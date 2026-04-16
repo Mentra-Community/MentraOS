@@ -131,6 +131,10 @@ jobs:
             value: "${{ secrets.RESEND_API_KEY }}"
           - name: UDP_HOST
             value: "dev-udp-api.mentraglass.cn"
+          - name: SONIOX_ENDPOINT
+            value: "wss://stt-rt.soniox.com/transcribe-websocket" 
+          - name: SONIOX_API_KEY
+            value: "random"
           EOL
 
       # Create start.sh file
