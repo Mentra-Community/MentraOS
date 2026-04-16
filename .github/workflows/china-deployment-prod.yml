@@ -161,7 +161,7 @@ jobs:
           min-instances: 1
           max-instances: 2
           use-specs: "2.0-4.0Gi"
-          vswitch: "vsw-wz94gyb5cinmsod89a4tj,vsw-wz9p9qoldncmf9k5se950"
-          security-group: "sg-wz95j71022jl4tezfozp"
+          vswitch: "vsw-wz9ie55i32y0m8sguoum4,vsw-wz9448ykk5arq76y1m85q"
+          security-group: "sg-wz92n2ui7musjt04j79p"
           env-yaml-file: "env.yaml"
           container-start-args-file: "container-start-args.yaml"
