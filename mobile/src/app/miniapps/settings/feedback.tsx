@@ -15,6 +15,7 @@ import restComms from "@/services/RestComms"
 import {feedbackPackageName, settingsPackageName, useAppletStatusStore} from "@/stores/applets"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
+import {APP_STORE_REVIEW_URL, PLAY_STORE_URL} from "@/constants/appConfig"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
 import {MiniAppCapsuleMenu} from "@/components/miniapps/CapsuleMenu"
@@ -353,8 +354,8 @@ export default function FeedbackPage() {
                   onPress: () => {
                     const appStoreUrl =
                       Platform.OS === "ios"
-                        ? "https://apps.apple.com/app/id6747363193?action=write-review"
-                        : "https://play.google.com/store/apps/details?id=com.mentra.mentra"
+                        ? APP_STORE_REVIEW_URL
+                        : PLAY_STORE_URL
                     Linking.openURL(appStoreUrl)
                   },
                 },

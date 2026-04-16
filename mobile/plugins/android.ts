@@ -275,7 +275,7 @@ function withAndroidManifestModifications(config: any) {
       {name: "android.permission.QUERY_ALL_PACKAGES"},
       {name: "android.permission.READ_PHONE_STATE"},
       {name: "android.permission.RECEIVE_BOOT_COMPLETED"},
-      {name: "com.mentra.mentra.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"},
+      {name: `${config.android?.package}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`},
     ]
 
     // Ensure uses-permission array exists
@@ -317,13 +317,14 @@ function withAndroidManifestModifications(config: any) {
     if (!manifest.permission) {
       manifest.permission = []
     }
+    const dynamicPermName = `${config.android?.package}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`
     const customPermExists = manifest.permission.find(
-      (p: any) => p.$["android:name"] === "com.mentra.mentra.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+      (p: any) => p.$["android:name"] === dynamicPermName,
     )
     if (!customPermExists) {
       manifest.permission.push({
         $: {
-          "android:name": "com.mentra.mentra.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+          "android:name": dynamicPermName,
         },
       })
     }
@@ -348,11 +349,11 @@ function withAndroidManifestModifications(config: any) {
       })
 
       if (schemeFilter && schemeFilter.data) {
-        const hasExtraScheme = schemeFilter.data.some((d: any) => d.$["android:scheme"] === "com.mentra.mentra")
+        const hasExtraScheme = schemeFilter.data.some((d: any) => d.$["android:scheme"] === config.android?.package)
 
         if (!hasExtraScheme) {
           schemeFilter.data.push({
-            $: {"android:scheme": "com.mentra.mentra"},
+            $: {"android:scheme": config.android?.package},
           })
         }
       }

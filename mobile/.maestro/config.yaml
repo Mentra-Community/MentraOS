@@ -1,7 +1,7 @@
 # Maestro Configuration for MentraOS
 
 # Global test configuration
-appId: com.mentra.mentra
+appId: ${MAESTRO_APP_ID:-com.mentra.mentra}
 name: "MentraOS E2E Tests"
 
 # Test tags for organizing test runs
@@ -12,7 +12,7 @@ tags:
 
 # Global environment variables
 env:
-  MAESTRO_APP_ID: com.mentra.mentra
+  MAESTRO_APP_ID: ${MAESTRO_APP_ID:-com.mentra.mentra}
 
 # Flows to include in test suite
 # Comment out flows to exclude them from runs

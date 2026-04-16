@@ -1,6 +1,25 @@
 import "tsx/cjs"
 import {ExpoConfig, ConfigContext} from "@expo/config"
 
+const VARIANTS = {
+  default: {
+    appName: "MentraOS",
+    packageName: "com.mentra.mentra",
+    includeFirebase: true,
+    googleServicesFile: "./google-services.json",
+    googleServicesPlist: "./GoogleService-Info.plist",
+  },
+  cn: {
+    appName: "Mentra",
+    packageName: "com.mentra.mentra.cn",
+    includeFirebase: false,
+    googleServicesFile: null,
+    googleServicesPlist: null,
+  },
+} as const
+
+const variant = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china" ? VARIANTS.cn : VARIANTS.default
+
 /**
  * @param config ExpoConfig coming from the static config app.json if it exists
  *
@@ -10,7 +29,7 @@ import {ExpoConfig, ConfigContext} from "@expo/config"
 module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   return {
     ...config,
-    name: "MentraOS",
+    name: variant.appName,
     slug: "MentraOS",
     version: process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "0.0.1",
     scheme: "com.mentra",
@@ -24,8 +43,8 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     assetBundlePatterns: ["**/*"],
     android: {
       // icon: "./assets/app-icons/ic_launcher.png",
-      package: "com.mentra.mentra",
-      googleServicesFile: "./google-services.json",
+      package: variant.packageName,
+      ...(variant.googleServicesFile ? {googleServicesFile: variant.googleServicesFile} : {}),
       versionCode: 174,
       adaptiveIcon: {
         foregroundImage: "./assets/app-icons/ic_launcher_foreground.png",
@@ -65,8 +84,8 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       supportsTablet: false,
       requireFullScreen: true,
       buildNumber: "174",
-      bundleIdentifier: "com.mentra.mentra",
-      googleServicesFile: "./GoogleService-Info.plist",
+      bundleIdentifier: variant.packageName,
+      ...(variant.googleServicesPlist ? {googleServicesFile: variant.googleServicesPlist} : {}),
       associatedDomains: ["applinks:apps.mentra.glass", "applinks:apps.mentraglass.com"],
       infoPlist: {
         NSCameraUsageDescription: "This app needs access to your camera to capture images.",
@@ -234,7 +253,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           locationAlwaysAndWhenInUsePermission: "Allow MentraOS to use your location.",
         },
       ],
-      "@react-native-firebase/app",
+      ...(variant.includeFirebase ? ["@react-native-firebase/app"] : []),
       "expo-audio",
       [
         "expo-video",
