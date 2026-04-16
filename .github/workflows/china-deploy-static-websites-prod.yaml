@@ -1,13 +1,13 @@
-name: China Cloud Deploy Static Websites (Dev)
+name: China Cloud Deploy Static Websites
 
 on:
   push:
     branches:
       - dev
-      - ya/clean-china-cicd
+      - "ya/china-cloud-launch-prep"
     paths:
       - "cloud/websites/**"
-      - ".github/workflows/china-deploy-static-websites-dev.yaml"
+      - ".github/workflows/china-deploy-static-websites-prod.yaml"
 
 jobs:
   china-cloud-deploy-static-websites:
@@ -41,7 +41,7 @@ jobs:
       # 3. Install dependencies
       - name: Install dependencies
         working-directory: cloud
-        run: bun install --frozen-lockfile
+        run: bun install
 
       # 4. Install ossutil
       - name: Install ossutil

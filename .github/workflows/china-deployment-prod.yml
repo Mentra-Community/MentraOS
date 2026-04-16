@@ -1,4 +1,4 @@
-name: China Cloud Api Deployment (Dev)
+name: China Cloud Api Deployment
 
 on:
   push:
