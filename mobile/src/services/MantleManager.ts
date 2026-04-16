@@ -19,6 +19,7 @@ import udp from "@/services/UdpManager"
 import {BackgroundTimer} from "@/utils/timers"
 import {useDebugStore} from "@/stores/debug"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
+import {logE2EMetric} from "@/utils/e2eMetrics"
 import {useAppletStatusStore} from "@/stores/applets"
 import {syncDashboardMenu} from "@/utils/glassesMenu"
 
@@ -699,6 +700,10 @@ class MantleManager {
 
   // mostly for debugging / local stt:
   public async displayTextMain(text: string) {
+    logE2EMetric("display_text_main", {
+      text,
+      line_count: text.split("\n").length,
+    })
     this.resetDisplayTimeout()
     socketComms.handle_display_event({
       type: "display_event",
@@ -735,11 +740,23 @@ class MantleManager {
   }
 
   public async handle_local_transcription(data: any) {
+    logE2EMetric("local_transcription_received", {
+      text: data?.text ?? "",
+      is_final: data?.isFinal ?? false,
+      language: data?.transcribeLanguage ?? "",
+    })
+
     // TODO: performance!
     const offlineStt = await useSettingsStore.getState().getSetting(SETTINGS.offline_captions_running.key)
     if (offlineStt) {
       this.transcriptProcessor.changeLanguage(data.transcribeLanguage)
       const processedText = this.transcriptProcessor.processString(data.text, data.isFinal ?? false)
+
+      logE2EMetric("local_transcription_processed", {
+        text: data?.text ?? "",
+        processed_text: processedText ?? "",
+        is_final: data?.isFinal ?? false,
+      })
 
       // Scheduling timeout to clear text from wall. In case of online STT online dashboard manager will handle it.
       // if (data.isFinal) {

@@ -1,4 +1,5 @@
 import {create} from "zustand"
+import {extractDisplayText, logE2EMetric} from "@/utils/e2eMetrics"
 // import
 // TODO: import view types from cloud
 
@@ -29,6 +30,16 @@ export const useDisplayStore = create<DisplayStore>((set, get) => ({
       updates.currentEvent = event
     }
 
+    const visibleEvent = updates.currentEvent ?? event
+    const textLines = extractDisplayText(visibleEvent)
+    if (textLines.some((line) => line.trim() !== "")) {
+      logE2EMetric("display_store_update", {
+        view: visibleEvent.view ?? currentView,
+        layout_type: visibleEvent.layout?.layoutType ?? "",
+        text_lines: textLines,
+      })
+    }
+
     set(updates)
   },
   setView: (view: string) => {
@@ -44,6 +55,7 @@ export const useDisplayStore = create<DisplayStore>((set, get) => ({
     } else {
       newEvent = get().mainEvent
     }
+    logE2EMetric("display_view_changed", {view})
     set({view, currentEvent: newEvent})
   },
 }))
