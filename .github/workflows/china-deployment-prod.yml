@@ -48,7 +48,7 @@ jobs:
           - name: PORTER_APP_NAME
             value: "cloud-prod"
           - name: MONGO_URL
-            value: "mongodb+srv://root:${{ secrets.MONGO_PASSWORD }}@dds-n9e5761d6d2d0f84-srv.mongodb.nosql.aliyuncs.com/prod?ssl=false"
+            value: "mongodb+srv://root:${{ secrets.MONGO_PASSWORD }}@dds-n9e4ca1d1dc902d4-srv.mongodb.nosql.aliyuncs.com/prod?ssl=false"
           - name: AUGMENTOS_AUTH_JWT_SECRET
             value: "${{ secrets.AUGMENTOS_AUTH_JWT_SECRET }}"
           - name: INVITE_JWT_SECRET
