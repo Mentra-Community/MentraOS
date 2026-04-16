@@ -10,8 +10,10 @@ import LoadingOverlay from "@/components/ui/LoadingOverlay"
 import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import restComms from "@/services/RestComms"
 import miniComms from "@/services/MiniComms"
+import {WebSocketStatus} from "@/services/ws-types"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import {useAppletStatusStore} from "@/stores/applets"
+import {useConnectionStore} from "@/stores/connection"
 import {MiniAppCapsuleMenu} from "@/components/miniapps/CapsuleMenu"
 import AppIcon from "@/components/home/AppIcon"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
@@ -108,27 +110,46 @@ export default function AppWebView() {
   // Watch the applet's store state for server confirmation.
   // startApplet() sets loading=true, then refreshApplets() (at ~2s) fetches
   // the real state from the server which sets loading=false.
-  // If running=false after server confirms, the app failed to start.
+  //
+  // Un-latch on positive confirmation: running=true clears a prior failure
+  // (e.g. if the WS briefly dropped and the store observed running=false
+  // during a cross-pod reconnect before the cloud re-hydrated the session).
+  //
+  // Suppress failure latching while the WS isn't CONNECTED or during a short
+  // grace window after reconnect — the store is inherently stale in that
+  // window and false-negatives there were causing "Cannot reach" mid-session.
   useEffect(() => {
-    // Check the current state immediately (covers re-opening an already-running app)
+    const POST_RECONNECT_GRACE_MS = 5_000
+
     const checkApplet = (state: {apps: Array<{packageName: string; loading: boolean; running: boolean}>}) => {
       const applet = state.apps.find((a) => a.packageName === packageName)
       if (!applet) return
+      if (applet.loading) return
 
-      if (!applet.loading) {
-        if (applet.running) {
-          setIsServerConfirmed(true)
-        } else {
-          setAppStartFailed(true)
-        }
+      if (applet.running) {
+        setIsServerConfirmed(true)
+        setAppStartFailed(false)
+        return
       }
+
+      const connState = useConnectionStore.getState()
+      if (connState.status !== WebSocketStatus.CONNECTED) return
+      const lastConnectedAt = connState.lastConnectedAt?.getTime() ?? 0
+      if (lastConnectedAt && Date.now() - lastConnectedAt < POST_RECONNECT_GRACE_MS) return
+
+      setAppStartFailed(true)
     }
 
     checkApplet(useAppletStatusStore.getState())
 
-    // Also subscribe to future changes
-    const unsub = useAppletStatusStore.subscribe(checkApplet)
-    return unsub
+    const unsubApplets = useAppletStatusStore.subscribe(checkApplet)
+    const unsubConn = useConnectionStore.subscribe(() => {
+      checkApplet(useAppletStatusStore.getState())
+    })
+    return () => {
+      unsubApplets()
+      unsubConn()
+    }
   }, [packageName])
 
   // Fade in webview once both conditions are met

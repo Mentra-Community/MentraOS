@@ -4,7 +4,10 @@ import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
 import CoreModule, {GlassesStatus, PhotoResponseEvent} from "core"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {useConnectionStore} from "@/stores/connection"
+import {WebSocketStatus} from "@/services/ws-types"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
+import {BackgroundTimer} from "@/utils/timers"
 
 interface RequestConfig {
   method: "GET" | "POST" | "DELETE"
@@ -99,11 +102,69 @@ class RestComms {
         const res = await this.axiosInstance.request<T>(axiosConfig)
         return res.data
       } catch (error) {
-        if (this.isNoActiveSessionError(error)) {
-          GlobalEventEmitter.emit("NO_ACTIVE_SESSION")
+        if (!this.isNoActiveSessionError(error)) {
+          throw error
         }
-        throw error
+
+        // Cloud pod has no session for this user (we reconnected to a different
+        // pod, or the prior session was cleaned up). Trigger a WS reconnect,
+        // wait for it to land, then retry the request exactly once.
+        //
+        // Subscribe BEFORE emitting so we don't miss the DISCONNECTED → CONNECTED
+        // transition triggered by handleNoActiveSession → reconnectNow.
+        const waitPromise = this.waitForNextConnected(8_000)
+        GlobalEventEmitter.emit("NO_ACTIVE_SESSION")
+        try {
+          await waitPromise
+        } catch (waitErr) {
+          console.log(`${this.TAG}: Retry skipped — WS didn't reconnect in time:`, waitErr)
+          throw error
+        }
+
+        const retryHeaders = requiresAuth ? this.createAuthHeaders() : {"Content-Type": "application/json"}
+        const retryRes = await this.axiosInstance.request<T>({...axiosConfig, headers: retryHeaders})
+        return retryRes.data
       }
+    })
+  }
+
+  /**
+   * Resolves on the NEXT CONNECTED transition of the WS (or rejects after
+   * timeoutMs). Does NOT short-circuit when already CONNECTED — callers
+   * invoke this after a 503 NO_ACTIVE_SESSION when we know the current
+   * connection is landing on the wrong pod; we need to wait for the
+   * post-reconnect CONNECTED event, not the current one.
+   *
+   * Uses the connection store directly rather than WebSocketManager to avoid
+   * a circular import (WebSocketManager → RestComms → WebSocketManager).
+   */
+  private waitForNextConnected(timeoutMs: number): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      let settled = false
+      const timer = BackgroundTimer.setTimeout(() => {
+        if (settled) return
+        settled = true
+        unsub()
+        reject(new Error(`waitForNextConnected timed out after ${timeoutMs}ms`))
+      }, timeoutMs)
+
+      let sawNonConnected = useConnectionStore.getState().status !== WebSocketStatus.CONNECTED
+      const unsub = useConnectionStore.subscribe((state) => {
+        if (settled) return
+        if (state.status !== WebSocketStatus.CONNECTED) {
+          sawNonConnected = true
+          return
+        }
+        // Only resolve on a CONNECTED transition that follows a non-CONNECTED
+        // state. This guarantees we waited for a real reconnect rather than
+        // resolving on the stale pre-reconnect CONNECTED state.
+        if (sawNonConnected) {
+          settled = true
+          BackgroundTimer.clearTimeout(timer)
+          unsub()
+          resolve()
+        }
+      })
     })
   }
 
