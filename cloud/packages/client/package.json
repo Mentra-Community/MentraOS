@@ -1,0 +1,22 @@
+{
+  "name": "@mentra/client",
+  "version": "0.1.0",
+  "description": "MentraOS cloud protocol client — connect to MentraOS services from any app",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5"
+  }
+}

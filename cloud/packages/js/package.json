@@ -1,0 +1,30 @@
+{
+  "name": "@mentra/js",
+  "version": "0.1.0",
+  "description": "MentraOS app framework — build glasses apps like Next.js",
+  "type": "module",
+  "bin": {
+    "mentra": "./cli.ts"
+  },
+  "main": "src/runtime/index.ts",
+  "exports": {
+    ".": "./src/runtime/index.ts",
+    "./react": "./src/runtime/react.ts"
+  },
+  "scripts": {
+    "dev": "bun run cli.ts dev",
+    "build": "bun run cli.ts build"
+  },
+  "dependencies": {
+    "@mentra/sdk": "file:../sdk",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5"
+  }
+}

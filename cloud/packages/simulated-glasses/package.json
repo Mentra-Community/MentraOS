@@ -1,0 +1,25 @@
+{
+  "name": "@mentra/simulated-glasses",
+  "version": "0.1.0",
+  "description": "Simulated smart glasses for MentraOS development and testing",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@mentra/client": "file:../client"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5"
+  }
+}
