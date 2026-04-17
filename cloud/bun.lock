@@ -365,13 +365,46 @@
         "mentra": "./cli.ts",
       },
       "dependencies": {
-        "@mentra/sdk": "file:../sdk",
+        "@logtail/pino": "^0.5.4",
+        "@mentra/display-utils": "file:../display-utils",
+        "@mentra/types": "file:../types",
+        "axios": "^1.8.1",
+        "chalk": "^5.6.2",
+        "dotenv": "^16.4.0",
+        "hono": "^4.11.3",
+        "jimp": "^1.6.0",
+        "jsonwebtoken": "^8.5.1",
+        "jsrsasign": "^11.1.0",
+        "lamejs": "^1.2.1",
+        "pino": "^9.6.0",
         "qrcode-terminal": "^0.12.0",
+        "strip-ansi": "^7.1.2",
+        "ws": "^8.18.2",
       },
       "devDependencies": {
+        "@mentra/client": "file:../client",
+        "@mentra/simulated-glasses": "file:../simulated-glasses",
         "@types/bun": "latest",
+        "@types/jsonwebtoken": "^9.0.2",
+        "@types/jsrsasign": "^10.5.15",
+        "@types/ws": "^8.5.12",
         "typescript": "^5",
       },
+      "optionalDependencies": {
+        "pino-pretty": "^13.0.0",
+      },
+      "peerDependencies": {
+        "@mentra/client": ">=0.1",
+        "@mentra/simulated-glasses": ">=0.1",
+        "react": ">=18",
+        "react-dom": ">=18",
+      },
+      "optionalPeers": [
+        "@mentra/client",
+        "@mentra/simulated-glasses",
+        "react",
+        "react-dom",
+      ],
     },
     "packages/react-sdk": {
       "name": "@mentra/react",
@@ -390,7 +423,7 @@
     },
     "packages/sdk": {
       "name": "@mentra/sdk",
-      "version": "3.0.0-alpha.1",
+      "version": "3.0.0-alpha.3",
       "dependencies": {
         "@logtail/pino": "^0.5.4",
         "@mentra/types": "^1.0.0-beta.1",
@@ -3776,7 +3809,13 @@
 
     "@mentra/example-webview/react-dom": ["react-dom@19.2.4", "", { "dependencies": { "scheduler": "^0.27.0" }, "peerDependencies": { "react": "^19.2.4" } }, "sha512-AXJdLo8kgMbimY95O2aKQqsz2iWi9jMgKJhRBAxECE4IFxfcazB2LmzloIoibJI3C12IlY20+KFaLv+71bUJeQ=="],
 
+    "@mentra/js/@mentra/client": ["@mentra/client@file:packages/client", { "devDependencies": { "@types/bun": "latest", "typescript": "^5" } }],
+
+    "@mentra/js/@mentra/simulated-glasses": ["@mentra/simulated-glasses@file:packages/simulated-glasses", { "dependencies": { "@mentra/client": "file:../client" }, "devDependencies": { "@types/bun": "latest", "typescript": "^5" } }],
+
     "@mentra/js/@types/bun": ["@types/bun@1.3.12", "", { "dependencies": { "bun-types": "1.3.12" } }, "sha512-DBv81elK+/VSwXHDlnH3Qduw+KxkTIWi7TXkAeh24zpi5l0B2kUg9Ga3tb4nJaPcOFswflgi/yAvMVBPrxMB+A=="],
+
+    "@mentra/js/jsonwebtoken": ["jsonwebtoken@8.5.1", "", { "dependencies": { "jws": "^3.2.2", "lodash.includes": "^4.3.0", "lodash.isboolean": "^3.0.3", "lodash.isinteger": "^4.0.4", "lodash.isnumber": "^3.0.3", "lodash.isplainobject": "^4.0.6", "lodash.isstring": "^4.0.1", "lodash.once": "^4.0.0", "ms": "^2.1.1", "semver": "^5.6.0" } }, "sha512-XjwVfRS6jTMsqYs0EsuJ4LGxXV14zQybNd4L2r0UvbVnSF9Af8x7p5MzbJ90Ioz/9TI41/hTCvznF/loiSzn8w=="],
 
     "@mentra/line-width/@types/react": ["@types/react@19.2.14", "", { "dependencies": { "csstype": "^3.2.2" } }, "sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w=="],
 
@@ -3799,6 +3838,8 @@
     "@mentra/shared/@types/node": ["@types/node@22.19.15", "", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-F0R/h2+dsy5wJAUe3tAU6oqa2qbWY5TpNfL/RGmo1y38hiyO1w3x2jPtt76wmuaJI4DQnOBu21cNXQ2STIUUWg=="],
 
     "@mentra/shared/lucide-react": ["lucide-react@0.476.0", "", { "peerDependencies": { "react": "^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0" } }, "sha512-x6cLTk8gahdUPje0hSgLN1/MgiJH+Xl90Xoxy9bkPAsMPOUiyRSKR4JCDPGVCEpyqnZXH3exFWNItcvra9WzUQ=="],
+
+    "@mentra/simulated-glasses/@mentra/client": ["@mentra/client@file:packages/client", { "devDependencies": { "@types/bun": "latest", "typescript": "^5" } }],
 
     "@mentra/simulated-glasses/@types/bun": ["@types/bun@1.3.12", "", { "dependencies": { "bun-types": "1.3.12" } }, "sha512-DBv81elK+/VSwXHDlnH3Qduw+KxkTIWi7TXkAeh24zpi5l0B2kUg9Ga3tb4nJaPcOFswflgi/yAvMVBPrxMB+A=="],
 
@@ -4290,7 +4331,13 @@
 
     "@mentra/example-webview/react-dom/scheduler": ["scheduler@0.27.0", "", {}, "sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q=="],
 
+    "@mentra/js/@mentra/simulated-glasses/@mentra/client": ["@mentra/client@file:packages/client", {}],
+
     "@mentra/js/@types/bun/bun-types": ["bun-types@1.3.12", "", { "dependencies": { "@types/node": "*" } }, "sha512-HqOLj5PoFajAQciOMRiIZGNoKxDJSr6qigAttOX40vJuSp6DN/CxWp9s3C1Xwm4oH7ybueITwiaOcWXoYVoRkA=="],
+
+    "@mentra/js/jsonwebtoken/jws": ["jws@3.2.3", "", { "dependencies": { "jwa": "^1.4.2", "safe-buffer": "^5.0.1" } }, "sha512-byiJ0FLRdLdSVSReO/U4E7RoEyOCKnEnEPMjq3HxWtvzLsV08/i5RQKsFVNkCldrCaPr2vDNAOMsfs8T/Hze7g=="],
+
+    "@mentra/js/jsonwebtoken/semver": ["semver@5.7.2", "", { "bin": { "semver": "bin/semver" } }, "sha512-cBznnQ9KjJqU67B52RMC65CMarK2600WFnbkcaiwWq3xy/5haFJlshgnpjovMVJ+Hff49d8GEn0b87C5pDQ10g=="],
 
     "@mentra/line-width/react-dom/scheduler": ["scheduler@0.27.0", "", {}, "sha512-eNv+WrVbKu1f3vbYJT/xtiF5syA5HPIMtf9IgY/nKg0sWqzAUEvqY/xm7OcZc/qafLx/iO9FgOmeSAp4v5ti/Q=="],
 
@@ -4587,6 +4634,8 @@
     "@mentra/debugger/vite/esbuild/@esbuild/win32-x64": ["@esbuild/win32-x64@0.18.20", "", { "os": "win32", "cpu": "x64" }, "sha512-kTdfRcSiDfQca/y9QIkng02avJ+NCaQvrMejlsB3RRv5sE9rRoeBPISaZpKxHELzRxZyLvNts1P27W3wV+8geQ=="],
 
     "@mentra/js/@types/bun/bun-types/@types/node": ["@types/node@22.19.15", "", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-F0R/h2+dsy5wJAUe3tAU6oqa2qbWY5TpNfL/RGmo1y38hiyO1w3x2jPtt76wmuaJI4DQnOBu21cNXQ2STIUUWg=="],
+
+    "@mentra/js/jsonwebtoken/jws/jwa": ["jwa@1.4.2", "", { "dependencies": { "buffer-equal-constant-time": "^1.0.1", "ecdsa-sig-formatter": "1.0.11", "safe-buffer": "^5.0.1" } }, "sha512-eeH5JO+21J78qMvTIDdBXidBd6nG2kZjg5Ohz/1fpa28Z4CcsWUzJ1ZZyFq/3z3N17aZy+ZuBoHljASbL1WfOw=="],
 
     "@mentra/sdk/jsonwebtoken/jws/jwa": ["jwa@1.4.2", "", { "dependencies": { "buffer-equal-constant-time": "^1.0.1", "ecdsa-sig-formatter": "1.0.11", "safe-buffer": "^5.0.1" } }, "sha512-eeH5JO+21J78qMvTIDdBXidBd6nG2kZjg5Ohz/1fpa28Z4CcsWUzJ1ZZyFq/3z3N17aZy+ZuBoHljASbL1WfOw=="],
 
