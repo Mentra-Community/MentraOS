@@ -176,9 +176,9 @@ deleted the raw file, B is now invisible in the gallery.
 
 ### Key Architectural Change
 
-**Before:** Two concurrent metadata writers, no locking, gallery sorted by insertion order.
+**Before:** Two concurrent metadata writers (Writer 1 legacy loop + Writer 2 processing queue), no locking, gallery sorted by insertion order.
 
-**After:** One metadata writer (processing queue), all writes serialized by mutex, gallery sorted by capture time, anomaly detection on every load.
+**After:** One metadata writer (processing queue only — Writer 1 deleted), all writes serialized by mutex, gallery sorted by capture time, anomaly detection on every load. Orphan detection on startup surfaces any files that were downloaded but not processed due to app kill or queue abort.
 
 ---
 
@@ -186,19 +186,16 @@ deleted the raw file, B is now invisible in the gallery.
 
 ### Phase 1 — Critical Bug Fixes
 
-#### Fix #1: Convert Writer 1 to a Provisional Fallback Entry
+#### Fix #1: Remove the Double-Write (Delete Writer 1)
 
 - **File:** `mobile/src/services/asg/gallerySyncService.ts`
 - **Lines:** 1457–1474
-- **Change:** Do NOT delete the post-download loop. Instead, convert it into a provisional "download-complete" write that serves as a safety net if the processing queue is aborted or times out before reaching step 6 (metadata save). The processing queue (Writer 2) will overwrite the provisional entry with the final processed path when it completes. With the write mutex added in Fix #2, this interleaving is now safe.
+- **Change:** Delete the post-download metadata loop entirely. Writer 2 (processing queue) is the sole metadata writer going forward. It writes the correct final processed file path after HDR, lens correction, and stabilization complete.
 
-**Why not delete it:** `mediaProcessingQueue.waitUntilDrained()` can time out and call `abort()`, dropping all pending items before metadata is saved. Pre-save processing failures (HDR, lens correction) also skip persistence. If Writer 1 is removed without a fallback, files that successfully downloaded but failed to process will be on disk but invisible in the gallery index, reproducing the exact data loss this plan aims to prevent.
-
-**What to change** — replace the existing raw-path write with a clearly-marked provisional entry:
+**What to delete:**
 
 ```typescript
-// In executeDownload(), after downloads complete — write provisional entries as a safety net.
-// mediaProcessingQueue will overwrite each entry with the final processed path when it finishes.
+// Remove this entire block from executeDownload():
 for (const photoInfo of downloadResult.downloaded) {
   const isAuxiliary =
     photoInfo.name?.match(/_ev-?\d+\.(jpg|jpeg)$/i) ||
@@ -212,16 +209,15 @@ for (const photoInfo of downloadResult.downloaded) {
     photoInfo.filePath || "",
     photoInfo.thumbnailPath,
     defaultWearable,
-    {provisional: true}, // marks entry as pre-processing fallback
   )
   await localStorageService.saveDownloadedFile(downloadedFile)
 }
 ```
 
-Add a `provisional?: boolean` field to `DownloadedFile`. When Writer 2 (processing queue) saves the final entry, it writes `provisional: false` (or omits the field). The gallery UI can optionally use this flag to show a "processing" badge rather than displaying the raw file.
+**Accepted trade-off:** If the app is killed mid-sync or the processing queue times out, photos that had not yet reached step 6 (metadata save) in the processing pipeline will be on disk but absent from the gallery index until the next sync retries them. This is the same behaviour users experience today when processing fails — it is now intentional rather than accidental. Fix #5 (orphan detection) surfaces these cases via Sentry on the next startup, and Tripwire T3 fires if orphans are found, so the team has visibility when this happens.
 
-- **Risk:** Low. With the mutex from Fix #2 in place, the provisional write and the processed write are fully serialized — no race condition. In the best case (processing completes), the provisional entry is simply overwritten. In the worst case (processing aborted/timed out), the provisional entry preserves the file's visibility in the gallery.
-- **Effort:** 15 minutes
+- **Risk:** Low for the happy path (processing completes). Accepted orphan risk on processing abort/app kill — mitigated by orphan detection (Fix #5) and T3 tripwire.
+- **Effort:** 5 minutes
 
 ---
 
@@ -490,7 +486,7 @@ Items are ordered by dependency — later items may depend on earlier ones being
 
 ```
 PHASE 1 — Critical Bug Fixes (do first, in this order)
-  #1  Convert Writer 1 to provisional fallback entry      15 min   gallerySyncService.ts + mediaProcessingQueue.ts + types
+  #1  Delete Writer 1 from executeDownload                5 min    gallerySyncService.ts
   #2  Add write mutex to localStorageService              30 min   localStorageService.ts
   #3  Skip stale cleanup during sync + resumable queue    5 min    GalleryScreen.tsx
 
@@ -508,7 +504,7 @@ PHASE 3 — Observability (depends on Phase 1 + 2)
 PHASE 4 — Automated Tests (after all fixes are in place)
   localStorageService.test.ts                             45 min   ~8 tests (mutex, orphans, artifacts, paths)
   normalizeTimestamp.test.ts                              20 min   ~7 tests (timestamp normalization + bounds)
-  gallerySyncService.test.ts                              30 min   ~2 tests (regression: no double-write)
+  gallerySyncService.test.ts                              20 min   ~2 tests (regression: no saveDownloadedFile from download paths)
   gallerySort.test.ts                                     20 min   ~4 tests (unified sort)
   galleryTripwires.test.ts                                30 min   ~10 tests (count drop, full-wipe alert, Clear All guard, first-run guard, order check)
 
@@ -523,12 +519,11 @@ TOTAL ESTIMATED EFFORT:                                   ~7–8 hours
 
 | File                                                      | Changes                                                                                                                                                                                                                               |
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mobile/src/services/asg/gallerySyncService.ts`           | Convert post-download metadata loop to provisional writes (Fix #1). Add startup orphan detection + artifact cleanup call (Fix #5). Add Tripwire T3 Sentry call. Remove defensive `modified` parsing (Fix #6).                         |
+| `mobile/src/services/asg/gallerySyncService.ts`           | Delete post-download metadata loop (Fix #1). Add startup orphan detection + artifact cleanup call (Fix #5). Add Tripwire T3 Sentry call. Remove defensive `modified` parsing (Fix #6).                                                |
 | `mobile/src/services/asg/localStorageService.ts`          | Add write mutex (Fix #2). Add `detectOrphans()` and `cleanupArtifacts()` methods (Fix #5). Add `normalizeTimestamp()` helper and use in `convertToDownloadedFile()` (Fix #6).                                                         |
-| `mobile/src/types/asg/index.ts`                           | Add `provisional?: boolean` to `DownloadedFile` type (Fix #1).                                                                                                                                                                        |
 | `mobile/src/components/glasses/Gallery/GalleryScreen.tsx` | Guard stale cleanup (Fix #3). Unified sort in `allPhotos` useMemo (Fix #4). Concurrent load guard (Fix #11). Tripwire T1 (count drop + full-wipe detection). Tripwire T2 (order check). Track user deletions + `userClearedAll` flag. |
 | `mobile/src/services/asg/asgCameraApi.ts`                 | Normalize `modified` at ingestion in `syncWithServer` response (Fix #6).                                                                                                                                                              |
-| `mobile/src/services/asg/mediaProcessingQueue.ts`         | Remove defensive `modified` parsing (Fix #6). Write `provisional: false` on final metadata save (Fix #1).                                                                                                                             |
+| `mobile/src/services/asg/mediaProcessingQueue.ts`         | Remove defensive `modified` parsing (Fix #6).                                                                                                                                                                                         |
 | `mobile/src/app/asg/gallery-settings.tsx`                 | Set `gallery_known_photo_count` to 0 AND `gallery_user_cleared_all` to `true` before "Clear All" (T1 false-alarm guard).                                                                                                              |
 | `mobile/src/app/miniapps/gallery/gallery-settings.tsx`    | Same as above.                                                                                                                                                                                                                        |
 | `mobile/src/services/asg/localStorageService.test.ts`     | **NEW.** ~8 tests: mutex serialization, concurrent save+delete, path handling, orphan detection, artifact cleanup.                                                                                                                    |
@@ -687,39 +682,24 @@ it("handles undefined gracefully", () => {
 
 ### Test File 3: `gallerySyncService.test.ts`
 
-Regression tests verifying the provisional-write behavior introduced in Fix #1.
+Regression tests verifying Writer 1 has been removed — `executeDownload` must never call `saveDownloadedFile` directly (Fix #1).
 
 ```typescript
-it("executeDownload writes provisional entries for each non-auxiliary file", async () => {
+it("executeDownload does not call saveDownloadedFile directly", async () => {
   // Mock asgCameraApi.batchSyncFiles to return 3 downloaded files
+  // Spy on localStorageService.saveDownloadedFile
   await service.executeDownload(mockFiles, mockServerTime)
 
-  // Should have written a provisional entry for each downloaded file
-  expect(localStorageService.saveDownloadedFile).toHaveBeenCalledTimes(3)
-  // Each call should have provisional: true
-  for (const call of (localStorageService.saveDownloadedFile as jest.Mock).mock.calls) {
-    expect(call[0].provisional).toBe(true)
-  }
-  // Processing queue should also have been enqueued
+  // Writer 1 is gone — saveDownloadedFile must NOT be called from here
+  expect(localStorageService.saveDownloadedFile).not.toHaveBeenCalled()
+  // Processing queue must still be enqueued for each file
   expect(mediaProcessingQueue.enqueue).toHaveBeenCalledTimes(3)
 })
 
-it("executeDownload skips auxiliary files for provisional write", async () => {
-  const filesWithAuxiliary = [
-    makePhotoInfo("IMG_001.jpg"),
-    makePhotoInfo("IMG_001_ev-1.jpg"), // auxiliary — should be skipped
-    makePhotoInfo("IMG_001.imu.json"), // auxiliary — should be skipped
-  ]
-  await service.executeDownload(filesWithAuxiliary, mockServerTime)
+it("executeCaptureDownload does not call saveDownloadedFile directly", async () => {
+  await service.executeCaptureDownload(mockCaptures, mockServerTime)
 
-  expect(localStorageService.saveDownloadedFile).toHaveBeenCalledTimes(1)
-})
-
-it("mediaProcessingQueue final write sets provisional: false", async () => {
-  await mediaProcessingQueue.processItem(mockQueueItem)
-
-  const savedFile = (localStorageService.saveDownloadedFile as jest.Mock).mock.calls[0][0]
-  expect(savedFile.provisional).toBe(false)
+  expect(localStorageService.saveDownloadedFile).not.toHaveBeenCalled()
 })
 ```
 
@@ -877,10 +857,10 @@ it("ignores photos with invalid timestamps", () => {
 | ----------------------------- | ------- | ------------------------------------------------------------------------------------ |
 | `localStorageService.test.ts` | ~8      | Fix #2 (mutex), Fix #5 (orphans, artifacts), path handling                           |
 | `normalizeTimestamp.test.ts`  | ~7      | Fix #6 (timestamp normalization + bounds)                                            |
-| `gallerySyncService.test.ts`  | ~3      | Fix #1 (provisional writes, auxiliary skipped, final write clears provisional flag)  |
+| `gallerySyncService.test.ts`  | ~2      | Fix #1 (regression: no direct saveDownloadedFile calls from either download path)    |
 | `gallerySort.test.ts`         | ~4      | Fix #4 (unified sort by capture time)                                                |
 | `galleryTripwires.test.ts`    | ~10     | T1 (count drop, full-wipe alert, Clear All guard, first-run guard), T2 (order check) |
-| **Total**                     | **~32** |                                                                                      |
+| **Total**                     | **~31** |                                                                                      |
 
 ### Implementation Notes
 
@@ -901,7 +881,7 @@ Writing all 5 test files with mocks: **~2–3 hours** additional on top of the f
 - **Processing pipeline** — HDR merge, lens correction, stabilization, camera roll save are untouched.
 - **v2 capture-aware sync** — `executeCaptureDownload` is already correct (no double-write).
 - **Delete-from-glasses safety checks** — existing size validation in `mediaProcessingQueue` is untouched.
-- **Data model** — no new fields added to `DownloadedFile` or `PhotoInfo`.
+- **Data model** — no new fields added to `DownloadedFile` or `PhotoInfo`. The `provisional` flag considered during planning was intentionally dropped in favour of simplicity.
 - **Navigation / routing** — gallery routes unchanged.
 
 ---
