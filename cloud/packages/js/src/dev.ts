@@ -1,45 +1,59 @@
 /**
  * mentra dev — Development server
  *
- * 1. Reads mentra.config.ts from the project root
- * 2. Validates client/ imports (no Node built-ins)
- * 3. Creates a MiniAppServer from @mentra/sdk (v3)
- * 4. Loads client/index.ts and wires session + state
- * 5. Serves webview/ with Bun fullstack (HMR, Tailwind)
- * 6. Shows QR code in terminal
+ * Responsibilities (in order):
+ *   1. Load mentra.config.ts
+ *   2. Ensure bunfig.toml pins React (dedupe plugin)
+ *   3. Validate client/ imports (no Node/RN built-ins)
+ *   4. Pick a runtime adapter automatically:
+ *        - API key present → cloud adapter + MiniAppServer
+ *        - otherwise       → sim adapter (in-process simulated glasses)
+ *        - mentra.config.ts can override with `runtime: "cloud" | "sim"`
+ *   5. If server/index.ts exists, load it as a Hono app and mount it
+ *   6. Serve webview/ + /__mentra/state with Bun fullstack (HMR, dedupe plugin)
+ *   7. Dynamic-import client/index.ts (the on-device developer code)
+ *   8. Print QR + URLs
+ *
+ * The framework never asks the developer "which mode?" — it picks
+ * based on what's available. Explicit override is via config, not env.
  */
 
 import { join } from "path";
 import { existsSync } from "fs";
 import { networkInterfaces } from "os";
 import QRCode from "qrcode-terminal";
-import { MiniAppServer, type MentraSession } from "@mentra/sdk";
+import { MiniAppServer } from "./runtime/internals";
+import type { MentraSession } from "./runtime/internals";
 import { StateManager } from "./runtime/state-manager";
+import { loadProject, ensureBunfig, rel } from "./project";
+import { pickRuntime } from "./runtime/pick-runtime";
+import { CloudAdapter } from "./runtime/adapters/cloud-adapter";
+import { SimAdapter } from "./runtime/adapters/sim-adapter";
+import { __flushLazyHandlers } from "./runtime/index";
+import type { MentraRuntime } from "./runtime/contract";
 
 const PROJECT_ROOT = process.cwd();
 const PORT = parseInt(process.env.PORT || "4242");
 
-// ─── Load config ─────────────────────────────────────────────────────────────
+// ─── Load project layout ─────────────────────────────────────────────────────
 
-interface MentraConfig {
-  packageName: string;
-  name: string;
-  version?: string;
-  permissions?: string[];
-  server?: { env?: string[] };
+const project = await loadProject(PROJECT_ROOT);
+if (!project) {
+  console.error("  ❌ No mentra.config.ts found in the current directory.\n");
+  console.error("  Run this command from your project root, or run `mentra init` to create a new project.\n");
+  process.exit(1);
 }
 
-let config: MentraConfig;
-const configPath = join(PROJECT_ROOT, "mentra.config.ts");
-if (existsSync(configPath)) {
-  const mod = await import(configPath);
-  config = mod.default;
-} else {
-  console.error("  ❌ No mentra.config.ts found in the current directory.\n");
-  console.error(
-    "  Run this command from your project root, or run `mentra init` to create a new project.\n",
-  );
-  process.exit(1);
+const { config } = project;
+
+// ─── Ensure bunfig.toml with the dedupe plugin ───────────────────────────────
+
+{
+  const { written, path } = ensureBunfig(PROJECT_ROOT);
+  if (written) {
+    console.log(`  📝 Wrote ${rel(PROJECT_ROOT, path)} (React dedupe plugin)`);
+    console.log("  \x1b[2m   Restart `mentra dev` for the plugin to take effect.\x1b[0m\n");
+  }
 }
 
 // ─── Validate client/ imports ────────────────────────────────────────────────
@@ -81,19 +95,12 @@ const BANNED_MODULES = new Set([
   "node:stream",
 ]);
 
-const BANNED_PATTERNS = [
-  /^react-native$/,
-  /^react-native\//,
-  /^expo-/,
-  /^@react-native/,
-];
+const BANNED_PATTERNS = [/^react-native$/, /^react-native\//, /^expo-/, /^@react-native/];
 
 const clientDir = join(PROJECT_ROOT, "client");
 if (existsSync(clientDir)) {
   const { readdir, readFile } = await import("fs/promises");
-  const files = (await readdir(clientDir, { recursive: true })).filter(
-    (f: string) => /\.(ts|tsx|js|jsx)$/.test(f),
-  );
+  const files = (await readdir(clientDir, { recursive: true })).filter((f: string) => /\.(ts|tsx|js|jsx)$/.test(f));
 
   let hasErrors = false;
   for (const file of files) {
@@ -101,103 +108,120 @@ if (existsSync(clientDir)) {
     const content = await readFile(join(clientDir, file), "utf-8");
     const lines = content.split("\n");
     for (let i = 0; i < lines.length; i++) {
-      const match = lines[i].match(
-        /(?:import\s+.*from\s+['"]([^'"]+)['"]|require\s*\(['"]([^'"]+)['"]\))/,
-      );
+      const match = lines[i].match(/(?:import\s+.*from\s+['"]([^'"]+)['"]|require\s*\(['"]([^'"]+)['"]\))/);
       if (match) {
         const imp = match[1] || match[2];
-        const banned =
-          BANNED_MODULES.has(imp) ||
-          BANNED_PATTERNS.some((p) => p.test(imp));
+        const banned = BANNED_MODULES.has(imp) || BANNED_PATTERNS.some((p) => p.test(imp));
         if (banned) {
           if (!hasErrors) console.error("\n  ❌ Invalid imports in client/:\n");
           hasErrors = true;
-          console.error(
-            `    client/${file}:${i + 1} — "${imp}" is not available in the client runtime.`,
-          );
-          console.error(
-            `    Move this code to server/ if you need Node APIs.\n`,
-          );
+          console.error(`    client/${file}:${i + 1} — "${imp}" is not available in the client runtime.`);
+          console.error(`    Move this code to server/ if you need Node APIs.\n`);
         }
       }
     }
   }
   if (hasErrors) process.exit(1);
-  console.log("  ✅ client/ imports validated\n");
+  console.log("  ✅ client/ imports validated");
 }
 
-// ─── Create MiniAppServer (real SDK v3) ──────────────────────────────────────
+// ─── Shared state manager ────────────────────────────────────────────────────
+
+const stateManager = new StateManager();
+globalThis.__mentraState = stateManager;
+
+// ─── Pick a runtime ──────────────────────────────────────────────────────────
 
 const API_KEY = process.env.MENTRAOS_API_KEY || "";
 
-// Create the shared state manager for client ↔ webview sync
-const stateManager = new StateManager();
+let picked;
+try {
+  picked = await pickRuntime({
+    preference: config.runtime,
+    hasApiKey: API_KEY.length > 0,
+  });
+} catch (err) {
+  console.error("  ❌ Couldn't pick a runtime:\n");
+  console.error((err as Error).message);
+  process.exit(1);
+}
 
-// Make state available globally for the runtime
-globalThis.__mentraState = stateManager;
+const runtime: MentraRuntime = picked.runtime;
+globalThis.__mentraRuntime = runtime;
+console.log(`  🧠 Runtime: ${runtime.name} \x1b[2m(${picked.reason})\x1b[0m`);
 
-const sdkPort = PORT + 1; // SDK server on a different port; Bun fullstack on PORT
+// Expose the sim adapter for the /__mentra/inject endpoint.
+if (runtime instanceof SimAdapter) {
+  (globalThis as any).__mentraSimAdapter = runtime;
+}
 
-// Only create the real SDK server if we have an API key.
-// Without a key, we still serve the webview with HMR — just no cloud connection.
-// This lets developers build and preview their UI without needing glasses or cloud.
-let sdkRunning = false;
+// Drain any handlers the developer registered before the runtime was
+// installed. See runtime/index.ts `__flushLazyHandlers`.
+__flushLazyHandlers();
 
-if (API_KEY) {
+// ─── Boot MiniAppServer (cloud adapter only) ─────────────────────────────────
+
+let miniAppServerRunning = false;
+
+if (picked.needsMiniAppServer && runtime instanceof CloudAdapter) {
   try {
     const app = new MiniAppServer({
       packageName: config.packageName,
       apiKey: API_KEY,
-      port: sdkPort,
+      port: PORT + 1,
     });
 
     app.onSession((session: MentraSession) => {
-      const userId = session.userId;
-      session.logger.info(`[mentra dev] Session started for ${userId}`);
-
-      // Make session and state available to the client code via globals.
-      // The runtime/index.ts reads these globals to provide the developer-facing
-      // `session` and `state` APIs.
+      session.logger.info(`[mentra dev] Session started for ${session.userId}`);
       globalThis.__mentraSession = session;
-      globalThis.__mentraState = stateManager;
-
-      // Emit ready so any session.onReady() handlers fire
-      stateManager.emit("session_ready", session);
+      runtime.bind(session);
     });
 
     app.onStop((session, reason) => {
       if (session) {
         session.logger.info(`[mentra dev] Session stopped: ${reason}`);
       }
-      stateManager.emit("session_stopped", reason);
+      runtime.unbind(reason);
       globalThis.__mentraSession = undefined;
     });
 
     await app.start();
-    sdkRunning = true;
-    console.log(
-      `  📡 SDK server on port ${sdkPort} (webhooks + cloud protocol)`,
-    );
+    miniAppServerRunning = true;
+    console.log(`  📡 MiniAppServer on port ${PORT + 1} (webhooks + cloud protocol)`);
   } catch (err) {
-    console.warn(`  ⚠️  SDK server failed to start: ${err}`);
-    console.warn("  Continuing with webview-only mode.\n");
+    console.warn(`  ⚠️  MiniAppServer failed to start: ${err}`);
+    console.warn("  Continuing with webview-only (cloud adapter idle).\n");
   }
-} else {
-  console.log(
-    "  📱 No MENTRAOS_API_KEY — webview-only mode (no cloud connection)",
-  );
-  console.log(
-    "  \x1b[2mSet MENTRAOS_API_KEY in .env to enable glasses + cloud features.\x1b[0m\n",
-  );
+}
+
+// ─── Optional user server/ (Hono app) ────────────────────────────────────────
+
+type HonoLike = { fetch: (req: Request) => Response | Promise<Response> };
+let userServer: HonoLike | null = null;
+
+if (project.serverEntry) {
+  try {
+    const mod = await import(project.serverEntry);
+    const exported = mod.default ?? mod.app ?? mod.server;
+    if (exported && typeof exported.fetch === "function") {
+      userServer = exported as HonoLike;
+      console.log(`  🛠  server/ mounted (${rel(PROJECT_ROOT, project.serverEntry)})`);
+    } else {
+      console.warn(`  ⚠️  server/ loaded but no default export with .fetch() found — skipping.`);
+      console.warn(`  \x1b[2m   Tip: \`export default new Hono()...\` from server/index.ts.\x1b[0m`);
+    }
+  } catch (err) {
+    console.error("  ❌ Failed to load server/:\n");
+    console.error(err);
+  }
 }
 
 // ─── Serve webview with Bun fullstack ────────────────────────────────────────
 
-const webviewHtmlPath = join(PROJECT_ROOT, "webview", "index.html");
+const webviewHtmlPath = project.webviewHtml;
 let webviewHtml: any = null;
 
-if (existsSync(webviewHtmlPath)) {
-  // Dynamic import so Bun processes it as an HTML entrypoint with HMR
+if (webviewHtmlPath && existsSync(webviewHtmlPath)) {
   webviewHtml = (await import(webviewHtmlPath)).default;
 }
 
@@ -214,32 +238,21 @@ function getLocalIP(): string {
 const localIP = getLocalIP();
 const networkURL = `http://${localIP}:${PORT}`;
 
-// State sync endpoint — webview subscribes via SSE for real-time state updates
 const stateRoute = {
   GET(_req: Request): Response {
     const stream = new ReadableStream({
       start(controller) {
         const encoder = new TextEncoder();
-
-        // Send initial snapshot
         const snapshot = JSON.stringify(stateManager.getAll());
-        controller.enqueue(
-          encoder.encode(`event: snapshot\ndata: ${snapshot}\n\n`),
-        );
-
-        // Subscribe to updates
+        controller.enqueue(encoder.encode(`event: snapshot\ndata: ${snapshot}\n\n`));
         const unsub = stateManager.onChange(() => {
           try {
             const update = JSON.stringify(stateManager.getAll());
-            controller.enqueue(
-              encoder.encode(`event: update\ndata: ${update}\n\n`),
-            );
+            controller.enqueue(encoder.encode(`event: update\ndata: ${update}\n\n`));
           } catch {
             unsub();
           }
         });
-
-        // Keepalive every 30s
         const keepalive = setInterval(() => {
           try {
             controller.enqueue(encoder.encode(": keepalive\n\n"));
@@ -250,53 +263,70 @@ const stateRoute = {
         }, 30_000);
       },
     });
-
     return new Response(stream, {
       headers: {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
-        Connection: "keep-alive",
+        "Connection": "keep-alive",
         "Access-Control-Allow-Origin": "*",
       },
     });
   },
 };
 
-const server = Bun.serve({
+Bun.serve({
   port: PORT,
   routes: {
-    ...(webviewHtml
-      ? { "/": webviewHtml, "/app/*": webviewHtml }
-      : {}),
+    ...(webviewHtml ? { "/": webviewHtml, "/app/*": webviewHtml } : {}),
     "/__mentra/state": stateRoute,
-  },
-  fetch(req) {
+  } as any,
+  async fetch(req) {
     const url = new URL(req.url);
 
-    // API: get current state snapshot as JSON
     if (url.pathname === "/__mentra/state.json") {
       return Response.json(stateManager.getAll(), {
         headers: { "Access-Control-Allow-Origin": "*" },
       });
     }
 
-    // API: set state (from client/ code or RPC)
     if (url.pathname === "/__mentra/state" && req.method === "POST") {
-      return (async () => {
-        const body = await req.json();
-        if (body.key && body.value !== undefined) {
-          stateManager.set(body.key, body.value);
-        }
-        return Response.json(
-          { ok: true },
-          {
-            headers: { "Access-Control-Allow-Origin": "*" },
-          },
-        );
-      })();
+      const body = await req.json();
+      if (body.key && body.value !== undefined) {
+        stateManager.set(body.key, body.value);
+      }
+      return Response.json({ ok: true }, { headers: { "Access-Control-Allow-Origin": "*" } });
     }
 
-    // CORS preflight
+    // Runtime introspection — helpful for humans & integration tests.
+    if (url.pathname === "/__mentra/runtime") {
+      return Response.json(
+        {
+          adapter: runtime.name,
+          reason: picked.reason,
+          miniAppServerRunning,
+          configRuntime: config.runtime ?? "auto",
+        },
+        { headers: { "Access-Control-Allow-Origin": "*" } },
+      );
+    }
+
+    // Sim-only: inject a transcription event for testing. This endpoint
+    // simply doesn't exist when cloud adapter is active — injection into
+    // a real session would be wrong.
+    if (url.pathname === "/__mentra/inject/transcription" && req.method === "POST") {
+      const sim = (globalThis as any).__mentraSimAdapter as SimAdapter | undefined;
+      if (!sim) {
+        return Response.json({ ok: false, error: "inject/* is only available on the sim adapter" }, { status: 404 });
+      }
+      const body = (await req.json().catch(() => ({}))) as any;
+      sim.injectTranscription({
+        text: String(body.text ?? ""),
+        isFinal: body.isFinal !== false,
+        language: body.language,
+      });
+      return Response.json({ ok: true });
+    }
+
     if (req.method === "OPTIONS") {
       return new Response(null, {
         headers: {
@@ -307,6 +337,16 @@ const server = Bun.serve({
       });
     }
 
+    if (userServer) {
+      try {
+        const res = await userServer.fetch(req);
+        if (res.status !== 404) return res;
+      } catch (err) {
+        console.error("  ❌ server/ handler threw:\n", err);
+        return new Response("server/ error", { status: 500 });
+      }
+    }
+
     return new Response("Not found", { status: 404 });
   },
   development: {
@@ -315,24 +355,19 @@ const server = Bun.serve({
   },
 });
 
-// ─── Load client code ────────────────────────────────────────────────────────
+// ─── Load client/ code ───────────────────────────────────────────────────────
 
-// After the server is running, dynamically load the developer's client/index.ts.
-// This file imports from "@mentra/js" which reads the globals we set above.
-const clientEntry = join(PROJECT_ROOT, "client", "index.ts");
-if (existsSync(clientEntry)) {
+if (project.clientEntry) {
   try {
-    await import(clientEntry);
-    console.log("  ✅ client/index.ts loaded\n");
+    await import(project.clientEntry);
+    console.log(`  ✅ ${rel(PROJECT_ROOT, project.clientEntry)} loaded\n`);
   } catch (err) {
-    console.error("  ❌ Error loading client/index.ts:\n");
+    console.error(`  ❌ Error loading ${rel(PROJECT_ROOT, project.clientEntry)}:\n`);
     console.error(err);
     console.error("");
   }
 } else {
-  console.log(
-    "  ⚠️  No client/index.ts found — create one to add glasses logic.\n",
-  );
+  console.log("  ⚠️  No client/index.ts found — create one to add glasses logic.\n");
 }
 
 // ─── QR Code + Banner ────────────────────────────────────────────────────────
@@ -360,16 +395,8 @@ console.log("");
 await printQR(networkURL);
 console.log("");
 console.log(
-  "  \x1b[2mServing:\x1b[0m webview/ + client/ \x1b[2m(HMR enabled)\x1b[0m",
+  "  \x1b[2mServing:\x1b[0m webview/ + client/" + (userServer ? " + server/" : "") + " \x1b[2m(HMR enabled)\x1b[0m",
 );
-if (sdkRunning) {
-  console.log(
-    `  \x1b[2mCloud:\x1b[0m SDK on port ${sdkPort}`,
-  );
-} else {
-  console.log(
-    "  \x1b[2mCloud:\x1b[0m not connected \x1b[2m(set MENTRAOS_API_KEY for cloud features)\x1b[0m",
-  );
-}
+console.log(`  \x1b[2mRuntime:\x1b[0m ${runtime.name} — ${picked.reason}`);
 console.log("  \x1b[2mPress Ctrl+C to stop.\x1b[0m");
 console.log("");

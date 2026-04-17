@@ -1,29 +1,61 @@
 /**
- * @mentra/js — Runtime for client/ code
+ * @mentra/js — Runtime for developer code
  *
- * Provides `session` and `state` objects that are wired to the real
- * MentraSession and StateManager by the dev server.
+ *   import { session, state, defineConfig } from "@mentra/js";
  *
- * import { session, state } from "@mentra/js";
+ * `session.*` is a thin proxy over a `MentraRuntime` adapter installed
+ * by the dev server. Every call reads `globalThis.__mentraRuntime` at
+ * dispatch time, so:
+ *
+ *   - Adapter hot-swap works (we read "current" on every call).
+ *   - If developer code calls `session.foo()` before a runtime is
+ *     installed, we throw a clear "no runtime active" error.
+ *
+ * The runtime contract covers: display, transcription, mic, speaker,
+ * camera, device, location, plus session identity + lifecycle. See
+ * `./contract.ts`.
+ *
+ * What's NOT in the proxy (yet): led, storage, dashboard, phone,
+ * translation, permissions. Apps that need these can reach them via
+ * `@mentra/js/runtime` (full internal surface) — they'll work in cloud
+ * mode but not in sim mode until we migrate them onto the contract.
  */
 
-import type { MentraSession } from "@mentra/sdk";
 import type { StateManager } from "./state-manager";
+import type {
+  CameraRuntime,
+  DeviceRuntime,
+  DisplayRuntime,
+  LocationRuntime,
+  MentraRuntime,
+  MentraSessionInfo,
+  MicRuntime,
+  SpeakerRuntime,
+  TranscriptionRuntime,
+} from "./contract";
 
-// These are set by the dev server when a session connects
 declare global {
-  var __mentraSession: MentraSession | undefined;
+  /**
+   * The active `MentraRuntime` adapter. `dev.ts` picks cloud-adapter,
+   * sim-adapter, or (future) island-adapter based on what's available.
+   */
+  var __mentraRuntime: MentraRuntime | undefined;
+
+  /** Shared state manager. See `./state-manager.ts`. */
   var __mentraState: StateManager | undefined;
+
+  /**
+   * Raw SDK session (cloud adapter only). Available for legacy code
+   * paths that haven't been migrated onto the contract yet.
+   */
+  var __mentraSession: import("./internals").MentraSession | undefined;
 }
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
 export const state = {
   init<T extends Record<string, any>>(defaults: T): void {
-    const mgr = globalThis.__mentraState;
-    if (mgr) {
-      mgr.init(defaults);
-    }
+    globalThis.__mentraState?.init(defaults);
   },
 
   get<T = any>(key: string): T {
@@ -43,119 +75,143 @@ export const state = {
   },
 };
 
-// ─── Session ─────────────────────────────────────────────────────────────────
+// ─── Session (contract-routed) ───────────────────────────────────────────────
 
-// Session proxy — waits for the real session to be available, then delegates
-const readyHandlers: Array<(s: MentraSession) => void> = [];
-const stoppedHandlers: Array<(reason: string) => void> = [];
-
-// Listen for session ready from the dev server
-if (globalThis.__mentraState) {
-  globalThis.__mentraState.on("session_ready", (s: MentraSession) => {
-    for (const handler of readyHandlers) {
-      try { handler(s); } catch (e) { console.error("[mentra/js] onReady error:", e); }
-    }
-  });
-  globalThis.__mentraState.on("session_stopped", (reason: string) => {
-    for (const handler of stoppedHandlers) {
-      try { handler(reason); } catch (e) { console.error("[mentra/js] onStopped error:", e); }
-    }
-  });
+function getRuntime(): MentraRuntime {
+  const r = globalThis.__mentraRuntime;
+  if (!r) {
+    throw new Error("[mentra/js] No runtime is active. Is `mentra dev` running?");
+  }
+  return r;
 }
 
-function getSession(): MentraSession {
-  const s = globalThis.__mentraSession;
-  if (!s) throw new Error("[mentra/js] No active session. Is the dev server running?");
-  return s;
+// Manager proxies. Each one reads the *current* runtime on every call
+// so hot-swap / session-rebind work transparently.
+
+const displayProxy: DisplayRuntime = new Proxy({} as DisplayRuntime, {
+  get: (_t, prop) => (getRuntime().display as any)[prop],
+});
+const transcriptionProxy: TranscriptionRuntime = new Proxy({} as TranscriptionRuntime, {
+  get: (_t, prop) => (getRuntime().transcription as any)[prop],
+});
+const micProxy: MicRuntime = new Proxy({} as MicRuntime, {
+  get: (_t, prop) => (getRuntime().mic as any)[prop],
+});
+const speakerProxy: SpeakerRuntime = new Proxy({} as SpeakerRuntime, {
+  get: (_t, prop) => (getRuntime().speaker as any)[prop],
+});
+const cameraProxy: CameraRuntime = new Proxy({} as CameraRuntime, {
+  get: (_t, prop) => (getRuntime().camera as any)[prop],
+});
+const deviceProxy: DeviceRuntime = new Proxy({} as DeviceRuntime, {
+  get: (_t, prop) => (getRuntime().device as any)[prop],
+});
+const locationProxy: LocationRuntime = new Proxy({} as LocationRuntime, {
+  get: (_t, prop) => (getRuntime().location as any)[prop],
+});
+
+// ─── Lazy handler queue ──────────────────────────────────────────────────────
+// If developer code calls session.onReady() before dev.ts has installed
+// the runtime, we queue the handler and replay when the runtime appears.
+
+const lazyReadyQueue: Array<(info: MentraSessionInfo) => void> = [];
+const lazyStoppedQueue: Array<(reason: string) => void> = [];
+const lazyReconnectedQueue: Array<() => void> = [];
+
+/**
+ * Called by `dev.ts` the moment it sets `globalThis.__mentraRuntime`.
+ * Drains handlers registered before the runtime existed and forwards
+ * them onto the adapter.
+ */
+export function __flushLazyHandlers(): void {
+  const r = globalThis.__mentraRuntime;
+  if (!r) return;
+  for (const h of lazyReadyQueue.splice(0)) r.onReady(h);
+  for (const h of lazyStoppedQueue.splice(0)) r.onStopped(h);
+  for (const h of lazyReconnectedQueue.splice(0)) r.onReconnected(h);
 }
 
-export const session = {
-  onReady(handler: (session?: MentraSession) => void): void {
-    readyHandlers.push(handler as any);
-    // If session already exists, fire immediately
-    if (globalThis.__mentraSession) {
-      try { handler(globalThis.__mentraSession); } catch (e) { console.error(e); }
+// ─── The `session` object ────────────────────────────────────────────────────
+
+interface Session {
+  onReady(handler: (info?: MentraSessionInfo) => void): void;
+  onStopped(handler: (reason: string) => void): void;
+  onReconnected(handler: () => void): void;
+  readonly info: MentraSessionInfo;
+  readonly userId: string;
+  readonly runtime: string;
+  readonly display: DisplayRuntime;
+  readonly transcription: TranscriptionRuntime;
+  readonly mic: MicRuntime;
+  readonly speaker: SpeakerRuntime;
+  readonly camera: CameraRuntime;
+  readonly device: DeviceRuntime;
+  readonly location: LocationRuntime;
+}
+
+export const session: Session = {
+  onReady(handler: (info?: MentraSessionInfo) => void): void {
+    const r = globalThis.__mentraRuntime;
+    if (r) {
+      r.onReady(handler as (info: MentraSessionInfo) => void);
+    } else {
+      lazyReadyQueue.push(handler as (info: MentraSessionInfo) => void);
     }
   },
 
   onStopped(handler: (reason: string) => void): void {
-    stoppedHandlers.push(handler);
+    const r = globalThis.__mentraRuntime;
+    if (r) r.onStopped(handler);
+    else lazyStoppedQueue.push(handler);
   },
 
-  // ── v3 MentraSession manager accessors ────────────────────────────────
-
-  /** 🖥️ Display management — showText, showTextWall, clear, etc. */
-  get display() {
-    return getSession().display;
+  onReconnected(handler: () => void): void {
+    const r = globalThis.__mentraRuntime;
+    if (r) r.onReconnected(handler);
+    else lazyReconnectedQueue.push(handler);
   },
 
-  /** 🎙️ Transcription — on(), configure() */
-  get transcription() {
-    return getSession().transcription;
+  /** Session identity (userId, email, sessionId). */
+  get info(): MentraSessionInfo {
+    return getRuntime().info;
   },
 
-  /** 📷 Camera — takePhoto, startStream, etc. */
-  get camera() {
-    return getSession().camera;
+  /** Convenience accessor for `info.userId`. */
+  get userId(): string {
+    return getRuntime().info.userId;
   },
 
-  /** 🔊 Speaker management */
-  get speaker() {
-    return getSession().speaker;
+  /** Name of the active runtime adapter. "cloud" | "sim" | "island" | ... */
+  get runtime(): string {
+    return globalThis.__mentraRuntime?.name ?? "none";
   },
 
-  /** 🎤 Microphone management */
-  get mic() {
-    return getSession().mic;
-  },
+  // ── Contract-covered managers ─────────────────────────────────────────
 
-  /** 📱 Device state */
-  get device() {
-    return getSession().device;
+  get display(): DisplayRuntime {
+    return displayProxy;
   },
-
-  /** 💡 RGB LED control */
-  get led() {
-    return getSession().led;
+  get transcription(): TranscriptionRuntime {
+    return transcriptionProxy;
   },
-
-  /** 🔐 Key-value storage */
-  get storage() {
-    return getSession().storage;
+  get mic(): MicRuntime {
+    return micProxy;
   },
-
-  /** 📍 Location management */
-  get location() {
-    return getSession().location;
+  get speaker(): SpeakerRuntime {
+    return speakerProxy;
   },
-
-  /** 📞 Phone management */
-  get phone() {
-    return getSession().phone;
+  get camera(): CameraRuntime {
+    return cameraProxy;
   },
-
-  /** 📊 Dashboard API */
-  get dashboard() {
-    return getSession().dashboard;
+  get device(): DeviceRuntime {
+    return deviceProxy;
   },
-
-  /** Capabilities of the connected glasses */
-  get capabilities() {
-    return getSession().capabilities;
-  },
-
-  /** Logger instance for this session */
-  get logger() {
-    return getSession().logger;
-  },
-
-  /** The userId associated with this session */
-  get userId() {
-    return getSession().userId;
+  get location(): LocationRuntime {
+    return locationProxy;
   },
 };
 
-// ─── Config ──────────────────────────────────────────────────────────────────
+// ─── Config helper ───────────────────────────────────────────────────────────
 
 export function defineConfig(config: {
   packageName: string;
@@ -163,11 +219,42 @@ export function defineConfig(config: {
   version?: string;
   permissions?: string[];
   server?: { env?: string[] };
+  runtime?: "auto" | "cloud" | "sim";
 }) {
   return config;
 }
 
 // ─── Re-exports ──────────────────────────────────────────────────────────────
+// Contract types — apps that want to type-annotate handlers.
 
-export type { MentraSession } from "@mentra/sdk";
-export type { StateManager } from "./state-manager";
+export type {
+  MentraRuntime,
+  MentraSessionInfo,
+  DisplayRuntime,
+  TranscriptionRuntime,
+  TranscriptionData,
+  MicRuntime,
+  MicChunk,
+  VadEvent,
+  SpeakerRuntime,
+  SpeakerStream,
+  SpeakerStreamOptions,
+  CameraRuntime,
+  PhotoOptions,
+  PhotoResult,
+  CameraStreamOptions,
+  CameraStreamResult,
+  DeviceRuntime,
+  DeviceStateRuntime,
+  LocationRuntime,
+  LocationData,
+} from "./contract";
+
+export { MentraRuntimeCapabilityError, Observable } from "./contract";
+
+// For apps that need the full forked SDK surface (led, storage, dashboard,
+// phone, translation, permissions, or direct MentraSession access):
+//
+//   import { MentraSession, MiniAppServer, getMentraAuth } from "@mentra/js/runtime";
+//
+// See `./internals/index.ts` for everything available.

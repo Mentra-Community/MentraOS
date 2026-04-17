@@ -9,22 +9,54 @@
   "main": "src/runtime/index.ts",
   "exports": {
     ".": "./src/runtime/index.ts",
-    "./react": "./src/runtime/react.ts"
+    "./react": "./src/runtime/react.ts",
+    "./dedupe-plugin": "./src/dedupe-plugin.ts",
+    "./runtime": "./src/runtime/internals/index.ts",
+    "./runtime/session": "./src/runtime/internals/session.ts"
   },
   "scripts": {
     "dev": "bun run cli.ts dev",
     "build": "bun run cli.ts build"
   },
   "dependencies": {
-    "@mentra/sdk": "file:../sdk",
-    "qrcode-terminal": "^0.12.0"
+    "@logtail/pino": "^0.5.4",
+    "@mentra/types": "file:../types",
+    "@mentra/display-utils": "file:../display-utils",
+    "axios": "^1.8.1",
+    "chalk": "^5.6.2",
+    "dotenv": "^16.4.0",
+    "hono": "^4.11.3",
+    "jimp": "^1.6.0",
+    "jsonwebtoken": "^8.5.1",
+    "jsrsasign": "^11.1.0",
+    "lamejs": "^1.2.1",
+    "pino": "^9.6.0",
+    "qrcode-terminal": "^0.12.0",
+    "strip-ansi": "^7.1.2",
+    "ws": "^8.18.2"
+  },
+  "optionalDependencies": {
+    "pino-pretty": "^13.0.0"
   },
   "peerDependencies": {
+    "@mentra/client": ">=0.1",
+    "@mentra/simulated-glasses": ">=0.1",
     "react": ">=18",
     "react-dom": ">=18"
   },
+  "peerDependenciesMeta": {
+    "@mentra/client": { "optional": true },
+    "@mentra/simulated-glasses": { "optional": true },
+    "react": { "optional": true },
+    "react-dom": { "optional": true }
+  },
   "devDependencies": {
+    "@mentra/client": "file:../client",
+    "@mentra/simulated-glasses": "file:../simulated-glasses",
     "@types/bun": "latest",
+    "@types/jsonwebtoken": "^9.0.2",
+    "@types/jsrsasign": "^10.5.15",
+    "@types/ws": "^8.5.12",
     "typescript": "^5"
   }
 }
