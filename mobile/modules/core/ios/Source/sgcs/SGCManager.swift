@@ -53,6 +53,10 @@ protocol SGCManager {
     func setDashboardHeightOnly(_ height: Int)
     func setDashboardDepthOnly(_ depth: Int)
 
+    // MARK: - Dashboard Menu
+
+    func setDashboardMenu(_ items: [[String: Any]])
+
     // MARK: - Device Control
 
     func setHeadUpAngle(_ angle: Int)
@@ -73,8 +77,12 @@ protocol SGCManager {
     func findCompatibleDevices()
     func connectById(_ id: String)
     func getConnectedBluetoothName() -> String?
+    func connectController()
+    func disconnectController()
     func cleanup()
     func ping()
+    func dbg1()
+    func dbg2()
 
     // MARK: - Network Management
 
@@ -116,6 +124,10 @@ extension SGCManager {
         let h = GlassesStore.shared.get("core", "dashboard_height") as? Int ?? 4
         setDashboardPosition(h, depth)
     }
+
+    // MARK: - Dashboard Menu (default no-op — only G2 supports this)
+
+    func setDashboardMenu(_: [[String: Any]]) {}
 
     // MARK: - Default GlassesStore-backed property implementations
 

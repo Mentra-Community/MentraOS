@@ -57,6 +57,7 @@ class CoreModule : Module() {
             // Nex / BLE debug (NexEventUtils → Bridge.sendTypedMessage)
             "send_command_to_ble",
             "receive_command_from_ble",
+            "miniapp_selected",
         )
 
         OnCreate {
@@ -144,6 +145,15 @@ class CoreModule : Module() {
         AsyncFunction("showDashboard") { coreManager?.showDashboard() }
 
         AsyncFunction("ping") { coreManager?.ping() }
+
+        AsyncFunction("dbg1") {
+            coreManager?.dbg1()
+            coreManager?.sgc?.dbg1()
+        }
+        AsyncFunction("dbg2") {
+            coreManager?.dbg2()
+            coreManager?.sgc?.dbg2()
+        }
 
         // MARK: - Incident Reporting
 

@@ -382,6 +382,13 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  glasses_menu_apps: {
+    key: "glasses_menu_apps",
+    defaultValue: () => null,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   // button settings
   button_mode: {key: "button_mode", defaultValue: () => "photo", writable: true, saveOnServer: true, persist: true},
   button_photo_size: {

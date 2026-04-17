@@ -20,6 +20,57 @@ choco install -y nodejs-lts microsoft-openjdk17
 
 Install swiftformat from https://github.com/nicklockwood/SwiftFormat/releases
 
+### Mac Setup
+
+1. **Install tooling** (Homebrew):
+
+   ```bash
+   brew install bun node@20 android-platform-tools
+   ```
+
+   Install **Android Studio** and open it once so the Android SDK, NDK, and build tools install. Default SDK path is `~/Library/Android/sdk`.
+
+2. **Shell environment** — add to `~/.zshrc` (adjust paths if your SDK or Studio install differs):
+
+   ```bash
+   export BUN_INSTALL="$HOME/.bun"
+   export PATH="$BUN_INSTALL/bin:$PATH"
+   export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+   export ANDROID_HOME="$HOME/Library/Android/sdk"
+   export ANDROID_SDK_ROOT="$ANDROID_HOME"
+   export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
+   ```
+
+   Then `source ~/.zshrc`.
+
+3. **Global Gradle** — optional but recommended so Expo-regenerated `android/` still finds Java and Node. Create or edit `~/.gradle/gradle.properties`:
+   - Point `org.gradle.java.home` at Android Studio’s JBR (same path as `JAVA_HOME` above).
+   - Set `org.gradle.jvmargs` to include `-Dorg.gradle.project.nodePath=/opt/homebrew/bin/node` (or your `which node`).
+   - Optionally set `sdk.dir` to your Android SDK path.
+
+   The `bun android` script runs `expo prebuild` and then pins the Gradle wrapper and writes `android/local.properties` so builds keep working after regenerating `android/`.
+
+4. **Git** — set `git config --global user.name` (and `user.email`) so local build metadata scripts don’t fail on missing identity.
+
+5. **Run Android** — use a **physical device** (BLE is not available in emulators):
+
+Create a mobile/.env with valid values.
+
+```bash
+bun install
+bun android
+```
+
+(`bun android` runs prebuild, then `expo run:android` on a connected device.)
+
+Then iterate on code with
+
+```bash
+bun start --clear
+```
+
+For iOS on Mac, follow the **iOS** section below (Xcode, CocoaPods).
+
 ## Android
 
 ```

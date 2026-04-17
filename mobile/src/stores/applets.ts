@@ -713,8 +713,13 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
     let res = await restComms.getApplets()
     if (res.is_error()) {
       console.error(`APPLETS: Failed to get applets: ${res.error}`)
-      // continue anyway in case we're just offline:
       Sentry.captureException(res.error)
+      // Bail out instead of replacing the store with an empty list. On transient
+      // failures (WS reconnecting, server 503, offline) we'd otherwise flip
+      // every app's running flag to false, cascading into a "Cannot reach"
+      // error screen for any open miniapp webview. The server is the source
+      // of truth — if we can't reach it, keep the last known state.
+      return
     } else {
       // convert to the client applet interface:
       onlineApps = res.value.map((app) => ({

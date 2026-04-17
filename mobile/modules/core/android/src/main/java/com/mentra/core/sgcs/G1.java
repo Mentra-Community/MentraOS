@@ -1643,6 +1643,12 @@ public class G1 extends SGCManager {
     }
 
     @Override
+    public void dbg1() {}
+
+    @Override
+    public void dbg2() {}
+
+    @Override
     public void setDashboardPosition(int height, int depth) {
         Bridge.log("G1: setDashboardPosition() - height: " + height + ", depth: " + depth);
         sendDashboardPositionCommand(height, depth);

@@ -242,6 +242,13 @@ class Bridge {
         }
     }
 
+    static func sendMiniappSelected(packageName: String) {
+        let event: [String: Any] = [
+            "packageName": packageName,
+        ]
+        Bridge.sendTypedMessage("miniapp_selected", body: event)
+    }
+
     /**
      * Send transcription result to server
      * Used by AOSManager to send pre-formatted transcription results
@@ -257,11 +264,6 @@ class Bridge {
     }
 
     // core bridge funcs:
-
-    static func sendStatus(_ statusObj: [String: Any]) {
-        let body = ["core_status": statusObj]
-        Bridge.sendTypedMessage("core_status_update", body: body)
-    }
 
     static func sendserialNumber(_ serialNumber: String, style: String, color: String) {
         let body = [

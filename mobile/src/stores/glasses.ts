@@ -89,6 +89,7 @@ const initialState: GlassesStore = {
   // ring:
   controllerConnected: false,
   controllerFullyBooted: false,
+  controllerMacAddress: "",
   controllerBatteryLevel: -1,
   controllerSignalStrength: -1,
 }

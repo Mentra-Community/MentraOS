@@ -241,6 +241,11 @@ export type BleCommandTraceEvent = {
   timestamp: number
 }
 
+export type MiniappSelectedEvent = {
+  type: "miniapp_selected"
+  packageName: string
+}
+
 // Union type of all core events
 export type CoreEvent = Parameters<CoreModuleEvents[keyof CoreModuleEvents]>[0]
 
@@ -284,6 +289,7 @@ export type CoreModuleEvents = {
   ota_start_ack: (event: OtaStartAckEvent) => void
   send_command_to_ble: (event: BleCommandTraceEvent) => void
   receive_command_from_ble: (event: BleCommandTraceEvent) => void
+  miniapp_selected: (event: MiniappSelectedEvent) => void
 }
 
 export type GlassesConnectionState = "disconnected" | "connected" | "connecting"
@@ -355,6 +361,7 @@ export interface GlassesStatus {
   // ring info
   controllerConnected: boolean
   controllerFullyBooted: boolean
+  controllerMacAddress: string
   controllerBatteryLevel: number
   controllerSignalStrength: number
 }

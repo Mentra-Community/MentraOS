@@ -83,18 +83,6 @@ CoreModule.displayText('Hello World')
 CoreModule.displayText({ text: 'Hello World' })
 ```
 
-#### `CoreModule.setMicState(state: MicState | SetMicStateArgs): void`
-
-Control the microphone state.
-
-```typescript
-// Simple usage
-CoreModule.setMicState('on') // 'on' | 'off' | 'muted'
-
-// With options
-CoreModule.setMicState({ state: 'on' })
-```
-
 ### Events
 
 Subscribe to real-time events from MentraOS.
@@ -116,22 +104,6 @@ Events.requestTranscriptions(
 )
 ```
 
-#### `Events.requestAudio(options: AudioOptions, handler: (data: AudioPayload) => void): void`
-
-Subscribe to audio stream data from the smartglasses.
-
-**Options:**
-- `sampleRate`: `number` - Desired sample rate (optional)
-- `channels`: `number` - Number of audio channels (optional)
-
-```typescript
-Events.requestAudio(
-  { sampleRate: 16000, channels: 1 },
-  (audioData) => {
-    console.log('Received audio data:', audioData)
-  }
-)
-```
 
 #### `Events.requestMovement(options: MovementOptions, handler: (data: MovementPayload) => void): void`
 

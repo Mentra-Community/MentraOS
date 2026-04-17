@@ -3607,6 +3607,9 @@ public class MentraLive extends SGCManager {
         keepAwake();
     }
 
+    public void dbg1() {}
+    public void dbg2() {}
+
     public boolean displayBitmap(String base64) {
         return false;
     }

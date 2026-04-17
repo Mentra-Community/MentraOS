@@ -44,7 +44,8 @@ public class CoreModule: Module {
             "ota_update_available",
             "ota_progress",
             "send_command_to_ble",
-            "receive_command_from_ble"
+            "receive_command_from_ble",
+            "miniapp_selected",
         )
 
         OnCreate {
@@ -169,6 +170,20 @@ public class CoreModule: Module {
         AsyncFunction("ping") {
             await MainActor.run {
                 CoreManager.shared.ping()
+            }
+        }
+
+        AsyncFunction("dbg1") {
+            await MainActor.run {
+                CoreManager.shared.dbg1()
+                CoreManager.shared.sgc?.dbg1()
+            }
+        }
+
+        AsyncFunction("dbg2") {
+            await MainActor.run {
+                CoreManager.shared.dbg2()
+                CoreManager.shared.sgc?.dbg2()
             }
         }
 

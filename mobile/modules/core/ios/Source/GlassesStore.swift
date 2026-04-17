@@ -46,6 +46,9 @@ class GlassesStore {
         store.set("glasses", "hotspotGatewayIp", "")
         store.set("glasses", "bluetoothName", "")
         store.set("glasses", "controllerConnected", false)
+        store.set("glasses", "controllerMacAddress", "")
+        store.set("glasses", "controllerBatteryLevel", -1)
+        store.set("glasses", "controllerSignalStrength", -1)
         store.set("glasses", "signalStrength", -1)
         store.set("glasses", "ringSignalStrength", -1)
 
@@ -150,6 +153,15 @@ class GlassesStore {
                 }
             }
 
+        case ("glasses", "controllerMacAddress"):
+            if let mac = value as? String {
+                Task {
+                    // give the glasses some extra time to finish booting:
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    await CoreManager.shared.sgc?.connectController()
+                }
+            }
+
         case ("glasses", "headUp"):
             if let headUp = value as? Bool {
                 CoreManager.shared.sendCurrentState()
@@ -202,6 +214,11 @@ class GlassesStore {
         case ("core", "head_up_angle"):
             if let angle = value as? Int {
                 CoreManager.shared.sgc?.setHeadUpAngle(angle)
+            }
+
+        case ("core", "dashboard_menu_apps"):
+            if let items = value as? [[String: Any]] {
+                CoreManager.shared.sgc?.setDashboardMenu(items)
             }
 
         case ("core", "gallery_mode"):

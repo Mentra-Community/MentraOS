@@ -978,10 +978,11 @@ public class CameraNeo extends LifecycleService {
             if (mImuRecorder != null) {
                 mImuRecorder.cancel();
             }
+            // Delete the corrupt/incomplete video file so it's never synced
+            deleteCorruptCapture(currentVideoPath);
             if (sVideoCallback != null) {
                 sVideoCallback.onRecordingError(currentVideoId, "Failed to stop recorder: " + stopErr.getMessage());
             }
-            // Still try to clean up even if stop failed
         } finally {
             isRecording = false;
             if (recordingTimer != null) {
@@ -1674,6 +1675,8 @@ public class CameraNeo extends LifecycleService {
                 } else if (what == MediaRecorder.MEDIA_RECORDER_ERROR_UNKNOWN) {
                     errorMsg = "Unknown recording error occurred";
                 }
+                // Delete the corrupt/incomplete video file so it's never synced
+                deleteCorruptCapture(currentVideoPath);
                 notifyVideoError(currentVideoId, errorMsg);
                 // Try to clean up
                 try {
@@ -2161,6 +2164,34 @@ public class CameraNeo extends LifecycleService {
               " (total difference: " + smallestDifference + " from requested " + desiredWidth + "x" + desiredHeight + ")");
 
         return bestSize;
+    }
+
+    /**
+     * Delete a corrupt or incomplete capture directory to prevent it from being
+     * synced to the mobile app. Called when MediaRecorder.stop() fails or an
+     * error callback fires during recording.
+     */
+    private void deleteCorruptCapture(String videoPath) {
+        if (videoPath == null) return;
+        try {
+            File videoFile = new File(videoPath);
+            File captureDir = videoFile.getParentFile();
+            if (captureDir != null && captureDir.exists() && captureDir.isDirectory()) {
+                String dirName = captureDir.getName();
+                if (dirName.startsWith("VID_") || dirName.startsWith("BUFFER_") || dirName.startsWith("IMG_")) {
+                    File[] files = captureDir.listFiles();
+                    if (files != null) {
+                        for (File f : files) {
+                            f.delete();
+                        }
+                    }
+                    captureDir.delete();
+                    Log.w(TAG, "Deleted corrupt capture directory: " + captureDir.getAbsolutePath());
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to delete corrupt capture at " + videoPath, e);
+        }
     }
 
     private void notifyVideoError(String videoId, String errorMessage) {

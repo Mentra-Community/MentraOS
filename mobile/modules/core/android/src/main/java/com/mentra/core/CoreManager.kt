@@ -1113,6 +1113,14 @@ class CoreManager {
         sgc?.ping()
     }
 
+    fun dbg1() {
+        sgc?.dbg1()
+    }
+
+    fun dbg2() {
+        sgc?.dbg2()
+    }
+
     fun startStream(message: MutableMap<String, Any>) {
         Bridge.log("MAN: startStream")
         sgc?.startStream(message)

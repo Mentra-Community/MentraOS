@@ -19,6 +19,9 @@ import udp from "@/services/UdpManager"
 import {BackgroundTimer} from "@/utils/timers"
 import {useDebugStore} from "@/stores/debug"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
+import {logE2EMetric} from "@/utils/e2eMetrics"
+import {useAppletStatusStore} from "@/stores/applets"
+import {syncDashboardMenu} from "@/utils/glassesMenu"
 
 const LOCATION_TASK_NAME = "handleLocationUpdates"
 
@@ -221,7 +224,7 @@ class MantleManager {
     // forward core status changes to the zustand core store:
     this.subs.push(
       CoreModule.addListener("core_status", (changed: Partial<CoreStatus>) => {
-        console.log("MANTLE: Core status changed", changed)
+        // console.log("MANTLE: Core status changed", changed)
         useCoreStore.getState().setCoreInfo(changed)
       }),
     )
@@ -391,6 +394,46 @@ class MantleManager {
       this.subs.push(
         CoreModule.addListener("head_up", (event) => {
           mantle.handle_head_up(event.up)
+        }),
+      )
+
+      // G2 dashboard menu: user selected a miniapp from the glasses swipe menu
+      // G2.swift resolves the numeric appId → packageName before sending this event
+      this.subs.push(
+        CoreModule.addListener("miniapp_selected", (event) => {
+          const packageName = event.packageName as string
+          if (!packageName) return
+          const applet = useAppletStatusStore.getState().apps.find((a) => a.packageName === packageName)
+          if (!applet) return
+          // Toggle: if already running, stop it; otherwise start it
+          if (applet.running) {
+            console.log(`MANTLE: miniapp_selected — stopping ${packageName}`)
+            useAppletStatusStore.getState().stopApplet(packageName)
+          } else {
+            console.log(`MANTLE: miniapp_selected — starting ${packageName}`)
+            useAppletStatusStore.getState().startApplet(applet, {skipNavigation: true})
+          }
+        }),
+      )
+
+      // G2 dashboard menu: sync on glasses connect
+      this.subs.push(
+        useGlassesStore.subscribe(
+          (state) => state.fullyBooted,
+          async (fullyBooted) => {
+            if (!fullyBooted) return
+            await syncDashboardMenu()
+          },
+        ),
+      )
+
+      // G2 dashboard menu: re-sync when app list changes (handles app install/uninstall,
+      // server refresh after connect, and race where apps weren't loaded on first connect)
+      this.subs.push(
+        useAppletStatusStore.subscribe(async (state, prevState) => {
+          if (state.apps !== prevState.apps && state.apps.length > 0) {
+            await syncDashboardMenu()
+          }
         }),
       )
 
@@ -657,6 +700,10 @@ class MantleManager {
 
   // mostly for debugging / local stt:
   public async displayTextMain(text: string) {
+    logE2EMetric("display_text_main", {
+      text,
+      line_count: text.split("\n").length,
+    })
     this.resetDisplayTimeout()
     socketComms.handle_display_event({
       type: "display_event",
@@ -693,11 +740,23 @@ class MantleManager {
   }
 
   public async handle_local_transcription(data: any) {
+    logE2EMetric("local_transcription_received", {
+      text: data?.text ?? "",
+      is_final: data?.isFinal ?? false,
+      language: data?.transcribeLanguage ?? "",
+    })
+
     // TODO: performance!
     const offlineStt = await useSettingsStore.getState().getSetting(SETTINGS.offline_captions_running.key)
     if (offlineStt) {
       this.transcriptProcessor.changeLanguage(data.transcribeLanguage)
       const processedText = this.transcriptProcessor.processString(data.text, data.isFinal ?? false)
+
+      logE2EMetric("local_transcription_processed", {
+        text: data?.text ?? "",
+        processed_text: processedText ?? "",
+        is_final: data?.isFinal ?? false,
+      })
 
       // Scheduling timeout to clear text from wall. In case of online STT online dashboard manager will handle it.
       // if (data.isFinal) {

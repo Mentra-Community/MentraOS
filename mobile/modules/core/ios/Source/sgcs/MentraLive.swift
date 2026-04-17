@@ -903,6 +903,12 @@ class MentraLive: NSObject, SGCManager {
         keepAwake()
     }
 
+    func connectController() {}
+    func disconnectController() {}
+    
+    func dbg1() {}
+    func dbg2() {}
+
     func forget() {
         Bridge.log("LIVE: Forgetting Mentra Live glasses")
 

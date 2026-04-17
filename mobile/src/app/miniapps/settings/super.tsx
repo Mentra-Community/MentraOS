@@ -1,4 +1,5 @@
 import {ScrollView, View} from "react-native"
+import CoreModule from "core"
 
 import {Header, Screen} from "@/components/ignite"
 import ToggleSetting from "@/components/settings/ToggleSetting"
@@ -50,12 +51,18 @@ export default function SuperSettingsScreen() {
             />
           </Group>
 
+          <Group title="Debug">
+            <RouteButton label="dbg1()" onPress={() => CoreModule.dbg1()} />
+            <RouteButton label="dbg2()" onPress={() => CoreModule.dbg2()} />
+          </Group>
+
           <Group title="Mini Apps">
             <RouteButton label="React Example" onPress={() => push("/miniapps/dev/react-example")} />
             <RouteButton label="Local Captions Example" onPress={() => push("/miniapps/dev/local-captions")} />
             <RouteButton label="LMA Installer" onPress={() => push("/miniapps/dev/mini-app-installer")} />
           </Group>
         </View>
+        <View className="flex h-16"/>
       </ScrollView>
     </Screen>
   )

@@ -445,4 +445,60 @@ public class ThumbnailManager {
 
         return deleted;
     }
-} 
+
+    /**
+     * Check whether a video file has a valid MP4 container (moov atom).
+     * Android's MediaRecorder writes the moov atom on stop(). If the process
+     * is killed mid-recording, the file exists with raw H264 data but no moov
+     * atom, making it unplayable by any player or tool.
+     *
+     * @param videoFile The video file to check
+     * @return true if the video has a valid container and can be opened, false otherwise
+     */
+    public boolean isValidVideo(File videoFile) {
+        if (videoFile == null || !videoFile.exists() || videoFile.length() == 0) {
+            return false;
+        }
+
+        MediaMetadataRetriever retriever = null;
+        try {
+            retriever = new MediaMetadataRetriever();
+
+            // setDataSource will throw if the container is corrupt / missing moov atom
+            final MediaMetadataRetriever finalRetriever = retriever;
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            Future<String> future = executor.submit(() -> {
+                finalRetriever.setDataSource(videoFile.getAbsolutePath());
+                return finalRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
+            });
+
+            try {
+                String duration = future.get(5, TimeUnit.SECONDS);
+                // A valid MP4 with a moov atom will return a non-null duration string
+                return duration != null && !duration.isEmpty();
+            } catch (TimeoutException e) {
+                future.cancel(true);
+                logger.warn(TAG, "isValidVideo timed out for: " + videoFile.getName());
+                // Timeout is ambiguous — the file might be valid but slow to parse.
+                // Err on the side of keeping it rather than deleting a good file.
+                return true;
+            } catch (Exception e) {
+                logger.debug(TAG, "isValidVideo: invalid video " + videoFile.getName() + ": " + e.getMessage());
+                return false;
+            } finally {
+                executor.shutdownNow();
+            }
+        } catch (Exception e) {
+            logger.debug(TAG, "isValidVideo: could not open " + videoFile.getName() + ": " + e.getMessage());
+            return false;
+        } finally {
+            if (retriever != null) {
+                try {
+                    retriever.release();
+                } catch (Exception e) {
+                    // Ignore release errors
+                }
+            }
+        }
+    }
+}

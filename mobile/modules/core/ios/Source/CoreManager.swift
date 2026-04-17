@@ -329,8 +329,8 @@ struct ViewState {
 
         // Initialize SherpaOnnx Transcriber
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let window = windowScene.windows.first,
-           let rootViewController = window.rootViewController
+            let window = windowScene.windows.first,
+            let rootViewController = window.rootViewController
         {
             transcriber = SherpaOnnxTranscriber(context: rootViewController)
         } else {
@@ -491,7 +491,7 @@ struct ViewState {
 
         // allow the sgc to make changes to the micRanking:
         micRanking = sgc?.sortMicRanking(list: micRanking) ?? micRanking
-        Bridge.log("MAN: updateMicState() micRanking: \(micRanking)")
+        // Bridge.log("MAN: updateMicState() micRanking: \(micRanking)")
 
         var phoneMicUnavailable = systemMicUnavailable
 
@@ -575,7 +575,8 @@ struct ViewState {
                 PhoneMic.shared.stopMode(micMode)
             }
 
-            if micMode == MicTypes.GLASSES_CUSTOM && sgc?.hasMic == true && sgc?.micEnabled == true {
+            if micMode == MicTypes.GLASSES_CUSTOM && sgc?.hasMic == true && sgc?.micEnabled == true
+            {
                 sgc?.setMicEnabled(false)
             }
         }
@@ -611,8 +612,8 @@ struct ViewState {
         // Arrow frames for the animation
         let arrowFrames = ["↑", "↗", "↑", "↖"]
 
-        let delay = 0.25 // Frame delay in seconds
-        let totalCycles = 2 // Number of animation cycles
+        let delay = 0.25  // Frame delay in seconds
+        let totalCycles = 2  // Number of animation cycles
 
         // Variables to track animation state
         var frameIndex = 0
@@ -683,8 +684,8 @@ struct ViewState {
         } else if wearable.contains(DeviceTypes.MACH1) {
             sgc = Mach1()
         } else if wearable.contains(DeviceTypes.Z100) {
-            sgc = Mach1() // Z100 uses same hardware/SDK as Mach1
-            sgc?.type = DeviceTypes.Z100 // Override type to Z100
+            sgc = Mach1()  // Z100 uses same hardware/SDK as Mach1
+            sgc?.type = DeviceTypes.Z100  // Override type to Z100
         } else if wearable.contains(DeviceTypes.FRAME) {
             // sgc = FrameManager()
         }
@@ -918,7 +919,7 @@ struct ViewState {
         if shouldSendBootingMessage {
             Task {
                 sgc.sendTextWall("// MentraOS Connected")
-                try? await Task.sleep(nanoseconds: 3_000_000_000) // 1 second
+                try? await Task.sleep(nanoseconds: 3_000_000_000)  // 1 second
                 sgc.clearDisplay()
             }
             shouldSendBootingMessage = false
@@ -932,7 +933,7 @@ struct ViewState {
         } else if defaultWearable.contains(DeviceTypes.MACH1) {
             handleMach1Ready()
         } else if defaultWearable.contains(DeviceTypes.Z100) {
-            handleMach1Ready() // Z100 uses same initialization as Mach1
+            handleMach1Ready()  // Z100 uses same initialization as Mach1
         }
 
         // check current audio device:
@@ -945,7 +946,8 @@ struct ViewState {
 
         // Re-apply display height after reconnection
         let h = GlassesStore.shared.get("core", "dashboard_height") as? Int ?? 4
-        let d = NexDashboardDisplayWire.clampDepthFromStore(GlassesStore.shared.get("core", "dashboard_depth"))
+        let d = NexDashboardDisplayWire.clampDepthFromStore(
+            GlassesStore.shared.get("core", "dashboard_depth"))
         sgc.setDashboardPosition(h, d)
     }
 
@@ -974,7 +976,7 @@ struct ViewState {
         Task {
             // give the glasses some extra time to finish booting:
             try? await Task.sleep(nanoseconds: 1_000_000_000)
-            await sgc?.setSilentMode(false) // turn off silent mode
+            await sgc?.setSilentMode(false)  // turn off silent mode
             await sgc?.getBatteryStatus()
 
             // send loaded settings to glasses:
@@ -1043,7 +1045,7 @@ struct ViewState {
 
         if layoutType == "bitmap_animation" {
             if let frames = layout["frames"] as? [String],
-               let interval = layout["interval"] as? Double
+                let interval = layout["interval"] as? Double
             {
                 let animationData: [String: Any] = [
                     "frames": frames,
@@ -1090,6 +1092,14 @@ struct ViewState {
 
     func ping() {
         sgc?.ping()
+    }
+
+    func dbg1() {
+        sgc?.disconnectController()
+        connectDefaultController()
+    }
+
+    func dbg2() {
     }
 
     func startStream(_ message: [String: Any]) {
@@ -1333,7 +1343,7 @@ struct ViewState {
 
         Task {
             disconnect()
-            try? await Task.sleep(nanoseconds: 100 * 1_000_000) // 100ms
+            try? await Task.sleep(nanoseconds: 100 * 1_000_000)  // 100ms
             self.searching = true
             self.deviceName = name
 
@@ -1350,27 +1360,28 @@ struct ViewState {
     }
 
     func disconnect() {
-        sgc?.clearDisplay() // clear the screen
+        sgc?.clearDisplay()  // clear the screen
         sgc?.disconnect()
-        sgc = nil // Clear the SGC reference after disconnect
+        sgc = nil  // Clear the SGC reference after disconnect
         searching = false
         micEnabled = false
         updateMicState()
-        shouldSendBootingMessage = true // Reset for next first connect
+        shouldSendBootingMessage = true  // Reset for next first connect
         GlassesStore.shared.apply("glasses", "fullyBooted", false)
         GlassesStore.shared.apply("glasses", "connected", false)
         // disconnect the controller as well:
         searchingController = false
         GlassesStore.shared.apply("glasses", "controllerConnected", false)
         controller?.disconnect()
-        controller = nil // Clear the controller reference after disconnect
+        controller = nil  // Clear the controller reference after disconnect
     }
 
     func disconnectController() {
         searchingController = false
-        GlassesStore.shared.apply("glasses", "controllerConnected", false)
+        // disconnect the controller from the glasses if applicable:
+        sgc?.disconnectController()
         controller?.disconnect()
-        controller = nil // Clear the controller reference after disconnect
+        controller = nil  // Clear the controller reference after disconnect
     }
 
     func forget() {

@@ -1436,6 +1436,9 @@ class G2 : SGCManager() {
         sendEvenHubHeartbeat()
     }
 
+    override fun dbg1() {}
+    override fun dbg2() {}
+
     // ---------- SGCManager: Device Control ----------
 
     override fun setHeadUpAngle(angle: Int) {

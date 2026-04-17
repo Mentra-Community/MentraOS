@@ -265,11 +265,10 @@ export function Screen(props: ScreenProps & {ref?: any; className?: string}) {
   let $containerInsets = useSafeAreaInsetsStyle(safeAreaEdges, "padding")
 
   // on some screens, we need some extra bottom padding on android so buttons look nice:
-  // SaferAreaContext already inflates insets.bottom to s6 when the real inset is 0
-  // (3-button nav), so we just use insets.bottom directly to avoid double-padding.
   const insets = useSaferAreaInsets()
   if (Platform.OS === "android" && extraAndroidInsets) {
-    $containerInsets = {...$containerInsets, paddingBottom: insets.bottom}
+    // this additional s6 padding is intentional and is what the extraAndroidInsets prop is for
+    $containerInsets = {...$containerInsets, paddingBottom: insets.bottom + theme.spacing.s6}
   }
 
   return (

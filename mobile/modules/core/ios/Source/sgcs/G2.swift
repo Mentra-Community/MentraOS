@@ -14,18 +14,18 @@ import UIKit
 
 // MARK: - Data Little-Endian Helpers (for BMP construction)
 
-private extension Data {
-    mutating func appendLittleEndian(_ value: UInt16) {
+extension Data {
+    fileprivate mutating func appendLittleEndian(_ value: UInt16) {
         var v = value.littleEndian
         Swift.withUnsafeBytes(of: &v) { append(contentsOf: $0) }
     }
 
-    mutating func appendLittleEndian(_ value: UInt32) {
+    fileprivate mutating func appendLittleEndian(_ value: UInt32) {
         var v = value.littleEndian
         Swift.withUnsafeBytes(of: &v) { append(contentsOf: $0) }
     }
 
-    mutating func appendLittleEndian(_ value: Int32) {
+    fileprivate mutating func appendLittleEndian(_ value: Int32) {
         var v = value.littleEndian
         Swift.withUnsafeBytes(of: &v) { append(contentsOf: $0) }
     }
@@ -52,26 +52,31 @@ private enum G2BLE {
 
 /// Service IDs from service_id_def.proto
 private enum ServiceID: UInt8 {
-    case g2Setting = 9 // 0x09 - UI_SETTING_APP_ID
-    case onboarding = 16 // 0x10 - UI_ONBOARDING_APP_ID
-    case deviceSettings = 128 // 0x80 - UX_DEVICE_SETTINGS_APP_ID
-    case evenHub = 224 // 0xE0 - UI_BACKGROUND_EVENHUB_APP_ID
+    case dashboard = 1  // 0x01 - UI_BACKGROUND_DASHBOARD_APP_ID
+    case menu = 3  // 0x03 - UI_FOREGROUND_MEUN_ID (typo is intentional — matches Even's proto)
+    case evenAI = 7  // 0x07 - UI_FOREGROUND_EVEN_AI_ID
+    case g2Setting = 9  // 0x09 - UI_SETTING_APP_ID
+    case gestureCtrl = 13  // 0x0D - gesture_ctrl lifecycle signals
+    case onboarding = 16  // 0x10 - UI_ONBOARDING_APP_ID
+    case deviceSettings = 128  // 0x80 - UX_DEVICE_SETTINGS_APP_ID
+    case evenHubCtrl = 129  // 0x81 - EvenHub CTRL channel (init/registration)
+    case evenHub = 224  // 0xE0 - UI_BACKGROUND_EVENHUB_APP_ID
 }
 
 /// EvenHub command IDs from EvenHub.proto
 private enum EvenHubCmd: Int32 {
-    case createStartupPage = 0 // APP_REQUEST_CREATE_STARTUP_PAGE_PACKET
-    case updateImageRawData = 3 // APP_UPDATE_IMAGE_RAW_DATA_PACKET
-    case updateTextData = 5 // APP_UPDATE_TEXT_DATA_PACKET
-    case rebuildPage = 7 // APP_REQUEST_REBUILD_PAGE_PACKET
-    case shutdownPage = 9 // APP_REQUEST_SHUTDOWN_PAGE_PACKET
-    case heartbeat = 12 // APP_REQUEST_HEARTBEAT_PACKET
-    case audioControl = 15 // APP_REQUEST_AUDIO_CTR_PACKET
+    case createStartupPage = 0  // APP_REQUEST_CREATE_STARTUP_PAGE_PACKET
+    case updateImageRawData = 3  // APP_UPDATE_IMAGE_RAW_DATA_PACKET
+    case updateTextData = 5  // APP_UPDATE_TEXT_DATA_PACKET
+    case rebuildPage = 7  // APP_REQUEST_REBUILD_PAGE_PACKET
+    case shutdownPage = 9  // APP_REQUEST_SHUTDOWN_PAGE_PACKET
+    case heartbeat = 12  // APP_REQUEST_HEARTBEAT_PACKET
+    case audioControl = 15  // APP_REQUEST_AUDIO_CTR_PACKET
 }
 
 /// EvenHub response command IDs (from glasses → phone)
 private enum EvenHubResponseCmd: Int32 {
-    case osNotifyEventToApp = 2 // OS_NOITY_EVENT_TO_APP_PACKET - touch/gesture events
+    case osNotifyEventToApp = 2  // OS_NOITY_EVENT_TO_APP_PACKET - touch/gesture events
 }
 
 /// OsEventTypeList from EvenHub.proto
@@ -89,16 +94,17 @@ private enum OsEventType: Int32 {
 /// g2_settingCommandId from g2_setting.proto
 private enum G2SettingCommandId: Int32 {
     case none = 0
-    case deviceReceiveInfo = 1 // Send settings TO glasses
-    case deviceReceiveRequest = 2 // Request info FROM glasses
-    case deviceSendToApp = 3 // Glasses sends info TO app
-    case deviceRespondToApp = 4 // Glasses responds to app
+    case deviceReceiveInfo = 1  // Send settings TO glasses
+    case deviceReceiveRequest = 2  // Request info FROM glasses
+    case deviceSendToApp = 3  // Glasses sends info TO app
+    case deviceRespondToApp = 4  // Glasses responds to app
 }
 
 /// DevCfgCommandId from dev_config_protocol.proto
 private enum DevCfgCommandId: Int32 {
     case authentication = 4
     case pipeRoleChange = 5
+    case ringConnectInfo = 6
     case timeSync = 128
     case baseConnHeartBeat = 14
 }
@@ -135,7 +141,7 @@ private struct ProtobufWriter {
     }
 
     mutating func writeInt32Field(_ fieldNumber: Int, _ value: Int32) {
-        let tag = UInt64(fieldNumber << 3) | 0 // wire type 0 = varint
+        let tag = UInt64(fieldNumber << 3) | 0  // wire type 0 = varint
         writeVarint(tag)
         // protobuf int32 uses varint encoding; negative values use 10 bytes
         if value >= 0 {
@@ -146,7 +152,7 @@ private struct ProtobufWriter {
     }
 
     mutating func writeStringField(_ fieldNumber: Int, _ value: String) {
-        let tag = UInt64(fieldNumber << 3) | 2 // wire type 2 = length-delimited
+        let tag = UInt64(fieldNumber << 3) | 2  // wire type 2 = length-delimited
         writeVarint(tag)
         let utf8 = Array(value.utf8)
         writeVarint(UInt64(utf8.count))
@@ -154,7 +160,7 @@ private struct ProtobufWriter {
     }
 
     mutating func writeBytesField(_ fieldNumber: Int, _ value: Data) {
-        let tag = UInt64(fieldNumber << 3) | 2 // wire type 2 = length-delimited
+        let tag = UInt64(fieldNumber << 3) | 2  // wire type 2 = length-delimited
         writeVarint(tag)
         writeVarint(UInt64(value.count))
         data.append(value)
@@ -216,7 +222,7 @@ private struct ProtobufReader {
         guard let len = readVarint() else { return nil }
         let length = Int(len)
         guard offset + length <= data.count else { return nil }
-        let result = data[(data.startIndex + offset) ..< (data.startIndex + offset + length)]
+        let result = data[(data.startIndex + offset)..<(data.startIndex + offset + length)]
         offset += length
         return Data(result)
     }
@@ -229,10 +235,10 @@ private struct ProtobufReader {
     /// Skip a field value based on wire type
     mutating func skipField(wireType: Int) {
         switch wireType {
-        case 0: _ = readVarint() // varint
-        case 1: offset += 8 // 64-bit
-        case 2: _ = readBytes() // length-delimited
-        case 5: offset += 4 // 32-bit
+        case 0: _ = readVarint()  // varint
+        case 1: offset += 8  // 64-bit
+        case 2: _ = readBytes()  // length-delimited
+        case 5: offset += 4  // 32-bit
         default: break
         }
     }
@@ -244,9 +250,9 @@ private struct ProtobufReader {
         while hasMore {
             guard let (fieldNum, wireType) = readTag() else { break }
             switch wireType {
-            case 0: // varint
+            case 0:  // varint
                 if let v = readVarint() { fields[fieldNum] = Int32(truncatingIfNeeded: v) }
-            case 2: // length-delimited (submessage or bytes or string)
+            case 2:  // length-delimited (submessage or bytes or string)
                 if let d = readBytes() { fields[fieldNum] = d }
             default:
                 skipField(wireType: wireType)
@@ -268,21 +274,21 @@ private enum EvenHubProto {
         content: String? = nil
     ) -> Data {
         var w = ProtobufWriter()
-        w.writeInt32Field(1, x) // XPosition
-        w.writeInt32Field(2, y) // YPosition
-        w.writeInt32Field(3, width) // Width
-        w.writeInt32Field(4, height) // Height
-        w.writeInt32Field(5, borderWidth) // BorderWidth
-        w.writeInt32Field(6, borderColor) // BorderColor
-        w.writeInt32Field(7, borderRadius) // BorderRdaius (sic - typo in proto)
-        w.writeInt32Field(8, paddingLength) // PaddingLength
-        w.writeInt32Field(9, containerID) // ContainerID
+        w.writeInt32Field(1, x)  // XPosition
+        w.writeInt32Field(2, y)  // YPosition
+        w.writeInt32Field(3, width)  // Width
+        w.writeInt32Field(4, height)  // Height
+        w.writeInt32Field(5, borderWidth)  // BorderWidth
+        w.writeInt32Field(6, borderColor)  // BorderColor
+        w.writeInt32Field(7, borderRadius)  // BorderRdaius (sic - typo in proto)
+        w.writeInt32Field(8, paddingLength)  // PaddingLength
+        w.writeInt32Field(9, containerID)  // ContainerID
         if let name = containerName {
-            w.writeStringField(10, name) // ContainerName
+            w.writeStringField(10, name)  // ContainerName
         }
-        w.writeInt32Field(11, isEventCapture ? 1 : 0) // IsEventCapture
+        w.writeInt32Field(11, isEventCapture ? 1 : 0)  // IsEventCapture
         if let content = content {
-            w.writeStringField(12, content) // Content
+            w.writeStringField(12, content)  // Content
         }
         return w.data
     }
@@ -293,13 +299,13 @@ private enum EvenHubProto {
         containerID: Int32, containerName: String? = nil
     ) -> Data {
         var w = ProtobufWriter()
-        w.writeInt32Field(1, x) // XPosition
-        w.writeInt32Field(2, y) // YPosition
-        w.writeInt32Field(3, width) // Width
-        w.writeInt32Field(4, height) // Height
-        w.writeInt32Field(5, containerID) // ContainerID
+        w.writeInt32Field(1, x)  // XPosition
+        w.writeInt32Field(2, y)  // YPosition
+        w.writeInt32Field(3, width)  // Width
+        w.writeInt32Field(4, height)  // Height
+        w.writeInt32Field(5, containerID)  // ContainerID
         if let name = containerName {
-            w.writeStringField(6, name) // ContainerName
+            w.writeStringField(6, name)  // ContainerName
         }
         return w.data
     }
@@ -311,16 +317,16 @@ private enum EvenHubProto {
         mapFragmentIndex: Int32, mapFragmentPacketSize: Int32, mapRawData: Data
     ) -> Data {
         var w = ProtobufWriter()
-        w.writeInt32Field(1, containerID) // ContainerID
+        w.writeInt32Field(1, containerID)  // ContainerID
         if let name = containerName {
-            w.writeStringField(2, name) // ContainerName
+            w.writeStringField(2, name)  // ContainerName
         }
-        w.writeInt32Field(3, mapSessionId) // MapSessionId
-        w.writeInt32Field(4, mapTotalSize) // MapTotalSize
-        w.writeInt32Field(5, compressMode) // CompressMode
-        w.writeInt32Field(6, mapFragmentIndex) // MapFragmentIndex
-        w.writeInt32Field(7, mapFragmentPacketSize) // MapFragmentPacketSize
-        w.writeBytesField(8, mapRawData) // MapRawData
+        w.writeInt32Field(3, mapSessionId)  // MapSessionId
+        w.writeInt32Field(4, mapTotalSize)  // MapTotalSize
+        w.writeInt32Field(5, compressMode)  // CompressMode
+        w.writeInt32Field(6, mapFragmentIndex)  // MapFragmentIndex
+        w.writeInt32Field(7, mapFragmentPacketSize)  // MapFragmentPacketSize
+        w.writeBytesField(8, mapRawData)  // MapRawData
         return w.data
     }
 
@@ -331,13 +337,13 @@ private enum EvenHubProto {
         imageContainers: [Data] = []
     ) -> Data {
         var w = ProtobufWriter()
-        w.writeInt32Field(1, containerTotalNum) // ContainerTotalNum
+        w.writeInt32Field(1, containerTotalNum)  // ContainerTotalNum
         // field 2 = repeated ListContainerProperty ListObject (not used here)
         for tc in textContainers {
-            w.writeMessageField(3, tc) // field 3 = repeated TextObject
+            w.writeMessageField(3, tc)  // field 3 = repeated TextObject
         }
         for ic in imageContainers {
-            w.writeMessageField(4, ic) // field 4 = repeated ImageObject
+            w.writeMessageField(4, ic)  // field 4 = repeated ImageObject
         }
         return w.data
     }
@@ -348,17 +354,17 @@ private enum EvenHubProto {
         contentLength: Int32, content: String
     ) -> Data {
         var w = ProtobufWriter()
-        w.writeInt32Field(1, containerID) // ContainerID
-        w.writeInt32Field(3, contentOffset) // ContentOffset
-        w.writeInt32Field(4, contentLength) // ContentLength
-        w.writeStringField(5, content) // Content
+        w.writeInt32Field(1, containerID)  // ContainerID
+        w.writeInt32Field(3, contentOffset)  // ContentOffset
+        w.writeInt32Field(4, contentLength)  // ContentLength
+        w.writeStringField(5, content)  // Content
         return w.data
     }
 
     /// Build a ShutDownContaniner message (sic - typo in proto)
     static func shutdownContainer(exitMode: Int32 = 0) -> Data {
         var w = ProtobufWriter()
-        w.writeInt32Field(1, exitMode) // exitMode
+        w.writeInt32Field(1, exitMode)  // exitMode
         return w.data
     }
 
@@ -366,7 +372,7 @@ private enum EvenHubProto {
     static func heartbeatPacket(cnt: Int32 = 0) -> Data {
         var w = ProtobufWriter()
         if cnt != 0 {
-            w.writeInt32Field(1, cnt) // Cnt
+            w.writeInt32Field(1, cnt)  // Cnt
         }
         return w.data
     }
@@ -374,32 +380,47 @@ private enum EvenHubProto {
     /// Build an AudioCtrCmd message
     static func audioCtrCmd(enable: Bool) -> Data {
         var w = ProtobufWriter()
-        w.writeInt32Field(1, enable ? 1 : 0) // AudoFuncEn
+        w.writeInt32Field(1, enable ? 1 : 0)  // AudoFuncEn
         return w.data
     }
 
     /// Build an evenhub_main_msg_ctx wrapper
-    static func evenHubMessage(cmd: EvenHubCmd, subFieldNumber: Int, subMessage: Data) -> Data {
+    /// appId: optional menu item appId to associate the page with (enables cmdId=17 selection events)
+    static func evenHubMessage(
+        cmd: EvenHubCmd, subFieldNumber: Int, subMessage: Data, magicRandom: Int32 = 0,
+        appId: Int32? = nil
+    ) -> Data {
         var w = ProtobufWriter()
-        w.writeInt32Field(1, cmd.rawValue) // Cmd (field 1, enum)
-        // MagicRandom will be set by the send layer (field 2)
-        w.writeMessageField(subFieldNumber, subMessage) // the actual command payload
+        w.writeInt32Field(1, cmd.rawValue)  // Cmd (field 1, enum)
+        w.writeInt32Field(2, magicRandom)  // MagicRandom (field 2)
+        w.writeMessageField(subFieldNumber, subMessage)  // the actual command payload
+        if let appId = appId {
+            w.writeInt32Field(5, appId)  // Associate page with a menu item appId
+        }
         return w.data
     }
 
     /// Convenience builders for full evenhub messages
-    static func createPageMessage(textContainers: [Data] = [], imageContainers: [Data] = []) -> Data {
+    static func createPageMessage(
+        textContainers: [Data] = [], imageContainers: [Data] = [], magicRandom: Int32 = 0,
+        appId: Int32? = nil
+    ) -> Data {
         let total = Int32(textContainers.count + imageContainers.count)
         let createMsg = createStartupPageContainer(
             containerTotalNum: total,
             textContainers: textContainers,
             imageContainers: imageContainers
         )
-        return evenHubMessage(cmd: .createStartupPage, subFieldNumber: 3, subMessage: createMsg)
+        return evenHubMessage(
+            cmd: .createStartupPage, subFieldNumber: 3, subMessage: createMsg,
+            magicRandom: magicRandom, appId: nil)
     }
 
     // RebuildPageContainer: same structure as CreateStartUpPageContainer, but cmd=7, field 7
-    static func rebuildPageMessage(textContainers: [Data] = [], imageContainers: [Data] = [])
+    static func rebuildPageMessage(
+        textContainers: [Data] = [], imageContainers: [Data] = [], magicRandom: Int32 = 0,
+        appId: Int32? = nil
+    )
         -> Data
     {
         let total = Int32(textContainers.count + imageContainers.count)
@@ -408,7 +429,9 @@ private enum EvenHubProto {
             textContainers: textContainers,
             imageContainers: imageContainers
         )
-        return evenHubMessage(cmd: .rebuildPage, subFieldNumber: 7, subMessage: rebuildMsg)
+        return evenHubMessage(
+            cmd: .rebuildPage, subFieldNumber: 7, subMessage: rebuildMsg, magicRandom: magicRandom,
+            appId: appId)
     }
 
     static func updateImageRawDataMessage(
@@ -442,14 +465,16 @@ private enum EvenHubProto {
         return evenHubMessage(cmd: .shutdownPage, subFieldNumber: 11, subMessage: shutdownMsg)
     }
 
-    static func heartbeatMessage() -> Data {
+    static func heartbeatMessage(magicRandom: Int32 = 0) -> Data {
         let hbMsg = heartbeatPacket()
-        return evenHubMessage(cmd: .heartbeat, subFieldNumber: 14, subMessage: hbMsg)
+        return evenHubMessage(
+            cmd: .heartbeat, subFieldNumber: 14, subMessage: hbMsg, magicRandom: magicRandom)
     }
 
-    static func audioControlMessage(enable: Bool) -> Data {
+    static func audioControlMessage(enable: Bool, magicRandom: Int32 = 0) -> Data {
         let audioMsg = audioCtrCmd(enable: enable)
-        return evenHubMessage(cmd: .audioControl, subFieldNumber: 18, subMessage: audioMsg)
+        return evenHubMessage(
+            cmd: .audioControl, subFieldNumber: 18, subMessage: audioMsg, magicRandom: magicRandom)
     }
 }
 
@@ -463,17 +488,17 @@ private enum DevSettingsProto {
         //   field 2 = magicRandom (int32)
         //   field 3 = authMgr (AuthMgr message)
         var w = ProtobufWriter()
-        w.writeInt32Field(1, DevCfgCommandId.authentication.rawValue) // commandId
-        w.writeInt32Field(2, magicRandom) // magicRandom
+        w.writeInt32Field(1, DevCfgCommandId.authentication.rawValue)  // commandId
+        w.writeInt32Field(2, magicRandom)  // magicRandom
 
         // AuthMgr sub-message:
         //   field 1 = secAuth (bool)
         //   field 2 = phoneType (enum eDevice: PHONE_IOS=3, PHONE_ANDROID=4)
         var authW = ProtobufWriter()
-        authW.writeBoolField(1, true) // secAuth
-        authW.writeInt32Field(2, 3) // phoneType = PHONE_IOS (eDevice.PHONE_IOS=3)
+        authW.writeBoolField(1, true)  // secAuth
+        authW.writeInt32Field(2, 3)  // phoneType = PHONE_IOS (eDevice.PHONE_IOS=3)
 
-        w.writeMessageField(3, authW.data) // authMgr
+        w.writeMessageField(3, authW.data)  // authMgr
         return w.data
     }
 
@@ -485,8 +510,8 @@ private enum DevSettingsProto {
 
         // PipeRoleChange: field 1 = asCmdRole (enum GlassesLR.RIGHT=1)
         var roleW = ProtobufWriter()
-        roleW.writeInt32Field(1, 1) // RIGHT
-        w.writeMessageField(4, roleW.data) // roleChange (field 4 in DevCfgDataPackage)
+        roleW.writeInt32Field(1, 1)  // RIGHT
+        w.writeMessageField(4, roleW.data)  // roleChange (field 4 in DevCfgDataPackage)
         return w.data
     }
 
@@ -502,7 +527,7 @@ private enum DevSettingsProto {
         tsW.writeInt32Field(1, timestamp)
         let tz = Int32(TimeZone.current.secondsFromGMT() / 3600)
         tsW.writeInt32Field(2, tz)
-        w.writeMessageField(128, tsW.data) // timeSync (field 128 in DevCfgDataPackage)
+        w.writeMessageField(128, tsW.data)  // timeSync (field 128 in DevCfgDataPackage)
         return w.data
     }
 
@@ -514,8 +539,30 @@ private enum DevSettingsProto {
 
         // BaseConnHeartBeat: empty message
         var hbW = ProtobufWriter()
-        _ = hbW // empty
-        w.writeMessageField(13, hbW.data) // baseHeartBeat (field 13)
+        _ = hbW  // empty
+        w.writeMessageField(13, hbW.data)  // baseHeartBeat (field 13)
+        return w.data
+    }
+
+    /// DevCfgDataPackage with RING_CONNECT_INFO command
+    /// Tells the glasses to connect/disconnect to a ring by MAC address.
+    /// RingInfo: field 1 = connectRing (bool), field 2 = ringMac (bytes), field 3 = ringName (bytes)
+    static func ringConnectInfo(
+        magicRandom: Int32, connect: Bool, ringMac: Data, ringName: String = ""
+    ) -> Data {
+        var w = ProtobufWriter()
+        w.writeInt32Field(1, DevCfgCommandId.ringConnectInfo.rawValue)  // commandId = RING_CONNECT_INFO (6)
+        w.writeInt32Field(2, magicRandom)
+
+        // RingInfo sub-message (field 5 in DevCfgDataPackage)
+        var ringW = ProtobufWriter()
+        ringW.writeBoolField(1, connect)  // connectRing
+        ringW.writeBytesField(2, ringMac)  // ringMac (6 bytes)
+        if !ringName.isEmpty {
+            ringW.writeBytesField(3, Data(ringName.utf8))  // ringName
+        }
+
+        w.writeMessageField(5, ringW.data)  // ringInfo (field 5)
         return w.data
     }
 }
@@ -527,18 +574,18 @@ private enum G2SettingProto {
     static func setBrightness(magicRandom: Int32, level: Int32, autoAdjust: Bool) -> Data {
         // DeviceReceive_Brightness
         var brightnessW = ProtobufWriter()
-        brightnessW.writeInt32Field(1, autoAdjust ? 1 : 0) // autoAdjust
-        brightnessW.writeInt32Field(2, level) // brightnessLevel
+        brightnessW.writeInt32Field(1, autoAdjust ? 1 : 0)  // autoAdjust
+        brightnessW.writeInt32Field(2, level)  // brightnessLevel
 
         // DeviceReceiveInfoFromAPP
         var infoW = ProtobufWriter()
-        infoW.writeMessageField(1, brightnessW.data) // deviceReceiveBrightness (field 1)
+        infoW.writeMessageField(1, brightnessW.data)  // deviceReceiveBrightness (field 1)
 
         // G2SettingPackage
         var w = ProtobufWriter()
-        w.writeInt32Field(1, G2SettingCommandId.deviceReceiveInfo.rawValue) // commandId
+        w.writeInt32Field(1, G2SettingCommandId.deviceReceiveInfo.rawValue)  // commandId
         w.writeInt32Field(2, magicRandom)
-        w.writeMessageField(3, infoW.data) // deviceReceiveInfoFromApp (field 3)
+        w.writeMessageField(3, infoW.data)  // deviceReceiveInfoFromApp (field 3)
         return w.data
     }
 
@@ -547,13 +594,85 @@ private enum G2SettingProto {
         // DeviceReceiveRequestFromAPP - empty message triggers glasses to respond with all fields
         var reqW = ProtobufWriter()
         // Request brightness info type
-        reqW.writeInt32Field(1, 1) // settingInfoType = APP_REQUIRE_BASIC_SETTING
+        reqW.writeInt32Field(1, 1)  // settingInfoType = APP_REQUIRE_BASIC_SETTING
 
         // G2SettingPackage
         var w = ProtobufWriter()
-        w.writeInt32Field(1, G2SettingCommandId.deviceReceiveRequest.rawValue) // commandId
+        w.writeInt32Field(1, G2SettingCommandId.deviceReceiveRequest.rawValue)  // commandId
         w.writeInt32Field(2, magicRandom)
-        w.writeMessageField(4, reqW.data) // deviceReceiveRequestFromApp (field 4)
+        w.writeMessageField(4, reqW.data)  // deviceReceiveRequestFromApp (field 4)
+        return w.data
+    }
+
+    /// Toggle head-up display on/off
+    static func setHeadUpSwitch(magicRandom: Int32, enabled: Bool) -> Data {
+        // DeviceReceive_Head_UP_Setting
+        var headUpW = ProtobufWriter()
+        headUpW.writeInt32Field(1, enabled ? 1 : 0)  // headUpSwitch
+
+        // DeviceReceiveInfoFromAPP
+        var infoW = ProtobufWriter()
+        infoW.writeMessageField(4, headUpW.data)  // deviceReceiveHeadUpSetting (field 4)
+
+        // G2SettingPackage
+        var w = ProtobufWriter()
+        w.writeInt32Field(1, G2SettingCommandId.deviceReceiveInfo.rawValue)
+        w.writeInt32Field(2, magicRandom)
+        w.writeMessageField(3, infoW.data)  // deviceReceiveInfoFromApp (field 3)
+        return w.data
+    }
+
+    /// Set head-up trigger angle (0-60 degrees)
+    static func setHeadUpAngle(magicRandom: Int32, angle: Int32) -> Data {
+        // DeviceReceive_Head_UP_Setting
+        var headUpW = ProtobufWriter()
+        headUpW.writeInt32Field(2, angle)  // headUpAngle (field 2)
+
+        // DeviceReceiveInfoFromAPP
+        var infoW = ProtobufWriter()
+        infoW.writeMessageField(4, headUpW.data)  // deviceReceiveHeadUpSetting (field 4)
+
+        // G2SettingPackage
+        var w = ProtobufWriter()
+        w.writeInt32Field(1, G2SettingCommandId.deviceReceiveInfo.rawValue)
+        w.writeInt32Field(2, magicRandom)
+        w.writeMessageField(3, infoW.data)
+        return w.data
+    }
+
+    /// Set screen height (Y coordinate level, 0-12)
+    static func setScreenHeight(magicRandom: Int32, level: Int32) -> Data {
+        // DeviceReceive_Y_Coordinate
+        var yW = ProtobufWriter()
+        yW.writeInt32Field(1, level)  // yCoordinateLevel
+
+        // DeviceReceiveInfoFromAPP
+        var infoW = ProtobufWriter()
+        infoW.writeMessageField(2, yW.data)  // deviceReceiveYCoordinate (field 2)
+
+        // G2SettingPackage
+        var w = ProtobufWriter()
+        w.writeInt32Field(1, G2SettingCommandId.deviceReceiveInfo.rawValue)
+        w.writeInt32Field(2, magicRandom)
+        w.writeMessageField(3, infoW.data)
+        return w.data
+    }
+
+    /// Set screen depth (X coordinate level, 0-2)
+    static func setScreenDepth(magicRandom: Int32, level: Int32) -> Data {
+        // DeviceReceive_X_Coordinate
+        var xW = ProtobufWriter()
+        xW.writeInt32Field(1, level)  // xCoordinateLevel
+
+        // DeviceReceiveInfoFromAPP
+        var infoW = ProtobufWriter()
+        infoW.writeMessageField(3, xW.data)  // deviceReceiveXCoordinate (field 3)
+
+        // G2SettingPackage
+        var w = ProtobufWriter()
+        w.writeInt32Field(1, G2SettingCommandId.deviceReceiveInfo.rawValue)
+        w.writeInt32Field(2, magicRandom)
+        w.writeMessageField(3, infoW.data)
         return w.data
     }
 }
@@ -565,14 +684,135 @@ private enum OnboardingProto {
     static func skipOnboarding(magicRandom: Int32) -> Data {
         // OnboardingConfig: processId = FINISH (4)
         var configW = ProtobufWriter()
-        configW.writeInt32Field(1, 4) // processId = FINISH
+        configW.writeInt32Field(1, 4)  // processId = FINISH
 
         // OnboardingDataPackage
         var w = ProtobufWriter()
-        w.writeInt32Field(1, 1) // commandId = CONFIG
+        w.writeInt32Field(1, 1)  // commandId = CONFIG
         w.writeInt32Field(2, magicRandom)
-        w.writeMessageField(3, configW.data) // config (field 3)
+        w.writeMessageField(3, configW.data)  // config (field 3)
         return w.data
+    }
+}
+
+// MARK: - EvenAI Protobuf Builders (even_ai.proto, service ID 7)
+
+private enum EvenAIProto {
+    /// EvenAIDataPackage with CONFIG command to toggle Hey Even wakeword
+    /// voiceSwitch: 0 = OFF, 1 = ON
+    static func setHeyEven(magicRandom: Int32, enabled: Bool) -> Data {
+        // EvenAIConfig
+        var configW = ProtobufWriter()
+        configW.writeInt32Field(1, enabled ? 1 : 0)  // voiceSwitch
+        configW.writeInt32Field(2, 80)  // streamSpeed (always sent)
+
+        // EvenAIDataPackage
+        var w = ProtobufWriter()
+        w.writeInt32Field(1, 10)  // commandId = CONFIG
+        w.writeInt32Field(2, magicRandom)
+        w.writeMessageField(13, configW.data)  // config (field 13)
+        return w.data
+    }
+}
+
+// MARK: - Menu Protobuf Builders (menu.proto, service ID 3)
+
+private enum MenuProto {
+    /// Input from RN — packageName + display name + running state
+    struct MenuItem {
+        let packageName: String
+        let name: String
+        let running: Bool
+    }
+
+    /// G2 firmware requires minimum 5, maximum 10 menu items
+    static let MIN_MENU_SIZE = 5
+    static let MAX_MENU_SIZE = 10
+    static let MAX_NAME_LENGTH = 15  // 17 char limit minus 2 for running indicator prefix
+    /// Placeholder appIds for padding slots (in valid Even range, unique per slot)
+    static let PLACEHOLDER_APP_IDS: [Int32] = [10535, 10536, 10537, 10538, 10539]
+
+    /// Deterministic hash of packageName → numeric appId in range 10029–10534
+    /// Even's third-party appIds are all in the 10029–10539 range
+    static func packageNameToAppId(_ packageName: String) -> Int32 {
+        var hash: Int32 = 0
+        for char in packageName.unicodeScalars {
+            hash = ((hash &<< 5) &- hash) &+ Int32(char.value)
+        }
+        // 506 values: 10029–10534 (reserve 10535–10539 for placeholders)
+        return 10029 + (abs(hash) % 506)
+    }
+
+    /// meun_main_msg_ctx with APP_SEND_MENU_INFO command
+    /// Handles: name truncation (15 chars), running prefix ("● " / "  "), padding to 5, cap at 10
+    /// Returns (protobuf data, appId→packageName mapping for reverse lookup)
+    /// meun_main_msg_ctx with APP_SEND_MENU_INFO command
+    /// Handles: name truncation (15 chars), running prefix ("● " / "  "), padding to 5, cap at 10
+    /// Always prepends the built-in Notification item as the first entry.
+    /// Returns (protobuf data, appId→packageName mapping for reverse lookup)
+    static func sendMenuInfo(magicRandom: Int32, items: [MenuItem]) -> (Data, [Int32: String]) {
+        var appIdMap: [Int32: String] = [:]
+
+        // Wire items carry either a built-in (itemType=0, no name) or third-party (itemType=1, with name)
+        struct WireItem {
+            let displayName: String?  // nil for built-ins
+            let appId: Int32
+            let isBuiltIn: Bool
+        }
+
+        var wireItems: [WireItem] = []
+
+        // Always first: built-in Notification (SID=4)
+        wireItems.append(WireItem(displayName: nil, appId: 4, isBuiltIn: true))
+
+        // Third-party items — leave room for the built-in
+        for item in items.prefix(MAX_MENU_SIZE - 1) {
+            let appId = packageNameToAppId(item.packageName)
+            appIdMap[appId] = item.packageName
+
+            let truncated =
+                item.name.count > MAX_NAME_LENGTH
+                ? String(item.name.prefix(MAX_NAME_LENGTH))
+                : item.name
+            let prefix = item.running ? "● " : "  "
+            wireItems.append(
+                WireItem(displayName: prefix + truncated, appId: appId, isBuiltIn: false))
+        }
+
+        // Pad to MIN_MENU_SIZE with placeholder third-party items
+        while wireItems.count < MIN_MENU_SIZE {
+            let idx = wireItems.count - 1  // -1 because built-in occupies slot 0
+            wireItems.append(
+                WireItem(
+                    displayName: "  ---",
+                    appId: PLACEHOLDER_APP_IDS[idx],
+                    isBuiltIn: false))
+        }
+
+        // MenuInfoSend
+        var menuW = ProtobufWriter()
+        menuW.writeInt32Field(1, Int32(wireItems.count))  // itemTotalNum
+
+        for item in wireItems {
+            var itemW = ProtobufWriter()
+            if item.isBuiltIn {
+                itemW.writeInt32Field(1, 0)  // itemType = 0 (built-in)
+                itemW.writeInt32Field(4, item.appId)  // itemAppId = SID
+            } else {
+                itemW.writeInt32Field(1, 1)  // itemType = 1 (third-party)
+                itemW.writeInt32Field(2, 1)  // iconNum = 1
+                itemW.writeStringField(3, item.displayName ?? "")  // itemName
+                itemW.writeInt32Field(4, item.appId)  // itemAppId
+            }
+            menuW.writeMessageField(2, itemW.data)  // repeated item (field 2)
+        }
+
+        // meun_main_msg_ctx
+        var w = ProtobufWriter()
+        w.writeInt32Field(1, 0)  // Cmd = APP_SEND_MENU_INFO (0)
+        w.writeInt32Field(2, magicRandom)  // MagicRandom
+        w.writeMessageField(3, menuW.data)  // sendData (field 3)
+        return (w.data, appIdMap)
     }
 }
 
@@ -593,7 +833,7 @@ private struct EvenBLETransport {
         var offset = 0
         while offset < payload.count {
             let end = min(offset + maxPayload, payload.count)
-            chunks.append(payload[offset ..< end])
+            chunks.append(payload[offset..<end])
             offset = end
         }
         if chunks.isEmpty {
@@ -621,20 +861,20 @@ private struct EvenBLETransport {
             let payloadLen = UInt8(chunk.count + (isLast ? 2 : 0))
 
             var packet = Data()
-            packet.append(G2BLE.HEADER_BYTE) // [0] 0xAA
-            packet.append((G2BLE.DEST_GLASSES << 4) | G2BLE.SOURCE_PHONE) // [1] src+dst
-            packet.append(syncId) // [2] syncId
-            packet.append(payloadLen) // [3] payloadLen
-            packet.append(totalPackets) // [4] packetTotalNum
-            packet.append(serialNum) // [5] packetSerialNum
-            packet.append(serviceId) // [6] serviceId
-            packet.append(status) // [7] status
+            packet.append(G2BLE.HEADER_BYTE)  // [0] 0xAA
+            packet.append((G2BLE.DEST_GLASSES << 4) | G2BLE.SOURCE_PHONE)  // [1] src+dst
+            packet.append(syncId)  // [2] syncId
+            packet.append(payloadLen)  // [3] payloadLen
+            packet.append(totalPackets)  // [4] packetTotalNum
+            packet.append(serialNum)  // [5] packetSerialNum
+            packet.append(serviceId)  // [6] serviceId
+            packet.append(status)  // [7] status
 
             packet.append(chunk)
 
             if isLast {
-                packet.append(UInt8(crc & 0xFF)) // CRC low
-                packet.append(UInt8((crc >> 8) & 0xFF)) // CRC high
+                packet.append(UInt8(crc & 0xFF))  // CRC low
+                packet.append(UInt8((crc >> 8) & 0xFF))  // CRC high
             }
 
             packets.append(packet)
@@ -674,9 +914,10 @@ private class G2SendManager {
 // MARK: - G2 Receive Manager (multi-part reassembly)
 
 private class G2ReceiveManager {
-    private var partials: [String: (Data, UInt8)] = [:] // key -> (accumulated payload, lastSerialNum)
+    private var partials: [String: (Data, UInt8)] = [:]  // key -> (accumulated payload, lastSerialNum)
 
-    func handlePacket(_ rawData: Data) -> (serviceId: UInt8, payload: Data)? {
+    func handlePacket(_ rawData: Data, sourceKey: String = "") -> (serviceId: UInt8, payload: Data)?
+    {
         guard rawData.count >= 8 else { return nil }
         guard rawData[0] == G2BLE.HEADER_BYTE else { return nil }
 
@@ -695,10 +936,11 @@ private class G2ReceiveManager {
         let isLast = (serialNum == totalPackets)
         let hasCrc = isLast
         let payloadEnd = 8 + payloadLen - (hasCrc ? 2 : 0)
-        let payload = rawData[8 ..< payloadEnd]
+        let payload = rawData[8..<payloadEnd]
 
         let syncId = rawData[2]
-        let key = "\(serviceId)-\(syncId)"
+        // Key partials by source peripheral too — left and right glasses have independent syncId counters
+        let key = "\(sourceKey)-\(serviceId)-\(syncId)"
 
         if serialNum > 1 {
             guard var existing = partials[key] else { return nil }
@@ -741,7 +983,7 @@ actor G2ReconnectionManager {
     private var task: Task<Void, Never>?
     private let intervalSeconds: TimeInterval
     private var attempts = 0
-    private let maxAttempts: Int // -1 for unlimited
+    private let maxAttempts: Int  // -1 for unlimited
 
     init(intervalSeconds: TimeInterval = 30, maxAttempts: Int = -1) {
         self.intervalSeconds = intervalSeconds
@@ -804,7 +1046,7 @@ class G2: NSObject, SGCManager {
         set {
             _ready = newValue
             if !newValue {
-                batteryLevel = -1
+                GlassesStore.shared.apply("glasses", "batteryLevel", -1)
             }
         }
     }
@@ -825,6 +1067,8 @@ class G2: NSObject, SGCManager {
 
     /// Device search
     var DEVICE_SEARCH_ID = "NOT_SET"
+    // map device names to serial numbers:
+    private var deviceNameToSerialNumber: [String: String] = [:]
 
     /// Stored UUIDs for background reconnection
     private var leftGlassUUID: UUID? {
@@ -865,10 +1109,9 @@ class G2: NSObject, SGCManager {
     private let receiveManager = G2ReceiveManager()
     private var heartbeatTimer: Timer?
     private var devSettingsHeartbeatTimer: Timer?
-    private var micEnabled_: Bool = false
-    private var startupPageCreated: Bool = false // createStartUpPageContainer can only be called once
+    private var startupPageCreated: Bool = false  // createStartUpPageContainer can only be called once
     private var pageCreated: Bool = false
-    private var pageHasTextContainer: Bool = false // tracks if current page has a text container
+    private var pageHasTextContainer: Bool = false  // tracks if current page has a text container
     private var currentTextContent: String = ""
     private var currentBitmapBase64: String = ""
     private var textContainerID: Int32 = 1
@@ -876,17 +1119,15 @@ class G2: NSObject, SGCManager {
     private var heartbeatCounter: Int = 0
     private var authStarted: Bool = false
 
-    /// Published state
-    @Published var batteryLevel: Int = -1 {
-        didSet {
-            if batteryLevel != oldValue && batteryLevel >= 0 {
-                GlassesStore.shared.apply("glasses", "batteryLevel", batteryLevel)
-                Bridge.sendBatteryStatus(level: batteryLevel, charging: isCharging)
-            }
-        }
-    }
+    /// Dashboard menu: appId → packageName mapping for selection reverse lookup
+    private var menuAppIdToPackageName: [Int32: String] = [:]
+    /// Dashboard menu items (stored for re-send on connect)
+    private var dashboardMenuItems: [MenuProto.MenuItem] = []
+    /// Current appId to associate EvenHub pages with (enables menu selection events)
+    /// Set to the first menu item's appId so glasses know our page belongs to the menu
+    private var activeMenuAppId: Int32?
+    private var lastClickTimestamp: Int64?
 
-    private var isCharging: Bool = false
     @Published var aiListening: Bool = false
 
     static let _bluetoothQueue = DispatchQueue(label: "BluetoothG2", qos: .userInitiated)
@@ -951,6 +1192,51 @@ class G2: NSObject, SGCManager {
         sendToGlasses(packets)
     }
 
+    private func sendEvenAICommand(_ payload: Data) {
+        let packets = sendManager.buildPackets(
+            serviceId: ServiceID.evenAI.rawValue,
+            payload: payload,
+            reserveFlag: true
+        )
+        sendToGlasses(packets)
+    }
+
+    private func sendMenuCommand(_ payload: Data) {
+        let packets = sendManager.buildPackets(
+            serviceId: ServiceID.menu.rawValue,
+            payload: payload,
+            reserveFlag: true
+        )
+        sendToGlasses(packets)
+    }
+
+    private func sendGestureCtrlCommand(_ payload: Data) {
+        let packets = sendManager.buildPackets(
+            serviceId: ServiceID.gestureCtrl.rawValue,
+            payload: payload,
+            reserveFlag: true
+        )
+        sendToGlasses(packets)
+    }
+
+    private func sendEvenHubCtrlCommand(_ payload: Data) {
+        let packets = sendManager.buildPackets(
+            serviceId: ServiceID.evenHubCtrl.rawValue,
+            payload: payload,
+            reserveFlag: true
+        )
+        sendToGlasses(packets)
+    }
+
+    private func sendDashboardCommand(_ payload: Data) {
+        let packets = sendManager.buildPackets(
+            serviceId: ServiceID.dashboard.rawValue,
+            payload: payload,
+            reserveFlag: true
+        )
+        sendToGlasses(packets)
+    }
+
     // MARK: - Authentication Sequence
 
     private func runAuthSequence() {
@@ -993,6 +1279,127 @@ class G2: NSObject, SGCManager {
                         )
                         self.sendOnboardingCommand(onboarding)
                         Bridge.log("G2: Sent onboarding skip (FINISH)")
+
+                        // Disable "Hey Even" wakeword on connect
+                        let heyEvenOff = EvenAIProto.setHeyEven(
+                            magicRandom: self.sendManager.nextMagicRandom(),
+                            enabled: false
+                        )
+                        self.sendEvenAICommand(heyEvenOff)
+                        Bridge.log("G2: Disabled Hey Even wakeword")
+
+                        // Replicate Even app's full init sequence for menu selection support:
+
+                        // 0. Universe settings (g2_setting cmd=1 field3 with field9=universe settings)
+                        // Even app's bytes: 4a 0a 08 00 10 00 18 01 20 00 28 01
+                        // = field 9 (universe), {1:0, 2:0, 3:1, 4:0, 5:1}
+                        var univW = ProtobufWriter()
+                        univW.writeInt32Field(1, 1)  // DeviceReceiveInfo
+                        univW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+                        univW.writeMessageField(
+                            3,
+                            Data([
+                                0x4A, 0x0A,  // field 9, length 10
+                                0x08, 0x00,  // unitFormat=0
+                                0x10, 0x00,  // distanceUnit=0
+                                0x18, 0x01,  // timeFormat=1
+                                0x20, 0x00,  // dateFormat=0
+                                0x28, 0x01,  // temperatureUnit=1
+                            ]))
+                        self.sendG2SettingCommand(univW.data)
+
+                        // 1. gesture_ctrl init (field1=0, field2=magicRandom)
+                        var gestureInitW = ProtobufWriter()
+                        gestureInitW.writeInt32Field(1, 0)
+                        gestureInitW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+                        self.sendGestureCtrlCommand(gestureInitW.data)
+
+                        // 2. ui_setting_app (0x0C) — query (cmd=2, field4={settingInfoType=1, autoBrightnessLevel=0})
+                        var uiSettW = ProtobufWriter()
+                        uiSettW.writeInt32Field(1, 2)  // cmd = DeviceReceiveRequest
+                        uiSettW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+                        uiSettW.writeMessageField(4, Data([0x08, 0x01, 0x10, 0x00]))  // {1:1, 2:0}
+                        self.sendToGlasses(
+                            self.sendManager.buildPackets(
+                                serviceId: 0x0C, payload: uiSettW.data, reserveFlag: true
+                            ))
+
+                        // 3. teleprompter (0x10) — config (cmd=1, field3={1:4})
+                        var teleW = ProtobufWriter()
+                        teleW.writeInt32Field(1, 1)
+                        teleW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+                        teleW.writeMessageField(3, Data([0x08, 0x04]))  // {1:4}
+                        self.sendToGlasses(
+                            self.sendManager.buildPackets(
+                                serviceId: 0x10, payload: teleW.data, reserveFlag: true
+                            ))
+
+                        // 4. EvenHub CTRL on service 0x81 (cmd=1, empty field3)
+                        var ehCtrlW = ProtobufWriter()
+                        ehCtrlW.writeInt32Field(1, 1)
+                        ehCtrlW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+                        ehCtrlW.writeMessageField(3, Data())
+                        self.sendEvenHubCtrlCommand(ehCtrlW.data)
+
+                        // 5. calendar (0x04) — config
+                        var calW = ProtobufWriter()
+                        calW.writeInt32Field(1, 1)
+                        calW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+                        calW.writeMessageField(
+                            3, Data([0x08, 0x01, 0x10, 0x01, 0x18, 0x05, 0x28, 0x01]))
+                        self.sendToGlasses(
+                            self.sendManager.buildPackets(
+                                serviceId: 0x04, payload: calW.data, reserveFlag: true
+                            ))
+
+                        // 6. Dashboard init (0x01) — display settings
+                        var dashDisplayW = ProtobufWriter()
+                        dashDisplayW.writeInt32Field(1, 4)  // displayMode
+                        dashDisplayW.writeInt32Field(2, 3)  // statusDisplayCount
+                        dashDisplayW.writeMessageField(3, Data([1, 2, 3]))  // statusDisplayOrder
+                        dashDisplayW.writeInt32Field(4, 4)  // widgetDisplayCount
+                        dashDisplayW.writeMessageField(5, Data([1, 3, 2, 2]))  // widgetDisplayOrder
+                        dashDisplayW.writeInt32Field(6, 1)  // halfDayFormat
+                        dashDisplayW.writeInt32Field(7, 1)  // temperatureUnit
+
+                        var dashRecvW = ProtobufWriter()
+                        dashRecvW.writeMessageField(2, dashDisplayW.data)
+
+                        var dashPkgW = ProtobufWriter()
+                        dashPkgW.writeInt32Field(1, 2)  // Dashboard_Receive
+                        dashPkgW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+                        dashPkgW.writeMessageField(4, dashRecvW.data)
+                        self.sendDashboardCommand(dashPkgW.data)
+
+                        // 7. Dashboard REQUEST_NEWS_INFO (cmd=5, field7={1:1})
+                        var dashNewsReqW = ProtobufWriter()
+                        dashNewsReqW.writeInt32Field(1, 5)  // REQUEST_NEWS_INFO
+                        dashNewsReqW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+                        dashNewsReqW.writeMessageField(7, Data([0x08, 0x01]))  // {1:1}
+                        self.sendDashboardCommand(dashNewsReqW.data)
+
+                        // 8. Gesture control list via g2_setting
+                        var gestListW = ProtobufWriter()
+                        gestListW.writeInt32Field(1, 1)  // DeviceReceiveInfo
+                        gestListW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+                        // field 3 with field 10 (gestureControlList): 3 items, all app_unable
+                        let gestureCtrlPayload = Data([
+                            0x52, 0x18,  // field 10, length 24
+                            0x0A, 0x06, 0x08, 0x00, 0x10, 0x00, 0x18, 0x00,  // item 1
+                            0x0A, 0x06, 0x08, 0x00, 0x10, 0x01, 0x18, 0x00,  // item 2
+                            0x0A, 0x06, 0x08, 0x00, 0x10, 0x02, 0x18, 0x00,  // item 3
+                        ])
+                        gestListW.writeMessageField(3, gestureCtrlPayload)
+                        self.sendG2SettingCommand(gestListW.data)
+
+                        // 9. Dashboard APP_REQUEST_NEWS_INFO (cmd=7, field9={1:1})
+                        var dashAppNewsW = ProtobufWriter()
+                        dashAppNewsW.writeInt32Field(1, 7)  // APP_REQUEST_NEWS_INFO
+                        dashAppNewsW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+                        dashAppNewsW.writeMessageField(9, Data([0x08, 0x01]))  // {1:1}
+                        self.sendDashboardCommand(dashAppNewsW.data)
+
+                        Bridge.log("G2: Sent full Even-compatible init sequence")
                     }
 
                     // Start heartbeats after auth
@@ -1015,15 +1422,258 @@ class G2: NSObject, SGCManager {
                             Bridge.log("G2: Set device_name to \(deviceId)")
                         }
 
+                        // Set bluetooth name and device model for Device Info page
+                        let btName =
+                            self.rightPeripheral?.name
+                            ?? self.leftPeripheral?.name ?? ""
+                        GlassesStore.shared.apply("glasses", "bluetoothName", btName)
+                        GlassesStore.shared.apply("glasses", "deviceModel", DeviceTypes.G2)
+
                         GlassesStore.shared.apply("glasses", "connected", true)
                         GlassesStore.shared.apply("glasses", "fullyBooted", true)
+                        
+
+                        // connnect a controller if we have one:
+                        self.connectController()
 
                         // Query version + battery info from glasses
                         self.requestDeviceInfo()
+
+                        // Re-send dashboard menu if we have stored items
+                        if !self.dashboardMenuItems.isEmpty {
+                            let (msg, appIdMap) = MenuProto.sendMenuInfo(
+                                magicRandom: self.sendManager.nextMagicRandom(),
+                                items: self.dashboardMenuItems
+                            )
+                            self.menuAppIdToPackageName = appIdMap
+                            self.sendMenuCommand(msg)
+                            Bridge.log(
+                                "G2: Re-sent dashboard menu (\(self.dashboardMenuItems.count) items)"
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+
+    private func runDashboardSequence() {
+        Bridge.log("G2: Running dashboard sequence")
+
+        // send the shutdown command to the glasses:
+        let msg = EvenHubProto.shutdownMessage()
+        sendEvenHubCommand(msg)
+        pageCreated = false
+        currentTextContent = ""
+
+        // // Auth to left side
+        // if leftPeripheral != nil && leftWriteChar != nil {
+        //     let authL = DevSettingsProto.authCmd(magicRandom: sendManager.nextMagicRandom())
+        //     sendDevSettingsCommand(authL, left: true, right: false)
+        // }
+
+        // // Small delay then auth right + pipe role change + time sync
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self = self else { return }
+
+            //     let authR = DevSettingsProto.authCmd(magicRandom: self.sendManager.nextMagicRandom())
+            //     self.sendDevSettingsCommand(authR, left: false, right: true)
+
+            //     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            //         guard let self = self else { return }
+
+            //         let roleChange = DevSettingsProto.pipeRoleChange(
+            //             magicRandom: self.sendManager.nextMagicRandom()
+            //         )
+            //         self.sendDevSettingsCommand(roleChange, left: false, right: true)
+
+            //         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            //             guard let self = self else { return }
+
+            //             let timeSync = DevSettingsProto.timeSync(
+            //                 magicRandom: self.sendManager.nextMagicRandom()
+            //             )
+            //             self.sendDevSettingsCommand(timeSync)
+
+            //             // Skip onboarding on connect
+            //             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            //                 guard let self = self else { return }
+            // let onboarding = OnboardingProto.skipOnboarding(
+            //     magicRandom: self.sendManager.nextMagicRandom()
+            // )
+            // self.sendOnboardingCommand(onboarding)
+            // Bridge.log("G2: Sent onboarding skip (FINISH)")
+
+            // // Disable "Hey Even" wakeword on connect
+            // let heyEvenOff = EvenAIProto.setHeyEven(
+            //     magicRandom: self.sendManager.nextMagicRandom(),
+            //     enabled: false
+            // )
+            // self.sendEvenAICommand(heyEvenOff)
+            // Bridge.log("G2: Disabled Hey Even wakeword")
+
+            // // Replicate Even app's full init sequence for menu selection support:
+
+            // // 0. Universe settings (g2_setting cmd=1 field3 with field9=universe settings)
+            // // Even app's bytes: 4a 0a 08 00 10 00 18 01 20 00 28 01
+            // // = field 9 (universe), {1:0, 2:0, 3:1, 4:0, 5:1}
+            // var univW = ProtobufWriter()
+            // univW.writeInt32Field(1, 1)  // DeviceReceiveInfo
+            // univW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+            // univW.writeMessageField(
+            //     3,
+            //     Data([
+            //         0x4A, 0x0A,  // field 9, length 10
+            //         0x08, 0x00,  // unitFormat=0
+            //         0x10, 0x00,  // distanceUnit=0
+            //         0x18, 0x01,  // timeFormat=1
+            //         0x20, 0x00,  // dateFormat=0
+            //         0x28, 0x01,  // temperatureUnit=1
+            //     ]))
+            // self.sendG2SettingCommand(univW.data)
+
+            // 1. gesture_ctrl init (field1=0, field2=magicRandom)
+            var gestureInitW = ProtobufWriter()
+            gestureInitW.writeInt32Field(1, 0)
+            gestureInitW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+            self.sendGestureCtrlCommand(gestureInitW.data)
+
+            // 2. ui_setting_app (0x0C) — query (cmd=2, field4={settingInfoType=1, autoBrightnessLevel=0})
+            // var uiSettW = ProtobufWriter()
+            // uiSettW.writeInt32Field(1, 2)  // cmd = DeviceReceiveRequest
+            // uiSettW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+            // uiSettW.writeMessageField(4, Data([0x08, 0x01, 0x10, 0x00]))  // {1:1, 2:0}
+            // self.sendToGlasses(
+            //     self.sendManager.buildPackets(
+            //         serviceId: 0x0C, payload: uiSettW.data, reserveFlag: true
+            //     ))
+
+            // // 3. teleprompter (0x10) — config (cmd=1, field3={1:4})
+            // var teleW = ProtobufWriter()
+            // teleW.writeInt32Field(1, 1)
+            // teleW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+            // teleW.writeMessageField(3, Data([0x08, 0x04]))  // {1:4}
+            // self.sendToGlasses(
+            //     self.sendManager.buildPackets(
+            //         serviceId: 0x10, payload: teleW.data, reserveFlag: true
+            //     ))
+
+            // 4. EvenHub CTRL on service 0x81 (cmd=1, empty field3)
+            // var ehCtrlW = ProtobufWriter()
+            // ehCtrlW.writeInt32Field(1, 1)
+            // ehCtrlW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+            // ehCtrlW.writeMessageField(3, Data())
+            // self.sendEvenHubCtrlCommand(ehCtrlW.data)
+
+            // // 5. calendar (0x04) — config
+            // var calW = ProtobufWriter()
+            // calW.writeInt32Field(1, 1)
+            // calW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+            // calW.writeMessageField(
+            //     3, Data([0x08, 0x01, 0x10, 0x01, 0x18, 0x05, 0x28, 0x01]))
+            // self.sendToGlasses(
+            //     self.sendManager.buildPackets(
+            //         serviceId: 0x04, payload: calW.data, reserveFlag: true
+            //     ))
+
+            // 6. Dashboard init (0x01) — display settings
+            var dashDisplayW = ProtobufWriter()
+            dashDisplayW.writeInt32Field(1, 4)  // displayMode
+            dashDisplayW.writeInt32Field(2, 3)  // statusDisplayCount
+            dashDisplayW.writeMessageField(3, Data([1, 2, 3]))  // statusDisplayOrder
+            dashDisplayW.writeInt32Field(4, 4)  // widgetDisplayCount
+            dashDisplayW.writeMessageField(5, Data([1, 3, 2, 2]))  // widgetDisplayOrder
+            dashDisplayW.writeInt32Field(6, 1)  // halfDayFormat
+            dashDisplayW.writeInt32Field(7, 1)  // temperatureUnit
+
+            var dashRecvW = ProtobufWriter()
+            dashRecvW.writeMessageField(2, dashDisplayW.data)
+
+            var dashPkgW = ProtobufWriter()
+            dashPkgW.writeInt32Field(1, 2)  // Dashboard_Receive
+            dashPkgW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+            dashPkgW.writeMessageField(4, dashRecvW.data)
+            self.sendDashboardCommand(dashPkgW.data)
+
+            // // 7. Dashboard REQUEST_NEWS_INFO (cmd=5, field7={1:1})
+            // var dashNewsReqW = ProtobufWriter()
+            // dashNewsReqW.writeInt32Field(1, 5)  // REQUEST_NEWS_INFO
+            // dashNewsReqW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+            // dashNewsReqW.writeMessageField(7, Data([0x08, 0x01]))  // {1:1}
+            // self.sendDashboardCommand(dashNewsReqW.data)
+
+            // // 8. Gesture control list via g2_setting
+            // var gestListW = ProtobufWriter()
+            // gestListW.writeInt32Field(1, 1)  // DeviceReceiveInfo
+            // gestListW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+            // // field 3 with field 10 (gestureControlList): 3 items, all app_unable
+            // let gestureCtrlPayload = Data([
+            //     0x52, 0x18,  // field 10, length 24
+            //     0x0A, 0x06, 0x08, 0x00, 0x10, 0x00, 0x18, 0x00,  // item 1
+            //     0x0A, 0x06, 0x08, 0x00, 0x10, 0x01, 0x18, 0x00,  // item 2
+            //     0x0A, 0x06, 0x08, 0x00, 0x10, 0x02, 0x18, 0x00,  // item 3
+            // ])
+            // gestListW.writeMessageField(3, gestureCtrlPayload)
+            // self.sendG2SettingCommand(gestListW.data)
+
+            // 9. Dashboard APP_REQUEST_NEWS_INFO (cmd=7, field9={1:1})
+            // var dashAppNewsW = ProtobufWriter()
+            // dashAppNewsW.writeInt32Field(1, 7)  // APP_REQUEST_NEWS_INFO
+            // dashAppNewsW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+            // dashAppNewsW.writeMessageField(9, Data([0x08, 0x01]))  // {1:1}
+            // self.sendDashboardCommand(dashAppNewsW.data)
+
+            Bridge.log("G2: Sent full Even-compatible init sequence")
+
+            //             // Start heartbeats after auth
+            //             self.startHeartbeats()
+
+            //             // Mark as ready and request device info (version + battery)
+            //             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            //                 guard let self = self else { return }
+            //                 self.ready = true
+            //                 Task { await self.reconnectionManager.stop() }
+            //                 Bridge.log("G2: Auth sequence complete, glasses ready")
+
+            //                 // Set device_name so CoreManager can save it for reconnection
+            //                 if let peripheralName = self.rightPeripheral?.name
+            //                     ?? self.leftPeripheral?.name,
+            //                     let idNumber = self.extractIdNumber(peripheralName)
+            //                 {
+            //                     let deviceId = "\(idNumber)"
+            //                     GlassesStore.shared.apply("core", "device_name", deviceId)
+            //                     Bridge.log("G2: Set device_name to \(deviceId)")
+            //                 }
+
+            //                 // Set bluetooth name and device model for Device Info page
+            //                 let btName =
+            //                     self.rightPeripheral?.name
+            //                     ?? self.leftPeripheral?.name ?? ""
+            //                 GlassesStore.shared.apply("glasses", "bluetoothName", btName)
+            //                 GlassesStore.shared.apply("glasses", "deviceModel", DeviceTypes.G2)
+
+            //                 GlassesStore.shared.apply("glasses", "connected", true)
+            //                 GlassesStore.shared.apply("glasses", "fullyBooted", true)
+
+            //                 // Query version + battery info from glasses
+            //                 self.requestDeviceInfo()
+
+            //                 // Re-send dashboard menu if we have stored items
+            //                 if !self.dashboardMenuItems.isEmpty {
+            //                     let (msg, appIdMap) = MenuProto.sendMenuInfo(
+            //                         magicRandom: self.sendManager.nextMagicRandom(),
+            //                         items: self.dashboardMenuItems
+            //                     )
+            //                     self.menuAppIdToPackageName = appIdMap
+            //                     self.sendMenuCommand(msg)
+            //                     Bridge.log(
+            //                         "G2: Re-sent dashboard menu (\(self.dashboardMenuItems.count) items)"
+            //                     )
+            //                 }
+            //             }
+            //         }
+        }
+        // }
     }
 
     // MARK: - Heartbeats
@@ -1077,13 +1727,19 @@ class G2: NSObject, SGCManager {
     private func requestDeviceInfo() {
         let msg = G2SettingProto.requestInfo(magicRandom: sendManager.nextMagicRandom())
         sendG2SettingCommand(msg)
-        Bridge.log("G2: Requested device info (battery/version)")
+        // Bridge.log("G2: Requested device info (battery/version)")
     }
 
     // MARK: - SGCManager: Display Control
 
     func sendTextWall(_ text: String) {
         // Bridge.log("G2: sendTextWall(\(text.prefix(50))...)")
+
+        // ignore events while the dashboard is open:
+        // let isHeadUp = GlassesStore.shared.get("glasses", "headUp") as? Bool ?? false
+        // if isHeadUp {
+        //     return
+        // }
 
         if text.isEmpty {
             clearDisplay()
@@ -1092,8 +1748,10 @@ class G2: NSObject, SGCManager {
 
         if !pageCreated || !pageHasTextContainer {
             // Need to create/rebuild page with a text container
+            // Bridge.log("G2: sendTextWall() - creating page with text container")
             createPageWithText(text)
         } else {
+            // Bridge.log("G2: sendTextWall() - updating text container")
             updateText(text)
         }
     }
@@ -1132,7 +1790,7 @@ class G2: NSObject, SGCManager {
 
         while offset < bmpData.count {
             let end = min(offset + fragmentSize, bmpData.count)
-            let fragment = bmpData[offset ..< end]
+            let fragment = bmpData[offset..<end]
 
             let msg = EvenHubProto.updateImageRawDataMessage(
                 containerID: containerID,
@@ -1148,7 +1806,7 @@ class G2: NSObject, SGCManager {
 
             fragmentIndex += 1
             offset = end
-            try? await Task.sleep(nanoseconds: 200_000_000) // 200ms between fragments
+            try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms between fragments
         }
 
         Bridge.log(
@@ -1188,18 +1846,22 @@ class G2: NSObject, SGCManager {
         let msg: Data
         if !startupPageCreated {
             Bridge.log("G2: displayBitmap() - creating startup page with image container")
-            msg = EvenHubProto.createPageMessage(imageContainers: [imageContainer])
+            msg = EvenHubProto.createPageMessage(
+                imageContainers: [imageContainer], magicRandom: sendManager.nextMagicRandom(),
+                appId: activeMenuAppId)
             startupPageCreated = true
         } else {
             Bridge.log("G2: displayBitmap() - rebuilding page with image container")
-            msg = EvenHubProto.rebuildPageMessage(imageContainers: [imageContainer])
+            msg = EvenHubProto.rebuildPageMessage(
+                imageContainers: [imageContainer], magicRandom: sendManager.nextMagicRandom(),
+                appId: activeMenuAppId)
         }
         sendEvenHubCommand(msg)
         pageCreated = true
         pageHasTextContainer = false
         currentTextContent = ""
         Bridge.log("G2: displayBitmap() - page sent, waiting 1s before sending fragments...")
-        try? await Task.sleep(nanoseconds: 1_000_000_000) // 1s - give glasses time to process page
+        try? await Task.sleep(nanoseconds: 1_000_000_000)  // 1s - give glasses time to process page
 
         // Send the BMP data
         let success = await sendImageData(
@@ -1244,14 +1906,16 @@ class G2: NSObject, SGCManager {
 
         let msg: Data
         if !startupPageCreated {
-            msg = EvenHubProto.createPageMessage(imageContainers: [
-                container1, container2, container3, container4,
-            ])
+            msg = EvenHubProto.createPageMessage(
+                imageContainers: [
+                    container1, container2, container3, container4,
+                ], magicRandom: sendManager.nextMagicRandom(), appId: activeMenuAppId)
             startupPageCreated = true
         } else {
-            msg = EvenHubProto.rebuildPageMessage(imageContainers: [
-                container1, container2, container3, container4,
-            ])
+            msg = EvenHubProto.rebuildPageMessage(
+                imageContainers: [
+                    container1, container2, container3, container4,
+                ], magicRandom: sendManager.nextMagicRandom(), appId: activeMenuAppId)
         }
         sendEvenHubCommand(msg)
         pageCreated = true
@@ -1293,7 +1957,7 @@ class G2: NSObject, SGCManager {
             return nil
         }
 
-        let srcPaddedRowSize = ((srcWidth + 1) / 2 + 3) & ~3 // 4-bit rows padded to 4 bytes
+        let srcPaddedRowSize = ((srcWidth + 1) / 2 + 3) & ~3  // 4-bit rows padded to 4 bytes
         let pixelDataOffset = headerSize
 
         let dstWidth = srcWidth * 2
@@ -1326,7 +1990,7 @@ class G2: NSObject, SGCManager {
         dst.appendLittleEndian(UInt32(0))
 
         // --- Color Table (same 16-entry grayscale) ---
-        for i in 0 ..< 16 {
+        for i in 0..<16 {
             let val = UInt8(i * 17)
             dst.append(contentsOf: [val, val, val, 0])
         }
@@ -1334,12 +1998,12 @@ class G2: NSObject, SGCManager {
         // --- Pixel Data (nearest-neighbor 2x upscale) ---
         // BMP is bottom-up, so row 0 = bottom of image
         // Each dst row maps to srcRow = dstRow / 2
-        for dstRow in 0 ..< dstHeight {
+        for dstRow in 0..<dstHeight {
             let srcRow = dstRow / 2
             let srcRowOffset = pixelDataOffset + srcRow * srcPaddedRowSize
             var rowBuf = [UInt8](repeating: 0, count: dstPaddedRowSize)
 
-            for dstCol in 0 ..< dstWidth {
+            for dstCol in 0..<dstWidth {
                 let srcCol = dstCol / 2
 
                 // Read 4-bit nibble from source
@@ -1401,18 +2065,22 @@ class G2: NSObject, SGCManager {
         let msg: Data
         if !startupPageCreated {
             Bridge.log("G2: displayBitmap() - creating startup page with image container")
-            msg = EvenHubProto.createPageMessage(imageContainers: [imageContainer])
+            msg = EvenHubProto.createPageMessage(
+                imageContainers: [imageContainer], magicRandom: sendManager.nextMagicRandom(),
+                appId: activeMenuAppId)
             startupPageCreated = true
         } else {
             Bridge.log("G2: displayBitmap() - rebuilding page with image container")
-            msg = EvenHubProto.rebuildPageMessage(imageContainers: [imageContainer])
+            msg = EvenHubProto.rebuildPageMessage(
+                imageContainers: [imageContainer], magicRandom: sendManager.nextMagicRandom(),
+                appId: activeMenuAppId)
         }
         sendEvenHubCommand(msg)
         pageCreated = true
         pageHasTextContainer = false
         currentTextContent = ""
         Bridge.log("G2: displayBitmap() - page sent, waiting 1s before sending fragments...")
-        try? await Task.sleep(nanoseconds: 1_000_000_000) // 1s - give glasses time to process page
+        try? await Task.sleep(nanoseconds: 1_000_000_000)  // 1s - give glasses time to process page
 
         // Send the BMP data
         let success = await sendImageData(
@@ -1475,7 +2143,7 @@ class G2: NSObject, SGCManager {
         ctx.draw(cgImage, in: CGRect(x: offsetX, y: offsetY, width: scaledW, height: scaledH))
 
         guard let renderedImage = ctx.makeImage(),
-              let pixels = renderedImage.dataProvider?.data as Data?
+            let pixels = renderedImage.dataProvider?.data as Data?
         else {
             Bridge.log("G2: convertToG2Bmp - failed to get pixel data")
             return nil
@@ -1509,8 +2177,8 @@ class G2: NSObject, SGCManager {
 
         let srcWidth = cgImage.width
         let srcHeight = cgImage.height
-        let totalW = G2.tileWidth * 2 // 400
-        let totalH = G2.tileHeight * 2 // 200
+        let totalW = G2.tileWidth * 2  // 400
+        let totalH = G2.tileHeight * 2  // 200
 
         // Scale source to fit within 400x200 (maintain aspect ratio)
         let scale = min(Double(totalW) / Double(srcWidth), Double(totalH) / Double(srcHeight))
@@ -1545,7 +2213,7 @@ class G2: NSObject, SGCManager {
         ctx.draw(cgImage, in: CGRect(x: offsetX, y: offsetY, width: scaledW, height: scaledH))
 
         guard let renderedImage = ctx.makeImage(),
-              let fullPixels = renderedImage.dataProvider?.data as Data?
+            let fullPixels = renderedImage.dataProvider?.data as Data?
         else {
             Bridge.log("G2: renderAndSliceTo4Tiles - failed to get pixel data")
             return nil
@@ -1553,22 +2221,22 @@ class G2: NSObject, SGCManager {
 
         // Slice into 4 tiles and build BMP for each
         // CGContext origin is bottom-left, but pixel data is top-left row-first
-        let tw = G2.tileWidth // 200
-        let th = G2.tileHeight // 100
+        let tw = G2.tileWidth  // 200
+        let th = G2.tileHeight  // 100
         let tileOrigins = [
-            (0, 0), // top-left
-            (tw, 0), // top-right
-            (0, th), // bottom-left
-            (tw, th), // bottom-right
+            (0, 0),  // top-left
+            (tw, 0),  // top-right
+            (0, th),  // bottom-left
+            (tw, th),  // bottom-right
         ]
 
         var tiles: [Data] = []
         for (ox, oy) in tileOrigins {
             // Extract tile pixels from the full 400x200 buffer
             var tilePixels = Data(capacity: tw * th)
-            for row in 0 ..< th {
+            for row in 0..<th {
                 let srcRowStart = (oy + row) * totalW + ox
-                tilePixels.append(fullPixels[srcRowStart ..< (srcRowStart + tw)])
+                tilePixels.append(fullPixels[srcRowStart..<(srcRowStart + tw)])
             }
             guard let bmp = build4BitBmp(grayscalePixels: tilePixels, width: tw, height: th) else {
                 Bridge.log("G2: renderAndSliceTo4Tiles - failed to build BMP for tile")
@@ -1584,8 +2252,8 @@ class G2: NSObject, SGCManager {
     /// BMP rows are stored bottom-up. Each row is padded to a 4-byte boundary.
     private func build4BitBmp(grayscalePixels: Data, width: Int, height: Int) -> Data? {
         // 4-bit: 2 pixels per byte, rows padded to 4-byte boundary
-        let bytesPerRow4bit = (width + 1) / 2 // ceil(width / 2)
-        let paddedRowSize = (bytesPerRow4bit + 3) & ~3 // pad to 4-byte boundary
+        let bytesPerRow4bit = (width + 1) / 2  // ceil(width / 2)
+        let paddedRowSize = (bytesPerRow4bit + 3) & ~3  // pad to 4-byte boundary
         let pixelDataSize = paddedRowSize * height
 
         // BMP file header (14 bytes) + DIB header (40 bytes) + color table (16 * 4 = 64 bytes)
@@ -1595,46 +2263,46 @@ class G2: NSObject, SGCManager {
         var bmp = Data(capacity: fileSize)
 
         // --- BMP File Header (14 bytes) ---
-        bmp.append(contentsOf: [0x42, 0x4D]) // "BM" signature
-        bmp.appendLittleEndian(UInt32(fileSize)) // File size
-        bmp.appendLittleEndian(UInt16(0)) // Reserved1
-        bmp.appendLittleEndian(UInt16(0)) // Reserved2
-        bmp.appendLittleEndian(UInt32(headerSize)) // Pixel data offset
+        bmp.append(contentsOf: [0x42, 0x4D])  // "BM" signature
+        bmp.appendLittleEndian(UInt32(fileSize))  // File size
+        bmp.appendLittleEndian(UInt16(0))  // Reserved1
+        bmp.appendLittleEndian(UInt16(0))  // Reserved2
+        bmp.appendLittleEndian(UInt32(headerSize))  // Pixel data offset
 
         // --- DIB Header (BITMAPINFOHEADER, 40 bytes) ---
-        bmp.appendLittleEndian(UInt32(40)) // DIB header size
-        bmp.appendLittleEndian(Int32(width)) // Width
-        bmp.appendLittleEndian(Int32(height)) // Height (positive = bottom-up)
-        bmp.appendLittleEndian(UInt16(1)) // Color planes
-        bmp.appendLittleEndian(UInt16(4)) // Bits per pixel (4-bit)
-        bmp.appendLittleEndian(UInt32(0)) // Compression (none)
-        bmp.appendLittleEndian(UInt32(pixelDataSize)) // Image size
-        bmp.appendLittleEndian(Int32(2835)) // X pixels/meter (~72 DPI)
-        bmp.appendLittleEndian(Int32(2835)) // Y pixels/meter
-        bmp.appendLittleEndian(UInt32(16)) // Colors used
-        bmp.appendLittleEndian(UInt32(0)) // Important colors (0 = all)
+        bmp.appendLittleEndian(UInt32(40))  // DIB header size
+        bmp.appendLittleEndian(Int32(width))  // Width
+        bmp.appendLittleEndian(Int32(height))  // Height (positive = bottom-up)
+        bmp.appendLittleEndian(UInt16(1))  // Color planes
+        bmp.appendLittleEndian(UInt16(4))  // Bits per pixel (4-bit)
+        bmp.appendLittleEndian(UInt32(0))  // Compression (none)
+        bmp.appendLittleEndian(UInt32(pixelDataSize))  // Image size
+        bmp.appendLittleEndian(Int32(2835))  // X pixels/meter (~72 DPI)
+        bmp.appendLittleEndian(Int32(2835))  // Y pixels/meter
+        bmp.appendLittleEndian(UInt32(16))  // Colors used
+        bmp.appendLittleEndian(UInt32(0))  // Important colors (0 = all)
 
         // --- Color Table (16 entries, 4 bytes each: B, G, R, 0) ---
-        for i in 0 ..< 16 {
-            let val = UInt8(i * 17) // 0, 17, 34, ... 255 (evenly spaced grayscale)
-            bmp.append(contentsOf: [val, val, val, 0]) // B, G, R, Reserved
+        for i in 0..<16 {
+            let val = UInt8(i * 17)  // 0, 17, 34, ... 255 (evenly spaced grayscale)
+            bmp.append(contentsOf: [val, val, val, 0])  // B, G, R, Reserved
         }
 
         // --- Pixel Data (bottom-up rows, 4-bit packed) ---
         let rowBytes = [UInt8](repeating: 0, count: paddedRowSize)
-        for row in 0 ..< height {
+        for row in 0..<height {
             // BMP is bottom-up: row 0 in BMP = last row of image
             let srcRow = height - 1 - row
             let srcOffset = srcRow * width
             var rowBuf = rowBytes
 
-            for col in 0 ..< width {
+            for col in 0..<width {
                 let pixelIndex = srcOffset + col
                 guard pixelIndex < grayscalePixels.count else { continue }
 
                 // Map 8-bit grayscale (0-255) to 4-bit index (0-15)
                 let gray8 = grayscalePixels[pixelIndex]
-                let index4 = gray8 >> 4 // divide by 16
+                let index4 = gray8 >> 4  // divide by 16
 
                 let bytePos = col / 2
                 if col % 2 == 0 {
@@ -1658,8 +2326,30 @@ class G2: NSObject, SGCManager {
         // G2 doesn't have a native dashboard concept via EvenHub
     }
 
-    func setDashboardPosition(_: Int, _: Int) {
-        // No-op for G2
+    func setDashboardPosition(_ height: Int, _ depth: Int) {
+        Bridge.log("G2: setDashboardPosition(height=\(height), depth=\(depth))")
+        setDashboardHeightOnly(height)
+        setDashboardDepthOnly(depth)
+    }
+
+    func setDashboardHeightOnly(_ height: Int) {
+        let clamped = Int32(min(max(height, 0), 12))
+        Bridge.log("G2: setDashboardHeightOnly(\(clamped))")
+        let msg = G2SettingProto.setScreenHeight(
+            magicRandom: sendManager.nextMagicRandom(),
+            level: clamped
+        )
+        sendG2SettingCommand(msg)
+    }
+
+    func setDashboardDepthOnly(_ depth: Int) {
+        let clamped = Int32(min(max(depth, 0), 2))
+        Bridge.log("G2: setDashboardDepthOnly(\(clamped))")
+        let msg = G2SettingProto.setScreenDepth(
+            magicRandom: sendManager.nextMagicRandom(),
+            level: clamped
+        )
+        sendG2SettingCommand(msg)
     }
 
     func setBrightness(_ level: Int, autoMode: Bool) {
@@ -1686,11 +2376,15 @@ class G2: NSObject, SGCManager {
         let msg: Data
         if !startupPageCreated {
             Bridge.log("G2: createPageWithText - using createPageMessage (first time)")
-            msg = EvenHubProto.createPageMessage(textContainers: [tc])
+            msg = EvenHubProto.createPageMessage(
+                textContainers: [tc], magicRandom: sendManager.nextMagicRandom(),
+                appId: activeMenuAppId)
             startupPageCreated = true
         } else {
             Bridge.log("G2: createPageWithText - using rebuildPageMessage")
-            msg = EvenHubProto.rebuildPageMessage(textContainers: [tc])
+            msg = EvenHubProto.rebuildPageMessage(
+                textContainers: [tc], magicRandom: sendManager.nextMagicRandom(),
+                appId: activeMenuAppId)
         }
         sendEvenHubCommand(msg)
         pageCreated = true
@@ -1715,7 +2409,6 @@ class G2: NSObject, SGCManager {
 
     func setMicEnabled(_ enabled: Bool) {
         Bridge.log("G2: setMicEnabled(\(enabled))")
-        micEnabled_ = enabled
         GlassesStore.shared.apply("glasses", "micEnabled", enabled)
 
         let msg = EvenHubProto.audioControlMessage(enable: enabled)
@@ -1736,7 +2429,7 @@ class G2: NSObject, SGCManager {
 
     func connectById(_ id: String) {
         Bridge.log("G2: connectById(\(id))")
-        DEVICE_SEARCH_ID = "_" + id + "_"
+        DEVICE_SEARCH_ID = id
         startScan()
     }
 
@@ -1802,15 +2495,156 @@ class G2: NSObject, SGCManager {
         sendEvenHubHeartbeat()
     }
 
+    func connectController() {
+        guard ready else {
+            Bridge.log("G2: connectController - not ready, ignoring")
+            return
+        }
+
+        guard let mac = GlassesStore.shared.get("glasses", "controllerMacAddress") as? String else {
+            Bridge.log("G2: connectController - no MAC address found")
+            return
+        }
+
+        // Parse "AA:BB:CC:DD:EE:FF" into 6-byte Data
+        let hexParts = mac.split(separator: ":").compactMap { UInt8($0, radix: 16) }
+        guard hexParts.count == 6 else {
+            Bridge.log("G2: connectController - invalid MAC format: \(mac)")
+            return
+        }
+        let macData = Data(hexParts)
+
+        let msg = DevSettingsProto.ringConnectInfo(
+            magicRandom: sendManager.nextMagicRandom(),
+            connect: true,
+            ringMac: macData
+        )
+        sendDevSettingsCommand(msg)
+        Bridge.log("G2: Sent RING_CONNECT_INFO for MAC \(mac)")
+    }
+
+    func disconnectController() {
+
+        guard ready else {
+            Bridge.log("G2: disconnectController - not ready, ignoring")
+            return
+        }
+
+        guard let mac = GlassesStore.shared.get("glasses", "controllerMacAddress") as? String else {
+            Bridge.log("G2: disconnectController - no MAC address found")
+            return
+        }
+
+        // Parse "AA:BB:CC:DD:EE:FF" into 6-byte Data
+        let hexParts = mac.split(separator: ":").compactMap { UInt8($0, radix: 16) }
+        guard hexParts.count == 6 else {
+            Bridge.log("G2: disconnectController - invalid MAC format: \(mac)")
+            return
+        }
+        let macData = Data(hexParts)
+
+        let msg = DevSettingsProto.ringConnectInfo(
+            magicRandom: sendManager.nextMagicRandom(),
+            connect: false,
+            ringMac: macData
+        )
+        sendDevSettingsCommand(msg)
+
+        GlassesStore.shared.apply("glasses", "controllerMacAddress", "")
+        GlassesStore.shared.apply("glasses", "controllerConnected", false)
+        GlassesStore.shared.apply("glasses", "controllerFullyBooted", false)
+        Bridge.log("G2: Sent RING_DISCONNECT_INFO for MAC \(mac)")
+    }
+
+    func dbg1() {
+        Bridge.log("G2: dbg1()")
+
+        // // send a shutdown message
+        // let msg = EvenHubProto.shutdownMessage()
+        // sendEvenHubCommand(msg)
+        // pageCreated = false
+        // currentTextContent = ""
+
+        // DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+        //     guard let self = self else { return }
+        //     // self.sendShutdown()
+        //     // runAuthSequence()
+        //     runDashboardSequence()
+        // }
+
+        // connectController("1B:08:26:8E:0E:E6")
+        connectController()
+    }
+    func dbg2() {
+
+        Bridge.log("G2: dbg2()")
+
+        // createPageWithText("test1")
+
+        // let tc = EvenHubProto.textContainerProperty(
+        //     x: 0, y: 0, width: 576, height: 288,
+        //     borderWidth: 0, borderColor: 0, borderRadius: 0,
+        //     paddingLength: 4, containerID: textContainerID,
+        //     containerName: "text-main2", isEventCapture: true,
+        //     content: "test-dbg1"
+        // )
+
+        // let msg: Data
+        // Bridge.log("G2: dbg2 - sending createPageMessage()")
+        // msg = EvenHubProto.createPageMessage(
+        //     textContainers: [tc], magicRandom: sendManager.nextMagicRandom(),
+        //     appId: nil)
+
+        // sendEvenHubCommand(msg)
+
+        // // update the text
+        // Bridge.log("G2: sendTextWall() - updating text container")
+        // updateText("test2")
+    }
+
     // MARK: - SGCManager: Device Control
 
-    func setHeadUpAngle(_: Int) {
-        // TODO: Implement via g2_setting service
+    func setHeadUpAngle(_ angle: Int) {
+        let clamped = min(max(angle, 0), 60)
+        Bridge.log("G2: setHeadUpAngle(\(clamped))")
+
+        // Enable head-up display
+        let enableMsg = G2SettingProto.setHeadUpSwitch(
+            magicRandom: sendManager.nextMagicRandom(),
+            enabled: true
+        )
+        sendG2SettingCommand(enableMsg)
+
+        // Set the angle
+        let angleMsg = G2SettingProto.setHeadUpAngle(
+            magicRandom: sendManager.nextMagicRandom(),
+            angle: Int32(clamped)
+        )
+        sendG2SettingCommand(angleMsg)
     }
 
     func getBatteryStatus() {
         Bridge.log("G2: getBatteryStatus()")
         requestDeviceInfo()
+    }
+
+    func setDashboardMenu(_ items: [[String: Any]]) {
+        let menuItems = items.compactMap { dict -> MenuProto.MenuItem? in
+            guard let name = dict["name"] as? String,
+                let packageName = dict["packageName"] as? String
+            else { return nil }
+            let running = dict["running"] as? Bool ?? false
+            return MenuProto.MenuItem(packageName: packageName, name: name, running: running)
+        }
+        dashboardMenuItems = menuItems
+        Bridge.log("G2: setDashboardMenu — sending \(menuItems.count) items")
+        let (msg, appIdMap) = MenuProto.sendMenuInfo(
+            magicRandom: sendManager.nextMagicRandom(),
+            items: menuItems
+        )
+        menuAppIdToPackageName = appIdMap
+        activeMenuAppId = appIdMap.keys.sorted().first
+        sendMenuCommand(msg)
     }
 
     func setSilentMode(_: Bool) {
@@ -1912,9 +2746,10 @@ class G2: NSObject, SGCManager {
         let devices = getConnectedDevices()
         Bridge.log("G2: connnectedDevices.count: (\(devices.count))")
         for device in devices {
-            if let name = device.name {
+            if let name = device.name, let serialNumber = deviceNameToSerialNumber[name] {
                 Bridge.log("G2: Connected to device: \(name)")
-                if name.contains("_L_") && name.contains(DEVICE_SEARCH_ID) {
+
+                if name.contains("_L_") && serialNumber.contains(DEVICE_SEARCH_ID) {
                     leftPeripheral = device
                     device.delegate = self
                     device.discoverServices([G2BLE.SERVICE_UUID])
@@ -1925,7 +2760,7 @@ class G2: NSObject, SGCManager {
                             CBConnectPeripheralOptionNotifyOnDisconnectionKey: true,
                         ]
                     )
-                } else if name.contains("_R_") && name.contains(DEVICE_SEARCH_ID) {
+                } else if name.contains("_R_") && serialNumber.contains(DEVICE_SEARCH_ID) {
                     rightPeripheral = device
                     device.delegate = self
                     device.discoverServices([G2BLE.SERVICE_UUID])
@@ -1937,7 +2772,8 @@ class G2: NSObject, SGCManager {
                         ]
                     )
                 }
-                emitDiscoveredDevice(name)
+                // we can't emit the serial number here unfortunately:
+                emitDiscoveredDevice(serialNumber)
             }
         }
 
@@ -1949,7 +2785,7 @@ class G2: NSObject, SGCManager {
         centralManager!.scanForPeripherals(
             withServices: nil,
             options: [
-                CBCentralManagerScanOptionAllowDuplicatesKey: false,
+                CBCentralManagerScanOptionAllowDuplicatesKey: false
             ]
         )
         return true
@@ -1976,14 +2812,18 @@ class G2: NSObject, SGCManager {
         // Validate the cached peripherals match the device the user selected
         let leftName = left.name ?? ""
         let rightName = right.name ?? ""
-        if !leftName.isEmpty && !leftName.contains(DEVICE_SEARCH_ID) {
-            Bridge.log("G2: connectByUUID - cached left '\(leftName)' doesn't match search ID '\(DEVICE_SEARCH_ID)', skipping")
-            return false
-        }
-        if !rightName.isEmpty && !rightName.contains(DEVICE_SEARCH_ID) {
-            Bridge.log("G2: connectByUUID - cached right '\(rightName)' doesn't match search ID '\(DEVICE_SEARCH_ID)', skipping")
-            return false
-        }
+        // if !leftName.isEmpty && !leftName.contains(DEVICE_SEARCH_ID) {
+        //     Bridge.log(
+        //         "G2: connectByUUID - cached left '\(leftName)' doesn't match search ID '\(DEVICE_SEARCH_ID)', skipping"
+        //     )
+        //     return false
+        // }
+        // if !rightName.isEmpty && !rightName.contains(DEVICE_SEARCH_ID) {
+        //     Bridge.log(
+        //         "G2: connectByUUID - cached right '\(rightName)' doesn't match search ID '\(DEVICE_SEARCH_ID)', skipping"
+        //     )
+        //     return false
+        // }
 
         Bridge.log("G2: connectByUUID - left: \(leftName), right: \(rightName)")
 
@@ -2002,8 +2842,8 @@ class G2: NSObject, SGCManager {
         // a different service than our primary one, and retrieveConnectedPeripherals only
         // returns peripherals whose services match.
         let serviceUUIDs: [CBUUID] = [
-            G2BLE.SERVICE_UUID, // EvenHub: 00002760-...-0000
-            CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"), // Nordic UART
+            G2BLE.SERVICE_UUID,  // EvenHub: 00002760-...-0000
+            CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"),  // Nordic UART
         ]
         var devices: [CBPeripheral] = []
         for svc in serviceUUIDs {
@@ -2017,13 +2857,13 @@ class G2: NSObject, SGCManager {
         return devices
     }
 
-    private func emitDiscoveredDevice(_ name: String, _ signalStrength: Int = -1) {
+    private func emitDiscoveredDevice(_ serialNumber: String) {
         // Extract the numeric ID from name like "Even G2_32_R_3FFA6D" -> "32"
-        guard let idNumber = extractIdNumber(name) else {
-            Bridge.log("G2: Could not extract ID from: \(name)")
-            return
-        }
-        Bridge.sendDiscoveredDevice(DeviceTypes.G2, "\(idNumber)", signalStrength)
+        // guard let idNumber = extractIdNumber(name) else {
+        //     Bridge.log("G2: Could not extract ID from: \(name)")
+        //     return
+        // }
+        Bridge.sendDiscoveredDevice(DeviceTypes.G2, serialNumber)
     }
 
     private func extractIdNumber(_ name: String) -> Int? {
@@ -2031,8 +2871,8 @@ class G2: NSObject, SGCManager {
         // Extract XX (the numeric ID between G2_ and _L_/_R_)
         let pattern = "G2_(\\d+)_"
         guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)),
-              let range = Range(match.range(at: 1), in: name)
+            let match = regex.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)),
+            let range = Range(match.range(at: 1), in: name)
         else {
             return nil
         }
@@ -2041,8 +2881,13 @@ class G2: NSObject, SGCManager {
 
     // MARK: - Incoming Data Handling
 
-    private func handleNotifyData(_ data: Data, from _: CBPeripheral) {
-        guard let result = receiveManager.handlePacket(data) else { return }
+    private func handleNotifyData(_ data: Data, from peripheral: CBPeripheral) {
+        // Distinguish left vs right peripheral so multi-packet reassembly doesn't collide
+        let sourceKey = peripheral === leftPeripheral ? "L" : "R"
+        guard let result = receiveManager.handlePacket(data, sourceKey: sourceKey) else { return }
+        // Bridge.log(
+        //     "G2: handleNotifyData() - serviceId=\(result.serviceId), payload=\(result.payload.count) bytes"
+        // )
 
         // Route based on service ID
         switch result.serviceId {
@@ -2052,6 +2897,14 @@ class G2: NSObject, SGCManager {
             handleDevSettingsResponse(result.payload)
         case ServiceID.g2Setting.rawValue:
             handleG2SettingResponse(result.payload)
+        case ServiceID.menu.rawValue:
+            handleMenuResponse(result.payload)
+        case ServiceID.dashboard.rawValue:
+            handleDashboardResponse(result.payload)
+        case ServiceID.gestureCtrl.rawValue:
+            handleGestureCtrl(result.payload)
+        case ServiceID.evenHubCtrl.rawValue:
+            handleEvenHubCtrlResponse(result.payload)
         default:
             Bridge.log(
                 "G2: Unhandled service \(result.serviceId) (\(result.payload.count) bytes): \(result.payload.prefix(32).map { String(format: "%02X", $0) }.joined())"
@@ -2071,12 +2924,41 @@ class G2: NSObject, SGCManager {
             return
         }
 
+        // Bridge.log("G2: EvenHub incoming cmd=\(cmdValue), fields=\(Array(fields.keys).sorted())")
+
         if cmdValue == EvenHubResponseCmd.osNotifyEventToApp.rawValue {
             // Touch/gesture event from glasses
             guard let devEventData = fields[13] as? Data else { return }
+            let timestamp = Int64(Date().timeIntervalSince1970 * 1000)
+            if lastClickTimestamp != nil && timestamp - lastClickTimestamp! < 100 {
+                // Bridge.log("G2: Double click ignored (too soon)")
+                return
+            }
+            lastClickTimestamp = timestamp
             handleTouchEvent(devEventData)
+        } else if cmdValue == 17 {
+            // Miniapp selection from glasses dashboard menu (cmdId=17)
+            // field 20 contains sub-message with field 1 = itemAppId
+            if let selectData = fields[20] as? Data {
+                var selectReader = ProtobufReader(selectData)
+                let selectFields = selectReader.parseFields()
+                if let appId = selectFields[1] as? Int32 {
+                    // Resolve appId → packageName using our stored mapping
+                    if let packageName = menuAppIdToPackageName[appId] {
+                        Bridge.log("G2: Menu miniapp selected — \(packageName)")
+                        Bridge.sendMiniappSelected(packageName: packageName)
+                        // clear the display after a delay:
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            self.clearDisplay()
+                        }
+                    } else {
+                        Bridge.log(
+                            "G2: Menu selection ignored — placeholder or unknown appId=\(appId)")
+                    }
+                }
+            }
         } else {
-            // Log unhandled EvenHub commands (helps debug stock dashboard interactions)
+            // Log unhandled EvenHub commands (helps debug menu selection and stock dashboard interactions)
             // Bridge.log(
             //     "G2: EvenHub response cmd=\(cmdValue), \(payload.count) bytes, fields=\(Array(fields.keys).sorted())"
             // )
@@ -2092,7 +2974,7 @@ class G2: NSObject, SGCManager {
                         // Bridge.log("G2: EvenHub response field\(resField) errorCode=\(errorCode)")
                         if errorCode == 9 {
                             Bridge.log(
-                                "G2: Glasses shutdown our EvenHub page — resetting page state"
+                                "G2: WARN: Glasses shutdown our EvenHub page — resetting page state"
                             )
                             startupPageCreated = false
                             pageCreated = false
@@ -2109,7 +2991,7 @@ class G2: NSObject, SGCManager {
 
             // If glasses sent a shutdown (cmd=9/10), our page is gone — reset state
             if cmdValue == 9 || cmdValue == 10 {
-                Bridge.log("G2: Glasses shutdown our EvenHub page — resetting page state")
+                Bridge.log("G2: ERROR: Glasses shutdown our EvenHub page — resetting page state")
                 startupPageCreated = false
                 pageCreated = false
                 pageHasTextContainer = false
@@ -2125,58 +3007,92 @@ class G2: NSObject, SGCManager {
 
         let timestamp = Int64(Date().timeIntervalSince1970 * 1000)
 
+        // Bridge.log("G2: handleTouchEvent: \(fields)")
+
         // SysEvent (field 3) - system-level gestures
         if let sysData = fields[3] as? Data {
             var sysReader = ProtobufReader(sysData)
             let sysFields = sysReader.parseFields()
-            if let eventTypeRaw = sysFields[1] as? Int32,
-               let eventType = OsEventType(rawValue: eventTypeRaw)
-            {
-                let gestureName = mapEventTypeToGesture(eventType)
-                if let gestureName = gestureName {
-                    Bridge.sendTouchEvent(
-                        deviceModel: DeviceTypes.G2, gestureName: gestureName, timestamp: timestamp
-                    )
-                    Bridge.log("G2: SysEvent → \(gestureName)")
-
-                    if gestureName == "double_tap" {
-                        // trigger dashboard:
-                        let isHeadUp =
-                            GlassesStore.shared.get("glasses", "headUp") as? Bool ?? false
-                        // toggle head up:
-                        GlassesStore.shared.apply("glasses", "headUp", !isHeadUp)
-                        if isHeadUp {
-                            // clear the display after a delay:
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                self.clearDisplay()
-                            }
-                        }
-                    }
-
-                    // System exit: glasses killed our EvenHub page (user selected another app from long-press menu)
-                    // Reset page state so next display call re-creates the page, then force re-create immediately
-                    if eventType == .systemExit || eventType == .abnormalExit {
-                        let savedText = currentTextContent
-                        let savedBitmap = currentBitmapBase64
-                        Bridge.log("G2: System exit — resetting page state and re-creating EvenHub page")
-                        startupPageCreated = false
-                        pageCreated = false
-                        pageHasTextContainer = false
-                        currentTextContent = ""
-                        currentBitmapBase64 = ""
-                        // Force re-create the page to reclaim EvenHub focus
-                        Task {
-                            try? await Task.sleep(nanoseconds: 500_000_000) // 500ms for glasses to finish transition
-                            if !savedBitmap.isEmpty {
-                                await self.displayBitmap(base64ImageData: savedBitmap)
-                            } else {
-                                self.sendTextWall(savedText.isEmpty ? " " : savedText)
-                            }
-                        }
-                    }
+            var eventType: OsEventType? = nil
+            if let normalType = sysFields[1] as? Int32 {
+                eventType = OsEventType(rawValue: normalType)
+            } else if let clickType = sysFields[2] as? Int32 {
+                if clickType == 2 {
+                    eventType = OsEventType.click
                 }
+                if clickType == 3 {
+                    eventType = OsEventType.click
+                }
+            }
+
+            // Bridge.log("G2: sysFields: \(sysFields)")
+
+            guard let eventType = eventType else {
+                Bridge.log("G2: unknown event type: \(sysFields)")
                 return
             }
+
+            guard let gestureName = mapEventTypeToGesture(eventType) else {
+                Bridge.log("G2: no gesture mapping for \(eventType) \(sysFields)")
+                return
+            }
+
+            Bridge.sendTouchEvent(
+                deviceModel: DeviceTypes.G2, gestureName: gestureName,
+                timestamp: timestamp
+            )
+            // Bridge.log("G2: SysEvent → \(gestureName) \(eventType)")
+
+            if eventType == .doubleClick {
+                // trigger dashboard:
+                let isHeadUp = GlassesStore.shared.get("glasses", "headUp") as? Bool ?? false
+                // toggle head up:
+                GlassesStore.shared.apply("glasses", "headUp", !isHeadUp)
+                if isHeadUp {
+                    // Bridge.log("G2: going back to home, clearing display")
+                    // clear the display after a delay:
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        self.clearDisplay()
+                    }
+                }
+                // sendDashboardCommand(DashboardCommand.trigger)
+
+                // toggle head up:
+                // GlassesStore.shared.apply("glasses", "headUp", true)
+                // runDashboardSequence()
+            }
+
+            // if eventType == .foregroundEnter {
+            //     Bridge.log("G2: Foreground enter detected")
+            // }
+
+            // if eventType == .click {
+            //     Bridge.log("G2: Click detected")
+            // }
+
+            // System exit: glasses killed our EvenHub page (user opened menu or another app)
+            // Reset page state and re-create the page to reclaim EvenHub focus
+            if eventType == .systemExit || eventType == .abnormalExit {
+                let savedText = currentTextContent
+                let savedBitmap = currentBitmapBase64
+                // Bridge.log("G2: System exit detected")
+                startupPageCreated = false
+                pageCreated = false
+                pageHasTextContainer = false
+                currentTextContent = ""
+                currentBitmapBase64 = ""
+                // Force re-create the page to reclaim EvenHub focus
+                // Task {
+                //     try? await Task.sleep(nanoseconds: 1_000_000_000)  // 1000ms for glasses to finish transition
+                //     if !savedBitmap.isEmpty {
+                //         await self.displayBitmap(base64ImageData: savedBitmap)
+                //     } else {
+                //         self.sendTextWall(savedText.isEmpty ? " " : savedText)
+                //     }
+                // }
+
+            }
+            return
         }
 
         // TextEvent (field 2) - tap on text container
@@ -2184,7 +3100,7 @@ class G2: NSObject, SGCManager {
             var textReader = ProtobufReader(textData)
             let textFields = textReader.parseFields()
             if let eventTypeRaw = textFields[3] as? Int32,
-               let eventType = OsEventType(rawValue: eventTypeRaw)
+                let eventType = OsEventType(rawValue: eventTypeRaw)
             {
                 let gestureName = mapEventTypeToGesture(eventType)
                 if let gestureName = gestureName {
@@ -2198,21 +3114,21 @@ class G2: NSObject, SGCManager {
         }
 
         // ListEvent (field 1) - interaction with list container
-        if let listData = fields[1] as? Data {
-            var listReader = ProtobufReader(listData)
-            let listFields = listReader.parseFields()
-            if let eventTypeRaw = listFields[5] as? Int32,
-               let eventType = OsEventType(rawValue: eventTypeRaw)
-            {
-                let gestureName = mapEventTypeToGesture(eventType)
-                if let gestureName = gestureName {
-                    Bridge.sendTouchEvent(
-                        deviceModel: DeviceTypes.G2, gestureName: gestureName, timestamp: timestamp
-                    )
-                    Bridge.log("G2: ListEvent → \(gestureName)")
-                }
-            }
-        }
+        // if let listData = fields[1] as? Data {
+        //     var listReader = ProtobufReader(listData)
+        //     let listFields = listReader.parseFields()
+        //     if let eventTypeRaw = listFields[5] as? Int32,
+        //         let eventType = OsEventType(rawValue: eventTypeRaw)
+        //     {
+        //         let gestureName = mapEventTypeToGesture(eventType)
+        //         if let gestureName = gestureName {
+        //             Bridge.sendTouchEvent(
+        //                 deviceModel: DeviceTypes.G2, gestureName: gestureName, timestamp: timestamp
+        //             )
+        //             Bridge.log("G2: ListEvent → \(gestureName)")
+        //         }
+        //     }
+        // }
     }
 
     private func mapEventTypeToGesture(_ eventType: OsEventType) -> String? {
@@ -2224,18 +3140,118 @@ class G2: NSObject, SGCManager {
         case .foregroundEnter: return "foreground_enter"
         case .foregroundExit: return "foreground_exit"
         case .systemExit: return "system_exit"
-        case .abnormalExit: return nil // don't report abnormal exits as gestures
+        case .abnormalExit: return nil  // don't report abnormal exits as gestures
         }
     }
 
-    private func handleDevSettingsResponse(_: Data) {
+    private func reconnectController() {
+        let mac = GlassesStore.shared.get("glasses", "controllerMacAddress") as? String ?? ""
+        guard !mac.isEmpty else {
+            Bridge.log("G2: reconnectController - no MAC address found")
+            return
+        }
+        connectController()
+    }
+
+    private func handleDevSettingsResponse(_ data: Data) {
+
         // DevSettings responses (auth acks, heartbeat acks) — mostly informational
+
+        var reader = ProtobufReader(data)
+        let fields = reader.parseFields()
+
+        let cmdValue = fields[1] as? Int32 ?? -1
+
+        // if the data is just a heartbeat, ignore it:
+        if let cmdValue = fields[1] as? Int32,
+            cmdValue == DevCfgCommandId.baseConnHeartBeat.rawValue
+        {
+            return
+        }
+        // Bridge.log("G2: DevSettings response cmdValue=\(cmdValue)")
+
+        Bridge.log(
+            "G2: DevSettings response: \(data.prefix(32).map { String(format: "%02X", $0) }.joined(separator: ":"))"
+        )
+
+        // RING_CONNECT_INFO response (cmd 6)
+        if cmdValue == DevCfgCommandId.ringConnectInfo.rawValue {
+
+            // let connStat = fields[4] as? Int32 ?? -1
+            // // if it's 3c or 3d that's disconnected:
+            // if connStat == 0x3c || connStat == 0x3d {
+            //     Bridge.log("G2: Ring disconnected")
+            //     GlassesStore.shared.apply("glasses", "controllerConnected", false)
+            //     GlassesStore.shared.apply("glasses", "controllerFullyBooted", false)
+            //     GlassesStore.shared.apply("glasses", "controllerSearching", true)
+            // }
+
+            // Bridge.log("G2: Ring connection status: connStat=\(connStat)")
+
+            // Bridge.log("G2: RingConnectInfo: \(fields)")
+            if let ringData = fields[5] as? Data {  // field 5 = ringInfo
+                var ringReader = ProtobufReader(ringData)
+                let ringFields = ringReader.parseFields()
+
+                // Bridge.log("G2: RingInfo: \(ringFields)")
+
+                if ringFields[1] as? Int32 ?? 0 == 1 {
+                    Bridge.log("G2: Ring maybe connected?")
+                    // GlassesStore.shared.apply("glasses", "controllerConnected", true)
+                    GlassesStore.shared.apply("glasses", "controllerFullyBooted", true)
+
+                }
+
+                if ringFields[4] as? Int32 ?? 0 == 62 {
+                    Bridge.log("G2: Ring maybe reconnected?")
+                    // GlassesStore.shared.apply("glasses", "controllerConnected", true)
+                    GlassesStore.shared.apply("glasses", "controllerFullyBooted", true)
+                }
+            }
+
+            // if the data ends in 2016 that's a disconnect?:
+            // if data.suffix(4) == Data([0x20, 0x16]) {
+            //     Bridge.log("G2: Ring disconnected")
+            //     GlassesStore.shared.apply("glasses", "controllerConnected", false)
+            //     GlassesStore.shared.apply("glasses", "controllerFullyBooted", false)
+            //     GlassesStore.shared.apply("glasses", "controllerSearching", true)
+            // }
+
+            if let ringData = fields[5] as? Data {  // field 5 = ringInfo
+                var ringReader = ProtobufReader(ringData)
+                let ringFields = ringReader.parseFields()
+                let connStatus = ringFields[4] as? Int32 ?? -1  // field 4 = connStatus
+                Bridge.log(
+                    "G2: Ring connection status: connStatus?=\(connStatus))"
+                )
+
+                if connStatus == 22 {
+                    Bridge.log("G2: Ring disconnected")
+                    // GlassesStore.shared.apply("glasses", "controllerConnected", false)
+                    GlassesStore.shared.apply("glasses", "controllerFullyBooted", false)
+                    GlassesStore.shared.apply("glasses", "controllerSearching", true)
+                    reconnectController()
+                }
+
+                if connStatus == 8 {
+                    Bridge.log("G2: Ring maybe disconnected?")
+                    // GlassesStore.shared.apply("glasses", "controllerConnected", false)
+                    GlassesStore.shared.apply("glasses", "controllerFullyBooted", false)
+                    GlassesStore.shared.apply("glasses", "controllerSearching", true)
+                    reconnectController()
+                }
+                // // GlassesStore.shared.apply("glasses", "ringConnectedToGlasses", connected)
+
+            }
+        }
     }
 
     private func handleG2SettingResponse(_ payload: Data) {
         // Parse G2SettingPackage: field 1=commandId, field 4=DeviceReceiveRequestFromAPP (response), field 5=DeviceSendInfoToAPP
         var reader = ProtobufReader(payload)
         let fields = reader.parseFields()
+
+        // Bridge.log("G2: G2Setting response: \(fields)")
 
         guard let cmdValue = fields[1] as? Int32 else { return }
 
@@ -2260,19 +3276,22 @@ class G2: NSObject, SGCManager {
         var reader = ProtobufReader(data)
         let fields = reader.parseFields()
 
+        // Bridge.log("G2: DeviceRequestResponse: \(fields)")
+
         // Battery
         if let battery = fields[12] as? Int32 {
             let level = Int(battery)
             if level >= 0 && level <= 100 {
-                Bridge.log("G2: Battery level: \(level)%")
-                batteryLevel = level
+                // Bridge.log("G2: Battery level: \(level)%")
+                GlassesStore.shared.apply("glasses", "batteryLevel", level)
             }
         }
 
         // Charging status
         if let charging = fields[13] as? Int32 {
-            isCharging = charging != 0
-            Bridge.log("G2: Charging: \(isCharging)")
+            let isCharging = charging != 0
+            GlassesStore.shared.apply("glasses", "charging", isCharging)
+            // Bridge.log("G2: Charging: \(isCharging)")
             // Re-send battery status with updated charging info
             if batteryLevel >= 0 {
                 Bridge.sendBatteryStatus(level: batteryLevel, charging: isCharging)
@@ -2281,19 +3300,98 @@ class G2: NSObject, SGCManager {
 
         // Software versions
         if let leftVer = fields[5] as? Data,
-           let leftVersion = String(data: leftVer, encoding: .utf8)
+            let leftVersion = String(data: leftVer, encoding: .utf8)
         {
-            Bridge.log("G2: Left firmware: \(leftVersion)")
+            // Bridge.log("G2: Left firmware: \(leftVersion)")
             GlassesStore.shared.apply("glasses", "leftFirmwareVersion", leftVersion)
         }
         if let rightVer = fields[6] as? Data,
-           let rightVersion = String(data: rightVer, encoding: .utf8)
+            let rightVersion = String(data: rightVer, encoding: .utf8)
         {
-            Bridge.log("G2: Right firmware: \(rightVersion)")
+            // Bridge.log("G2: Right firmware: \(rightVersion)")
             GlassesStore.shared.apply("glasses", "rightFirmwareVersion", rightVersion)
             // Use right version as the main version
-            GlassesStore.shared.apply("glasses", "firmwareVersion", rightVersion)
+            GlassesStore.shared.apply("glasses", "fwVersion", rightVersion)
         }
+    }
+
+    private func handleMenuResponse(_ data: Data) {
+        // meun_main_msg_ctx response from glasses (ack of our menu send)
+        // (informational only)
+        Bridge.log(
+            "G2: menu response: \(data.prefix(32).map { String(format: "%02X", $0) }.joined())")
+    }
+
+    private func handleDashboardResponse(_ payload: Data) {
+        Bridge.log(
+            "G2: dashboard response: \(payload.prefix(32).map { String(format: "%02X", $0) }.joined())"
+        )
+        var reader = ProtobufReader(payload)
+        let fields = reader.parseFields()
+        let cmd = fields[1] as? Int32 ?? -1
+        let magicRandom = fields[2] as? Int32 ?? 0
+
+        // Parse field 6 (DashboardSendToApp) if present
+        var packageId: Int32 = 0
+        if let f6 = fields[6] as? Data {
+            var subReader = ProtobufReader(f6)
+            let sub = subReader.parseFields()
+            packageId = sub[1] as? Int32 ?? 0
+        }
+
+        // cmd=3 is APP_Respond — glasses sending us info, we should respond with cmd=4 (APP_RECEIVE)
+        // AppRespondToDashboard: field1=packageId, field2=flag (0=success)
+        if cmd == 3 {
+            var appRespW = ProtobufWriter()
+            appRespW.writeInt32Field(1, packageId)  // packageId
+            appRespW.writeInt32Field(2, 0)  // flag = APP_RECEIVED_SUCCESS
+
+            var pkgW = ProtobufWriter()
+            pkgW.writeInt32Field(1, 4)  // commandId = APP_RECEIVE
+            pkgW.writeInt32Field(2, magicRandom)
+            pkgW.writeMessageField(5, appRespW.data)  // field5 = appRespond
+            sendDashboardCommand(pkgW.data)
+        }
+    }
+
+    private func handleEvenHubCtrlResponse(_ data: Data) {
+        // EvenHub CTRL channel response (informational only)
+        Bridge.log(
+            "G2: evenHubCtrl response: \(data.prefix(8).map { String(format: "%02X", $0) }.joined())"
+        )
+    }
+
+    private func handleGestureCtrl(_ data: Data) {
+        // gesture_ctrl (service 0x0D): foreground lifecycle signals from glasses
+        // (informational only — log if needed for debugging)
+        // log first few bytes of the response:
+        // Bridge.log(
+        //     "G2: gesture_ctrl response: \(data.map { String(format: "%02X", $0) }.joined())"
+        // )
+        // Bridge.log("G2: gesture_ctrl response:")
+
+        // if we got 08011A00 that means we closed the dashboard, which means the mic is probably dead,
+        // so we need to revive it:
+        if data == Data([0x08, 0x01, 0x1A, 0x00]) {
+            Bridge.log("G2: gesture_ctrl response: dashboard closed")
+            // re-send mic on / update mic state:
+            GlassesStore.shared.apply("glasses", "micEnabled", false)
+            CoreManager.shared.updateMicState()  // should set the mic back on if it should be on
+            //     // let isHeadUp = GlassesStore.shared.get("glasses", "headUp") as? Bool ?? false
+
+            //     // toggle head up:
+            //     GlassesStore.shared.apply("glasses", "headUp", false)
+            //     // send the current state to the glasses
+            //     CoreManager.shared.sendCurrentState()
+            // reset the text container (different from clearDisplay())
+            sendTextWall(" ")
+        }
+
+        // if we got 08011097012200 that means we selected a menu item:
+        // if data == Data([0x08, 0x01, 0x10, 0x97, 0x01, 0x22, 0x00]) {
+        //     Bridge.log("G2: menu item selected, clearing display")
+        //     clearDisplay()
+        // }
     }
 
     private func parseDeviceSendToApp(_ data: Data) {
@@ -2324,6 +3422,20 @@ class G2: NSObject, SGCManager {
 
 // MARK: - CBCentralManagerDelegate
 
+func extractSN(from data: Data) -> String? {
+    // Android uses startSubIndex=7, byteLength=21 on the FULL scan record
+    // iOS manufacturerData is just the manufacturer-specific payload,
+    // so the offset may differ. You'll need to log the raw bytes and find
+    // where the SN string starts.
+
+    // Skip "ER" prefix (2 bytes), read 14 bytes of SN
+    let snData = data[2..<16]
+    let sn = String(data: snData, encoding: .ascii)?
+        .replacingOccurrences(
+            of: "[\\x00-\\x1F\\x7F]", with: "", options: .regularExpression)
+    return sn
+}
+
 extension G2: CBCentralManagerDelegate {
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
         let state = central.state
@@ -2344,48 +3456,51 @@ extension G2: CBCentralManagerDelegate {
     ) {
         guard
             let name = peripheral.name ?? advertisementData[CBAdvertisementDataLocalNameKey]
-            as? String
+                as? String
         else { return }
 
         // G2 glasses have "Even" prefix and "G2" in name, with _L_ or _R_ for side
         guard name.contains("G2") else { return }
+        guard let mfgData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
+            mfgData.count >= 16
+        else { return }
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
 
-            Bridge.log("G2: Discovered: \(name) (RSSI: \(RSSI))")
+            guard let serialNumber = extractSN(from: mfgData) else {
+                Bridge.log("G2: Could not extract SN from manufacturer data")
+                return
+            }
+            // sn = "S200LACA040040"
+            Bridge.log("G2: Discovered: \(name) (SN: \(serialNumber))")
+            self.deviceNameToSerialNumber[name] = serialNumber
             // GlassesStore.shared.apply("glasses", "signalStrength", RSSI.intValue)
 
             // Always emit discovered device to frontend
-            self.emitDiscoveredDevice(name, RSSI.intValue)
+            self.emitDiscoveredDevice(serialNumber)
 
             // If scan-only mode (no search ID set), don't auto-connect
             guard self.DEVICE_SEARCH_ID != "NOT_SET" else { return }
 
+            // Bridge.log("G2: SN: \(serialNumber), DEVICE_SEARCH_ID: \(self.DEVICE_SEARCH_ID) name: \(name)")
+
             // Only connect to devices matching our search ID
-            guard name.contains(self.DEVICE_SEARCH_ID) else { return }
+            guard serialNumber.contains(self.DEVICE_SEARCH_ID) else { return }
 
             if name.contains("_L_") {
-                // // hard coded conflict resolution for my g2 (for now):
-                // if !name.contains("_4935") {
-                //     return
-                // }
                 if self.leftPeripheral == nil {
                     self.leftPeripheral = peripheral
                     peripheral.delegate = self
                     central.connect(peripheral, options: nil)
-                    Bridge.log("G2: Connecting to LEFT: \(name)")
+                    // Bridge.log("G2: Connecting to LEFT: \(name)")
                 }
             } else if name.contains("_R_") {
-                // // hard coded conflict resolution for my g2 (for now):
-                // if !name.contains("_BCEF") {
-                //     return
-                // }
                 if self.rightPeripheral == nil {
                     self.rightPeripheral = peripheral
                     peripheral.delegate = self
                     central.connect(peripheral, options: nil)
-                    Bridge.log("G2: Connecting to RIGHT: \(name)")
+                    // Bridge.log("G2: Connecting to RIGHT: \(name)")
                 }
             }
 

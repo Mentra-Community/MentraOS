@@ -1487,17 +1487,35 @@ class GallerySyncService {
       await mediaProcessingQueue.waitUntilDrained()
       console.log("[GallerySyncService]   ✅ Processing queue drained")
 
-      // Update sync state
+      // Update sync state — only advance watermark if all files succeeded.
+      // If any failed, set it before the oldest failure so they get retried.
+      let syncWatermark = serverTime
+      if (downloadResult.failed.length > 0) {
+        const failedSet = new Set(downloadResult.failed)
+        let oldestFailed = Infinity
+        for (const f of files) {
+          if (failedSet.has(f.name)) {
+            const ts = typeof f.modified === "number" ? f.modified : parseInt(String(f.modified), 10)
+            if (!isNaN(ts) && ts < oldestFailed) oldestFailed = ts
+          }
+        }
+        if (oldestFailed < Infinity) {
+          syncWatermark = Math.max(0, oldestFailed - 1)
+          console.log(
+            `[GallerySyncService]   ⚠️ ${downloadResult.failed.length} files failed — sync watermark set to ${syncWatermark} instead of ${serverTime}`,
+          )
+        }
+      }
       console.log("[GallerySyncService]   💾 Updating sync state in local storage...")
       const currentSyncState = await localStorageService.getSyncState()
       await localStorageService.updateSyncState({
-        last_sync_time: serverTime,
+        last_sync_time: syncWatermark,
         total_downloaded: currentSyncState.total_downloaded + downloadedCount,
         total_size: currentSyncState.total_size + downloadResult.total_size,
       })
       console.log("[GallerySyncService]   ✅ Sync state updated:")
       console.log(
-        `[GallerySyncService]      - New last_sync_time: ${serverTime} (${new Date(serverTime).toISOString()})`,
+        `[GallerySyncService]      - New last_sync_time: ${syncWatermark} (${new Date(syncWatermark).toISOString()})`,
       )
       console.log(
         `[GallerySyncService]      - Total downloads (lifetime): ${
@@ -1551,6 +1569,7 @@ class GallerySyncService {
     let downloadedCount = 0
     let failedCount = 0
     let totalSizeDownloaded = 0
+    let oldestFailedTimestamp = Infinity // Track for sync watermark
 
     const shouldAutoSave = await gallerySettingsService.getAutoSaveToCameraRoll()
     const shouldProcessImages = useSettingsStore.getState().getSetting(SETTINGS.media_post_processing.key)
@@ -1622,6 +1641,10 @@ class GallerySyncService {
           const errMsg = captureError?.message || captureError?.toString?.() || JSON.stringify(captureError)
           console.error(`[GallerySyncService]   ❌ Failed to download capture ${capture.capture_id}: ${errMsg}`)
           failedCount++
+          // Track oldest failed timestamp so we don't advance sync past it
+          if (capture.timestamp < oldestFailedTimestamp) {
+            oldestFailedTimestamp = capture.timestamp
+          }
           const cs = useGallerySyncStore.getState()
           cs.onFileFailed(capture.capture_id)
         }
@@ -1648,13 +1671,24 @@ class GallerySyncService {
       await mediaProcessingQueue.waitUntilDrained()
       console.log("[GallerySyncService]   ✅ Processing queue drained")
 
-      // Update sync state
+      // Update sync state — only advance the watermark to serverTime if all
+      // captures succeeded. If any failed, set it just before the oldest failure
+      // so those captures are retried on the next sync.
+      const syncWatermark =
+        failedCount > 0 && oldestFailedTimestamp < Infinity
+          ? Math.max(0, oldestFailedTimestamp - 1)
+          : serverTime
       const currentSyncState = await localStorageService.getSyncState()
       await localStorageService.updateSyncState({
-        last_sync_time: serverTime,
+        last_sync_time: syncWatermark,
         total_downloaded: currentSyncState.total_downloaded + downloadedCount,
         total_size: currentSyncState.total_size + totalSizeDownloaded,
       })
+      if (failedCount > 0) {
+        console.log(
+          `[GallerySyncService]   ⚠️ ${failedCount} captures failed — sync watermark set to ${syncWatermark} instead of ${serverTime} so they will be retried`,
+        )
+      }
 
       store.setSyncComplete()
       await this.onSyncComplete(downloadedCount, failedCount)

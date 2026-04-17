@@ -80,18 +80,6 @@ export interface DisplayTextArgs {
 }
 
 /**
- * Microphone state
- */
-export type MicState = "on" | "off" | "muted"
-
-/**
- * Set mic state arguments
- */
-export interface SetMicStateArgs {
-  state: MicState
-}
-
-/**
  * Transcription subscription options
  */
 export interface TranscriptionOptions {
@@ -122,4 +110,4 @@ export type SubscriptionHandler<T = any> = (data: T) => void
 /**
  * Subscription type
  */
-export type SubscriptionType = "transcription" | "audio" | "movement"
+export type SubscriptionType = "transcription" | "movement"

@@ -9,7 +9,7 @@
 
 import { Hono } from "hono";
 import { ClientAppsService } from "../../../services/client/apps.service";
-import { clientAuth } from "../middleware/client.middleware";
+import { clientAuth, requireUserSession } from "../middleware/client.middleware";
 import { logger as rootLogger } from "../../../services/logging/pino-logger";
 import type { AppEnv, AppContext } from "../../../types/hono";
 
@@ -21,7 +21,12 @@ const app = new Hono<AppEnv>();
 // Routes
 // ============================================================================
 
-app.get("/", clientAuth, getApps);
+// requireUserSession returns 503 NO_ACTIVE_SESSION if this pod doesn't hold
+// the user's session. The mobile client auto-reconnects the WS and retries,
+// which routes to whichever pod now owns the session. Without this guard
+// the endpoint silently returned running=false for every app when called on
+// the wrong pod, causing the "Cannot reach $miniapp" screen mid-session.
+app.get("/", clientAuth, requireUserSession, getApps);
 
 // ============================================================================
 // Handlers

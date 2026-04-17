@@ -524,6 +524,9 @@ class MentraNex : SGCManager() {
         Bridge.log("Nex: ping()");
     }
 
+    override fun dbg1() {}
+    override fun dbg2() {}
+
     // Audio Control
     // TODO: Validate this logic. looks weird.
     override fun setMicEnabled(enabled: Boolean) {

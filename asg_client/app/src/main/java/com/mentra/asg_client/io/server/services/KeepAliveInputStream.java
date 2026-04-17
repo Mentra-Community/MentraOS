@@ -92,10 +92,10 @@ public class KeepAliveInputStream extends FilterInputStream {
     
     @Override
     public int available() throws IOException {
-        // Always report at least 1 byte available to prevent blocking
-        // This ensures the connection stays active
-        int available = super.available();
-        return available > 0 ? available : 1;
+        // Report true availability — lying about this (returning 1 when 0)
+        // can cause callers to attempt reads that block or return unexpected
+        // results, potentially truncating the stream.
+        return super.available();
     }
     
     @Override

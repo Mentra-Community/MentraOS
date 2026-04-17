@@ -93,7 +93,15 @@ export function MiniAppCapsuleMenu({
         compress: 0.1,
       })
 
-      await useAppletStatusStore.getState().saveScreenshot(packageName, cropped.uri)
+      if (Platform.OS === "ios") {
+        await useAppletStatusStore.getState().saveScreenshot(packageName, cropped.uri)
+      } else {
+        // android is weird and the crop doesn't work properly:
+        await useAppletStatusStore.getState().saveScreenshot(packageName, uri)
+      }
+
+      // await useAppletStatusStore.getState().saveScreenshot(packageName, cropped.uri)
+      await useAppletStatusStore.getState().saveScreenshot(packageName, uri)
     } catch (e) {
       console.warn("screenshot failed:", e)
     }

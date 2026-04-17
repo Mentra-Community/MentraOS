@@ -96,9 +96,12 @@ class R1: NSObject, ControllerManager {
     private var notifySubscriptionCount = 0
     private var initSequenceRun = false
 
+
     // Device search
     var DEVICE_SEARCH_ID = "NOT_SET"
 
+    // persisted state for ease of reconnection / background connection:
+    // we could store these elsewhere to be like other settings / state, but in practice they will only ever be set and used here
     // Stored UUID for background reconnection
     private var ringUUID: UUID? {
         get { UserDefaults.standard.string(forKey: "r1_ringUUID").flatMap { UUID(uuidString: $0) } }
@@ -109,6 +112,18 @@ class R1: NSObject, ControllerManager {
                 UserDefaults.standard.removeObject(forKey: "r1_ringUUID")
             }
         }
+    }
+    // maps peripheral.name to 6-byte ring MAC address:
+    private var ringMacAddressMap: [String: Data] {
+        get {
+            UserDefaults.standard.dictionary(forKey: "r1_ringMacAddressMap") as? [String: Data]
+                ?? [:]
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "r1_ringMacAddressMap") }
+    }
+    private var ringMacAddress: String? {
+        get { UserDefaults.standard.string(forKey: "r1_ringMacAddress") }
+        set { UserDefaults.standard.set(newValue, forKey: "r1_ringMacAddress") }
     }
 
     // Reconnection
@@ -183,6 +198,7 @@ class R1: NSObject, ControllerManager {
             return false
         }
         guard let uuid = ringUUID else { return false }
+        guard let ringMac = ringMacAddress else { return false }
         guard let peripheral = centralManager?.retrievePeripherals(withIdentifiers: [uuid]).first
         else { return false }
 
@@ -247,8 +263,21 @@ class R1: NSObject, ControllerManager {
             GlassesStore.shared.apply("core", "controller_device_name", id)
         }
 
+        // TODO: uncomment
+        guard let mac = ringMacAddress else {
+            Bridge.log("R1: No ring MAC address found")
+            return
+        }
+        GlassesStore.shared.apply("glasses", "controllerMacAddress", mac)
+
         GlassesStore.shared.apply("glasses", "controllerConnected", true)
         GlassesStore.shared.apply("glasses", "controllerFullyBooted", true)
+
+        // after a second, connect the glasses to the controller if needed:
+        Task {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            await CoreManager.shared.sgc?.connectController()
+        }
 
         startHeartbeat()
     }
@@ -342,6 +371,7 @@ class R1: NSObject, ControllerManager {
         batteryLevelChar = nil
         notifySubscriptionCount = 0
         initSequenceRun = false
+        ringMacAddress = nil
         ready = false
         GlassesStore.shared.apply("glasses", "controllerConnected", false)
         GlassesStore.shared.apply("glasses", "controllerFullyBooted", false)
@@ -392,6 +422,7 @@ class R1: NSObject, ControllerManager {
     func forget() {
         disconnect()
         ringUUID = nil
+        ringMacAddress = nil
         DEVICE_SEARCH_ID = "NOT_SET"
         centralManager?.delegate = nil
     }
@@ -487,12 +518,25 @@ extension R1: CBCentralManagerDelegate {
         rssi RSSI: NSNumber
     ) {
         let name = peripheral.name ?? advertisementData[CBAdvertisementDataLocalNameKey] as? String
+        let mfgData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             guard self.matchesNameFilter(name) else { return }
 
-            Bridge.log("R1: Discovered: \(name ?? "?") (RSSI: \(RSSI))")
+            Bridge.log(
+                "R1: Discovered: \(name ?? "?") (RSSI: \(RSSI)) mfgData: \(mfgData?.map { String(format: "%02X", $0) }.joined(separator: " ") ?? "none")"
+            )
+
+            // Extract ring MAC from manufacturer data if available and store to a map name:mac
+            if let mfgData = mfgData {
+                Bridge.log(
+                    "R1: mfgData: \(mfgData.map { String(format: "%02X", $0) }.joined(separator: " "))"
+                )
+                if mfgData.count >= 6 {
+                    self.ringMacAddressMap[name ?? ""] = Data(mfgData.suffix(6))
+                }
+            }
 
             // Emit discovered device
             if let name = name, let id = self.extractRingId(name) {
@@ -527,6 +571,23 @@ extension R1: CBCentralManagerDelegate {
             Bridge.log("R1: Connected to \(peripheral.name ?? "ring")")
 
             self.ringUUID = peripheral.identifier
+
+            guard let name = peripheral.name, let mac = self.ringMacAddressMap[name] else {
+                Bridge.log("R1: No MAC stored in map found for \(peripheral.name ?? "ring")")
+                // stop the scan, disconnect, remove the uuid, and try again as we need the mac address to connect:
+                self.disconnect()
+                self.ringUUID = nil
+                // we are still searching!:
+                GlassesStore.shared.apply("glasses", "controllerConnected", false)
+                GlassesStore.shared.apply("glasses", "controllerFullyBooted", false)
+                GlassesStore.shared.apply("glasses", "controllerSearching", true)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    self.startScan()
+                }
+                return
+            }
+
+            self.ringMacAddress = mac.map { String(format: "%02X", $0) }.joined(separator: ":")
 
             // Discover all services
             peripheral.discoverServices(nil)
@@ -580,6 +641,7 @@ extension R1: CBPeripheralDelegate {
             guard let self = self else { return }
 
             for char in characteristics {
+                Bridge.log("R1: char discovered: \(char.uuid)")
                 let props = char.properties
                 var propStr: [String] = []
                 if props.contains(.read) { propStr.append("read") }
@@ -622,6 +684,7 @@ extension R1: CBPeripheralDelegate {
         _ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic,
         error: Error?
     ) {
+        Bridge.log("R1: didUpdateNotificationStateFor: \(characteristic.uuid)")
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
 
@@ -647,7 +710,9 @@ extension R1: CBPeripheralDelegate {
         _ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
+        Bridge.log("R1: didUpdateValueFor1: \(characteristic.uuid)")
         guard let data = characteristic.value, !data.isEmpty, error == nil else { return }
+        Bridge.log("R1: didUpdateValueFor: \(characteristic.uuid) data: \(data.toHexString())")
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -666,6 +731,7 @@ extension R1: CBPeripheralDelegate {
     nonisolated func peripheral(
         _ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?
     ) {
+        Bridge.log("R1: didWriteValueFor: \(characteristic.uuid)")
         if let error = error {
             DispatchQueue.main.async {
                 Bridge.log(
