@@ -495,7 +495,10 @@ export class DeviceManager {
       return;
     }
 
-    this.deps.logger.debug("DeviceManager: Processing device state update");
+    // Intentionally silent — device state updates arrive every ~24s and
+    // produce noise in developer logs. The individual Observable.setValue
+    // calls below are the real source of truth; consumers subscribe to
+    // the specific properties they care about (battery, wifi, etc.).
 
     // Connection
     if (state.connected !== undefined) this._connected.setValue(state.connected);
@@ -549,7 +552,11 @@ export class DeviceManager {
    */
   setCapabilities(caps: any): void {
     this.capabilities = caps;
-    this.deps.logger.info(`DeviceManager: Capabilities ${caps ? "updated" : "cleared"}`);
+    const model = this._modelName.value;
+    this.deps.logger.info(
+      { model: model ?? undefined, hasCamera: !!caps?.camera, hasMicrophone: !!caps?.microphone },
+      `Glasses capabilities ${caps ? "received" : "cleared"}${model ? ` (${model})` : ""}`,
+    );
 
     // Notify listeners
     for (const listener of this.capabilitiesListeners) {

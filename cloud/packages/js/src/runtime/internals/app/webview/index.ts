@@ -287,7 +287,7 @@ export function createAuthMiddleware(options: {
     if (signedUserToken) {
       const userId = await verifySignedUserToken(signedUserToken);
       if (userId) {
-        console.log("[auth.middleware] User ID verified from signed user token:", userId);
+        console.debug("[auth.middleware] Authenticated via signed user token");
         return setAuthAndContinue(userId);
       } else {
         console.log("[auth.middleware] Signed user token invalid");
@@ -314,7 +314,7 @@ export function createAuthMiddleware(options: {
 
         const { userId } = await exchangeToken(cloudApiUrl, tempToken, apiKey, packageName);
 
-        console.log("[auth.middleware] User ID verified from temporary token:", userId);
+        console.debug("[auth.middleware] Authenticated via temporary token");
         return setAuthAndContinue(userId);
       } catch (error) {
         console.error("Webview token exchange failed:", error);
@@ -327,7 +327,7 @@ export function createAuthMiddleware(options: {
       const userId = verifyFrontendToken(frontendToken, apiKey);
 
       if (userId) {
-        console.log("[auth.middleware] User ID verified from frontend user token:", userId);
+        console.debug("[auth.middleware] Authenticated via frontend token");
         return setAuthAndContinue(userId);
       } else {
         console.log("[auth.middleware] Frontend token invalid");

@@ -48,3 +48,41 @@ with, we can re-sync. The process is mechanical:
 
 But we're explicitly not coupled. If the SDK never ships a fix, neither
 do we — we just own the code.
+
+## Change log
+
+### 2026-04-18 — Initial fork
+
+Copied verbatim from `cloud/packages/sdk/src/` at commit that matched
+alpha.3 on npm plus unreleased changes on `cloud/plan`.
+
+**Modifications from the initial copy:**
+
+- `internals/index.ts` — `export { StreamStatus, KeepAliveAck }` was
+  wrong (these are `interface` declarations, not runtime values; Bun
+  refused to load). Split into a separate `export type`. See the
+  `// FORK:` comment in the file. Should propagate back to the SDK.
+
+### 2026-04-18 — FORK-SYNC from `cloud/issues-095-dev-feedback-fixes`
+
+Pulled in 5 substantive SDK fixes from `cloud/packages/sdk/src/` after
+the `cloud/issues-095-dev-feedback-fixes` branch merged into
+`cloud/plan`. The copy at `internals/` doesn't auto-update with the
+upstream SDK, so we re-sync by copy-from-upstream and commit.
+
+Files touched:
+
+- `app/server/index.ts` — `onSession` runs fire-and-forget; webhook
+  responds immediately. Prevents webhook timeout on slow developer
+  setup.
+- `internal/_SessionManager.ts` — same fire-and-forget fix in the
+  v3 session manager path.
+- `session/MentraSession.ts` — removed double-registration of
+  `CAPABILITIES_UPDATE` + `DEVICE_STATE_UPDATE` handlers. Was causing
+  every device state handler to fire twice.
+- `session/managers/DeviceManager.ts` — removed 24s-cadence log noise;
+  richer capability log with model / camera / mic hints.
+- `app/webview/index.ts` — auth `console.log` → `console.debug`.
+
+Method: `cp cloud/packages/sdk/src/<f> cloud/packages/js/src/runtime/internals/<f>`
+then tested (236 pass / 0 fail) and booted flash end-to-end.
