@@ -337,31 +337,34 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
   }
 
   /**
-   * Check and log SDK version (dist-tag aware).
+   * Check and log framework version (dist-tag aware).
    * Hits npm registry directly — no dependency on our backend.
+   *
+   * FORK: original SDK looked for `@mentra/sdk` in node_modules. Since
+   * `@mentra/js` IS the SDK now (forked at runtime/internals/), we
+   * look for `@mentra/js` instead. Skips quietly if the package isn't
+   * found — the app is probably linked locally during development.
    */
   private async checkSDKVersion(): Promise<void> {
     try {
-      const sdkPkgPath = path.resolve(process.cwd(), "node_modules/@mentra/sdk/package.json");
+      const pkgPath = path.resolve(process.cwd(), "node_modules/@mentra/js/package.json");
 
-      let currentVersion = "unknown";
+      // No-op if @mentra/js isn't a real npm install (e.g., file: link
+      // during development). Avoids the noisy "package.json not found"
+      // debug + "update available" warn we used to print.
+      if (!fs.existsSync(pkgPath)) return;
 
-      if (fs.existsSync(sdkPkgPath)) {
-        const sdkPkg = JSON.parse(fs.readFileSync(sdkPkgPath, "utf-8"));
-        currentVersion = sdkPkg.version || "not-found";
-      } else {
-        this.logger.debug({ sdkPkgPath }, "No @mentra/sdk package.json found at path");
-      }
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+      const currentVersion = pkg.version || "unknown";
+      if (currentVersion === "unknown") return;
 
-      // Determine which dist-tag (release track) the dev is on
       const distTag = getDistTag(currentVersion);
 
-      // Fetch latest version for this track directly from npm registry
       let latest: string | null = null;
       try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 3000);
-        const response = await fetch(`https://registry.npmjs.org/@mentra/sdk/${distTag}`, {
+        const response = await fetch(`https://registry.npmjs.org/@mentra/js/${distTag}`, {
           signal: controller.signal,
         });
         clearTimeout(timeout);
@@ -370,15 +373,13 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
           latest = data.version;
         }
       } catch {
-        this.logger.debug("Failed to check npm for SDK updates — skipping (offline or timeout)");
+        this.logger.debug("Failed to check npm for @mentra/js updates — skipping (offline or timeout)");
       }
 
-      if (currentVersion === "not-found") {
+      if (latest && latest !== currentVersion) {
         this.logger.warn(
-          "@mentra/sdk not found in your project dependencies. Install it with: bun install @mentra/sdk",
+          `@mentra/js update available: ${currentVersion} → ${latest} — bun install @mentra/js@${distTag}`,
         );
-      } else if (latest && latest !== currentVersion) {
-        this.logger.warn(`SDK update available: ${currentVersion} → ${latest} — bun install @mentra/sdk@${distTag}`);
       }
     } catch (err) {
       this.logger.debug(err, "Version check failed");
