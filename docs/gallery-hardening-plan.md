@@ -186,15 +186,19 @@ deleted the raw file, B is now invisible in the gallery.
 
 ### Phase 1 — Critical Bug Fixes
 
-#### Fix #1: Remove the Double-Write
+#### Fix #1: Convert Writer 1 to a Provisional Fallback Entry
 
 - **File:** `mobile/src/services/asg/gallerySyncService.ts`
 - **Lines:** 1457–1474
-- **Change:** Delete the post-download metadata loop entirely. The processing queue (Writer 2) already writes every field this loop writes, plus the correct post-processing file path. The v2 capture-aware path (`executeCaptureDownload`) never had this loop and works correctly.
-- **What to delete:**
+- **Change:** Do NOT delete the post-download loop. Instead, convert it into a provisional "download-complete" write that serves as a safety net if the processing queue is aborted or times out before reaching step 6 (metadata save). The processing queue (Writer 2) will overwrite the provisional entry with the final processed path when it completes. With the write mutex added in Fix #2, this interleaving is now safe.
+
+**Why not delete it:** `mediaProcessingQueue.waitUntilDrained()` can time out and call `abort()`, dropping all pending items before metadata is saved. Pre-save processing failures (HDR, lens correction) also skip persistence. If Writer 1 is removed without a fallback, files that successfully downloaded but failed to process will be on disk but invisible in the gallery index, reproducing the exact data loss this plan aims to prevent.
+
+**What to change** — replace the existing raw-path write with a clearly-marked provisional entry:
 
 ```typescript
-// Remove this entire block from executeDownload():
+// In executeDownload(), after downloads complete — write provisional entries as a safety net.
+// mediaProcessingQueue will overwrite each entry with the final processed path when it finishes.
 for (const photoInfo of downloadResult.downloaded) {
   const isAuxiliary =
     photoInfo.name?.match(/_ev-?\d+\.(jpg|jpeg)$/i) ||
@@ -208,13 +212,16 @@ for (const photoInfo of downloadResult.downloaded) {
     photoInfo.filePath || "",
     photoInfo.thumbnailPath,
     defaultWearable,
+    {provisional: true}, // marks entry as pre-processing fallback
   )
   await localStorageService.saveDownloadedFile(downloadedFile)
 }
 ```
 
-- **Risk:** None. Processing queue handles all metadata.
-- **Effort:** 5 minutes
+Add a `provisional?: boolean` field to `DownloadedFile`. When Writer 2 (processing queue) saves the final entry, it writes `provisional: false` (or omits the field). The gallery UI can optionally use this flag to show a "processing" badge rather than displaying the raw file.
+
+- **Risk:** Low. With the mutex from Fix #2 in place, the provisional write and the processed write are fully serialized — no race condition. In the best case (processing completes), the provisional entry is simply overwritten. In the worst case (processing aborted/timed out), the provisional entry preserves the file's visibility in the gallery.
+- **Effort:** 15 minutes
 
 ---
 
@@ -445,14 +452,17 @@ All tripwires use Sentry for error/warning reports and Firebase Analytics for ev
 - **New MMKV keys:**
   - `gallery_known_photo_count` — last validated photo count
   - `gallery_user_deleted_count` — accumulator for user-initiated deletions
+  - `gallery_user_cleared_all` — boolean flag, set to `true` by the "Clear All" handler before wiping, reset to `false` after the tripwire reads it
 - **Logic:**
   - After validation, compare `currentCount` against `previousCount - userDeleted`.
-  - If `currentCount < expected` AND `syncState === "idle"` AND `currentCount > 0` (not a fresh install): fire Sentry error with `previousCount`, `currentCount`, `unexplainedLoss`, `staleFileNames`.
-  - If `previousCount > 0` AND `currentCount === 0`: treat as fresh install / data clear, reset silently.
+  - Compute `unexplainedLoss = previousCount - userDeleted - currentCount`.
+  - If `unexplainedLoss > 0` AND `syncState === "idle"`: fire Sentry error regardless of whether `currentCount` is zero or non-zero — **a full wipe is the highest-severity case, not a silent reset.**
+  - **Exception — explicit "Clear All":** If `gallery_user_cleared_all === true`, suppress the alert and reset the flag. This is the only legitimate zero-count state.
+  - **Exception — first run:** If `previousCount === 0` (no prior record), this is a fresh install. Skip the check and seed `gallery_known_photo_count`.
   - Always reset: `save('gallery_known_photo_count', currentCount)`, `save('gallery_user_deleted_count', 0)`.
 - **User-delete tracking hook points:**
   - Gallery selection delete handler: increment `gallery_user_deleted_count` by `selectedPhotos.length`.
-  - Gallery settings "Clear All" handler: set `gallery_known_photo_count` to `0` before clearing (prevents false alarm).
+  - Gallery settings "Clear All" handler: set `gallery_user_cleared_all` to `true` AND `gallery_known_photo_count` to `0` before wiping — both are needed to suppress the tripwire correctly.
 - **Effort:** 30 minutes
 
 #### Tripwire T2: Out-of-Order Detection
@@ -480,7 +490,7 @@ Items are ordered by dependency — later items may depend on earlier ones being
 
 ```
 PHASE 1 — Critical Bug Fixes (do first, in this order)
-  #1  Remove double-write in executeDownload             5 min    gallerySyncService.ts
+  #1  Convert Writer 1 to provisional fallback entry      15 min   gallerySyncService.ts + mediaProcessingQueue.ts + types
   #2  Add write mutex to localStorageService              30 min   localStorageService.ts
   #3  Skip stale cleanup during sync + resumable queue    5 min    GalleryScreen.tsx
 
@@ -500,7 +510,7 @@ PHASE 4 — Automated Tests (after all fixes are in place)
   normalizeTimestamp.test.ts                              20 min   ~7 tests (timestamp normalization + bounds)
   gallerySyncService.test.ts                              30 min   ~2 tests (regression: no double-write)
   gallerySort.test.ts                                     20 min   ~4 tests (unified sort)
-  galleryTripwires.test.ts                                30 min   ~8 tests (count drop, order check, false alarms)
+  galleryTripwires.test.ts                                30 min   ~10 tests (count drop, full-wipe alert, Clear All guard, first-run guard, order check)
 
 TOTAL ESTIMATED EFFORT:                                   ~7–8 hours
   Fixes + observability:                                  ~4–5 hours
@@ -511,20 +521,21 @@ TOTAL ESTIMATED EFFORT:                                   ~7–8 hours
 
 ## Files Changed
 
-| File                                                      | Changes                                                                                                                                                                                                                         |
-| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mobile/src/services/asg/gallerySyncService.ts`           | Delete post-download metadata loop (Fix #1). Add startup orphan detection + artifact cleanup call (Fix #5). Add Tripwire T3 Sentry call. Remove defensive `modified` parsing (Fix #6).                                          |
-| `mobile/src/services/asg/localStorageService.ts`          | Add write mutex (Fix #2). Add `detectOrphans()` and `cleanupArtifacts()` methods (Fix #5). Add `normalizeTimestamp()` helper and use in `convertToDownloadedFile()` (Fix #6).                                                   |
-| `mobile/src/components/glasses/Gallery/GalleryScreen.tsx` | Guard stale cleanup (Fix #3). Unified sort in `allPhotos` useMemo (Fix #4). Concurrent load guard (Fix #11). Tripwire T1 (count drop detection). Tripwire T2 (order check). Track user deletions for T1 false-alarm prevention. |
-| `mobile/src/services/asg/asgCameraApi.ts`                 | Normalize `modified` at ingestion in `syncWithServer` response (Fix #6).                                                                                                                                                        |
-| `mobile/src/services/asg/mediaProcessingQueue.ts`         | Remove defensive `modified` parsing (Fix #6).                                                                                                                                                                                   |
-| `mobile/src/app/asg/gallery-settings.tsx`                 | Set `gallery_known_photo_count` to 0 before "Clear All" (T1 false-alarm guard).                                                                                                                                                 |
-| `mobile/src/app/miniapps/gallery/gallery-settings.tsx`    | Same as above.                                                                                                                                                                                                                  |
-| `mobile/src/services/asg/localStorageService.test.ts`     | **NEW.** ~8 tests: mutex serialization, concurrent save+delete, path handling, orphan detection, artifact cleanup.                                                                                                              |
-| `mobile/src/services/asg/gallerySyncService.test.ts`      | **NEW.** ~2 tests: regression tests verifying no direct `saveDownloadedFile` calls from download paths.                                                                                                                         |
-| `mobile/src/utils/normalizeTimestamp.test.ts`             | **NEW.** ~7 tests: valid millis, ISO string conversion, NaN/zero/far-future fallback, undefined handling.                                                                                                                       |
-| `mobile/src/utils/gallerySort.test.ts`                    | **NEW.** ~4 tests: unified sort, interleaving sync+local, mixed timestamp types, invalid timestamps.                                                                                                                            |
-| `mobile/src/utils/galleryTripwires.test.ts`               | **NEW.** ~8 tests: count drop detection, user-delete tolerance, sync-active guard, fresh-install guard, partial loss, order check, burst tolerance, invalid timestamp skip.                                                     |
+| File                                                      | Changes                                                                                                                                                                                                                               |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mobile/src/services/asg/gallerySyncService.ts`           | Convert post-download metadata loop to provisional writes (Fix #1). Add startup orphan detection + artifact cleanup call (Fix #5). Add Tripwire T3 Sentry call. Remove defensive `modified` parsing (Fix #6).                         |
+| `mobile/src/services/asg/localStorageService.ts`          | Add write mutex (Fix #2). Add `detectOrphans()` and `cleanupArtifacts()` methods (Fix #5). Add `normalizeTimestamp()` helper and use in `convertToDownloadedFile()` (Fix #6).                                                         |
+| `mobile/src/types/asg/index.ts`                           | Add `provisional?: boolean` to `DownloadedFile` type (Fix #1).                                                                                                                                                                        |
+| `mobile/src/components/glasses/Gallery/GalleryScreen.tsx` | Guard stale cleanup (Fix #3). Unified sort in `allPhotos` useMemo (Fix #4). Concurrent load guard (Fix #11). Tripwire T1 (count drop + full-wipe detection). Tripwire T2 (order check). Track user deletions + `userClearedAll` flag. |
+| `mobile/src/services/asg/asgCameraApi.ts`                 | Normalize `modified` at ingestion in `syncWithServer` response (Fix #6).                                                                                                                                                              |
+| `mobile/src/services/asg/mediaProcessingQueue.ts`         | Remove defensive `modified` parsing (Fix #6). Write `provisional: false` on final metadata save (Fix #1).                                                                                                                             |
+| `mobile/src/app/asg/gallery-settings.tsx`                 | Set `gallery_known_photo_count` to 0 AND `gallery_user_cleared_all` to `true` before "Clear All" (T1 false-alarm guard).                                                                                                              |
+| `mobile/src/app/miniapps/gallery/gallery-settings.tsx`    | Same as above.                                                                                                                                                                                                                        |
+| `mobile/src/services/asg/localStorageService.test.ts`     | **NEW.** ~8 tests: mutex serialization, concurrent save+delete, path handling, orphan detection, artifact cleanup.                                                                                                                    |
+| `mobile/src/services/asg/gallerySyncService.test.ts`      | **NEW.** ~2 tests: regression tests verifying no direct `saveDownloadedFile` calls from download paths.                                                                                                                               |
+| `mobile/src/utils/normalizeTimestamp.test.ts`             | **NEW.** ~7 tests: valid millis, ISO string conversion, NaN/zero/far-future fallback, undefined handling.                                                                                                                             |
+| `mobile/src/utils/gallerySort.test.ts`                    | **NEW.** ~4 tests: unified sort, interleaving sync+local, mixed timestamp types, invalid timestamps.                                                                                                                                  |
+| `mobile/src/utils/galleryTripwires.test.ts`               | **NEW.** ~8 tests: count drop detection, user-delete tolerance, sync-active guard, fresh-install guard, partial loss, order check, burst tolerance, invalid timestamp skip.                                                           |
 
 ---
 
@@ -676,25 +687,39 @@ it("handles undefined gracefully", () => {
 
 ### Test File 3: `gallerySyncService.test.ts`
 
-Regression test to ensure the double-write is not reintroduced (Fix #1).
+Regression tests verifying the provisional-write behavior introduced in Fix #1.
 
 ```typescript
-it("executeDownload does not call saveDownloadedFile directly", async () => {
-  // Mock dependencies: asgCameraApi.batchSyncFiles returns 3 downloaded files
-  // Spy on localStorageService.saveDownloadedFile
-
+it("executeDownload writes provisional entries for each non-auxiliary file", async () => {
+  // Mock asgCameraApi.batchSyncFiles to return 3 downloaded files
   await service.executeDownload(mockFiles, mockServerTime)
 
-  // saveDownloadedFile should NOT have been called from executeDownload
-  // (only from mediaProcessingQueue, which is mocked)
-  expect(localStorageService.saveDownloadedFile).not.toHaveBeenCalled()
+  // Should have written a provisional entry for each downloaded file
+  expect(localStorageService.saveDownloadedFile).toHaveBeenCalledTimes(3)
+  // Each call should have provisional: true
+  for (const call of (localStorageService.saveDownloadedFile as jest.Mock).mock.calls) {
+    expect(call[0].provisional).toBe(true)
+  }
+  // Processing queue should also have been enqueued
   expect(mediaProcessingQueue.enqueue).toHaveBeenCalledTimes(3)
 })
 
-it("executeCaptureDownload does not call saveDownloadedFile directly", async () => {
-  await service.executeCaptureDownload(mockCaptures, mockServerTime)
+it("executeDownload skips auxiliary files for provisional write", async () => {
+  const filesWithAuxiliary = [
+    makePhotoInfo("IMG_001.jpg"),
+    makePhotoInfo("IMG_001_ev-1.jpg"), // auxiliary — should be skipped
+    makePhotoInfo("IMG_001.imu.json"), // auxiliary — should be skipped
+  ]
+  await service.executeDownload(filesWithAuxiliary, mockServerTime)
 
-  expect(localStorageService.saveDownloadedFile).not.toHaveBeenCalled()
+  expect(localStorageService.saveDownloadedFile).toHaveBeenCalledTimes(1)
+})
+
+it("mediaProcessingQueue final write sets provisional: false", async () => {
+  await mediaProcessingQueue.processItem(mockQueueItem)
+
+  const savedFile = (localStorageService.saveDownloadedFile as jest.Mock).mock.calls[0][0]
+  expect(savedFile.provisional).toBe(false)
 })
 ```
 
@@ -774,12 +799,37 @@ it("does not alert during active sync", () => {
   expect(result.shouldAlert).toBe(false)
 })
 
-it("does not alert on fresh install (count drops to zero)", () => {
+it("alerts on catastrophic full-count wipe", () => {
+  // previousCount > 0, currentCount === 0, no user deletes, no explicit Clear All
   const result = checkPhotoCountDrop({
     previousCount: 20,
     currentCount: 0,
     userDeleted: 0,
     syncState: "idle",
+    userClearedAll: false,
+  })
+  expect(result.shouldAlert).toBe(true)
+  expect(result.unexplainedLoss).toBe(20)
+})
+
+it("does not alert when user explicitly tapped Clear All", () => {
+  const result = checkPhotoCountDrop({
+    previousCount: 20,
+    currentCount: 0,
+    userDeleted: 0,
+    syncState: "idle",
+    userClearedAll: true,
+  })
+  expect(result.shouldAlert).toBe(false)
+})
+
+it("does not alert on first run (previousCount === 0)", () => {
+  const result = checkPhotoCountDrop({
+    previousCount: 0,
+    currentCount: 0,
+    userDeleted: 0,
+    syncState: "idle",
+    userClearedAll: false,
   })
   expect(result.shouldAlert).toBe(false)
 })
@@ -823,14 +873,14 @@ it("ignores photos with invalid timestamps", () => {
 
 ### Test Summary
 
-| Test File                     | # Tests | Covers                                                     |
-| ----------------------------- | ------- | ---------------------------------------------------------- |
-| `localStorageService.test.ts` | ~8      | Fix #2 (mutex), Fix #5 (orphans, artifacts), path handling |
-| `normalizeTimestamp.test.ts`  | ~7      | Fix #6 (timestamp normalization + bounds)                  |
-| `gallerySyncService.test.ts`  | ~2      | Fix #1 (regression: double-write removed)                  |
-| `gallerySort.test.ts`         | ~4      | Fix #4 (unified sort by capture time)                      |
-| `galleryTripwires.test.ts`    | ~8      | T1 (count drop + false alarm guards), T2 (order check)     |
-| **Total**                     | **~29** |                                                            |
+| Test File                     | # Tests | Covers                                                                               |
+| ----------------------------- | ------- | ------------------------------------------------------------------------------------ |
+| `localStorageService.test.ts` | ~8      | Fix #2 (mutex), Fix #5 (orphans, artifacts), path handling                           |
+| `normalizeTimestamp.test.ts`  | ~7      | Fix #6 (timestamp normalization + bounds)                                            |
+| `gallerySyncService.test.ts`  | ~3      | Fix #1 (provisional writes, auxiliary skipped, final write clears provisional flag)  |
+| `gallerySort.test.ts`         | ~4      | Fix #4 (unified sort by capture time)                                                |
+| `galleryTripwires.test.ts`    | ~10     | T1 (count drop, full-wipe alert, Clear All guard, first-run guard), T2 (order check) |
+| **Total**                     | **~32** |                                                                                      |
 
 ### Implementation Notes
 
