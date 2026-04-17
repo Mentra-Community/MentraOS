@@ -30,6 +30,7 @@ import { pickRuntime } from "./runtime/pick-runtime";
 import { CloudAdapter } from "./runtime/adapters/cloud-adapter";
 import { SimAdapter } from "./runtime/adapters/sim-adapter";
 import { __flushLazyHandlers } from "./runtime/index";
+import { __flushServerHandlers } from "./runtime/server";
 import type { MentraRuntime } from "./runtime/contract";
 
 const PROJECT_ROOT = process.cwd();
@@ -159,42 +160,42 @@ if (runtime instanceof SimAdapter) {
 // installed. See runtime/index.ts `__flushLazyHandlers`.
 __flushLazyHandlers();
 
-// ─── Boot MiniAppServer (cloud adapter only) ─────────────────────────────────
+// ─── Install server-runtime handler registry ─────────────────────────────────
+//
+// server/ code registers handlers via `import { onSession } from "@mentra/js/server"`.
+// Those handlers accumulate in a lazy queue until we install the registry
+// (see runtime/server.ts). We install an empty registry now and wire real
+// forwarding after MiniAppServer boots.
 
-let miniAppServerRunning = false;
+type SessionHandler = (session: MentraSession) => void | Promise<void>;
+type StopHandler = (session: MentraSession | null, reason: string) => void | Promise<void>;
+type ToolCallHandler = (toolCall: any) => Promise<any>;
 
-if (picked.needsMiniAppServer && runtime instanceof CloudAdapter) {
-  try {
-    const app = new MiniAppServer({
-      packageName: config.packageName,
-      apiKey: API_KEY,
-      port: PORT + 1,
-    });
+const serverSessionHandlers: SessionHandler[] = [];
+const serverStopHandlers: StopHandler[] = [];
+const serverToolCallHandlers: ToolCallHandler[] = [];
 
-    app.onSession((session: MentraSession) => {
-      session.logger.info(`[mentra dev] Session started for ${session.userId}`);
-      globalThis.__mentraSession = session;
-      runtime.bind(session);
-    });
+globalThis.__mentraServerRuntime = {
+  onSession: (cb) => {
+    serverSessionHandlers.push(cb);
+  },
+  onStop: (cb) => {
+    serverStopHandlers.push(cb);
+  },
+  onToolCall: (cb) => {
+    serverToolCallHandlers.push(cb);
+  },
+};
 
-    app.onStop((session, reason) => {
-      if (session) {
-        session.logger.info(`[mentra dev] Session stopped: ${reason}`);
-      }
-      runtime.unbind(reason);
-      globalThis.__mentraSession = undefined;
-    });
+// Drain anything server/ code registered before this runtime installed.
+// (In practice nothing has loaded yet — server/ is imported further down —
+// but the flush is cheap and idempotent.)
+__flushServerHandlers();
 
-    await app.start();
-    miniAppServerRunning = true;
-    console.log(`  📡 MiniAppServer on port ${PORT + 1} (webhooks + cloud protocol)`);
-  } catch (err) {
-    console.warn(`  ⚠️  MiniAppServer failed to start: ${err}`);
-    console.warn("  Continuing with webview-only (cloud adapter idle).\n");
-  }
-}
-
-// ─── Optional user server/ (Hono app) ────────────────────────────────────────
+// ─── Optional user server/ (Hono app + per-session handlers) ─────────────────
+//
+// Load server/index.ts BEFORE we boot MiniAppServer, so any onSession/onStop
+// handlers it registers are in the queue by the time sessions start firing.
 
 type HonoLike = { fetch: (req: Request) => Response | Promise<Response> };
 let userServer: HonoLike | null = null;
@@ -210,9 +211,86 @@ if (project.serverEntry) {
       console.warn(`  ⚠️  server/ loaded but no default export with .fetch() found — skipping.`);
       console.warn(`  \x1b[2m   Tip: \`export default new Hono()...\` from server/index.ts.\x1b[0m`);
     }
+    // Flush again in case server/index.ts registered handlers via module-load.
+    __flushServerHandlers();
   } catch (err) {
     console.error("  ❌ Failed to load server/:\n");
     console.error(err);
+  }
+}
+
+// ─── Boot MiniAppServer (cloud adapter only) ─────────────────────────────────
+//
+// Fans session events out to:
+//   1. The cloud adapter (so client/ code binds to the current session)
+//   2. Every handler registered via `onSession()` in server/ code
+// Handler #2 is how multi-tenant server/ apps (like flash) receive per-user
+// sessions. Handler #1 is for the single-session client/-dev flow.
+
+let miniAppServerRunning = false;
+
+if (picked.needsMiniAppServer && runtime instanceof CloudAdapter) {
+  try {
+    const app = new MiniAppServer({
+      packageName: config.packageName,
+      apiKey: API_KEY,
+      port: PORT + 1,
+    });
+
+    app.onSession(async (session: MentraSession) => {
+      session.logger.info(`[mentra dev] Session started for ${session.userId}`);
+      globalThis.__mentraSession = session;
+      runtime.bind(session);
+
+      // Fan out to server/ handlers. Run them concurrently; swallow errors
+      // per-handler so one misbehaving developer handler doesn't break the
+      // session for others.
+      for (const h of serverSessionHandlers) {
+        try {
+          await h(session);
+        } catch (err) {
+          session.logger.error({ err }, "[mentra dev] onSession handler threw");
+        }
+      }
+    });
+
+    app.onStop(async (session, reason) => {
+      if (session) {
+        session.logger.info(`[mentra dev] Session stopped: ${reason}`);
+      }
+      runtime.unbind(reason);
+      globalThis.__mentraSession = undefined;
+
+      for (const h of serverStopHandlers) {
+        try {
+          await h(session, reason);
+        } catch (err) {
+          console.error("[mentra dev] onStop handler threw:", err);
+        }
+      }
+    });
+
+    if (serverToolCallHandlers.length > 0) {
+      app.onToolCall(async (toolCall: any) => {
+        // Run all handlers; take the first non-undefined result.
+        for (const h of serverToolCallHandlers) {
+          try {
+            const result = await h(toolCall);
+            if (result !== undefined) return result;
+          } catch (err) {
+            console.error("[mentra dev] onToolCall handler threw:", err);
+          }
+        }
+        return undefined;
+      });
+    }
+
+    await app.start();
+    miniAppServerRunning = true;
+    console.log(`  📡 MiniAppServer on port ${PORT + 1} (webhooks + cloud protocol)`);
+  } catch (err) {
+    console.warn(`  ⚠️  MiniAppServer failed to start: ${err}`);
+    console.warn("  Continuing with webview-only (cloud adapter idle).\n");
   }
 }
 

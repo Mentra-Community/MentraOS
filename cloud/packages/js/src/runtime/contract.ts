@@ -24,7 +24,7 @@
 
 // ── Re-exports from internals ────────────────────────────────────────────────
 
-export type { Observable } from "./internals";
+export { Observable } from "./internals";
 
 export type { AudioChunk as MicChunk, VadEvent } from "./internals/session/managers/MicManager";
 

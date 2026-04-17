@@ -103,15 +103,33 @@ export function ensureBunfig(root: string): { written: boolean; path: string } {
     return { written: true, path: bunfigPath };
   }
 
-  // Append to an existing bunfig.toml if the plugin isn't referenced yet.
-  // We don't try to parse the TOML — a literal substring check is enough
-  // for something this narrow, and we err on the side of not clobbering
-  // a user's config.
+  // Update existing bunfig.toml. We look for three states:
+  //   1. Plugin already listed → nothing to do.
+  //   2. [serve.static] has a plugins = [...] array → merge into it.
+  //   3. [serve.static] exists but no plugins line → append one.
+  //   4. No [serve.static] section → add one.
+  //
+  // We don't fully parse TOML — narrow regex manipulation is enough
+  // and avoids taking a TOML dependency. If a user's bunfig is
+  // complex enough to confuse this, they can manually add the plugin.
   const existing = readFileSync(bunfigPath, "utf-8");
   if (existing.includes(pluginRef)) {
     return { written: false, path: bunfigPath };
   }
 
+  // Case 2: existing `plugins = ["..."]` under [serve.static]. Merge.
+  const pluginsArrayRe = /(\[serve\.static\][\s\S]*?\bplugins\s*=\s*)\[([^\]]*)\]/;
+  const match = existing.match(pluginsArrayRe);
+  if (match) {
+    const [full, prefix, inner] = match;
+    const trimmedInner = inner.trim();
+    const merged = trimmedInner.length > 0 ? `${prefix}[${trimmedInner}, "${pluginRef}"]` : `${prefix}["${pluginRef}"]`;
+    const updated = existing.replace(full, merged);
+    writeFileSync(bunfigPath, updated);
+    return { written: true, path: bunfigPath };
+  }
+
+  // Case 3 / Case 4: no existing plugins array.
   const needsSection = !/\[serve\.static\]/.test(existing);
   const addition = needsSection
     ? `\n\n[serve.static]\n${pluginsLine}\n`

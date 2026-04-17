@@ -1,7 +1,7 @@
 {
   "name": "@mentra/js",
   "version": "0.1.0",
-  "description": "MentraOS app framework — build glasses apps like Next.js",
+  "description": "MentraOS app framework \u2014 build glasses apps like Next.js",
   "type": "module",
   "bin": {
     "mentra": "./cli.ts"
@@ -12,7 +12,8 @@
     "./react": "./src/runtime/react.ts",
     "./dedupe-plugin": "./src/dedupe-plugin.ts",
     "./runtime": "./src/runtime/internals/index.ts",
-    "./runtime/session": "./src/runtime/internals/session.ts"
+    "./runtime/session": "./src/runtime/internals/session.ts",
+    "./server": "./src/runtime/server.ts"
   },
   "scripts": {
     "dev": "bun run cli.ts dev",
@@ -45,10 +46,18 @@
     "react-dom": ">=18"
   },
   "peerDependenciesMeta": {
-    "@mentra/client": { "optional": true },
-    "@mentra/simulated-glasses": { "optional": true },
-    "react": { "optional": true },
-    "react-dom": { "optional": true }
+    "@mentra/client": {
+      "optional": true
+    },
+    "@mentra/simulated-glasses": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@mentra/client": "file:../client",
