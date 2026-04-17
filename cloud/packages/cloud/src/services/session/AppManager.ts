@@ -373,7 +373,7 @@ export class AppManager {
 
     try {
       // Stop and restart the app (resurrection)
-      await this.stopApp(packageName, true);
+      await this.stopApp(packageName, true, "system_stop");
       const result = await this.startApp(packageName);
 
       // Check if resurrection succeeded - startApp returns { success: false } on failure, doesn't throw
@@ -481,7 +481,7 @@ export class AppManager {
 
       try {
         this.logger.info({ packageName }, "[AppManager] Resurrecting dormant app");
-        await this.stopApp(packageName, true); // restart=true marks as RESURRECTING
+        await this.stopApp(packageName, true, "system_stop"); // restart=true marks as RESURRECTING
         const result = await this.startApp(packageName);
 
         // Check if resurrection succeeded - startApp returns { success: false } on failure, doesn't throw
@@ -712,7 +712,7 @@ export class AppManager {
           { currentlyRunningApp },
           `Stopping currently running foreground app ${currentlyRunningApp.packageName} before starting ${packageName}`,
         );
-        await this.stopApp(currentlyRunningApp.packageName); // Restarting, so allow stopping even if not running
+        await this.stopApp(currentlyRunningApp.packageName, false, "system_stop"); // System-initiated: stopping foreground app to start new one
       }
     }
 
@@ -1098,7 +1098,11 @@ export class AppManager {
    *
    * @param packageName Package name of the app to stop
    */
-  async stopApp(packageName: string, restart?: boolean): Promise<void> {
+  async stopApp(
+    packageName: string,
+    restart?: boolean,
+    reason?: "user_disabled" | "system_stop" | "error",
+  ): Promise<void> {
     try {
       // Check if app is running or loading via AppSession
       const appSession = this.apps.get(packageName);
@@ -1124,7 +1128,7 @@ export class AppManager {
       // Trigger app stop webhook
       try {
         // TODO(isaiah): Move logic to stop app out of appService and into this class.
-        await appService.triggerStopByPackageName(packageName, this.userSession.userId, appSession?.sessionId);
+        await appService.triggerStopByPackageName(packageName, this.userSession.userId, appSession?.sessionId, reason);
       } catch (webhookError) {
         this.logger.error(webhookError, `Error triggering stop webhook for ${packageName}:`);
       }

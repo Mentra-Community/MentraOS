@@ -742,8 +742,16 @@ export class AppServer extends Hono<{ Variables: AuthVariables }> {
     try {
       await session.connect(sessionId);
       this.setActiveSession(sessionId, userId, session);
-      await this.onSession(session, sessionId, userId);
-      return c.json({ status: "success" } as WebhookResponse);
+      // Respond to webhook immediately — session is connected.
+      // Run onSession in background so slow developer setup doesn't timeout the webhook.
+      const response = c.json({ status: "success" } as WebhookResponse);
+
+      // Fire-and-forget: run developer's onSession handler
+      this.onSession(session, sessionId, userId).catch((error) => {
+        this.logger.error({ error, sessionId, userId }, "Error in onSession handler");
+      });
+
+      return response;
     } catch (error) {
       this.logger.error(error, "Failed to connect session");
       cleanupDisconnect();

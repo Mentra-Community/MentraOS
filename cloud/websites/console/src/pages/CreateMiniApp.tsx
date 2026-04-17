@@ -49,8 +49,7 @@ const CreateMiniApp: React.FC = () => {
     permissions: [
       {
         type: PermissionType.MICROPHONE,
-        description:
-          "Access to microphone for voice input and audio processing",
+        description: "Access to microphone for voice input and audio processing",
       },
     ], // Default opt-in Microphone permission; user can remove if not needed
     hardwareRequirements: [], // Initialize hardware requirements as empty array
@@ -75,9 +74,7 @@ const CreateMiniApp: React.FC = () => {
   // const isPublicEmailDomain = publicEmailDomains.includes(orgDomain);
 
   // Handle form changes
-  const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
-  ) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const { name, value } = e.currentTarget;
     setFormData((prev: Partial<App>) => ({
       ...prev,
@@ -133,9 +130,7 @@ const CreateMiniApp: React.FC = () => {
   };
 
   // Handle hardware requirements changes
-  const handleHardwareRequirementsChange = (
-    hardwareRequirements: HardwareRequirement[],
-  ) => {
+  const handleHardwareRequirementsChange = (hardwareRequirements: HardwareRequirement[]) => {
     setFormData((prev) => ({
       ...prev,
       hardwareRequirements,
@@ -158,8 +153,7 @@ const CreateMiniApp: React.FC = () => {
     if (!formData.packageName) {
       newErrors.packageName = "Package name is required";
     } else if (!/^[a-z0-9.-]+$/.test(formData.packageName)) {
-      newErrors.packageName =
-        "Package name must use lowercase letters, numbers, dots, and hyphens only";
+      newErrors.packageName = "Package name must use lowercase letters, numbers, dots, and hyphens only";
     }
 
     // Display name validation
@@ -246,18 +240,7 @@ const CreateMiniApp: React.FC = () => {
 
     try {
       // Prepare App data
-      // If webviewURL is empty, use the default based on publicUrl
-      let finalWebviewUrl = formData.webviewURL;
-      if (!finalWebviewUrl && formData.publicUrl) {
-        try {
-          const normalizedServerUrl = normalizeUrl(formData.publicUrl);
-          const base = normalizedServerUrl.replace(/\/$/, "");
-          finalWebviewUrl = `${base}/webview`;
-        } catch {
-          // If normalization fails, leave empty
-          finalWebviewUrl = "";
-        }
-      }
+      const finalWebviewUrl = formData.webviewURL || "";
 
       const appData: Partial<App> = {
         packageName: formData.packageName,
@@ -293,8 +276,7 @@ const CreateMiniApp: React.FC = () => {
           // Package name conflict
           setErrors({
             ...errors,
-            packageName:
-              "This package name is already in use. Please choose another.",
+            packageName: "This package name is already in use. Please choose another.",
           });
           setFormError("Package name is already in use");
         } else if (error.response.data?.error) {
@@ -306,9 +288,7 @@ const CreateMiniApp: React.FC = () => {
         }
       } else {
         // Network or other error
-        setFormError(
-          "Network error. Please check your connection and try again.",
-        );
+        setFormError("Network error. Please check your connection and try again.");
       }
 
       // Scroll to top to show error
@@ -347,10 +327,7 @@ const CreateMiniApp: React.FC = () => {
     <DashboardLayout>
       <div className="max-w-3xl mx-auto">
         <div className="flex items-center mb-6">
-          <Link
-            to="/apps"
-            className="flex items-center text-sm text-muted-foreground hover:text-foreground"
-          >
+          <Link to="/apps" className="flex items-center text-sm text-muted-foreground hover:text-foreground">
             <ArrowLeftIcon className="mr-1 h-4 w-4" />
             Back to MiniApps
           </Link>
@@ -365,9 +342,7 @@ const CreateMiniApp: React.FC = () => {
               </p>
               {currentOrg && (
                 <div className="mt-3 text-sm">
-                  <span className="text-muted-foreground">
-                    Creating in organization:{" "}
-                  </span>
+                  <span className="text-muted-foreground">Creating in organization: </span>
                   <span className="font-medium">{currentOrg.name}</span>
                 </div>
               )}
@@ -384,8 +359,10 @@ const CreateMiniApp: React.FC = () => {
               <FormSection
                 title="MiniApp Distribution"
                 description="Core details for your MiniApp listing in the Mentra MiniApp Store"
-                helpLink={{ text: "Publishing Guide", href: "https://docs.mentraglass.com/app-devs/getting-started/overview" }}
-              >
+                helpLink={{
+                  text: "Publishing Guide",
+                  href: "https://docs.mentraglass.com/app-devs/getting-started/overview",
+                }}>
                 <div className="space-y-2">
                   <Label htmlFor="packageName">
                     Package Name <span className="text-destructive">*</span>
@@ -398,14 +375,10 @@ const CreateMiniApp: React.FC = () => {
                     placeholder="e.g., org.example.myapp"
                     className={errors.packageName ? "border-destructive" : ""}
                   />
-                  {errors.packageName && (
-                    <p className="text-xs text-destructive mt-1">
-                      {errors.packageName}
-                    </p>
-                  )}
+                  {errors.packageName && <p className="text-xs text-destructive mt-1">{errors.packageName}</p>}
                   <p className="text-xs text-muted-foreground">
-                    Must use lowercase letters, numbers, dots, and hyphens only.
-                    This is a unique identifier and cannot be changed later.
+                    Must use lowercase letters, numbers, dots, and hyphens only. This is a unique identifier and cannot
+                    be changed later.
                   </p>
                 </div>
 
@@ -421,12 +394,9 @@ const CreateMiniApp: React.FC = () => {
                     placeholder="e.g., My Awesome MiniApp"
                     className={errors.name ? "border-destructive" : ""}
                   />
-                  {errors.name && (
-                    <p className="text-xs text-destructive mt-1">{errors.name}</p>
-                  )}
+                  {errors.name && <p className="text-xs text-destructive mt-1">{errors.name}</p>}
                   <p className="text-xs text-muted-foreground">
-                    The name that will be displayed to users in the Mentra MiniApp
-                    Store.
+                    The name that will be displayed to users in the Mentra MiniApp Store.
                   </p>
                 </div>
 
@@ -443,14 +413,9 @@ const CreateMiniApp: React.FC = () => {
                     rows={3}
                     className={errors.description ? "border-destructive" : ""}
                   />
-                  {errors.description && (
-                    <p className="text-xs text-destructive mt-1">
-                      {errors.description}
-                    </p>
-                  )}
+                  {errors.description && <p className="text-xs text-destructive mt-1">{errors.description}</p>}
                   <p className="text-xs text-muted-foreground">
-                    Provide a clear, concise description of your
-                    application&apos;s functionality.
+                    Provide a clear, concise description of your application&apos;s functionality.
                   </p>
                 </div>
 
@@ -480,8 +445,7 @@ const CreateMiniApp: React.FC = () => {
                     errorMessage={errors.logoURL}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Upload an image that will be used as your MiniApp&apos;s icon
-                    (recommended: 512x512 PNG).
+                    Upload an image that will be used as your MiniApp&apos;s icon (recommended: 512x512 PNG).
                   </p>
                 </div>
               </FormSection>
@@ -490,8 +454,10 @@ const CreateMiniApp: React.FC = () => {
               <FormSection
                 title="MiniApp Configuration"
                 description="Configure how MentraOS connects to your MiniApp server"
-                helpLink={{ text: "Server Setup Guide", href: "https://docs.mentraglass.com/app-devs/getting-started/deployment/overview" }}
-              >
+                helpLink={{
+                  text: "Server Setup Guide",
+                  href: "https://docs.mentraglass.com/app-devs/getting-started/deployment/overview",
+                }}>
                 <ServerUrlField
                   value={formData.publicUrl || ""}
                   onChange={handleChange}
@@ -523,16 +489,10 @@ const CreateMiniApp: React.FC = () => {
                   disabled={isLoading}
                 />
 
-                <AppTypeSelect
-                  value={formData.appType || "background"}
-                  onChange={handleAppTypeChange}
-                />
+                <AppTypeSelect value={formData.appType || "background"} onChange={handleAppTypeChange} />
 
                 {/* Permissions */}
-                <PermissionsSection
-                  permissions={formData.permissions || []}
-                  onChange={handlePermissionsChange}
-                />
+                <PermissionsSection permissions={formData.permissions || []} onChange={handlePermissionsChange} />
 
                 {/* Minimum Hardware Requirements */}
                 <HardwareRequirementsSection
@@ -540,14 +500,9 @@ const CreateMiniApp: React.FC = () => {
                   onChange={handleHardwareRequirementsChange}
                 />
               </FormSection>
-
             </div>
             <div className="flex justify-between mt-8 pt-6 border-t">
-              <Button
-                variant="outline"
-                type="button"
-                onClick={() => navigate("/apps")}
-              >
+              <Button variant="outline" type="button" onClick={() => navigate("/apps")}>
                 Back
               </Button>
               <Button type="submit" disabled={isLoading}>
@@ -561,24 +516,20 @@ const CreateMiniApp: React.FC = () => {
               <Alert className="bg-success-light border-1 border-success text-success shadow-md">
                 <CheckCircle className="h-5 w-5 text-success" />
                 <div>
-                  <AlertDescription className="text-success font-medium">
-                    {successMessage}
-                  </AlertDescription>
+                  <AlertDescription className="text-success font-medium">{successMessage}</AlertDescription>
                   <div className="mt-2 flex gap-2">
                     <Button
                       size="sm"
                       variant="outline"
                       onClick={() => setIsApiKeyDialogOpen(true)}
-                      className="border-success text-success hover:bg-success-light"
-                    >
+                      className="border-success text-success hover:bg-success-light">
                       View API Key
                     </Button>
                     <Button
                       size="sm"
                       variant="outline"
                       onClick={() => navigate("/apps")}
-                      className="border-success text-success hover:bg-success-light"
-                    >
+                      className="border-success text-success hover:bg-success-light">
                       Go to My MiniApps
                     </Button>
                   </div>

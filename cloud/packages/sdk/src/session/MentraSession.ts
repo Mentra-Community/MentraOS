@@ -294,16 +294,14 @@ export class MentraSession {
       }),
     );
 
+    // NOTE: DeviceManager self-registers for both CAPABILITIES_UPDATE and
+    // DEVICE_STATE_UPDATE in its constructor. Do NOT register those here
+    // too — that causes every handler to fire twice (double logs, double
+    // processing). MentraSession only needs to capture the capabilities
+    // reference for its own `.capabilities` property.
     this.cleanupTasks.push(
       this._router.messageHandlers.register(CloudToAppMessageType.CAPABILITIES_UPDATE, (message) => {
         this.capabilities = message.capabilities ?? null;
-        this.device.handleCapabilitiesUpdate(message);
-      }),
-    );
-
-    this.cleanupTasks.push(
-      this._router.messageHandlers.register(CloudToAppMessageType.DEVICE_STATE_UPDATE, (message) => {
-        this.device.handleDeviceStateUpdate(message);
       }),
     );
 

@@ -157,10 +157,16 @@ export class _SessionManager {
       throw error;
     }
 
-    // Invoke the developer's onSession callback
-    await this.invokeSessionHandler(created.compatSession, request.sessionId);
+    // Respond to webhook immediately — session is connected.
+    // Run onSession in background so slow developer setup doesn't timeout the webhook.
+    const response: WebhookResponse = { status: "success" };
 
-    return { status: "success" };
+    // Fire-and-forget: run developer's onSession handler
+    this.invokeSessionHandler(created.compatSession, request.sessionId).catch((error) => {
+      this.logger.error({ error, sessionId: request.sessionId }, "Error in onSession handler");
+    });
+
+    return response;
   }
 
   async handleStopRequest(request: StopWebhookRequest): Promise<WebhookResponse> {
