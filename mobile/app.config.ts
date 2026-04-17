@@ -8,6 +8,8 @@ const VARIANTS = {
     includeFirebase: true,
     googleServicesFile: "./google-services.json",
     googleServicesPlist: "./GoogleService-Info.plist",
+    icon: "./assets/app-icons/ic_launcher.png",
+    adaptiveIcon: "./assets/app-icons/ic_launcher_foreground.png",
   },
   cn: {
     appName: "Mentra",
@@ -15,6 +17,8 @@ const VARIANTS = {
     includeFirebase: false,
     googleServicesFile: null,
     googleServicesPlist: null,
+    icon: "./assets/app-icons/ic_launcher_china.png",
+    adaptiveIcon: "./assets/app-icons/ic_launcher_foreground_china.png",
   },
 } as const
 
@@ -35,7 +39,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     scheme: "com.mentra",
     orientation: "portrait",
     userInterfaceStyle: "automatic",
-    icon: "./assets/app-icons/ic_launcher.png",
+    icon: variant.icon,
     updates: {
       fallbackToCacheTimeout: 0,
     },
@@ -47,7 +51,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       ...(variant.googleServicesFile ? {googleServicesFile: variant.googleServicesFile} : {}),
       versionCode: 174,
       adaptiveIcon: {
-        foregroundImage: "./assets/app-icons/ic_launcher_foreground.png",
+        foregroundImage: variant.adaptiveIcon,
         // backgroundImage: "./assets/app-icons/ic_launcher.png",
         backgroundColor: "#fff",
       },
@@ -80,7 +84,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       ],
     },
     ios: {
-      icon: "./assets/app-icons/ic_launcher.png",
+      icon: variant.icon,
       supportsTablet: false,
       requireFullScreen: true,
       buildNumber: "174",

@@ -1,6 +1,6 @@
 import * as Clipboard from "expo-clipboard"
 import {useEffect, useRef, useState} from "react"
-import {TextStyle, TouchableOpacity, View} from "react-native"
+import {Linking, TextStyle, TouchableOpacity, View} from "react-native"
 import Toast from "react-native-toast-message"
 
 import {Text} from "@/components/ignite"
@@ -176,6 +176,8 @@ export const VersionInfo = () => {
     )
   }
 
+  const isChina = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china"
+
   return (
     <TouchableOpacity onPress={handleQuickPress}>
       <View className="items-center bottom-2 w-full py-2 rounded-xl mt-16">
@@ -185,6 +187,11 @@ export const VersionInfo = () => {
             text={translate("common:version", {number: process.env.EXPO_PUBLIC_MENTRAOS_VERSION})}
           />
         </View>
+        {isChina && (
+          <TouchableOpacity onPress={() => Linking.openURL("https://beian.miit.gov.cn/")}>
+            <Text style={themed($icpLink)} text="京ICP备04000001号-2" />
+          </TouchableOpacity>
+        )}
       </View>
     </TouchableOpacity>
   )
@@ -193,4 +200,10 @@ export const VersionInfo = () => {
 const $buildInfo: ThemedStyle<TextStyle> = ({colors}) => ({
   color: colors.muted_foreground,
   fontSize: 13,
+})
+
+const $icpLink: ThemedStyle<TextStyle> = ({colors}) => ({
+  color: colors.muted_foreground,
+  fontSize: 13,
+  textDecorationLine: "underline",
 })
