@@ -9,7 +9,7 @@ import MiniappErrorScreen from "@/components/miniapps/MiniappErrorScreen"
 import LoadingOverlay from "@/components/ui/LoadingOverlay"
 import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import restComms from "@/services/RestComms"
-import miniComms from "@/services/MiniComms"
+import {WebviewBridge} from "island"
 import {WebSocketStatus} from "@/services/ws-types"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import {useAppletStatusStore} from "@/stores/applets"
@@ -228,15 +228,15 @@ export default function AppWebView() {
         `)
       }
     }
-    miniComms.setWebViewMessageHandler(packageName, sendToWebView)
+    WebviewBridge.setWebViewMessageHandler(packageName, sendToWebView)
     return () => {
-      miniComms.setWebViewMessageHandler(packageName, undefined)
+      WebviewBridge.setWebViewMessageHandler(packageName, undefined)
     }
   }, [packageName])
 
   const handleWebViewMessage = (event: any) => {
     const data = event.nativeEvent.data
-    miniComms.handleRawMessageFromMiniApp(packageName, data)
+    WebviewBridge.handleRawMessageFromMiniApp(packageName, data)
   }
 
   const handleLoadStart = () => {

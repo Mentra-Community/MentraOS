@@ -19,6 +19,7 @@ import {
   useStartApplet,
   useStopApplet,
 } from "@/stores/applets"
+import {appStore} from "island"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
@@ -544,7 +545,8 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
       newOrderMap[item.packageName] = index
     })
     setOrderMap(newOrderMap)
-    saveAppsOrder(newOrderMap)
+    // saveAppsOrder(newOrderMap)
+    appStore.saveAppsOrder(newOrderMap)
   }
 
   const itemRefs = useRef<Record<string, View | null>>({})

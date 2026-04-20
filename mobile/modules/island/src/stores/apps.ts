@@ -347,7 +347,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
 //   },
 // )
 
-export const useApplets = () => useAppStatusStore((state) => state.apps)
+export const useApps = () => useAppStatusStore((state) => state.apps)
 export const useStart = () => useAppStatusStore((state) => state.start)
 export const useStop = () => useAppStatusStore((state) => state.stop)
 export const useRefresh = () => useAppStatusStore((state) => state.refresh)
@@ -374,7 +374,7 @@ export const useStopAll = () => useAppStatusStore((state) => state.stopAll)
 // }
 
 export const useActiveApps = () => {
-  const apps = useApplets()
+  const apps = useApps()
   return useMemo(() => apps.filter((app) => app.running), [apps])
 }
 

@@ -1,8 +1,7 @@
 import {memo, useEffect, useMemo, useRef, useState} from "react"
 import {View} from "react-native"
-import {apps} from "island"
+import {appStore, appRegistry} from "island"
 import LocalMiniApp from "@/components/home/LocalMiniApp"
-import composer from "@/services/Composer"
 import {usePathname} from "expo-router"
 import {Screen, Text} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
@@ -51,7 +50,7 @@ const LmaContainer = memo(
 )
 
 function Compositor() {
-  const lmas = apps.useApps()
+  const lmas = appStore.useApps()
   const pathname = usePathname()
   const viewShotRef = useRef<View>(null)
   const [packageName, setPackageName] = useState<string | null>(null)
@@ -83,7 +82,7 @@ function Compositor() {
           console.error("COMPOSITOR: Local mini app has no version", lma.packageName)
           return null
         }
-        const htmlRes = composer.getLocalMiniAppHtml(lma.packageName, lma.version)
+        const htmlRes = appRegistry.getLocalMiniAppHtml(lma.packageName, lma.version)
         if (htmlRes.is_ok()) {
           return {packageName: lma.packageName, html: htmlRes.value, running: lma.running}
         }
