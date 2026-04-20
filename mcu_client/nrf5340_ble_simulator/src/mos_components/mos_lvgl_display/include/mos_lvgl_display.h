@@ -183,6 +183,9 @@ void display_request_visible_redraw(void);
 // **NEW: Get current pattern ID for conditional logic**
 int display_get_current_pattern(void);
 
+/* Snapshot whether the shared Pattern 4 UI is still showing the welcome state. */
+bool display_is_welcome_screen_active(void);
+
 void display_close(void);
 
 /** Request welcome screen to refresh battery line (no-op if welcome not active). Call after battery update. */
@@ -190,6 +193,9 @@ void display_request_welcome_battery_refresh(void);
 
 /** Return to welcome screen (e.g. after BLE disconnect). Thread-safe, sends command to LVGL. */
 void display_show_welcome_screen(void);
+
+/** Reset protobuf text de-dup/pending state so the next identical BLE text can redraw. Thread-safe. */
+void display_reset_protobuf_text_state(void);
 
 /** Update DFU progress bar on welcome screen (below battery). show=1 to show and set percent (0..100), show=0 to hide. Thread-safe. */
 void display_update_dfu_progress(uint8_t show, uint8_t percent);

@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2026-03-02 15:34:12
- * @LastEditTime : 2026-03-03 11:17:50
+ * @LastEditTime : 2026-04-20 09:50:34
  * @FilePath     : mos_gx8002.c
  * @Description  :
  *
@@ -11,6 +11,7 @@
 
 #include "mos_gx8002.h"
 
+#include <errno.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/gpio.h>
@@ -18,6 +19,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
+#include "mos_i2s_slave.h"
 #include "vad_interrupt_handler.h"
 
 LOG_MODULE_REGISTER(mos_gx8002, LOG_LEVEL_INF);
@@ -205,10 +207,17 @@ static void gx8002_vad_int_isr(const struct device *dev, struct gpio_callback *c
     static uint32_t isr_count;
     isr_count++;
 
+
+    // if (vad_interrupt_handler_is_i2s_active())
+    // {
+    //     return;
+    // }
+
+
     int disable_ret = mos_gx8002_vad_int_disable();
     int send_ret = vad_interrupt_handler_send_event();
 
-    if (send_ret != 0)
+    if (send_ret != 0 && send_ret != -EALREADY)
     {
         (void)mos_gx8002_vad_int_re_enable();
     }
@@ -293,6 +302,13 @@ int mos_gx8002_init(void)
     if (ret != 0)
     {
         LOG_ERR("VAD interrupt handler init failed: %d", ret);
+        return ret;
+    }
+
+    ret = gx8002_i2s_init();
+    if (ret != 0)
+    {
+        LOG_ERR("GX8002 I2S pre-init failed: %d", ret);
         return ret;
     }
 

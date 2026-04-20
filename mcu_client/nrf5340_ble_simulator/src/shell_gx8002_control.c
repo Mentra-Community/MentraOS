@@ -21,10 +21,10 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/shell/shell.h>
 
-#include "mos_gx8002.h"
 #include "gx8002_firmware_data.h"
-#include "mos_i2s_slave.h"
 #include "gx8002_update.h"
+#include "mos_gx8002.h"
+#include "mos_i2s_slave.h"
 #include "vad_interrupt_handler.h"
 
 typedef struct
@@ -37,12 +37,12 @@ typedef struct
 static firmware_entry_t firmware_table[2];
 static size_t firmware_table_size = 0;
 
-/* 固件表按宏开关填充：V09/V08 未启用时对应固件不编入镜像，此处不加入表 */
+/* 固件表按宏开关填充：V09/V10 未启用时对应固件不编入镜像，此处不加入表 */
 static void init_firmware_table(void)
 {
     if (firmware_table_size > 0)
     {
-        return;  /* 已初始化 */
+        return; /* 已初始化 */
     }
 
     size_t idx = 0;
@@ -52,10 +52,10 @@ static void init_firmware_table(void)
     firmware_table[idx].len = gx8002_firmware_data_09_len;
     idx++;
 #endif
-#if GX8002_FIRMWARE_ENABLE_V08
-    firmware_table[idx].name = "v08";
-    firmware_table[idx].data = gx8002_firmware_data_08;
-    firmware_table[idx].len = gx8002_firmware_data_08_len;
+#if GX8002_FIRMWARE_ENABLE_V10
+    firmware_table[idx].name = "v10";
+    firmware_table[idx].data = gx8002_firmware_data_10;
+    firmware_table[idx].len = gx8002_firmware_data_10_len;
     idx++;
 #endif
     firmware_table_size = idx;
@@ -428,8 +428,8 @@ static int cmd_gx8002_update(const struct shell *shell, size_t argc, char **argv
         /* 无参数时使用表中第一项；若未启用任何内置固件则无可用项 */
         if (firmware_table_size == 0)
         {
-            shell_error(shell, "❌ No built-in firmware (V09/V08 both disabled in build)");
-            shell_print(shell, "   Enable GX8002_FIRMWARE_ENABLE_V09 or V08 to use gx8002 update");
+            shell_error(shell, "❌ No built-in firmware (V09/V10 both disabled in build)");
+            shell_print(shell, "   Enable GX8002_FIRMWARE_ENABLE_V09 or V10 to use gx8002 update");
             return -ENOENT;
         }
         firmware_data = firmware_table[0].data;

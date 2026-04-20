@@ -30,7 +30,7 @@
  * 6. Download flash image
  *
  * Note: firmware_data and firmware_len are required parameters.
- * Available firmware versions: v09, v08 (defined in gx8002_firmware_data.h)
+ * Available firmware versions: v09, v10 (defined in gx8002_firmware_data.h)
  */
 uint8_t gx8002_fw_update(const uint8_t *firmware_data, uint32_t firmware_len);
 
