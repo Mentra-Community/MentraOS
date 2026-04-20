@@ -38,7 +38,7 @@ export default function MiniAppInstaller() {
   }
 
   const handleUninstall = async (packageName: string, version: string) => {
-    let result = await appRegistry.uninstallMiniApp(packageName, version)
+    let result = await appRegistry.uninstall(packageName, version)
     if (result.is_ok()) {
       Toast.show({type: "success", text1: "Mini app uninstalled successfully"})
     } else {
@@ -48,7 +48,7 @@ export default function MiniAppInstaller() {
 
   const handleInstallMiniApp = async () => {
     console.log(`Installing MiniApp: ${url}`)
-    let result = await appRegistry.installMiniApp(url)
+    let result = await appRegistry.install(url)
     console.log("result", result)
     if (result.is_ok()) {
       Toast.show({type: "success", text1: "Mini app installed successfully"})
@@ -59,8 +59,8 @@ export default function MiniAppInstaller() {
 
   const showVersions = async (packageName: string) => {
     console.log(`Showing versions for ${packageName}`)
-    const installedVersions: string[] = appRegistry.getAppletInstalledVersions(packageName)
-    const activeVersion = await appRegistry.getActiveAppletVersion(packageName)
+    const installedVersions: string[] = appRegistry.getAppInstalledVersions(packageName)
+    const activeVersion = await appRegistry.getActiveAppVersion(packageName)
     // show all the versions, set the active
     setActiveVersion(activeVersion)
     setPackageName(packageName)

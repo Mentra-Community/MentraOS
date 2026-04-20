@@ -254,11 +254,11 @@ class AppRegistry {
     return versions[0]
   }
 
-  public setActiveAppletVersion(packageName: string, version: string): Result<void, Error> {
+  public setActiveAppVersion(packageName: string, version: string): Result<void, Error> {
     return storage.save(`${packageName}_active_version`, version)
   }
 
-  public getAppletMetadata(packageName: string, version: string): InstalledInfo {
+  public getAppMetadata(packageName: string, version: string): InstalledInfo {
     try {
       const lmaDir = new Directory(Paths.document, "lmas", packageName, version)
       const appJsonFile = new File(lmaDir, "app.json")
@@ -279,7 +279,7 @@ class AppRegistry {
       const installedVersion: InstalledLma = {packageName, versions: {}}
 
       for (const versionString of versionStrings) {
-        const info: InstalledInfo = this.getAppletMetadata(packageName, versionString)
+        const info: InstalledInfo = this.getAppMetadata(packageName, versionString)
         installedVersion.versions[versionString] = info
       }
       appletsInfo.push(installedVersion)

@@ -23,7 +23,6 @@ import {CompatibilityResult, HardwareCompatibility} from "@/utils/hardware"
 import {BackgroundTimer} from "@/utils/timers"
 import {storage} from "@/utils/storage"
 import {useShallow} from "zustand/react/shallow"
-import composer from "@/services/Composer"
 
 export interface ClientAppletInterface extends AppletInterface {
   offline: boolean
