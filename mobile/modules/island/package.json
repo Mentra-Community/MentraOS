@@ -30,15 +30,7 @@
     "babel-plugin-module-resolver": "5.0.0",
     "typesafe-ts": "^1.7.1",
     "zustand": "^5.0.11",
-    "expo": "^55.0.5",
-    "expo-file-system": "~55.0.10",
     "react-native-zip-archive": "^7.0.2",
-    "react-native-nitro-bg-timer": "^0.1.0",
-    "react": "19.2.0",
-    "react-dom": "19.2.0",
-    "react-i18next": "^16.5.6",
-    "react-native": "0.83.2",
-    "expo-clipboard": "~55.0.8",
     "core": "file:../core"
   },
   "devDependencies": {
@@ -49,6 +41,11 @@
     "react": "*",
     "react-native": "*",
     "@types/react": "*",
-    "@expo/config-plugins": "*"
+    "@expo/config-plugins": "*",
+    "expo-clipboard": "*",
+    "expo-file-system": "*",
+    "react-native-zip-archive": "*",
+    "react-native-nitro-bg-timer": "*",
+    "react-i18next": "*"
   }
 }

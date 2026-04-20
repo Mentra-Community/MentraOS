@@ -250,7 +250,7 @@ class AppRegistry {
     let versions = this.getInstalledVersions(packageName)
     // make sure they are sorted, newest first
     versions.sort((a, b) => semver.rcompare(a, b))
-    await this.setActiveAppletVersion(packageName, versions[0])
+    await this.setActiveAppVersion(packageName, versions[0])
     return versions[0]
   }
 
