@@ -11,19 +11,23 @@
     };
     /delete-node/ aliases;
     aliases {
-        opt3006 = &i2c3;  // OPT3006 Ambient Light Sensor I2C bus (raw I2C mode)
+        opt3006 = &opt3006; // OPT3006 device node
+        iqs7211a = &iqs7211a; // IQS7211A node 
         lsm6dsv16x = &lsm6dsv16x;  // LSM6DSV16X IMU sensor node
     };
 
     zephyr_user: zephyr,user {
-        jlink_usb_switch-gpios = <&gpio1 11 GPIO_ACTIVE_HIGH>;  // P1.11 for J-Link/USB switch control
-        button-gpios = <&gpio0 23 GPIO_ACTIVE_HIGH>;  // P0.23 for button input
+        jlink_usb_switch-gpios  = <&gpio1 11 GPIO_ACTIVE_HIGH>;  // P1.11 for J-Link/USB switch control
+        button-gpios            = <&gpio0 23 GPIO_ACTIVE_HIGH>;  // P0.23 for button input
 
         // GX8002 / VAD path disabled - microphone uses PDM (see &pdm0)
-        vad_power-gpios = <&gpio1 0 GPIO_ACTIVE_HIGH>;
-        gx8002_vad_int-gpios = <&gpio0 22 GPIO_ACTIVE_HIGH>;
-        vad_voice_detect-gpios = <&gpio0 25 GPIO_ACTIVE_HIGH>;
-        ear_en-gpios = <&gpio0 19 GPIO_ACTIVE_HIGH>;  // P0.19 for Ear Power Enable
+        vad_power-gpios         = <&gpio1 0 GPIO_ACTIVE_HIGH>;
+        gx8002_vad_int-gpios    = <&gpio0 22 GPIO_ACTIVE_HIGH>;
+        vad_voice_detect-gpios  = <&gpio0 25 GPIO_ACTIVE_HIGH>;
+        ear_en-gpios            = <&gpio0 19 GPIO_ACTIVE_HIGH>;  // P0.19 for Ear Power Enable
+
+        /* RDY: low asserted (per IQS / ProxFusion datasheet); idle high, falling edge = window start */
+        iqs7211a_rdy-gpios      = <&gpio1 14 GPIO_ACTIVE_LOW>;
     };
 };
 
@@ -154,8 +158,7 @@
     status = "okay";
     pinctrl-0 = <&pdm0_default>;
     pinctrl-names = "default";
-    clock-source = "PCLK32M_HFXO";
-    queue-size = <4>;
+    // clock-source = "PCLK32M_HFXO";
 };
 
 &i2c2 {
@@ -183,6 +186,18 @@
     pinctrl-0 = <&i2c3_default>;
     pinctrl-1 = <&i2c3_sleep>;
     pinctrl-names = "default", "sleep";
+    
+    opt3006: opt3006@45 {
+        compatible = "ti,opt3006";
+        reg = <0x45>;
+        status = "okay";
+    };
+
+    iqs7211a: iqs7211a@56 {
+        compatible = "i2c-device";
+        reg = <0x56>;
+        status = "okay";
+    };
 };
 
 
