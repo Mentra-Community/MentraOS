@@ -19,8 +19,8 @@
 #include <zephyr/pm/device.h>
 #include <zephyr/sys/poweroff.h>
 
-// #include "mos_gx8002.h"  // VAD path kept for quick rollback
-#include "pdm_audio_stream.h"
+#include "mos_gx8002.h"  // GX8002 VAD path enabled
+// #include "pdm_audio_stream.h"  // PDM path disabled - using GX8002 VAD
 #include "interrupt_handler.h"
 #include "mos_button.h"
 #include "mos_lsm6dsv16x.h"
@@ -103,7 +103,8 @@ static void button_poll_handler(struct k_work *work)
             /* Short press detected (released before 2.5s) - cancel polling, re-enable interrupt |
              * 检测到短按（在2.5s前释放）- 取消轮询，重新使能中断 */
             int64_t press_duration = k_uptime_get() - button_press_start_time;
-            LOG_INF("Button short press detected (duration: %lld ms, < 2.5s) - cancelling polling, re-enabling interrupt",
+            LOG_INF(
+                "Button short press detected (duration: %lld ms, < 2.5s) - cancelling polling, re-enabling interrupt",
                 press_duration);
 
             /* Cancel polling timer | 取消轮询定时器 */
@@ -143,9 +144,7 @@ static void button_poll_handler(struct k_work *work)
     if (press_duration >= BUTTON_LONG_PRESS_MS && !peripherals_turned_off)
     {
         LOG_INF("✅ Button long press (2.5s) detected - turning off peripherals");
-        // (void)mos_gx8002_power_control(false);  // Disable GX8002(VAD) power control
-        (void)pdm_audio_stream_set_enabled(false);  // Stop PDM mic pipeline before peripheral shutdown
-        ear_en_control(false);
+        (void)mos_gx8002_power_control(false);  // Disable GX8002(VAD) power control
         // opt3006_set_mode(OPT3006_MODE_SHUTDOWN);  // Shutdown OPT3006 | 关闭 OPT3006
         mos_npm1300_ldsw1_disable();
         opt3006_prepare_for_sleep();
@@ -373,8 +372,7 @@ static int prepare_for_sleep(bool turn_off_peripherals)
     {
         LOG_INF("Turning off peripherals before sleep...");
 
-        // (void)mos_gx8002_power_control(false);  // Disable GX8002(VAD) power control
-        (void)pdm_audio_stream_set_enabled(false);
+        (void)mos_gx8002_power_control(false);  // Disable GX8002(VAD) power control
         ear_en_control(false);
         /* Disable LDSW1 | 禁用LDSW1 */
 
@@ -392,8 +390,7 @@ static int prepare_for_sleep(bool turn_off_peripherals)
     }
     else
     {
-        // (void)mos_gx8002_power_control(false);  // Disable GX8002(VAD) power control
-        (void)pdm_audio_stream_set_enabled(false);  // Stop PDM mic pipeline before peripheral shutdown
+        (void)mos_gx8002_power_control(false);  // Disable GX8002(VAD) power control
     }
 
     /* Ensure all default LOW pins are LOW before sleep | 睡眠前确保所有默认拉低的引脚为低电平 */

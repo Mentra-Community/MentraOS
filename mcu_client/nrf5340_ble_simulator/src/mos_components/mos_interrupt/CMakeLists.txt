@@ -3,5 +3,5 @@
 target_include_directories(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/.)
 
 target_sources(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/interrupt_handler.c)
-# target_sources(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/vad_interrupt_handler.c)  # VAD/GX8002 off
+target_sources(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/vad_interrupt_handler.c)  # VAD/GX8002 enabled
 

@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2026-03-03 17:06:05
- * @LastEditTime : 2026-03-04 17:37:12
+ * @LastEditTime : 2026-04-10 14:32:05
  * @FilePath     : vad_interrupt_handler.c
  * @Description  : 
  * 
@@ -32,9 +32,17 @@ static const struct gpio_dt_spec vad_voice_detect = GPIO_DT_SPEC_GET(DT_PATH(zep
 #endif
 
 #define VAD_TIMEOUT_BASE_MS 5000
+#define VAD_TIMEOUT_CONFIRM_SAMPLES 3
+#define VAD_TIMEOUT_CONFIRM_INTERVAL_MS 20
 
 static bool vad_int_initialized = false;
 static bool i2s_reception_active = false;
+static int64_t s_vad_trigger_tick = 0;
+
+int64_t vad_get_trigger_tick(void)
+{
+    return s_vad_trigger_tick;
+}
 
 static bool mic_capture_enabled = false;
 static int32_t current_timeout_ms = 0;
@@ -92,6 +100,31 @@ static bool vad_check_voice_detect_gpio(void)
     LOG_INF("VAD voice_detect level=%d (0=voice,1=silence)", value);
     return value == 0;  // Active low: 0 means voice detected, 1 means no voice
 }
+/*
+ * @note: This is to avoid false VAD timeout trigger due to transient noise or brief pauses in speech, ensuring better user experience by keeping the mic capture active if voice is still present. 
+ *  这是为了避免由于瞬时噪声或短暂的语音停顿引起的错误VAD超时触发，通过确认如果仍然存在语音则保持麦克风捕获活动，从而确保更好的用户体验。
+*/
+static bool vad_check_voice_detect_stable(void)
+{
+    for (int i = 0; i < VAD_TIMEOUT_CONFIRM_SAMPLES; ++i)
+    {
+        if (!vad_check_voice_detect_gpio())
+        {
+            LOG_INF("VAD timeout confirm: sample %d/%d indicates silence, stopping capture", i + 1,
+                    VAD_TIMEOUT_CONFIRM_SAMPLES);
+            return false;
+        }
+
+        if (i + 1 < VAD_TIMEOUT_CONFIRM_SAMPLES)
+        {
+            k_sleep(K_MSEC(VAD_TIMEOUT_CONFIRM_INTERVAL_MS));
+        }
+    }
+
+    LOG_INF("VAD timeout confirm: %d/%d samples indicate voice, keep capture", VAD_TIMEOUT_CONFIRM_SAMPLES,
+            VAD_TIMEOUT_CONFIRM_SAMPLES);
+    return true;
+}
 
 static void vad_timeout_callback(interrupt_event_t *event)
 {
@@ -115,7 +148,7 @@ static void vad_timeout_callback(interrupt_event_t *event)
         return;
     }
 
-    if (vad_check_voice_detect_gpio())
+    if (vad_check_voice_detect_stable())
     {
         current_timeout_ms = VAD_TIMEOUT_BASE_MS;
         k_timer_start(&vad_timeout_timer, K_MSEC(current_timeout_ms), K_NO_WAIT);
@@ -128,6 +161,7 @@ static void vad_timeout_callback(interrupt_event_t *event)
 
     i2s_reception_active = false;
     current_timeout_ms = 0;
+    s_vad_trigger_tick = 0;
     LOG_INF("VAD timeout: stop GX8002 I2S capture");
 }
 
@@ -145,6 +179,7 @@ static void vad_interrupt_callback(interrupt_event_t *event)
     }
 
     LOG_INF("VAD interrupt: falling edge detected, tick=%lld", event->tick);
+    s_vad_trigger_tick = event->tick;
 
     if (!i2s_reception_active)
     {

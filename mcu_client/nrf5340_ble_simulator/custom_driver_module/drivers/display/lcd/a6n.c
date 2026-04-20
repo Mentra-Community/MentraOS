@@ -1,7 +1,7 @@
 /*
  * @Author       : Cole
  * @Date         : 2025-07-28 11:31:02
- * @LastEditTime : 2026-04-11 15:23:44
+ * @LastEditTime : 2026-04-13 17:06:28
  * @FilePath     : a6n.c
  * @Description  :
  *
@@ -42,7 +42,7 @@ static volatile int8_t s_software_depth_offset = 0;
 #define A6N_DEPTH_OFFSET_MAX_PX        16      // 软件双目偏移最大值 | Maximum software stereo offset in pixels
 #define A6N_DEPTH_IPD_MM               63.0    // 三角模型使用的等效双目基线/瞳距，需实测校准 | Effective binocular baseline/IPD, tune after measurement
 #define A6N_DEPTH_EFFECTIVE_FOCAL_PX   2400.0  // 角度差到像素偏移的标定系数，需实测校准 | Calibration factor from angular difference to pixel offset
-#define A6N_DEPTH_OFFSET_SIGN          1.0     // 方向校准：若实机远近方向相反，改为 -1.0 | Direction calibration; flip to -1.0 if hardware direction is reversed
+#define A6N_DEPTH_OFFSET_SIGN          (-1.0)  // 方向校准：若实机远近方向相反，改为 -1.0 | Direction calibration; flip to -1.0 if hardware direction is reversed
 
 /**
  * A6N 显示配置参数 | A6N Display Configuration
@@ -51,21 +51,21 @@ static volatile int8_t s_software_depth_offset = 0;
  * 显示模式 | Display mode: GRAY16 (4-bit)
  * SPI 时钟 | SPI clock: 32MHz
  * 自刷新帧率 | Self-refresh rate: 90Hz
- * 
+ *
  * 数据量计算 | Data size calculation:
  *   - 每行字节数 | Bytes per row: 640÷2 = 320 字节 | 320 bytes
  *   - 全屏字节数 | Full frame: 640×480÷2 = 153,600 字节 | 153,600 bytes
- *   - 每批次行数 | Lines per batch: 192 行 | 192 rows
- *   - 每批次字节数 | Bytes per batch: 192×320 = 61,440 字节 | 61,440 bytes
- *   - 批次数量 | Number of batches: 480÷192 = 2.5 批次 | 2.5 batches
- * 
+ *   - 每批次行数 | Lines per batch: 204 行 | 204 rows
+ *   - 每批次字节数 | Bytes per batch: 204×320 = 65,280 字节 | 65,280 bytes
+ *   - 批次数量 | Number of batches: 480÷204 ≈ 2.35 批次（实际3批） | ≈ 2.35 batches (3 actual writes)
+ *
  * ⚠️ 约束验证 | Constraint validation:
- *   ✅ 每批次是行的整数倍 (192行) | Each batch is row-aligned (192 rows)
- *   ✅ 每批次字节数是每行字节数的整数倍 (192×320) | Bytes per batch is multiple of bytes-per-row
+ *   ✅ 每批次是行的整数倍 (204行) | Each batch is row-aligned (204 rows)
+ *   ✅ 每批次字节数是每行字节数的整数倍 (204×320) | Bytes per batch is multiple of bytes-per-row
  *   ✅ SPI时钟32MHz ≤ 90Hz帧率要求(≤32MHz) | SPI 32MHz meets 90Hz requirement (≤32MHz)
  * ====================================================================
  */
-#define MAX_LINES_PER_WRITE 192  // 每次写入的最大行数 | Maximum rows per write batch
+#define MAX_LINES_PER_WRITE 204  // 每批最多写入 204 行（65,280B 像素数据）| Max 204 rows per write batch (65,280B payload)
 void a6n_init_sem_give(void)
 {
     k_sem_give(&a6n_init_sem);
@@ -89,7 +89,7 @@ static int write_reg_side(const struct device *dev, const struct gpio_dt_spec *c
     }
 
     const a6n_config *cfg = dev->config;
-    uint8_t  tx[3];
+    uint8_t tx[3];
     tx[0] = A6N_LCD_WRITE_ADDRESS;
     tx[1] = reg;
     tx[2] = val;
@@ -99,7 +99,7 @@ static int write_reg_side(const struct device *dev, const struct gpio_dt_spec *c
     };
     const struct spi_buf_set tx_set = {
         .buffers = &buf,
-        .count   = 1,
+        .count = 1,
     };
     gpio_pin_set_dt(cs, 0);
     int err = spi_write_dt(&cfg->spi, &tx_set);
@@ -151,11 +151,13 @@ int a6n_set_shift_mirror(uint8_t h_shift, uint8_t v_shift, a6n_mirror_mode_t mir
     const a6n_config *cfg = dev_a6n->config;
 
     // 参数范围限制 (Range protection)
-    if (h_shift > 16) h_shift = 8;
-    if (v_shift > 16) v_shift = 8;
+    if (h_shift > 16)
+        h_shift = 8;
+    if (v_shift > 16)
+        v_shift = 8;
 
-    // 0xEF 寄存器: bit7=镜像, bit[6:5]=保持为2(0x40), bit[4:0]=平移 | 0xEF register: bit7=mirror, bit[6:5]=keep 2(0x40), bit[4:0]=shift
-    // 左右光机使用相同的镜像设置 | Left/Right engines use same mirror setting
+    // 0xEF 寄存器: bit7=镜像, bit[6:5]=保持为2(0x40), bit[4:0]=平移 | 0xEF register: bit7=mirror, bit[6:5]=keep
+    // 2(0x40), bit[4:0]=shift 左右光机使用相同的镜像设置 | Left/Right engines use same mirror setting
     uint8_t val_l_h = ((mirror == A6N_MIRROR_H_FLIP) ? 0x80 : 0x00) | 0x40 | (h_shift & 0x1F);
     uint8_t val_r_h = ((mirror == A6N_MIRROR_H_FLIP) ? 0x80 : 0x00) | 0x40 | (h_shift & 0x1F);
 
@@ -163,15 +165,14 @@ int a6n_set_shift_mirror(uint8_t h_shift, uint8_t v_shift, a6n_mirror_mode_t mir
     uint8_t val_l_v = v_shift & 0x1F;
     uint8_t val_r_v = v_shift & 0x1F;
 
-    int err1 = write_reg_side(dev_a6n, &cfg->left_cs,  A6N_LCD_HD_REG, val_l_h);
+    int err1 = write_reg_side(dev_a6n, &cfg->left_cs, A6N_LCD_HD_REG, val_l_h);
     int err2 = write_reg_side(dev_a6n, &cfg->right_cs, A6N_LCD_HD_REG, val_r_h);
-    int err3 = write_reg_side(dev_a6n, &cfg->left_cs,  A6N_LCD_VD_REG, val_l_v);
+    int err3 = write_reg_side(dev_a6n, &cfg->left_cs, A6N_LCD_VD_REG, val_l_v);
     int err4 = write_reg_side(dev_a6n, &cfg->right_cs, A6N_LCD_VD_REG, val_r_v);
 
     LOG_INF("A6N_set_shift_mirror: H=%d, V=%d, mirror=%d → "
-            "HD[L=0x%02X,R=0x%02X], VD[L=0x%02X,R=0x%02X]",
-            h_shift, v_shift, mirror,
-            val_l_h, val_r_h, val_l_v, val_r_v);
+        "HD[L=0x%02X,R=0x%02X], VD[L=0x%02X,R=0x%02X]",
+        h_shift, v_shift, mirror, val_l_h, val_r_h, val_l_v, val_r_v);
 
     return (err1 || err2 || err3 || err4) ? -EIO : 0;
 }
@@ -199,7 +200,8 @@ int a6n_set_stereo_shift(uint8_t left_h_shift, uint8_t right_h_shift)
 
     if (left_hd < 0 || right_hd < 0)
     {
-        LOG_WRN("A6N_set_stereo_shift: read HD failed (L=%d R=%d), keep default non-mirror fallback", left_hd, right_hd);
+        LOG_WRN("A6N_set_stereo_shift: read HD failed (L=%d R=%d), keep default non-mirror fallback", 
+                left_hd, right_hd);
     }
 
     uint8_t val_l_h = left_mirror_bit | 0x40 | (left_h_shift & 0x1F);
@@ -208,12 +210,11 @@ int a6n_set_stereo_shift(uint8_t left_h_shift, uint8_t right_h_shift)
     int err1 = write_reg_side(dev_a6n, &cfg->left_cs, A6N_LCD_HD_REG, val_l_h);
     int err2 = write_reg_side(dev_a6n, &cfg->right_cs, A6N_LCD_HD_REG, val_r_h);
 
-    LOG_INF("A6N_set_stereo_shift: LH=%u RH=%u (mirror preserved) -> HD[L=0x%02X,R=0x%02X]",
+    LOG_INF("A6N_set_stereo_shift: LH=%u RH=%u (mirror preserved) -> HD[L=0x%02X,R=0x%02X]", 
             left_h_shift, right_h_shift, val_l_h, val_r_h);
 
     return (err1 || err2) ? -EIO : 0;
 }
-
 
 /**
  * send all data via SPI with retries
@@ -239,31 +240,31 @@ static int a6n_transmit_all(const struct device *dev, const uint8_t *data, size_
     };
     struct spi_buf_set tx = {
         .buffers = &tx_buf,
-        .count   = 1,
+        .count = 1,
     };
 
     /* 执行SPI传输（带重试机制）; Execute SPI transmission (with retry mechanism) */
     for (int i = 0; i <= retries; i++)
     {
         // 同时拉低左右 CS | Pull both CS low simultaneously
-        gpio_pin_set_dt(&cfg->left_cs, 0);   // Select left CS (active LOW)
+        gpio_pin_set_dt(&cfg->left_cs, 0);  // Select left CS (active LOW)
         gpio_pin_set_dt(&cfg->right_cs, 0);  // Select right CS (active LOW)
-        
+
         // ✅ FIX: 添加 CS setup time 延时，确保左右光机同步
         // CS setup time delay to ensure left/right engines are synchronized
         k_busy_wait(1);
-        
+
         // SPI 数据传输 | SPI data transfer
         err = spi_write_dt(&cfg->spi, &tx);
-        
+
         // ✅ FIX: 添加 CS hold time 延时，确保数据传输完成
         // CS hold time delay to ensure data transfer completion
         k_busy_wait(1);
-        
+
         // 同时拉高左右 CS | Pull both CS high simultaneously
-        gpio_pin_set_dt(&cfg->left_cs, 1);   // Deselect left CS (inactive HIGH)
+        gpio_pin_set_dt(&cfg->left_cs, 1);  // Deselect left CS (inactive HIGH)
         gpio_pin_set_dt(&cfg->right_cs, 1);  // Deselect right CS (inactive HIGH)
-        
+
         if (err != 0)
         {
             k_msleep(1); /* 短暂延迟; Short delay */
@@ -293,7 +294,7 @@ static int a6n_transmit_side(const struct device *dev, const uint8_t *data, size
     };
     struct spi_buf_set tx = {
         .buffers = &tx_buf,
-        .count   = 1,
+        .count = 1,
     };
 
     for (int i = 0; i <= retries; i++)
@@ -329,40 +330,91 @@ static int a6n_transmit_side(const struct device *dev, const uint8_t *data, size
     return err;
 }
 
-static uint8_t mono_get_pixel(const uint8_t *row, uint16_t x)
+static uint8_t mono_get_byte_padded(const uint8_t *row, uint16_t row_bytes, uint16_t width, int32_t byte_index)
 {
-    return (uint8_t)((row[x >> 3] >> (7U - (x & 0x7U))) & 0x1U);
-}
+    if (byte_index < 0 || byte_index >= row_bytes)
+    {
+        return 0xFF; /* out-of-range pixels are dark */
+    }
 
-static void mono_set_pixel(uint8_t *row, uint16_t x, uint8_t bit)
-{
-    uint8_t mask = (uint8_t)(1U << (7U - (x & 0x7U)));
-    if (bit)
+    uint8_t value = row[byte_index];
+    uint16_t tail_bits = (uint16_t)(width & 0x7U);
+    if (tail_bits != 0U && byte_index == (int32_t)(row_bytes - 1U))
     {
-        row[x >> 3] |= mask;
+        uint8_t valid_mask = (uint8_t)(0xFFU << (8U - tail_bits));
+        value = (uint8_t)((value & valid_mask) | (uint8_t)(~valid_mask));
     }
-    else
-    {
-        row[x >> 3] &= (uint8_t)(~mask);
-    }
+
+    return value;
 }
 
 static void mono_shift_row(const uint8_t *src_row, uint16_t width, int16_t dx, uint8_t *dst_row)
 {
+    uint16_t tail_bits = (uint16_t)(width & 0x7U);
     uint16_t row_bytes = (uint16_t)((width + 7U) / 8U);
+
     memset(dst_row, 0xFF, row_bytes); /* default fill as dark/black */
 
-    for (uint16_t x = 0; x < width; x++)
+    if (dx >= (int16_t)width || dx <= -(int16_t)width)
     {
-        int32_t src_x = (int32_t)x - (int32_t)dx;
-        if (src_x < 0 || src_x >= width)
+        return;
+    }
+
+    if (dx == 0)
+    {
+        for (uint16_t i = 0; i < row_bytes; i++)
         {
-            continue;
+            dst_row[i] = mono_get_byte_padded(src_row, row_bytes, width, i);
         }
-        uint8_t bit = mono_get_pixel(src_row, (uint16_t)src_x);
-        mono_set_pixel(dst_row, x, bit);
+    }
+    else if (dx > 0)
+    {
+        uint16_t shift = (uint16_t)dx;
+        uint16_t byte_shift = (uint16_t)(shift >> 3U);
+        uint16_t bit_shift = (uint16_t)(shift & 0x7U);
+        for (uint16_t i = 0; i < row_bytes; i++)
+        {
+            int32_t src_index = (int32_t)i - (int32_t)byte_shift;
+            uint8_t curr = mono_get_byte_padded(src_row, row_bytes, width, src_index);
+            if (bit_shift == 0U)
+            {
+                dst_row[i] = curr;
+            }
+            else
+            {
+                uint8_t prev = mono_get_byte_padded(src_row, row_bytes, width, src_index - 1);
+                dst_row[i] = (uint8_t)((curr >> bit_shift) | (uint8_t)(prev << (8U - bit_shift)));
+            }
+        }
+    }
+    else
+    {
+        uint16_t shift = (uint16_t)(-dx);
+        uint16_t byte_shift = (uint16_t)(shift >> 3U);
+        uint16_t bit_shift = (uint16_t)(shift & 0x7U);
+        for (uint16_t i = 0; i < row_bytes; i++)
+        {
+            int32_t src_index = (int32_t)i + (int32_t)byte_shift;
+            uint8_t curr = mono_get_byte_padded(src_row, row_bytes, width, src_index);
+            if (bit_shift == 0U)
+            {
+                dst_row[i] = curr;
+            }
+            else
+            {
+                uint8_t next = mono_get_byte_padded(src_row, row_bytes, width, src_index + 1);
+                dst_row[i] = (uint8_t)((uint8_t)(curr << bit_shift) | (next >> (8U - bit_shift)));
+            }
+        }
+    }
+
+    if (tail_bits != 0U)
+    {
+        uint8_t valid_mask = (uint8_t)(0xFFU << (8U - tail_bits));
+        dst_row[row_bytes - 1U] = (uint8_t)((dst_row[row_bytes - 1U] & valid_mask) | (uint8_t)(~valid_mask));
     }
 }
+
 /**
  * @brief Switch video format to GRAY16 (4-bit per pixel) via Bank0 register 0xBE.
  *        Bus stays 1-line SPI; only pixel depth becomes 4-bit (2 pixels per byte).
@@ -392,14 +444,14 @@ int a6n_set_gray16_mode(void)
 void a6n_write_multiple_rows_cmd(const struct device *dev, uint16_t start_line, uint16_t end_line)
 {
     uint8_t reg[8] = {0};
-    reg[0]         = A6N_LCD_DATA_REG;
-    reg[1]         = (A6N_LCD_LOCALITY_REG >> 16) & 0xff;
-    reg[2]         = (A6N_LCD_LOCALITY_REG >> 8) & 0xff;
-    reg[3]         = A6N_LCD_LOCALITY_REG & 0xff;
-    reg[4]         = (start_line >> 8) & 0xff;
-    reg[5]         = start_line & 0xff;
-    reg[6]         = (end_line >> 8) & 0xff;
-    reg[7]         = end_line & 0xff;
+    reg[0] = A6N_LCD_DATA_REG;
+    reg[1] = (A6N_LCD_LOCALITY_REG >> 16) & 0xff;
+    reg[2] = (A6N_LCD_LOCALITY_REG >> 8) & 0xff;
+    reg[3] = A6N_LCD_LOCALITY_REG & 0xff;
+    reg[4] = (start_line >> 8) & 0xff;
+    reg[5] = start_line & 0xff;
+    reg[6] = (end_line >> 8) & 0xff;
+    reg[7] = end_line & 0xff;
     a6n_transmit_all(dev, reg, sizeof(reg), 1);
 }
 
@@ -414,33 +466,30 @@ static int a6n_blanking_off(struct device *dev)
 }
 #if 1
 
-/* ================== I1→I4 查表（一次性构建） ================== */ 
+/* ================== I1→I4 查表（一次性构建） ================== */
 // LUT for I1→I4 (one-time construction)
 static uint32_t s_i1_to_i4_LUT[256];
-static bool     s_i1_to_i4_LUT_built = false;
+static bool s_i1_to_i4_LUT_built = false;
 
 /* 构建 LUT：输入 1 字节（8 像素，MSB→LSB），输出 4 字节（8 个 4bit 像素：两像素/字节） */
 // Build LUT: input 1 byte (8 pixels, MSB→LSB), output 4 bytes (8 4bit pixels: two pixels/byte)
 static void a6m_build_i1_to_i4_lut(void)
 {
-    for (int b = 0; b < 256; b++) 
+    for (int b = 0; b < 256; b++)
     {
         /* 逐位展开成 4bit 灰度（0x0 或 0xF） */
         // Expand bit by bit into 4bit grayscale (0x0 or 0xF)
         uint8_t px[8];
-        for (int i = 0; i < 8; i++) 
+        for (int i = 0; i < 8; i++)
         {
             uint8_t bit = (uint8_t)((b >> (7 - i)) & 0x01);
-            uint8_t nib = bit ? 0x00 : 0x0F;  /* 位=0亮（默认） 位=1暗 ; bit=0 bright (default) bit=1 dark */
+            uint8_t nib = bit ? 0x00 : 0x0F; /* 位=0亮（默认） 位=1暗 ; bit=0 bright (default) bit=1 dark */
             px[i] = nib;
         }
         /* 打包成 4 个字节（高4位=左像素，低4位=右像素） */
         // Pack into 4 bytes (high 4 bits = left pixel, low 4 bits = right pixel)
-        uint32_t pack =
-            ((uint32_t)((px[0] << 4) | px[1]) << 24) |
-            ((uint32_t)((px[2] << 4) | px[3]) << 16) |
-            ((uint32_t)((px[4] << 4) | px[5]) << 8)  |
-            ((uint32_t)((px[6] << 4) | px[7]) << 0);
+        uint32_t pack = ((uint32_t)((px[0] << 4) | px[1]) << 24) | ((uint32_t)((px[2] << 4) | px[3]) << 16)
+                        | ((uint32_t)((px[4] << 4) | px[5]) << 8) | ((uint32_t)((px[6] << 4) | px[7]) << 0);
         s_i1_to_i4_LUT[b] = pack;
     }
     s_i1_to_i4_LUT_built = true;
@@ -454,16 +503,14 @@ static void a6m_build_i1_to_i4_lut(void)
  * @param dst_row  Pointer to destination row (4bpp, two pixels/byte)
  * @return         None
  */
-static inline void a6m_pack_i1_to_i4_line_lut(const uint8_t *src_row,
-                                              uint16_t width,
-                                              uint8_t *dst_row)
+static inline void a6m_pack_i1_to_i4_line_lut(const uint8_t *src_row, uint16_t width, uint8_t *dst_row)
 {
     /* 每 8 像素（1 字节）→ LUT 输出 4 字节 ; Every 8 pixels (1 byte) → LUT outputs 4 bytes */
     uint16_t full_groups = (uint16_t)(width / 8U);
     uint16_t tail_pixels = (uint16_t)(width % 8U);
     uint16_t out = 0;
 
-    for (uint16_t g = 0; g < full_groups; g++) 
+    for (uint16_t g = 0; g < full_groups; g++)
     {
         uint32_t pack = s_i1_to_i4_LUT[src_row[g]];
         dst_row[out + 0] = (uint8_t)(pack >> 24);
@@ -483,12 +530,12 @@ static inline void a6m_pack_i1_to_i4_line_lut(const uint8_t *src_row,
         /* 从 start_bit 开始逐像素取位 */
         // Take bits pixel by pixel starting from start_bit
         uint8_t nib0 = 0, nib1 = 0, have0 = 0;
-        for (uint16_t i = 0; i < tail_pixels; i++) 
+        for (uint16_t i = 0; i < tail_pixels; i++)
         {
             /* 计算这个像素在 cur_byte 中的 bit 位置：MSB-first */
             // Calculate the bit position of this pixel in cur_byte: MSB-first
             uint16_t bit_index = (uint16_t)((start_bit + i) % 8U);
-            if (bit_index == 0 && i != 0) 
+            if (bit_index == 0 && i != 0)
             {
                 /* 跨到下一源字节 */
                 // Cross to the next source byte
@@ -496,19 +543,21 @@ static inline void a6m_pack_i1_to_i4_line_lut(const uint8_t *src_row,
             }
             uint8_t bit = (cur_byte >> (7 - bit_index)) & 0x01;
             uint8_t nib = bit ? 0x00 : 0x0F;
-            if (!have0) 
+            if (!have0)
             {
-                nib0 = nib; have0 = 1;
-            } 
-            else 
+                nib0 = nib;
+                have0 = 1;
+            }
+            else
             {
-                nib1 = nib; have0 = 0;
+                nib1 = nib;
+                have0 = 0;
                 dst_row[out++] = (uint8_t)((nib0 << 4) | (nib1 & 0x0F));
             }
         }
         /* 若尾巴是奇数个像素，补最后一个半字节（右像素=0x0）
         If the tail is an odd number of pixels, add the last half byte (right pixel = 0x0) */
-        if (have0) 
+        if (have0)
         {
             dst_row[out++] = (uint8_t)(nib0 << 4);
         }
@@ -628,38 +677,37 @@ static void a6m_pack_i1_to_i4_shifted_full_line_lut(const uint8_t *src_row, uint
  * @return      0 on success, negative value on error
  */
 static int a6n_write(const struct device *dev, const uint16_t x, const uint16_t y,
-                          const struct display_buffer_descriptor *desc, const void *buf)
+                     const struct display_buffer_descriptor *desc, const void *buf)
 {
     const a6n_config *cfg = dev->config;
     a6n_data *data = dev->data;
-    const uint16_t width  = desc->width;  
-    const uint16_t height = desc->height;  
-    const uint16_t pitch  = desc->pitch;  /* 源缓冲每行像素（通常=width）; Source buffer pixels per line (usually = width) */
+    const uint16_t width = desc->width;
+    const uint16_t height = desc->height;
+    const uint16_t pitch = desc->pitch; /* 源缓冲每行像素（通常=width）; Source buffer pixels per line (usually = width) */
 
-    if (x != 0) 
+    if (x != 0)
     {
         LOG_WRN("a6n_write: x must be 0 (x=%u)", x);
         return -ENOTSUP;
     }
-    if ((y + height) > cfg->screen_height || width > cfg->screen_width) 
+    if ((y + height) > cfg->screen_height || width > cfg->screen_width)
     {
-        LOG_WRN("a6n_write: OOB w=%u h=%u y=%u (scr %ux%u)",
-                width, height, y, cfg->screen_width, cfg->screen_height);
+        LOG_WRN("a6n_write: OOB w=%u h=%u y=%u (scr %ux%u)", width, height, y, cfg->screen_width, cfg->screen_height);
         return -ENOTSUP;
     }
 
     /* 首次构建 LUT ; Build LUT for the first time */
-    if (!s_i1_to_i4_LUT_built) 
+    if (!s_i1_to_i4_LUT_built)
     {
         a6m_build_i1_to_i4_lut();
         LOG_INF("a6n_write: I1->I4 LUT built");
     }
 
-    const uint8_t *src             = (const uint8_t *)buf; /* 1bpp 源 ; 1bpp source */
-    const uint16_t src_stride_bytes= (uint16_t)((pitch + 7U) / 8U);
+    const uint8_t *src = (const uint8_t *)buf; /* 1bpp 源 ; 1bpp source */
+    const uint16_t src_stride_bytes = (uint16_t)((pitch + 7U) / 8U);
     const uint16_t i4_bytes_per_ln = (uint16_t)((cfg->screen_width + 1U) / 2U); /* 320 */
-    uint8_t       *tx              = data->tx_buf_bulk;
-    uint8_t       *dst_base        = tx + 4;
+    uint8_t *tx = data->tx_buf_bulk;
+    uint8_t *dst_base = tx + 4;
 
     /* 设置行窗口 ; Set row window */
     a6n_write_multiple_rows_cmd(dev, y, (uint16_t)(y + height - 1U));
@@ -668,8 +716,8 @@ static int a6n_write(const struct device *dev, const uint16_t x, const uint16_t 
     // write data prefix (1-line SPI: 0x02 + 0x00 0x2C/0x3C 0x00)
     tx[0] = A6N_LCD_DATA_REG;
     tx[1] = (uint8_t)((A6N_LCD_CMD_REG >> 16) & 0xFF);
-    tx[2] = (uint8_t)((A6N_LCD_CMD_REG >>  8) & 0xFF);
-    tx[3] = (uint8_t)( A6N_LCD_CMD_REG        & 0xFF);
+    tx[2] = (uint8_t)((A6N_LCD_CMD_REG >> 8) & 0xFF);
+    tx[3] = (uint8_t)(A6N_LCD_CMD_REG & 0xFF);
 
     const uint32_t payload_bytes = (uint32_t)height * (uint32_t)i4_bytes_per_ln;
     const uint32_t bytes_to_send = 4U + payload_bytes;
@@ -683,7 +731,10 @@ static int a6n_write(const struct device *dev, const uint16_t x, const uint16_t 
         {
             const uint8_t *src_row = src + (uint32_t)row * src_stride_bytes;
             uint8_t *dst_row = dst_base + (uint32_t)row * i4_bytes_per_ln;
-            memset(dst_row, 0x00, i4_bytes_per_ln);
+            if (need_row_clear)
+            {
+                memset(dst_row, 0x00, i4_bytes_per_ln);
+            }
             a6m_pack_i1_to_i4_line_lut(src_row, width, dst_row);
         }
         ret = a6n_transmit_all(dev, tx, bytes_to_send, 1);
@@ -743,7 +794,6 @@ static int a6n_write(const struct device *dev, const uint16_t x, const uint16_t 
         LOG_ERR("a6n_write: SPI transmit failed: %d", ret);
         return ret;
     }
-    
 
     return 0;
 }
@@ -831,10 +881,10 @@ static int a6n_read(struct device *dev, int x, int y, const struct display_buffe
 
 /**
  * @brief 获取A6N最大亮度值 | Get A6N maximum brightness value
- * 
+ *
  * 假设最大亮度为0xFF（根据项目需求可调整）
  * Assume max brightness is 0xFF (adjustable based on project requirements)
- * 
+ *
  * @return 最大亮度值 (0xFF) | Max brightness value (0xFF)
  */
 int a6n_get_max_brightness(void)
@@ -844,12 +894,12 @@ int a6n_get_max_brightness(void)
 
 /**
  * @brief 设置A6N显示亮度 | Set A6N display brightness
- * 
+ *
  * 根据A6N手册6.4节亮度调节功能说明 | Per A6N manual section 6.4:
  * - 假设最大亮度为0xFF | Assume max brightness is 0xFF
  * - 相邻等级差值最小为2 | Minimum difference between adjacent levels is 2
  * - 最多支持64级亮度可调 | Up to 64 brightness levels supported
- * 
+ *
  * @param brightness 亮度值 (0x00-0xFF) | Brightness level (0x00-0xFF)
  * @return 0 表示成功，负数表示错误 | 0 on success, negative error code on failure
  */
@@ -857,7 +907,7 @@ int a6n_set_brightness(uint8_t brightness)
 {
     // 直接写入Bank0 0xE2寄存器 | Write directly to Bank0 0xE2 register
     int ret = a6n_write_reg_bank(dev_a6n, 0, A6N_LCD_SB_REG, brightness);
-    
+
     if (ret == 0)
     {
         LOG_INF("A6N brightness set to 0x%02X", brightness);
@@ -866,7 +916,7 @@ int a6n_set_brightness(uint8_t brightness)
     {
         LOG_ERR("Failed to set brightness 0x%02X: %d", brightness, ret);
     }
-    
+
     return ret;
 }
 
@@ -896,7 +946,7 @@ int a6n_set_brightness(uint8_t brightness)
  *                 0x09 = 4x4棋盘格 (4x4 checkerboard, maps to 0x89)
  *
  * @return 0 表示成功；负数表示 SPI 写入错误 | 0 if successful, negative errno on SPI error
- * 
+ *
  * @note 注意事项 | Important notes:
  *       1. 内部测试图 APL 较高，需要设置较低亮度 | Internal test patterns have high APL, use low brightness
  *       2. 点亮时间尽可能短 | Keep display time as short as possible
@@ -911,14 +961,14 @@ int a6n_enable_selftest(bool enable, uint8_t pattern)
     if (enable && !bank1_initialized)
     {
         LOG_INF("A6N: Initializing Bank1 registers for self-test");
-        
+
         // Bank1 寄存器配置结构 | Bank1 register configuration structure
         typedef struct
         {
             uint8_t reg;  // 寄存器地址 | Register address
             uint8_t val;  // 寄存器值 | Register value
         } Bank1RegConfig;
-        
+
         // Bank1 寄存器初始化序列 | Bank1 register initialization sequence
         static const Bank1RegConfig kBank1InitSequence[] = {
             {0x4D, 0x30},  // Bank1 寄存器 0x4D | Bank1 register 0x4D
@@ -928,9 +978,9 @@ int a6n_enable_selftest(bool enable, uint8_t pattern)
             {0x51, 0x02},  // Bank1 寄存器 0x51 | Bank1 register 0x51
             {0x52, 0x0E},  // Bank1 寄存器 0x52 | Bank1 register 0x52
             {0x53, 0x02},  // Bank1 寄存器 0x53 | Bank1 register 0x53
-            {0x54, 0x19}   // Bank1 寄存器 0x54 | Bank1 register 0x54
+            {0x54, 0x19}  // Bank1 寄存器 0x54 | Bank1 register 0x54
         };
-        
+
         // 依次写入 Bank1 寄存器 | Write Bank1 registers sequentially
         for (size_t i = 0; i < ARRAY_SIZE(kBank1InitSequence); i++)
         {
@@ -942,7 +992,7 @@ int a6n_enable_selftest(bool enable, uint8_t pattern)
             }
             mos_busy_wait(100);  // 寄存器间延时 | Delay between registers
         }
-        
+
         bank1_initialized = true;
         LOG_INF("A6N: Bank1 initialized successfully for self-test");
     }
@@ -987,7 +1037,7 @@ int a6n_enable_selftest(bool enable, uint8_t pattern)
  * @brief 设置镜像模式（简化接口） | Set mirror mode (simplified interface)
  * @param mode 镜像模式 | Mirror mode (MIRROR_NORMAL, MIRROR_HORZ, MIRROR_VERT, MIRROR_BOTH)
  * @return 成功返回0，失败返回负数错误码 | 0 on success, negative error code on failure
- * 
+ *
  * @note A6N 硬件仅支持水平镜像（根据最新规格书）| A6N hardware only supports horizontal mirroring (per latest specification)
  *       - MIRROR_NORMAL: 无镜像 | No mirroring
  *       - MIRROR_HORZ: 水平翻转（支持）| Horizontal flip (supported)
@@ -1001,9 +1051,10 @@ int a6n_set_mirror(mirror_mode_t mode)
         LOG_ERR("Invalid mirror mode: %d", mode);
         return -1;
     }
-    
+
     // 使用 a6n_set_shift_mirror，默认居中位置 (8, 8) | Use a6n_set_shift_mirror with default center position (8, 8)
-    // A6N 硬件仅支持水平镜像（根据最新规格书）| A6N hardware only supports horizontal mirroring per latest specification
+    // A6N 硬件仅支持水平镜像（根据最新规格书）| A6N hardware only supports horizontal mirroring per latest
+    // specification
     a6n_mirror_mode_t mirror_mode;
     switch (mode)
     {
@@ -1039,7 +1090,7 @@ int a6n_set_mirror(mirror_mode_t mode)
 int a6n_write_reg(uint8_t bank_id, uint8_t reg, uint8_t param)
 {
     LOG_INF("bspal_write_register bank:%d, reg:0x%02x, param:0x%02x", bank_id, reg, param);
-    
+
     // 使用统一的 Bank 寄存器写入接口 | Use unified Bank register write interface
     int ret = a6n_write_reg_bank(dev_a6n, bank_id, reg, param);
     return ret;
@@ -1061,35 +1112,35 @@ int a6n_write_reg(uint8_t bank_id, uint8_t reg, uint8_t param)
  * @param val     寄存器值 (8-bit) | Register value (8-bit)
  *
  * @return 0 表示成功，负数表示 SPI 写入错误 | 0 on success, negative errno on SPI error
- * 
+ *
  * @note 不支持连续读写，只能一次读写一个寄存器 | Continuous read/write not supported, one register at a time
  */
 int a6n_write_reg_bank(const struct device *dev, uint8_t bank_id, uint8_t reg, uint8_t val)
 {
     const a6n_config *cfg = dev_a6n->config;
-    
+
     // 根据 Bank 选择命令字 | Select command byte based on Bank
     // Bank0: 0x78, Bank1: 0x7A
     uint8_t cmd_byte = (bank_id == 0) ? A6N_LCD_WRITE_ADDRESS : A6N_LCD_BANK_SEL_REG;
-    
+
     // 构造 SPI 数据包: [命令字, 寄存器地址, 寄存器值] | Build SPI packet: [command, register address, register value]
     uint8_t tx_data[3] = {cmd_byte, reg, val};
     struct spi_buf buf_data = {.buf = tx_data, .len = sizeof(tx_data)};
     struct spi_buf_set tx_data_set = {.buffers = &buf_data, .count = 1};
 
     // 广播模式：同时拉低左右 CS，发送数据，拉高 CS | Broadcast mode: pull both CS low, send data, pull CS high
-    gpio_pin_set_dt(&cfg->left_cs, 0);   // 左 CS 拉低 | Left CS low
+    gpio_pin_set_dt(&cfg->left_cs, 0);  // 左 CS 拉低 | Left CS low
     gpio_pin_set_dt(&cfg->right_cs, 0);  // 右 CS 拉低 | Right CS low
-    
+
     // ✅ FIX: 添加 CS setup time，确保左右光机同步 | Add CS setup time for sync
     k_busy_wait(1);  // 1us delay
-    
+
     int ret = spi_write_dt(&cfg->spi, &tx_data_set);
-    
+
     // ✅ FIX: 添加 CS hold time | Add CS hold time
     k_busy_wait(1);  // 1us delay
-    
-    gpio_pin_set_dt(&cfg->left_cs, 1);   // 左 CS 拉高 | Left CS high
+
+    gpio_pin_set_dt(&cfg->left_cs, 1);  // 左 CS 拉高 | Left CS high
     gpio_pin_set_dt(&cfg->right_cs, 1);  // 右 CS 拉高 | Right CS high
 
     if (ret == 0)
@@ -1124,25 +1175,25 @@ int a6n_read_reg(uint8_t bank_id, int mode, uint8_t reg)
         LOG_WRN("Invalid mode err!!!");
         return -EINVAL;
     }
-    
+
     // 根据 Bank 选择命令字 | Select command byte based on Bank
     // Bank0: 0x79, Bank1: 0x7B
     uint8_t cmd_byte = (bank_id == 0) ? A6N_LCD_READ_ADDRESS : A6N_LCD_BANK1_READ;
-    
+
     uint8_t cmd[3] = {0};
     cmd[0] = cmd_byte;
     cmd[1] = reg;
     cmd[2] = 0;
-    
+
     uint8_t rx_buff[10] = {0};
-    const a6n_config *cfg  = dev_a6n->config;
+    const a6n_config *cfg = dev_a6n->config;
     struct spi_buf buf = {
         .buf = cmd,
         .len = sizeof(cmd),
     };
     struct spi_buf_set tx_set = {
         .buffers = &buf,
-        .count   = 1,
+        .count = 1,
     };
 
     struct spi_buf rx_buf = {
@@ -1151,9 +1202,9 @@ int a6n_read_reg(uint8_t bank_id, int mode, uint8_t reg)
     };
     struct spi_buf_set rx_set = {
         .buffers = &rx_buf,
-        .count   = 1,
+        .count = 1,
     };
-    
+
     // 选择左或右光机 | Select left or right engine
     if (mode == 0)
     {
@@ -1163,9 +1214,9 @@ int a6n_read_reg(uint8_t bank_id, int mode, uint8_t reg)
     {
         gpio_pin_set_dt(&cfg->right_cs, 0);
     }
-    
+
     int ret = spi_transceive_dt(&cfg->spi, &tx_set, &rx_set);
-    
+
     if (mode == 0)
     {
         gpio_pin_set_dt(&cfg->left_cs, 1);
@@ -1174,13 +1225,13 @@ int a6n_read_reg(uint8_t bank_id, int mode, uint8_t reg)
     {
         gpio_pin_set_dt(&cfg->right_cs, 1);
     }
-    
+
     if (ret != 0)
     {
         LOG_WRN("SPI read_reg [Bank%d] @0x%02x failed: %d", bank_id, reg, ret);
         return ret;
     }
-    
+
     LOG_INF("read [Bank%d] reg: 0x%02X, value: 0x%02X (cmd=0x%02X)", bank_id, reg, rx_buff[2], cmd_byte);
     return rx_buff[2];
 }
@@ -1199,7 +1250,7 @@ static int a6n_get_capabilities(struct device *dev, struct display_capabilities 
     memset(cap, 0, sizeof(struct display_capabilities));
     cap->x_resolution = cfg->screen_width;
     cap->y_resolution = cfg->screen_height;
-    cap->screen_info  = SCREEN_INFO_MONO_MSB_FIRST | SCREEN_INFO_X_ALIGNMENT_WIDTH;
+    cap->screen_info = SCREEN_INFO_MONO_MSB_FIRST | SCREEN_INFO_X_ALIGNMENT_WIDTH;
 
     // cap->current_pixel_format    = PIXEL_FORMAT_MONO01;
     // cap->supported_pixel_formats = PIXEL_FORMAT_MONO01;
@@ -1228,9 +1279,9 @@ void a6n_power_on(void)
     // gpio_pin_set_dt(&cfg->v0_9, 1); // v0.9 high
     gpio_pin_set_dt(&cfg->v1_8, 1);  // v0.9 high
     k_msleep(10);
-    gpio_pin_set_dt(&cfg->reset, 0); // reset low
+    gpio_pin_set_dt(&cfg->reset, 0);  // reset low
     k_msleep(5);
-    gpio_pin_set_dt(&cfg->reset, 1); // reset high
+    gpio_pin_set_dt(&cfg->reset, 1);  // reset high
     k_msleep(300);
 }
 
@@ -1253,18 +1304,18 @@ void a6n_power_off(void)
 
 int a6n_clear_screen(bool color_on)
 {
-    const a6n_config *cfg  = dev_a6n->config;
-    a6n_data         *data = dev_a6n->data;
+    const a6n_config *cfg = dev_a6n->config;
+    a6n_data *data = dev_a6n->data;
 
-    uint16_t width  = cfg->screen_width;
+    uint16_t width = cfg->screen_width;
     uint16_t height = SCREEN_HEIGHT;
     // Clear MAX_LINES_PER_WRITE lines each time
-    uint8_t *tx_buf          = data->tx_buf_bulk;
+    uint8_t *tx_buf = data->tx_buf_bulk;
     uint16_t lines_per_batch = MAX_LINES_PER_WRITE;
-    uint16_t total_lines     = height;
+    uint16_t total_lines = height;
 
-    uint8_t  nib               = color_on ? 0x0F : 0x00;// 4-bit color value (0x0F=white, 0x00=black)
-    uint8_t  fill_byte         = (uint8_t)((nib << 4) | nib);
+    uint8_t nib = color_on ? 0x0F : 0x00;  // 4-bit color value (0x0F=white, 0x00=black)
+    uint8_t fill_byte = (uint8_t)((nib << 4) | nib);
     uint16_t i4_bytes_per_line = (width + 1U) / 2U;
 
     for (uint16_t y = 0; y < total_lines; y += lines_per_batch)
@@ -1305,17 +1356,17 @@ int a6n_draw_horizontal_grayscale_pattern(void)
         return -ENODEV;
     }
 
-    const a6n_config *cfg  = dev_a6n->config;
-    a6n_data         *data = dev_a6n->data;
+    const a6n_config *cfg = dev_a6n->config;
+    a6n_data *data = dev_a6n->data;
 
-    uint16_t width             = cfg->screen_width;
-    uint16_t height            = cfg->screen_height;
+    uint16_t width = cfg->screen_width;
+    uint16_t height = cfg->screen_height;
     uint16_t i4_bytes_per_line = (width + 1u) / 2u; /* 320 */
     // 8 grayscale levels: 0x00, 0x24, 0x49, 0x6D, 0x92, 0xB6, 0xDB, 0xFF
-    uint8_t  gray_levels[8] = {0x00, 0x24, 0x49, 0x6D, 0x92, 0xB6, 0xDB, 0xFF};
-    uint16_t stripe_width   = width / 8;  // 80 pixels per stripe
+    uint8_t gray_levels[8] = {0x00, 0x24, 0x49, 0x6D, 0x92, 0xB6, 0xDB, 0xFF};
+    uint16_t stripe_width = width / 8;  // 80 pixels per stripe
 
-    uint8_t *tx_buf          = data->tx_buf_bulk;
+    uint8_t *tx_buf = data->tx_buf_bulk;
     uint16_t lines_per_batch = MAX_LINES_PER_WRITE;
 
     LOG_INF("🎨 Drawing horizontal grayscale pattern (8 levels, %d pixels per stripe)", stripe_width);
@@ -1338,9 +1389,11 @@ int a6n_draw_horizontal_grayscale_pattern(void)
             for (uint16_t x = 0; x < width; x += 2u)
             {
                 uint16_t s0 = (uint16_t)(x / stripe_width);
-                if (s0 > 7) s0 = 7;
+                if (s0 > 7)
+                    s0 = 7;
                 uint16_t s1 = (uint16_t)((x + 1u) / stripe_width);
-                if (s1 > 7) s1 = 7;
+                if (s1 > 7)
+                    s1 = 7;
                 uint8_t g0_4 = (uint8_t)(gray_levels[s0] >> 4);
                 uint8_t g1_4 = (uint8_t)(gray_levels[s1] >> 4);
 
@@ -1372,17 +1425,17 @@ int a6n_draw_vertical_grayscale_pattern(void)
         return -ENODEV;
     }
 
-    const a6n_config *cfg  = dev_a6n->config;
-    a6n_data         *data = dev_a6n->data;
+    const a6n_config *cfg = dev_a6n->config;
+    a6n_data *data = dev_a6n->data;
 
-    uint16_t width             = cfg->screen_width;
-    uint16_t height            = cfg->screen_height;
+    uint16_t width = cfg->screen_width;
+    uint16_t height = cfg->screen_height;
     uint16_t i4_bytes_per_line = (width + 1u) / 2u; /* 320 */
     // 8 grayscale levels: 0x00, 0x24, 0x49, 0x6D, 0x92, 0xB6, 0xDB, 0xFF
-    uint8_t  gray_levels[8] = {0x00, 0x24, 0x49, 0x6D, 0x92, 0xB6, 0xDB, 0xFF};
-    uint16_t stripe_height  = height / 8;  // 60 lines per stripe
+    uint8_t gray_levels[8] = {0x00, 0x24, 0x49, 0x6D, 0x92, 0xB6, 0xDB, 0xFF};
+    uint16_t stripe_height = height / 8;  // 60 lines per stripe
 
-    uint8_t *tx_buf          = data->tx_buf_bulk;
+    uint8_t *tx_buf = data->tx_buf_bulk;
     uint16_t lines_per_batch = MAX_LINES_PER_WRITE;
 
     LOG_INF("🎨 Drawing vertical grayscale pattern (8 levels, %d lines per stripe)", stripe_height);
@@ -1401,10 +1454,11 @@ int a6n_draw_vertical_grayscale_pattern(void)
         {
             uint16_t current_y = y + line;
             uint16_t band = (uint16_t)(current_y / stripe_height);
-            if (band > 7) band = 7;
+            if (band > 7)
+                band = 7;
 
             uint8_t g4 = (uint8_t)(gray_levels[band] >> 4);
-            uint8_t b  = (uint8_t)((g4 << 4) | g4); /* 两像素同灰度 */
+            uint8_t b = (uint8_t)((g4 << 4) | g4); /* 两像素同灰度 */
 
             uint8_t *dst = &tx_buf[4 + line * i4_bytes_per_line];
             memset(dst, b, i4_bytes_per_line);
@@ -1433,15 +1487,15 @@ int a6n_draw_chess_pattern(void)
         return -ENODEV;
     }
 
-    const a6n_config *cfg  = dev_a6n->config;
-    a6n_data         *data = dev_a6n->data;
+    const a6n_config *cfg = dev_a6n->config;
+    a6n_data *data = dev_a6n->data;
 
-    uint16_t width             = cfg->screen_width;
-    uint16_t height            = cfg->screen_height;
-    uint16_t square_size       = 40;                // 40x40 pixel squares
+    uint16_t width = cfg->screen_width;
+    uint16_t height = cfg->screen_height;
+    uint16_t square_size = 40;  // 40x40 pixel squares
     uint16_t i4_bytes_per_line = (width + 1u) / 2u; /* 320 */
-    uint8_t *tx_buf            = data->tx_buf_bulk;
-    uint16_t lines_per_batch   = MAX_LINES_PER_WRITE;
+    uint8_t *tx_buf = data->tx_buf_bulk;
+    uint16_t lines_per_batch = MAX_LINES_PER_WRITE;
 
     LOG_INF("🎨 Drawing chess pattern (%dx%d squares)", square_size, square_size);
     for (uint16_t y = 0; y < height; y += lines_per_batch)
@@ -1466,8 +1520,8 @@ int a6n_draw_chess_pattern(void)
             for (uint16_t x = 0; x < width; x += 2u)
             {
                 uint16_t col_block0 = (uint16_t)(x / square_size);
-                bool     white0     = (((row_block + col_block0) & 1u) == 0u);
-                uint8_t  px0_4      = white0 ? 0x0F : 0x00;
+                bool white0 = (((row_block + col_block0) & 1u) == 0u);
+                uint8_t px0_4 = white0 ? 0x0F : 0x00;
 
                 uint8_t px1_4 = 0x00;
                 if (x + 1u < width)
@@ -1504,8 +1558,8 @@ void a6n_open_display(void)
  */
 static int a6n_init(const struct device *dev)
 {
-    a6n_config *cfg  = (a6n_config *)dev->config;
-    a6n_data   *data = (a6n_data *)dev->data;
+    a6n_config *cfg = (a6n_config *)dev->config;
+    a6n_data *data = (a6n_data *)dev->data;
     int ret;
 
     if (!spi_is_ready_dt(&cfg->spi))
@@ -1577,8 +1631,8 @@ static int a6n_init(const struct device *dev)
     ret = gpio_pin_set_dt(&cfg->reset, 1);
     if (ret < 0)
     {
-    	LOG_ERR("reset Enable display failed! (%d)", ret);
-    	return ret;
+        LOG_ERR("reset Enable display failed! (%d)", ret);
+        return ret;
     }
 
     ret = gpio_pin_configure_dt(&cfg->vcom, GPIO_OUTPUT);
@@ -1648,39 +1702,39 @@ static int a6n_init(const struct device *dev)
 
 /* 驱动API注册; Driver API registration */
 static DEVICE_API(display, a6n_api) = {
-    .blanking_on      = a6n_blanking_on,
-    .blanking_off     = a6n_blanking_off,
-    .write            = a6n_write,
-    .read             = a6n_read,
-    .set_brightness   = a6n_set_brightness,    // 设置亮度；Set brightness
-    .get_framebuffer  = a6n_get_framebuffer,   // 获取帧缓冲区；Get framebuffer
+    .blanking_on = a6n_blanking_on,
+    .blanking_off = a6n_blanking_off,
+    .write = a6n_write,
+    .read = a6n_read,
+    .set_brightness = a6n_set_brightness,  // 设置亮度；Set brightness
+    .get_framebuffer = a6n_get_framebuffer,  // 获取帧缓冲区；Get framebuffer
     .get_capabilities = a6n_get_capabilities,  // 获取显示能力；Get display capabilities
 };
 /* 每行 I4 字节数：两像素/字节 ; Number of I4 bytes per line: two pixels/byte */
 #define A6M_I4_BYTES_PER_LINE(w) (((w) + 1U) / 2U)
 #define CUSTOM_a6n_DEFINE(inst)                                                                                \
-    static uint8_t                                                                                                  \
+    static uint8_t                                                                                             \
         a6n_bulk_tx_buffer_##inst[4 + MAX_LINES_PER_WRITE * A6M_I4_BYTES_PER_LINE(DT_INST_PROP(inst, width))]; \
-    static a6n_config a6n_config_##inst = {                                                               \
-        .spi           = SPI_DT_SPEC_INST_GET(inst, SPI_OP_MODE_MASTER | SPI_TRANSFER_MSB | SPI_WORD_SET(8U), 0U),  \
-        .left_cs       = GPIO_DT_SPEC_INST_GET(inst, left_cs_gpios),                                                \
-        .right_cs      = GPIO_DT_SPEC_INST_GET(inst, right_cs_gpios),                                               \
-        .reset         = GPIO_DT_SPEC_INST_GET(inst, reset_gpios),                                                  \
-        .vcom          = GPIO_DT_SPEC_INST_GET(inst, vcom_gpios),                                                   \
-        .v1_8          = GPIO_DT_SPEC_INST_GET(inst, v1_8_gpios),                                                   \
-        .v0_9          = GPIO_DT_SPEC_INST_GET(inst, v0_9_gpios),                                                   \
-        .screen_width  = DT_INST_PROP(inst, width),                                                                 \
-        .screen_height = DT_INST_PROP(inst, height),                                                                \
-    };                                                                                                              \
-                                                                                                                    \
-    static a6n_data a6n_data_##inst = {                                                                   \
-        .tx_buf_bulk   = a6n_bulk_tx_buffer_##inst,                                                            \
-        .screen_width  = DT_INST_PROP(inst, width),                                                                 \
-        .screen_height = DT_INST_PROP(inst, height),                                                                \
-        .initialized   = false,                                                                                     \
-    };                                                                                                              \
-                                                                                                                    \
-    DEVICE_DT_INST_DEFINE(inst, a6n_init, NULL, &a6n_data_##inst, &a6n_config_##inst, POST_KERNEL,   \
+    static a6n_config a6n_config_##inst = {                                                                    \
+        .spi = SPI_DT_SPEC_INST_GET(inst, SPI_OP_MODE_MASTER | SPI_TRANSFER_MSB | SPI_WORD_SET(8U), 0U),       \
+        .left_cs = GPIO_DT_SPEC_INST_GET(inst, left_cs_gpios),                                                 \
+        .right_cs = GPIO_DT_SPEC_INST_GET(inst, right_cs_gpios),                                               \
+        .reset = GPIO_DT_SPEC_INST_GET(inst, reset_gpios),                                                     \
+        .vcom = GPIO_DT_SPEC_INST_GET(inst, vcom_gpios),                                                       \
+        .v1_8 = GPIO_DT_SPEC_INST_GET(inst, v1_8_gpios),                                                       \
+        .v0_9 = GPIO_DT_SPEC_INST_GET(inst, v0_9_gpios),                                                       \
+        .screen_width = DT_INST_PROP(inst, width),                                                             \
+        .screen_height = DT_INST_PROP(inst, height),                                                           \
+    };                                                                                                         \
+                                                                                                               \
+    static a6n_data a6n_data_##inst = {                                                                        \
+        .tx_buf_bulk = a6n_bulk_tx_buffer_##inst,                                                              \
+        .screen_width = DT_INST_PROP(inst, width),                                                             \
+        .screen_height = DT_INST_PROP(inst, height),                                                           \
+        .initialized = false,                                                                                  \
+    };                                                                                                         \
+                                                                                                               \
+    DEVICE_DT_INST_DEFINE(inst, a6n_init, NULL, &a6n_data_##inst, &a6n_config_##inst, POST_KERNEL,             \
                           CONFIG_DISPLAY_INIT_PRIORITY, &a6n_api);
 
 /* 为每个状态为"okay"的设备树节点创建实例；Create an instance for each device tree node with the status "okay"*/
