@@ -127,34 +127,19 @@ void protobuf_set_charging_state(bool charging);
  */
 void protobuf_toggle_charging_state(void);
 
-/**
- * @brief Get current brightness level
- *
- * @return Current brightness level (0-100%)
- */
-uint32_t protobuf_get_brightness_level(void);
-
 void protobuf_process_display_height_config(const mentraos_ble_DisplayHeightConfig *config);
 void protobuf_process_display_distance_config(const mentraos_ble_DisplayDistanceConfig *config);
 
 /**
- * @brief Set brightness level and update LED 3
- * Note: Manual brightness setting automatically disables auto brightness
+ * @brief Process auto brightness multiplier configuration message
  *
- * @param level Brightness level (0-100%, will be clamped)
+ * @param auto_brightness_multiplier Pointer to auto brightness multiplier message
  */
-void protobuf_set_brightness_level(uint32_t level);
-
-/**
- * @brief Get current auto brightness state
- *
- * @return true if auto brightness is enabled, false otherwise
- */
-bool protobuf_get_auto_brightness_enabled(void);
+void protobuf_process_auto_brightness_multiplier(
+    const mentraos_ble_AutoBrightnessMultiplier *auto_brightness_multiplier);
 
 /**
  * @brief Process brightness configuration message
- * Note: This will automatically disable auto brightness mode
  *
  * @param brightness_config Pointer to brightness configuration message
  */
