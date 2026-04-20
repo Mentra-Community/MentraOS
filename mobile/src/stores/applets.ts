@@ -258,7 +258,7 @@ const getOfflineApplets = async (): Promise<ClientAppletInterface[]> => {
       // description: "Live captions for your mentra glasses.",
       webviewUrl: "",
       healthy: true,
-      hidden: false,
+      hidden: process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china",
       permissions: [],
       offlineRoute: "",
       running: false,
