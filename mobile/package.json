@@ -132,6 +132,7 @@
     "react-native-tcp-socket": "^6.4.1",
     "react-native-toast-message": "^2.3.3",
     "react-native-udp": "^4.1.7",
+    "react-native-vector-icons": "^10.3.0",
     "react-native-video": "^6.19.0",
     "react-native-view-shot": "^4.0.3",
     "react-native-webview": "13.16.0",

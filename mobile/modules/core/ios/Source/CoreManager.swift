@@ -689,6 +689,8 @@ struct ViewState {
         } else if wearable.contains(DeviceTypes.FRAME) {
             // sgc = FrameManager()
         }
+        // update device model:
+        GlassesStore.shared.apply("glasses", "deviceModel", sgc?.type ?? "")
     }
 
     func initController(_ controllerModel: String) {
@@ -912,9 +914,6 @@ struct ViewState {
         defaultWearable = sgc.type
         searching = false
 
-        // Set deviceModel so it flows to RN and cloud alongside connected state
-        GlassesStore.shared.apply("glasses", "deviceModel", sgc.type)
-
         // Show welcome message on first connect for all display glasses
         if shouldSendBootingMessage {
             Task {
@@ -1123,9 +1122,9 @@ struct ViewState {
         sgc?.requestWifiScan()
     }
 
-    func sendIncidentId(_ incidentId: String) {
+    func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil) {
         Bridge.log("MAN: Sending incidentId to glasses for log upload: \(incidentId)")
-        sgc?.sendIncidentId(incidentId)
+        sgc?.sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
     }
 
     func sendWifiCredentials(_ ssid: String, _ password: String) {
@@ -1367,6 +1366,8 @@ struct ViewState {
         micEnabled = false
         updateMicState()
         shouldSendBootingMessage = true  // Reset for next first connect
+        // clear glasses properties:
+        GlassesStore.shared.apply("glasses", "deviceModel", "")
         GlassesStore.shared.apply("glasses", "fullyBooted", false)
         GlassesStore.shared.apply("glasses", "connected", false)
         // disconnect the controller as well:

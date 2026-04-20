@@ -274,5 +274,5 @@ class Simulated: SGCManager {
         Bridge.log("requestVersionInfo - not supported on Simulated")
     }
 
-    func sendIncidentId(_: String) {}
+    func sendIncidentId(_: String, apiBaseUrl _: String?) {}
 }

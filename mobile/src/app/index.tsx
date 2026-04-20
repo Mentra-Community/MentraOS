@@ -305,7 +305,7 @@ export default function InitScreen() {
   // Render
   if (state === "loading") {
     return (
-      <Screen preset="fixed" extraAndroidInsets>
+      <Screen preset="fixed">
         <SplashVideo colorOverride={superMode ? theme.colors.chart_4 : undefined} />
       </Screen>
     )

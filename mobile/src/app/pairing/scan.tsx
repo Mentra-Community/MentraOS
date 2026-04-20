@@ -133,7 +133,7 @@ export default function SelectGlassesBluetoothScreen() {
 
           {!rememberedSearchResults ||
           rememberedSearchResults.filter((r) => r.deviceName !== "NOTREQUIREDSKIP").length === 0 ? (
-            <View className="flex-1 justify-center py-4">
+            <View className="justify-center min-h-20 py-4">
               <ActivityIndicator size="large" color={theme.colors.foreground} />
             </View>
           ) : (
@@ -162,7 +162,7 @@ export default function SelectGlassesBluetoothScreen() {
           )}
           <Divider />
           <View className="flex-row justify-end">
-            <Button preset="secondary" compact tx="common:cancel" onPress={() => goBack()} className="min-w-[100px]" />
+            <Button preset="alternate" compact tx="common:cancel" onPress={() => goBack()} className="min-w-[100px]" />
           </View>
         </GlassView>
       </View>

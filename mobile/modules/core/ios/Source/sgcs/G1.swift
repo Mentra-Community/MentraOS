@@ -271,7 +271,7 @@ actor ReconnectionManager {
 
 @MainActor
 class G1: NSObject, SGCManager {
-    func sendIncidentId(_: String) {}
+    func sendIncidentId(_: String, apiBaseUrl _: String?) {}
 
     func sendGalleryMode() {}
 

@@ -4,7 +4,7 @@ import Photos
 
 /// User-visible album in Apple Photos for glasses sync (matches dedicated-folder behavior on Android).
 private enum MentraSyncedMediaAlbum {
-    static let localizedTitle = "MentraOS"
+    static let localizedTitle = "Mentra"
 }
 
 public class CrustModule: Module {
@@ -154,7 +154,8 @@ public class CrustModule: Module {
                 let creationRequest: PHAssetChangeRequest
                 if ["mp4", "mov", "avi", "m4v"].contains(pathExtension) {
                     guard let req = PHAssetChangeRequest.creationRequestForAssetFromVideo(
-                        atFileURL: fileURL)
+                        atFileURL: fileURL
+                    )
                     else {
                         NSLog("CrustModule: Failed to create video asset request for: \(filePath)")
                         creationFailed = true
@@ -163,7 +164,8 @@ public class CrustModule: Module {
                     creationRequest = req
                 } else {
                     guard let req = PHAssetChangeRequest.creationRequestForAssetFromImage(
-                        atFileURL: fileURL)
+                        atFileURL: fileURL
+                    )
                     else {
                         NSLog("CrustModule: Failed to create image asset request for: \(filePath)")
                         creationFailed = true
@@ -174,7 +176,8 @@ public class CrustModule: Module {
 
                 if let captureMillis = captureTimeMillis {
                     let captureDate = Date(
-                        timeIntervalSince1970: TimeInterval(captureMillis) / 1000.0)
+                        timeIntervalSince1970: TimeInterval(captureMillis) / 1000.0
+                    )
                     creationRequest.creationDate = captureDate
                     NSLog("CrustModule: Setting creation date to: \(captureDate)")
                 }
@@ -205,11 +208,13 @@ public class CrustModule: Module {
                     albumChange.addAssets([assetPlaceholder] as NSArray)
                 } else if existingAlbums.firstObject == nil {
                     let newAlbumChange = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(
-                        withTitle: MentraSyncedMediaAlbum.localizedTitle)
+                        withTitle: MentraSyncedMediaAlbum.localizedTitle
+                    )
                     newAlbumChange.addAssets([assetPlaceholder] as NSArray)
                 } else {
                     NSLog(
-                        "CrustModule: MentraOS album exists but is not writable; asset saved to library only")
+                        "CrustModule: Mentra album exists but is not writable; asset saved to library only"
+                    )
                 }
             } completionHandler: { _, error in
                 resultError = error

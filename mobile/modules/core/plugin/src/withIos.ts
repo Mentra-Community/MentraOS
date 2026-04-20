@@ -9,14 +9,14 @@ import {type ConfigPlugin, withPodfile, withDangerousMod} from "expo/config-plug
  */
 function addProjectSpecification(podfileContent: string): string {
   // Check if already added
-  if (podfileContent.includes("project 'MentraOS.xcodeproj'")) {
+  if (podfileContent.includes("project 'Mentra.xcodeproj'")) {
     return podfileContent
   }
   // Find platform declaration and add project specification after it
   const platformRegex = /(platform :ios[^\n]+\n)/
   const match = podfileContent.match(platformRegex)
   if (match) {
-    const projectSpec = `\n# Specify which Xcode project to use\nproject 'MentraOS.xcodeproj'\n`
+    const projectSpec = `\n# Specify which Xcode project to use\nproject 'Mentra.xcodeproj'\n`
     return podfileContent.replace(platformRegex, `$1${projectSpec}`)
   }
   return podfileContent

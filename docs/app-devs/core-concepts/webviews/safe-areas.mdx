@@ -1,0 +1,83 @@
+---
+title: "Safe Areas & Layout"
+description: "Avoid system-reserved UI regions when building Mini App webviews"
+icon: "border-outer"
+---
+
+Mini App webviews run inside the MentraOS companion app. The top-right corner of the webview is reserved for the MentraOS capsule menu (≡ / ✕) — your content must stay clear of it.
+
+## The capsule menu
+
+| Property | Value |
+|----------|-------|
+| Size | 73 × 30 px |
+| Top offset | 8 px |
+| Right offset | 8 px |
+| Shape | Pill (fully rounded) |
+
+Don't place buttons, menus, badges, tabs, navigation actions, floating actions, status indicators, or popovers behind the capsule.
+
+<Frame>
+  <img src="/static/img/safe-area-diagram.png" alt="Safe area diagram showing the capsule menu in the top-right corner and the safe content area below" style={{ maxWidth: '300px', margin: '0 auto', display: 'block' }} />
+</Frame>
+
+## Using the SDK
+
+`@mentra/react` exposes the capsule's bounding rect and a derived `safeAreaTop` value so your layout can adjust without hardcoding pixels. Outside MentraOS (e.g. a browser preview), the rect is `null` and `safeAreaTop` is `0`, so your app renders normally.
+
+### `useCapsuleMenu` hook
+
+Most apps just need enough top padding to clear the capsule:
+
+```tsx
+import { useCapsuleMenu } from "@mentra/react"
+
+function MyScreen() {
+  const { safeAreaTop } = useCapsuleMenu()
+
+  return (
+    <div style={{ paddingTop: safeAreaTop }}>
+      <h1>My Mini App</h1>
+    </div>
+  )
+}
+```
+
+`safeAreaTop` is `rect.bottom + 8` when inside MentraOS, `0` otherwise.
+
+### `getCapsuleMenuRect()`
+
+For fine-grained layout (e.g. positioning a header exactly next to the capsule), read the full rect:
+
+```tsx
+import { getCapsuleMenuRect } from "@mentra/react"
+
+const rect = getCapsuleMenuRect()
+if (rect) {
+  // rect.top, rect.right, rect.bottom, rect.left, rect.width, rect.height
+}
+```
+
+The `CapsuleMenuRect` type:
+
+```ts
+interface CapsuleMenuRect {
+  top: number
+  right: number
+  bottom: number
+  left: number
+  width: number
+  height: number
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="React Webviews" icon="react" href="/app-devs/core-concepts/webviews/react-webviews">
+    Build webviews with @mentra/react
+  </Card>
+  <Card title="Hardware Capabilities" icon="microchip" href="/app-devs/core-concepts/device/hardware-capabilities">
+    Check device display capabilities
+  </Card>
+</CardGroup>

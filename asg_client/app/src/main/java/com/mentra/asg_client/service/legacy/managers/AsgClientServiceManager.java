@@ -22,6 +22,8 @@ import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.settings.AsgSettings;
 
+import java.util.Set;
+
 /**
  * Manages the initialization and lifecycle of AsgClientService components.
  * This class follows the Single Responsibility Principle by handling only
@@ -468,9 +470,19 @@ public class AsgClientServiceManager {
                 });
                 Log.d(TAG, "📡 Picture request listener set");
 
-                // Wire active recording provider so sync/download skip in-progress videos
+                // Wire active recording provider so sync/download skip in-progress and not-yet-validated videos
                 if (mediaCaptureService != null) {
-                    cameraServer.setActiveRecordingProvider(mediaCaptureService::getActiveRecordingCaptureId);
+                    cameraServer.setActiveRecordingProvider(new AsgCameraServer.ActiveRecordingProvider() {
+                        @Override
+                        public String getActiveRecordingCaptureId() {
+                            return mediaCaptureService.getActiveRecordingCaptureId();
+                        }
+
+                        @Override
+                        public Set<String> getPendingVideoIntegrityCaptureIds() {
+                            return mediaCaptureService.getPendingVideoIntegrityCaptureIds();
+                        }
+                    });
                     Log.d(TAG, "📡 Active recording provider set on camera server");
                 }
 

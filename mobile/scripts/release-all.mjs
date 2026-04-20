@@ -20,7 +20,7 @@ function ghTag(version) {
 
 function apkPrefix(version) {
   const { major, minor } = parseVersion(version);
-  return `MentraOS_${major}p${minor}`;
+  return `Mentra_${major}p${minor}`;
 }
 
 // ── Step 1: Read version from .env ────────────────────────────────────────────
@@ -188,7 +188,7 @@ await $({ stdio: 'inherit' })`zx ./scripts/release-ios.mjs`;
 
 const repoName = (await $`gh repo view --json nameWithOwner -q .nameWithOwner`).stdout.trim();
 const apkUrl = `https://github.com/${repoName}/releases/download/${tag}/${apkName}`;
-const ipaName = `${prefix.replace('MentraOS_', 'MentraOS_iOS_')}_Beta_${betaNumber}.ipa`;
+const ipaName = `${prefix.replace('Mentra_', 'Mentra_iOS_')}_Beta_${betaNumber}.ipa`;
 const ipaUrl = `https://github.com/${repoName}/releases/download/${tag}/${ipaName}`;
 
 console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');

@@ -45,7 +45,7 @@ private enum R1BLE {
 // MARK: - R1 Gesture Types
 
 private enum R1Gesture: String {
-    case hold = "hold"
+    case hold
     case singleTap = "single_tap"
     case doubleTap = "double_tap"
     case swipeUp = "swipe_up"
@@ -72,7 +72,7 @@ private enum R1Gesture: String {
 @MainActor
 class R1: NSObject, ControllerManager {
     var type = ControllerTypes.R1
-    let hasMic = false  // R1 ring has no microphone
+    let hasMic = false // R1 ring has no microphone
 
     // Connection state
     private var centralManager: CBCentralManager?
@@ -138,6 +138,7 @@ class R1: NSObject, ControllerManager {
             }
         }
     }
+
     private var isCharging = false
 
     // Heartbeat
@@ -182,8 +183,9 @@ class R1: NSObject, ControllerManager {
         centralManager!.scanForPeripherals(
             withServices: nil,
             options: [
-                CBCentralManagerScanOptionAllowDuplicatesKey: false
-            ])
+                CBCentralManagerScanOptionAllowDuplicatesKey: false,
+            ]
+        )
         return true
     }
 
@@ -345,9 +347,9 @@ class R1: NSObject, ControllerManager {
 
         // Longer data: check for embedded gesture marker
         if data.count > 3, let ffIndex = data.firstIndex(of: R1BLE.GESTURE_MARKER),
-            ffIndex + 2 < data.count
+           ffIndex + 2 < data.count
         {
-            let gestureData = Data(data[ffIndex...ffIndex + 2])
+            let gestureData = Data(data[ffIndex ... ffIndex + 2])
             if let gesture = R1Gesture.parse(from: gestureData) {
                 Bridge.log("R1: Embedded gesture: \(gesture.rawValue)")
                 Bridge.sendTouchEvent(
@@ -384,11 +386,11 @@ class R1: NSObject, ControllerManager {
             await reconnectionManager.start { [weak self] in
                 guard let self else { return false }
                 if await MainActor.run(body: { self.ready }) {
-                    return true  // already connected
+                    return true // already connected
                 }
                 Bridge.log("R1: Attempting reconnection...")
                 await MainActor.run { self.startScan() }
-                return false  // keep trying
+                return false // keep trying
             }
         }
     }
@@ -449,49 +451,49 @@ class R1: NSObject, ControllerManager {
 
     // MARK: - No-op implementations (ring has no display/camera/wifi/mic)
 
-    func sendIncidentId(_ incidentId: String) {}
-    func setMicEnabled(_ enabled: Bool) {}
+    func sendIncidentId(_: String, apiBaseUrl _: String?) {}
+    func setMicEnabled(_: Bool) {}
     func sortMicRanking(list: [String]) -> [String] { return list }
-    func sendJson(_ jsonOriginal: [String: Any], wakeUp: Bool, requireAck: Bool) {}
+    func sendJson(_: [String: Any], wakeUp _: Bool, requireAck _: Bool) {}
     func requestPhoto(
-        _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, flash: Bool, sound: Bool
+        _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
+        compress _: String?, flash _: Bool, sound _: Bool
     ) {}
-    func startVideoRecording(requestId: String, save: Bool, flash: Bool, sound: Bool) {}
-    func stopVideoRecording(requestId: String) {}
-    func startStream(_ message: [String: Any]) {}
+    func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {}
+    func stopVideoRecording(requestId _: String) {}
+    func startStream(_: [String: Any]) {}
     func stopStream() {}
-    func sendStreamKeepAlive(_ message: [String: Any]) {}
+    func sendStreamKeepAlive(_: [String: Any]) {}
     func startBufferRecording() {}
     func stopBufferRecording() {}
-    func saveBufferVideo(requestId: String, durationSeconds: Int) {}
+    func saveBufferVideo(requestId _: String, durationSeconds _: Int) {}
     func sendButtonPhotoSettings() {}
     func sendButtonModeSetting() {}
     func sendButtonVideoRecordingSettings() {}
     func sendButtonMaxRecordingTime() {}
     func sendButtonCameraLedSetting() {}
-    func setBrightness(_ level: Int, autoMode: Bool) {}
+    func setBrightness(_: Int, autoMode _: Bool) {}
     func clearDisplay() {}
-    func sendTextWall(_ text: String) {}
-    func sendDoubleTextWall(_ top: String, _ bottom: String) {}
-    func displayBitmap(base64ImageData: String) async -> Bool { return false }
+    func sendTextWall(_: String) {}
+    func sendDoubleTextWall(_: String, _: String) {}
+    func displayBitmap(base64ImageData _: String) async -> Bool { return false }
     func showDashboard() {}
-    func setDashboardPosition(_ height: Int, _ depth: Int) {}
-    func setHeadUpAngle(_ angle: Int) {}
-    func setSilentMode(_ enabled: Bool) {}
+    func setDashboardPosition(_: Int, _: Int) {}
+    func setHeadUpAngle(_: Int) {}
+    func setSilentMode(_: Bool) {}
     func exit() {}
     func sendShutdown() { disconnect() }
     func sendReboot() {}
     func sendRgbLedControl(
-        requestId: String, packageName: String?, action: String, color: String?, ontime: Int,
-        offtime: Int, count: Int
+        requestId _: String, packageName _: String?, action _: String, color _: String?, ontime _: Int,
+        offtime _: Int, count _: Int
     ) {}
     func requestWifiScan() {}
-    func sendWifiCredentials(_ ssid: String, _ password: String) {}
-    func forgetWifiNetwork(_ ssid: String) {}
-    func sendHotspotState(_ enabled: Bool) {}
+    func sendWifiCredentials(_: String, _: String) {}
+    func forgetWifiNetwork(_: String) {}
+    func sendHotspotState(_: Bool) {}
     func sendOtaStart() {}
-    func sendUserEmailToGlasses(_ email: String) {}
+    func sendUserEmailToGlasses(_: String) {}
     func queryGalleryStatus() {}
     func sendGalleryMode() {}
     func requestVersionInfo() {}
@@ -548,7 +550,7 @@ extension R1: CBCentralManagerDelegate {
 
             // If search ID is specific, check it matches the ring name/id
             if let name = name, let id = self.extractRingId(name),
-                self.DEVICE_SEARCH_ID != id && !name.contains(self.DEVICE_SEARCH_ID)
+               self.DEVICE_SEARCH_ID != id && !name.contains(self.DEVICE_SEARCH_ID)
             {
                 return
             }
@@ -564,7 +566,7 @@ extension R1: CBCentralManagerDelegate {
     }
 
     nonisolated func centralManager(
-        _ central: CBCentralManager, didConnect peripheral: CBPeripheral
+        _: CBCentralManager, didConnect peripheral: CBPeripheral
     ) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -595,7 +597,7 @@ extension R1: CBCentralManagerDelegate {
     }
 
     nonisolated func centralManager(
-        _ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?
+        _: CBCentralManager, didFailToConnect _: CBPeripheral, error: Error?
     ) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -605,7 +607,7 @@ extension R1: CBCentralManagerDelegate {
     }
 
     nonisolated func centralManager(
-        _ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?
+        _: CBCentralManager, didDisconnectPeripheral _: CBPeripheral, error: Error?
     ) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -624,7 +626,7 @@ extension R1: CBCentralManagerDelegate {
 // MARK: - CBPeripheralDelegate
 
 extension R1: CBPeripheralDelegate {
-    nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+    nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices _: Error?) {
         guard let services = peripheral.services else { return }
         for service in services {
             // Discover ALL characteristics on every service
@@ -633,7 +635,7 @@ extension R1: CBPeripheralDelegate {
     }
 
     nonisolated func peripheral(
-        _ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?
+        _ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error _: Error?
     ) {
         guard let characteristics = service.characteristics else { return }
 
@@ -681,7 +683,7 @@ extension R1: CBPeripheralDelegate {
     }
 
     nonisolated func peripheral(
-        _ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic,
+        _: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic,
         error: Error?
     ) {
         Bridge.log("R1: didUpdateNotificationStateFor: \(characteristic.uuid)")
@@ -707,7 +709,7 @@ extension R1: CBPeripheralDelegate {
     }
 
     nonisolated func peripheral(
-        _ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic,
+        _: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
         Bridge.log("R1: didUpdateValueFor1: \(characteristic.uuid)")
@@ -729,7 +731,7 @@ extension R1: CBPeripheralDelegate {
     }
 
     nonisolated func peripheral(
-        _ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?
+        _: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?
     ) {
         Bridge.log("R1: didWriteValueFor: \(characteristic.uuid)")
         if let error = error {

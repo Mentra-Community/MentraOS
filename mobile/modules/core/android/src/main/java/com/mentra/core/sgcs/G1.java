@@ -1747,7 +1747,7 @@ public class G1 extends SGCManager {
     }
 
     @Override
-    public void sendIncidentId(String incidentId) {
+    public void sendIncidentId(String incidentId, String apiBaseUrl) {
         // G1 doesn't support incident reporting (no ASG client)
     }
 

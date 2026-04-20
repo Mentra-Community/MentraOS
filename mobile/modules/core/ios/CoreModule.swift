@@ -46,6 +46,7 @@ public class CoreModule: Module {
             "send_command_to_ble",
             "receive_command_from_ble",
             "miniapp_selected",
+            "captions_tester_incident"
         )
 
         OnCreate {
@@ -189,9 +190,9 @@ public class CoreModule: Module {
 
         // MARK: - Incident Reporting
 
-        AsyncFunction("sendIncidentId") { (incidentId: String) in
+        AsyncFunction("sendIncidentId") { (incidentId: String, apiBaseUrl: String?) in
             await MainActor.run {
-                CoreManager.shared.sendIncidentId(incidentId)
+                CoreManager.shared.sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
             }
         }
 

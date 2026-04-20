@@ -10,8 +10,8 @@ import {ExpoConfig, ConfigContext} from "@expo/config"
 module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   return {
     ...config,
-    name: "MentraOS",
-    slug: "MentraOS",
+    name: "Mentra",
+    slug: "Mentra",
     version: process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "0.0.1",
     scheme: "com.mentra",
     orientation: "portrait",
@@ -26,7 +26,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       // icon: "./assets/app-icons/ic_launcher.png",
       package: "com.mentra.mentra",
       googleServicesFile: "./google-services.json",
-      versionCode: 174,
+      versionCode: 187,
       adaptiveIcon: {
         foregroundImage: "./assets/app-icons/ic_launcher_foreground.png",
         // backgroundImage: "./assets/app-icons/ic_launcher.png",
@@ -64,32 +64,32 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       icon: "./assets/app-icons/ic_launcher.png",
       supportsTablet: false,
       requireFullScreen: true,
-      buildNumber: "174",
+      buildNumber: "187",
       bundleIdentifier: "com.mentra.mentra",
       googleServicesFile: "./GoogleService-Info.plist",
       associatedDomains: ["applinks:apps.mentra.glass", "applinks:apps.mentraglass.com"],
       infoPlist: {
         NSCameraUsageDescription: "This app needs access to your camera to capture images.",
         NSMicrophoneUsageDescription:
-          "MentraOS uses your microphone to enable the 'Hey Mira' AI assistant and provide live captions for deaf and hard-of-hearing users on smart glasses. For example, you can say 'Hey Mira, what's on my calendar today?' or the app can caption conversations in real-time on your glasses display.",
+          "Mentra uses your microphone to enable the 'Hey Mira' AI assistant and provide live captions for deaf and hard-of-hearing users on smart glasses. For example, you can say 'Hey Mira, what's on my calendar today?' or the app can caption conversations in real-time on your glasses display.",
         NSBluetoothAlwaysUsageDescription: "This app needs access to your Bluetooth to connect to your glasses.",
         NSLocationWhenInUseUsageDescription:
-          "MentraOS uses your location to display nearby points of interest, weather updates, and navigation directions on your smart glasses. For example, when you're walking, the app can show restaurants within 100 meters or provide turn-by-turn directions to your destination on your glasses display.",
+          "Mentra uses your location to display nearby points of interest, weather updates, and navigation directions on your smart glasses. For example, when you're walking, the app can show restaurants within 100 meters or provide turn-by-turn directions to your destination on your glasses display.",
         NSBluetoothPeripheralUsageDescription: "This app needs access to your Bluetooth to connect to your glasses.",
         NSCalendarsUsageDescription:
-          "MentraOS accesses your calendar to display upcoming events and reminders directly on your smart glasses. For example, the app can show 'Meeting with John at 3 PM in Conference Room A' or remind you '15 minutes until dentist appointment' on your glasses display.",
+          "Mentra accesses your calendar to display upcoming events and reminders directly on your smart glasses. For example, the app can show 'Meeting with John at 3 PM in Conference Room A' or remind you '15 minutes until dentist appointment' on your glasses display.",
         NSCalendarsFullAccessUsageDescription:
-          "MentraOS accesses your calendar to display upcoming events and reminders directly on your smart glasses. For example, the app can show 'Meeting with John at 3 PM in Conference Room A' or remind you '15 minutes until dentist appointment' on your glasses display.",
+          "Mentra accesses your calendar to display upcoming events and reminders directly on your smart glasses. For example, the app can show 'Meeting with John at 3 PM in Conference Room A' or remind you '15 minutes until dentist appointment' on your glasses display.",
         NSCalendarUsageDescription:
-          "MentraOS accesses your calendar to display upcoming events and reminders directly on your smart glasses. For example, the app can show 'Meeting with John at 3 PM in Conference Room A' or remind you '15 minutes until dentist appointment' on your glasses display.",
+          "Mentra accesses your calendar to display upcoming events and reminders directly on your smart glasses. For example, the app can show 'Meeting with John at 3 PM in Conference Room A' or remind you '15 minutes until dentist appointment' on your glasses display.",
         NSPhotoLibraryUsageDescription:
           "This app needs access to your photo library to provide you with photo based information on your glasses.",
         NSPhotoLibraryAddUsageDescription:
-          "Allow MentraOS to save photos and videos from your glasses to your camera roll.",
+          "Allow Mentra to save photos and videos from your glasses to your camera roll.",
         NSUserNotificationUsageDescription:
           "This app needs access to your notifications to provide you with notifications.",
         NSLocalNetworkUsageDescription:
-          "MentraOS needs to access your local network to connect to Mentra Live glasses for viewing photos and media stored on the device.",
+          "Mentra needs to access your local network to connect to Mentra Live glasses for viewing photos and media stored on the device.",
         NSBonjourServices: ["_mentra-live._tcp", "_http._tcp"],
         NSAppTransportSecurity: {
           NSAllowsLocalNetworking: true,
@@ -102,7 +102,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         },
         UIBackgroundModes: ["bluetooth-central", "audio", "location", "processing", "fetch"],
         NSLocationAlwaysAndWhenInUseUsageDescription:
-          "MentraOS requires background location access to deliver continuous updates for apps like navigation and running, even when the app isn't in the foreground.",
+          "Mentra requires background location access to deliver continuous updates for apps like navigation and running, even when the app isn't in the foreground.",
         UIRequiresFullScreen: true,
         UISupportedInterfaceOrientations: [
           "UIInterfaceOrientationPortrait",
@@ -136,8 +136,8 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       [
         "expo-media-library",
         {
-          photosPermission: "Allow MentraOS to save photos from your glasses.",
-          savePhotosPermission: "Allow MentraOS to save photos from your glasses.",
+          photosPermission: "Allow Mentra to save photos from your glasses.",
+          savePhotosPermission: "Allow Mentra to save photos from your glasses.",
           // Disabled - we save photos from glasses, we don't need to read EXIF location from user's library
           // Google Play rejects ACCESS_MEDIA_LOCATION for apps without core photo gallery functionality
           isAccessMediaLocationEnabled: false,
@@ -231,7 +231,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       [
         "expo-location",
         {
-          locationAlwaysAndWhenInUsePermission: "Allow MentraOS to use your location.",
+          locationAlwaysAndWhenInUsePermission: "Allow Mentra to use your location.",
         },
       ],
       "@react-native-firebase/app",

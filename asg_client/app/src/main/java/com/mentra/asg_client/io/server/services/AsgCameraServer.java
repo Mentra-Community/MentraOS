@@ -46,6 +46,13 @@ public class AsgCameraServer extends AsgServer {
      */
     public interface ActiveRecordingProvider {
         String getActiveRecordingCaptureId();
+
+        /**
+         * Capture IDs whose files must stay off sync/download until post-record validation completes.
+         */
+        default Set<String> getPendingVideoIntegrityCaptureIds() {
+            return Collections.emptySet();
+        }
     }
 
     // File management system
@@ -1190,12 +1197,14 @@ public class AsgCameraServer extends AsgServer {
      */
     private boolean isActiveRecording(String fileName) {
         if (activeRecordingProvider == null || fileName == null) return false;
-        String activeCaptureId = activeRecordingProvider.getActiveRecordingCaptureId();
-        if (activeCaptureId == null) return false;
         // deriveCaptureId handles both folder-based ("VID_xxx/base.mp4" -> "VID_xxx")
         // and legacy flat ("VID_xxx.mp4" -> "VID_xxx") paths
         String fileCaptureId = deriveCaptureId(fileName);
-        return activeCaptureId.equals(fileCaptureId);
+        String activeCaptureId = activeRecordingProvider.getActiveRecordingCaptureId();
+        if (activeCaptureId != null && activeCaptureId.equals(fileCaptureId)) {
+            return true;
+        }
+        return activeRecordingProvider.getPendingVideoIntegrityCaptureIds().contains(fileCaptureId);
     }
 
     /**
@@ -1545,6 +1554,17 @@ public class AsgCameraServer extends AsgServer {
                 }
 
                 logger.debug(TAG, "📦 Processing file: " + fileName);
+
+                if (isActiveRecording(fileName)) {
+                    logger.warn(TAG, "📦 Skipping file pending recording or integrity check: " + fileName);
+                    Map<String, Object> result = new HashMap<>();
+                    result.put("file", fileName);
+                    result.put("success", false);
+                    result.put("message", "File is not ready for download");
+                    results.add(result);
+                    failureCount++;
+                    continue;
+                }
 
                 try {
                     // Get file metadata

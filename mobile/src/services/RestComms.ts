@@ -50,7 +50,7 @@ class RestComms {
 
     // Sync to native GlassesStore (and persist to SharedPreferences in CoreModule when bridge runs)
     const value = token ?? ""
-    const updateResult = CoreModule.update("core", {auth_token: value})
+    const updateResult = CoreModule.update("core", {core_token: value})
     if (updateResult != null && typeof (updateResult as Promise<void>).then === "function") {
       ;(updateResult as Promise<void>).catch(() => {})
     }

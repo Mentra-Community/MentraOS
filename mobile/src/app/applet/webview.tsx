@@ -30,8 +30,6 @@ export default function AppWebView() {
   const [retryTrigger, setRetryTrigger] = useState(0)
   const {goBack, push} = useNavigationHistory()
   const viewShotRef = useRef(null)
-  const [appSwitcherUi] = useSetting(SETTINGS.app_switcher_ui.key)
-  const insets = useSaferAreaInsets()
   const {theme} = useAppTheme()
 
   // Track if the server-side app start failed
@@ -349,25 +347,8 @@ export default function AppWebView() {
   if (showError) {
     return (
       <>
-        {appSwitcherUi && (
-          <MiniAppCapsuleMenu packageName={packageName} viewShotRef={viewShotRef} onBackPress={handleWebViewBack} />
-        )}
-        <Screen preset="fixed" safeAreaEdges={[appSwitcherUi && "top"]} className="px-0">
-          {!appSwitcherUi && (
-            <View className="px-6">
-              <Header
-                leftIcon="chevron-left"
-                onLeftPress={() => {
-                  if (webViewCanGoBack && webViewRef.current) {
-                    webViewRef.current.goBack()
-                  } else {
-                    goBack()
-                  }
-                }}
-                title={appName}
-              />
-            </View>
-          )}
+        <MiniAppCapsuleMenu packageName={packageName} viewShotRef={viewShotRef} onBackPress={handleWebViewBack} />
+        <Screen preset="fixed" safeAreaEdges={["top"]} className="px-0">
           <MiniappErrorScreen
             packageName={packageName}
             appName={appName}
@@ -399,22 +380,18 @@ export default function AppWebView() {
   const capsuleMenuRight = theme.spacing.s2
   const capsuleMenuTop = theme.spacing.s2
   const screenWidth = Dimensions.get("window").width
-  const capsuleMenuRect = appSwitcherUi
-    ? {
-        top: capsuleMenuTop,
-        right: capsuleMenuRight,
-        bottom: capsuleMenuTop + capsuleMenuHeight,
-        left: screenWidth - capsuleMenuRight - capsuleMenuWidth,
-        width: capsuleMenuWidth,
-        height: capsuleMenuHeight,
-      }
-    : null
+  const capsuleMenuRect = {
+    top: capsuleMenuTop,
+    right: capsuleMenuRight,
+    bottom: capsuleMenuTop + capsuleMenuHeight,
+    left: screenWidth - capsuleMenuRight - capsuleMenuWidth,
+    width: capsuleMenuWidth,
+    height: capsuleMenuHeight,
+  }
 
   return (
     <>
-      {appSwitcherUi && (
-        <MiniAppCapsuleMenu packageName={packageName} viewShotRef={viewShotRef} onBackPress={handleWebViewBack} />
-      )}
+      <MiniAppCapsuleMenu packageName={packageName} viewShotRef={viewShotRef} onBackPress={handleWebViewBack} />
       <Screen
         preset="fixed"
         safeAreaEdges={Platform.OS === "android" ? ["top", "bottom"] : ["top"]}

@@ -133,6 +133,14 @@ const IncidentDetail: React.FC = () => {
     }
   };
 
+  const formatAreaLabel = (value?: string) =>
+    value
+      ? value
+          .split("_")
+          .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+          .join(" ")
+      : "Unknown";
+
   const copyToClipboard = async (text: string) => {
     await navigator.clipboard.writeText(text);
     setCopied(true);
@@ -217,6 +225,11 @@ const IncidentDetail: React.FC = () => {
   }
 
   const feedback = (logs?.feedback as Record<string, any>) || {};
+  const submissionMode = incident.submissionMode || feedback.submissionMode;
+  const triggerArea = incident.triggerArea || feedback.triggerArea;
+  const triggerReason = incident.triggerReason || feedback.triggerReason;
+  const sourceAppletPackageName = incident.sourceAppletPackageName || feedback.sourceAppletPackageName;
+  const sourceAppletName = incident.sourceAppletName || feedback.sourceAppletName;
 
   return (
     <DashboardLayout>
@@ -306,6 +319,32 @@ const IncidentDetail: React.FC = () => {
                   <div>
                     <label className="text-sm font-medium text-gray-500">Severity</label>
                     <p className="mt-1">{feedback.severityRating || "N/A"}/5</p>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium text-gray-500 mb-2 block">Categorization</label>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3 bg-gray-50 rounded-lg">
+                    <div>
+                      <span className="text-xs text-gray-500">Submission Mode</span>
+                      <p className="text-sm">{submissionMode || "Unknown"}</p>
+                    </div>
+                    <div>
+                      <span className="text-xs text-gray-500">Trigger Area</span>
+                      <p className="text-sm">{formatAreaLabel(triggerArea)}</p>
+                    </div>
+                    <div>
+                      <span className="text-xs text-gray-500">Trigger Reason</span>
+                      <p className="text-sm">{triggerReason || "Unknown"}</p>
+                    </div>
+                    <div>
+                      <span className="text-xs text-gray-500">Source Applet</span>
+                      <p className="text-sm">
+                        {sourceAppletName && sourceAppletPackageName
+                          ? `${sourceAppletName} (${sourceAppletPackageName})`
+                          : sourceAppletName || sourceAppletPackageName || "Not specified"}
+                      </p>
+                    </div>
                   </div>
                 </div>
 
