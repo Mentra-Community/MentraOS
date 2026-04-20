@@ -6,9 +6,21 @@ import {create} from "zustand"
 import {CompatibilityResult, HardwareCompatibility} from "@/utils/hardware"
 import {storage} from "@/utils/storage"
 import composer from "@/services/Composer"
+import {AppletPermission, AppletType, HardwareRequirement} from "../types"
 
 // runtime state of an applet:
-export interface ClientApp extends AppletInterface {
+export interface ClientApp {
+  packageName: string
+  name: string
+  webviewUrl: string
+  logoUrl: string
+  type: AppletType
+  permissions: AppletPermission[]
+  running: boolean
+  healthy: boolean
+  hardwareRequirements: HardwareRequirement[]
+  installedDate?: string
+  lastActiveAt?: string
   offline: boolean
   offlineRoute: string
   compatibility?: CompatibilityResult
@@ -148,7 +160,6 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     // merge in the offline apps:
     let applets: ClientApp[] = [...(await composer.getApps())]
 
-    
     // add in any existing screenshots:
     let oldApplets = useAppStatusStore.getState().apps
     oldApplets.forEach((app) => {
@@ -193,8 +204,8 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     set({apps: applets})
   },
 
-  start: async (applet: ClientApp) => {
-    const packageName = applet.packageName
+  start: async (clientApp: ClientApp) => {
+    const packageName = clientApp.packageName
     const applet = get().apps.find((a) => a.packageName === packageName)
 
     if (!applet) {
