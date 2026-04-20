@@ -15,10 +15,10 @@
  * Author: MentraOS Team
  */
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdbool.h>
 #include <zephyr/device.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -40,6 +40,8 @@
 
 // Include protobuf handler for battery functions
 #include "protobuf_handler.h"
+// Brightness component (AUTO + manual state)
+#include "mos_brightness.h"
 // A6N driver API for register read/write
 #include "../custom_driver_module/drivers/display/lcd/a6n.h"
 
@@ -47,12 +49,6 @@
 extern struct k_msgq lvgl_display_msgq;
 
 LOG_MODULE_REGISTER(shell_display, LOG_LEVEL_INF);
-
-/* Software distance mapping model (meters -> stereo offset) */
-#define DISPLAY_DISTANCE_BASE_M       2.5   /* default convergence distance from vendor */
-#define DISPLAY_DISTANCE_NEAR_LIMIT_M 0.5
-#define DISPLAY_DISTANCE_FAR_LIMIT_M  20.0
-#define DISPLAY_DISTANCE_GAIN         12.0  /* tunable gain: higher = stronger depth change */
 
 #ifndef PM_QSPI_NOR_BASE_ADDRESS
 #define PM_QSPI_NOR_BASE_ADDRESS 0x10000000u
@@ -81,7 +77,13 @@ static int cmd_display_help(const struct shell *shell, size_t argc, char **argv)
     shell_print(shell, "  display fill                     - Fill entire display (white)");
     shell_print(shell, "");
     shell_print(shell, "🔆 Brightness Control:");
-    shell_print(shell, "  display brightness <0-100> - Set display brightness (linear 0-100%)");
+    shell_print(shell, "  display brightness <0-100>      - Set display brightness (linear 0-100%%)");
+    shell_print(shell, "  display brightness auto status  - Show AUTO brightness status");
+    shell_print(shell, "  display brightness auto on      - Enable AUTO brightness");
+    shell_print(shell, "  display brightness auto off     - Disable AUTO brightness");
+    shell_print(shell, "  display brightness auto log on  - Enable AUTO sample log");
+    shell_print(shell, "  display brightness auto log off - Disable AUTO sample log");
+    shell_print(shell, "  display brightness auto multiplier <value> - Set AUTO multiplier (0.10-3.00)");
     shell_print(shell, "");
     shell_print(shell, "🎨 Pattern Control:");
     shell_print(shell, "  display pattern <0-5>            - Select specific pattern:");
@@ -117,6 +119,11 @@ static int cmd_display_help(const struct shell *shell, size_t argc, char **argv)
     shell_print(shell, "");
     shell_print(shell, "Examples:");
     shell_print(shell, "  display brightness 50            - Set brightness to 50%%");
+    shell_print(shell, "  display brightness auto status   - Show AUTO brightness status");
+    shell_print(shell, "  display brightness auto on       - Enable ambient-light AUTO mode");
+    shell_print(shell, "  display brightness auto log on   - Print AUTO sample log");
+    shell_print(shell, "  display brightness auto multiplier 1.20 - Increase AUTO sensitivity");
+    shell_print(shell, "  display brightness auto off      - Restore manual brightness");
     shell_print(shell, "  display pattern 2                - Show vertical zebra pattern");
     shell_print(shell, "  display battery 65               - Set 65%% battery, not charging");
     shell_print(shell, "  display battery 85 true          - Set 85%% battery, charging");
@@ -136,8 +143,9 @@ static int cmd_display_help(const struct shell *shell, size_t argc, char **argv)
     shell_print(shell, "                                   - offset: -16..16, pure software (no shift register write)");
     shell_print(shell, "  display redraw                   - Full-screen invalidate + refresh");
     shell_print(shell, "  display redraw_visible            - Current pattern UI only (lighter than redraw)");
-    shell_print(shell, "  display distance <meters>        - Distance control by meters (software mapping)");
-    shell_print(shell, "                                   - example: 0.8 / 2.5 / 5.0 / 10.0");
+    shell_print(shell, "  display distance <meters>        - Distance control by trigonometry (2.0-5.0m)");
+    shell_print(shell, "                                   - default: 2.5m => 0px, values clamp to 2.0-5.0m");
+    shell_print(shell, "  display distance_test            - Print 2.0-5.0m distance-to-pixel table");
     shell_print(shell, "  display stereo <lh> <rh>         - Hardware stereo shift (register)");
     shell_print(shell, "                                   - lh/rh: left/right H shift only");
     shell_print(shell, "                                   - mirror is preserved from existing panel setting");
@@ -243,7 +251,16 @@ static int cmd_display_brightness(const struct shell *shell, size_t argc, char *
         return -EINVAL;
     }
 
-    int brightness_pct = atoi(argv[1]);
+    char *endptr = NULL;
+    long brightness_pct = strtol(argv[1], &endptr, 10);
+
+    if ((endptr == argv[1]) || (*endptr != '\0'))
+    {
+        shell_error(shell, "❌ Invalid brightness value: %s", argv[1]);
+        shell_print(shell, "Usage: display brightness <0-100>");
+        shell_print(shell, "AUTO:  display brightness auto <status|on|off|multiplier>");
+        return -EINVAL;
+    }
 
     // Validate brightness range
     if (brightness_pct < 0 || brightness_pct > 100)
@@ -252,25 +269,10 @@ static int cmd_display_brightness(const struct shell *shell, size_t argc, char *
         return -EINVAL;
     }
 
-    // Linear mapping from 0-100% to 0x00-0xFF register values
-    uint8_t reg_value = (brightness_pct * 255) / 100;
-
-    // 设置亮度 | Set brightness
-    LOG_INF("🔍 DEBUG: About to call a6n_set_brightness(0x%02X) from SHELL path", reg_value);
-    int ret = a6n_set_brightness(reg_value);
-    if (ret == 0)
-    {
-        shell_print(shell, "✅ A6N brightness set to %d%% (reg=0x%02X)", brightness_pct, reg_value);
-        LOG_INF("🔍 DEBUG: a6n_set_brightness() succeeded from SHELL path");
-    }
-    else
-    {
-        shell_error(shell, "❌ Failed to set brightness: %d", ret);
-        LOG_ERR("🔍 DEBUG: a6n_set_brightness() FAILED from SHELL path with error %d", ret);
-        return ret;
-    }
-
-    LOG_INF("Display brightness set to %d%% (0x%02X) via shell", brightness_pct, reg_value);
+    // Set brightness through the state machine (also disables AUTO brightness)
+    mos_brightness_request_manual((uint32_t)brightness_pct);
+    shell_print(shell, "✅ Brightness set to %ld%% (AUTO disabled)", brightness_pct);
+    LOG_INF("Display brightness set to %ld%% via shell", brightness_pct);
     return 0;
 }
 
@@ -951,14 +953,9 @@ static int cmd_display_depth(const struct shell *shell, size_t argc, char **argv
 }
 
 /**
- * Display distance command (software mapping model)
+ * Display distance command (trigonometry model)
  * Usage: display distance <meters>
- *   meters: 0.5..20.0
- *
- * Model:
- *   offset_f = G * (1/d - 1/d0)
- *   d0 = DISPLAY_DISTANCE_BASE_M (default 2.5m => offset=0)
- *   G  = DISPLAY_DISTANCE_GAIN
+ *   meters: 2.0..5.0, default 2.5m => offset 0
  */
 static int cmd_display_distance(const struct shell *shell, size_t argc, char **argv)
 {
@@ -975,23 +972,24 @@ static int cmd_display_distance(const struct shell *shell, size_t argc, char **a
         shell_error(shell, "❌ Invalid distance: %s", argv[1]);
         return -EINVAL;
     }
-    if (distance_m < DISPLAY_DISTANCE_NEAR_LIMIT_M || distance_m > DISPLAY_DISTANCE_FAR_LIMIT_M)
+
+    if (distance_m <= 0.0)
     {
-        shell_error(shell, "❌ Distance out of range: %.3f (valid: %.1f..%.1f m)", distance_m,
-                    DISPLAY_DISTANCE_NEAR_LIMIT_M, DISPLAY_DISTANCE_FAR_LIMIT_M);
+        shell_error(shell, "❌ Invalid distance: %.3f m", distance_m);
         return -EINVAL;
     }
 
-    /* offset_f > 0 => near, offset_f < 0 => far */
-    double offset_f = DISPLAY_DISTANCE_GAIN * ((1.0 / distance_m) - (1.0 / DISPLAY_DISTANCE_BASE_M));
+    uint32_t requested_cm = (uint32_t)((distance_m * 100.0) + 0.5);
+    int8_t offset = 0;
+    uint32_t clamped_cm = 0U;
+    int ret = a6n_depth_distance_cm_to_offset(requested_cm, &offset, &clamped_cm);
+    if (ret != 0)
+    {
+        shell_error(shell, "❌ Distance calculate failed: %d", ret);
+        return ret;
+    }
 
-    long offset_i = (long)((offset_f >= 0.0) ? (offset_f + 0.5) : (offset_f - 0.5));
-    if (offset_i < -16)
-        offset_i = -16;
-    if (offset_i > 16)
-        offset_i = 16;
-
-    int ret = a6n_set_software_depth_offset((int8_t)offset_i);
+    ret = a6n_set_software_depth_offset(offset);
     if (ret != 0)
     {
         shell_error(shell, "❌ Distance apply failed: %d", ret);
@@ -999,18 +997,41 @@ static int cmd_display_distance(const struct shell *shell, size_t argc, char **a
     }
 
     display_request_visible_redraw();
-    shell_print(shell,
-                "✅ Distance set: %.2fm -> sw_offset=%.2f (quantized=%ld px, pure software) (base=%.1fm, gain=%.1f)",
-                distance_m, offset_f, offset_i, DISPLAY_DISTANCE_BASE_M, DISPLAY_DISTANCE_GAIN);
+    shell_print(shell, "✅ Distance set: request=%.2fm (%u cm), clamp=%.2fm, offset=%d px",
+                distance_m, (unsigned int)requested_cm, (double)clamped_cm / 100.0, (int)offset);
     shell_print(shell, "   Visible UI refresh queued. Use \"display redraw\" for full screen if needed.");
     return 0;
 }
 
+static int cmd_display_distance_test(const struct shell *shell, size_t argc, char **argv)
+{
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
+
+    static const uint32_t test_cm[] = {200U, 225U, 250U, 300U, 400U, 500U};
+
+    shell_print(shell, "Distance trigonometry test (default 2.50m => 0px):");
+    for (size_t i = 0; i < (sizeof(test_cm) / sizeof(test_cm[0])); ++i)
+    {
+        int8_t offset = 0;
+        uint32_t clamped_cm = 0U;
+        int ret = a6n_depth_distance_cm_to_offset(test_cm[i], &offset, &clamped_cm);
+        if (ret != 0)
+        {
+            shell_error(shell, "  %.2fm -> error %d", (double)test_cm[i] / 100.0, ret);
+            continue;
+        }
+        shell_print(shell, "  %.2fm -> clamp %.2fm -> offset %+d px",
+                    (double)test_cm[i] / 100.0, (double)clamped_cm / 100.0, (int)offset);
+    }
+
+    return 0;
+}
+
 /**
- * Simulate protobuf DisplayDistanceConfig tier mapping locally.
+ * Simulate legacy protobuf DisplayDistanceConfig tier mapping locally.
  *
- * App 侧约定：distance_cm 字段里直接传档位索引 1/2/3
- * 1 => offset -16, 2 => offset 0, 3 => offset +16
+ * 1 => 2.0m, 2 => 2.5m, 3 => 5.0m, then use the trigonometry model.
  */
 static int cmd_display_distance_tier(const struct shell *shell, size_t argc, char **argv)
 {
@@ -1032,7 +1053,7 @@ static int cmd_display_distance_tier(const struct shell *shell, size_t argc, cha
     cfg.distance_cm = (uint32_t)v;
 
     protobuf_process_display_distance_config(&cfg);
-    shell_print(shell, "✅ distance_tier=%ld applied (see A6N offset log / errors in console).", v);
+    shell_print(shell, "✅ legacy distance_tier=%ld applied (1=2.0m, 2=2.5m, 3=5.0m).", v);
     return 0;
 }
 
@@ -1471,6 +1492,111 @@ static int cmd_display_layout_padding(const struct shell *shell, size_t argc, ch
     return 0;
 }
 
+/* AUTO brightness shell commands */
+static int cmd_display_auto_status(const struct shell *shell, size_t argc, char **argv)
+{
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
+    mos_brightness_status_t status = {0};
+    mos_brightness_get_status(&status);
+    shell_print(shell, "AUTO brightness: %s", status.auto_enabled ? "ON" : "OFF");
+    shell_print(shell, "  Multiplier : %.2f", (double)status.multiplier);
+    if (status.last_lux < 0.0f)
+    {
+        shell_print(shell, "  Last lux   : not sampled yet");
+    }
+    else
+    {
+        shell_print(shell, "  Last lux   : %.2f lx", (double)status.last_lux);
+    }
+    if (status.filtered_lux < 0.0f)
+    {
+        shell_print(shell, "  Filter lux : not initialized");
+    }
+    else
+    {
+        shell_print(shell, "  Filter lux : %.2f lx", (double)status.filtered_lux);
+    }
+    shell_print(shell, "  Sensor err : %d", status.last_sensor_error);
+    shell_print(shell, "  Sample log : %s", status.sample_log_enabled ? "ON" : "OFF");
+    shell_print(shell, "  Current    : %u%%", status.current_level_percent);
+    shell_print(shell, "  Note       : AUTO samples every 1500 ms when enabled");
+    return 0;
+}
+
+static int cmd_display_auto_on(const struct shell *shell, size_t argc, char **argv)
+{
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
+    mos_brightness_request_auto_enabled(true);
+    shell_print(shell, "✅ AUTO brightness enabled");
+    shell_print(shell, "   Check with: display brightness auto status");
+    shell_print(shell, "   Log tag: mos_brightness, sample interval: 1500 ms");
+    return 0;
+}
+
+static int cmd_display_auto_off(const struct shell *shell, size_t argc, char **argv)
+{
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
+    mos_brightness_request_auto_enabled(false);
+    shell_print(shell, "✅ AUTO brightness disabled, manual level restored");
+    return 0;
+}
+
+static int cmd_display_auto_multiplier(const struct shell *shell, size_t argc, char **argv)
+{
+    mos_brightness_status_t status = {0};
+
+    if (argc != 2)
+    {
+        shell_error(shell, "Usage: display brightness auto multiplier <0.10-3.00>");
+        mos_brightness_get_status(&status);
+        shell_print(shell, "  Current: %.2f", (double)status.multiplier);
+        return -EINVAL;
+    }
+    char *endptr = NULL;
+    float val = strtof(argv[1], &endptr);
+    if ((endptr == argv[1]) || (*endptr != '\0'))
+    {
+        shell_error(shell, "Invalid multiplier: %s", argv[1]);
+        shell_print(shell, "Usage: display brightness auto multiplier <0.10-3.00>");
+        return -EINVAL;
+    }
+    mos_brightness_request_multiplier(val);
+    mos_brightness_get_status(&status);
+    shell_print(shell, "✅ Multiplier set to %.2f (clamped if out of range)", (double)status.multiplier);
+    return 0;
+}
+
+static int cmd_display_auto_log_on(const struct shell *shell, size_t argc, char **argv)
+{
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
+    mos_brightness_set_sample_log_enabled(true);
+    shell_print(shell, "✅ AUTO brightness sample log enabled");
+    return 0;
+}
+
+static int cmd_display_auto_log_off(const struct shell *shell, size_t argc, char **argv)
+{
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
+    mos_brightness_set_sample_log_enabled(false);
+    shell_print(shell, "✅ AUTO brightness sample log disabled");
+    return 0;
+}
+
+static int cmd_display_auto_log_status(const struct shell *shell, size_t argc, char **argv)
+{
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
+    mos_brightness_status_t status = {0};
+    mos_brightness_get_status(&status);
+    shell_print(shell, "AUTO brightness sample log: %s", status.sample_log_enabled ? "ON" : "OFF");
+    return 0;
+}
+
 /* Shell subcommand definitions for fonts */
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_fonts,
                                SHELL_CMD(list, NULL, "List all available font sizes", cmd_display_fonts_list),
@@ -1504,11 +1630,35 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_max_temp_limit,
                                          cmd_display_max_temp_limit_get),
                                SHELL_SUBCMD_SET_END);
 
+/* Shell subcommand definitions for auto brightness sample logs */
+SHELL_STATIC_SUBCMD_SET_CREATE(sub_brightness_auto_log,
+                               SHELL_CMD(on, NULL, "Enable AUTO sample log", cmd_display_auto_log_on),
+                               SHELL_CMD(off, NULL, "Disable AUTO sample log", cmd_display_auto_log_off),
+                               SHELL_CMD(status, NULL, "Show AUTO sample log state", cmd_display_auto_log_status),
+                               SHELL_SUBCMD_SET_END);
+
+/* Shell subcommand definitions for auto brightness */
+SHELL_STATIC_SUBCMD_SET_CREATE(
+    sub_brightness_auto,
+    SHELL_CMD(status, NULL, "Show AUTO brightness state (enabled, lux, %%, multiplier)", cmd_display_auto_status),
+    SHELL_CMD(on, NULL, "Enable AUTO brightness (ambient light sensor)", cmd_display_auto_on),
+    SHELL_CMD(off, NULL, "Disable AUTO brightness, restore manual level", cmd_display_auto_off),
+    SHELL_CMD(log, &sub_brightness_auto_log, "AUTO sample log control (on/off/status)", cmd_display_auto_log_status),
+    SHELL_CMD_ARG(multiplier, NULL, "Set AUTO brightness multiplier <0.10-3.00>", cmd_display_auto_multiplier, 2, 0),
+    SHELL_SUBCMD_SET_END);
+
+/* Shell subcommand definitions for brightness */
+SHELL_STATIC_SUBCMD_SET_CREATE(
+    sub_brightness,
+    SHELL_CMD(auto, &sub_brightness_auto, "AUTO brightness control (on/off/status/multiplier)",
+              cmd_display_auto_status),
+    SHELL_SUBCMD_SET_END);
+
 /* Shell command definitions */
 SHELL_STATIC_SUBCMD_SET_CREATE(
     sub_display, SHELL_CMD(help, NULL, "Show display commands help", cmd_display_help),
     SHELL_CMD(info, NULL, "Show display information", cmd_display_info),
-    SHELL_CMD_ARG(brightness, NULL, "Set brightness (20/40/60/80/100%)", cmd_display_brightness, 2, 0),
+    SHELL_CMD_ARG(brightness, &sub_brightness, "Set brightness <0-100> (disables AUTO)", cmd_display_brightness, 2, 0),
     SHELL_CMD(clear, NULL, "Clear display", cmd_display_clear),
     SHELL_CMD(fill, NULL, "Fill display with white", cmd_display_fill),
     SHELL_CMD_ARG(text, NULL, "Write text: \"string\" [x y size] (overlay or positioned)", cmd_display_text, 2, 3),
@@ -1522,7 +1672,8 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
     SHELL_CMD_ARG(battery, NULL, "Set battery level & charging: <level> [true/false]", cmd_display_battery, 2, 1),
     SHELL_CMD_ARG(depth, NULL, "One-param depth: <offset>", cmd_display_depth, 2, 0),
     SHELL_CMD_ARG(distance, NULL, "Distance by meters: <meters>", cmd_display_distance, 2, 0),
-    SHELL_CMD_ARG(distance_tier, NULL, "Simulate tier: <1|2|3> (protobuf distance)", cmd_display_distance_tier, 2, 0),
+    SHELL_CMD(distance_test, NULL, "Print distance trigonometry table", cmd_display_distance_test),
+    SHELL_CMD_ARG(distance_tier, NULL, "Simulate legacy tier: <1|2|3>", cmd_display_distance_tier, 2, 0),
     SHELL_CMD(redraw, NULL, "Force full LVGL screen invalidate + refresh", cmd_display_redraw),
     SHELL_CMD(redraw_visible, NULL, "Invalidate current pattern UI only", cmd_display_redraw_visible),
     SHELL_CMD_ARG(stereo, NULL, "Set stereo shift: <left_h> <right_h>", cmd_display_stereo, 3, 0),

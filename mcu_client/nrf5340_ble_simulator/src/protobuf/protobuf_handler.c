@@ -16,6 +16,7 @@
  * Tag 35: DisplayScrollingText     - Display animated scrolling text (No response)
  * Tag 37: BrightnessConfig         - Set display brightness level (Projector, No response)
  * Tag 38: AutoBrightnessConfig     - Configure automatic brightness adjustment (No response)
+ * Tag 39: AutoBrightnessMultiplier - Adjust AUTO brightness sensitivity (No response)
  * Tag 46: ClearDisplay             - Clear display content (No response)
  *
  * === GlassesToPhone (Outgoing) Messages ===
@@ -53,7 +54,8 @@
 #include "../../custom_driver_module/drivers/display/lcd/a6n.h"
 #include "main.h"
 #include "mos_ble_service.h"
-#include "mos_components/mos_lvgl_display/include/mos_lvgl_display.h"  // **NEW: For protobuf text display**
+#include "mos_brightness.h"
+#include "mos_components/mos_lvgl_display/include/mos_lvgl_display.h"
 // #include "mos_gx8002.h"         // VAD path kept for quick rollback
 // #include "mos_i2s_slave.h"      // VAD path kept for quick rollback
 #include "pdm_audio_stream.h"
@@ -67,12 +69,6 @@ static uint32_t current_battery_level = 85;
 
 // Global battery charging state
 static bool current_charging_state = false;
-
-// Global brightness level state (0-100%)
-static uint32_t current_brightness_level = 50;
-
-// Global auto brightness state
-static bool auto_brightness_enabled = false;
 
 // Audio streaming error counter
 static uint32_t streaming_errors = 0;
@@ -123,6 +119,8 @@ static const char *protobuf_message_name(uint32_t which_payload)
             return "BrightnessConfig";
         case 38:
             return "AutoBrightnessConfig";
+        case 39:
+            return "AutoBrightnessMultiplier";
         case 45:
             return "DisplayHeightConfig";
         case 44:
@@ -434,6 +432,14 @@ void protobuf_parse_control_message(const uint8_t *protobuf_data, uint16_t len)
                 if (phone_msg.which_payload == mentraos_ble_PhoneToGlasses_auto_brightness_tag)
                 {
                     protobuf_process_auto_brightness_config(&phone_msg.payload.auto_brightness);
+                }
+                break;
+
+            case 39:  // auto_brightness_mult_tag
+                LOG_INF("Processing Auto Brightness Multiplier...");
+                if (phone_msg.which_payload == mentraos_ble_PhoneToGlasses_auto_brightness_mult_tag)
+                {
+                    protobuf_process_auto_brightness_multiplier(&phone_msg.payload.auto_brightness_mult);
                 }
                 break;
 
@@ -759,81 +765,23 @@ int protobuf_generate_echo_response(const uint8_t *input_data, uint16_t input_le
     }
 }
 
-// ============== BRIGHTNESS CONTROL FUNCTIONS ==============
-
-uint32_t protobuf_get_brightness_level(void)
-{
-    return current_brightness_level;
-}
-
-bool protobuf_get_auto_brightness_enabled(void)
-{
-    return auto_brightness_enabled;
-}
-
-void protobuf_set_brightness_level(uint32_t level)
-{
-    // Clamp level to 0-100
-    if (level > 100)
-    {
-        level = 100;
-    }
-
-    // Manual brightness setting automatically disables auto brightness
-    if (auto_brightness_enabled)
-    {
-        LOG_INF("Manual brightness setting - disabling auto brightness");
-        auto_brightness_enabled = false;
-    }
-
-    current_brightness_level = level;
-
-    // Update display projector brightness (0-100% -> 0x00-0xFF register values)
-    // Map 0-100% to 0x00-0xFF register values for A6N projector
-    uint8_t projector_reg_value = (level * 255) / 100;  // Linear mapping: 0%->0x00, 100%->0xFF
-
-    LOG_INF("Setting projector brightness: %u%% -> reg_value 0x%02X (0x00-0xFF)", level, projector_reg_value);
-
-    int ret = a6n_set_brightness(projector_reg_value);
-    if (ret == 0)
-    {
-        LOG_INF("✅ Display projector brightness set to reg_value 0x%02X/0xFF", projector_reg_value);
-    }
-    else
-    {
-        LOG_ERR("❌ Failed to set display projector brightness: %d", ret);
-    }
-}
-
 void protobuf_process_brightness_config(const mentraos_ble_BrightnessConfig *brightness_config)
 {
     if (!brightness_config)
     {
-        LOG_ERR("Invalid brightness config pointer");
+        LOG_ERR("[PROTOBUF] Invalid BrightnessConfig pointer");
         return;
     }
 
-    uint32_t new_level = brightness_config->value;
-
-    // Value validation
-    bool valid_range = (new_level <= 100);
-
-    if (!valid_range)
+    uint32_t level = brightness_config->value;
+    if (level > 100U)
     {
-        LOG_WRN("[PROTOBUF] Brightness value %u exceeds maximum (100), will clamp", new_level);
+        LOG_WRN("[PROTOBUF] BrightnessConfig %u out of range, clamped to 100", level);
+        level = 100U;
     }
 
-    uint32_t clamped_level = (new_level > 100) ? 100 : new_level;
-    uint32_t previous_level = current_brightness_level;
-    bool previous_auto = auto_brightness_enabled;
-    LOG_INF("[PROTOBUF] BrightnessConfig request=%u%% clamp=%u%% prev=%u%% auto=%s", new_level, clamped_level,
-            previous_level, previous_auto ? "ON" : "OFF");
-
-    // Clamp and set the new brightness level (this will disable auto brightness)
-    protobuf_set_brightness_level(new_level);
-
-    LOG_INF("[PROTOBUF] BrightnessConfig applied new=%u%% delta=%+d%% auto=%s", current_brightness_level,
-            (int32_t)current_brightness_level - (int32_t)previous_level, auto_brightness_enabled ? "ON" : "OFF");
+    LOG_INF("[PROTOBUF] BrightnessConfig -> %u%%", level);
+    mos_brightness_request_manual(level);
 }
 
 void protobuf_process_display_text(const mentraos_ble_DisplayText *display_text)
@@ -949,8 +897,8 @@ void protobuf_parse_text_brightness(const char *text)
 
                 if (brightness_value >= 0 && brightness_value <= 100)
                 {
-                    protobuf_set_brightness_level((uint32_t)brightness_value);
-                    LOG_INF("\n[UART BRIGHTNESS] Text brightness set to %d%%\n", brightness_value);
+                    mos_brightness_request_manual((uint32_t)brightness_value);
+                    LOG_INF("[UART BRIGHTNESS] Text brightness set to %d%%", brightness_value);
                 }
                 else
                 {
@@ -980,43 +928,43 @@ void protobuf_process_display_distance_config(const mentraos_ble_DisplayDistance
         return;
     }
 
-    /*
-     * App 侧约定：distance_cm 字段里直接传档位索引 1/2/3，
-     * 不再解释为真实“距离厘米”。
-     *
-     * 1 => 第一档：offset -16
-     * 2 => 第二档：offset 0 (默认 2.5m)
-     * 3 => 第三档：offset +16
-     *
-     * 任何其他值都直接报错并返回（保留原样参数，不做兜底猜测）。
-     */
     const uint32_t v = (uint32_t)config->distance_cm;
-    long offset_i;
+    uint32_t distance_cm = v;
+    bool legacy_tier = false;
 
     if (v == 1U)
     {
-        offset_i = -16;
+        distance_cm = 200U;
+        legacy_tier = true;
     }
     else if (v == 2U)
     {
-        offset_i = 0;
+        distance_cm = 250U;
+        legacy_tier = true;
     }
     else if (v == 3U)
     {
-        offset_i = 16;
+        distance_cm = 500U;
+        legacy_tier = true;
     }
-    else
+
+    int8_t offset = 0;
+    uint32_t clamped_cm = 0U;
+    int ret = a6n_depth_distance_cm_to_offset(distance_cm, &offset, &clamped_cm);
+    if (ret != 0)
     {
-        LOG_ERR("[PROTOBUF] DisplayDistanceConfig invalid tier: distance_cm=%u (expected 1/2/3)", (unsigned int)v);
+        LOG_ERR("Failed to calculate DisplayDistance: request=%u cm ret=%d", (unsigned int)distance_cm, ret);
         return;
     }
 
-    LOG_INF("[PROTOBUF] DisplayDistanceConfig tier map: distance_cm=%u -> offset=%ld", (unsigned int)v, offset_i);
+    LOG_INF("[PROTOBUF] DisplayDistanceConfig %srequest=%u -> distance=%u cm clamp=%u cm offset=%d px",
+            legacy_tier ? "legacy-tier " : "", (unsigned int)v, (unsigned int)distance_cm, (unsigned int)clamped_cm,
+            (int)offset);
 
-    int ret = a6n_set_software_depth_offset((int8_t)offset_i);
+    ret = a6n_set_software_depth_offset(offset);
     if (ret != 0)
     {
-        LOG_ERR("Failed to apply DisplayDistance: offset=%ld ret=%d", offset_i, ret);
+        LOG_ERR("Failed to apply DisplayDistance: offset=%d ret=%d", (int)offset, ret);
         return;
     }
 
@@ -1036,18 +984,23 @@ void protobuf_process_auto_brightness_config(const mentraos_ble_AutoBrightnessCo
 {
     if (!auto_brightness_config)
     {
-        LOG_ERR("Invalid auto brightness config pointer");
+        LOG_ERR("[PROTOBUF] Invalid AutoBrightnessConfig pointer");
         return;
     }
+    LOG_INF("[PROTOBUF] AutoBrightnessConfig -> %s", auto_brightness_config->enabled ? "ON" : "OFF");
+    mos_brightness_request_auto_enabled(auto_brightness_config->enabled);
+}
 
-    bool enabled = auto_brightness_config->enabled;
-    bool previous_state = auto_brightness_enabled;
-
-    // Update the global auto brightness state
-    auto_brightness_enabled = enabled;
-
-    LOG_INF("[PROTOBUF] AutoBrightnessConfig %s->%s manual_level=%u%%", previous_state ? "ON" : "OFF",
-            enabled ? "ON" : "OFF", protobuf_get_brightness_level());
+void protobuf_process_auto_brightness_multiplier(
+    const mentraos_ble_AutoBrightnessMultiplier *auto_brightness_multiplier_msg)
+{
+    if (!auto_brightness_multiplier_msg)
+    {
+        LOG_ERR("[PROTOBUF] Invalid AutoBrightnessMultiplier pointer");
+        return;
+    }
+    LOG_INF("[PROTOBUF] AutoBrightnessMultiplier -> %.2f", (double)auto_brightness_multiplier_msg->multiplier);
+    mos_brightness_request_multiplier(auto_brightness_multiplier_msg->multiplier);
 }
 
 void protobuf_process_mic_state_config(const mentraos_ble_MicStateConfig *mic_state)
