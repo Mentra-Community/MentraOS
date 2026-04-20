@@ -3,9 +3,15 @@
   "version": "0.1.0",
   "description": "Mentra Manager Island",
   "main": "build/index.js",
-  "app.plugin": "plugin/src/index",
   "types": "build/index.d.ts",
   "scripts": {
+    "build": "expo-module build",
+    "clean": "expo-module clean",
+    "lint": "expo-module lint",
+    "test": "expo-module test",
+    "prepare": "expo-module prepare",
+    "prepublishOnly": "expo-module prepublishOnly",
+    "expo-module": "expo-module"
   },
   "keywords": [
     "react-native",

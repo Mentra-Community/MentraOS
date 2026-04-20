@@ -1,16 +1,6 @@
-// export {default} from "./IslandModule"
-// export * from "./Island.types"
+import {useApplets, useActiveApps} from "./stores/apps"
 
-import {useApps} from "./stores/apps"
-import {useActiveApps} from "./stores/apps"
-
-const apps = {
-  useApps: useApps,
-  useActiveApps: useActiveApps,
-}
-
-const IslandModule = {
-  apps: {
-    useApps: useApps,
-  },
+export const apps = {
+  useApps: useApplets,
+  useActiveApps,
 }

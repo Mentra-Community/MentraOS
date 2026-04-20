@@ -1,14 +1,13 @@
-import {AppletInterface, AppletPermission} from "@/types"
 import CoreModule from "core"
 import {Alert, Linking, PermissionsAndroid, Platform} from "react-native"
 import BleManager from "react-native-ble-manager"
 import {check, PERMISSIONS, request, RESULTS} from "react-native-permissions"
 
-import {translate} from "@/i18n"
-import {Theme} from "@/theme"
-import showAlert, {showBluetoothAlert, showLocationAlert, showLocationServicesAlert} from "@/utils/AlertUtils"
-import {checkAndRequestNotificationAccessSpecialPermission} from "@/utils/NotificationServiceUtils"
-import {storage} from "@/utils/storage/storage"
+// TODO: these depend on mobile/src — island must not reach into the app.
+// Leave broken until they're injected by the consumer or reimplemented locally.
+// import {translate} from "@/i18n"
+// import {Theme} from "@/theme"
+import {storage} from "../storage"
 
 export type UiPermission =
   | "LOCATION"
@@ -446,7 +445,7 @@ export const requestFeaturePermissions = async (featureKey: string): Promise<boo
 
       if (allDenied && config.critical) {
         // Show critical permission denied message for essential features
-        await displayCriticalPermissionDeniedWarning(config.name)
+        // await displayCriticalPermissionDeniedWarning(config.name)
         return false
       }
 
@@ -534,72 +533,57 @@ export const displayPermissionDeniedWarning = (permissionName: string): Promise<
   })
 }
 
-export const displayCriticalPermissionDeniedWarning = (permissionName: string): Promise<boolean> => {
-  return new Promise((resolve) => {
-    showAlert(
-      `${permissionName} Required`,
-      `Mentra needs ${permissionName.toLowerCase()} permissions to function properly. Please grant these permissions to continue.`,
-      [
-        {
-          text: "Try Again",
-          style: "default",
-          onPress: () => resolve(true),
-        },
-      ],
-    )
-  })
-}
-
 // Helper function to handle permissions that were previously denied at the system level
 export const handlePreviouslyDeniedPermission = (config: PermissionConfig): Promise<boolean> => {
-  console.log("handlePreviouslyDeniedPermission: config", config)
-  if (Platform.OS === "ios" && config.name === PERMISSION_CONFIG[PermissionFeatures.BACKGROUND_LOCATION].name) {
-    // guide the user on how to enable the background location permission:
-    return new Promise((resolve) => {
-      showAlert(
-        translate("permissions:permissionRequired"),
-        "MentraOS needs access to your location when the app is in the background " +
-          `to provide location-based features\n` +
-          `\n\nOn the next screen, select Location, then select "Always" instead of "While Using the App"`,
-        [
-          {
-            text: translate("common:cancel"),
-            style: "cancel",
-            onPress: () => resolve(false),
-          },
-          {
-            text: "Open Settings",
-            onPress: () => {
-              Linking.openSettings()
-              resolve(false)
-            },
-          },
-        ],
-      )
-    })
-  }
+  //   console.log("handlePreviouslyDeniedPermission: config", config)
+  //   if (Platform.OS === "ios" && config.name === PERMISSION_CONFIG[PermissionFeatures.BACKGROUND_LOCATION].name) {
+  //     // guide the user on how to enable the background location permission:
+  //     return new Promise((resolve) => {
+  //       showAlert(
+  //         translate("permissions:permissionRequired"),
+  //         "MentraOS needs access to your location when the app is in the background " +
+  //           `to provide location-based features\n` +
+  //           `\n\nOn the next screen, select Location, then select "Always" instead of "While Using the App"`,
+  //         [
+  //           {
+  //             text: translate("common:cancel"),
+  //             style: "cancel",
+  //             onPress: () => resolve(false),
+  //           },
+  //           {
+  //             text: "Open Settings",
+  //             onPress: () => {
+  //               Linking.openSettings()
+  //               resolve(false)
+  //             },
+  //           },
+  //         ],
+  //       )
+  //     })
+  //   }
 
-  return new Promise((resolve) => {
-    showAlert(
-      translate("permissions:permissionRequired"),
-      translate("permissions:permissionRequiredMessage", {name: config.name}),
-      [
-        {
-          text: translate("common:cancel"),
-          style: "cancel",
-          onPress: () => resolve(false),
-        },
-        {
-          text: translate("permissions:openSettings"),
-          onPress: () => {
-            Linking.openSettings()
-            // Return false since we don't know if the user actually changed the setting
-            resolve(false)
-          },
-        },
-      ],
-    )
-  })
+  //   return new Promise((resolve) => {
+  //     showAlert(
+  //       translate("permissions:permissionRequired"),
+  //       translate("permissions:permissionRequiredMessage", {name: config.name}),
+  //       [
+  //         {
+  //           text: translate("common:cancel"),
+  //           style: "cancel",
+  //           onPress: () => resolve(false),
+  //         },
+  //         {
+  //           text: translate("permissions:openSettings"),
+  //           onPress: () => {
+  //             Linking.openSettings()
+  //             // Return false since we don't know if the user actually changed the setting
+  //             resolve(false)
+  //           },
+  //         },
+  //       ],
+  //     )
+  //   })
+  return new Promise((resolve) => resolve(false))
 }
 
 // Check if a feature has the permissions it needs
@@ -676,147 +660,8 @@ export const checkFeaturePermissions = async (featureKey: string): Promise<boole
   return false
 }
 
-export const askPermissionsUI = async (app: AppletInterface, _theme: Theme): Promise<number> => {
-  const neededPermissions = await checkPermissionsUI(app)
-
-  if (neededPermissions.length == 0) {
-    return 1
-  }
-
-  // Create a promise that resolves based on user action
-  return new Promise<number>((resolve) => {
-    showAlert(
-      neededPermissions.length > 1
-        ? translate("home:permissionsRequiredTitle")
-        : translate("home:permissionRequiredTitle"),
-      translate("home:permissionMessage", {
-        permissions: neededPermissions.map((perm) => PERMISSION_CONFIG[perm]?.name || perm).join(", "),
-      }),
-      [
-        {
-          text: translate("common:cancel"),
-          onPress: () => {
-            resolve(-1)
-          },
-          style: "cancel",
-        },
-        {
-          text: translate("common:next"),
-          onPress: async () => {
-            await requestPermissionsUI(neededPermissions)
-
-            // Check if permissions were actually granted
-            const stillNeededPermissions = await checkPermissionsUI(app)
-
-            // If we still need READ_NOTIFICATIONS, don't auto-retry
-            if (stillNeededPermissions.includes(PermissionFeatures.READ_NOTIFICATIONS) && Platform.OS === "android") {
-              // Permission flow is in progress, user needs to complete it manually
-              resolve(-1) // Return 0 to indicate "in progress" state
-              return
-            }
-
-            // For other permissions that were granted, proceed
-            if (stillNeededPermissions.length === 0) {
-              resolve(1) // Success
-            } else {
-              // Still have missing permissions (other than READ_NOTIFICATIONS)
-              resolve(0) // Failed to get all permissions
-            }
-          },
-        },
-      ],
-      // {
-      //   iconName: "info",
-      //   iconColor: theme.colors.textDim,
-      // },
-    )
-  })
-}
-
-export const checkPermissionsUI = async (app: AppletInterface) => {
-  let permissions = app.permissions || []
-  const neededPermissions: string[] = []
-
-  if (permissions.length == 1 && permissions[0].type == "ALL") {
-    permissions = [
-      {type: "MICROPHONE", required: true},
-      {type: "CALENDAR", required: true},
-      {type: "POST_NOTIFICATIONS", required: true},
-      {type: "READ_NOTIFICATIONS", required: true},
-      {type: "LOCATION", required: true},
-      {type: "BACKGROUND_LOCATION", required: true},
-    ] as AppletPermission[]
-  }
-
-  for (const permission of permissions) {
-    if (!(permission["required"] ?? true)) {
-      continue
-    }
-    switch (permission.type) {
-      case "MICROPHONE":
-        const hasMicrophone = await checkFeaturePermissions(PermissionFeatures.MICROPHONE)
-        if (!hasMicrophone) {
-          neededPermissions.push(PermissionFeatures.MICROPHONE)
-        }
-        break
-      case "CAMERA":
-        // glasses_camera is not a real permission since it doesn't need to be requested
-        // const hasCamera = await checkFeaturePermissions(PermissionFeatures.GLASSES_CAMERA)
-        // if (!hasCamera) {
-        //   neededPermissions.push(PermissionFeatures.GLASSES_CAMERA)
-        // }
-        break
-      case "CALENDAR":
-        const hasCalendar = await checkFeaturePermissions(PermissionFeatures.CALENDAR)
-        if (!hasCalendar) {
-          neededPermissions.push(PermissionFeatures.CALENDAR)
-        }
-        break
-      case "LOCATION":
-        const hasLocation = await checkFeaturePermissions(PermissionFeatures.LOCATION)
-        if (!hasLocation) {
-          neededPermissions.push(PermissionFeatures.LOCATION)
-        }
-        break
-      case "BACKGROUND_LOCATION":
-        const hasBackgroundLocation = await checkFeaturePermissions(PermissionFeatures.BACKGROUND_LOCATION)
-        if (!hasBackgroundLocation) {
-          neededPermissions.push(PermissionFeatures.BACKGROUND_LOCATION)
-        }
-        break
-      case "POST_NOTIFICATIONS":
-        const hasNotificationPermission = await checkFeaturePermissions(PermissionFeatures.POST_NOTIFICATIONS)
-        if (!hasNotificationPermission) {
-          neededPermissions.push(PermissionFeatures.POST_NOTIFICATIONS)
-        }
-        break
-      case "READ_NOTIFICATIONS":
-        if (Platform.OS == "ios") {
-          break
-        }
-        const hasNotificationAccess = await CoreModule.hasNotificationListenerPermission()
-        if (!hasNotificationAccess) {
-          neededPermissions.push(PermissionFeatures.READ_NOTIFICATIONS)
-        }
-        break
-    }
-  }
-
-  return neededPermissions
-}
-
-export const requestPermissionsUI = async (permissions: string[]) => {
-  for (const permission of permissions) {
-    await requestFeaturePermissions(permission)
-  }
-
-  if (permissions.includes(PermissionFeatures.READ_NOTIFICATIONS) && Platform.OS === "android") {
-    await checkAndRequestNotificationAccessSpecialPermission()
-  }
-}
-
 // Utility methods for checking permissions and device capabilities
-async function isBluetoothEnabled(): Promise<boolean> {
+export async function isBluetoothEnabled(): Promise<boolean> {
   try {
     console.log("Checking Bluetooth state...")
     await BleManager.start({showAlert: false})
@@ -844,7 +689,7 @@ async function isBluetoothEnabled(): Promise<boolean> {
   }
 }
 
-async function isLocationPermissionGranted(): Promise<boolean> {
+export async function isLocationPermissionGranted(): Promise<boolean> {
   try {
     if (Platform.OS === "android") {
       const result = await check(PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION)
@@ -864,9 +709,9 @@ async function isLocationServicesEnabled(): Promise<boolean> {
   try {
     if (Platform.OS === "android") {
       // Use our native module to check if location services are enabled
-      const locationServicesEnabled = await CoreModule.isLocationServicesEnabled()
-      console.log("Location services enabled (native check):", locationServicesEnabled)
-      return locationServicesEnabled
+    //   const locationServicesEnabled = await CoreModule.isLocationServicesEnabled()
+    //   console.log("Location services enabled (native check):", locationServicesEnabled)
+    //   return locationServicesEnabled
     } else if (Platform.OS === "ios") {
       // iOS doesn't require location for BLE scanning since iOS 13
       return true
@@ -881,89 +726,162 @@ async function isLocationServicesEnabled(): Promise<boolean> {
 // Export for use in other services (e.g., GallerySyncService)
 export {isLocationServicesEnabled}
 
-async function checkConnectivityRequirements(): Promise<{
-  isReady: boolean
-  message?: string
-  requirement?: "bluetooth" | "location" | "locationServices" | "permissions"
-}> {
-  console.log("Checking connectivity requirements")
-
-  // Check Bluetooth state on both iOS and Android
-  const isBtEnabled = await isBluetoothEnabled()
-  console.log("Is Bluetooth enabled:", isBtEnabled)
-  if (!isBtEnabled) {
-    console.log("Bluetooth is disabled, showing error")
-    return {
-      isReady: false,
-      message: "Bluetooth is required to connect to glasses. Please enable Bluetooth and try again.",
-      requirement: "bluetooth",
-    }
-  }
-
-  // Only check location on Android
-  if (Platform.OS === "android") {
-    // First check if location permission is granted
-    const locationPermissionGranted = await isLocationPermissionGranted()
-    console.log("Is Location permission granted:", locationPermissionGranted)
-    if (!locationPermissionGranted) {
-      console.log("Location permission missing, showing error")
-      return {
-        isReady: false,
-        message: translate("connectivity:locationPermissionRequiredMessage"),
-        requirement: "location",
-      }
-    }
-
-    // Then check if location services are enabled
-    const locationServicesEnabled = await isLocationServicesEnabled()
-    console.log("Are Location services enabled:", locationServicesEnabled)
-    if (!locationServicesEnabled) {
-      console.log("Location services disabled, showing error")
-      return {
-        isReady: false,
-        message:
-          "Location services are disabled. Please enable location services in your device settings and try again.",
-        requirement: "locationServices",
-      }
-    }
-  }
-
-  console.log("All requirements met")
-  return {isReady: true}
-}
-
-export async function checkConnectivityRequirementsUI() {
-  const requirementsCheck = await checkConnectivityRequirements()
-  if (!requirementsCheck.isReady) {
-    switch (requirementsCheck.requirement) {
-      case "bluetooth":
-        showBluetoothAlert(
-          translate("pairing:connectionIssueTitle"),
-          requirementsCheck.message || translate("pairing:connectionIssueMessage"),
-        )
-        break
-      case "location":
-        showLocationAlert(
-          translate("pairing:connectionIssueTitle"),
-          requirementsCheck.message || translate("pairing:connectionIssueMessage"),
-        )
-        break
-      case "locationServices":
-        showLocationServicesAlert(
-          translate("pairing:connectionIssueTitle"),
-          requirementsCheck.message || translate("pairing:connectionIssueMessage"),
-        )
-        break
-      default:
-        showAlert(
-          translate("pairing:connectionIssueTitle"),
-          requirementsCheck.message || translate("pairing:connectionIssueMessage"),
-          [{text: translate("common:ok")}],
-        )
-    }
+export async function checkAndRequestNotificationAccessSpecialPermission(): Promise<boolean> {
+  if (Platform.OS !== "android") {
     return false
   }
-  return true
+
+  let hasAccess = await CoreModule.hasNotificationListenerPermission()
+  if (hasAccess) {
+    console.log("Notification access already granted")
+    return true
+  }
+
+  return await new Promise<boolean>((resolve) => {
+    // useFocusEffect(
+    //   useCallback(() => {
+    //     // let hasAccess = await CoreModule.hasNotificationListenerPermission()
+    //     // if (hasAccess) {
+    //     //   console.log("Notification access already granted")
+    //     //   return true
+    //     // }
+
+    //     resolve(CoreModule.hasNotificationListenerPermission())
+    //     return async () => {}
+    //   }, []),
+    // )
+    // showAlert(
+    //   "Enable Notification Access",
+    //   "MentraOS needs permission to read your phone notifications to display them on your smart glasses.\n\n" +
+    //     "On the next screen:\n" +
+    //     '1. Find "MentraOS" in the list\n' +
+    //     '2. Toggle the switch to "on"\n' +
+    //     '3. Tap "Allow" when prompted',
+    //   [
+    //     {
+    //       text: "Later",
+    //       style: "cancel",
+    //       onPress: () => {
+    //         resolve(false)
+    //       },
+    //     },
+    //     {
+    //       text: "Go to Settings",
+    //       onPress: async () => {
+    //         Linking.sendIntent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS").catch((err: any) => {
+    //           console.error("Error opening notification settings:", err)
+    //         //   showAlert(
+    //         //     "Error",
+    //         //     "Could not open notification settings. Please enable notification access manually in your device settings.",
+    //         //     [{text: "OK"}],
+    //         //   )
+    //         })
+    //         // resolve(false)
+    //       },
+    //     },
+    //   ],
+    //   {cancelable: true},
+    // )
+    resolve(true)
+  })
+}
+
+// async function checkConnectivityRequirements(): Promise<{
+//   isReady: boolean
+//   message?: string
+//   requirement?: "bluetooth" | "location" | "locationServices" | "permissions"
+// }> {
+//   console.log("Checking connectivity requirements")
+
+//   // Check Bluetooth state on both iOS and Android
+//   const isBtEnabled = await isBluetoothEnabled()
+//   console.log("Is Bluetooth enabled:", isBtEnabled)
+//   if (!isBtEnabled) {
+//     console.log("Bluetooth is disabled, showing error")
+//     return {
+//       isReady: false,
+//       message: "Bluetooth is required to connect to glasses. Please enable Bluetooth and try again.",
+//       requirement: "bluetooth",
+//     }
+//   }
+
+//   // Only check location on Android
+//   if (Platform.OS === "android") {
+//     // First check if location permission is granted
+//     const locationPermissionGranted = await isLocationPermissionGranted()
+//     console.log("Is Location permission granted:", locationPermissionGranted)
+//     if (!locationPermissionGranted) {
+//       console.log("Location permission missing, showing error")
+//       return {
+//         isReady: false,
+//         requirement: "location",
+//       }
+//     }
+
+//     // Then check if location services are enabled
+//     const locationServicesEnabled = await isLocationServicesEnabled()
+//     console.log("Are Location services enabled:", locationServicesEnabled)
+//     if (!locationServicesEnabled) {
+//       console.log("Location services disabled, showing error")
+//       return {
+//         isReady: false,
+//         message:
+//           "Location services are disabled. Please enable location services in your device settings and try again.",
+//         requirement: "locationServices",
+//       }
+//     }
+//   }
+
+//   console.log("All requirements met")
+//   return {isReady: true}
+// }
+
+// export async function checkConnectivityRequirementsUI() {
+//   const requirementsCheck = await checkConnectivityRequirements()
+//   if (!requirementsCheck.isReady) {
+//     switch (requirementsCheck.requirement) {
+//       case "bluetooth":
+//         showBluetoothAlert(
+//           translate("pairing:connectionIssueTitle"),
+//           requirementsCheck.message || translate("pairing:connectionIssueMessage"),
+//         )
+//         break
+//       case "location":
+//         showLocationAlert(
+//           translate("pairing:connectionIssueTitle"),
+//           requirementsCheck.message || translate("pairing:connectionIssueMessage"),
+//         )
+//         break
+//       case "locationServices":
+//         showLocationServicesAlert(
+//           translate("pairing:connectionIssueTitle"),
+//           requirementsCheck.message || translate("pairing:connectionIssueMessage"),
+//         )
+//         break
+//       default:
+//         showAlert(
+//           translate("pairing:connectionIssueTitle"),
+//           requirementsCheck.message || translate("pairing:connectionIssueMessage"),
+//           [{text: translate("common:ok")}],
+//         )
+//     }
+//     return false
+//   }
+//   return true
+// }
+
+export async function checkNotificationAccessSpecialPermission(): Promise<boolean> {
+  if (Platform.OS !== "android") {
+    return false
+  }
+
+  let hasAccess = await CoreModule.hasNotificationListenerPermission()
+  if (hasAccess) {
+    console.log("Notification access already granted")
+    return true
+  }
+
+  return false
 }
 
 export {PERMISSION_CONFIG}

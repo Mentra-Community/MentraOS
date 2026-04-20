@@ -1,6 +1,6 @@
-import {ClientApp, saveLocalAppRunningState, useAppStatusStore} from "@/stores/apps"
-import {storage} from "@/utils/storage/storage"
-import {printDirectory} from "@/utils/storage/zip"
+import {ClientApp, useAppStatusStore} from "../stores/apps"
+import {storage} from "../utils/storage/storage"
+import {printDirectory} from "../utils/storage/zip"
 import {Directory, Paths, File} from "expo-file-system"
 import {unzip} from "react-native-zip-archive"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
@@ -22,20 +22,20 @@ interface InstalledLma {
 }
 
 // this class manages the on-disk state of installed mini apps
-class Composer {
+class AppRegistry {
   private installedLmas: ClientApp[] = []
   private refreshNeeded: boolean = false
 
-  private static instance: Composer | null = null
+  private static instance: AppRegistry | null = null
   private constructor() {
     this.initialize()
   }
 
-  public static getInstance(): Composer {
-    if (!Composer.instance) {
-      Composer.instance = new Composer()
+  public static getInstance(): AppRegistry {
+    if (!AppRegistry.instance) {
+      AppRegistry.instance = new AppRegistry()
     }
-    return Composer.instance
+    return AppRegistry.instance
   }
 
   // read local storage to find which mini apps are installed and running
@@ -46,18 +46,9 @@ class Composer {
     // useAppStatusStore.getState().refreshApplets()
   }
 
-  public async fanOutPcm(bytes: Uint8Array) {
-    // let offlineCaptionsRunning = await useSettingsStore.getState().getSetting(SETTINGS.offline_captions_running.key)
-    // let offlineTranslationRunning = await useSettingsStore.getState().getSetting(SETTINGS.offline_translation_running.key)
-    // if (offlineCaptionsRunning) {
-    //   // send the pcm to the offline transcription service
-    // }
-    // TODO: fan out the PCM to the mini apps that request it
-  }
-
   private async downloadAndInstallMiniApp(url: string) {
     let downloadedZipPath: string = ""
-  
+
     // create the download directory if it doesn't exist
     const downloadDir = new Directory(Paths.cache, "lma_downloads")
     try {
@@ -68,7 +59,7 @@ class Composer {
       console.error("ZIP: Error creating download directory", error)
       throw "CREATE_DOWNLOAD_DIR_FAILED"
     }
-  
+
     try {
       const output = await File.downloadFileAsync(url, downloadDir)
       downloadedZipPath = output.uri
@@ -82,9 +73,9 @@ class Composer {
         throw "DOWNLOAD_FAILED"
       }
     }
-  
+
     console.log("ZIP: done downloading, starting unzip")
-  
+
     const unzipDir = new Directory(Paths.cache, "lma_unzip")
     try {
       if (!unzipDir.exists) {
@@ -98,7 +89,7 @@ class Composer {
       console.error("ZIP: Error creating or deleting the unzip directory", error)
       throw "CREATE_CACHE_DIR_FAILED"
     }
-  
+
     let res = null
     try {
       console.log("ZIP: unzipping", downloadedZipPath)
@@ -110,9 +101,9 @@ class Composer {
       console.error("Error unzipping zip file", error)
       throw "UNZIP_FAILED"
     }
-  
+
     console.log("ZIP: done unzipping", res)
-  
+
     // get the package name and info from the app.json file:
     let packageName = null
     let version = null
@@ -121,11 +112,11 @@ class Composer {
     try {
       // console.log("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
       // printDirectory(unzipDir)
-  
+
       const firstFile = unzipDir.list()[0] // this should be the folder containing the app.json file
       folderName = firstFile.name
       console.log("ZIP: folder name", folderName)
-  
+
       // TODO: we shouldn't be fault tolerant here, but I can't seem to tell the difference between how these zip files were created
       // it seems sometimes an extra folder is created, and sometimes it's not.
       if (folderName === "icon.png" || folderName === "app.json") {
@@ -138,23 +129,23 @@ class Composer {
       console.error("Error getting the app directory", error)
       throw "GET_APP_DIR_FAILED"
     }
-  
+
     try {
       // read firstFile/app.json:
       const appJsonFile = new File(appDir, "app.json")
       const appJson = JSON.parse(appJsonFile.textSync())
       packageName = appJson.packageName
       version = appJson.version
-  
+
       console.log("ZIP: package name", packageName)
       console.log("ZIP: version", version)
     } catch (error) {
       console.error("Error reading the app.json file", error)
       throw "READ_APP_JSON_FAILED"
     }
-  
+
     // move the contents of this folder to Documents/lmas/<version>/<packageName>
-  
+
     const basePackageDir = new Directory(Paths.document, "lmas", packageName)
     try {
       if (!basePackageDir.exists) {
@@ -164,7 +155,7 @@ class Composer {
       console.error("Error creating the base package directory", error)
       throw "CREATE_PACKAGE_DIR_FAILED"
     }
-  
+
     // create the version directory
     const versionDir = new Directory(basePackageDir, version)
     try {
@@ -179,7 +170,7 @@ class Composer {
       console.error("Error creating the version directory", error)
       throw "CREATE_VERSION_DIR_FAILED"
     }
-  
+
     // move the contents of the folder to the destination directory
     try {
       const contents = appDir.list()
@@ -190,7 +181,7 @@ class Composer {
       console.error("Error moving the contents of the folder to the destination directory", error)
       throw "INSTALL_CONTENTS_FAILED"
     }
-  
+
     console.log("ZIP: local mini app installed at", versionDir.uri)
     printDirectory(versionDir, 2)
   }
@@ -199,9 +190,9 @@ class Composer {
   public install(url: string): AsyncResult<void, Error> {
     return Res.try_async(async () => {
       await this.downloadAndInstallMiniApp(url)
-      console.log("COMPOSER: Downloaded and installed mini app")
+      console.log("AppRegistry: Downloaded and installed mini app")
       this.refreshNeeded = true
-      await useAppStatusStore.getState().refreshApplets()
+      // await useAppStatusStore.getState().refreshApplets()
     })
   }
 
@@ -209,14 +200,14 @@ class Composer {
     return Res.try_async(async () => {
       const lmaDir = new Directory(Paths.document, "lmas", packageName, version)
       lmaDir.delete()
-      console.log("COMPOSER: Uninstalled mini app")
+      console.log("AppRegistry: Uninstalled mini app")
       // when uninstalling a version, if we have no versions left, delete the package directory:
       const packageDir = new Directory(Paths.document, "lmas", packageName)
       if (packageDir.list().length === 0) {
         packageDir.delete()
       }
       this.refreshNeeded = true
-      await useAppStatusStore.getState().refreshApplets()
+      await useAppStatusStore.getState().refresh()
     })
   }
 
@@ -224,7 +215,7 @@ class Composer {
     try {
       const lmasDir = new Directory(Paths.document, "lmas")
       if (!lmasDir.exists) {
-        // console.log("COMPOSER: No lmas directory found, returning empty array")
+        // console.log("AppRegistry: No lmas directory found, returning empty array")
         return []
       }
       let lmas = lmasDir.list()
@@ -232,7 +223,7 @@ class Composer {
       lmas = lmas.filter((lma): lma is Directory => lma instanceof Directory && lma.list().length > 0)
       return lmas.map((lma) => lma.name)
     } catch (error) {
-      console.error("COMPOSER: Error getting locally installed package names", error)
+      console.error("AppRegistry: Error getting locally installed package names", error)
       return []
     }
   }
@@ -241,10 +232,10 @@ class Composer {
     try {
       const lmaDir = new Directory(Paths.document, "lmas", packageName)
       const lma = lmaDir.list()
-      console.log("COMPOSER: Local applet", lma)
+      console.log("AppRegistry: Local applet", lma)
       return lma.map((lma) => lma.name)
     } catch (error) {
-      console.error("COMPOSER: Error getting local applet versions", error)
+      console.error("AppRegistry: Error getting local applet versions", error)
       return []
     }
   }
@@ -275,7 +266,7 @@ class Composer {
       const logoUrl = new File(lmaDir, "icon.png").uri
       return {name: appJson.name, logoUrl: logoUrl}
     } catch (error) {
-      console.error("COMPOSER: Error getting local applet metadata", error)
+      console.error("AppRegistry: Error getting local applet metadata", error)
       return {name: "error", logoUrl: ""}
     }
   }
@@ -293,7 +284,7 @@ class Composer {
       }
       appletsInfo.push(installedVersion)
     }
-    // console.log("COMPOSER: Applets info", appletsInfo)
+    // console.log("AppRegistry: Applets info", appletsInfo)
     return appletsInfo
   }
 
@@ -306,7 +297,7 @@ class Composer {
 
     try {
       const installedLmasInfo = await this.getInstalledAppsInfo()
-      // console.log("COMPOSER: Installed Lmas Info", installedLmasInfo)
+      // console.log("AppRegistry: Installed Lmas Info", installedLmasInfo)
       // use the latest version for now (will be overriddable later via <packageName>_version_key)
       // build the installedLmas array:
       const lmas: ClientApp[] = []
@@ -329,15 +320,15 @@ class Composer {
           type: "standard",
           permissions: [],
           hardwareRequirements: [],
-          onStart: () => saveLocalAppRunningState(lmaInfo.packageName, true),
-          onStop: () => saveLocalAppRunningState(lmaInfo.packageName, false),
+          onStart: () => this.saveLocalAppRunningState(lmaInfo.packageName, true),
+          onStop: () => this.saveLocalAppRunningState(lmaInfo.packageName, false),
         })
       }
 
       this.installedLmas = lmas
       this.refreshNeeded = false
 
-      // console.log("COMPOSER: Installed Lmas", this.installedLmas)
+      // console.log("AppRegistry: Installed Lmas", this.installedLmas)
       return this.installedLmas
     } catch (error) {
       console.error("Error getting local applets", error)
@@ -353,20 +344,34 @@ class Composer {
     })
   }
 
-  // public startStop(applet: ClientApp, status: boolean): AsyncResult<void, Error> {
-  //   return Res.try_async(async () => {})
-  // }
+  public saveLocalAppRunningState(packageName: string, status: boolean) {
+    storage.save(`${packageName}_running`, status)
+  }
 
-  // manage global state for apps and mic data / transcriptions:
-  public async updateOfflineSTT() {
-    // const offlineCaptionsRunning = await useSettingsStore.getState().getSetting(SETTINGS.offline_captions_running.key)
-    // const offlineTranslationRunning = await useSettingsStore
-    //   .getState()
-    //   .getSetting(SETTINGS.offline_translation_running.key)
-    // if (offlineCaptionsRunning) {
-    // }
+  public saveLastOpenTime(packageName: string) {
+    storage.save(`${packageName}_last_open_time`, Date.now())
+  }
+
+  public async getLastOpenTime(packageName: string): Promise<number> {
+    const lastOpenTime = await storage.load<number>(`${packageName}_last_open_time`)
+    if (lastOpenTime.is_ok()) {
+      return lastOpenTime.value
+    }
+    return 0
+  }
+  // @ts-ignore
+  private async sortAppsByLastOpenTime(apps: ClientApp[]): Promise<ClientApp[]> {
+    const timestamps = await Promise.all(
+      apps.map(async (app) => ({
+        app,
+        time: await this.getLastOpenTime(app.packageName),
+      })),
+    )
+    return timestamps
+      .sort((a, b) => a.time - b.time)
+      .map((entry) => entry.app)
   }
 }
 
-const composer = Composer.getInstance()
-export default composer
+const registry = AppRegistry.getInstance()
+export default registry

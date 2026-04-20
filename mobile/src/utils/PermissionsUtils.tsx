@@ -861,21 +861,22 @@ async function isLocationPermissionGranted(): Promise<boolean> {
 }
 
 async function isLocationServicesEnabled(): Promise<boolean> {
-  try {
-    if (Platform.OS === "android") {
-      // Use our native module to check if location services are enabled
-      const locationServicesEnabled = await CoreModule.isLocationServicesEnabled()
-      console.log("Location services enabled (native check):", locationServicesEnabled)
-      return locationServicesEnabled
-    } else if (Platform.OS === "ios") {
-      // iOS doesn't require location for BLE scanning since iOS 13
-      return true
-    }
-    return true
-  } catch (error) {
-    console.error("Error checking if location services are enabled:", error)
-    return false
-  }
+  // try {
+  //   if (Platform.OS === "android") {
+  //     // Use our native module to check if location services are enabled
+  //     const locationServicesEnabled = await CoreModule.isLocationServicesEnabled()
+  //     console.log("Location services enabled (native check):", locationServicesEnabled)
+  //     return locationServicesEnabled
+  //   } else if (Platform.OS === "ios") {
+  //     // iOS doesn't require location for BLE scanning since iOS 13
+  //     return true
+  //   }
+  //   return true
+  // } catch (error) {
+  //   console.error("Error checking if location services are enabled:", error)
+  //   return false
+  // }
+  return true
 }
 
 // Export for use in other services (e.g., GallerySyncService)

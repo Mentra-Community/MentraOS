@@ -1,12 +1,12 @@
-import {AppletInterface, HardwareType} from "@/types"
 import {useMemo} from "react"
 import {AsyncResult, result as Res, Result} from "typesafe-ts"
 import {create} from "zustand"
 
-import {CompatibilityResult, HardwareCompatibility} from "@/utils/hardware"
-import {storage} from "@/utils/storage"
-import composer from "@/services/Composer"
-import {AppletPermission, AppletType, HardwareRequirement} from "../types"
+import {CompatibilityResult} from "../utils/hardware"
+import {storage} from "../utils/storage"
+import composer from "../services/AppRegistry"
+import {AppletPermission, AppletType, HardwareRequirement, HardwareType} from "../types"
+// import registry from "../services/AppRegistry"
 
 // runtime state of an applet:
 export interface ClientApp {
@@ -27,8 +27,8 @@ export interface ClientApp {
   loading: boolean
   local: boolean
   hidden: boolean
-  onStart?: () => AsyncResult<void, Error>
-  onStop?: () => AsyncResult<void, Error>
+  onStart?: () => void
+  onStop?: () => void
   screenshot?: string
   runtimePermissions?: string[]
   declaredPermissions?: string[]
@@ -47,7 +47,6 @@ interface AppStatusState {
   setInstalledLmas: (installedLmas: ClientApp[]) => void
   setHiddenStatus: (packageName: string, status: boolean) => void
   getHiddenStatus: (packageName: string) => boolean
-  uninstallApplet: (packageName: string) => Promise<void>
 }
 
 export const DUMMY_APPLET: ClientApp = {
@@ -65,39 +64,6 @@ export const DUMMY_APPLET: ClientApp = {
   offlineRoute: "",
   local: false,
   hidden: false,
-}
-
-export const saveLocalAppRunningState = (packageName: string, status: boolean) => {
-  storage.save(`${packageName}_running`, status)
-}
-
-export const saveLastOpenTime = (packageName: string) => {
-  storage.save(`${packageName}_last_open_time`, Date.now())
-}
-
-export const getLastOpenTime = (packageName: string): AsyncResult<number, Error> => {
-  return Res.try_async(async () => {
-    const lastOpenTime = await storage.load<number>(`${packageName}_last_open_time`)
-    if (lastOpenTime.is_ok()) {
-      return lastOpenTime.value
-    }
-    return 0
-  })
-}
-
-export const sortAppsByLastOpenTime = async <T extends {packageName: string}>(apps: T[]): Promise<T[]> => {
-  const timestamps = await Promise.all(
-    apps.map(async (app) => ({
-      app,
-      time: await getLastOpenTime(app.packageName),
-    })),
-  )
-  return timestamps
-    .sort((a, b) => {
-      if (a.time.is_error() || b.time.is_error()) return 0
-      return a.time.value - b.time.value
-    })
-    .map((entry) => entry.app)
 }
 
 export type OrderMap = Record<string, number>
@@ -128,24 +94,13 @@ export const sortAppsByPackageNamePriority = (a: ClientApp, b: ClientApp): numbe
 }
 
 const startStopApplet = (applet: ClientApp, status: boolean): AsyncResult<void, Error> => {
-  // await useSettingsStore.getState().setSetting(packageName, status)
   return Res.try_async(async () => {
-    let packageName = applet.packageName
-
     if (!status && applet.onStop) {
-      const result = await applet.onStop()
-      if (result.is_error()) {
-        console.log(`APPLET: Failed to stop applet onStop() for ${applet.packageName}: ${result.error}`)
-        return
-      }
+      await applet.onStop()
     }
 
     if (status && applet.onStart) {
-      const result = await applet.onStart()
-      if (result.is_error()) {
-        console.log(`APPLET: Failed to start applet onStart() for ${applet.packageName}: ${result.error}`)
-        return
-      }
+      await applet.onStart()
     }
   })
 }
@@ -154,7 +109,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   apps: [],
 
   refresh: async () => {
-    const state = get()
+    // const state = get()
     console.log(`APPLETS: refreshApplets()`)
 
     // merge in the offline apps:
@@ -205,8 +160,9 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   },
 
   start: async (clientApp: ClientApp) => {
+    const state = get()
     const packageName = clientApp.packageName
-    const applet = get().apps.find((a) => a.packageName === packageName)
+    const applet = state.apps.find((a) => a.packageName === packageName)
 
     if (!applet) {
       console.error(`Applet not found for package name: ${packageName}`)
@@ -214,7 +170,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     }
 
     // do nothing if any applet is currently loading:
-    if (get().apps.some((a) => a.loading)) {
+    if (state.apps.some((a) => a.loading)) {
       console.log(`APPLETS: Skipping start applet ${packageName} because another applet is currently loading`)
       return
     }
@@ -227,27 +183,27 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       // if one of the missing types is EXIST, show a specific message:
       const missingTypes = applet.compatibility?.missingRequired?.map((req) => req.type) || []
       if (missingTypes.includes(HardwareType.EXIST)) {
-        await showAlert({
-          title: translate("home:glassesRequired"),
-          buttons: [{text: translate("common:ok")}],
-          message: translate("home:glassesRequiredMessage", {app: applet.name}),
-        })
+        // await showAlert({
+        //   title: translate("home:glassesRequired"),
+        //   buttons: [{text: translate("common:ok")}],
+        //   message: translate("home:glassesRequiredMessage", {app: applet.name}),
+        // })
         return
       }
-      const missingHardware =
-        missingTypes
-          .filter((t) => t !== HardwareType.EXIST)
-          .map((t) => t.toLowerCase())
-          .join(", ") || "required features"
+      // const missingHardware =
+      //   missingTypes
+      //     .filter((t) => t !== HardwareType.EXIST)
+      //     .map((t) => t.toLowerCase())
+      //     .join(", ") || "required features"
 
-      await showAlert({
-        title: translate("home:hardwareIncompatible"),
-        buttons: [{text: translate("common:ok")}],
-        message: translate("home:hardwareIncompatibleMessage", {
-          app: applet.name,
-          missing: missingHardware,
-        }),
-      })
+      // await showAlert({
+      //   title: translate("home:hardwareIncompatible"),
+      //   buttons: [{text: translate("common:ok")}],
+      //   message: translate("home:hardwareIncompatibleMessage", {
+      //     app: applet.name,
+      //     missing: missingHardware,
+      //   }),
+      // })
 
       return
     }
@@ -304,7 +260,8 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   },
 
   stop: async (packageName: string) => {
-    const applet = get().apps.find((a) => a.packageName === packageName)
+    const state = get()
+    const applet = state.apps.find((a) => a.packageName === packageName)
     if (!applet) {
       console.error(`Applet with package name ${packageName} not found`)
       return
@@ -318,22 +275,6 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     }))
 
     startStopApplet(applet, false)
-  },
-
-  uninstallApplet: async (packageName: string) => {
-    const applet = get().apps.find((a) => a.packageName === packageName)
-    if (!applet) {
-      console.error(`Applet with package name ${packageName} not found`)
-      return
-    }
-
-    if (applet.running) {
-      await startStopApplet(applet, false)
-    }
-    await restComms.uninstallApp(packageName)
-    set((state) => ({
-      apps: state.apps.filter((a) => a.packageName !== packageName),
-    }))
   },
 
   setHiddenStatus: (packageName: string, status: boolean) => {
@@ -361,10 +302,11 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
 
   stopAll: (): AsyncResult<void, Error> => {
     return Res.try_async(async () => {
-      const runningApps = get().apps.filter((app) => app.running)
+      const state = get()
+      const runningApps = state.apps.filter((app) => app.running)
 
       for (const app of runningApps) {
-        await get().stop(app.packageName)
+        await state.stop(app.packageName)
       }
     })
   },
@@ -432,7 +374,7 @@ export const useStopAll = () => useAppStatusStore((state) => state.stopAll)
 // }
 
 export const useActiveApps = () => {
-  const apps = useApps()
+  const apps = useApplets()
   return useMemo(() => apps.filter((app) => app.running), [apps])
 }
 

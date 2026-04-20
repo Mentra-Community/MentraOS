@@ -213,9 +213,9 @@ class MiniComms {
     }
   }
 
-  private handleRequestTranscription(packageName: string, message: MiniAppMessage) {
-    // composer
-  }
+  // private handleRequestTranscription(packageName: string, message: MiniAppMessage) {
+  //   // composer
+  // }
 
   private sendResponse(packageName: string, requestId: string | undefined, result: any) {
     if (!requestId) return
