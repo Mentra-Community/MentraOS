@@ -172,7 +172,7 @@ monitor_update() {
             else
                 echo "⚠️  ADB disconnected before reboot completed. This can be expected after the update."
             fi
-            echo "ℹ️  After reboot, verify UVC on a Windows laptop."
+            echo "ℹ️  Done! Please wait for the glasses to reboot..."
             return 0
         fi
     done
