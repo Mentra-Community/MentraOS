@@ -31,7 +31,7 @@
     "typesafe-ts": "^1.7.1",
     "zustand": "^5.0.11",
     "react-native-zip-archive": "^7.0.2",
-    "core": "file:../core"
+    "core": "workspace:*"
   },
   "devDependencies": {
     "expo-module-scripts": "^55.0.2"

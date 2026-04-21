@@ -426,7 +426,7 @@ class MantleManager {
     this.initServices()
     this.setupPeriodicTasks()
     this.setupSubscriptions()
-    await this.initNativeApps()
+    // await this.initNativeApps()
   }
 
   private async syncTimezone() {

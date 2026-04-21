@@ -12,13 +12,13 @@ import {
   OrderMap,
   saveAppsOrder,
   sortAppsByPackageNamePriority,
-  SYSTEM_APPS,
   uninstallAppUI,
   useAppletStatusStore,
   useForegroundApps,
   useStartApplet,
   useStopApplet,
 } from "@/stores/applets"
+import {SYSTEM_APPS} from "@/services/MantleManager"
 import {appStore} from "island"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
