@@ -12,7 +12,7 @@ console.log('Building Android release...');
 await $({ stdio: 'inherit' })`bun expo prebuild --platform android`;
 
 // bundle js code:
-await $({stdio: "inherit"})`bun expo export --platform android`
+await $({stdio: "inherit"})`bun expo export --platform android --clear`
 
 // Build release APK
 await $({ stdio: 'inherit', cwd: 'android' })`./gradlew assembleRelease`;
