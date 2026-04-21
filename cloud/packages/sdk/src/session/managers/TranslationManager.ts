@@ -114,7 +114,7 @@ export interface TranslationManagerDeps {
  * stream key it subscribes to, enabling independent cleanup.
  */
 interface Registration {
-  /** The subscription strings this registration added (e.g. `"translation:auto-es"`). */
+  /** The subscription strings this registration added (e.g. `"translation:auto-to-es"`). */
   streams: string[];
   /** Cleanup functions returned by `router.on()` for each stream key. */
   routerCleanups: Array<() => void>;
@@ -125,32 +125,35 @@ interface Registration {
 /** Stream prefix used on the wire. */
 const STREAM_PREFIX = StreamType.TRANSLATION; // "translation"
 
+/** Separator used on the wire between source and target language codes. */
+const PAIR_SEPARATOR = "-to-";
+
 /**
  * Build the wire subscription key for a translation pair.
  *
  * Wire protocol:
- * - `to("es")`           → `"translation:auto-es"`
- * - `fromTo("en", "ja")` → `"translation:en-ja"`
+ * - `to("es")`           → `"translation:auto-to-es"`
+ * - `fromTo("en", "ja")` → `"translation:en-to-ja"`
  */
 function subscriptionKey(source: string, target: string): string {
-  return `${STREAM_PREFIX}:${source}-${target}`;
+  return `${STREAM_PREFIX}:${source}${PAIR_SEPARATOR}${target}`;
 }
 
 /**
- * Parse a stream type string like `"translation:en-ja"` into its source and
- * target language components. Returns `null` if parsing fails.
+ * Parse a stream type string like `"translation:en-to-ja"` into its source
+ * and target language components. Returns `null` if parsing fails.
  */
 function parseStreamType(streamType: string): { source: string; target: string } | null {
   const prefixLen = STREAM_PREFIX.length + 1; // "translation:"
   if (!streamType.startsWith(`${STREAM_PREFIX}:`)) return null;
 
   const pair = streamType.slice(prefixLen);
-  const dashIdx = pair.indexOf("-");
-  if (dashIdx === -1) return null;
+  const sepIdx = pair.indexOf(PAIR_SEPARATOR);
+  if (sepIdx === -1) return null;
 
   return {
-    source: pair.slice(0, dashIdx),
-    target: pair.slice(dashIdx + 1),
+    source: pair.slice(0, sepIdx),
+    target: pair.slice(sepIdx + PAIR_SEPARATOR.length),
   };
 }
 
@@ -229,7 +232,7 @@ export class TranslationManager {
    */
   on(handler: TranslationHandler): () => void {
     // Register on the router using the bare prefix so we receive
-    // translation:en-ja, translation:auto-es, etc.
+    // translation:en-to-ja, translation:auto-to-es, etc.
     const routerCleanup = this.deps.router.on(STREAM_PREFIX, (_streamType, data, _message) => {
       try {
         handler(normalise(_streamType, data));
@@ -260,8 +263,8 @@ export class TranslationManager {
    * listed target languages.
    *
    * Wire protocol:
-   * - `to("es")` → subscribes `"translation:auto-es"`
-   * - `to(["es", "ja"])` → subscribes `"translation:auto-es"` + `"translation:auto-ja"`
+   * - `to("es")` → subscribes `"translation:all-to-es"`
+   * - `to(["es", "ja"])` → subscribes `"translation:all-to-es"` + `"translation:all-to-ja"`
    *
    * @param target - ISO 639-1 target language code(s).
    * @param handler - Called for every matching translation event.
@@ -279,7 +282,7 @@ export class TranslationManager {
     const routerCleanups: Array<() => void> = [];
 
     for (const t of targets) {
-      const stream = subscriptionKey("auto", t); // e.g. "translation:auto-es"
+      const stream = subscriptionKey("all", t); // e.g. "translation:all-to-es"
 
       const cleanup = this.deps.router.on(stream, (_streamType, data, _message) => {
         try {
@@ -304,8 +307,8 @@ export class TranslationManager {
    * languages.
    *
    * Wire protocol:
-   * - `fromTo("en", "ja")` → subscribes `"translation:en-ja"`
-   * - `fromTo("en", ["ja", "es"])` → subscribes `"translation:en-ja"` + `"translation:en-es"`
+   * - `fromTo("en", "ja")` → subscribes `"translation:en-to-ja"`
+   * - `fromTo("en", ["ja", "es"])` → subscribes `"translation:en-to-ja"` + `"translation:en-to-es"`
    *
    * @param source - ISO 639-1 source language code.
    * @param target - ISO 639-1 target language code(s).
@@ -324,7 +327,7 @@ export class TranslationManager {
     const routerCleanups: Array<() => void> = [];
 
     for (const t of targets) {
-      const stream = subscriptionKey(source, t); // e.g. "translation:en-ja"
+      const stream = subscriptionKey(source, t); // e.g. "translation:en-to-ja"
 
       const cleanup = this.deps.router.on(stream, (_streamType, data, _message) => {
         try {
