@@ -25,7 +25,20 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PORT=${OTA_TEST_PORT:-9876}
 SERVE_DIR="$(mktemp -d)"
-LOG_FILE="$(mktemp /tmp/test-mtk-ota.XXXXXX.log)"
+make_temp_log_file() {
+    local temp_file=""
+    if temp_file="$(mktemp -t test-mtk-ota 2>/dev/null)"; then
+        mv "$temp_file" "$temp_file.log"
+        echo "$temp_file.log"
+        return 0
+    fi
+
+    temp_file="$(mktemp "${TMPDIR:-/tmp}/test-mtk-ota.XXXXXX")"
+    mv "$temp_file" "$temp_file.log"
+    echo "$temp_file.log"
+}
+
+LOG_FILE="$(make_temp_log_file)"
 PATCH_PATH=""
 START_FIRMWARE_OVERRIDE=""
 END_FIRMWARE_OVERRIDE=""
