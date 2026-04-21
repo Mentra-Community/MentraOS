@@ -15,6 +15,9 @@ set -euo pipefail
 
 PORT=${OTA_TEST_PORT:-9876}
 WAIT_SECONDS=20
+MAX_TRIGGER_ATTEMPTS=3
+TRIGGER_RETRY_DELAY_SECONDS=8
+TRIGGER_ACTIVITY_TIMEOUT_SECONDS=15
 SERVE_DIR="$(mktemp -d)"
 PATCH_PATH=""
 START_FIRMWARE_OVERRIDE=""
@@ -53,44 +56,26 @@ extract_trailing_date() {
     return 1
 }
 
-logcat_has() {
-    local pattern="$1"
-    adb logcat -d | grep -Fq "$pattern"
-}
-
 print_phase() {
     echo ""
     echo "$1"
 }
 
 start_app_and_wait() {
-    local ready=0
-
     print_phase "🚀 Launching ASG Client..."
     adb shell am start -n "$APP_COMPONENT" >/dev/null 2>&1 || fail "Failed to launch ASG Client"
 
     echo "ℹ️  This process takes about 5 minutes. Keep your Mentra Live plugged in and do not disconnect it."
     for ((remaining=WAIT_SECONDS; remaining>0; remaining--)); do
-        if logcat_has "OtaService onCreate" && logcat_has "OtaHelper singleton initialized"; then
-            ready=1
-        fi
         printf "\r⏳ Waiting to start: %2ds remaining..." "$remaining"
         sleep 1
     done
     printf "\r⏳ Waiting to start:  0s remaining...\n"
-
-    if [ "$ready" -ne 1 ]; then
-        echo ""
-        echo "Recent OTA startup logs:"
-        adb logcat -d | grep -E "OtaService|OtaHelper|ServiceLifecycleManager|ServiceContainer" || true
-        fail "OTA service did not initialize within ${WAIT_SECONDS} seconds"
-    fi
-
-    echo "✅ OTA service initialized"
 }
 
 trigger_mtk_ota() {
-    print_phase "🚀 Starting MTK OTA..."
+    local attempt="$1"
+    print_phase "🚀 Starting MTK OTA (attempt ${attempt}/${MAX_TRIGGER_ATTEMPTS})..."
     adb shell am broadcast \
         -a com.mentra.DEBUG_MTK_OTA \
         --es url "http://localhost:$PORT/version.json" \
@@ -103,24 +88,42 @@ monitor_update() {
     local line=""
     local progress=0
     local raw_progress=0
+    local idle_seconds=0
+    local saw_activity=0
 
-    while IFS= read -r line; do
+    exec 3< <(adb logcat -v time)
+    while true; do
+        if IFS= read -r -t 1 line <&3; then
+            idle_seconds=0
+        else
+            idle_seconds=$((idle_seconds + 1))
+            if [ "$saw_activity" -eq 0 ] && [ "$idle_seconds" -ge "$TRIGGER_ACTIVITY_TIMEOUT_SECONDS" ]; then
+                exec 3<&-
+                return 3
+            fi
+            continue
+        fi
+
         if [[ "$line" == *"OtaHelper not initialized - is OtaService running?"* ]]; then
-            fail "OTA trigger fired before OtaHelper was initialized"
+            exec 3<&-
+            return 2
         fi
 
         if [[ "$line" == *"Failed to download MTK firmware"* ]] || \
            [[ "$line" == *"MTK firmware verification failed"* ]] || \
            [[ "$line" == *"MTK OTA error:"* ]]; then
+            exec 3<&-
             fail "$line"
         fi
 
         if [[ "$line" == *"MTK OTA source URL:"* ]]; then
+            saw_activity=1
             echo "📥 Downloading MTK patch..."
             continue
         fi
 
         if [[ "$line" =~ MTK\ firmware\ download\ progress:\ ([0-9]+)% ]]; then
+            saw_activity=1
             progress="${BASH_REMATCH[1]}"
             if [ "$progress" -ne "$last_download" ]; then
                 echo "📥 Downloading MTK patch: ${progress}%"
@@ -130,6 +133,7 @@ monitor_update() {
         fi
 
         if [[ "$line" == *"MTK firmware downloaded to:"* ]]; then
+            saw_activity=1
             if [ "$last_download" -lt 100 ]; then
                 echo "📥 Downloading MTK patch: 100%"
                 last_download=100
@@ -138,6 +142,7 @@ monitor_update() {
         fi
 
         if [[ "$line" =~ MTK\ OTA\ update\ -\ cmd:\ write,\ msg:\ ([0-9]+) ]]; then
+            saw_activity=1
             raw_progress="${BASH_REMATCH[1]}"
             progress=$((raw_progress / 2))
             if [ "$progress" -gt "$last_install" ]; then
@@ -148,6 +153,7 @@ monitor_update() {
         fi
 
         if [[ "$line" =~ MTK\ OTA\ update\ -\ cmd:\ update,\ msg:\ ([0-9]+) ]]; then
+            saw_activity=1
             raw_progress="${BASH_REMATCH[1]}"
             progress=$((50 + (raw_progress / 2)))
             if [ "$progress" -gt "$last_install" ]; then
@@ -159,6 +165,7 @@ monitor_update() {
 
         if [[ "$line" == *'"type":"mtk_update_complete"'* ]] || \
            [[ "$line" == *"MTK OTA success:"* ]]; then
+            exec 3<&-
             echo "✅ Complete. Rebooting glasses..."
             if adb shell reboot >/dev/null 2>&1; then
                 echo "✅ Reboot command sent"
@@ -168,7 +175,44 @@ monitor_update() {
             echo "ℹ️  After reboot, verify UVC on a Windows laptop."
             return 0
         fi
-    done < <(adb logcat -v time)
+    done
+}
+
+run_mtk_ota() {
+    local attempt=1
+    local status=0
+
+    while [ "$attempt" -le "$MAX_TRIGGER_ATTEMPTS" ]; do
+        print_phase "🧼 Resetting logcat for OTA progress tracking..."
+        adb logcat -c
+        echo "✅ Progress log buffer cleared"
+
+        trigger_mtk_ota "$attempt"
+
+        set +e
+        monitor_update
+        status=$?
+        set -e
+
+        if [ "$status" -eq 0 ]; then
+            return 0
+        fi
+        if [ "$status" -eq 2 ]; then
+            if [ "$attempt" -lt "$MAX_TRIGGER_ATTEMPTS" ]; then
+                echo "⚠️  OTA helper is not ready yet. Retrying in ${TRIGGER_RETRY_DELAY_SECONDS}s..."
+                sleep "$TRIGGER_RETRY_DELAY_SECONDS"
+                attempt=$((attempt + 1))
+                continue
+            fi
+            fail "OTA helper never became ready after ${MAX_TRIGGER_ATTEMPTS} attempts"
+        fi
+
+        if [ "$status" -eq 3 ]; then
+            fail "No MTK OTA activity detected within ${TRIGGER_ACTIVITY_TIMEOUT_SECONDS} seconds of the trigger"
+        fi
+
+        fail "MTK OTA monitoring exited unexpectedly with status ${status}"
+    done
 }
 
 while [[ $# -gt 0 ]]; do
@@ -305,9 +349,4 @@ echo "✅ Logcat cleared"
 
 start_app_and_wait
 
-print_phase "🧼 Resetting logcat for OTA progress tracking..."
-adb logcat -c
-echo "✅ Progress log buffer cleared"
-
-trigger_mtk_ota
-monitor_update
+run_mtk_ota
