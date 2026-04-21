@@ -147,6 +147,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- Debug receiver for testing MTK OTA via adb -->
+        <receiver
+            android:name="com.mentra.asg_client.receiver.DebugMtkOtaReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.mentra.DEBUG_MTK_OTA" />
+            </intent-filter>
+        </receiver>
+
         <!-- Intent IPC receiver for third-party app commands -->
         <receiver
             android:name="com.mentra.asg_client.receiver.IntentCommandReceiver"

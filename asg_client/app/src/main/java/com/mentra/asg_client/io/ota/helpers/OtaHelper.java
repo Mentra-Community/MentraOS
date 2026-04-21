@@ -1630,6 +1630,8 @@ public class OtaHelper {
         }
 
         try {
+            Log.i(TAG, "Checking " + patches.length()
+                    + " MTK patch entries against current firmware: " + currentVersion);
             for (int i = 0; i < patches.length(); i++) {
                 JSONObject patch = patches.getJSONObject(i);
                 String startFirmware = patch.getString("start_firmware");
@@ -2034,6 +2036,7 @@ public class OtaHelper {
                 Log.e(TAG, "MTK firmware URL missing in JSON (expected 'url' or 'firmwareUrl')");
                 return false;
             }
+            Log.i(TAG, "MTK OTA source URL: " + firmwareUrl + " (installNow=" + installNow + ")");
             boolean hasValidCache = isCachedArtifactValid(CACHE_KEY_MTK, UPDATE_TYPE_MTK, OtaConstants.MTK_FIRMWARE_PATH, firmwareInfo);
             if (!hasValidCache) {
                 boolean downloaded = downloadMtkFirmware(firmwareUrl, firmwareInfo, context);
@@ -2048,6 +2051,7 @@ public class OtaHelper {
             }
 
             if (!installNow) {
+                Log.i(TAG, "MTK firmware cached for later install at: " + OtaConstants.MTK_FIRMWARE_PATH);
                 return true;
             }
 
@@ -2072,6 +2076,7 @@ public class OtaHelper {
             final Context ctx = context;
             new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
                 Log.i(TAG, "Starting MTK firmware update from: " + OtaConstants.MTK_FIRMWARE_PATH);
+                Log.i(TAG, "Dispatching MTK OTA install broadcast to SystemUI");
                 com.mentra.asg_client.SysControl.installOTA(ctx, OtaConstants.MTK_FIRMWARE_PATH);
                 Log.i(TAG, "MTK firmware update initiated - system will handle in background");
             }, 1000); // 1 second delay
