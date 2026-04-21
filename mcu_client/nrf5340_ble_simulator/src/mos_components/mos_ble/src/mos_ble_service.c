@@ -1,15 +1,3 @@
-/*
- * @Author       : Cole
- * @Date         : 2026-01-30 09:30:43
- * @LastEditTime : 2026-01-30 14:12:31
- * @FilePath     : mos_ble_service.c
- * @Description  : 
- * 
- *  Copyright (c) MentraOS Contributors 2026 
- *  SPDX-License-Identifier: Apache-2.0
- */
-
-
 #include <string.h>
 
 #include <zephyr/types.h>

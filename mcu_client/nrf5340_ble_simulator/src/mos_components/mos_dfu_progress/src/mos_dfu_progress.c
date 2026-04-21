@@ -1,15 +1,3 @@
-/*
- * @Author       : Cole
- * @Date         : 2026-01-31 09:40:16
- * @LastEditTime : 2026-01-31 09:41:05
- * @FilePath     : mos_dfu_progress.c
- * @Description  : 
- * 
- *  Copyright (c) MentraOS Contributors 2026 
- *  SPDX-License-Identifier: Apache-2.0
- */
-
-
 #include <stdio.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>

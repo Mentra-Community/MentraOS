@@ -1,20 +1,3 @@
-/*
- * Shell J-Link/USB Switch Control Module
- * 
- * Shell commands for J-Link/USB switch control
- * J-Link/USB切换控制的Shell命令
- * 
- * Available Commands:
- * - jlink_usb help        : Show all J-Link/USB switch commands
- * - jlink_usb status      : Show current switch status
- * - jlink_usb jlink       : Switch to J-Link mode (GPIO LOW)
- * - jlink_usb usb         : Switch to USB mode (GPIO HIGH)
- * - jlink_usb toggle      : Toggle between J-Link and USB mode
- * 
- * Created: 2025-11-20
- * Author: MentraOS Team
- */
-
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/logging/log.h>

@@ -1,14 +1,3 @@
-/***
- * @Author       : Cole
- * @Date         : 2026-02-05 14:53:31
- * @LastEditTime : 2026-02-10 15:46:31
- * @FilePath     : mos_binfont_lvgl.h
- * @Description  :
- * @
- * @ Copyright (c) MentraOS Contributors 2026
- * @ SPDX-License-Identifier: Apache-2.0
- */
-
 #ifndef MOS_BINFONT_LVGL_H
 #define MOS_BINFONT_LVGL_H
 

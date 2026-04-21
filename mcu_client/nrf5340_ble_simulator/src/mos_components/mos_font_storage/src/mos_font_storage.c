@@ -1,14 +1,3 @@
-/*
- * @Author       : Cole
- * @Date         : 2026-02-05 14:53:31
- * @LastEditTime : 2026-02-07 14:59:43
- * @FilePath     : mos_font_storage.c
- * @Description  :
- *
- *  Copyright (c) MentraOS Contributors 2026
- *  SPDX-License-Identifier: Apache-2.0
- */
-
 #include "mos_font_storage.h"
 
 #include <zephyr/kernel.h>

@@ -1,14 +1,3 @@
-/*
- * @Author       : Cole
- * @Date         : 2025-10-15 16:03:00
- * @LastEditTime : 2026-02-04 19:51:43
- * @FilePath     : mos_opt3006.c
- * @Description  :
- *
- *  Copyright (c) MentraOS Contributors 2025
- *  SPDX-License-Identifier: Apache-2.0
- */
-
 #include "mos_opt3006.h"
 
 #include <hal/nrf_gpio.h>

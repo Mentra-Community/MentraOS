@@ -1,15 +1,3 @@
-/*** 
- * @Author       : Cole
- * @Date         : 2026-01-31 09:33:02
- * @LastEditTime : 2026-01-31 10:34:26
- * @FilePath     : mos_dfu_progress.h
- * @Description  : 
- * @
- * @ Copyright (c) MentraOS Contributors 2026 
- * @ SPDX-License-Identifier: Apache-2.0
- */
-
-
 #ifndef MOS_DFU_PROGRESS_H_
 #define MOS_DFU_PROGRESS_H_
 

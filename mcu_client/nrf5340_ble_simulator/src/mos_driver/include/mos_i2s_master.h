@@ -1,13 +1,3 @@
-/***
- * @Author       : Cole
- * @Date         : 2025-08-15 17:43:14
- * @LastEditTime : 2026-01-30 09:59:21
- * @FilePath     : mos_i2s_master.h
- * @Description  : MOS I2S master driver - nRF as I2S master (external mic + I2S playback)
- * @
- * @ Copyright (c) MentraOS Contributors 2025
- * @ SPDX-License-Identifier: Apache-2.0
- */
 #ifndef MOS_I2S_MASTER_H_
 #define MOS_I2S_MASTER_H_
 

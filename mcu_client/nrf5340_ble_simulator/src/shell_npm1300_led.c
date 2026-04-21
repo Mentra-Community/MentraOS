@@ -1,20 +1,3 @@
-/*
- * Shell nPM1300 LED Control Module
- * 
- * Shell commands for testing nPM1300 LED control
- * 
- * Available Commands:
- * - led help                    : Show all LED commands
- * - led on <0|1|2>              : Turn LED on
- * - led off <0|1|2>             : Turn LED off
- * - led blink <0|1|2> [freq]    : Start blinking LED (default: 2 Hz, range: 1-10 Hz)
- * - led stop <0|1|2>           : Stop blinking LED
- * - led status [0|1|2]         : Show LED status (all LEDs or specific LED)
- * 
- * Created: 2025-01-XX
- * Author: MentraOS Team
- */
-
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/logging/log.h>

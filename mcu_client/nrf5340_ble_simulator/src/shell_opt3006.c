@@ -1,21 +1,3 @@
-/*
- * Shell OPT3006 Control Module
- * 
- * Manual OPT3006 ambient light sensor control commands
- * 
- * Available Commands:
- * - opt3006 help              : Show all OPT3006 commands
- * - opt3006 info              : Show sensor information
- * - opt3006 read              : Read current illuminance value
- * - opt3006 test [count]      : Run continuous test (default: infinite)
- * - opt3006 config            : Show current configuration
- * - opt3006 mode <mode>       : Set conversion mode (continuous/single/shutdown)
- * - opt3006 ct <time>         : Set conversion time (100/800 ms)
- * 
- * Created: 2025-10-16
- * Author: MentraOS Team
- */
-
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/logging/log.h>

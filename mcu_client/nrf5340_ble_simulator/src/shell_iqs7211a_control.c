@@ -1,12 +1,3 @@
-/*
- * Shell IQS7211A Control Module
- *
- * Commands:
- * - iqs7211a help            : Show commands
- * - iqs7211a id              : Read version details (0x00..0x09) and print first word
- * - iqs7211a ver             : Read and print all version words (0x00..0x09)
- */
-
 #include <errno.h>
 #include <stddef.h>
 #include <stdint.h>

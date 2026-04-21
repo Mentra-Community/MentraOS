@@ -1,14 +1,3 @@
-/***
- * @Author       : Cole
- * @Date         : 2026-03-27 17:34:41
- * @LastEditTime : 2026-03-28 15:32:46
- * @FilePath     : mos_iqs7211a.h
- * @Description  :
- * @
- * @ Copyright (c) MentraOS Contributors 2026
- * @ SPDX-License-Identifier: Apache-2.0
- */
-
 #ifndef MOS_IQS7211A_H_
 #define MOS_IQS7211A_H_
 

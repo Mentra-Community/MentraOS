@@ -1,14 +1,3 @@
-/*** 
- * @Author       : Cole
- * @Date         : 2026-01-24 11:14:00
- * @LastEditTime : 2026-01-26 13:49:26
- * @FilePath     : mos_button_app.h
- * @Description  : 
- * @
- * @ Copyright (c) MentraOS Contributors 2026 
- * @ SPDX-License-Identifier: Apache-2.0
- */
-
 #ifndef MOS_BUTTON_APP_H_
 #define MOS_BUTTON_APP_H_
 

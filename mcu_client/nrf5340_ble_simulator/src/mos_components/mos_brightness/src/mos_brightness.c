@@ -1,14 +1,3 @@
-/*
- * @Author       : Cole
- * @Date         : 2026-04-15 10:46:46
- * @LastEditTime : 2026-04-15 16:47:46
- * @FilePath     : mos_brightness.c
- * @Description  :
- *
- *  Copyright (c) MentraOS Contributors 2026
- *  SPDX-License-Identifier: Apache-2.0
- */
-
 #include "mos_brightness.h"
 
 #include <stdlib.h>

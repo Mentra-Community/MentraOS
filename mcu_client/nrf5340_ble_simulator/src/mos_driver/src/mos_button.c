@@ -1,14 +1,3 @@
-/*
- * @Author       : Cole
- * @Date         : 2026-01-24 11:14:00
- * @LastEditTime : 2026-01-28 19:01:48
- * @FilePath     : mos_button.c
- * @Description  : 
- * 
- *  Copyright (c) MentraOS Contributors 2026 
- *  SPDX-License-Identifier: Apache-2.0
- */
-
 #include "mos_button.h"
 
 #include <zephyr/device.h>

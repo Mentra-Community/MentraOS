@@ -1,14 +1,3 @@
-/***
- * @Author       : Cole
- * @Date         : 2025-07-31 11:52:06
- * @LastEditTime : 2025-07-31 18:45:41
- * @FilePath     : bal_os.h
- * @Description  :
- * @
- * @ Copyright (c) MentraOS Contributors 2025
- * @ SPDX-License-Identifier: Apache-2.0
- */
-
 #ifndef _BAL_OS_H__
 #define _BAL_OS_H__
 

@@ -1,14 +1,3 @@
-/***
- * @Author       : Cole
- * @Date         : 2025-11-19 20:05:11
- * @LastEditTime : 2025-11-20 11:15:30
- * @FilePath     : mos_lsm6dsv16x.h
- * @Description  : LSM6DSV16X 6-axis IMU sensor driver wrapper
- * @
- * @ Copyright (c) MentraOS Contributors 2025
- * @ SPDX-License-Identifier: Apache-2.0
- */
-
 #ifndef MOS_LSM6DSV16X_H_
 #define MOS_LSM6DSV16X_H_
 

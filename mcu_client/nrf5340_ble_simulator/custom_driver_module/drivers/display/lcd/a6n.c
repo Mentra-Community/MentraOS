@@ -1,14 +1,3 @@
-/*
- * @Author       : Cole
- * @Date         : 2025-07-28 11:31:02
- * @LastEditTime : 2026-04-13 17:06:28
- * @FilePath     : a6n.c
- * @Description  :
- *
- *  Copyright (c) MentraOS Contributors 2025
- *  SPDX-License-Identifier: Apache-2.0
- */
-
 #include "a6n.h"
 
 #include <math.h>

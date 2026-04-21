@@ -1,15 +1,4 @@
-/*** 
- * @Author       : Cole
- * @Date         : 2025-07-31 11:52:11
- * @LastEditTime : 2025-07-31 16:55:28
- * @FilePath     : mos_crc.h
- * @Description  : 
- * @
- * @ Copyright (c) MentraOS Contributors 2025 
- * @ SPDX-License-Identifier: Apache-2.0
- */
-
- #ifndef _MOS_CRC_H_
+#ifndef _MOS_CRC_H_
  #define _MOS_CRC_H_
 
 

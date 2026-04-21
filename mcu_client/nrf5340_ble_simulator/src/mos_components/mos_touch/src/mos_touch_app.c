@@ -1,14 +1,3 @@
-/*
- * @Author       : Cole
- * @Date         : 2026-03-31 14:10:00
- * @LastEditTime : 2026-04-02 10:09:21
- * @FilePath     : mos_touch_app.c
- * @Description  :
- *
- *  Copyright (c) MentraOS Contributors 2026
- *  SPDX-License-Identifier: Apache-2.0
- */
-
 #include "mos_touch_app.h"
 
 #include <errno.h>

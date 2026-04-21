@@ -1,14 +1,3 @@
-/*
- * @Author       : Cole
- * @Date         : 2025-07-31 10:40:40
- * @LastEditTime : 2026-03-27 14:08:05
- * @FilePath     : mos_pdm.c
- * @Description  :
- *
- *  Copyright (c) MentraOS Contributors 2025
- *  SPDX-License-Identifier: Apache-2.0
- */
-
 // #include <bluetooth/audio/lc3.h>
 #include "mos_pdm.h"
 

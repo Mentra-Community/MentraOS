@@ -1,20 +1,3 @@
-/*
- * Shell Display Control Module
- *
- * Manual display control commands for nRF5340 BLE Simulator
- * Supporting both A6N projector and SSD1306 OLED displays
- *
- * Available Commands:
- * - display help                    : Show all display commands
- * - display brightness <0-100>      : Set display brightness
- * - display clear                   : Clear display
- * - display text "string" <x> <y> <size> : Write text at position with font size
- * - display info                    : Show display information
- *
- * Created: 2025-09-30
- * Author: MentraOS Team
- */
-
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>

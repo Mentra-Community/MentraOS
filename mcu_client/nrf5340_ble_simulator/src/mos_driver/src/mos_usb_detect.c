@@ -1,14 +1,3 @@
-/*
- * @Author       : Cole
- * @Date         : 2026-01-30 09:47:30
- * @LastEditTime : 2026-03-04 09:57:34
- * @FilePath     : mos_usb_detect.c
- * @Description  :
- *
- *  Copyright (c) MentraOS Contributors 2026
- *  SPDX-License-Identifier: Apache-2.0
- */
-
 #include "mos_usb_detect.h"
 
 #include <hal/nrf_usbreg.h>

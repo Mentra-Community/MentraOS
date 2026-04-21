@@ -1,14 +1,3 @@
-/*
- * @Author       : Cole
- * @Date         : 2026-03-02 15:33:39
- * @LastEditTime : 2026-04-20 16:22:22
- * @FilePath     : mos_i2s_slave.c
- * @Description  : MOS I2S slave driver - GX8002 VAD path (nRF as I2S slave)
- *
- *  Copyright (c) MentraOS Contributors 2026
- *  SPDX-License-Identifier: Apache-2.0
- */
-
 #include "mos_i2s_slave.h"
 
 #include <nrfx_i2s.h>

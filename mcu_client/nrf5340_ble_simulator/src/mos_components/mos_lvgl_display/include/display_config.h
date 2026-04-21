@@ -1,15 +1,3 @@
-/*** 
- * @Author       : Cole
- * @Date         : 2026-01-17 15:30:32
- * @LastEditTime : 2026-01-29 14:16:25
- * @FilePath     : display_config.h
- * @Description  : 
- * @
- * @ Copyright (c) MentraOS Contributors 2026 
- * @ SPDX-License-Identifier: Apache-2.0
- */
-
-
 #ifndef DISPLAY_CONFIG_H
 #define DISPLAY_CONFIG_H
 

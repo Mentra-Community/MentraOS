@@ -1,8 +1,3 @@
-/*
- * Copyright (C) 2023 Nordic Semiconductor ASA
- * SPDX-License-Identifier: Apache-2.0
- */
-
 #include <dt-bindings/regulator/npm1300.h>
 #include <zephyr/dt-bindings/input/input-event-codes.h>
 

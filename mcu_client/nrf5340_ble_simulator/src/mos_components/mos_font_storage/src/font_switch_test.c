@@ -1,8 +1,3 @@
-/*
- * 字体切换测试示例
- *
- * 演示如何使用 MentraOS 的动态字体切换功能
- */
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>

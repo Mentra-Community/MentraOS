@@ -1,18 +1,3 @@
-/*
- * Shell Audio Control Module
- * 
- * Audio/PDM microphone test commands (independent of BLE)
- * 
- * Commands:
- * - audio help        : Show help
- * - audio start       : Start PDM + LC3 (shell mic test; no I2S unless loopback enabled in build)
- * - audio stop        : Stop complete audio system
- * - audio status      : Show current audio/PDM status
- * 
- * Purpose: Test PDM microphone + LC3 encode (shell). I2S loopback is optional via
- * CONFIG_PDM_SHELL_I2S_LOOPBACK (default 0).
- */
-
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/logging/log.h>

@@ -1,9 +1,3 @@
-/*
- * Copyright (c) 2024 Mentra
- *
- * SPDX-License-Identifier: Apache-2.0
- */
-
 #ifndef PROTOBUF_HANDLER_H_
 #define PROTOBUF_HANDLER_H_
 

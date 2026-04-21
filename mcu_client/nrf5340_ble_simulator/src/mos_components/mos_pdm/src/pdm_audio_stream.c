@@ -1,14 +1,3 @@
-/*
- * @Author       : Cole
- * @Date         : 2026-01-17 15:30:32
- * @LastEditTime : 2026-03-27 14:09:41
- * @FilePath     : pdm_audio_stream.c
- * @Description  :
- *
- *  Copyright (c) MentraOS Contributors 2026
- *  SPDX-License-Identifier: Apache-2.0
- */
-
 #include "pdm_audio_stream.h"
 
 #include <errno.h>

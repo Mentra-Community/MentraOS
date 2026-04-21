@@ -1,7 +1,3 @@
-/*
- * Copyright (c) MentraOS Contributors 2025
- * SPDX-License-Identifier: Apache-2.0
- */
 
 #ifndef _MOS_FUEL_GAUGE_H_
 #define _MOS_FUEL_GAUGE_H_

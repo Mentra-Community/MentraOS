@@ -1,18 +1,3 @@
-/*
- * Shell GX8002 Control Module
- *
- * GX8002 test commands for nRF5340 BLE Simulator
- *
- * Available Commands:
- * - gx8002 help                    : Show all gx8002 commands
- * - gx8002 version                 : Get GX8002 firmware version
- * - gx8002 handshake               : Test I2C handshake with GX8002
- * - gx8002 reset                   : Reset GX8002 chip
- *
- * Created: 2025-12-03
- * Author: MentraOS Team
- */
-
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>

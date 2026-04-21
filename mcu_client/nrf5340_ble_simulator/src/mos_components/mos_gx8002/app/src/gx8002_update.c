@@ -1,14 +1,3 @@
-/*
- * @Author       : Cole
- * @Date         : 2025-12-03 11:37:55
- * @LastEditTime : 2026-03-03 15:23:05
- * @FilePath     : mos_components/mos_gx8002/app/src/gx8002_update.c
- * @Description  :
- *
- *  Copyright (c) MentraOS Contributors 2025
- *  SPDX-License-Identifier: Apache-2.0
- */
-
 #include "gx8002_update.h"
 
 #include <string.h>

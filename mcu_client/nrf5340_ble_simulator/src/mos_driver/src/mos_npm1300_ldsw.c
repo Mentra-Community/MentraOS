@@ -1,14 +1,3 @@
-/*
- * @Author       : Cole
- * @Date         : 2026-01-26
- * @LastEditTime : 2026-01-26
- * @FilePath     : mos_npm1300_ldsw.c
- * @Description  : nPM1300 LDSW1 (Load Switch) control driver
- * 
- *  Copyright (c) MentraOS Contributors 2026 
- *  SPDX-License-Identifier: Apache-2.0
- */
-
 #include "mos_npm1300_ldsw.h"
 
 #include <zephyr/drivers/regulator.h>

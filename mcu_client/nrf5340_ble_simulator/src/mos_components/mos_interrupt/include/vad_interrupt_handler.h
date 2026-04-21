@@ -1,14 +1,3 @@
-/***
- * @Author       : Cole
- * @Date         : 2026-03-03 17:06:05
- * @LastEditTime : 2026-04-20 17:05:25
- * @FilePath     : vad_interrupt_handler.h
- * @Description  :
- * @
- * @ Copyright (c) MentraOS Contributors 2026
- * @ SPDX-License-Identifier: Apache-2.0
- */
-
 #ifndef _VAD_INTERRUPT_HANDLER_H_
 #define _VAD_INTERRUPT_HANDLER_H_
 

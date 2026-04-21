@@ -1,19 +1,3 @@
-/*
- * Shell Battery Control Module
- * 
- * Battery monitoring and fuel gauge control commands
- * 
- * Available Commands:
- * - battery help              : Show all battery commands
- * - battery status             : Show current battery status
- * - battery monitor start      : Start continuous battery monitoring
- * - battery monitor stop       : Stop battery monitoring
- * - battery monitor status     : Show monitoring status
- * 
- * Created: 2025-10-28
- * Author: MentraOS Team
- */
-
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/logging/log.h>

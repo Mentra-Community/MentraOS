@@ -1,14 +1,3 @@
-/***
- * @Author       : Cole
- * @Date         : 2026-03-02 15:33:45
- * @LastEditTime : 2026-03-03 10:40:55
- * @FilePath     : mos_gx8002.h
- * @Description  :
- * @
- * @ Copyright (c) MentraOS Contributors 2026
- * @ SPDX-License-Identifier: Apache-2.0
- */
-
 #ifndef MOS_GX8002_H_
 #define MOS_GX8002_H_
 

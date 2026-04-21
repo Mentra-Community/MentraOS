@@ -1,24 +1,3 @@
-/*
- * Shell LSM6DSV16X Control Module
- *
- * Manual LSM6DSV16X IMU sensor control commands
- *
- * Available Commands:
- * - imu help              : Show all IMU commands
- * - imu status            : Show sensor status and information
- * - imu read              : Read sensor data once (accel, gyro)
- * - imu start [interval]  : Start continuous reading (accel, gyro, default: 100ms)
- * - imu stop              : Stop continuous reading
- * - imu config            : Show current configuration (temporarily disabled)
- * - imu accel_odr <hz>    : Set accelerometer ODR (Hz) (temporarily disabled)
- * - imu gyro_odr <hz>     : Set gyroscope ODR (Hz) (temporarily disabled)
- * - imu accel_range <g>   : Set accelerometer range (±2/±4/±8/±16 g) (temporarily disabled)
- * - imu gyro_range <dps>  : Set gyroscope range (±125/±250/±500/±1000/±2000 dps) (temporarily disabled)
- *
- * Created: 2025-11-20
- * Author: MentraOS Team
- */
-
 #include <stdlib.h>
 #include <string.h>
 #include <zephyr/kernel.h>

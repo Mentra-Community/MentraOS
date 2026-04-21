@@ -1,14 +1,3 @@
-/***
- * @Author       : Cole
- * @Date         : 2025-12-04 19:32:27
- * @LastEditTime : 2025-12-05 10:31:13
- * @FilePath     : interrupt_handler.h
- * @Description  :
- * @
- * @ Copyright (c) MentraOS Contributors 2025
- * @ SPDX-License-Identifier: Apache-2.0
- */
-
 #ifndef _INTERRUPT_HANDLER_H_
 #define _INTERRUPT_HANDLER_H_
 

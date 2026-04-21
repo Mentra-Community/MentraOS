@@ -1,15 +1,3 @@
-/***
- * @Author       : Cole
- * @Date         : 2025-12-17 17:51:52
- * @LastEditTime : 2026-01-30 14:10:25
- * @FilePath     : mos_ble_service.h
- * @Description  :
- * @
- * @ Copyright (c) MentraOS Contributors 2026
- * @ SPDX-License-Identifier: Apache-2.0
- */
-
-
 #ifndef MOS_BLE_SERVICE_H_
 #define MOS_BLE_SERVICE_H_
 

@@ -1,16 +1,3 @@
-/*** 
- * @Author       : Cole
- * @Date         : 2026-01-26 14:16:14
- * @LastEditTime : 2026-01-26 14:21:18
- * @FilePath     : mos_jlink_usb_switch_app.h
- * @Description  : 
- * @
- * @ Copyright (c) MentraOS Contributors 2026 
- * @ SPDX-License-Identifier: Apache-2.0
- */
-
-
-
 #ifndef MOS_JLINK_USB_SWITCH_APP_H_
 #define MOS_JLINK_USB_SWITCH_APP_H_
 

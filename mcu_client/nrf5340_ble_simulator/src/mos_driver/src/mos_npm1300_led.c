@@ -1,14 +1,3 @@
-/*
- * @Author       : Cole
- * @Date         : 2025-11-22 14:05:45
- * @LastEditTime : 2025-11-22 16:10:32
- * @FilePath     : mos_npm1300_led.c
- * @Description  : 
- * 
- *  Copyright (c) MentraOS Contributors 2025 
- *  SPDX-License-Identifier: Apache-2.0
- */
-
 #include "mos_npm1300_led.h"
 #include <zephyr/drivers/led.h>
 #include <zephyr/devicetree.h>

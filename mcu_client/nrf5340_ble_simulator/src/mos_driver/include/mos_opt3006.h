@@ -1,14 +1,3 @@
-/***
- * @Author       : Cole
- * @Date         : 2025-10-15 16:01:10
- * @LastEditTime : 2026-01-29 10:44:40
- * @FilePath     : mos_opt3006.h
- * @Description  :
- * @
- * @ Copyright (c) MentraOS Contributors 2025
- * @ SPDX-License-Identifier: Apache-2.0
- */
-
 #ifndef MOS_OPT3006_H_
 #define MOS_OPT3006_H_
 

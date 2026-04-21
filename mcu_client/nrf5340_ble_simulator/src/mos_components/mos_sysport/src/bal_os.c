@@ -1,14 +1,3 @@
-/*
- * @Author       : Cole
- * @Date         : 2025-07-31 10:40:40
- * @LastEditTime : 2025-09-30 09:40:21
- * @FilePath     : bal_os.c
- * @Description  :
- *
- *  Copyright (c) MentraOS Contributors 2025
- *  SPDX-License-Identifier: Apache-2.0
- */
-
 #include "bal_os.h"
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>

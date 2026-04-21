@@ -1,15 +1,3 @@
-/*** 
- * @Author       : Cole
- * @Date         : 2026-02-28 15:26:10
- * @LastEditTime : 2026-02-28 16:04:26
- * @FilePath     : mos_hinge_fold.h
- * @Description  : 
- * @
- * @ Copyright (c) MentraOS Contributors 2026 
- * @ SPDX-License-Identifier: Apache-2.0
- */
-
-
 #ifndef MOS_HINGE_FOLD_H_
 #define MOS_HINGE_FOLD_H_
 

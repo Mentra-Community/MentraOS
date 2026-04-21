@@ -1,14 +1,3 @@
-/*
- * @Author       : Cole
- * @Date         : 2026-01-24 11:14:00
- * @LastEditTime : 2026-03-04 16:24:36
- * @FilePath     : mos_button_app.c
- * @Description  :
- *
- *  Copyright (c) MentraOS Contributors 2026
- *  SPDX-License-Identifier: Apache-2.0
- */
-
 #include "mos_button_app.h"
 
 #include <display/lcd/a6n.h>  // For a6n_power_off()

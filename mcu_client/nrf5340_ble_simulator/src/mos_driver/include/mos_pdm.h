@@ -1,15 +1,3 @@
-/*** 
- * @Author       : Cole
- * @Date         : 2025-07-31 11:52:00
- * @LastEditTime : 2026-01-30 09:58:09
- * @FilePath     : mos_pdm.h
- * @Description  : 
- * @
- * @ Copyright (c) MentraOS Contributors 2025 
- * @ SPDX-License-Identifier: Apache-2.0
- */
-
-
 #ifndef MOS_PDM_H_
 #define MOS_PDM_H_
 

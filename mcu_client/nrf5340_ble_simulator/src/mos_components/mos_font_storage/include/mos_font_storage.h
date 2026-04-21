@@ -1,14 +1,3 @@
-/***
- * @Author       : Cole
- * @Date         : 2026-02-05 14:53:31
- * @LastEditTime : 2026-02-07 15:00:46
- * @FilePath     : mos_font_storage.h
- * @Description  :
- * @
- * @ Copyright (c) MentraOS Contributors 2026
- * @ SPDX-License-Identifier: Apache-2.0
- */
-
 #ifndef MOS_FONT_STORAGE_H
 #define MOS_FONT_STORAGE_H
 

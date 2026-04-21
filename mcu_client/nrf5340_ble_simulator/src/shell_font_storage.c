@@ -1,7 +1,3 @@
-/*
-    Shell command implementation for font storage management
-    Provides commands to query font storage partitions, read font data, and switch fonts at runtime.
-*/
 #include <pm_config.h>
 #include <stdlib.h>
 #include <string.h>

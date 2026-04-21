@@ -1,15 +1,3 @@
-/***
- * @Author       : Cole
- * @Date         : 2025-11-22 14:02:36
- * @LastEditTime : 2025-11-22 14:18:38
- * @FilePath     : mos_npm1300_led.h
- * @Description  :
- * @
- * @ Copyright (c) MentraOS Contributors 2025
- * @ SPDX-License-Identifier: Apache-2.0
- */
-
-
 #ifndef MOS_NPM1300_LED_H_
 #define MOS_NPM1300_LED_H_
 

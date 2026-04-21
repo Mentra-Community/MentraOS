@@ -1,14 +1,3 @@
-/***
- * @Author       : Cole
- * @Date         : 2026-01-28 11:43:43
- * @LastEditTime : 2026-01-29 14:49:36
- * @FilePath     : pdm_audio_stream.h
- * @Description  :
- * @
- * @ Copyright (c) MentraOS Contributors 2026
- * @ SPDX-License-Identifier: Apache-2.0
- */
-
 #ifndef PDM_AUDIO_STREAM_H
 #define PDM_AUDIO_STREAM_H
 

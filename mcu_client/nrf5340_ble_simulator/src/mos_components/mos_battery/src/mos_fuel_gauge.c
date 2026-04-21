@@ -1,15 +1,3 @@
-/*
- * @Author       : Cole
- * @Date         : 2026-01-28 14:44:46
- * @LastEditTime : 2026-02-07 15:00:36
- * @FilePath     : mos_fuel_gauge.c
- * @Description  : 
- * 
- *  Copyright (c) MentraOS Contributors 2026 
- *  SPDX-License-Identifier: Apache-2.0
- */
-
-
 #include "mos_fuel_gauge.h"
 #include "protobuf_handler.h"  /* sync SoC & charging to display/BLE */
 #include "mos_lvgl_display.h"  /* display_request_welcome_battery_refresh */

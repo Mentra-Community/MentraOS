@@ -1,14 +1,3 @@
-/***
- * @Author       : Cole
- * @Date         : 2025-07-31 10:50:44
- * @LastEditTime : 2025-07-31 20:36:52
- * @FilePath     : mos_lvgl_display.h
- * @Description  :
- * @
- * @ Copyright (c) MentraOS Contributors 2025
- * @ SPDX-License-Identifier: Apache-2.0
- */
-
 #ifndef _MOS_LVGL_DISPLAY_H_
 #define _MOS_LVGL_DISPLAY_H_
 

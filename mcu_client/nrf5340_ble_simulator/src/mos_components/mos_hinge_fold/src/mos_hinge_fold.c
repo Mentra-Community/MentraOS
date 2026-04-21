@@ -1,14 +1,3 @@
-/*
- * @Author       : Cole
- * @Date         : 2026-02-28
- * @LastEditTime : 2026-03-02 14:20:55
- * @FilePath     : mos_hinge_fold.c
- * @Description  : Hinge fold detection using IMU posture + debounce state machine
- *
- * Copyright (c) MentraOS Contributors 2026
- * SPDX-License-Identifier: Apache-2.0
- */
-
 #include "mos_hinge_fold.h"
 
 #include <display/lcd/a6n.h>
