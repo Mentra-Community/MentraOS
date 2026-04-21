@@ -9,6 +9,11 @@ import { logger as rootLogger } from "../logging/pino-logger";
 import { appCache } from "../core/app-cache.service";
 const logger = rootLogger.child({ service: "console.apps.service" });
 
+const DEFAULT_MICROPHONE_PERMISSION = {
+  type: "MICROPHONE",
+  description: "Access to microphone for voice input and audio processing",
+} as const;
+
 /**
  * Auto-install an app for the developer who created it.
  * This ensures the developer can immediately test their app without manual installation.
@@ -50,6 +55,21 @@ function sanitizeApp(doc: any): any {
   if (!doc || typeof doc !== "object") return doc;
   const { hashedApiKey: _hashedApiKey, ...rest } = doc;
   return { ...rest };
+}
+
+/**
+ * Match the console UI default: if app creation omits permissions entirely,
+ * opt new apps into MICROPHONE. Explicit empty arrays still opt out.
+ */
+export function applyDefaultCreatePermissions(appInput: Record<string, unknown>): Record<string, unknown> {
+  if ("permissions" in appInput) {
+    return appInput;
+  }
+
+  return {
+    ...appInput,
+    permissions: [DEFAULT_MICROPHONE_PERMISSION],
+  };
 }
 
 /**
@@ -164,10 +184,11 @@ export async function createApp(
   appInput: Record<string, unknown>,
   opts?: { orgId?: string },
 ): Promise<{ app: any; apiKey: string }> {
+  const normalizedAppInput = applyDefaultCreatePermissions(appInput);
   const user = await getOrCreateUserByEmail(email);
 
   // Validate required fields
-  const packageNameRaw = appInput?.["packageName"];
+  const packageNameRaw = normalizedAppInput["packageName"];
   if (typeof packageNameRaw !== "string" || packageNameRaw.trim().length === 0) {
     throw new ApiError(400, "packageName is required");
   }
@@ -213,8 +234,8 @@ export async function createApp(
   };
 
   for (const key of allowedFields) {
-    if (key in appInput) {
-      doc[key] = appInput[key];
+    if (key in normalizedAppInput) {
+      doc[key] = normalizedAppInput[key];
     }
   }
 

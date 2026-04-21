@@ -47,41 +47,45 @@ Here's how to handle a Mentra AI tool call in your app:
 <CodeGroup>
 
 ```typescript Simple Example
-import {AppServer, ToolCall} from "@mentra/sdk"
+import { MiniAppServer } from "@mentra/sdk";
 
-export class TodoAppServer extends AppServer {
-  protected async onToolCall(toolCall: ToolCall): Promise<string | undefined> {
-    // Check which tool Mentra AI is calling
-    if (toolCall.toolId === "add_todo") {
-      // Get parameters Mentra AI extracted from the user's message
-      const todoItem = toolCall.toolParameters.todo_item as string;
-      const dueDate = toolCall.toolParameters.due_date as string | undefined;
+const app = new MiniAppServer({
+  packageName: "com.example.todo",
+  apiKey: process.env.API_KEY!,
+  port: 3000,
+});
 
-      // Do your app logic
-      await this.todoService.addTodo(toolCall.userId, todoItem, dueDate);
+app.onToolCall(async (session, toolName, args) => {
+  // Check which tool Mentra AI is calling
+  if (toolName === "add_todo") {
+    // Get parameters Mentra AI extracted from the user's message
+    const todoItem = args.todo_item as string;
+    const dueDate = args.due_date as string | undefined;
 
-      // Return a message for Mentra AI to tell the user
-      return `Added: "${todoItem}"${dueDate ? ` due ${dueDate}` : ''}`;
-    }
+    // Do your app logic
+    await todoService.addTodo(session.userId, todoItem, dueDate);
 
-    return undefined; // You don't handle this tool
+    // Return a message for Mentra AI to tell the user
+    return { result: `Added: "${todoItem}"${dueDate ? ` due ${dueDate}` : ""}` };
   }
-}
+
+  return { error: "Unknown tool" };
+});
 ```
 
 ```typescript Multiple Tools
-protected async onToolCall(toolCall: ToolCall): Promise<string | undefined> {
-  switch (toolCall.toolId) {
+app.onToolCall(async (session, toolName, args) => {
+  switch (toolName) {
     case "add_todo":
-      return this.handleAddTodo(toolCall)
+      return handleAddTodo(session, args);
     case "list_todos":
-      return this.handleListTodos(toolCall)
+      return handleListTodos(session, args);
     case "complete_todo":
-      return this.handleCompleteTodo(toolCall)
+      return handleCompleteTodo(session, args);
     default:
-      return undefined // Unknown tool
+      return { error: "Unknown tool" };
   }
-}
+});
 ```
 
 </CodeGroup>
@@ -141,7 +145,7 @@ protected async onToolCall(toolCall: ToolCall): Promise<string | undefined> {
     const items = await db.todos.getAll(toolCall.userId);
 
     // You control exactly what displays
-    session.layouts.showReferenceCard(
+    session.display.showReferenceCard(
       "Shopping List",
       items.map(item => `• ${item.name}`).join('\n')
     );
@@ -210,7 +214,7 @@ return "Weather is 72 degrees F and sunny in San Francisco";
 // Custom formatted display
 const session = this.getSessionByUserId(toolCall.userId);
 
-session.layouts.showTextWall(
+session.display.showTextWall(
   "Today's Weather\n" +
   "72°F Sunny\nHumidity: 45%\nWind: 5mph"
 );
@@ -222,7 +226,7 @@ return GIVE_APP_CONTROL_OF_TOOL_RESPONSE;
 // Complex list that needs formatting
 const tasks = await db.tasks.getAll(userId);
 
-session.layouts.showReferenceCard(
+session.display.showReferenceCard(
   "Your Tasks",
   tasks.map((t, i) => `${i+1}. ${t.title} ${t.done ? '[DONE]' : '[TODO]'}`).join('\n')
 );
@@ -234,7 +238,7 @@ return GIVE_APP_CONTROL_OF_TOOL_RESPONSE;
 // Silent action (no response needed)
 await db.settings.update(userId, { theme: 'dark' });
 
-session.layouts.showTextWall("Theme updated");
+session.display.showTextWall("Theme updated");
 
 return GIVE_APP_CONTROL_OF_TOOL_RESPONSE;
 ```

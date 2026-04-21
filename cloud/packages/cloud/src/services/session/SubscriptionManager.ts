@@ -95,7 +95,9 @@ export class SubscriptionManager {
           if (
             subParsed &&
             subParsed.type === incomingParsed.type &&
-            subParsed.transcribeLanguage === incomingParsed.transcribeLanguage
+            // transcription:auto is a wildcard subscription for any detected transcription language
+            ((subParsed.type === StreamType.TRANSCRIPTION && subParsed.transcribeLanguage === "auto") ||
+              subParsed.transcribeLanguage === incomingParsed.transcribeLanguage)
           ) {
             subscribedApps.push(packageName);
             break;

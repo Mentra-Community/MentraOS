@@ -663,6 +663,7 @@ export class AsgCameraApiClient {
               }
             },
             abortSignal,
+            file.size, // Pass expected size for validation when Content-Length is missing
           )
 
           // Combine file info with downloaded file paths
@@ -822,6 +823,25 @@ export class AsgCameraApiClient {
           throw new Error("Sync cancelled")
         }
 
+        // Validate downloaded file size against expected size from sync response.
+        // On Android, a graceful TCP close on a chunked response looks like a
+        // successful download (HTTP 200, no error) but produces a truncated file.
+        if (file.size > 0) {
+          try {
+            const stat = await RNFS.stat(localFilePath)
+            if (stat.size !== file.size) {
+              console.error(
+                `[ASG Camera API] downloadCapture: size mismatch for ${file.name}: expected ${file.size}, got ${stat.size}`,
+              )
+              await RNFS.unlink(localFilePath).catch(() => {})
+              throw new Error(`Size mismatch for ${file.name}: expected ${file.size}, got ${stat.size}`)
+            }
+          } catch (statErr: any) {
+            if (statErr?.message?.includes("Size mismatch")) throw statErr
+            console.warn(`[ASG Camera API] downloadCapture: could not validate size for ${file.name}:`, statErr)
+          }
+        }
+
         console.log(`[ASG Camera API] downloadCapture: completed ${file.name} (${file.size} bytes)`)
       } catch (dlErr: any) {
         // S2: Clean up partial file on failure
@@ -929,6 +949,7 @@ export class AsgCameraApiClient {
     includeThumbnail: boolean = false,
     onProgress?: (progress: number) => void,
     abortSignal?: AbortSignal,
+    expectedSize?: number,
   ): Promise<{
     filePath: string
     thumbnailPath?: string
@@ -1040,16 +1061,20 @@ export class AsgCameraApiClient {
         throw new Error("Sync cancelled")
       }
 
-      // N1: Validate file size after download
-      if (expectedContentLength > 0) {
+      // N1: Validate file size after download.
+      // Use Content-Length from the HTTP response if available, otherwise fall back
+      // to expectedSize from the sync response metadata. This catches truncated
+      // downloads even when the server uses chunked transfer encoding (no Content-Length).
+      const sizeToCheck = expectedContentLength > 0 ? expectedContentLength : (expectedSize && expectedSize > 0 ? expectedSize : 0)
+      if (sizeToCheck > 0) {
         try {
           const stat = await RNFS.stat(localFilePath)
-          if (stat.size !== expectedContentLength) {
+          if (stat.size !== sizeToCheck) {
             console.error(
-              `[ASG Camera API] File size mismatch for ${filename}: expected ${expectedContentLength}, got ${stat.size}`,
+              `[ASG Camera API] File size mismatch for ${filename}: expected ${sizeToCheck}, got ${stat.size}`,
             )
             await RNFS.unlink(localFilePath).catch(() => {})
-            throw new Error(`File size mismatch for ${filename}: expected ${expectedContentLength}, got ${stat.size}`)
+            throw new Error(`File size mismatch for ${filename}: expected ${sizeToCheck}, got ${stat.size}`)
           }
         } catch (statError: any) {
           if (statError?.message?.includes("File size mismatch")) throw statError

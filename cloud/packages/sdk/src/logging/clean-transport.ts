@@ -17,6 +17,16 @@
  *   - · (debug/trace): dim — internal details (only visible at debug level)
  *   - Message text: default terminal color
  *
+ * SDK internal log filtering:
+ *   Logs tagged with `_sdk: true` (from managers and internal subsystems) are
+ *   only shown in the terminal at warn level and above. This keeps the developer's
+ *   terminal clean — their own `session.logger.info(...)` calls always show,
+ *   while internal SDK chatter (subscription updates, ping, handler registration)
+ *   is hidden unless the developer sets MENTRA_VERBOSE=true.
+ *
+ *   BetterStack always receives ALL logs regardless of the _sdk tag — the
+ *   filtering only applies to the terminal/clean transport.
+ *
  * All structured context fields (app, packageName, service, userId, err, etc.)
  * are intentionally hidden — they're only visible in verbose mode or in BetterStack.
  * The `msg` field is the only thing shown to the developer.
@@ -37,6 +47,12 @@ const LEVEL_CONFIG: Record<number, { symbol: string; color: (s: string) => strin
   50: { symbol: "✗", color: chalk.red }, // error
   60: { symbol: "✗", color: chalk.red }, // fatal
 };
+
+/** Whether verbose mode is enabled — when true, SDK internal logs are shown in terminal. */
+const VERBOSE = process.env.MENTRA_VERBOSE === "true" || process.env.MENTRA_VERBOSE === "1";
+
+/** Pino level number for warn — SDK internal logs below this are hidden from terminal (unless verbose). */
+const WARN_LEVEL = 40;
 
 const DEFAULT_LEVEL_CONFIG = { symbol: "·", color: chalk.dim };
 
@@ -73,6 +89,17 @@ export function createCleanStream(): Writable {
         // Skip empty messages — these are pino internal events or structured-only logs
         // that have no human-readable message component.
         if (!msg) {
+          callback();
+          return;
+        }
+
+        // SDK internal log filtering:
+        // Logs from managers and internal subsystems are tagged with _sdk: true.
+        // In the terminal, only show these at warn level and above.
+        // This keeps the developer's terminal clean — their own session.logger.info()
+        // calls always show, while SDK plumbing noise is hidden.
+        // BetterStack still gets everything (it's a separate transport).
+        if (obj._sdk === true && level < WARN_LEVEL && !VERBOSE) {
           callback();
           return;
         }

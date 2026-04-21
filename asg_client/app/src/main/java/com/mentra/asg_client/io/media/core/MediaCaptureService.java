@@ -33,10 +33,17 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import android.net.ConnectivityManager;
@@ -293,7 +300,15 @@ public class MediaCaptureService {
 
     // Capture state tracking - prevent concurrent camera captures from SDK
     private final AtomicBoolean isCapturingPhoto = new AtomicBoolean(false);
+    private final AtomicBoolean isCleaningUp = new AtomicBoolean(false);
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    /** Exclude these capture directory names from Wi‑Fi sync until integrity check finishes. */
+    private final Set<String> videoCaptureIdsPendingIntegrityCheck = ConcurrentHashMap.newKeySet();
+    private final ExecutorService videoIntegrityExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "RecordedVideoIntegrity");
+        t.setPriority(Thread.NORM_PRIORITY - 1);
+        return t;
+    });
     private static final long CAPTURE_SAFETY_TIMEOUT_MS = 15000; // 15 seconds
     private Runnable captureSafetyTimeout;
 
@@ -829,20 +844,91 @@ public class MediaCaptureService {
                         Log.d(TAG, "Recording LED turned OFF");
                     }
 
-                    // Notify listener
-                    if (mMediaCaptureListener != null) {
-                        mMediaCaptureListener.onVideoRecordingStopped(requestId, filePath);
-                    }
-
-                    // Send gallery status update to phone after video recording
-                    sendGalleryStatusUpdate();
-
-                    // Call upload stub (which just logs for now)
-                    uploadVideo(filePath, requestId);
-
-                    // Reset state
+                    final String pendingRequestId = requestId;
+                    final String captureId = captureIdFromVideoAbsPath(filePath);
                     currentVideoId = null;
                     currentVideoPath = null;
+
+                    if (filePath == null || captureId == null) {
+                        Log.e(TAG, "onRecordingStopped received null filePath for " + pendingRequestId);
+                        if (mMediaCaptureListener != null) {
+                            mMediaCaptureListener.onMediaError(
+                                pendingRequestId,
+                                "Video recording stopped with no file path",
+                                MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
+                        }
+                        sendGalleryStatusUpdate();
+                        return;
+                    }
+
+                    if (isCleaningUp.get()) {
+                        Log.w(TAG, "Skipping video integrity check because cleanup is already in progress");
+                        sendGalleryStatusUpdate();
+                        return;
+                    }
+
+                    videoCaptureIdsPendingIntegrityCheck.add(captureId);
+
+                    try {
+                        videoIntegrityExecutor.execute(() -> {
+                            try {
+                                final boolean ok = RecordedVideoIntegrityChecker.verify(filePath);
+                                mainHandler.post(() -> {
+                                    videoCaptureIdsPendingIntegrityCheck.remove(captureId);
+                                    if (ok) {
+                                        if (mMediaCaptureListener != null) {
+                                            mMediaCaptureListener.onVideoRecordingStopped(pendingRequestId, filePath);
+                                        }
+                                        sendGalleryStatusUpdate();
+                                        uploadVideo(filePath, pendingRequestId);
+                                    } else {
+                                        final boolean cleaningUp = isCleaningUp.get();
+                                        if (!cleaningUp) {
+                                            File bad = new File(filePath);
+                                            if (bad.exists() && !bad.delete()) {
+                                                Log.w(TAG, "Could not delete failed video file: " + filePath);
+                                            }
+                                        } else {
+                                            Log.w(TAG, "Skipping failed video deletion because cleanup is in progress");
+                                        }
+                                        if (mMediaCaptureListener != null) {
+                                            mMediaCaptureListener.onMediaError(
+                                                pendingRequestId,
+                                                cleaningUp
+                                                    ? "Video integrity check aborted during cleanup; file preserved"
+                                                    : "Video file failed integrity check and was removed",
+                                                MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
+                                        }
+                                        sendGalleryStatusUpdate();
+                                    }
+                                });
+                            } catch (Throwable t) {
+                                Log.e(TAG, "Unexpected error during video integrity check", t);
+                                mainHandler.post(() -> {
+                                    videoCaptureIdsPendingIntegrityCheck.remove(captureId);
+                                    if (mMediaCaptureListener != null) {
+                                        mMediaCaptureListener.onMediaError(
+                                            pendingRequestId,
+                                            "Video integrity check error: " + t.getMessage(),
+                                            MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
+                                    }
+                                    sendGalleryStatusUpdate();
+                                });
+                            }
+                        });
+                    } catch (RejectedExecutionException e) {
+                        Log.w(TAG, "Video integrity check rejected because cleanup is in progress", e);
+                        videoCaptureIdsPendingIntegrityCheck.remove(captureId);
+                        mainHandler.post(() -> {
+                            if (mMediaCaptureListener != null) {
+                                mMediaCaptureListener.onMediaError(
+                                    pendingRequestId,
+                                    "Video integrity check unavailable during cleanup",
+                                    MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
+                            }
+                            sendGalleryStatusUpdate();
+                        });
+                    }
                 }
 
                 @Override
@@ -1001,9 +1087,22 @@ public class MediaCaptureService {
         if (!isRecordingVideo || currentVideoPath == null) {
             return null;
         }
-        // currentVideoPath is e.g. /sdcard/.../VID_xxx/base.mp4
-        // We need the parent directory name ("VID_xxx") which is the capture ID
-        File f = new File(currentVideoPath);
+        return captureIdFromVideoAbsPath(currentVideoPath);
+    }
+
+    /**
+     * Capture directory names (e.g. VID_xxx) whose recording has stopped but integrity check
+     * has not finished — excluded from Wi‑Fi sync/download alongside in-progress recordings.
+     */
+    public Set<String> getPendingVideoIntegrityCaptureIds() {
+        return Collections.unmodifiableSet(videoCaptureIdsPendingIntegrityCheck);
+    }
+
+    private static String captureIdFromVideoAbsPath(String absolutePath) {
+        if (absolutePath == null) {
+            return null;
+        }
+        File f = new File(absolutePath);
         File parentDir = f.getParentFile();
         return parentDir != null ? parentDir.getName() : f.getName();
     }
@@ -2874,6 +2973,7 @@ public class MediaCaptureService {
     public void cleanup() {
         assertMainThread();
         Log.d(TAG, "🧹 MediaCaptureService cleanup() called");
+        isCleaningUp.set(true);
 
         try {
             // Stop battery monitoring
@@ -2900,6 +3000,17 @@ public class MediaCaptureService {
                 mBatteryMonitorHandler.removeCallbacksAndMessages(null);
                 mBatteryMonitorHandler = null;
             }
+
+            videoIntegrityExecutor.shutdown();
+            try {
+                if (!videoIntegrityExecutor.awaitTermination(3, TimeUnit.SECONDS)) {
+                    videoIntegrityExecutor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                videoIntegrityExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+            videoCaptureIdsPendingIntegrityCheck.clear();
 
             Log.d(TAG, "✅ MediaCaptureService cleanup complete");
 

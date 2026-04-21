@@ -35,8 +35,6 @@ jobs:
             value: "production"
           - name: PORT
             value: "80"
-          - name: SYSTEM_DASHBOARD_PACKAGE_NAME
-            value: "system.augmentos.dashboard"
           - name: CLOUD_VERSION
             value: "2.1.2"
           - name: ADMIN_EMAILS
@@ -154,7 +152,7 @@ jobs:
           acr-vpc-domain: "mentra-acr-cnsz-a-registry-vpc.cn-shenzhen.cr.aliyuncs.com"
           acr-public-domain: "mentra-acr-cnsz-a-registry.cn-shenzhen.cr.aliyuncs.com"
           docker-context: "./cloud"
-          dockerfile: "./cloud/docker/Dockerfile.livekit"
+          dockerfile: "./cloud/docker/Dockerfile.porter"
           image-tag: ${{ steps.vars.outputs.sha_short }}
           min-instances: 1
           max-instances: 2

@@ -232,7 +232,7 @@ class LocationService {
     if (appWs && appWs.readyState === WebSocketReadyState.OPEN) {
       const dataStream: DataStream = {
         type: CloudToAppMessageType.DATA_STREAM,
-        sessionId: `${userSession.sessionId}-${targetApp}`,
+        sessionId: userSession.getAppSessionId(targetApp),
         streamType: StreamType.LOCATION_UPDATE,
         data: locationUpdate,
         timestamp: new Date(),

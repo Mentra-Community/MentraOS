@@ -19,7 +19,7 @@
  *   2. MENTRA_LOG_LEVEL env var → sets level (debug implies verbose)
  *   3. config.verbose: true → verbose mode, debug level
  *   4. config.logLevel → sets level
- *   5. Default → warn level, clean mode
+ *   5. Default → info level, clean mode
  */
 
 import pino from "pino";
@@ -33,11 +33,11 @@ export type MentraLogLevel = "none" | "error" | "warn" | "info" | "debug";
 
 export interface LoggerConfig {
   /**
-   * SDK console log level. Default: 'warn'.
+   * SDK console log level. Default: 'info'.
    * - 'none':  Suppress all SDK console output
    * - 'error': Only errors
-   * - 'warn':  Errors + warnings (default)
-   * - 'info':  Errors + warnings + lifecycle events
+   * - 'warn':  Errors + warnings
+   * - 'info':  Errors + warnings + lifecycle events (default)
    * - 'debug': Everything (verbose structured output)
    *
    * Can be overridden with MENTRA_LOG_LEVEL env var.
@@ -94,8 +94,10 @@ function resolveConfig(config?: LoggerConfig): { pinoLevel: string; verbose: boo
     return { pinoLevel, verbose: config.logLevel === "debug" };
   }
 
-  // 5. Default: warn level, clean mode
-  return { pinoLevel: "warn", verbose: false };
+  // 5. Default: info level, clean mode
+  // Developers expect session.logger.info("...") to be visible in their terminal.
+  // The log level system controls SDK internal noise (debug/trace), not developer logs.
+  return { pinoLevel: "info", verbose: false };
 }
 
 /** A no-op writable stream for when all console output is suppressed. */

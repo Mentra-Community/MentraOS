@@ -48,6 +48,13 @@ public class AsgCameraServer extends AsgServer {
      */
     public interface ActiveRecordingProvider {
         String getActiveRecordingCaptureId();
+
+        /**
+         * Capture IDs whose files must stay off sync/download until post-record validation completes.
+         */
+        default Set<String> getPendingVideoIntegrityCaptureIds() {
+            return Collections.emptySet();
+        }
     }
 
     /**
@@ -504,10 +511,13 @@ public class AsgCameraServer extends AsgServer {
                 return createErrorResponse(Response.Status.INTERNAL_ERROR, "Failed to generate video thumbnail");
             }
             
-            // Stream thumbnail file directly without loading into memory
-            logger.debug(TAG, "🎥 Streaming video thumbnail: " + filename + " (" + thumbnailFile.length() + " bytes)");
+            // Use fixed-length response so clients can validate download integrity
+            long thumbSize = thumbnailFile.length();
+            logger.debug(TAG, "🎥 Streaming video thumbnail: " + filename + " (" + thumbSize + " bytes)");
             BufferedInputStream bis = new BufferedInputStream(new FileInputStream(thumbnailFile), 65536);
-            return newChunkedResponse(Response.Status.OK, "image/jpeg", bis);
+            Response response = newFixedLengthResponse(Response.Status.OK, "image/jpeg", bis, thumbSize);
+            response.addHeader("Content-Length", String.valueOf(thumbSize));
+            return response;
         } catch (Exception e) {
             logger.error(TAG, "🎥 Error serving video thumbnail " + filename + ": " + e.getMessage(), e);
             return createErrorResponse(Response.Status.INTERNAL_ERROR, "Error serving video thumbnail");
@@ -521,9 +531,15 @@ public class AsgCameraServer extends AsgServer {
         logger.debug(TAG, "🖼️ Streaming image file: " + filename + " (" + imageFile.length() + " bytes)");
 
         try {
-            // Stream file directly without loading into memory
+            // Use fixed-length response with Content-Length so clients can validate
+            // integrity after download. Chunked responses lack Content-Length, which
+            // means a graceful TCP close mid-transfer looks identical to a completed
+            // download on Android (HttpURLConnection treats EOF as success).
+            long fileSize = imageFile.length();
             BufferedInputStream bis = new BufferedInputStream(new FileInputStream(imageFile), 65536);
-            return newChunkedResponse(Response.Status.OK, mimeType, bis);
+            Response response = newFixedLengthResponse(Response.Status.OK, mimeType, bis, fileSize);
+            response.addHeader("Content-Length", String.valueOf(fileSize));
+            return response;
         } catch (Exception e) {
             logger.error(TAG, "🖼️ Error reading image file " + filename + ": " + e.getMessage(), e);
             return createErrorResponse(Response.Status.INTERNAL_ERROR, "Error reading image file");
@@ -1354,12 +1370,14 @@ public class AsgCameraServer extends AsgServer {
      */
     private boolean isActiveRecording(String fileName) {
         if (activeRecordingProvider == null || fileName == null) return false;
-        String activeCaptureId = activeRecordingProvider.getActiveRecordingCaptureId();
-        if (activeCaptureId == null) return false;
         // deriveCaptureId handles both folder-based ("VID_xxx/base.mp4" -> "VID_xxx")
         // and legacy flat ("VID_xxx.mp4" -> "VID_xxx") paths
         String fileCaptureId = deriveCaptureId(fileName);
-        return activeCaptureId.equals(fileCaptureId);
+        String activeCaptureId = activeRecordingProvider.getActiveRecordingCaptureId();
+        if (activeCaptureId != null && activeCaptureId.equals(fileCaptureId)) {
+            return true;
+        }
+        return activeRecordingProvider.getPendingVideoIntegrityCaptureIds().contains(fileCaptureId);
     }
 
     /**
@@ -1379,7 +1397,11 @@ public class AsgCameraServer extends AsgServer {
         logger.debug(TAG, "🔄 =========================================");
 
         Map<String, String> params = session.getParms();
-        String lastSyncTimeParam = params.get("last_sync");
+        // Accept both "last_sync_time" (what mobile sends) and "last_sync" (legacy)
+        String lastSyncTimeParam = params.get("last_sync_time");
+        if (lastSyncTimeParam == null) {
+            lastSyncTimeParam = params.get("last_sync");
+        }
         String clientId = params.get("client_id");
         String includeThumbnails = params.get("include_thumbnails");
 
@@ -1705,6 +1727,17 @@ public class AsgCameraServer extends AsgServer {
                 }
 
                 logger.debug(TAG, "📦 Processing file: " + fileName);
+
+                if (isActiveRecording(fileName)) {
+                    logger.warn(TAG, "📦 Skipping file pending recording or integrity check: " + fileName);
+                    Map<String, Object> result = new HashMap<>();
+                    result.put("file", fileName);
+                    result.put("success", false);
+                    result.put("message", "File is not ready for download");
+                    results.add(result);
+                    failureCount++;
+                    continue;
+                }
 
                 try {
                     // Get file metadata

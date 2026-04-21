@@ -4,6 +4,10 @@ description: "Build a voice-controlled dashboard note app using Mira Tool Calls,
 icon: "note-sticky"
 ---
 
+<Warning>
+**This cookbook uses the v2 SDK API** (`AppServer`, `session.events.*`, `session.simpleStorage`). The code still works with SDK v3 via the compatibility layer, but for new apps, use the v3 patterns: `MiniAppServer`, `session.transcription`, `session.storage`, etc. See the [Migration Guide](/app-devs/migration/overview) for the updated API.
+</Warning>
+
 Learn how to build a simple but practical app that lets users save a quick note to their dashboard using voice commands. This cookbook demonstrates three core MentraOS features working together.
 
 ## What You'll Build
@@ -107,7 +111,7 @@ class DashboardNoteApp extends AppServer {
     session.logger.info(`Session started for user ${userId}`);
 
     // Load saved note from Simple Storage
-    const savedNote = await session.simpleStorage.get('dashboard_note');
+    const savedNote = await session.storage.get('dashboard_note');
     
     if (savedNote) {
       // Display it on the dashboard
@@ -139,7 +143,7 @@ class DashboardNoteApp extends AppServer {
       }
       
       // Save to Simple Storage (persists across sessions)
-      await session.simpleStorage.set('dashboard_note', note);
+      await session.storage.set('dashboard_note', note);
       
       // Display on dashboard (bottom-right, visible when user looks up)
       session.dashboard.content.writeToMain(note);
@@ -152,7 +156,7 @@ class DashboardNoteApp extends AppServer {
 
     // Handle read_note tool
     if (toolCall.toolId === "read_note") {
-      const note = await session.simpleStorage.get('dashboard_note');
+      const note = await session.storage.get('dashboard_note');
       
       if (note) {
         session.logger.info(`Reading note: ${note}`);
@@ -166,7 +170,7 @@ class DashboardNoteApp extends AppServer {
     // Handle clear_note tool
     if (toolCall.toolId === "clear_note") {
       // Delete from Simple Storage
-      await session.simpleStorage.delete('dashboard_note');
+      await session.storage.delete('dashboard_note');
       
       // Clear from dashboard
       session.dashboard.content.writeToMain('');
@@ -199,7 +203,7 @@ server.start();
 ```typescript
 protected async onSession(session: AppSession, sessionId: string, userId: string) {
   // This runs when user opens your app
-  const savedNote = await session.simpleStorage.get('dashboard_note');
+  const savedNote = await session.storage.get('dashboard_note');
   
   if (savedNote) {
     session.dashboard.content.writeToMain(savedNote);
@@ -255,8 +259,8 @@ This is **context for Mira**, not what the user sees/hears. Mira uses this to fo
 
 ```typescript
 // If you want to control the exact response
-session.audio.speak("Note saved!");
-session.layouts.showTextWall("Saved");
+session.speaker.speak("Note saved!");
+session.display.showTextWall("Saved");
 
 return GIVE_APP_CONTROL_OF_TOOL_RESPONSE;
 ```
@@ -284,22 +288,22 @@ Simple Storage provides localStorage-like API with cloud sync:
 
 ```typescript
 // Get a value (returns Promise<string | undefined>)
-const note = await session.simpleStorage.get('dashboard_note');
+const note = await session.storage.get('dashboard_note');
 
 // Set a value (returns Promise<void>)
-await session.simpleStorage.set('dashboard_note', 'Buy milk');
+await session.storage.set('dashboard_note', 'Buy milk');
 
 // Delete a value (returns Promise<boolean>)
-await session.simpleStorage.delete('dashboard_note');
+await session.storage.delete('dashboard_note');
 
 // Check if key exists (returns Promise<boolean>)
-const hasNote = await session.simpleStorage.hasKey('dashboard_note');
+const hasNote = await session.storage.hasKey('dashboard_note');
 
 // Get all keys (returns Promise<string[]>)
-const keys = await session.simpleStorage.keys();
+const keys = await session.storage.keys();
 
 // Clear all data (returns Promise<boolean>)
-await session.simpleStorage.clear();
+await session.storage.clear();
 ```
 
 **Key features:**
@@ -409,7 +413,7 @@ Dashboard updates are automatically throttled to 1 per 300ms by MentraOS Cloud t
 ```typescript
 protected async onSession(session: AppSession, sessionId: string, userId: string) {
   // MUST load and display saved note
-  const savedNote = await session.simpleStorage.get('dashboard_note');
+  const savedNote = await session.storage.get('dashboard_note');
   if (savedNote) {
     session.dashboard.content.writeToMain(savedNote);
   }
@@ -424,7 +428,7 @@ protected async onSession(session: AppSession, sessionId: string, userId: string
 
 ```typescript
 // Save to storage
-await session.simpleStorage.set('dashboard_note', note);
+await session.storage.set('dashboard_note', note);
 
 // MUST also update dashboard
 session.dashboard.content.writeToMain(note);
@@ -438,8 +442,8 @@ session.dashboard.content.writeToMain(note);
 
 ```typescript
 // Save with category
-await session.simpleStorage.set('work_note', workNote);
-await session.simpleStorage.set('personal_note', personalNote);
+await session.storage.set('work_note', workNote);
+await session.storage.set('personal_note', personalNote);
 
 // Display on dashboard
 session.dashboard.content.writeToMain(
@@ -455,10 +459,10 @@ const note = {
   timestamp: new Date().toISOString()
 };
 
-await session.simpleStorage.set('dashboard_note', JSON.stringify(note));
+await session.storage.set('dashboard_note', JSON.stringify(note));
 
 // When reading
-const savedNote = await session.simpleStorage.get('dashboard_note');
+const savedNote = await session.storage.get('dashboard_note');
 if (savedNote) {
   const parsed = JSON.parse(savedNote);
   return `Note from ${new Date(parsed.timestamp).toLocaleDateString()}: ${parsed.text}`;
@@ -469,11 +473,11 @@ if (savedNote) {
 
 ```typescript
 // Save multiple notes
-const notes = await session.simpleStorage.get('note_history');
+const notes = await session.storage.get('note_history');
 const noteList = notes ? JSON.parse(notes) : [];
 noteList.push({ text: note, date: new Date().toISOString() });
 
-await session.simpleStorage.set('note_history', JSON.stringify(noteList));
+await session.storage.set('note_history', JSON.stringify(noteList));
 ```
 
 ---

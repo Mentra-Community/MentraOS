@@ -38,7 +38,7 @@ enum NexDashboardDisplayWire {
 @MainActor
 @objc(MentraNexSGC)
 class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCManager {
-    func sendIncidentId(_: String) {}
+    func sendIncidentId(_: String, apiBaseUrl _: String?) {}
 
     func sendJson(_: [String: Any], wakeUp _: Bool, requireAck _: Bool) {}
 
@@ -129,6 +129,11 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     func cleanup() {}
 
     func ping() {}
+    func connectController() {}
+    func disconnectController() {}
+    
+    func dbg1() {}
+    func dbg2() {}
 
     func requestWifiScan() {}
 

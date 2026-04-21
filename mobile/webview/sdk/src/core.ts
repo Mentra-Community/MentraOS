@@ -1,5 +1,5 @@
 import {getBridge} from "./bridge"
-import type {DisplayTextArgs, SetMicStateArgs, MicState} from "./types"
+import type {DisplayTextArgs} from "./types"
 
 /**
  * Core module providing basic MentraOS functions
@@ -14,23 +14,6 @@ export class CoreModule {
       payload: {
         fn: "displayText",
         text: text,
-      },
-    })
-  }
-
-  /**
-   * Set the microphone state
-   */
-  setMicState(state: MicState): void
-  setMicState(args: SetMicStateArgs): void
-  setMicState(stateOrArgs: MicState | SetMicStateArgs): void {
-    const args: SetMicStateArgs = typeof stateOrArgs === "string" ? {state: stateOrArgs} : stateOrArgs
-
-    getBridge().send({
-      type: "core_fn",
-      payload: {
-        fn: "setMicState",
-        args,
       },
     })
   }

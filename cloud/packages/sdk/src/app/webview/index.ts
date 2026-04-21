@@ -8,7 +8,7 @@ import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import type { CookieOptions } from "hono/utils/cookie";
 import { KEYUTIL, KJUR, RSAKey } from "jsrsasign";
 
-import { AuthVariables, AuthenticatedRequest } from "../../types";
+import { AuthVariables, AuthenticatedRequest, MentraAuthContext, MentraAuthHonoContext } from "../../types";
 import { AppSession } from "../session";
 
 const userTokenPublicKey =
@@ -380,6 +380,39 @@ export function createAuthMiddleware(options: {
     // No valid authentication method found, proceed without setting authUserId
     c.set("activeSession", null);
     await next();
+  };
+}
+
+/**
+ * Read the authenticated Mentra context from a Hono request context.
+ *
+ * This helper intentionally hides the underlying context variable names so
+ * app code does not depend on implementation details like `authUserId`.
+ */
+export function getMentraAuth(c: MentraAuthHonoContext): MentraAuthContext {
+  return {
+    userId: c.get("authUserId") ?? null,
+    session: c.get("activeSession") ?? null,
+  };
+}
+
+/**
+ * Read the authenticated Mentra context and throw if no authenticated user
+ * is present. Intended for SDK-owned middleware / helpers that want a strict
+ * contract after authentication has been enforced.
+ */
+export function requireMentraAuth(c: MentraAuthHonoContext): {
+  userId: string;
+  session: AppSession | null;
+} {
+  const auth = getMentraAuth(c);
+  if (!auth.userId) {
+    throw new Error("Unauthenticated Mentra request");
+  }
+
+  return {
+    userId: auth.userId,
+    session: auth.session,
   };
 }
 

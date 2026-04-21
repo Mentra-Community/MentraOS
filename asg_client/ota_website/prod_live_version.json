@@ -1,10 +1,10 @@
 {
   "apps": {
     "com.mentra.asg_client": {
-      "versionCode": 35,
-      "versionName": "35.0",
-      "apkUrl": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/asg-client-35.apk",
-      "sha256": "8d2cbb327d5063b9613ca393a7dd008f931da92676bdb2dd241fedf94925b3e5"
+      "versionCode": 36,
+      "versionName": "36.0",
+      "apkUrl": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/asg-client-36.apk",
+      "sha256": "b086b93fee34219d3dc6e2f563a8d7e7d31f7690365b76076a111d564a51ebe4"
     },
     "com.augmentos.otaupdater": {
       "versionCode": 0,
@@ -21,8 +21,8 @@
     }
   ],
   "bes_firmware": {
-    "version": "17.26.02.22",
-    "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/bes_firmware_17.26.02.23.bin",
-    "sha256": "b1ea846babec719438fc0b3fa7f39e12b79dacc722e38c1409857e724bc26e1d"
+    "version": "17.26.04.01",
+    "url": "https://github.com/Mentra-Community/MentraOS/releases/download/asg-client/bes_firmware_17.26.04.01.bin",
+    "sha256": "67a7d1c48dd7fbed16fc1a94c9d221ebae2e817f493d0007a58e8d49028f4e82"
   }
 }

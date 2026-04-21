@@ -46,6 +46,9 @@ class GlassesStore {
         store.set("glasses", "hotspotGatewayIp", "")
         store.set("glasses", "bluetoothName", "")
         store.set("glasses", "controllerConnected", false)
+        store.set("glasses", "controllerMacAddress", "")
+        store.set("glasses", "controllerBatteryLevel", -1)
+        store.set("glasses", "controllerSignalStrength", -1)
         store.set("glasses", "signalStrength", -1)
         store.set("glasses", "ringSignalStrength", -1)
 
@@ -91,7 +94,7 @@ class GlassesStore {
         store.set("core", "preferred_mic", "auto")
         store.set("core", "lc3_frame_size", 60)
         store.set("core", "auth_email", "")
-        store.set("core", "auth_token", "")
+        store.set("core", "core_token", "")
         store.set("core", "should_send_pcm", false)
         store.set("core", "should_send_lc3", false)
         store.set("core", "should_send_transcript", false)
@@ -133,6 +136,10 @@ class GlassesStore {
         switch (category, key) {
         case ("glasses", "fullyBooted"):
             Bridge.log("STORE: Glasses fullyBooted changed to \(value)")
+            // skip if the value is the same as the old value:
+            if let ready = value as? Bool, ready == oldValue as? Bool {
+                return
+            }
             if let ready = value as? Bool {
                 if ready {
                     CoreManager.shared.handleDeviceReady()
@@ -141,12 +148,22 @@ class GlassesStore {
                 }
                 // we shouldn't call store.set in this function as this is only intended for side-effects, not driving state updates
             }
+
         case ("glasses", "controllerFullyBooted"):
             if let ready = value as? Bool {
                 if ready {
                     CoreManager.shared.handleControllerReady()
                 } else {
                     CoreManager.shared.handleControllerDisconnected()
+                }
+            }
+
+        case ("glasses", "controllerMacAddress"):
+            if let mac = value as? String {
+                Task {
+                    // give the glasses some extra time to finish booting:
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    await CoreManager.shared.sgc?.connectController()
                 }
             }
 
@@ -163,8 +180,9 @@ class GlassesStore {
                 // CoreManager.shared.sgc?.sendAuthEmail(email)
             }
 
-        case ("core", "auth_token"):
+        case ("core", "core_token"):
             if let token = value as? String {
+                _ = token
                 // CoreManager.shared.sgc?.sendAuthToken(token)
             }
 
@@ -174,7 +192,7 @@ class GlassesStore {
             Task {
                 CoreManager.shared.sgc?.setBrightness(b, autoMode: auto)
                 CoreManager.shared.sgc?.sendTextWall("Set brightness to \(b)%")
-                try? await Task.sleep(nanoseconds: 800_000_000)  // 0.8 seconds
+                try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 seconds
                 CoreManager.shared.sgc?.clearDisplay()
             }
 
@@ -188,7 +206,7 @@ class GlassesStore {
                     CoreManager.shared.sgc?.sendTextWall(
                         auto ? "Enabled auto brightness" : "Disabled auto brightness"
                     )
-                    try? await Task.sleep(nanoseconds: 800_000_000)  // 0.8 seconds
+                    try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 seconds
                     CoreManager.shared.sgc?.clearDisplay()
                 }
             }
@@ -202,6 +220,11 @@ class GlassesStore {
         case ("core", "head_up_angle"):
             if let angle = value as? Int {
                 CoreManager.shared.sgc?.setHeadUpAngle(angle)
+            }
+
+        case ("core", "dashboard_menu_apps"):
+            if let items = value as? [[String: Any]] {
+                CoreManager.shared.sgc?.setDashboardMenu(items)
             }
 
         case ("core", "gallery_mode"):
@@ -232,7 +255,7 @@ class GlassesStore {
             CoreManager.shared.sgc?.sendCameraFovSetting()
 
         case ("core", "button_video_width"), ("core", "button_video_height"),
-            ("core", "button_video_fps"):
+             ("core", "button_video_fps"):
             CoreManager.shared.sgc?.sendButtonVideoRecordingSettings()
 
         case ("core", "preferred_mic"):

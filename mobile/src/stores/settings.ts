@@ -33,13 +33,6 @@ export const SETTINGS: Record<string, Setting> = {
   // feature flags / mantle settings:
   dev_mode: {key: "dev_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},
   super_mode: {key: "super_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
-  app_switcher_ui: {
-    key: "app_switcher_ui",
-    defaultValue: () => true,
-    writable: true,
-    saveOnServer: true,
-    persist: true,
-  },
   enable_squircles: {
     key: "enable_squircles",
     defaultValue: () => true,
@@ -153,7 +146,6 @@ export const SETTINGS: Record<string, Setting> = {
   // state:
   core_token: {key: "core_token", defaultValue: () => "", writable: true, saveOnServer: true, persist: true},
   auth_email: {key: "auth_email", defaultValue: () => "", writable: true, saveOnServer: false, persist: true},
-  auth_token: {key: "auth_token", defaultValue: () => "", writable: true, saveOnServer: false, persist: true},
   pending_wearable: {
     key: "pending_wearable",
     defaultValue: () => "",
@@ -382,6 +374,13 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  glasses_menu_apps: {
+    key: "glasses_menu_apps",
+    defaultValue: () => null,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   // button settings
   button_mode: {key: "button_mode", defaultValue: () => "photo", writable: true, saveOnServer: true, persist: true},
   button_photo_size: {
@@ -525,6 +524,14 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  // Cached required version from server - used to enforce updates even when offline
+  cached_required_version: {
+    key: "cached_required_version",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   // OTA update dismissal - stores the version code user dismissed (not persisted so resets on app restart)
   dismissed_ota_version: {
     key: "dismissed_ota_version",
@@ -559,7 +566,7 @@ const CORE_SETTINGS_KEYS: string[] = [
   SETTINGS.preferred_mic.key,
   SETTINGS.screen_disabled.key,
   SETTINGS.auth_email.key,
-  SETTINGS.auth_token.key,
+  SETTINGS.core_token.key,
   // glasses settings:
   SETTINGS.contextual_dashboard.key,
   SETTINGS.head_up_angle.key,

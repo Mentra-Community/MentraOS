@@ -29,6 +29,8 @@ class AudioPlaybackService {
   // Prevents mic toggle flicker when playing back-to-back audio
   // Uses BackgroundTimer to work reliably when app is backgrounded on Android
   private audioStopDebounceTimer: number | null = null
+  // Original glasses media volume captured before we bump it for A2DP playback.
+  private glassesVolumeRestoreLevel: number | null = null
   private static readonly AUDIO_STOP_DEBOUNCE_MS = 500
   /** If glasses report step volume at or below this, bump to FLOOR before A2DP playback. */
   private static readonly GLASSES_VOLUME_LOW_THRESHOLD = 2
@@ -85,6 +87,13 @@ class AudioPlaybackService {
    * Fail-open on unsupported devices, timeouts, or errors.
    */
   private async ensureGlassesMediaVolumeForA2dp(): Promise<void> {
+    if (this.glassesVolumeRestoreLevel !== null) {
+      console.log(
+        `AUDIO: Keeping bumped glasses media volume at ${AudioPlaybackService.GLASSES_VOLUME_FLOOR} during ongoing playback`,
+      )
+      return
+    }
+
     try {
       const raw = await CoreModule.getGlassesMediaVolume()
       const vol = Number(raw.vol)
@@ -100,9 +109,30 @@ class AudioPlaybackService {
       }
       console.log(`AUDIO: Raising glasses media volume (was ${vol})`)
       await CoreModule.setGlassesMediaVolume(AudioPlaybackService.GLASSES_VOLUME_FLOOR)
+      this.glassesVolumeRestoreLevel = vol
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       console.warn("AUDIO: Skipping glasses volume bump:", msg)
+    }
+  }
+
+  /**
+   * Restore the user's original glasses media step volume after A2DP playback finishes.
+   */
+  private async restoreGlassesMediaVolume(): Promise<void> {
+    const restoreLevel = this.glassesVolumeRestoreLevel
+    if (restoreLevel === null) {
+      return
+    }
+
+    try {
+      console.log(`AUDIO: Restoring glasses media volume to ${restoreLevel}`)
+      await CoreModule.setGlassesMediaVolume(restoreLevel)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      console.warn(`AUDIO: Failed to restore glasses volume to ${restoreLevel}:`, msg)
+    } finally {
+      this.glassesVolumeRestoreLevel = null
     }
   }
 
@@ -127,7 +157,7 @@ class AudioPlaybackService {
       // Stop current playback if any (notify previous callback)
       if (stopOtherAudio && this.currentPlayback && !this.currentPlayback.completed) {
         console.log(`AUDIO: Interrupting current playback for new request`)
-        this.interruptCurrentPlayback()
+        this.interruptCurrentPlayback(true)
       }
 
       // Get or create the reusable player
@@ -165,6 +195,7 @@ class AudioPlaybackService {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error loading audio"
       console.error(`AUDIO: Failed to play ${requestId}:`, errorMessage)
+      void this.restoreGlassesMediaVolume()
       onComplete(requestId, false, errorMessage, null)
     }
   }
@@ -172,7 +203,7 @@ class AudioPlaybackService {
   /**
    * Interrupt current playback and notify its callback
    */
-  private interruptCurrentPlayback(): void {
+  private interruptCurrentPlayback(preserveGlassesMediaVolume: boolean = false): void {
     if (!this.currentPlayback || this.currentPlayback.completed) return
 
     const playback = this.currentPlayback
@@ -190,6 +221,9 @@ class AudioPlaybackService {
 
     // Notify native that our app stopped playing audio (debounced)
     this.notifyAudioStopDebounced()
+    if (!preserveGlassesMediaVolume) {
+      void this.restoreGlassesMediaVolume()
+    }
 
     // Notify that playback was interrupted
     const elapsedMs = Date.now() - playback.startTime
@@ -213,11 +247,22 @@ class AudioPlaybackService {
       const durationMs = (status.duration || 0) * 1000 // expo-audio uses seconds
       console.log(`AUDIO: Playback finished for ${playback.requestId}, duration: ${durationMs}ms`)
       playback.completed = true
+
+      // Pause the player to prevent Android ExoPlayer from looping/replaying
+      if (this.player) {
+        try {
+          this.player.pause()
+        } catch (e) {
+          console.warn("AUDIO: Error pausing player after finish:", e)
+        }
+      }
+
       playback.onComplete(playback.requestId, true, null, durationMs)
       this.currentPlayback = null
 
       // Notify native that our app stopped playing audio (debounced)
       this.notifyAudioStopDebounced()
+      void this.restoreGlassesMediaVolume()
       return
     }
 
@@ -233,6 +278,7 @@ class AudioPlaybackService {
         playback.onComplete(playback.requestId, false, "Playback failed (player went idle)", null)
         this.currentPlayback = null
         this.notifyAudioStopDebounced()
+        void this.restoreGlassesMediaVolume()
       }
     }
   }
@@ -310,6 +356,8 @@ class AudioPlaybackService {
   public release(): void {
     if (this.currentPlayback && !this.currentPlayback.completed) {
       this.interruptCurrentPlayback()
+    } else {
+      void this.restoreGlassesMediaVolume()
     }
 
     if (this.player) {

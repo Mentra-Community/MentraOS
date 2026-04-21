@@ -21,13 +21,10 @@ export const ActiveForegroundApp: React.FC = () => {
       return
     }
 
-    // Handle offline apps - navigate directly to React Native route
-    if (applet.offline) {
-      const offlineRoute = applet.offlineRoute
-      if (offlineRoute) {
-        push(offlineRoute)
-        return
-      }
+    // Handle apps with custom routes
+    if (applet.offlineRoute) {
+      push(applet.offlineRoute)
+      return
     }
 
     // Check if app has webviewURL and navigate directly to it

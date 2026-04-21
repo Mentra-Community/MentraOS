@@ -2,7 +2,7 @@ import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import CoreModule from "core"
 import {useFocusEffect} from "expo-router"
 import {useCallback} from "react"
-import {View, TouchableOpacity, Platform, ScrollView, Image, ViewStyle, ImageStyle, TextStyle} from "react-native"
+import {View, TouchableOpacity, Platform, ScrollView, Image} from "react-native"
 
 import {EvenRealitiesLogo} from "@/components/brands/EvenRealitiesLogo"
 import {MentraLogo} from "@/components/brands/MentraLogo"
@@ -14,7 +14,6 @@ import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {ThemedStyle} from "@/theme"
 import {getGlassesImage} from "@/utils/getGlassesImage"
 import GlassView from "@/components/ui/GlassView"
 
@@ -50,8 +49,12 @@ export default function SelectGlassesModelScreen() {
     }
   }
 
-  // Glasses models that should only be visible in super mode
-  const SUPER_MODE_ONLY_MODELS = new Set([DeviceTypes.NEX, DeviceTypes.G2])
+  // Glasses models that should only be visible in super mode.
+  // G2 is available to iOS users without super mode; Android still gates it.
+  const SUPER_MODE_ONLY_MODELS = new Set<string>([DeviceTypes.NEX])
+  if (Platform.OS !== "ios") {
+    SUPER_MODE_ONLY_MODELS.add(DeviceTypes.G2)
+  }
 
   // Platform-specific glasses options
   const glassesOptions =
@@ -83,7 +86,7 @@ export default function SelectGlassesModelScreen() {
   }
 
   return (
-    <Screen preset="fixed">
+    <Screen preset="fixed" extraAndroidInsets>
       <Header
         titleTx="pairing:selectModel"
         leftIcon="chevron-left"

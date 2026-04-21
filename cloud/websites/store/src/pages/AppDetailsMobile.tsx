@@ -148,18 +148,7 @@ const AppDetailsMobile: React.FC<AppDetailsMobileProps> = ({
                     }}>
                     Installed
                   </Button>
-                ) : app.compatibility?.isCompatible === false ? (
-                  <Button
-                    disabled={true}
-                    className="flex-1 h-[36px] text-[14px] font-medium rounded-full opacity-40 cursor-not-allowed"
-                    style={{
-                      fontFamily: '"Red Hat Display", sans-serif',
-                      backgroundColor: "var(--button-bg)",
-                      color: "var(--button-text)",
-                    }}>
-                    Get
-                  </Button>
-                ) : (
+                ) : app.compatibility?.isCompatible === false ? null : (
                   <Button
                     onClick={handleInstall}
                     disabled={installingApp}

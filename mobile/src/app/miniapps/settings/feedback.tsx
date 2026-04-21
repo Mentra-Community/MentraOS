@@ -1,25 +1,34 @@
-import CoreModule from "core"
-import NetInfo from "@react-native-community/netinfo"
-import Constants from "expo-constants"
+import {useLocalSearchParams} from "expo-router"
 import * as ImagePicker from "expo-image-picker"
+import Constants from "expo-constants"
 import * as Location from "expo-location"
-import {useState, useEffect} from "react"
+import NetInfo from "@react-native-community/netinfo"
+import {useState, useEffect, useCallback, useRef} from "react"
 import {Image, Platform, Pressable, ScrollView, TextInput, View, Linking, ActivityIndicator} from "react-native"
 
-import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
+import {Button, Icon, Screen, Text} from "@/components/ignite"
 import {RadioGroup, RatingButtons, StarRating} from "@/components/ui"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
-import {logBuffer} from "@/utils/dev/logging"
+import {buildBugReportFeedbackDataForBug, submitBugIncident} from "@/services/bugReport/bugReportIncident"
+import {buildIncidentCategorization} from "@/services/bugReport/incidentCategorization"
 import restComms from "@/services/RestComms"
-import {useAppletStatusStore} from "@/stores/applets"
+import {feedbackPackageName, settingsPackageName, useAppletStatusStore} from "@/stores/applets"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
+import {MiniAppCapsuleMenu} from "@/components/miniapps/CapsuleMenu"
+import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 
 export default function FeedbackPage() {
+  const params = useLocalSearchParams<{
+    submissionMode?: string
+    triggerArea?: string
+    triggerReason?: string
+    sourceAppletPackageName?: string
+    sourceAppletName?: string
+  }>()
   const [savedContactEmail, setSavedContactEmail] = useSetting(SETTINGS.contact_email.key)
   const [email, setEmail] = useState((savedContactEmail as string) || "")
   const [feedbackType, setFeedbackType] = useState<"bug" | "feature">("bug")
@@ -33,10 +42,21 @@ export default function FeedbackPage() {
 
   const MAX_SCREENSHOTS = 5
 
-  const {goBack} = useNavigationHistory()
   const {theme} = useAppTheme()
   const apps = useAppletStatusStore((state) => state.apps)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  const viewShotRef = useRef<View>(null)
+  const {goBack} = useNavigationHistory()
+
+  const resolveScreenshotPackageName = useCallback(() => {
+    if (apps.some((app) => app.packageName === feedbackPackageName && app.running)) {
+      return feedbackPackageName
+    }
+    if (apps.some((app) => app.packageName === settingsPackageName && app.running)) {
+      return settingsPackageName
+    }
+    return null
+  }, [apps])
 
   // Glasses info for bug reports
   const glassesConnected = useGlassesStore((state) => state.connected)
@@ -109,154 +129,31 @@ export default function FeedbackPage() {
     // Check if user rated 4-5 stars on feature request
     const shouldPromptAppRating = feedbackType === "feature" && experienceRating !== null && experienceRating >= 4
 
-    // Collect diagnostic information
-    const customBackendUrl = process.env.EXPO_PUBLIC_BACKEND_URL_OVERRIDE
-    const isBetaBuild = !!customBackendUrl
-    const osVersion = `${Platform.OS} ${Platform.Version}`
-    const deviceName = Constants.deviceName || "deviceName"
-    const mobileAppVersion = process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "version"
-    const buildCommit = process.env.EXPO_PUBLIC_BUILD_COMMIT || "commit"
-    const buildBranch = process.env.EXPO_PUBLIC_BUILD_BRANCH || "branch"
-    const buildTime = process.env.EXPO_PUBLIC_BUILD_TIME || "time"
-    const buildUser = process.env.EXPO_PUBLIC_BUILD_USER || "user"
-
-    // Get offline mode status
-    const offlineMode = await useSettingsStore.getState().getSetting(SETTINGS.offline_mode.key)
-
-    // Get network connectivity info
-    let networkInfo = {type: "unknown", isConnected: false, isInternetReachable: false}
-    try {
-      const netState = await NetInfo.fetch()
-      networkInfo = {
-        type: netState.type,
-        isConnected: netState.isConnected ?? false,
-        isInternetReachable: netState.isInternetReachable ?? false,
-      }
-    } catch (e) {
-      console.log("Failed to get network info:", e)
-    }
-
-    // Get location if permission is granted
-    let locationInfo: string | undefined
-    let locationPlace: string | undefined
-    try {
-      const {status} = await Location.getForegroundPermissionsAsync()
-      if (status === "granted") {
-        const location = await Location.getLastKnownPositionAsync()
-        if (location) {
-          locationInfo = `${location.coords.latitude.toFixed(4)}, ${location.coords.longitude.toFixed(4)}`
-          // Try to get human-readable location
-          try {
-            const [place] = await Location.reverseGeocodeAsync({
-              latitude: location.coords.latitude,
-              longitude: location.coords.longitude,
-            })
-            if (place) {
-              const parts = [place.city, place.region, place.country].filter(Boolean)
-              if (parts.length > 0) {
-                locationPlace = parts.join(", ")
-              }
-            }
-          } catch (e) {
-            console.log("Failed to reverse geocode:", e)
-          }
-        }
-      }
-    } catch (e) {
-      console.log("Failed to get location:", e)
-    }
-
-    // Running apps
-    const runningApps = apps.filter((app) => app.running).map((app) => app.packageName)
-
-    // Build glasses info (only if glasses are connected)
-    const glassesBluetoothId = glassesBluetoothName?.split("_").pop() || glassesBluetoothName
-
-    // Build structured feedback JSON
-    const feedbackData = {
-      type: feedbackType,
-      // Bug report fields
-      ...(feedbackType === "bug" && {
-        expectedBehavior: expectedBehavior,
-        actualBehavior: actualBehavior,
-        severityRating: severityRating ?? undefined,
-      }),
-      // Feature request fields
-      ...(feedbackType === "feature" && {
-        feedbackText: feedbackText,
-        experienceRating: experienceRating ?? undefined,
-      }),
-      // Contact email for Apple private relay users
-      ...(isApplePrivateRelay && email && {contactEmail: email}),
-      // System information
-      systemInfo: {
-        appVersion: mobileAppVersion,
-        deviceName,
-        osVersion,
-        platform: Platform.OS,
-        glassesConnected,
-        defaultWearable: defaultWearable as string,
-        runningApps,
-        offlineMode: !!offlineMode,
-        networkType: networkInfo.type,
-        networkConnected: networkInfo.isConnected,
-        internetReachable: networkInfo.isInternetReachable,
-        ...(locationInfo && {location: locationInfo}),
-        ...(locationPlace && {locationPlace}),
-        ...(isBetaBuild && {isBetaBuild: true}),
-        ...(isBetaBuild && customBackendUrl && {backendUrl: customBackendUrl}),
-        buildCommit,
-        buildBranch,
-        buildTime,
-        buildUser,
-      },
-      // Glasses information (only if connected)
-      ...(glassesConnected && {
-        glassesInfo: {
-          deviceModel: deviceModel || undefined,
-          bluetoothId: glassesBluetoothId || undefined,
-          serialNumber: serialNumber || undefined,
-          buildNumber: buildNumber || undefined,
-          fwVersion: glassesFwVersion || undefined,
-          appVersion: appVersion || undefined,
-          androidVersion: androidVersion || undefined,
-          wifiConnected: glassesWifiConnected,
-          ...(glassesWifiConnected && glassesWifiSsid && {wifiSsid: glassesWifiSsid}),
-          ...(glassesBatteryLevel >= 0 && {batteryLevel: glassesBatteryLevel}),
-        },
-      }),
-    }
-
-    console.log("Feedback submitted:", JSON.stringify(feedbackData, null, 2))
-
     // Bug reports use the incidents endpoint, feature requests use feedback endpoint
     if (feedbackType === "bug") {
-      // Collect phone state snapshot from stores
-      // Only send installed package names for applets (not full details - that's public info we can query)
-      const appletState = useAppletStatusStore.getState()
+      const feedbackData = await buildBugReportFeedbackDataForBug({
+        expectedBehavior,
+        actualBehavior,
+        severityRating: severityRating!,
+        contactEmail: isApplePrivateRelay && email.trim() ? email.trim() : undefined,
+        extraFeedbackFields: buildIncidentCategorization({
+          submissionMode: params.submissionMode === "AUTOMATIC" ? "AUTOMATIC" : "USER_INITIATED",
+          triggerArea: typeof params.triggerArea === "string" ? params.triggerArea : "feedback_screen",
+          triggerReason: typeof params.triggerReason === "string" ? params.triggerReason : "manual_bug_report",
+          sourceAppletPackageName:
+            typeof params.sourceAppletPackageName === "string" ? params.sourceAppletPackageName : undefined,
+          sourceAppletName: typeof params.sourceAppletName === "string" ? params.sourceAppletName : undefined,
+        }),
+      })
 
-      // Get settings but filter out sensitive keys (tokens, credentials)
-      const settingsState = useSettingsStore.getState()
-      const SENSITIVE_KEYS = ["core_token", "auth_token", "auth_email"]
-      const filteredSettings = Object.fromEntries(
-        Object.entries(settingsState.settings || {}).filter(([key]) => !SENSITIVE_KEYS.includes(key)),
-      )
+      console.log("Feedback submitted:", JSON.stringify(feedbackData, null, 2))
+      console.log("Phone backend URL (incident creation):", useSettingsStore.getState().getRestUrl())
 
-      const phoneState = {
-        glasses: useGlassesStore.getState(),
-        installedApplets: appletState.apps.map((app) => app.packageName),
-        settings: filteredSettings,
-      }
+      const submitRes = await submitBugIncident(feedbackData, {screenshots})
 
-      const phoneBackendUrl = useSettingsStore.getState().getRestUrl()
-      console.log("Phone backend URL (incident creation):", phoneBackendUrl)
-
-      // Create incident for bug report
-      const res = await restComms.createIncident(feedbackData, phoneState)
-
-      if (res.is_error()) {
+      if (!submitRes.ok) {
         setIsSubmitting(false)
-        console.error("Error creating incident:", res.error)
+        console.error("Error creating incident:", submitRes.error)
         showAlert(translate("common:error"), translate("feedback:errorSendingFeedback"), [
           {
             text: translate("common:ok"),
@@ -267,35 +164,105 @@ export default function FeedbackPage() {
         ])
         return
       }
-
-      const {incidentId} = res.value
-
-      // Upload phone logs from ring buffer
-      const phoneLogs = logBuffer.getRecentLogs()
-      if (phoneLogs.length > 0) {
-        console.log(`Uploading ${phoneLogs.length} phone logs to incident ${incidentId}`)
-        const logsRes = await restComms.uploadIncidentLogs(incidentId, phoneLogs)
-        if (logsRes.is_error()) {
-          console.error("Error uploading phone logs:", logsRes.error)
-          // Don't block - incident already created successfully
-        }
-      }
-
-      // Trigger glasses to upload their own logs directly over WiFi (fire-and-forget)
-      if (glassesConnected) {
-        CoreModule.sendIncidentId(incidentId)
-      }
-
-      // Upload screenshots if any
-      if (screenshots.length > 0) {
-        console.log(`Uploading ${screenshots.length} screenshots to incident ${incidentId}`)
-        const uploadRes = await restComms.uploadIncidentAttachments(incidentId, screenshots)
-        if (uploadRes.is_error()) {
-          console.error("Error uploading screenshots:", uploadRes.error)
-          // Don't block - incident already created successfully
-        }
-      }
     } else {
+      const customBackendUrl = process.env.EXPO_PUBLIC_BACKEND_URL_OVERRIDE
+      const isBetaBuild = !!customBackendUrl
+      const osVersion = `${Platform.OS} ${Platform.Version}`
+      const deviceName = Constants.deviceName || "deviceName"
+      const mobileAppVersion = process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "version"
+      const buildCommit = process.env.EXPO_PUBLIC_BUILD_COMMIT || "commit"
+      const buildBranch = process.env.EXPO_PUBLIC_BUILD_BRANCH || "branch"
+      const buildTime = process.env.EXPO_PUBLIC_BUILD_TIME || "time"
+      const buildUser = process.env.EXPO_PUBLIC_BUILD_USER || "user"
+
+      const offlineMode = await useSettingsStore.getState().getSetting(SETTINGS.offline_mode.key)
+
+      let networkInfo = {type: "unknown", isConnected: false, isInternetReachable: false}
+      try {
+        const netState = await NetInfo.fetch()
+        networkInfo = {
+          type: netState.type,
+          isConnected: netState.isConnected ?? false,
+          isInternetReachable: netState.isInternetReachable ?? false,
+        }
+      } catch (e) {
+        console.log("Failed to get network info:", e)
+      }
+
+      let locationInfo: string | undefined
+      let locationPlace: string | undefined
+      try {
+        const {status} = await Location.getForegroundPermissionsAsync()
+        if (status === "granted") {
+          const location = await Location.getLastKnownPositionAsync()
+          if (location) {
+            locationInfo = `${location.coords.latitude.toFixed(4)}, ${location.coords.longitude.toFixed(4)}`
+            try {
+              const [place] = await Location.reverseGeocodeAsync({
+                latitude: location.coords.latitude,
+                longitude: location.coords.longitude,
+              })
+              if (place) {
+                const parts = [place.city, place.region, place.country].filter(Boolean)
+                if (parts.length > 0) {
+                  locationPlace = parts.join(", ")
+                }
+              }
+            } catch (e) {
+              console.log("Failed to reverse geocode:", e)
+            }
+          }
+        }
+      } catch (e) {
+        console.log("Failed to get location:", e)
+      }
+
+      const runningApps = apps.filter((app) => app.running).map((app) => app.packageName)
+      const glassesBluetoothId = glassesBluetoothName?.split("_").pop() || glassesBluetoothName
+
+      const feedbackData = {
+        type: feedbackType,
+        feedbackText: feedbackText,
+        experienceRating: experienceRating ?? undefined,
+        ...(isApplePrivateRelay && email && {contactEmail: email}),
+        systemInfo: {
+          appVersion: mobileAppVersion,
+          deviceName,
+          osVersion,
+          platform: Platform.OS,
+          glassesConnected,
+          defaultWearable: defaultWearable as string,
+          runningApps,
+          offlineMode: !!offlineMode,
+          networkType: networkInfo.type,
+          networkConnected: networkInfo.isConnected,
+          internetReachable: networkInfo.isInternetReachable,
+          ...(locationInfo && {location: locationInfo}),
+          ...(locationPlace && {locationPlace}),
+          ...(isBetaBuild && {isBetaBuild: true}),
+          ...(isBetaBuild && customBackendUrl && {backendUrl: customBackendUrl}),
+          buildCommit,
+          buildBranch,
+          buildTime,
+          buildUser,
+        },
+        ...(glassesConnected && {
+          glassesInfo: {
+            deviceModel: deviceModel || undefined,
+            bluetoothId: glassesBluetoothId || undefined,
+            serialNumber: serialNumber || undefined,
+            buildNumber: buildNumber || undefined,
+            fwVersion: glassesFwVersion || undefined,
+            appVersion: appVersion || undefined,
+            androidVersion: androidVersion || undefined,
+            wifiConnected: glassesWifiConnected,
+            ...(glassesWifiConnected && glassesWifiSsid && {wifiSsid: glassesWifiSsid}),
+            ...(glassesBatteryLevel >= 0 && {batteryLevel: glassesBatteryLevel}),
+          },
+        }),
+      }
+
+      console.log("Feedback submitted:", JSON.stringify(feedbackData, null, 2))
       // Feature request - use feedback endpoint
       const res = await restComms.sendFeedback(feedbackData)
 
@@ -306,7 +273,7 @@ export default function FeedbackPage() {
           {
             text: translate("common:ok"),
             onPress: () => {
-              goBack()
+              void goBack()
             },
           },
         ])
@@ -329,7 +296,7 @@ export default function FeedbackPage() {
       {
         text: translate("common:ok"),
         onPress: () => {
-          goBack()
+          void goBack()
 
           // If user rated highly, prompt for app store rating after a delay
           if (shouldPromptAppRating) {
@@ -367,168 +334,179 @@ export default function FeedbackPage() {
   }
 
   return (
-    <Screen preset="fixed">
-      <Header title={translate("feedback:giveFeedback")} leftIcon="chevron-left" onLeftPress={goBack} />
-      <ScrollView
-        className="pt-6 -mx-6 px-6"
-        contentContainerClassName="flex-grow pb-12"
-        keyboardShouldPersistTaps="handled">
-        <View className="gap-6">
-          <View>
-            <Text className="text-sm font-semibold text-foreground mb-2">{translate("feedback:type")}</Text>
-            <RadioGroup
-              options={[
-                {value: "bug", label: translate("feedback:bugReport")},
-                {value: "feature", label: translate("feedback:featureRequest")},
-              ]}
-              value={feedbackType}
-              onValueChange={(value) => setFeedbackType(value as "bug" | "feature")}
-            />
-          </View>
-
-          {isApplePrivateRelay && (
+    <>
+      <MiniAppCapsuleMenu packageName={resolveScreenshotPackageName() || ""} viewShotRef={viewShotRef} />
+      <Screen preset="fixed" ref={viewShotRef} safeAreaEdges={["top", "bottom"]}>
+        <View className="h-12 justify-center">
+          <Text tx="feedback:giveFeedback" className="text-xl text-foreground" />
+        </View>
+        <ScrollView
+          className="pt-6 -mx-6 px-6"
+          contentContainerClassName="flex-grow pb-12"
+          keyboardShouldPersistTaps="handled">
+          <View className="gap-6">
             <View>
               <View className="flex-row items-center mb-2 gap-1.5">
-                <Text className="text-sm font-semibold text-foreground">{translate("feedback:emailOptional")}</Text>
-                <Pressable
-                  hitSlop={10}
-                  onPress={() =>
-                    showAlert(translate("feedback:emailOptional"), translate("feedback:emailInfoMessage"), [
-                      {text: translate("common:ok")},
-                    ])
-                  }>
-                  <Icon name="info-circle" size={16} color={theme.colors.muted_foreground} />
-                </Pressable>
+                <Text className="text-sm font-semibold text-foreground">{translate("feedback:type")}</Text>
               </View>
-              <TextInput
-                className="bg-background border border-border rounded-xl p-4 text-base text-foreground"
-                value={email}
-                onChangeText={setEmail}
-                placeholder={translate("feedback:email")}
-                placeholderTextColor={theme.colors.muted_foreground}
-                keyboardType="email-address"
-                autoCapitalize="none"
+              <RadioGroup
+                options={[
+                  {value: "bug", label: translate("feedback:bugReport")},
+                  {value: "feature", label: translate("feedback:featureRequest")},
+                ]}
+                value={feedbackType}
+                onValueChange={(value) => setFeedbackType(value as "bug" | "feature")}
               />
             </View>
-          )}
 
-          {feedbackType === "bug" ? (
-            <>
+            {isApplePrivateRelay && (
               <View>
-                <Text className="text-sm font-semibold text-foreground mb-2">
-                  {translate("feedback:expectedBehavior")}
-                </Text>
-                <TextInput
-                  className="bg-background border border-border rounded-xl p-4 text-base text-foreground min-h-[120px]"
-                  multiline
-                  numberOfLines={4}
-                  placeholder={translate("feedback:share")}
-                  placeholderTextColor={theme.colors.muted_foreground}
-                  value={expectedBehavior}
-                  onChangeText={setExpectedBehavior}
-                  textAlignVertical="top"
-                />
-              </View>
-
-              <View>
-                <Text className="text-sm font-semibold text-foreground mb-2">
-                  {translate("feedback:actualBehavior")}
-                </Text>
-                <TextInput
-                  className="bg-background border border-border rounded-xl p-4 text-base text-foreground min-h-[120px]"
-                  multiline
-                  numberOfLines={4}
-                  placeholder={translate("feedback:actualShare")}
-                  placeholderTextColor={theme.colors.muted_foreground}
-                  value={actualBehavior}
-                  onChangeText={setActualBehavior}
-                  textAlignVertical="top"
-                />
-              </View>
-
-              <View>
-                <Text className="text-sm font-semibold text-foreground mb-2">
-                  {translate("feedback:severityRating")}
-                </Text>
-                <Text className="text-xs text-muted-foreground mb-3">{translate("feedback:ratingScale")}</Text>
-                <RatingButtons value={severityRating} onValueChange={setSeverityRating} />
-              </View>
-
-              {/* Screenshots Section */}
-              <View>
-                <Text className="text-sm font-semibold text-foreground mb-2">{translate("feedback:screenshots")}</Text>
-                <Text className="text-xs text-muted-foreground mb-3">{translate("feedback:screenshotsHint")}</Text>
-
-                {/* Screenshot Thumbnails */}
-                {screenshots.length > 0 && (
-                  <View className="flex-row flex-wrap gap-2 mb-3">
-                    {screenshots.map((image, index) => (
-                      <View key={image.uri} className="relative">
-                        <Image source={{uri: image.uri}} className="w-20 h-20 rounded-lg" resizeMode="cover" />
-                        <Pressable
-                          onPress={() => removeScreenshot(index)}
-                          className="absolute -top-2 -right-2 bg-destructive rounded-full w-6 h-6 items-center justify-center">
-                          <Text className="text-white text-xs font-bold">X</Text>
-                        </Pressable>
-                      </View>
-                    ))}
-                  </View>
-                )}
-
-                {/* Add Screenshot Button */}
-                {screenshots.length < MAX_SCREENSHOTS && (
+                <View className="flex-row items-center mb-2 gap-1.5">
+                  <Text className="text-sm font-semibold text-foreground">{translate("feedback:emailOptional")}</Text>
                   <Pressable
-                    onPress={pickScreenshots}
-                    className="border-2 border-dashed border-border rounded-xl p-4 items-center justify-center">
-                    <Text className="text-muted-foreground">
-                      {screenshots.length === 0 ? translate("feedback:addScreenshots") : translate("feedback:addMore")}
-                    </Text>
-                    <Text className="text-xs text-muted-foreground mt-1">
-                      {screenshots.length}/{MAX_SCREENSHOTS}
-                    </Text>
+                    hitSlop={10}
+                    onPress={() =>
+                      showAlert(translate("feedback:emailOptional"), translate("feedback:emailInfoMessage"), [
+                        {text: translate("common:ok")},
+                      ])
+                    }>
+                    <Icon name="info-circle" size={16} color={theme.colors.muted_foreground} />
                   </Pressable>
-                )}
-              </View>
-            </>
-          ) : (
-            <>
-              <View>
-                <Text className="text-sm font-semibold text-foreground mb-2">
-                  {translate("feedback:feedbackLabel")}
-                </Text>
+                </View>
                 <TextInput
-                  className="bg-background border border-border rounded-xl p-4 text-base text-foreground min-h-[120px]"
-                  multiline
-                  numberOfLines={6}
-                  placeholder={translate("feedback:shareThoughts")}
+                  className="bg-background border border-border rounded-xl p-4 text-base text-foreground"
+                  value={email}
+                  onChangeText={setEmail}
+                  placeholder={translate("feedback:email")}
                   placeholderTextColor={theme.colors.muted_foreground}
-                  value={feedbackText}
-                  onChangeText={setFeedbackText}
-                  textAlignVertical="top"
+                  keyboardType="email-address"
+                  autoCapitalize="none"
                 />
               </View>
+            )}
 
-              <View>
-                <Text className="text-sm font-semibold text-foreground mb-2">
-                  {translate("feedback:experienceRating")}
-                </Text>
-                <Text className="text-xs text-muted-foreground mb-3">{translate("feedback:ratingScale")}</Text>
-                <StarRating value={experienceRating} onValueChange={setExperienceRating} />
-              </View>
-            </>
-          )}
-        </View>
-        <View className="flex-1 min-h-6" />
-        <Button
-          text={
-            isSubmitting ? "" : feedbackType === "bug" ? translate("feedback:continue") : translate("feedback:submit")
-          }
-          onPress={handleSubmitFeedback}
-          disabled={!isFormValid() || isSubmitting}
-          preset="primary">
-          {isSubmitting && <ActivityIndicator color={theme.colors.background} />}
-        </Button>
-      </ScrollView>
-    </Screen>
+            {feedbackType === "bug" ? (
+              <>
+                <View>
+                  <Text className="text-sm font-semibold text-foreground mb-2">
+                    {translate("feedback:expectedBehavior")}
+                  </Text>
+                  <TextInput
+                    className="bg-background border border-border rounded-xl p-4 text-base text-foreground min-h-[120px]"
+                    multiline
+                    numberOfLines={4}
+                    placeholder={translate("feedback:share")}
+                    placeholderTextColor={theme.colors.muted_foreground}
+                    value={expectedBehavior}
+                    onChangeText={setExpectedBehavior}
+                    textAlignVertical="top"
+                  />
+                </View>
+
+                <View>
+                  <Text className="text-sm font-semibold text-foreground mb-2">
+                    {translate("feedback:actualBehavior")}
+                  </Text>
+                  <TextInput
+                    className="bg-background border border-border rounded-xl p-4 text-base text-foreground min-h-[120px]"
+                    multiline
+                    numberOfLines={4}
+                    placeholder={translate("feedback:actualShare")}
+                    placeholderTextColor={theme.colors.muted_foreground}
+                    value={actualBehavior}
+                    onChangeText={setActualBehavior}
+                    textAlignVertical="top"
+                  />
+                </View>
+
+                <View>
+                  <Text className="text-sm font-semibold text-foreground mb-2">
+                    {translate("feedback:severityRating")}
+                  </Text>
+                  <Text className="text-xs text-muted-foreground mb-3">{translate("feedback:ratingScale")}</Text>
+                  <RatingButtons value={severityRating} onValueChange={setSeverityRating} />
+                </View>
+
+                {/* Screenshots Section */}
+                <View>
+                  <Text className="text-sm font-semibold text-foreground mb-2">
+                    {translate("feedback:screenshots")}
+                  </Text>
+                  <Text className="text-xs text-muted-foreground mb-3">{translate("feedback:screenshotsHint")}</Text>
+
+                  {/* Screenshot Thumbnails */}
+                  {screenshots.length > 0 && (
+                    <View className="flex-row flex-wrap gap-2 mb-3">
+                      {screenshots.map((image, index) => (
+                        <View key={image.uri} className="relative">
+                          <Image source={{uri: image.uri}} className="w-20 h-20 rounded-lg" resizeMode="cover" />
+                          <Pressable
+                            onPress={() => removeScreenshot(index)}
+                            className="absolute -top-2 -right-2 bg-destructive rounded-full w-6 h-6 items-center justify-center">
+                            <Text className="text-white text-xs font-bold">X</Text>
+                          </Pressable>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+
+                  {/* Add Screenshot Button */}
+                  {screenshots.length < MAX_SCREENSHOTS && (
+                    <Pressable
+                      onPress={pickScreenshots}
+                      className="border-2 border-dashed border-border rounded-xl p-4 items-center justify-center">
+                      <Text className="text-muted-foreground">
+                        {screenshots.length === 0
+                          ? translate("feedback:addScreenshots")
+                          : translate("feedback:addMore")}
+                      </Text>
+                      <Text className="text-xs text-muted-foreground mt-1">
+                        {screenshots.length}/{MAX_SCREENSHOTS}
+                      </Text>
+                    </Pressable>
+                  )}
+                </View>
+              </>
+            ) : (
+              <>
+                <View>
+                  <Text className="text-sm font-semibold text-foreground mb-2">
+                    {translate("feedback:feedbackLabel")}
+                  </Text>
+                  <TextInput
+                    className="bg-background border border-border rounded-xl p-4 text-base text-foreground min-h-[120px]"
+                    multiline
+                    numberOfLines={6}
+                    placeholder={translate("feedback:shareThoughts")}
+                    placeholderTextColor={theme.colors.muted_foreground}
+                    value={feedbackText}
+                    onChangeText={setFeedbackText}
+                    textAlignVertical="top"
+                  />
+                </View>
+
+                <View>
+                  <Text className="text-sm font-semibold text-foreground mb-2">
+                    {translate("feedback:experienceRating")}
+                  </Text>
+                  <Text className="text-xs text-muted-foreground mb-3">{translate("feedback:ratingScale")}</Text>
+                  <StarRating value={experienceRating} onValueChange={setExperienceRating} />
+                </View>
+              </>
+            )}
+          </View>
+          <View className="flex-1 min-h-6" />
+          <Button
+            text={
+              isSubmitting ? "" : feedbackType === "bug" ? translate("feedback:continue") : translate("feedback:submit")
+            }
+            onPress={handleSubmitFeedback}
+            disabled={!isFormValid() || isSubmitting}
+            preset="primary">
+            {isSubmitting && <ActivityIndicator color={theme.colors.background} />}
+          </Button>
+        </ScrollView>
+      </Screen>
+    </>
   )
 }

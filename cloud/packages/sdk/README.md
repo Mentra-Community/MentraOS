@@ -1,14 +1,56 @@
 # @mentra/sdk
 
-Build apps for MentraOS smartglasses. This SDK provides everything you need to create real-time smartglasses applications.
+Build apps for MentraOS smart glasses.
+
+## Quick Start
+
+```typescript
+import { MiniAppServer } from "@mentra/sdk";
+
+const app = new MiniAppServer({
+  packageName: "com.example.myapp",
+  apiKey: process.env.API_KEY!,
+  port: 3000,
+});
+
+app.onSession((session) => {
+  session.transcription.on((data) => {
+    session.display.showTextWall(data.text);
+  });
+});
+
+await app.start();
+```
+
+## Session Managers
+
+| Manager | Access | What it does |
+|---------|--------|-------------|
+| Transcription | `session.transcription` | Real-time speech-to-text |
+| Translation | `session.translation` | Real-time translation |
+| Display | `session.display` | Show text and graphics on the glasses |
+| Camera | `session.camera` | Take photos and stream video |
+| Speaker | `session.speaker` | Play audio and text-to-speech |
+| Mic | `session.mic` | Raw audio input and voice activity detection |
+| Device | `session.device` | Hardware state, battery, connection, events |
+| Phone | `session.phone` | Notifications, calendar, phone battery |
+| Location | `session.location` | GPS coordinates |
+| Storage | `session.storage` | Persistent key-value storage |
+| Permissions | `session.permissions` | Check app permissions at runtime |
+| LED | `session.led` | Control the LED light |
+| Dashboard | `session.dashboard` | Write to the system dashboard view |
+| Time | `session.time` | Timezone-aware time utilities |
+
+## Migrating from v2?
+
+See the [migration guide](https://docs.mentra.glass/app-devs/migration/overview). Your existing code still works — v3 includes a compatibility layer.
 
 ## Prerequisites
 
-- Node.js (v18 or later)
-- Bun
+- Node.js (v18 or later) or Bun
 - Basic TypeScript knowledge
 
-## 🚀 Building Your First App
+## Getting Started
 
 The quickest way to get started is using our example app. This guide assumes you have a pair of [compatible smart glasses](https://mentra.glass/os) connected to a phone running the [MentraOS app](https://mentra.glass/install).
 
@@ -92,11 +134,14 @@ We are going to use ngrok to expose your local app to the internet. This is usef
 
 For more information, visit the [MentraOS-Cloud-Example-App repository](https://github.com/Mentra-Community/MentraOS-Cloud-Example-App). For a more in-depth example with app settings support, see the [Extended Example](https://github.com/Mentra-Community/MentraOS-Extended-Example-App).
 
-## Next Steps
+## Documentation
 
-- Check out the [documentation](https://docs.mentra.glass) for more information
-- Join our [Discord community](https://discord.gg/5ukNvkEAqT) for help and support
+- [Getting Started](https://docs.mentra.glass/app-devs/getting-started/quickstart)
+- [API Reference](https://docs.mentra.glass/app-devs/core-concepts/session)
+- [Migration Guide (v2 → v3)](https://docs.mentra.glass/app-devs/migration/overview)
+- [Full API Map](https://docs.mentra.glass/app-devs/migration/api-map)
+- [Discord Community](https://discord.gg/5ukNvkEAqT)
 
-## 📄 License
+## License
 
-MIT License.
+MIT

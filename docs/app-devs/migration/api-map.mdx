@@ -1,0 +1,201 @@
+---
+title: "API Map: v2 → v3"
+description: "Searchable table mapping every v2 SDK method to its v3 equivalent"
+---
+
+Use this page to find the v3 equivalent of any v2 API. Press Ctrl+F (or Cmd+F) and search for the v2 method you're looking for.
+
+## Server
+
+| v2 | v3 | Notes |
+|----|-----|-------|
+| `class MyApp extends AppServer` | `new MiniAppServer({ ... })` | No class inheritance. Register callbacks instead. |
+| `protected onSession(session, sessionId, userId)` | `app.onSession((session) => { ... })` | Session is `MentraSession`. `sessionId` and `userId` are on the session object. |
+| `protected onStop(sessionId, userId, reason)` | `app.onStop((session, reason) => { ... })` | Receives the session object instead of separate IDs. |
+| `protected onToolCall(toolName, args, userId)` | `app.onToolCall(async (session, toolName, args) => { ... })` | |
+| `app.start()` | `await app.start()` | Returns a Promise in v3. |
+| `this.getExpressApp()` | Removed. Use `app.get()`, `app.post()`, etc. directly. | MiniAppServer is a Hono app. |
+| `import { AppServer } from "@mentra/sdk"` | `import { MiniAppServer } from "@mentra/sdk"` | `AppServer` still exported as compat alias. |
+| `import { AppSession } from "@mentra/sdk"` | `import { type MentraSession } from "@mentra/sdk"` | `AppSession` still exported as compat alias. |
+
+## Session Properties
+
+| v2 | v3 | Notes |
+|----|-----|-------|
+| `session` (AppSession) | `session` (MentraSession) | Different type, same role. |
+| `sessionId` (callback arg) | `session.sessionId` | On the session object, not a separate argument. |
+| `userId` (callback arg) | `session.userId` | On the session object, not a separate argument. |
+| `session.logger` | `session.logger` | Unchanged. |
+| `session.capabilities` | `session.capabilities` | Unchanged. Also available via `session.device.capabilities`. |
+| `session.settings` | `session.settingsData` | The raw settings array. |
+| `session.appConfig` | `session.appConfig` | Unchanged. |
+
+## Transcription
+
+| v2 | v3 | Notes |
+|----|-----|-------|
+| `session.events.onTranscription(handler)` | `session.transcription.on(handler)` | Returns cleanup function. |
+| No equivalent | `session.transcription.forLanguage("en", handler)` | New. Subscribe to a specific language. |
+| No equivalent | `session.transcription.configure({ languageHints, diarization })` | New. Configure transcription behavior. |
+| No equivalent | `session.transcription.stop()` | New. Stop all transcription streams. |
+
+## Translation
+
+| v2 | v3 | Notes |
+|----|-----|-------|
+| `session.events.onTranslation(handler)` | `session.translation.on(handler)` | Returns cleanup function. |
+| No equivalent | `session.translation.to("es", handler)` | New. Subscribe to a specific target language. |
+| No equivalent | `session.translation.fromTo("en", "es", handler)` | New. Subscribe to a specific source/target pair. |
+| No equivalent | `session.translation.stop()` | New. Stop all translation streams. |
+
+## Display
+
+| v2 | v3 | Notes |
+|----|-----|-------|
+| `session.layouts.showTextWall(text)` | `session.display.showTextWall(text)` | Same signature. |
+| `session.layouts.showDoubleTextWall(left, right)` | `session.display.showDoubleTextWall(left, right)` | Same signature. |
+| `session.layouts.showText(text)` | `session.display.showText(text)` | Same signature. Accepts string or string[]. |
+| `session.layouts.showReferenceCard(title, body)` | `session.display.showReferenceCard(title, body)` | Same signature. |
+| `session.layouts.showDashboardCard(left, right)` | `session.display.showDashboardCard(left, right)` | Same signature. |
+| `session.layouts.showBitmap(data)` | `session.display.showBitmap(data)` | Same signature. |
+| `session.layouts.clear()` | `session.display.clear()` | Same signature. |
+
+## Speaker / Audio Output
+
+| v2 | v3 | Notes |
+|----|-----|-------|
+| `session.audio.playAudio({ audioUrl })` | `session.speaker.play({ url })` | Options object with `url` field instead of `audioUrl`. |
+| `session.audio.speak(text)` | `session.speaker.speak(text)` | Same signature. |
+| `session.audio.createStream()` | `session.speaker.createStream()` | Same signature. Returns AudioOutputStream. |
+| `session.audio.stop()` | `session.speaker.stop()` | Same signature. |
+
+## Microphone / Audio Input
+
+| v2 | v3 | Notes |
+|----|-----|-------|
+| `session.events.onAudioChunk(handler)` | `session.mic.onChunk(handler)` | Returns cleanup function. |
+| No equivalent | `session.mic.onVoiceActivity(handler)` | New. Detect when user starts/stops speaking. |
+| No equivalent | `session.mic.isSpeaking` | New. Current voice activity state. |
+| No equivalent | `session.mic.isActive` | New. Whether mic is streaming. |
+
+## Camera
+
+| v2 | v3 | Notes |
+|----|-----|-------|
+| `session.camera.takePhoto(options)` | `session.camera.takePhoto(options)` | Same API surface. |
+| `session.camera.onPhotoTaken(handler)` | `session.camera.onPhotoTaken(handler)` | Same API surface. |
+| `session.camera.startLocalLivestream({ streamUrl })` | `session.camera.startStream({ direct: url })` | Direct streaming. `streamUrl` → `direct`. Supports SRT, RTMP, RTMPS, WHIP. |
+| `session.camera.stopLocalLivestream()` | `session.camera.stopStream()` | One stop method for both modes. |
+| `session.camera.onLocalLivestreamStatus(handler)` | `session.camera.onStreamStatus(handler)` | Works for both managed and direct. |
+| `session.camera.startLivestream(options)` | `session.camera.startStream(options)` | Managed relay. No args = default. `restreamDestinations` → `destinations` (string[] instead of object[]). |
+| `session.camera.stopLivestream()` | `session.camera.stopStream()` | One stop method for both modes. |
+| `session.camera.onLivestreamStatus(handler)` | `session.camera.onStreamStatus(handler)` | Works for both managed and direct. |
+
+## Device State & Events
+
+| v2 | v3 | Notes |
+|----|-----|-------|
+| `session.events.onGlassesConnectionState(handler)` | `session.device.state.connected.onChange(handler)` | Observable pattern. |
+| `session.events.onBatteryUpdate(handler)` | `session.device.state.batteryLevel.onChange(handler)` | Observable pattern. |
+| `session.events.onButtonPress(handler)` | `session.device.onButtonPress(handler)` | |
+| `session.events.onTouchEvent(handler)` | `session.device.onTouchEvent(handler)` | |
+| `session.events.onHeadUp(handler)` | `session.device.onHeadUp(handler)` | |
+| `session.getWifiStatus()` | `session.device.state.wifiConnected.value` | Synchronous read via Observable. |
+| `session.isWifiConnected()` | `session.device.state.wifiConnected.value` | Synchronous read via Observable. |
+| `session.requestWifiSetup(reason)` | `session.device.requestWifiSetup(reason)` | |
+| `session.capabilities` | `session.device.capabilities` | Also still available directly on session. |
+| No equivalent | `session.device.state.batteryLevel.value` | New. Synchronous read of current battery level. |
+| No equivalent | `session.device.state.modelName.value` | New. Current glasses model name. |
+| No equivalent | `session.device.state.charging.value` | New. Whether glasses are charging. |
+
+## Phone
+
+| v2 | v3 | Notes |
+|----|-----|-------|
+| `session.events.onPhoneNotifications(handler)` | `session.phone.notifications.on(handler)` | Sub-scoped manager. |
+| `session.events.onPhoneNotificationDismissed(handler)` | `session.phone.notifications.onDismissed(handler)` | |
+| `session.events.onCalendarEvent(handler)` | `session.phone.calendar.on(handler)` | Sub-scoped manager. |
+| No equivalent | `session.phone.battery` | New. Phone battery level. |
+
+## Storage
+
+| v2 | v3 | Notes |
+|----|-----|-------|
+| `session.simpleStorage.get(key)` | `session.storage.get(key)` | Same signature. |
+| `session.simpleStorage.set(key, value)` | `session.storage.set(key, value)` | Same signature. |
+| `session.simpleStorage.delete(key)` | `session.storage.delete(key)` | Same signature. |
+| `session.simpleStorage.getAll()` | `session.storage.getAll()` | Same signature. |
+
+## Location
+
+| v2 | v3 | Notes |
+|----|-----|-------|
+| `session.location.getLatestLocation(options)` | `session.location.getLatestLocation(options)` | Same signature. |
+| `session.location.subscribeToStream(options, handler)` | `session.location.onUpdate(handler)` | Returns cleanup function. |
+| `session.location.unsubscribeFromStream()` | Call the cleanup function returned by `onUpdate()` | |
+| `session.events.onLocationUpdate(handler)` | `session.location.onUpdate(handler)` | Returns cleanup function. |
+
+## Permissions
+
+| v2 | v3 | Notes |
+|----|-----|-------|
+| No runtime API | `session.permissions.has(permission)` | New. Check a permission at runtime. |
+| No runtime API | `session.permissions.getAll()` | New. Get all permissions. |
+| No runtime API | `session.permissions.onUpdate(handler)` | New. Subscribe to permission changes. |
+
+## LED
+
+| v2 | v3 | Notes |
+|----|-----|-------|
+| `session.led.setColor(color)` | `session.led.setColor(color)` | Same signature. |
+| `session.led.off()` | `session.led.off()` | Same signature. |
+
+## Dashboard
+
+| v2 | v3 | Notes |
+|----|-----|-------|
+| `session.dashboard.content.writeToMain(text)` | `session.dashboard.showText(text)` | Simplified API. |
+| `session.dashboard.content.clear()` | `session.dashboard.clear()` | |
+
+## Time (new in v3)
+
+| v2 | v3 | Notes |
+|----|-----|-------|
+| No equivalent | `session.time.now()` | Current time in user's timezone. |
+| No equivalent | `session.time.zone` | User's timezone string. |
+| No equivalent | `session.time.toLocal(date)` | Convert a Date to user's timezone. |
+| No equivalent | `session.time.format(date, options)` | Format a date with Intl.DateTimeFormat. |
+
+## Settings
+
+| v2 | v3 | Notes |
+|----|-----|-------|
+| `session.settings.get(key, default)` | `session.settingsData` | Raw settings array on session. |
+| `session.settings.onValueChange(key, handler)` | Access via compat shim during v3.0. | Settings API is being redesigned. |
+| `session.settings.getMentraOS(key)` | `session.mentraosSettings[key]` | Direct access to MentraOS settings. |
+| `session.settings.onMentraosChange(key, handler)` | Access via compat shim during v3.0. | Settings API is being redesigned. |
+
+## Lifecycle Events
+
+| v2 | v3 | Notes |
+|----|-----|-------|
+| No equivalent | `session.onReconnected(handler)` | New. Fires when transport reconnects after a blip. |
+| No equivalent | `session.onStopped(handler)` | New. Fires when the session ends. |
+
+## Subscriptions
+
+| v2 | v3 | Notes |
+|----|-----|-------|
+| `session.subscribe(stream)` | Automatic. Registering a handler subscribes. | No manual subscription management. |
+| `session.unsubscribe(stream)` | Call the cleanup function returned by the handler registration. | No manual unsubscription. |
+| `session.events.on(event, handler)` | Use the specific manager instead. | Still works via compat shim in v3.0. |
+
+## Removed in v3
+
+| v2 | v3 | Notes |
+|----|-----|-------|
+| `this.getExpressApp()` | Removed | Use Hono routing directly on the MiniAppServer instance. |
+| `session.sendMessage(msg)` | Available via compat shim | Raw message sending is discouraged. Use managers. |
+| `session.sendBinary(data)` | Available via compat shim | Raw binary sending is discouraged. Use managers. |
+| `session.events.on(event, handler)` | Available via compat shim | Use specific managers instead. Will be removed in v3.1. |
+| Express middleware | Removed | Rewrite as Hono middleware. |

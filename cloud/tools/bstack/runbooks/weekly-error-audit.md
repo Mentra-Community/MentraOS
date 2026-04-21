@@ -4,10 +4,23 @@
 
 Every Monday morning, or after every major deploy. Takes 15-30 minutes.
 
+## Prerequisites
+
+SRE credentials are in Doppler project `mentra-sre` (NOT `mentraos-cloud`):
+
+```bash
+# Run any bstack command with credentials injected
+doppler run --project mentra-sre --config dev -- bstack health
+doppler run --project mentra-sre --config dev -- bstack incidents --limit 10
+doppler run --project mentra-sre --config dev -- bstack sql "SELECT ..."
+```
+
+**Important**: The hot storage table (`remote(t373499_mentracloud_prod_logs)`) only holds the last few minutes of data. For weekly audits, use the historical/S3 table: `s3Cluster(primary, t373499_mentracloud_prod_s3)` with `WHERE _row_type = 1`. Queries are slower (~3-5s) but have full history.
+
 ## Quick Check (30 seconds)
 
 ```bash
-bstack sql "SELECT count() as total FROM remote(t373499_mentracloud_prod_logs) WHERE dt >= now() - INTERVAL 7 DAY AND JSONExtract(raw, 'feature', 'Nullable(String)') = 'unhandled-rejection'"
+bstack sql "SELECT count() as total FROM s3Cluster(primary, t373499_mentracloud_prod_s3) WHERE _row_type = 1 AND dt >= now() - INTERVAL 7 DAY AND JSONExtractString(raw, 'feature') = 'unhandled-rejection'"
 ```
 
 Any results = a bug that would have crashed the server. File an issue immediately.
@@ -17,7 +30,7 @@ Any results = a bug that would have crashed the server. File an issue immediatel
 ### Step 1: Unhandled Rejections (30 seconds)
 
 ```bash
-bstack sql "SELECT dt, JSONExtract(raw, 'message', 'Nullable(String)') as message, JSONExtract(raw, 'region', 'Nullable(String)') as region FROM remote(t373499_mentracloud_prod_logs) WHERE dt >= now() - INTERVAL 7 DAY AND JSONExtract(raw, 'feature', 'Nullable(String)') = 'unhandled-rejection' ORDER BY dt DESC LIMIT 20"
+bstack sql "SELECT dt, JSONExtractString(raw, 'message') as message, JSONExtractString(raw, 'region') as region FROM s3Cluster(primary, t373499_mentracloud_prod_s3) WHERE _row_type = 1 AND dt >= now() - INTERVAL 7 DAY AND JSONExtractString(raw, 'feature') = 'unhandled-rejection' ORDER BY dt DESC LIMIT 20"
 ```
 
 **Zero results = good.** Any result = a code bug where a promise rejected without a `.catch()`. The global handler (issue 070) kept the server alive, but the root cause needs fixing.
@@ -25,7 +38,7 @@ bstack sql "SELECT dt, JSONExtract(raw, 'message', 'Nullable(String)') as messag
 ### Step 2: Top Errors by Count (2 minutes)
 
 ```bash
-bstack sql "SELECT JSONExtract(raw, 'service', 'Nullable(String)') as service, substring(JSONExtract(raw, 'message', 'Nullable(String)'), 1, 80) as message, count() as total FROM remote(t373499_mentracloud_prod_logs) WHERE dt >= now() - INTERVAL 7 DAY AND JSONExtract(raw, 'level', 'Nullable(String)') IN ('error', 'fatal') AND JSONExtract(raw, 'region', 'Nullable(String)') = 'us-central' GROUP BY service, message ORDER BY total DESC LIMIT 20"
+bstack sql "SELECT JSONExtractString(raw, 'service') as service, substring(JSONExtractString(raw, 'message'), 1, 80) as message, count() as total FROM s3Cluster(primary, t373499_mentracloud_prod_s3) WHERE _row_type = 1 AND dt >= now() - INTERVAL 7 DAY AND JSONExtractString(raw, 'level') IN ('error', 'fatal') AND JSONExtractString(raw, 'region') = 'us-central' GROUP BY service, message ORDER BY total DESC LIMIT 20"
 ```
 
 For each entry, ask:
@@ -37,10 +50,18 @@ For each entry, ask:
 | Is this new since last week?                        | Investigate — new errors after a deploy often indicate a regression. |
 | Is this > 10,000 occurrences?                       | It's noise. Rate-limit, sample, or downgrade to `debug`.             |
 
+### Step 2b: Memory Leak Check (1 minute)
+
+```bash
+bstack sql "SELECT toStartOfHour(dt) as hour, avg(JSONExtractInt(raw, 'disposedSessionsPendingGC')) as avg_leaked, avg(JSONExtractFloat(raw, 'rssMB')) as rss, avg(JSONExtractInt(raw, 'activeSessions')) as sessions FROM s3Cluster(primary, t373499_mentracloud_prod_s3) WHERE _row_type = 1 AND JSONExtractString(raw, 'feature') = 'system-vitals' AND JSONExtractString(raw, 'region') = 'us-central' AND dt >= now() - INTERVAL 24 HOUR GROUP BY hour ORDER BY hour ASC"
+```
+
+If `disposedSessionsPendingGC` climbs above 0 and stays there, sessions are leaking. Check the timer audit section in the pod-crash runbook.
+
 ### Step 3: Top Warnings by Count (2 minutes)
 
 ```bash
-bstack sql "SELECT JSONExtract(raw, 'service', 'Nullable(String)') as service, substring(JSONExtract(raw, 'message', 'Nullable(String)'), 1, 80) as message, count() as total FROM remote(t373499_mentracloud_prod_logs) WHERE dt >= now() - INTERVAL 7 DAY AND JSONExtract(raw, 'level', 'Nullable(String)') = 'warn' AND JSONExtract(raw, 'region', 'Nullable(String)') = 'us-central' GROUP BY service, message ORDER BY total DESC LIMIT 20"
+bstack sql "SELECT JSONExtractString(raw, 'service') as service, substring(JSONExtractString(raw, 'message'), 1, 80) as message, count() as total FROM s3Cluster(primary, t373499_mentracloud_prod_s3) WHERE _row_type = 1 AND dt >= now() - INTERVAL 7 DAY AND JSONExtractString(raw, 'level') = 'warn' AND JSONExtractString(raw, 'region') = 'us-central' GROUP BY service, message ORDER BY total DESC LIMIT 20"
 ```
 
 Warnings > 10,000/week are noise candidates. Each one is a hint at an architectural gap — the code handles it, but something upstream could be improved to prevent it.
@@ -48,7 +69,7 @@ Warnings > 10,000/week are noise candidates. Each one is a hint at an architectu
 ### Step 4: Log Volume by Service (2 minutes)
 
 ```bash
-bstack sql "SELECT JSONExtract(raw, 'service', 'Nullable(String)') as service, count() as total, round(count() / 7 / 24 / 60, 0) as per_minute FROM remote(t373499_mentracloud_prod_logs) WHERE dt >= now() - INTERVAL 7 DAY AND JSONExtract(raw, 'region', 'Nullable(String)') = 'us-central' GROUP BY service ORDER BY total DESC LIMIT 20"
+bstack sql "SELECT JSONExtractString(raw, 'service') as service, count() as total, round(count() / 7 / 24 / 60, 0) as per_minute FROM s3Cluster(primary, t373499_mentracloud_prod_s3) WHERE _row_type = 1 AND dt >= now() - INTERVAL 7 DAY AND JSONExtractString(raw, 'region') = 'us-central' GROUP BY service ORDER BY total DESC LIMIT 20"
 ```
 
 The top 3 services probably account for 80% of log volume. For each:
@@ -76,7 +97,7 @@ Compare to last week:
 ### Step 6: Connection Churn (1 minute)
 
 ```bash
-bstack sql "SELECT toStartOfHour(dt) as hour, sum(JSONExtract(raw, 'wsDisconnects', 'Nullable(Int32)')) as disconnects, sum(JSONExtract(raw, 'wsReconnects', 'Nullable(Int32)')) as reconnects, max(JSONExtract(raw, 'activeSessions', 'Nullable(Int32)')) as peak_sessions FROM remote(t373499_mentracloud_prod_logs) WHERE dt >= now() - INTERVAL 7 DAY AND JSONExtract(raw, 'feature', 'Nullable(String)') = 'system-vitals' AND JSONExtract(raw, 'region', 'Nullable(String)') = 'us-central' GROUP BY hour ORDER BY hour DESC LIMIT 48"
+bstack sql "SELECT toStartOfHour(dt) as hour, sum(JSONExtractInt(raw, 'wsDisconnects')) as disconnects, sum(JSONExtractInt(raw, 'wsReconnects')) as reconnects, max(JSONExtractInt(raw, 'activeSessions')) as peak_sessions FROM s3Cluster(primary, t373499_mentracloud_prod_s3) WHERE _row_type = 1 AND dt >= now() - INTERVAL 7 DAY AND JSONExtractString(raw, 'feature') = 'system-vitals' AND JSONExtractString(raw, 'region') = 'us-central' GROUP BY hour ORDER BY hour DESC LIMIT 48"
 ```
 
 Is churn getting better or worse? Does it correlate with time of day (peak hours)?
@@ -150,3 +171,29 @@ Heap: [stable/climbing] at [X]MB with [X] sessions
 - [071 Observability Hygiene Spike](../../issues/071-observability-hygiene/spike.md) — full analysis of the log noise problem
 - [067 Heap Growth Investigation](../../issues/067-heap-growth-investigation/spike.md) — how log volume crashed the server
 - [069 WS Disconnect Observability](../../issues/069-ws-disconnect-observability/spike.md) — how to prove client-side disconnects
+- [074 SDK v3 Merge & Ship](../../issues/074-sdk-v3-merge-and-ship/spike.md) — France OOM investigation, timer audit
+
+## Tips & Tricks
+
+### JSONExtract syntax
+
+Use `JSONExtractString(raw, 'field')`, `JSONExtractInt(raw, 'field')`, `JSONExtractFloat(raw, 'field')` — NOT `json.field` dot notation (doesn't work) or `JSONExtract(raw, 'field', 'Nullable(String)')` (verbose).
+
+### Hot vs historical storage
+
+| Table | Data range | Speed | Use for |
+|-------|-----------|-------|---------|
+| `remote(t373499_mentracloud_prod_logs)` | Last ~2-5 minutes | Fast (<1s) | Real-time debugging |
+| `s3Cluster(primary, t373499_mentracloud_prod_s3)` | Full history | Slow (3-5s) | Weekly audits, investigations |
+| `remote(t373499_augmentos_logs)` | Last ~2-5 minutes (dev/debug) | Fast | Dev/debug real-time |
+| `s3Cluster(primary, t373499_augmentos_s3)` | Full history (dev/debug) | Slow | Dev/debug investigations |
+
+Always add `WHERE _row_type = 1` when querying S3 tables (filters to log rows, excludes metrics).
+
+### Maintain this runbook
+
+After every audit, update:
+- New error patterns discovered
+- Query patterns that worked well
+- Thresholds that need adjusting
+- Tools or credentials that were hard to find

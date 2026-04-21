@@ -237,7 +237,7 @@ export class UserSettingsManager {
 
         const message = {
           type: "augmentos_settings_update",
-          sessionId: `${this.userSession.sessionId}-${packageName}`,
+          sessionId: this.userSession.getAppSessionId(packageName),
           settings: mentraosSettings,
           timestamp,
         };

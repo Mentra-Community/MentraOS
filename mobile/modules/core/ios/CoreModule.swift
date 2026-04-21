@@ -44,7 +44,9 @@ public class CoreModule: Module {
             "ota_update_available",
             "ota_progress",
             "send_command_to_ble",
-            "receive_command_from_ble"
+            "receive_command_from_ble",
+            "miniapp_selected",
+            "captions_tester_incident"
         )
 
         OnCreate {
@@ -172,11 +174,25 @@ public class CoreModule: Module {
             }
         }
 
+        AsyncFunction("dbg1") {
+            await MainActor.run {
+                CoreManager.shared.dbg1()
+                CoreManager.shared.sgc?.dbg1()
+            }
+        }
+
+        AsyncFunction("dbg2") {
+            await MainActor.run {
+                CoreManager.shared.dbg2()
+                CoreManager.shared.sgc?.dbg2()
+            }
+        }
+
         // MARK: - Incident Reporting
 
-        AsyncFunction("sendIncidentId") { (incidentId: String) in
+        AsyncFunction("sendIncidentId") { (incidentId: String, apiBaseUrl: String?) in
             await MainActor.run {
-                CoreManager.shared.sendIncidentId(incidentId)
+                CoreManager.shared.sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
             }
         }
 

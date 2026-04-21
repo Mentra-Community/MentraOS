@@ -61,6 +61,9 @@ abstract class SGCManager {
         setDashboardPosition(height, depth)
     }
 
+    // Dashboard Menu (default no-op — only G2 supports this)
+    open fun setDashboardMenu(items: List<Map<String, Any>>) {}
+
     // Device Control
     abstract fun setHeadUpAngle(angle: Int)
     abstract fun getBatteryStatus()
@@ -86,7 +89,9 @@ abstract class SGCManager {
     abstract fun getConnectedBluetoothName(): String
     abstract fun cleanup()
     abstract fun ping()
-    
+    abstract fun dbg1()
+    abstract fun dbg2()
+
     // Network Management
     abstract fun requestWifiScan()
     abstract fun sendWifiCredentials(ssid: String, password: String)
@@ -97,7 +102,7 @@ abstract class SGCManager {
     abstract fun sendUserEmailToGlasses(email: String)
 
     // Incident Reporting
-    abstract fun sendIncidentId(incidentId: String)
+    abstract fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null)
 
     // Gallery
     abstract fun queryGalleryStatus()

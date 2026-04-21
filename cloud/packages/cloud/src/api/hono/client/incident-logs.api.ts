@@ -21,6 +21,14 @@ const logger = rootLogger.child({ service: "incidents.api" });
 
 const app = new Hono<AppEnv>();
 
+function normalizeIncidentString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 // ============================================================================
 // Create Incident
 // ============================================================================
@@ -98,6 +106,11 @@ app.post("/", async (c) => {
       incidentId,
       userId: userEmail,
       status: "processing",
+      submissionMode: body.feedback.submissionMode,
+      triggerArea: normalizeIncidentString(body.feedback.triggerArea),
+      triggerReason: normalizeIncidentString(body.feedback.triggerReason),
+      sourceAppletPackageName: normalizeIncidentString(body.feedback.sourceAppletPackageName),
+      sourceAppletName: normalizeIncidentString(body.feedback.sourceAppletName),
     });
 
     logger.info({ incidentId, userId: userEmail }, "Created incident for bug report");

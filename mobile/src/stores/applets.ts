@@ -14,6 +14,7 @@ import * as Sentry from "@sentry/react-native"
 import {getCurrentRoute, push} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
 import CoreModule from "core"
+import {submitMiniappStartFailedBugReport} from "@/services/bugReport/miniappStartBugReport"
 import restComms from "@/services/RestComms"
 import STTModelManager from "@/services/STTModelManager"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
@@ -44,7 +45,7 @@ export interface ClientAppletInterface extends AppletInterface {
 interface AppStatusState {
   apps: ClientAppletInterface[]
   refreshApplets: () => Promise<void>
-  retryStartApp: (packageName: string) => void
+  retryStartApp: (packageName: string) => Promise<void>
   startApplet: (applet: ClientAppletInterface, options?: {skipNavigation?: boolean}) => Promise<void>
   stopApplet: (packageName: string) => Promise<void>
   stopAllApplets: () => AsyncResult<void, Error>
@@ -152,6 +153,21 @@ export const getLastOpenTime = (packageName: string): AsyncResult<number, Error>
   })
 }
 
+export const sortAppsByLastOpenTime = async <T extends {packageName: string}>(apps: T[]): Promise<T[]> => {
+  const timestamps = await Promise.all(
+    apps.map(async (app) => ({
+      app,
+      time: await getLastOpenTime(app.packageName),
+    })),
+  )
+  return timestamps
+    .sort((a, b) => {
+      if (a.time.is_error() || b.time.is_error()) return 0
+      return a.time.value - b.time.value
+    })
+    .map((entry) => entry.app)
+}
+
 export type OrderMap = Record<string, number>
 const APP_ORDER_KEY = "foreground_apps_order"
 export const saveAppsOrder = (orderMap: OrderMap) => {
@@ -191,6 +207,7 @@ export const SYSTEM_APPS = [
   mentraAiPackageName,
   notifyPackageName,
   feedbackPackageName,
+  lmaInstallerPackageName,
 ]
 
 // get offline applets:
@@ -455,24 +472,8 @@ const getOfflineApplets = async (): Promise<ClientAppletInterface[]> => {
       type: "background",
       logoUrl: require("@assets/applet-icons/store.png"),
       local: false,
-      onStart: () => {
-        return Res.try_async(async () => {
-          const appSwitcherUi = useSettingsStore.getState().getSetting(SETTINGS.app_switcher_ui.key)
-          if (!appSwitcherUi) {
-            saveLocalAppRunningState(storePackageName, true)
-          }
-          return undefined
-        })
-      },
-      onStop: () => {
-        return Res.try_async(async () => {
-          const appSwitcherUi = useSettingsStore.getState().getSetting(SETTINGS.app_switcher_ui.key)
-          if (!appSwitcherUi) {
-            saveLocalAppRunningState(storePackageName, false)
-          }
-          return undefined
-        })
-      },
+      onStart: () => saveLocalAppRunningState(storePackageName, true),
+      onStop: () => saveLocalAppRunningState(storePackageName, false),
     },
     {
       packageName: mirrorPackageName,
@@ -533,8 +534,7 @@ const getOfflineApplets = async (): Promise<ClientAppletInterface[]> => {
   ]
 
   let superMode = useSettingsStore.getState().getSetting(SETTINGS.super_mode.key)
-  let appSwitcherUi = useSettingsStore.getState().getSetting(SETTINGS.app_switcher_ui.key)
-  if (superMode && appSwitcherUi) {
+  if (superMode) {
     miniApps.push({
       packageName: lmaInstallerPackageName,
       name: translate("miniApps:lmaInstaller"),
@@ -555,17 +555,6 @@ const getOfflineApplets = async (): Promise<ClientAppletInterface[]> => {
     })
   }
 
-  if (!appSwitcherUi) {
-    // remove the settings, gallery, and simulator apps:
-    miniApps = miniApps.filter(
-      (app) =>
-        app.packageName !== settingsPackageName &&
-        app.packageName !== galleryPackageName &&
-        app.packageName !== simulatedPackageName &&
-        app.packageName !== mirrorPackageName,
-    )
-  }
-
   // check the storage for the running state of the applets and update them:
   for (const mapp of miniApps) {
     let runningRes = await storage.load(`${mapp.packageName}_running`)
@@ -583,14 +572,6 @@ const getOfflineApplets = async (): Promise<ClientAppletInterface[]> => {
 const startStopOfflineApplet = (applet: ClientAppletInterface, status: boolean): AsyncResult<void, Error> => {
   // await useSettingsStore.getState().setSetting(packageName, status)
   return Res.try_async(async () => {
-    let packageName = applet.packageName
-
-    let appSwitcherUi = useSettingsStore.getState().getSetting(SETTINGS.app_switcher_ui.key)
-    if (packageName === storePackageName && !appSwitcherUi) {
-      push("/store")
-      return
-    }
-
     if (!status && applet.onStop) {
       const result = await applet.onStop()
       if (result.is_error()) {
@@ -664,7 +645,7 @@ const startStopApplet = (applet: ClientAppletInterface, status: boolean): AsyncR
 export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
   apps: [],
 
-  retryStartApp: (packageName: string) => {
+  retryStartApp: async (packageName: string) => {
     // Re-send start request and set up polling (used by error screen retry)
     if (refreshInterval) {
       BackgroundTimer.clearInterval(refreshInterval)
@@ -682,7 +663,12 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
         }
       }
     }, 1000)
-    restComms.startApp(packageName)
+    const applet = get().apps.find((app) => app.packageName === packageName)
+    const startResult = await restComms.startApp(packageName)
+    if (startResult.is_error() && applet) {
+      console.error(`Failed to retry start applet ${packageName}: ${startResult.error}`)
+      void submitMiniappStartFailedBugReport(applet, startResult.error, "retry_start")
+    }
   },
 
   refreshApplets: async () => {
@@ -698,8 +684,13 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
     let res = await restComms.getApplets()
     if (res.is_error()) {
       console.error(`APPLETS: Failed to get applets: ${res.error}`)
-      // continue anyway in case we're just offline:
       Sentry.captureException(res.error)
+      // Bail out instead of replacing the store with an empty list. On transient
+      // failures (WS reconnecting, server 503, offline) we'd otherwise flip
+      // every app's running flag to false, cascading into a "Cannot reach"
+      // error screen for any open miniapp webview. The server is the source
+      // of truth — if we can't reach it, keep the last known state.
+      return
     } else {
       // convert to the client applet interface:
       onlineApps = res.value.map((app) => ({
@@ -770,7 +761,6 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
     for (const applet of applets) {
       if (applet.packageName === notifyPackageName) {
         // On Android, route to notification settings instead of generic webview settings
-        applet.offline = true
         applet.offlineRoute = "/miniapps/settings/notifications"
       }
     }
@@ -850,17 +840,15 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
     }))
 
     // open the app webview if it has one:
-    let appSwitcherUi = useSettingsStore.getState().getSetting(SETTINGS.app_switcher_ui.key)
-    if (appSwitcherUi && !options?.skipNavigation) {
+    if (!options?.skipNavigation) {
       // only open if the current route is home:
       const currentRoute = getCurrentRoute()
       if (currentRoute === "/home") {
         saveLastOpenTime(applet.packageName)
-        if (applet.offline) {
-          const offlineRoute = applet.offlineRoute
-          if (offlineRoute) {
-            push(offlineRoute, {transition: "zoom"})
-          }
+        if (applet.offlineRoute) {
+          push(applet.offlineRoute, {transition: "zoom"})
+        } else if (applet.offline) {
+          // offline app with no route - nothing to navigate to
         } else if (applet.local) {
           push("/applet/local", {
             packageName: applet.packageName,
@@ -890,6 +878,7 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
     const result = await startStopApplet(applet, true)
     if (result.is_error()) {
       console.error(`Failed to start applet ${applet.packageName}: ${result.error}`)
+      void submitMiniappStartFailedBugReport(applet, result.error, "initial_start")
       set((state) => ({
         apps: state.apps.map((a) => (a.packageName === packageName ? {...a, running: false, loading: false} : a)),
       }))
@@ -972,7 +961,7 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
     }))
   },
 
-  setInstalledLmas: (installedLmas: ClientAppletInterface[]) => {
+  setInstalledLmas: (_installedLmas: ClientAppletInterface[]) => {
     // set({localMiniApps: installedLmas})
   },
 }))

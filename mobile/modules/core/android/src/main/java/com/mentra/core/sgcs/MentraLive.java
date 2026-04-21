@@ -43,6 +43,8 @@ import com.mentra.core.utils.K900ProtocolUtils;
 import com.mentra.core.utils.MessageChunker;
 import com.mentra.core.utils.audio.Lc3Player;
 import com.mentra.core.utils.BlePhotoUploadService;
+import com.mentra.core.utils.IncidentLogBleRelayNaming;
+import com.mentra.core.utils.IncidentLogBleUploadService;
 import com.mentra.core.GlassesStore;
 import com.mentra.core.utils.PhoneAudioMonitor;
 
@@ -232,6 +234,10 @@ public class MentraLive extends SGCManager {
     // BLE photo transfer tracking
     private Map<String, BlePhotoTransfer> blePhotoTransfers = new HashMap<>();
 
+    /** Expected incident log relay files from glasses (B… firmware, L… logcat). */
+    private final ConcurrentHashMap<String, BleIncidentLogRelay> bleIncidentLogRelays =
+            new ConcurrentHashMap<>();
+
     // File packet reassembly buffer for handling fragmented BLE notifications
     // Android BLE stack delivers notifications in MTU-sized chunks (253 bytes with default MTU)
     // iOS CoreBluetooth delivers full packets, so this buffer is only needed on Android
@@ -274,6 +280,28 @@ public class MentraLive extends SGCManager {
 
         void setAuthToken(String authToken) {
             this.authToken = authToken != null ? authToken : "";
+        }
+    }
+
+    private enum BleIncidentLogKind {
+        FIRMWARE,
+        LOGCAT
+    }
+
+    private static final class BleIncidentLogRelay {
+        final String fileBaseKey;
+        final String incidentId;
+        final String apiBaseUrl;
+        final BleIncidentLogKind kind;
+        FileTransferSession session;
+
+        BleIncidentLogRelay(String fileBaseKey, String incidentId, String apiBaseUrl,
+                            BleIncidentLogKind kind) {
+            this.fileBaseKey = fileBaseKey;
+            this.incidentId = incidentId;
+            this.apiBaseUrl = apiBaseUrl;
+            this.kind = kind;
+            this.session = null;
         }
     }
 
@@ -777,6 +805,7 @@ public class MentraLive extends SGCManager {
                         isConnecting = true;
                     }
                     stopScan();
+                    isReconnecting = false;
                     connectToDevice(result.getDevice());
                 }
             }
@@ -903,6 +932,9 @@ public class MentraLive extends SGCManager {
         isReconnecting = true;
 
         reconnectAttempts++;
+        // RN home UI keys off core.searching for "connecting"; auto-reconnect does not set that.
+        // Publish CONNECTING so the app shows reconnecting during backoff (e.g. post-shutdown delay).
+        updateConnectionState(ConnTypes.CONNECTING);
         // Calculate delay with exponential backoff
         long delay = Math.min(BASE_RECONNECT_DELAY_MS * (1L << reconnectAttempts), MAX_RECONNECT_DELAY_MS);
         // After K900 shutdown, glasses need time to power cycle before they advertise again
@@ -923,23 +955,37 @@ public class MentraLive extends SGCManager {
             @Override
             public void run() {
                 if (!isConnected && !isConnecting && !isKilled) {
-                    // Check for last known device name to start scan
-                    // SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
-                    // String lastDeviceName = prefs.getString(PREF_DEVICE_NAME, null);
+                    // Prefer saved MAC for direct GATT connect (faster and more reliable than scanning).
+                    // Falls back to name-based scan if no address is saved.
+                    String lastDeviceAddress = (String) GlassesStore.INSTANCE.get("core", "device_address");
+                    if (lastDeviceAddress != null && !lastDeviceAddress.isEmpty() && bluetoothAdapter != null) {
+                        try {
+                            BluetoothDevice device = bluetoothAdapter.getRemoteDevice(lastDeviceAddress);
+                            Log.i(TAG, "🔌 🔁 RECONNECT #" + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS
+                                    + " - Direct GATT to saved address " + lastDeviceAddress);
+                            Bridge.log("LIVE: 🔌 🔁 Reconnection attempt " + reconnectAttempts + "/"
+                                    + MAX_RECONNECT_ATTEMPTS + " - connecting to saved BLE address: "
+                                    + lastDeviceAddress);
+                            // Release latch so connect timeout / GATT error can call handleReconnection() again
+                            isReconnecting = false;
+                            connectToDevice(device);
+                            return;
+                        } catch (IllegalArgumentException e) {
+                            Log.w(TAG, "🔌 ⚠️ Invalid saved BLE address, falling back to scan: " + lastDeviceAddress, e);
+                            Bridge.log("LIVE: 🔌 ⚠️ Invalid saved BLE address, using scan fallback");
+                        }
+                    }
 
-                    if (savedDeviceName != null && bluetoothAdapter != null) {
-                        Log.i(TAG, "🔌 🔍 STARTING RECONNECT #" + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS + 
+                    if (savedDeviceName != null && !savedDeviceName.isEmpty() && bluetoothAdapter != null) {
+                        Log.i(TAG, "🔌 🔍 STARTING RECONNECT #" + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS +
                               " - Fast scan (" + RECONNECT_SCAN_TIMEOUT_MS + "ms) for device: " + savedDeviceName);
-                        Bridge.log("LIVE: 🔌 🔍 Reconnection attempt " + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS + 
+                        Bridge.log("LIVE: 🔌 🔍 Reconnection attempt " + reconnectAttempts + "/" + MAX_RECONNECT_ATTEMPTS +
                               " - Starting FAST BLE scan for: " + savedDeviceName);
-                        // Start scan to find this device (will use fast timeout)
                         startScan();
-                        // The scan will automatically connect if it finds a device with the saved name
                     } else {
-                        Log.w(TAG, "🔌 ⚠️ RECONNECT #" + reconnectAttempts + " SKIPPED - No saved device name available");
-                        Bridge.log("LIVE: 🔌 ⚠️ Reconnection attempt " + reconnectAttempts + 
-                              " - No last device name available, scheduling next attempt");
-                        // Schedule another reconnection attempt - maybe the name will be available later
+                        Log.w(TAG, "🔌 ⚠️ RECONNECT #" + reconnectAttempts + " SKIPPED - No saved address or device id");
+                        Bridge.log("LIVE: 🔌 ⚠️ Reconnection attempt " + reconnectAttempts +
+                              " - No saved BLE address or device id, scheduling next attempt");
                         handleReconnection();
                     }
                 } else if (isConnected) {
@@ -975,6 +1021,10 @@ public class MentraLive extends SGCManager {
                     isConnected = true;
                     connectedDevice = gatt.getDevice();
                     GlassesStore.INSTANCE.apply("glasses", "bluetoothName", connectedDevice.getName());
+                    // Persist MAC so reconnection can use direct GATT instead of scanning
+                    if (connectedDevice.getAddress() != null) {
+                        GlassesStore.INSTANCE.apply("core", "device_address", connectedDevice.getAddress());
+                    }
 
                     // Save the connected device name for future reconnections
                     // no longer needed as we now save it immediately in connectToDevice()
@@ -1963,8 +2013,8 @@ public class MentraLive extends SGCManager {
                 for (int i = 0; i < Math.min(data.length, 64); i++) {
                     hexDump.append(String.format("%02X ", data[i]));
                 }
-                Bridge.log("LIVE: Thread-" + threadId + ": 📦 Raw file packet data length=" + data.length +
-                      ", first 64 bytes: " + hexDump.toString());
+                // Bridge.log("LIVE: Thread-" + threadId + ": 📦 Raw file packet data length=" + data.length +
+                //       ", first 64 bytes: " + hexDump.toString());
 
                 // The data IS the file packet - it starts with ## and contains the full file packet structure
                 K900ProtocolUtils.FilePacketInfo packetInfo = K900ProtocolUtils.extractFilePacket(data);
@@ -2751,6 +2801,14 @@ public class MentraLive extends SGCManager {
                 if (photoTransfer != null) {
                     Bridge.log("LIVE: 🧹 Cleaned up timed out BLE photo transfer for: " + bleImgId);
                 }
+
+                // Reset stale session on incident log relay so a retry starts fresh.
+                // Keep the relay entry itself — glasses will retry after receiving transfer_complete:false.
+                BleIncidentLogRelay incidentRelay = bleIncidentLogRelays.get(bleImgId);
+                if (incidentRelay != null) {
+                    incidentRelay.session = null;
+                    Bridge.log("LIVE: 🧹 Reset timed out BLE incident log relay session for: " + bleImgId);
+                }
             }
 
         } catch (Exception e) {
@@ -2792,6 +2850,10 @@ public class MentraLive extends SGCManager {
             BlePhotoTransfer photoTransfer = blePhotoTransfers.remove(bleImgId);
             if (photoTransfer != null) {
                 Bridge.log("LIVE: 🧹 Cleaned up failed BLE photo transfer for: " + bleImgId + " (requestId: " + photoTransfer.requestId + ")");
+            }
+
+            if (bleIncidentLogRelays.remove(bleImgId) != null) {
+                Bridge.log("LIVE: 🧹 Cleaned up failed BLE incident log relay for: " + bleImgId);
             }
         } catch (Exception e) {
             Log.e(TAG, "❌ Error processing transfer failed notification", e);
@@ -3227,13 +3289,26 @@ public class MentraLive extends SGCManager {
     }
 
     @Override
-    public void sendIncidentId(String incidentId) {
+    public void sendIncidentId(String incidentId, String apiBaseUrl) {
         try {
+            String base = apiBaseUrl != null ? apiBaseUrl.trim() : "";
+            if (base.isEmpty()) {
+                base = "https://api.mentra.glass";
+            }
+            String bKey = IncidentLogBleRelayNaming.bleFileBaseName(incidentId, 'B');
+            String lKey = IncidentLogBleRelayNaming.bleFileBaseName(incidentId, 'L');
+            bleIncidentLogRelays.put(bKey,
+                    new BleIncidentLogRelay(bKey, incidentId, base, BleIncidentLogKind.FIRMWARE));
+            bleIncidentLogRelays.put(lKey,
+                    new BleIncidentLogRelay(lKey, incidentId, base, BleIncidentLogKind.LOGCAT));
+
             JSONObject json = new JSONObject();
             json.put("type", "upload_incident_logs");
             json.put("incidentId", incidentId);
+            json.put("apiBaseUrl", base);
             sendJson(json, true);
-            Bridge.log("LIVE: Sent incidentId to glasses for log upload: " + incidentId);
+            Bridge.log("LIVE: Sent incidentId to glasses for log upload: " + incidentId
+                    + " (BLE relay keys " + bKey + ", " + lKey + ")");
         } catch (JSONException e) {
             Log.e(TAG, "Error creating upload_incident_logs command", e);
         }
@@ -3585,6 +3660,9 @@ public class MentraLive extends SGCManager {
         keepAwake();
     }
 
+    public void dbg1() {}
+    public void dbg2() {}
+
     public boolean displayBitmap(String base64) {
         return false;
     }
@@ -3924,6 +4002,10 @@ public class MentraLive extends SGCManager {
                         switch (bondState) {
                             case BluetoothDevice.BOND_BONDED:
                                 Bridge.log("LIVE: CTKD: ✅ Successfully bonded with device - BT Classic connection established");
+                                if (isKilled) {
+                                    Bridge.log("LIVE: CTKD: Ignoring bond complete — SGC destroyed");
+                                    break;
+                                }
                                 isBtClassicConnected = true;
                                 audioConnected = true;
                                 bondingRetryCount = 0; // Reset retry counter on success
@@ -3952,6 +4034,9 @@ public class MentraLive extends SGCManager {
                                     if (bondingRetryCount < MAX_BONDING_RETRIES && connectedDevice != null) {
                                         Bridge.log("LIVE: CTKD: 🔄 Retrying bonding in " + BONDING_RETRY_DELAY_MS + "ms...");
                                         handler.postDelayed(() -> {
+                                            if (isKilled) {
+                                                return;
+                                            }
                                             if (connectedDevice != null && connectedDevice.getBondState() != BluetoothDevice.BOND_BONDED) {
                                                 Bridge.log("LIVE: CTKD: 🔄 Initiating bonding retry #" + bondingRetryCount);
                                                 createBond(connectedDevice);
@@ -4068,6 +4153,17 @@ public class MentraLive extends SGCManager {
         @Override
         public void onServiceConnected(int profile, BluetoothProfile proxy) {
             if (profile == BluetoothProfile.A2DP) {
+                if (isKilled) {
+                    Bridge.log("LIVE: A2DP: Ignoring onServiceConnected — SGC destroyed (stale profile callback)");
+                    try {
+                        if (bluetoothAdapter != null && proxy != null) {
+                            bluetoothAdapter.closeProfileProxy(BluetoothProfile.A2DP, proxy);
+                        }
+                    } catch (Exception e) {
+                        Bridge.log("LIVE: A2DP: Error closing stale proxy: " + e.getMessage());
+                    }
+                    return;
+                }
                 a2dpProfile = (BluetoothA2dp) proxy;
                 Bridge.log("LIVE: A2DP: Profile proxy obtained");
 
@@ -4092,6 +4188,10 @@ public class MentraLive extends SGCManager {
      * Helper to connect A2DP using the proxy - called from service listener or directly
      */
     private void connectA2dpWithProxy(BluetoothDevice device) {
+        if (isKilled) {
+            Bridge.log("LIVE: A2DP: Skipping connectA2dpWithProxy — SGC destroyed");
+            return;
+        }
         if (a2dpProfile == null || device == null) {
             Bridge.log("LIVE: A2DP: Cannot connect - proxy or device is null");
             return;
@@ -4123,6 +4223,9 @@ public class MentraLive extends SGCManager {
                 // STATE_DISCONNECTING - wait and retry
                 Bridge.log("LIVE: A2DP: Device disconnecting, will retry in 500ms");
                 handler.postDelayed(() -> {
+                    if (isKilled) {
+                        return;
+                    }
                     if (connectedDevice != null && a2dpProfile != null) {
                         connectA2dpWithProxy(connectedDevice);
                     }
@@ -4139,6 +4242,10 @@ public class MentraLive extends SGCManager {
      * Helper to mark audio as connected and notify
      */
     private void markAudioConnected(String deviceName) {
+        if (isKilled) {
+            Bridge.log("LIVE: A2DP: Ignoring markAudioConnected — SGC destroyed (would confuse CoreManager)");
+            return;
+        }
         isBtClassicConnected = true;
         audioConnected = true;
         Bridge.sendAudioConnected(deviceName);
@@ -4154,6 +4261,10 @@ public class MentraLive extends SGCManager {
      * This is needed because being bonded doesn't automatically connect the audio profile
      */
     private void connectA2dpProfile(BluetoothDevice device) {
+        if (isKilled) {
+            Bridge.log("LIVE: A2DP: Skipping connectA2dpProfile — SGC destroyed");
+            return;
+        }
         if (device == null) {
             Bridge.log("LIVE: A2DP: Cannot connect - device is null");
             return;
@@ -4204,7 +4315,6 @@ public class MentraLive extends SGCManager {
         Bridge.log("LIVE: Destroying MentraLiveSGC");
 
         // Mark as killed to prevent reconnection attempts
-        boolean wasKilled = isKilled;
         isKilled = true;
 
         // Stop scanning if in progress
@@ -5504,6 +5614,44 @@ public class MentraLive extends SGCManager {
 
         Bridge.log("LIVE: 📦 BLE photo transfer packet for requestId: " + bleImgId);
 
+        BleIncidentLogRelay incidentRelay = bleIncidentLogRelays.get(bleImgId);
+        if (incidentRelay != null) {
+            Bridge.log("LIVE: 📦 BLE incident log relay packet for: " + bleImgId);
+
+            if (incidentRelay.session == null) {
+                activeFileTransfers.remove(packetInfo.fileName);
+                incidentRelay.session = new FileTransferSession(packetInfo.fileName, packetInfo.fileSize);
+                incidentRelay.session.recalculateTotalPackets(packetInfo.packSize);
+                Bridge.log("LIVE: 📦 Started BLE incident log transfer: " + packetInfo.fileName
+                        + " (" + packetInfo.fileSize + " bytes, " + incidentRelay.session.totalPackets
+                        + " packets, packSize=" + packetInfo.packSize + ")");
+            }
+
+            boolean added = incidentRelay.session.addPacket(packetInfo.packIndex, packetInfo.data);
+
+            if (added && incidentRelay.session.shouldCheckCompletion(packetInfo.packIndex)) {
+                if (incidentRelay.session.isComplete) {
+                    byte[] payload = incidentRelay.session.assembleFile();
+                    if (payload != null) {
+                        uploadBleIncidentLogPayload(incidentRelay, packetInfo.fileName, payload);
+                    } else {
+                        sendTransferCompleteConfirmation(packetInfo.fileName, false);
+                        // Keep relay entry so glasses can retry after transfer_complete:false.
+                        incidentRelay.session = null;
+                    }
+                } else {
+                    List<Integer> missingPackets = incidentRelay.session.getMissingPackets();
+                    Log.e(TAG, "❌ BLE incident log transfer incomplete. Missing " + missingPackets.size()
+                            + " packets: " + missingPackets);
+                    sendTransferCompleteConfirmation(packetInfo.fileName, false);
+                    // Keep relay entry so glasses can retry after transfer_complete:false.
+                    incidentRelay.session = null;
+                }
+            }
+
+            return;
+        }
+
         BlePhotoTransfer photoTransfer = blePhotoTransfers.get(bleImgId);
         Bridge.log("LIVE: 📦 BLE photo transfer for requestId: " + bleImgId + " found: " + (photoTransfer != null));
         if (photoTransfer != null) {
@@ -5775,6 +5923,25 @@ public class MentraLive extends SGCManager {
         }
     }
 
+    private void uploadBleIncidentLogPayload(BleIncidentLogRelay relay, String fileName,
+                                           byte[] jsonUtf8) {
+        String token = getCoreToken();
+        IncidentLogBleUploadService.upload(relay.apiBaseUrl, relay.incidentId, token, jsonUtf8,
+                (success, message) -> new Handler(Looper.getMainLooper()).post(() -> {
+                    if (success) {
+                        Bridge.log("LIVE: ✅ Incident log BLE relay uploaded (" + relay.kind + "): "
+                                + relay.incidentId);
+                        bleIncidentLogRelays.remove(relay.fileBaseKey);
+                    } else {
+                        Log.e(TAG, "❌ Incident log BLE relay upload failed (" + relay.kind + "): "
+                                + message);
+                        // Keep relay entry so glasses can retry after transfer_complete:false.
+                        relay.session = null;
+                    }
+                    sendTransferCompleteConfirmation(fileName, success);
+                }));
+    }
+
     /**
      * Process and upload a BLE photo transfer
      */
@@ -5872,7 +6039,7 @@ public class MentraLive extends SGCManager {
      * SharedPreferences for backward compatibility.
      */
     private String getCoreToken() {
-        Object fromStore = GlassesStore.INSTANCE.get("core", "auth_token");
+        Object fromStore = GlassesStore.INSTANCE.get("core", "core_token");
         if (fromStore instanceof String) {
             String token = (String) fromStore;
             if (token != null && !token.isEmpty()) {

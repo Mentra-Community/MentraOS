@@ -73,7 +73,7 @@ export default function BtClassicPairingScreen() {
   ]
 
   return (
-    <Screen preset="fixed" safeAreaEdges={["bottom"]}>
+    <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
       {/* <Header leftIcon="chevron-left" onLeftPress={handleBack} /> */}
       <OnboardingGuide
         steps={steps}

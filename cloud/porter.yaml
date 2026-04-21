@@ -18,6 +18,11 @@ services:
       SERVICE_NAME: "cloud"
       RTMP_RELAY_URLS: "rtmp-relay-uscentral.mentra.glass:1935"
       LOG_LEVEL: "info"
+      # Output raw JSON to stdout so Vector (BetterStack DaemonSet) can parse
+      # and ship logs. Without this, pino-pretty outputs human-readable text
+      # that Vector can't ingest — and the environment gets zero observability.
+      # See: cloud/issues/067-heap-growth-investigation (why we use Vector, not @logtail/pino)
+      LOG_STDOUT_JSON: "true"
     # Liveness probe — "is the process alive?"
     # Points to /livez which just returns "ok" with zero computation.
     # Previously pointed to /health which iterates all sessions, counts

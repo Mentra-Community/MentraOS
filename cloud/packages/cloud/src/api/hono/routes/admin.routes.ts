@@ -359,6 +359,10 @@ async function approveApp(c: AppContext) {
     const body = await c.req.json().catch(() => ({}));
     const { notes } = body as { notes?: string };
 
+    if (!packageName) {
+      return c.json({ error: "packageName is required" }, 400);
+    }
+
     const appDoc = await App.findOne({ packageName });
 
     if (!appDoc) {
@@ -426,6 +430,9 @@ async function rejectApp(c: AppContext) {
     const body = await c.req.json().catch(() => ({}));
     const { notes } = body as { notes?: string };
 
+    if (!packageName) {
+      return c.json({ error: "packageName is required" }, 400);
+    }
     if (!notes) {
       return c.json({ error: "Rejection notes are required" }, 400);
     }

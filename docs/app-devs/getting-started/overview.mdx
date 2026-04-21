@@ -27,27 +27,25 @@ MentraOS provides:
 Here's a MentraOS app that shows "Hello World" on a smart glasses display:
 
 ```typescript
-import { AppServer } from '@mentra/sdk';
+import { MiniAppServer } from '@mentra/sdk';
 
-class MyApp extends AppServer {
-  protected async onSession(session, sessionId, userId) {
-    // Display "Hello World" on the glasses
-    session.layouts.showTextWall("Hello World from MentraOS!");
-    
-    // Log when user speaks
-    session.events.onTranscription((data) => {
-      console.log(`User said: ${data.text}`);
-    });
-  }
-}
-
-const app = new MyApp({
+const app = new MiniAppServer({
   packageName: 'com.example.myapp',
-  apiKey: process.env.MENTRA_API_KEY,
-  port: 3000
+  apiKey: process.env.MENTRA_API_KEY!,
+  port: 3000,
 });
 
-app.start();
+app.onSession((session) => {
+  // Display "Hello World" on the glasses
+  session.display.showTextWall("Hello World from MentraOS!");
+
+  // Log when user speaks
+  session.transcription.on((data) => {
+    console.log(`User said: ${data.text}`);
+  });
+});
+
+await app.start();
 ```
 
 That's it! This app will:

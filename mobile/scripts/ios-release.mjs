@@ -7,7 +7,7 @@ await setBuildEnv()
 const now = new Date()
 const date = now.toLocaleDateString("en-US", {month: "2-digit", day: "2-digit", year: "2-digit"})
 const time = now.toLocaleTimeString("en-US", {hour: "numeric", minute: "2-digit", hour12: true})
-const archiveName = `MentraOS ${date.replace(/\//g, "-")}, ${time}.xcarchive`
+const archiveName = `Mentra ${date.replace(/\//g, "-")}, ${time}.xcarchive`
 
 const archiveDate = now.toISOString().split("T")[0]
 const archivePath = `${os.homedir()}/Library/Developer/Xcode/Archives/${archiveDate}/${archiveName}`
@@ -24,8 +24,8 @@ await $({
   stdio: "inherit",
   env: process.env,
 })`xcodebuild archive \
-  -workspace ios/MentraOS.xcworkspace \
-  -scheme MentraOS \
+  -workspace ios/Mentra.xcworkspace \
+  -scheme Mentra \
   -configuration Release \
   -destination generic/platform=iOS \
   -archivePath ${archivePath}`

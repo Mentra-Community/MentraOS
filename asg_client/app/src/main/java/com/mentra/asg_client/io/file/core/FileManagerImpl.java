@@ -49,6 +49,9 @@ public class FileManagerImpl implements FileManager {
         this.operationLogger = new FileOperationLogger(logger);
         
         logger.info(TAG, "FileManagerImpl initialized with base directory: " + baseDirectory.getAbsolutePath());
+
+        // Clean up orphaned/empty capture folders left by crashes or failed recordings
+        cleanupOrphanedCaptures();
     }
     
     // FileOperations implementation
@@ -659,5 +662,82 @@ public class FileManagerImpl implements FileManager {
     @Override
     public ThumbnailManager getThumbnailManager() {
         return thumbnailManager;
+    }
+
+    /**
+     * Remove capture folders that are empty or contain no primary media file
+     * (no base.jpg, base.mp4, or any other image/video). These are left behind
+     * when the app crashes mid-recording, when MediaRecorder.stop() fails, or
+     * when the process is OOM-killed.
+     */
+    private void cleanupOrphanedCaptures() {
+        try {
+            File packageDir = directoryManager.getPackageDirectory(getDefaultPackageName());
+            if (packageDir == null || !packageDir.exists()) return;
+
+            File[] dirs = packageDir.listFiles();
+            if (dirs == null) return;
+
+            int cleaned = 0;
+            for (File dir : dirs) {
+                if (!dir.isDirectory()) continue;
+                String name = dir.getName();
+                if (!name.startsWith("IMG_") && !name.startsWith("VID_") && !name.startsWith("BUFFER_")) continue;
+
+                File[] contents = dir.listFiles();
+                if (contents == null || contents.length == 0) {
+                    // Empty directory
+                    dir.delete();
+                    cleaned++;
+                    continue;
+                }
+
+                // Check if any file is a valid primary media file (not just sidecars)
+                boolean hasValidPrimaryMedia = false;
+                for (File f : contents) {
+                    String lower = f.getName().toLowerCase();
+                    boolean isMediaExtension =
+                        lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".png") ||
+                        lower.endsWith(".mp4") || lower.endsWith(".mov") || lower.endsWith(".avi");
+                    // Exclude HDR brackets — they're not standalone media
+                    boolean isBracket = lower.matches("ev-?\\d+\\.jpe?g");
+
+                    if (isMediaExtension && !isBracket) {
+                        boolean isVideo = lower.endsWith(".mp4") || lower.endsWith(".mov") || lower.endsWith(".avi");
+                        if (isVideo) {
+                            // Videos need moov atom validation — a killed process leaves
+                            // a .mp4 with raw data but no index, which is unplayable
+                            if (thumbnailManager.isValidVideo(f)) {
+                                hasValidPrimaryMedia = true;
+                                break;
+                            } else {
+                                logger.warn(TAG, "Found corrupt video (missing moov atom): " + f.getAbsolutePath());
+                            }
+                        } else {
+                            // Photos: if the file exists and has data, it's usable
+                            if (f.length() > 0) {
+                                hasValidPrimaryMedia = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (!hasValidPrimaryMedia) {
+                    // Only sidecars, brackets, or corrupt media — delete all
+                    for (File f : contents) {
+                        f.delete();
+                    }
+                    dir.delete();
+                    cleaned++;
+                }
+            }
+
+            if (cleaned > 0) {
+                logger.info(TAG, "Cleaned up " + cleaned + " orphaned capture folder(s)");
+            }
+        } catch (Exception e) {
+            logger.error(TAG, "Error cleaning up orphaned captures", e);
+        }
     }
 } 

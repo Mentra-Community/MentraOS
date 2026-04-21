@@ -1,0 +1,346 @@
+---
+title: "Device"
+description: "Buttons, gestures, head position, device state, and hardware events."
+---
+
+`session.device` (the DeviceManager) gives your app access to everything about the connected glasses hardware. It exposes reactive state observables for battery, WiFi, and connection status, event handlers for buttons, gestures, and head position, and a capability profile describing what the current device supports.
+
+All event handlers return a cleanup function. Call it to unsubscribe.
+
+## Quick Example
+
+```typescript
+import { MiniAppServer, type MentraSession } from "@mentra/sdk";
+
+const app = new MiniAppServer();
+
+app.onSession((session) => {
+  // React to button presses
+  const stopButtons = session.device.onButtonPress((e) => {
+    session.logger.info(`Button: ${e.buttonId}, type: ${e.pressType}`);
+  });
+
+  // Watch battery level reactively
+  session.device.state.batteryLevel.onChange((level) => {
+    if (level !== null && level < 15) {
+      session.display.showTextWall("Low battery!");
+    }
+  });
+});
+```
+
+## Reactive State
+
+Every property on `session.device.state` is an **Observable**. Read the current value with `.value`, or subscribe to changes with `.onChange(cb)`. The `onChange` method returns a cleanup function.
+
+```typescript
+// Synchronous read
+const connected = session.device.state.connected.value;
+
+// Reactive subscription
+const stop = session.device.state.batteryLevel.onChange((level) => {
+  console.log("Battery is now:", level);
+});
+
+// Unsubscribe later
+stop();
+```
+
+### Connection
+
+| Observable | Type | Description |
+|---|---|---|
+| `state.connected` | `Observable<boolean>` | Whether glasses are connected |
+| `state.modelName` | `Observable<string \| null>` | Model name of the connected glasses |
+
+### Battery
+
+| Observable | Type | Description |
+|---|---|---|
+| `state.batteryLevel` | `Observable<number \| null>` | Glasses battery level, 0 to 100 |
+| `state.charging` | `Observable<boolean \| null>` | Whether the glasses are charging |
+| `state.caseBatteryLevel` | `Observable<number \| null>` | Charging case battery level |
+| `state.caseCharging` | `Observable<boolean \| null>` | Whether the case is charging |
+| `state.caseOpen` | `Observable<boolean \| null>` | Whether the case lid is open |
+| `state.caseRemoved` | `Observable<boolean \| null>` | Whether the glasses have been removed from the case |
+
+### WiFi and Hotspot
+
+| Observable | Type | Description |
+|---|---|---|
+| `state.wifiConnected` | `Observable<boolean>` | Whether WiFi is connected |
+| `state.wifiSsid` | `Observable<string \| null>` | Connected WiFi network name |
+| `state.wifiLocalIp` | `Observable<string \| null>` | Local IP address on the WiFi network |
+| `state.hotspotEnabled` | `Observable<boolean \| null>` | Whether the hotspot is active |
+| `state.hotspotSsid` | `Observable<string \| null>` | Hotspot network name |
+
+## Event Handlers
+
+All event handlers follow the same pattern: pass a callback, get back a cleanup function.
+
+### `onButtonPress(handler)`
+
+Listen for physical button press events on the glasses.
+
+```typescript
+const stop = session.device.onButtonPress((event) => {
+  // event.buttonId - "forward", "back", "select", etc.
+  // event.pressType - "short" or "long"
+  console.log(event.buttonId, event.pressType);
+});
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `event.buttonId` | `string` | Which button was pressed (e.g. `"forward"`, `"back"`, `"select"`) |
+| `event.pressType` | `"short" \| "long"` | Whether it was a short press or a long press |
+
+### `onHeadPosition(handler)`
+
+Listen for head tilt events from the IMU. Fires when the user looks up or down past the threshold.
+
+```typescript
+const stop = session.device.onHeadPosition((event) => {
+  if (event.position === "up") {
+    session.display.showTextWall("Looking up!");
+  }
+});
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `event.position` | `"up" \| "down"` | Current head position |
+
+### `onTouchEvent(handler)` and `onTouchEvent(gesture, handler)`
+
+Listen for touch and gesture events from the glasses touchpad. Call with just a handler to receive all events, or pass a gesture name to filter.
+
+```typescript
+// All touch events
+const stop = session.device.onTouchEvent((event) => {
+  console.log(event.gesture, event.model, event.timestamp);
+});
+
+// Only a specific gesture
+const stop2 = session.device.onTouchEvent("double_tap", (event) => {
+  console.log("Double tap detected!");
+});
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `event.gesture` | `string` | Gesture name (e.g. `"single_tap"`, `"double_tap"`, `"forward_swipe"`, `"backward_swipe"`) |
+| `event.model` | `string` | Device model that produced the event |
+| `event.timestamp` | `Date \| string` | When the gesture occurred |
+
+### `subscribeToGestures(gestures)`
+
+Subscribe to multiple gesture types at once. Returns a single cleanup function that removes all subscriptions.
+
+```typescript
+const stop = session.device.subscribeToGestures([
+  "single_tap",
+  "double_tap",
+  "forward_swipe",
+  "backward_swipe",
+]);
+
+// Unsubscribe from all at once
+stop();
+```
+
+Events from these gestures are delivered through your `onTouchEvent` handlers.
+
+### `onBatteryUpdate(handler)`
+
+Listen for battery change events. This also updates the reactive `state.batteryLevel` and `state.charging` observables automatically.
+
+```typescript
+const stop = session.device.onBatteryUpdate((event) => {
+  console.log(`Battery: ${event.level}%, charging: ${event.charging}`);
+});
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `event.level` | `number` | Battery level, 0 to 100 |
+| `event.charging` | `boolean` | Whether the glasses are charging |
+
+### `onVpsCoordinates(handler)`
+
+Listen for Visual Positioning System (VPS) coordinate updates.
+
+```typescript
+const stop = session.device.onVpsCoordinates((data) => {
+  console.log("VPS update:", data);
+});
+```
+
+## Capabilities
+
+The `capabilities` property holds the current device capability profile. It is set when the glasses connect and updated if the device changes mid-session.
+
+```typescript
+const caps = session.device.capabilities;
+if (caps?.camera?.photo) {
+  session.logger.info("This device supports camera photos");
+}
+```
+
+### `onCapabilitiesChange(handler)`
+
+Subscribe to capability changes. Fires only when capabilities are updated after the initial connection (not on initial subscribe).
+
+```typescript
+const stop = session.device.onCapabilitiesChange((caps) => {
+  if (caps?.camera) {
+    // Enable camera features
+  }
+});
+```
+
+## Actions
+
+### `requestWifiSetup(reason?)`
+
+Prompt the user to configure WiFi on their glasses through the companion app. Pass an optional reason string that is shown to the user.
+
+```typescript
+session.device.requestWifiSetup("This app needs WiFi for real-time sync");
+```
+
+## Common Patterns
+
+### Button Navigation
+
+Use button presses to navigate between screens or cycle through content.
+
+```typescript
+app.onSession((session) => {
+  const pages = ["Page 1", "Page 2", "Page 3"];
+  let index = 0;
+
+  const show = () => session.display.showTextWall(pages[index]);
+
+  session.device.onButtonPress((e) => {
+    if (e.pressType === "short") {
+      if (e.buttonId === "forward") {
+        index = Math.min(index + 1, pages.length - 1);
+      } else if (e.buttonId === "back") {
+        index = Math.max(index - 1, 0);
+      }
+      show();
+    }
+  });
+
+  show();
+});
+```
+
+### Gesture-Driven UI
+
+Combine tap and swipe gestures to build an interactive experience.
+
+```typescript
+app.onSession((session) => {
+  session.device.subscribeToGestures([
+    "single_tap",
+    "double_tap",
+    "forward_swipe",
+    "backward_swipe",
+  ]);
+
+  session.device.onTouchEvent("single_tap", () => {
+    session.display.showTextWall("Tapped!");
+  });
+
+  session.device.onTouchEvent("forward_swipe", () => {
+    session.display.showTextWall("Swiped forward");
+  });
+
+  session.device.onTouchEvent("double_tap", () => {
+    session.display.showTextWall("Double tap, exiting...");
+  });
+});
+```
+
+### Battery Monitoring
+
+Show a warning when battery drops below a threshold, and notify when charging starts.
+
+```typescript
+app.onSession((session) => {
+  session.device.state.batteryLevel.onChange((level) => {
+    if (level !== null && level <= 10) {
+      session.display.showTextWall(`Battery critical: ${level}%`);
+    }
+  });
+
+  session.device.state.charging.onChange((charging) => {
+    if (charging) {
+      session.display.showTextWall("Charging started");
+    }
+  });
+});
+```
+
+### WiFi Status Check
+
+Check WiFi state before performing network-dependent operations.
+
+```typescript
+app.onSession((session) => {
+  const wifi = session.device.state;
+
+  if (wifi.wifiConnected.value) {
+    session.logger.info(`Connected to ${wifi.wifiSsid.value} (${wifi.wifiLocalIp.value})`);
+  } else {
+    session.device.requestWifiSetup("Internet is required to use this app");
+  }
+
+  // React when WiFi connects or disconnects
+  wifi.wifiConnected.onChange((connected) => {
+    if (!connected) {
+      session.display.showTextWall("WiFi disconnected");
+    }
+  });
+});
+```
+
+### Head Position Toggle
+
+Use head position to toggle a "hands-free" mode.
+
+```typescript
+app.onSession((session) => {
+  let paused = false;
+
+  session.device.onHeadPosition((e) => {
+    if (e.position === "down") {
+      paused = true;
+      session.display.showTextWall("Paused (look up to resume)");
+    } else {
+      paused = false;
+      session.display.showTextWall("Resumed");
+    }
+  });
+});
+```
+
+### Cleanup on Disconnect
+
+Always clean up subscriptions when they are no longer needed.
+
+```typescript
+app.onSession((session) => {
+  const cleanups = [
+    session.device.onButtonPress((e) => { /* ... */ }),
+    session.device.onHeadPosition((e) => { /* ... */ }),
+    session.device.onTouchEvent((e) => { /* ... */ }),
+    session.device.state.batteryLevel.onChange((l) => { /* ... */ }),
+  ];
+
+  // When you need to tear down
+  cleanups.forEach((fn) => fn());
+});
+```

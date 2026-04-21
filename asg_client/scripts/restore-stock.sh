@@ -134,8 +134,21 @@ fi
 
 echo ""
 
-# Step 5: Launch stock app
+# Step 5: Restore stock as default launcher
+echo "=== Setting Stock as Default Launcher ==="
+echo ""
+# Clear any stale chooser-cached preferences left over from the dev build
+# so Android doesn't show the "which launcher?" popup.
+adb shell pm clear-package-preferred-activities "$STOCK_PKG" 2>/dev/null || true
+adb shell pm clear-package-preferred-activities "$DEV_PKG" 2>/dev/null || true
+adb shell cmd package set-home-activity --user 0 "$STOCK_PKG/com.mentra.asg_client.MainActivity" 2>/dev/null || true
+echo "Default launcher set to stock."
+
+echo ""
+
+# Step 6: Launch stock app
 echo "=== Launching Stock App ==="
+adb shell am start -a android.intent.action.MAIN -c android.intent.category.HOME 2>/dev/null || true
 adb shell am start -n "$STOCK_PKG/.MainActivity" 2>/dev/null || true
 
 echo ""

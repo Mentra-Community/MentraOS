@@ -180,9 +180,9 @@ class CrustModule : Module() {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
               val relativePath =
                 if (isVideo) {
-                  "Movies/MentraOS"
+                  "Movies/Mentra"
                 } else {
-                  "Pictures/MentraOS"
+                  "Pictures/Mentra"
                 }
               put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
               put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)

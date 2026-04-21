@@ -185,6 +185,14 @@ export class ManagedStreamingExtension {
         restreamDestinations: useWebRTC ? undefined : restreamDestinations,
       });
 
+      // In SRT/restream mode, clear webrtcUrl — Cloudflare always returns a WHEP endpoint
+      // but it won't work when the ingest is SRT, not WHIP. Without this, the frontend
+      // would try WebRTC playback and get 409 errors from Cloudflare.
+      if (!useWebRTC) {
+        liveInput.webrtcUrl = undefined;
+        liveInput.webrtcPublishUrl = undefined;
+      }
+
       this.logger.info(
         {
           userId,
@@ -242,14 +250,28 @@ export class ManagedStreamingExtension {
         "🚀 Streaming via WebRTC (WHIP) — app will receive webrtcUrl for low-latency WHEP playback",
       );
     } else {
-      if (!liveInput.srtUrl) {
-        throw new Error("No SRT ingest URL available from Cloudflare");
+      // Twitter/Periscope breaks with SRT→RTMP restreaming, so fall back to RTMP ingest when any destination is pscp.tv
+      const hasPscp = restreamDestinations?.some((d) => d.url.includes("pscp.tv"));
+
+      if (hasPscp) {
+        if (!liveInput.rtmpUrl) {
+          throw new Error("No RTMP ingest URL available from Cloudflare");
+        }
+        ingestUrl = liveInput.rtmpUrl;
+        this.logger.info(
+          { userId, packageName, protocol: "RTMP", restreamCount: restreamDestinations?.length || 0 },
+          "🚀 Streaming via RTMP — pscp.tv destination detected, using RTMP ingest for compatibility",
+        );
+      } else {
+        if (!liveInput.srtUrl) {
+          throw new Error("No SRT ingest URL available from Cloudflare");
+        }
+        ingestUrl = liveInput.srtUrl;
+        this.logger.info(
+          { userId, packageName, protocol: "SRT", restreamCount: restreamDestinations?.length || 0 },
+          "🚀 Streaming via SRT — app will receive hlsUrl/dashUrl for HLS/DASH playback (restream destinations active)",
+        );
       }
-      ingestUrl = liveInput.srtUrl;
-      this.logger.info(
-        { userId, packageName, protocol: "SRT", restreamCount: restreamDestinations?.length || 0 },
-        "🚀 Streaming via SRT — app will receive hlsUrl/dashUrl for HLS/DASH playback (restream destinations active)",
-      );
     }
 
     const startMessage: StartStream = {
@@ -634,6 +656,27 @@ export class ManagedStreamingExtension {
    */
   getUserStreamState(userId: string): StreamState | undefined {
     return this.stateManager.getStreamState(userId);
+  }
+
+  /**
+   * Clear the deduplication cache for a specific app.
+   * Must be called when an app reconnects so that stream status
+   * is delivered fresh to the new connection.
+   *
+   * The dedup cache prevents redundant status messages during a single
+   * connection's lifetime (e.g., duplicate Cloudflare webhooks). But it
+   * must not suppress delivery across connections — a reconnected app has
+   * no memory of previous messages.
+   *
+   * See: cloud/issues/087-managed-stream-status-not-delivered-on-reconnect
+   */
+  clearLastSentStatus(packageName: string): void {
+    for (const key of this.lastSentStatus.keys()) {
+      if (key.endsWith(`:${packageName}`)) {
+        this.lastSentStatus.delete(key);
+        this.logger.debug({ packageName, key }, "Cleared dedup cache entry for reconnected app");
+      }
+    }
   }
 
   /**

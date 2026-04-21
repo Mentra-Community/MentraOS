@@ -14,7 +14,7 @@ import UltraliteSDK
 
 @MainActor
 class Mach1: UltraliteBaseViewController, SGCManager {
-    func sendIncidentId(_: String) {}
+    func sendIncidentId(_: String, apiBaseUrl _: String?) {}
 
     func requestPhoto(
         _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
@@ -111,6 +111,10 @@ class Mach1: UltraliteBaseViewController, SGCManager {
     func cleanup() {}
 
     func ping() {}
+    func dbg1() {}
+    func dbg2() {}
+    func connectController() {}
+    func disconnectController() {}
 
     var type: String = DeviceTypes.MACH1
     var hasMic: Bool = false

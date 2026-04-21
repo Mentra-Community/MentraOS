@@ -1,41 +1,47 @@
 ---
-title: "AppServer"
-description: "The core server class that powers your MentraOS app"
+title: "MiniAppServer"
+description: "The entry point for your MentraOS app"
 icon: "server"
 ---
 
-Every MentraOS app extends the `AppServer` class. It handles webhooks, manages WebSocket connections, and routes sessions to your code.
+Every MentraOS app starts with a `MiniAppServer`. It handles webhooks from the MentraOS Cloud, manages WebSocket connections, and gives you a `MentraSession` for each user who opens your app.
 
 ## Basic Setup
 
 ```typescript
-import { AppServer, AppSession } from '@mentraos/sdk';
+import { MiniAppServer, type MentraSession } from "@mentra/sdk";
 
-class MyApp extends AppServer {
-  protected async onSession(session: AppSession, sessionId: string, userId: string) {
-    // Your app logic goes here
-  }
-}
+const app = new MiniAppServer({
+  packageName: "com.example.myapp",
+  apiKey: process.env.API_KEY!,
+  port: 3000,
+});
+
+app.onSession((session: MentraSession) => {
+  // Your app logic goes here - this runs once per user
+});
+
+await app.start();
 ```
 
-## What AppServer Does
+No class inheritance needed. Create an instance, register callbacks, start the server.
+
+## What MiniAppServer Does
 
 | Responsibility | Details |
 |----------------|---------|
-| **HTTP Server** | Listens for webhooks from MentraOS Cloud |
-| **WebSocket Client** | Maintains connection to MentraOS Cloud |
-| **Session Manager** | Creates `AppSession` for each user connection |
-| **Lifecycle Handler** | Calls `onSession()` and `onStop()` at appropriate times |
+| **HTTP Server** | Listens for webhooks from MentraOS Cloud (Hono-based) |
+| **WebSocket Client** | Maintains a connection to MentraOS Cloud per user session |
+| **Session Manager** | Creates a `MentraSession` for each user who starts your app |
+| **Lifecycle Handler** | Calls your `onSession` and `onStop` callbacks at the right times |
 
 ## Configuration
 
 ```typescript
-const server = new MyApp({
-  packageName: 'com.example.myapp',    // From developer console
-  apiKey: process.env.API_KEY,          // From developer console
+const app = new MiniAppServer({
+  packageName: "com.example.myapp",     // From developer console
+  apiKey: process.env.API_KEY!,          // From developer console
   port: 3000,                            // Your server port
-  webhookPath: '/webhook',               // Optional, defaults to '/webhook'
-  mentraOSWebsocketUrl: 'wss://...'     // Optional, defaults to production
 });
 ```
 
@@ -43,194 +49,142 @@ const server = new MyApp({
 
 <AccordionGroup>
   <Accordion title="packageName" icon="tag">
-    **Unique identifier for your app.** 
-    
+    **Unique identifier for your app.**
+
     - Format: Reverse domain notation (e.g., `com.company.appname`)
-    - Set in [Developer Console](https://console.mentra.glass/apps)
+    - Set in the [Developer Console](https://console.mentra.glass/apps)
     - Used to route sessions to your app
   </Accordion>
 
   <Accordion title="apiKey" icon="key">
-    **Secret key for authentication.**
-    
-    - Generated in Developer Console
-    - Authenticates your server with MentraOS Cloud
-    - Store in environment variables, never hardcode
-    
-    ```typescript
-    apiKey: process.env.MENTRAOS_API_KEY  // ✅ Good
-    apiKey: 'sk_live_abc123...'           // ❌ Never do this
-    ```
+    **Your app's API key.**
+
+    - Found in the [Developer Console](https://console.mentra.glass/apps) under your app's settings
+    - Keep this secret - use environment variables, not hardcoded strings
   </Accordion>
 
-  <Accordion title="port" icon="network-wired">
-    **HTTP port for webhook server.**
-    
-    - Your server listens on this port
-    - MentraOS Cloud sends webhooks here
-    - Must be accessible from the internet (production)
+  <Accordion title="port" icon="hashtag">
+    **The port your server listens on.**
+
+    - Defaults to `80` if not set
+    - Must match the port in your deployment configuration and ngrok tunnel
   </Accordion>
 </AccordionGroup>
 
-## Getting Credentials
+### Optional Settings
 
-1. Go to [Developer Console](https://console.mentra.glass/apps)
-2. Create or select your app
-3. **Package Name**: Set during app creation (e.g., `com.example.myapp`)
-4. **API Key**: Click "Generate API Key" or copy existing key
+<AccordionGroup>
+  <Accordion title="cookieSecret" icon="lock">
+    **Secret for signing authentication cookies in webviews.**
 
-<Warning>
-**Keep your API key secret!** Anyone with your API key can impersonate your app.
-</Warning>
+    - Required if your app uses webviews with authentication
+    - Must be at least 8 characters
+    - Use a strong random string from an environment variable
+  </Accordion>
+</AccordionGroup>
 
-## Starting Your Server
+## Lifecycle Callbacks
+
+### onSession
+
+Called when a user starts your app on their glasses. This is where your app logic lives.
 
 ```typescript
-// Create server instance
-const server = new MyApp({
-  packageName: 'com.example.myapp',
-  apiKey: process.env.API_KEY,
-  port: 3000
-});
+app.onSession((session: MentraSession) => {
+  const userId = session.userId;
 
-// Start listening
-server.start();
-console.log('Server running on port 3000');
+  session.transcription.on((data) => {
+    session.display.showTextWall(data.text);
+  });
+
+  session.onReconnected(() => {
+    // The user's connection was briefly lost and restored.
+    // All subscriptions are preserved - no action needed.
+  });
+
+  session.onStopped((reason) => {
+    // This specific session ended. Clean up any per-user state.
+  });
+});
 ```
 
-The server now:
-- Listens for webhooks on `http://localhost:3000/webhook`
-- Connects to MentraOS Cloud via WebSocket
-- Waits for users to start your app
+The `MentraSession` object is your connection to that user. Everything you do with their glasses goes through it. See [MentraSession](/app-devs/core-concepts/session) for the full API.
 
-## Multiple Users
+### onStop
 
-AppServer handles many users simultaneously. Each user gets their own `AppSession`:
+Called when a user session ends. Receives the session (if available) and a reason string.
 
 ```typescript
+app.onStop((session, reason) => {
+  console.log("Session ended:", reason);
+});
+```
+
+### onToolCall
+
+Called when the MentraOS AI system invokes one of your app's registered tools.
+
+```typescript
+app.onToolCall(async (session, toolName, args) => {
+  if (toolName === "summarize") {
+    return { result: "Summary of the conversation..." };
+  }
+  return { error: "Unknown tool" };
+});
+```
+
+## Custom Routes
+
+`MiniAppServer` is built on [Hono](https://hono.dev), so you can add your own HTTP routes directly:
+
+```typescript
+app.get("/api/health", (c) => {
+  return c.json({ ok: true });
+});
+
+app.post("/api/data", async (c) => {
+  const body = await c.req.json();
+  return c.json({ received: true });
+});
+```
+
+### Authenticated Routes
+
+If your app has a webview that needs to make authenticated API calls:
+
+```typescript
+import { createAuthMiddleware, getMentraAuth } from "@mentra/sdk";
+
+const authMiddleware = createAuthMiddleware({
+  apiKey: process.env.API_KEY!,
+  packageName: "com.example.myapp",
+  cookieSecret: process.env.COOKIE_SECRET!,
+});
+
+app.get("/api/me", authMiddleware, (c) => {
+  const auth = getMentraAuth(c);
+  return c.json({ userId: auth.userId });
+});
+```
+
+## Migrating from AppServer
+
+If you're updating from v2, see the [Migration Guide](/app-devs/migration/overview). The key change is moving from class inheritance to callbacks:
+
+```typescript
+// v2 - class inheritance
 class MyApp extends AppServer {
-  private activeSessions = new Map<string, AppSession>();
-
   protected async onSession(session: AppSession, sessionId: string, userId: string) {
-    // Each user gets their own session
-    this.activeSessions.set(sessionId, session);
-    
-    session.layouts.showTextWall(`Active users: ${this.activeSessions.size}`);
-  }
-
-  protected async onStop(sessionId: string, userId: string, reason: string) {
-    this.activeSessions.delete(sessionId);
+    // ...
   }
 }
-```
+const app = new MyApp({ ... });
 
-Each user has:
-- Unique `sessionId`
-- Separate `AppSession` instance
-- Isolated event subscriptions
-- Independent state
-
-## Key Methods
-
-### `onSession()` (Required)
-
-Called when a user starts your app:
-
-```typescript
-protected async onSession(
-  session: AppSession,  // Interface to this user's session
-  sessionId: string,    // Unique session ID
-  userId: string        // User's ID
-): Promise<void> {
-  // Set up subscriptions, show initial UI
-}
-```
-
-### `onStop()` (Optional)
-
-Called when a session ends:
-
-```typescript
-protected async onStop(
-  sessionId: string,  // Session that ended
-  userId: string,     // User who disconnected
-  reason: string      // Why it ended
-): Promise<void> {
-  // Clean up resources, save state
-}
-```
-
-### `onToolCall()` (Optional)
-
-Called when AI assistant invokes your app's tools:
-
-```typescript
-protected async onToolCall(
-  toolName: string,
-  args: any,
-  userId: string
-): Promise<any> {
-  // Execute AI-requested action
-  // Return result to AI
-}
-```
-
-<Info>
-Tool calls happen outside of active sessions. AI Tool Calls are temporarily unavailable while this feature is under maintenance. This feature will return later in 2026.
-</Info>
-
-## Complete Example
-
-```typescript
-import { AppServer, AppSession } from '@mentraos/sdk';
-
-class WeatherApp extends AppServer {
-  protected async onSession(session: AppSession, sessionId: string, userId: string) {
-    session.logger.info(`User ${userId} connected`);
-    
-    // Show welcome message
-    session.layouts.showTextWall('Weather App Ready');
-    
-    // Listen for voice commands
-    session.events.onTranscription((data) => {
-      if (data.isFinal && data.text.includes('weather')) {
-        this.showWeather(session);
-      }
-    });
-  }
-
-  protected async onStop(sessionId: string, userId: string, reason: string) {
-    console.log(`Session ended: ${reason}`);
-  }
-
-  private async showWeather(session: AppSession) {
-    session.layouts.showReferenceCard('Weather', 'Sunny, 72°F');
-  }
-}
-
-// Start server
-const server = new WeatherApp({
-  packageName: 'com.example.weather',
-  apiKey: process.env.MENTRAOS_API_KEY!,
-  port: 3000
+// v3 - callbacks
+const app = new MiniAppServer({ ... });
+app.onSession((session: MentraSession) => {
+  // ...
 });
-
-server.start();
 ```
 
-## Next Steps
-
-<CardGroup cols={2}>
-  <Card title="AppSession" icon="plug" href="/app-devs/core-concepts/app-session/app-session">
-    Work with user sessions
-  </Card>
-  <Card title="App Lifecycle" icon="arrows-rotate" href="/app-devs/core-concepts/app-lifecycle-overview">
-    Understand the full lifecycle
-  </Card>
-  <Card title="API Reference" icon="book" href="/app-devs/reference/app-server">
-    Complete AppServer documentation
-  </Card>
-  <Card title="Quick Start" icon="rocket" href="/app-devs/getting-started/quickstart">
-    Build your first app
-  </Card>
-</CardGroup>
+The `AppServer` class still works in v3.0 for backward compatibility. It will be removed in v3.1.

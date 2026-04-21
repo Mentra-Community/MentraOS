@@ -1,126 +1,146 @@
 ---
-title: LED Control
-description: Overview of RGB LED control on smart glasses for notifications, status indicators, and user feedback in MentraOS apps.
-icon: lightbulb
+title: "LED"
+description: "Control the RGB LED on connected glasses."
 ---
 
-Learn how to use **RGB LEDs** on smart glasses to provide visual feedback, notifications, and status indicators in your MentraOS apps.
+The LED manager lets your app control the RGB LED on supported smart glasses. Use it for notification flashes, status indicators, or privacy signals during camera use.
 
-LEDs provide immediate visual feedback to users and can indicate app status, notifications, or recording states. Different smart glasses models have different LED configurations - some have RGB LEDs, others only white LEDs, and some have no LEDs at all.
+Only some devices have LEDs. Check `session.capabilities?.hasLight` before calling any LED method.
 
----
-
-## 📖 Detailed Documentation
-
-For complete method documentation, examples, and advanced usage patterns, see the **[LED Manager API Reference](/app-devs/reference/managers/led-manager)**.
-
----
-
-## Quick Start
+## Quick Example
 
 ```typescript
-import { AppServer, AppSession } from "@mentra/sdk";
+import { MiniAppServer, type MentraSession } from "@mentra/sdk";
 
-class LEDApp extends AppServer {
-  protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
-    // Always check LED capabilities first
-    if (!session.capabilities?.hasLight) {
-      session.layouts.showTextWall("No LED support on this device");
-      return;
-    }
+const app = new MiniAppServer({
+  packageName: "com.example.led-demo",
+  apiKey: process.env.API_KEY!,
+  port: 3000,
+});
 
-    // Basic LED control
-    await session.led.turnOn({ color: 'red', ontime: 2000 });
+app.onSession((session: MentraSession) => {
+  // Green LED for 2 seconds
+  session.led.setColor("green", 2000);
+});
 
-    // LED patterns
-    await session.led.blink('green', 500, 500, 3);
-    await session.led.solid('white', 5000);
-
-    // Turn off LEDs
-    await session.led.turnOff();
-  }
-}
+await app.start();
 ```
 
----
+## API
 
-## Key Features
+### `session.led.setColor(color)`
 
-### ✅ Device Capability Checking
-Always check `session.capabilities?.hasLight` before using LED features to ensure compatibility across different devices.
+Turn on the LED with the given color. Uses a default duration of 1000ms.
 
-### ✅ Multiple Control Methods
-- **Low-level**: `turnOn()`, `turnOff()` for precise control
-- **Patterns**: `blink()`, `solid()` for common behaviors
-- **Capabilities**: `getCapabilities()` to query available LEDs
+```typescript
+session.led.setColor("blue");
+```
 
-### ✅ Available Colors
-- `red`, `green`, `blue`, `orange`, `white`
+### `session.led.setColor(color, durationMs)`
 
-### ✅ Fire-and-Forget Operation
-LED commands resolve immediately after sending - no waiting for responses.
+Turn on the LED for a specific duration in milliseconds.
 
----
+```typescript
+session.led.setColor("red", 3000);
+```
+
+### `session.led.setColor(color, options)`
+
+Blink the LED in a pattern. The options object accepts three fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `onTime` | `number` | Milliseconds the LED stays on per blink |
+| `offTime` | `number` | Milliseconds the LED stays off between blinks |
+| `count` | `number` | Number of times to blink |
+
+```typescript
+session.led.setColor("orange", { onTime: 400, offTime: 400, count: 3 });
+```
+
+### `session.led.off()`
+
+Turn off the LED immediately.
+
+```typescript
+session.led.off();
+```
+
+### Available Colors
+
+`"red"`, `"green"`, `"blue"`, `"orange"`, `"white"`
+
+## Common Patterns
+
+### Notification Flash
+
+A quick double-blink to signal an event without being too distracting.
+
+```typescript
+app.onSession((session: MentraSession) => {
+  session.led.setColor("blue", { onTime: 200, offTime: 200, count: 2 });
+});
+```
+
+### Status Indicator
+
+Hold a solid color while a long-running task is in progress, then turn it off.
+
+```typescript
+app.onSession(async (session: MentraSession) => {
+  session.led.setColor("orange", 30000);
+
+  await doSomeWork();
+
+  session.led.off();
+});
+```
+
+### Error Signal
+
+Three red blinks to indicate something went wrong.
+
+```typescript
+session.led.setColor("red", { onTime: 300, offTime: 300, count: 3 });
+```
+
+### Privacy Indicator During Camera Use
+
+Keep the LED on while the camera is streaming so bystanders know recording is active.
+
+```typescript
+app.onSession(async (session: MentraSession) => {
+  session.led.setColor("white", 60000);
+  await session.camera.startStream();
+
+  // Later, when stopping the stream
+  await session.camera.stopStream();
+  session.led.off();
+});
+```
+
+### Capability Check with Fallback
+
+Not every device has an LED. Check before calling, and fall back to another feedback method if needed.
+
+```typescript
+app.onSession((session: MentraSession) => {
+  if (session.capabilities?.hasLight) {
+    session.led.setColor("green", 1000);
+  } else {
+    session.logger.info("No LED available on this device");
+  }
+});
+```
 
 ## Device Compatibility
 
-| Device | LED Support | LED Types | Colors Available |
-|--------|-------------|-----------|-------------------|
-| **Mentra Live** | ✅ Yes | RGB + White | All colors |
-| **Even Realities G1** | ❌ No | None | N/A |
-| **Vuzix Z100** | ❌ No | None | N/A |
+| Device | LED Support | Colors |
+|--------|-------------|--------|
+| Mentra Live | Yes | All (red, green, blue, orange, white) |
+| Even Realities G1 | No | N/A |
+| Vuzix Z100 | No | N/A |
 
----
-
-## Common Use Cases
-
-### Notifications
-```typescript
-// Success notification
-await session.led.blink('green', 500, 500, 2);
-
-// Error notification
-await session.led.blink('red', 500, 500, 3);
-
-// Info notification
-await session.led.blink('blue', 300, 300, 1);
-```
-
-### Status Indicators
-```typescript
-// Recording indicator
-await session.led.solid('white', 30000);
-
-// Processing status
-await session.led.blink('orange', 200, 200, 10);
-
-// Turn off LEDs
-await session.led.turnOff();
-```
-
-### Graceful Fallbacks
-```typescript
-if (!session.capabilities?.hasLight) {
-  // Use display instead
-  session.layouts.showTextWall("📱 Notification");
-  // Or audio feedback
-  await session.audio.speak("Notification received");
-}
-```
-
----
-
-## Best Practices
-
-1. **Always check capabilities** before using LED features
-2. **Use semantic colors** (green=success, red=error, blue=info)
-3. **Provide fallbacks** for devices without LEDs
-4. **Don't overuse** - brief, meaningful feedback is best
-5. **Combine with other feedback** methods when appropriate
-
----
-
-## Next Steps
-
-- 📖 **[LED Manager API Reference](/app-devs/reference/managers/led-manager)** - Complete method documentation and examples
-- 🔧 **Device Capabilities**: [Capabilities](/capabilities) - Check LED hardware support
+<Info>
+LED commands are fire-and-forget. They resolve immediately after the command is sent to the device.
+</Info>

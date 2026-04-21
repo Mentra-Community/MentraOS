@@ -20,7 +20,7 @@ function ghTag(version) {
 
 function apkPrefix(version) {
   const { major, minor } = parseVersion(version);
-  return `MentraOS_${major}p${minor}`;
+  return `Mentra_${major}p${minor}`;
 }
 
 // ── Step 1: Read version from .env ────────────────────────────────────────────

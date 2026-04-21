@@ -44,6 +44,7 @@ const AppRoutes: FC = () => {
       <Routes>
         <Route path="/" element={<AppStore />} />
         <Route path="/package/:packageName" element={<AppDetailsV2 />} />
+        <Route path="/package/:packageName/start" element={<AppDetailsV2 />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/reset-password" element={<ResetPasswordPage redirectUrl="/" />} />

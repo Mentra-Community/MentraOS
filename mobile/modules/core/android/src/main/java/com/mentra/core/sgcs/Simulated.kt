@@ -192,6 +192,9 @@ class Simulated : SGCManager() {
         Bridge.log("ping")
     }
 
+    override fun dbg1() {}
+    override fun dbg2() {}
+
     // Network Management
     override fun requestWifiScan() {
         Bridge.log("requestWifiScan")
@@ -213,7 +216,7 @@ class Simulated : SGCManager() {
         Bridge.log("sendUserEmailToGlasses: $email")
     }
 
-    override fun sendIncidentId(incidentId: String) {
+    override fun sendIncidentId(incidentId: String, apiBaseUrl: String?) {
         Bridge.log("sendIncidentId: $incidentId")
     }
 

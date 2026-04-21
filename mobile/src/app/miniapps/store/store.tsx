@@ -222,7 +222,7 @@ export default function AppStoreWeb() {
           {!isAuthReady && (
             <View style={themed($loadingOverlay)}>
               <ActivityIndicator size="large" color={theme.colors.foreground} />
-              <Text text="Loading App Store..." style={themed($loadingText)} />
+              <Text text="Loading Mentra MiniApp Store..." style={themed($loadingText)} />
             </View>
           )}
         </View>

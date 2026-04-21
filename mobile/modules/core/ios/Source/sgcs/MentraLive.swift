@@ -442,8 +442,9 @@ private struct FileTransferSession {
     mutating func addPacket(_ index: Int, data: Data) -> Bool {
         guard index >= 0 else { return false }
 
-        // On first packet, recalculate total packets based on actual pack size
-        if receivedPackets.isEmpty && !data.isEmpty {
+        // On first packet, recalculate total packets only when we do not already
+        // have an authoritative pack size from protocol metadata.
+        if receivedPackets.isEmpty && actualPackSize == 0 && !data.isEmpty {
             recalculateTotalPackets(actualPackSize: data.count)
         }
 
@@ -517,6 +518,28 @@ private struct BlePhotoTransfer {
     }
 }
 
+private enum BleIncidentLogRelayKind {
+    case firmware
+    case logcat
+}
+
+private final class BleIncidentLogRelayEntry {
+    let fileBaseKey: String
+    let incidentId: String
+    let apiBaseUrl: String
+    let kind: BleIncidentLogRelayKind
+    var session: FileTransferSession?
+
+    init(
+        fileBaseKey: String, incidentId: String, apiBaseUrl: String, kind: BleIncidentLogRelayKind
+    ) {
+        self.fileBaseKey = fileBaseKey
+        self.incidentId = incidentId
+        self.apiBaseUrl = apiBaseUrl
+        self.kind = kind
+    }
+}
+
 // MARK: - CBCentralManagerDelegate
 
 extension MentraLive: CBCentralManagerDelegate {
@@ -533,15 +556,15 @@ extension MentraLive: CBCentralManagerDelegate {
 
         case .poweredOff:
             Bridge.log("LIVE: Bluetooth is powered off")
-            connectionState = ConnTypes.DISCONNECTED
+            updateConnectionState(ConnTypes.DISCONNECTED)
 
         case .unauthorized:
             Bridge.log("LIVE: Bluetooth is unauthorized")
-            connectionState = ConnTypes.DISCONNECTED
+            updateConnectionState(ConnTypes.DISCONNECTED)
 
         case .unsupported:
             Bridge.log("LIVE: Bluetooth is unsupported")
-            connectionState = ConnTypes.DISCONNECTED
+            updateConnectionState(ConnTypes.DISCONNECTED)
 
         default:
             Bridge.log("LIVE: Bluetooth state: \(central.state.rawValue)")
@@ -590,12 +613,14 @@ extension MentraLive: CBCentralManagerDelegate {
         isConnecting = false
         connectedPeripheral = peripheral
 
-        // Save device name for future reconnection
+        // Save device name and address for future reconnection
         if let name = peripheral.name {
             UserDefaults.standard.set(name, forKey: PREFS_DEVICE_NAME)
             Bridge.log("Saved device name for future reconnection: \(name)")
             GlassesStore.shared.apply("glasses", "bluetoothName", name)
         }
+        // Persist peripheral UUID so CoreManager can sync it to RN settings
+        GlassesStore.shared.apply("core", "device_address", peripheral.identifier.uuidString)
 
         // Audio Pairing: Setup Bluetooth audio after BLE connection
         if let deviceName = peripheral.name {
@@ -620,7 +645,7 @@ extension MentraLive: CBCentralManagerDelegate {
         connectedPeripheral = nil
         fullyBooted = false
         connected = false
-        connectionState = ConnTypes.DISCONNECTED
+        updateConnectionState(ConnTypes.DISCONNECTED)
         rgbLedAuthorityClaimed = false
 
         stopAllTimers()
@@ -642,7 +667,8 @@ extension MentraLive: CBCentralManagerDelegate {
 
         stopConnectionTimeout()
         isConnecting = false
-        connectionState = ConnTypes.DISCONNECTED
+        connectedPeripheral = nil
+        updateConnectionState(ConnTypes.DISCONNECTED)
 
         if !isKilled {
             handleReconnection()
@@ -736,7 +762,7 @@ extension MentraLive: CBPeripheralDelegate {
             // GlassesStore handles connected state based on fullyBooted
 
             // Keep state as connecting until glasses are ready
-            connectionState = ConnTypes.CONNECTING
+            updateConnectionState(ConnTypes.CONNECTING)
 
             // Request MTU size
             peripheral.readRSSI()
@@ -875,6 +901,12 @@ class MentraLive: NSObject, SGCManager {
 
     var connectionState: String = ConnTypes.DISCONNECTED
 
+    /// Mirrors Android `updateConnectionState` — RN home reads `glasses.connectionState` for reconnecting UI.
+    private func updateConnectionState(_ state: String) {
+        connectionState = state
+        GlassesStore.shared.apply("glasses", "connectionState", state)
+    }
+
     func setDashboardPosition(_: Int, _: Int) {}
     func setSilentMode(_: Bool) {}
     func exit() {}
@@ -893,6 +925,12 @@ class MentraLive: NSObject, SGCManager {
         Bridge.log("LIVE: ping()")
         keepAwake()
     }
+
+    func connectController() {}
+    func disconnectController() {}
+    
+    func dbg1() {}
+    func dbg2() {}
 
     func forget() {
         Bridge.log("LIVE: Forgetting Mentra Live glasses")
@@ -970,6 +1008,7 @@ class MentraLive: NSObject, SGCManager {
     private var fileWriteCharacteristic: CBCharacteristic?
     private var activeFileTransfers = [String: FileTransferSession]()
     private var blePhotoTransfers = [String: BlePhotoTransfer]()
+    private var bleIncidentLogRelays = [String: BleIncidentLogRelayEntry]()
     private var rgbLedAuthorityClaimed = false
 
     // LC3 Audio properties
@@ -1523,7 +1562,7 @@ class MentraLive: NSObject, SGCManager {
         Bridge.log("LIVE: Connecting to device: \(peripheral.identifier.uuidString)")
 
         isConnecting = true
-        connectionState = ConnTypes.CONNECTING
+        updateConnectionState(ConnTypes.CONNECTING)
         connectedPeripheral = peripheral
         peripheral.delegate = self
 
@@ -1543,7 +1582,7 @@ class MentraLive: NSObject, SGCManager {
         if reconnectAttempts >= MAX_RECONNECT_ATTEMPTS {
             Bridge.log("LIVE: Maximum reconnection attempts reached (\(MAX_RECONNECT_ATTEMPTS))")
             reconnectAttempts = 0
-            connectionState = ConnTypes.DISCONNECTED
+            updateConnectionState(ConnTypes.DISCONNECTED)
             connected = false
             fullyBooted = false
             return
@@ -1555,6 +1594,9 @@ class MentraLive: NSObject, SGCManager {
         )
         reconnectAttempts += 1
 
+        // RN keys off connectionState for reconnecting affordance during backoff (matches Android).
+        updateConnectionState(ConnTypes.CONNECTING)
+
         Bridge.log(
             "LIVE: Scheduling reconnection attempt \(reconnectAttempts) in \(Double(delayNanoseconds) / 1_000_000_000)s (max \(MAX_RECONNECT_ATTEMPTS))"
         )
@@ -1563,7 +1605,8 @@ class MentraLive: NSObject, SGCManager {
         let workItem = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
 
-            if self.connectionState == ConnTypes.DISCONNECTED && !self.isKilled {
+            // Use peripheral presence, not connectionState: we stay CONNECTING during backoff until scan/connect.
+            if self.connectedPeripheral == nil, !self.isKilled {
                 // Check for last known device name to start scan
                 if let lastDeviceName = UserDefaults.standard.string(
                     forKey: self.PREFS_DEVICE_NAME), !lastDeviceName.isEmpty
@@ -1578,7 +1621,7 @@ class MentraLive: NSObject, SGCManager {
                     Bridge.log(
                         "LIVE: Reconnection attempt \(self.reconnectAttempts) - no last device name available"
                     )
-                    self.connectionState = ConnTypes.DISCONNECTED
+                    self.updateConnectionState(ConnTypes.DISCONNECTED)
                 }
             }
         }
@@ -1634,8 +1677,8 @@ class MentraLive: NSObject, SGCManager {
                 "📦 DETECTED FILE TRANSFER PACKET (type: 0x\(String(format: "%02X", commandType)))")
 
             // Debug: Log the raw data
-            let hexDump = data.prefix(64).map { String(format: "%02X ", $0) }.joined()
-            Bridge.log("📦 Raw file packet data length=\(data.count), first 64 bytes: \(hexDump)")
+            // let hexDump = data.prefix(64).map { String(format: "%02X ", $0) }.joined()
+            // Bridge.log("📦 Raw file packet data length=\(data.count), first 64 bytes: \(hexDump)")
 
             // The data IS the file packet - it starts with ## and contains the full file packet structure
             if let packetInfo = K900ProtocolUtils.extractFilePacket(data) {
@@ -2085,7 +2128,7 @@ class MentraLive: NSObject, SGCManager {
             //     centralManager?.cancelPeripheralConnection(peripheral)
             // }
             // Notify the system that glasses are intentionally disconnected
-            connectionState = ConnTypes.DISCONNECTED
+            updateConnectionState(ConnTypes.DISCONNECTED)
 
         case "sr_adota":
             // BES chip OTA progress - convert to ota_progress format for phone UI
@@ -2222,9 +2265,35 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
-    func sendIncidentId(_ incidentId: String) {
-        Bridge.log("LIVE: Sending incidentId to glasses for log upload: \(incidentId)")
-        sendJson(["type": "upload_incident_logs", "incidentId": incidentId], wakeUp: true)
+    func sendIncidentId(_ incidentId: String, apiBaseUrl: String?) {
+        var base = (apiBaseUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if base.isEmpty {
+            base = "https://api.mentra.glass"
+        }
+        while base.hasSuffix("/") {
+            base = String(base.dropLast())
+        }
+        let bKey = MentraLive.incidentBleFileBase(incidentId: incidentId, prefix: "B")
+        let lKey = MentraLive.incidentBleFileBase(incidentId: incidentId, prefix: "L")
+        bleIncidentLogRelays[bKey] = BleIncidentLogRelayEntry(
+            fileBaseKey: bKey, incidentId: incidentId, apiBaseUrl: base, kind: .firmware
+        )
+        bleIncidentLogRelays[lKey] = BleIncidentLogRelayEntry(
+            fileBaseKey: lKey, incidentId: incidentId, apiBaseUrl: base, kind: .logcat
+        )
+
+        Bridge.log(
+            "LIVE: Sending incidentId to glasses for log upload: \(incidentId) (BLE relay \(bKey), \(lKey))"
+        )
+        sendJson(["type": "upload_incident_logs", "incidentId": incidentId, "apiBaseUrl": base], wakeUp: true)
+    }
+
+    private static func incidentBleFileBase(incidentId: String, prefix: Character) -> String {
+        var compact = incidentId.replacingOccurrences(of: "-", with: "").lowercased()
+        if compact.count < 15 {
+            compact += String(repeating: "0", count: 15 - compact.count)
+        }
+        return String(prefix) + String(compact.prefix(15))
     }
 
     func forgetWifiNetwork(_ ssid: String) {
@@ -2332,7 +2401,7 @@ class MentraLive: NSObject, SGCManager {
 
         fullyBooted = true
         connected = true
-        connectionState = ConnTypes.CONNECTED
+        updateConnectionState(ConnTypes.CONNECTED)
     }
 
     private func handleWifiScanResult(_ json: [String: Any]) {
@@ -2538,6 +2607,9 @@ class MentraLive: NSObject, SGCManager {
         if blePhotoTransfers.removeValue(forKey: bleImgId) != nil {
             Bridge.log("LIVE: 🧹 Cleaned up timed out BLE photo transfer for: \(bleImgId)")
         }
+        if bleIncidentLogRelays.removeValue(forKey: bleImgId) != nil {
+            Bridge.log("LIVE: 🧹 Cleaned up timed out BLE incident log relay for: \(bleImgId)")
+        }
     }
 
     private func handleTransferFailed(_ json: [String: Any]) {
@@ -2572,6 +2644,9 @@ class MentraLive: NSObject, SGCManager {
                 "LIVE: 🧹 Cleaned up failed BLE photo transfer for: \(bleImgId) (requestId: \(transfer.requestId))"
             )
         }
+        if bleIncidentLogRelays.removeValue(forKey: bleImgId) != nil {
+            Bridge.log("LIVE: 🧹 Cleaned up failed BLE incident log relay for: \(bleImgId)")
+        }
     }
 
     // requestMissingPackets() removed - no longer used with ACK system
@@ -2587,6 +2662,55 @@ class MentraLive: NSObject, SGCManager {
         if let dotIndex = bleImgId.lastIndex(of: ".") {
             bleImgId = String(bleImgId[..<dotIndex])
         }
+
+        if let incidentRelay = bleIncidentLogRelays[bleImgId] {
+            Bridge.log("LIVE: 📦 BLE incident log relay packet for: \(bleImgId)")
+
+            if incidentRelay.session == nil {
+                activeFileTransfers.removeValue(forKey: packetInfo.fileName)
+                var session = FileTransferSession(
+                    fileName: packetInfo.fileName, fileSize: Int(packetInfo.fileSize)
+                )
+                session.recalculateTotalPackets(actualPackSize: Int(packetInfo.packSize))
+                incidentRelay.session = session
+                Bridge.log(
+                    "LIVE: 📦 Started BLE incident log transfer: \(packetInfo.fileName) (\(packetInfo.fileSize) bytes, \(session.totalPackets) packets)"
+                )
+            }
+
+            guard var session = incidentRelay.session else { return }
+
+            let added = session.addPacket(Int(packetInfo.packIndex), data: packetInfo.data)
+            incidentRelay.session = session
+
+            if added {
+                if session.isComplete {
+                    if let payload = session.assembleFile() {
+                        uploadBleIncidentLogRelay(
+                            relay: incidentRelay, fileName: packetInfo.fileName, data: payload
+                        )
+                    } else {
+                        sendTransferCompleteConfirmation(fileName: packetInfo.fileName, success: false)
+                        // Keep relay entry for glasses retry after transfer_complete:false.
+                        incidentRelay.session = nil
+                    }
+                } else if session.isFinalPacket(Int(packetInfo.packIndex)) {
+                    let missing = session.missingPacketIndices()
+                    if !missing.isEmpty {
+                        Bridge.log(
+                            "LIVE: ❌ BLE incident log transfer incomplete. Missing \(missing.count) packets"
+                        )
+                        sendTransferCompleteConfirmation(fileName: packetInfo.fileName, success: false)
+                        // Keep relay entry for glasses retry after transfer_complete:false.
+                        incidentRelay.session = nil
+                    }
+                }
+            }
+
+            return
+        }
+
+        if bleImgId.hasPrefix("B") || bleImgId.hasPrefix("L") {}
 
         if var photoTransfer = blePhotoTransfers[bleImgId] {
             // This is a BLE photo transfer
@@ -2791,6 +2915,69 @@ class MentraLive: NSObject, SGCManager {
         ]
     }
 
+    private func uploadBleIncidentLogRelay(
+        relay: BleIncidentLogRelayEntry, fileName: String, data: Data
+    ) {
+        let token = GlassesStore.shared.get("core", "core_token") as? String ?? ""
+        guard !token.isEmpty else {
+            sendTransferCompleteConfirmation(fileName: fileName, success: false)
+            if let existing = bleIncidentLogRelays[relay.fileBaseKey] {
+                existing.session = nil
+            }
+            return
+        }
+
+        guard var components = URLComponents(string: relay.apiBaseUrl) else {
+            sendTransferCompleteConfirmation(fileName: fileName, success: false)
+            if let existing = bleIncidentLogRelays[relay.fileBaseKey] {
+                existing.session = nil
+            }
+            return
+        }
+        let basePath = components.path.hasSuffix("/")
+            ? String(components.path.dropLast())
+            : components.path
+        components.path = basePath + "/api/incidents/\(relay.incidentId)/logs"
+        guard let url = components.url else {
+            sendTransferCompleteConfirmation(fileName: fileName, success: false)
+            if let existing = bleIncidentLogRelays[relay.fileBaseKey] {
+                existing.session = nil
+            }
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = data
+
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            let ok: Bool
+            let statusCode: Int?
+            if error != nil {
+                ok = false
+                statusCode = nil
+            } else if let http = response as? HTTPURLResponse {
+                ok = (200 ..< 300).contains(http.statusCode)
+                statusCode = http.statusCode
+            } else {
+                ok = false
+                statusCode = nil
+            }
+            DispatchQueue.main.async {
+                if ok {
+                    Bridge.log("LIVE: ✅ Incident log BLE relay uploaded (\(relay.kind))")
+                    self.bleIncidentLogRelays.removeValue(forKey: relay.fileBaseKey)
+                } else if let existing = self.bleIncidentLogRelays[relay.fileBaseKey] {
+                    // Keep relay entry for glasses retry after transfer_complete:false.
+                    existing.session = nil
+                }
+                self.sendTransferCompleteConfirmation(fileName: fileName, success: ok)
+            }
+        }.resume()
+    }
+
     private func processAndUploadBlePhoto(_ transfer: BlePhotoTransfer, imageData: Data) {
         Bridge.log("LIVE: Processing BLE photo for upload. RequestId: \(transfer.requestId)")
 
@@ -2936,7 +3123,7 @@ class MentraLive: NSObject, SGCManager {
     private func sendCoreTokenToAsgClient() {
         Bridge.log("Preparing to send coreToken to ASG client")
 
-        let coreToken = GlassesStore.shared.get("core", "auth_token") as? String ?? ""
+        let coreToken = GlassesStore.shared.get("core", "core_token") as? String ?? ""
         if coreToken.isEmpty {
             Bridge.log("LIVE: No coreToken available to send to ASG client")
             return
@@ -3475,7 +3662,6 @@ class MentraLive: NSObject, SGCManager {
 
         GlassesStore.shared.apply("glasses", "connected", false)
         GlassesStore.shared.apply("glasses", "fullyBooted", false)
-        GlassesStore.shared.apply("glasses", "connectionState", ConnTypes.DISCONNECTED)
         GlassesStore.shared.apply("glasses", "wifiConnected", false)
         GlassesStore.shared.apply("glasses", "wifiSsid", "")
         GlassesStore.shared.apply("glasses", "wifiLocalIp", "")
@@ -3488,7 +3674,7 @@ class MentraLive: NSObject, SGCManager {
         centralManager?.delegate = nil
         centralManager = nil
 
-        connectionState = ConnTypes.DISCONNECTED
+        updateConnectionState(ConnTypes.DISCONNECTED)
     }
 }
 

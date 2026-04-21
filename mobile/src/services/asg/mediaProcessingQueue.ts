@@ -282,11 +282,28 @@ class MediaProcessingQueue {
       duration: item.duration,
     })
 
-    // 8. Delete from glasses now that processing is complete
+    // 8. Delete from glasses now that processing is complete — but only if the
+    // local file actually exists and has data. If the download was truncated or
+    // processing failed silently, we must not destroy the only good copy.
     if (item.deleteFromGlasses && item.deleteFromGlasses.length > 0) {
       try {
-        await asgCameraApi.deleteFilesFromServer(item.deleteFromGlasses)
-        console.log(`${TAG} 🗑️ Deleted ${item.deleteFromGlasses.join(", ")} from glasses`)
+        const localFileExists = await RNFS.exists(filePathToSave)
+        if (!localFileExists) {
+          console.error(`${TAG} Skipping glasses deletion for ${item.id}: local file missing at ${filePathToSave}`)
+        } else {
+          const localStat = await RNFS.stat(filePathToSave)
+          if (localStat.size === 0) {
+            console.error(`${TAG} Skipping glasses deletion for ${item.id}: local file is 0 bytes`)
+          } else if (item.totalSize > 0 && localStat.size < item.totalSize * 0.5) {
+            // If local file is less than 50% of expected size, something went wrong
+            console.error(
+              `${TAG} Skipping glasses deletion for ${item.id}: local file ${localStat.size} bytes is much smaller than expected ${item.totalSize} bytes`,
+            )
+          } else {
+            await asgCameraApi.deleteFilesFromServer(item.deleteFromGlasses)
+            console.log(`${TAG} 🗑️ Deleted ${item.deleteFromGlasses.join(", ")} from glasses`)
+          }
+        }
       } catch (deleteError) {
         console.warn(`${TAG} Delete from glasses failed for ${item.id} (non-fatal):`, deleteError)
       }

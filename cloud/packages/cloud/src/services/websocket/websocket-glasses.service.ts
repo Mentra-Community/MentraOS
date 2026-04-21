@@ -97,6 +97,19 @@ export class GlassesWebSocketService {
           // Parse text message
           const message = JSON.parse(data.toString()) as GlassesToCloudMessage;
 
+          // Application-level ping/pong for client liveness detection.
+          // Respond immediately — don't log, don't relay, don't touch session state.
+          if ((message as any).type === "ping") {
+            ws.send(JSON.stringify({ type: "pong" }));
+            return;
+          }
+
+          // Client pong (response to legacy server ping). Consume silently.
+          if ((message as any).type === "pong") {
+            userSession.lastAppLevelPongTime = Date.now();
+            return;
+          }
+
           if (message.type === GlassesToCloudMessageType.CONNECTION_INIT) {
             // Handle connection initialization message
             const connectionInitMessage = message as ConnectionInit;

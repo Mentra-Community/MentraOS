@@ -123,7 +123,7 @@ object GlassesStore {
         store.set("core", "preferred_mic", "auto")
         store.set("core", "lc3_frame_size", 60)
         store.set("core", "auth_email", "")
-        store.set("core", "auth_token", "")
+        store.set("core", "core_token", "")
         store.set("core", "should_send_pcm", false)
         store.set("core", "should_send_lc3", false)
         store.set("core", "should_send_transcript", false)
@@ -171,7 +171,7 @@ object GlassesStore {
                     // CoreManager.getInstance().sgc?.sendAuthEmail(value)
                 }
             }
-            "core" to "auth_token" -> {
+            "core" to "core_token" -> {
                 if (value is String) {
                     // CoreManager.getInstance().sgc?.sendAuthToken(value)
                 }
@@ -220,6 +220,12 @@ object GlassesStore {
             "core" to "head_up_angle" -> {
                 (value as? Int)?.let { angle ->
                     CoreManager.getInstance().sgc?.setHeadUpAngle(angle)
+                }
+            }
+            "core" to "dashboard_menu_apps" -> {
+                @Suppress("UNCHECKED_CAST")
+                (value as? List<Map<String, Any>>)?.let { items ->
+                    CoreManager.getInstance().sgc?.setDashboardMenu(items)
                 }
             }
             "core" to "gallery_mode" -> {

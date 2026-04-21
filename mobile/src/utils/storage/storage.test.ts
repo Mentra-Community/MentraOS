@@ -1,13 +1,12 @@
-import {load, loadString, save, saveString, clear, remove, storage} from "./storage"
+import {storage} from "@/utils/storage/storage"
 
 const VALUE_OBJECT = {x: 1}
-const VALUE_STRING = JSON.stringify(VALUE_OBJECT)
 
 describe("MMKV Storage", () => {
   beforeEach(() => {
     storage.clearAll()
-    storage.set("string", "string")
-    storage.set("object", JSON.stringify(VALUE_OBJECT))
+    storage.save("string", "string")
+    storage.save("object", VALUE_OBJECT)
   })
 
   it("should be defined", () => {
@@ -19,43 +18,35 @@ describe("MMKV Storage", () => {
   })
 
   it("should load data", () => {
-    expect(load<object>("object")).toEqual(VALUE_OBJECT)
-    expect(loadString("object")).toEqual(VALUE_STRING)
+    const objectResult = storage.load<object>("object")
+    expect(objectResult.is_ok()).toBe(true)
+    expect(objectResult.value).toEqual(VALUE_OBJECT)
 
-    expect(load<string>("string")).toEqual("string")
-    expect(loadString("string")).toEqual("string")
-  })
-
-  it("should save strings", () => {
-    saveString("string", "new string")
-    expect(loadString("string")).toEqual("new string")
+    const stringResult = storage.load<string>("string")
+    expect(stringResult.is_ok()).toBe(true)
+    expect(stringResult.value).toEqual("string")
   })
 
   it("should save objects", () => {
-    save("object", {y: 2})
-    expect(load<object>("object")).toEqual({y: 2})
-    save("object", {z: 3, also: true})
-    expect(load<object>("object")).toEqual({z: 3, also: true})
-  })
-
-  it("should save strings and objects", () => {
-    saveString("object", "new string")
-    expect(loadString("object")).toEqual("new string")
+    storage.save("object", {y: 2})
+    expect(storage.load<object>("object").value).toEqual({y: 2})
+    storage.save("object", {z: 3, also: true})
+    expect(storage.load<object>("object").value).toEqual({z: 3, also: true})
   })
 
   it("should remove data", () => {
-    remove("object")
-    expect(load<object>("object")).toBeNull()
+    storage.remove("object")
+    expect(storage.load<object>("object").is_error()).toBe(true)
     expect(storage.getAllKeys()).toEqual(["string"])
 
-    remove("string")
-    expect(load<string>("string")).toBeNull()
+    storage.remove("string")
+    expect(storage.load<string>("string").is_error()).toBe(true)
     expect(storage.getAllKeys()).toEqual([])
   })
 
   it("should clear all data", () => {
     expect(storage.getAllKeys()).toEqual(["string", "object"])
-    clear()
+    storage.clearAll()
     expect(storage.getAllKeys()).toEqual([])
   })
 })

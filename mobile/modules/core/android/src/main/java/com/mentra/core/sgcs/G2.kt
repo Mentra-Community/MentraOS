@@ -1436,6 +1436,9 @@ class G2 : SGCManager() {
         sendEvenHubHeartbeat()
     }
 
+    override fun dbg1() {}
+    override fun dbg2() {}
+
     // ---------- SGCManager: Device Control ----------
 
     override fun setHeadUpAngle(angle: Int) {
@@ -1502,7 +1505,7 @@ class G2 : SGCManager() {
         requestDeviceInfo()
     }
 
-    override fun sendIncidentId(incidentId: String) {}
+    override fun sendIncidentId(incidentId: String, apiBaseUrl: String?) {}
 
     // ---------- BLE Scanning ----------
 

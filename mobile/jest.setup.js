@@ -1,5 +1,3 @@
-/* eslint-env jest */
-
 // Mock react-native-permissions
 jest.mock("react-native-permissions", () => require("react-native-permissions/mock"))
 
@@ -11,10 +9,13 @@ jest.mock("react-native-mmkv", () => {
   ])
 
   return {
-    MMKV: jest.fn().mockImplementation(() => ({
-      getString: jest.fn(key => mockStorage.get(key)),
+    createMMKV: jest.fn(() => ({
+      getString: jest.fn((key) => mockStorage.get(key)),
       set: jest.fn((key, value) => mockStorage.set(key, value)),
-      delete: jest.fn(key => mockStorage.delete(key)),
+      remove: jest.fn((key) => {
+        mockStorage.delete(key)
+        return true
+      }),
       clearAll: jest.fn(() => mockStorage.clear()),
       getAllKeys: jest.fn(() => Array.from(mockStorage.keys())),
     })),
@@ -57,22 +58,15 @@ jest.mock("expo-audio", () => ({
   })),
 }))
 
-// Mock MantleBridge
-jest.mock("@/bridge/MantleBridge", () => {
-  const {EventEmitter} = require("events")
-
-  class MockMantleBridge extends EventEmitter {
-    static getInstance = jest.fn(() => new MockMantleBridge())
-    connect = jest.fn()
-    disconnect = jest.fn()
-    sendMessage = jest.fn()
-    cleanup = jest.fn()
-  }
-
-  return {
-    default: new MockMantleBridge(),
-  }
-})
+// Mock react-native-nitro-bg-timer for non-native Jest runs
+jest.mock("react-native-nitro-bg-timer", () => ({
+  BackgroundTimer: {
+    setInterval: jest.fn((callback, delay) => setInterval(callback, delay)),
+    clearInterval: jest.fn((id) => clearInterval(id)),
+    setTimeout: jest.fn((callback, delay) => setTimeout(callback, delay)),
+    clearTimeout: jest.fn((id) => clearTimeout(id)),
+  },
+}))
 
 // Mock SocketComms to avoid complex dependency chains
 jest.mock("@/services/SocketComms", () => ({

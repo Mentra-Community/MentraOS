@@ -1,7 +1,11 @@
 ---
-title: "Device Control"
+title: "Device Control (v2)"
 description: "Control audio, camera, LED, and location on smart glasses"
 ---
+
+<Warning>
+**This page documents the v2 API.** In v3, device control is accessed through dedicated managers: `session.speaker` (renamed from `session.audio`), `session.camera`, `session.led`, `session.location`, and the new `session.device` for hardware state and events. See the [MentraSession](/app-devs/core-concepts/session) page for the current documentation, or the [Migration Guide](/app-devs/migration/overview) for all v2 → v3 changes.
+</Warning>
 
 Control device hardware using `session.audio`, `session.camera`, `session.led`, and `session.location`. Each manager provides methods for specific hardware features.
 

@@ -1,0 +1,175 @@
+---
+title: "Time"
+description: "Timezone-aware date formatting and time utilities."
+---
+
+Use `session.time` to work with dates and times in the user's timezone. It handles timezone detection, date formatting, and conversions so you never have to think about UTC offsets yourself.
+
+## Quick Example
+
+```typescript
+import { MiniAppServer, type MentraSession } from "@mentra/sdk";
+
+const app = new MiniAppServer({ ... });
+
+app.onSession((session: MentraSession) => {
+  const now = session.time.now();
+  const formatted = session.time.format(now, {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+  session.display.showTextWall(`It's ${formatted}`);
+});
+
+await app.start();
+```
+
+## API Reference
+
+### time.zone
+
+The user's current IANA timezone string.
+
+```typescript
+const tz = session.time.zone;
+// "America/Los_Angeles"
+```
+
+This value comes from the companion app and is set automatically when the session starts.
+
+### time.now()
+
+Returns the current `Date`.
+
+```typescript
+const now = session.time.now();
+```
+
+### time.toLocal(date?)
+
+Convert a UTC `Date` to local wall-clock time in the user's timezone. If no date is provided, converts the current time.
+
+```typescript
+const local = session.time.toLocal(someUtcDate);
+```
+
+### time.format(date, opts?)
+
+Format a date for display in the user's timezone. The optional `opts` parameter accepts standard `Intl.DateTimeFormatOptions`.
+
+```typescript
+// Time only
+session.time.format(date, { hour: "numeric", minute: "2-digit" });
+// "3:45 PM"
+
+// Date only
+session.time.format(date, { month: "short", day: "numeric" });
+// "Jun 12"
+
+// Full date and time
+session.time.format(date, {
+  weekday: "short",
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+// "Thu, Jun 12, 3:45 PM"
+
+// Default (no options)
+session.time.format(date);
+```
+
+Under the hood, this uses `Intl.DateTimeFormat` with the user's timezone, so all standard options are supported.
+
+### time.setTimezone(tz)
+
+Override the timezone at runtime. Throws a `RangeError` if the timezone string is invalid.
+
+```typescript
+session.time.setTimezone("Europe/London");
+
+// Throws RangeError
+session.time.setTimezone("Not/A/Timezone");
+```
+
+This is useful when you want to let users pick a timezone manually, or when you detect a timezone from GPS coordinates.
+
+## Common Patterns
+
+### Show a clock on the display
+
+```typescript
+app.onSession((session: MentraSession) => {
+  const tick = () => {
+    const now = session.time.now();
+    const time = session.time.format(now, {
+      hour: "numeric",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    session.display.showTextWall(time);
+  };
+
+  tick();
+  const interval = setInterval(tick, 1000);
+
+  session.onStopped(() => {
+    clearInterval(interval);
+  });
+});
+```
+
+### Format timestamps from external APIs
+
+When you receive UTC timestamps from an API, convert them to the user's local time before displaying:
+
+```typescript
+app.onSession(async (session: MentraSession) => {
+  const events = await fetchCalendarEvents();
+
+  for (const event of events) {
+    const start = session.time.format(new Date(event.startUtc), {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+    session.display.showTextWall(`${event.title} at ${start}`);
+  }
+});
+```
+
+### Override timezone from GPS
+
+```typescript
+import tzlookup from "tz-lookup";
+
+app.onSession((session: MentraSession) => {
+  session.location.onUpdate((data) => {
+    const detectedTz = tzlookup(data.lat, data.lng);
+
+    if (detectedTz !== session.time.zone) {
+      session.time.setTimezone(detectedTz);
+      session.logger.info(`Timezone updated to ${detectedTz}`);
+    }
+  });
+
+  session.location.requestUpdate("high");
+});
+```
+
+### Safe timezone override with validation
+
+```typescript
+function trySetTimezone(session: MentraSession, tz: string): boolean {
+  try {
+    session.time.setTimezone(tz);
+    return true;
+  } catch (e) {
+    if (e instanceof RangeError) {
+      session.logger.warn(`Invalid timezone: ${tz}`);
+    }
+    return false;
+  }
+}
+```

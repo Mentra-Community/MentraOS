@@ -37,7 +37,7 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   ping(): Promise<void>
 
   // Incident Reporting
-  sendIncidentId(incidentId: string): Promise<void>
+  sendIncidentId(incidentId: string, apiBaseUrl?: string | null): Promise<void>
 
   // WiFi Commands
   requestWifiScan(): Promise<void>

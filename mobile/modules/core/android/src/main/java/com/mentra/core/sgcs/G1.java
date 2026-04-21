@@ -1643,6 +1643,12 @@ public class G1 extends SGCManager {
     }
 
     @Override
+    public void dbg1() {}
+
+    @Override
+    public void dbg2() {}
+
+    @Override
     public void setDashboardPosition(int height, int depth) {
         Bridge.log("G1: setDashboardPosition() - height: " + height + ", depth: " + depth);
         sendDashboardPositionCommand(height, depth);
@@ -1741,7 +1747,7 @@ public class G1 extends SGCManager {
     }
 
     @Override
-    public void sendIncidentId(String incidentId) {
+    public void sendIncidentId(String incidentId, String apiBaseUrl) {
         // G1 doesn't support incident reporting (no ASG client)
     }
 

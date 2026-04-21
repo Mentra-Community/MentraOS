@@ -3,7 +3,7 @@ title: "Hardware & Capabilities Overview"
 description: "Detect and adapt to different smart glasses hardware"
 ---
 
-**Check what hardware is available using `session.capabilities`.** Different glasses have different features—displays, cameras, speakers, buttons, LEDs. Your app can detect and adapt to each device.
+**Check what hardware is available using `session.capabilities`.** Different glasses have different features-displays, cameras, speakers, buttons, LEDs. Your app can detect and adapt to each device.
 
 ## Accessing Capabilities
 
@@ -44,9 +44,9 @@ protected async onSession(session: AppSession, sessionId: string, userId: string
 
   // Adapt to available hardware
   if (caps.hasDisplay) {
-    session.layouts.showTextWall('Welcome!');
+    session.display.showTextWall('Welcome!');
   } else {
-    await session.audio.speak('Welcome!');
+    await session.speaker.speak('Welcome!');
   }
 
   if (caps.hasCamera) {
@@ -177,9 +177,9 @@ await session.camera.requestPhoto();
 
 ```typescript
 if (caps?.hasDisplay) {
-  session.layouts.showTextWall('Message');
+  session.display.showTextWall('Message');
 } else {
-  await session.audio.speak('Message');
+  await session.speaker.speak('Message');
 }
 ```
 

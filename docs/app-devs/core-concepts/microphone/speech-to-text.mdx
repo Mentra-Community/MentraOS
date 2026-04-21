@@ -3,418 +3,197 @@ title: "Speech-to-Text"
 description: "Capture and process user voice input in real-time"
 ---
 
-Listen to user voice input with `session.events.onTranscription()`. Get real-time speech-to-text transcription from the user's microphone.
+Listen to what the user says with `session.transcription`. Get real-time speech-to-text from the glasses microphone, with support for multiple languages and speaker diarization.
 
 ## Basic Usage
 
 ```typescript
-session.events.onTranscription((data) => {
+session.transcription.on((data) => {
   if (data.isFinal) {
-    session.logger.info('User said:', data.text);
+    session.display.showTextWall(data.text);
   }
 });
+```
+
+Every call to `.on()` returns a cleanup function. Call it when you want to stop receiving transcriptions:
+
+```typescript
+const cleanup = session.transcription.on((data) => {
+  session.display.showTextWall(data.text);
+});
+
+// Later, when you're done:
+cleanup();
 ```
 
 ## How It Works
 
-1. User speaks into microphone
+1. User speaks into the glasses microphone
 2. Audio streams to MentraOS Cloud
-3. Speech recognition processes audio
-4. Transcription events sent to your app
-5. You receive interim and final results
+3. Cloud runs speech recognition (via Soniox)
+4. Transcription events are sent to your app
+5. You receive interim results (while speaking) and final results (when a sentence completes)
 
 ## Transcription Data
 
+Each event gives you a `TranscriptionData` object:
+
 ```typescript
-interface TranscriptionData {
-  text: string;           // Transcribed text
-  isFinal: boolean;       // True when transcription is complete
-  language: string;       // Language code (e.g., 'en-US')
-  confidence: number;     // Confidence score (0-1)
-  timestamp: Date;        // When transcription was generated
-}
+session.transcription.on((data) => {
+  data.text;          // The transcribed text
+  data.isFinal;       // true when the sentence is complete
+  data.language;      // Language code (e.g. "en")
+  data.speakerId;     // Speaker ID when diarization is enabled
+  data.utteranceId;   // Unique ID for this utterance
+});
 ```
 
 ## Interim vs Final Results
 
-**Interim results** - Partial transcription while user is speaking:
+While the user is speaking, you receive **interim** results that update in real time. When the user finishes a sentence, you get a **final** result.
 
 ```typescript
-session.events.onTranscription((data) => {
-  if (!data.isFinal) {
-    // Show real-time preview
-    session.layouts.showTextWall(`${data.text}...`);
-  }
-});
-```
-
-**Final results** - Complete transcription when user finishes:
-
-```typescript
-session.events.onTranscription((data) => {
+session.transcription.on((data) => {
   if (data.isFinal) {
-    // Process complete command
-    session.layouts.showTextWall(data.text);
-    await this.handleCommand(data.text);
-  }
-});
-```
-
-## Common Patterns
-
-### Voice Commands
-
-```typescript
-session.events.onTranscription((data) => {
-  if (!data.isFinal) return;
-
-  const command = data.text.toLowerCase();
-
-  if (command.includes('help')) {
-    this.showHelp(session);
-  } else if (command.includes('weather')) {
-    this.showWeather(session);
-  } else if (command.includes('time')) {
-    this.showTime(session);
+    // Sentence complete - safe to process, save, or act on
+    session.display.showTextWall(data.text);
   } else {
-    session.layouts.showTextWall('Unknown command');
+    // Still speaking - text may change as more audio arrives
+    session.display.showTextWall(`${data.text}...`);
   }
 });
 ```
 
-### Voice Search
+A common pattern for live captions is to show both interim and final results:
 
 ```typescript
-session.events.onTranscription(async (data) => {
-  if (!data.isFinal) {
-    // Show what user is saying
-    session.layouts.showTextWall(`Searching: ${data.text}...`);
-    return;
+session.transcription.on((data) => {
+  session.display.showTextWall(data.text);
+});
+```
+
+## Language-Specific Subscriptions
+
+Subscribe to transcriptions in a specific language:
+
+```typescript
+const cleanup = session.transcription.forLanguage("en", (data) => {
+  // Only English transcriptions
+  session.display.showTextWall(data.text);
+});
+```
+
+You can subscribe to multiple languages simultaneously. Each call is independent and returns its own cleanup function:
+
+```typescript
+const cleanupEn = session.transcription.forLanguage("en", (data) => {
+  session.display.showText(`EN: ${data.text}`);
+});
+
+const cleanupEs = session.transcription.forLanguage("es", (data) => {
+  session.display.showText(`ES: ${data.text}`);
+});
+```
+
+## Configuration
+
+Configure transcription behavior before or after subscribing:
+
+```typescript
+session.transcription.configure({
+  languageHints: ["en", "es"],   // Help the recognizer with expected languages
+  diarization: true,              // Enable speaker identification
+});
+```
+
+### Language Hints
+
+Language hints tell the speech recognizer which languages to expect. This improves accuracy, especially in multilingual environments.
+
+```typescript
+// Expect English and Spanish
+session.transcription.configure({
+  languageHints: ["en", "es"],
+});
+```
+
+If no hints are set, the recognizer uses automatic language detection.
+
+### Speaker Diarization
+
+When diarization is enabled, each transcription event includes a `speakerId` that identifies which person is speaking. This is useful for meeting transcription, group conversations, and any scenario with multiple speakers.
+
+```typescript
+session.transcription.configure({ diarization: true });
+
+session.transcription.on((data) => {
+  if (data.isFinal) {
+    const speaker = data.speakerId || "unknown";
+    session.display.showTextWall(`[${speaker}]: ${data.text}`);
   }
-
-  // Perform search with final text
-  session.layouts.showTextWall('Searching...');
-  const results = await this.search(data.text);
-  session.layouts.showReferenceCard('Results', results);
 });
 ```
 
-### Voice Notes
+## Stopping Transcription
+
+Call the cleanup function returned by `.on()` or `.forLanguage()`:
 
 ```typescript
-session.events.onTranscription(async (data) => {
-  if (!data.isFinal) return;
+const cleanup = session.transcription.on((data) => { ... });
 
-  // Save note
-  const note = {
-    text: data.text,
-    timestamp: new Date(),
-    confidence: data.confidence
-  };
-
-  await session.simpleStorage.set(
-    `note_${Date.now()}`,
-    JSON.stringify(note)
-  );
-
-  await session.audio.speak('Note saved');
-});
+// Stop receiving transcriptions
+cleanup();
 ```
 
-### Conversation
+Or stop all transcription streams:
 
 ```typescript
-session.events.onTranscription(async (data) => {
-  if (!data.isFinal) return;
+session.transcription.stop();
+```
 
-  // Show what user said
-  session.layouts.showDoubleTextWall({
-    topText: 'You:',
-    bottomText: data.text
+## Permissions
+
+Your app needs the **microphone** permission to receive transcriptions. Add it in the [Developer Console](https://console.mentra.glass/apps) when creating or editing your app.
+
+Without microphone permission, `session.transcription.on()` will not receive any data.
+
+## Complete Example
+
+A simple live captions app:
+
+```typescript
+import { MiniAppServer, type MentraSession } from "@mentra/sdk";
+
+const app = new MiniAppServer({
+  packageName: "com.example.captions",
+  apiKey: process.env.API_KEY!,
+  port: 3000,
+});
+
+app.onSession((session: MentraSession) => {
+  session.transcription.configure({
+    languageHints: ["en"],
+    diarization: true,
   });
 
-  // Generate response
-  const response = await this.generateResponse(data.text);
-
-  // Show and speak response
-  session.layouts.showDoubleTextWall({
-    topText: 'App:',
-    bottomText: response
+  session.transcription.on((data) => {
+    session.display.showTextWall(data.text);
   });
 
-  await session.audio.speak(response);
-});
-```
-
-### Confidence Checking
-
-```typescript
-session.events.onTranscription((data) => {
-  if (!data.isFinal) return;
-
-  if (data.confidence < 0.5) {
-    // Low confidence - ask for clarification
-    session.layouts.showTextWall(`Did you say: ${data.text}?`);
-    await session.audio.speak('Please repeat that');
-  } else {
-    // High confidence - process command
-    this.processCommand(data.text);
-  }
-});
-```
-
-## Language Support
-
-**Default language:**
-
-```typescript
-// Uses default language from user's device settings
-session.events.onTranscription((data) => {
-  session.logger.info('Language:', data.language);
-  session.logger.info('Text:', data.text);
-});
-```
-
-**Multiple languages** - Transcription automatically detects the spoken language based on device settings.
-
-## Best Practices
-
-<AccordionGroup>
-  <Accordion title="Always Check isFinal" icon="check">
-    Only process commands on final results:
-
-    ```typescript
-    // ✅ Good
-    session.events.onTranscription((data) => {
-      if (!data.isFinal) return;
-      this.processCommand(data.text);
-    });
-
-    // ❌ Avoid - processes interim results
-    session.events.onTranscription((data) => {
-      this.processCommand(data.text); // Called too often
-    });
-    ```
-  </Accordion>
-
-  <Accordion title="Show Visual Feedback" icon="eye">
-    Display what the user said:
-
-    ```typescript
-    session.events.onTranscription((data) => {
-      if (data.isFinal) {
-        session.layouts.showTextWall(`You: ${data.text}`);
-      }
-    });
-    ```
-  </Accordion>
-
-  <Accordion title="Provide Audio Confirmation" icon="volume">
-    Acknowledge user input:
-
-    ```typescript
-    session.events.onTranscription(async (data) => {
-      if (!data.isFinal) return;
-
-      await session.audio.speak('Got it');
-      await this.processCommand(data.text);
-    });
-    ```
-  </Accordion>
-
-  <Accordion title="Handle Errors Gracefully" icon="circle-exclamation">
-    User might say something unexpected:
-
-    ```typescript
-    session.events.onTranscription(async (data) => {
-      if (!data.isFinal) return;
-
-      try {
-        await this.processCommand(data.text);
-      } catch (error) {
-        session.logger.error('Command failed:', error);
-        await session.audio.speak('Sorry, I could not do that');
-      }
-    });
-    ```
-  </Accordion>
-</AccordionGroup>
-
-## Permissions Required
-
-<Warning>
-Transcription requires the **MICROPHONE** permission. Set this in the [Developer Console](https://console.mentra.glass/apps).
-</Warning>
-
-```typescript
-// In Developer Console, add permission:
-{
-  "type": "MICROPHONE",
-  "description": "To listen to your voice commands"
-}
-```
-
-## Unsubscribing
-
-```typescript
-// Store unsubscribe function
-const unsubscribe = session.events.onTranscription((data) => {
-  session.logger.info(data.text);
+  session.display.showTextWall("Captions ready - start speaking");
 });
 
-// Later, stop listening
-unsubscribe();
+await app.start();
 ```
 
-## Example: Voice Assistant
+## Migrating from v2
 
 ```typescript
-class VoiceAssistant extends AppServer {
-  protected async onSession(session: AppSession, sessionId: string, userId: string) {
-    session.layouts.showTextWall('Voice Assistant Ready\nSay "help" for commands');
+// v2
+session.events.onTranscription((data) => { ... });
 
-    session.events.onTranscription(async (data) => {
-      if (!data.isFinal) {
-        // Show interim results
-        session.layouts.showTextWall(`Listening: ${data.text}...`);
-        return;
-      }
-
-      // Process final command
-      const command = data.text.toLowerCase().trim();
-
-      session.logger.info('Command:', command, 'Confidence:', data.confidence);
-
-      if (command.includes('help')) {
-        await this.showHelp(session);
-      } else if (command.includes('weather')) {
-        await this.showWeather(session);
-      } else if (command.includes('time')) {
-        await this.showTime(session);
-      } else if (command.includes('reminder')) {
-        await this.setReminder(session, command);
-      } else {
-        session.layouts.showTextWall(`Unknown: ${data.text}`);
-        await session.audio.speak('I did not understand that. Say help for commands.');
-      }
-    });
-  }
-
-  private async showHelp(session: AppSession) {
-    const helpText = 'Commands:\n- Weather\n- Time\n- Set reminder';
-    session.layouts.showReferenceCard('Help', helpText);
-    await session.audio.speak('You can ask about weather, time, or set a reminder');
-  }
-
-  private async showWeather(session: AppSession) {
-    // Fetch weather data
-    const weather = await this.fetchWeather();
-    session.layouts.showReferenceCard('Weather', `${weather.condition}, ${weather.temp}°F`);
-    await session.audio.speak(`The weather is ${weather.condition} and ${weather.temp} degrees`);
-  }
-
-  private async showTime(session: AppSession) {
-    const time = new Date().toLocaleTimeString();
-    session.layouts.showTextWall(`Time: ${time}`);
-    await session.audio.speak(`The time is ${time}`);
-  }
-
-  private async setReminder(session: AppSession, command: string) {
-    // Parse reminder from command
-    // "set reminder to call mom at 3pm"
-    session.layouts.showTextWall('Reminder set!');
-    await session.audio.speak('Reminder set');
-  }
-}
+// v3
+session.transcription.on((data) => { ... });
 ```
 
-## Troubleshooting
-
-<AccordionGroup>
-  <Accordion title="No Transcription Events" icon="microphone-slash">
-    **Check permission:**
-
-    - Ensure MICROPHONE permission is set in Developer Console
-    - User must approve permission when installing app
-    - Check logs for permission errors
-  </Accordion>
-
-  <Accordion title="Poor Transcription Quality" icon="triangle-exclamation">
-    **Possible causes:**
-
-    - Background noise
-    - User speaking too quietly
-    - Microphone quality
-    - Non-standard accent or pronunciation
-
-    Check `data.confidence` to detect low-quality transcriptions.
-  </Accordion>
-
-  <Accordion title="Delayed Transcriptions" icon="clock">
-    **Network latency:**
-
-    - Transcription requires internet connection
-    - Processing happens in cloud
-    - Some delay is normal (typically < 1 second)
-  </Accordion>
-</AccordionGroup>
-
-## Performance Tips
-
-<AccordionGroup>
-  <Accordion title="Use Final Results Only" icon="bolt">
-    Avoid processing every interim result:
-
-    ```typescript
-    // Processes only when complete
-    if (data.isFinal) {
-      await heavyProcessing(data.text);
-    }
-    ```
-  </Accordion>
-
-  <Accordion title="Debounce Expensive Operations" icon="clock">
-    If you must process interim results:
-
-    ```typescript
-    let timeoutId: NodeJS.Timeout;
-
-    session.events.onTranscription((data) => {
-      clearTimeout(timeoutId);
-
-      timeoutId = setTimeout(() => {
-        this.updateSearch(data.text);
-      }, 300); // Wait 300ms after user stops speaking
-    });
-    ```
-  </Accordion>
-
-  <Accordion title="Cache Common Commands" icon="floppy-disk">
-    Store frequently used command responses:
-
-    ```typescript
-    const responses = new Map<string, string>();
-
-    if (responses.has(command)) {
-      await session.audio.speak(responses.get(command)!);
-    }
-    ```
-  </Accordion>
-</AccordionGroup>
-
-## Next Steps
-
-<CardGroup cols={2}>
-  <Card title="Text-to-Speech" icon="comment" href="/app-devs/core-concepts/speakers/text-to-speech">
-    Respond with voice synthesis
-  </Card>
-  <Card title="Audio Chunks" icon="waveform" href="/app-devs/core-concepts/microphone/audio-chunks">
-    Process raw audio data
-  </Card>
-  <Card title="Event Manager" icon="book" href="/app-devs/reference/managers/event-manager">
-    Complete event API reference
-  </Card>
-  <Card title="Permissions" icon="lock" href="/app-devs/core-concepts/permissions">
-    Learn about permissions
-  </Card>
-</CardGroup>
+The `TranscriptionData` object shape is the same. Only the access pattern changed. See the [Migration Guide](/app-devs/migration/overview) for the full list of changes.

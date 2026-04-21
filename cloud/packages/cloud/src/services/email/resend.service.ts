@@ -25,36 +25,6 @@ export class ResendEmailService {
    * Sends an app approval notification email to the developer/organization contact.
    * Includes optional review notes from the admin.
    */
-  async sendFeedback(
-    userEmail: string,
-    feedbackHtml: string,
-    to: string[],
-  ): Promise<{ id?: string; error?: any }> {
-    try {
-      const { data, error } = await this.resend.emails.send({
-        from: this.defaultSender,
-        to: to,
-        cc: [userEmail],
-        subject: `New feedback from: ${userEmail}`,
-        html: feedbackHtml,
-      });
-
-      if (error) {
-        console.error("[resend.service] Failed to send feedback email:", error);
-        return { error };
-      }
-
-      return { id: data?.id };
-    } catch (error) {
-      console.error("[resend.service] Error sending approval email:", error);
-      return { error };
-    }
-  }
-
-  /**
-   * Sends an app approval notification email to the developer/organization contact.
-   * Includes optional review notes from the admin.
-   */
   async sendAppApprovalNotification(
     recipientEmail: string,
     appName: string,

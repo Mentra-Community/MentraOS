@@ -121,7 +121,7 @@ export default function MentraOSOnboarding() {
   }
 
   return (
-    <Screen preset="fixed" safeAreaEdges={["bottom"]}>
+    <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
       <OnboardingGuide
         steps={steps}
         autoStart={false}

@@ -1,425 +1,87 @@
 ---
 title: "Playing Audio Files"
-description: "Play audio files from URLs on smart glasses"
+description: "Play audio files from URLs through the glasses speakers"
 ---
 
-Play audio files from URLs using `session.audio.playAudio()`. Stream sound effects, music, or pre-recorded messages to the user's device.
+Use `session.speaker.play()` to play audio files from a URL. The audio is streamed to the user's phone and played through the glasses speakers (or phone speakers if the glasses don't have speakers).
 
 ## Basic Usage
 
 ```typescript
-const result = await session.audio.playAudio({
-  audioUrl: 'https://example.com/sound.mp3'
-});
-
-if (result.success) {
-  session.logger.info('Audio played successfully');
-}
+session.speaker.play({ url: "https://example.com/sound.mp3" });
 ```
-
-## How It Works
-
-1. Provide a URL to an audio file
-2. MentraOS downloads and streams the file
-3. Audio plays through glasses speakers or phone
-4. Promise resolves when playback completes
 
 ## Supported Formats
 
-- **MP3** - Most common, recommended
-- **WAV** - Uncompressed, larger files
-- **OGG** - Open format, good compression
-- **M4A** - Apple format
+- **MP3** - most common, recommended
+- **WAV** - uncompressed, larger files
+- **OGG** - open format, good compression
 
-<Info>
-MP3 format is recommended for best compatibility and file size.
-</Info>
-
-## Audio Options
-
-### Volume Control
-
-```typescript
-await session.audio.playAudio({
-  audioUrl: 'https://example.com/notification.mp3',
-  volume: 0.5  // 0.0 - 1.0
-});
-```
-
-### Stop Other Audio
-
-```typescript
-await session.audio.playAudio({
-  audioUrl: 'https://example.com/alert.mp3',
-  stopOtherAudio: true  // Default: true
-});
-```
-
-## Options Reference
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `audioUrl` | string | required | URL to audio file |
-| `volume` | number | 1.0 | Volume level (0.0-1.0) |
-| `stopOtherAudio` | boolean | true | Stop currently playing audio |
+The URL must be publicly accessible. The MentraOS Cloud fetches the audio and streams it to the user's device.
 
 ## Common Patterns
 
-### Sound Effects
+### Sound effects for actions
 
 ```typescript
-async function playClickSound(session: AppSession) {
-  await session.audio.playAudio({
-    audioUrl: 'https://cdn.example.com/sounds/click.mp3',
-    volume: 0.8
-  });
-}
-
-// Use on button press
-session.events.onButtonPress(async (data) => {
-  await playClickSound(session);
-  // Handle button action
-});
-```
-
-### Notification Sounds
-
-```typescript
-const SOUNDS = {
-  success: 'https://cdn.example.com/success.mp3',
-  error: 'https://cdn.example.com/error.mp3',
-  warning: 'https://cdn.example.com/warning.mp3'
-};
-
-async function notify(session: AppSession, type: keyof typeof SOUNDS) {
-  await session.audio.playAudio({
-    audioUrl: SOUNDS[type],
-    volume: 0.7
-  });
-}
-
-// Usage
-await notify(session, 'success');
-```
-
-### Background Music
-
-```typescript
-protected async onSession(session: AppSession, sessionId: string, userId: string) {
-  // Play ambient background music
-  await session.audio.playAudio({
-    audioUrl: 'https://cdn.example.com/ambient.mp3',
-    volume: 0.3
-  });
-}
-```
-
-### Error Handling
-
-```typescript
-async function playAudioSafe(session: AppSession, url: string) {
-  try {
-    const result = await session.audio.playAudio({
-      audioUrl: url
-    });
-
-    if (!result.success) {
-      session.logger.error('Audio failed:', result.error);
-      // Fallback to TTS
-      await session.audio.speak('Audio notification');
-    }
-  } catch (error) {
-    session.logger.error('Audio error:', error);
-  }
-}
-```
-
-### Sequential Audio
-
-```typescript
-async function playSequence(session: AppSession) {
-  // Play sounds in sequence
-  await session.audio.playAudio({
-    audioUrl: 'https://cdn.example.com/beep1.mp3'
-  });
-
-  await session.audio.playAudio({
-    audioUrl: 'https://cdn.example.com/beep2.mp3'
-  });
-
-  await session.audio.playAudio({
-    audioUrl: 'https://cdn.example.com/beep3.mp3'
-  });
-}
-```
-
-### Conditional Audio
-
-```typescript
-session.events.onTranscription(async (data) => {
+session.transcription.on((data) => {
   if (!data.isFinal) return;
 
   const text = data.text.toLowerCase();
 
-  if (text.includes('success')) {
-    await session.audio.playAudio({
-      audioUrl: 'https://cdn.example.com/success.mp3'
-    });
-  } else if (text.includes('error')) {
-    await session.audio.playAudio({
-      audioUrl: 'https://cdn.example.com/error.mp3'
-    });
+  if (text.includes("take photo")) {
+    session.camera.takePhoto();
+    session.speaker.play({ url: "https://example.com/shutter.mp3" });
   }
 });
 ```
 
-## Stopping Audio
-
-**Stop all currently playing audio:**
+### Alert sounds
 
 ```typescript
-session.audio.stopAudio();
-```
-
-**Stop before playing new audio:**
-
-```typescript
-// Automatically stops other audio (default behavior)
-await session.audio.playAudio({
-  audioUrl: 'https://example.com/new-sound.mp3',
-  stopOtherAudio: true
-});
-
-// Allow overlap
-await session.audio.playAudio({
-  audioUrl: 'https://example.com/background.mp3',
-  stopOtherAudio: false
+session.phone.notifications.on((notification) => {
+  session.speaker.play({ url: "https://example.com/notification.mp3" });
+  session.display.showText(`${notification.app}: ${notification.title}`);
 });
 ```
 
-## Best Practices
-
-<AccordionGroup>
-  <Accordion title="Use CDN for Audio Files" icon="cloud">
-    Host audio on a CDN for fast, reliable access:
-
-    ```typescript
-    // ✅ Good - CDN URL
-    audioUrl: 'https://cdn.example.com/sounds/click.mp3'
-
-    // ❌ Avoid - slow origin server
-    audioUrl: 'https://slow-server.com/large-file.wav'
-    ```
-  </Accordion>
-
-  <Accordion title="Keep Files Small" icon="compress">
-    Smaller files = faster loading = better UX:
-
-    ```typescript
-    // ✅ Good - short sound effect
-    // click.mp3 - 50KB, 0.5 seconds
-
-    // ❌ Avoid - huge file for simple sound
-    // click.wav - 5MB, 0.5 seconds
-    ```
-  </Accordion>
-
-  <Accordion title="Handle Failures Gracefully" icon="circle-exclamation">
-    Always check the result:
-
-    ```typescript
-    const result = await session.audio.playAudio({ audioUrl: url });
-
-    if (!result.success) {
-      // Fallback: TTS or visual feedback
-      await session.audio.speak('Notification');
-      // or
-      session.layouts.showTextWall('🔔 Alert');
-    }
-    ```
-  </Accordion>
-
-  <Accordion title="Provide Visual Feedback" icon="eye">
-    Combine audio with visual cues:
-
-    ```typescript
-    session.layouts.showTextWall('✓ Success');
-    await session.audio.playAudio({
-      audioUrl: 'https://cdn.example.com/success.mp3'
-    });
-    ```
-  </Accordion>
-</AccordionGroup>
-
-## Audio Routing
-
-**Audio automatically routes to the best available output:**
-
-1. **Glasses with speakers** → Plays on glasses
-2. **Glasses without speakers** → Plays on phone
-3. **Phone Bluetooth** → Respects phone audio routing
-
-<Info>
-Users can connect glasses to their phone via Bluetooth like regular headphones to route all audio through glasses speakers.
-</Info>
-
-## Performance Tips
-
-<AccordionGroup>
-  <Accordion title="Pre-load Common Sounds" icon="rocket">
-    Cache frequently used audio:
-
-    ```typescript
-    // Store audio URLs as constants
-    const AUDIO_CACHE = {
-      click: 'https://cdn.example.com/click.mp3',
-      success: 'https://cdn.example.com/success.mp3',
-      error: 'https://cdn.example.com/error.mp3'
-    };
-
-    // Reuse throughout your app
-    await session.audio.playAudio({ audioUrl: AUDIO_CACHE.click });
-    ```
-  </Accordion>
-
-  <Accordion title="Optimize File Size" icon="gauge">
-    Use appropriate bitrate and format:
-
-    - **Sound effects**: 128kbps MP3
-    - **Voice**: 64-96kbps MP3
-    - **Music**: 192-256kbps MP3
-  </Accordion>
-
-  <Accordion title="Use Short Durations" icon="clock">
-    Keep audio brief for better UX:
-
-    ```typescript
-    // ✅ Good - 0.2-1 second for UI sounds
-    // ✅ Good - 2-5 seconds for notifications
-    // ❌ Avoid - 30+ seconds blocks interaction
-    ```
-  </Accordion>
-</AccordionGroup>
-
-## Return Value
+### Background music or ambient audio
 
 ```typescript
-interface AudioPlayResult {
-  success: boolean;
-  error?: string;
-  duration?: number;  // Audio duration in seconds
-}
+session.speaker.play({ url: "https://example.com/ambient.mp3" });
 ```
 
-**Example:**
+## Audio Streaming
+
+For real-time audio (like AI voice responses or live audio processing), use `session.speaker.createStream()` instead of `play()`:
 
 ```typescript
-const result = await session.audio.playAudio({
-  audioUrl: 'https://example.com/sound.mp3'
-});
+const stream = session.speaker.createStream();
 
-console.log('Success:', result.success);
-console.log('Duration:', result.duration);
+// Write audio chunks to the stream
+stream.write(audioChunk);
 
-if (!result.success) {
-  console.log('Error:', result.error);
-}
+// Close when done
+stream.close();
 ```
 
-## Troubleshooting
+This is used for conversational AI integrations (Gemini Live, OpenAI Realtime) where audio is generated in real time rather than served from a static file.
 
-<AccordionGroup>
-  <Accordion title="Audio Not Playing" icon="volume-xmark">
-    **Check URL accessibility:**
+## Tips
 
-    ```typescript
-    // Verify URL is publicly accessible
-    // Test in browser first
+- Keep audio files short. Long audio files block the speaker for the entire duration.
+- Use MP3 for the best balance of quality and file size.
+- Host audio files on a CDN for fast delivery.
+- Pair audio with a display update so the user gets both visual and audio feedback.
 
-    // Ensure HTTPS (not HTTP)
-    audioUrl: 'https://example.com/sound.mp3'  // ✅
-    audioUrl: 'http://example.com/sound.mp3'   // ❌ May fail
-    ```
-  </Accordion>
-
-  <Accordion title="Playback Errors" icon="triangle-exclamation">
-    **Common issues:**
-
-    - **CORS errors**: Ensure CDN allows cross-origin requests
-    - **File format**: Use MP3 for best compatibility
-    - **File size**: Large files may timeout (60s limit)
-    - **URL access**: Must be publicly accessible
-  </Accordion>
-
-  <Accordion title="Volume Too Low" icon="volume-low">
-    **Adjust volume:**
-
-    ```typescript
-    await session.audio.playAudio({
-      audioUrl: url,
-      volume: 1.0  // Maximum volume
-    });
-    ```
-  </Accordion>
-</AccordionGroup>
-
-## Example: Sound Library
+## Migrating from v2
 
 ```typescript
-class SoundLibrary {
-  private baseUrl = 'https://cdn.example.com/sounds';
+// v2
+session.audio.playAudio({ audioUrl: "https://example.com/sound.mp3" });
 
-  private sounds = {
-    click: 'click.mp3',
-    success: 'success.mp3',
-    error: 'error.mp3',
-    notification: 'notification.mp3',
-    confirm: 'confirm.mp3'
-  };
-
-  async play(session: AppSession, sound: keyof typeof this.sounds, volume = 0.8) {
-    const url = `${this.baseUrl}/${this.sounds[sound]}`;
-
-    try {
-      const result = await session.audio.playAudio({
-        audioUrl: url,
-        volume
-      });
-
-      if (!result.success) {
-        session.logger.warn(`Sound ${sound} failed:`, result.error);
-      }
-
-      return result.success;
-    } catch (error) {
-      session.logger.error(`Error playing ${sound}:`, error);
-      return false;
-    }
-  }
-}
-
-// Usage
-const sounds = new SoundLibrary();
-
-session.events.onButtonPress(async (data) => {
-  await sounds.play(session, 'click');
-  // Handle button action
-});
+// v3
+session.speaker.play({ url: "https://example.com/sound.mp3" });
 ```
 
-## Next Steps
-
-<CardGroup cols={2}>
-  <Card title="Text-to-Speech" icon="comment" href="/app-devs/core-concepts/speakers/text-to-speech">
-    Generate speech from text
-  </Card>
-  <Card title="Speech-to-Text" icon="microphone" href="/app-devs/core-concepts/microphone/speech-to-text">
-    Capture user voice input
-  </Card>
-  <Card title="Audio Manager" icon="book" href="/app-devs/reference/managers/audio-manager">
-    Complete audio API reference
-  </Card>
-  <Card title="Device Control" icon="microchip" href="/app-devs/core-concepts/app-session/device-control">
-    All device control features
-  </Card>
-</CardGroup>
+Same method, just on `session.speaker` instead of `session.audio`. See the [Migration Guide](/app-devs/migration/overview) for the full list of changes.

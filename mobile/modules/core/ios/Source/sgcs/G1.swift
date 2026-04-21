@@ -271,7 +271,7 @@ actor ReconnectionManager {
 
 @MainActor
 class G1: NSObject, SGCManager {
-    func sendIncidentId(_: String) {}
+    func sendIncidentId(_: String, apiBaseUrl _: String?) {}
 
     func sendGalleryMode() {}
 
@@ -329,6 +329,10 @@ class G1: NSObject, SGCManager {
     func sendOtaStart() {}
 
     func ping() {}
+    func dbg1() {}
+    func dbg2() {}
+    func connectController() {}
+    func disconnectController() {}
 
     func requestVersionInfo() {
         Bridge.log("G1: requestVersionInfo - not supported on G1")

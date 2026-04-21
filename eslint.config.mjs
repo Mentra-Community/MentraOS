@@ -131,6 +131,9 @@ export default defineConfig([
       globals: {
         ...globals.jest,
       },
+      parserOptions: {
+        projectService: false,
+      },
     },
   },
 

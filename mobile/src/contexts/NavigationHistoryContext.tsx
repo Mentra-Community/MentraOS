@@ -52,6 +52,8 @@ interface NavigationHistoryContextType {
   setAndroidBackFn: (fn: () => void) => void
   setAnimation: (animation: StackAnimationTypes) => void
   animation: StackAnimationTypes
+  forceGestureEnabled: boolean
+  setForceGestureEnabled: (value: boolean) => void
   getCurrentParams: () => any | null
   getCurrentRoute: () => string | null
 }
@@ -74,6 +76,7 @@ export function NavigationHistoryProvider({children}: {children: React.ReactNode
     androidBackFnRef.current = fn
   }
   const [animation, setAnimation] = useState<StackAnimationTypes>("simple_push")
+  const [forceGestureEnabled, setForceGestureEnabled] = useState(false)
   // const rootNavigation = useNavigationContainerRef()
 
   useEffect(() => {
@@ -515,6 +518,8 @@ export function NavigationHistoryProvider({children}: {children: React.ReactNode
         setAndroidBackFn,
         setAnimation,
         animation,
+        forceGestureEnabled,
+        setForceGestureEnabled,
         getCurrentRoute,
         getCurrentParams,
       }}>
@@ -536,19 +541,17 @@ export const focusEffectPreventBack = (backFn?: () => void, iosDontPreventBack?:
   const {incPreventBack, decPreventBack, setAndroidBackFn} = useNavigationHistory()
   const navigation = useNavigation()
 
-  // hook into the back button on ios:
+  // hook into the back button on ios (skip if iosDontPreventBack — let native gesture handle it):
   if (Platform.OS === "ios") {
     useFocusEffect(
       useCallback(() => {
         const unsubscribe = navigation.addListener("beforeRemove", (e) => {
-          // Fires when back gesture starts or back button is pressed
-          // console.log("navigating back")
           backFn?.()
         })
         return () => {
           unsubscribe()
         }
-      }, [backFn]),
+      }, [backFn, iosDontPreventBack]),
     )
   }
 

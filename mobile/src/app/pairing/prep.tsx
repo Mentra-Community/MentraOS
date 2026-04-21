@@ -451,7 +451,7 @@ export default function PairingPrepScreen() {
   }
 
   return (
-    <Screen preset="fixed" safeAreaEdges={["bottom"]}>
+    <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
       <Header
         title={deviceModel}
         leftIcon="chevron-left"

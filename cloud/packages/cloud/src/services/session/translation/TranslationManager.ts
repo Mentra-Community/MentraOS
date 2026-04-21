@@ -62,6 +62,20 @@ export class TranslationManager {
   private disposed = false;
   private pendingTimers = new Set<NodeJS.Timeout>();
 
+  /**
+   * Pre-allocated DataStream template for relayDataToApps hot path.
+   * Mutated in-place to avoid per-message heap allocation, reducing GC pressure
+   * and heap fragmentation on Bun/JSC.
+   */
+  private _relayTimestamp: Date = new Date();
+  private _relayDataStream: DataStream = {
+    type: CloudToAppMessageType.DATA_STREAM,
+    sessionId: "",
+    streamType: "" as ExtendedStreamType,
+    data: null as any,
+    timestamp: this._relayTimestamp,
+  };
+
   constructor(
     private userSession: UserSession,
     private config: TranslationConfig = DEFAULT_TRANSLATION_CONFIG,
@@ -707,19 +721,18 @@ export class TranslationManager {
       );
 
       // Send to each app using AppManager
+      // Hot-path: mutate pre-allocated _relayDataStream instead of allocating a new
+      // object per message to reduce heap fragmentation on Bun/JSC.
       for (const packageName of subscribedApps) {
-        const appSessionId = `${this.userSession.sessionId}-${packageName}`;
+        const appSessionId = this.userSession.getAppSessionId(packageName);
 
-        const dataStream: DataStream = {
-          type: CloudToAppMessageType.DATA_STREAM,
-          sessionId: appSessionId,
-          streamType: subscription,
-          data,
-          timestamp: new Date(),
-        };
+        this._relayDataStream.sessionId = appSessionId;
+        this._relayDataStream.streamType = subscription;
+        this._relayDataStream.data = data;
+        this._relayTimestamp.setTime(Date.now());
 
         try {
-          const result = await this.userSession.appManager.sendMessageToApp(packageName, dataStream);
+          const result = await this.userSession.appManager.sendMessageToApp(packageName, this._relayDataStream);
 
           if (!result.sent) {
             this.logger.warn(

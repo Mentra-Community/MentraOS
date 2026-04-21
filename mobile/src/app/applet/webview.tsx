@@ -10,8 +10,10 @@ import LoadingOverlay from "@/components/ui/LoadingOverlay"
 import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import restComms from "@/services/RestComms"
 import miniComms from "@/services/MiniComms"
+import {WebSocketStatus} from "@/services/ws-types"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import {useAppletStatusStore} from "@/stores/applets"
+import {useConnectionStore} from "@/stores/connection"
 import {MiniAppCapsuleMenu} from "@/components/miniapps/CapsuleMenu"
 import AppIcon from "@/components/home/AppIcon"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
@@ -28,8 +30,6 @@ export default function AppWebView() {
   const [retryTrigger, setRetryTrigger] = useState(0)
   const {goBack, push} = useNavigationHistory()
   const viewShotRef = useRef(null)
-  const [appSwitcherUi] = useSetting(SETTINGS.app_switcher_ui.key)
-  const insets = useSaferAreaInsets()
   const {theme} = useAppTheme()
 
   // Track if the server-side app start failed
@@ -42,21 +42,45 @@ export default function AppWebView() {
   const hasValidParams =
     typeof webviewURL === "string" && typeof appName === "string" && typeof packageName === "string"
 
-  // Back press handler: navigate within WebView if possible, otherwise do nothing.
-  // Users must press X to exit the miniapp.
+  const {setForceGestureEnabled} = useNavigationHistory()
+
+  // Back press handler for CapsuleMenu/Header buttons and Android back button.
   const handleWebViewBack = useCallback(() => {
     if (!hasValidParams) {
-      goBack()
+      if (Platform.OS === "android") {
+        goBack()
+      }
       return
     }
     if (webViewCanGoBack && webViewRef.current) {
       webViewRef.current.goBack()
+    } else {
+      if (Platform.OS === "android") {
+        goBack()
+      }
     }
   }, [webViewCanGoBack, hasValidParams, goBack])
 
-  // Prevent iOS swipe-back gesture and intercept Android back button.
-  // Back navigates within the WebView; only X exits the miniapp.
-  focusEffectPreventBack(handleWebViewBack)
+  // Block native back gesture/button — route through handleWebViewBack for Android.
+  focusEffectPreventBack(handleWebViewBack, false)
+
+  // Dynamically toggle gesture handling based on webview navigation state:
+  // - Page 0 (no history): disable WebView's gesture, force-enable React Navigation's
+  //   native swipe-back so user can exit miniapp with the real iOS animation.
+  // - Has history: enable WebView's gesture for in-webview navigation,
+  //   React Navigation's gesture stays blocked by focusEffectPreventBack.
+  useEffect(() => {
+    if (!webViewCanGoBack) {
+      // Page 0: force React Navigation gesture on, WebView gesture off
+      setForceGestureEnabled(true)
+    } else {
+      // Has history: let focusEffectPreventBack handle it (gesture disabled),
+      // WebView's allowsBackForwardNavigationGestures handles in-webview swipe
+      setForceGestureEnabled(false)
+    }
+
+    return () => setForceGestureEnabled(false)
+  }, [webViewCanGoBack, setForceGestureEnabled])
 
   // Two conditions for showing the webview content:
   // 1. WebView HTML has loaded (onLoadEnd fired)
@@ -84,27 +108,46 @@ export default function AppWebView() {
   // Watch the applet's store state for server confirmation.
   // startApplet() sets loading=true, then refreshApplets() (at ~2s) fetches
   // the real state from the server which sets loading=false.
-  // If running=false after server confirms, the app failed to start.
+  //
+  // Un-latch on positive confirmation: running=true clears a prior failure
+  // (e.g. if the WS briefly dropped and the store observed running=false
+  // during a cross-pod reconnect before the cloud re-hydrated the session).
+  //
+  // Suppress failure latching while the WS isn't CONNECTED or during a short
+  // grace window after reconnect — the store is inherently stale in that
+  // window and false-negatives there were causing "Cannot reach" mid-session.
   useEffect(() => {
-    // Check the current state immediately (covers re-opening an already-running app)
+    const POST_RECONNECT_GRACE_MS = 5_000
+
     const checkApplet = (state: {apps: Array<{packageName: string; loading: boolean; running: boolean}>}) => {
       const applet = state.apps.find((a) => a.packageName === packageName)
       if (!applet) return
+      if (applet.loading) return
 
-      if (!applet.loading) {
-        if (applet.running) {
-          setIsServerConfirmed(true)
-        } else {
-          setAppStartFailed(true)
-        }
+      if (applet.running) {
+        setIsServerConfirmed(true)
+        setAppStartFailed(false)
+        return
       }
+
+      const connState = useConnectionStore.getState()
+      if (connState.status !== WebSocketStatus.CONNECTED) return
+      const lastConnectedAt = connState.lastConnectedAt?.getTime() ?? 0
+      if (lastConnectedAt && Date.now() - lastConnectedAt < POST_RECONNECT_GRACE_MS) return
+
+      setAppStartFailed(true)
     }
 
     checkApplet(useAppletStatusStore.getState())
 
-    // Also subscribe to future changes
-    const unsub = useAppletStatusStore.subscribe(checkApplet)
-    return unsub
+    const unsubApplets = useAppletStatusStore.subscribe(checkApplet)
+    const unsubConn = useConnectionStore.subscribe(() => {
+      checkApplet(useAppletStatusStore.getState())
+    })
+    return () => {
+      unsubApplets()
+      unsubConn()
+    }
   }, [packageName])
 
   // Fade in webview once both conditions are met
@@ -241,13 +284,13 @@ export default function AppWebView() {
     setTokenError(friendlyMessage)
   }
 
-  const screenshotComponent = () => {
-    const screenshot = useAppletStatusStore.getState().apps.find((a) => a.packageName === packageName)?.screenshot
-    if (screenshot) {
-      return <Image source={{uri: screenshot}} style={{flex: 1, resizeMode: "cover"}} blurRadius={10} />
-    }
-    return null
-  }
+  // const screenshotComponent = () => {
+  //   const screenshot = useAppletStatusStore.getState().apps.find((a) => a.packageName === packageName)?.screenshot
+  //   if (screenshot) {
+  //     return <Image source={{uri: screenshot}} style={{flex: 1, resizeMode: "cover"}} blurRadius={10} />
+  //   }
+  //   return null
+  // }
 
   const renderLoadingOverlay = () => {
     const app = useAppletStatusStore.getState().apps.find((a) => a.packageName === packageName)
@@ -304,23 +347,8 @@ export default function AppWebView() {
   if (showError) {
     return (
       <>
-        {appSwitcherUi && <MiniAppCapsuleMenu packageName={packageName} viewShotRef={viewShotRef} onBackPress={handleWebViewBack} />}
-        <Screen preset="fixed" safeAreaEdges={[appSwitcherUi && "top"]} className="px-0">
-          {!appSwitcherUi && (
-            <View className="px-6">
-              <Header
-              leftIcon="chevron-left"
-              onLeftPress={() => {
-                if (webViewCanGoBack && webViewRef.current) {
-                  webViewRef.current.goBack()
-                } else {
-                  goBack()
-                }
-              }}
-              title={appName}
-            />
-            </View>
-          )}
+        <MiniAppCapsuleMenu packageName={packageName} viewShotRef={viewShotRef} onBackPress={handleWebViewBack} />
+        <Screen preset="fixed" safeAreaEdges={["top"]} className="px-0">
           <MiniappErrorScreen
             packageName={packageName}
             appName={appName}
@@ -352,51 +380,53 @@ export default function AppWebView() {
   const capsuleMenuRight = theme.spacing.s2
   const capsuleMenuTop = theme.spacing.s2
   const screenWidth = Dimensions.get("window").width
-  const capsuleMenuRect = appSwitcherUi
-    ? {
-        top: capsuleMenuTop,
-        right: capsuleMenuRight,
-        bottom: capsuleMenuTop + capsuleMenuHeight,
-        left: screenWidth - capsuleMenuRight - capsuleMenuWidth,
-        width: capsuleMenuWidth,
-        height: capsuleMenuHeight,
-      }
-    : null
+  const capsuleMenuRect = {
+    top: capsuleMenuTop,
+    right: capsuleMenuRight,
+    bottom: capsuleMenuTop + capsuleMenuHeight,
+    left: screenWidth - capsuleMenuRight - capsuleMenuWidth,
+    width: capsuleMenuWidth,
+    height: capsuleMenuHeight,
+  }
 
   return (
     <>
-      {appSwitcherUi && <MiniAppCapsuleMenu packageName={packageName} viewShotRef={viewShotRef} onBackPress={handleWebViewBack} />}
+      <MiniAppCapsuleMenu packageName={packageName} viewShotRef={viewShotRef} onBackPress={handleWebViewBack} />
       <Screen
         preset="fixed"
-        // safeAreaEdges={[appSwitcherUi && "top"]}
-        style={{paddingTop: appSwitcherUi ? insets.top : 0}}
-        KeyboardAvoidingViewProps={{enabled: true}}
+        safeAreaEdges={Platform.OS === "android" ? ["top", "bottom"] : ["top"]}
+        KeyboardAvoidingViewProps={{enabled: false}}
         className="px-0"
         ref={viewShotRef}>
-        {/* {appSwitcherUi && <View style={{height: insets.top}} />} */}
-        {!appSwitcherUi && (
-          <View className="px-6">
-            <Header
-              leftIcon="chevron-left"
-              onLeftPress={() => {
-                if (webViewCanGoBack && webViewRef.current) {
-                  webViewRef.current.goBack()
-                } else {
-                  goBack()
-                }
-              }}
-              title={appName}
-              rightIcon="settings"
-              onRightPress={() => {
-                push("/applet/settings", {
-                  packageName: packageName as string,
-                  appName: appName as string,
-                  fromWebView: "true",
-                })
-              }}
-            />
+        {/* rainbow bars for debugging insets / screenshots */}
+        {/* <View className="flex-1 absolute inset-0 z-10">
+          <View className="flex-col">
+            <View className="w-full h-2 bg-red-500" />
+            <View className="w-full h-2 bg-green-500" />
+            <View className="w-full h-2 bg-blue-500" />
+            <View className="w-full h-2 bg-yellow-500" />
+            <View className="w-full h-2 bg-purple-500" />
+            <View className="w-full h-2 bg-orange-500" />
+            <View className="w-full h-2 bg-pink-500" />
+            <View className="w-full h-2 bg-gray-500" />
+            <View className="w-full h-2 bg-teal-500" />
+            <View className="w-full h-2 bg-indigo-500" />
           </View>
-        )}
+        </View>
+        <View className="absolute bottom-0 left-0 right-0 z-10">
+          <View className="flex-col">
+            <View className="w-full h-2 bg-yellow-500" />
+            <View className="w-full h-2 bg-purple-500" />
+            <View className="w-full h-2 bg-orange-500" />
+            <View className="w-full h-2 bg-pink-500" />
+            <View className="w-full h-2 bg-gray-500" />
+            <View className="w-full h-2 bg-teal-500" />
+            <View className="w-full h-2 bg-indigo-500" />
+            <View className="w-full h-2 bg-blue-500" />
+            <View className="w-full h-2 bg-green-500" />
+            <View className="w-full h-2 bg-red-500" />
+          </View>
+        </View> */}
         <View className="flex-1">
           {renderLoadingOverlay()}
           {finalUrl && (
@@ -417,6 +447,7 @@ export default function AppWebView() {
                 scalesPageToFit={false}
                 scrollEnabled={true}
                 bounces={false}
+                allowsBackForwardNavigationGestures={true}
                 onNavigationStateChange={(navState) => setWebViewCanGoBack(navState.canGoBack)}
                 automaticallyAdjustContentInsets={false}
                 contentInsetAdjustmentBehavior="never"

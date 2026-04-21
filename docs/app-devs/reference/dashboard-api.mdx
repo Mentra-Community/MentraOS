@@ -10,9 +10,9 @@ The Dashboard API provides an interface for displaying real-time information and
 ## Import
 
 ```typescript
-import { AppServer, AppSession, DashboardMode } from '@mentra/sdk';
+import { MiniAppServer, type MentraSession, DashboardMode } from '@mentra/sdk';
 
-export class MyAppServer extends AppServer {
+const app = new MiniAppServer({
   protected async onSession(session: AppSession, sessionId: string, userId: string): Promise<void> {
     // Access the dashboard API
     const dashboard = session.dashboard;

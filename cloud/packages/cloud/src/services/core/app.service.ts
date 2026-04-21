@@ -207,10 +207,10 @@ export class AppService {
   }
 
   // TODO(isaiah): Move this to the new AppManager within new UserSession class.
-  async triggerStopByPackageName(packageName: string, userId: string): Promise<void> {
+  async triggerStopByPackageName(packageName: string, userId: string, sessionId?: string): Promise<void> {
     // Look up the App by packageName
     const app = await this.getApp(packageName);
-    const appSessionId = `${userId}-${packageName}`;
+    const appSessionId = sessionId ?? `${userId}-${packageName}`;
 
     const payload: StopWebhookRequest = {
       type: WebhookRequestType.STOP_REQUEST,

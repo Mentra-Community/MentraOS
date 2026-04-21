@@ -1,11 +1,9 @@
 import {getBridge} from "./bridge"
 import type {
   TranscriptionOptions,
-  AudioOptions,
   MovementOptions,
   SubscriptionHandler,
   TranscriptionPayload,
-  AudioPayload,
   MovementPayload,
 } from "./types"
 
@@ -29,24 +27,6 @@ export class Events {
     // Send subscription request to native
     bridge.send({
       type: "sub_transcription",
-      payload: options,
-    })
-  }
-
-  /**
-   * Request audio stream events from the smartglasses
-   * @param options - Audio options (sample rate, channels)
-   * @param handler - Callback function to handle audio data
-   */
-  requestAudio(options: AudioOptions, handler: SubscriptionHandler<AudioPayload>): void {
-    const bridge = getBridge()
-
-    // Subscribe to audio events
-    bridge.subscribe("audio", handler)
-
-    // Send subscription request to native
-    bridge.send({
-      type: "sub_audio",
       payload: options,
     })
   }

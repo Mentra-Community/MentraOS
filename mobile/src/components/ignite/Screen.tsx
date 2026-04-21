@@ -17,6 +17,7 @@ import {KeyboardAwareScrollView} from "react-native-keyboard-controller"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {$styles} from "@/theme"
 import {ExtendedEdge, useSafeAreaInsetsStyle} from "@/utils/useSafeAreaInsetsStyle"
+import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 
 export const DEFAULT_BOTTOM_OFFSET = 50
 
@@ -43,6 +44,11 @@ interface BaseScreenProps {
    * Override the default edges for the safe area.
    */
   safeAreaEdges?: ExtendedEdge[]
+  /**
+   * Skip the automatic Android 3-button nav bar bottom inset.
+   * Use when a parent (e.g. tab bar) already handles bottom spacing.
+   */
+  extraAndroidInsets?: boolean
   /**
    * Background color
    */
@@ -248,15 +254,22 @@ export function Screen(props: ScreenProps & {ref?: any; className?: string}) {
     KeyboardAvoidingViewProps,
     keyboardOffset = 0,
     safeAreaEdges,
+    extraAndroidInsets,
     StatusBarProps,
     statusBarStyle,
     ref,
     className,
   } = props
+  const {theme} = useAppTheme()
 
   let $containerInsets = useSafeAreaInsetsStyle(safeAreaEdges, "padding")
-  // const [debugCoreStatusBarEnabled] = useSetting(SETTINGS.debug_core_status_bar.key)
-  // console.log("$containerInsets", $containerInsets)
+
+  // on some screens, we need some extra bottom padding on android so buttons look nice:
+  const insets = useSaferAreaInsets()
+  if (Platform.OS === "android" && extraAndroidInsets) {
+    // this additional s6 padding is intentional and is what the extraAndroidInsets prop is for
+    $containerInsets = {...$containerInsets, paddingBottom: insets.bottom + theme.spacing.s6}
+  }
 
   return (
     // separate view for screenshots:

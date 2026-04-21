@@ -482,12 +482,17 @@ public class SrtStreamingService extends Service {
 
       if (mReconnectHandler != null) mReconnectHandler.removeCallbacksAndMessages(null);
 
-      if (mReconnectAttempts > 0 || mReconnecting) {
-        mReconnectAttempts = 0;
-        mReconnecting = false;
+      if (mReconnecting) {
+        // Called from scheduleReconnect() — preserve attempt count and reconnecting flag
+        Log.d(TAG, "Reconnect attempt #" + mReconnectAttempts + " starting (sequence: " + mReconnectionSequence + ")");
+      } else {
+        // Fresh start from external caller — reset everything
+        if (mReconnectAttempts > 0) {
+          Log.w(TAG, "Cleaning up stale reconnection state - attempts: " + mReconnectAttempts);
+          mReconnectAttempts = 0;
+        }
+        mReconnectionSequence++;
       }
-
-      mReconnectionSequence++;
 
       if (CameraNeo.isCameraInUse()) {
         String error = "camera_busy";
@@ -684,12 +689,19 @@ public class SrtStreamingService extends Service {
     mReconnectHandler.postDelayed(() -> {
       if (currentSequence != mReconnectionSequence) return;
       synchronized (mStateLock) {
-        if (mStreamState != StreamState.IDLE && mStreamState != StreamState.STOPPING) {
-          mStreamState = StreamState.IDLE;
-          mIsStreaming = false;
-          mReconnecting = true;
-          startStreaming();
+        // Allow reconnection if we're still actively reconnecting (even from IDLE after a failed attempt)
+        // Only bail if an explicit stop was requested (mReconnecting would be false)
+        if (!mReconnecting) {
+          Log.d(TAG, "Stream was explicitly stopped during reconnection delay, cancelling reconnection");
+          return;
         }
+        if (mStreamState == StreamState.STOPPING) {
+          Log.d(TAG, "Stream is stopping, cancelling reconnection");
+          return;
+        }
+        mStreamState = StreamState.IDLE;
+        mIsStreaming = false;
+        startStreaming();
       }
     }, delay);
   }

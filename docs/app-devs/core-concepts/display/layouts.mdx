@@ -1,254 +1,180 @@
 ---
-title: "Layouts"
-description: "Display text and cards on smart glasses screens"
-icon: "table-cells"
+title: "Display"
+description: "Show text, cards, and images on the glasses screen"
+icon: "display"
 ---
 
-Layouts control the main content displayed on glasses screens. Use `session.layouts` to show text, cards, and structured information.
+Use `session.display` to show content on the user's glasses. Every display method sends content to the glasses HUD immediately, replacing whatever was previously shown.
 
-## Available Layout Types
+## Text Wall
 
-### TextWall
-
-Single block of text - most common layout:
+The most common display method. Shows a block of text on the screen:
 
 ```typescript
-session.layouts.showTextWall('Hello from MentraOS!');
+session.display.showTextWall("Hello from MentraOS!");
 ```
 
 Multi-line content:
 
 ```typescript
-session.layouts.showTextWall(
-  'Line 1\n' +
-  'Line 2\n' +
-  'Line 3'
+session.display.showTextWall(
+  "Line 1\n" +
+  "Line 2\n" +
+  "Line 3"
 );
 ```
 
-### DoubleTextWall
-
-Two text blocks - top and bottom:
+Live captions pattern - update the display as the user speaks:
 
 ```typescript
-session.layouts.showDoubleTextWall({
-  topText: 'Title or Header',
-  bottomText: 'Details or body text here'
+session.transcription.on((data) => {
+  session.display.showTextWall(data.text);
 });
 ```
 
-Common pattern for questions/answers:
+## Double Text Wall
+
+Two text blocks side by side (or top and bottom, depending on the glasses model):
 
 ```typescript
-session.events.onTranscription((data) => {
-  if (data.isFinal) {
-    session.layouts.showDoubleTextWall({
-      topText: `You asked: ${data.text}`,
-      bottomText: 'Processing your request...'
-    });
-  }
+session.display.showDoubleTextWall("Left side", "Right side");
+```
+
+Useful for showing a question and answer, original text and translation, or any two-column layout:
+
+```typescript
+session.translation.to("es", (data) => {
+  session.display.showDoubleTextWall(data.originalText, data.text);
 });
 ```
 
-### ReferenceCard
+## Text
 
-Card with title and content:
+Show a simple text string. For short messages and status updates:
 
 ```typescript
-session.layouts.showReferenceCard(
-  'Weather Update',
-  'Sunny, 72°F\nLow: 58°F\nHumidity: 45%'
-);
+session.display.showText("Connected");
 ```
 
-Great for structured information:
+You can also pass an array of strings:
 
 ```typescript
-session.layouts.showReferenceCard(
-  'Meeting Info',
-  'Time: 2:00 PM\nRoom: Conf A\nAttendees: 5'
-);
+session.display.showText(["Line 1", "Line 2", "Line 3"]);
 ```
 
-## Updating Layouts
+## Reference Card
 
-Layouts replace previous content:
+A card with a title and body. Good for structured information:
 
 ```typescript
-// Show initial message
-session.layouts.showTextWall('Loading...');
-
-// After processing (replaces "Loading...")
-session.layouts.showTextWall('Data loaded!');
+session.display.showReferenceCard("Weather", "Sunny, 72°F\nHumidity: 45%");
 ```
 
-Progressive updates:
+## Dashboard Card
+
+A compact card for the dashboard view:
 
 ```typescript
-session.events.onTranscription((data) => {
-  if (data.isFinal) {
-    // Show final transcription
-    session.layouts.showTextWall(data.text);
-  } else {
-    // Show interim results
-    session.layouts.showTextWall(`${data.text}...`);
-  }
+session.display.showDashboardCard("12:30 PM", "☀️ 72°F");
+```
+
+## Bitmap
+
+Send raw bitmap data to the display. For custom graphics and images:
+
+```typescript
+session.display.showBitmap(bitmapData);
+```
+
+## Clearing the Display
+
+Remove all content from the screen:
+
+```typescript
+session.display.clear();
+```
+
+## Views
+
+Display content can target different views on the glasses:
+
+```typescript
+import { ViewType } from "@mentra/sdk";
+
+// Main view - what the user normally sees
+session.display.showTextWall("Main content", {
+  view: ViewType.MAIN,
+});
+
+// Dashboard view - shown when the user looks up
+session.display.showTextWall("Dashboard content", {
+  view: ViewType.DASHBOARD,
 });
 ```
 
-## Clearing Layouts
+If you don't specify a view, content goes to the main view by default.
+
+## Duration
+
+Control how long content stays on screen:
 
 ```typescript
-// Clear the display
-session.layouts.clear();
+session.display.showTextWall("Temporary message", {
+  durationMs: 5000, // Disappears after 5 seconds
+});
 ```
 
-## Best Practices
+If no duration is set, content stays until replaced by the next display call or cleared.
 
-**Keep text concise:**
+## Display Capabilities
 
-```typescript
-// ✅ Good
-session.layouts.showTextWall('Message sent!');
-
-// ❌ Avoid - too verbose
-session.layouts.showTextWall(
-  'Your message has been successfully sent to the recipient.'
-);
-```
-
-**Adapt to display capabilities:**
+Different glasses have different display capabilities. Some have one eye, some have two. Some support bitmaps, some only support text. Check what the connected glasses can do:
 
 ```typescript
 const caps = session.capabilities;
 
-if (caps?.display?.maxTextLines && caps.display.maxTextLines < 5) {
-  // Small display - use short message
-  session.layouts.showTextWall('Updated!');
-} else {
-  // Larger display - show details
-  session.layouts.showTextWall(
-    'Update complete\nTime: 10:30\nStatus: Success'
-  );
+if (caps?.hasDisplay) {
+  session.display.showTextWall("This device has a display");
 }
 ```
 
-**Use appropriate layout type:**
+See [Hardware Capabilities](/app-devs/core-concepts/hardware-capabilities/overview) for details on what each glasses model supports.
+
+## Best Practices
+
+**Keep text concise.** Glasses displays are small. Short messages are easier to read at a glance.
 
 ```typescript
-// Question/answer - use DoubleTextWall
-session.layouts.showDoubleTextWall({
-  topText: 'What is 2 + 2?',
-  bottomText: 'Answer: 4'
-});
+// Good - scannable
+session.display.showTextWall("Meeting in 5 min - Room A");
 
-// Structured data - use ReferenceCard
-session.layouts.showReferenceCard('Contact', 'Name: John\nPhone: 555-0100');
-
-// Simple message - use TextWall
-session.layouts.showTextWall('Processing...');
+// Avoid - too much text for a glance
+session.display.showTextWall(
+  "You have an upcoming meeting scheduled in approximately 5 minutes. " +
+  "The meeting will take place in Conference Room A on the second floor."
+);
 ```
 
-## Common Patterns
+**Update frequently for live content.** For captions or real-time data, call `showTextWall` on every update. The display replaces the previous content instantly.
 
-### Loading States
+**Use the right layout for the content.** Text walls for flowing text, reference cards for structured data, double text walls for side-by-side comparison.
+
+## Migrating from v2
+
+The API is the same, just on `session.display` instead of `session.layouts`:
 
 ```typescript
-protected async onSession(session: AppSession, sessionId: string, userId: string) {
-  session.layouts.showTextWall('Loading your data...');
-  
-  const data = await this.fetchUserData(userId);
-  
-  session.layouts.showReferenceCard(
-    'Welcome Back',
-    `Last login: ${data.lastLogin}`
-  );
-}
+// v2
+session.layouts.showTextWall("Hello");
+session.layouts.showDoubleTextWall("Left", "Right");
+session.layouts.showReferenceCard("Title", "Body");
+session.layouts.clear();
+
+// v3
+session.display.showTextWall("Hello");
+session.display.showDoubleTextWall("Left", "Right");
+session.display.showReferenceCard("Title", "Body");
+session.display.clear();
 ```
 
-### Multi-Step Flows
-
-```typescript
-class OnboardingApp extends AppServer {
-  protected async onSession(session: AppSession, sessionId: string, userId: string) {
-    await this.showStep1(session);
-  }
-
-  private async showStep1(session: AppSession) {
-    session.layouts.showDoubleTextWall({
-      topText: 'Step 1: Welcome',
-      bottomText: 'Say "next" to continue'
-    });
-    
-    session.events.onTranscription((data) => {
-      if (data.isFinal && data.text.toLowerCase().includes('next')) {
-        this.showStep2(session);
-      }
-    });
-  }
-
-  private async showStep2(session: AppSession) {
-    session.layouts.showDoubleTextWall({
-      topText: 'Step 2: Setup',
-      bottomText: 'Configuring your preferences...'
-    });
-  }
-}
-```
-
-### Adaptive Display
-
-```typescript
-protected async onSession(session: AppSession, sessionId: string, userId: string) {
-  const caps = session.capabilities;
-  
-  if (!caps?.hasDisplay) {
-    // Audio-only device
-    await session.audio.speak('Welcome to the app!');
-    return;
-  }
-  
-  const maxLines = caps.display?.maxTextLines || 3;
-  
-  if (maxLines < 5) {
-    // Small display - minimal content
-    session.layouts.showTextWall('Welcome!');
-  } else {
-    // Larger display - more detail
-    session.layouts.showReferenceCard(
-      'Welcome',
-      'Your app is ready\nSay "help" for commands'
-    );
-  }
-}
-```
-
-## Layout Manager API
-
-| Method | Description |
-|--------|-------------|
-| `showTextWall(text)` | Show single text block |
-| `showDoubleTextWall({ topText, bottomText })` | Show two text blocks |
-| `showReferenceCard(title, content)` | Show titled card |
-| `clear()` | Clear display |
-
-<Info>
-Display updates are automatically throttled to 1 per 300ms by MentraOS Cloud to prevent display desync.
-</Info>
-
-## Next Steps
-
-<CardGroup cols={2}>
-  <Card title="Dashboard" icon="gauge" href="/app-devs/core-concepts/display/dashboard">
-    Persistent status display
-  </Card>
-  <Card title="Hardware & Capabilities" icon="microchip" href="/app-devs/core-concepts/hardware-capabilities/overview">
-    Check display capabilities
-  </Card>
-  <Card title="Layout Manager" icon="book" href="/app-devs/reference/managers/layout-manager">
-    Complete API reference
-  </Card>
-  <Card title="Layout Types" icon="book" href="/app-devs/reference/interfaces/layout-types">
-    Layout type definitions
-  </Card>
-</CardGroup>
+See the [Migration Guide](/app-devs/migration/overview) for the full list of changes.

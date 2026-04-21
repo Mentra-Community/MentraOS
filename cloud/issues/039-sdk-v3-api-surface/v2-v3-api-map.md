@@ -19,8 +19,8 @@ Legend:
 
 ## Table of Contents
 
-1. [MentraApp (HTTP server)](#1-mentraapp)
-2. [MentraApp Config](#2-mentraapp-config)
+1. [MiniAppServer (HTTP server)](#1-miniappserver)
+2. [MiniAppServer Config](#2-miniappserver-config)
 3. [AppSession — Top-Level Properties](#3-appsession--top-level-properties)
 4. [Transcription](#4-transcription)
 5. [Translation](#5-translation)
@@ -48,19 +48,29 @@ Legend:
 
 ---
 
-## 1. MentraApp
+## 1. MiniAppServer
+
+### Naming note
+
+The cloud/server host class is `MiniAppServer`, not `MentraApp`.
+
+Why:
+
+- `MentraSession` is the runtime-agnostic app/session API that works across cloud and future local runtimes
+- the cloud-only host should be named for what it is: a server wrapper for mini apps
+- `MentraApp` becomes ambiguous once mini apps can run locally on the phone without a server
 
 ### Key decision: callback pattern, not class inheritance
 
 TypeScript devs don't extend classes. Express, Hono, Discord.js, Socket.io — they all use callbacks. The v3 SDK follows this convention.
 
-| v2                                      | v3                                                                         | Status          |
-| --------------------------------------- | -------------------------------------------------------------------------- | --------------- |
-| `class MyApp extends AppServer { ... }` | `const app = new MentraApp(config)`                                        | 🔄 **Redesign** |
-| `new MyApp(config)`                     | `new MentraApp(config)`                                                    | 🔄 Rename       |
-| `server.start()`                        | `app.start()`                                                              | ✅ Keep         |
-| `server.stop()`                         | `app.stop()`                                                               | ✅ Keep         |
-| `server.getExpressApp()`                | ❌ Removed — `MentraApp` IS a Hono app under the hood, add routes directly | ❌ Remove       |
+| v2                                      | v3                                                                             | Status          |
+| --------------------------------------- | ------------------------------------------------------------------------------ | --------------- |
+| `class MyApp extends AppServer { ... }` | `const app = new MiniAppServer(config)`                                        | 🔄 **Redesign** |
+| `new MyApp(config)`                     | `new MiniAppServer(config)`                                                    | 🔄 Rename       |
+| `server.start()`                        | `app.start()`                                                                  | ✅ Keep         |
+| `server.stop()`                         | `app.stop()`                                                                   | ✅ Keep         |
+| `server.getExpressApp()`                | ❌ Removed — `MiniAppServer` IS a Hono app under the hood, add routes directly | ❌ Remove       |
 
 ### Hooks: override → callback
 
@@ -90,9 +100,9 @@ const server = new MyApp({packageName: "com.example.app", apiKey: "xxx"})
 await server.start()
 
 // ─── v3 (callback composition) ───────────────────
-import {MentraApp} from "@mentra/sdk"
+import {MiniAppServer} from "@mentra/sdk"
 
-const app = new MentraApp({packageName: "com.example.app", apiKey: "xxx"})
+const app = new MiniAppServer({packageName: "com.example.app", apiKey: "xxx"})
 
 app.onSession((session) => {
   session.transcription.on((data) => {
@@ -109,12 +119,12 @@ await app.start()
 
 ### Custom routes
 
-`MentraApp` extends Hono internally — devs add routes directly on the app instance:
+`MiniAppServer` extends Hono internally — devs add routes directly on the app instance:
 
 ```typescript
-const app = new MentraApp({ ... });
+const app = new MiniAppServer({ ... });
 
-// Custom routes — MentraApp IS a Hono app under the hood
+// Custom routes — MiniAppServer IS a Hono app under the hood
 app.get('/status', (c) => c.json({ ok: true }));
 app.use('/public/*', serveStatic({ root: './public' }));
 
@@ -123,7 +133,7 @@ await app.start();
 
 ---
 
-## 2. MentraApp Config
+## 2. MiniAppServer Config
 
 | Field             | v2                                        | v3                                   | Status    |
 | ----------------- | ----------------------------------------- | ------------------------------------ | --------- |
@@ -142,7 +152,7 @@ await app.start();
 **v3 config is minimal:**
 
 ```typescript
-const app = new MentraApp({
+const app = new MiniAppServer({
   packageName: "com.example.app",
   apiKey: "xxx",
   port: 7010, // optional, default 7010
@@ -1116,28 +1126,28 @@ Cloud-side: delete `app-communication.routes.ts` (both Express and Hono versions
 
 ## 21. Connection / Lifecycle
 
-| v2                                           | v3                                              | Status                |
-| -------------------------------------------- | ----------------------------------------------- | --------------------- |
-| `session.connect(sessionId)`                 | (internal — called by MentraApp, not developer) | ❌ Remove from public |
-| `session.disconnect(opts?)`                  | (internal — called by MentraApp, not developer) | ❌ Remove from public |
-| `session.releaseOwnership(reason)`           | (internal — called by MentraApp, not developer) | ❌ Remove from public |
-| `session.getSessionId()`                     | `session.getSessionId()`                        | ✅ Keep               |
-| `session.getPackageName()`                   | `session.getPackageName()`                      | ✅ Keep               |
-| `session.getSettings()` (deprecated)         | — (use `session.storage.getAll()`)              | ❌ Remove             |
-| `session.getSetting(key)` (deprecated)       | — (use `session.storage.get(key)`)              | ❌ Remove             |
-| `session.setSubscriptionSettings(opts)`      | `session.setSubscriptionSettings(opts)`         | ✅ Keep               |
-| `session.loadConfigFromJson(path)`           | `session.loadConfigFromJson(path)`              | ✅ Keep               |
-| `session.getConfig()`                        | `session.getConfig()`                           | ✅ Keep               |
-| `session.getInstructions()`                  | `session.getInstructions()`                     | ✅ Keep               |
-| `session.getWifiStatus()`                    | — (use `session.device.wifiConnected.value`)    | ❌ Remove             |
-| `session.isWifiConnected()`                  | — (use `session.device.wifiConnected.value`)    | ❌ Remove             |
-| `session.requestWifiSetup(ssid, pass)`       | `session.device.requestWifiSetup(ssid, pass)`   | 🔀 Move               |
-| `session.getDefaultSettings()`               | — (settings deprecated)                         | ❌ Remove             |
-| `session.getSettingSchema(key)`              | — (settings deprecated)                         | ❌ Remove             |
-| `session.getServerUrl()`                     | (internal)                                      | ❌ Remove from public |
-| `session.getHttpsServerUrl()`                | (internal)                                      | ❌ Remove from public |
-| `session.sendMessage(msg)`                   | (internal)                                      | ❌ Remove from public |
-| `session.updateSettingsForTesting(settings)` | (internal / test-only)                          | ❌ Remove from public |
+| v2                                           | v3                                                  | Status                |
+| -------------------------------------------- | --------------------------------------------------- | --------------------- |
+| `session.connect(sessionId)`                 | (internal — called by MiniAppServer, not developer) | ❌ Remove from public |
+| `session.disconnect(opts?)`                  | (internal — called by MiniAppServer, not developer) | ❌ Remove from public |
+| `session.releaseOwnership(reason)`           | (internal — called by MiniAppServer, not developer) | ❌ Remove from public |
+| `session.getSessionId()`                     | `session.getSessionId()`                            | ✅ Keep               |
+| `session.getPackageName()`                   | `session.getPackageName()`                          | ✅ Keep               |
+| `session.getSettings()` (deprecated)         | — (use `session.storage.getAll()`)                  | ❌ Remove             |
+| `session.getSetting(key)` (deprecated)       | — (use `session.storage.get(key)`)                  | ❌ Remove             |
+| `session.setSubscriptionSettings(opts)`      | `session.setSubscriptionSettings(opts)`             | ✅ Keep               |
+| `session.loadConfigFromJson(path)`           | `session.loadConfigFromJson(path)`                  | ✅ Keep               |
+| `session.getConfig()`                        | `session.getConfig()`                               | ✅ Keep               |
+| `session.getInstructions()`                  | `session.getInstructions()`                         | ✅ Keep               |
+| `session.getWifiStatus()`                    | — (use `session.device.wifiConnected.value`)        | ❌ Remove             |
+| `session.isWifiConnected()`                  | — (use `session.device.wifiConnected.value`)        | ❌ Remove             |
+| `session.requestWifiSetup(ssid, pass)`       | `session.device.requestWifiSetup(ssid, pass)`       | 🔀 Move               |
+| `session.getDefaultSettings()`               | — (settings deprecated)                             | ❌ Remove             |
+| `session.getSettingSchema(key)`              | — (settings deprecated)                             | ❌ Remove             |
+| `session.getServerUrl()`                     | (internal)                                          | ❌ Remove from public |
+| `session.getHttpsServerUrl()`                | (internal)                                          | ❌ Remove from public |
+| `session.sendMessage(msg)`                   | (internal)                                          | ❌ Remove from public |
+| `session.updateSettingsForTesting(settings)` | (internal / test-only)                              | ❌ Remove from public |
 
 ---
 
@@ -1187,7 +1197,7 @@ Cloud-side: delete `app-communication.routes.ts` (both Express and Hono versions
 
 ### Problem
 
-SDK mounts HTTP endpoints at root level (`/webhook`, `/tool`, `/health`, `/settings`, `/photo-upload`, `/mentra-auth`). With `MentraApp extends Hono`, dev's web app shares the same server — route collisions are invisible and fragile.
+SDK mounts HTTP endpoints at root level (`/webhook`, `/tool`, `/health`, `/settings`, `/photo-upload`, `/mentra-auth`). With `MiniAppServer extends Hono`, dev's web app shares the same server — route collisions are invisible and fragile.
 
 ### Solution
 
@@ -1239,8 +1249,8 @@ The cloud hardcodes these paths (`${publicUrl}/webhook`, `${publicUrl}/tool`, et
 | D9  | Translation redesign ships in v3.1, not v3.0                              | Reduce v3.0 scope, don't block on unknowns                                       |
 | D10 | API is provider-agnostic and transport-agnostic                           | Future-proof for local SDK, provider changes                                     |
 | D11 | Azure code is dead — remove from cloud                                    | Not deprecated, it's a bug that it's still there                                 |
-| D12 | `MentraApp extends Hono` (from sdk-hono branch)                           | Lighter, faster, native Bun, consistency with cloud backend                      |
-| D13 | MentraApp config slimmed to 5 fields                                      | 6 deprecated/removable fields dropped                                            |
+| D12 | `MiniAppServer extends Hono` (from sdk-hono branch)                       | Lighter, faster, native Bun, consistency with cloud backend                      |
+| D13 | MiniAppServer config slimmed to 5 fields                                  | 6 deprecated/removable fields dropped                                            |
 | D14 | `session.device` flattened (remove `.state.` nesting)                     | One less level of nesting, DeviceState IS the device manager                     |
 | D15 | `session.simpleStorage` → `session.storage`                               | Shorter, cleaner name                                                            |
 | D16 | `session.layouts` → `session.display`                                     | More intuitive name for AR display operations                                    |
@@ -1290,3 +1300,4 @@ The cloud hardcodes these paths (`${publicUrl}/webhook`, `${publicUrl}/tool`, et
 | Q12 | Notification summarization — where in cloud?                           | LLM agent from Dashboard mini app → OS capability. Which LLM? Cost?                                                     |
 | Q13 | Dashboard app content priority/ordering                                | How does OS decide which app content to show? Most recent? Something smarter?                                           |
 | Q14 | Head-up gesture for dashboard                                          | Currently cycles app content rotation. Keep? Change behavior?                                                           |
+                                  | Currently cycles app content rotation. Keep? Change behavior?                                                           |

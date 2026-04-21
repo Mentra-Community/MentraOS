@@ -91,15 +91,13 @@ class Bridge {
         }
     }
 
-    static func sendDiscoveredDevice(_ deviceModel: String, _ deviceName: String, _ signalStrength: Int = -1) {
+    static func sendDiscoveredDevice(_ deviceModel: String, _ deviceName: String) {
         Task {
             await MainActor.run {
-                let searchResults =
-                    GlassesStore.shared.get("core", "searchResults") as? [[String: Any]] ?? []
+                let searchResults = GlassesStore.shared.get("core", "searchResults") as? [[String: Any]] ?? []
                 let newResult: [String: Any] = [
                     "deviceModel": deviceModel,
                     "deviceName": deviceName,
-                    "signalStrength": signalStrength,
                 ]
                 let allResults = searchResults + [newResult]
                 var seen = Set<String>()
@@ -141,12 +139,15 @@ class Bridge {
         Bridge.sendTypedMessage("button_press", body: body)
     }
 
-    static func sendTouchEvent(deviceModel: String, gestureName: String, timestamp: Int64) {
-        let body: [String: Any] = [
+    static func sendTouchEvent(deviceModel: String, gestureName: String, timestamp: Int64, source: Int32? = nil) {
+        var body: [String: Any] = [
             "device_model": deviceModel,
             "gesture_name": gestureName,
             "timestamp": timestamp,
         ]
+        if let source {
+            body["source"] = source
+        }
         Bridge.sendTypedMessage("touch_event", body: body)
     }
 
@@ -242,6 +243,13 @@ class Bridge {
         }
     }
 
+    static func sendMiniappSelected(packageName: String) {
+        let event: [String: Any] = [
+            "packageName": packageName
+        ]
+        Bridge.sendTypedMessage("miniapp_selected", body: event)
+    }
+
     /**
      * Send transcription result to server
      * Used by AOSManager to send pre-formatted transcription results
@@ -257,11 +265,6 @@ class Bridge {
     }
 
     // core bridge funcs:
-
-    static func sendStatus(_ statusObj: [String: Any]) {
-        let body = ["core_status": statusObj]
-        Bridge.sendTypedMessage("core_status_update", body: body)
-    }
 
     static func sendserialNumber(_ serialNumber: String, style: String, color: String) {
         let body = [
@@ -312,7 +315,7 @@ class Bridge {
     /// Send ota_start_ack — glasses confirmed receipt of ota_start command
     static func sendOtaStartAck() {
         let eventBody: [String: Any] = [
-            "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
+            "timestamp": Int64(Date().timeIntervalSince1970 * 1000)
         ]
         Bridge.sendTypedMessage("ota_start_ack", body: eventBody)
     }

@@ -733,16 +733,19 @@ public class RtmpStreamingService extends Service {
                 mReconnectHandler.removeCallbacksAndMessages(null);
             }
 
-            // Ensure reconnection state is clean
-            if (mReconnectAttempts > 0 || mReconnecting) {
-                Log.w(TAG, "Cleaning up stale reconnection state - attempts: " + mReconnectAttempts + ", reconnecting: " + mReconnecting);
-                mReconnectAttempts = 0;
-                mReconnecting = false;
+            if (mReconnecting) {
+                // Called from scheduleReconnect() — preserve attempt count and reconnecting flag
+                Log.d(TAG, "Reconnect attempt #" + mReconnectAttempts + " starting (sequence: " + mReconnectionSequence + ")");
+            } else {
+                // Fresh start from external caller — reset everything
+                if (mReconnectAttempts > 0) {
+                    Log.w(TAG, "Cleaning up stale reconnection state - attempts: " + mReconnectAttempts);
+                    mReconnectAttempts = 0;
+                }
+                // Increment reconnection sequence to invalidate any pending reconnection handlers
+                mReconnectionSequence++;
+                Log.d(TAG, "Starting new stream with reconnection sequence: " + mReconnectionSequence);
             }
-
-            // Increment reconnection sequence to invalidate any pending reconnection handlers
-            mReconnectionSequence++;
-            Log.d(TAG, "Starting new stream with reconnection sequence: " + mReconnectionSequence);
 
             // Check if camera is busy with photo/video capture BEFORE attempting to stream
             if (CameraNeo.isCameraInUse()) {
@@ -1174,15 +1177,19 @@ public class RtmpStreamingService extends Service {
 
             // Reset state and mark that we're reconnecting
             synchronized (mStateLock) {
-                // Only proceed if we're not already stopped
-                if (mStreamState != StreamState.IDLE && mStreamState != StreamState.STOPPING) {
-                    mStreamState = StreamState.IDLE;
-                    mIsStreaming = false;
-                    mReconnecting = true;
-                    startStreaming();
-                } else {
-                    Log.d(TAG, "Stream was stopped during reconnection delay, cancelling reconnection");
+                // Allow reconnection if we're still actively reconnecting (even from IDLE after a failed attempt)
+                // Only bail if an explicit stop was requested (mReconnecting would be false)
+                if (!mReconnecting) {
+                    Log.d(TAG, "Stream was explicitly stopped during reconnection delay, cancelling reconnection");
+                    return;
                 }
+                if (mStreamState == StreamState.STOPPING) {
+                    Log.d(TAG, "Stream is stopping, cancelling reconnection");
+                    return;
+                }
+                mStreamState = StreamState.IDLE;
+                mIsStreaming = false;
+                startStreaming();
             }
         }, delay);
     }

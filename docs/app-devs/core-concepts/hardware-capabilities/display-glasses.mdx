@@ -52,7 +52,7 @@ description: "Build apps for glasses with screens - G1, Vuzix"
 ### Check Display Capabilities
 
 ```typescript
-protected async onSession(session: AppSession, sessionId: string, userId: string) {
+app.onSession((session: MentraSession) => {
   const caps = session.capabilities;
   if (!caps?.hasDisplay) {
     session.logger.warn('No display available');
@@ -75,10 +75,10 @@ const maxLines = caps.display?.maxTextLines || 3;
 
 if (maxLines < 5) {
   // Small display - brief message
-  session.layouts.showTextWall('Done!');
+  session.display.showTextWall('Done!');
 } else {
   // Larger display - more detail
-  session.layouts.showReferenceCard('Complete', 'Task finished successfully');
+  session.display.showReferenceCard('Complete', 'Task finished successfully');
 }
 ```
 
@@ -89,11 +89,11 @@ const isColor = caps.display?.isColor;
 
 if (!isColor) {
   // Monochrome - use high contrast
-  session.layouts.showTextWall('Status: Active');
+  session.display.showTextWall('Status: Active');
   // Avoid complex graphics
 } else {
   // Color display available
-  session.layouts.showTextWall('✓ Status: Active');
+  session.display.showTextWall('✓ Status: Active');
 }
 ```
 
@@ -104,7 +104,7 @@ if (!isColor) {
 ```typescript
 if (!caps.hasSpeaker) {
   // Audio plays through phone
-  await session.audio.speak('Hello!');
+  await session.speaker.speak('Hello!');
 
   // User hears through phone speaker or Bluetooth headphones
 }
@@ -116,9 +116,9 @@ if (!caps.hasSpeaker) {
 
 ```typescript
 if (caps.hasMicrophone) {
-  session.events.onTranscription((data) => {
+  session.transcription.on((data) => {
     if (data.isFinal) {
-      session.layouts.showTextWall(data.text);
+      session.display.showTextWall(data.text);
     }
   });
 }
@@ -128,7 +128,7 @@ if (caps.hasMicrophone) {
 
 ```typescript
 // Voice input happens through phone's microphone
-session.events.onTranscription((data) => {
+session.transcription.on((data) => {
   // Still works - uses phone mic
 });
 ```
@@ -139,10 +139,10 @@ session.events.onTranscription((data) => {
 
 ```typescript
 // ✅ Good - readable
-session.layouts.showTextWall('Message sent');
+session.display.showTextWall('Message sent');
 
 // ❌ Avoid - too much text
-session.layouts.showTextWall(
+session.display.showTextWall(
   'Your message has been successfully sent to the recipient and they will receive it shortly'
 );
 ```
@@ -151,16 +151,16 @@ session.layouts.showTextWall(
 
 ```typescript
 // Simple status
-session.layouts.showTextWall('Ready');
+session.display.showTextWall('Ready');
 
 // Structured info
-session.layouts.showReferenceCard(
+session.display.showReferenceCard(
   'Weather',
   'Sunny\n72°F\nHumidity: 45%'
 );
 
 // Two-part content
-session.layouts.showDoubleTextWall({
+session.display.showDoubleTextWall({
   topText: 'Question:',
   bottomText: 'What is 2 + 2?'
 });
@@ -174,29 +174,29 @@ session.layouts.showDoubleTextWall({
 ## Example App
 
 ```typescript
-class DisplayGlassesApp extends AppServer {
-  protected async onSession(session: AppSession, sessionId: string, userId: string) {
+const app = new MiniAppServer {
+  app.onSession((session: MentraSession) => {
     const caps = session.capabilities;
 
     if (!caps?.hasDisplay) {
       session.logger.warn('No display - audio only');
-      await session.audio.speak('Welcome');
+      await session.speaker.speak('Welcome');
       return;
     }
 
     // Show welcome on display
-    session.layouts.showTextWall('Voice Assistant Ready');
+    session.display.showTextWall('Voice Assistant Ready');
 
     // Use microphone if available
     if (caps.hasMicrophone) {
-      session.events.onTranscription((data) => {
+      session.transcription.on((data) => {
         if (data.isFinal) {
           this.handleCommand(session, data.text);
         }
       });
     } else {
       // Phone microphone still works
-      session.events.onTranscription((data) => {
+      session.transcription.on((data) => {
         if (data.isFinal) {
           this.handleCommand(session, data.text);
         }
@@ -205,11 +205,11 @@ class DisplayGlassesApp extends AppServer {
   }
 
   private handleCommand(session: AppSession, text: string) {
-    session.layouts.showTextWall(`You said: ${text}`);
+    session.display.showTextWall(`You said: ${text}`);
 
     // Speak response if no speaker on glasses
     if (!session.capabilities?.hasSpeaker) {
-      session.audio.speak('Processing');
+      session.speaker.speak('Processing');
     }
   }
 }

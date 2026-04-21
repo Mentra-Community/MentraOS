@@ -35,7 +35,7 @@ Example: Mentra Live. These devices are ideal for visual capture, streaming, and
 ### Check Camera Capabilities
 
 ```typescript
-protected async onSession(session: AppSession, sessionId: string, userId: string) {
+app.onSession((session: MentraSession) => {
   const caps = session.capabilities;
 
   if (!caps?.hasCamera) {
@@ -62,7 +62,7 @@ if (caps.hasCamera) {
   });
 
   session.logger.info('Photo captured:', photo.filename);
-  await session.audio.speak('Photo captured');
+  await session.speaker.speak('Photo captured');
 }
 ```
 
@@ -78,7 +78,7 @@ if (caps.camera?.video.canStream) {
     }
   });
 
-  await session.audio.speak('Streaming started');
+  await session.speaker.speak('Streaming started');
 }
 ```
 
@@ -89,9 +89,9 @@ if (caps.camera?.video.canStream) {
 ```typescript
 protected async onSession(session: AppSession, sessionId: string, userId: userId: string) {
   // Speak instead of showing text
-  await session.audio.speak('Camera ready. Say "photo" to capture.');
+  await session.speaker.speak('Camera ready. Say "photo" to capture.');
 
-  session.events.onTranscription(async (data) => {
+  session.transcription.on(async (data) => {
     if (!data.isFinal) return;
 
     if (data.text.toLowerCase().includes('photo')) {
@@ -100,12 +100,12 @@ protected async onSession(session: AppSession, sessionId: string, userId: userId
   });
 }
 
-private async takePhoto(session: AppSession) {
-  await session.audio.speak('Taking photo');
+private async takePhoto(session: MentraSession) {
+  await session.speaker.speak('Taking photo');
 
   const photo = await session.camera.requestPhoto();
 
-  await session.audio.speak('Photo saved');
+  await session.speaker.speak('Photo saved');
 }
 ```
 
@@ -113,10 +113,10 @@ private async takePhoto(session: AppSession) {
 
 ```typescript
 if (caps.hasButton) {
-  session.events.onButtonPress(async (data) => {
+  session.device.onButtonPress(async (data) => {
     if (data.button === 'select') {
       await session.camera.requestPhoto();
-      await session.audio.speak('Photo captured');
+      await session.speaker.speak('Photo captured');
     }
   });
 }
@@ -154,9 +154,9 @@ if (caps.hasWifi) {
 
 ```typescript
 // ✅ Good - user knows what's happening
-await session.audio.speak('Processing');
+await session.speaker.speak('Processing');
 await processData();
-await session.audio.speak('Complete');
+await session.speaker.speak('Complete');
 
 // ❌ Avoid - silent operation confuses users
 await processData();
@@ -167,10 +167,10 @@ await processData();
 ```typescript
 if (caps.hasSpeaker) {
   // Audio plays directly on glasses
-  await session.audio.speak('Hello!');
+  await session.speaker.speak('Hello!');
 } else {
   // Fallback to phone
-  await session.audio.speak('Hello!');
+  await session.speaker.speak('Hello!');
 }
 ```
 
@@ -178,12 +178,12 @@ if (caps.hasSpeaker) {
 
 ```typescript
 // Button for quick actions
-session.events.onButtonPress(async (data) => {
+session.device.onButtonPress(async (data) => {
   await session.camera.requestPhoto();
 });
 
 // Voice for complex commands
-session.events.onTranscription(async (data) => {
+session.transcription.on(async (data) => {
   if (data.isFinal) {
     await this.handleCommand(data.text);
   }
@@ -193,27 +193,27 @@ session.events.onTranscription(async (data) => {
 ## Example App
 
 ```typescript
-class CameraGlassesApp extends AppServer {
-  protected async onSession(session: AppSession, sessionId: string, userId: string) {
+const app = new MiniAppServer {
+  app.onSession((session: MentraSession) => {
     const caps = session.capabilities;
 
     if (!caps?.hasCamera) {
-      await session.audio.speak('Camera not available');
+      await session.speaker.speak('Camera not available');
       return;
     }
 
     // Audio welcome
-    await session.audio.speak('Camera app ready');
+    await session.speaker.speak('Camera app ready');
 
     // Button to capture
-    session.events.onButtonPress(async (data) => {
+    session.device.onButtonPress(async (data) => {
       if (data.button === 'select') {
         await this.capturePhoto(session);
       }
     });
 
     // Voice commands
-    session.events.onTranscription(async (data) => {
+    session.transcription.on(async (data) => {
       if (!data.isFinal) return;
 
       const text = data.text.toLowerCase();
@@ -226,8 +226,8 @@ class CameraGlassesApp extends AppServer {
     });
   }
 
-  private async capturePhoto(session: AppSession) {
-    await session.audio.speak('Capturing');
+  private async capturePhoto(session: MentraSession) {
+    await session.speaker.speak('Capturing');
 
     // LED feedback
     if (session.capabilities?.hasLight) {
@@ -243,11 +243,11 @@ class CameraGlassesApp extends AppServer {
       saveToGallery: true
     });
 
-    await session.audio.speak('Photo saved');
+    await session.speaker.speak('Photo saved');
   }
 
-  private async startStreaming(session: AppSession) {
-    await session.audio.speak('Starting stream');
+  private async startStreaming(session: MentraSession) {
+    await session.speaker.speak('Starting stream');
 
     await session.camera.startLivestream({
       video: {
@@ -256,7 +256,7 @@ class CameraGlassesApp extends AppServer {
       }
     });
 
-    await session.audio.speak('Streaming');
+    await session.speaker.speak('Streaming');
   }
 }
 ```

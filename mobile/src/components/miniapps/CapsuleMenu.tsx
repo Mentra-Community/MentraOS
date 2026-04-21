@@ -1,7 +1,7 @@
 import {Button, Icon, Text} from "@/components/ignite"
 import {focusEffectPreventBack, push, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {ClientAppletInterface, SYSTEM_APPS, uninstallAppUI, useAppletStatusStore} from "@/stores/applets"
+import {ClientAppletInterface, SYSTEM_APPS, useAppletStatusStore} from "@/stores/applets"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {BottomSheetBackdrop, BottomSheetModal} from "@gorhom/bottom-sheet"
 import {Dimensions, Image as RNImage, InteractionManager, Platform, Share, View, PixelRatio} from "react-native"
@@ -84,7 +84,7 @@ export function MiniAppCapsuleMenu({
         RNImage.getSize(uri, (w, h) => resolve({width: w, height: h}), reject)
       })
       let amountToChop = insets.top * PixelRatio.get()
-
+      amountToChop = 0
       const context = ImageManipulator.ImageManipulator.manipulate(uri)
       context.crop({originX: 0, originY: amountToChop, width: width, height: height - amountToChop})
       const imageRef = await context.renderAsync()
@@ -93,7 +93,15 @@ export function MiniAppCapsuleMenu({
         compress: 0.1,
       })
 
-      await useAppletStatusStore.getState().saveScreenshot(packageName, cropped.uri)
+      if (Platform.OS === "ios") {
+        await useAppletStatusStore.getState().saveScreenshot(packageName, cropped.uri)
+      } else {
+        // android is weird and the crop doesn't work properly:
+        await useAppletStatusStore.getState().saveScreenshot(packageName, uri)
+      }
+
+      // await useAppletStatusStore.getState().saveScreenshot(packageName, cropped.uri)
+      await useAppletStatusStore.getState().saveScreenshot(packageName, uri)
     } catch (e) {
       console.warn("screenshot failed:", e)
     }
@@ -103,9 +111,28 @@ export function MiniAppCapsuleMenu({
     }
   }
 
+  // focusEffectPreventBack(
+  //   onBackPress
+  //     ? () => {
+  //         onBackPress()
+  //       }
+  //     : () => {
+  //         // Defer screenshot capture so it doesn't block the navigation animation
+  //         // InteractionManager.runAfterInteractions(() => {
+  //         //   let shouldGoBack = Platform.OS === "android"
+  //         //   handleExit(shouldGoBack)
+  //         // })
+  //         let shouldGoBack = Platform.OS === "android"
+  //         handleExit(shouldGoBack)
+  //       },
+  //   onBackPress ? false : true,
+  // )
+
   focusEffectPreventBack(
     onBackPress
       ? () => {
+          console.log("CAPSULE MENU: handleBackPress() called")
+          handleExit(false)
           onBackPress()
         }
       : () => {
@@ -115,7 +142,7 @@ export function MiniAppCapsuleMenu({
             handleExit(shouldGoBack)
           })
         },
-    onBackPress ? false : true,
+    true,
   )
 
   return (
@@ -130,7 +157,7 @@ interface MiniAppMoreActionsSheetProps {
 }
 
 export const MiniAppMoreActionsSheet = forwardRef<BottomSheetModal, MiniAppMoreActionsSheetProps>(
-  ({packageName}, ref) => {
+  function MiniAppMoreActionsSheet({packageName}, ref) {
     const {theme} = useAppTheme()
     const screenHeight = Dimensions.get("window").height
     const snapPoints = useMemo(() => [screenHeight < 700 ? "70%" : "50%"], [screenHeight])
@@ -157,14 +184,6 @@ export const MiniAppMoreActionsSheet = forwardRef<BottomSheetModal, MiniAppMoreA
       [],
     )
 
-    const handleUninstall = useCallback(() => {
-      // Composer.getInstance().uninstallMiniApp(packageName)
-      const app = useAppletStatusStore.getState().apps.find((app) => app.packageName === packageName)
-      if (app) {
-        uninstallAppUI(app)
-      }
-    }, [packageName])
-
     const handleAddRemoveFromHome = useCallback(() => {
       if (app && app.hidden) {
         useAppletStatusStore.getState().setHiddenStatus(packageName, false)
@@ -188,8 +207,14 @@ export const MiniAppMoreActionsSheet = forwardRef<BottomSheetModal, MiniAppMoreA
 
     const handleFeedback = useCallback(() => {
       internalRef.current?.dismiss()
-      push("/miniapps/settings/feedback")
-    }, [packageName])
+      push("/miniapps/settings/feedback", {
+        submissionMode: "USER_INITIATED",
+        triggerArea: "applet_capsule_menu",
+        triggerReason: "manual_bug_report",
+        sourceAppletPackageName: packageName,
+        sourceAppletName: app?.name,
+      })
+    }, [packageName, app?.name])
 
     const handleSettings = useCallback(() => {
       internalRef.current?.dismiss()
@@ -200,7 +225,6 @@ export const MiniAppMoreActionsSheet = forwardRef<BottomSheetModal, MiniAppMoreA
     }, [packageName])
 
     const isSystemApp = SYSTEM_APPS.includes(packageName)
-    const isUninstallable = isSystemApp ? false : true
     const size = 28
 
     return (

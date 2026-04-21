@@ -1,55 +1,202 @@
 ---
-title: Camera Module
-description: Capture photos and stream video from MentraOS smart glasses. Managed streaming uses WebRTC by default (or SRT + HLS/DASH with restream destinations). Unmanaged streaming sends directly to your endpoint via SRT, RTMP, or WHIP.
+title: "Camera"
+description: "Capture photos and stream video from smart glasses with a camera."
 ---
 
-The Camera Module provides photo capture and video streaming for MentraOS apps.
+The camera manager lets your app take photos and stream video from camera-equipped smart glasses like Mentra Live. It supports single photo capture, managed and direct video streaming, and stream lifecycle events.
 
-## Available Features
+Since Mentra Live has no display, examples on this page use `session.logger.info()` for output.
 
-### [Photo Capture](./photo-capture.md)
-Take high-quality photos from smart glasses with options for gallery saving and raw buffer access.
+## Quick Example
 
-### [Video Streaming](./streaming.md)
-Stream live video from smart glasses:
-
-- **Livestream** (`startLivestream`) — Zero infrastructure. Low-latency WebRTC by default. Add `restreamDestinations` to go live on YouTube, Twitch, etc. Multiple apps can share the same stream.
-- **Local Livestream** (`startLocalLivestream`) — Stream directly to your own endpoint via SRT, RTMP, or WHIP. Exclusive camera access.
-
-See the [Video Streaming guide](./streaming.md) for details and API reference.
-
-## Quick Start
-
-### Taking a Photo
 ```typescript
-const photo = await session.camera.requestPhoto({ saveToGallery: true });
-console.log(`Photo captured: ${photo.mimeType}, ${photo.size} bytes`);
+import { MiniAppServer, type MentraSession } from "@mentra/sdk";
+
+const app = new MiniAppServer({
+  packageName: "com.example.camera-demo",
+  apiKey: process.env.API_KEY!,
+  port: 3000,
+});
+
+app.onSession(async (session: MentraSession) => {
+  session.logger.info("Camera session started");
+
+  if (!session.camera.hasPermission) {
+    session.logger.info("No camera permission for this app");
+    return;
+  }
+
+  // Take a photo
+  const photo = await session.camera.takePhoto({ saveToGallery: true });
+  session.logger.info(`Captured photo: ${photo.mimeType}, ${photo.size} bytes`);
+});
+
+await app.start();
 ```
 
-### Starting a Livestream
+## Full API
+
+| Method / Property | Description |
+|---|---|
+| `session.camera.takePhoto(options?)` | Capture a photo. Returns `Promise<PhotoData>`. |
+| `session.camera.startStream(options?)` | Start video streaming (managed, direct, or with restream destinations). |
+| `session.camera.stopStream()` | Stop the active video stream. |
+| `session.camera.onStreamStatus(handler)` | Register a handler for stream status events. |
+| `session.camera.checkExistingStream()` | Check for orphaned streams from a previous session. |
+| `session.camera.hasPermission` | Boolean. Whether this app has camera permission. |
+
+### `takePhoto(options?)`
+
+Captures a single photo from the glasses camera and returns a `PhotoData` object.
+
 ```typescript
-const result = await session.camera.startLivestream();
-console.log('WebRTC playback URL:', result.webrtcUrl);
+// Default capture
+const photo = await session.camera.takePhoto();
+session.logger.info(`Got ${photo.size} bytes of ${photo.mimeType}`);
+
+// Save to the user's gallery
+const saved = await session.camera.takePhoto({ saveToGallery: true });
+session.logger.info("Photo saved to gallery");
 ```
 
-### Streaming to Your Own Server
-```typescript
-// SRT
-await session.camera.startLocalLivestream({ streamUrl: 'srt://your-server.com:4201?streamid=key' });
+### `startStream(options?)`
 
-// RTMP
-await session.camera.startLocalLivestream({ streamUrl: 'rtmp://your-server.com/live/key' });
+Starts a video stream from the glasses. The options object controls the stream type and destination.
+
+```typescript
+// Managed stream (WebRTC, zero infrastructure)
+const result = await session.camera.startStream();
+session.logger.info(`Stream live at: ${result.webrtcUrl}`);
+
+// Direct stream to your own server via SRT
+await session.camera.startStream({
+  streamUrl: "srt://your-server.com:4201?streamid=key",
+});
+
+// Managed stream with restream destinations (YouTube, Twitch, etc.)
+await session.camera.startStream({
+  restreamDestinations: [
+    { url: "rtmp://a.rtmp.youtube.com/live2", streamKey: "your-key" },
+  ],
+});
+```
+
+### `stopStream()`
+
+Stops the active video stream.
+
+```typescript
+await session.camera.stopStream();
+session.logger.info("Stream stopped");
+```
+
+### `onStreamStatus(handler)`
+
+Registers a callback that fires when stream status changes.
+
+```typescript
+session.camera.onStreamStatus((status) => {
+  session.logger.info(`Stream status: ${status.state}`);
+});
+```
+
+### `checkExistingStream()`
+
+Checks for orphaned streams from a previous session. Useful on startup to clean up or resume.
+
+```typescript
+const existing = await session.camera.checkExistingStream();
+if (existing) {
+  session.logger.info("Found orphaned stream, stopping it");
+  await session.camera.stopStream();
+}
+```
+
+### `hasPermission`
+
+A boolean property. Check this before calling any camera method.
+
+```typescript
+if (!session.camera.hasPermission) {
+  session.logger.info("Camera permission not granted");
+  return;
+}
+```
+
+## Common Patterns
+
+### Take a Photo on Voice Command
+
+```typescript
+import { MiniAppServer, type MentraSession } from "@mentra/sdk";
+
+const app = new MiniAppServer({
+  packageName: "com.example.photo-snap",
+  apiKey: process.env.API_KEY!,
+  port: 3000,
+});
+
+app.onSession((session: MentraSession) => {
+  session.transcription.on(async (data) => {
+    if (data.isFinal && data.text.toLowerCase().includes("take photo")) {
+      const photo = await session.camera.takePhoto({ saveToGallery: true });
+      session.logger.info(`Photo captured: ${photo.size} bytes`);
+      session.led.setColor("green", 500);
+    }
+  });
+});
+
+await app.start();
+```
+
+### Stream with Status Monitoring
+
+```typescript
+app.onSession(async (session: MentraSession) => {
+  session.camera.onStreamStatus((status) => {
+    session.logger.info(`Stream is now: ${status.state}`);
+
+    if (status.state === "live") {
+      session.led.setColor("red");
+    } else if (status.state === "stopped") {
+      session.led.off();
+    }
+  });
+
+  await session.camera.startStream();
+  session.logger.info("Streaming started");
+});
+```
+
+### Clean Up Orphaned Streams on Startup
+
+```typescript
+app.onSession(async (session: MentraSession) => {
+  const existing = await session.camera.checkExistingStream();
+  if (existing) {
+    session.logger.info("Cleaning up orphaned stream");
+    await session.camera.stopStream();
+  }
+
+  // Now safe to start fresh
+  await session.camera.startStream();
+});
 ```
 
 ## Important Notes
 
-- **Permissions**: Camera access requires the `CAMERA` permission. See [Permissions Guide](/app-devs/core-concepts/permissions).
-- **Hardware**: Only available on camera-equipped glasses (e.g., Mentra Live)
-- **Battery**: Extended streaming drains battery quickly
-- **Privacy**: Always notify users when camera is active
+- **Permission required.** Camera access requires the `CAMERA` permission. Check `session.camera.hasPermission` before use.
+- **Hardware.** Only available on camera-equipped glasses (Mentra Live). Other devices will not have camera capability.
+- **Battery.** Extended video streaming drains the glasses battery quickly. Keep streams as short as practical.
+- **Privacy.** Always make it clear to the user when the camera is active. Consider using the LED as a recording indicator.
 
-## See Also
+## Sub-Pages
 
-- [Video Streaming Guide](./streaming.md) — Livestream vs local, protocol details, re-streaming
-- [Photo Capture Guide](./photo-capture.md) — Taking and processing photos
-- [API Reference](/app-devs/reference/managers/camera) — Complete API documentation
+<CardGroup cols={2}>
+  <Card title="Photo Capture" icon="camera" href="/app-devs/core-concepts/camera/photo-capture">
+    Single photo capture, gallery saving, and raw buffer access.
+  </Card>
+  <Card title="Video Streaming" icon="video" href="/app-devs/core-concepts/camera/streaming">
+    Managed streams, direct streams, restream destinations, and stream lifecycle.
+  </Card>
+</CardGroup>

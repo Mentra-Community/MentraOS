@@ -21,13 +21,13 @@ src/
 
 ### Naming
 
-| Thing | Convention | Example |
-|---|---|---|
-| Folder for backend | `backend/` | NOT `server/` |
-| API route files | `<feature>.api.ts` | `audio.api.ts`, `photo.api.ts` |
-| Manager files | `<feature>.manager.ts` | `audio.manager.ts`, `photo.manager.ts` |
-| App class | Context-specific name | `SdkTestApp`, NOT `CameraApp` if it's not a camera app |
-| Per-user state class | `UserSession` | NOT `User`, NOT `Session` |
+| Thing                | Convention             | Example                                                |
+| -------------------- | ---------------------- | ------------------------------------------------------ |
+| Folder for backend   | `backend/`             | NOT `server/`                                          |
+| API route files      | `<feature>.api.ts`     | `audio.api.ts`, `photo.api.ts`                         |
+| Manager files        | `<feature>.manager.ts` | `audio.manager.ts`, `photo.manager.ts`                 |
+| App class            | Context-specific name  | `SdkTestApp`, NOT `CameraApp` if it's not a camera app |
+| Per-user state class | `UserSession`          | NOT `User`, NOT `Session`                              |
 
 ## API Files (`<feature>.api.ts`)
 
@@ -129,7 +129,7 @@ UserSession.remove(userId)
 // ❌ Bad
 sessions.getOrCreate(userId)
 sessionManager.get(userId)
-import { sessions } from "../UserSession"
+import {sessions} from "../UserSession"
 ```
 
 ### Duplicate Module Bug Prevention
@@ -190,11 +190,11 @@ this.logger.info(`\n\n🛑 Received stop request for user ${userId}\n\n`)
 
 ### Log levels
 
-| Level | Use for |
-|---|---|
-| `error` | Actual failures requiring action |
-| `warn` | SDK updates, abnormal closures, missing config — things the dev should see |
-| `info` | Server started. That's about it. |
+| Level   | Use for                                                                            |
+| ------- | ---------------------------------------------------------------------------------- |
+| `error` | Actual failures requiring action                                                   |
+| `warn`  | SDK updates, abnormal closures, missing config — things the dev should see         |
+| `info`  | Server started. That's about it.                                                   |
 | `debug` | Everything else — session lifecycle, internal routing, cleanup, connection details |
 
 **Default log level is `warn`.** Developers only see warnings and errors unless they opt in to more with `MENTRA_LOG_LEVEL=debug` or `MENTRA_VERBOSE=true`.
@@ -219,10 +219,7 @@ fetch("/api/speak", { method: "POST", ... })
 
 ## General
 
-- **Semicolons:** No. (Prettier/lint will enforce this.)
-- **Bracket spacing:** `{thing}` not `{ thing }`.
 - **Trailing commas:** Yes, everywhere.
-- **Imports:** `import {Foo} from "bar"` not `import { Foo } from "bar"`.
 - **Quotes:** Double quotes in TypeScript.
 - **Don't over-abstract.** A `Map` is fine. You don't need a `SessionManager` class wrapping a `Map`. Static methods on the class that owns the data are enough.
 - **Don't split routing from handling into separate folders.** One `api/` folder. Each file has its own routes AND handlers.

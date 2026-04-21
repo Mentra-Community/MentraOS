@@ -152,6 +152,7 @@ Verify zero event loop gaps and GC probes within range.
 | Mar 29    | 068     | ResourceTracker.track() throw → exit 1   | Run cleanup immediately instead of throwing |
 | Mar 29    | 070     | Soniox WebSocket timeout → exit 1        | Global unhandledRejection handler           |
 | Mar 30    | 072     | Cloudflare 521 — server was healthy      | No action needed — Cloudflare network blip  |
+| Mar 30    | 074     | Timer closures pinning disposed sessions | Cleared 5 leaked timers in dispose() paths  |
 
 ## Cluster IDs
 
@@ -162,3 +163,144 @@ Verify zero event loop gaps and GC probes within range.
 | East Asia  | 4754       | `asiaeastapi.mentra.glass`  |
 | US West    | 4965       | `uswestapi.mentraglass.com` |
 | US East    | 4977       | `useastapi.mentraglass.com` |
+
+---
+
+## Tips & Tricks (Lessons Learned)
+
+### Getting credentials
+
+SRE credentials (BetterStack, admin JWT) are in Doppler project `mentra-sre`:
+
+```bash
+# Run any bstack command with SRE credentials injected
+doppler run --project mentra-sre --config dev -- bstack health
+doppler run --project mentra-sre --config dev -- bstack incidents --limit 10
+
+# Or export for a session
+export BETTERSTACK_USERNAME=$(doppler secrets get BETTERSTACK_USERNAME --project mentra-sre --config dev --plain)
+export BETTERSTACK_PASSWORD=$(doppler secrets get BETTERSTACK_PASSWORD --project mentra-sre --config dev --plain)
+export BETTERSTACK_API_TOKEN=$(doppler secrets get BETTERSTACK_API_TOKEN --project mentra-sre --config dev --plain)
+export MENTRA_ADMIN_JWT=$(doppler secrets get MENTRA_ADMIN_JWT --project mentra-sre --config dev --plain)
+```
+
+Cloud runtime secrets (MONGO_URL, SONIOX_API_KEY, etc.) are in Doppler project `mentraos-cloud` — configs: `dev`, `dev_debug`, `staging`, `prod_central-us`, etc. **Don't put SRE tokens in the cloud project.**
+
+### BetterStack log table gotchas
+
+- **Hot storage** (`remote(t373499_mentracloud_prod_logs)`) only has the last few minutes of data. If you're investigating something older, you get zero rows.
+- **Historical/S3 storage** (`s3Cluster(primary, t373499_mentracloud_prod_s3)`) has everything but is slower (~3-5s per query) and requires `WHERE _row_type = 1` for log rows.
+- **Dev/debug logs** go to `remote(t373499_augmentos_logs)` (the dev source), NOT the prod source.
+- The `json` column exists in DESCRIBE but you can't use `json.field` dot notation. Use `JSONExtractString(raw, 'field')` instead.
+- Pino fields: `level` is a string ("error"/"warn"/"info"), `message` (not `msg` — Vector renames it), `service`, `region`, `feature`, `userId`.
+
+### BetterStack query patterns that work
+
+```sql
+-- Errors for a specific user (last 15 min, hot storage)
+SELECT dt, JSONExtractString(raw, 'level') as lvl,
+       JSONExtractString(raw, 'message') as message,
+       JSONExtractString(raw, 'service') as svc
+FROM remote(t373499_augmentos_logs)
+WHERE raw LIKE '%isaiahballah%'
+  AND JSONExtractString(raw, 'level') IN ('error', 'warn')
+  AND dt > now() - INTERVAL 15 MINUTE
+ORDER BY dt DESC LIMIT 20
+
+-- System vitals over time (historical, for a specific region)
+SELECT toStartOfHour(dt) as hour,
+       avg(JSONExtractFloat(raw, 'rssMB')) as rss,
+       avg(JSONExtractInt(raw, 'activeSessions')) as sessions,
+       avg(JSONExtractInt(raw, 'disposedSessionsPendingGC')) as leaked
+FROM s3Cluster(primary, t373499_mentracloud_prod_s3)
+WHERE _row_type = 1
+  AND JSONExtractString(raw, 'feature') = 'system-vitals'
+  AND JSONExtractString(raw, 'region') = 'france'
+  AND dt > now() - INTERVAL 16 HOUR
+GROUP BY hour ORDER BY hour ASC
+
+-- Raw log snippet (when you don't know the field names)
+SELECT dt, substring(raw, 1, 300) as snippet
+FROM remote(t373499_augmentos_logs)
+WHERE raw LIKE '%keyword%' AND dt > now() - INTERVAL 5 MINUTE
+ORDER BY dt DESC LIMIT 5
+```
+
+### Debug environment has no logs?
+
+The debug cloud needs `LOG_STDOUT_JSON=true` to output JSON that Vector can parse. Without it, pino-pretty outputs human-readable text and Vector ignores it. This is set in `porter.yaml` as of issue 074. If a new environment has no logs in BetterStack, check this first.
+
+Vector is already deployed on cluster 4689 (DaemonSet in `betterstack` namespace) and filters for `cloud-debug-cloud` containers. No additional Vector install needed.
+
+### When you can't see logs, use kubectl directly
+
+```bash
+# Find the pod
+porter kubectl --cluster 4689 -- get pods -n default | grep debug
+
+# Tail logs (last 100 lines, grep for your keyword)
+porter kubectl --cluster 4689 -- logs -n default <POD_NAME> --tail=100 | grep -i "error\|timeout\|captions"
+
+# Live follow
+porter kubectl --cluster 4689 -- logs -n default <POD_NAME> -f | grep -i error
+```
+
+### Heap snapshot analysis
+
+**WARNING: Taking a heap snapshot on a loaded server doubles memory usage temporarily. On a server at 400MB+ with many sessions, this WILL cause OOM.** Only take snapshots on low-traffic environments or right after a restart when memory is low.
+
+```bash
+# Fetch a Bun heap snapshot (saves as JSON, loadable in Chrome DevTools Memory tab)
+doppler run --project mentra-sre --config dev -- \
+  bun run packages/cloud/src/scripts/analyze-heap.ts fetch \
+  --host=uscentralapi.mentra.glass --out=.heap/
+
+# Analyze object counts
+doppler run --project mentra-sre --config dev -- \
+  bun run packages/cloud/src/scripts/analyze-heap.ts snapshot \
+  --file=.heap/uscentralapi-TIMESTAMP.json
+
+# Live memory tracking (polls /api/admin/memory/now every 30s)
+doppler run --project mentra-sre --config dev -- \
+  bun run packages/cloud/src/scripts/analyze-heap.ts live \
+  --host=franceapi.mentra.glass --interval=10 --duration=300
+```
+
+Key things to look for in the snapshot:
+- `UserSession` count vs `activeSessions` from health endpoint — difference = phantom sessions
+- `Timeout` count — should be ~20× active sessions. Much higher = leaked timers
+- All manager types (DashboardManager, DeviceManager, etc.) should equal UserSession count
+
+### Timer leak investigation process
+
+If `disposedSessionsPendingGC` is climbing and GC is freeing 0MB:
+
+1. **Confirm the pattern**: check `disposedSessionsPendingGC` over time in system-vitals. If it climbs from 0 to 5+ over hours, sessions are being retained.
+2. **Take a heap snapshot** (on a low-traffic env) and check object counts — UserSession count should match activeSessions.
+3. **Audit timers**: `grep -rn "setInterval\|setTimeout" cloud/packages/cloud/src/services/session/ --include="*.ts"` — for each timer, verify it's stored in a variable AND cleared in the owning class's `dispose()` method.
+4. **Red flags**:
+   - `setTimeout(() => ..., N)` with no variable assignment = untracked, can't be cancelled
+   - `setInterval` in a class whose `dispose()` doesn't `clearInterval` it
+   - Module-level Maps/Sets that hold closures capturing session references
+   - Recursive `setTimeout(fn, 100)` polling with no disposed guard
+   - Closures that capture `this` (the session) without checking `this.disposed`
+5. **Fix pattern**: store timer in a variable, clear in `dispose()`, add `if (this.disposed) return` guard in callbacks.
+
+### Pre-push build verification
+
+Always run before pushing to avoid CI failures:
+
+```bash
+cd cloud && bun run ci
+```
+
+This runs the same build sequence as `Dockerfile.porter` locally in ~7 seconds: types → display-utils → sdk → utils → cloud. If it passes, CI will pass.
+
+### Maintain this runbook
+
+After every investigation, add what you learned:
+- New query patterns that worked
+- Tools/credentials that were hard to find
+- Failure modes you discovered
+- Things that took multiple attempts to figure out
+- Environment-specific gotchas (debug vs prod differences)

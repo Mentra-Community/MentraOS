@@ -1,6 +1,6 @@
-import React, {RefObject, useCallback, useEffect, useRef, useState} from "react"
+import {RefObject, useCallback, useEffect, useRef, useState} from "react"
 import {View, Dimensions, Pressable, Platform} from "react-native"
-import {Image} from "expo-image"
+import {Image, useImage} from "expo-image"
 import {Text} from "@/components/ignite/"
 import Animated, {
   useSharedValue,
@@ -18,8 +18,8 @@ import {Gesture, GestureDetector} from "react-native-gesture-handler"
 import {runOnJS, scheduleOnRN} from "react-native-worklets"
 import {
   ClientAppletInterface,
-  getLastOpenTime,
   saveLastOpenTime,
+  sortAppsByLastOpenTime,
   useActiveApps,
   useAppletStatusStore,
 } from "@/stores/applets"
@@ -30,10 +30,12 @@ import {SETTINGS, useSetting} from "@/stores/settings"
 import {BlurView} from "expo-blur"
 import GlassView from "@/components/ui/GlassView"
 import {hapticBuzz} from "@/utils/utils"
+import { storage } from "@/utils/storage"
 
 const {width: SCREEN_WIDTH, height: SCREEN_HEIGHT} = Dimensions.get("window")
-const CARD_WIDTH = SCREEN_WIDTH * 0.67
-const CARD_HEIGHT = SCREEN_HEIGHT * 0.67
+const CARD_SCALE = 0.67
+const CARD_WIDTH = SCREEN_WIDTH * CARD_SCALE
+const CARD_HEIGHT = SCREEN_HEIGHT * CARD_SCALE
 const CARD_SPACING = 0
 const DISMISS_THRESHOLD = -180
 const VELOCITY_THRESHOLD = -800
@@ -60,6 +62,25 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
   const translateY = useSharedValue(0)
   const cardOpacity = useSharedValue(1)
   const animatedIndex = useSharedValue(index)
+  const loadedImage = useImage(
+    app.screenshot ??
+      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkAAIAAAoAAv/lxKUAAAAASUVORK5CYII=",
+    {},
+    [app.screenshot],
+  )
+  // such a dumb hack but it works:
+  let imageAspectRatio = loadedImage && loadedImage.width > 0 ? loadedImage.height / loadedImage.width : null
+  if (!app.screenshot) {
+    // load aspect ratio from storage:
+    const res = storage.load(`app_screenshot_aspect_ratio`)
+    if (res.is_ok()) {
+      imageAspectRatio = res.value as number
+    } else {
+      imageAspectRatio = CARD_HEIGHT / CARD_WIDTH
+    }
+  } else {
+    storage.save(`app_screenshot_aspect_ratio`, imageAspectRatio)
+  }
 
   useEffect(() => {
     if (animatedIndex.value < index && index == count - 1) {
@@ -168,7 +189,9 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
 
   // debug sort order:
   // console.log("packageName", app.packageName, "index", index)
-  const insets = useSaferAreaInsets()
+  // const insets = useSafierAreaInsets()
+
+  const imageHeight = imageAspectRatio != null ? (CARD_WIDTH - 4) * imageAspectRatio : null
 
   return (
     <GestureDetector gesture={composedGesture}>
@@ -176,10 +199,8 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
         className="items-start"
         style={[
           {
-            width: CARD_WIDTH,
-            // height: CARD_HEIGHT + (12 * 4) - (insets.top * 1/0.67), // - 16,
-            height: CARD_HEIGHT,
-            // zIndex: -index,// to reverse stack order
+            width: CARD_WIDTH - 4, // idk why we need this -4, but it's more work than it's worth to figure out
+            // height: imageHeight,
             position: "absolute",
             left: 0,
             // zIndex: index,// ensure the cards are on top of each other
@@ -195,9 +216,10 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
           </Animated.View>
         </View>
         <View
-          className="flex-1 rounded-3xl overflow-hidden w-full shadow-2xl bg-primary-foreground"
+          className="rounded-3xl overflow-hidden w-full shadow-2xl bg-primary-foreground"
           style={{
             boxShadow: "0px 8px 32px 0px rgba(0, 0, 0, 0.2)",
+            height: imageHeight,
           }}>
           {!app.screenshot && (
             <View className="flex-1 items-center justify-center">
@@ -207,11 +229,7 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
 
           {app.screenshot && (
             <View className="flex-1" style={{overflow: "hidden"}}>
-              <Image
-                source={{uri: app.screenshot}}
-                style={{width: "100%", height: "100%"}}
-                contentFit="cover"
-              />
+              <Image source={{uri: app.screenshot}} style={{width: "100%", height: "100%"}} contentFit="cover" />
             </View>
           )}
         </View>
@@ -253,7 +271,7 @@ interface AppSwitcherProps {
 
 const AnimatedBlurView = Animated.createAnimatedComponent(BlurView)
 
-export default function AppSwitcher({swipeProgress, blurTargetRef}: AppSwitcherProps) {
+export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRef}: AppSwitcherProps) {
   const translateX = useSharedValue(0)
   const offsetX = useSharedValue(0)
   const targetIndex = useSharedValue(0)
@@ -265,7 +283,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef}: AppSwitcherP
   let [apps, setApps] = useState<ClientAppletInterface[]>([])
   const prevAppsLength = useRef(0)
   const [blurPointerEvents, setBlurPointerEvents] = useState<"auto" | "none">("none")
-  const [androidBlur] = useSetting(SETTINGS.android_blur.key)
+  const [_androidBlur] = useSetting(SETTINGS.android_blur.key)
   const [showNoAppsMessage, setShowNoAppsMessage] = useState(true)
   const dotsPanGestureRef = useRef(Gesture.Pan())
 
@@ -278,27 +296,13 @@ export default function AppSwitcher({swipeProgress, blurTargetRef}: AppSwitcherP
   // }, [activePackageNames])
 
   useEffect(() => {
-    const sortApps = async () => {
-      const timestamps = await Promise.all(
-        directApps.map(async (app) => ({
-          app,
-          time: await getLastOpenTime(app.packageName),
-        })),
-      )
-      let sortedApps = timestamps
-        .sort((a, b) => {
-          if (a.time.is_error() || b.time.is_error()) return 0
-          return a.time.value - b.time.value
-        })
-        .map((entry) => entry.app)
-      setApps(sortedApps)
-      // let index = apps.length - 1
-      // setTimeout(() => {
-      //   runOnJS(goToIndex)(index)
-      // }, 100)
-      // setApps(directApps)
+    let cancelled = false
+    sortAppsByLastOpenTime(directApps).then((sorted) => {
+      if (!cancelled) setApps(sorted)
+    })
+    return () => {
+      cancelled = true
     }
-    sortApps()
   }, [directApps])
 
   const activeIndex = useDerivedValue(() => {
@@ -598,8 +602,8 @@ export default function AppSwitcher({swipeProgress, blurTargetRef}: AppSwitcherP
       return
     }
 
-    // Handle offline apps - navigate directly to React Native route
-    if (applet.offline && applet.offlineRoute) {
+    // Handle apps with custom routes (offline or online with offlineRoute override)
+    if (applet.offlineRoute) {
       saveLastOpenTime(applet.packageName)
       push(applet.offlineRoute, {transition: "fade"})
     } else if (applet.webviewUrl && applet.healthy) {

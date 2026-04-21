@@ -1,0 +1,5 @@
+# Ignore everything in this directory — private/internal docs
+# This .gitignore lives inside .local/ as a safety net in case
+# the parent cloud/issues/.gitignore doesn't exist on the current branch.
+*
+!.gitignore

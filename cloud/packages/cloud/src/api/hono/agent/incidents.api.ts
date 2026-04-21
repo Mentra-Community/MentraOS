@@ -58,7 +58,9 @@ async function listIncidents(c: AppContext) {
       .sort({ createdAt: -1 })
       .skip(offset)
       .limit(limit)
-      .select("incidentId userId status summary linearIssueId linearIssueUrl errorMessage createdAt updatedAt")
+      .select(
+        "incidentId userId status submissionMode triggerArea triggerReason sourceAppletPackageName sourceAppletName summary linearIssueId linearIssueUrl errorMessage createdAt updatedAt",
+      )
       .lean();
 
     const total = await Incident.countDocuments();
@@ -85,6 +87,9 @@ async function listIncidents(c: AppContext) {
  */
 async function getIncident(c: AppContext) {
   const incidentId = c.req.param("incidentId");
+  if (!incidentId) {
+    return c.json({ error: "incidentId is required" }, 400);
+  }
 
   try {
     const incident = await Incident.findOne({ incidentId }).lean();

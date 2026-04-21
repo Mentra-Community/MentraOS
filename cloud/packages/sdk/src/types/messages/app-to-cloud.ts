@@ -17,8 +17,18 @@ export type SubscriptionRequest = ExtendedStreamType | LocationStreamRequest;
 export interface AppConnectionInit extends BaseMessage {
   type: AppToCloudMessageType.CONNECTION_INIT;
   packageName: string;
-  sessionId: string;
+  sessionId?: string;
   apiKey: string;
+  sdkVersion?: string;
+}
+
+/**
+ * Reconnect request from App
+ */
+export interface AppReconnect extends BaseMessage {
+  type: AppToCloudMessageType.RECONNECT;
+  sessionId: string;
+  sdkVersion: string;
 }
 
 /**
@@ -114,6 +124,8 @@ export interface RestreamDestination {
 export interface ManagedStreamRequest extends BaseMessage {
   type: AppToCloudMessageType.MANAGED_STREAM_REQUEST;
   packageName: string;
+  quality?: "720p" | "1080p";
+  enableWebRTC?: boolean;
   video?: VideoConfig;
   audio?: AudioConfig;
   stream?: StreamConfig;
@@ -251,6 +263,7 @@ export interface OwnershipReleaseMessage extends BaseMessage {
  */
 export type AppToCloudMessage =
   | AppConnectionInit
+  | AppReconnect
   | AppSubscriptionUpdate
   | AppLocationPollRequest
   | DisplayRequest
@@ -286,6 +299,13 @@ export type AppToCloudMessage =
  */
 export function isAppConnectionInit(message: AppToCloudMessage): message is AppConnectionInit {
   return message.type === AppToCloudMessageType.CONNECTION_INIT;
+}
+
+/**
+ * Type guard to check if a message is a App reconnect request
+ */
+export function isAppReconnect(message: AppToCloudMessage): message is AppReconnect {
+  return message.type === AppToCloudMessageType.RECONNECT;
 }
 
 /**
