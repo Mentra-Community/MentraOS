@@ -10,6 +10,9 @@ const WINDOW_OPTIONS = [
   {label: "1m", value: 60_000},
   {label: "5m", value: 5 * 60_000},
   {label: "15m", value: 15 * 60_000},
+  {label: "1h", value: 60 * 60_000},
+  {label: "6h", value: 6 * 60 * 60_000},
+  {label: "1d", value: 24 * 60 * 60_000},
   {label: "All", value: null},
 ] as const
 
@@ -50,6 +53,8 @@ export function LatencyTab({snapshot}: {snapshot: MonitorSnapshot}) {
                 <CartesianGrid stroke="rgba(140, 158, 189, 0.16)" vertical={false} />
                 <XAxis
                   dataKey="ts_ms"
+                  type="number"
+                  domain={["dataMin", "dataMax"]}
                   tickFormatter={(value: number) => formatClock(value)}
                   minTickGap={36}
                   stroke="#7f90b2"
