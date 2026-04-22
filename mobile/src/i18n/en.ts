@@ -427,8 +427,7 @@ const en = {
     connectToTakePicture: "Connect to take pictures",
     gallerySettings: "Gallery Settings",
     saveToLibrary: "Save to Camera Roll",
-    saveToLibraryDescription:
-      "Automatically save synced photos and videos to your camera roll",
+    saveToLibraryDescription: "Automatically save synced photos and videos to your camera roll",
     deleteAllPhotos: "Delete All Photos",
     deleteAllPhotosDescription: "Remove all photos from device storage (camera roll photos are not affected)",
     galleryStats: "Gallery Statistics",
@@ -945,6 +944,7 @@ const en = {
     mirror: "Glasses Mirror",
     simulated: "Simulated Glasses",
     store: "MiniApp Store",
+    notify: "Notifications",
     feedback: "Give Feedback",
     lmaInstaller: "Local Store",
     lmaLoader: "Side Loader",

@@ -1,7 +1,6 @@
 import {ControllerTypes, DeviceTypes} from "@/../../cloud/packages/types/src"
 import {useRoute} from "@react-navigation/native"
-import CoreModule from "core"
-import {Linking, PermissionsAndroid, Image, Platform, ScrollView, View} from "react-native"
+import {Linking, PermissionsAndroid, Image, Platform, View} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
@@ -9,12 +8,10 @@ import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {showAlert} from "@/utils/AlertUtils"
+import {completeSimulatedSetup} from "@/utils/completeSimulatedSetup"
 import {PermissionFeatures, checkConnectivityRequirementsUI, requestFeaturePermissions} from "@/utils/PermissionsUtils"
-import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
 import {useState} from "react"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
-import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
-import {useAppletStatusStore} from "@/stores/applets"
 
 export default function PairingPrepScreen() {
   const route = useRoute()
@@ -212,7 +209,7 @@ export default function PairingPrepScreen() {
 
     // skip pairing for simulated glasses:
     if (deviceModel.startsWith(DeviceTypes.SIMULATED)) {
-      await CoreModule.connectSimulated()
+      await completeSimulatedSetup()
       clearHistoryAndGoHome()
       return
     }

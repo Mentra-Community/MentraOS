@@ -688,6 +688,7 @@ class MantleManager {
             typeof event.failure_message === "string" ? event.failure_message : "Captions tester incident detected."
           const testRunId = typeof event.test_run_id === "string" ? event.test_run_id : undefined
           const scenarioName = typeof event.scenario_name === "string" ? event.scenario_name : undefined
+          const alertId = typeof event.alert_id === "string" ? event.alert_id : testRunId
 
           const actualBehavior = JSON.stringify(
             {
@@ -705,18 +706,33 @@ class MantleManager {
             "|",
           )
 
-          void submitAutomaticBugIncident({
-            categorization: {
-              submissionMode: "AUTOMATIC",
-              triggerArea: "captions_tester",
-              triggerReason: "captions_incident_detected",
-            },
-            expectedBehavior: "Captions tester runs should complete without a captions incident.",
-            actualBehavior,
-            severityRating: 4,
-            dedupeKey,
-            logTag: "CaptionsTesterBugReport",
-          })
+          void (async () => {
+            const result = await submitAutomaticBugIncident({
+              categorization: {
+                submissionMode: "AUTOMATIC",
+                triggerArea: "captions_tester",
+                triggerReason: "captions_incident_detected",
+              },
+              expectedBehavior: "Captions tester runs should complete without a captions incident.",
+              actualBehavior,
+              severityRating: 4,
+              dedupeKey,
+              logTag: "CaptionsTesterBugReport",
+            })
+
+            console.log(
+              `CAPTIONS_TESTER_INCIDENT_RESULT ${JSON.stringify({
+                alert_id: alertId,
+                test_run_id: testRunId,
+                failure_code: failureCode,
+                scenario_name: scenarioName,
+                status: result.status,
+                incident_id: result.status === "filed" ? result.incidentId : undefined,
+                reason: result.status === "skipped" ? result.reason : undefined,
+                error: result.status === "failed" ? result.error : undefined,
+              })}`,
+            )
+          })()
         }),
       )
 

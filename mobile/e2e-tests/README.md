@@ -7,12 +7,12 @@ The current production path for this harness is:
 - word-level ground truth from Hugging Face word-timestamp data
 - visible transcription timing from `E2E_METRIC` app logs in `adb logcat`
 - live dashboard served locally by `scripts/live_word_monitor.py`
+- read-only archive review served by the same script with `--read-only`
 - optional public sharing via Cloudflare Tunnel
 
 ## Layout
 
 - `scripts/live_word_monitor.py`: current live dashboard and monitor
-- `scripts/serve_monitor_history.py`: serves previously captured monitor history
 - `results/`: NDJSON, cache, and monitor outputs
 
 ## Current Signal Source
@@ -94,15 +94,71 @@ The phone must be able to open the captions mini app and render the `Simulated g
 ### 6. Run the monitor
 
 ```bash
-cd /path/to/MentraOS/mobile/e2e-test
+cd /path/to/MentraOS/mobile/e2e-tests
 python3 scripts/live_word_monitor.py \
   --output-dir results \
   --port 8765
 ```
 
+If you want the monitor to verify a specific macOS output device and raise incidents when playback would route elsewhere, run it with the extra device flag:
+
+```bash
+cd /path/to/MentraOS/mobile/e2e-tests
+python3 scripts/live_word_monitor.py \
+  --output-dir results \
+  --port 8765 \
+  --audio-output-device "External Headphones"
+```
+
 Then open:
 
 - [http://127.0.0.1:8765](http://127.0.0.1:8765)
+
+If you only want to inspect previously captured results, start the same dashboard in read-only mode:
+
+```bash
+cd /path/to/MentraOS/mobile/e2e-tests
+python3 scripts/live_word_monitor.py \
+  --read-only \
+  --output-dir results \
+  --port 8765
+```
+
+In read-only mode, the dashboard loads history from `monitor_events.ndjson` and does not require the phone, `adb`, local audio playback, or any live collectors.
+
+The dashboard UI now lives in `ui/` as a small React app.
+
+For the normal static workflow, rebuild it before restarting the monitor:
+
+```bash
+cd /path/to/MentraOS/mobile/e2e-tests/ui
+bun install
+bun run build
+```
+
+For frontend hot reload during development, run Vite separately and start the monitor in UI dev mode:
+
+```bash
+cd /path/to/MentraOS/mobile/e2e-tests/ui
+bun install
+bun run dev
+```
+
+In another terminal:
+
+```bash
+cd /path/to/MentraOS/mobile/e2e-tests
+python3 scripts/live_word_monitor.py \
+  --output-dir results \
+  --port 8765 \
+  --ui-dev
+```
+
+Then keep using:
+
+- [http://127.0.0.1:8765](http://127.0.0.1:8765)
+
+The monitor will proxy UI requests to Vite on `127.0.0.1:5173` while still serving `/state` itself, so React edits hot reload without rebuilding `ui/dist`.
 
 ### 7. Set up Cloudflare Tunnel on the new machine
 
@@ -166,8 +222,39 @@ curl -A 'Mozilla/5.0' https://captions.smartglasses.art
 ## Notes
 
 - The monitor server is Python, not Expo; restart it after code changes.
-- The dashboard now uses Plotly for chart interaction.
-- The chart is intended for incident review as well as live monitoring, so older windows can be inspected from the UI.
+- The dashboard UI is a small React app under `ui/`.
+- The chart is intended for incident review as well as live monitoring.
+- On startup, the monitor restores recent graph history from `results/monitor_events.ndjson`, so the latency shape survives dashboard restarts.
+
+## Incident Config
+
+Incident thresholds now live in:
+
+- [incident_config.toml](/Users/philippe/dev/MentraOS-philippe-OS-1274-e2e-testing-checklist/mobile/e2e-tests/incident_config.toml)
+
+This file defines per-incident names and thresholds. Current examples:
+
+- `drop_event`
+- `audio_output_device_mismatch`
+- `high_average_latency`
+
+Each incident can have its own:
+
+- `name`
+- `enabled`
+- `incident_threshold_ms`
+- `alert_threshold_ms`
+
+Some incident types can also use extra fields. For example, `high_average_latency` uses:
+
+- `window_size`
+- `resolve_threshold_ms`
+
+The monitor reads this file at startup.
+
+For `audio_output_device_mismatch`, the thresholds live in the TOML config, but the expected device name is still provided at runtime with `--audio-output-device`. That keeps the policy shared in git while letting a MacBook and Mac mini use different local hardware.
+
+When an alert is raised, the monitor also broadcasts an Android intent to the connected phone by default. This is intended for the `internal` Android build, which registers the `com.mentra.CAPTIONS_TESTER_INCIDENT` receiver and files a normal automatic incident through the mobile app.
 
 ## Running it
 
@@ -209,9 +296,27 @@ Open:
 
 Notes:
 
-- this script does **not** hot reload; restart it after code changes
+- backend/script changes still require restarting this Python process
 - it writes cache and monitor output under `results`
+- if `--audio-output-device` is set, the monitor will refuse playback unless that macOS output device is active; with `SwitchAudioSource` installed it will auto-switch first
 - if startup fails because cached utterance history is on an old schema, remove or migrate `results/utterance_reports.ndjson`
+- if you are editing the React dashboard, run Vite in `ui/` and add `--ui-dev` for hot reload; otherwise rebuild `ui/dist`
+
+If you only want to review archived output:
+
+```bash
+cd mobile/e2e-tests
+python3 scripts/live_word_monitor.py \
+  --read-only \
+  --output-dir results \
+  --port 8765
+```
+
+Notes:
+
+- this mode serves the same dashboard UI
+- it reloads recent delay points, completed utterances, drop events, and recent events from disk
+- it does not start playback, logcat collection, RN streaming, USB forwarding, or any adb-dependent checks
 
 ### 4. Optional: expose the dashboard publicly
 
@@ -238,8 +343,8 @@ cloudflared tunnel info captions
 If the monitor looks stale:
 
 ```bash
-pkill -f 'mobile/e2e-test/scripts/live_word_monitor.py'
-cd mobile/e2e-test
+pkill -f 'mobile/e2e-tests/scripts/live_word_monitor.py'
+cd mobile/e2e-tests
 python3 scripts/live_word_monitor.py \
   --output-dir results \
   --port 8765
@@ -249,4 +354,49 @@ If the public URL is down:
 
 ```bash
 cloudflared --config ~/.cloudflared/config.yml tunnel run captions
+```
+
+## On Mentra's mac mini
+
+### Disable computer sleep
+
+It should not sleep but log out and screen saver is fine
+
+### Disable system updates
+
+Disable the user-level automatic update settings for this account:
+
+com.apple.SoftwareUpdate.AutomaticCheckEnabled = 0
+com.apple.SoftwareUpdate.AutomaticDownload = 0
+com.apple.SoftwareUpdate.AutomaticallyInstallMacOSUpdates = 0
+com.apple.commerce.AutoUpdate = 0
+com.apple.commerce.AutoUpdateRestartRequired = 0
+
+Open:
+System Settings > General > Software Update > Automatic Updates
+
+Turn off:
+
+Check for Updates
+Download new updates when available
+Install macOS updates
+Install Security Responses and system files
+That should stop both full macOS updates and the background security/system-file installs that can sometimes interfere.
+
+### Run it
+
+Connect the phone with a data-USB cable
+Open the Captions app, go back to the home screen.
+
+# Terminal 1
+
+```
+cd /Users/mentraconference/Documents/MentraOS/mobile/e2e-tests
+python3 scripts/live_word_monitor.py --output-dir results --port 8765 --audio-output-device "External Headphones"
+```
+
+# Terminal 2
+
+```
+cloudflared --config /Users/mentraconference/.cloudflared/config.yml tunnel run captions
 ```
