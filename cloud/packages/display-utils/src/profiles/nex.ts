@@ -1,4 +1,4 @@
-import {DisplayProfile} from "./types"
+import { DisplayProfile } from "./types";
 
 /**
  * Mentra Nex glyph widths
@@ -115,7 +115,7 @@ const NEX_GLYPH_WIDTHS: Record<string, number> = {
   "|": 1,
   "}": 3,
   "~": 7,
-}
+};
 
 /**
  * Mentra Nex Smart Glasses Display Profile
@@ -135,8 +135,10 @@ export const NEX_PROFILE: DisplayProfile = {
   maxLines: 5,
 
   // BLE constraints
-  // PLACEHOLDER: Using G1 values until Nex specs confirmed
-  maxPayloadBytes: 390,
+  // maxPayloadBytes matches firmware MAX_TEXT_LEN (nanopb DisplayText.text is char[247]).
+  // The TextWrapper uses this as the maxBytes ceiling so wrapped output never exceeds
+  // what the firmware decoder can accept in a single protobuf message.
+  maxPayloadBytes: 247,
   bleChunkSize: 176,
 
   // Font metrics
@@ -167,16 +169,16 @@ export const NEX_PROFILE: DisplayProfile = {
     noStartChars: [".", ",", "!", "?", ":", ";", ")", "]", "}", "。", "，", "！", "？", "：", "；", "）", "】", "」"],
     noEndChars: ["(", "[", "{", "（", "【", "「"],
   },
-}
+};
 
 /**
  * Get the hyphen width for Mentra Nex in rendered pixels.
  * PLACEHOLDER: Using G1 value
  */
-export const NEX_HYPHEN_WIDTH_PX = 10
+export const NEX_HYPHEN_WIDTH_PX = 10;
 
 /**
  * Get the space width for Mentra Nex in rendered pixels.
  * PLACEHOLDER: Using G1 value
  */
-export const NEX_SPACE_WIDTH_PX = 6
+export const NEX_SPACE_WIDTH_PX = 6;
