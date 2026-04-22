@@ -25,6 +25,8 @@ The current live monitor primarily uses machine-readable `E2E_METRIC` log lines 
 - `display_store_update`
 - `display_view_changed`
 
+By default, the monitor only consumes `display_store_update` events for the `main` display view. This avoids treating dashboard-only content such as date/time ticks as caption activity.
+
 For the current dashboard, delay is computed from:
 
 - observed timestamp: first accepted visible word match from `display_store_update`
@@ -98,6 +100,15 @@ cd /path/to/MentraOS/mobile/e2e-tests
 python3 scripts/live_word_monitor.py \
   --output-dir results \
   --port 8765
+```
+
+If you need to inspect a different display lane, you can override the default filter:
+
+```bash
+python3 scripts/live_word_monitor.py \
+  --output-dir results \
+  --port 8765 \
+  --display-view dashboard
 ```
 
 If you want the monitor to verify a specific macOS output device and raise incidents when playback would route elsewhere, run it with the extra device flag:

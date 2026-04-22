@@ -103,6 +103,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--inter-utterance-gap-ms", type=int, default=350, help="Gap between utterances in continuous playback")
     parser.add_argument("--max-history", type=int, default=500, help="How many completed utterances and drop events to keep in memory")
     parser.add_argument(
+        "--display-view",
+        choices=["main", "dashboard", "any"],
+        default="main",
+        help="Only consume display_store_update metrics for this view. Use 'any' to accept all views.",
+    )
+    parser.add_argument(
         "--ui-dev",
         action="store_true",
         help="Proxy UI requests to a Vite dev server instead of serving ui/dist. Useful for hot reloading frontend edits.",
@@ -861,6 +867,13 @@ class MonitorWorker:
         self.last_is_app_foreground: bool | None = None
         self.last_foreground_app_check_error: str | None = None
         self.last_foreground_focus: str | None = None
+
+    def should_accept_display_payload(self, payload: dict[str, Any]) -> bool:
+        payload_view = payload.get("view")
+        if self.args.display_view != "any" and payload_view not in (None, self.args.display_view):
+            return False
+
+        return True
 
     @property
     def adb_prefix(self) -> list[str]:
@@ -1675,6 +1688,8 @@ ws.on('error', (err) => process.stderr.write(String(err && err.message || err) +
 
                     if payload.get("event") != "display_store_update":
                         continue
+                    if not self.should_accept_display_payload(payload):
+                        continue
                     now_ms = int(payload.get("ts_ms") or time.time() * 1000)
                     visible_lines = payload.get("text_lines") or []
                     normalized_lines = [normalize_text(item) for item in visible_lines]
@@ -1687,6 +1702,7 @@ ws.on('error', (err) => process.stderr.write(String(err && err.message || err) +
                                 "ts_ms": now_ms,
                                 "visible_lines": visible_lines,
                                 "normalized_visible_lines": normalized_lines,
+                                "view": payload.get("view"),
                                 "source": "rn_inspector",
                             },
                         )
@@ -1740,6 +1756,8 @@ ws.on('error', (err) => process.stderr.write(String(err && err.message || err) +
 
                     if payload.get("event") != "display_store_update":
                         continue
+                    if not self.should_accept_display_payload(payload):
+                        continue
 
                     now_ms = int(payload.get("ts_ms") or now_ms)
                     visible_lines = payload.get("text_lines") or []
@@ -1753,6 +1771,7 @@ ws.on('error', (err) => process.stderr.write(String(err && err.message || err) +
                                 "ts_ms": now_ms,
                                 "visible_lines": visible_lines,
                                 "normalized_visible_lines": normalized_lines,
+                                "view": payload.get("view"),
                                 "source": "logcat",
                             },
                         )
