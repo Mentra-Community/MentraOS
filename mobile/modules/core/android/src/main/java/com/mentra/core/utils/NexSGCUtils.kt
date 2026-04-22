@@ -256,14 +256,9 @@ object NexProtobufUtils {
         // Replace all m-dashes with normal dash
         val textWithNormalDash = text.replace("—", "-")
         
-        val sanitizedText = textWithNormalDash.replace(
-            Regex("""[^A-Za-z0-9 \r\n.,!?;:\-\[\]\(\)\{\}'"+=/]"""),
-            ""
-        )
-
         val textNewBuilder = DisplayText.newBuilder()
             .setColor(10000)
-            .setText(sanitizedText)
+            .setText(textWithNormalDash)
             .setSize(48)
             .setX(20)
             .setY(260)
