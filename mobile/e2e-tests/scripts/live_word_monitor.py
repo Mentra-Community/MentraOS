@@ -56,6 +56,7 @@ CAPTIONS_TESTER_FILED_RE = re.compile(r"CaptionsTesterBugReport\]\s+Incident fil
 UI_DIST_DIR = Path(__file__).resolve().parent.parent / "ui" / "dist"
 DEFAULT_UI_DEV_ORIGIN = "http://127.0.0.1:5173"
 SNAPSHOT_WORD_HISTORY_MULTIPLIER = 8
+LEADING_SPEAKER_MARKER_RE = re.compile(r"^\s*(?:\[\s*\d+\s*\]\s*:?\s*)+")
 
 
 def parse_args() -> argparse.Namespace:
@@ -133,6 +134,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def normalize_text(value: str) -> str:
+    value = LEADING_SPEAKER_MARKER_RE.sub("", value)
     value = value.lower()
     value = re.sub(r"[^a-z0-9\s]", " ", value)
     value = re.sub(r"\s+", " ", value)
