@@ -1,8 +1,9 @@
 import {MetricCard} from "../components/MetricCard"
+import {RelativeAge} from "../components/RelativeAge"
 import {SectionCard} from "../components/SectionCard"
 import {StatusBadge} from "../components/StatusBadge"
 import type {MonitorSnapshot} from "../types"
-import {formatAge, formatClockWithMs} from "../utils"
+import {formatClockWithMs} from "../utils"
 
 export function OverviewTab({snapshot}: {snapshot: MonitorSnapshot}) {
   const currentWord = snapshot.current_utterance?.words?.filter((word) => word.logcat_true_first_visible_ts_ms).at(-1)
@@ -28,7 +29,7 @@ export function OverviewTab({snapshot}: {snapshot: MonitorSnapshot}) {
         <MetricCard
           label="Logcat Feed"
           value={snapshot.logcat_visible_lines.length ? "Active" : "Idle"}
-          detail={`Last event ${formatAge(snapshot.last_logcat_event_ts_ms)}`}
+          detail={<RelativeAge ms={snapshot.last_logcat_event_ts_ms} prefix="Last event " />}
         />
         <MetricCard
           label="Open Incidents"

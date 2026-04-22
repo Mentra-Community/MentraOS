@@ -2,9 +2,9 @@ import * as Tabs from "@radix-ui/react-tabs"
 import {lazy, startTransition, Suspense, useEffect, useMemo, useState} from "react"
 
 import {EmptyState} from "./components/EmptyState"
+import {RelativeAge} from "./components/RelativeAge"
 import {StatusBadge} from "./components/StatusBadge"
 import type {CurrentUtterance, DelayPoint, MonitorSnapshot} from "./types"
-import {formatAge} from "./utils"
 
 const OverviewTab = lazy(() => import("./tabs/OverviewTab").then((module) => ({default: module.OverviewTab})))
 const IncidentsTab = lazy(() => import("./tabs/IncidentsTab").then((module) => ({default: module.IncidentsTab})))
@@ -188,17 +188,6 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabValue>("overview")
   const [snapshot, setSnapshot] = useState<MonitorSnapshot | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
-  const [, setRenderTick] = useState(() => Date.now())
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setRenderTick(Date.now())
-    }, 1000)
-
-    return () => {
-      window.clearInterval(intervalId)
-    }
-  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -330,9 +319,15 @@ export default function App() {
           <div className="hero-pill">{snapshot ? <StatusBadge status={snapshot.status} /> : "Loading…"}</div>
           <strong>{headline}</strong>
           <span>
-            {snapshot
-              ? `Last logcat event ${formatAge(snapshot.last_logcat_event_ts_ms)}`
-              : "Waiting for initial state"}
+            {snapshot ? (
+              <RelativeAge
+                ms={snapshot.last_logcat_event_ts_ms}
+                prefix="Last logcat event "
+                emptyLabel="Waiting for event"
+              />
+            ) : (
+              "Waiting for initial state"
+            )}
           </span>
           {errorMessage ? <span className="hero-error">{errorMessage}</span> : null}
         </div>
