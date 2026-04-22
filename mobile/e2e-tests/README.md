@@ -399,6 +399,19 @@ That should stop both full macOS updates and the background security/system-file
 Connect the phone with a data-USB cable
 Open the Captions app, go back to the home screen.
 
+#### From your local machine
+
+```
+./mobile/e2e-tests/scripts/redeploy_mentra_mini.sh
+```
+
+That helper will:
+
+- ssh to `mentra-mini`
+- fast-forward pull the current local branch
+- rebuild `mobile/e2e-tests/ui`
+- restart `live_word_monitor.py` with the known-good Homebrew Python runtime
+
 #### Terminal 1
 
 ```
@@ -415,6 +428,7 @@ cloudflared --config /Users/mentraconference/.cloudflared/config.yml tunnel run 
 ### Misc
 
 To login, run
+
 ```
 maestro test ~/Documents/Playground/maestro/captions.yaml
 ```
