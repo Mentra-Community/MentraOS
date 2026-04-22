@@ -65,6 +65,14 @@ SNAPSHOT_WORD_HISTORY_MULTIPLIER = 8
 LEADING_SPEAKER_MARKER_RE = re.compile(r"^\s*(?:\[\s*\d+\s*\]\s*:?\s*)+")
 SOCKET_APP_STARTED_RE = re.compile(r"SOCKET:\s+Received app_started message for package:\s*(\S+)")
 SOCKET_APP_STOPPED_RE = re.compile(r"SOCKET:\s+Received app_stopped message for package:\s*(\S+)")
+INCIDENT_PRIMARY_ORDER = (
+    "audio_output_device_mismatch",
+    "app_not_foreground",
+    "captions_app_not_running",
+    "drop_event",
+    "high_average_latency",
+)
+INCIDENT_PRIMARY_PRIORITY = {incident_type: index for index, incident_type in enumerate(INCIDENT_PRIMARY_ORDER)}
 
 
 def parse_args() -> argparse.Namespace:
@@ -521,6 +529,67 @@ class MonitorState:
             include_ongoing=False,
         )
 
+    def incident_primary_sort_key(self, incident: dict[str, Any]) -> tuple[int, str, int, str]:
+        incident_type = str(incident.get("incident_type") or "")
+        priority = INCIDENT_PRIMARY_PRIORITY.get(incident_type, len(INCIDENT_PRIMARY_PRIORITY))
+        started_at_ms = int(incident.get("started_at_ms") or 0)
+        incident_id = str(incident.get("incident_id") or "")
+        return (priority, incident_type, started_at_ms, incident_id)
+
+    def current_primary_incident_id(self) -> str | None:
+        for incident_id, incident in self.ongoing_incidents.items():
+            if incident.get("is_primary"):
+                return incident_id
+        return None
+
+    def recompute_primary_incident(self, now_ms: int) -> tuple[str | None, str | None]:
+        previous_primary_id = self.current_primary_incident_id()
+        new_primary_id: str | None = None
+        primary_incident: dict[str, Any] | None = None
+        if self.ongoing_incidents:
+            primary_incident = min(self.ongoing_incidents.values(), key=self.incident_primary_sort_key)
+            new_primary_id = str(primary_incident.get("incident_id") or "") or None
+
+        for incident_id, incident in self.ongoing_incidents.items():
+            is_primary = incident_id == new_primary_id
+            incident["is_primary"] = is_primary
+            if is_primary:
+                if previous_primary_id != incident_id or incident.get("primary_since_ms") is None:
+                    incident["primary_since_ms"] = now_ms
+                incident["secondary_to_incident_id"] = None
+                incident["secondary_to_incident_type"] = None
+                incident["secondary_to_incident_name"] = None
+            else:
+                incident["primary_since_ms"] = None
+                incident["secondary_to_incident_id"] = new_primary_id
+                incident["secondary_to_incident_type"] = primary_incident.get("incident_type") if primary_incident is not None else None
+                incident["secondary_to_incident_name"] = primary_incident.get("incident_name") if primary_incident is not None else None
+
+        return previous_primary_id, new_primary_id
+
+    def append_primary_transition_event(self, previous_primary_id: str | None, new_primary_id: str | None, now_ms: int) -> None:
+        if previous_primary_id == new_primary_id or new_primary_id is None:
+            return
+
+        new_primary = self.ongoing_incidents.get(new_primary_id)
+        if new_primary is None:
+            return
+
+        payload = {
+            "ts_ms": now_ms,
+            "incident_id": new_primary_id,
+            "incident_type": new_primary.get("incident_type"),
+            "incident_name": new_primary.get("incident_name"),
+            "primary_since_ms": new_primary.get("primary_since_ms"),
+        }
+        if previous_primary_id is not None:
+            payload["previous_primary_incident_id"] = previous_primary_id
+        previous_primary = self.ongoing_incidents.get(previous_primary_id) if previous_primary_id is not None else None
+        if previous_primary is not None:
+            payload["previous_primary_incident_type"] = previous_primary.get("incident_type")
+            payload["previous_primary_incident_name"] = previous_primary.get("incident_name")
+        self.append_event("incident_promoted", payload)
+
     def append_event(self, kind: str, payload: dict[str, Any]) -> None:
         event = {"kind": kind, **payload}
         self.last_events.append(event)
@@ -572,18 +641,23 @@ class MonitorState:
             **details,
         }
         self.ongoing_incidents[incident_id] = incident
+        previous_primary_id, new_primary_id = self.recompute_primary_incident(started_at_ms)
         write_ndjson(self.output_dir / "incidents.ndjson", incident)
         self.append_event("incident_started", incident)
+        self.append_primary_transition_event(previous_primary_id, new_primary_id, started_at_ms)
         return incident_id
 
     def maybe_alert_incident(self, incident_id: str, now_ms: int) -> dict[str, Any] | None:
         incident = self.ongoing_incidents.get(incident_id)
         if incident is None or incident.get("alerted_at_ms") is not None:
             return None
+        if not incident.get("is_primary"):
+            return None
 
         started_at_ms = int(incident["started_at_ms"])
+        primary_since_ms = int(incident.get("primary_since_ms") or started_at_ms)
         alert_threshold_ms = int(incident["alert_threshold_ms"])
-        if now_ms - started_at_ms < alert_threshold_ms:
+        if now_ms - primary_since_ms < alert_threshold_ms:
             return None
 
         alert = {
@@ -593,8 +667,10 @@ class MonitorState:
             "incident_name": incident.get("incident_name", incident["incident_type"]),
             "status": "pending_dispatch",
             "started_at_ms": started_at_ms,
+            "primary_since_ms": primary_since_ms,
             "alerted_at_ms": now_ms,
             "duration_ms": now_ms - started_at_ms,
+            "primary_duration_ms": now_ms - primary_since_ms,
             "alert_threshold_ms": alert_threshold_ms,
             "dataset_row_idx": incident.get("dataset_row_idx"),
             "utterance_text": incident.get("utterance_text"),
@@ -619,6 +695,7 @@ class MonitorState:
         return None
 
     def end_incident(self, incident_id: str, ended_at_ms: int, details: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        previous_primary_id = self.current_primary_incident_id()
         incident = self.ongoing_incidents.pop(incident_id, None)
         if incident is None:
             return None
@@ -635,6 +712,8 @@ class MonitorState:
         self.completed_incidents = trim_history(self.completed_incidents, self.max_history)
         write_ndjson(self.output_dir / "incidents.ndjson", ended)
         self.append_event("incident_ended", ended)
+        _, new_primary_id = self.recompute_primary_incident(ended_at_ms)
+        self.append_primary_transition_event(previous_primary_id, new_primary_id, ended_at_ms)
         return ended
 
     def append_drop_event(self, drop: dict[str, Any]) -> None:
@@ -679,15 +758,23 @@ class MonitorState:
             ongoing_incidents = []
             for incident in self.ongoing_incidents.values():
                 started_at_ms = int(incident["started_at_ms"])
+                primary_since_ms = incident.get("primary_since_ms")
+                primary_since_value = int(primary_since_ms) if primary_since_ms is not None else None
                 alerted_at_ms = incident.get("alerted_at_ms")
                 ongoing_incidents.append(
                     {
                         **incident,
                         "current_duration_ms": now_ms - started_at_ms,
-                        "time_to_alert_ms": None if alerted_at_ms else max(0, int(incident["alert_threshold_ms"]) - (now_ms - started_at_ms)),
+                        "primary_duration_ms": None if primary_since_value is None else now_ms - primary_since_value,
+                        "time_to_alert_ms": (
+                            None
+                            if alerted_at_ms or not incident.get("is_primary")
+                            else max(0, int(incident["alert_threshold_ms"]) - (now_ms - (primary_since_value or started_at_ms)))
+                        ),
                     }
                 )
-            ongoing_incidents.sort(key=lambda item: item["started_at_ms"])
+            ongoing_incidents.sort(key=self.incident_primary_sort_key)
+            primary_incident_id = next((item["incident_id"] for item in ongoing_incidents if item.get("is_primary")), None)
             return {
                 "started_at_ms": self.started_at_ms,
                 "dataset": self.dataset,
@@ -712,6 +799,7 @@ class MonitorState:
                     snapshot_word_history_limit,
                 ),
                 "drop_events": list(self.drop_events),
+                "primary_incident_id": primary_incident_id,
                 "ongoing_incidents": ongoing_incidents,
                 "completed_incidents": list(self.completed_incidents),
                 "alerts": list(self.alerts),

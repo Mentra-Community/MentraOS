@@ -25,15 +25,21 @@ export interface IncidentRecord {
   incident_type: string
   incident_name?: string
   status: string
+  is_primary?: boolean
   started_at_ms: number
   ended_at_ms?: number
   duration_ms?: number
   current_duration_ms?: number
+  primary_since_ms?: number | null
+  primary_duration_ms?: number | null
   alerted_at_ms?: number | null
   time_to_alert_ms?: number | null
   dataset_row_idx?: number | null
   utterance_text?: string | null
   reason?: string | null
+  secondary_to_incident_id?: string | null
+  secondary_to_incident_type?: string | null
+  secondary_to_incident_name?: string | null
 }
 
 export interface AlertRecord {
@@ -43,8 +49,10 @@ export interface AlertRecord {
   incident_name?: string
   status: string
   started_at_ms: number
+  primary_since_ms?: number | null
   alerted_at_ms: number
   duration_ms: number
+  primary_duration_ms?: number | null
   alert_threshold_ms: number
   dataset_row_idx?: number | null
   utterance_text?: string | null
@@ -78,6 +86,7 @@ export interface MonitorSnapshot {
   status_detail?: string | null
   last_error?: string | null
   started_at_ms: number
+  primary_incident_id?: string | null
   last_logcat_event_ts_ms?: number | null
   logcat_visible_lines: string[]
   current_utterance?: CurrentUtterance | null
