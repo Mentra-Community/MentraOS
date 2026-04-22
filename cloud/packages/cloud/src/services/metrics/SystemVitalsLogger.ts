@@ -21,6 +21,7 @@ import { logger as rootLogger } from "../logging/pino-logger";
 import { UserSession } from "../session/UserSession";
 import { memoryLeakDetector } from "../debug/MemoryLeakDetector";
 import { mongoQueryStats } from "../../connections/mongodb.connection";
+import { getDeviceStateCounters, resetDeviceStateCounters } from "./device-state-counters";
 
 const logger = rootLogger.child({ service: "SystemVitalsLogger" });
 
@@ -109,6 +110,9 @@ class SystemVitalsLogger {
   private gapDetectorInterval?: NodeJS.Timeout;
   private lastGapTick: number = Date.now();
   private startedAt: number = Date.now();
+  private previousOwnerBytes = new Map<string, number>();
+  private previousSessionOwnerBytes = new Map<string, number>();
+  private memoryOwnerWarnCooldown = new Map<string, number>();
 
   start(): void {
     if (this.vitalsInterval) return;
@@ -230,6 +234,47 @@ class SystemVitalsLogger {
     }
   }
 
+  private maybeLogMemoryOwnerGrowth(
+    owner: string,
+    estimatedBytes: number,
+    deltaBytes: number,
+    userId: string | undefined,
+    sessionDeltaBytes: number | undefined,
+  ): void {
+    const OWNER_WARN_COOLDOWN_MS = 10 * 60 * 1000;
+    const LARGE_OWNER_THRESHOLD_BYTES = 25 * 1024 * 1024;
+    const OWNER_GROWTH_THRESHOLD_BYTES = 2 * 1024 * 1024;
+    const FAST_GROWTH_THRESHOLD_BYTES = 10 * 1024 * 1024;
+    const now = Date.now();
+    const lastWarnAt = this.memoryOwnerWarnCooldown.get(owner) ?? 0;
+
+    if (deltaBytes < OWNER_GROWTH_THRESHOLD_BYTES) {
+      return;
+    }
+
+    if (estimatedBytes < LARGE_OWNER_THRESHOLD_BYTES && deltaBytes < FAST_GROWTH_THRESHOLD_BYTES) {
+      return;
+    }
+
+    if (now - lastWarnAt < OWNER_WARN_COOLDOWN_MS) {
+      return;
+    }
+
+    this.memoryOwnerWarnCooldown.set(owner, now);
+
+    logger.warn(
+      {
+        feature: "memory-owner-growth",
+        owner,
+        estimatedBytes,
+        deltaBytes,
+        userId,
+        sessionDeltaBytes,
+      },
+      `Memory owner growth: ${owner} +${Math.round(deltaBytes / 1048576)}MB`,
+    );
+  }
+
   private logVitals(): void {
     try {
       const memUsage = process.memoryUsage();
@@ -241,6 +286,14 @@ class SystemVitalsLogger {
       let totalTranslationStreams = 0;
       let glassesWebSockets = 0;
       let micActiveCount = 0;
+      const ownerTotals = new Map<string, { estimatedBytes: number; itemCount: number }>();
+      const currentSessionOwnerBytes = new Map<string, number>();
+      const ownerLargestDeltaSession = new Map<string, { userId: string; deltaBytes: number }>();
+      const topSessionCandidates: Array<{
+        userId: string;
+        estimatedBytes: number;
+        topOwners: Array<{ owner: string; estimatedBytes: number }>;
+      }> = [];
 
       for (const session of sessions) {
         totalAppWebsockets += session.appWebsockets?.size || 0;
@@ -273,6 +326,55 @@ class SystemVitalsLogger {
         } catch {
           // Swallow — property access failed, counts stay at 0
         }
+
+        try {
+          const census = session.getMemoryCensus();
+          const sortedOwners = [...census.owners].sort((a, b) => b.estimatedBytes - a.estimatedBytes);
+          const sessionOwnerTotals = new Map<string, { estimatedBytes: number; itemCount: number }>();
+
+          topSessionCandidates.push({
+            userId: session.userId,
+            estimatedBytes: census.estimatedBytes,
+            topOwners: sortedOwners.slice(0, 3).map((owner) => ({
+              owner: owner.owner,
+              estimatedBytes: owner.estimatedBytes,
+            })),
+          });
+
+          for (const owner of census.owners) {
+            const current = ownerTotals.get(owner.owner) ?? { estimatedBytes: 0, itemCount: 0 };
+            current.estimatedBytes += owner.estimatedBytes;
+            current.itemCount += owner.itemCount;
+            ownerTotals.set(owner.owner, current);
+
+            const sessionCurrent = sessionOwnerTotals.get(owner.owner) ?? { estimatedBytes: 0, itemCount: 0 };
+            sessionCurrent.estimatedBytes += owner.estimatedBytes;
+            sessionCurrent.itemCount += owner.itemCount;
+            sessionOwnerTotals.set(owner.owner, sessionCurrent);
+          }
+
+          for (const [ownerName, stats] of sessionOwnerTotals.entries()) {
+            const sessionOwnerKey = `${session.userId}:${ownerName}`;
+            const previousBytes = this.previousSessionOwnerBytes.get(sessionOwnerKey) ?? 0;
+            const deltaBytes = stats.estimatedBytes - previousBytes;
+
+            currentSessionOwnerBytes.set(sessionOwnerKey, stats.estimatedBytes);
+
+            if (deltaBytes <= 0) {
+              continue;
+            }
+
+            const existingLargestDelta = ownerLargestDeltaSession.get(ownerName);
+            if (!existingLargestDelta || deltaBytes > existingLargestDelta.deltaBytes) {
+              ownerLargestDeltaSession.set(ownerName, {
+                userId: session.userId,
+                deltaBytes,
+              });
+            }
+          }
+        } catch (err) {
+          logger.error({ err, userId: session.userId }, "Failed to collect session memory census");
+        }
       }
 
       // Total connection count: glasses WS + app WS + Soniox streams + translation streams
@@ -281,6 +383,38 @@ class SystemVitalsLogger {
 
       const operationSnapshot = operationTimers.getAndReset();
       const totalOperationMs = Object.values(operationSnapshot).reduce((a, b) => a + b, 0);
+      const sortedOwners = [...ownerTotals.entries()]
+        .map(([owner, stats]) => ({
+          owner,
+          estimatedBytes: stats.estimatedBytes,
+          itemCount: stats.itemCount,
+        }))
+        .sort((a, b) => b.estimatedBytes - a.estimatedBytes);
+      const sortedOwnerDeltas = [...ownerTotals.entries()]
+        .map(([owner, stats]) => ({
+          owner,
+          estimatedBytes: stats.estimatedBytes,
+          deltaBytes: stats.estimatedBytes - (this.previousOwnerBytes.get(owner) ?? 0),
+          itemCount: stats.itemCount,
+        }))
+        .filter((owner) => owner.deltaBytes > 0)
+        .sort((a, b) => b.deltaBytes - a.deltaBytes);
+      const topSessions = topSessionCandidates.sort((a, b) => b.estimatedBytes - a.estimatedBytes).slice(0, 10);
+
+      for (const owner of sortedOwnerDeltas.slice(0, 10)) {
+        this.maybeLogMemoryOwnerGrowth(
+          owner.owner,
+          owner.estimatedBytes,
+          owner.deltaBytes,
+          ownerLargestDeltaSession.get(owner.owner)?.userId,
+          ownerLargestDeltaSession.get(owner.owner)?.deltaBytes,
+        );
+      }
+
+      this.previousOwnerBytes = new Map(
+        Array.from(ownerTotals.entries(), ([owner, stats]) => [owner, stats.estimatedBytes] as const),
+      );
+      this.previousSessionOwnerBytes = currentSessionOwnerBytes;
 
       logger.info(
         {
@@ -311,6 +445,21 @@ class SystemVitalsLogger {
 
           // Leak indicator
           disposedSessionsPendingGC: memoryLeakDetector.getDisposedPendingGCCount(),
+
+          // Code ownership census — which managers/structures actually own retained memory.
+          // This is the missing layer between heap shape ("Objects are growing")
+          // and root cause ("transcription.history.en-US owns the growth").
+          memoryEstimatedSessionBytes: sortedOwners.reduce((sum, owner) => sum + owner.estimatedBytes, 0),
+          memoryOwnerCount: ownerTotals.size,
+          memoryTopOwners: JSON.stringify(sortedOwners.slice(0, 10)),
+          memoryTopOwnerDeltas: JSON.stringify(
+            sortedOwnerDeltas.slice(0, 10).map((owner) => ({
+              owner: owner.owner,
+              deltaBytes: owner.deltaBytes,
+              estimatedBytes: owner.estimatedBytes,
+            })),
+          ),
+          memoryTopSessions: JSON.stringify(topSessions),
 
           // Heap object breakdown — shows WHAT is in the heap, not just how much.
           // Before this, we only had heapUsedMB (a single number). Now we see
@@ -349,6 +498,18 @@ class SystemVitalsLogger {
               wsReconnects: churn.reconnects,
               wsAvgDowntimeMs: churn.avgDowntimeMs,
               wsCloseCodeDist: Object.keys(churn.closeCodes).length > 0 ? JSON.stringify(churn.closeCodes) : undefined,
+            };
+          })(),
+
+          // Device-state storm counters (issue 099). Pod-global, reset per tick.
+          ...(() => {
+            const ds = getDeviceStateCounters();
+            resetDeviceStateCounters();
+            return {
+              deviceStateUpdatesTotal: ds.total,
+              deviceStateUpdatesDeduped: ds.deduped,
+              deviceStateUpdatesApplied: ds.applied,
+              deviceStateUpdatesRateLimited: ds.rateLimited,
             };
           })(),
 

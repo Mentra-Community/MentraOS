@@ -20,8 +20,8 @@ class MessageChunker {
     // BES2700 limit is 253 bytes; anything over ~200 bytes packed needs chunking.
     private static let MESSAGE_SIZE_THRESHOLD = 200
 
-    // Maximum raw bytes per chunk. After double JSON escaping + compact envelope
-    // + C-wrapper + K900 framing, 80 bytes stays under the 253-byte BLE limit.
+    /// Maximum raw bytes per chunk. After double JSON escaping + compact envelope
+    /// + C-wrapper + K900 framing, 80 bytes stays under the 253-byte BLE limit.
     private static let CHUNK_DATA_SIZE = 80
 
     /**

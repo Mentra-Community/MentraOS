@@ -53,6 +53,7 @@ class MantleManager {
   private MIC_TIMEOUT_MS: number = 1000
   private transcriptProcessor: TranscriptProcessor
   private subs: Array<any> = []
+  private initialized: boolean = false
 
   public static getInstance(): MantleManager {
     if (!MantleManager.instance) {
@@ -87,6 +88,13 @@ class MantleManager {
   // sets up the bridge and initializes app state
   public async init() {
     console.log("MANTLE: init()")
+
+    if (this.initialized) {
+      console.log("MANTLE: already initialized")
+      return
+    }
+    this.initialized = true
+
     await migrate() // do any local migrations here
     const res = await restComms.loadUserSettings() // get settings from server
     if (res.is_ok()) {
@@ -150,7 +158,7 @@ class MantleManager {
       },
       60 * 60 * 1000,
     ) // 1 hour
-
+    
     try {
       // only start location updates if we have the location permission:
       const hasLocation = await checkFeaturePermissions(PermissionFeatures.LOCATION)
@@ -678,11 +686,11 @@ class MantleManager {
 
     // one time get all:
     const coreStatus = await CoreModule.getCoreStatus()
-    console.log("MANTLE: core status:", coreStatus)
+    // console.log("MANTLE: core status:", coreStatus)
     useCoreStore.getState().setCoreInfo(coreStatus)
 
     const glassesStatus = await CoreModule.getGlassesStatus()
-    console.log("MANTLE: glasses status:", glassesStatus)
+    // console.log("MANTLE: glasses status:", glassesStatus)
     useGlassesStore.getState().setGlassesInfo(glassesStatus)
   }
 

@@ -87,7 +87,7 @@ public class CrustModule: Module {
 
         AsyncFunction("mergeHdrBrackets") {
             (underPath: String, normalPath: String, overPath: String, outputPath: String)
-                -> [String: Any] in
+            -> [String: Any] in
             let processingTimeMs = ImageProcessor.mergeHdr(
                 underPath: underPath,
                 normalPath: normalPath,

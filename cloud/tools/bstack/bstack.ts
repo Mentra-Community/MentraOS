@@ -29,7 +29,7 @@
  * See: cloud/tools/bstack/inventory.md
  */
 
-export {}
+export {};
 
 import {
   SQL_ENDPOINT,
@@ -48,7 +48,7 @@ import {
   getLogsTable,
   getCollectorTable,
   getAllRegions,
-} from "./config"
+} from "./config";
 
 // ---------------------------------------------------------------------------
 // Doppler auto-load for SRE credentials
@@ -57,78 +57,82 @@ import {
 // This means you can just run `bstack health` without wrapping in `doppler run`.
 
 function tryDopplerLoad(): void {
-  if (SQL_USERNAME && SQL_PASSWORD) return // Already set
+  if (SQL_USERNAME && SQL_PASSWORD) return; // Already set
 
   try {
-    const {execSync} = require("child_process")
+    const { execSync } = require("child_process");
     const get = (key: string): string =>
       execSync(`doppler secrets get ${key} --project mentra-sre --config dev --plain 2>/dev/null`, {
         encoding: "utf-8",
         timeout: 5000,
-      }).trim()
+      }).trim();
 
     if (!process.env.BETTERSTACK_USERNAME && !process.env.BETTERSTACK_SQL_USERNAME) {
-      process.env.BETTERSTACK_USERNAME = get("BETTERSTACK_USERNAME")
+      process.env.BETTERSTACK_USERNAME = get("BETTERSTACK_USERNAME");
     }
     if (!process.env.BETTERSTACK_PASSWORD && !process.env.BETTERSTACK_SQL_PASSWORD) {
-      process.env.BETTERSTACK_PASSWORD = get("BETTERSTACK_PASSWORD")
+      process.env.BETTERSTACK_PASSWORD = get("BETTERSTACK_PASSWORD");
     }
     if (!process.env.BETTERSTACK_API_TOKEN) {
       try {
-        process.env.BETTERSTACK_API_TOKEN = get("BETTERSTACK_API_TOKEN")
-      } catch {}
+        process.env.BETTERSTACK_API_TOKEN = get("BETTERSTACK_API_TOKEN");
+      } catch {
+        /* optional — API token not required for SQL queries */
+      }
     }
     if (!process.env.MENTRA_ADMIN_JWT) {
       try {
-        process.env.MENTRA_ADMIN_JWT = get("MENTRA_ADMIN_JWT")
-      } catch {}
+        process.env.MENTRA_ADMIN_JWT = get("MENTRA_ADMIN_JWT");
+      } catch {
+        /* optional — admin JWT only needed for admin API calls */
+      }
     }
   } catch {
     // Doppler not installed or not configured — fall back to env vars
   }
 }
 
-tryDopplerLoad()
+tryDopplerLoad();
 
 // Re-read after Doppler load (config.ts reads at import time, so we re-read here)
-const _SQL_USERNAME = process.env.BETTERSTACK_SQL_USERNAME || process.env.BETTERSTACK_USERNAME || ""
-const _SQL_PASSWORD = process.env.BETTERSTACK_SQL_PASSWORD || process.env.BETTERSTACK_PASSWORD || ""
-const _API_TOKEN = process.env.BETTERSTACK_API_TOKEN || ""
-const _ADMIN_JWT = process.env.MENTRA_ADMIN_JWT || ""
+const _SQL_USERNAME = process.env.BETTERSTACK_SQL_USERNAME || process.env.BETTERSTACK_USERNAME || "";
+const _SQL_PASSWORD = process.env.BETTERSTACK_SQL_PASSWORD || process.env.BETTERSTACK_PASSWORD || "";
+const _API_TOKEN = process.env.BETTERSTACK_API_TOKEN || "";
+const _ADMIN_JWT = process.env.MENTRA_ADMIN_JWT || "";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 function pad(s: string, n: number): string {
-  return s.length >= n ? s.slice(0, n) : s + " ".repeat(n - s.length)
+  return s.length >= n ? s.slice(0, n) : s + " ".repeat(n - s.length);
 }
 
 function rpad(s: string, n: number): string {
-  return s.length >= n ? s : " ".repeat(n - s.length) + s
+  return s.length >= n ? s : " ".repeat(n - s.length) + s;
 }
 
-function parseArgs(): {command: string; flags: Record<string, string>; positional: string[]} {
-  const args = process.argv.slice(2)
-  const command = args[0] ?? "help"
-  const flags: Record<string, string> = {}
-  const positional: string[] = []
+function parseArgs(): { command: string; flags: Record<string, string>; positional: string[] } {
+  const args = process.argv.slice(2);
+  const command = args[0] ?? "help";
+  const flags: Record<string, string> = {};
+  const positional: string[] = [];
 
   for (let i = 1; i < args.length; i++) {
-    const arg = args[i]
+    const arg = args[i];
     if (arg.startsWith("--")) {
-      const [key, ...val] = arg.slice(2).split("=")
-      flags[key] = val.length > 0 ? val.join("=") : (args[++i] ?? "true")
+      const [key, ...val] = arg.slice(2).split("=");
+      flags[key] = val.length > 0 ? val.join("=") : (args[++i] ?? "true");
     } else {
-      positional.push(arg)
+      positional.push(arg);
     }
   }
 
-  return {command, flags, positional}
+  return { command, flags, positional };
 }
 
 function getFlag(flags: Record<string, string>, name: string, defaultVal: string): string {
-  return flags[name] ?? defaultVal
+  return flags[name] ?? defaultVal;
 }
 
 /**
@@ -137,30 +141,27 @@ function getFlag(flags: Record<string, string>, name: string, defaultVal: string
  * Returns: "30 MINUTE", "1 HOUR", "2 DAY", etc.
  */
 function normalizeDuration(input: string): string {
-  const match = input.match(/^(\d+)\s*(m|min|minute|h|hr|hour|d|day|s|sec|second)s?$/i)
+  const match = input.match(/^(\d+)\s*(m|min|minute|h|hr|hour|d|day|s|sec|second)s?$/i);
   if (match) {
-    const num = match[1]
-    const unit = match[2].toLowerCase()
-    if (unit.startsWith("m")) return `${num} MINUTE`
-    if (unit.startsWith("h")) return `${num} HOUR`
-    if (unit.startsWith("d")) return `${num} DAY`
-    if (unit.startsWith("s")) return `${num} SECOND`
+    const num = match[1];
+    const unit = match[2].toLowerCase();
+    if (unit.startsWith("m")) return `${num} MINUTE`;
+    if (unit.startsWith("h")) return `${num} HOUR`;
+    if (unit.startsWith("d")) return `${num} DAY`;
+    if (unit.startsWith("s")) return `${num} SECOND`;
   }
   // Already in ClickHouse format (e.g. "30 MINUTE") or raw — pass through
-  return input
+  return input;
 }
 
 /**
- * Pick the correct BetterStack log source table for a region.
- * France and East Asia may still be on the legacy AugmentOS source.
+ * Pick the BetterStack log source table for a region.
  */
 function getSourceForRegion(region: string): string {
-  if (region === "france" || region === "east-asia") {
-    // These regions may still send to the legacy source until redeployed
-    // with the new BETTERSTACK_SOURCE_TOKEN. Check both — prefer prod.
-    return getLogsTable("prod")
-  }
-  return getLogsTable("prod")
+  // All regions send to the MentraCloud-Prod source.
+  // Regional collector sources (mentra-france, mentra-east-asia, etc.) exist
+  // but the cloud process logs all go to prod via Vector/BetterStack collectors.
+  return getLogsTable("prod");
 }
 
 // ---------------------------------------------------------------------------
@@ -168,9 +169,9 @@ function getSourceForRegion(region: string): string {
 // ---------------------------------------------------------------------------
 
 interface QueryResult {
-  data: Record<string, any>[]
-  rows: number
-  statistics?: {elapsed: number; rows_read: number; bytes_read: number}
+  data: Record<string, any>[];
+  rows: number;
+  statistics?: { elapsed: number; rows_read: number; bytes_read: number };
 }
 
 /**
@@ -178,20 +179,20 @@ interface QueryResult {
  * historical/S3 for anything older. The user never needs to think about this.
  */
 function getTableForDuration(env: "prod" | "dev", duration: string): string {
-  const match = duration.match(/^(\d+)\s*(MINUTE|HOUR|DAY|SECOND)/i)
-  if (!match) return getLogsTable(env)
+  const match = duration.match(/^(\d+)\s*(MINUTE|HOUR|DAY|SECOND)/i);
+  if (!match) return getLogsTable(env);
 
-  const num = parseInt(match[1])
-  const unit = match[2].toUpperCase()
-  const minutes = unit === "SECOND" ? num / 60 : unit === "MINUTE" ? num : unit === "HOUR" ? num * 60 : num * 1440
+  const num = parseInt(match[1]);
+  const unit = match[2].toUpperCase();
+  const minutes = unit === "SECOND" ? num / 60 : unit === "MINUTE" ? num : unit === "HOUR" ? num * 60 : num * 1440;
 
   // Hot storage only reliably has the last ~5 minutes
   if (minutes <= 5) {
-    return getLogsTable(env)
+    return getLogsTable(env);
   }
 
   // Historical S3 for anything older
-  return env === "prod" ? LOG_SOURCES.prod.historicalTable : LOG_SOURCES.dev.historicalTable
+  return env === "prod" ? LOG_SOURCES.prod.historicalTable : LOG_SOURCES.dev.historicalTable;
 }
 
 /**
@@ -199,22 +200,22 @@ function getTableForDuration(env: "prod" | "dev", duration: string): string {
  * S3 tables need `_row_type = 1` to filter to log rows.
  */
 function isHistoricalTable(table: string): boolean {
-  return table.includes("s3Cluster")
+  return table.includes("s3Cluster");
 }
 
 async function runSql(sql: string): Promise<QueryResult> {
   // Use Doppler-loaded creds if available
-  const username = _SQL_USERNAME || SQL_USERNAME
-  const password = _SQL_PASSWORD || SQL_PASSWORD
+  const username = _SQL_USERNAME || SQL_USERNAME;
+  const password = _SQL_PASSWORD || SQL_PASSWORD;
 
   if (!username || !password) {
-    console.error("❌ BetterStack SQL credentials not set.")
-    console.error("   Run: doppler run --project mentra-sre --config dev -- bstack <command>")
-    console.error("   Or set BETTERSTACK_USERNAME and BETTERSTACK_PASSWORD env vars.")
-    process.exit(1)
+    console.error("❌ BetterStack SQL credentials not set.");
+    console.error("   Run: doppler run --project mentra-sre --config dev -- bstack <command>");
+    console.error("   Or set BETTERSTACK_USERNAME and BETTERSTACK_PASSWORD env vars.");
+    process.exit(1);
   }
 
-  const auth = Buffer.from(`${username}:${password}`).toString("base64")
+  const auth = Buffer.from(`${username}:${password}`).toString("base64");
   const res = await fetch(SQL_ENDPOINT, {
     method: "POST",
     headers: {
@@ -222,43 +223,43 @@ async function runSql(sql: string): Promise<QueryResult> {
       "Authorization": `Basic ${auth}`,
     },
     body: sql + " FORMAT JSON",
-  })
+  });
 
   if (!res.ok) {
-    const body = await res.text()
-    throw new Error(`BetterStack SQL error (${res.status}): ${body.slice(0, 500)}`)
+    const body = await res.text();
+    throw new Error(`BetterStack SQL error (${res.status}): ${body.slice(0, 500)}`);
   }
 
-  const json = (await res.json()) as any
+  const json = (await res.json()) as any;
   return {
     data: json.data ?? [],
     rows: json.rows ?? 0,
     statistics: json.statistics,
-  }
+  };
 }
 
 function printTable(data: Record<string, any>[], columns?: string[]): void {
   if (data.length === 0) {
-    console.log("  (no data)")
-    return
+    console.log("  (no data)");
+    return;
   }
 
-  const cols = columns ?? Object.keys(data[0])
+  const cols = columns ?? Object.keys(data[0]);
   const widths = cols.map((col) => {
     const maxData = data.reduce((max, row) => {
-      const val = String(row[col] ?? "")
-      return val.length > max ? val.length : max
-    }, 0)
-    return Math.max(col.length, maxData, 4)
-  })
+      const val = String(row[col] ?? "");
+      return val.length > max ? val.length : max;
+    }, 0);
+    return Math.max(col.length, maxData, 4);
+  });
 
   // Header
-  console.log(cols.map((c, i) => pad(c, widths[i])).join(" │ "))
-  console.log(widths.map((w) => "─".repeat(w)).join("─┼─"))
+  console.log(cols.map((c, i) => pad(c, widths[i])).join(" │ "));
+  console.log(widths.map((w) => "─".repeat(w)).join("─┼─"));
 
   // Rows
   for (const row of data) {
-    console.log(cols.map((c, i) => pad(String(row[c] ?? ""), widths[i])).join(" │ "))
+    console.log(cols.map((c, i) => pad(String(row[c] ?? ""), widths[i])).join(" │ "));
   }
 }
 
@@ -267,14 +268,14 @@ function printTable(data: Record<string, any>[], columns?: string[]): void {
 // ---------------------------------------------------------------------------
 
 async function fetchUptime(path: string): Promise<any> {
-  validateApiToken()
+  validateApiToken();
   const res = await fetch(`${UPTIME_API}${path}`, {
-    headers: {Authorization: `Bearer ${API_TOKEN}`},
-  })
+    headers: { Authorization: `Bearer ${API_TOKEN}` },
+  });
   if (!res.ok) {
-    throw new Error(`Uptime API error (${res.status}): ${await res.text()}`)
+    throw new Error(`Uptime API error (${res.status}): ${await res.text()}`);
   }
-  return res.json()
+  return res.json();
 }
 
 // ---------------------------------------------------------------------------
@@ -284,13 +285,13 @@ async function fetchUptime(path: string): Promise<any> {
 // ── health ──────────────────────────────────────────────────────────────────
 
 async function cmdHealth() {
-  console.log("🏥 Health Check — All Regions\n")
+  console.log("🏥 Health Check — All Regions\n");
 
-  const results: Record<string, any>[] = []
+  const results: Record<string, any>[] = [];
 
   for (const [regionId, region] of Object.entries(REGIONS)) {
     try {
-      const res = await fetch(region.healthUrl, {signal: AbortSignal.timeout(15000)})
+      const res = await fetch(region.healthUrl, { signal: AbortSignal.timeout(15000) });
       if (!res.ok) {
         results.push({
           region: regionId,
@@ -299,19 +300,19 @@ async function cmdHealth() {
           uptime: "?",
           rss: "?",
           lag: "?",
-        })
-        continue
+        });
+        continue;
       }
-      const d = (await res.json()) as any
+      const d = (await res.json()) as any;
 
       // The /health response has nested fields:
       //   sessions.userSessions, eventLoop.lagMs, uptimeSeconds, rssMB, heapUsedMB
       // Also support flat fields for backward compatibility.
-      const sessions = d.sessions?.userSessions ?? d.activeSessions ?? "?"
-      const uptime = d.uptimeSeconds ?? "?"
-      const rss = d.rssMB ?? "?"
-      const lag = d.eventLoop?.lagMs ?? d.eventLoopLagMs ?? "?"
-      const heap = d.heapUsedMB ?? "?"
+      const sessions = d.sessions?.userSessions ?? d.activeSessions ?? "?";
+      const uptime = d.uptimeSeconds ?? "?";
+      const rss = d.rssMB ?? "?";
+      const lag = d.eventLoop?.lagMs ?? d.eventLoopLagMs ?? "?";
+      const heap = d.heapUsedMB ?? "?";
 
       results.push({
         region: regionId,
@@ -321,7 +322,7 @@ async function cmdHealth() {
         rss: `${rss}MB`,
         heap: `${heap}MB`,
         lag: `${typeof lag === "number" ? lag.toFixed(1) : lag}ms`,
-      })
+      });
     } catch (err: any) {
       results.push({
         region: regionId,
@@ -331,42 +332,42 @@ async function cmdHealth() {
         rss: "-",
         heap: "-",
         lag: "-",
-      })
+      });
     }
   }
 
-  printTable(results)
+  printTable(results);
 
   // Also check uptime monitors (don't exit if token is missing)
   if (!API_TOKEN) {
-    console.log("\n  (Skipping uptime monitors — BETTERSTACK_API_TOKEN not set)")
-    return
+    console.log("\n  (Skipping uptime monitors — BETTERSTACK_API_TOKEN not set)");
+    return;
   }
   try {
-    const monitors = await fetchUptime("/monitors")
-    console.log("\n📡 Uptime Monitors:\n")
+    const monitors = await fetchUptime("/monitors");
+    console.log("\n📡 Uptime Monitors:\n");
     const monitorRows = monitors.data.map((m: any) => ({
       name: m.attributes.pronounceable_name,
       status: m.attributes.status === "up" ? "🟢 Up" : "🔴 Down",
       checked: m.attributes.last_checked_at?.slice(0, 19) ?? "?",
-    }))
-    printTable(monitorRows)
+    }));
+    printTable(monitorRows);
   } catch {
-    console.log("\n  (Could not fetch uptime monitors)")
+    console.log("\n  (Could not fetch uptime monitors)");
   }
 }
 
 // ── diagnostics ─────────────────────────────────────────────────────────────
 
 async function cmdDiagnostics(flags: Record<string, string>) {
-  const region = getFlag(flags, "region", "us-central")
-  const duration = normalizeDuration(getFlag(flags, "duration", "30 MINUTE"))
-  const source = getSourceForRegion(region)
+  const region = getFlag(flags, "region", "us-central");
+  const duration = normalizeDuration(getFlag(flags, "duration", "30 MINUTE"));
+  const source = getSourceForRegion(region);
 
-  console.log(`🔍 Diagnostics — ${region} (last ${duration})\n`)
+  console.log(`🔍 Diagnostics — ${region} (last ${duration})\n`);
 
   // GC probes
-  console.log("── GC Probes ──")
+  console.log("── GC Probes ──");
   const gc = await runSql(`
     SELECT
       round(avg(JSONExtract(raw, 'gcDurationMs', 'Nullable(Float64)')), 1) AS avg_gc_ms,
@@ -380,11 +381,11 @@ async function cmdDiagnostics(flags: Record<string, string>) {
       AND JSONExtract(raw, 'region', 'Nullable(String)') = '${region}'
       AND JSONExtract(raw, 'server', 'Nullable(String)') = 'cloud-prod'
       AND JSONExtract(raw, 'feature', 'Nullable(String)') = 'gc-probe'
-  `)
-  printTable(gc.data)
+  `);
+  printTable(gc.data);
 
   // Event loop gaps
-  console.log("\n── Event Loop Gaps ──")
+  console.log("\n── Event Loop Gaps ──");
   const gaps = await runSql(`
     SELECT count() AS gap_count,
       round(avg(JSONExtract(raw, 'gapMs', 'Nullable(Float64)')), 0) AS avg_gap_ms,
@@ -394,15 +395,15 @@ async function cmdDiagnostics(flags: Record<string, string>) {
       AND JSONExtract(raw, 'region', 'Nullable(String)') = '${region}'
       AND JSONExtract(raw, 'server', 'Nullable(String)') = 'cloud-prod'
       AND JSONExtract(raw, 'feature', 'Nullable(String)') = 'event-loop-gap'
-  `)
+  `);
   if (gaps.data[0]?.gap_count === 0 || gaps.data[0]?.gap_count === "0") {
-    console.log("  ✅ No event loop gaps detected (event loop was never blocked >1s)")
+    console.log("  ✅ No event loop gaps detected (event loop was never blocked >1s)");
   } else {
-    printTable(gaps.data)
+    printTable(gaps.data);
   }
 
   // MongoDB slow queries
-  console.log("\n── MongoDB Slow Queries ──")
+  console.log("\n── MongoDB Slow Queries ──");
   const mongo = await runSql(`
     SELECT
       count() AS slow_queries,
@@ -414,11 +415,11 @@ async function cmdDiagnostics(flags: Record<string, string>) {
       AND JSONExtract(raw, 'region', 'Nullable(String)') = '${region}'
       AND JSONExtract(raw, 'server', 'Nullable(String)') = 'cloud-prod'
       AND JSONExtract(raw, 'feature', 'Nullable(String)') = 'slow-query'
-  `)
-  printTable(mongo.data)
+  `);
+  printTable(mongo.data);
 
   // Operation budget
-  console.log("\n── Operation Budget (avg per 30s window) ──")
+  console.log("\n── Operation Budget (avg per 30s window) ──");
   const budget = await runSql(`
     SELECT
       round(avg(JSONExtract(raw, 'op_audioProcessing_ms', 'Nullable(Float64)')), 0) AS audio_ms,
@@ -436,11 +437,11 @@ async function cmdDiagnostics(flags: Record<string, string>) {
       AND JSONExtract(raw, 'region', 'Nullable(String)') = '${region}'
       AND JSONExtract(raw, 'server', 'Nullable(String)') = 'cloud-prod'
       AND JSONExtract(raw, 'feature', 'Nullable(String)') = 'system-vitals'
-  `)
-  printTable(budget.data)
+  `);
+  printTable(budget.data);
 
   // App cache
-  console.log("\n── App Cache ──")
+  console.log("\n── App Cache ──");
   const cache = await runSql(`
     SELECT
       JSONExtract(raw, 'count', 'Nullable(Int32)') AS apps_cached,
@@ -454,18 +455,18 @@ async function cmdDiagnostics(flags: Record<string, string>) {
       AND JSONExtract(raw, 'feature', 'Nullable(String)') = 'app-cache'
     ORDER BY dt DESC
     LIMIT 3
-  `)
-  printTable(cache.data)
+  `);
+  printTable(cache.data);
 }
 
 // ── crash-timeline ──────────────────────────────────────────────────────────
 
 async function cmdCrashTimeline(flags: Record<string, string>) {
-  const region = getFlag(flags, "region", "us-central")
-  const duration = normalizeDuration(getFlag(flags, "duration", "10 MINUTE"))
-  const source = getSourceForRegion(region)
+  const region = getFlag(flags, "region", "us-central");
+  const duration = normalizeDuration(getFlag(flags, "duration", "10 MINUTE"));
+  const source = getSourceForRegion(region);
 
-  console.log(`💥 Crash Timeline — ${region} (last ${duration})\n`)
+  console.log(`💥 Crash Timeline — ${region} (last ${duration})\n`);
 
   const result = await runSql(`
     SELECT
@@ -489,19 +490,19 @@ async function cmdCrashTimeline(flags: Record<string, string>) {
       )
     ORDER BY dt DESC
     LIMIT 100
-  `)
+  `);
 
-  printTable(result.data, ["dt", "feature", "message", "gc_ms", "gap_ms", "rss_mb", "sessions", "budget_pct"])
+  printTable(result.data, ["dt", "feature", "message", "gc_ms", "gap_ms", "rss_mb", "sessions", "budget_pct"]);
 }
 
 // ── memory ──────────────────────────────────────────────────────────────────
 
 async function cmdMemory(flags: Record<string, string>) {
-  const region = getFlag(flags, "region", "us-central")
-  const duration = normalizeDuration(getFlag(flags, "duration", "1 HOUR"))
-  const source = getSourceForRegion(region)
+  const region = getFlag(flags, "region", "us-central");
+  const duration = normalizeDuration(getFlag(flags, "duration", "1 HOUR"));
+  const source = getSourceForRegion(region);
 
-  console.log(`📈 Memory Trend — ${region} (last ${duration})\n`)
+  console.log(`📈 Memory Trend — ${region} (last ${duration})\n`);
 
   const result = await runSql(`
     SELECT
@@ -518,35 +519,166 @@ async function cmdMemory(flags: Record<string, string>) {
       AND JSONExtract(raw, 'feature', 'Nullable(String)') = 'system-vitals'
     GROUP BY time
     ORDER BY time
-  `)
+  `);
 
-  printTable(result.data)
+  printTable(result.data);
 
   if (result.data.length >= 2) {
-    const first = result.data[0]
-    const last = result.data[result.data.length - 1]
-    const rssGrowth = Number(last.rss_mb) - Number(first.rss_mb)
-    const minutes = result.data.length * 5
-    const rate = rssGrowth / minutes
+    const first = result.data[0];
+    const last = result.data[result.data.length - 1];
+    const rssGrowth = Number(last.rss_mb) - Number(first.rss_mb);
+    const minutes = result.data.length * 5;
+    const rate = rssGrowth / minutes;
     console.log(
       `\n  RSS growth: ${first.rss_mb}MB → ${last.rss_mb}MB (${rssGrowth > 0 ? "+" : ""}${rssGrowth}MB over ~${minutes}min)`,
-    )
-    console.log(`  Rate: ~${rate.toFixed(1)} MB/min`)
+    );
+    console.log(`  Rate: ~${rate.toFixed(1)} MB/min`);
     if (rate > 0) {
-      const toGb = (1024 - Number(last.rss_mb)) / rate
-      console.log(`  Est. time to 1GB: ${toGb.toFixed(0)} min (${(toGb / 60).toFixed(1)} hrs)`)
+      const toGb = (1024 - Number(last.rss_mb)) / rate;
+      console.log(`  Est. time to 1GB: ${toGb.toFixed(0)} min (${(toGb / 60).toFixed(1)} hrs)`);
     }
+  }
+}
+
+// ── memory-owners ───────────────────────────────────────────────────────────
+
+async function cmdMemoryOwners(flags: Record<string, string>) {
+  const region = getFlag(flags, "region", "us-central");
+  const duration = normalizeDuration(getFlag(flags, "duration", "2 HOUR"));
+  const source = getSourceForRegion(region);
+
+  console.log(`🧠 Memory Owners — ${region} (last ${duration})\n`);
+
+  const result = await runSql(`
+    SELECT
+      dt,
+      JSONExtract(raw, 'memoryTopOwners', 'Nullable(String)') AS top_owners,
+      JSONExtract(raw, 'memoryTopOwnerDeltas', 'Nullable(String)') AS top_deltas,
+      JSONExtract(raw, 'memoryTopSessions', 'Nullable(String)') AS top_sessions
+    FROM ${source}
+    WHERE dt >= now() - INTERVAL ${duration}
+      AND JSONExtract(raw, 'region', 'Nullable(String)') = '${region}'
+      AND JSONExtract(raw, 'server', 'Nullable(String)') = 'cloud-prod'
+      AND JSONExtract(raw, 'feature', 'Nullable(String)') = 'system-vitals'
+      AND JSONHas(raw, 'memoryTopOwners')
+    ORDER BY dt DESC
+    LIMIT 12
+  `);
+
+  if (result.data.length === 0) {
+    console.log("  (no memory ownership data found — likely not deployed yet)");
+    return;
+  }
+
+  const latest = result.data[0];
+  const topOwners = safeJsonParse(latest.top_owners);
+  const topDeltas = safeJsonParse(latest.top_deltas);
+  const topSessions = safeJsonParse(latest.top_sessions);
+
+  console.log(`Latest sample: ${latest.dt}\n`);
+
+  console.log("Top owners by size:");
+  printTable(
+    Array.isArray(topOwners)
+      ? topOwners.map((owner: any) => ({
+          owner: owner.owner,
+          estimated_mb: Math.round(Number(owner.estimatedBytes || 0) / 1048576),
+          items: owner.itemCount ?? 0,
+        }))
+      : [],
+  );
+
+  console.log("\nTop owners by growth:");
+  printTable(
+    Array.isArray(topDeltas)
+      ? topDeltas.map((owner: any) => ({
+          owner: owner.owner,
+          delta_mb: Math.round(Number(owner.deltaBytes || 0) / 1048576),
+          estimated_mb: Math.round(Number(owner.estimatedBytes || 0) / 1048576),
+        }))
+      : [],
+  );
+
+  console.log("\nTop sessions:");
+  printTable(
+    Array.isArray(topSessions)
+      ? topSessions.map((session: any) => ({
+          userId: session.userId,
+          estimated_mb: Math.round(Number(session.estimatedBytes || 0) / 1048576),
+          top_owners: Array.isArray(session.topOwners)
+            ? session.topOwners.map((owner: any) => owner.owner).join(", ")
+            : "",
+        }))
+      : [],
+  );
+}
+
+// ── device-state ────────────────────────────────────────────────────────────
+// See: cloud/issues/099-glasses-connection-state-storm/
+
+async function cmdDeviceState(flags: Record<string, string>) {
+  const region = getFlag(flags, "region", "us-central");
+  const duration = normalizeDuration(getFlag(flags, "duration", "30 MINUTE"));
+  const source = getSourceForRegion(region);
+
+  console.log(`📟 Device-State Storm — ${region} (last ${duration})\n`);
+
+  // Pod-wide volume from system-vitals (per-tick counters averaged per minute).
+  const vol = await runSql(`
+    SELECT
+      toStartOfInterval(dt, INTERVAL 1 MINUTE) AS bucket,
+      round(avg(JSONExtract(raw, 'deviceStateUpdatesTotal', 'Nullable(Float64)')), 1) AS total_per_tick,
+      round(avg(JSONExtract(raw, 'deviceStateUpdatesDeduped', 'Nullable(Float64)')), 1) AS deduped,
+      round(avg(JSONExtract(raw, 'deviceStateUpdatesApplied', 'Nullable(Float64)')), 1) AS applied,
+      round(avg(JSONExtract(raw, 'deviceStateUpdatesRateLimited', 'Nullable(Float64)')), 1) AS rate_limited
+    FROM ${source}
+    WHERE dt >= now() - INTERVAL ${duration}
+      AND JSONExtract(raw, 'region', 'Nullable(String)') = '${region}'
+      AND JSONExtract(raw, 'feature', 'Nullable(String)') = 'system-vitals'
+      AND JSONHas(raw, 'deviceStateUpdatesTotal')
+    GROUP BY bucket
+    ORDER BY bucket DESC
+    LIMIT 30
+  `);
+
+  if (vol.data.length === 0) {
+    console.log("  (no vitals data found — counters may not be deployed yet)");
+  } else {
+    console.log("Volume by minute (avg per 30s vitals tick):");
+    printTable(vol.data);
+  }
+
+  // Top emitters from the 'Updating device state' log line.
+  const top = await runSql(`
+    SELECT
+      JSONExtract(raw, 'userId', 'Nullable(String)') AS userId,
+      count() AS updates
+    FROM ${source}
+    WHERE dt >= now() - INTERVAL ${duration}
+      AND JSONExtract(raw, 'region', 'Nullable(String)') = '${region}'
+      AND JSONExtract(raw, 'feature', 'Nullable(String)') = 'device-state'
+      AND JSONExtract(raw, 'message', 'Nullable(String)') = 'Updating device state'
+    GROUP BY userId
+    ORDER BY updates DESC
+    LIMIT 10
+  `);
+
+  console.log("\nTop emitters (post-dedup 'Updating device state' logs):");
+  if (top.data.length === 0) {
+    console.log("  (no device-state log lines in the window)");
+  } else {
+    printTable(top.data);
   }
 }
 
 // ── gc ───────────────────────────────────────────────────────────────────────
 
 async function cmdGc(flags: Record<string, string>) {
-  const region = getFlag(flags, "region", "us-central")
-  const duration = normalizeDuration(getFlag(flags, "duration", "1 HOUR"))
-  const source = getSourceForRegion(region)
+  const region = getFlag(flags, "region", "us-central");
+  const duration = normalizeDuration(getFlag(flags, "duration", "1 HOUR"));
+  const source = getSourceForRegion(region);
 
-  console.log(`🗑️ GC Probe Analysis — ${region} (last ${duration})\n`)
+  console.log(`🗑️ GC Probe Analysis — ${region} (last ${duration})\n`);
 
   const result = await runSql(`
     SELECT
@@ -563,18 +695,20 @@ async function cmdGc(flags: Record<string, string>) {
       AND JSONExtract(raw, 'server', 'Nullable(String)') = 'cloud-prod'
       AND JSONExtract(raw, 'feature', 'Nullable(String)') = 'gc-probe'
     ORDER BY dt
-  `)
+  `);
 
-  printTable(result.data)
+  printTable(result.data);
 
   if (result.data.length > 0) {
-    const avgGc = result.data.reduce((sum, r) => sum + Number(r.gc_ms || 0), 0) / result.data.length
-    const maxGc = Math.max(...result.data.map((r) => Number(r.gc_ms || 0)))
-    console.log(`\n  Average GC: ${avgGc.toFixed(1)}ms | Max GC: ${maxGc.toFixed(1)}ms | Probes: ${result.data.length}`)
+    const avgGc = result.data.reduce((sum, r) => sum + Number(r.gc_ms || 0), 0) / result.data.length;
+    const maxGc = Math.max(...result.data.map((r) => Number(r.gc_ms || 0)));
+    console.log(
+      `\n  Average GC: ${avgGc.toFixed(1)}ms | Max GC: ${maxGc.toFixed(1)}ms | Probes: ${result.data.length}`,
+    );
     if (maxGc > 100) {
-      console.log(`  ⚠️ Max GC > 100ms — GC is contributing to event loop blocking`)
+      console.log(`  ⚠️ Max GC > 100ms — GC is contributing to event loop blocking`);
     } else {
-      console.log(`  ✅ GC pauses are within acceptable range`)
+      console.log(`  ✅ GC pauses are within acceptable range`);
     }
   }
 }
@@ -582,11 +716,11 @@ async function cmdGc(flags: Record<string, string>) {
 // ── gaps ─────────────────────────────────────────────────────────────────────
 
 async function cmdGaps(flags: Record<string, string>) {
-  const region = getFlag(flags, "region", "us-central")
-  const duration = normalizeDuration(getFlag(flags, "duration", "6 HOUR"))
-  const source = getSourceForRegion(region)
+  const region = getFlag(flags, "region", "us-central");
+  const duration = normalizeDuration(getFlag(flags, "duration", "6 HOUR"));
+  const source = getSourceForRegion(region);
 
-  console.log(`⏱️ Event Loop Gaps — ${region} (last ${duration})\n`)
+  console.log(`⏱️ Event Loop Gaps — ${region} (last ${duration})\n`);
 
   const result = await runSql(`
     SELECT
@@ -602,25 +736,25 @@ async function cmdGaps(flags: Record<string, string>) {
       AND JSONExtract(raw, 'feature', 'Nullable(String)') = 'event-loop-gap'
     ORDER BY dt DESC
     LIMIT 50
-  `)
+  `);
 
   if (result.data.length === 0) {
-    console.log("  ✅ No event loop gaps detected — the event loop was never blocked >1 second.")
+    console.log("  ✅ No event loop gaps detected — the event loop was never blocked >1 second.");
   } else {
-    printTable(result.data)
-    console.log(`\n  ⚠️ ${result.data.length} gaps detected — something is blocking the event loop.`)
-    console.log("  Cross-reference with slow-queries and gc-probes at the same timestamps.")
+    printTable(result.data);
+    console.log(`\n  ⚠️ ${result.data.length} gaps detected — something is blocking the event loop.`);
+    console.log("  Cross-reference with slow-queries and gc-probes at the same timestamps.");
   }
 }
 
 // ── budget ───────────────────────────────────────────────────────────────────
 
 async function cmdBudget(flags: Record<string, string>) {
-  const region = getFlag(flags, "region", "us-central")
-  const duration = normalizeDuration(getFlag(flags, "duration", "30 MINUTE"))
-  const source = getSourceForRegion(region)
+  const region = getFlag(flags, "region", "us-central");
+  const duration = normalizeDuration(getFlag(flags, "duration", "30 MINUTE"));
+  const source = getSourceForRegion(region);
 
-  console.log(`📊 Operation Budget — ${region} (last ${duration})\n`)
+  console.log(`📊 Operation Budget — ${region} (last ${duration})\n`);
 
   const result = await runSql(`
     SELECT
@@ -640,7 +774,7 @@ async function cmdBudget(flags: Record<string, string>) {
       AND JSONExtract(raw, 'server', 'Nullable(String)') = 'cloud-prod'
       AND JSONExtract(raw, 'feature', 'Nullable(String)') = 'system-vitals'
     ORDER BY dt
-  `)
+  `);
 
   printTable(result.data, [
     "dt",
@@ -653,18 +787,18 @@ async function cmdBudget(flags: Record<string, string>) {
     "budget_pct",
     "mongo_ms",
     "rss_mb",
-  ])
+  ]);
 
   if (result.data.length > 0) {
-    const avgBudget = result.data.reduce((s, r) => s + Number(r.budget_pct || 0), 0) / result.data.length
-    const maxBudget = Math.max(...result.data.map((r) => Number(r.budget_pct || 0)))
-    console.log(`\n  Average budget: ${avgBudget.toFixed(1)}% | Max: ${maxBudget.toFixed(1)}%`)
+    const avgBudget = result.data.reduce((s, r) => s + Number(r.budget_pct || 0), 0) / result.data.length;
+    const maxBudget = Math.max(...result.data.map((r) => Number(r.budget_pct || 0)));
+    console.log(`\n  Average budget: ${avgBudget.toFixed(1)}% | Max: ${maxBudget.toFixed(1)}%`);
     if (maxBudget > 50) {
-      console.log("  🔴 Budget > 50% — application CPU work is consuming most of the event loop")
+      console.log("  🔴 Budget > 50% — application CPU work is consuming most of the event loop");
     } else if (maxBudget > 20) {
-      console.log("  🟡 Budget 20-50% — moderate, watch for growth")
+      console.log("  🟡 Budget 20-50% — moderate, watch for growth");
     } else {
-      console.log("  ✅ Budget < 20% — healthy event loop headroom")
+      console.log("  ✅ Budget < 20% — healthy event loop headroom");
     }
   }
 }
@@ -672,11 +806,11 @@ async function cmdBudget(flags: Record<string, string>) {
 // ── slow-queries ────────────────────────────────────────────────────────────
 
 async function cmdSlowQueries(flags: Record<string, string>) {
-  const region = getFlag(flags, "region", "us-central")
-  const duration = normalizeDuration(getFlag(flags, "duration", "30 MINUTE"))
-  const source = getSourceForRegion(region)
+  const region = getFlag(flags, "region", "us-central");
+  const duration = normalizeDuration(getFlag(flags, "duration", "30 MINUTE"));
+  const source = getSourceForRegion(region);
 
-  console.log(`🐢 Slow MongoDB Queries — ${region} (last ${duration})\n`)
+  console.log(`🐢 Slow MongoDB Queries — ${region} (last ${duration})\n`);
 
   const summary = await runSql(`
     SELECT
@@ -694,18 +828,18 @@ async function cmdSlowQueries(flags: Record<string, string>) {
     GROUP BY collection, operation
     ORDER BY total_ms DESC
     LIMIT 20
-  `)
+  `);
 
-  printTable(summary.data)
+  printTable(summary.data);
 }
 
 // ── cache ───────────────────────────────────────────────────────────────────
 
 async function cmdCache(flags: Record<string, string>) {
-  const region = getFlag(flags, "region", "us-central")
-  const source = getSourceForRegion(region)
+  const region = getFlag(flags, "region", "us-central");
+  const source = getSourceForRegion(region);
 
-  console.log(`📦 App Cache Status — ${region}\n`)
+  console.log(`📦 App Cache Status — ${region}\n`);
 
   const result = await runSql(`
     SELECT
@@ -720,75 +854,75 @@ async function cmdCache(flags: Record<string, string>) {
       AND JSONExtract(raw, 'feature', 'Nullable(String)') = 'app-cache'
     ORDER BY dt DESC
     LIMIT 10
-  `)
+  `);
 
-  printTable(result.data)
+  printTable(result.data);
 }
 
 // ── incidents ───────────────────────────────────────────────────────────────
 
 async function cmdIncidents(flags: Record<string, string>) {
-  const limit = parseInt(getFlag(flags, "limit", "10"), 10)
+  const limit = parseInt(getFlag(flags, "limit", "10"), 10);
 
-  console.log(`🚨 Recent Incidents (last ${limit})\n`)
+  console.log(`🚨 Recent Incidents (last ${limit})\n`);
 
-  const data = await fetchUptime(`/incidents?per_page=${limit}`)
+  const data = await fetchUptime(`/incidents?per_page=${limit}`);
 
   const rows = data.data.map((inc: any) => {
-    const a = inc.attributes
-    const resolved = a.resolved_at ? a.resolved_at.slice(0, 19) : "ONGOING"
+    const a = inc.attributes;
+    const resolved = a.resolved_at ? a.resolved_at.slice(0, 19) : "ONGOING";
     return {
       started: a.started_at?.slice(0, 19) ?? "?",
       name: a.name ?? "?",
       cause: (a.cause ?? "?").slice(0, 40),
       status: a.resolved_at ? "✅" : "🔴",
       resolved,
-    }
-  })
+    };
+  });
 
-  printTable(rows)
+  printTable(rows);
 }
 
 // ── sources ─────────────────────────────────────────────────────────────────
 
 async function cmdSources() {
-  console.log("📡 BetterStack Sources & Collectors\n")
+  console.log("📡 BetterStack Sources & Collectors\n");
 
-  console.log("── Log Sources ──")
+  console.log("── Log Sources ──");
   const logRows = Object.entries(LOG_SOURCES).map(([key, s]) => ({
     key,
     id: s.id,
     name: s.name,
     table: s.logsTable,
-  }))
-  printTable(logRows)
+  }));
+  printTable(logRows);
 
-  console.log("\n── Collectors (Infrastructure Metrics) ──")
+  console.log("\n── Collectors (Infrastructure Metrics) ──");
   const collectorRows = Object.entries(COLLECTORS).map(([key, c]) => ({
     region: key,
     collector_id: c.collectorId,
     source_id: c.sourceId,
     name: c.name,
     cluster: c.clusterId,
-  }))
-  printTable(collectorRows)
+  }));
+  printTable(collectorRows);
 
-  console.log("\n── Dashboards ──")
+  console.log("\n── Dashboards ──");
   const dashRows = Object.entries(DASHBOARDS).map(([key, d]) => ({
     key,
     id: d.id,
     name: d.name,
     url: d.url,
-  }))
-  printTable(dashRows)
+  }));
+  printTable(dashRows);
 
-  console.log("\n── Uptime Monitors ──")
+  console.log("\n── Uptime Monitors ──");
   const monitorRows = Object.entries(UPTIME_MONITORS).map(([key, m]) => ({
     key,
     id: m.id,
     name: m.name,
-  }))
-  printTable(monitorRows)
+  }));
+  printTable(monitorRows);
 }
 
 // ── sql ─────────────────────────────────────────────────────────────────────
@@ -796,134 +930,134 @@ async function cmdSources() {
 // ── logs — search logs for a user/keyword ────────────────────────────────────
 
 async function cmdLogs(flags: Record<string, string>, positional: string[]) {
-  const query = positional.join(" ")
+  const query = positional.join(" ");
   if (!query) {
     console.error(
       "Usage: bstack logs <userId or keyword> [--level error] [--duration 15m] [--region us-central] [--env prod]",
-    )
-    console.error("\nExamples:")
-    console.error("  bstack logs isaiahballah@gmail.com")
-    console.error("  bstack logs isaiahballah@gmail.com --level error")
-    console.error("  bstack logs isaiahballah@gmail.com --duration 1h --env dev")
-    console.error("  bstack logs captions --level warn --region france")
-    process.exit(1)
+    );
+    console.error("\nExamples:");
+    console.error("  bstack logs isaiahballah@gmail.com");
+    console.error("  bstack logs isaiahballah@gmail.com --level error");
+    console.error("  bstack logs isaiahballah@gmail.com --duration 1h --env dev");
+    console.error("  bstack logs captions --level warn --region france");
+    process.exit(1);
   }
 
-  const duration = normalizeDuration(getFlag(flags, "duration", "15m"))
-  const level = getFlag(flags, "level", "")
-  const region = getFlag(flags, "region", "")
-  const env = getFlag(flags, "env", "prod") as "prod" | "dev"
-  const limit = getFlag(flags, "limit", "30")
-  const service = getFlag(flags, "service", "")
+  const duration = normalizeDuration(getFlag(flags, "duration", "15m"));
+  const level = getFlag(flags, "level", "");
+  const region = getFlag(flags, "region", "");
+  const env = getFlag(flags, "env", "prod") as "prod" | "dev";
+  const limit = getFlag(flags, "limit", "30");
+  const service = getFlag(flags, "service", "");
 
-  const table = getTableForDuration(env, duration)
-  const historical = isHistoricalTable(table)
+  const table = getTableForDuration(env, duration);
+  const historical = isHistoricalTable(table);
 
-  let where = `raw LIKE '%${query}%' AND dt > now() - INTERVAL ${duration}`
-  if (historical) where = `_row_type = 1 AND ${where}`
+  let where = `raw LIKE '%${query}%' AND dt > now() - INTERVAL ${duration}`;
+  if (historical) where = `_row_type = 1 AND ${where}`;
   if (level)
     where += ` AND JSONExtractString(raw, 'level') IN (${level
       .split(",")
       .map((l) => `'${l.trim()}'`)
-      .join(",")})`
-  if (region) where += ` AND JSONExtractString(raw, 'region') = '${region}'`
-  if (service) where += ` AND JSONExtractString(raw, 'service') = '${service}'`
+      .join(",")})`;
+  if (region) where += ` AND JSONExtractString(raw, 'region') = '${region}'`;
+  if (service) where += ` AND JSONExtractString(raw, 'service') = '${service}'`;
 
-  const sql = `SELECT dt, JSONExtractString(raw, 'level') as level, JSONExtractString(raw, 'message') as message, JSONExtractString(raw, 'service') as service FROM ${table} WHERE ${where} ORDER BY dt DESC LIMIT ${limit}`
+  const sql = `SELECT dt, JSONExtractString(raw, 'level') as level, JSONExtractString(raw, 'message') as message, JSONExtractString(raw, 'service') as service FROM ${table} WHERE ${where} ORDER BY dt DESC LIMIT ${limit}`;
 
   console.log(
     `🔍 Logs matching "${query}" (last ${duration}, ${env}${region ? `, ${region}` : ""}${level ? `, level=${level}` : ""})\n`,
-  )
+  );
 
-  const result = await runSql(sql)
-  printTable(result.data)
+  const result = await runSql(sql);
+  printTable(result.data);
 
   if (result.statistics) {
     console.log(
       `\n  ${result.rows} rows | ${result.statistics.elapsed.toFixed(3)}s | ${(result.statistics.bytes_read / 1024 / 1024).toFixed(1)}MB scanned`,
-    )
+    );
   }
 
   if (result.rows === 0) {
-    console.log(`\n  💡 No results? Try:`)
-    console.log(`     --duration 1h  (search further back)`)
-    console.log(`     --env dev      (search dev/debug source instead of prod)`)
-    console.log(`     --level ""     (remove level filter)`)
+    console.log(`\n  💡 No results? Try:`);
+    console.log(`     --duration 1h  (search further back)`);
+    console.log(`     --env dev      (search dev/debug source instead of prod)`);
+    console.log(`     --level ""     (remove level filter)`);
   }
 }
 
 // ── errors — top errors by count ─────────────────────────────────────────────
 
 async function cmdErrors(flags: Record<string, string>) {
-  const region = getFlag(flags, "region", "us-central")
-  const duration = normalizeDuration(getFlag(flags, "duration", "4h"))
-  const top = getFlag(flags, "limit", "20")
-  const env = getFlag(flags, "env", "prod") as "prod" | "dev"
+  const region = getFlag(flags, "region", "us-central");
+  const duration = normalizeDuration(getFlag(flags, "duration", "4h"));
+  const top = getFlag(flags, "limit", "20");
+  const env = getFlag(flags, "env", "prod") as "prod" | "dev";
 
-  const table = getTableForDuration(env, duration)
-  const historical = isHistoricalTable(table)
-  const rowFilter = historical ? "_row_type = 1 AND " : ""
+  const table = getTableForDuration(env, duration);
+  const historical = isHistoricalTable(table);
+  const rowFilter = historical ? "_row_type = 1 AND " : "";
 
-  const sql = `SELECT JSONExtractString(raw, 'service') as service, substring(JSONExtractString(raw, 'message'), 1, 100) as message, count() as total FROM ${table} WHERE ${rowFilter}dt >= now() - INTERVAL ${duration} AND JSONExtractString(raw, 'level') IN ('error', 'fatal') AND JSONExtractString(raw, 'region') = '${region}' GROUP BY service, message ORDER BY total DESC LIMIT ${top}`
+  const sql = `SELECT JSONExtractString(raw, 'service') as service, substring(JSONExtractString(raw, 'message'), 1, 100) as message, count() as total FROM ${table} WHERE ${rowFilter}dt >= now() - INTERVAL ${duration} AND JSONExtractString(raw, 'level') IN ('error', 'fatal') AND JSONExtractString(raw, 'region') = '${region}' GROUP BY service, message ORDER BY total DESC LIMIT ${top}`;
 
-  console.log(`🔴 Top Errors — ${region} (last ${duration})\n`)
+  console.log(`🔴 Top Errors — ${region} (last ${duration})\n`);
 
-  const result = await runSql(sql)
-  printTable(result.data)
+  const result = await runSql(sql);
+  printTable(result.data);
 
   if (result.statistics) {
     console.log(
       `\n  ${result.rows} rows | ${result.statistics.elapsed.toFixed(3)}s | ${(result.statistics.bytes_read / 1024 / 1024).toFixed(1)}MB scanned`,
-    )
+    );
   }
 }
 
 // ── leaks — memory leak detection ────────────────────────────────────────────
 
 async function cmdLeaks(flags: Record<string, string>) {
-  const region = getFlag(flags, "region", "us-central")
-  const duration = normalizeDuration(getFlag(flags, "duration", "12h"))
-  const env = getFlag(flags, "env", "prod") as "prod" | "dev"
+  const region = getFlag(flags, "region", "us-central");
+  const duration = normalizeDuration(getFlag(flags, "duration", "12h"));
+  const env = getFlag(flags, "env", "prod") as "prod" | "dev";
 
-  const table = getTableForDuration(env, duration)
-  const historical = isHistoricalTable(table)
-  const rowFilter = historical ? "_row_type = 1 AND " : ""
+  const table = getTableForDuration(env, duration);
+  const historical = isHistoricalTable(table);
+  const rowFilter = historical ? "_row_type = 1 AND " : "";
 
-  console.log(`🔍 Memory Leak Check — ${region} (last ${duration})\n`)
+  console.log(`🔍 Memory Leak Check — ${region} (last ${duration})\n`);
 
   // 1. disposedSessionsPendingGC trend
-  const leakSql = `SELECT toStartOfHour(dt) as hour, avg(JSONExtractInt(raw, 'disposedSessionsPendingGC')) as avg_leaked, avg(JSONExtractFloat(raw, 'rssMB')) as avg_rss, avg(JSONExtractFloat(raw, 'heapUsedMB')) as avg_heap, avg(JSONExtractInt(raw, 'activeSessions')) as sessions FROM ${table} WHERE ${rowFilter}JSONExtractString(raw, 'feature') = 'system-vitals' AND JSONExtractString(raw, 'region') = '${region}' AND dt >= now() - INTERVAL ${duration} GROUP BY hour ORDER BY hour ASC`
+  const leakSql = `SELECT toStartOfHour(dt) as hour, avg(JSONExtractInt(raw, 'disposedSessionsPendingGC')) as avg_leaked, avg(JSONExtractFloat(raw, 'rssMB')) as avg_rss, avg(JSONExtractFloat(raw, 'heapUsedMB')) as avg_heap, avg(JSONExtractInt(raw, 'activeSessions')) as sessions FROM ${table} WHERE ${rowFilter}JSONExtractString(raw, 'feature') = 'system-vitals' AND JSONExtractString(raw, 'region') = '${region}' AND dt >= now() - INTERVAL ${duration} GROUP BY hour ORDER BY hour ASC`;
 
-  const leakResult = await runSql(leakSql)
-  console.log("📊 Disposed Sessions Pending GC (should be 0):\n")
-  printTable(leakResult.data)
+  const leakResult = await runSql(leakSql);
+  console.log("📊 Disposed Sessions Pending GC (should be 0):\n");
+  printTable(leakResult.data);
 
   // 2. GC freed amounts
-  const gcSql = `SELECT toStartOfHour(dt) as hour, count() as probes, avg(JSONExtractFloat(raw, 'gcDurationMs')) as avg_gc_ms, max(JSONExtractFloat(raw, 'gcDurationMs')) as max_gc_ms, avg(JSONExtractFloat(raw, 'freedMB')) as avg_freed_mb FROM ${table} WHERE ${rowFilter}JSONExtractString(raw, 'feature') = 'gc-probe' AND JSONExtractString(raw, 'region') = '${region}' AND dt >= now() - INTERVAL ${duration} GROUP BY hour ORDER BY hour ASC`
+  const gcSql = `SELECT toStartOfHour(dt) as hour, count() as probes, avg(JSONExtractFloat(raw, 'gcDurationMs')) as avg_gc_ms, max(JSONExtractFloat(raw, 'gcDurationMs')) as max_gc_ms, avg(JSONExtractFloat(raw, 'freedMB')) as avg_freed_mb FROM ${table} WHERE ${rowFilter}JSONExtractString(raw, 'feature') = 'gc-probe' AND JSONExtractString(raw, 'region') = '${region}' AND dt >= now() - INTERVAL ${duration} GROUP BY hour ORDER BY hour ASC`;
 
-  const gcResult = await runSql(gcSql)
-  console.log("\n🗑️  GC Probe Trend (freed_mb should be > 0):\n")
-  printTable(gcResult.data)
+  const gcResult = await runSql(gcSql);
+  console.log("\n🗑️  GC Probe Trend (freed_mb should be > 0):\n");
+  printTable(gcResult.data);
 
   // 3. Leak warnings from MemoryLeakDetector
-  const warnSql = `SELECT dt, JSONExtractString(raw, 'tag') as tag, JSONExtractString(raw, 'message') as status FROM ${table} WHERE ${rowFilter}JSONExtractString(raw, 'service') = 'MemoryLeakDetector' AND JSONExtractString(raw, 'region') = '${region}' AND dt >= now() - INTERVAL ${duration} ORDER BY dt DESC LIMIT 20`
+  const warnSql = `SELECT dt, JSONExtractString(raw, 'tag') as tag, JSONExtractString(raw, 'message') as status FROM ${table} WHERE ${rowFilter}JSONExtractString(raw, 'service') = 'MemoryLeakDetector' AND JSONExtractString(raw, 'region') = '${region}' AND dt >= now() - INTERVAL ${duration} ORDER BY dt DESC LIMIT 20`;
 
-  const warnResult = await runSql(warnSql)
+  const warnResult = await runSql(warnSql);
   if (warnResult.rows > 0) {
-    console.log("\n⚠️  MemoryLeakDetector Events:\n")
-    printTable(warnResult.data)
+    console.log("\n⚠️  MemoryLeakDetector Events:\n");
+    printTable(warnResult.data);
   }
 
   // Summary
   if (leakResult.data.length > 0) {
-    const latest = leakResult.data[leakResult.data.length - 1]
-    const leaked = parseFloat(latest.avg_leaked) || 0
-    const rss = parseFloat(latest.avg_rss) || 0
+    const latest = leakResult.data[leakResult.data.length - 1];
+    const leaked = parseFloat(latest.avg_leaked) || 0;
+    const rss = parseFloat(latest.avg_rss) || 0;
     if (leaked > 1) {
-      console.log(`\n  🔴 LEAK DETECTED: ${leaked.toFixed(1)} disposed sessions stuck in memory`)
-      console.log(`     RSS: ${rss.toFixed(0)}MB — run timer audit (see: bstack runbook pod-crash)`)
+      console.log(`\n  🔴 LEAK DETECTED: ${leaked.toFixed(1)} disposed sessions stuck in memory`);
+      console.log(`     RSS: ${rss.toFixed(0)}MB — run timer audit (see: bstack runbook pod-crash)`);
     } else {
-      console.log(`\n  ✅ No leak detected (disposedSessionsPendingGC = ${leaked.toFixed(1)})`)
+      console.log(`\n  ✅ No leak detected (disposedSessionsPendingGC = ${leaked.toFixed(1)})`);
     }
   }
 }
@@ -931,106 +1065,106 @@ async function cmdLeaks(flags: Record<string, string>) {
 // ── session — live session inspection ────────────────────────────────────────
 
 async function cmdSession(flags: Record<string, string>, positional: string[]) {
-  const userId = positional[0]
-  const host = getFlag(flags, "host", "")
+  const userId = positional[0];
+  const host = getFlag(flags, "host", "");
 
   if (!userId || !host) {
-    console.error("Usage: bstack session <userId> --host <hostname>")
-    console.error("\nExamples:")
-    console.error("  bstack session isaiahballah@gmail.com --host debug.augmentos.cloud")
-    console.error("  bstack session user@example.com --host uscentralapi.mentra.glass")
-    process.exit(1)
+    console.error("Usage: bstack session <userId> --host <hostname>");
+    console.error("\nExamples:");
+    console.error("  bstack session isaiahballah@gmail.com --host debug.augmentos.cloud");
+    console.error("  bstack session user@example.com --host uscentralapi.mentra.glass");
+    process.exit(1);
   }
 
-  const jwt = _ADMIN_JWT || process.env.MENTRA_ADMIN_JWT || ""
+  const jwt = _ADMIN_JWT || process.env.MENTRA_ADMIN_JWT || "";
   if (!jwt) {
-    console.error("❌ MENTRA_ADMIN_JWT not set. Set it in env or Doppler mentra-sre project.")
-    process.exit(1)
+    console.error("❌ MENTRA_ADMIN_JWT not set. Set it in env or Doppler mentra-sre project.");
+    process.exit(1);
   }
 
-  console.log(`🔍 Session: ${userId} on ${host}\n`)
+  console.log(`🔍 Session: ${userId} on ${host}\n`);
 
   try {
     const res = await fetch(`https://${host}/api/admin/memory/now`, {
-      headers: {Authorization: `Bearer ${jwt}`},
-    })
+      headers: { Authorization: `Bearer ${jwt}` },
+    });
     if (!res.ok) {
-      console.error(`❌ HTTP ${res.status}: ${await res.text()}`)
-      return
+      console.error(`❌ HTTP ${res.status}: ${await res.text()}`);
+      return;
     }
 
-    const data = (await res.json()) as any
-    const session = (data.sessions || []).find((s: any) => s.userId === userId)
+    const data = (await res.json()) as any;
+    const session = (data.sessions || []).find((s: any) => s.userId === userId);
 
     if (!session) {
-      console.log(`  ❌ No active session for ${userId}`)
-      console.log(`  Active users: ${(data.sessions || []).map((s: any) => s.userId).join(", ") || "(none)"}`)
-      return
+      console.log(`  ❌ No active session for ${userId}`);
+      console.log(`  Active users: ${(data.sessions || []).map((s: any) => s.userId).join(", ") || "(none)"}`);
+      return;
     }
 
-    console.log(`  User:          ${session.userId}`)
-    console.log(`  Running Apps:  ${(session.runningApps || []).join(", ") || "(none)"}`)
-    console.log(`  Loading Apps:  ${(session.loadingApps || []).join(", ") || "(none)"}`)
-    console.log(`  Apps:          ${JSON.stringify(session.apps || {})}`)
-    console.log(`  Subscriptions: ${JSON.stringify(session.subscriptions || {})}`)
+    console.log(`  User:          ${session.userId}`);
+    console.log(`  Running Apps:  ${(session.runningApps || []).join(", ") || "(none)"}`);
+    console.log(`  Loading Apps:  ${(session.loadingApps || []).join(", ") || "(none)"}`);
+    console.log(`  Apps:          ${JSON.stringify(session.apps || {})}`);
+    console.log(`  Subscriptions: ${JSON.stringify(session.subscriptions || {})}`);
 
-    if (session.mic !== undefined) console.log(`  Mic:           ${JSON.stringify(session.mic)}`)
-    if (session.audio !== undefined) console.log(`  Audio:         ${JSON.stringify(session.audio)}`)
+    if (session.mic !== undefined) console.log(`  Mic:           ${JSON.stringify(session.mic)}`);
+    if (session.audio !== undefined) console.log(`  Audio:         ${JSON.stringify(session.audio)}`);
   } catch (error: any) {
-    console.error(`❌ Error: ${error.message}`)
+    console.error(`❌ Error: ${error.message}`);
   }
 }
 
 // ── sql ──────────────────────────────────────────────────────────────────────
 
 async function cmdSql(positional: string[]) {
-  const sql = positional.join(" ")
+  const sql = positional.join(" ");
   if (!sql) {
-    console.error('Usage: bstack sql "SELECT ..."')
-    process.exit(1)
+    console.error('Usage: bstack sql "SELECT ..."');
+    process.exit(1);
   }
 
-  console.log(`🔍 Raw SQL Query\n`)
-  const result = await runSql(sql)
-  printTable(result.data)
+  console.log(`🔍 Raw SQL Query\n`);
+  const result = await runSql(sql);
+  printTable(result.data);
 
   if (result.statistics) {
     console.log(
       `\n  ${result.rows} rows | ${result.statistics.elapsed.toFixed(3)}s | ${(result.statistics.bytes_read / 1024 / 1024).toFixed(1)}MB scanned`,
-    )
+    );
   }
 }
 
 // ── runbook ──────────────────────────────────────────────────────────────────
 
 async function cmdRunbook(positional: string[]) {
-  const name = positional[0]
+  const name = positional[0];
   if (!name) {
-    console.log("📖 Available Runbooks:\n")
-    const fs = await import("fs")
-    const path = await import("path")
-    const runbookDir = path.join(import.meta.dir, "runbooks")
+    console.log("📖 Available Runbooks:\n");
+    const fs = await import("fs");
+    const path = await import("path");
+    const runbookDir = path.join(import.meta.dir, "runbooks");
     try {
-      const files = fs.readdirSync(runbookDir).filter((f: string) => f.endsWith(".md"))
+      const files = fs.readdirSync(runbookDir).filter((f: string) => f.endsWith(".md"));
       for (const f of files) {
-        console.log(`  bstack runbook ${f.replace(".md", "")}`)
+        console.log(`  bstack runbook ${f.replace(".md", "")}`);
       }
     } catch {
-      console.log("  (no runbooks found in cloud/tools/bstack/runbooks/)")
+      console.log("  (no runbooks found in cloud/tools/bstack/runbooks/)");
     }
-    return
+    return;
   }
 
-  const fs = await import("fs")
-  const path = await import("path")
-  const filePath = path.join(import.meta.dir, "runbooks", `${name}.md`)
+  const fs = await import("fs");
+  const path = await import("path");
+  const filePath = path.join(import.meta.dir, "runbooks", `${name}.md`);
   try {
-    const content = fs.readFileSync(filePath, "utf-8")
-    console.log(content)
+    const content = fs.readFileSync(filePath, "utf-8");
+    console.log(content);
   } catch {
-    console.error(`Runbook not found: ${name}`)
-    console.error(`  Expected file: ${filePath}`)
-    process.exit(1)
+    console.error(`Runbook not found: ${name}`);
+    console.error(`  Expected file: ${filePath}`);
+    process.exit(1);
   }
 }
 
@@ -1134,6 +1268,14 @@ Diagnostics:
   bstack memory --region <r> [--duration 1h] RSS/heap/external/arraybuf trend over time.
     Calculates growth rate and estimates time to 1GB.
 
+  bstack memory-owners --region <r>          Top memory owners and growth.
+
+  bstack device-state --region <r>           Device-state storm volume + top emitters (issue 099).
+    --duration 30m                             Time window (default: 30m)
+    Shows: 1. pod-wide updates/min from system-vitals
+           2. top-10 emitters within the window
+    Internally: JSONExtract(raw, 'feature') = 'device-state'
+
   bstack gc --region <r> [--duration 1h]     GC probe durations and freed MB.
     Warns if max GC > 100ms (contributing to event loop blocking).
 
@@ -1171,93 +1313,111 @@ Cluster IDs: ${Object.entries(REGIONS)
   pod-crash            What to do when a pod crashes (exit codes, heap analysis, timer audit)
   weekly-error-audit   Weekly error audit process (top errors, log volume, churn, memory)
   client-disconnect    Investigate client disconnection patterns (ws-close, ws-reconnect)
-`)
+`);
+}
+
+function safeJsonParse(input: unknown): any[] {
+  if (!input || typeof input !== "string") return [];
+  try {
+    const parsed = JSON.parse(input);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
-const {command, flags, positional} = parseArgs()
+const { command, flags, positional } = parseArgs();
 
 try {
   switch (command) {
     case "health":
-      await cmdHealth()
-      break
+      await cmdHealth();
+      break;
     case "diagnostics":
     case "diag":
-      await cmdDiagnostics(flags)
-      break
+      await cmdDiagnostics(flags);
+      break;
     case "crash-timeline":
     case "crash":
-      await cmdCrashTimeline(flags)
-      break
+      await cmdCrashTimeline(flags);
+      break;
     case "memory":
     case "mem":
-      await cmdMemory(flags)
-      break
+      await cmdMemory(flags);
+      break;
+    case "memory-owners":
+    case "owners":
+      await cmdMemoryOwners(flags);
+      break;
+    case "device-state":
+    case "ds":
+      await cmdDeviceState(flags);
+      break;
     case "gc":
-      await cmdGc(flags)
-      break
+      await cmdGc(flags);
+      break;
     case "gaps":
-      await cmdGaps(flags)
-      break
+      await cmdGaps(flags);
+      break;
     case "budget":
-      await cmdBudget(flags)
-      break
+      await cmdBudget(flags);
+      break;
     case "slow-queries":
     case "slow":
-      await cmdSlowQueries(flags)
-      break
+      await cmdSlowQueries(flags);
+      break;
     case "cache":
-      await cmdCache(flags)
-      break
+      await cmdCache(flags);
+      break;
     case "logs":
     case "log":
-      await cmdLogs(flags, positional)
-      break
+      await cmdLogs(flags, positional);
+      break;
     case "errors":
     case "err":
-      await cmdErrors(flags)
-      break
+      await cmdErrors(flags);
+      break;
     case "leaks":
     case "leak":
-      await cmdLeaks(flags)
-      break
+      await cmdLeaks(flags);
+      break;
     case "session":
     case "sess":
-      await cmdSession(flags, positional)
-      break
+      await cmdSession(flags, positional);
+      break;
     case "incidents":
     case "inc":
-      await cmdIncidents(flags)
-      break
+      await cmdIncidents(flags);
+      break;
     case "sources":
     case "src":
-      await cmdSources()
-      break
+      await cmdSources();
+      break;
     case "sql":
-      await cmdSql(positional)
-      break
+      await cmdSql(positional);
+      break;
     case "runbook":
     case "rb":
-      await cmdRunbook(positional)
-      break
+      await cmdRunbook(positional);
+      break;
     case "help":
     case "--help":
     case "-h":
-      cmdHelp()
-      break
+      cmdHelp();
+      break;
     default:
-      console.error(`Unknown command: ${command}`)
-      cmdHelp()
-      process.exit(1)
+      console.error(`Unknown command: ${command}`);
+      cmdHelp();
+      process.exit(1);
   }
 } catch (error: any) {
-  console.error(`\n❌ Error: ${error.message}`)
+  console.error(`\n❌ Error: ${error.message}`);
   if (error.message.includes("Unauthorized")) {
-    console.error("   Check your BETTERSTACK_USERNAME and BETTERSTACK_PASSWORD environment variables.")
+    console.error("   Check your BETTERSTACK_USERNAME and BETTERSTACK_PASSWORD environment variables.");
   }
-  process.exit(1)
+  process.exit(1);
 }

@@ -67,7 +67,7 @@ process.env.ORG_GRADLE_PROJECT_reactNativeArchitectures = 'arm64-v8a';
 // Clean android/ to avoid cached version number issues
 await $({ stdio: 'inherit' })`rm -rf android`;
 await $({ stdio: 'inherit' })`bun expo prebuild --platform android`;
-await $({ stdio: 'inherit' })`bun expo export --platform android`;
+await $({ stdio: 'inherit' })`bun expo export --platform android --clear`;
 
 // ── Step 4: Copy fastlane config into android/ ────────────────────────────────
 

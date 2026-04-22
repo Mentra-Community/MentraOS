@@ -1,14 +1,14 @@
-/// swift-api-examples/SherpaOnnx.swift
-/// Copyright (c)  2023  Xiaomi Corporation
+// swift-api-examples/SherpaOnnx.swift
+// Copyright (c)  2023  Xiaomi Corporation
 
 import Foundation // For NSString
 
-/// Convert a String from swift to a `const char*` so that we can pass it to
-/// the C language.
-///
-/// - Parameters:
-///   - s: The String to convert.
-/// - Returns: A pointer that can be passed to C as `const char*`
+// Convert a String from swift to a `const char*` so that we can pass it to
+// the C language.
+//
+// - Parameters:
+//   - s: The String to convert.
+// - Returns: A pointer that can be passed to C as `const char*`
 
 func toCPointer(_ s: String) -> UnsafePointer<Int8>! {
     let cs = (s as NSString).utf8String
@@ -232,13 +232,21 @@ class SherpaOnnxOnlineRecongitionResult {
     /// Return the actual recognition result.
     /// For English models, it contains words separated by spaces.
     /// For Chinese models, it contains Chinese words.
-    var text: String { _text }
+    var text: String {
+        _text
+    }
 
-    var count: Int { Int(result.pointee.count) }
+    var count: Int {
+        Int(result.pointee.count)
+    }
 
-    var tokens: [String] { _tokens }
+    var tokens: [String] {
+        _tokens
+    }
 
-    var timestamps: [Float] { _timestamps }
+    var timestamps: [Float] {
+        _timestamps
+    }
 }
 
 class SherpaOnnxRecognizer {
@@ -560,23 +568,37 @@ class SherpaOnnxOfflineRecongitionResult {
     /// Return the actual recognition result.
     /// For English models, it contains words separated by spaces.
     /// For Chinese models, it contains Chinese words.
-    var text: String { _text }
-    var count: Int { Int(result.pointee.count) }
-    var timestamps: [Float] { _timestamps }
+    var text: String {
+        _text
+    }
 
-    // For SenseVoice models, it can be zh, en, ja, yue, ko
-    // where zh is for Chinese
-    // en is for English
-    // ja is for Japanese
-    // yue is for Cantonese
-    // ko is for Korean
-    var lang: String { _lang }
+    var count: Int {
+        Int(result.pointee.count)
+    }
 
-    // for SenseVoice models
-    var emotion: String { _emotion }
+    var timestamps: [Float] {
+        _timestamps
+    }
 
-    // for SenseVoice models
-    var event: String { _event }
+    /// For SenseVoice models, it can be zh, en, ja, yue, ko
+    /// where zh is for Chinese
+    /// en is for English
+    /// ja is for Japanese
+    /// yue is for Cantonese
+    /// ko is for Korean
+    var lang: String {
+        _lang
+    }
+
+    /// for SenseVoice models
+    var emotion: String {
+        _emotion
+    }
+
+    /// for SenseVoice models
+    var event: String {
+        _event
+    }
 
     init(result: UnsafePointer<SherpaOnnxOfflineRecognizerResult>) {
         self.result = result
@@ -805,7 +827,7 @@ class SherpaOnnxVoiceActivityDetectorWrapper {
     }
 }
 
-// offline tts
+/// offline tts
 func sherpaOnnxOfflineTtsVitsModelConfig(
     model: String = "",
     lexicon: String = "",
@@ -1151,8 +1173,7 @@ class SherpaOnnxKeywordResultWrapper {
             }
             return tokens
         } else {
-            let tokens: [String] = []
-            return tokens
+            return []
         }
     }
 
@@ -1421,7 +1442,7 @@ class SherpaOnnxOfflineSpeakerDiarizationWrapper {
         return Int(SherpaOnnxOfflineSpeakerDiarizationGetSampleRate(impl))
     }
 
-    // only config.clustering is used. All other fields are ignored
+    /// only config.clustering is used. All other fields are ignored
     func setConfig(config: UnsafePointer<SherpaOnnxOfflineSpeakerDiarizationConfig>!) {
         SherpaOnnxOfflineSpeakerDiarizationSetConfig(impl, config)
     }
@@ -1449,7 +1470,8 @@ class SherpaOnnxOfflineSpeakerDiarizationWrapper {
             ans.append(
                 SherpaOnnxOfflineSpeakerDiarizationSegmentWrapper(
                     start: p![i].start, end: p![i].end, speaker: Int(p![i].speaker)
-                ))
+                )
+            )
         }
 
         SherpaOnnxOfflineSpeakerDiarizationDestroySegment(p)
@@ -1551,7 +1573,8 @@ func sherpaOnnxOfflineSpeechDenoiserConfig(
         sherpaOnnxOfflineSpeechDenoiserModelConfig()
 ) -> SherpaOnnxOfflineSpeechDenoiserConfig {
     return SherpaOnnxOfflineSpeechDenoiserConfig(
-        model: model)
+        model: model
+    )
 }
 
 class SherpaOnnxDenoisedAudioWrapper {
@@ -1584,8 +1607,7 @@ class SherpaOnnxDenoisedAudioWrapper {
             }
             return samples
         } else {
-            let samples: [Float] = []
-            return samples
+            return []
         }
     }
 

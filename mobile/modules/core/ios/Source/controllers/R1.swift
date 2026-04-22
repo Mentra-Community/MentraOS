@@ -14,7 +14,7 @@ import React
 // MARK: - R1 BLE Constants
 
 private enum R1BLE {
-    // Ring custom service
+    /// Ring custom service
     static let SERVICE_UUID = CBUUID(string: "BAE80001-4F05-4503-8E65-3AF1F7329D1F")
 
     // Channel 1
@@ -29,14 +29,14 @@ private enum R1BLE {
     static let BATTERY_SERVICE = CBUUID(string: "180F")
     static let BATTERY_LEVEL_CHAR = CBUUID(string: "2A19")
 
-    // Name filters for scanning
+    /// Name filters for scanning
     static let NAME_FILTERS = ["EVEN R1", "BCL60"]
 
     // Init sequence config writes
     static let CONFIG_FC = Data([0xFC])
     static let CONFIG_11 = Data([0x11])
 
-    // Gesture protocol marker
+    /// Gesture protocol marker
     static let GESTURE_MARKER: UInt8 = 0xFF
 
     static let SCAN_TIMEOUT: TimeInterval = 15.0
@@ -96,13 +96,12 @@ class R1: NSObject, ControllerManager {
     private var notifySubscriptionCount = 0
     private var initSequenceRun = false
 
-
-    // Device search
+    /// Device search
     var DEVICE_SEARCH_ID = "NOT_SET"
 
-    // persisted state for ease of reconnection / background connection:
-    // we could store these elsewhere to be like other settings / state, but in practice they will only ever be set and used here
-    // Stored UUID for background reconnection
+    /// persisted state for ease of reconnection / background connection:
+    /// we could store these elsewhere to be like other settings / state, but in practice they will only ever be set and used here
+    /// Stored UUID for background reconnection
     private var ringUUID: UUID? {
         get { UserDefaults.standard.string(forKey: "r1_ringUUID").flatMap { UUID(uuidString: $0) } }
         set {
@@ -113,7 +112,8 @@ class R1: NSObject, ControllerManager {
             }
         }
     }
-    // maps peripheral.name to 6-byte ring MAC address:
+
+    /// maps peripheral.name to 6-byte ring MAC address:
     private var ringMacAddressMap: [String: Data] {
         get {
             UserDefaults.standard.dictionary(forKey: "r1_ringMacAddressMap") as? [String: Data]
@@ -121,15 +121,16 @@ class R1: NSObject, ControllerManager {
         }
         set { UserDefaults.standard.set(newValue, forKey: "r1_ringMacAddressMap") }
     }
+
     private var ringMacAddress: String? {
         get { UserDefaults.standard.string(forKey: "r1_ringMacAddress") }
         set { UserDefaults.standard.set(newValue, forKey: "r1_ringMacAddress") }
     }
 
-    // Reconnection
+    /// Reconnection
     private let reconnectionManager = R1ReconnectionManager()
 
-    // Battery
+    /// Battery
     @Published private var _batteryLevel: Int = -1 {
         didSet {
             if _batteryLevel != oldValue && _batteryLevel >= 0 {
@@ -141,7 +142,7 @@ class R1: NSObject, ControllerManager {
 
     private var isCharging = false
 
-    // Heartbeat
+    /// Heartbeat
     private var heartbeatTimer: Timer?
 
     static let _bluetoothQueue = DispatchQueue(label: "BluetoothR1", qos: .userInitiated)
@@ -453,7 +454,10 @@ class R1: NSObject, ControllerManager {
 
     func sendIncidentId(_: String, apiBaseUrl _: String?) {}
     func setMicEnabled(_: Bool) {}
-    func sortMicRanking(list: [String]) -> [String] { return list }
+    func sortMicRanking(list: [String]) -> [String] {
+        return list
+    }
+
     func sendJson(_: [String: Any], wakeUp _: Bool, requireAck _: Bool) {}
     func requestPhoto(
         _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
@@ -476,13 +480,19 @@ class R1: NSObject, ControllerManager {
     func clearDisplay() {}
     func sendTextWall(_: String) {}
     func sendDoubleTextWall(_: String, _: String) {}
-    func displayBitmap(base64ImageData _: String) async -> Bool { return false }
+    func displayBitmap(base64ImageData _: String) async -> Bool {
+        return false
+    }
+
     func showDashboard() {}
     func setDashboardPosition(_: Int, _: Int) {}
     func setHeadUpAngle(_: Int) {}
     func setSilentMode(_: Bool) {}
     func exit() {}
-    func sendShutdown() { disconnect() }
+    func sendShutdown() {
+        disconnect()
+    }
+
     func sendReboot() {}
     func sendRgbLedControl(
         requestId _: String, packageName _: String?, action _: String, color _: String?, ontime _: Int,
@@ -692,7 +702,8 @@ extension R1: CBPeripheralDelegate {
 
             if let error = error {
                 Bridge.log(
-                    "R1: Notify error on \(characteristic.uuid): \(error.localizedDescription)")
+                    "R1: Notify error on \(characteristic.uuid): \(error.localizedDescription)"
+                )
                 return
             }
             Bridge.log("R1: Notify enabled on \(characteristic.uuid)")
@@ -737,7 +748,8 @@ extension R1: CBPeripheralDelegate {
         if let error = error {
             DispatchQueue.main.async {
                 Bridge.log(
-                    "R1: Write error on \(characteristic.uuid): \(error.localizedDescription)")
+                    "R1: Write error on \(characteristic.uuid): \(error.localizedDescription)"
+                )
             }
         }
     }

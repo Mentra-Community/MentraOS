@@ -30,7 +30,7 @@ struct MentraLiveDevice {
 class BlePhotoUploadService {
     static let TAG = "BlePhotoUploadService"
 
-    // Callback protocol
+    /// Callback protocol
     protocol UploadCallback {
         func onSuccess(requestId: String)
         func onError(requestId: String, error: String)
@@ -74,7 +74,8 @@ class BlePhotoUploadService {
         Task {
             do {
                 Bridge.log(
-                    "\(TAG): Processing BLE photo for upload. Image size: \(imageData.count) bytes")
+                    "\(TAG): Processing BLE photo for upload. Image size: \(imageData.count) bytes"
+                )
 
                 // 1. Decode image (AVIF or JPEG) to UIImage
                 guard let image = decodeImage(imageData: imageData) else {
@@ -179,7 +180,8 @@ class BlePhotoUploadService {
         // Add requestId field
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append(
-            "Content-Disposition: form-data; name=\"requestId\"\r\n\r\n".data(using: .utf8)!)
+            "Content-Disposition: form-data; name=\"requestId\"\r\n\r\n".data(using: .utf8)!
+        )
         body.append("\(requestId)\r\n".data(using: .utf8)!)
 
         // Add source field
@@ -191,7 +193,8 @@ class BlePhotoUploadService {
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append(
             "Content-Disposition: form-data; name=\"photo\"; filename=\"\(requestId).jpg\"\r\n"
-                .data(using: .utf8)!)
+                .data(using: .utf8)!
+        )
         body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
         body.append(jpegData)
         body.append("\r\n".data(using: .utf8)!)
@@ -213,7 +216,8 @@ class BlePhotoUploadService {
             if httpResponse.statusCode < 200 || httpResponse.statusCode >= 300 {
                 let errorBody = String(data: data, encoding: .utf8) ?? "No response body"
                 throw PhotoUploadError.uploadFailed(
-                    "Upload failed with code \(httpResponse.statusCode): \(errorBody)")
+                    "Upload failed with code \(httpResponse.statusCode): \(errorBody)"
+                )
             }
 
             print("LIVE: Upload successful. Response code: \(httpResponse.statusCode)")
@@ -379,8 +383,8 @@ private struct FileTransferSession {
     var isComplete: Bool = false
     var isAnnounced: Bool = false
 
-    // BES2700 firmware hardcodes FILE_PACK_SIZE=400 when calculating totalPack.
-    // Android glasses "lie" about fileSize to make BES expect correct packet count.
+    /// BES2700 firmware hardcodes FILE_PACK_SIZE=400 when calculating totalPack.
+    /// Android glasses "lie" about fileSize to make BES expect correct packet count.
     private static let BES_HARDCODED_PACK_SIZE = 400
 
     init(fileName: String, fileSize: Int, announcedPackets: Int? = nil) {
@@ -808,7 +812,8 @@ extension MentraLive: CBPeripheralDelegate {
         }
         if let error {
             Bridge.log(
-                "LIVE: Error updating value for characteristic: \(error.localizedDescription)")
+                "LIVE: Error updating value for characteristic: \(error.localizedDescription)"
+            )
             return
         }
 
@@ -887,7 +892,7 @@ enum MentraLiveConnectionState {
     case connected
 }
 
-// Type aliases for compatibility
+/// Type aliases for compatibility
 typealias JSONObject = [String: Any]
 
 // MARK: - Main Manager Class
@@ -928,7 +933,7 @@ class MentraLive: NSObject, SGCManager {
 
     func connectController() {}
     func disconnectController() {}
-    
+
     func dbg1() {}
     func dbg2() {}
 
@@ -1040,14 +1045,16 @@ class MentraLive: NSObject, SGCManager {
     private let MIN_SEND_DELAY_MS: UInt64 = 160_000_000 // 160ms in nanoseconds
     private let READINESS_CHECK_INTERVAL_MS: TimeInterval = 2.5 // 2.5 seconds
 
-    // Device Settings Keys
+    /// Device Settings Keys
     private let PREFS_DEVICE_NAME = "MentraLiveLastConnectedDeviceName"
 
     // MARK: - Properties
 
-    @objc static func requiresMainQueueSetup() -> Bool { true }
+    @objc static func requiresMainQueueSetup() -> Bool {
+        true
+    }
 
-    // BLE Properties
+    /// BLE Properties
     private var centralManager: CBCentralManager?
 
     private var connectedPeripheral: CBPeripheral?
@@ -1085,7 +1092,7 @@ class MentraLive: NSObject, SGCManager {
     private var readinessCheckTimer: Timer?
     private var readinessCheckCounter = 0
 
-    // BES OTA progress tracking - only send to UI on 5% increments
+    /// BES OTA progress tracking - only send to UI on 5% increments
     private var lastBesOtaProgress = -1
 
     // Glasses media volume (K900 cs_getvol / cs_vol, sr_getvol / sr_vol)
@@ -1182,11 +1189,13 @@ class MentraLive: NSObject, SGCManager {
 
                 // Check if this is the device we want
                 if let savedDeviceName = UserDefaults.standard.string(
-                    forKey: PREFS_DEVICE_NAME),
+                    forKey: PREFS_DEVICE_NAME
+                ),
                     savedDeviceName == name
                 {
                     Bridge.log(
-                        "Found our remembered device already connected, connecting: \(name)")
+                        "Found our remembered device already connected, connecting: \(name)"
+                    )
                     connectToDevice(peripheral)
                     return
                 }
@@ -1489,7 +1498,8 @@ class MentraLive: NSObject, SGCManager {
             }
 
             Bridge.log(
-                "🔄 Retrying message mId: \(pendingMessage.id) (attempt \(retryMessage.retries)/3)")
+                "🔄 Retrying message mId: \(pendingMessage.id) (attempt \(retryMessage.retries)/3)"
+            )
         } else {
             Bridge.log("❌ Message failed after 3 retries - mId: \(pendingMessage.id)")
             // Optionally emit an event or callback for failed message
@@ -1609,8 +1619,8 @@ class MentraLive: NSObject, SGCManager {
             if self.connectedPeripheral == nil, !self.isKilled {
                 // Check for last known device name to start scan
                 if let lastDeviceName = UserDefaults.standard.string(
-                    forKey: self.PREFS_DEVICE_NAME), !lastDeviceName.isEmpty
-                {
+                    forKey: self.PREFS_DEVICE_NAME
+                ), !lastDeviceName.isEmpty {
                     Bridge.log(
                         "LIVE: Reconnection attempt \(self.reconnectAttempts) - looking for device with name: \(lastDeviceName)"
                     )
@@ -1674,7 +1684,8 @@ class MentraLive: NSObject, SGCManager {
             || commandType == K900ProtocolUtils.CMD_TYPE_DATA
         {
             Bridge.log(
-                "📦 DETECTED FILE TRANSFER PACKET (type: 0x\(String(format: "%02X", commandType)))")
+                "📦 DETECTED FILE TRANSFER PACKET (type: 0x\(String(format: "%02X", commandType)))"
+            )
 
             // Debug: Log the raw data
             // let hexDump = data.prefix(64).map { String(format: "%02X ", $0) }.joined()
@@ -1762,7 +1773,8 @@ class MentraLive: NSObject, SGCManager {
                     pendingMessageTimer = nil
                 } else if pending?.id != nil {
                     Bridge.log(
-                        "LIVE: Received unexpected ACK! expected: \(pending!.id), received: \(mId)")
+                        "LIVE: Received unexpected ACK! expected: \(pending!.id), received: \(mId)"
+                    )
                 }
             }
             return // Don't send ACK for ACKs!
@@ -1842,7 +1854,8 @@ class MentraLive: NSObject, SGCManager {
             {
                 if let gestureName = mapK900GestureType(gestureType) {
                     Bridge.log(
-                        "LIVE: 👆 K900 touchpad event - Type: \(gestureType) -> \(gestureName)")
+                        "LIVE: 👆 K900 touchpad event - Type: \(gestureType) -> \(gestureName)"
+                    )
                     Bridge.sendTouchEvent(
                         deviceModel: "Mentra Live",
                         gestureName: gestureName,
@@ -2108,7 +2121,8 @@ class MentraLive: NSObject, SGCManager {
                 let isCharging = voltage > 4000
 
                 Bridge.log(
-                    "🔋 K900 Battery Status - Voltage: \(voltageVolts)V, Level: \(percentage)%")
+                    "🔋 K900 Battery Status - Voltage: \(voltageVolts)V, Level: \(percentage)%"
+                )
                 updateBatteryStatus(level: percentage, isCharging: isCharging)
             }
 
@@ -2196,7 +2210,8 @@ class MentraLive: NSObject, SGCManager {
             {
                 if let gestureName = mapK900GestureType(gestureType) {
                     Bridge.log(
-                        "LIVE: 👆 K900 touchpad event - Type: \(gestureType) -> \(gestureName)")
+                        "LIVE: 👆 K900 touchpad event - Type: \(gestureType) -> \(gestureName)"
+                    )
                     Bridge.sendTouchEvent(
                         deviceModel: deviceModel,
                         gestureName: gestureName,
@@ -2520,7 +2535,8 @@ class MentraLive: NSObject, SGCManager {
         let compressionDurationMs = json["compressionDurationMs"] as? Int64 ?? 0
 
         Bridge.log(
-            "LIVE: 📸 BLE photo ready notification: bleImgId=\(bleImgId), requestId=\(requestId)")
+            "LIVE: 📸 BLE photo ready notification: bleImgId=\(bleImgId), requestId=\(requestId)"
+        )
 
         // Update the transfer with glasses compression duration
         if var transfer = blePhotoTransfers[bleImgId] {
@@ -2747,7 +2763,8 @@ class MentraLive: NSObject, SGCManager {
 
                         Bridge.log("✅ BLE photo transfer complete: \(packetInfo.fileName)")
                         Bridge.log(
-                            "⏱️ Total duration (request to complete): \(Int(totalDuration))ms")
+                            "⏱️ Total duration (request to complete): \(Int(totalDuration))ms"
+                        )
                         Bridge.log(
                             "⏱️ Glasses compression: \(photoTransfer.glassesCompressionDurationMs)ms"
                         )
@@ -3294,7 +3311,8 @@ class MentraLive: NSObject, SGCManager {
                 "LIVE: IMU Single Reading - Accel: [%.2f, %.2f, %.2f], Euler: [%.1f°, %.1f°, %.1f°]",
                 accel[0], accel[1], accel[2],
                 euler[0], euler[1], euler[2]
-            ))
+            )
+        )
 
         // Emit event for other components
         let eventBody: [String: Any] = [
@@ -3897,7 +3915,8 @@ extension MentraLive {
                     domain: "MentraLive",
                     code: -1002,
                     userInfo: [NSLocalizedDescriptionKey: "glasses_volume_invalid_response"]
-                ))
+                )
+            )
             return
         }
 
@@ -3976,7 +3995,9 @@ extension MentraLive {
                         domain: "MentraLive",
                         code: -1003,
                         userInfo: [NSLocalizedDescriptionKey: "glasses_volume_busy"]
-                    )))
+                    )
+                )
+            )
             return
         }
         glassesMediaVolumeGetCompletion = completion
@@ -3988,7 +4009,8 @@ extension MentraLive {
                     domain: "MentraLive",
                     code: -1004,
                     userInfo: [NSLocalizedDescriptionKey: "glasses_not_ready"]
-                ))
+                )
+            )
             return
         }
 
@@ -3999,7 +4021,8 @@ extension MentraLive {
                     domain: "MentraLive",
                     code: -1005,
                     userInfo: [NSLocalizedDescriptionKey: "glasses_volume_send_failed"]
-                ))
+                )
+            )
         }
     }
 
@@ -4014,7 +4037,9 @@ extension MentraLive {
                         domain: "MentraLive",
                         code: -1003,
                         userInfo: [NSLocalizedDescriptionKey: "glasses_volume_busy"]
-                    )))
+                    )
+                )
+            )
             return
         }
         glassesMediaVolumeSetCompletion = completion
@@ -4026,7 +4051,8 @@ extension MentraLive {
                     domain: "MentraLive",
                     code: -1004,
                     userInfo: [NSLocalizedDescriptionKey: "glasses_not_ready"]
-                ))
+                )
+            )
             return
         }
 
@@ -4037,7 +4063,8 @@ extension MentraLive {
                     domain: "MentraLive",
                     code: -1005,
                     userInfo: [NSLocalizedDescriptionKey: "glasses_volume_send_failed"]
-                ))
+                )
+            )
         }
     }
 
@@ -4267,8 +4294,7 @@ extension MentraLive {
         }
 
         // Extract payload
-        let payload = protocolData.subdata(in: 5 ..< (5 + length))
-        return payload
+        return protocolData.subdata(in: 5 ..< (5 + length))
     }
 
     // MARK: - Button Mode Settings
@@ -4378,7 +4404,8 @@ extension MentraLive {
         let finalFps = fps > 0 ? fps : 30
 
         Bridge.log(
-            "Sending button video recording settings: \(finalWidth)x\(finalHeight)@\(finalFps)fps")
+            "Sending button video recording settings: \(finalWidth)x\(finalHeight)@\(finalFps)fps"
+        )
 
         guard connectionState == ConnTypes.CONNECTED else {
             Bridge.log("Cannot send button video recording settings - not connected")

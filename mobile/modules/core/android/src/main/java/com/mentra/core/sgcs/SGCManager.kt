@@ -64,6 +64,10 @@ abstract class SGCManager {
     // Dashboard Menu (default no-op — only G2 supports this)
     open fun setDashboardMenu(items: List<Map<String, Any>>) {}
 
+    // Controller bridging (default no-op — only G2 supports pairing with a ring controller)
+    open fun connectController() {}
+    open fun disconnectController() {}
+
     // Device Control
     abstract fun setHeadUpAngle(angle: Int)
     abstract fun getBatteryStatus()

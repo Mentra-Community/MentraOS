@@ -22,15 +22,15 @@ protocol PhoneAudioMonitorListener: AnyObject {
 
 /// Monitors system audio playback to detect when the phone is playing audio
 class PhoneAudioMonitor {
-    // Singleton instance
+    /// Singleton instance
     private static var instance: PhoneAudioMonitor?
 
     private weak var listener: PhoneAudioMonitorListener?
     private var isMonitoring = false
     private var lastKnownState = false
 
-    // Track our own app's audio playback state
-    // isOtherAudioPlaying only detects OTHER apps, not our own
+    /// Track our own app's audio playback state
+    /// isOtherAudioPlaying only detects OTHER apps, not our own
     private var ownAppAudioPlaying = false
 
     // Polling timer for fallback detection
@@ -77,8 +77,8 @@ class PhoneAudioMonitor {
         }
 
         self.listener = listener
-        self.lastKnownState = isPlaying()
-        self.isMonitoring = true
+        lastKnownState = isPlaying()
+        isMonitoring = true
 
         Bridge.log(
             "PhoneAudioMonitor: Starting audio playback monitoring (initial state: \(lastKnownState ? "playing" : "not playing"))"
@@ -136,8 +136,8 @@ class PhoneAudioMonitor {
     /// Handle silenceSecondaryAudioHint notification
     @objc private func handleSilenceSecondaryAudioHint(_ notification: Notification) {
         guard let userInfo = notification.userInfo,
-            let typeValue = userInfo[AVAudioSessionSilenceSecondaryAudioHintTypeKey] as? UInt,
-            let type = AVAudioSession.SilenceSecondaryAudioHintType(rawValue: typeValue)
+              let typeValue = userInfo[AVAudioSessionSilenceSecondaryAudioHintTypeKey] as? UInt,
+              let type = AVAudioSession.SilenceSecondaryAudioHintType(rawValue: typeValue)
         else {
             return
         }
@@ -163,8 +163,8 @@ class PhoneAudioMonitor {
     /// Handle audio interruption notifications
     @objc private func handleAudioInterruption(_ notification: Notification) {
         guard let userInfo = notification.userInfo,
-            let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
-            let type = AVAudioSession.InterruptionType(rawValue: typeValue)
+              let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue)
         else {
             return
         }

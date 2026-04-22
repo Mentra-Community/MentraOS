@@ -365,7 +365,9 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
 
     return filteredApps.map((app) => ({
       ...app,
-      id: app.packageName,
+      // force masonry to re-render when the compatibility changes (fairly expensive :/)
+      id: `${app.packageName}:${app.compatibility?.isCompatible ? 1 : 0}`,
+      // id: app.packageName,
       height: 110,
     }))
   }, [apps, orderMap, showAllApps, searchQuery])
@@ -593,7 +595,7 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
     },
     [themed, theme, startApplet, wiggleEnabled, handlePress, showAllApps],
   )
-  
+
   return (
     <View className="flex-1 mt-3">
       <View ref={containerRef}>

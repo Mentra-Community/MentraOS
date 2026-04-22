@@ -19,7 +19,7 @@ struct DeviceTypes {
         FRAME,
     ]
 
-    // Private init to prevent instantiation
+    /// Private init to prevent instantiation
     private init() {}
 }
 
@@ -27,10 +27,10 @@ struct ControllerTypes {
     static let R1 = "Even Realities R1"
 
     static let ALL = [
-        R1
+        R1,
     ]
 
-    // Private init to prevent instantiation
+    /// Private init to prevent instantiation
     private init() {}
 }
 
@@ -39,7 +39,7 @@ struct ConnTypes {
     static let CONNECTED = "CONNECTED"
     static let DISCONNECTED = "DISCONNECTED"
 
-    // Private init to prevent instantiation
+    /// Private init to prevent instantiation
     private init() {}
 }
 
@@ -56,7 +56,7 @@ struct MicTypes {
         BT,
     ]
 
-    // Private init to prevent instantiation
+    /// Private init to prevent instantiation
     private init() {}
 }
 

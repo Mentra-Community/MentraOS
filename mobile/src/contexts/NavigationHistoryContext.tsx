@@ -1,5 +1,5 @@
 import {router, useFocusEffect, usePathname, useSegments, useNavigation} from "expo-router"
-import {createContext, useContext, useEffect, useRef, useCallback, useState} from "react"
+import {createContext, useContext, useEffect, useRef, useCallback, useMemo, useState} from "react"
 import {BackHandler, Platform} from "react-native"
 import {CommonActions} from "@react-navigation/native"
 
