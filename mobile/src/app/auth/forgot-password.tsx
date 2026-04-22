@@ -5,6 +5,7 @@ import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
+import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
 import {mapAuthError} from "@/utils/auth/authErrors"
@@ -13,8 +14,9 @@ export default function ForgotPasswordScreen() {
   const [email, setEmail] = useState("")
   const [isLoading, setIsLoading] = useState(false)
 
-  const {goBack} = useNavigationHistory()
+  const {goBack, push} = useNavigationHistory()
   const {theme} = useAppTheme()
+  const [isChina] = useSetting<boolean>(SETTINGS.china_deployment.key)
 
   const isEmailValid = email.includes("@") && email.includes(".")
 
@@ -36,10 +38,13 @@ export default function ForgotPasswordScreen() {
 
     setIsLoading(false)
 
-    // Show success alert and navigate back after dismissal
-    showAlert(translate("login:resetEmailSent"), translate("login:checkEmailForReset"), [
-      {text: translate("common:ok"), onPress: () => goBack()},
-    ])
+    if (isChina) {
+      push("/auth/reset-password", {email})
+    } else {
+      showAlert(translate("login:resetEmailSent"), translate("login:checkEmailForReset"), [
+        {text: translate("common:ok"), onPress: () => goBack()},
+      ])
+    }
   }
 
   return (
@@ -48,7 +53,7 @@ export default function ForgotPasswordScreen() {
       <ScrollView className="flex-grow" showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
         <View className="flex-1 p-4">
           <Text
-            tx="login:forgotPasswordSubtitle"
+            tx={isChina ? "login:forgotPasswordCodeSubtitle" : "login:forgotPasswordSubtitle"}
             className="text-base text-secondary-foreground text-left mb-6 leading-[22px]"
           />
 

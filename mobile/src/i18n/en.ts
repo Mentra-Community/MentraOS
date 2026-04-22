@@ -427,8 +427,7 @@ const en = {
     connectToTakePicture: "Connect to take pictures",
     gallerySettings: "Gallery Settings",
     saveToLibrary: "Save to Camera Roll",
-    saveToLibraryDescription:
-      "Automatically save synced photos and videos to your camera roll",
+    saveToLibraryDescription: "Automatically save synced photos and videos to your camera roll",
     deleteAllPhotos: "Delete All Photos",
     deleteAllPhotosDescription: "Remove all photos from device storage (camera roll photos are not affected)",
     galleryStats: "Gallery Statistics",
@@ -670,6 +669,8 @@ const en = {
     invalidEmail: "Please enter a valid email address",
     forgotPasswordTitle: "Forgot Password",
     forgotPasswordSubtitle: "Enter your email address and we'll send you a link to reset your password.",
+    forgotPasswordCodeSubtitle:
+      "Enter your email address and we'll send you a verification code to reset your password.",
     sendResetEmail: "Send Reset Email",
     resetEmailSent: "Reset Email Sent",
     checkEmailForReset: "Please check your email for the password reset link",
@@ -677,6 +678,9 @@ const en = {
     backToLogin: "Back to Log In",
     resetPasswordTitle: "Reset Password",
     resetPasswordSubtitle: "Enter your new password below",
+    resetPasswordCodeSubtitle: "Enter the verification code sent to your email and choose a new password.",
+    verificationCode: "Verification Code",
+    verificationCodePlaceholder: "Enter 6-digit code",
     resetPassword: "Reset Password",
     passwordResetSuccess: "Password Reset Successful",
     redirectingToLogin: "Redirecting to login...",
