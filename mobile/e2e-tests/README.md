@@ -399,15 +399,22 @@ That should stop both full macOS updates and the background security/system-file
 Connect the phone with a data-USB cable
 Open the Captions app, go back to the home screen.
 
-# Terminal 1
+#### Terminal 1
 
 ```
 cd /Users/mentraconference/Documents/MentraOS/mobile/e2e-tests
 python3 scripts/live_word_monitor.py --output-dir results --port 8765 --audio-output-device "External Headphones"
 ```
 
-# Terminal 2
+#### Terminal 2
 
 ```
 cloudflared --config /Users/mentraconference/.cloudflared/config.yml tunnel run captions
+```
+
+### Misc
+
+To login, run
+```
+maestro test ~/Documents/Playground/maestro/captions.yaml
 ```
