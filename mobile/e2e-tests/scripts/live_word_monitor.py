@@ -29,6 +29,12 @@ DEFAULT_INCIDENT_CONFIG = {
         "incident_threshold_ms": 5000,
         "alert_threshold_ms": 15000,
     },
+    "captions_app_not_running": {
+        "name": "Captions App Not Running",
+        "enabled": True,
+        "incident_threshold_ms": 0,
+        "alert_threshold_ms": 15000,
+    },
     "audio_output_device_mismatch": {
         "name": "Audio Output Device Mismatch",
         "enabled": True,
@@ -57,6 +63,8 @@ UI_DIST_DIR = Path(__file__).resolve().parent.parent / "ui" / "dist"
 DEFAULT_UI_DEV_ORIGIN = "http://127.0.0.1:5173"
 SNAPSHOT_WORD_HISTORY_MULTIPLIER = 8
 LEADING_SPEAKER_MARKER_RE = re.compile(r"^\s*(?:\[\s*\d+\s*\]\s*:?\s*)+")
+SOCKET_APP_STARTED_RE = re.compile(r"SOCKET:\s+Received app_started message for package:\s*(\S+)")
+SOCKET_APP_STOPPED_RE = re.compile(r"SOCKET:\s+Received app_stopped message for package:\s*(\S+)")
 
 
 def parse_args() -> argparse.Namespace:
@@ -103,6 +111,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--post-roll-ms", type=int, default=1200, help="Extra time after the last aligned word before closing an utterance")
     parser.add_argument("--inter-utterance-gap-ms", type=int, default=350, help="Gap between utterances in continuous playback")
     parser.add_argument("--max-history", type=int, default=500, help="How many completed utterances and drop events to keep in memory")
+    parser.add_argument(
+        "--captions-package",
+        default="com.mentra.captions",
+        help="Monitor SocketComms app_started/app_stopped logs for this captions package. Pass an empty string to disable this check.",
+    )
     parser.add_argument(
         "--display-view",
         choices=["main", "dashboard", "any"],
@@ -1521,6 +1534,74 @@ class MonitorWorker:
                 },
             )
 
+    def handle_captions_app_lifecycle_line(self, line: str, now_ms: int) -> bool:
+        monitored_package = (self.args.captions_package or "").strip()
+        if not monitored_package:
+            return False
+
+        lifecycle_match: re.Match[str] | None = None
+        is_running = False
+
+        started_match = SOCKET_APP_STARTED_RE.search(line)
+        if started_match is not None:
+            lifecycle_match = started_match
+            is_running = True
+        else:
+            stopped_match = SOCKET_APP_STOPPED_RE.search(line)
+            if stopped_match is not None:
+                lifecycle_match = stopped_match
+
+        if lifecycle_match is None:
+            return False
+
+        package_name = lifecycle_match.group(1).strip()
+        if package_name != monitored_package:
+            return False
+
+        incident_type = "captions_app_not_running"
+        source = "socket_app_lifecycle_log"
+        with self.state.lock:
+            self.state.append_event(
+                "captions_app_lifecycle",
+                {
+                    "ts_ms": now_ms,
+                    "package_name": package_name,
+                    "running": is_running,
+                    "source": source,
+                },
+            )
+            ongoing_incident = self.state.find_ongoing_incident_by_type(incident_type)
+
+            if not is_running:
+                details = {
+                    "package_name": package_name,
+                    "reason": "captions_app_stopped",
+                    "source": source,
+                }
+                incident_id = ongoing_incident["incident_id"] if ongoing_incident is not None else self.state.start_incident(
+                    incident_type,
+                    now_ms,
+                    details,
+                )
+                if incident_id is not None:
+                    active_incident = self.state.ongoing_incidents.get(incident_id)
+                    if active_incident is not None:
+                        active_incident.update(details)
+                    self.maybe_alert_and_dispatch(incident_id, now_ms)
+                return True
+
+            if ongoing_incident is not None:
+                self.state.end_incident(
+                    ongoing_incident["incident_id"],
+                    now_ms,
+                    {
+                        "package_name": package_name,
+                        "reason": "captions_app_started",
+                        "source": source,
+                    },
+                )
+        return True
+
     def maybe_record_word_matches(
         self,
         utterance: UtteranceState,
@@ -1746,6 +1827,8 @@ ws.on('error', (err) => process.stderr.write(String(err && err.message || err) +
                         self.handle_captions_tester_incident_result(payload, now_ms)
                         continue
                     if self.handle_legacy_captions_tester_filed_log(line, now_ms) is not None:
+                        continue
+                    if self.handle_captions_app_lifecycle_line(line, now_ms):
                         continue
                     marker = "E2E_METRIC "
                     if marker not in line:

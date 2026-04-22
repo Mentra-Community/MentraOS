@@ -246,7 +246,9 @@ Incident thresholds now live in:
 This file defines per-incident names and thresholds. Current examples:
 
 - `drop_event`
+- `captions_app_not_running`
 - `audio_output_device_mismatch`
+- `app_not_foreground`
 - `high_average_latency`
 
 Each incident can have its own:
@@ -264,6 +266,8 @@ Some incident types can also use extra fields. For example, `high_average_latenc
 The monitor reads this file at startup.
 
 For `audio_output_device_mismatch`, the thresholds live in the TOML config, but the expected device name is still provided at runtime with `--audio-output-device`. That keeps the policy shared in git while letting a MacBook and Mac mini use different local hardware.
+
+For `captions_app_not_running`, the thresholds live in the TOML config, but the specific monitored app package is still provided at runtime with `--captions-package` and defaults to `com.mentra.captions`. The monitor opens this incident when logcat shows `SOCKET: Received app_stopped message for package: ...` for that package, and resolves it on the matching `app_started` log.
 
 When an alert is raised, the monitor also broadcasts an Android intent to the connected phone by default. This is intended for the `internal` Android build, which registers the `com.mentra.CAPTIONS_TESTER_INCIDENT` receiver and files a normal automatic incident through the mobile app.
 

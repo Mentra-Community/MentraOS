@@ -4,6 +4,12 @@ enabled = true
 incident_threshold_ms = 5000
 alert_threshold_ms = 15000
 
+[incidents.captions_app_not_running]
+name = "Captions App Not Running"
+enabled = true
+incident_threshold_ms = 0
+alert_threshold_ms = 15000
+
 [incidents.audio_output_device_mismatch]
 name = "Audio Output Device Mismatch"
 enabled = true
