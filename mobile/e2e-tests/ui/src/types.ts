@@ -27,6 +27,7 @@ export interface IncidentRecord {
   status: string
   is_primary?: boolean
   started_at_ms: number
+  alert_threshold_ms?: number
   ended_at_ms?: number
   duration_ms?: number
   current_duration_ms?: number

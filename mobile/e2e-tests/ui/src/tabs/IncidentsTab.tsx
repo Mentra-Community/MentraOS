@@ -3,6 +3,18 @@ import {SectionCard} from "../components/SectionCard"
 import type {MonitorSnapshot} from "../types"
 import {formatClock, formatDuration} from "../utils"
 
+function currentDurationMs(startedAtMs: number): number {
+  return Math.max(0, Date.now() - startedAtMs)
+}
+
+function timeToAlertMs(startedAtMs: number, primarySinceMs?: number | null, alertThresholdMs?: number): number | null {
+  if (!alertThresholdMs) {
+    return null
+  }
+  const effectiveStartMs = primarySinceMs ?? startedAtMs
+  return Math.max(0, alertThresholdMs - (Date.now() - effectiveStartMs))
+}
+
 export function IncidentsTab({snapshot}: {snapshot: MonitorSnapshot}) {
   return (
     <div className="tab-layout">
@@ -35,12 +47,12 @@ export function IncidentsTab({snapshot}: {snapshot: MonitorSnapshot}) {
                           : `Secondary to ${incident.secondary_to_incident_name || incident.secondary_to_incident_type || "primary"}`}
                       </td>
                       <td>{formatClock(incident.started_at_ms)}</td>
-                      <td>{formatDuration(incident.current_duration_ms)}</td>
+                      <td>{formatDuration(currentDurationMs(incident.started_at_ms))}</td>
                       <td>
                         {incident.alerted_at_ms
                           ? `Alerted at ${formatClock(incident.alerted_at_ms)}`
                           : incident.is_primary
-                            ? `In ${formatDuration(incident.time_to_alert_ms)}`
+                            ? `In ${formatDuration(timeToAlertMs(incident.started_at_ms, incident.primary_since_ms, incident.alert_threshold_ms))}`
                             : "Suppressed while secondary"}
                       </td>
                     </tr>

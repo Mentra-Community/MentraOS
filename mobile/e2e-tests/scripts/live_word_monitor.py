@@ -4,6 +4,7 @@ import collections
 import json
 import mimetypes
 import os
+import queue
 import re
 import shlex
 import shutil
@@ -65,6 +66,7 @@ DEFAULT_UI_DEV_ORIGIN = "http://127.0.0.1:5173"
 SNAPSHOT_WORD_HISTORY_MULTIPLIER = 8
 SNAPSHOT_COMPLETED_UTTERANCE_LIMIT = 120
 SNAPSHOT_RECENT_WORD_MATCH_LIMIT = 200
+STREAM_KEEPALIVE_SECONDS = 15
 LEADING_SPEAKER_MARKER_RE = re.compile(r"^\s*(?:\[\s*\d+\s*\]\s*:?\s*)+")
 SOCKET_APP_STARTED_RE = re.compile(r"SOCKET:\s+Received app_started message for package:\s*(\S+)")
 SOCKET_APP_STOPPED_RE = re.compile(r"SOCKET:\s+Received app_stopped message for package:\s*(\S+)")
@@ -536,6 +538,59 @@ class MonitorState:
             max_history,
             include_ongoing=False,
         )
+        self.stream_lock = threading.Lock()
+        self.stream_subscribers: dict[int, queue.Queue[dict[str, Any]]] = {}
+        self.next_stream_subscriber_id = 1
+
+    def subscribe_stream(self) -> tuple[int, queue.Queue[dict[str, Any]]]:
+        subscriber_queue: queue.Queue[dict[str, Any]] = queue.Queue()
+        with self.stream_lock:
+            subscriber_id = self.next_stream_subscriber_id
+            self.next_stream_subscriber_id += 1
+            self.stream_subscribers[subscriber_id] = subscriber_queue
+        return subscriber_id, subscriber_queue
+
+    def unsubscribe_stream(self, subscriber_id: int) -> None:
+        with self.stream_lock:
+            self.stream_subscribers.pop(subscriber_id, None)
+
+    def publish_stream_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        envelope = {"type": event_type, "payload": payload}
+        with self.stream_lock:
+            subscriber_queues = list(self.stream_subscribers.values())
+        for subscriber_queue in subscriber_queues:
+            subscriber_queue.put(envelope)
+
+    def set_status(
+        self,
+        status: str | None = None,
+        status_detail: str | None = None,
+        *,
+        last_error: str | None | object = ...,
+        ts_ms: int | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {}
+        changed = False
+
+        if status is not None and status != self.status:
+            self.status = status
+            payload["status"] = status
+            changed = True
+        if status_detail is not None and status_detail != self.status_detail:
+            self.status_detail = status_detail
+            payload["status_detail"] = status_detail
+            changed = True
+        if last_error is not ... and last_error != self.last_error:
+            self.last_error = last_error if isinstance(last_error, str) or last_error is None else str(last_error)
+            payload["last_error"] = self.last_error
+            changed = True
+
+        if changed:
+            payload.setdefault("status", self.status)
+            payload.setdefault("status_detail", self.status_detail)
+            payload.setdefault("last_error", self.last_error)
+            payload["ts_ms"] = int(time.time() * 1000) if ts_ms is None else ts_ms
+            self.publish_stream_event("status_changed", payload)
 
     def incident_primary_sort_key(self, incident: dict[str, Any]) -> tuple[int, str, int, str]:
         incident_type = str(incident.get("incident_type") or "")
@@ -603,6 +658,7 @@ class MonitorState:
         self.last_events.append(event)
         self.last_events = trim_history(self.last_events, 100)
         write_ndjson(self.output_dir / "monitor_events.ndjson", event)
+        self.publish_stream_event(kind, payload)
 
     def snapshot_word_history_limit(self) -> int:
         # Keep enough points to preserve the recent graph shape without sending
@@ -1223,15 +1279,13 @@ class MonitorWorker:
             if self.prefetch_queue:
                 prepared_row = self.prefetch_queue.popleft()
         if prepared_row is None:
-            self.state.status = "prefetching"
-            self.state.status_detail = "waiting for prefetched audio"
+            self.state.set_status("prefetching", "waiting for prefetched audio", ts_ms=now_ms)
             return
 
         utterance = self.make_utterance(prepared_row, now_ms)
         self.playback_process = play_audio_locally(prepared_row.audio_file, self.args.audio_output_device)
         self.state.current_utterance = utterance
-        self.state.status = "running_utterance"
-        self.state.status_detail = f"row {utterance.dataset_row_idx}"
+        self.state.set_status("running_utterance", f"row {utterance.dataset_row_idx}", ts_ms=now_ms)
         self.state.append_event(
             "utterance_started",
             {
@@ -1310,8 +1364,7 @@ class MonitorWorker:
             {"summary": summary, "utterance": self.state.serialize_utterance(utterance)},
         )
         self.state.current_utterance = None
-        self.state.status = "between_utterances"
-        self.state.status_detail = "waiting for next utterance"
+        self.state.set_status("between_utterances", "waiting for next utterance", ts_ms=now_ms)
         self.next_start_ts_ms = now_ms + self.args.inter_utterance_gap_ms
 
     def update_drop_tracking(self, utterance: UtteranceState | None, now_ms: int, normalized_lines: list[str]) -> None:
@@ -1978,6 +2031,14 @@ ws.on('error', (err) => process.stderr.write(String(err && err.message || err) +
                         utterance = self.state.current_utterance
                         if utterance is not None:
                             self.maybe_record_word_matches(utterance, now_ms, visible_lines, "logcat_true", min_run_length=1)
+                        self.state.publish_stream_event(
+                            "visible_lines_updated",
+                            {
+                                "ts_ms": now_ms,
+                                "visible_lines": visible_lines,
+                                "last_logcat_event_ts_ms": now_ms,
+                            },
+                        )
                 if self.logcat_process.poll() is None:
                     self.logcat_process.terminate()
             except Exception as exc:
@@ -2001,8 +2062,7 @@ ws.on('error', (err) => process.stderr.write(String(err && err.message || err) +
                         if now_ms >= self.next_start_ts_ms:
                             self.start_next_utterance(now_ms)
                         else:
-                            self.state.status = "between_utterances"
-                            self.state.status_detail = "waiting for next utterance"
+                            self.state.set_status("between_utterances", "waiting for next utterance", ts_ms=now_ms)
                         self.evaluate_audio_output_device_incident(now_ms)
                         self.evaluate_app_not_foreground_incident(now_ms)
                     else:
@@ -2014,12 +2074,10 @@ ws.on('error', (err) => process.stderr.write(String(err && err.message || err) +
 
                     for incident_id in list(self.state.ongoing_incidents):
                         self.maybe_alert_and_dispatch(incident_id, now_ms)
-                    self.state.last_error = None
+                    self.state.set_status(last_error=None, ts_ms=now_ms)
             except Exception as exc:
                 with self.state.lock:
-                    self.state.last_error = str(exc)
-                    self.state.status = "error"
-                    self.state.status_detail = "collector error"
+                    self.state.set_status("error", "collector error", last_error=str(exc), ts_ms=now_ms)
                     self.state.append_event("error", {"ts_ms": now_ms, "message": str(exc)})
 
             elapsed = time.time() - started
@@ -2108,6 +2166,36 @@ class MonitorHandler(BaseHTTPRequestHandler):
         self._send_bytes(candidate.read_bytes(), content_type)
         return True
 
+    def _send_sse_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        body = f"event: {event_type}\ndata: {json.dumps(payload, ensure_ascii=True)}\n\n".encode("utf-8")
+        self.wfile.write(body)
+        self.wfile.flush()
+
+    def _stream_events(self) -> None:
+        assert self.monitor_state is not None
+        subscriber_id, subscriber_queue = self.monitor_state.subscribe_stream()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        try:
+            self.wfile.write(b"retry: 3000\n\n")
+            self.wfile.flush()
+            while True:
+                try:
+                    item = subscriber_queue.get(timeout=STREAM_KEEPALIVE_SECONDS)
+                except queue.Empty:
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+                    continue
+                self._send_sse_event(str(item.get("type") or "message"), dict(item.get("payload") or {}))
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            self.monitor_state.unsubscribe_stream(subscriber_id)
+
     def do_GET(self) -> None:  # noqa: N802
         parsed = urllib.parse.urlparse(self.path)
         request_path = parsed.path or "/"
@@ -2135,6 +2223,10 @@ class MonitorHandler(BaseHTTPRequestHandler):
             include_latency_details = active_tab == "latency"
             body = json.dumps(self.monitor_state.snapshot(include_latency_details=include_latency_details)).encode("utf-8")
             self._send_bytes(body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            return
+
+        if request_path == "/events":
+            self._stream_events()
             return
 
         if self._proxy_ui_dev_asset(self.path):
@@ -2170,8 +2262,7 @@ def main() -> int:
     logcat_thread: threading.Thread | None = None
 
     if args.read_only:
-        state.status = "archived"
-        state.status_detail = "read-only dashboard from archived output"
+        state.set_status("archived", "read-only dashboard from archived output")
     else:
         cached_rows = load_cached_rows(output_dir)
         cursor = DatasetCursor(dataset=args.dataset, config=args.config, split=args.split, page_size=args.page_size, cached_rows=cached_rows)
