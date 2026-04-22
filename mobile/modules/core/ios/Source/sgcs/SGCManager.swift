@@ -98,7 +98,7 @@ protocol SGCManager {
 
     // MARK: - Incident Reporting
 
-    func sendIncidentId(_ incidentId: String)
+    func sendIncidentId(_ incidentId: String, apiBaseUrl: String?)
 
     // MARK: - Gallery
 

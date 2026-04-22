@@ -102,7 +102,7 @@ abstract class SGCManager {
     abstract fun sendUserEmailToGlasses(email: String)
 
     // Incident Reporting
-    abstract fun sendIncidentId(incidentId: String)
+    abstract fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null)
 
     // Gallery
     abstract fun queryGalleryStatus()

@@ -1,7 +1,6 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
-import {Dimensions, FlatList, Platform, Pressable, StyleSheet, TouchableOpacity, View} from "react-native"
+import {Dimensions, Pressable, StyleSheet, TouchableOpacity, View} from "react-native"
 import {DraggableMasonryList} from "react-native-draggable-masonry"
-import {BlurView} from "expo-blur"
 
 import {Icon, Text} from "@/components/ignite"
 import AppIcon from "@/components/home/AppIcon"
@@ -21,11 +20,20 @@ import {
   useStopApplet,
 } from "@/stores/applets"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
-import {SETTINGS, useSetting} from "@/stores/settings"
-import {storage} from "@/utils/storage"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
 import GlassView from "@/components/ui/GlassView"
+import Animated, {
+  cancelAnimation,
+  useAnimatedReaction,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSequence,
+  withTiming,
+  SharedValue,
+} from "react-native-reanimated"
+import {BackgroundTimer} from "@/utils/timers"
 
 const GRID_COLUMNS = 4
 const POPOVER_WIDTH = 180
@@ -157,12 +165,55 @@ interface AppsGridProps {
   searchQuery?: string
 }
 
+const WiggleWrapper: React.FC<{
+  enabled: SharedValue<boolean>
+  isDummy: boolean
+  children: React.ReactNode
+}> = ({enabled, isDummy, children}) => {
+  const offset = useSharedValue(0)
+  const randomPhase = useRef(Math.random() * 120).current
+
+  // React to `enabled` flipping instead of polling it 10×/sec. With 50+ icons,
+  // a per-icon setInterval pegged the JS thread enough to heat the device on
+  // an idle home screen.
+  useAnimatedReaction(
+    () => enabled.value,
+    (isEnabled, wasEnabled) => {
+      "worklet"
+      if (isEnabled === wasEnabled) return
+      if (isEnabled && !isDummy) {
+        offset.value = withRepeat(
+          withSequence(
+            withTiming(1, {duration: 60 + randomPhase}),
+            withTiming(-1, {duration: 120}),
+            withTiming(0, {duration: 60 + randomPhase}),
+          ),
+          -1,
+        )
+      } else {
+        cancelAnimation(offset)
+        offset.value = withTiming(0, {duration: 100})
+      }
+    },
+    [isDummy],
+  )
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{rotate: `${offset.value * 2}deg`}],
+  }))
+
+  return (
+    <Animated.View style={animatedStyle} className="items-center">
+      {children}
+    </Animated.View>
+  )
+}
+
 export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQuery}: AppsGridProps) {
   const {themed, theme} = useAppTheme()
 
   const startApplet = useStartApplet()
   const stopApplet = useStopApplet()
-  const [appSwitcherUi] = useSetting(SETTINGS.app_switcher_ui.key)
   const apps = useForegroundApps()
 
   const [orderMap, setOrderMap] = useState<OrderMap>({})
@@ -174,6 +225,8 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
   const containerRef = useRef<View>(null)
   const isMovingRef = useRef(false)
   const draggingIndexRef = useRef(0)
+  const wiggleEnabled = useSharedValue(false)
+  const wiggleTimeoutRef = useRef<number | null>(null)
 
   useEffect(() => {
     const result = getAppsOrder()
@@ -193,10 +246,7 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
         // }
         return true
       }
-      if (app.hidden && appSwitcherUi) {
-        return false
-      }
-      if (app.running && !appSwitcherUi) {
+      if (app.hidden) {
         return false
       }
       // if (!app.compatibility?.isCompatible) {
@@ -221,29 +271,22 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
     if (remainder == 0) {
       emptySlots = 0
     }
-    if (appSwitcherUi) {
-      // console.log("MIN_APPS", MIN_APPS, "totalItems", totalItems)
-      // console.log("emptySlots", emptySlots)
-      // emptySlots = Math.max(emptySlots, MIN_APPS - totalItems)
-      while (emptySlots + totalItems < MIN_APPS) {
-        emptySlots += GRID_COLUMNS
-      }
-      if (emptySlots < GRID_COLUMNS) {
-        emptySlots += GRID_COLUMNS
-      }
+    // console.log("MIN_APPS", MIN_APPS, "totalItems", totalItems)
+    // console.log("emptySlots", emptySlots)
+    // emptySlots = Math.max(emptySlots, MIN_APPS - totalItems)
+    while (emptySlots + totalItems < MIN_APPS) {
+      emptySlots += GRID_COLUMNS
     }
+    if (emptySlots < GRID_COLUMNS) {
+      emptySlots += GRID_COLUMNS
+    }
+
     // if (showAllApps) {
     //   emptySlots = 0
     // }
 
-    if (!appSwitcherUi) {
-      for (let i = 0; i < emptySlots; i++) {
-        filteredApps.push({...DUMMY_APPLET, packageName: `@empty${totalItems + i}`})
-      }
-    }
-
     // Fill gaps in orderMap with dummy apps
-    if (!showAllApps && appSwitcherUi) {
+    if (!showAllApps) {
       const orderedPackages = new Set(
         filteredApps.filter((app) => orderMap[app.packageName] !== undefined).map((app) => app.packageName),
       )
@@ -285,40 +328,36 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
       }
     }
 
-    if (appSwitcherUi) {
-      // Assign unpositioned real apps to the first available empty slots
-      const unpositioned = filteredApps.filter(
-        (app) => !app.packageName.startsWith("@empty") && orderMap[app.packageName] === undefined,
-      )
-      if (unpositioned.length > 0) {
-        const dummySlots = filteredApps
-          .filter((app) => app.packageName.startsWith("@empty") && orderMap[app.packageName] !== undefined)
-          .sort((a, b) => orderMap[a.packageName] - orderMap[b.packageName])
+    // Assign unpositioned real apps to the first available empty slots
+    const unpositioned = filteredApps.filter(
+      (app) => !app.packageName.startsWith("@empty") && orderMap[app.packageName] === undefined,
+    )
+    if (unpositioned.length > 0) {
+      const dummySlots = filteredApps
+        .filter((app) => app.packageName.startsWith("@empty") && orderMap[app.packageName] !== undefined)
+        .sort((a, b) => orderMap[a.packageName] - orderMap[b.packageName])
 
-        for (const app of unpositioned) {
-          const dummy = dummySlots.shift()
-          if (dummy) {
-            orderMap[app.packageName] = orderMap[dummy.packageName]
-            delete orderMap[dummy.packageName]
-            const idx = filteredApps.indexOf(dummy)
-            if (idx !== -1) filteredApps.splice(idx, 1)
-          }
+      for (const app of unpositioned) {
+        const dummy = dummySlots.shift()
+        if (dummy) {
+          orderMap[app.packageName] = orderMap[dummy.packageName]
+          delete orderMap[dummy.packageName]
+          const idx = filteredApps.indexOf(dummy)
+          if (idx !== -1) filteredApps.splice(idx, 1)
         }
       }
-
-      filteredApps.sort((a, b) => {
-        const aIndex = orderMap[a.packageName]
-        const bIndex = orderMap[b.packageName]
-        if (aIndex === undefined && bIndex === undefined) {
-          return sortAppsByPackageNamePriority(a, b)
-        }
-        if (aIndex === undefined) return 1
-        if (bIndex === undefined) return -1
-        return aIndex - bIndex
-      })
-    } else {
-      filteredApps.sort(sortAppsByPackageNamePriority)
     }
+
+    filteredApps.sort((a, b) => {
+      const aIndex = orderMap[a.packageName]
+      const bIndex = orderMap[b.packageName]
+      if (aIndex === undefined && bIndex === undefined) {
+        return sortAppsByPackageNamePriority(a, b)
+      }
+      if (aIndex === undefined) return 1
+      if (bIndex === undefined) return -1
+      return aIndex - bIndex
+    })
 
     if (showAllApps) {
       filteredApps.sort(sortAppsByPackageNamePriority)
@@ -329,7 +368,7 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
       id: app.packageName,
       height: 110,
     }))
-  }, [apps, appSwitcherUi, orderMap, showAllApps, searchQuery])
+  }, [apps, orderMap, showAllApps, searchQuery])
 
   const dismissPopover = useCallback(() => {
     setPopoverVisible(false)
@@ -466,13 +505,19 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
         () => console.warn("measureLayout failed"),
       )
     },
-    [gridData],
+    [gridData, handlePress],
   )
 
-  const handleDragStart = ({key}: {key: string; fromIndex: number}) => {
-    isMovingRef.current = false
-    showPopover(key)
-  }
+  const handleDragStart = useCallback(
+    ({key}: {key: string; fromIndex: number}) => {
+      isMovingRef.current = false
+      showPopover(key)
+      wiggleTimeoutRef.current = BackgroundTimer.setTimeout(() => {
+        wiggleEnabled.value = true
+      }, 500)
+    },
+    [showPopover],
+  )
 
   const handleDragChange = ({key, x, y, index}: {key: string; x: number; y: number; index: number}) => {
     if (!isMovingRef.current) {
@@ -487,7 +532,13 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
 
   const handleDragEnd = ({data}: {data: MasonryAppItem[]}) => {
     isMovingRef.current = false
-
+    // stop wiggle:
+    wiggleEnabled.value = false
+    if (wiggleTimeoutRef.current) {
+      BackgroundTimer.clearTimeout(wiggleTimeoutRef.current)
+      wiggleTimeoutRef.current = null
+    }
+    // save the new order:
     const newOrderMap: OrderMap = {}
     data.forEach((item, index) => {
       newOrderMap[item.packageName] = index
@@ -500,6 +551,7 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
 
   const renderItem = useCallback(
     ({item}: {item: MasonryAppItem}) => {
+      const isDummy = item.packageName.startsWith("@empty")
       return (
         <TouchableOpacity
           ref={(ref) => {
@@ -514,72 +566,53 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
             handlePress(item)
           }}
           onLongPress={() => {
-            if (!appSwitcherUi) {
-              return
-            }
             if (showAllApps) {
               showPopover(item.packageName)
               return
             }
           }}
           activeOpacity={0.7}>
-          <AppIcon app={item} className="w-16 h-16" />
-          <View className="w-full h-9 my-1 items-center justify-start">
-            <Text
-              className="text-foreground text-center mt-1 text-[12px] shrink"
-              style={{
-                textShadowColor: "rgba(0,0,0,0.08)",
-                textShadowOffset: {width: 0, height: 0},
-                textShadowRadius: 30,
-              }}
-              numberOfLines={2}
-              ellipsizeMode="tail"
-              text={item.name}
-            />
-          </View>
+          <WiggleWrapper enabled={wiggleEnabled} isDummy={isDummy}>
+            <AppIcon app={item} className="w-16 h-16" />
+            <View className="w-full h-9 my-1 items-center justify-start">
+              <Text
+                className="text-foreground text-center mt-1 text-[12px] shrink"
+                style={{
+                  textShadowColor: "rgba(0,0,0,0.08)",
+                  textShadowOffset: {width: 0, height: 0},
+                  textShadowRadius: 30,
+                }}
+                numberOfLines={2}
+                ellipsizeMode="tail"
+                text={item.name}
+              />
+            </View>
+          </WiggleWrapper>
         </TouchableOpacity>
       )
     },
-    [themed, theme, startApplet],
+    [themed, theme, startApplet, wiggleEnabled, handlePress, showAllApps],
   )
-
+  
   return (
     <View className="flex-1 mt-3">
-      {!appSwitcherUi && (
-        <View className="flex-row justify-between items-center pb-3">
-          <Text tx="home:inactiveApps" className="font-semibold text-xl text-secondary-foreground" />
-        </View>
-      )}
-      {!appSwitcherUi && (
-        <FlatList
+      <View ref={containerRef}>
+        <DraggableMasonryList
           data={gridData}
           renderItem={renderItem}
-          keyExtractor={(item) => item.packageName}
-          numColumns={GRID_COLUMNS}
-          scrollEnabled={false}
-          showsVerticalScrollIndicator={false}
-          contentContainerClassName="pb-4"
+          rowGap={0}
+          columnGap={0}
+          columns={GRID_COLUMNS}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          onDragChange={handleDragChange}
+          overDrag="none"
+          showDropIndicator={false}
+          sortEnabled={!showAllApps}
+          swapMode={true}
+          dropIndicatorStyle={{backgroundColor: theme.colors.primary_foreground, borderWidth: 0}}
         />
-      )}
-      {appSwitcherUi && (
-        <View ref={containerRef}>
-          <DraggableMasonryList
-            data={gridData}
-            renderItem={renderItem}
-            rowGap={0}
-            columnGap={0}
-            columns={GRID_COLUMNS}
-            onDragStart={handleDragStart}
-            onDragEnd={handleDragEnd}
-            onDragChange={handleDragChange}
-            overDrag="none"
-            showDropIndicator={false}
-            sortEnabled={!showAllApps}
-            swapMode={true}
-            dropIndicatorStyle={{backgroundColor: theme.colors.primary_foreground, borderWidth: 0}}
-          />
-        </View>
-      )}
+      </View>
       <AppPopover
         visible={popoverVisible}
         position={popoverPosition}

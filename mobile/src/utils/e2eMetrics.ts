@@ -6,13 +6,13 @@ export interface E2EMetricPayload {
 
 export const logE2EMetric = (event: string, payload: E2EMetricPayload = {}) => {
   try {
-    console.log(
-      `${E2E_METRIC_PREFIX} ${JSON.stringify({
-        event,
-        ts_ms: Date.now(),
-        ...payload,
-      })}`,
-    )
+    // console.log(
+    //   `${E2E_METRIC_PREFIX} ${JSON.stringify({
+    //     event,
+    //     ts_ms: Date.now(),
+    //     ...payload,
+    //   })}`,
+    // )
   } catch (error) {
     console.warn("E2E_METRIC: failed to serialize payload", error)
   }

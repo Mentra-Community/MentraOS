@@ -16,11 +16,10 @@ export default function AppearanceSettingsPage() {
 
   const [themePreference, setThemePreference] = useSetting(SETTINGS.theme_preference.key)
   const [iosGlassEffect, setIosGlassEffect] = useSetting(SETTINGS.ios_glass_effect.key)
-  const [appSwitcherUi] = useSetting(SETTINGS.app_switcher_ui.key)
   const [androidBlur, setAndroidBlur] = useSetting(SETTINGS.android_blur.key)
 
-  const showGlassToggle = appSwitcherUi && Platform.OS === "ios" && isLiquidGlassAvailable()
-  const showAndroidBlurToggle = appSwitcherUi && Platform.OS === "android"
+  const showGlassToggle = Platform.OS === "ios" && isLiquidGlassAvailable()
+  const showAndroidBlurToggle = Platform.OS === "android"
 
   const handleThemeChange = async (newTheme: ThemeType) => {
     await setThemePreference(newTheme)
@@ -29,7 +28,7 @@ export default function AppearanceSettingsPage() {
   return (
     <Screen preset="fixed">
       <Header title={translate("settings:appearance")} leftIcon="chevron-left" onLeftPress={() => goBack()} />
-      <ScrollView className="pt-6" contentContainerClassName="gap-6">
+      <ScrollView className="pt-6 px-6 -mx-6" contentContainerClassName="gap-6">
         <OptionList
           title={translate("appearanceSettings:theme")}
           selected={themePreference}
@@ -41,7 +40,7 @@ export default function AppearanceSettingsPage() {
           ]}
         />
 
-        {appSwitcherUi && <BackgroundPicker />}
+        <BackgroundPicker />
 
         {showGlassToggle && (
           <Group>

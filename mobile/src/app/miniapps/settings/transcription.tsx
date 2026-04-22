@@ -28,7 +28,6 @@ export default function TranscriptionSettingsScreen() {
   const [isCheckingModel, setIsCheckingModel] = useState(true)
   const [bypassVadForDebugging, setBypassVadForDebugging] = useSetting(SETTINGS.bypass_vad_for_debugging.key)
   const [offlineMode, setOfflineMode] = useSetting(SETTINGS.offline_mode.key)
-  const [appSwitcherUi] = useSetting(SETTINGS.app_switcher_ui.key)
   const [_offlineCaptionsAppRunning, setOfflineCaptionsAppRunning] = useSetting(SETTINGS.offline_captions_running.key)
   const [enforceLocalTranscription, setEnforceLocalTranscription] = useSetting(SETTINGS.enforce_local_transcription.key)
   const RESTART_TRANSCRIPTION_DEBOUNCE_MS = 8000 // 8 seconds
@@ -283,7 +282,7 @@ export default function TranscriptionSettingsScreen() {
         titleStyle={{textAlign: "left", paddingLeft: theme.spacing.s3}}
       />
 
-      <ScrollView className="pt-6">
+      <ScrollView className="pt-6 px-6 -mx-6">
         <ToggleSetting
           label={translate("settings:bypassVAD")}
           subtitle={translate("settings:bypassVADSubtitle")}
@@ -292,19 +291,6 @@ export default function TranscriptionSettingsScreen() {
         />
 
         <Spacer height={theme.spacing.s6} />
-
-        {!appSwitcherUi && (
-          <>
-            <ToggleSetting
-              label={"Offline Mode"}
-              subtitle={"Toggle Offline mode. Offline Apps don't need internet to run."}
-              value={offlineMode}
-              onValueChange={handleToggleOfflineMode}
-            />
-
-            <Spacer height={theme.spacing.s6} />
-          </>
-        )}
 
         {isCheckingModel ? (
           <View style={{alignItems: "center", padding: theme.spacing.s6}}>

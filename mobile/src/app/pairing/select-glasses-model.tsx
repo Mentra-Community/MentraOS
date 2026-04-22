@@ -49,8 +49,12 @@ export default function SelectGlassesModelScreen() {
     }
   }
 
-  // Glasses models that should only be visible in super mode
-  const SUPER_MODE_ONLY_MODELS = new Set([DeviceTypes.NEX, DeviceTypes.G2])
+  // Glasses models that should only be visible in super mode.
+  // G2 is available to iOS users without super mode; Android still gates it.
+  const SUPER_MODE_ONLY_MODELS = new Set<string>([DeviceTypes.NEX])
+  if (Platform.OS !== "ios") {
+    SUPER_MODE_ONLY_MODELS.add(DeviceTypes.G2)
+  }
 
   // Platform-specific glasses options
   const glassesOptions =

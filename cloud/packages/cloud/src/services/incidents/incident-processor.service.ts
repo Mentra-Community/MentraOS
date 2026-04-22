@@ -151,9 +151,12 @@ async function processIncident(incidentId: string, userId: string): Promise<void
     // Console URL for humans, used in Linear tickets and notifications
     const consoleUrl = `https://console.mentra.glass/admin/incidents/${incidentId}`;
 
+    const feedback = incidentLogs?.feedback as Record<string, unknown> | undefined;
+    const isAutomaticIncident = feedback?.submissionMode === "AUTOMATIC";
+
     // 4. LLM summary generation
     let summary: BugSummary | null = null;
-    if (incidentLogs) {
+    if (incidentLogs && !isAutomaticIncident) {
       try {
         summary = await generateBugSummary(incidentLogs);
         logger.info({ incidentId, title: summary.title }, "Generated bug summary");
@@ -161,7 +164,6 @@ async function processIncident(incidentId: string, userId: string): Promise<void
         logger.warn({ incidentId, err }, "Failed to generate bug summary");
         errors.push("LLM summary failed");
         // Fallback summary - preserve user feedback even when LLM fails
-        const feedback = incidentLogs.feedback as Record<string, unknown> | undefined;
         const systemInfo = feedback?.systemInfo as BugSummary["systemInfo"] | undefined;
         summary = {
           title: "Bug report (auto-summary failed)",
@@ -174,6 +176,8 @@ async function processIncident(incidentId: string, userId: string): Promise<void
           systemInfo,
         };
       }
+    } else if (incidentLogs) {
+      logger.info({ incidentId }, "Skipping bug summary generation for automatic incident");
     }
 
     // 5. Linear ticket creation/deduplication — disabled, using incident system + Slack alerts instead

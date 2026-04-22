@@ -458,20 +458,65 @@ public class K900CommandHandler {
      */
     public void requestBesLogs(String incidentId, Context context,
                                IConfigurationManager configManager) {
+        requestBesLogs(incidentId, context, configManager, "", null);
+    }
+
+    /**
+     * Like {@link #requestBesLogs(String, Context, IConfigurationManager)} but uploads to
+     * {@code apiBaseUrl} instead of the glasses' built-in server config. Falls back to
+     * {@link com.mentra.asg_client.utils.ServerConfigUtil} when {@code apiBaseUrl} is empty.
+     *
+     * @param apiBaseUrl      backend base URL from the phone (e.g. from sendIncidentId JSON);
+     *                        empty or null to use glasses' own ServerConfigUtil
+     */
+    public void requestBesLogs(String incidentId, Context context,
+                               IConfigurationManager configManager,
+                               String apiBaseUrl) {
+        requestBesLogs(incidentId, context, configManager, apiBaseUrl, null);
+    }
+
+    /**
+     * BLE-relay variant: assembled BES logs are delivered to {@code relayFirmwareJson} instead of
+     * being uploaded over HTTP.
+     */
+    public void requestBesLogs(String incidentId, Context context,
+                               IConfigurationManager configManager,
+                               java.util.function.Consumer<String> relayFirmwareJson) {
+        requestBesLogs(incidentId, context, configManager, "", relayFirmwareJson);
+    }
+
+    /**
+     * @param apiBaseUrl        backend base URL from the phone; empty/null to use glasses' own
+     *                          ServerConfigUtil (only used when {@code relayFirmwareJson} is null)
+     * @param relayFirmwareJson if non-null, assembled BES logs are passed to this consumer as
+     *                          glasses_firmware JSON instead of HTTP upload
+     */
+    public void requestBesLogs(String incidentId, Context context,
+                               IConfigurationManager configManager,
+                               String apiBaseUrl,
+                               java.util.function.Consumer<String> relayFirmwareJson) {
         Log.i(TAG, "📋 Requesting BES logs (mh_logs) for incident: " + incidentId);
 
         if (serviceManager == null || serviceManager.getBluetoothManager() == null) {
             Log.w(TAG, "⚠️ BluetoothManager unavailable — cannot request BES logs");
+            if (relayFirmwareJson != null) {
+                relayFirmwareJson.accept(BesLogManager.buildFirmwareUploadJson(""));
+            }
             return;
         }
 
         if (!serviceManager.getBluetoothManager().isConnected()) {
             Log.w(TAG, "⚠️ UART not connected — cannot request BES logs");
+            if (relayFirmwareJson != null) {
+                relayFirmwareJson.accept(BesLogManager.buildFirmwareUploadJson(""));
+            }
             return;
         }
 
         // Replace any stale session from a previous request
-        mBesLogSession = new BesLogManager(incidentId, context, configManager);
+        mBesLogSession = (relayFirmwareJson != null)
+                ? new BesLogManager(incidentId, context, configManager, relayFirmwareJson)
+                : new BesLogManager(incidentId, context, configManager, apiBaseUrl);
 
         try {
             JSONObject k900Command = new JSONObject();
@@ -491,10 +536,16 @@ public class K900CommandHandler {
             } else {
                 Log.e(TAG, "❌ Failed to send mh_logs");
                 mBesLogSession = null;
+                if (relayFirmwareJson != null) {
+                    relayFirmwareJson.accept(BesLogManager.buildFirmwareUploadJson(""));
+                }
             }
         } catch (JSONException e) {
             Log.e(TAG, "💥 Error building mh_logs command", e);
             mBesLogSession = null;
+            if (relayFirmwareJson != null) {
+                relayFirmwareJson.accept(BesLogManager.buildFirmwareUploadJson(""));
+            }
         }
     }
 

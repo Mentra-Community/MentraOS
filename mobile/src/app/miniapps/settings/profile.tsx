@@ -250,7 +250,7 @@ export default function ProfileSettingsPage() {
   return (
     <Screen preset="fixed">
       <Header title={translate("profileSettings:title")} leftIcon="chevron-left" onLeftPress={goBack} />
-      <ScrollView>
+      <ScrollView className="px-6 -mx-6">
         {loading ? (
           <ActivityIndicator size="large" color={theme.colors.foreground} />
         ) : userData ? (

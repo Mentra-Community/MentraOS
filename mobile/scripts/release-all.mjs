@@ -20,7 +20,7 @@ function ghTag(version) {
 
 function apkPrefix(version) {
   const { major, minor } = parseVersion(version);
-  return `MentraOS_${major}p${minor}`;
+  return `Mentra_${major}p${minor}`;
 }
 
 // ── Step 1: Read version from .env ────────────────────────────────────────────
@@ -67,7 +67,7 @@ process.env.ORG_GRADLE_PROJECT_reactNativeArchitectures = 'arm64-v8a';
 // Clean android/ to avoid cached version number issues
 await $({ stdio: 'inherit' })`rm -rf android`;
 await $({ stdio: 'inherit' })`bun expo prebuild --platform android`;
-await $({ stdio: 'inherit' })`bun expo export --platform android`;
+await $({ stdio: 'inherit' })`bun expo export --platform android --clear`;
 
 // ── Step 4: Copy fastlane config into android/ ────────────────────────────────
 
@@ -188,7 +188,7 @@ await $({ stdio: 'inherit' })`zx ./scripts/release-ios.mjs`;
 
 const repoName = (await $`gh repo view --json nameWithOwner -q .nameWithOwner`).stdout.trim();
 const apkUrl = `https://github.com/${repoName}/releases/download/${tag}/${apkName}`;
-const ipaName = `${prefix.replace('MentraOS_', 'MentraOS_iOS_')}_Beta_${betaNumber}.ipa`;
+const ipaName = `${prefix.replace('Mentra_', 'Mentra_iOS_')}_Beta_${betaNumber}.ipa`;
 const ipaUrl = `https://github.com/${repoName}/releases/download/${tag}/${ipaName}`;
 
 console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');

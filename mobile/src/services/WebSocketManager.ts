@@ -1,10 +1,13 @@
 import {EventEmitter} from "events"
 
 import restComms from "@/services/RestComms"
+import {WebSocketStatus} from "@/services/ws-types"
 import {useConnectionStore} from "@/stores/connection"
 import {getGlasesInfoPartial, useGlassesStore} from "@/stores/glasses"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {BackgroundTimer} from "@/utils/timers"
+
+export {WebSocketStatus}
 
 // ---------------------------------------------------------------------------
 // Liveness detection constants
@@ -23,13 +26,6 @@ const PONG_TIMEOUT_MS = 5_000
 
 // Delay between reconnect attempts after a disconnect.
 const RECONNECT_INTERVAL_MS = 5_000
-
-export enum WebSocketStatus {
-  DISCONNECTED = "disconnected",
-  CONNECTING = "connecting",
-  CONNECTED = "connected",
-  ERROR = "error",
-}
 
 class WebSocketManager extends EventEmitter {
   private static instance: WebSocketManager | null = null

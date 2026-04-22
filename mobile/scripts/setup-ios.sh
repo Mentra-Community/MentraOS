@@ -117,7 +117,7 @@ run_setup() {
     
     # Step 4: Open Xcode workspace
     print_status "Opening Xcode workspace..."
-    open ios/MentraOS.xcworkspace
+    open ios/Mentra.xcworkspace
     print_success "Xcode workspace opened"
     
     print_warning "Manual step required: Install a dev build on your phone using Xcode"

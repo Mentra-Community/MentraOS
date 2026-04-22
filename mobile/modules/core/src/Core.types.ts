@@ -79,6 +79,18 @@ export type PhotoResponseEvent = {
   errorMessage?: string
 }
 
+export type CaptionsTesterIncidentEvent = {
+  type?: "captions_tester_incident"
+  action?: string
+  timestamp?: number
+  failure_code?: string
+  failure_message?: string
+  test_run_id?: string
+  scenario_name?: string
+  source?: string
+  [key: string]: unknown
+}
+
 export type GalleryStatusEvent = {
   type: "gallery_status"
   photos: number
@@ -263,6 +275,7 @@ export type CoreModuleEvents = {
   wifi_status_change: (event: WifiStatusChangeEvent) => void
   hotspot_status_change: (event: HotspotStatusChangeEvent) => void
   hotspot_error: (event: HotspotErrorEvent) => void
+  photo_response: (event: PhotoResponseEvent) => void
   gallery_status: (event: GalleryStatusEvent) => void
   compatible_glasses_search_stop: (event: CompatibleGlassesSearchStopEvent) => void
   heartbeat_sent: (event: HeartbeatSentEvent) => void
@@ -290,6 +303,7 @@ export type CoreModuleEvents = {
   send_command_to_ble: (event: BleCommandTraceEvent) => void
   receive_command_from_ble: (event: BleCommandTraceEvent) => void
   miniapp_selected: (event: MiniappSelectedEvent) => void
+  captions_tester_incident: (event: CaptionsTesterIncidentEvent) => void
 }
 
 export type GlassesConnectionState = "disconnected" | "connected" | "connecting"

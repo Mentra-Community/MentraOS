@@ -14,6 +14,7 @@ import MaterialCommunityIcons from "react-native-vector-icons/MaterialCommunityI
 import Video from "react-native-video"
 
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {submitGalleryVideoPlaybackBugReport} from "@/services/bugReport/galleryVideoPlaybackBugReport"
 import {ThemedStyle} from "@/theme"
 import {PhotoInfo} from "@/types/asg"
 
@@ -175,12 +176,15 @@ const VideoPlayerItem = memo(function VideoPlayerItem({photo, isActive, onSeekin
         }}
         onError={(error) => {
           console.error("🎥 [VideoPlayerItem] Video error:", error)
-          const errorStr = String(error?.error?.errorString || error?.error?.code || "Unknown error")
-          const isCorrupted = errorStr.includes("UNSUPPORTED") || errorStr.includes("PARSING")
+          const inner = (error as {error?: {code?: number; domain?: string; errorString?: string}})?.error
+          const code = inner?.code
+          const errorStr = String(inner?.errorString || inner?.code || "Unknown error")
+          const isCorrupted = errorStr.includes("UNSUPPORTED") || errorStr.includes("PARSING") || code === -11829
           setHasError(true)
           setErrorMessage(isCorrupted ? "Video file corrupted or unsupported format" : "Failed to play video")
           setIsPlaying(false)
           setIsBuffering(false)
+          void submitGalleryVideoPlaybackBugReport(photo, error, isActive)
         }}
         onEnd={() => {
           console.log("🎥 [VideoPlayerItem] Video playback ended:", photo.name)
@@ -321,7 +325,6 @@ const VideoPlayerItem = memo(function VideoPlayerItem({photo, isActive, onSeekin
  * Image component for gallery items
  */
 const ImageItem = memo(function ImageItem({photo, setImageDimensions, isActive: _isActive}: ImageItemProps) {
-  const {themed} = useAppTheme()
   const {width: screenWidth, height: screenHeight} = useWindowDimensions()
   const hasReportedDimensions = useRef(false)
 

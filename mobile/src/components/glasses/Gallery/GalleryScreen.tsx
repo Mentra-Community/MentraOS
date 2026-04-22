@@ -1163,21 +1163,13 @@ export function GalleryScreen() {
         safeAreaEdges={[]}
         LeftActionComponent={
           isSelectionMode ? (
-            <TouchableOpacity onPress={() => exitSelectionMode()}>
-              <View style={themed($selectionHeader)}>
-                <Icon name="x" size={20} color={theme.colors.text} />
-                <Text style={themed($selectionCountText)}>{selectedPhotos.size}</Text>
-              </View>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity onPress={() => push("/asg/gallery-settings")} style={themed($settingsButton)}>
-              <Icon name="settings" size={24} color={theme.colors.text} />
-            </TouchableOpacity>
-          )
-        }
-        RightActionComponent={
-          isSelectionMode ? (
             <View style={{flexDirection: "row", alignItems: "center", gap: 16}}>
+              <TouchableOpacity onPress={() => exitSelectionMode()}>
+                <View style={themed($selectionHeader)}>
+                  <Icon name="x" size={20} color={theme.colors.text} />
+                  <Text style={themed($selectionCountText)}>{selectedPhotos.size}</Text>
+                </View>
+              </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => {
                   if (selectedPhotos.size > 0) {
@@ -1199,8 +1191,13 @@ export function GalleryScreen() {
                 <MaterialCommunityIcons name="share-variant" size={22} color={theme.colors.text} />
               </TouchableOpacity>
             </View>
-          ) : undefined
+          ) : (
+            <TouchableOpacity onPress={() => push("/asg/gallery-settings")} style={themed($settingsButton)}>
+              <Icon name="settings" size={24} color={theme.colors.text} />
+            </TouchableOpacity>
+          )
         }
+        RightActionComponent={undefined}
       />
       <View style={themed($screenContainer)}>
         <View style={themed($galleryContainer)}>

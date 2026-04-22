@@ -216,7 +216,7 @@ class Simulated : SGCManager() {
         Bridge.log("sendUserEmailToGlasses: $email")
     }
 
-    override fun sendIncidentId(incidentId: String) {
+    override fun sendIncidentId(incidentId: String, apiBaseUrl: String?) {
         Bridge.log("sendIncidentId: $incidentId")
     }
 

@@ -201,7 +201,7 @@ export default function PrivacySettingsScreen() {
   return (
     <Screen preset="fixed">
       <Header titleTx="privacySettings:title" leftIcon="chevron-left" onLeftPress={goBack} />
-      <ScrollView className="pt-6">
+      <ScrollView className="pt-6 px-6 -mx-6">
         {/* Notification Permission - Android Only */}
         {Platform.OS === "android" && !notificationsEnabled && (
           <>

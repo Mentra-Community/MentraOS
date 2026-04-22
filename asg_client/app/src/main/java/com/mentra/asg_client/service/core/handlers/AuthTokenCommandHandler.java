@@ -52,17 +52,17 @@ public class AuthTokenCommandHandler implements ICommandHandler {
      */
     private boolean handleAuthToken(JSONObject data) {
         try {
-            String coreToken = data.optString("coreToken", "");
-            if (!coreToken.isEmpty()) {
-                Log.d(TAG, "Received coreToken from AugmentOS Core");
-                boolean success = configurationManager.saveCoreToken(coreToken);
-                communicationManager.sendTokenStatusResponse(success);
-                return success;
-            } else {
+            String coreToken = data.optString("coreToken", "").trim();
+            if (coreToken.isEmpty()) {
                 Log.e(TAG, "Received empty coreToken");
                 communicationManager.sendTokenStatusResponse(false);
                 return false;
             }
+
+            Log.d(TAG, "Received coreToken from AugmentOS Core");
+            boolean success = configurationManager.saveCoreToken(coreToken);
+            communicationManager.sendTokenStatusResponse(success);
+            return success;
         } catch (Exception e) {
             Log.e(TAG, "Error handling auth token command", e);
             communicationManager.sendTokenStatusResponse(false);

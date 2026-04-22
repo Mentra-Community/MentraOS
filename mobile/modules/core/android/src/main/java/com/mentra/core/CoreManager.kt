@@ -562,8 +562,7 @@ class CoreManager {
                 Bridge.log("MAN: ERROR - LC3 encoder not initialized but format is LC3")
                 return
             }
-            val lc3FrameSize =
-                    (GlassesStore.store.get("core", "lc3_frame_size") as Number).toInt()
+            val lc3FrameSize = (GlassesStore.store.get("core", "lc3_frame_size") as Number).toInt()
             val lc3Data = Lc3Cpp.encodeLC3(lc3EncoderPtr, pcmData, lc3FrameSize)
             if (lc3Data == null || lc3Data.isEmpty()) {
                 Bridge.log("MAN: ERROR - LC3 encoding returned empty data")
@@ -571,7 +570,7 @@ class CoreManager {
             }
             Bridge.sendMicLc3(lc3Data)
         }
-    } 
+    }
 
     private fun handleSendingPcm(pcmData: ByteArray) {
         if (shouldSendPcm) {
@@ -974,6 +973,8 @@ class CoreManager {
         } else if (wearable.contains(DeviceTypes.FRAME)) {
             // sgc = FrameManager()
         }
+        // update device model:
+        GlassesStore.apply("glasses", "deviceModel", sgc?.type ?: "")
     }
 
     fun restartTranscriber() {
@@ -1114,10 +1115,12 @@ class CoreManager {
     }
 
     fun dbg1() {
+        Bridge.log("MAN: dbg1()")
         sgc?.dbg1()
     }
 
     fun dbg2() {
+        Bridge.log("MAN: dbg2()")
         sgc?.dbg2()
     }
 
@@ -1142,9 +1145,9 @@ class CoreManager {
         sgc?.requestWifiScan()
     }
 
-    fun sendIncidentId(incidentId: String) {
+    fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null) {
         Bridge.log("MAN: Sending incidentId to glasses for log upload: $incidentId")
-        sgc?.sendIncidentId(incidentId)
+        sgc?.sendIncidentId(incidentId, apiBaseUrl)
     }
 
     fun sendWifiCredentials(ssid: String, password: String) {
@@ -1177,8 +1180,8 @@ class CoreManager {
     }
 
     /**
-     * Read glasses media step volume (0–15) via K900 on Mentra Live only.
-     * Blocks until response, error, or timeout (used from JS AsyncFunction on a worker thread).
+     * Read glasses media step volume (0–15) via K900 on Mentra Live only. Blocks until response,
+     * error, or timeout (used from JS AsyncFunction on a worker thread).
      */
     fun getGlassesMediaVolumeBlocking(): Map<String, Any> {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
@@ -1193,14 +1196,13 @@ class CoreManager {
                 { e ->
                     error = e
                     latch.countDown()
-                })
+                }
+        )
         val completed = latch.await(5, TimeUnit.SECONDS)
         if (!completed) {
             throw IllegalStateException("glasses_volume_timeout")
         }
-        error?.let {
-            throw IllegalStateException(it)
-        }
+        error?.let { throw IllegalStateException(it) }
         return result ?: throw IllegalStateException("glasses_volume_empty")
     }
 
@@ -1219,14 +1221,13 @@ class CoreManager {
                 { e ->
                     error = e
                     latch.countDown()
-                })
+                }
+        )
         val completed = latch.await(5, TimeUnit.SECONDS)
         if (!completed) {
             throw IllegalStateException("glasses_volume_timeout")
         }
-        error?.let {
-            throw IllegalStateException(it)
-        }
+        error?.let { throw IllegalStateException(it) }
         return result ?: throw IllegalStateException("glasses_volume_empty")
     }
 
@@ -1373,6 +1374,8 @@ class CoreManager {
         micEnabled = false
         updateMicState()
         shouldSendBootingMessage = true // Reset for next first connect
+        // clear glasses properties:
+        GlassesStore.apply("glasses", "deviceModel", "")
         GlassesStore.apply("glasses", "fullyBooted", false)
         GlassesStore.apply("glasses", "connected", false)
     }

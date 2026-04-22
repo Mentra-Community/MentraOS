@@ -924,12 +924,18 @@ const api = {
       list: async (
         limit = 100,
         offset = 0,
+        filters?: {
+          q?: string;
+          submissionMode?: IncidentSubmissionMode | "";
+          triggerArea?: string;
+          triggerReason?: string;
+        },
       ): Promise<{
         data: Incident[];
         pagination: { total: number; limit: number; offset: number; hasMore: boolean };
       }> => {
         const response = await axios.get("/api/console/admin/incidents", {
-          params: { limit, offset },
+          params: { limit, offset, ...filters },
         });
         return response.data;
       },
@@ -950,10 +956,17 @@ const api = {
 };
 
 // Incident types
+export type IncidentSubmissionMode = "USER_INITIATED" | "AUTOMATIC";
+
 export interface Incident {
   incidentId: string;
   userId: string;
   status: "processing" | "complete" | "partial" | "failed";
+  submissionMode?: IncidentSubmissionMode;
+  triggerArea?: string;
+  triggerReason?: string;
+  sourceAppletPackageName?: string;
+  sourceAppletName?: string;
   summary?: string;
   linearIssueId?: string;
   linearIssueUrl?: string;
