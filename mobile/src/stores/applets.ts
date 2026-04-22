@@ -212,6 +212,7 @@ export const SYSTEM_APPS = [
 
 // get offline applets:
 const getOfflineApplets = async (): Promise<ClientAppletInterface[]> => {
+  const isChina = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china"
   let miniApps: ClientAppletInterface[] = [
     {
       packageName: cameraPackageName,
@@ -260,7 +261,7 @@ const getOfflineApplets = async (): Promise<ClientAppletInterface[]> => {
       // description: "Live captions for your mentra glasses.",
       webviewUrl: "",
       healthy: true,
-      hidden: process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china",
+      hidden: false,
       permissions: [],
       offlineRoute: "",
       running: false,
@@ -566,6 +567,12 @@ const getOfflineApplets = async (): Promise<ClientAppletInterface[]> => {
     //   mapp.screenshot = screenshotRes.value
     // }
   }
+  if (isChina) {
+    miniApps = miniApps.filter(
+      (app) => app.packageName !== captionsPackageName && app.packageName !== feedbackPackageName,
+    )
+  }
+
   return miniApps as ClientAppletInterface[]
 }
 
