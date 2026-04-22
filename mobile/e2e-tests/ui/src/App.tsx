@@ -23,6 +23,21 @@ const TAB_OPTIONS = [
 
 type TabValue = (typeof TAB_OPTIONS)[number]["value"]
 
+function renderActiveTab(activeTab: TabValue, snapshot: MonitorSnapshot) {
+  switch (activeTab) {
+    case "overview":
+      return <OverviewTab snapshot={snapshot} />
+    case "incidents":
+      return <IncidentsTab snapshot={snapshot} />
+    case "alerts":
+      return <AlertsTab snapshot={snapshot} />
+    case "latency":
+      return <LatencyTab snapshot={snapshot} />
+    case "debug":
+      return <DebugTab snapshot={snapshot} />
+  }
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabValue>("overview")
   const [snapshot, setSnapshot] = useState<MonitorSnapshot | null>(null)
@@ -33,7 +48,7 @@ export default function App() {
 
     const refresh = async () => {
       try {
-        const response = await fetch("/state", {cache: "no-store"})
+        const response = await fetch(`/state?tab=${encodeURIComponent(activeTab)}`, {cache: "no-store"})
         if (!response.ok) {
           throw new Error(`State request failed with ${response.status}`)
         }
@@ -62,7 +77,7 @@ export default function App() {
       cancelled = true
       window.clearInterval(intervalId)
     }
-  }, [])
+  }, [activeTab])
 
   const headline = useMemo(() => {
     if (!snapshot) {
@@ -108,17 +123,11 @@ export default function App() {
             ))}
           </Tabs.List>
 
-          {TAB_OPTIONS.map((tab) => (
-            <Tabs.Content key={tab.value} className="tab-content" value={tab.value}>
-              <Suspense fallback={<div className="panel-loading">Loading {tab.label.toLowerCase()}…</div>}>
-                {tab.value === "overview" ? <OverviewTab snapshot={snapshot} /> : null}
-                {tab.value === "incidents" ? <IncidentsTab snapshot={snapshot} /> : null}
-                {tab.value === "alerts" ? <AlertsTab snapshot={snapshot} /> : null}
-                {tab.value === "latency" ? <LatencyTab snapshot={snapshot} /> : null}
-                {tab.value === "debug" ? <DebugTab snapshot={snapshot} /> : null}
-              </Suspense>
-            </Tabs.Content>
-          ))}
+          <Tabs.Content className="tab-content" forceMount value={activeTab}>
+            <Suspense fallback={<div className="panel-loading">Loading {activeTab}…</div>}>
+              {renderActiveTab(activeTab, snapshot)}
+            </Suspense>
+          </Tabs.Content>
         </Tabs.Root>
       )}
     </div>

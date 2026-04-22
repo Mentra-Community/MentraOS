@@ -63,6 +63,8 @@ CAPTIONS_TESTER_FILED_RE = re.compile(r"CaptionsTesterBugReport\]\s+Incident fil
 UI_DIST_DIR = Path(__file__).resolve().parent.parent / "ui" / "dist"
 DEFAULT_UI_DEV_ORIGIN = "http://127.0.0.1:5173"
 SNAPSHOT_WORD_HISTORY_MULTIPLIER = 8
+SNAPSHOT_COMPLETED_UTTERANCE_LIMIT = 120
+SNAPSHOT_RECENT_WORD_MATCH_LIMIT = 200
 LEADING_SPEAKER_MARKER_RE = re.compile(r"^\s*(?:\[\s*\d+\s*\]\s*:?\s*)+")
 SOCKET_APP_STARTED_RE = re.compile(r"SOCKET:\s+Received app_started message for package:\s*(\S+)")
 SOCKET_APP_STOPPED_RE = re.compile(r"SOCKET:\s+Received app_stopped message for package:\s*(\S+)")
@@ -607,6 +609,12 @@ class MonitorState:
         # multi-megabyte /state responses to the browser on every poll.
         return max(200, self.max_history * SNAPSHOT_WORD_HISTORY_MULTIPLIER)
 
+    def snapshot_completed_utterance_limit(self) -> int:
+        return min(self.max_history, SNAPSHOT_COMPLETED_UTTERANCE_LIMIT)
+
+    def snapshot_recent_word_match_limit(self) -> int:
+        return min(max(20, self.max_history), SNAPSHOT_RECENT_WORD_MATCH_LIMIT)
+
     def build_incident_id(self, incident_type: str, started_at_ms: int, dataset_row_idx: int | None = None) -> str:
         suffix = f":row{dataset_row_idx}" if dataset_row_idx is not None else ""
         return f"{incident_type}:{started_at_ms}{suffix}"
@@ -757,10 +765,12 @@ class MonitorState:
             ],
         }
 
-    def snapshot(self) -> dict[str, Any]:
+    def snapshot(self, include_latency_details: bool = True) -> dict[str, Any]:
         with self.lock:
             now_ms = int(time.time() * 1000)
             snapshot_word_history_limit = self.snapshot_word_history_limit()
+            snapshot_completed_utterance_limit = self.snapshot_completed_utterance_limit()
+            snapshot_recent_word_match_limit = self.snapshot_recent_word_match_limit()
             ongoing_incidents = []
             for incident in self.ongoing_incidents.values():
                 started_at_ms = int(incident["started_at_ms"])
@@ -781,7 +791,7 @@ class MonitorState:
                 )
             ongoing_incidents.sort(key=self.incident_primary_sort_key)
             primary_incident_id = next((item["incident_id"] for item in ongoing_incidents if item.get("is_primary")), None)
-            return {
+            snapshot: dict[str, Any] = {
                 "started_at_ms": self.started_at_ms,
                 "dataset": self.dataset,
                 "split": self.split,
@@ -796,14 +806,6 @@ class MonitorState:
                 "logcat_visible_lines": list(self.logcat_visible_lines),
                 "last_logcat_event_ts_ms": self.last_logcat_event_ts_ms,
                 "current_utterance": self.serialize_utterance(self.current_utterance),
-                "completed_utterances": list(self.completed_utterances),
-                "word_delay_points": trim_history(list(self.word_delay_points), snapshot_word_history_limit),
-                "rn_word_delay_points": trim_history(list(self.rn_word_delay_points), snapshot_word_history_limit),
-                "rn_true_word_delay_points": trim_history(list(self.rn_true_word_delay_points), snapshot_word_history_limit),
-                "logcat_true_word_delay_points": trim_history(
-                    list(self.logcat_true_word_delay_points),
-                    snapshot_word_history_limit,
-                ),
                 "drop_events": list(self.drop_events),
                 "primary_incident_id": primary_incident_id,
                 "ongoing_incidents": ongoing_incidents,
@@ -811,6 +813,22 @@ class MonitorState:
                 "alerts": list(self.alerts),
                 "last_events": list(self.last_events),
             }
+            if include_latency_details:
+                snapshot["completed_utterances"] = trim_history(list(self.completed_utterances), snapshot_completed_utterance_limit)
+                snapshot["word_delay_points"] = trim_history(list(self.word_delay_points), snapshot_recent_word_match_limit)
+                snapshot["rn_word_delay_points"] = []
+                snapshot["rn_true_word_delay_points"] = []
+                snapshot["logcat_true_word_delay_points"] = trim_history(
+                    list(self.logcat_true_word_delay_points),
+                    snapshot_word_history_limit,
+                )
+            else:
+                snapshot["completed_utterances"] = []
+                snapshot["word_delay_points"] = []
+                snapshot["rn_word_delay_points"] = []
+                snapshot["rn_true_word_delay_points"] = []
+                snapshot["logcat_true_word_delay_points"] = []
+            return snapshot
 
 
 def lcs_reference_indices(reference_tokens: list[str], candidate_tokens: list[str]) -> list[int]:
@@ -2091,7 +2109,11 @@ class MonitorHandler(BaseHTTPRequestHandler):
         return True
 
     def do_GET(self) -> None:  # noqa: N802
-        if self.path == "/":
+        parsed = urllib.parse.urlparse(self.path)
+        request_path = parsed.path or "/"
+        query = urllib.parse.parse_qs(parsed.query)
+
+        if request_path == "/":
             if self._proxy_ui_dev_asset("/"):
                 return
             if self._serve_ui_asset("/index.html"):
@@ -2107,9 +2129,11 @@ class MonitorHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
-        if self.path == "/state":
+        if request_path == "/state":
             assert self.monitor_state is not None
-            body = json.dumps(self.monitor_state.snapshot()).encode("utf-8")
+            active_tab = (query.get("tab", ["overview"])[0] or "overview").lower()
+            include_latency_details = active_tab == "latency"
+            body = json.dumps(self.monitor_state.snapshot(include_latency_details=include_latency_details)).encode("utf-8")
             self._send_bytes(body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
             return
 
