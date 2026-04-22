@@ -58,6 +58,7 @@ DEFAULT_INCIDENT_CONFIG = {
 }
 CAPTIONS_TESTER_INCIDENT_RESULT_MARKER = "CAPTIONS_TESTER_INCIDENT_RESULT "
 CONSOLE_INCIDENT_BASE_URL = "https://console.mentra.glass/admin/incidents/"
+DEFAULT_PUBLIC_DASHBOARD_URL = "http://captions.smartglasses.art"
 CAPTIONS_TESTER_FILED_RE = re.compile(r"CaptionsTesterBugReport\]\s+Incident filed:\s*([0-9a-fA-F-]+)")
 UI_DIST_DIR = Path(__file__).resolve().parent.parent / "ui" / "dist"
 DEFAULT_UI_DEV_ORIGIN = "http://127.0.0.1:5173"
@@ -88,6 +89,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--playback-mode", choices=["local"], default="local", help="Currently only local audio playback is supported")
     parser.add_argument("--output-dir", required=True, help="Directory for monitor state and NDJSON history")
     parser.add_argument("--port", type=int, default=8765, help="Local dashboard port")
+    parser.add_argument(
+        "--public-dashboard-url",
+        default=DEFAULT_PUBLIC_DASHBOARD_URL,
+        help="Public URL for the live captions dashboard to include in automatic incident alerts.",
+    )
     parser.add_argument("--device", default=None, help="Optional adb device id")
     parser.add_argument(
         "--incident-config-path",
@@ -1092,6 +1098,9 @@ class MonitorWorker:
             remote_cmd.extend(["--ei", "dataset_row_idx", str(int(alert["dataset_row_idx"]))])
         if alert.get("utterance_text"):
             remote_cmd.extend(["--es", "utterance_text", str(alert["utterance_text"])])
+        public_dashboard_url = (self.args.public_dashboard_url or "").strip()
+        if public_dashboard_url:
+            remote_cmd.extend(["--es", "dashboard_url", public_dashboard_url])
 
         adb_cmd = self.adb_prefix + ["shell", " ".join(shlex.quote(part) for part in remote_cmd)]
 
