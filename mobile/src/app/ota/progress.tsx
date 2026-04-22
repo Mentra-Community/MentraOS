@@ -13,6 +13,7 @@ import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {logEvent} from "@/utils/analytics"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
+import {CDN_BASE_URL} from "@/constants/appConfig"
 
 type ProgressState =
   | "starting"
@@ -41,7 +42,7 @@ const GLOBAL_OTA_TIMEOUT_MS = 20 * 60 * 1000 // 20 minutes
 // Delay between APK install completion (glasses reconnected) and sending the next ota_start.
 // The new APK's OTA service needs a moment to fully initialize after the app restarts.
 const POST_APK_OTA_START_DELAY_MS = 6000
-const OTA_COVER_VIDEO_URL = "https://mentra-videos-cdn.mentraglass.com/onboarding/ota/ota_video_2.mp4"
+const OTA_COVER_VIDEO_URL = `${CDN_BASE_URL}/onboarding/ota/ota_video_2.mp4`
 
 export default function OtaProgressScreen() {
   const {theme} = useAppTheme()

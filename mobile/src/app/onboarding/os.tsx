@@ -5,8 +5,9 @@ import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
 import {getGlassesImage} from "@/utils/getGlassesImage"
+import {CDN_BASE_URL} from "@/constants/appConfig"
 
-const CDN_BASE = "https://mentra-videos-cdn.mentraglass.com/onboarding/mentraos/light"
+const CDN_BASE = `${CDN_BASE_URL}/onboarding/mentraos/light`
 
 export default function MentraOSOnboarding() {
   const {pushPrevious} = useNavigationHistory()

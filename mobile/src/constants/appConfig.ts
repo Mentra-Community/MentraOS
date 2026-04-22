@@ -5,6 +5,7 @@ const VARIANTS = {
     playStoreBetaUrl: "https://play.google.com/apps/testing/com.mentra.mentra",
     appStoreUrl: "https://apps.apple.com/app/id6747363193",
     appStoreReviewUrl: "https://apps.apple.com/app/id6747363193?action=write-review",
+    cdnBaseUrl: "https://mentra-videos-cdn.mentraglass.com",
   },
   china: {
     packageName: "com.mentra.mentra.cn",
@@ -12,6 +13,7 @@ const VARIANTS = {
     playStoreBetaUrl: "https://play.google.com/apps/testing/com.mentra.mentra.cn",
     appStoreUrl: "https://apps.apple.com/app/id6747363193",
     appStoreReviewUrl: "https://apps.apple.com/app/id6747363193?action=write-review",
+    cdnBaseUrl: "https://asset.mentraglass.cn",
   },
 }
 
@@ -23,3 +25,4 @@ export const PLAY_STORE_URL = variant.playStoreUrl
 export const PLAY_STORE_BETA_URL = variant.playStoreBetaUrl
 export const APP_STORE_URL = variant.appStoreUrl
 export const APP_STORE_REVIEW_URL = variant.appStoreReviewUrl
+export const CDN_BASE_URL = variant.cdnBaseUrl

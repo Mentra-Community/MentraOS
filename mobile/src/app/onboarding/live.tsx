@@ -6,8 +6,9 @@ import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
 import CoreModule, {TouchEvent} from "core"
 import {Platform} from "react-native"
+import {CDN_BASE_URL} from "@/constants/appConfig"
 
-const CDN_BASE = "https://mentra-videos-cdn.mentraglass.com/onboarding/mentra-live/light"
+const CDN_BASE = `${CDN_BASE_URL}/onboarding/mentra-live/light`
 
 export default function MentraLiveOnboarding() {
   const {clearHistoryAndGoHome} = useNavigationHistory()
