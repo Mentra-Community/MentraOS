@@ -1738,6 +1738,7 @@ class MonitorWorker:
                 check=True,
                 capture_output=True,
                 text=True,
+                timeout=5,
             )
             fallback_focus: str | None = None
             for line in focus_result.stdout.splitlines():
@@ -1750,8 +1751,34 @@ class MonitorWorker:
                 focused_app = fallback_focus
             is_app_foreground = bool(focused_app and "com.mentra.mentra" in focused_app and "MainActivity" in focused_app)
         except Exception as exc:
-            probe_error = str(exc)
-            is_app_foreground = None
+            error_message = str(exc)
+            if device_state.last_foreground_app_check_ts_ms:
+                self.state.append_event(
+                    "foreground_probe_timeout",
+                    {
+                        "ts_ms": now_ms,
+                        "device_id": device_id,
+                        "message": error_message,
+                        "used_cached_result": True,
+                    },
+                    device_id=device_id,
+                )
+                is_app_foreground = device_state.last_is_app_foreground
+                focused_app = device_state.last_foreground_focus
+                probe_error = None
+            else:
+                self.state.append_event(
+                    "foreground_probe_timeout",
+                    {
+                        "ts_ms": now_ms,
+                        "device_id": device_id,
+                        "message": error_message,
+                        "used_cached_result": False,
+                    },
+                    device_id=device_id,
+                )
+                probe_error = error_message
+                is_app_foreground = None
         device_state.last_foreground_app_check_ts_ms = now_ms
         device_state.last_is_app_foreground = is_app_foreground
         device_state.last_foreground_focus = focused_app
