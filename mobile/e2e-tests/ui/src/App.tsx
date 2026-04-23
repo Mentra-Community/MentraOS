@@ -41,6 +41,7 @@ const STREAM_EVENT_NAMES = [
 ] as const
 
 type TabValue = (typeof TAB_OPTIONS)[number]["value"]
+type ViewMode = "single" | "compare"
 type MonitorStreamEvent = {
   type: (typeof STREAM_EVENT_NAMES)[number] | string
   payload: Record<string, unknown>
@@ -186,8 +187,10 @@ function applyStreamUpdate(
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabValue>("overview")
+  const [viewMode, setViewMode] = useState<ViewMode>("single")
   const [selectedDevice, setSelectedDevice] = useState<string | null>(null)
   const [snapshot, setSnapshot] = useState<MonitorSnapshot | null>(null)
+  const [compareSnapshots, setCompareSnapshots] = useState<Record<string, MonitorSnapshot>>({})
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   useEffect(() => {
@@ -195,21 +198,38 @@ export default function App() {
     let refreshInFlight = false
     let resyncTimeoutId: number | null = null
 
+    const fetchSnapshot = async (deviceId: string | null) => {
+      const params = new URLSearchParams({tab: activeTab})
+      if (deviceId) {
+        params.set("device", deviceId)
+      }
+      const response = await fetch(`/state?${params.toString()}`, {cache: "no-store"})
+      if (!response.ok) {
+        throw new Error(`State request failed with ${response.status}`)
+      }
+      return (await response.json()) as MonitorSnapshot
+    }
+
     const refresh = async () => {
       if (refreshInFlight) {
         return
       }
       refreshInFlight = true
       try {
-        const params = new URLSearchParams({tab: activeTab})
-        if (selectedDevice) {
-          params.set("device", selectedDevice)
+        const nextSnapshot = await fetchSnapshot(selectedDevice)
+        if (cancelled) {
+          return
         }
-        const response = await fetch(`/state?${params.toString()}`, {cache: "no-store"})
-        if (!response.ok) {
-          throw new Error(`State request failed with ${response.status}`)
-        }
-        const nextSnapshot = (await response.json()) as MonitorSnapshot
+        const shouldCompare = viewMode === "compare" && nextSnapshot.devices.length > 1
+        const nextCompareSnapshots = shouldCompare
+          ? Object.fromEntries(
+              await Promise.all(
+                nextSnapshot.devices.map(
+                  async (device) => [device.device_id, await fetchSnapshot(device.device_id)] as const,
+                ),
+              ),
+            )
+          : {}
         if (cancelled) {
           return
         }
@@ -221,6 +241,7 @@ export default function App() {
             return nextSnapshot.selected_device_id
           })
           setSnapshot(nextSnapshot)
+          setCompareSnapshots(nextCompareSnapshots)
           setErrorMessage(null)
         })
       } catch (error) {
@@ -253,7 +274,7 @@ export default function App() {
         return
       }
       const eventDeviceId = typeof streamEvent.payload.device_id === "string" ? streamEvent.payload.device_id : null
-      if (eventDeviceId && selectedDevice && eventDeviceId !== selectedDevice) {
+      if (viewMode === "single" && eventDeviceId && selectedDevice && eventDeviceId !== selectedDevice) {
         return
       }
 
@@ -263,9 +284,34 @@ export default function App() {
         streamEvent.type === "word_match"
       ) {
         startTransition(() => {
-          setSnapshot((currentSnapshot) =>
-            currentSnapshot ? applyStreamUpdate(currentSnapshot, streamEvent, activeTab) : currentSnapshot,
-          )
+          setSnapshot((currentSnapshot) => {
+            if (!currentSnapshot) {
+              return currentSnapshot
+            }
+            if (eventDeviceId && currentSnapshot.selected_device_id !== eventDeviceId) {
+              return currentSnapshot
+            }
+            return applyStreamUpdate(currentSnapshot, streamEvent, activeTab)
+          })
+          if (viewMode === "compare") {
+            setCompareSnapshots((currentCompareSnapshots) => {
+              if (streamEvent.type === "status_changed") {
+                return Object.fromEntries(
+                  Object.entries(currentCompareSnapshots).map(([deviceId, deviceSnapshot]) => [
+                    deviceId,
+                    applyStreamUpdate(deviceSnapshot, streamEvent, activeTab),
+                  ]),
+                )
+              }
+              if (!eventDeviceId || !currentCompareSnapshots[eventDeviceId]) {
+                return currentCompareSnapshots
+              }
+              return {
+                ...currentCompareSnapshots,
+                [eventDeviceId]: applyStreamUpdate(currentCompareSnapshots[eventDeviceId], streamEvent, activeTab),
+              }
+            })
+          }
           setErrorMessage(null)
         })
         return
@@ -273,9 +319,25 @@ export default function App() {
 
       if (streamEvent.type === "utterance_completed" && activeTab === "latency") {
         startTransition(() => {
-          setSnapshot((currentSnapshot) =>
-            currentSnapshot ? applyStreamUpdate(currentSnapshot, streamEvent, activeTab) : currentSnapshot,
-          )
+          setSnapshot((currentSnapshot) => {
+            if (!currentSnapshot) {
+              return currentSnapshot
+            }
+            if (eventDeviceId && currentSnapshot.selected_device_id !== eventDeviceId) {
+              return currentSnapshot
+            }
+            return applyStreamUpdate(currentSnapshot, streamEvent, activeTab)
+          })
+          if (viewMode === "compare" && eventDeviceId) {
+            setCompareSnapshots((currentCompareSnapshots) =>
+              currentCompareSnapshots[eventDeviceId]
+                ? {
+                    ...currentCompareSnapshots,
+                    [eventDeviceId]: applyStreamUpdate(currentCompareSnapshots[eventDeviceId], streamEvent, activeTab),
+                  }
+                : currentCompareSnapshots,
+            )
+          }
           setErrorMessage(null)
         })
       }
@@ -308,7 +370,7 @@ export default function App() {
       }
       eventSource.close()
     }
-  }, [activeTab, selectedDevice])
+  }, [activeTab, selectedDevice, viewMode])
 
   const headline = useMemo(() => {
     if (!snapshot) {
@@ -319,8 +381,11 @@ export default function App() {
       : "No active incidents"
   }, [snapshot])
 
+  const effectiveViewMode: ViewMode =
+    snapshot && snapshot.devices.length > 1 && viewMode === "compare" ? "compare" : "single"
+
   return (
-    <div className="app-shell">
+    <div className={`app-shell${effectiveViewMode === "compare" ? " compare-mode" : ""}`}>
       <div className="hero">
         <div className="hero-copy">
           <div className="eyebrow">MentraOS Captions Monitor</div>
@@ -335,11 +400,19 @@ export default function App() {
           <strong>{headline}</strong>
           {snapshot?.devices.length ? (
             <span>
-              Device{" "}
-              <strong>
-                {snapshot.devices.find((device) => device.device_id === snapshot.selected_device_id)?.label ||
-                  snapshot.selected_device_id}
-              </strong>
+              {effectiveViewMode === "compare" ? (
+                <>
+                  Comparing <strong>{snapshot.devices.length}</strong> devices
+                </>
+              ) : (
+                <>
+                  Device{" "}
+                  <strong>
+                    {snapshot.devices.find((device) => device.device_id === snapshot.selected_device_id)?.label ||
+                      snapshot.selected_device_id}
+                  </strong>
+                </>
+              )}
             </span>
           ) : null}
           <span>
@@ -367,16 +440,34 @@ export default function App() {
       ) : (
         <Tabs.Root className="tabs-root" value={activeTab} onValueChange={(value) => setActiveTab(value as TabValue)}>
           {snapshot.devices.length > 1 ? (
-            <div className="device-switcher">
-              {snapshot.devices.map((device) => (
+            <div className="dashboard-toolbar">
+              <div className="view-mode-toggle" role="group" aria-label="Dashboard view mode">
                 <button
-                  key={device.device_id}
-                  className={`device-trigger${snapshot.selected_device_id === device.device_id ? " active" : ""}`}
-                  onClick={() => setSelectedDevice(device.device_id)}
+                  className={`view-mode-trigger${effectiveViewMode === "single" ? " active" : ""}`}
+                  onClick={() => setViewMode("single")}
                   type="button">
-                  {device.label}
+                  Single
                 </button>
-              ))}
+                <button
+                  className={`view-mode-trigger${effectiveViewMode === "compare" ? " active" : ""}`}
+                  onClick={() => setViewMode("compare")}
+                  type="button">
+                  Compare
+                </button>
+              </div>
+              {effectiveViewMode === "single" ? (
+                <div className="device-switcher">
+                  {snapshot.devices.map((device) => (
+                    <button
+                      key={device.device_id}
+                      className={`device-trigger${snapshot.selected_device_id === device.device_id ? " active" : ""}`}
+                      onClick={() => setSelectedDevice(device.device_id)}
+                      type="button">
+                      {device.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           ) : null}
           <Tabs.List className="tabs-list" aria-label="Monitor dashboard sections">
@@ -389,7 +480,39 @@ export default function App() {
 
           <Tabs.Content className="tab-content" forceMount value={activeTab}>
             <Suspense fallback={<div className="panel-loading">Loading {activeTab}…</div>}>
-              {renderActiveTab(activeTab, snapshot)}
+              {effectiveViewMode === "compare" ? (
+                <div
+                  className="compare-grid"
+                  style={{gridTemplateColumns: `repeat(${Math.max(snapshot.devices.length, 1)}, minmax(0, 1fr))`}}>
+                  {snapshot.devices.map((device) => {
+                    const deviceSnapshot = compareSnapshots[device.device_id]
+                    return (
+                      <section key={device.device_id} className="compare-panel">
+                        <header className="compare-panel-header">
+                          <div>
+                            <strong>{device.label}</strong>
+                            <span>
+                              <RelativeAge
+                                ms={device.last_logcat_event_ts_ms}
+                                prefix="Last event "
+                                emptyLabel="Waiting for event"
+                              />
+                            </span>
+                          </div>
+                          {deviceSnapshot ? <StatusBadge status={deviceSnapshot.status} /> : null}
+                        </header>
+                        {deviceSnapshot ? (
+                          renderActiveTab(activeTab, deviceSnapshot)
+                        ) : (
+                          <div className="panel-loading">Loading device…</div>
+                        )}
+                      </section>
+                    )
+                  })}
+                </div>
+              ) : (
+                renderActiveTab(activeTab, snapshot)
+              )}
             </Suspense>
           </Tabs.Content>
         </Tabs.Root>

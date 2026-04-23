@@ -45,6 +45,11 @@ a:hover {
   padding: 28px 24px 48px;
 }
 
+.app-shell.compare-mode {
+  max-width: none;
+  width: 100%;
+}
+
 .hero {
   display: grid;
   grid-template-columns: minmax(0, 1.7fr) minmax(280px, 0.9fr);
@@ -123,6 +128,40 @@ a:hover {
   gap: 18px;
 }
 
+.dashboard-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.view-mode-toggle {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.view-mode-trigger {
+  border: 1px solid var(--border);
+  background: rgba(9, 17, 26, 0.72);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 10px 16px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 180ms ease,
+    color 180ms ease,
+    border-color 180ms ease;
+}
+
+.view-mode-trigger.active {
+  background: linear-gradient(135deg, rgba(255, 181, 93, 0.28), rgba(120, 214, 255, 0.18));
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
 .device-switcher {
   display: inline-flex;
   flex-wrap: wrap;
@@ -190,6 +229,46 @@ a:hover {
 
 .tab-content {
   outline: none;
+}
+
+.compare-grid {
+  display: grid;
+  gap: 18px;
+  align-items: start;
+}
+
+.app-shell.compare-mode .compare-grid {
+  width: 100%;
+}
+
+.compare-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.compare-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 20px;
+  border-radius: 24px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 18px 45px rgba(1, 5, 12, 0.32);
+}
+
+.compare-panel-header strong {
+  display: block;
+  font-size: 1rem;
+}
+
+.compare-panel-header span {
+  color: var(--muted);
+  font-size: 0.9rem;
 }
 
 .tab-layout {
