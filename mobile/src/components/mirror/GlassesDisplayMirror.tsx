@@ -8,6 +8,24 @@ import {useDisplayStore} from "@/stores/display"
 import {useGlassesStore} from "@/stores/glasses"
 import {ThemedStyle} from "@/theme"
 
+const summarizeMirrorLayout = (event: any, layout: any) => {
+  const text =
+    typeof layout?.text === "string"
+      ? layout.text
+      : Array.isArray(layout?.text)
+        ? layout.text.join(" | ")
+        : typeof layout?.topText === "string" || typeof layout?.bottomText === "string"
+          ? [layout?.topText, layout?.bottomText].filter(Boolean).join(" | ")
+          : ""
+
+  return {
+    eventView: event?.view ?? "missing",
+    layoutType: layout?.layoutType ?? "missing",
+    textLength: text.length,
+    textPreview: text.slice(0, 160),
+  }
+}
+
 interface GlassesDisplayMirrorProps {
   fallbackMessage?: string
   style?: ViewStyle
@@ -30,6 +48,18 @@ const GlassesDisplayMirror: React.FC<GlassesDisplayMirrorProps> = ({
 
   // Use demo layout if in demo mode, otherwise use real layout
   const layout = demoText !== "" ? {layoutType: "text_wall", text: demoText} : currentEvent.layout
+
+  useEffect(() => {
+    console.log("MIRROR: currentEvent changed", summarizeMirrorLayout(currentEvent, currentEvent?.layout))
+  }, [currentEvent])
+
+  useEffect(() => {
+    console.log("MIRROR: layout selected for render", {
+      demoMode: demoText !== "",
+      containerWidth,
+      summary: summarizeMirrorLayout(currentEvent, layout),
+    })
+  }, [currentEvent, layout, containerWidth, demoText])
 
   const processBitmap = async () => {
     if (layout?.layoutType !== "bitmap_view" || !layout.data) {

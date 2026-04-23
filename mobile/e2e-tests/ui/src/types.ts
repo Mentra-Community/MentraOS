@@ -82,11 +82,22 @@ export interface CompletedUtterance {
   max_logcat_true_delay_ms?: number | null
 }
 
+export interface DeviceSummary {
+  device_id: string
+  label: string
+  ongoing_incident_count: number
+  last_logcat_event_ts_ms?: number | null
+  primary_incident_id?: string | null
+  current_utterance_row_idx?: number | null
+}
+
 export interface MonitorSnapshot {
   status: string
   status_detail?: string | null
   last_error?: string | null
   started_at_ms: number
+  devices: DeviceSummary[]
+  selected_device_id: string
   primary_incident_id?: string | null
   last_logcat_event_ts_ms?: number | null
   logcat_visible_lines: string[]
@@ -97,4 +108,5 @@ export interface MonitorSnapshot {
   logcat_true_word_delay_points: DelayPoint[]
   word_delay_points: DelayPoint[]
   completed_utterances: CompletedUtterance[]
+  last_events: Record<string, unknown>[]
 }

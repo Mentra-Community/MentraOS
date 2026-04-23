@@ -123,6 +123,33 @@ a:hover {
   gap: 18px;
 }
 
+.device-switcher {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.device-trigger {
+  border: 1px solid var(--border);
+  background: rgba(9, 17, 26, 0.72);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 10px 16px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 180ms ease,
+    color 180ms ease,
+    border-color 180ms ease;
+}
+
+.device-trigger.active {
+  background: linear-gradient(135deg, rgba(255, 181, 93, 0.28), rgba(120, 214, 255, 0.18));
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
 .tabs-list {
   display: inline-flex;
   flex-wrap: wrap;

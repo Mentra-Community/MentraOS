@@ -9,6 +9,27 @@ import {BackgroundTimer} from "@/utils/timers"
 
 export {WebSocketStatus}
 
+const summarizeDisplayMessage = (message: any) => {
+  const layout = message?.layout ?? {}
+  const text =
+    typeof layout.text === "string"
+      ? layout.text
+      : Array.isArray(layout.text)
+        ? layout.text.join(" | ")
+        : typeof layout.topText === "string" || typeof layout.bottomText === "string"
+          ? [layout.topText, layout.bottomText].filter(Boolean).join(" | ")
+          : ""
+
+  return {
+    view: message?.view ?? "missing",
+    layoutType: layout.layoutType ?? "unknown",
+    packageName: message?.packageName ?? "unknown",
+    durationMs: message?.durationMs ?? layout.durationMs ?? null,
+    textLength: text.length,
+    textPreview: text.slice(0, 120),
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Liveness detection constants
 // ---------------------------------------------------------------------------
@@ -353,6 +374,10 @@ class WebSocketManager extends EventEmitter {
         this.lastPongTime = Date.now()
         this.awaitingPong = false
         return
+      }
+
+      if (message.type === "display_event") {
+        console.log("WSM: Incoming display_event from cloud", summarizeDisplayMessage(message))
       }
 
       // Forward message to listeners

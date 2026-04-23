@@ -186,6 +186,7 @@ function applyStreamUpdate(
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabValue>("overview")
+  const [selectedDevice, setSelectedDevice] = useState<string | null>(null)
   const [snapshot, setSnapshot] = useState<MonitorSnapshot | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
@@ -200,7 +201,11 @@ export default function App() {
       }
       refreshInFlight = true
       try {
-        const response = await fetch(`/state?tab=${encodeURIComponent(activeTab)}`, {cache: "no-store"})
+        const params = new URLSearchParams({tab: activeTab})
+        if (selectedDevice) {
+          params.set("device", selectedDevice)
+        }
+        const response = await fetch(`/state?${params.toString()}`, {cache: "no-store"})
         if (!response.ok) {
           throw new Error(`State request failed with ${response.status}`)
         }
@@ -209,6 +214,12 @@ export default function App() {
           return
         }
         startTransition(() => {
+          setSelectedDevice((currentDevice) => {
+            if (currentDevice && nextSnapshot.devices.some((device) => device.device_id === currentDevice)) {
+              return currentDevice
+            }
+            return nextSnapshot.selected_device_id
+          })
           setSnapshot(nextSnapshot)
           setErrorMessage(null)
         })
@@ -239,6 +250,10 @@ export default function App() {
       const streamEvent = parseStreamEvent(browserEvent)
       if (!streamEvent) {
         scheduleResync()
+        return
+      }
+      const eventDeviceId = typeof streamEvent.payload.device_id === "string" ? streamEvent.payload.device_id : null
+      if (eventDeviceId && selectedDevice && eventDeviceId !== selectedDevice) {
         return
       }
 
@@ -293,7 +308,7 @@ export default function App() {
       }
       eventSource.close()
     }
-  }, [activeTab])
+  }, [activeTab, selectedDevice])
 
   const headline = useMemo(() => {
     if (!snapshot) {
@@ -318,6 +333,15 @@ export default function App() {
         <div className="hero-status">
           <div className="hero-pill">{snapshot ? <StatusBadge status={snapshot.status} /> : "Loading…"}</div>
           <strong>{headline}</strong>
+          {snapshot?.devices.length ? (
+            <span>
+              Device{" "}
+              <strong>
+                {snapshot.devices.find((device) => device.device_id === snapshot.selected_device_id)?.label ||
+                  snapshot.selected_device_id}
+              </strong>
+            </span>
+          ) : null}
           <span>
             {snapshot ? (
               <RelativeAge
@@ -342,6 +366,19 @@ export default function App() {
         </div>
       ) : (
         <Tabs.Root className="tabs-root" value={activeTab} onValueChange={(value) => setActiveTab(value as TabValue)}>
+          {snapshot.devices.length > 1 ? (
+            <div className="device-switcher">
+              {snapshot.devices.map((device) => (
+                <button
+                  key={device.device_id}
+                  className={`device-trigger${snapshot.selected_device_id === device.device_id ? " active" : ""}`}
+                  onClick={() => setSelectedDevice(device.device_id)}
+                  type="button">
+                  {device.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <Tabs.List className="tabs-list" aria-label="Monitor dashboard sections">
             {TAB_OPTIONS.map((tab) => (
               <Tabs.Trigger key={tab.value} className="tab-trigger" value={tab.value}>
