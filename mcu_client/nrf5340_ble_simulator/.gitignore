@@ -35,3 +35,7 @@ local_config.h
 
 # MCUboot signing key (do not commit)
 sysbuild/private.pem
+
+# Clang 
+.clang-format
+.clangd

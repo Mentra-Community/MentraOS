@@ -13,7 +13,9 @@
 #include <zephyr/logging/log.h>
 
 #include "bal_os.h"
+#include "caption_state.h"
 #include "display_config.h"
+#include "display_scene.h"
 #include "main.h"
 #include "mos_brightness.h"
 #include "mos_lvgl_display.h"
@@ -55,7 +57,7 @@ static lv_obj_t *protobuf_gbk_container = NULL;
 static lv_obj_t *protobuf_xy_overlay_container = NULL;
 static bool welcome_screen_active = true;
 static bool welcome_screen_initializing = false;
-static char last_protobuf_text[MAX_TEXT_LEN + 1];
+static char last_protobuf_text[CAPTION_TEXT_MAX_CHARS];
 static bool last_protobuf_text_valid = false;
 static char s_last_welcome_text[160];
 static bool s_last_welcome_text_valid = false;
@@ -68,7 +70,7 @@ static int s_dynamic_font_label_count = 0;
 
 static void restore_welcome_screen_state(void);
 static void update_welcome_label_with_battery(void);
-static void update_protobuf_text_content(const char *text_content);
+static void update_protobuf_text_content(const char *text_content, uint32_t committed_seq);
 static void protobuf_scroll_ascii_label_bottom_visible(void);
 static void protobuf_container_set_welcome_scroll(bool welcome_active);
 static void ensure_pattern4_scene_ready(void);
@@ -236,7 +238,7 @@ static void apply_font_update_in_lvgl_thread(const lv_font_t *new_font)
              * last 为空也必须重跑：否则会保留 CJK 逐字层可见，坐标仍按旧字高，与新分区字模叠在一起。 */
             if (protobuf_container != NULL)
             {
-                update_protobuf_text_content(last_protobuf_text);
+                update_protobuf_text_content(last_protobuf_text, 0U);
             }
         }
 
@@ -290,23 +292,18 @@ static lv_coord_t dfu_progress_bar_w = 0; /* Track width for fill calculation / 
 static volatile bool lvgl_force_one_refresh = false; /* Force one refresh on next loop / 强制下一轮刷新一次 */
 static uint32_t lvgl_min_refresh_ms = 10;
 static volatile bool lvgl_freeze_refresh = false;
-static K_MUTEX_DEFINE(s_pending_protobuf_text_lock);
-static bool s_pending_protobuf_text_valid = false;
-static bool s_pending_protobuf_text_notify_pending = false;
-static uint32_t s_pending_protobuf_arrival_ms = 0U;
-static uint32_t s_protobuf_last_apply_ms = 0U;
-static bool s_last_committed_protobuf_text_valid = false;
-
-#define PROTOBUF_TEXT_MAX_CHARS 768U
-#define PROTOBUF_TEXT_THROTTLE_MS 150U
-static char s_pending_protobuf_text_big[PROTOBUF_TEXT_MAX_CHARS];
-static char s_last_committed_protobuf_text_big[PROTOBUF_TEXT_MAX_CHARS];
+#define PROTOBUF_TEXT_MAX_CHARS CAPTION_TEXT_MAX_CHARS
+#define PROTOBUF_TEXT_THROTTLE_MS 250U
+#define PROTOBUF_TEXT_RENDER_MAX_CHARS 192U
+#define PROTOBUF_TEXT_RENDER_MAX_LINES 8U
 /* Throttle validation counters (printed once per second during traffic). */
 static uint32_t s_pt_stats_window_start_ms = 0U;
 static uint32_t s_pt_rx_count = 0U;
 static uint32_t s_pt_commit_count = 0U;
 static uint32_t s_pt_throttle_skip_count = 0U;
 static uint32_t s_pt_dedup_skip_count = 0U;
+static uint32_t s_caption_render_last_skip_log_ms = 0U;
+static uint32_t s_caption_last_apply_ms = 0U;
 
 #define PROTOBUF_GBK_LABEL_POOL_SIZE 256
 static lv_obj_t *s_protobuf_gbk_label_pool[PROTOBUF_GBK_LABEL_POOL_SIZE];
@@ -334,6 +331,24 @@ static struct k_work_delayable welcome_battery_work;
 static void welcome_battery_work_handler(struct k_work *work);
 /* Forward declaration for protobuf throttle telemetry helper. */
 static void protobuf_text_log_throttle_stats_if_due(void);
+static void protobuf_text_prepare_for_render(const char *text_content, char *out_text, size_t out_size)
+{
+    if (out_text == NULL || out_size == 0U)
+    {
+        return;
+    }
+
+    if (text_content == NULL)
+    {
+        out_text[0] = '\0';
+        return;
+    }
+
+    /* Mirror the latest full text snapshot from the app as-is.
+     * No line-tail or content-window trimming should happen here. */
+    strncpy(out_text, text_content, out_size - 1U);
+    out_text[out_size - 1U] = '\0';
+}
 
 void lv_example_scroll_text(void)
 {
@@ -444,14 +459,8 @@ void display_show_welcome_screen(void)
 
 void display_reset_protobuf_text_state(void)
 {
-    k_mutex_lock(&s_pending_protobuf_text_lock, K_FOREVER);
-    s_pending_protobuf_text_valid = false;
-    s_pending_protobuf_text_notify_pending = false;
-    s_pending_protobuf_arrival_ms = 0U;
-    s_last_committed_protobuf_text_valid = false;
-    s_pending_protobuf_text_big[0] = '\0';
-    s_last_committed_protobuf_text_big[0] = '\0';
-    k_mutex_unlock(&s_pending_protobuf_text_lock);
+    caption_state_reset();
+    s_caption_last_apply_ms = 0U;
 
     last_protobuf_text_valid = false;
     last_protobuf_text[0] = '\0';
@@ -583,8 +592,8 @@ static void log_display_text_payload_diag(const char *text)
 }
 #endif /* CONFIG_MOS_DISPLAY_TEXT_PAYLOAD_DIAG */
 
-/* Thread-safe protobuf text update: send message to LVGL thread.
- * 线程安全 protobuf 文本更新：发消息到 LVGL 线程。 */
+/* Thread-safe protobuf text update: state-only ingest, LVGL thread pulls later.
+ * 线程安全 protobuf 文本更新：仅写入状态，由 LVGL 线程稍后主动拉取。 */
 void display_update_protobuf_text(const char *text_content)
 {
     if (!text_content)
@@ -593,61 +602,34 @@ void display_update_protobuf_text(const char *text_content)
         return;
     }
 
-    LOG_INF("Filling protobuf text: %s", text_content);
+    s_pt_rx_count++;
+    protobuf_text_log_throttle_stats_if_due();
+
 #if defined(CONFIG_MOS_DISPLAY_TEXT_PAYLOAD_DIAG)
     log_display_text_payload_diag(text_content);
 #endif
 
-    /* Copy into big pending slot (protobuf-only). */
-    size_t text_len = strlen(text_content);
-    if (text_len >= PROTOBUF_TEXT_MAX_CHARS)
-    {
-        text_len = PROTOBUF_TEXT_MAX_CHARS - 1U;
-        LOG_WRN("Protobuf text truncated to %u chars", (unsigned int)(PROTOBUF_TEXT_MAX_CHARS - 1U));
-    }
+    caption_state_ingest(text_content);
+}
 
-    bool should_notify = false;
-    s_pt_rx_count++;
-    protobuf_text_log_throttle_stats_if_due();
+void display_submit_text_payload(uint16_t x, uint16_t y, const char *text_content, uint16_t font_size, uint32_t color)
+{
+    if (display_scene_get_pattern() == 5 || display_scene_get_mode() == DISPLAY_SCENE_MODE_XY)
+    {
+        uint32_t y_offset = (uint32_t)y + 80U;
+        uint16_t y_clamped = (y_offset > 65535U) ? 65535U : (uint16_t)y_offset;
+        uint16_t effective_font_size = (font_size > 0U) ? font_size : 12U;
 
-    k_mutex_lock(&s_pending_protobuf_text_lock, K_FOREVER);
-    /* De-dupe against pending and last committed to avoid needless wakeups. */
-    if (s_pending_protobuf_text_valid && strcmp(s_pending_protobuf_text_big, text_content) == 0)
-    {
-        s_pt_dedup_skip_count++;
-        LOG_INF("[PROTOBUF][DEDUP] Skip duplicate text against pending slot: %s", text_content);
-        k_mutex_unlock(&s_pending_protobuf_text_lock);
-        return;
-    }
-    if (s_last_committed_protobuf_text_valid && strcmp(s_last_committed_protobuf_text_big, text_content) == 0)
-    {
-        s_pt_dedup_skip_count++;
-        LOG_INF("[PROTOBUF][DEDUP] Skip duplicate text against last committed: %s", text_content);
-        k_mutex_unlock(&s_pending_protobuf_text_lock);
+        display_update_xy_text(x, y_clamped, text_content, effective_font_size, color);
         return;
     }
 
-    memcpy(s_pending_protobuf_text_big, text_content, text_len);
-    s_pending_protobuf_text_big[text_len] = '\0';
-    s_pending_protobuf_text_valid = true;
-    s_pending_protobuf_arrival_ms = k_uptime_get_32();
-    if (!s_pending_protobuf_text_notify_pending)
-    {
-        s_pending_protobuf_text_notify_pending = true;
-        should_notify = true;
-    }
-    k_mutex_unlock(&s_pending_protobuf_text_lock);
+    display_update_protobuf_text(text_content);
+}
 
-    if (should_notify)
-    {
-        display_cmd_t cmd = {
-            .type = LCD_CMD_UPDATE_PROTOBUF_TEXT,
-            .p = {.protobuf_text = {{0}}} /* Wake LVGL thread; payload text comes from pending slot / 唤醒 LVGL
-                                             线程，正文从 pending 槽读取 */
-        };
-
-        mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
-    }
+void display_submit_scrolling_text_payload(const char *text_content)
+{
+    display_update_protobuf_text(text_content);
 }
 
 /* Direct A6N pattern APIs, thread-safe.
@@ -1249,6 +1231,7 @@ static void restore_welcome_screen_state(void)
     ensure_pattern4_scene_ready();
 
     destroy_protobuf_scene();
+    display_scene_set_mode(DISPLAY_SCENE_MODE_WELCOME);
 
     if (welcome_container != NULL)
     {
@@ -1380,6 +1363,7 @@ static void create_scrolling_text_container(lv_obj_t *screen)
     LOG_INF("Welcome text set: '%.50s...' (truncated)", initial_text);
 
     welcome_screen_active = true;
+    display_scene_set_mode(DISPLAY_SCENE_MODE_WELCOME);
     welcome_screen_initializing = false;
 
     LOG_INF("Welcome screen initialized: label_ptr=%p, state=%d", (void *)label, welcome_screen_active);
@@ -1581,12 +1565,12 @@ static const int num_patterns = 6; /* 从 5 增至 6（新增 Pattern 5 XY 文�
 /* 获取当前图案 ID 供条件逻辑使用 / Get current pattern ID for conditional logic */
 int display_get_current_pattern(void)
 {
-    return current_pattern;
+    return display_scene_get_pattern();
 }
 
 bool display_is_welcome_screen_active(void)
 {
-    return welcome_screen_active;
+    return display_scene_is_welcome_active();
 }
 
 /* lv_obj_del 子控件后，文件内缓存的 lv_obj_t* 全部悬空；必须清零，否则 BLE/protobuf 与 DFU 路径会 UAF。 */
@@ -1626,6 +1610,7 @@ static void tear_down_screen_child_global_refs(void)
 
     welcome_screen_active = false;
     welcome_screen_initializing = false;
+    display_scene_set_mode(DISPLAY_SCENE_MODE_TEST);
 }
 
 static void ensure_pattern4_scene_ready(void)
@@ -1641,14 +1626,8 @@ static void ensure_pattern4_scene_ready(void)
 
 static void reset_display_text_caches(void)
 {
-    k_mutex_lock(&s_pending_protobuf_text_lock, K_FOREVER);
-    s_pending_protobuf_text_valid = false;
-    s_pending_protobuf_text_notify_pending = false;
-    s_pending_protobuf_arrival_ms = 0U;
-    s_last_committed_protobuf_text_valid = false;
-    s_pending_protobuf_text_big[0] = '\0';
-    s_last_committed_protobuf_text_big[0] = '\0';
-    k_mutex_unlock(&s_pending_protobuf_text_lock);
+    caption_state_reset();
+    s_caption_last_apply_ms = 0U;
 
     last_protobuf_text_valid = false;
     last_protobuf_text[0] = '\0';
@@ -1802,6 +1781,19 @@ static void show_test_pattern(int pattern_id)
     }
 
     current_pattern = pattern_id;
+    display_scene_set_pattern(pattern_id);
+    switch (pattern_id)
+    {
+        case 4:
+            display_scene_set_mode(DISPLAY_SCENE_MODE_WELCOME);
+            break;
+        case 5:
+            display_scene_set_mode(DISPLAY_SCENE_MODE_XY);
+            break;
+        default:
+            display_scene_set_mode(DISPLAY_SCENE_MODE_TEST);
+            break;
+    }
 }
 
 /** 仅标脏当前 pattern 下的根容器，用于软件视差等驱动参数变更后“刷新当前画面”而尽量不整屏刷 */
@@ -2349,116 +2341,50 @@ static lv_color_t color_from_rgb565(uint32_t color)
     return lv_color_make((uint8_t)((r * 255U) / 31U), (uint8_t)((g * 255U) / 63U), (uint8_t)((b * 255U) / 31U));
 }
 
-/* last_protobuf_text / last_protobuf_text_valid 见文件顶部 */
-
-static bool protobuf_text_take_latest(char *out_text, size_t out_size)
-{
-    bool has_text = false;
-
-    if (!out_text || out_size == 0U)
-    {
-        return false;
-    }
-
-    k_mutex_lock(&s_pending_protobuf_text_lock, K_FOREVER);
-    if (s_pending_protobuf_text_valid)
-    {
-        strncpy(out_text, s_pending_protobuf_text_big, out_size - 1U);
-        out_text[out_size - 1U] = '\0';
-        s_pending_protobuf_text_valid = false;
-        has_text = true;
-    }
-    s_pending_protobuf_text_notify_pending = false;
-    k_mutex_unlock(&s_pending_protobuf_text_lock);
-
-    return has_text;
-}
-static bool protobuf_text_peek_latest(char *out_text, size_t out_size, uint32_t *out_arrival_ms)
-{
-    bool has_text = false;
-
-    if (!out_text || out_size == 0U)
-    {
-        return false;
-    }
-
-    k_mutex_lock(&s_pending_protobuf_text_lock, K_FOREVER);
-    if (s_pending_protobuf_text_valid)
-    {
-        strncpy(out_text, s_pending_protobuf_text_big, out_size - 1U);
-        out_text[out_size - 1U] = '\0';
-        if (out_arrival_ms != NULL)
-        {
-            *out_arrival_ms = s_pending_protobuf_arrival_ms;
-        }
-        has_text = true;
-    }
-    k_mutex_unlock(&s_pending_protobuf_text_lock);
-
-    return has_text;
-}
-
-static bool protobuf_text_should_commit(const char *candidate_text)
-{
-    if (candidate_text == NULL)
-    {
-        return false;
-    }
-    if (!s_last_committed_protobuf_text_valid)
-    {
-        return true;
-    }
-    return (strcmp(candidate_text, s_last_committed_protobuf_text_big) != 0);
-}
-
+/* 尝试提交待显示的 Protobuf 文本，返回是否成功提交（已提交但未必已渲染）。如果因节流而未提交，则根据 schedule_retry_if_throttled 决定是否安排后续重试。 */
 static bool protobuf_text_try_commit_pending(char *latest_text, size_t latest_text_size,
                                              bool schedule_retry_if_throttled)
 {
     uint32_t pending_arrival_ms = 0U;
-    bool has_pending = protobuf_text_peek_latest(latest_text, latest_text_size, &pending_arrival_ms);
+    uint32_t pending_seq = 0U;
+    bool has_pending = caption_state_peek_latest(latest_text, latest_text_size, &pending_arrival_ms, &pending_seq);
     if (!has_pending)
     {
         return false;
     }
 
     uint32_t now_ms = k_uptime_get_32();
-    uint32_t elapsed_ms = now_ms - s_protobuf_last_apply_ms;
+    uint32_t elapsed_ms = now_ms - s_caption_last_apply_ms;
     uint32_t age_ms = now_ms - pending_arrival_ms;
-    bool throttle_ready = !s_protobuf_last_apply_ms || (elapsed_ms >= PROTOBUF_TEXT_THROTTLE_MS && age_ms >= PROTOBUF_TEXT_THROTTLE_MS);
+    bool throttle_ready = !s_caption_last_apply_ms
+                          || (elapsed_ms >= PROTOBUF_TEXT_THROTTLE_MS && age_ms >= PROTOBUF_TEXT_THROTTLE_MS);
 
     if (throttle_ready)
     {
-        if (protobuf_text_should_commit(latest_text) && protobuf_text_take_latest(latest_text, latest_text_size))
+        if (!caption_state_take_latest(latest_text, latest_text_size, &pending_seq))
         {
-            update_protobuf_text_content(latest_text);
-            s_pt_commit_count++;
-            strncpy(s_last_committed_protobuf_text_big, latest_text, PROTOBUF_TEXT_MAX_CHARS - 1U);
-            s_last_committed_protobuf_text_big[PROTOBUF_TEXT_MAX_CHARS - 1U] = '\0';
-            s_last_committed_protobuf_text_valid = true;
-            s_protobuf_last_apply_ms = k_uptime_get_32();
-            return true;
+            return false;
         }
 
-        s_pt_dedup_skip_count++;
-        return false;
+        if (last_protobuf_text_valid && strcmp(latest_text, last_protobuf_text) == 0)
+        {
+            s_pt_dedup_skip_count++;
+            return false;
+        }
+
+        update_protobuf_text_content(latest_text, pending_seq);
+        s_pt_commit_count++;
+        s_caption_last_apply_ms = k_uptime_get_32();
+        return true;
     }
 
     s_pt_throttle_skip_count++;
-    if (schedule_retry_if_throttled)
+    if ((now_ms - s_caption_render_last_skip_log_ms) >= 500U)
     {
-        /* No new wakeup may arrive; schedule a retry. */
-        display_cmd_t retry_cmd = {.type = LCD_CMD_UPDATE_PROTOBUF_TEXT};
-        int retry_ret = mos_msgq_send(&lvgl_display_msgq, &retry_cmd, 0);
-        if (retry_ret != 0)
-        {
-            /* If retry enqueue fails, let the next producer send a fresh wakeup instead of
-             * leaving the pending slot stuck behind notify_pending=true forever. */
-            k_mutex_lock(&s_pending_protobuf_text_lock, K_FOREVER);
-            s_pending_protobuf_text_notify_pending = false;
-            k_mutex_unlock(&s_pending_protobuf_text_lock);
-            LOG_WRN("[PROTOBUF][THROTTLE] Retry enqueue failed: %d, re-arming producer wakeup", retry_ret);
-        }
+        s_caption_render_last_skip_log_ms = now_ms;
+        LOG_INF("[RENDER][CAPTION] throttle seq=%u elapsed=%u age=%u", pending_seq, elapsed_ms, age_ms);
     }
+    ARG_UNUSED(schedule_retry_if_throttled);
     return false;
 }
 
@@ -2485,6 +2411,31 @@ static void protobuf_text_log_throttle_stats_if_due(void)
     s_pt_commit_count = 0U;
     s_pt_throttle_skip_count = 0U;
     s_pt_dedup_skip_count = 0U;
+}
+
+static bool protobuf_text_service_pending(void)
+{
+    static char latest_text[PROTOBUF_TEXT_MAX_CHARS];
+    bool committed;
+    uint32_t now_ms = k_uptime_get_32();
+    uint32_t pending_arrival_ms = 0U;
+    uint32_t pending_seq = 0U;
+
+    if (!display_scene_allows_caption_render())
+    {
+        if (caption_state_peek_latest(latest_text, sizeof(latest_text), &pending_arrival_ms, &pending_seq)
+            && ((now_ms - s_caption_render_last_skip_log_ms) >= 1000U))
+        {
+            s_caption_render_last_skip_log_ms = now_ms;
+            LOG_INF("[RENDER][CAPTION] blocked seq=%u scene=%d pattern=%d", pending_seq,
+                    (int)display_scene_get_mode(), display_scene_get_pattern());
+        }
+        return false;
+    }
+
+    committed = protobuf_text_try_commit_pending(latest_text, sizeof(latest_text), false);
+    protobuf_text_log_throttle_stats_if_due();
+    return committed;
 }
 
 static lv_obj_t *protobuf_gbk_acquire_label(lv_obj_t *parent, size_t index)
@@ -2528,31 +2479,25 @@ static void protobuf_scroll_ascii_label_bottom_visible(void)
     {
         target = 0;
     }
-
-    const lv_coord_t scroll_max = lv_obj_get_scroll_bottom(protobuf_container);
-    if (target > scroll_max)
-    {
-        target = scroll_max;
-    }
-
     lv_obj_scroll_to_y(protobuf_container, target, LV_ANIM_OFF);
 }
 
 /* 在自动滚动容器中更新 protobuf 文本内容 / Update protobuf text content in the auto-scroll container */
-static void update_protobuf_text_content(const char *text_content)
+static void update_protobuf_text_content(const char *text_content, uint32_t committed_seq)
 {
+    char render_text[PROTOBUF_TEXT_MAX_CHARS] = {0};
+
     if (!text_content)
     {
         LOG_ERR("Invalid text content pointer");
         return;
     }
 
-    uint32_t t_update_begin = k_uptime_get_32();
+    protobuf_text_prepare_for_render(text_content, render_text, sizeof(render_text));
 
     /* 内容与上次完全一致则跳过 */
-    if (last_protobuf_text_valid && strcmp(text_content, last_protobuf_text) == 0)
+    if (last_protobuf_text_valid && strcmp(render_text, last_protobuf_text) == 0)
     {
-        LOG_INF("[PROTOBUF][DEDUP] Skip duplicate text in label path (last_protobuf_text): %s", text_content);
         return;
     }
 
@@ -2565,6 +2510,7 @@ static void update_protobuf_text_content(const char *text_content)
     }
 
     welcome_screen_active = false;
+    display_scene_set_mode(DISPLAY_SCENE_MODE_CAPTION);
     if (welcome_container != NULL)
     {
         lv_obj_add_flag(welcome_container, LV_OBJ_FLAG_HIDDEN);
@@ -2575,9 +2521,8 @@ static void update_protobuf_text_content(const char *text_content)
 
     hide_and_clear_protobuf_xy_overlay();
 
-    bool ascii_only = utf8_is_ascii_only(text_content);
-    bool has_cjk = utf8_contains_cjk(text_content);
-    bool has_non_ascii = !ascii_only;
+    bool ascii_only = utf8_is_ascii_only(render_text);
+    bool has_cjk = utf8_contains_cjk(render_text);
 
 #if defined(CONFIG_LVGL)
     /* 临时屏蔽双语/中文逐字渲染：业务仅使用英文显示 */
@@ -2647,7 +2592,7 @@ static void update_protobuf_text_content(const char *text_content)
         {
             uint32_t probe_code = 0;
             lv_font_glyph_dsc_t probe_dsc;
-            if (utf8_first_non_ascii_codepoint(text_content, &probe_code)
+            if (utf8_first_non_ascii_codepoint(render_text, &probe_code)
                 && !lv_font_get_glyph_dsc(gbk_font, &probe_dsc, probe_code, 0))
             {
 #if defined(CONFIG_LV_FONT_SIMSUN_16_CJK)
@@ -2687,7 +2632,7 @@ static void update_protobuf_text_content(const char *text_content)
             lv_obj_align(protobuf_gbk_container, LV_ALIGN_TOP_LEFT, 0, PROTOBUF_BLE_LABEL_YOFF);
             /* Use per-character GBK rendering for UTF-8 CJK text in protobuf path. */
             render_gbk_per_char(protobuf_gbk_container, 0, 0, lv_obj_get_content_width(protobuf_gbk_container),
-                                text_content, gbk_font, font_primary, display_get_text_color(), NULL, NULL, NULL);
+                                render_text, gbk_font, font_primary, display_get_text_color(), NULL, NULL, NULL);
 
             lv_obj_clear_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(protobuf_label, LV_OBJ_FLAG_HIDDEN);
@@ -2695,11 +2640,13 @@ static void update_protobuf_text_content(const char *text_content)
             lv_obj_update_layout(protobuf_gbk_container);
             lv_obj_scroll_to_y(protobuf_gbk_container, lv_obj_get_scroll_bottom(protobuf_gbk_container), LV_ANIM_OFF);
 
-            strncpy(last_protobuf_text, text_content, MAX_TEXT_LEN);
-            last_protobuf_text[MAX_TEXT_LEN] = '\0';
+            strncpy(last_protobuf_text, render_text, sizeof(last_protobuf_text) - 1U);
+            last_protobuf_text[sizeof(last_protobuf_text) - 1U] = '\0';
             last_protobuf_text_valid = true;
-            LOG_INF("[LAT][UI] update_protobuf_text_content (CJK) cost=%u ms",
-                    (unsigned int)(k_uptime_get_32() - t_update_begin));
+            LOG_INF("[RENDER][CAPTION] commit seq=%u raw_len=%u render_len=%u scene=%d pattern=%d hidden=%d",
+                    committed_seq, (unsigned int)strlen(text_content), (unsigned int)strlen(render_text),
+                    (int)display_scene_get_mode(), display_scene_get_pattern(),
+                    (int)lv_obj_has_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN));
             return;
         }
     }
@@ -2745,7 +2692,7 @@ static void update_protobuf_text_content(const char *text_content)
         lv_obj_set_style_text_font(protobuf_label, &lv_font_simsun_16_cjk, 0);
     }
 #endif
-    lv_label_set_text(protobuf_label, text_content);
+    lv_label_set_text(protobuf_label, render_text);
 
     /* 与欢迎屏一致：容器内容区顶左 + y；字号/行距由 apply_font 写入 style */
     lv_obj_align(protobuf_label, LV_ALIGN_TOP_LEFT, 0, PROTOBUF_BLE_LABEL_YOFF);
@@ -2762,11 +2709,12 @@ static void update_protobuf_text_content(const char *text_content)
     }
     lvgl_force_one_refresh = true;
 
-    strncpy(last_protobuf_text, text_content, MAX_TEXT_LEN);
-    last_protobuf_text[MAX_TEXT_LEN] = '\0';
+    strncpy(last_protobuf_text, render_text, sizeof(last_protobuf_text) - 1U);
+    last_protobuf_text[sizeof(last_protobuf_text) - 1U] = '\0';
     last_protobuf_text_valid = true;
-    LOG_INF("[LAT][UI] update_protobuf_text_content (label) cost=%u ms",
-            (unsigned int)(k_uptime_get_32() - t_update_begin));
+    LOG_INF("[RENDER][CAPTION] commit seq=%u raw_len=%u render_len=%u scene=%d pattern=%d hidden=%d", committed_seq,
+            (unsigned int)strlen(text_content), (unsigned int)strlen(render_text), (int)display_scene_get_mode(),
+            display_scene_get_pattern(), (int)lv_obj_has_flag(protobuf_label, LV_OBJ_FLAG_HIDDEN));
 }
 
 /* 用当前电量重建欢迎标签文案（60s 刷新）；仅由 LVGL 线程调用 / Rebuild welcome label text with current battery (60s
@@ -2776,6 +2724,10 @@ static void update_welcome_label_with_battery(void)
     /* 仅当欢迎屏激活时刷新；不覆盖 BLE/其它内容 / Only refresh when welcome screen is active; do not overwrite
      * BLE/other content */
     if (!welcome_screen_active)
+    {
+        return;
+    }
+    if (!display_scene_is_welcome_active())
     {
         return;
     }
@@ -2864,6 +2816,7 @@ static void update_xy_positioned_text(uint16_t x, uint16_t y, const char *text_c
     /* 标记不再显示欢迎界面，防止定时器覆盖测试内容 / Mark as non-welcome screen to prevent timer from overwriting test
      * content */
     welcome_screen_active = false;
+    display_scene_set_mode(DISPLAY_SCENE_MODE_XY);
 
     lv_obj_t *target_container = NULL;
 
@@ -3061,6 +3014,7 @@ static void show_gbk_chars_test(void)
 
     /* Disable welcome screen updates to avoid overwriting the test label */
     welcome_screen_active = false;
+    display_scene_set_mode(DISPLAY_SCENE_MODE_TEST);
     k_work_cancel_delayable(&welcome_battery_work);
 
     if (scrolling_welcome_label != NULL)
@@ -3173,6 +3127,7 @@ static void show_gbk_test_text(void)
 
     /* Disable welcome screen updates to avoid overwriting the test label */
     welcome_screen_active = false;
+    display_scene_set_mode(DISPLAY_SCENE_MODE_TEST);
     k_work_cancel_delayable(&welcome_battery_work);
 
     if (scrolling_welcome_label != NULL)
@@ -3266,6 +3221,8 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
     /* 注册字体切换回调 / Register font change callback */
     mos_font_register_change_callback(on_font_changed);
 #endif
+    display_scene_reset();
+    caption_state_reset();
 
     const display_config_t *config = display_get_config();
     LOG_INF("🖼️ Display configuration loaded: %s (%dx%d)", config->name, config->width, config->height);
@@ -3387,28 +3344,8 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     break;
                 case LCD_CMD_UPDATE_PROTOBUF_TEXT:
                 {
-                    static char latest_text[PROTOBUF_TEXT_MAX_CHARS];
-                    /* 队列中的 UPDATE_PROTOBUF_TEXT 只作为唤醒事件，正文统一从 pending 槽取最新值。
-                     * The UPDATE_PROTOBUF_TEXT in the queue is only used as a wake-up event, the actual content is always taken from the pending slot*/
-                    display_cmd_t next;
-                    while (mos_msgq_receive(&lvgl_display_msgq, &next, 0) == 0)
-                    {
-                        if (next.type == LCD_CMD_UPDATE_PROTOBUF_TEXT)
-                        {
-                            continue;
-                        }
-                        else
-                        {
-                            /* A non-protobuf command interrupted the wakeup path. If we're still
-                             * inside the throttle window, keep a retry armed so pending text does
-                             * not get stranded with notify_pending=true and no future wakeup. */
-                            protobuf_text_try_commit_pending(latest_text, sizeof(latest_text), true);
-                            cmd = next;
-                            protobuf_text_log_throttle_stats_if_due();
-                            goto reenter_switch;
-                        }
-                    }
-                    protobuf_text_try_commit_pending(latest_text, sizeof(latest_text), true);
+                    /* Compatibility wake-up: real caption servicing now happens in the main LVGL loop. */
+                    protobuf_text_service_pending();
                     protobuf_text_log_throttle_stats_if_due();
                     break;
                 }
@@ -3435,6 +3372,7 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                 case LCD_CMD_SHOW_WELCOME_SCREEN:
                     /* 蓝牙断开后重新进入欢迎界面：隐藏 BLE 文案区，显示欢迎标签并刷新电量 */
                     welcome_screen_active = true;
+                    display_scene_set_mode(DISPLAY_SCENE_MODE_WELCOME);
                     reset_display_text_caches();
                     restore_welcome_screen_state();
                     update_welcome_label_with_battery();
@@ -3550,6 +3488,13 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
             }
             if (state_type == LCD_STATE_ON)
                 need_refresh = true;
+        }
+        if (state_type == LCD_STATE_ON)
+        {
+            if (protobuf_text_service_pending())
+            {
+                need_refresh = true;
+            }
         }
         // 如果需要刷新，则调用 lv_timer_handler 刷新，判断条件为：屏幕开启且需要刷新，或者强制刷新
         // Refresh if needed: screen is on and either refresh is due or forced

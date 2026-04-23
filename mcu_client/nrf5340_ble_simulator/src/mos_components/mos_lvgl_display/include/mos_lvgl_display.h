@@ -152,6 +152,14 @@ void display_update_height(uint16_t height);
 // **NEW: Thread-safe protobuf text update function**
 void display_update_protobuf_text(const char *text_content);
 
+/* Route a text payload to the active display scene.
+ * In caption/welcome scene it updates the scrolling caption state.
+ * In XY scene it renders positioned text. */
+void display_submit_text_payload(uint16_t x, uint16_t y, const char *text_content, uint16_t font_size, uint32_t color);
+
+/* Route scrolling text payload to the caption scene. */
+void display_submit_scrolling_text_payload(const char *text_content);
+
 // **NEW: Direct A6N pattern functions**
 void display_draw_horizontal_grayscale(void);
 void display_draw_vertical_grayscale(void);

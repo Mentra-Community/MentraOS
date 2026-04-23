@@ -766,26 +766,7 @@ void protobuf_process_display_text(const mentraos_ble_DisplayText *display_text)
     LOG_INF("[PROTOBUF] DisplayText len=%zu pos=(%u,%u) color=0x%04X font=%u size=%u", text_length, display_text->x,
             display_text->y, color_rgb565, display_text->font_code, display_text->size);
 
-    // *** LVGL INTEGRATION: Display text based on current pattern ***
-    // **NEW: Check current pattern to determine display mode**
-    int current_pattern = display_get_current_pattern();
-
-    if (current_pattern == 5)
-    {
-        // Pattern 5: XY Text Positioning - use coordinates and font size from protobuf
-        // BLE text offset: move down 100px from phone-sent position
-        uint32_t y_offset = (uint32_t)display_text->y + 80U;
-        uint16_t y_clamped = (y_offset > 65535U) ? 65535 : (uint16_t)y_offset;
-        uint16_t font_size = (display_text->size > 0) ? display_text->size : 12;  // Default to 12pt
-        display_update_xy_text(display_text->x, y_clamped, display_text->text, font_size, color_rgb565);
-        /* LOG_INF("LVGL XY positioned text at (%u,%u) font=%u", display_text->x, y_clamped, font_size); */
-    }
-    else
-    {
-        // Pattern 4 or others: Auto-scroll container (backward compatibility)
-        display_update_protobuf_text(display_text->text);
-        /* LOG_INF("LVGL protobuf text updated in auto-scroll container (Pattern %d)", current_pattern); */
-    }
+    display_submit_text_payload(display_text->x, display_text->y, display_text->text, display_text->size, color_rgb565);
 }
 
 void protobuf_process_display_scrolling_text(const mentraos_ble_DisplayScrollingText *scrolling_text)
@@ -819,9 +800,7 @@ void protobuf_process_display_scrolling_text(const mentraos_ble_DisplayScrolling
             scrolling_text->width, scrolling_text->height, scrolling_text->x, scrolling_text->y, scrolling_text->speed,
             alignment_name, scrolling_text->loop ? "Y" : "N");
 
-    // *** LVGL INTEGRATION: Display scrolling text in protobuf container ***
-    // **NEW: Both DisplayText and DisplayScrollingText update the same auto-scroll container**
-    display_update_protobuf_text(scrolling_text->text);
+    display_submit_scrolling_text_payload(scrolling_text->text);
     /* LOG_INF("LVGL protobuf scrolling text updated in auto-scroll container"); */
 }
 
