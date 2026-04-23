@@ -6,7 +6,7 @@
 
 import { Hono } from "hono";
 import { logger as rootLogger } from "../../../services/logging/pino-logger";
-import { CLIENT_VERSIONS } from "../../../version";
+import { CLIENT_VERSIONS, CHINESE_CLIENT_VERSIONS } from "../../../version";
 import type { AppEnv, AppContext } from "../../../types/hono";
 
 const logger = rootLogger.child({ service: "min-version.api" });
@@ -32,16 +32,18 @@ app.get("/", getClientMinVersions);
  */
 async function getClientMinVersions(c: AppContext) {
   try {
+    const isChina = process.env.DEPLOYMENT_REGION === "china";
+    const versions = isChina ? CHINESE_CLIENT_VERSIONS : CLIENT_VERSIONS;
     const body = {
       success: true,
-      data: CLIENT_VERSIONS,
+      data: versions,
       timestamp: new Date(),
     };
 
     // Return response with no-cache headers to prevent 304 responses
     return c.json(body, 200, {
       "Cache-Control": "no-store, no-cache, must-revalidate",
-      Pragma: "no-cache",
+      "Pragma": "no-cache",
     });
   } catch (error) {
     logger.error(error, "Error getting client minimum versions");
