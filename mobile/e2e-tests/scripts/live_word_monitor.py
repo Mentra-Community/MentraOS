@@ -1404,7 +1404,6 @@ class MonitorWorker:
         for device_id in self.state.device_ids:
             device_state = self.state.get_device(device_id)
             device_state.current_utterance = clone_utterance(base_utterance)
-            device_state.drop_open = None
             payload = {
                 "dataset_row_idx": base_utterance.dataset_row_idx,
                 "text": base_utterance.text,
@@ -1468,8 +1467,42 @@ class MonitorWorker:
         self.state.append_event("utterance_completed", summary, device_id=device_id)
         write_ndjson(device_state.output_dir / "utterance_reports.ndjson", {"device_id": device_id, "summary": summary, "utterance": self.state.serialize_utterance(utterance)})
         device_state.current_utterance = None
-        device_state.drop_open = None
-        device_state.active_drop_incident_id = None
+
+    def reconcile_drop_incidents(self, device_id: str, device_state: MonitorDeviceState, now_ms: int) -> None:
+        drop_incidents = [
+            incident
+            for incident in device_state.ongoing_incidents.values()
+            if incident.get("incident_type") == "drop_event"
+        ]
+        if not drop_incidents:
+            device_state.active_drop_incident_id = None
+            return
+
+        drop_incidents.sort(key=self.state.incident_primary_sort_key)
+        canonical_incident = drop_incidents[0]
+        canonical_incident_id = str(canonical_incident["incident_id"])
+
+        if len(drop_incidents) > 1:
+            for duplicate_incident in drop_incidents[1:]:
+                duplicate_incident_id = str(duplicate_incident["incident_id"])
+                if duplicate_incident_id == canonical_incident_id:
+                    continue
+                self.state.end_incident(
+                    device_id,
+                    duplicate_incident_id,
+                    now_ms,
+                    {
+                        "reason": "duplicate_drop_incident_collapsed",
+                        "merged_into_incident_id": canonical_incident_id,
+                    },
+                )
+
+        device_state.active_drop_incident_id = canonical_incident_id
+        if device_state.drop_open is None:
+            device_state.drop_open = {
+                "dataset_row_idx": canonical_incident.get("dataset_row_idx"),
+                "started_at_ms": int(canonical_incident.get("started_at_ms") or now_ms),
+            }
 
     def finalize_all_utterances(self, now_ms: int) -> None:
         for device_id in self.state.device_ids:
@@ -1486,6 +1519,8 @@ class MonitorWorker:
         if not drop_rule.get("enabled", True):
             self.end_active_drop_incident(device_id, device_state, now_ms, "incident_disabled")
             return
+
+        self.reconcile_drop_incidents(device_id, device_state, now_ms)
 
         signature = "|".join(normalized_lines)
         if device_state.drop_last_change_ts_ms is None:
@@ -1678,10 +1713,15 @@ class MonitorWorker:
                 capture_output=True,
                 text=True,
             )
+            fallback_focus: str | None = None
             for line in focus_result.stdout.splitlines():
                 if "mCurrentFocus=" in line:
-                    focused_app = line.strip()
-                    break
+                    candidate_focus = line.strip()
+                    fallback_focus = candidate_focus
+                    if "null" not in candidate_focus:
+                        focused_app = candidate_focus
+            if focused_app is None:
+                focused_app = fallback_focus
             is_app_foreground = bool(focused_app and "com.mentra.mentra" in focused_app and "MainActivity" in focused_app)
         except Exception as exc:
             probe_error = str(exc)

@@ -106,7 +106,13 @@ export function LatencyTab({snapshot}: {snapshot: MonitorSnapshot}) {
                   formatter={(value: number) => formatDelay(value)}
                   labelFormatter={(value: number) => formatClock(value)}
                 />
-                <Scatter isAnimationActive={false} name="Raw delay" dataKey="delay_ms" fill="#79c7ff" />
+                <Scatter
+                  isAnimationActive={false}
+                  name="Raw delay"
+                  dataKey="delay_ms"
+                  fill="#79c7ff"
+                  shape={{type: "circle", size: 4, sizeType: "diameter"}}
+                />
                 <Line
                   isAnimationActive={false}
                   type="monotone"

@@ -301,6 +301,7 @@ a:hover {
   font-size: clamp(1.3rem, 1.7vw, 2rem);
   font-weight: 700;
   line-height: 1.1;
+  min-width: 0;
 }
 
 .metric-detail {
@@ -352,6 +353,15 @@ a:hover {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+.metric-value .status-badge {
+  font-size: 0.74rem;
+  line-height: 1.25;
 }
 
 .status-good {

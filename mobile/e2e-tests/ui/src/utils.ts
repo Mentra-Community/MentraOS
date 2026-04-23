@@ -39,7 +39,7 @@ export function formatAge(ms?: number | null): string {
   if (!ms) {
     return "-"
   }
-  return `${((Date.now() - ms) / 1000).toFixed(1)}s ago`
+  return `${(Math.max(0, Date.now() - ms) / 1000).toFixed(1)}s ago`
 }
 
 export function trimmedMean(values: number[], trimFraction = 0.1): number | null {

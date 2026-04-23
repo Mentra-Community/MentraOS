@@ -372,17 +372,26 @@ export default function App() {
     }
   }, [activeTab, selectedDevice, viewMode])
 
+  const effectiveViewMode: ViewMode =
+    snapshot && snapshot.devices.length > 1 && viewMode === "compare" ? "compare" : "single"
+
   const headline = useMemo(() => {
     if (!snapshot) {
       return "Loading monitor dashboard"
     }
-    return snapshot.ongoing_incidents.length
-      ? `${snapshot.ongoing_incidents.length} active incident${snapshot.ongoing_incidents.length === 1 ? "" : "s"}`
-      : "No active incidents"
-  }, [snapshot])
 
-  const effectiveViewMode: ViewMode =
-    snapshot && snapshot.devices.length > 1 && viewMode === "compare" ? "compare" : "single"
+    const activeIncidentCount =
+      effectiveViewMode === "compare"
+        ? snapshot.devices.reduce((total, device) => {
+            const compareSnapshot = compareSnapshots[device.device_id]
+            return total + (compareSnapshot?.ongoing_incidents.length ?? device.ongoing_incident_count)
+          }, 0)
+        : snapshot.ongoing_incidents.length
+
+    return activeIncidentCount
+      ? `${activeIncidentCount} active incident${activeIncidentCount === 1 ? "" : "s"}`
+      : "No active incidents"
+  }, [compareSnapshots, effectiveViewMode, snapshot])
 
   return (
     <div className={`app-shell${effectiveViewMode === "compare" ? " compare-mode" : ""}`}>
