@@ -415,6 +415,15 @@ That helper will:
 - fast-forward pull the current local branch
 - rebuild `mobile/e2e-tests/ui`
 - restart `live_word_monitor.py` with the known-good Homebrew Python runtime
+- auto-detect attached Android phones on the Mac mini and pass them as repeated `--device` flags
+
+If you want to target specific phones explicitly, you can also pass repeatable device flags:
+
+```sh
+./mobile/e2e-tests/scripts/redeploy_mentra_mini.sh \
+  --device Q92024100001877 \
+  --device RFCX71TH0CR
+```
 
 #### Terminal 1
 
