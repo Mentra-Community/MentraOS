@@ -304,6 +304,32 @@ def sanitize_device_id(device_id: str) -> str:
     return normalized or "device"
 
 
+def get_device_display_name(device_id: str) -> str:
+    if device_id == "default":
+        return "Default Device"
+    try:
+        manufacturer_result = subprocess.run(
+            ["adb", "-s", device_id, "shell", "getprop", "ro.product.manufacturer"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        model_result = subprocess.run(
+            ["adb", "-s", device_id, "shell", "getprop", "ro.product.model"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        manufacturer = manufacturer_result.stdout.strip()
+        model = model_result.stdout.strip()
+        label_parts = [part for part in [manufacturer.title() if manufacturer else None, model or None] if part]
+        if label_parts:
+            return " ".join(label_parts)
+    except Exception:
+        pass
+    return device_id
+
+
 class DatasetCursor:
     def __init__(self, dataset: str, config: str, split: str, page_size: int, cached_rows: dict[int, dict[str, Any]] | None = None) -> None:
         self.dataset = dataset
@@ -603,7 +629,7 @@ class MonitorState:
             self.devices[device_id] = MonitorDeviceState(
                 device_id=device_id,
                 output_dir=device_output_dir,
-                display_name="Default Device" if device_id == "default" else device_id,
+                display_name=get_device_display_name(device_id),
                 completed_utterances=completed_utterances,
                 word_delay_points=word_delay_points,
                 rn_word_delay_points=rn_word_delay_points,
@@ -630,7 +656,7 @@ class MonitorState:
             summaries.append(
                 {
                     "device_id": device_state.device_id,
-                    "label": device_state.display_name,
+                    "label": f"{device_state.display_name} ({device_state.device_id})",
                     "ongoing_incident_count": len(device_state.ongoing_incidents),
                     "last_logcat_event_ts_ms": device_state.last_logcat_event_ts_ms,
                     "primary_incident_id": self.current_primary_incident_id(device_id),
