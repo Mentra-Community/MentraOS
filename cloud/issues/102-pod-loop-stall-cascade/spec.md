@@ -18,7 +18,7 @@
 
 ## The Problem in 30 Seconds
 
-us-central crashes 4-6 times per day. The most recent crash (2026-04-23 23:34 UTC, restart #5) had:
+us-central is crashing daily. The most recent crash (2026-04-23 23:34 UTC, restart #5) had:
 
 - An 80.7s `event-loop-gap` log (timer expected at 1s, fired 80.7s late)
 - Almost all op_total during that window in `op_audioProcessing_ms`
@@ -336,4 +336,4 @@ Each answered question narrows Phase 2's scope. After one crash cycle, we should
 | Visibility into pod-level UDP load      | Only periodic 100-packet stats                    | Per-vitals-window deltas (received, dropped, decrypted, fail) + active sessions |
 | Visibility into natural GC              | 0 (only forced)                                   | Either real `natural-gc` logs OR explicit `natural-gc-unsupported` startup log  |
 | K8s liveness threshold                  | 75s blockage                                      | ~300s blockage (only after S8 applied)                                          |
-| Crashes per day on us-central           | 4-6                                               | Should decrease (S8 band-aid only); root cause still pending Phase 2            |
+| Crash frequency on us-central           | Daily                                             | Should decrease (S8 band-aid only); root cause still pending Phase 2            |

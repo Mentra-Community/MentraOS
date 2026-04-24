@@ -2,7 +2,7 @@
 
 ## Overview
 
-**What this doc covers:** Investigation of recurring SIGKILL crashes on the us-central cloud pod. The pod crashes 4-6 times per day with exit code 137. Direct gap-detector evidence shows 40-80 second event-loop blockages preceding each kill. Cumulative `op_audioProcessing_ms` accounts for ~99% of the blocked sync time, but **we have not yet proven what initiates the stall**, and three different mechanisms are equally compatible with the data.
+**What this doc covers:** Investigation of recurring SIGKILL crashes on the us-central cloud pod. The pod is crashing daily with exit code 137. Direct gap-detector evidence shows 40-80 second event-loop blockages preceding each kill. Cumulative `op_audioProcessing_ms` accounts for ~99% of the blocked sync time, but **we have not yet proven what initiates the stall**, and three different mechanisms are equally compatible with the data.
 
 **Why this doc exists:** Multiple prior investigations (BetterStack AI SRE, internal triage) reached confident-but-wrong conclusions: "MongoDB query slowness," "readiness probe timeout from Mongo saturation," "reconnect storm trigger." All three were falsified by direct examination of source + telemetry. This spike captures what we actually know, what we falsified, and why the next step must be instrumentation rather than speculative fix.
 
@@ -27,7 +27,7 @@ Multi-pod requires Redis (or equivalent) for cross-pod session lookup, a UDP rou
 
 ## The Pattern in 30 Seconds
 
-us-central pod crashes 4-6 times per day:
+us-central pod crashes daily:
 
 - Exit code 137 (SIGKILL)
 - Container Reason: "Error" (not OOMKilled)
@@ -173,7 +173,7 @@ Multi-pod is the eventual fix and is covered by the separate cloud scaling plan.
 
 Multi-pod is blocked today by the single-pod assumptions catalogued earlier in this spike (in-memory `UserSession` map, UDP server binding, photo-response routing, no shared session store). The scaling plan addresses these via Redis-backed session registry, a UDP routing layer, and sticky LB. That work is multi-week.
 
-**This issue exists because we cannot wait for multi-pod to stop the crashes.** us-central is crashing 4-6 times per day right now. Single-pod stabilization needs to land first; multi-pod lands after.
+**This issue exists because we cannot wait for multi-pod to stop the crashes.** us-central is crashing daily right now. Single-pod stabilization needs to land first; multi-pod lands after.
 
 Vertical scaling (more CPU/memory for us-central) is a separate option that doesn't conflict with this work. It buys headroom but doesn't address the cascade mechanism. Worth doing in parallel as a defensive measure, but not a substitute for fixing the cascade itself.
 
