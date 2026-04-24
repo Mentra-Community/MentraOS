@@ -208,6 +208,24 @@ Explicitly out of scope for this PR:
 
 Adding any of these without the data could mask the real cause and make Phase 2 diagnosis harder.
 
+### S10. Heap snapshot admin API (bundled infrastructure change)
+
+**File:** `cloud/packages/cloud/src/api/hono/routes/admin.routes.ts`
+
+Not strictly observability for the cascade — but bundled into this PR because it enables on-demand heap captures for the [103 non-session heap growth](../103-non-session-heap-growth/) investigation the existing instrumentation can't answer on its own.
+
+**Before:** `POST /api/admin/memory/heap-snapshot` used a `node:inspector` Session + HeapProfiler addHeapSnapshotChunk streaming dance to produce Chrome-compatible `.heapsnapshot` files. ~35 lines of boilerplate per request.
+
+**After:**
+
+- `POST /api/admin/memory/heap-snapshot` — same contract, implementation is now one line via `v8.writeHeapSnapshot(filePath)`.
+- `GET /api/admin/memory/heap-snapshot-v8` — **new**. Streams the snapshot directly to the caller as an `attachment; filename="heap-<ts>.heapsnapshot"` download, so operators can pull a snapshot without shelling into the pod to retrieve the temp file.
+- `GET /api/admin/memory/heap-snapshot-bun` — unchanged. Kept for local scripts / Safari-style tooling that want the Bun JSC-format output.
+
+**Self-DoS guard** (added after CodeRabbit 🟠 Major review): both V8-path handlers share a module-level `heapSnapshotInFlight` flag. Concurrent requests return 429 instead of stacking two 2×-heap allocations on top of an already stressed pod. Both handlers carry an explicit WARNING JSDoc instructing operators not to invoke during an active degradation window — `v8.getHeapSnapshot()` and `v8.writeHeapSnapshot()` are synchronous and block the event loop for the full snapshot generation (which is exactly what this PR is investigating). The flag covers the expensive blocking generation phase; post-generation streaming is cheap and concurrent downloads of already-generated snapshot data are fine.
+
+**Why bundle into this PR:** the heap-snapshot endpoint was being used during the same investigation that produced this PR; keeping them separate created review churn without a corresponding benefit.
+
 ---
 
 ## Non-Goals
