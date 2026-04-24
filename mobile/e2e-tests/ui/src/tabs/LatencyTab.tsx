@@ -99,7 +99,7 @@ export function LatencyTab({snapshot}: {snapshot: MonitorSnapshot}) {
           <div className="chart-shell">
             <ResponsiveContainer width="100%" height={380}>
               <ComposedChart data={latencySeries} margin={{top: 16, right: 16, left: 0, bottom: 16}}>
-                <CartesianGrid stroke="rgba(140, 158, 189, 0.16)" vertical={false} />
+                <CartesianGrid stroke="#e4e7ec" vertical={false} />
                 <XAxis
                   dataKey="ts_ms"
                   type="number"
@@ -108,16 +108,16 @@ export function LatencyTab({snapshot}: {snapshot: MonitorSnapshot}) {
                   ticks={ticks}
                   tickFormatter={(value: number) => formatTimeTick(value, windowMs)}
                   minTickGap={36}
-                  stroke="#7f90b2"
+                  stroke="#667085"
                 />
                 <YAxis
                   tickFormatter={(value: number) => `${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)}s`}
-                  stroke="#7f90b2"
+                  stroke="#667085"
                   width={72}
                 />
                 <Tooltip
-                  cursor={{stroke: "#33415f"}}
-                  contentStyle={{background: "#101828", border: "1px solid #27324a", borderRadius: 12}}
+                  cursor={{stroke: "#98a2b3"}}
+                  contentStyle={{background: "#ffffff", border: "1px solid #d8dee9", borderRadius: 8}}
                   formatter={(value: number) => formatDelay(value)}
                   labelFormatter={(value: number) => formatClock(value)}
                 />
@@ -125,7 +125,7 @@ export function LatencyTab({snapshot}: {snapshot: MonitorSnapshot}) {
                   isAnimationActive={false}
                   name="Raw delay"
                   dataKey="delay_ms"
-                  fill="#79c7ff"
+                  fill="#2563eb"
                   shape={{type: "circle", size: 4, sizeType: "diameter"}}
                 />
                 <Line
@@ -133,8 +133,8 @@ export function LatencyTab({snapshot}: {snapshot: MonitorSnapshot}) {
                   type="monotone"
                   name="Trimmed avg"
                   dataKey="moving_average"
-                  stroke="#ffaf45"
-                  strokeWidth={3}
+                  stroke="#b54708"
+                  strokeWidth={2}
                   dot={false}
                   connectNulls={false}
                 />

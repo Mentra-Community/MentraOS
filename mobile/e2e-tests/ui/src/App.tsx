@@ -398,16 +398,15 @@ export default function App() {
     <div className={`app-shell${effectiveViewMode === "compare" ? " compare-mode" : ""}`}>
       <div className="hero">
         <div className="hero-copy">
-          <div className="eyebrow">MentraOS Captions Monitor</div>
-          <h1>Captions incident review dashboard.</h1>
-          <p>
-            Monitor caption health, incident state, alerts, latency, and recent debug signals during live or archived
-            test runs.
-          </p>
+          <div className="eyebrow">MentraOS</div>
+          <h1>Captions Monitor</h1>
+          <p>Live e2e caption health across devices and backend targets.</p>
         </div>
         <div className="hero-status">
-          <div className="hero-pill">{snapshot ? <StatusBadge status={snapshot.status} /> : "Loading…"}</div>
-          <strong>{headline}</strong>
+          <div className="hero-status-main">
+            <div className="hero-pill">{snapshot ? <StatusBadge status={snapshot.status} /> : "Loading..."}</div>
+            <strong>{headline}</strong>
+          </div>
           {snapshot?.devices.length ? (
             <span>
               {effectiveViewMode === "compare" ? (
@@ -458,12 +457,14 @@ export default function App() {
             <div className="dashboard-toolbar">
               <div className="view-mode-toggle" role="group" aria-label="Dashboard view mode">
                 <button
+                  aria-pressed={effectiveViewMode === "single"}
                   className={`view-mode-trigger${effectiveViewMode === "single" ? " active" : ""}`}
                   onClick={() => setViewMode("single")}
                   type="button">
                   Single
                 </button>
                 <button
+                  aria-pressed={effectiveViewMode === "compare"}
                   className={`view-mode-trigger${effectiveViewMode === "compare" ? " active" : ""}`}
                   onClick={() => setViewMode("compare")}
                   type="button">
@@ -475,6 +476,7 @@ export default function App() {
                   {snapshot.devices.map((device) => (
                     <button
                       key={device.device_id}
+                      aria-pressed={snapshot.selected_device_id === device.device_id}
                       className={`device-trigger${snapshot.selected_device_id === device.device_id ? " active" : ""}`}
                       onClick={() => setSelectedDevice(device.device_id)}
                       type="button">
