@@ -1,0 +1,21 @@
+{
+  "name": "mentra-bluetooth-sdk-example",
+  "version": "0.1.0",
+  "private": true,
+  "main": "expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start --dev-client",
+    "ios": "expo run:ios",
+    "android": "expo run:android"
+  },
+  "dependencies": {
+    "@mentra/bluetooth-sdk": "^0.1.0",
+    "expo": "^55.0.0",
+    "react": "^19.1.0",
+    "react-native": "^0.83.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "typescript": "^6.0.0"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "Mentra Bluetooth SDK Example",
+    "slug": "mentra-bluetooth-sdk-example",
+    "scheme": "mentra-sdk-example",
+    "ios": {
+      "bundleIdentifier": "com.mentra.bluetoothsdk.example",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "This app uses Bluetooth to connect to Mentra smart glasses.",
+        "NSBluetoothPeripheralUsageDescription": "This app uses Bluetooth to connect to Mentra smart glasses.",
+        "NSMicrophoneUsageDescription": "This app can access glasses microphone audio when you enable audio examples.",
+        "NSCameraUsageDescription": "This app can request photos from supported smart glasses."
+      }
+    },
+    "android": {
+      "package": "com.mentra.bluetoothsdk.example",
+      "permissions": [
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_SCAN",
+        "BLUETOOTH_CONNECT",
+        "ACCESS_FINE_LOCATION",
+        "RECORD_AUDIO",
+        "CAMERA"
+      ]
+    },
+    "plugins": [
+      [
+        "@mentra/bluetooth-sdk",
+        {
+          "node": true
+        }
+      ]
+    ]
+  }
+}
