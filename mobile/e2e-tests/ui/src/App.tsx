@@ -5,6 +5,7 @@ import {EmptyState} from "./components/EmptyState"
 import {RelativeAge} from "./components/RelativeAge"
 import {StatusBadge} from "./components/StatusBadge"
 import type {CurrentUtterance, DelayPoint, MonitorSnapshot} from "./types"
+import {formatEndpointLabel} from "./utils"
 
 const OverviewTab = lazy(() => import("./tabs/OverviewTab").then((module) => ({default: module.OverviewTab})))
 const IncidentsTab = lazy(() => import("./tabs/IncidentsTab").then((module) => ({default: module.IncidentsTab})))
@@ -424,6 +425,11 @@ export default function App() {
               )}
             </span>
           ) : null}
+          {effectiveViewMode === "single" && snapshot?.backend_url ? (
+            <span>
+              Backend <strong>{formatEndpointLabel(snapshot.backend_url)}</strong>
+            </span>
+          ) : null}
           <span>
             {snapshot ? (
               <RelativeAge
@@ -500,6 +506,9 @@ export default function App() {
                         <header className="compare-panel-header">
                           <div>
                             <strong>{device.label}</strong>
+                            {deviceSnapshot?.backend_url ? (
+                              <span>Backend {formatEndpointLabel(deviceSnapshot.backend_url)}</span>
+                            ) : null}
                             <span>
                               <RelativeAge
                                 ms={device.last_logcat_event_ts_ms}

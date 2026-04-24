@@ -85,6 +85,9 @@ export interface CompletedUtterance {
 export interface DeviceSummary {
   device_id: string
   label: string
+  backend_url?: string | null
+  ws_url?: string | null
+  last_backend_config_ts_ms?: number | null
   ongoing_incident_count: number
   last_logcat_event_ts_ms?: number | null
   primary_incident_id?: string | null
@@ -99,6 +102,9 @@ export interface MonitorSnapshot {
   devices: DeviceSummary[]
   selected_device_id: string
   primary_incident_id?: string | null
+  backend_url?: string | null
+  ws_url?: string | null
+  last_backend_config_ts_ms?: number | null
   last_logcat_event_ts_ms?: number | null
   logcat_visible_lines: string[]
   current_utterance?: CurrentUtterance | null

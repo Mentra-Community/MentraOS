@@ -252,6 +252,9 @@ class MonitorDeviceState:
     device_id: str
     output_dir: Path
     display_name: str
+    backend_url: str | None = None
+    ws_url: str | None = None
+    last_backend_config_ts_ms: int | None = None
     current_visible_lines: list[str] = field(default_factory=list)
     rn_visible_lines: list[str] = field(default_factory=list)
     last_rn_event_ts_ms: int | None = None
@@ -657,6 +660,9 @@ class MonitorState:
                 {
                     "device_id": device_state.device_id,
                     "label": f"{device_state.display_name} ({device_state.device_id})",
+                    "backend_url": device_state.backend_url,
+                    "ws_url": device_state.ws_url,
+                    "last_backend_config_ts_ms": device_state.last_backend_config_ts_ms,
                     "ongoing_incident_count": len(device_state.ongoing_incidents),
                     "last_logcat_event_ts_ms": device_state.last_logcat_event_ts_ms,
                     "primary_incident_id": self.current_primary_incident_id(device_id),
@@ -997,6 +1003,9 @@ class MonitorState:
                 "last_snapshot_ts_ms": self.last_snapshot_ts_ms,
                 "devices": self.device_summaries(),
                 "selected_device_id": selected_device.device_id,
+                "backend_url": selected_device.backend_url,
+                "ws_url": selected_device.ws_url,
+                "last_backend_config_ts_ms": selected_device.last_backend_config_ts_ms,
                 "current_visible_lines": list(selected_device.current_visible_lines),
                 "rn_visible_lines": list(selected_device.rn_visible_lines),
                 "last_rn_event_ts_ms": selected_device.last_rn_event_ts_ms,
@@ -2024,6 +2033,23 @@ class MonitorWorker:
                     try:
                         payload = json.loads(payload_text)
                     except json.JSONDecodeError:
+                        continue
+                    if payload.get("event") == "backend_config":
+                        now_ms = int(payload.get("ts_ms") or now_ms)
+                        with self.state.lock:
+                            device_state = self.state.get_device(device_id)
+                            device_state.backend_url = str(payload.get("backend_url") or "") or None
+                            device_state.ws_url = str(payload.get("ws_url") or "") or None
+                            device_state.last_backend_config_ts_ms = now_ms
+                            self.state.append_event(
+                                "backend_config",
+                                {
+                                    "ts_ms": now_ms,
+                                    "backend_url": device_state.backend_url,
+                                    "ws_url": device_state.ws_url,
+                                },
+                                device_id=device_id,
+                            )
                         continue
                     if payload.get("event") != "display_store_update":
                         continue

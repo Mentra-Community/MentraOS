@@ -14,6 +14,7 @@ import {showAlert} from "@/utils/AlertUtils"
 import restComms from "@/services/RestComms"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
 import {throttle} from "@/utils/timers"
+import {logE2EMetric} from "@/utils/e2eMetrics"
 
 const summarizeDisplayPayload = (payload: any) => {
   const layout = payload?.layout ?? {}
@@ -70,10 +71,15 @@ class SocketComms {
     console.log("SOCKET: connectWebsocket()")
     this.setupListeners()
     const url = useSettingsStore.getState().getWsUrl()
+    const backendUrl = useSettingsStore.getState().getRestUrl()
     if (!url) {
       console.error(`SOCKET: Invalid server URL`)
       return
     }
+    logE2EMetric("backend_config", {
+      backend_url: backendUrl,
+      ws_url: url,
+    })
     ws.connect(url, this.coreToken)
   }
 
