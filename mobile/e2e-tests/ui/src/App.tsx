@@ -504,18 +504,20 @@ export default function App() {
                     return (
                       <section key={device.device_id} className="compare-panel">
                         <header className="compare-panel-header">
-                          <div>
+                          <div className="compare-panel-summary">
                             <strong>{device.label}</strong>
-                            {deviceSnapshot?.backend_url ? (
-                              <span>Backend {formatEndpointLabel(deviceSnapshot.backend_url)}</span>
-                            ) : null}
-                            <span>
-                              <RelativeAge
-                                ms={device.last_logcat_event_ts_ms}
-                                prefix="Last event "
-                                emptyLabel="Waiting for event"
-                              />
-                            </span>
+                            <div className="compare-panel-meta">
+                              {deviceSnapshot?.backend_url ? (
+                                <span className="compare-panel-meta-item">
+                                  <span className="compare-panel-meta-label">Backend</span>
+                                  <strong>{formatEndpointLabel(deviceSnapshot.backend_url)}</strong>
+                                </span>
+                              ) : null}
+                              <span className="compare-panel-meta-item">
+                                <span className="compare-panel-meta-label">Last event</span>
+                                <RelativeAge ms={device.last_logcat_event_ts_ms} emptyLabel="Waiting for event" />
+                              </span>
+                            </div>
                           </div>
                           {deviceSnapshot ? <StatusBadge status={deviceSnapshot.status} /> : null}
                         </header>

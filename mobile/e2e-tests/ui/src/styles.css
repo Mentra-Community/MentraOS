@@ -266,6 +266,37 @@ a:hover {
   font-size: 1rem;
 }
 
+.compare-panel-summary {
+  min-width: 0;
+}
+
+.compare-panel-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-top: 8px;
+}
+
+.compare-panel-meta-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.compare-panel-meta-item strong {
+  display: inline;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.compare-panel-meta-label {
+  color: var(--muted);
+  font-size: 0.76rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
 .compare-panel-header span {
   color: var(--muted);
   font-size: 0.9rem;
