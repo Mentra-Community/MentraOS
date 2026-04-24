@@ -524,10 +524,31 @@ async function getMemorySnapshot(c: AppContext) {
 }
 
 /**
+ * Self-DoS guard for V8 heap snapshot endpoints. Both v8.getHeapSnapshot and
+ * v8.writeHeapSnapshot are SYNCHRONOUS — they block the event loop for the
+ * full snapshot generation (which scales with heap size) and require ~2× the
+ * current heap in memory. Two concurrent requests would stack that 2×
+ * allocation on top of an already stressed pod and can trigger OOM.
+ *
+ * Do NOT invoke these endpoints during an active degradation window. Taking
+ * a snapshot while a pod is stalled/OOM-ing will extend the stall and can
+ * push the pod past its memory limit before the snapshot finishes streaming.
+ */
+let heapSnapshotInFlight = false;
+
+/**
  * POST /api/admin/memory/heap-snapshot
  * Trigger a Chrome-compatible V8 heap snapshot and write it to a temp file.
+ *
+ * WARNING: synchronous, blocks the event loop, requires ~2× heap in memory.
+ * See `heapSnapshotInFlight` above — do not call during a degradation window.
  */
 async function takeHeapSnapshotHandler(c: AppContext) {
+  if (heapSnapshotInFlight) {
+    return c.json({ error: "Heap snapshot already in progress" }, 429);
+  }
+  heapSnapshotInFlight = true;
+
   const filename = `heap-${Date.now()}.heapsnapshot`;
   const filePath = path.join(os.tmpdir(), filename);
 
@@ -540,14 +561,24 @@ async function takeHeapSnapshotHandler(c: AppContext) {
   } catch (error) {
     logger.error(error, "Error taking heap snapshot");
     return c.json({ error: "Failed to take heap snapshot" }, 500);
+  } finally {
+    heapSnapshotInFlight = false;
   }
 }
 
 /**
  * GET /api/admin/memory/heap-snapshot-v8
  * Stream a Chrome-compatible V8 heap snapshot directly to the caller.
+ *
+ * WARNING: synchronous, blocks the event loop, requires ~2× heap in memory.
+ * See `heapSnapshotInFlight` above — do not call during a degradation window.
  */
 async function downloadHeapSnapshotHandler(c: AppContext) {
+  if (heapSnapshotInFlight) {
+    return c.json({ error: "Heap snapshot already in progress" }, 429);
+  }
+  heapSnapshotInFlight = true;
+
   const filename = `heap-${Date.now()}.heapsnapshot`;
 
   try {
@@ -561,6 +592,13 @@ async function downloadHeapSnapshotHandler(c: AppContext) {
   } catch (error) {
     logger.error(error, "Error streaming V8 heap snapshot");
     return c.json({ error: "Failed to stream heap snapshot" }, 500);
+  } finally {
+    // Note: for the streaming endpoint the flag clears when the handler returns,
+    // not when the stream finishes. That is intentional — the snapshot generation
+    // (the expensive blocking part) happens during v8.getHeapSnapshot() BEFORE
+    // the stream is returned. Streaming the already-generated JSON to the caller
+    // is cheap and concurrent downloads are fine.
+    heapSnapshotInFlight = false;
   }
 }
 
