@@ -460,6 +460,24 @@ export default function App() {
       : "No active incidents"
   }, [compareSnapshots, effectiveViewMode, snapshot])
 
+  const heroLogcatEventTsMs = useMemo(() => {
+    if (!snapshot || effectiveViewMode === "single") {
+      return snapshot?.last_logcat_event_ts_ms ?? null
+    }
+
+    return snapshot.devices.reduce<number | null>((latestTsMs, device) => {
+      const deviceLogcatEventTsMs =
+        compareSnapshots[device.device_id]?.last_logcat_event_ts_ms ?? device.last_logcat_event_ts_ms ?? null
+      if (deviceLogcatEventTsMs === null) {
+        return latestTsMs
+      }
+      if (latestTsMs === null || deviceLogcatEventTsMs > latestTsMs) {
+        return deviceLogcatEventTsMs
+      }
+      return latestTsMs
+    }, null)
+  }, [compareSnapshots, effectiveViewMode, snapshot])
+
   return (
     <div className={`app-shell${effectiveViewMode === "compare" ? " compare-mode" : ""}`}>
       <div className="hero">
@@ -498,8 +516,8 @@ export default function App() {
           <span>
             {snapshot ? (
               <RelativeAge
-                ms={snapshot.last_logcat_event_ts_ms}
-                prefix="Last logcat event "
+                ms={heroLogcatEventTsMs}
+                prefix={effectiveViewMode === "compare" ? "Latest logcat event " : "Last logcat event "}
                 emptyLabel="Waiting for event"
               />
             ) : (
