@@ -47,6 +47,52 @@ type MonitorStreamEvent = {
   type: (typeof STREAM_EVENT_NAMES)[number] | string
   payload: Record<string, unknown>
 }
+interface DashboardRouteState {
+  activeTab: TabValue
+  viewMode: ViewMode
+  selectedDevice: string | null
+}
+
+const DEFAULT_TAB_VALUE: TabValue = "overview"
+const DEFAULT_VIEW_MODE: ViewMode = "compare"
+
+function isTabValue(value: string | null): value is TabValue {
+  return TAB_OPTIONS.some((tab) => tab.value === value)
+}
+
+function isViewMode(value: string | null): value is ViewMode {
+  return value === "single" || value === "compare"
+}
+
+function readDashboardRouteState(): DashboardRouteState {
+  const params = new URLSearchParams(window.location.search)
+  const tab = params.get("tab")
+  const view = params.get("view")
+  const device = params.get("device")
+
+  return {
+    activeTab: isTabValue(tab) ? tab : DEFAULT_TAB_VALUE,
+    viewMode: isViewMode(view) ? view : DEFAULT_VIEW_MODE,
+    selectedDevice: device || null,
+  }
+}
+
+function writeDashboardRouteState(activeTab: TabValue, viewMode: ViewMode, selectedDevice: string | null) {
+  const params = new URLSearchParams(window.location.search)
+  params.set("tab", activeTab)
+  params.set("view", viewMode)
+
+  if (viewMode === "single" && selectedDevice) {
+    params.set("device", selectedDevice)
+  } else {
+    params.delete("device")
+  }
+
+  const nextUrl = `${window.location.pathname}?${params.toString()}${window.location.hash}`
+  if (nextUrl !== `${window.location.pathname}${window.location.search}${window.location.hash}`) {
+    window.history.replaceState(null, "", nextUrl)
+  }
+}
 
 function renderActiveTab(activeTab: TabValue, snapshot: MonitorSnapshot) {
   switch (activeTab) {
@@ -187,12 +233,32 @@ function applyStreamUpdate(
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<TabValue>("overview")
-  const [viewMode, setViewMode] = useState<ViewMode>("single")
-  const [selectedDevice, setSelectedDevice] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<TabValue>(() => readDashboardRouteState().activeTab)
+  const [viewMode, setViewMode] = useState<ViewMode>(() => readDashboardRouteState().viewMode)
+  const [selectedDevice, setSelectedDevice] = useState<string | null>(() => readDashboardRouteState().selectedDevice)
   const [snapshot, setSnapshot] = useState<MonitorSnapshot | null>(null)
   const [compareSnapshots, setCompareSnapshots] = useState<Record<string, MonitorSnapshot>>({})
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const nextRouteState = readDashboardRouteState()
+      startTransition(() => {
+        setActiveTab(nextRouteState.activeTab)
+        setViewMode(nextRouteState.viewMode)
+        setSelectedDevice(nextRouteState.selectedDevice)
+      })
+    }
+
+    window.addEventListener("popstate", handlePopState)
+    return () => {
+      window.removeEventListener("popstate", handlePopState)
+    }
+  }, [])
+
+  useEffect(() => {
+    writeDashboardRouteState(activeTab, viewMode, selectedDevice)
+  }, [activeTab, selectedDevice, viewMode])
 
   useEffect(() => {
     let cancelled = false
@@ -452,7 +518,14 @@ export default function App() {
           />
         </div>
       ) : (
-        <Tabs.Root className="tabs-root" value={activeTab} onValueChange={(value) => setActiveTab(value as TabValue)}>
+        <Tabs.Root
+          className="tabs-root"
+          value={activeTab}
+          onValueChange={(value) => {
+            if (isTabValue(value)) {
+              setActiveTab(value)
+            }
+          }}>
           {snapshot.devices.length > 1 ? (
             <div className="dashboard-toolbar">
               <div className="view-mode-toggle" role="group" aria-label="Dashboard view mode">
