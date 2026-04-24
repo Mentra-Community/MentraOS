@@ -1,6 +1,10 @@
 node_modules
 ios
 android
+!examples/android/
+!examples/android/**
+!examples/ios/
+!examples/ios/**
 .expo
 dist
 build

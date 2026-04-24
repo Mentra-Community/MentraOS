@@ -1,6 +1,8 @@
 # React Native Example
 
-This example is a minimal Expo development-build app that demonstrates the Mentra Bluetooth SDK.
+This example is a minimal Expo development-build app for partners who have explicit access to the React Native integration path.
+
+Start with `examples/android` or `examples/ios` unless your partner agreement explicitly includes React Native support.
 
 ## Run
 

@@ -1,63 +1,88 @@
 # Audio Guide
 
-The SDK can emit microphone events and local transcription results on supported devices.
+The SDK can emit microphone events and local transcription results on supported devices. Treat audio as an advanced feature: request permission only when the user enables it, and provide clear privacy copy.
 
 ## Enable Microphone Events
 
-```ts
-await BluetoothSdk.setMicState(
-  true, // sendPcmData
-  true, // sendTranscript
-  false, // bypassVad
-);
+Android:
+
+```kotlin
+sdk.setPreferredMic(MentraMicPreference.AUTO)
+sdk.setMicState(
+    MentraMicConfig(
+        sendPcmData = true,
+        sendTranscript = true,
+        bypassVad = false,
+    )
+)
+```
+
+iOS:
+
+```swift
+sdk.setPreferredMic(.auto)
+sdk.setMicState(
+    MentraMicConfiguration(
+        sendPcmData: true,
+        sendTranscript: true,
+        bypassVad: false
+    )
+)
 ```
 
 ## PCM Audio
 
-```ts
-const sub = BluetoothSdk.addListener("mic_pcm", (event) => {
-  const pcm = event.pcm;
-  // Forward to your audio pipeline.
-});
+Android:
 
-sub.remove();
+```kotlin
+override fun onMicPcm(frame: ByteArray) {
+    // Forward to your audio pipeline.
+}
+```
+
+iOS:
+
+```swift
+func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicPcm frame: Data) {
+    // Forward to your audio pipeline.
+}
 ```
 
 ## LC3 Audio
 
-```ts
-const sub = BluetoothSdk.addListener("mic_lc3", (event) => {
-  const lc3 = event.lc3;
-  // Decode or forward depending on your pipeline.
-});
+Android:
+
+```kotlin
+override fun onMicLc3(frame: ByteArray) {
+    // Decode or forward depending on your pipeline.
+}
+```
+
+iOS:
+
+```swift
+func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicLc3 frame: Data) {
+    // Decode or forward depending on your pipeline.
+}
 ```
 
 ## Local Transcription
 
-```ts
-const sub = BluetoothSdk.addListener("local_transcription", (event) => {
-  console.log(event.text, event.isFinal);
-});
-```
+Android:
 
-## Local STT Models
-
-```ts
-const available = await BluetoothSdk.checkSttModelAvailable();
-
-if (available) {
-  await BluetoothSdk.restartTranscriber();
+```kotlin
+override fun onLocalTranscription(event: MentraLocalTranscriptionEvent) {
+    Log.d("Mentra", "${event.text} final=${event.isFinal}")
 }
 ```
 
-For custom model deployments:
+iOS:
 
-```ts
-const valid = await BluetoothSdk.validateSttModel(modelPath);
-
-if (valid) {
-  await BluetoothSdk.setSttModelDetails(modelPath, "en");
-  await BluetoothSdk.restartTranscriber();
+```swift
+func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: MentraBluetoothEvent) {
+    if case let .localTranscription(transcription) = event {
+        print("\(transcription.text) final=\(transcription.isFinal)")
+    }
 }
 ```
 
@@ -67,3 +92,4 @@ if (valid) {
 - Let users disable microphone streaming.
 - Expect model availability to differ by platform, locale, and partner app configuration.
 - Keep cloud upload and retention policies explicit in your privacy disclosures.
+- Disable raw audio callbacks when the app no longer needs them.

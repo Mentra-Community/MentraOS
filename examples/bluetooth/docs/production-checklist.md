@@ -4,38 +4,45 @@ Use this checklist before shipping a partner app with the Mentra Bluetooth SDK.
 
 ## App Setup
 
-- Native development builds are configured for iOS and Android.
+- Bare Android and/or bare iOS native builds are configured.
 - iOS deployment target is `15.1` or newer.
-- Android min SDK is `28` or newer.
+- Android min SDK is `24` or newer.
+- Android builds use Java 17.
 - Bluetooth permission copy is user-friendly and specific.
-- Microphone, camera, local network, and location permissions are requested only when needed.
+- Microphone, camera, local network, notification, and location permissions are requested only when needed.
+- The app integrates through the documented typed Android or iOS SDK APIs.
 
 ## SDK Integration
 
-- App subscribes to `glasses_status` and `bluetooth_status`.
-- App handles disconnect, reconnect, and pair failure states.
+- App subscribes to typed glasses and Bluetooth status callbacks.
+- App handles disconnect, reconnect, scan stopped, and pair failure states.
 - App does not assume every model supports every feature.
-- App removes event listeners when screens unmount or sessions end.
+- App cleans up SDK listeners/delegates and calls `close()` / `invalidate()` when sessions end.
 - App avoids sending rapid display updates without debouncing.
+- App uses typed settings APIs for brightness, dashboard, button, camera, and microphone settings.
+- Advanced controls are gated behind SDK capability/status checks.
 
 ## Privacy And Compliance
 
 - Audio capture behavior is clearly disclosed.
 - Camera capture behavior is clearly disclosed.
+- Bluetooth and location permission copy explains device discovery.
 - Cloud upload behavior is documented in the partner privacy policy.
 - Logs avoid sensitive user data.
 
 ## Release Validation
 
-- Fresh third-party Expo/RN consumer app install using the published package.
-- Fresh third-party iOS `prebuild` and `pod install`.
-- Fresh third-party Android prebuild and native build.
+- Fresh bare Android app install using the published Maven artifact.
+- Fresh bare iOS app install using the published CocoaPod.
+- Android sample app in this Partner Kit builds.
+- iOS sample app in this Partner Kit runs `pod install` and builds.
 - Fresh install test on iOS.
 - Fresh install test on Android.
 - Pairing test with each supported glasses model.
 - Reconnect test after app restart.
 - Reconnect test after Bluetooth toggle.
 - Display command test.
+- Core settings test for brightness, dashboard, and button behavior.
 - Button/touch event test.
 - Audio/transcription test if enabled.
 - Camera/gallery/streaming test if enabled.

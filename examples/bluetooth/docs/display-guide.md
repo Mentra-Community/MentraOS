@@ -1,22 +1,85 @@
 # Display Guide
 
-The display API lets your app send user-visible information to supported smart glasses.
+The display API lets your app send glanceable, user-visible information to supported smart glasses.
 
 ## Basic Text
 
-```ts
-await BluetoothSdk.displayText({
-  text: "Turn left in 100 ft",
-  x: 0,
-  y: 0,
-  size: 24,
-});
+Android:
+
+```kotlin
+sdk.displayText(
+    MentraDisplayTextRequest(
+        text = "Turn left in 100 ft",
+        x = 0,
+        y = 0,
+        size = 24,
+    )
+)
+```
+
+iOS:
+
+```swift
+try await sdk.displayText(
+    MentraDisplayTextRequest(
+        text: "Turn left in 100 ft",
+        x: 0,
+        y: 0,
+        size: 24
+    )
+)
 ```
 
 ## Clear Display
 
-```ts
-await BluetoothSdk.clearDisplay();
+Android:
+
+```kotlin
+sdk.clearDisplay()
+```
+
+iOS:
+
+```swift
+try await sdk.clearDisplay()
+```
+
+## Dashboard
+
+Android:
+
+```kotlin
+sdk.showDashboard()
+```
+
+iOS:
+
+```swift
+sdk.showDashboard()
+```
+
+Dashboard support depends on the connected glasses model and firmware.
+
+## Settings That Affect Display
+
+Android:
+
+```kotlin
+sdk.setBrightness(60)
+sdk.setAutoBrightness(true)
+sdk.setDashboardPosition(MentraDashboardPositionRequest(height = 4, depth = 6))
+sdk.setHeadUpAngle(20)
+sdk.setScreenDisabled(false)
+```
+
+iOS:
+
+```swift
+try await sdk.setBrightness(60)
+try await sdk.setAutoBrightness(enabled: true)
+try await sdk.setDashboardPosition(MentraDashboardPositionRequest(height: 4, depth: 6))
+try await sdk.setHeadUpAngle(20)
+try await sdk.setScreenDisabled(false)
 ```
 
 ## Guidelines
@@ -25,12 +88,4 @@ await BluetoothSdk.clearDisplay();
 - Prefer one primary message at a time.
 - Avoid rapid display churn. Debounce frequent updates.
 - Clear the display when information is no longer relevant.
-- Handle `glasses_not_ready` and disconnected status gracefully.
-
-## Dashboard
-
-```ts
-await BluetoothSdk.showDashboard();
-```
-
-Dashboard support depends on the connected glasses model and firmware.
+- Handle disconnected, not-ready, and unsupported-capability states gracefully.

@@ -1,215 +1,334 @@
-# API Reference
+# Native API Reference
 
-Import the SDK from the package root:
+The Mentra Bluetooth SDK exposes typed native APIs for Android and iOS. Use these APIs as the primary integration path for native mobile apps. React Native and Expo integrations are optional for partners who have explicit access to that integration path.
 
-```ts
-import BluetoothSdk from "@mentra/bluetooth-sdk";
+## Package Names
+
+| Platform | Package |
+| --- | --- |
+| Android | `com.mentra.bluetoothsdk` |
+| iOS | `MentraBluetoothSDK` |
+
+## Base Lifecycle
+
+Android:
+
+```kotlin
+val sdk = MentraBluetoothSdk.create(
+    context = applicationContext,
+    config = MentraBluetoothSdkConfig(),
+    listener = listener,
+)
+
+sdk.close()
 ```
 
-The default export is an Expo native module with promise-based commands and typed event listeners.
+iOS:
 
-## Status Stores
+```swift
+let sdk = MentraBluetoothSDK(configuration: .default)
+sdk.delegate = delegate
 
-### `getGlassesStatus(): GlassesStatus`
+sdk.invalidate()
+```
 
-Returns the last native glasses status snapshot.
+Keep one SDK instance per app session. The SDK owns Bluetooth connection state, remembered/default device state, hardware event delivery, foreground-service coordination on Android, and cleanup.
 
-### `getBluetoothStatus(): BluetoothStatus`
+## Permissions
 
-Returns the last native Bluetooth status snapshot.
+Android:
 
-### `onGlassesStatus(callback): () => void`
+```kotlin
+val permissions = MentraBluetoothPermissions.requiredPermissions(
+    setOf(MentraSdkFeature.SCANNING, MentraSdkFeature.PHONE_MICROPHONE)
+)
 
-Subscribes to partial glasses status updates and returns an unsubscribe function.
+val status = MentraBluetoothPermissions.check(
+    context,
+    setOf(MentraSdkFeature.SCANNING, MentraSdkFeature.PHONE_MICROPHONE)
+)
+```
 
-### `onBluetoothStatus(callback): () => void`
+iOS:
 
-Subscribes to partial Bluetooth status updates and returns an unsubscribe function.
+```swift
+let status = MentraBluetoothSDK.permissions(
+    for: [.scanning, .phoneMicrophone]
+)
+```
+
+The SDK can report required permissions and current status. Your app owns user-facing permission prompts and explanation copy.
 
 ## Connection
 
-### `findCompatibleDevices(deviceModel: string): Promise<void>`
+Android:
 
-Starts scanning for glasses compatible with the provided model name.
+```kotlin
+sdk.startScan(MentraDeviceModel.MENTRA_LIVE)
+sdk.stopScan()
+sdk.connect(device)
+sdk.connectByName(MentraDeviceModel.MENTRA_LIVE, "Mentra Live 1234")
+sdk.connectDefault()
+sdk.connectSimulated()
+sdk.disconnect()
+sdk.forget()
+```
 
-### `connectDefault(): Promise<void>`
+iOS:
 
-Connects to the saved/default glasses.
+```swift
+sdk.startScan(model: .mentraLive)
+sdk.stopScan()
+sdk.connect(to: device)
+sdk.connect(model: .mentraLive, name: "Mentra Live 1234")
+sdk.connectDefault()
+sdk.connectSimulated()
+sdk.disconnect()
+sdk.forget()
+```
 
-### `connectByName(deviceName: string): Promise<void>`
+Prefer connecting to a `MentraDiscoveredDevice` returned by the SDK. Use name/default connection helpers for simple pairing UIs.
 
-Connects to a discovered device by name.
+## Status
 
-### `connectSimulated(): Promise<void>`
+Android:
 
-Connects to simulated glasses. Useful for UI development.
+```kotlin
+val glasses = sdk.getGlassesStatus()
+val bluetooth = sdk.getBluetoothStatus()
+```
 
-### `disconnect(): Promise<void>`
+iOS:
 
-Disconnects the active glasses connection.
+```swift
+let glasses = sdk.glassesStatus
+let bluetooth = sdk.bluetoothStatus
+```
 
-### `forget(): Promise<void>`
-
-Clears the saved glasses pairing/default device.
+Status snapshots are safe to read at any time. Treat command success as "command accepted"; keep UI state derived from status callbacks.
 
 ## Display
 
-### `displayText(params): Promise<void>`
+Android:
 
-Displays text on supported glasses.
+```kotlin
+sdk.displayText(
+    MentraDisplayTextRequest(
+        text = "Pickup at gate B12",
+        x = 0,
+        y = 0,
+        size = 24,
+    )
+)
 
-```ts
-await BluetoothSdk.displayText({
-  text: "Pickup at gate B12",
-  x: 0,
-  y: 0,
-  size: 24,
-});
+sdk.clearDisplay()
+sdk.showDashboard()
 ```
 
-### `displayEvent(params): Promise<void>`
+iOS:
 
-Sends a lower-level display event payload. Use `displayText` unless you need advanced display commands.
+```swift
+try await sdk.displayText(
+    MentraDisplayTextRequest(
+        text: "Pickup at gate B12",
+        x: 0,
+        y: 0,
+        size: 24
+    )
+)
 
-### `clearDisplay(): Promise<void>`
-
-Clears the glasses display.
-
-### `showDashboard(): Promise<void>`
-
-Requests the glasses dashboard where supported.
-
-## WiFi And Hotspot
-
-### `requestWifiScan(): Promise<void>`
-
-Requests a WiFi scan from supported glasses.
-
-### `sendWifiCredentials(ssid: string, password: string): Promise<void>`
-
-Sends credentials for glasses that support WiFi pairing.
-
-### `forgetWifiNetwork(ssid: string): Promise<void>`
-
-Forgets a saved WiFi network.
-
-### `setHotspotState(enabled: boolean): Promise<void>`
-
-Enables or disables glasses hotspot mode where supported.
-
-## Camera, Gallery, And Video
-
-### `queryGalleryStatus(): Promise<void>`
-
-Requests photo/video gallery status.
-
-### `photoRequest(requestId, appId, size, webhookUrl, authToken, compress, flash, sound): Promise<void>`
-
-Requests a photo capture.
-
-### `startVideoRecording(requestId, save, flash, sound): Promise<void>`
-
-Starts video recording.
-
-### `stopVideoRecording(requestId): Promise<void>`
-
-Stops video recording.
-
-### `startBufferRecording(): Promise<void>`
-
-Starts rolling buffer capture.
-
-### `stopBufferRecording(): Promise<void>`
-
-Stops rolling buffer capture.
-
-### `saveBufferVideo(requestId, durationSeconds): Promise<void>`
-
-Saves the most recent buffered video segment.
-
-## Audio And Transcription
-
-### `setMicState(sendPcmData, sendTranscript, bypassVad): Promise<void>`
-
-Controls microphone event output.
-
-```ts
-await BluetoothSdk.setMicState(true, true, false);
+try await sdk.clearDisplay()
+sdk.showDashboard()
 ```
 
-### `restartTranscriber(): Promise<void>`
+Use `displayText` for normal glanceable UI. Use `displayEvent` only for advanced display payloads that require lower-level rendering control.
 
-Restarts the local transcription pipeline after changing model files.
+## Core Hardware Settings
 
-### `setSttModelDetails(path, languageCode): Promise<void>`
+The SDK exposes typed settings methods for hardware configuration. Use these methods instead of custom key/value payloads.
 
-Sets the local STT model path and language code.
+Android:
 
-### `checkSttModelAvailable(): Promise<boolean>`
+```kotlin
+sdk.setBrightness(level = 60)
+sdk.setBrightness(level = 60, autoMode = false)
+sdk.setAutoBrightness(enabled = true)
+sdk.setDashboardPosition(
+    MentraDashboardPositionRequest(height = 4, depth = 6)
+)
+sdk.setHeadUpAngle(angleDegrees = 20)
+sdk.setScreenDisabled(false)
+sdk.setGalleryMode(MentraGalleryMode.AUTO)
+sdk.setButtonMode(MentraButtonMode.CAMERA)
+sdk.setButtonPhotoSettings(MentraButtonPhotoSettings(size = MentraPhotoSize.MEDIUM))
+sdk.setButtonVideoRecordingSettings(
+    MentraButtonVideoRecordingSettings(width = 1280, height = 720, fps = 30)
+)
+sdk.setButtonCameraLed(enabled = true)
+sdk.setButtonMaxRecordingTime(minutes = 3)
+sdk.setCameraFov(MentraCameraFov.WIDE)
+```
 
-Returns whether a local STT model is available.
+iOS:
 
-### `validateSttModel(path): Promise<boolean>`
+```swift
+try await sdk.setBrightness(60)
+try await sdk.setBrightness(60, autoMode: false)
+try await sdk.setAutoBrightness(enabled: true)
+try await sdk.setDashboardPosition(
+    MentraDashboardPositionRequest(height: 4, depth: 6)
+)
+try await sdk.setHeadUpAngle(20)
+try await sdk.setScreenDisabled(false)
+try await sdk.setGalleryMode(.auto)
+try await sdk.setButtonMode(.camera)
+try await sdk.setButtonPhotoSettings(
+    MentraButtonPhotoSettings(size: .medium)
+)
+try await sdk.setButtonVideoRecordingSettings(
+    MentraButtonVideoRecordingSettings(width: 1280, height: 720, fps: 30)
+)
+try await sdk.setButtonCameraLed(enabled: true)
+try await sdk.setButtonMaxRecordingTime(minutes: 3)
+try await sdk.setCameraFov(.wide)
+```
 
-Validates a model directory.
+Unsupported settings should fail through a typed error or capability status, not silently succeed.
 
-## Streaming
+## Microphone And Audio
 
-### `startStream(params): Promise<void>`
+Android:
 
-Starts a glasses stream using the provided native stream payload.
+```kotlin
+sdk.setPreferredMic(MentraMicPreference.AUTO)
+sdk.setOwnAppAudioPlaying(false)
+sdk.setMicState(
+    MentraMicConfig(
+        sendPcmData = true,
+        sendTranscript = true,
+        bypassVad = false,
+    )
+)
+```
 
-### `keepStreamAlive(params): Promise<void>`
+iOS:
 
-Sends a stream keep-alive payload.
+```swift
+sdk.setPreferredMic(.auto)
+sdk.setOwnAppAudioPlaying(false)
+sdk.setMicState(
+    MentraMicConfiguration(
+        sendPcmData: true,
+        sendTranscript: true,
+        bypassVad: false
+    )
+)
+```
 
-### `stopStream(): Promise<void>`
+Raw audio and local transcription are advanced capabilities. Gate them behind explicit user permission and in-app controls.
 
-Stops streaming.
+## Wi-Fi And Hotspot
 
-## OTA And Device Maintenance
+Android:
 
-### `requestVersionInfo(): Promise<void>`
+```kotlin
+sdk.requestWifiScan()
+sdk.sendWifiCredentials(ssid = "Office WiFi", password = "secret")
+sdk.forgetWifiNetwork("Office WiFi")
+sdk.setHotspotState(enabled = true)
+```
 
-Requests firmware and app version information from glasses.
+iOS:
 
-### `sendOtaStart(): Promise<void>`
+```swift
+sdk.requestWifiScan()
+sdk.sendWifiCredentials(ssid: "Office WiFi", password: "secret")
+sdk.forgetWifiNetwork(ssid: "Office WiFi")
+sdk.setHotspotState(enabled: true)
+```
 
-Starts an OTA update that was previously reported as available.
+## Advanced Capabilities
 
-### `ping(): Promise<void>`
+Advanced APIs are capability-gated because support differs by glasses model and firmware.
 
-Sends a connectivity ping.
+| Area | Examples |
+| --- | --- |
+| Camera/gallery | `requestPhoto`, `queryGalleryStatus`, `photo_response`, `gallery_status` |
+| Streaming | `startStream`, `keepStreamAlive`, `stopStream`, `stream_status` |
+| Video | `startVideoRecording`, `stopVideoRecording`, `startBufferRecording`, `saveBufferVideo` |
+| Maintenance | `requestVersionInfo`, `sendOtaStart`, `sendShutdown`, `sendReboot` |
+| Local STT | model validation, transcription restart, `local_transcription` |
+| Diagnostics | partner-approved device diagnostic context |
 
-## Events
+Expose advanced controls only when SDK status/capabilities say the connected device supports them.
 
-Use `BluetoothSdk.addListener(eventName, callback)` for event subscriptions.
+## Android Listener
 
-| Event                   | Purpose                                 |
-| ----------------------- | --------------------------------------- |
-| `glasses_status`        | Partial glasses status updates          |
-| `bluetooth_status`      | Partial Bluetooth/search status updates |
-| `button_press`          | Hardware button press events            |
-| `touch_event`           | Touch or gesture input                  |
-| `head_up`               | Head-up state changes                   |
-| `battery_status`        | Battery and charging status             |
-| `local_transcription`   | Offline/local STT result                |
-| `mic_pcm`               | Raw PCM microphone audio                |
-| `mic_lc3`               | LC3 microphone audio                    |
-| `wifi_status_change`    | WiFi connection status                  |
-| `hotspot_status_change` | Hotspot status                          |
-| `photo_response`        | Photo capture result                    |
-| `gallery_status`        | Gallery availability summary            |
-| `stream_status`         | Stream status updates                   |
-| `ota_update_available`  | OTA availability                        |
-| `ota_progress`          | OTA progress                            |
-| `pair_failure`          | Pairing failure                         |
-| `audio_pairing_needed`  | Bluetooth audio pairing required        |
-| `audio_connected`       | Bluetooth audio connected               |
-| `audio_disconnected`    | Bluetooth audio disconnected            |
+```kotlin
+interface MentraBluetoothSdkListener {
+    fun onGlassesStatusChanged(status: MentraGlassesStatusUpdate) {}
+    fun onBluetoothStatusChanged(status: MentraBluetoothStatusUpdate) {}
+    fun onDeviceDiscovered(device: MentraDiscoveredDevice) {}
+    fun onScanStopped(reason: MentraScanStopReason) {}
+    fun onButtonPress(event: MentraButtonPressEvent) {}
+    fun onTouch(event: MentraTouchEvent) {}
+    fun onHeadUpChanged(headUp: Boolean) {}
+    fun onBatteryStatus(event: MentraBatteryStatusEvent) {}
+    fun onWifiStatusChanged(event: MentraWifiStatusEvent) {}
+    fun onGalleryStatus(event: MentraGalleryStatusEvent) {}
+    fun onPhotoResponse(event: MentraPhotoResponseEvent) {}
+    fun onStreamStatus(event: MentraStreamStatusEvent) {}
+    fun onMicPcm(frame: ByteArray) {}
+    fun onMicLc3(frame: ByteArray) {}
+    fun onLocalTranscription(event: MentraLocalTranscriptionEvent) {}
+    fun onDefaultDeviceChanged(device: MentraPairedDevice?) {}
+    fun onLog(message: String) {}
+    fun onError(error: MentraBluetoothError) {}
+}
+```
 
-## Status Types
+Callbacks are delivered on the Android main thread by default.
 
-`GlassesStatus` includes connection state, device metadata, battery levels, WiFi/hotspot status, OTA state, and controller state.
+## iOS Delegate
 
-`BluetoothStatus` includes active search state, discovered devices, WiFi scan results, microphone ranking, and recent native logs.
+```swift
+@MainActor
+public protocol MentraBluetoothSDKDelegate: AnyObject {
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateGlassesStatus status: MentraGlassesStatusUpdate)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateBluetoothStatus status: MentraBluetoothStatusUpdate)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didDiscover device: MentraDiscoveredDevice)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didStopScan reason: MentraScanStopReason)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: MentraBluetoothEvent)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicPcm frame: Data)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicLc3 frame: Data)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didChangeDefaultDevice device: MentraPairedDevice?)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didLog message: String)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didFail error: MentraBluetoothError)
+}
+```
+
+Swift apps may also use an `AsyncStream<MentraBluetoothEvent>` when they prefer structured concurrency, but delegates remain the primary v1 integration path.
+
+## Core Models
+
+| Model | Purpose |
+| --- | --- |
+| `MentraDeviceModel` | Supported glasses family such as Mentra Live, Mentra Nex, G1, G2, Mach1, Z100, simulated, or R1 |
+| `MentraDiscoveredDevice` | Scan result containing model, name, identifier/address, and RSSI |
+| `MentraGlassesStatus` | Connected device snapshot: model, firmware, serial, battery, Wi-Fi, hotspot, head-up, controller, and readiness |
+| `MentraBluetoothStatus` | Bluetooth subsystem snapshot: scanning state, discovered devices, Wi-Fi scan results, mic state, permissions, and logs |
+| `MentraBluetoothError` | Typed command, permission, connection, unsupported-capability, or native failure |
+
+## Error Handling
+
+Use SDK errors for user-recoverable behavior:
+
+- Permission missing
+- Bluetooth off or unavailable
+- Device not discovered
+- Device disconnected
+- Capability unsupported on the connected model
+- Command rejected by glasses
+- Native subsystem failed
+
+Do not infer connected state from exceptions alone. Always reconcile with status callbacks.
