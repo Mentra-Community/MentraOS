@@ -12,7 +12,14 @@ class CrustModule : Module() {
       Math.PI
     }
 
-    Events("onChange")
+    Events(
+      "onChange",
+      "onNavManeuver",
+      "onNavRerouting",
+      "onNavArrived",
+      "onNavError",
+      "onNavLocation",
+    )
 
     Function("hello") {
       "Hello world! 👋"
@@ -217,6 +224,102 @@ class CrustModule : Module() {
       } catch (e: Exception) {
         android.util.Log.e("CrustModule", "Error saving to gallery: ${e.message}", e)
         mapOf("success" to false, "error" to e.message)
+      }
+    }
+
+    // MARK: - Navigation Commands (Google Navigation SDK)
+
+    AsyncFunction("startNavigation") { lat: Double, lng: Double ->
+      val activity = appContext.currentActivity
+        ?: return@AsyncFunction mapOf("ok" to false, "error" to "no current activity (app backgrounded?)")
+
+      val callbacks = object : NavigationManager.Callbacks {
+        override fun onManeuver(payload: NavigationManager.ManeuverPayload) {
+          sendEvent(
+            "onNavManeuver",
+            mapOf(
+              "instruction" to payload.instruction,
+              "roadName" to payload.roadName,
+              "maneuverType" to payload.maneuverType,
+              "distanceMeters" to payload.distanceMeters,
+              "towardRoad" to payload.towardRoad,
+              "nextManeuverType" to payload.nextManeuverType,
+              "nextManeuverLabel" to payload.nextManeuverLabel,
+            ),
+          )
+        }
+        override fun onRerouting() {
+          sendEvent("onNavRerouting", emptyMap<String, Any?>())
+        }
+        override fun onArrived() {
+          sendEvent("onNavArrived", emptyMap<String, Any?>())
+        }
+        override fun onError(message: String) {
+          sendEvent("onNavError", mapOf("message" to message))
+        }
+        override fun onLocation(payload: NavigationManager.LocationPayload) {
+          sendEvent(
+            "onNavLocation",
+            mapOf(
+              "lat" to payload.lat,
+              "lng" to payload.lng,
+              "accuracy" to payload.accuracy,
+              "timestamp" to payload.timestamp,
+            ),
+          )
+        }
+      }
+
+      activity.runOnUiThread {
+        // 1) Verify ACCESS_FINE_LOCATION is granted to this process. The
+        //    Google Nav SDK rejects getNavigator() with LOCATION_PERMISSION_MISSING
+        //    even if location was granted in another module's context — it
+        //    requires PackageManager.PERMISSION_GRANTED at call-time.
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+          activity,
+          android.Manifest.permission.ACCESS_FINE_LOCATION,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        if (!granted) {
+          // Request and abort this attempt. User taps Start again after granting.
+          androidx.core.app.ActivityCompat.requestPermissions(
+            activity,
+            arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION),
+            9001,
+          )
+          sendEvent(
+            "onNavError",
+            mapOf("message" to "ACCESS_FINE_LOCATION not granted — accept the prompt and tap Start again"),
+          )
+          return@runOnUiThread
+        }
+
+        // 2) Show T&C dialog (no-op after first acceptance), then start nav.
+        com.google.android.libraries.navigation.NavigationApi
+          .showTermsAndConditionsDialog(
+            activity,
+            "Mentra",
+            object : com.google.android.libraries.navigation.NavigationApi.OnTermsResponseListener {
+              override fun onTermsResponse(termsAccepted: Boolean) {
+                if (!termsAccepted) {
+                  sendEvent("onNavError", mapOf("message" to "user declined Google Nav T&C"))
+                  return
+                }
+                NavigationManager.start(activity, lat, lng, callbacks)
+              }
+            },
+          )
+      }
+      mapOf("ok" to true)
+    }
+
+    AsyncFunction("stopNavigation") {
+      try {
+        NavigationManager.stop()
+        mapOf("ok" to true)
+      } catch (e: Exception) {
+        android.util.Log.e("CrustModule", "stopNavigation failed", e)
+        mapOf("ok" to false, "error" to (e.message ?: "stop failed"))
       }
     }
   }

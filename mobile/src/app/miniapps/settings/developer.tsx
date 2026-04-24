@@ -1,4 +1,5 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {useEffect, useRef, useState} from "react"
 import {ScrollView, View} from "react-native"
 
 import BackendUrl from "@/components/dev/BackendUrl"
@@ -13,8 +14,13 @@ import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
+import navigationService from "@/services/NavigationService"
 import ws from "@/services/WebSocketManager"
 import socketComms from "@/services/SocketComms"
+import showAlert from "@/utils/AlertUtils"
+
+// Hardcoded test destination for the nav POC. SF Ferry Building.
+const TEST_NAV_DESTINATION = {lat: 37.7956, lng: -122.3933}
 
 // LC3 frame size options - maps to bitrates
 // Frame size = bytes per 10ms frame, bitrate = frameSize * 800 bps
@@ -38,6 +44,15 @@ export default function DeveloperSettingsScreen() {
   const [_onboardingLiveCompleted, setOnboardingLiveCompleted] = useSetting(SETTINGS.onboarding_live_completed.key)
   const [lc3FrameSize, setLc3FrameSize] = useSetting(SETTINGS.lc3_frame_size.key)
   const [localSttFallbackEnabled, setLocalSttFallbackEnabled] = useSetting(SETTINGS.local_stt_fallback_enabled.key)
+  const [navRunning, setNavRunning] = useState(false)
+  const navUnsubRef = useRef<(() => void) | null>(null)
+
+  useEffect(() => {
+    return () => {
+      navUnsubRef.current?.()
+      navUnsubRef.current = null
+    }
+  }, [])
 
   return (
     <Screen preset="fixed">
@@ -165,6 +180,37 @@ export default function DeveloperSettingsScreen() {
               label="Buffer Recording Debug"
               subtitle="Control 30-second video buffer on glasses"
               onPress={() => push("/miniapps/settings/buffer-debug")}
+            />
+
+            <RouteButton
+              label={navRunning ? "Stop Test Nav" : "Start Test Nav"}
+              subtitle={
+                navRunning
+                  ? "Logging nav events to console — tap to stop"
+                  : `Navigate to SF Ferry Building (${TEST_NAV_DESTINATION.lat}, ${TEST_NAV_DESTINATION.lng})`
+              }
+              onPress={async () => {
+                if (navRunning) {
+                  navUnsubRef.current?.()
+                  navUnsubRef.current = null
+                  const result = await navigationService.stop()
+                  setNavRunning(false)
+                  console.log("NAV_TEST: stopped", result)
+                  return
+                }
+                navUnsubRef.current = navigationService.addListener((update) => {
+                  console.log("NAV_TEST:", JSON.stringify(update))
+                })
+                const result = await navigationService.start(TEST_NAV_DESTINATION)
+                console.log("NAV_TEST: start result", result)
+                if (!result.ok) {
+                  navUnsubRef.current?.()
+                  navUnsubRef.current = null
+                  showAlert("Nav", `Start failed: ${result.error ?? "unknown"}`)
+                  return
+                }
+                setNavRunning(true)
+              }}
             />
 
             <RouteButton

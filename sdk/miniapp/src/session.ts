@@ -30,6 +30,7 @@ import {DashboardAPI} from "./modules/dashboard"
 import {EventManager} from "./modules/events"
 import {LayoutManager} from "./modules/layouts"
 import {LedModule} from "./modules/led"
+import {NavigationManager} from "./modules/navigation"
 import {SimpleStorage} from "./modules/storage"
 import {StreamModule} from "./modules/stream"
 import {SystemModule} from "./modules/system"
@@ -105,6 +106,7 @@ export class MiniappSession {
   public readonly storage: SimpleStorage
   public readonly stream: StreamModule
   public readonly system: SystemModule
+  public readonly navigation: NavigationManager
 
   /** Phone-declared glasses capabilities. Null until CONNECT_ACK arrives. */
   public capabilities: GlassesCapabilities | null = null
@@ -149,6 +151,7 @@ export class MiniappSession {
     this.storage = new SimpleStorage(this)
     this.stream = new StreamModule(this)
     this.system = new SystemModule(this)
+    this.navigation = new NavigationManager(this, this.events)
   }
 
   // -------------------------------------------------------------------------

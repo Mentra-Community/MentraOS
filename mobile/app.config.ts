@@ -190,6 +190,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
             minSdkVersion: 28,
             targetSdkVersion: 35,
             compileSdkVersion: 36,
+            enableCoreLibraryDesugaring: true,
           },
           ios: {
             deploymentTarget: "15.5", // for react-native-zip-archive

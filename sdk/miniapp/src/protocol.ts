@@ -39,6 +39,11 @@ export enum MiniappRequestType {
   /** One-shot location poll. */
   LOCATION_POLL = "miniapp_location_poll",
 
+  /** Start a turn-by-turn navigation session. */
+  NAVIGATION_START = "miniapp_navigation_start",
+  /** Stop the active navigation session. */
+  NAVIGATION_STOP = "miniapp_navigation_stop",
+
   /** Phone-local simple storage. */
   STORAGE_GET = "miniapp_storage_get",
   STORAGE_SET = "miniapp_storage_set",
@@ -128,6 +133,9 @@ export enum MiniappStreamType {
   LOCATION_UPDATE = "location_update",
   PHONE_NOTIFICATION = "phone_notification",
   CALENDAR_EVENT = "calendar_event",
+
+  // Navigation
+  NAVIGATION_UPDATE = "navigation_update",
 
   // Phase 5
   PHOTO_TAKEN = "photo_taken",

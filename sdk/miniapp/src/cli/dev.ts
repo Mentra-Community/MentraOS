@@ -18,7 +18,7 @@ function getLanIp(): string | null {
 async function waitForPort(port: number, retries = 30, delayMs = 500): Promise<void> {
   for (let i = 0; i < retries; i++) {
     try {
-      const res = await fetch(`http://localhost:${port}`);
+      await fetch(`http://localhost:${port}`);
       // Any response means the server is up
       return;
     } catch {

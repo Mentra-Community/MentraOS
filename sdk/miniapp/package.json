@@ -1,13 +1,16 @@
 {
   "name": "@mentra/miniapp",
   "version": "0.1.0",
-  "description": "SDK for building MentraOS local miniapps (browser/WebView)",
+  "description": "SDK and CLI for building MentraOS local miniapps",
   "author": "Mentra Labs",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "mentra-miniapp": "./dist/cli/index.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -21,11 +24,15 @@
       "types": "./dist/protocol.d.ts",
       "default": "./dist/protocol.js"
     },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "default": "./dist/cli/index.js"
+    },
     "./package.json": "./package.json"
   },
   "sideEffects": false,
   "scripts": {
-    "build": "rm -rf dist tsconfig.tsbuildinfo && bun x tsc -p tsconfig.json",
+    "build": "rm -rf dist tsconfig.tsbuildinfo && bun x tsc -p tsconfig.json && chmod +x dist/cli/index.js",
     "dev": "bun x tsc --watch",
     "typecheck": "bun x tsc --noEmit",
     "test": "bun test",
@@ -41,11 +48,14 @@
   },
   "dependencies": {
     "@mentra/types": "1.0.0-beta.2",
-    "eventemitter3": "^5.0.1"
+    "eventemitter3": "^5.0.1",
+    "qrcode-terminal": "^0.12.0"
   },
   "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "@types/node": "^22.0.0",
+    "@types/qrcode-terminal": "^0.12.0",
     "@types/react": "^19.1.6",
-    "react": "^19.1.0",
     "typescript": "^5.0.0"
   },
   "files": [

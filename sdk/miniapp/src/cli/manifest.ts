@@ -1,6 +1,5 @@
-// Note: these values must stay in sync with AppPermissionType from @mentra/types.
-// We cannot use `satisfies readonly AppPermissionType[]` here because @mentra/types
-// is not a dependency of this lightweight CLI package.
+import type { AppPermissionType } from '@mentra/types';
+
 export const ALLOWED_PERMISSIONS = [
   'MICROPHONE',
   'CAMERA',
@@ -9,7 +8,7 @@ export const ALLOWED_PERMISSIONS = [
   'BACKGROUND_LOCATION',
   'READ_NOTIFICATIONS',
   'POST_NOTIFICATIONS',
-] as const;
+] as const satisfies readonly AppPermissionType[];
 
 export type AllowedPermission = (typeof ALLOWED_PERMISSIONS)[number];
 

@@ -1,0 +1,506 @@
+import {useEffect, useRef, useState} from "react"
+import {useSession} from "@mentra/miniapp/react"
+import type {LocationData, NavManeuver, NavUpdate} from "@mentra/miniapp"
+
+// SF Ferry Building. Replace with whatever you want to test.
+const DEFAULTS = {lat: "37.7956", lng: "-122.3933"}
+
+type LogEntry = {ts: number; line: string}
+type Coords = {lat: number; lng: number; accuracy?: number; ts: number}
+
+export default function App() {
+  const session = useSession()
+  const [lat, setLat] = useState(DEFAULTS.lat)
+  const [lng, setLng] = useState(DEFAULTS.lng)
+  const [running, setRunning] = useState(false)
+  const [coords, setCoords] = useState<Coords | null>(null)
+  const [maneuver, setManeuver] = useState<NavManeuver | null>(null)
+  const [status, setStatus] = useState<"idle" | "navigating" | "rerouting" | "arrived">("idle")
+  const [log, setLog] = useState<LogEntry[]>([])
+  const navUnsubRef = useRef<(() => void) | null>(null)
+
+  // Live location stream — independent of nav. Subscribes for the lifetime
+  // of the mini app so the "My location" card always reflects current GPS.
+  useEffect(() => {
+    const unsub = session.events.onLocation((d: LocationData) => {
+      setCoords({lat: d.lat, lng: d.lng, accuracy: d.accuracy, ts: d.timestamp ?? Date.now()})
+    })
+    return unsub
+  }, [session])
+
+  useEffect(() => {
+    return () => {
+      navUnsubRef.current?.()
+      navUnsubRef.current = null
+    }
+  }, [])
+
+  function append(line: string) {
+    setLog((prev) => [{ts: Date.now(), line}, ...prev].slice(0, 100))
+  }
+
+  async function start() {
+    const latNum = Number(lat)
+    const lngNum = Number(lng)
+    if (!Number.isFinite(latNum) || !Number.isFinite(lngNum)) {
+      append("ERROR: lat/lng must be numbers")
+      return
+    }
+    setLog([])
+    setManeuver(null)
+    setStatus("navigating")
+    append(`start → ${latNum}, ${lngNum}`)
+
+    console.log("[NAV-MINI] start tapped", {latNum, lngNum})
+    console.log("[NAV-MINI] session.navigation =", session.navigation)
+
+    if (!navUnsubRef.current) {
+      console.log("[NAV-MINI] subscribing to onUpdate")
+      navUnsubRef.current = session.navigation.onUpdate((u: NavUpdate) => {
+        console.log("[NAV-MINI] ← update", u)
+        handleUpdate(u)
+      })
+    }
+
+    console.log("[NAV-MINI] calling session.navigation.start()")
+    const result = await session.navigation.start({lat: latNum, lng: lngNum})
+    console.log("[NAV-MINI] start ack:", result)
+    append(`start ack: ${JSON.stringify(result)}`)
+    if (result.ok) {
+      setRunning(true)
+    } else {
+      setStatus("idle")
+      navUnsubRef.current?.()
+      navUnsubRef.current = null
+    }
+  }
+
+  async function stop() {
+    const result = await session.navigation.stop()
+    append(`stop ack: ${JSON.stringify(result)}`)
+    navUnsubRef.current?.()
+    navUnsubRef.current = null
+    setRunning(false)
+    setStatus("idle")
+    setManeuver(null)
+  }
+
+  function handleUpdate(u: NavUpdate) {
+    append(formatUpdate(u))
+    switch (u.kind) {
+      case "maneuver":
+        setManeuver(u)
+        setStatus("navigating")
+        break
+      case "rerouting":
+        setStatus("rerouting")
+        break
+      case "arrived":
+        setStatus("arrived")
+        setManeuver(null)
+        setRunning(false)
+        navUnsubRef.current?.()
+        navUnsubRef.current = null
+        break
+      case "error":
+        setStatus("idle")
+        break
+    }
+  }
+
+  return (
+    <div style={styles.page}>
+      <h1 style={styles.h1}>Navigation</h1>
+
+      {/* My location — live from session.events.onLocation */}
+      <div style={styles.card}>
+        <div style={styles.cardLabel}>📍 My location</div>
+        {coords ? (
+          <>
+            <div style={styles.coordsLine}>
+              {coords.lat.toFixed(6)}, {coords.lng.toFixed(6)}
+            </div>
+            <div style={styles.coordsMeta}>
+              {coords.accuracy != null ? `±${Math.round(coords.accuracy)}m • ` : ""}
+              updated {timeAgo(coords.ts)}
+            </div>
+          </>
+        ) : (
+          <div style={styles.empty}>(waiting for fix…)</div>
+        )}
+      </div>
+
+      <div style={styles.row}>
+        <label style={styles.label}>
+          Lat
+          <input
+            style={styles.input}
+            value={lat}
+            onChange={(e) => setLat(e.target.value)}
+            disabled={running}
+            inputMode="decimal"
+          />
+        </label>
+        <label style={styles.label}>
+          Lng
+          <input
+            style={styles.input}
+            value={lng}
+            onChange={(e) => setLng(e.target.value)}
+            disabled={running}
+            inputMode="decimal"
+          />
+        </label>
+      </div>
+
+      <div style={styles.btnRow}>
+        {!running ? (
+          <button style={styles.startBtn} onClick={start}>
+            Start
+          </button>
+        ) : (
+          <button style={styles.stopBtn} onClick={stop}>
+            Stop
+          </button>
+        )}
+      </div>
+
+      {/* Status + active maneuver — the big read-out */}
+      {running || maneuver || status !== "idle" ? (
+        <>
+          <div style={styles.statusRow}>
+            <div style={styles.statusPill(status)}>{statusText(status)}</div>
+            {maneuver && maneuver.distanceMeters >= 0 ? (
+              <div style={styles.distanceBadge}>{formatDistance(maneuver.distanceMeters)}</div>
+            ) : null}
+          </div>
+
+          {maneuver ? (
+            <>
+              <ManeuverPill
+                glyph={maneuverGlyph(maneuver.maneuverType)}
+                primary={primaryText(maneuver)}
+                primarySuffix={primarySuffix(maneuver)}
+                secondary={maneuver.towardRoad ? maneuver.towardRoad : undefined}
+              />
+              {maneuver.towardRoad && maneuver.nextManeuverType ? (
+                <ThenChip
+                  label={maneuver.nextManeuverLabel || "Then"}
+                  glyph={maneuverGlyph(maneuver.nextManeuverType)}
+                />
+              ) : null}
+            </>
+          ) : (
+            <div style={styles.empty}>
+              {status === "rerouting" ? "Rebuilding route…" : "Waiting for first maneuver…"}
+            </div>
+          )}
+        </>
+      ) : null}
+
+      <h2 style={styles.h2}>
+        Live updates {running ? "•" : ""} <span style={styles.count}>({log.length})</span>
+      </h2>
+      <div style={styles.log}>
+        {log.length === 0 ? (
+          <div style={styles.empty}>(no events yet)</div>
+        ) : (
+          log.map((e) => (
+            <div key={e.ts + e.line} style={styles.logLine}>
+              <span style={styles.logTs}>{new Date(e.ts).toLocaleTimeString()}</span>
+              <span>{e.line}</span>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
+function formatUpdate(u: NavUpdate): string {
+  switch (u.kind) {
+    case "maneuver":
+      return `MANEUVER: ${u.instruction} • ${u.roadName || "?"} • ${u.distanceMeters}m • ${u.maneuverType}${
+        u.towardRoad ? ` • then ${u.nextManeuverType || "?"} onto ${u.towardRoad}` : ""
+      }`
+    case "rerouting":
+      return "REROUTING"
+    case "arrived":
+      return "ARRIVED"
+    case "error":
+      return `ERROR: ${u.message}`
+    default:
+      return JSON.stringify(u)
+  }
+}
+
+function formatDistance(meters: number): string {
+  if (meters < 1000) return `${meters} m`
+  return `${(meters / 1000).toFixed(meters < 10000 ? 1 : 0)} km`
+}
+
+function maneuverGlyph(type: string): string {
+  switch (type.toUpperCase()) {
+    case "TURN_LEFT":
+      return "↰"
+    case "TURN_RIGHT":
+      return "↱"
+    case "TURN_SLIGHT_LEFT":
+      return "↖"
+    case "TURN_SLIGHT_RIGHT":
+      return "↗"
+    case "TURN_SHARP_LEFT":
+      return "⤴"
+    case "TURN_SHARP_RIGHT":
+      return "⤵"
+    case "UTURN_LEFT":
+    case "UTURN_RIGHT":
+      return "↶"
+    case "STRAIGHT":
+    case "CONTINUE":
+      return "↑"
+    case "DESTINATION":
+    case "ARRIVE":
+      return "●"
+    default:
+      return "↑"
+  }
+}
+
+/**
+ * Current step's primary label. Prefer the road we're currently ON; fall
+ * back to the instruction text if no road name.
+ */
+function primaryText(m: NavManeuver): string {
+  if (m.roadName && m.roadName !== "Destination") return stripSuffix(m.roadName).name
+  return m.instruction || "Continue"
+}
+
+/**
+ * Optional suffix (e.g. "Ct", "Ave") to render smaller next to the primary.
+ */
+function primarySuffix(m: NavManeuver): string | undefined {
+  if (m.roadName && m.roadName !== "Destination") return stripSuffix(m.roadName).suffix
+  return undefined
+}
+
+/**
+ * Split "Oakton Ct" → { name: "Oakton", suffix: "Ct" }. Keeps common street
+ * suffixes small so the main road name reads large. Falls back to the
+ * whole string as name with no suffix.
+ */
+function stripSuffix(road: string): {name: string; suffix?: string} {
+  const match = road.match(/^(.+?)\s+(Ct|Ave|St|Rd|Blvd|Dr|Ln|Way|Pkwy|Hwy|Pl|Ter|Cir|Loop)\.?$/i)
+  if (match) return {name: match[1], suffix: match[2]}
+  return {name: road}
+}
+
+function ManeuverPill({
+  glyph,
+  primary,
+  primarySuffix,
+  secondary,
+}: {
+  glyph: string
+  primary: string
+  primarySuffix?: string
+  secondary?: string
+}) {
+  return (
+    <div style={styles.pill}>
+      <div style={styles.pillGlyph}>{glyph}</div>
+      <div style={styles.pillText}>
+        <div style={styles.pillPrimary}>
+          {primary}
+          {primarySuffix ? <span style={styles.pillPrimarySuffix}> {primarySuffix}</span> : null}
+        </div>
+        {secondary ? (
+          <div style={styles.pillSecondary}>
+            toward <span style={styles.pillSecondaryBold}>{stripSuffix(secondary).name}</span>
+            {stripSuffix(secondary).suffix ? (
+              <span style={styles.pillSecondarySuffix}> {stripSuffix(secondary).suffix}</span>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function ThenChip({label, glyph}: {label: string; glyph: string}) {
+  return (
+    <div style={styles.thenChip}>
+      <span style={styles.thenChipLabel}>{label}</span>
+      <span style={styles.thenChipGlyph}>{glyph}</span>
+    </div>
+  )
+}
+
+function statusText(s: "idle" | "navigating" | "rerouting" | "arrived"): string {
+  switch (s) {
+    case "idle":
+      return "IDLE"
+    case "navigating":
+      return "NAVIGATING"
+    case "rerouting":
+      return "REROUTING"
+    case "arrived":
+      return "ARRIVED"
+  }
+}
+
+function timeAgo(ts: number): string {
+  const sec = Math.max(0, Math.floor((Date.now() - ts) / 1000))
+  if (sec < 2) return "just now"
+  if (sec < 60) return `${sec}s ago`
+  return `${Math.floor(sec / 60)}m ago`
+}
+
+const styles = {
+  page: {padding: 16, fontFamily: "system-ui, sans-serif", color: "#111"} as React.CSSProperties,
+  h1: {fontSize: 22, margin: "0 0 12px"} as React.CSSProperties,
+  h2: {fontSize: 14, margin: "20px 0 8px", color: "#444"} as React.CSSProperties,
+  count: {color: "#999", fontWeight: "normal"} as React.CSSProperties,
+  card: {
+    border: "1px solid #e6e6e6",
+    background: "#f7f9fb",
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
+  } as React.CSSProperties,
+  cardLabel: {fontSize: 11, color: "#666", marginBottom: 4, textTransform: "uppercase" as const, letterSpacing: 0.5},
+  coordsLine: {
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontSize: 14,
+  } as React.CSSProperties,
+  coordsMeta: {fontSize: 11, color: "#666", marginTop: 2} as React.CSSProperties,
+  row: {display: "flex", gap: 12, marginBottom: 12} as React.CSSProperties,
+  label: {flex: 1, display: "flex", flexDirection: "column" as const, fontSize: 12, color: "#555"},
+  input: {
+    fontSize: 16,
+    padding: "8px 10px",
+    border: "1px solid #ccc",
+    borderRadius: 8,
+    marginTop: 4,
+  } as React.CSSProperties,
+  btnRow: {display: "flex", gap: 8} as React.CSSProperties,
+  startBtn: {
+    flex: 1,
+    background: "#0a84ff",
+    color: "white",
+    border: "none",
+    padding: "12px 16px",
+    borderRadius: 10,
+    fontSize: 16,
+    fontWeight: 600,
+  } as React.CSSProperties,
+  stopBtn: {
+    flex: 1,
+    background: "#ff3b30",
+    color: "white",
+    border: "none",
+    padding: "12px 16px",
+    borderRadius: 10,
+    fontSize: 16,
+    fontWeight: 600,
+  } as React.CSSProperties,
+  statusRow: {
+    marginTop: 16,
+    marginBottom: 10,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  } as React.CSSProperties,
+  statusPill: (s: "idle" | "navigating" | "rerouting" | "arrived"): React.CSSProperties => ({
+    display: "inline-block",
+    fontSize: 10,
+    fontWeight: 700,
+    letterSpacing: 0.6,
+    padding: "3px 8px",
+    borderRadius: 999,
+    background: s === "rerouting" ? "#ffd84a" : s === "arrived" ? "#34c759" : s === "navigating" ? "#0a84ff" : "#999",
+    color: s === "rerouting" ? "#5a4500" : "white",
+  }),
+  distanceBadge: {
+    fontSize: 16,
+    fontWeight: 700,
+    color: "#2c5f3f",
+    background: "#eaf5ef",
+    border: "1px solid #cbe4d6",
+    borderRadius: 8,
+    padding: "3px 10px",
+  } as React.CSSProperties,
+
+  // Big green pill — the current maneuver read-out
+  pill: {
+    display: "flex",
+    alignItems: "center",
+    gap: 18,
+    background: "#2e7d5b",
+    color: "white",
+    borderRadius: 20,
+    padding: "18px 22px",
+    boxShadow: "0 2px 10px rgba(46,125,91,0.25)",
+  } as React.CSSProperties,
+  pillGlyph: {
+    fontSize: 44,
+    fontWeight: 700,
+    lineHeight: 1,
+    flexShrink: 0,
+    minWidth: 44,
+    textAlign: "center",
+  } as React.CSSProperties,
+  pillText: {flex: 1, minWidth: 0} as React.CSSProperties,
+  pillPrimary: {
+    fontSize: 30,
+    fontWeight: 600,
+    lineHeight: 1.1,
+    letterSpacing: -0.3,
+    wordBreak: "break-word",
+  } as React.CSSProperties,
+  pillPrimarySuffix: {fontSize: 18, fontWeight: 400, opacity: 0.85} as React.CSSProperties,
+  pillSecondary: {
+    fontSize: 16,
+    marginTop: 4,
+    opacity: 0.85,
+    wordBreak: "break-word",
+  } as React.CSSProperties,
+  pillSecondaryBold: {fontSize: 20, fontWeight: 600, opacity: 1} as React.CSSProperties,
+  pillSecondarySuffix: {fontSize: 13, fontWeight: 400, opacity: 0.75} as React.CSSProperties,
+
+  // Stacked "Then →" chip below the main pill
+  thenChip: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    background: "#2e7d5b",
+    color: "white",
+    borderRadius: 14,
+    padding: "8px 14px",
+    marginTop: -6,
+    marginLeft: 6,
+    fontSize: 18,
+    fontWeight: 500,
+  } as React.CSSProperties,
+  thenChipLabel: {fontWeight: 500} as React.CSSProperties,
+  thenChipGlyph: {fontSize: 22, fontWeight: 700, lineHeight: 1} as React.CSSProperties,
+  log: {
+    border: "1px solid #eee",
+    borderRadius: 8,
+    padding: 8,
+    maxHeight: 360,
+    overflowY: "auto" as const,
+    background: "#fafafa",
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontSize: 12,
+  },
+  logLine: {
+    padding: "4px 6px",
+    borderBottom: "1px solid #f0f0f0",
+    display: "flex",
+    gap: 8,
+  } as React.CSSProperties,
+  logTs: {color: "#999", flexShrink: 0} as React.CSSProperties,
+  empty: {color: "#999", padding: 8} as React.CSSProperties,
+}

@@ -1,5 +1,5 @@
 {
-  "name": "{{packageName}}",
+  "name": "my-app",
   "private": true,
   "scripts": {
     "dev": "mentra-miniapp dev",
@@ -7,6 +7,7 @@
     "pack": "mentra-miniapp pack"
   },
   "dependencies": {
+    "@mentra/miniapp": "link:@mentra/miniapp",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   }
