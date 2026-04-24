@@ -249,6 +249,44 @@ a:hover {
   outline: none;
 }
 
+.compare-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.compare-monitor-summary .section-card {
+  border-color: var(--border-strong);
+}
+
+.compare-monitor-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.compare-monitor-grid .metric-card {
+  min-height: 96px;
+}
+
+.compare-monitor-utterance {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--panel-strong);
+  border: 1px solid var(--border);
+}
+
+.compare-monitor-utterance span {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.compare-monitor-utterance strong {
+  font-size: 1rem;
+  line-height: 1.45;
+}
+
 .compare-grid {
   display: grid;
   gap: 14px;
@@ -330,6 +368,10 @@ a:hover {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
+}
+
+.compare-panel .metric-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .metric-card {
@@ -615,6 +657,10 @@ a:hover {
   .metric-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
+  .compare-monitor-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 960px) {
@@ -646,6 +692,14 @@ a:hover {
   }
 
   .metric-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .compare-monitor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .compare-panel .metric-grid {
     grid-template-columns: 1fr;
   }
 

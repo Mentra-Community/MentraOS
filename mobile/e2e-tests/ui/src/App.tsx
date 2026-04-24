@@ -2,10 +2,12 @@ import * as Tabs from "@radix-ui/react-tabs"
 import {lazy, startTransition, Suspense, useEffect, useMemo, useState} from "react"
 
 import {EmptyState} from "./components/EmptyState"
+import {MetricCard} from "./components/MetricCard"
 import {RelativeAge} from "./components/RelativeAge"
+import {SectionCard} from "./components/SectionCard"
 import {StatusBadge} from "./components/StatusBadge"
 import type {CurrentUtterance, DelayPoint, MonitorSnapshot} from "./types"
-import {formatEndpointLabel} from "./utils"
+import {formatClockWithMs, formatEndpointLabel} from "./utils"
 
 const OverviewTab = lazy(() => import("./tabs/OverviewTab").then((module) => ({default: module.OverviewTab})))
 const IncidentsTab = lazy(() => import("./tabs/IncidentsTab").then((module) => ({default: module.IncidentsTab})))
@@ -52,6 +54,9 @@ interface DashboardRouteState {
   viewMode: ViewMode
   selectedDevice: string | null
 }
+interface RenderActiveTabOptions {
+  compareDevice?: boolean
+}
 
 const DEFAULT_TAB_VALUE: TabValue = "overview"
 const DEFAULT_VIEW_MODE: ViewMode = "compare"
@@ -94,10 +99,10 @@ function writeDashboardRouteState(activeTab: TabValue, viewMode: ViewMode, selec
   }
 }
 
-function renderActiveTab(activeTab: TabValue, snapshot: MonitorSnapshot) {
+function renderActiveTab(activeTab: TabValue, snapshot: MonitorSnapshot, options: RenderActiveTabOptions = {}) {
   switch (activeTab) {
     case "overview":
-      return <OverviewTab snapshot={snapshot} />
+      return <OverviewTab compareDevice={options.compareDevice} snapshot={snapshot} />
     case "incidents":
       return <IncidentsTab snapshot={snapshot} />
     case "alerts":
@@ -105,8 +110,56 @@ function renderActiveTab(activeTab: TabValue, snapshot: MonitorSnapshot) {
     case "latency":
       return <LatencyTab snapshot={snapshot} />
     case "debug":
-      return <DebugTab snapshot={snapshot} />
+      return <DebugTab compareDevice={options.compareDevice} snapshot={snapshot} />
   }
+}
+
+function CompareMonitorSummary({
+  latestLogcatEventTsMs,
+  snapshot,
+}: {
+  latestLogcatEventTsMs: number | null
+  snapshot: MonitorSnapshot
+}) {
+  const utterance = snapshot.current_utterance
+
+  return (
+    <div className="compare-monitor-summary">
+      <SectionCard title="Shared Monitor" subtitle="Global playback and collector state shared by every phone">
+        <div className="metric-grid compare-monitor-grid">
+          <MetricCard
+            label="Monitor Status"
+            value={<StatusBadge status={snapshot.status} />}
+            detail={snapshot.status_detail || "Live monitor health"}
+          />
+          <MetricCard
+            label="Current Row"
+            value={utterance ? `#${utterance.dataset_row_idx}` : "-"}
+            detail={utterance ? `${utterance.word_count} words in flight` : "Waiting for the next utterance"}
+          />
+          <MetricCard
+            label="Latest Logcat Event"
+            value={<RelativeAge ms={latestLogcatEventTsMs} emptyLabel="Waiting for event" />}
+            detail="Freshest device update in compare mode"
+          />
+          <MetricCard
+            label="Last Error"
+            value={snapshot.last_error ? "Error" : "None"}
+            detail={snapshot.last_error || "Collector is healthy"}
+          />
+        </div>
+        <div className="compare-monitor-utterance">
+          <span>Reference utterance</span>
+          <strong>{utterance?.text || "No utterance is active right now."}</strong>
+          <span>
+            {utterance
+              ? `${formatClockWithMs(utterance.start_ts_ms)} to ${formatClockWithMs(utterance.end_ts_ms)}`
+              : "Waiting for playback"}
+          </span>
+        </div>
+      </SectionCard>
+    </div>
+  )
 }
 
 function trimHistory<T>(items: T[], maxItems: number): T[] {
@@ -589,41 +642,43 @@ export default function App() {
           <Tabs.Content className="tab-content" forceMount value={activeTab}>
             <Suspense fallback={<div className="panel-loading">Loading {activeTab}…</div>}>
               {effectiveViewMode === "compare" ? (
-                <div
-                  className="compare-grid"
-                  style={{gridTemplateColumns: `repeat(${Math.max(snapshot.devices.length, 1)}, minmax(0, 1fr))`}}>
-                  {snapshot.devices.map((device) => {
-                    const deviceSnapshot = compareSnapshots[device.device_id]
-                    const lastLogcatEventTsMs =
-                      deviceSnapshot?.last_logcat_event_ts_ms ?? device.last_logcat_event_ts_ms
-                    return (
-                      <section key={device.device_id} className="compare-panel">
-                        <header className="compare-panel-header">
-                          <div className="compare-panel-summary">
-                            <strong>{device.label}</strong>
-                            <div className="compare-panel-meta">
-                              {deviceSnapshot?.backend_url ? (
+                <div className="compare-layout">
+                  <CompareMonitorSummary latestLogcatEventTsMs={heroLogcatEventTsMs} snapshot={snapshot} />
+                  <div
+                    className="compare-grid"
+                    style={{gridTemplateColumns: `repeat(${Math.max(snapshot.devices.length, 1)}, minmax(0, 1fr))`}}>
+                    {snapshot.devices.map((device) => {
+                      const deviceSnapshot = compareSnapshots[device.device_id]
+                      const lastLogcatEventTsMs =
+                        deviceSnapshot?.last_logcat_event_ts_ms ?? device.last_logcat_event_ts_ms
+                      return (
+                        <section key={device.device_id} className="compare-panel">
+                          <header className="compare-panel-header">
+                            <div className="compare-panel-summary">
+                              <strong>{device.label}</strong>
+                              <div className="compare-panel-meta">
+                                {deviceSnapshot?.backend_url ? (
+                                  <span className="compare-panel-meta-item">
+                                    <span className="compare-panel-meta-label">Backend</span>
+                                    <strong>{formatEndpointLabel(deviceSnapshot.backend_url)}</strong>
+                                  </span>
+                                ) : null}
                                 <span className="compare-panel-meta-item">
-                                  <span className="compare-panel-meta-label">Backend</span>
-                                  <strong>{formatEndpointLabel(deviceSnapshot.backend_url)}</strong>
+                                  <span className="compare-panel-meta-label">Last event</span>
+                                  <RelativeAge ms={lastLogcatEventTsMs} emptyLabel="Waiting for event" />
                                 </span>
-                              ) : null}
-                              <span className="compare-panel-meta-item">
-                                <span className="compare-panel-meta-label">Last event</span>
-                                <RelativeAge ms={lastLogcatEventTsMs} emptyLabel="Waiting for event" />
-                              </span>
+                              </div>
                             </div>
-                          </div>
-                          {deviceSnapshot ? <StatusBadge status={deviceSnapshot.status} /> : null}
-                        </header>
-                        {deviceSnapshot ? (
-                          renderActiveTab(activeTab, deviceSnapshot)
-                        ) : (
-                          <div className="panel-loading">Loading device…</div>
-                        )}
-                      </section>
-                    )
-                  })}
+                          </header>
+                          {deviceSnapshot ? (
+                            renderActiveTab(activeTab, deviceSnapshot, {compareDevice: true})
+                          ) : (
+                            <div className="panel-loading">Loading device…</div>
+                          )}
+                        </section>
+                      )
+                    })}
+                  </div>
                 </div>
               ) : (
                 renderActiveTab(activeTab, snapshot)
