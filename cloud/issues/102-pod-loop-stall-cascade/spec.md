@@ -48,7 +48,7 @@ Phase 1 instruments to answer all three.
 
 **After:** Same outer cumulative timer (preserved for vitals), plus an inline check: when one **handler invocation** (which processes a batch of 1+ packets from the reorder buffer) takes longer than `SLOW_AUDIO_CALL_MS` (default 50ms), log a structured warning.
 
-```
+```json
 {
   feature: "slow-audio-call",
   durationMs: <number>,
@@ -81,7 +81,7 @@ Note: the timer brackets one handler invocation (the for-loop over the reorder b
    - `op_audio_microphoneUpdate_ms`
 
 2. **Outlier warning**: when any single substage call exceeds `SLOW_AUDIO_STAGE_MS` (default 10ms), log:
-   ```
+   ```json
    {
      feature: "slow-audio-stage",
      stage: "lc3Decode" | "appFanout" | "transcriptionFeed" | "translationFeed" | "microphoneUpdate",
@@ -103,7 +103,7 @@ The 10ms per-substage threshold is conservative: each substage is sub-millisecon
 
 **After:** Wrap `relayAudioToApps` with a timer; warn when slow OR fan-out is high:
 
-```
+```json
 {
   feature: "slow-audio-fanout",
   durationMs: <number>,
@@ -125,7 +125,7 @@ Thresholds: `SLOW_RELAY_MS = 20`, `FANOUT_WARN = 10` subscribers.
 
 **After:** Add a 500ms `setInterval` that records the tick time. When the next tick fires more than `HEARTBEAT_GAP_THRESHOLD_MS` (default 1000ms) late, log:
 
-```
+```json
 {
   feature: "heartbeat-gap",
   gapMs: <elapsed - HEARTBEAT_INTERVAL_MS>,
