@@ -579,27 +579,38 @@ async function downloadHeapSnapshotHandler(c: AppContext) {
   }
   heapSnapshotInFlight = true;
 
-  const filename = `heap-${Date.now()}.heapsnapshot`;
-
+  let nodeStream: Readable;
   try {
-    const snapshotStream = Readable.toWeb(v8.getHeapSnapshot()) as unknown as ReadableStream<Uint8Array>;
-
-    return c.body(snapshotStream, 200, {
-      "Cache-Control": "no-store",
-      "Content-Disposition": `attachment; filename="${filename}"`,
-      "Content-Type": "application/json",
-    });
+    nodeStream = v8.getHeapSnapshot();
   } catch (error) {
-    logger.error(error, "Error streaming V8 heap snapshot");
-    return c.json({ error: "Failed to stream heap snapshot" }, 500);
-  } finally {
-    // Note: for the streaming endpoint the flag clears when the handler returns,
-    // not when the stream finishes. That is intentional — the snapshot generation
-    // (the expensive blocking part) happens during v8.getHeapSnapshot() BEFORE
-    // the stream is returned. Streaming the already-generated JSON to the caller
-    // is cheap and concurrent downloads are fine.
     heapSnapshotInFlight = false;
+    logger.error(error, "Error starting V8 heap snapshot");
+    return c.json({ error: "Failed to stream heap snapshot" }, 500);
   }
+
+  // Hold the flag until the stream fully drains (or errors). A slow client
+  // transferring the ~25MB snapshot over seconds would otherwise let another
+  // admin request trigger a second v8.getHeapSnapshot() while the first is
+  // still buffered in memory — stacking the 2× heap allocation the guard is
+  // meant to prevent. 'close' fires after both clean end and error, so it
+  // covers every exit path. Use `once` so we never double-clear.
+  const release = () => {
+    heapSnapshotInFlight = false;
+  };
+  nodeStream.once("close", release);
+  nodeStream.once("error", (err) => {
+    logger.error(err, "Error during V8 heap snapshot stream");
+    release();
+  });
+
+  const filename = `heap-${Date.now()}.heapsnapshot`;
+  const snapshotStream = Readable.toWeb(nodeStream) as unknown as ReadableStream<Uint8Array>;
+
+  return c.body(snapshotStream, 200, {
+    "Cache-Control": "no-store",
+    "Content-Disposition": `attachment; filename="${filename}"`,
+    "Content-Type": "application/json",
+  });
 }
 
 /**

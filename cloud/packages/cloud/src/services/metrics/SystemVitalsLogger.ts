@@ -136,13 +136,25 @@ class SystemVitalsLogger {
   private lastHeartbeatTick: number = Date.now();
   private gcObserver?: PerformanceObserver;
   // Issue 102: previous UDP stats snapshot for delta calculation per vitals window.
+  // Initialized to all-zeros (not null) so the first vitals window after pod
+  // start captures the from-boot traffic as its delta instead of hardcoding 0.
+  // Otherwise startup-burst traffic in the first 30s is invisible — defeats
+  // the point of the instrumentation. Since UdpAudioServer's counters also
+  // start at 0, subtracting zeros from the current snapshot yields "packets
+  // received since boot," which IS the right value for the first window.
   private prevUdpStats: {
     packetsReceived: number;
     packetsDropped: number;
     pingsReceived: number;
     packetsDecrypted: number;
     decryptionFailures: number;
-  } | null = null;
+  } = {
+    packetsReceived: 0,
+    packetsDropped: 0,
+    pingsReceived: 0,
+    packetsDecrypted: 0,
+    decryptionFailures: 0,
+  };
 
   start(): void {
     if (this.vitalsInterval) return;
@@ -437,22 +449,17 @@ class SystemVitalsLogger {
       // Issue 102: pod-level UDP counter deltas per 30s vitals window.
       // UdpAudioServer exposes cumulative counters; we compute deltas against
       // the previous snapshot so the vitals row shows per-window traffic.
+      // The prev snapshot is initialized to all-zeros (see field init above),
+      // so the first window correctly captures from-boot traffic instead of
+      // being hardcoded to 0s.
       const udpStats = udpAudioServer.getStatsSnapshot();
-      const udpDelta = this.prevUdpStats
-        ? {
-            udpPacketsReceivedDelta: udpStats.packetsReceived - this.prevUdpStats.packetsReceived,
-            udpPacketsDroppedDelta: udpStats.packetsDropped - this.prevUdpStats.packetsDropped,
-            udpPingsReceivedDelta: udpStats.pingsReceived - this.prevUdpStats.pingsReceived,
-            udpPacketsDecryptedDelta: udpStats.packetsDecrypted - this.prevUdpStats.packetsDecrypted,
-            udpDecryptionFailuresDelta: udpStats.decryptionFailures - this.prevUdpStats.decryptionFailures,
-          }
-        : {
-            udpPacketsReceivedDelta: 0,
-            udpPacketsDroppedDelta: 0,
-            udpPingsReceivedDelta: 0,
-            udpPacketsDecryptedDelta: 0,
-            udpDecryptionFailuresDelta: 0,
-          };
+      const udpDelta = {
+        udpPacketsReceivedDelta: udpStats.packetsReceived - this.prevUdpStats.packetsReceived,
+        udpPacketsDroppedDelta: udpStats.packetsDropped - this.prevUdpStats.packetsDropped,
+        udpPingsReceivedDelta: udpStats.pingsReceived - this.prevUdpStats.pingsReceived,
+        udpPacketsDecryptedDelta: udpStats.packetsDecrypted - this.prevUdpStats.packetsDecrypted,
+        udpDecryptionFailuresDelta: udpStats.decryptionFailures - this.prevUdpStats.decryptionFailures,
+      };
       this.prevUdpStats = {
         packetsReceived: udpStats.packetsReceived,
         packetsDropped: udpStats.packetsDropped,
