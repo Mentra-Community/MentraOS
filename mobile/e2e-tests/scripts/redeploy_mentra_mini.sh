@@ -195,15 +195,17 @@ if [[ "$RESTART_APPS" == "1" && ${#REMOTE_DEVICE_IDS[@]} -gt 0 ]]; then
   expected_backend_count="${#REMOTE_DEVICE_IDS[@]}"
   for _ in {1..20}; do
     backend_count="$(
-      curl -fsS "http://127.0.0.1:$PORT/state" \
-        | jq '[.devices[] | select(.backend_url != null)] | length' \
-        || printf '0'
+      curl -fsS "http://127.0.0.1:$PORT/state" 2>/dev/null \
+        | jq -r '[.devices[] | select(.backend_url != null)] | length' 2>/dev/null \
+        || true
     )"
-    if [[ "$backend_count" -ge "$expected_backend_count" ]]; then
+    backend_count="${backend_count:-0}"
+    if [[ "$backend_count" =~ ^[0-9]+$ && "$backend_count" -ge "$expected_backend_count" ]]; then
       break
     fi
     sleep 1
   done
+  echo "  backend configs captured: $backend_count/$expected_backend_count"
 fi
 
 echo "Redeployed monitor"
@@ -219,7 +221,8 @@ tail -n 20 "$OUTPUT_DIR/live_word_monitor.log" || true
 
 echo
 echo "State:"
-curl -fsS "http://127.0.0.1:$PORT/state" | jq '{status, status_detail, last_error}'
+curl -fsS "http://127.0.0.1:$PORT/state" \
+  | jq '{status, status_detail, last_error, devices: [.devices[] | {device_id, backend_url}]}'
 
 if [[ "$TAIL_LOG" == "1" ]]; then
   echo
