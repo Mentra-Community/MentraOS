@@ -43,6 +43,11 @@ private enum G2BLE {
     /// The service UUID that contains these chars
     static let SERVICE_UUID = CBUUID(string: "00002760-08C2-11E1-9073-0E8AC72E0000")
 
+    /// Standard GATT Device Information service + Serial Number String characteristic.
+    /// Used to verify identity of bonded peripherals that never advertise this session.
+    static let DEVICE_INFO_SERVICE = CBUUID(string: "180A")
+    static let CHAR_SERIAL_NUMBER = CBUUID(string: "2A25")
+
     // Transport constants
     static let HEADER_BYTE: UInt8 = 0xAA
     static let SOURCE_PHONE: UInt8 = 1
@@ -1075,6 +1080,10 @@ class G2: NSObject, SGCManager {
     var DEVICE_SEARCH_ID = "NOT_SET"
     /// map device names to serial numbers:
     private var deviceNameToSerialNumber: [String: String] = [:]
+    /// Peripherals we're probing for identity (bonded but never advertised this session).
+    /// Keyed by peripheral identifier. We connect them, read the Serial Number String GATT
+    /// characteristic, and only then decide whether they belong to the targeted pair.
+    private var pendingIdentityChecks: Set<UUID> = []
 
     /// Stored UUIDs for background reconnection
     private var leftGlassUUID: UUID? {
@@ -1427,14 +1436,32 @@ class G2: NSObject, SGCManager {
                         Task { await self.reconnectionManager.stop() }
                         Bridge.log("G2: Auth sequence complete, glasses ready")
 
-                        // Set device_name so CoreManager can save it for reconnection
-                        if let peripheralName = self.rightPeripheral?.name
-                            ?? self.leftPeripheral?.name,
-                            let idNumber = self.extractIdNumber(peripheralName)
-                        {
-                            let deviceId = "\(idNumber)"
-                            GlassesStore.shared.apply("core", "device_name", deviceId)
-                            Bridge.log("G2: Set device_name to \(deviceId)")
+                        // Set device_name so CoreManager can save it for reconnection.
+                        // MUST be the full serial number (e.g. S200LACA040040) — not the
+                        // 2-digit product ID from the BLE name (all our G2 units share "32"),
+                        // or `connectById` on reconnect will receive a non-unique key and
+                        // fail the SN guard against every connected peripheral.
+                        let resolvedSN: String? = {
+                            if self.DEVICE_SEARCH_ID != "NOT_SET", !self.DEVICE_SEARCH_ID.isEmpty {
+                                return self.DEVICE_SEARCH_ID
+                            }
+                            if let rName = self.rightPeripheral?.name,
+                               let sn = self.deviceNameToSerialNumber[rName]
+                            {
+                                return sn
+                            }
+                            if let lName = self.leftPeripheral?.name,
+                               let sn = self.deviceNameToSerialNumber[lName]
+                            {
+                                return sn
+                            }
+                            return nil
+                        }()
+                        if let sn = resolvedSN {
+                            GlassesStore.shared.apply("core", "device_name", sn)
+                            Bridge.log("G2: Set device_name to \(sn)")
+                        } else {
+                            Bridge.log("G2: Could not resolve SN — device_name not updated")
                         }
 
                         // Set bluetooth name and device model for Device Info page
@@ -2273,6 +2300,14 @@ class G2: NSObject, SGCManager {
 
     func connectById(_ id: String) {
         Bridge.log("G2: connectById(\(id))")
+        // Legacy migration: older builds persisted the 2-digit product ID
+        // (e.g. "32") as device_name. That's not unique across units and breaks
+        // SN matching. Treat short numeric IDs as no-op and let the user re-pair.
+        if id.count < 6, id.allSatisfy(\.isNumber) {
+            Bridge.log("G2: device_name '\(id)' looks like legacy product ID, not a full SN — skipping connect. User should re-pair.")
+            DEVICE_SEARCH_ID = "NOT_SET"
+            return
+        }
         DEVICE_SEARCH_ID = id
         startScan()
     }
@@ -2323,6 +2358,7 @@ class G2: NSObject, SGCManager {
         rightNotifyChar = nil
         rightAudioChar = nil
         leftAudioChar = nil
+        pendingIdentityChecks.removeAll()
         DEVICE_SEARCH_ID = "NOT_SET"
         centralManager?.delegate = nil
     }
@@ -2591,7 +2627,9 @@ class G2: NSObject, SGCManager {
         let devices = getConnectedDevices()
         Bridge.log("G2: connnectedDevices.count: (\(devices.count))")
         for device in devices {
-            if let name = device.name, let serialNumber = deviceNameToSerialNumber[name] {
+            guard let name = device.name else { continue }
+
+            if let serialNumber = deviceNameToSerialNumber[name] {
                 Bridge.log("G2: Connected to device: \(name)")
 
                 if name.contains("_L_") && serialNumber.contains(DEVICE_SEARCH_ID) {
@@ -2619,6 +2657,12 @@ class G2: NSObject, SGCManager {
                 }
                 // we can't emit the serial number here unfortunately:
                 emitDiscoveredDevice(serialNumber)
+            } else if (name.contains("_L_") || name.contains("_R_")) && DEVICE_SEARCH_ID != "NOT_SET" {
+                // Bonded peripheral that never advertised this session — typical for the
+                // R side after the Even app or a prior session left it "system-connected."
+                // We can't match by name (pair-ID prefix isn't unique across our units),
+                // so probe identity via the GATT Serial Number String characteristic.
+                probeBondedPeripheralIdentity(device)
             }
         }
 
@@ -2679,6 +2723,31 @@ class G2: NSObject, SGCManager {
         centralManager?.connect(left, options: nil)
         centralManager?.connect(right, options: nil)
         return true
+    }
+
+    /// Tentatively connect to a bonded peripheral whose SN we haven't mapped yet,
+    /// then read the GATT Serial Number String characteristic to decide whether
+    /// it belongs to the targeted pair. See handling in
+    /// `didDiscoverCharacteristicsFor` / `didUpdateValueFor` below.
+    private func probeBondedPeripheralIdentity(_ peripheral: CBPeripheral) {
+        guard let central = centralManager else { return }
+        // Avoid re-probing a peripheral we've already claimed or queued.
+        if peripheral === leftPeripheral || peripheral === rightPeripheral { return }
+        if pendingIdentityChecks.contains(peripheral.identifier) { return }
+
+        pendingIdentityChecks.insert(peripheral.identifier)
+        peripheral.delegate = self
+        Bridge.log("G2: Probing identity of bonded peripheral \(peripheral.name ?? "?")")
+
+        // For both already-connected and not-yet-connected peripherals, calling
+        // connect() is safe and will (re)fire didConnect, which drives the narrow
+        // Device Info service discovery.
+        central.connect(peripheral, options: nil)
+        // If the peripheral is already at GATT level .connected, didConnect may not
+        // fire again on some iOS versions — kick off service discovery directly.
+        if peripheral.state == .connected {
+            peripheral.discoverServices([G2BLE.DEVICE_INFO_SERVICE])
+        }
     }
 
     private func getConnectedDevices() -> [CBPeripheral] {
@@ -3400,6 +3469,13 @@ extension G2: CBCentralManagerDelegate {
             guard let self = self else { return }
             Bridge.log("G2: Connected to \(peripheral.name ?? "unknown")")
 
+            // Pending-identity connect: narrow discovery to Device Info service only.
+            // Serial Number read will decide whether to promote to L/R or drop.
+            if self.pendingIdentityChecks.contains(peripheral.identifier) {
+                peripheral.discoverServices([G2BLE.DEVICE_INFO_SERVICE])
+                return
+            }
+
             // Store UUID for reconnection
             if peripheral === self.leftPeripheral {
                 self.leftGlassUUID = peripheral.identifier
@@ -3417,6 +3493,16 @@ extension G2: CBCentralManagerDelegate {
     ) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+
+            // A pending-identity peripheral going away (typically after we rejected
+            // it via cancelPeripheralConnection) must not tear down the real L/R state.
+            if self.pendingIdentityChecks.remove(peripheral.identifier) != nil {
+                Bridge.log(
+                    "G2: Released probed peripheral \(peripheral.name ?? "?"): \(error?.localizedDescription ?? "clean")"
+                )
+                return
+            }
+
             let side = peripheral === self.leftPeripheral ? "LEFT" : "RIGHT"
             Bridge.log("G2: Disconnected \(side): \(error?.localizedDescription ?? "clean")")
 
@@ -3490,6 +3576,17 @@ extension G2: CBPeripheralDelegate {
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+
+            // Pending-identity peripherals aren't L or R yet — read their Serial Number
+            // String instead of routing their chars into the normal init path.
+            if self.pendingIdentityChecks.contains(peripheral.identifier) {
+                for char in characteristics where char.uuid == G2BLE.CHAR_SERIAL_NUMBER {
+                    peripheral.readValue(for: char)
+                    return
+                }
+                return
+            }
+
             let side = peripheral === self.leftPeripheral ? "LEFT" : "RIGHT"
 
             for char in characteristics {
@@ -3566,8 +3663,63 @@ extension G2: CBPeripheralDelegate {
             } else if characteristic.uuid == G2BLE.CHAR_NOTIFY {
                 // Protocol data
                 self.handleNotifyData(data, from: peripheral)
+            } else if characteristic.uuid == G2BLE.CHAR_SERIAL_NUMBER,
+                      self.pendingIdentityChecks.contains(peripheral.identifier)
+            {
+                self.resolveBondedPeripheralIdentity(peripheral, serialNumberData: data)
             }
         }
+    }
+
+    /// Called when a probed bonded peripheral's Serial Number String value arrives.
+    /// Decide whether to claim it as L or R, or drop it.
+    private func resolveBondedPeripheralIdentity(
+        _ peripheral: CBPeripheral, serialNumberData: Data
+    ) {
+        pendingIdentityChecks.remove(peripheral.identifier)
+
+        let rawSN = String(data: serialNumberData, encoding: .ascii) ?? ""
+        let serialNumber = rawSN.replacingOccurrences(
+            of: "[\\x00-\\x1F\\x7F]", with: "", options: .regularExpression
+        )
+        let name = peripheral.name ?? "?"
+        Bridge.log("G2: Bonded peripheral \(name) reports SN '\(serialNumber)'")
+
+        guard serialNumber.contains(DEVICE_SEARCH_ID), DEVICE_SEARCH_ID != "NOT_SET" else {
+            Bridge.log("G2: Bonded peripheral SN doesn't match search ID — releasing")
+            centralManager?.cancelPeripheralConnection(peripheral)
+            return
+        }
+
+        // Cache the mapping so future lookups hit the fast path.
+        deviceNameToSerialNumber[name] = serialNumber
+
+        if name.contains("_L_") {
+            if leftPeripheral != nil && leftPeripheral !== peripheral {
+                Bridge.log("G2: LEFT already assigned to a different peripheral — releasing duplicate \(name)")
+                centralManager?.cancelPeripheralConnection(peripheral)
+                return
+            }
+            leftPeripheral = peripheral
+            leftGlassUUID = peripheral.identifier
+            Bridge.log("G2: Claimed bonded LEFT: \(name)")
+        } else if name.contains("_R_") {
+            if rightPeripheral != nil && rightPeripheral !== peripheral {
+                Bridge.log("G2: RIGHT already assigned to a different peripheral — releasing duplicate \(name)")
+                centralManager?.cancelPeripheralConnection(peripheral)
+                return
+            }
+            rightPeripheral = peripheral
+            rightGlassUUID = peripheral.identifier
+            Bridge.log("G2: Claimed bonded RIGHT: \(name)")
+        } else {
+            Bridge.log("G2: Bonded peripheral name has no L/R marker — releasing")
+            centralManager?.cancelPeripheralConnection(peripheral)
+            return
+        }
+
+        // Now run the normal characteristic-discovery path to initialize it.
+        peripheral.discoverServices(nil)
     }
 
     nonisolated func peripheral(
