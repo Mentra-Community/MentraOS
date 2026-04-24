@@ -1,11 +1,31 @@
 node_modules
 ios
 android
-!examples/android/
-!examples/android/**
-!examples/ios/
-!examples/ios/**
 .expo
 dist
 build
 .DS_Store
+
+# Keep customer-facing native example source projects even though generic
+# React Native generated `android` / `ios` directories are ignored above.
+!examples/android/
+!examples/android/**
+!examples/ios/
+!examples/ios/**
+
+# Android example generated files.
+examples/android/.gradle/
+examples/android/.idea/
+examples/android/**/build/
+examples/android/**/*.iml
+examples/android/local.properties
+
+# iOS example generated files.
+examples/ios/Pods/
+examples/ios/Podfile.lock
+examples/ios/*.xcworkspace/
+examples/ios/DerivedData/
+examples/ios/build/
+examples/ios/**/*.xcuserstate
+examples/ios/**/xcuserdata/
+examples/ios/**/project.xcworkspace/
