@@ -286,31 +286,44 @@ export class UdpAudioServer {
 
     // Forward reordered packets to AudioManager
     // AudioManager handles LC3→PCM decoding if needed based on client's audio config
+    //
+    // Issue 102: processAudioData is async with an `await` on LC3 decode for LC3
+    // sessions. A plain sync for-loop measured with t0..finally would STOP timing
+    // at the first await, missing the post-await substages (appFanout,
+    // transcriptionFeed, translationFeed, microphoneUpdate). That would
+    // systematically underreport slow-audio-call durations for LC3 sessions — the
+    // exact observability gap this PR is supposed to close.
+    //
+    // Fix: capture the promises and record timing + emit the slow-call warning
+    // AFTER all of them settle. The function remains synchronous to its caller
+    // (Bun's UDP socket handler); the timing log is deferred to a microtask that
+    // fires once the real wall-clock is known. Per-promise .catch() prevents
+    // rejections from becoming unhandled, preserving existing error-log shape.
     const t0 = performance.now();
-    try {
-      for (const audioChunk of packetsToProcess) {
-        session.audioManager.processAudioData(audioChunk, "udp");
-      }
-    } catch (error) {
-      this.logger.error(
-        {
-          error,
-          userId: session.userId,
-          userIdHash,
-          sequence,
-          audioBytes: audioData.length,
-          feature: "udp-audio",
-        },
-        "Error processing UDP audio in AudioManager",
-      );
-    } finally {
+    const activeSessionsAtStart = this.sessionMap.size;
+    const pending = packetsToProcess.map((audioChunk) =>
+      Promise.resolve(session.audioManager.processAudioData(audioChunk, "udp")).catch((error: unknown) => {
+        this.logger.error(
+          {
+            error,
+            userId: session.userId,
+            userIdHash,
+            sequence,
+            audioBytes: audioData.length,
+            feature: "udp-audio",
+          },
+          "Error processing UDP audio in AudioManager",
+        );
+      }),
+    );
+    Promise.all(pending).finally(() => {
       const durationMs = performance.now() - t0;
       operationTimers.addTiming("audioProcessing", durationMs);
-      // Issue 102: catch outlier per-call durations to disambiguate the
-      // three competing cascade hypotheses. Many slow entries with normal-ish
-      // durations indicate a high-volume cascade; a single multi-second entry
-      // indicates a pathological call; entries with high packetsToProcess
-      // indicate a reorder-buffer flush; see cloud/issues/102-pod-loop-stall-cascade/.
+      // Catch outlier per-handler durations to disambiguate the cascade hypotheses.
+      // Many slow entries with normal-ish durations = high-volume cascade;
+      // a single multi-second entry = pathological call;
+      // high packetsToProcess = reorder-buffer flush.
+      // See cloud/issues/102-pod-loop-stall-cascade/.
       if (durationMs > SLOW_AUDIO_CALL_MS) {
         this.logger.warn(
           {
@@ -318,13 +331,13 @@ export class UdpAudioServer {
             durationMs: Math.round(durationMs * 10) / 10,
             packetsToProcess: packetsToProcess.length,
             userIdHash,
-            activeSessions: this.sessionMap.size,
+            activeSessions: activeSessionsAtStart,
             rssMB: Math.round(process.memoryUsage().rss / 1048576),
           },
           `Slow UDP audio handler: ${Math.round(durationMs)}ms over ${packetsToProcess.length} packet(s)`,
         );
       }
-    }
+    });
   }
 
   /**
