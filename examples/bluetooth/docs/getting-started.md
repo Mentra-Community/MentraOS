@@ -24,6 +24,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        maven("https://www.jitpack.io")
         maven("https://<mentra-maven-repository>") {
             credentials {
                 username = providers.gradleProperty("mentraRepoUser").orNull

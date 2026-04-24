@@ -12,6 +12,7 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         mavenLocal()
+        maven("https://www.jitpack.io")
 
         // Partner releases may require a private Mentra Maven repository.
         // Add the repository URL and credentials supplied by Mentra here or in

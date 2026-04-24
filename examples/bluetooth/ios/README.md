@@ -14,6 +14,12 @@ MENTRA_BLUETOOTH_SDK_VERSION=<version supplied by Mentra> pod install
 
 If your partner release uses a private CocoaPods spec repo, add the source supplied by Mentra at the top of `Podfile`.
 
+For local validation before a release, point the example at a checked-out SDK podspec:
+
+```sh
+MENTRA_BLUETOOTH_SDK_LOCAL_PATH=/path/to/bluetooth-sdk/ios pod install
+```
+
 ## Run
 
 ```sh
