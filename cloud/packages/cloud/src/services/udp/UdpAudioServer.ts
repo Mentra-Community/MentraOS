@@ -32,6 +32,12 @@ const MIN_PACKET_SIZE = 6; // 4 bytes hash + 2 bytes sequence
 const MIN_ENCRYPTED_PACKET_SIZE = 6 + NONCE_SIZE + TAG_SIZE; // header + nonce + minimum ciphertext (just tag)
 const LOG_INTERVAL = 100; // Log every N packets for debugging
 
+// Issue 102: warn when one UDP audio handler invocation takes longer than this.
+// Steady-state per-call duration is ~115μs (~400ms cumulative / 30s / ~3500 calls).
+// 50ms = ~400× normal, indicates either a pathological call, a packetsToProcess
+// flush from the reorder buffer, or a fan-out blowup downstream.
+const SLOW_AUDIO_CALL_MS = 50;
+
 export class UdpAudioServer {
   private socket: any = null;
   private sessionMap: Map<number, UserSession> = new Map(); // userIdHash → session
@@ -64,6 +70,30 @@ export class UdpAudioServer {
       this.logger.error({ error, port: UDP_PORT, feature: "udp-audio" }, "Failed to start UDP Audio Server");
       throw error;
     }
+  }
+
+  /**
+   * Issue 102: snapshot of all cumulative counters + active session count,
+   * for SystemVitalsLogger to compute per-vitals-window deltas. JS read of
+   * scalar fields is atomic on Bun's single-threaded loop, no concern about
+   * partial reads.
+   */
+  public getStatsSnapshot(): {
+    packetsReceived: number;
+    packetsDropped: number;
+    pingsReceived: number;
+    packetsDecrypted: number;
+    decryptionFailures: number;
+    registeredSessions: number;
+  } {
+    return {
+      packetsReceived: this.packetsReceived,
+      packetsDropped: this.packetsDropped,
+      pingsReceived: this.pingsReceived,
+      packetsDecrypted: this.packetsDecrypted,
+      decryptionFailures: this.decryptionFailures,
+      registeredSessions: this.sessionMap.size,
+    };
   }
 
   /**
@@ -274,7 +304,26 @@ export class UdpAudioServer {
         "Error processing UDP audio in AudioManager",
       );
     } finally {
-      operationTimers.addTiming("audioProcessing", performance.now() - t0);
+      const durationMs = performance.now() - t0;
+      operationTimers.addTiming("audioProcessing", durationMs);
+      // Issue 102: catch outlier per-call durations to disambiguate the
+      // three competing cascade hypotheses. Many slow entries with normal-ish
+      // durations indicate a high-volume cascade; a single multi-second entry
+      // indicates a pathological call; entries with high packetsToProcess
+      // indicate a reorder-buffer flush; see cloud/issues/102-pod-loop-stall-cascade/.
+      if (durationMs > SLOW_AUDIO_CALL_MS) {
+        this.logger.warn(
+          {
+            feature: "slow-audio-call",
+            durationMs: Math.round(durationMs * 10) / 10,
+            packetsToProcess: packetsToProcess.length,
+            userIdHash,
+            activeSessions: this.sessionMap.size,
+            rssMB: Math.round(process.memoryUsage().rss / 1048576),
+          },
+          `Slow UDP audio handler: ${Math.round(durationMs)}ms over ${packetsToProcess.length} packet(s)`,
+        );
+      }
     }
   }
 
