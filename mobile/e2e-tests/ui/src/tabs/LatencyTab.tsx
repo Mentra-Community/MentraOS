@@ -1,4 +1,4 @@
-import {useState} from "react"
+import {useEffect, useState} from "react"
 import {CartesianGrid, ComposedChart, Line, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis} from "recharts"
 
 import {EmptyState} from "../components/EmptyState"
@@ -42,21 +42,36 @@ function formatTimeTick(ms: number, windowMs: number | null): string {
 
 export function LatencyTab({snapshot}: {snapshot: MonitorSnapshot}) {
   const [windowMs, setWindowMs] = useState<number | null>(null)
+  const [nowMs, setNowMs] = useState(() => Date.now())
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setNowMs(Date.now())
+    }, 1000)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [])
+
   const latestPointTsMs = snapshot.logcat_true_word_delay_points.at(-1)?.ts_ms ?? null
   const activeWindow = WINDOW_OPTIONS.find((option) => option.value === windowMs) ?? WINDOW_OPTIONS.at(-1)
-  const windowStartMs = windowMs !== null && latestPointTsMs !== null ? latestPointTsMs - windowMs : null
+  const windowEndMs = windowMs !== null ? Math.max(nowMs, latestPointTsMs ?? 0) : null
+  const windowStartMs = windowMs !== null && windowEndMs !== null ? windowEndMs - windowMs : null
   const xDomain =
-    windowMs !== null && latestPointTsMs !== null
-      ? [latestPointTsMs - windowMs, latestPointTsMs]
+    windowMs !== null && windowEndMs !== null
+      ? [windowEndMs - windowMs, windowEndMs]
       : (["dataMin", "dataMax"] as const)
   const ticks =
-    windowStartMs !== null && latestPointTsMs !== null
-      ? buildWindowTicks(windowStartMs, latestPointTsMs, activeWindow?.tickStepMs ?? null)
+    windowStartMs !== null && windowEndMs !== null
+      ? buildWindowTicks(windowStartMs, windowEndMs, activeWindow?.tickStepMs ?? null)
       : undefined
   const filteredPoints =
-    windowMs === null || latestPointTsMs === null
+    windowMs === null || windowStartMs === null || windowEndMs === null
       ? snapshot.logcat_true_word_delay_points
-      : snapshot.logcat_true_word_delay_points.filter((point) => latestPointTsMs - point.ts_ms <= windowMs)
+      : snapshot.logcat_true_word_delay_points.filter(
+          (point) => point.ts_ms >= windowStartMs && point.ts_ms <= windowEndMs,
+        )
   const latencySeries = buildLatencySeries(filteredPoints)
   const activeWindowLabel = activeWindow?.label ?? "All"
 
