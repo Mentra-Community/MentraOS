@@ -6,10 +6,10 @@
 
 import { Hono } from "hono";
 import jwt from "jsonwebtoken";
+import { Readable } from "node:stream";
+import v8 from "node:v8";
 import os from "os";
 import path from "path";
-import fs from "fs";
-import * as inspector from "node:inspector";
 import App, { AppI } from "../../../models/app.model";
 import { Organization } from "../../../models/organization.model";
 import { memoryTelemetryService } from "../../../services/debug/MemoryTelemetryService";
@@ -57,10 +57,10 @@ app.post("/apps/:packageName/reject", validateAdminEmail, rejectApp);
 // Memory telemetry routes
 app.get("/memory/now", validateAdminEmail, getMemorySnapshot);
 app.post("/memory/heap-snapshot", validateAdminEmail, takeHeapSnapshotHandler);
+app.get("/memory/heap-snapshot-v8", validateAdminEmail, downloadHeapSnapshotHandler);
 
-// Bun-native heap snapshot — returns JSON directly (loadable in Chrome DevTools → Memory → Load).
-// Lighter than the Node inspector-based POST version above.
-// Save response as .heapsnapshot file, then load in Chrome DevTools Memory tab.
+// Bun/JSC-native heap snapshot — returns JSON directly for local scripts/Safari-style
+// tooling. For Chrome DevTools, use /memory/heap-snapshot-v8 instead.
 app.get("/memory/heap-snapshot-bun", validateAdminEmail, (c: AppContext) => {
   try {
     const snapshot = Bun.generateHeapSnapshot();
@@ -525,7 +525,7 @@ async function getMemorySnapshot(c: AppContext) {
 
 /**
  * POST /api/admin/memory/heap-snapshot
- * Trigger a heap snapshot and write it to a temp file.
+ * Trigger a Chrome-compatible V8 heap snapshot and write it to a temp file.
  */
 async function takeHeapSnapshotHandler(c: AppContext) {
   const filename = `heap-${Date.now()}.heapsnapshot`;
@@ -544,37 +544,31 @@ async function takeHeapSnapshotHandler(c: AppContext) {
 }
 
 /**
- * Helper function to take a heap snapshot.
+ * GET /api/admin/memory/heap-snapshot-v8
+ * Stream a Chrome-compatible V8 heap snapshot directly to the caller.
+ */
+async function downloadHeapSnapshotHandler(c: AppContext) {
+  const filename = `heap-${Date.now()}.heapsnapshot`;
+
+  try {
+    const snapshotStream = Readable.toWeb(v8.getHeapSnapshot()) as unknown as ReadableStream<Uint8Array>;
+
+    return c.body(snapshotStream, 200, {
+      "Cache-Control": "no-store",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Content-Type": "application/json",
+    });
+  } catch (error) {
+    logger.error(error, "Error streaming V8 heap snapshot");
+    return c.json({ error: "Failed to stream heap snapshot" }, 500);
+  }
+}
+
+/**
+ * Helper function to take a Chrome-compatible V8 heap snapshot.
  */
 async function takeHeapSnapshot(filePath: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const session = new inspector.Session();
-    try {
-      session.connect();
-      const writeStream = fs.createWriteStream(filePath);
-      session.post("HeapProfiler.enable");
-      session.on("HeapProfiler.addHeapSnapshotChunk", (m: any) => {
-        writeStream.write(m.params.chunk);
-      });
-      session.post("HeapProfiler.takeHeapSnapshot", { reportProgress: false }, (err) => {
-        writeStream.end();
-        session.post("HeapProfiler.disable");
-        session.disconnect();
-        if (err) {
-          reject(err);
-        } else {
-          resolve();
-        }
-      });
-    } catch (error) {
-      try {
-        session.disconnect();
-      } catch {
-        /* ignore disconnect errors */
-      }
-      reject(error);
-    }
-  });
+  v8.writeHeapSnapshot(filePath);
 }
 
 export default app;
