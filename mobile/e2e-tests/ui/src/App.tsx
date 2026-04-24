@@ -576,6 +576,8 @@ export default function App() {
                   style={{gridTemplateColumns: `repeat(${Math.max(snapshot.devices.length, 1)}, minmax(0, 1fr))`}}>
                   {snapshot.devices.map((device) => {
                     const deviceSnapshot = compareSnapshots[device.device_id]
+                    const lastLogcatEventTsMs =
+                      deviceSnapshot?.last_logcat_event_ts_ms ?? device.last_logcat_event_ts_ms
                     return (
                       <section key={device.device_id} className="compare-panel">
                         <header className="compare-panel-header">
@@ -590,7 +592,7 @@ export default function App() {
                               ) : null}
                               <span className="compare-panel-meta-item">
                                 <span className="compare-panel-meta-label">Last event</span>
-                                <RelativeAge ms={device.last_logcat_event_ts_ms} emptyLabel="Waiting for event" />
+                                <RelativeAge ms={lastLogcatEventTsMs} emptyLabel="Waiting for event" />
                               </span>
                             </div>
                           </div>
