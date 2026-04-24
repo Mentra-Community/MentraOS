@@ -366,12 +366,21 @@ a:hover {
   gap: 14px;
 }
 
+.content-grid > * {
+  min-width: 0;
+}
+
 .content-grid.two-up {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.compare-panel .content-grid.two-up {
+  grid-template-columns: 1fr;
+}
+
 .section-card {
   border-radius: 8px;
+  min-width: 0;
   padding: 16px;
 }
 
@@ -486,6 +495,27 @@ a:hover {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.92rem;
+}
+
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.incident-table {
+  min-width: 680px;
+}
+
+.incident-table th,
+.incident-table td {
+  white-space: nowrap;
+}
+
+.incident-table th:first-child,
+.incident-table td:first-child,
+.incident-table th:nth-child(2),
+.incident-table td:nth-child(2) {
+  white-space: normal;
 }
 
 .data-table th,
