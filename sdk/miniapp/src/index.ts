@@ -57,6 +57,7 @@ export type {
   ButtonPressData,
   CalendarEventData,
   ConnectionData,
+  HeadingData,
   HeadPositionData,
   LocationData,
   PhoneNotificationData,
@@ -72,4 +73,4 @@ export type {DashboardMode} from "./modules/dashboard"
 export type {LedColor, LedControlOptions} from "./modules/led"
 export type {StartUnmanagedOptions, StartManagedOptions, ManagedStreamResult, StreamStatus} from "./modules/stream"
 export type {ShareOptions, ShareResult, DownloadOptions, DownloadResult} from "./modules/system"
-export type {NavArrived, NavError, NavManeuver, NavRerouting, NavUpdate} from "./modules/navigation"
+export type {NavArrived, NavError, NavManeuver, NavRerouting, NavRoute, NavUpdate} from "./modules/navigation"

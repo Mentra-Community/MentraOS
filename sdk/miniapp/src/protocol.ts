@@ -131,11 +131,13 @@ export enum MiniappStreamType {
 
   // Phone sensors
   LOCATION_UPDATE = "location_update",
+  HEADING_UPDATE = "heading_update",
   PHONE_NOTIFICATION = "phone_notification",
   CALENDAR_EVENT = "calendar_event",
 
   // Navigation
   NAVIGATION_UPDATE = "navigation_update",
+  NAVIGATION_ROUTE = "navigation_route",
 
   // Phase 5
   PHOTO_TAKEN = "photo_taken",

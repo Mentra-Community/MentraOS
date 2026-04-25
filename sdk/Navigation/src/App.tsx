@@ -1,6 +1,8 @@
 import {useEffect, useRef, useState} from "react"
 import {useSession} from "@mentra/miniapp/react"
-import type {LocationData, NavManeuver, NavUpdate} from "@mentra/miniapp"
+import type {LocationData, NavManeuver, NavRoute, NavUpdate} from "@mentra/miniapp"
+
+import {NavMap} from "./NavMap"
 
 // SF Ferry Building. Replace with whatever you want to test.
 const DEFAULTS = {lat: "37.7956", lng: "-122.3933"}
@@ -17,7 +19,10 @@ export default function App() {
   const [maneuver, setManeuver] = useState<NavManeuver | null>(null)
   const [status, setStatus] = useState<"idle" | "navigating" | "rerouting" | "arrived">("idle")
   const [log, setLog] = useState<LogEntry[]>([])
+  const [activeDestination, setActiveDestination] = useState<{lat: number; lng: number} | null>(null)
+  const [routePoints, setRoutePoints] = useState<NavRoute["points"] | null>(null)
   const navUnsubRef = useRef<(() => void) | null>(null)
+  const routeUnsubRef = useRef<(() => void) | null>(null)
 
   // Live location stream — independent of nav. Subscribes for the lifetime
   // of the mini app so the "My location" card always reflects current GPS.
@@ -32,6 +37,8 @@ export default function App() {
     return () => {
       navUnsubRef.current?.()
       navUnsubRef.current = null
+      routeUnsubRef.current?.()
+      routeUnsubRef.current = null
     }
   }, [])
 
@@ -49,16 +56,23 @@ export default function App() {
     setLog([])
     setManeuver(null)
     setStatus("navigating")
+    setActiveDestination({lat: latNum, lng: lngNum})
+    setRoutePoints(null)
     append(`start → ${latNum}, ${lngNum}`)
 
     console.log("[NAV-MINI] start tapped", {latNum, lngNum})
-    console.log("[NAV-MINI] session.navigation =", session.navigation)
 
     if (!navUnsubRef.current) {
-      console.log("[NAV-MINI] subscribing to onUpdate")
       navUnsubRef.current = session.navigation.onUpdate((u: NavUpdate) => {
         console.log("[NAV-MINI] ← update", u)
         handleUpdate(u)
+      })
+    }
+    if (!routeUnsubRef.current) {
+      routeUnsubRef.current = session.navigation.onRoute((route: NavRoute) => {
+        console.log("[NAV-MINI] ← route", route.points.length, "pts")
+        setRoutePoints(route.points)
+        append(`route: ${route.points.length} points`)
       })
     }
 
@@ -70,8 +84,12 @@ export default function App() {
       setRunning(true)
     } else {
       setStatus("idle")
+      setActiveDestination(null)
+      setRoutePoints(null)
       navUnsubRef.current?.()
       navUnsubRef.current = null
+      routeUnsubRef.current?.()
+      routeUnsubRef.current = null
     }
   }
 
@@ -80,9 +98,13 @@ export default function App() {
     append(`stop ack: ${JSON.stringify(result)}`)
     navUnsubRef.current?.()
     navUnsubRef.current = null
+    routeUnsubRef.current?.()
+    routeUnsubRef.current = null
     setRunning(false)
     setStatus("idle")
     setManeuver(null)
+    setActiveDestination(null)
+    setRoutePoints(null)
   }
 
   function handleUpdate(u: NavUpdate) {
@@ -99,8 +121,12 @@ export default function App() {
         setStatus("arrived")
         setManeuver(null)
         setRunning(false)
+        setActiveDestination(null)
+        setRoutePoints(null)
         navUnsubRef.current?.()
         navUnsubRef.current = null
+        routeUnsubRef.current?.()
+        routeUnsubRef.current = null
         break
       case "error":
         setStatus("idle")
@@ -128,6 +154,14 @@ export default function App() {
         ) : (
           <div style={styles.empty}>(waiting for fix…)</div>
         )}
+      </div>
+
+      <div style={{marginBottom: 12}}>
+        <NavMap
+          me={coords ? {lat: coords.lat, lng: coords.lng} : null}
+          destination={activeDestination}
+          routePoints={routePoints}
+        />
       </div>
 
       <div style={styles.row}>

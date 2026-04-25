@@ -20,7 +20,8 @@ public class CrustModule: Module {
             "onNavManeuver",
             "onNavRerouting",
             "onNavArrived",
-            "onNavError"
+            "onNavError",
+            "onHeading"
         )
 
         Function("hello") {
@@ -40,6 +41,13 @@ public class CrustModule: Module {
         }
         AsyncFunction("stopNavigation") { () -> [String: Any] in
             return ["ok": false, "error": "navigation is android-only in v1"]
+        }
+
+        AsyncFunction("startHeading") { () -> [String: Any] in
+            return ["ok": false, "error": "heading is android-only in v1"]
+        }
+        AsyncFunction("stopHeading") { () -> [String: Any] in
+            return ["ok": false, "error": "heading is android-only in v1"]
         }
 
         Function("showAVRoutePicker") { (tintColor: String?) in

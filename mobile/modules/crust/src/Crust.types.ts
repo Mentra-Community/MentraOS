@@ -11,6 +11,17 @@ export type CrustModuleEvents = {
   onNavArrived: (params: Record<string, never>) => void
   onNavError: (params: NavErrorPayload) => void
   onNavLocation: (params: NavLocationPayload) => void
+  onNavRoute: (params: NavRoutePayload) => void
+  onHeading: (params: HeadingPayload) => void
+}
+
+export type HeadingPayload = {
+  /** Compass heading in degrees, 0 = north, 90 = east. */
+  degrees: number
+}
+
+export type NavRoutePayload = {
+  points: Array<{lat: number; lng: number}>
 }
 
 export type NavLocationPayload = {

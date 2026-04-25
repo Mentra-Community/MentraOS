@@ -19,6 +19,8 @@ class CrustModule : Module() {
       "onNavArrived",
       "onNavError",
       "onNavLocation",
+      "onNavRoute",
+      "onHeading",
     )
 
     Function("hello") {
@@ -268,6 +270,14 @@ class CrustModule : Module() {
             ),
           )
         }
+        override fun onRoute(points: List<NavigationManager.RoutePoint>) {
+          sendEvent(
+            "onNavRoute",
+            mapOf(
+              "points" to points.map { mapOf("lat" to it.lat, "lng" to it.lng) },
+            ),
+          )
+        }
       }
 
       activity.runOnUiThread {
@@ -321,6 +331,25 @@ class CrustModule : Module() {
         android.util.Log.e("CrustModule", "stopNavigation failed", e)
         mapOf("ok" to false, "error" to (e.message ?: "stop failed"))
       }
+    }
+
+    // MARK: - Heading (compass) — Android only
+
+    AsyncFunction("startHeading") {
+      val ctx = appContext.reactContext
+        ?: appContext.currentActivity
+        ?: return@AsyncFunction mapOf("ok" to false, "error" to "no context")
+      HeadingManager.start(ctx, object : HeadingManager.Callback {
+        override fun onHeading(degrees: Float) {
+          sendEvent("onHeading", mapOf("degrees" to degrees.toDouble()))
+        }
+      })
+      mapOf("ok" to true)
+    }
+
+    AsyncFunction("stopHeading") {
+      HeadingManager.stop()
+      mapOf("ok" to true)
     }
   }
 }

@@ -57,12 +57,15 @@ object NavigationManager {
     val timestamp: Long,
   )
 
+  data class RoutePoint(val lat: Double, val lng: Double)
+
   interface Callbacks {
     fun onManeuver(payload: ManeuverPayload)
     fun onRerouting()
     fun onArrived()
     fun onError(message: String)
     fun onLocation(payload: LocationPayload)
+    fun onRoute(points: List<RoutePoint>)
   }
 
   /** Start a navigation session. Initializes the Navigator on first call. */
@@ -153,6 +156,7 @@ object NavigationManager {
           nav.startGuidance()
           startPolling()
           emitCurrentManeuverIfChanged(nav, callbacks)
+          emitRoute(nav, callbacks)
         }
         else -> {
           val msg = "route status: $status"
@@ -163,16 +167,46 @@ object NavigationManager {
     }
   }
 
+  /**
+   * Flatten every segment's decoded path into a single polyline and emit
+   * it. Called on initial route + after any reroute.
+   */
+  private fun emitRoute(nav: Navigator, callbacks: Callbacks) {
+    try {
+      val segments = nav.routeSegments ?: return
+      val points = mutableListOf<RoutePoint>()
+      for (seg in segments) {
+        val path = try {
+          seg.latLngs
+        } catch (_: Throwable) {
+          null
+        } ?: continue
+        for (ll in path) {
+          points.add(RoutePoint(ll.latitude, ll.longitude))
+        }
+      }
+      if (points.isNotEmpty()) {
+        Log.d(TAG, "emit route — ${points.size} points")
+        callbacks.onRoute(points)
+      } else {
+        Log.w(TAG, "route segments empty, nothing to emit")
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "emitRoute failed", e)
+    }
+  }
+
   private fun attachListeners(nav: Navigator, callbacks: Callbacks) {
     arrivalListener = Navigator.ArrivalListener { _: ArrivalEvent ->
       Log.d(TAG, "arrived")
       callbacks.onArrived()
     }
     routeChangedListener = Navigator.RouteChangedListener {
-      Log.d(TAG, "route changed — emitting next maneuver")
+      Log.d(TAG, "route changed — emitting next maneuver + new route")
       callbacks.onRerouting()
       lastEmittedKey = null // force re-emit after reroute
       emitCurrentManeuverIfChanged(nav, callbacks)
+      emitRoute(nav, callbacks)
     }
     nav.addArrivalListener(arrivalListener)
     nav.addRouteChangedListener(routeChangedListener)

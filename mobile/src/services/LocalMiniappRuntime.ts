@@ -31,6 +31,7 @@ import type {MiniappEnvelope} from "@mentra/miniapp"
 import {getModelCapabilities, DeviceTypes} from "@/../../cloud/packages/types/src"
 import audioPlaybackService from "@/services/AudioPlaybackService"
 import localSttFallbackCoordinator from "@/services/LocalSttFallbackCoordinator"
+import headingService from "@/services/HeadingService"
 import navigationService, {NavUpdate} from "@/services/NavigationService"
 import micStateCoordinator from "@/services/MicStateCoordinator"
 import socketComms from "@/services/SocketComms"
@@ -358,6 +359,10 @@ class LocalMiniappRuntime {
       })
     }
 
+    // Recompute heading subscription — if this app was the last subscriber,
+    // the sensor will stop.
+    this.recomputeHeadingSubscription()
+
     // Clean up any pending cloud requests from this app
     for (const [reqId, pending] of this.pendingCloudRequests) {
       if (pending.packageName === packageName) {
@@ -600,11 +605,29 @@ class LocalMiniappRuntime {
 
     this.recomputeMicRequirements()
     this.updateCloudSubscriptions()
+    this.recomputeHeadingSubscription()
     this.sendResult(packageName, requestId, true)
 
     // Fire initial snapshot values for stateful streams so miniapps don't have
     // to wait for the first change event.
     this.emitInitialSnapshots(packageName, streams)
+  }
+
+  /**
+   * Heading is a sensor stream — start the native compass when any mini
+   * app is subscribed to "heading_update", stop it when none are.
+   */
+  private headingUnsub: (() => void) | null = null
+  private recomputeHeadingSubscription(): void {
+    const wantsHeading = this.streamSubscribers.has(MiniappStreamType.HEADING_UPDATE)
+    if (wantsHeading && !this.headingUnsub) {
+      this.headingUnsub = headingService.addListener((degrees) => {
+        this.forwardEvent(MiniappStreamType.HEADING_UPDATE, {degrees})
+      })
+    } else if (!wantsHeading && this.headingUnsub) {
+      this.headingUnsub()
+      this.headingUnsub = null
+    }
   }
 
   /**
@@ -914,9 +937,18 @@ class LocalMiniappRuntime {
           },
         })
       })
+      const unsubRoute = navigationService.addRouteListener((route) => {
+        console.log(`${LOG_TAG}: forwarding nav route to ${packageName}: ${route.points.length} pts`)
+        this.sendToMiniapp(packageName, {
+          type: MiniappResponseType.EVENT,
+          streamType: MiniappStreamType.NAVIGATION_ROUTE,
+          data: route,
+        })
+      })
       this.navListeners.set(packageName, () => {
         unsubNav()
         unsubLoc()
+        unsubRoute()
       })
     } else {
       console.log(`${LOG_TAG}: forwarder already exists for ${packageName}`)

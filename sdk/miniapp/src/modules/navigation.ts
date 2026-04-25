@@ -37,6 +37,10 @@ export type NavError = {kind: "error"; message: string}
 
 export type NavUpdate = NavManeuver | NavRerouting | NavArrived | NavError
 
+export type NavRoute = {
+  points: Array<{lat: number; lng: number}>
+}
+
 export class NavigationManager {
   constructor(
     private readonly session: MiniappSession,
@@ -75,6 +79,17 @@ export class NavigationManager {
   onUpdate(handler: (update: NavUpdate) => void): UnsubscribeFn {
     return this.events.subscribe(MiniappStreamType.NAVIGATION_UPDATE, (data) => {
       handler(data as NavUpdate)
+    })
+  }
+
+  /**
+   * Subscribe to the active route polyline. Fires once per route build —
+   * the full path is delivered each time, not a diff. Use this to draw
+   * the route on a map.
+   */
+  onRoute(handler: (route: NavRoute) => void): UnsubscribeFn {
+    return this.events.subscribe(MiniappStreamType.NAVIGATION_ROUTE, (data) => {
+      handler(data as NavRoute)
     })
   }
 }

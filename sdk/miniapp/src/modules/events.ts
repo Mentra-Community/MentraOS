@@ -53,6 +53,11 @@ export interface LocationData {
   correlationId?: string
 }
 
+export interface HeadingData {
+  /** Compass heading in degrees, 0 = north, 90 = east. */
+  degrees: number
+}
+
 export interface BatteryData {
   level: number
   charging: boolean
@@ -156,6 +161,14 @@ export class EventManager {
 
   onLocation(handler: (data: LocationData) => void): UnsubscribeFn {
     return this.subscribe(MiniappStreamType.LOCATION_UPDATE, handler as (data: unknown) => void)
+  }
+
+  /**
+   * Subscribe to live compass heading from the phone's magnetometer
+   * (Android only). Fires whenever the phone rotates more than ~1°.
+   */
+  onHeading(handler: (data: HeadingData) => void): UnsubscribeFn {
+    return this.subscribe(MiniappStreamType.HEADING_UPDATE, handler as (data: unknown) => void)
   }
 
   onGlassesBattery(handler: (data: BatteryData) => void): UnsubscribeFn {

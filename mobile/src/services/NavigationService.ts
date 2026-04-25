@@ -42,14 +42,21 @@ export type NavLocation = {
 }
 export type NavLocationListener = (loc: NavLocation) => void
 
+export type NavRoute = {points: Array<{lat: number; lng: number}>}
+export type NavRouteListener = (route: NavRoute) => void
+
 export type NavState = "idle" | "navigating" | "rerouting" | "arrived"
 
 class NavigationService {
   private static instance: NavigationService | null = null
   private listeners = new Set<NavListener>()
   private locationListeners = new Set<NavLocationListener>()
+  private routeListeners = new Set<NavRouteListener>()
   private subs: Array<{remove: () => void}> = []
   private state: NavState = "idle"
+  /** Last emitted route — replayed to late subscribers so they get the
+   *  current geometry immediately. */
+  private lastRoute: NavRoute | null = null
 
   private constructor() {}
 
@@ -71,7 +78,7 @@ class NavigationService {
     }
     return () => {
       this.listeners.delete(listener)
-      if (this.listeners.size === 0 && this.locationListeners.size === 0) {
+      if (this.noListeners()) {
         this.detachNativeSubs()
       }
     }
@@ -88,10 +95,43 @@ class NavigationService {
     }
     return () => {
       this.locationListeners.delete(listener)
-      if (this.listeners.size === 0 && this.locationListeners.size === 0) {
+      if (this.noListeners()) {
         this.detachNativeSubs()
       }
     }
+  }
+
+  /**
+   * Subscribe to the active route's polyline. Fires once per route build
+   * (initial + after every reroute). Late subscribers get the current
+   * route replayed on subscribe so the UI can render immediately.
+   */
+  public addRouteListener(listener: NavRouteListener): () => void {
+    this.routeListeners.add(listener)
+    if (this.subs.length === 0) {
+      this.attachNativeSubs()
+    }
+    if (this.lastRoute) {
+      try {
+        listener(this.lastRoute)
+      } catch (err) {
+        console.error(`${LOG_TAG}: route listener threw on replay`, err)
+      }
+    }
+    return () => {
+      this.routeListeners.delete(listener)
+      if (this.noListeners()) {
+        this.detachNativeSubs()
+      }
+    }
+  }
+
+  private noListeners(): boolean {
+    return (
+      this.listeners.size === 0 &&
+      this.locationListeners.size === 0 &&
+      this.routeListeners.size === 0
+    )
   }
 
   public async start(coords: {lat: number; lng: number}): Promise<{ok: boolean; error?: string}> {
@@ -115,6 +155,7 @@ class NavigationService {
     console.log(`${LOG_TAG}: stop`)
     const result = await CrustModule.stopNavigation()
     this.state = "idle"
+    this.lastRoute = null
     return result
   }
 
@@ -152,6 +193,18 @@ class NavigationService {
             l(loc)
           } catch (err) {
             console.error(`${LOG_TAG}: location listener threw`, err)
+          }
+        })
+      }),
+      CrustModule.addListener("onNavRoute", (data) => {
+        const route: NavRoute = {points: data.points ?? []}
+        this.lastRoute = route
+        console.log(`${LOG_TAG}: ← onNavRoute (${route.points.length} points)`)
+        this.routeListeners.forEach((l) => {
+          try {
+            l(route)
+          } catch (err) {
+            console.error(`${LOG_TAG}: route listener threw`, err)
           }
         })
       }),
