@@ -57,7 +57,11 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
   }>
 
   // Navigation (Android only — iOS stubs return error)
-  startNavigation(lat: number, lng: number): Promise<{ok: boolean; error?: string}>
+  startNavigation(
+    lat: number,
+    lng: number,
+    options?: {simulate?: boolean; speedMultiplier?: number},
+  ): Promise<{ok: boolean; error?: string}>
   stopNavigation(): Promise<{ok: boolean; error?: string}>
 
   // Heading / compass (Android only)

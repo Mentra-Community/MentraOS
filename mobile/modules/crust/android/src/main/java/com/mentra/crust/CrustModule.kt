@@ -231,9 +231,11 @@ class CrustModule : Module() {
 
     // MARK: - Navigation Commands (Google Navigation SDK)
 
-    AsyncFunction("startNavigation") { lat: Double, lng: Double ->
+    AsyncFunction("startNavigation") { lat: Double, lng: Double, options: Map<String, Any?>? ->
       val activity = appContext.currentActivity
         ?: return@AsyncFunction mapOf("ok" to false, "error" to "no current activity (app backgrounded?)")
+      val simulate = (options?.get("simulate") as? Boolean) ?: false
+      val speed = (options?.get("speedMultiplier") as? Number)?.toFloat() ?: 5f
 
       val callbacks = object : NavigationManager.Callbacks {
         override fun onManeuver(payload: NavigationManager.ManeuverPayload) {
@@ -315,7 +317,7 @@ class CrustModule : Module() {
                   sendEvent("onNavError", mapOf("message" to "user declined Google Nav T&C"))
                   return
                 }
-                NavigationManager.start(activity, lat, lng, callbacks)
+                NavigationManager.start(activity, lat, lng, simulate, speed, callbacks)
               }
             },
           )

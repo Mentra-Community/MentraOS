@@ -36,7 +36,7 @@ public class CrustModule: Module {
 
         // Navigation — Android only. iOS stubs return an error so the JS
         // surface compiles cross-platform.
-        AsyncFunction("startNavigation") { (_: Double, _: Double) -> [String: Any] in
+        AsyncFunction("startNavigation") { (_: Double, _: Double, _: [String: Any]?) -> [String: Any] in
             return ["ok": false, "error": "navigation is android-only in v1"]
         }
         AsyncFunction("stopNavigation") { () -> [String: Any] in

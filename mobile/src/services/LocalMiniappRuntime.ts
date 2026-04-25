@@ -908,6 +908,9 @@ class LocalMiniappRuntime {
       })
       return
     }
+    const simulate = payload.simulate === true
+    const speedNum = Number(payload.speedMultiplier)
+    const speedMultiplier = Number.isFinite(speedNum) && speedNum > 0 ? speedNum : 5
 
     // Attach a per-app listener that forwards nav updates as a stream event.
     if (!this.navListeners.has(packageName)) {
@@ -955,7 +958,7 @@ class LocalMiniappRuntime {
     }
 
     try {
-      const result = await navigationService.start({lat, lng})
+      const result = await navigationService.start({lat, lng}, {simulate, speedMultiplier})
       this.sendResult(packageName, requestId, result.ok, result, undefined)
     } catch (err) {
       console.error(`${LOG_TAG}: navigation start error:`, err)

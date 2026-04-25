@@ -21,6 +21,9 @@ export default function App() {
   const [log, setLog] = useState<LogEntry[]>([])
   const [activeDestination, setActiveDestination] = useState<{lat: number; lng: number} | null>(null)
   const [routePoints, setRoutePoints] = useState<NavRoute["points"] | null>(null)
+  const [breadcrumbs, setBreadcrumbs] = useState<Array<{lat: number; lng: number}>>([])
+  const [simulate, setSimulate] = useState(true)
+  const [speedMultiplier, setSpeedMultiplier] = useState(5)
   const navUnsubRef = useRef<(() => void) | null>(null)
   const routeUnsubRef = useRef<(() => void) | null>(null)
 
@@ -32,6 +35,24 @@ export default function App() {
     })
     return unsub
   }, [session])
+
+  // While a trip is active, drop breadcrumb dots showing where we've been.
+  // Only sample if we've moved at least ~3m since the last crumb.
+  useEffect(() => {
+    if (!running || !coords) return
+    setBreadcrumbs((prev) => {
+      const last = prev[prev.length - 1]
+      if (last) {
+        const dLat = (coords.lat - last.lat) * 111_320
+        const dLng = (coords.lng - last.lng) * 111_320 * Math.cos((coords.lat * Math.PI) / 180)
+        const meters = Math.sqrt(dLat * dLat + dLng * dLng)
+        if (meters < 3) return prev
+      }
+      const next = [...prev, {lat: coords.lat, lng: coords.lng}]
+      // Cap memory — most recent 500 crumbs is plenty for the trips we test
+      return next.length > 500 ? next.slice(-500) : next
+    })
+  }, [running, coords?.lat, coords?.lng])
 
   useEffect(() => {
     return () => {
@@ -58,7 +79,8 @@ export default function App() {
     setStatus("navigating")
     setActiveDestination({lat: latNum, lng: lngNum})
     setRoutePoints(null)
-    append(`start → ${latNum}, ${lngNum}`)
+    setBreadcrumbs([])
+    append(`start → ${latNum}, ${lngNum}${simulate ? ` (sim ${speedMultiplier}x)` : ""}`)
 
     console.log("[NAV-MINI] start tapped", {latNum, lngNum})
 
@@ -76,8 +98,13 @@ export default function App() {
       })
     }
 
-    console.log("[NAV-MINI] calling session.navigation.start()")
-    const result = await session.navigation.start({lat: latNum, lng: lngNum})
+    console.log("[NAV-MINI] calling session.navigation.start()", {simulate, speedMultiplier})
+    const result = await session.navigation.start({
+      lat: latNum,
+      lng: lngNum,
+      simulate,
+      speedMultiplier,
+    })
     console.log("[NAV-MINI] start ack:", result)
     append(`start ack: ${JSON.stringify(result)}`)
     if (result.ok) {
@@ -86,6 +113,7 @@ export default function App() {
       setStatus("idle")
       setActiveDestination(null)
       setRoutePoints(null)
+      setBreadcrumbs([])
       navUnsubRef.current?.()
       navUnsubRef.current = null
       routeUnsubRef.current?.()
@@ -105,6 +133,7 @@ export default function App() {
     setManeuver(null)
     setActiveDestination(null)
     setRoutePoints(null)
+    setBreadcrumbs([])
   }
 
   function handleUpdate(u: NavUpdate) {
@@ -123,6 +152,7 @@ export default function App() {
         setRunning(false)
         setActiveDestination(null)
         setRoutePoints(null)
+        setBreadcrumbs([])
         navUnsubRef.current?.()
         navUnsubRef.current = null
         routeUnsubRef.current?.()
@@ -161,6 +191,7 @@ export default function App() {
           me={coords ? {lat: coords.lat, lng: coords.lng} : null}
           destination={activeDestination}
           routePoints={routePoints}
+          breadcrumbs={breadcrumbs}
         />
       </div>
 
@@ -187,10 +218,37 @@ export default function App() {
         </label>
       </div>
 
+      <div style={styles.simRow}>
+        <label style={styles.simLabel}>
+          <input
+            type="checkbox"
+            checked={simulate}
+            onChange={(e) => setSimulate(e.target.checked)}
+            disabled={running}
+          />
+          <span>Simulate walking</span>
+        </label>
+        {simulate ? (
+          <label style={styles.speedLabel}>
+            <span style={styles.speedValue}>{speedMultiplier}x</span>
+            <input
+              type="range"
+              min={1}
+              max={20}
+              step={1}
+              value={speedMultiplier}
+              onChange={(e) => setSpeedMultiplier(Number(e.target.value))}
+              disabled={running}
+              style={styles.slider}
+            />
+          </label>
+        ) : null}
+      </div>
+
       <div style={styles.btnRow}>
         {!running ? (
           <button style={styles.startBtn} onClick={start}>
-            Start
+            Start{simulate ? ` (sim ${speedMultiplier}x)` : ""}
           </button>
         ) : (
           <button style={styles.stopBtn} onClick={stop}>
@@ -417,6 +475,40 @@ const styles = {
     borderRadius: 8,
     marginTop: 4,
   } as React.CSSProperties,
+  simRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 10,
+    padding: "8px 10px",
+    background: "#fff8e1",
+    border: "1px solid #f0d97c",
+    borderRadius: 8,
+  } as React.CSSProperties,
+  simLabel: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    fontSize: 13,
+    color: "#6b5300",
+    cursor: "pointer",
+    flexShrink: 0,
+  } as React.CSSProperties,
+  speedLabel: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    flex: 1,
+    fontSize: 12,
+    color: "#6b5300",
+  } as React.CSSProperties,
+  speedValue: {
+    fontFamily: "ui-monospace, monospace",
+    fontWeight: 700,
+    minWidth: 28,
+    textAlign: "right",
+  } as React.CSSProperties,
+  slider: {flex: 1, accentColor: "#c89a00"} as React.CSSProperties,
   btnRow: {display: "flex", gap: 8} as React.CSSProperties,
   startBtn: {
     flex: 1,

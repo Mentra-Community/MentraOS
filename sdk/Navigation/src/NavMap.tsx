@@ -9,6 +9,7 @@ export function NavMap({
   me,
   destination,
   routePoints,
+  breadcrumbs,
   autoFollow = true,
 }: {
   me: LatLng | null
@@ -16,6 +17,9 @@ export function NavMap({
   /** Full walking-route polyline emitted by Nav SDK. If null, falls back
    *  to a straight me→destination line so the map has *something*. */
   routePoints?: Array<LatLng> | null
+  /** Where the user has actually been since the trip started. Drawn as
+   *  small dots behind the position marker. */
+  breadcrumbs?: Array<LatLng>
   autoFollow?: boolean
 }) {
   const {ready, error} = useGoogleMaps()
@@ -57,6 +61,7 @@ export function NavMap({
   const meConeRef = useRef<any | null>(null)
   const destMarkerRef = useRef<any | null>(null)
   const routeRef = useRef<any | null>(null)
+  const crumbMarkersRef = useRef<any[]>([])
 
   // One-time map init
   useEffect(() => {
@@ -167,6 +172,42 @@ export function NavMap({
       destMarkerRef.current.setPosition(pos)
     }
   }, [ready, destination?.lat, destination?.lng])
+
+  // Breadcrumb dots — where the user has actually been. We diff against
+  // the previous render so we only ever ADD markers (cheap), and clear
+  // everything when the array shrinks (start/stop/arrived).
+  useEffect(() => {
+    if (!ready || !mapRef.current) return
+    const g = window.google
+    const trail = breadcrumbs ?? []
+
+    // Reset condition: array shrank or was emptied
+    if (trail.length < crumbMarkersRef.current.length) {
+      crumbMarkersRef.current.forEach((m) => m.setMap(null))
+      crumbMarkersRef.current = []
+    }
+
+    const dotIcon = {
+      path: g.maps.SymbolPath.CIRCLE,
+      scale: 4,
+      fillColor: "#1a73e8",
+      fillOpacity: 0.55,
+      strokeColor: "white",
+      strokeWeight: 1,
+    }
+
+    for (let i = crumbMarkersRef.current.length; i < trail.length; i++) {
+      const p = trail[i]
+      const m = new g.maps.Marker({
+        map: mapRef.current,
+        position: new g.maps.LatLng(p.lat, p.lng),
+        icon: dotIcon,
+        clickable: false,
+        zIndex: 50,
+      })
+      crumbMarkersRef.current.push(m)
+    }
+  }, [ready, breadcrumbs])
 
   // Polyline: prefer the real walking route from Nav SDK. Fall back to a
   // straight me → destination line so the map shows *something* while

@@ -53,12 +53,24 @@ export class NavigationManager {
    * the request, not that a route was successfully built.
    *
    * Listen via `onUpdate(...)` for the actual nav events.
+   *
+   * For dev/testing only: pass `simulate: true` to have the Nav SDK fake
+   * walking along the route at `speedMultiplier`× real-time. All events
+   * (location, maneuvers, arrival) fire as if the user were actually
+   * walking.
    */
-  async start(coords: {lat: number; lng: number}): Promise<{ok: boolean; error?: string}> {
+  async start(coords: {
+    lat: number
+    lng: number
+    simulate?: boolean
+    speedMultiplier?: number
+  }): Promise<{ok: boolean; error?: string}> {
     const result = await this.session.sendRequest<{ok: boolean; error?: string}>({
       type: MiniappRequestType.NAVIGATION_START,
       lat: coords.lat,
       lng: coords.lng,
+      simulate: coords.simulate ?? false,
+      speedMultiplier: coords.speedMultiplier ?? 5,
     })
     return result ?? {ok: false, error: "no response"}
   }

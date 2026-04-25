@@ -10,6 +10,7 @@ import com.google.android.libraries.navigation.NavigationApi
 import com.google.android.libraries.navigation.Navigator
 import com.google.android.libraries.navigation.RoadSnappedLocationProvider
 import com.google.android.libraries.navigation.RoutingOptions
+import com.google.android.libraries.navigation.SimulationOptions
 import com.google.android.libraries.navigation.Waypoint
 
 /**
@@ -69,8 +70,15 @@ object NavigationManager {
   }
 
   /** Start a navigation session. Initializes the Navigator on first call. */
-  fun start(activity: Activity, lat: Double, lng: Double, callbacks: Callbacks) {
-    Log.d(TAG, "start lat=$lat lng=$lng")
+  fun start(
+    activity: Activity,
+    lat: Double,
+    lng: Double,
+    simulate: Boolean,
+    speedMultiplier: Float,
+    callbacks: Callbacks,
+  ) {
+    Log.d(TAG, "start lat=$lat lng=$lng simulate=$simulate speed=$speedMultiplier")
 
     NavigationApi.getNavigator(
       activity,
@@ -80,7 +88,7 @@ object NavigationManager {
           navigator = nav
           attachListeners(nav, callbacks)
           attachLocationListener(activity, callbacks)
-          setDestinationAndStart(nav, lat, lng, callbacks)
+          setDestinationAndStart(nav, lat, lng, simulate, speedMultiplier, callbacks)
         }
 
         override fun onError(errorCode: Int) {
@@ -99,6 +107,7 @@ object NavigationManager {
     lastEmittedKey = null
     navigator?.let { nav ->
       try {
+        nav.simulator?.unsetUserLocation()
         nav.stopGuidance()
         nav.clearDestinations()
         detachListeners(nav)
@@ -133,6 +142,8 @@ object NavigationManager {
     nav: Navigator,
     lat: Double,
     lng: Double,
+    simulate: Boolean,
+    speedMultiplier: Float,
     callbacks: Callbacks,
   ) {
     val waypoint = try {
@@ -154,6 +165,12 @@ object NavigationManager {
         Navigator.RouteStatus.OK -> {
           Log.d(TAG, "route OK, starting guidance")
           nav.startGuidance()
+          if (simulate) {
+            Log.d(TAG, "simulator engaged at ${speedMultiplier}x")
+            nav.simulator?.simulateLocationsAlongExistingRoute(
+              SimulationOptions().speedMultiplier(speedMultiplier.coerceIn(0.5f, 50f)),
+            )
+          }
           startPolling()
           emitCurrentManeuverIfChanged(nav, callbacks)
           emitRoute(nav, callbacks)

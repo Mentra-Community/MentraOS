@@ -134,14 +134,22 @@ class NavigationService {
     )
   }
 
-  public async start(coords: {lat: number; lng: number}): Promise<{ok: boolean; error?: string}> {
-    console.log(`${LOG_TAG}: start ${coords.lat},${coords.lng}`)
+  public async start(
+    coords: {lat: number; lng: number},
+    options?: {simulate?: boolean; speedMultiplier?: number},
+  ): Promise<{ok: boolean; error?: string}> {
+    console.log(
+      `${LOG_TAG}: start ${coords.lat},${coords.lng} sim=${options?.simulate ?? false} speed=${options?.speedMultiplier ?? 5}`,
+    )
     if (this.subs.length === 0) {
       // Listeners may attach after start(); make sure native subs exist
       // so we don't drop early events.
       this.attachNativeSubs()
     }
-    const result = await CrustModule.startNavigation(coords.lat, coords.lng)
+    const result = await CrustModule.startNavigation(coords.lat, coords.lng, {
+      simulate: options?.simulate ?? false,
+      speedMultiplier: options?.speedMultiplier ?? 5,
+    })
     if (!result.ok) {
       console.warn(`${LOG_TAG}: start failed — ${result.error}`)
       this.state = "idle"
