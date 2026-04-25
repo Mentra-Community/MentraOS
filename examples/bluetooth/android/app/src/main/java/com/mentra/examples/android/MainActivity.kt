@@ -2,11 +2,18 @@ package com.mentra.examples.android
 
 import android.Manifest
 import android.app.Activity
+import android.graphics.BitmapFactory
 import android.graphics.Typeface
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
 import android.os.Build
 import android.os.Bundle
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -16,7 +23,10 @@ import com.mentra.bluetoothsdk.MentraBluetoothSdk
 import com.mentra.bluetoothsdk.MentraBluetoothSdkListener
 import com.mentra.bluetoothsdk.MentraBluetoothStatusUpdate
 import com.mentra.bluetoothsdk.MentraButtonMode
+import com.mentra.bluetoothsdk.MentraButtonPhotoSettings
 import com.mentra.bluetoothsdk.MentraButtonPressEvent
+import com.mentra.bluetoothsdk.MentraButtonVideoRecordingSettings
+import com.mentra.bluetoothsdk.MentraCameraFov
 import com.mentra.bluetoothsdk.MentraDashboardPositionRequest
 import com.mentra.bluetoothsdk.MentraDeviceModel
 import com.mentra.bluetoothsdk.MentraDiscoveredDevice
@@ -25,19 +35,39 @@ import com.mentra.bluetoothsdk.MentraGalleryStatusEvent
 import com.mentra.bluetoothsdk.MentraGlassesStatusUpdate
 import com.mentra.bluetoothsdk.MentraLocalTranscriptionEvent
 import com.mentra.bluetoothsdk.MentraMicConfig
+import com.mentra.bluetoothsdk.MentraMicPreference
 import com.mentra.bluetoothsdk.MentraPhotoResponseEvent
+import com.mentra.bluetoothsdk.MentraPhotoRequest
+import com.mentra.bluetoothsdk.MentraPhotoSize
 import com.mentra.bluetoothsdk.MentraScanStopReason
 import com.mentra.bluetoothsdk.MentraStreamStatusEvent
+import com.mentra.bluetoothsdk.MentraVideoRecordingRequest
 import com.mentra.bluetoothsdk.MentraWifiStatusEvent
+import java.net.URL
+import kotlin.math.PI
+import kotlin.math.sin
+
+private enum class DemoTab(val title: String) {
+    STATUS("Status"),
+    AUDIO("Audio"),
+    CAMERA("Camera"),
+    DISPLAY("Display"),
+    LOGS("Logs"),
+}
 
 class MainActivity : Activity(), MentraBluetoothSdkListener {
     private lateinit var sdk: MentraBluetoothSdk
+    private lateinit var tabContent: FrameLayout
+    private lateinit var tabViews: Map<DemoTab, ScrollView>
     private lateinit var connectionText: TextView
     private lateinit var deviceText: TextView
     private lateinit var batteryText: TextView
     private lateinit var wifiText: TextView
     private lateinit var versionText: TextView
     private lateinit var micText: TextView
+    private lateinit var audioOutputText: TextView
+    private lateinit var cameraText: TextView
+    private lateinit var photoPreview: ImageView
     private lateinit var eventText: TextView
     private lateinit var debugButton: Button
     private lateinit var logText: TextView
@@ -55,6 +85,9 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
     private var micLc3Frames = 0
     private var latestTranscript = "none"
     private var dataChannelActive = false
+    private var isPlayingTone = false
+    private var latestPhotoRequestId: String? = null
+    private var activeVideoRequestId: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -66,17 +99,25 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
     }
 
     override fun onDestroy() {
+        sdk.setOwnAppAudioPlaying(false)
         sdk.close()
         super.onDestroy()
     }
 
-    private fun createContentView(): ScrollView {
+    private fun createContentView(): LinearLayout {
         connectionText = statusLine("Connection: not connected")
         deviceText = statusLine("Device: none")
         batteryText = statusLine(latestBatteryLine)
         wifiText = statusLine(latestWifiLine)
         versionText = statusLine("Version: waiting for device status")
         micText = statusLine("Mic: off")
+        audioOutputText = statusLine("Output: idle")
+        cameraText = statusLine("Camera: idle")
+        photoPreview = ImageView(this).apply {
+            adjustViewBounds = true
+            maxHeight = 700
+            setPadding(0, 12, 0, 12)
+        }
         eventText = statusLine(latestEventLine)
         logText = TextView(this).apply {
             textSize = 14f
@@ -94,6 +135,39 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
             )
         }
 
+        tabViews =
+            mapOf(
+                DemoTab.STATUS to tabScrollView(buildStatusTab()),
+                DemoTab.AUDIO to tabScrollView(buildAudioTab()),
+                DemoTab.CAMERA to tabScrollView(buildCameraTab()),
+                DemoTab.DISPLAY to tabScrollView(buildDisplayTab()),
+                DemoTab.LOGS to tabScrollView(buildLogsTab()),
+            )
+
+        tabContent = FrameLayout(this).apply {
+            layoutParams =
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    0,
+                    1f,
+                )
+        }
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams =
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                )
+        }
+        root.addView(buildTabBar())
+        root.addView(tabContent)
+        showTab(DemoTab.STATUS)
+        return root
+    }
+
+    private fun buildStatusTab(): LinearLayout {
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(32, 32, 32, 32)
@@ -109,7 +183,6 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
         content.addView(batteryText)
         content.addView(wifiText)
         content.addView(versionText)
-        content.addView(micText)
         content.addView(eventText)
 
         content.addView(sectionTitle("Connection"))
@@ -135,7 +208,7 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
             appendAppLog("Disconnect requested.")
         })
 
-        content.addView(sectionTitle("Displayless checks"))
+        content.addView(sectionTitle("Device status"))
         content.addView(button("Refresh version / Wi-Fi / gallery") {
             refreshSnapshot()
             sdk.requestVersionInfo()
@@ -143,41 +216,104 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
             sdk.queryGalleryStatus()
             appendAppLog("Requested version, Wi-Fi scan, and gallery status.")
         })
-        content.addView(button("Set glasses button to photo") {
-            sdk.setButtonMode(MentraButtonMode.PHOTO)
-            appendAppLog("Set hardware button mode to photo. Press the glasses button to test events.")
+        return content
+    }
+
+    private fun buildAudioTab(): LinearLayout {
+        val content = tabContentContainer()
+        content.addView(sectionTitle("Audio input"))
+        content.addView(micText)
+        content.addView(button("Use automatic mic routing") {
+            sdk.setPreferredMic(MentraMicPreference.AUTO)
+            appendAppLog("Preferred mic set to auto.")
         })
-        content.addView(button("Set glasses button to video") {
-            sdk.setButtonMode(MentraButtonMode.VIDEO)
-            appendAppLog("Set hardware button mode to video. Press the glasses button to test events.")
+        content.addView(button("Start PCM + transcript") {
+            startMicCapture(sendPcm = true, sendLc3 = false, sendTranscript = true)
+            appendAppLog("Requested PCM frames and local transcription.")
         })
-        content.addView(button("Start mic LC3 frame counter") {
-            micLc3Frames = 0
-            micPcmFrames = 0
-            sdk.setMicState(
-                MentraMicConfig(
-                    sendPcmData = false,
-                    sendLc3Data = true,
-                    sendTranscript = false,
-                    bypassVad = false,
-                )
-            )
-            updateMicStatus()
-            appendAppLog("Requested LC3 mic frames. Speak near the glasses and watch the counter.")
+        content.addView(button("Start LC3 frame counter") {
+            startMicCapture(sendPcm = false, sendLc3 = true, sendTranscript = false)
+            appendAppLog("Requested LC3 mic frames.")
         })
         content.addView(button("Stop mic") {
-            sdk.setMicState(
-                MentraMicConfig(
-                    sendPcmData = false,
-                    sendLc3Data = false,
-                    sendTranscript = false,
-                    bypassVad = false,
-                )
-            )
-            updateMicStatus()
+            stopMicCapture()
             appendAppLog("Mic stream disabled.")
         })
 
+        content.addView(sectionTitle("Audio output"))
+        content.addView(audioOutputText)
+        content.addView(button("Play 2s output tone") {
+            playOutputTone()
+        })
+        content.addView(
+            statusLine(
+                "Output uses Android's active audio route. If the glasses are paired as a media device, the tone should route there; the SDK is notified while audio is playing."
+            )
+        )
+        return content
+    }
+
+    private fun buildCameraTab(): LinearLayout {
+        val content = tabContentContainer()
+        content.addView(sectionTitle("Photo preview"))
+        content.addView(cameraText)
+        content.addView(photoPreview)
+        content.addView(button("Request photo preview") {
+            requestPhotoPreview()
+        })
+        content.addView(button("Query gallery status") {
+            sdk.queryGalleryStatus()
+            appendAppLog("Requested gallery status.")
+        })
+
+        content.addView(sectionTitle("Video recording"))
+        content.addView(button("Set 1080p video button settings") {
+            sdk.setButtonVideoRecordingSettings(
+                MentraButtonVideoRecordingSettings(width = 1920, height = 1080, fps = 30)
+            )
+            sdk.setButtonMaxRecordingTime(1)
+            sdk.setButtonCameraLed(true)
+            sdk.setCameraFov(MentraCameraFov.STANDARD)
+            appendAppLog("Applied video button settings: 1080p30, 1 minute max, LED on.")
+        })
+        content.addView(button("Start saved video recording") {
+            startSavedVideoRecording()
+        })
+        content.addView(button("Stop saved video recording") {
+            stopSavedVideoRecording()
+        })
+        content.addView(button("Start rolling buffer") {
+            sdk.startBufferRecording()
+            updateCameraStatus("Camera: rolling buffer requested")
+            appendAppLog("Requested start buffer recording.")
+        })
+        content.addView(button("Save last 10s buffer") {
+            val requestId = nextRequestId("buffer")
+            sdk.saveBufferVideo(requestId = requestId, durationSeconds = 10)
+            updateCameraStatus("Camera: save buffer requested ($requestId)")
+            appendAppLog("Requested save buffer video: $requestId.")
+        })
+        content.addView(button("Stop rolling buffer") {
+            sdk.stopBufferRecording()
+            updateCameraStatus("Camera: stop buffer requested")
+            appendAppLog("Requested stop buffer recording.")
+        })
+
+        content.addView(sectionTitle("Hardware button"))
+        content.addView(button("Set button to photo") {
+            sdk.setButtonMode(MentraButtonMode.PHOTO)
+            sdk.setButtonPhotoSettings(MentraButtonPhotoSettings(MentraPhotoSize.MEDIUM))
+            appendAppLog("Set hardware button mode to photo.")
+        })
+        content.addView(button("Set button to video") {
+            sdk.setButtonMode(MentraButtonMode.VIDEO)
+            appendAppLog("Set hardware button mode to video.")
+        })
+        return content
+    }
+
+    private fun buildDisplayTab(): LinearLayout {
+        val content = tabContentContainer()
         content.addView(sectionTitle("Display models"))
         content.addView(button("Display hello") {
             sdk.displayText(
@@ -199,15 +335,48 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
             sdk.clearDisplay()
             appendAppLog("Clear display requested.")
         })
+        return content
+    }
 
+    private fun buildLogsTab(): LinearLayout {
+        val content = tabContentContainer()
         content.addView(sectionTitle("Logs"))
         content.addView(debugButton)
         content.addView(logText)
-
-        return ScrollView(this).apply {
-            addView(content)
-        }
+        return content
     }
+
+    private fun buildTabBar(): HorizontalScrollView {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(16, 16, 16, 8)
+        }
+        DemoTab.values().forEach { tab ->
+            row.addView(button(tab.title) { showTab(tab) })
+        }
+
+        return HorizontalScrollView(this).apply { addView(row) }
+    }
+
+    private fun showTab(tab: DemoTab) {
+        if (!::tabContent.isInitialized) return
+        tabContent.removeAllViews()
+        tabViews[tab]?.let { tabContent.addView(it) }
+    }
+
+    private fun tabScrollView(content: LinearLayout): ScrollView =
+        ScrollView(this).apply { addView(content) }
+
+    private fun tabContentContainer(): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(32, 16, 32, 32)
+            layoutParams =
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                )
+        }
 
     private fun sectionTitle(label: String): TextView =
         TextView(this).apply {
@@ -252,6 +421,151 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
         bluetoothValues.putAll(sdk.getBluetoothStatus().values)
         updateStatusPanel()
     }
+
+    private fun startMicCapture(sendPcm: Boolean, sendLc3: Boolean, sendTranscript: Boolean) {
+        micLc3Frames = 0
+        micPcmFrames = 0
+        latestTranscript = "none"
+        sdk.setMicState(
+            MentraMicConfig(
+                sendPcmData = sendPcm,
+                sendLc3Data = sendLc3,
+                sendTranscript = sendTranscript,
+                bypassVad = false,
+            )
+        )
+        updateMicStatus()
+    }
+
+    private fun stopMicCapture() {
+        sdk.setMicState(
+            MentraMicConfig(
+                sendPcmData = false,
+                sendLc3Data = false,
+                sendTranscript = false,
+                bypassVad = false,
+            )
+        )
+        updateMicStatus()
+    }
+
+    private fun playOutputTone() {
+        if (isPlayingTone) {
+            appendAppLog("Output tone is already playing.")
+            return
+        }
+
+        isPlayingTone = true
+        updateAudioOutputStatus("Output: playing 2s tone")
+        sdk.setOwnAppAudioPlaying(true)
+
+        Thread {
+            var track: AudioTrack? = null
+            try {
+                val sampleRate = 16_000
+                val durationSeconds = 2
+                val sampleCount = sampleRate * durationSeconds
+                val samples = ShortArray(sampleCount) { index ->
+                    val wave = sin(2.0 * PI * 440.0 * index / sampleRate)
+                    (wave * Short.MAX_VALUE * 0.25).toInt().toShort()
+                }
+                val minBufferSize =
+                    AudioTrack.getMinBufferSize(
+                        sampleRate,
+                        AudioFormat.CHANNEL_OUT_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT,
+                    )
+                track =
+                    AudioTrack.Builder()
+                        .setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_MEDIA)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                                .build()
+                        )
+                        .setAudioFormat(
+                            AudioFormat.Builder()
+                                .setSampleRate(sampleRate)
+                                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                                .build()
+                        )
+                        .setBufferSizeInBytes(maxOf(minBufferSize, samples.size * 2))
+                        .setTransferMode(AudioTrack.MODE_STREAM)
+                        .build()
+
+                track.play()
+                track.write(samples, 0, samples.size, AudioTrack.WRITE_BLOCKING)
+                track.stop()
+                updateAudioOutputStatus("Output: played 2s tone")
+                appendAppLog("Played output tone through Android's active audio route.")
+            } catch (error: Exception) {
+                updateAudioOutputStatus("Output: failed (${error.message ?: "unknown error"})")
+                appendAppLog("Output tone failed: ${error.message ?: error.javaClass.simpleName}")
+            } finally {
+                track?.release()
+                sdk.setOwnAppAudioPlaying(false)
+                isPlayingTone = false
+            }
+        }.start()
+    }
+
+    private fun requestPhotoPreview() {
+        val requestId = nextRequestId("photo")
+        latestPhotoRequestId = requestId
+        photoPreview.setImageDrawable(null)
+        updateCameraStatus("Camera: photo requested ($requestId)")
+        sdk.requestPhoto(
+            MentraPhotoRequest(
+                requestId = requestId,
+                appId = "com.mentra.examples.android",
+                size = "medium",
+                webhookUrl = "",
+                authToken = "",
+                compress = "none",
+                flash = false,
+                sound = true,
+            )
+        )
+        appendAppLog("Requested photo preview: $requestId.")
+    }
+
+    private fun startSavedVideoRecording() {
+        val requestId = nextRequestId("video")
+        activeVideoRequestId = requestId
+        sdk.startVideoRecording(
+            MentraVideoRecordingRequest(
+                requestId = requestId,
+                save = true,
+                flash = false,
+                sound = true,
+            )
+        )
+        updateCameraStatus("Camera: video recording requested ($requestId)")
+        appendAppLog("Started saved video recording: $requestId.")
+    }
+
+    private fun stopSavedVideoRecording() {
+        val requestId = activeVideoRequestId ?: latestPhotoRequestId ?: nextRequestId("video")
+        sdk.stopVideoRecording(requestId)
+        activeVideoRequestId = null
+        updateCameraStatus("Camera: stop video requested ($requestId)")
+        appendAppLog("Stopped saved video recording: $requestId.")
+    }
+
+    private fun updateAudioOutputStatus(message: String) {
+        runOnUiThread {
+            audioOutputText.text = message
+        }
+    }
+
+    private fun updateCameraStatus(message: String) {
+        runOnUiThread {
+            cameraText.text = message
+        }
+    }
+
+    private fun nextRequestId(prefix: String): String = "$prefix-${System.currentTimeMillis()}"
 
     override fun onDeviceDiscovered(device: MentraDiscoveredDevice) {
         latestDevice = device
@@ -298,6 +612,7 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
     override fun onGalleryStatus(event: MentraGalleryStatusEvent) {
         dataChannelActive = true
         latestEventLine = "Events: gallery ${summarizeValues(event.values)}"
+        updateCameraStatus("Camera: gallery ${summarizeValues(event.values)}")
         updateStatusPanel()
         appendAppLog("Gallery status: ${summarizeValues(event.values)}")
     }
@@ -312,6 +627,10 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
     override fun onPhotoResponse(event: MentraPhotoResponseEvent) {
         dataChannelActive = true
         latestEventLine = "Events: photo ${summarizeValues(event.values)}"
+        updateCameraStatus("Camera: photo response ${summarizeValues(event.values)}")
+        photoPreviewSource(event.values)?.let { source ->
+            loadPhotoPreview(source)
+        }
         updateStatusPanel()
         appendAppLog("Photo response: ${summarizeValues(event.values)}")
     }
@@ -319,6 +638,7 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
     override fun onStreamStatus(event: MentraStreamStatusEvent) {
         dataChannelActive = true
         latestEventLine = "Events: stream ${summarizeValues(event.values)}"
+        updateCameraStatus("Camera: stream ${summarizeValues(event.values)}")
         updateStatusPanel()
         appendAppLog("Stream status: ${summarizeValues(event.values)}")
     }
@@ -390,6 +710,44 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
         latestEventLine = "Events: error ${error.code}"
         updateStatusPanel()
         appendAppLog("Error ${error.code}: ${error.message}")
+    }
+
+    private fun photoPreviewSource(values: Map<String, Any>): String? =
+        stringValue(values, "photoUrl", "photo_url", "previewUrl", "preview_url", "localPath", "local_path")
+
+    private fun loadPhotoPreview(source: String) {
+        updateCameraStatus("Camera: loading photo preview")
+        Thread {
+            try {
+                val bitmap =
+                    if (source.startsWith("http://") || source.startsWith("https://")) {
+                        URL(source).openStream().use { stream -> BitmapFactory.decodeStream(stream) }
+                    } else {
+                        val path = source.removePrefix("file://")
+                        BitmapFactory.decodeFile(path)
+                    }
+
+                runOnUiThread {
+                    if (bitmap != null) {
+                        photoPreview.setImageBitmap(bitmap)
+                        cameraText.text = "Camera: loaded photo preview"
+                    } else {
+                        cameraText.text = "Camera: photo response had a source, but Android could not decode it"
+                    }
+                }
+            } catch (error: Exception) {
+                updateCameraStatus("Camera: preview load failed (${error.message ?: "unknown error"})")
+            }
+        }.start()
+    }
+
+    private fun stringValue(values: Map<String, Any>, vararg keys: String): String? {
+        for (key in keys) {
+            val value = values[key]
+            if (value is String && value.isNotBlank()) return value
+        }
+
+        return null
     }
 
     private fun updateStatusPanel() {

@@ -2,7 +2,7 @@
 
 This example is a minimal native Android app that calls the Mentra Bluetooth SDK Kotlin API directly.
 
-It is intentionally not a React Native or Expo app. It demonstrates scanning, connecting, receiving hardware events, refreshing device status, counting mic frames, setting the glasses button mode, and cleaning up the SDK.
+It is intentionally not a React Native or Expo app. It demonstrates scanning, connecting, receiving hardware events, refreshing device status, capturing microphone frames, routing app audio output, requesting photos, starting/stopping video recording, setting the glasses button mode, and cleaning up the SDK.
 
 ## Configure SDK Version
 
@@ -22,9 +22,15 @@ Open this folder in Android Studio, select the `app` configuration, and run on a
 
 The example asks for Bluetooth/location/microphone permissions, scans for Mentra Live glasses, and connects to the first discovered device or the saved default.
 
-The main screen is optimized for Mentra Live, which does not have a display. It shows connection/data-channel state, battery, Wi-Fi, firmware/version details, gallery counts, button events, and mic frame counters. Raw SDK debug logs are hidden by default; use **Show SDK debug logs** when collecting support details.
+The app is split into native Android tabs:
 
-The display buttons are kept in a separate **Display models** section so the same example can still be used with glasses that support display output.
+- **Status** shows connection/data-channel state, battery, Wi-Fi, firmware/version details, and recent hardware events.
+- **Audio** exercises microphone input callbacks (`onMicPcm`, `onMicLc3`, and local transcription) and plays a short Android output tone while notifying the SDK that the app is producing audio.
+- **Camera** exercises photo requests, gallery status, saved video recording, rolling buffer recording, camera settings, and hardware button modes. Photo preview appears when the SDK/firmware returns a preview URL or local path in `photo_response`.
+- **Display** keeps display text/settings controls for glasses models that support display output.
+- **Logs** keeps SDK debug logs hidden by default; use **Show SDK debug logs** when collecting support details.
+
+Mentra Live does not have a display, so the Status, Audio, and Camera tabs are the main hardware validation surface for that device.
 
 ## Files
 
