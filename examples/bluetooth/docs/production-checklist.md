@@ -6,8 +6,9 @@ Use this checklist before shipping a partner app with the Mentra Bluetooth SDK.
 
 - Bare Android and/or bare iOS native builds are configured.
 - iOS deployment target is `15.1` or newer.
-- Android min SDK is `24` or newer.
+- Android min SDK is `28` or newer.
 - Android builds use Java 17.
+- Android native packaging includes the SDK ONNX Runtime `pickFirst` rule.
 - Bluetooth permission copy is user-friendly and specific.
 - Microphone, camera, local network, notification, and location permissions are requested only when needed.
 - The app integrates through the documented typed Android or iOS SDK APIs.

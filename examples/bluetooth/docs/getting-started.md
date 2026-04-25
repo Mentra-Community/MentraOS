@@ -7,7 +7,7 @@ Use the SDK version and package repository supplied by Mentra. The snippets belo
 ## Requirements
 
 - A supported pair of Mentra smart glasses
-- Android min SDK `24` or newer for Android apps
+- Android min SDK `28` or newer for Android apps
 - Java 17 for Android builds
 - iOS deployment target `15.1` or newer for iOS apps
 - Xcode 15 or newer for iOS builds
@@ -37,10 +37,20 @@ dependencyResolutionManagement {
 
 ```kotlin
 // app/build.gradle.kts
+android {
+    packaging {
+        jniLibs {
+            pickFirsts += "lib/**/libonnxruntime.so"
+        }
+    }
+}
+
 dependencies {
     implementation("com.mentra:bluetooth-sdk:<version>")
 }
 ```
+
+The packaging rule resolves the SDK native audio stack's shared ONNX Runtime library during Android app packaging.
 
 The SDK manifest contributes the service and baseline Bluetooth declarations, but your app still owns runtime permission prompts.
 

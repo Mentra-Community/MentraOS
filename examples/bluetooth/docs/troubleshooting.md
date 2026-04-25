@@ -9,8 +9,9 @@
 
 ## Android Build Fails On Native Libraries
 
-- Confirm Android min SDK is at least `24`.
+- Confirm Android min SDK is at least `28`.
 - Confirm Java 17 is used by Gradle.
+- Confirm your app includes `pickFirsts += "lib/**/libonnxruntime.so"` under `android.packaging.jniLibs`.
 - Confirm no app-level packaging rule excludes `libc++_shared.so`, ONNX runtime, or SDK native libraries.
 - Clean only the example build output first. Do not delete SDK source artifacts unless you are intentionally resetting your workspace.
 

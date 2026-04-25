@@ -36,28 +36,11 @@ Keep one SDK instance per app session. The SDK owns Bluetooth connection state, 
 
 ## Permissions
 
-Android:
+Your app owns user-facing permission prompts and explanation copy. Request Bluetooth permissions before scanning and microphone permission before enabling audio or transcription features.
 
-```kotlin
-val permissions = MentraBluetoothPermissions.requiredPermissions(
-    setOf(MentraSdkFeature.SCANNING, MentraSdkFeature.PHONE_MICROPHONE)
-)
+On Android, request the platform permissions required for your target SDK, such as `BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT`, `ACCESS_FINE_LOCATION`, `RECORD_AUDIO`, and `POST_NOTIFICATIONS` where applicable.
 
-val status = MentraBluetoothPermissions.check(
-    context,
-    setOf(MentraSdkFeature.SCANNING, MentraSdkFeature.PHONE_MICROPHONE)
-)
-```
-
-iOS:
-
-```swift
-let status = MentraBluetoothSDK.permissions(
-    for: [.scanning, .phoneMicrophone]
-)
-```
-
-The SDK can report required permissions and current status. Your app owns user-facing permission prompts and explanation copy.
+On iOS, include the Bluetooth and microphone usage descriptions in your app `Info.plist`.
 
 ## Connection
 
@@ -159,7 +142,7 @@ sdk.setDashboardPosition(
 sdk.setHeadUpAngle(angleDegrees = 20)
 sdk.setScreenDisabled(false)
 sdk.setGalleryMode(MentraGalleryMode.AUTO)
-sdk.setButtonMode(MentraButtonMode.CAMERA)
+sdk.setButtonMode(MentraButtonMode.PHOTO)
 sdk.setButtonPhotoSettings(MentraButtonPhotoSettings(size = MentraPhotoSize.MEDIUM))
 sdk.setButtonVideoRecordingSettings(
     MentraButtonVideoRecordingSettings(width = 1280, height = 720, fps = 30)
@@ -181,7 +164,7 @@ try await sdk.setDashboardPosition(
 try await sdk.setHeadUpAngle(20)
 try await sdk.setScreenDisabled(false)
 try await sdk.setGalleryMode(.auto)
-try await sdk.setButtonMode(.camera)
+try await sdk.setButtonMode(.photo)
 try await sdk.setButtonPhotoSettings(
     MentraButtonPhotoSettings(size: .medium)
 )
@@ -307,7 +290,7 @@ public protocol MentraBluetoothSDKDelegate: AnyObject {
 }
 ```
 
-Swift apps may also use an `AsyncStream<MentraBluetoothEvent>` when they prefer structured concurrency, but delegates remain the primary v1 integration path.
+Delegates are the primary v1 integration path for Swift apps.
 
 ## Core Models
 

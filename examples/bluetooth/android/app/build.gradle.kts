@@ -9,11 +9,26 @@ android {
 
     defaultConfig {
         applicationId = "com.mentra.examples.android"
-        minSdk = 24
+        minSdk = 28
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
     }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    packaging {
+        jniLibs {
+            pickFirsts += "lib/**/libonnxruntime.so"
+        }
+    }
+}
+
+kotlin {
+    jvmToolchain(17)
 }
 
 dependencies {
