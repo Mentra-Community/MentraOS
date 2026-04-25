@@ -210,6 +210,61 @@ sdk.setMicState(
 
 Raw audio and local transcription are advanced capabilities. Gate them behind explicit user permission and in-app controls.
 
+## Camera Photo Upload
+
+Use `requestPhoto` when your app needs the glasses to capture a photo and upload it to your backend. The phone sends the command to the glasses over Bluetooth, but the image upload is performed by the glasses over Wi-Fi to the `webhookUrl` you provide.
+
+Android:
+
+```kotlin
+val requestId = "assistant-${System.currentTimeMillis()}"
+
+sdk.requestPhoto(
+    MentraPhotoRequest(
+        requestId = requestId,
+        appId = "com.example.assistant",
+        size = "medium",
+        webhookUrl = "https://api.example.com/mentra/photo",
+        authToken = "optional-token",
+        compress = "medium",
+        flash = false,
+        sound = true,
+    )
+)
+```
+
+iOS:
+
+```swift
+let requestId = "assistant-\(Date().timeIntervalSince1970)"
+
+try await sdk.requestPhoto(
+    MentraPhotoRequest(
+        requestId: requestId,
+        appId: "com.example.assistant",
+        size: "medium",
+        webhookUrl: "https://api.example.com/mentra/photo",
+        authToken: "optional-token",
+        compress: "medium",
+        flash: false,
+        sound: true
+    )
+)
+```
+
+Your webhook should accept multipart form data. Mentra Live currently sends:
+
+| Field | Description |
+| --- | --- |
+| `photo` | JPEG image file |
+| `requestId` | Your request identifier |
+| `type` | `photo_upload` |
+| `success` | `true` for a successful upload |
+
+If you include `authToken`, the glasses add it as `Authorization: Bearer <token>` on the webhook request.
+
+For local development, run the companion server in `examples/photo-webhook-server` and use the printed LAN URL, such as `http://192.168.1.42:8787/upload`. Do not use `localhost`: the glasses, not the phone, make the upload request. The Android example demonstrates this by polling `GET /uploads/<requestId>.json` and displaying the returned `photoUrl`.
+
 ## Wi-Fi And Hotspot
 
 Android:

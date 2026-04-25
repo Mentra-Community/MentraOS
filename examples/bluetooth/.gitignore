@@ -5,6 +5,8 @@ android
 dist
 build
 .DS_Store
+__pycache__/
+*.pyc
 
 # Keep customer-facing native example source projects even though generic
 # React Native generated `android` / `ios` directories are ignored above.
@@ -19,6 +21,9 @@ examples/android/.idea/
 examples/android/**/build/
 examples/android/**/*.iml
 examples/android/local.properties
+
+# Local webhook demo uploads.
+examples/photo-webhook-server/uploads/
 
 # iOS example generated files.
 examples/ios/Pods/

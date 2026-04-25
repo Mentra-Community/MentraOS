@@ -9,8 +9,10 @@ import android.media.AudioFormat
 import android.media.AudioTrack
 import android.os.Build
 import android.os.Bundle
+import android.text.InputType
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
@@ -43,9 +45,12 @@ import com.mentra.bluetoothsdk.MentraScanStopReason
 import com.mentra.bluetoothsdk.MentraStreamStatusEvent
 import com.mentra.bluetoothsdk.MentraVideoRecordingRequest
 import com.mentra.bluetoothsdk.MentraWifiStatusEvent
+import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import kotlin.math.PI
 import kotlin.math.sin
+import org.json.JSONObject
 
 private enum class DemoTab(val title: String) {
     STATUS("Status"),
@@ -67,6 +72,7 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
     private lateinit var micText: TextView
     private lateinit var audioOutputText: TextView
     private lateinit var cameraText: TextView
+    private lateinit var webhookUrlInput: EditText
     private lateinit var photoPreview: ImageView
     private lateinit var eventText: TextView
     private lateinit var debugButton: Button
@@ -87,6 +93,7 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
     private var dataChannelActive = false
     private var isPlayingTone = false
     private var latestPhotoRequestId: String? = null
+    private var activePhotoPollRequestId: String? = null
     private var activeVideoRequestId: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -113,6 +120,12 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
         micText = statusLine("Mic: off")
         audioOutputText = statusLine("Output: idle")
         cameraText = statusLine("Camera: idle")
+        webhookUrlInput =
+            EditText(this).apply {
+                hint = "http://192.168.1.42:8787/upload"
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+                setSingleLine(true)
+            }
         photoPreview = ImageView(this).apply {
             adjustViewBounds = true
             maxHeight = 700
@@ -255,12 +268,18 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
 
     private fun buildCameraTab(): LinearLayout {
         val content = tabContentContainer()
-        content.addView(sectionTitle("Photo preview"))
+        content.addView(sectionTitle("Webhook photo preview"))
         content.addView(cameraText)
         content.addView(photoPreview)
-        content.addView(button("Request photo preview") {
-            requestPhotoPreview()
+        content.addView(webhookUrlInput)
+        content.addView(button("Take photo + upload to webhook") {
+            requestWebhookPhotoPreview()
         })
+        content.addView(
+            statusLine(
+                "Run the local webhook server on your computer, paste its /upload URL here, then tap the button. The glasses upload directly to that server; this app polls it by requestId and displays the image."
+            )
+        )
         content.addView(button("Query gallery status") {
             sdk.queryGalleryStatus()
             appendAppLog("Requested gallery status.")
@@ -510,24 +529,39 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
         }.start()
     }
 
-    private fun requestPhotoPreview() {
+    private fun requestWebhookPhotoPreview() {
+        if (!hasActiveGlassesSession()) {
+            updateCameraStatus("Camera: connect to Mentra Live before requesting a photo")
+            appendAppLog("Webhook photo skipped because the sample is not connected to glasses.")
+            return
+        }
+
+        val webhookUrl = webhookUrlInput.text?.toString()?.trim().orEmpty()
+        if (!webhookUrl.startsWith("http://") && !webhookUrl.startsWith("https://")) {
+            updateCameraStatus("Camera: enter a webhook URL like http://<computer-ip>:8787/upload")
+            appendAppLog("Webhook photo skipped because the upload URL is missing or invalid.")
+            return
+        }
+
         val requestId = nextRequestId("photo")
         latestPhotoRequestId = requestId
+        activePhotoPollRequestId = requestId
         photoPreview.setImageDrawable(null)
-        updateCameraStatus("Camera: photo requested ($requestId)")
+        updateCameraStatus("Camera: webhook upload requested ($requestId)")
         sdk.requestPhoto(
             MentraPhotoRequest(
                 requestId = requestId,
                 appId = "com.mentra.examples.android",
                 size = "medium",
-                webhookUrl = "",
+                webhookUrl = webhookUrl,
                 authToken = "",
-                compress = "none",
+                compress = "medium",
                 flash = false,
                 sound = true,
             )
         )
-        appendAppLog("Requested photo preview: $requestId.")
+        appendAppLog("Requested webhook photo upload: $requestId -> $webhookUrl.")
+        pollPhotoPreview(requestId, webhookUrl)
     }
 
     private fun startSavedVideoRecording() {
@@ -566,6 +600,73 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
     }
 
     private fun nextRequestId(prefix: String): String = "$prefix-${System.currentTimeMillis()}"
+
+    private fun hasActiveGlassesSession(): Boolean =
+        glassesValues["connected"] == true ||
+            dataChannelActive ||
+            latestBatteryLine != "Battery: waiting for device status" ||
+            latestWifiLine != "Wi-Fi: waiting for device status"
+
+    private fun pollPhotoPreview(requestId: String, webhookUrl: String) {
+        val statusUrl =
+            try {
+                photoStatusUrl(webhookUrl, requestId)
+            } catch (error: Exception) {
+                updateCameraStatus("Camera: invalid webhook URL (${error.message ?: "unknown error"})")
+                return
+            }
+
+        Thread {
+            repeat(45) { attempt ->
+                if (activePhotoPollRequestId != requestId) return@Thread
+
+                try {
+                    val connection = URL(statusUrl).openConnection() as HttpURLConnection
+                    try {
+                        connection.connectTimeout = 1_500
+                        connection.readTimeout = 1_500
+                        connection.requestMethod = "GET"
+
+                        if (connection.responseCode == HttpURLConnection.HTTP_OK) {
+                            val body = connection.inputStream.bufferedReader().use { it.readText() }
+                            val json = JSONObject(body)
+                            val photoUrl =
+                                json.optString("photoUrl")
+                                    .ifBlank { json.optString("photo_url") }
+                                    .ifBlank { json.optString("url") }
+
+                            if (photoUrl.isNotBlank()) {
+                                updateCameraStatus("Camera: server received photo; loading preview")
+                                appendAppLog("Local webhook photo ready: $photoUrl")
+                                loadPhotoPreview(photoUrl)
+                                return@Thread
+                            }
+                        }
+                    } finally {
+                        connection.disconnect()
+                    }
+                } catch (error: Exception) {
+                    if (attempt == 0 || attempt % 10 == 9) {
+                        appendAppLog("Waiting for local photo server: ${error.message ?: error.javaClass.simpleName}")
+                    }
+                }
+
+                Thread.sleep(1_000)
+            }
+
+            if (activePhotoPollRequestId == requestId) {
+                updateCameraStatus("Camera: timed out waiting for local server upload")
+                appendAppLog("Timed out polling local photo server for $requestId.")
+            }
+        }.start()
+    }
+
+    private fun photoStatusUrl(webhookUrl: String, requestId: String): String {
+        val uploadUrl = URL(webhookUrl)
+        val port = if (uploadUrl.port >= 0) ":${uploadUrl.port}" else ""
+        val encodedRequestId = URLEncoder.encode(requestId, "UTF-8")
+        return "${uploadUrl.protocol}://${uploadUrl.host}$port/uploads/$encodedRequestId.json"
+    }
 
     override fun onDeviceDiscovered(device: MentraDiscoveredDevice) {
         latestDevice = device
@@ -627,10 +728,26 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
     override fun onPhotoResponse(event: MentraPhotoResponseEvent) {
         dataChannelActive = true
         latestEventLine = "Events: photo ${summarizeValues(event.values)}"
-        updateCameraStatus("Camera: photo response ${summarizeValues(event.values)}")
-        photoPreviewSource(event.values)?.let { source ->
+        val success = event.values["success"] as? Boolean
+        val requestId = stringValue(event.values, "requestId", "request_id")
+        val source = photoPreviewSource(event.values)
+
+        if (success == false) {
+            if (requestId == activePhotoPollRequestId) {
+                activePhotoPollRequestId = null
+            }
+            val errorCode = stringValue(event.values, "errorCode", "error_code") ?: "unknown_error"
+            val errorMessage = stringValue(event.values, "errorMessage", "error_message", "error") ?: "no details"
+            updateCameraStatus("Camera: photo failed $errorCode - $errorMessage")
+        } else if (source != null) {
+            updateCameraStatus("Camera: photo response received; loading preview")
             loadPhotoPreview(source)
+        } else if (requestId == activePhotoPollRequestId) {
+            updateCameraStatus("Camera: photo acknowledged; waiting for local server upload")
+        } else {
+            updateCameraStatus("Camera: photo response had no preview source")
         }
+
         updateStatusPanel()
         appendAppLog("Photo response: ${summarizeValues(event.values)}")
     }
@@ -713,7 +830,17 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
     }
 
     private fun photoPreviewSource(values: Map<String, Any>): String? =
-        stringValue(values, "photoUrl", "photo_url", "previewUrl", "preview_url", "localPath", "local_path")
+        stringValue(
+            values,
+            "photoUrl",
+            "photo_url",
+            "previewUrl",
+            "preview_url",
+            "localPath",
+            "local_path",
+            "mediaUrl",
+            "media_url",
+        )
 
     private fun loadPhotoPreview(source: String) {
         updateCameraStatus("Camera: loading photo preview")
