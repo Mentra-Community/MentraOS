@@ -753,8 +753,13 @@ void protobuf_process_display_text(const mentraos_ble_DisplayText *display_text)
 
     size_t text_length = strlen(display_text->text);
 
-    /* Ignore an empty first DisplayText while still on the welcome screen.
-     * Once we've already switched into the text scene, keep honoring BLE payloads as-is. */
+    /*
+     * Ignore the first empty DisplayText while still on the welcome page.
+     * This protects the welcome message from being cleared by an empty generic
+     * text packet during connection/setup.
+     * 当设备仍停留在欢迎页时，忽略第一次收到的空 DisplayText。
+     * 这样可以避免连接建立阶段的空通用文本包把欢迎文案误清掉。
+     */
     if (text_length == 0U && display_is_welcome_screen_active())
     {
         LOG_INF("[PROTOBUF] Ignore empty DisplayText while welcome screen is active");
@@ -766,6 +771,14 @@ void protobuf_process_display_text(const mentraos_ble_DisplayText *display_text)
     LOG_INF("[PROTOBUF] DisplayText len=%zu pos=(%u,%u) color=0x%04X font=%u size=%u", text_length, display_text->x,
             display_text->y, color_rgb565, display_text->font_code, display_text->size);
 
+    /*
+     * DisplayText is treated as generic protobuf text input.
+     * In the current production flow, generic protobuf text is routed to the
+     * caption page unless the caller explicitly switches to translation first.
+     * DisplayText 被当作通用 protobuf 文本输入处理。
+     * 在当前生产路径里，通用 protobuf 文本默认路由到 caption 页；
+     * 只有调用方先显式切到 translation，才会进入翻译页。
+     */
     display_submit_text_payload(display_text->x, display_text->y, display_text->text, display_text->size, color_rgb565);
 }
 

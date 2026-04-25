@@ -2,6 +2,9 @@
 #define _MOS_LVGL_DISPLAY_H_
 
 #include <lvgl.h>
+
+#include "display_pattern.h"
+#include "ui_framework.h"
 // #include "mentraos_ble.pb.h"
 typedef enum
 {
@@ -19,7 +22,15 @@ typedef enum
     DISPLAY_BIZ_LANG_JA = 4,
 } display_biz_lang_t;
 
-/* 消息队列的命令类型 */
+#ifndef DISPLAY_DEFAULT_TRANSLATION_SRC_LANG
+#define DISPLAY_DEFAULT_TRANSLATION_SRC_LANG DISPLAY_BIZ_LANG_EN
+#endif
+
+#ifndef DISPLAY_DEFAULT_TRANSLATION_DST_LANG
+#define DISPLAY_DEFAULT_TRANSLATION_DST_LANG DISPLAY_BIZ_LANG_ZH
+#endif
+
+/* Display command types pushed into the LVGL thread message queue. / 发送到 LVGL 线程消息队列的显示命令类型。 */
 typedef enum
 {
     LCD_CMD_INIT,
@@ -27,27 +38,31 @@ typedef enum
     LCD_CMD_CLOSE,
     LCD_CMD_TEXT,
     LCD_CMD_DATA,
-    LCD_CMD_CYCLE_PATTERN,           // **NEW: Pattern cycling command**
-    LCD_CMD_UPDATE_PROTOBUF_TEXT,    // **NEW: Update container with protobuf text**
-    LCD_CMD_UPDATE_XY_TEXT,          // **NEW: Pattern 5 XY positioned text**
-    LCD_CMD_GBK_TEST,                // **NEW: Simple GBK test text**
-    LCD_CMD_GBK_CHARS_TEST,          // 中文字库/GBK per-character test
-    LCD_CMD_UPDATE_WELCOME_BATTERY,  // **NEW: Refresh welcome label with current battery (60s period)**
-    LCD_CMD_SHOW_WELCOME_SCREEN,      // **NEW: Return to welcome screen (e.g. after BLE disconnect)**
-    LCD_CMD_UPDATE_DFU_PROGRESS,      // **NEW: Show/update DFU progress bar below battery on welcome screen**
-    LCD_CMD_UPDATE_DFU_STATUS_TEXT,   // **NEW: Show/hide DFU status line (e.g. "DFU Updating... 45%") below battery**
-    LCD_CMD_GRAYSCALE_HORIZONTAL,  // **NEW: Direct A6N horizontal grayscale**
-    LCD_CMD_GRAYSCALE_VERTICAL,    // **NEW: Direct A6N vertical grayscale**
-    LCD_CMD_CHESS_PATTERN,         // **NEW: Direct A6N chess pattern**
-    LCD_CMD_SHOW_PATTERN,          // **NEW: Show specific pattern by ID**
-    LCD_CMD_CLEAR_DISPLAY,         // **NEW: Clear display**
-    LCD_CMD_INVALIDATE_FULL_SCREEN, /* Mark full screen dirty + request one LVGL refresh (thread-safe via msgq) */
-    LCD_CMD_INVALIDATE_VISIBLE_UI, /* Invalidate current pattern roots only (e.g. after software depth) */
+    LCD_CMD_CYCLE_PATTERN,  // Cycle test patterns / 循环测试图案
+    LCD_CMD_UPDATE_PROTOBUF_TEXT,  // Update generic protobuf text flow / 更新通用 protobuf 文本流
+    LCD_CMD_UPDATE_XY_TEXT,  // Update XY positioned text / 更新 XY 定位文本
+    LCD_CMD_GBK_TEST,  // Show simple GBK test text / 显示简单 GBK 测试文本
+    LCD_CMD_GBK_CHARS_TEST,  // Show per-character GBK test / 显示逐字 GBK 测试
+    LCD_CMD_UPDATE_WELCOME_BATTERY,  // Refresh battery line on welcome screen / 刷新欢迎页电量行
+    LCD_CMD_SHOW_WELCOME_SCREEN,  // Switch to welcome page / 切到欢迎页
+    LCD_CMD_SHOW_CAPTION_SCREEN,  // Switch to generic caption page / 切到通用字幕页
+    LCD_CMD_SHOW_TRANSLATION_SCREEN,  // Switch to translation page / 切到翻译页
+    LCD_CMD_UPDATE_DFU_PROGRESS,  // Update DFU progress on welcome screen / 更新欢迎页 DFU 进度
+    LCD_CMD_UPDATE_DFU_STATUS_TEXT,  // Update DFU status line / 更新 DFU 状态文本
+    LCD_CMD_GRAYSCALE_HORIZONTAL,  // Draw horizontal grayscale pattern / 绘制横向灰阶图案
+    LCD_CMD_GRAYSCALE_VERTICAL,  // Draw vertical grayscale pattern / 绘制纵向灰阶图案
+    LCD_CMD_CHESS_PATTERN,  // Draw chess pattern / 绘制棋盘图案
+    LCD_CMD_SHOW_PATTERN,  // Show a specific test pattern / 显示指定测试图案
+    LCD_CMD_CLEAR_DISPLAY,  // Clear current display content / 清空当前显示内容
+    LCD_CMD_INVALIDATE_FULL_SCREEN, /* Mark full screen dirty and request one refresh. / 标记整屏脏区并请求一次刷新。 */
+    LCD_CMD_INVALIDATE_VISIBLE_UI, /* Mark only visible UI roots dirty. / 仅标记当前可见 UI 根节点为脏区。 */
     LCD_CMD_UPDATE_HEIGHT,
-    LCD_CMD_UPDATE_DYNAMIC_FONT     // **NEW: Update dynamic font in LVGL thread**
+    LCD_CMD_NOTIFY_LANGUAGE_CHANGED,
+    LCD_CMD_UI_EVENT,
+    LCD_CMD_UPDATE_DYNAMIC_FONT  // Apply dynamic font change in LVGL thread / 在 LVGL 线程应用动态字体切换
 } display_cmd_type_t;
 
-/* Display on/off control functions | 显示开关控制函数 */
+/* Display on/off control helpers. / 显示开关控制辅助函数。 */
 void set_display_onoff(bool state);
 bool get_display_onoff(void);
 
@@ -70,27 +85,27 @@ typedef struct
 
 typedef struct
 {
-    uint8_t pattern_id;  // **NEW: Pattern ID for cycling**
+    display_pattern_id_t pattern_id;  // Shell-visible diagnostic pattern ID / Shell 可见的诊断图案 ID
 } lcd_pattern_param_t;
 
 typedef struct
 {
-    uint8_t show;   // 1 = show bar and set value, 0 = hide bar | 1=显示并更新 0=隐藏
-    uint8_t percent;  // 0..100 progress | 进度 0..100
+    uint8_t show;  // 1 = show and update, 0 = hide / 1=显示并更新，0=隐藏
+    uint8_t percent;  // 0..100 progress / 0..100 进度
 } lcd_dfu_progress_param_t;
 
 typedef struct
 {
-    char text[MAX_TEXT_LEN + 1];  // **NEW: Protobuf text content**
+    char text[MAX_TEXT_LEN + 1];  // Generic protobuf text payload / 通用 protobuf 文本载荷
 } lcd_protobuf_text_param_t;
 
 typedef struct
 {
-    uint16_t x;                   // **NEW: X coordinate (0-580)**
-    uint16_t y;                   // **NEW: Y coordinate (0-420)**
-    uint16_t font_size;           // **NEW: Font size (12,14,16,18,24,30,48)**
-    uint32_t color;               // **NEW: Text color (RGB hex)**
-    char text[MAX_TEXT_LEN + 1];  // **NEW: XY positioned text content**
+    uint16_t x;  // X coordinate / X 坐标
+    uint16_t y;  // Y coordinate / Y 坐标
+    uint16_t font_size;  // Font size / 字号
+    uint32_t color;  // Text color / 文字颜色
+    char text[MAX_TEXT_LEN + 1];  // XY positioned text content / XY 定位文本内容
 } lcd_xy_text_param_t;
 
 typedef struct
@@ -103,17 +118,23 @@ typedef struct
     const lv_font_t *font_ptr;
 } lcd_font_update_param_t;
 
+typedef struct
+{
+    ui_event_t event;
+} lcd_ui_event_param_t;
+
 typedef union
 {
     lcd_text_param_t text;
     lcd_open_param_t open;
-    lcd_pattern_param_t pattern;  // **NEW: Pattern parameter**
-    lcd_protobuf_text_param_t protobuf_text;  // **NEW: Protobuf text parameter**
-    lcd_xy_text_param_t xy_text;              // **NEW: XY positioned text parameter**
-    lcd_dfu_progress_param_t dfu_progress;    // **NEW: DFU progress bar (show + percent)**
+    lcd_pattern_param_t pattern;  // Test pattern parameter / 测试图案参数
+    lcd_protobuf_text_param_t protobuf_text;  // Generic protobuf text parameter / 通用 protobuf 文本参数
+    lcd_xy_text_param_t xy_text;  // XY positioned text parameter / XY 定位文本参数
+    lcd_dfu_progress_param_t dfu_progress;  // DFU progress parameter / DFU 进度参数
     lcd_height_param_t height;
     lcd_font_update_param_t font_update;
-    // 其它命令参数结构体可继续扩展
+    lcd_ui_event_param_t ui_event;
+    // Additional command parameter structs can be added here. / 其他命令参数结构体可继续扩展。
 } display_param_u;
 
 typedef struct
@@ -122,53 +143,61 @@ typedef struct
     display_param_u p;
 } display_cmd_t;
 
-void scroll_text_create(lv_obj_t *parent,
-                        lv_coord_t x, lv_coord_t y,
-                        lv_coord_t w, lv_coord_t h,
-                        const char *txt,
-                        const lv_font_t *font,
-                        uint32_t time_ms);
-
+void scroll_text_create(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h, const char *txt,
+                        const lv_font_t *font, uint32_t time_ms);
 
 void scroll_text_stop(void);
 
 void display_open(void);
 
-
 int display_set_translation_pair(display_biz_lang_t src_lang, display_biz_lang_t dst_lang);
 void display_get_translation_pair(display_biz_lang_t *src_lang, display_biz_lang_t *dst_lang);
 
-// **NEW: Thread-safe pattern cycling function**
+/* Thread-safe test-pattern helpers. / 线程安全的测试图案辅助接口。 */
 void display_cycle_pattern(void);
+void display_show_test_pattern(display_pattern_id_t pattern_id);
 
-// **NEW: Thread-safe GBK test render (no serial input needed)**
+/* Thread-safe GBK test rendering helpers. / 线程安全的 GBK 测试渲染接口。 */
 void display_show_gbk_test(void);
 void display_show_gbk_chars_test(void);
 
-static void update_display_height(uint16_t height);
-
 void display_update_height(uint16_t height);
 
-// **NEW: Thread-safe protobuf text update function**
+/* Thread-safe translation text update function. */
+void display_update_translation_text(const char *text_content);
+
+/*
+ * Thread-safe generic protobuf/display-text update function.
+ *
+ * Protobuf is the transport/input channel and is not conceptually limited to
+ * the translation page. In the current production flow, this generic input is
+ * routed to the caption page.
+ */
 void display_update_protobuf_text(const char *text_content);
 
-/* Route a text payload to the active display scene.
- * In caption/welcome scene it updates the scrolling caption state.
- * In XY scene it renders positioned text. */
+/* Route a generic text payload to the active text-display flow.
+ * 在当前文本显示流程中路由一段通用文本载荷。
+ * In caption/translation/welcome flow it updates text rendering state.
+ * 在 caption/translation/welcome 路径中，它会更新文本渲染状态。
+ * In XY flow it renders positioned text directly.
+ * 在 XY 路径中，它会直接渲染定位文本。
+ */
 void display_submit_text_payload(uint16_t x, uint16_t y, const char *text_content, uint16_t font_size, uint32_t color);
 
-/* Route scrolling text payload to the caption scene. */
+/* Route scrolling text payload to the generic caption flow.
+ * 将滚动文本载荷路由到通用字幕显示流程。
+ */
 void display_submit_scrolling_text_payload(const char *text_content);
 
-// **NEW: Direct A6N pattern functions**
+/* Direct A6N pattern helpers. / 直接控制 A6N 图案的辅助接口。 */
 void display_draw_horizontal_grayscale(void);
 void display_draw_vertical_grayscale(void);
 void display_draw_chess_pattern(void);
 
-// **NEW: Pattern 5 XY Text Positioning function**
+/* XY text positioning entry. / XY 文本定位入口。 */
 void display_update_xy_text(uint16_t x, uint16_t y, const char *text_content, uint16_t font_size, uint32_t color);
 
-// **NEW: Clear display function**
+/* Clear current display content. / 清空当前显示内容。 */
 void display_clear_screen(void);
 
 /** After driver-only changes (e.g. software depth), force LVGL to flush the whole screen. Thread-safe. */
@@ -177,10 +206,13 @@ void display_request_full_redraw(void);
 /** Mark dirty only the UI roots for the current pattern (less tearing than full screen). Thread-safe. */
 void display_request_visible_redraw(void);
 
-// **NEW: Get current pattern ID for conditional logic**
+/** Submit a UI event to the LVGL thread, then dispatch it to the active UI page. */
+void display_submit_ui_event(const ui_event_t *event);
+
+/* Get current effective pattern id. / 获取当前生效的 pattern ID。 */
 int display_get_current_pattern(void);
 
-/* Snapshot whether the shared Pattern 4 UI is still showing the welcome state. */
+/* Snapshot whether the active UI page is still welcome and the shared view is visible. */
 bool display_is_welcome_screen_active(void);
 
 void display_close(void);
@@ -191,13 +223,24 @@ void display_request_welcome_battery_refresh(void);
 /** Return to welcome screen (e.g. after BLE disconnect). Thread-safe, sends command to LVGL. */
 void display_show_welcome_screen(void);
 
-/** Reset protobuf text de-dup/pending state so the next identical BLE text can redraw. Thread-safe. */
+/** Show generic caption screen explicitly. Useful for direct text display modes. */
+void display_show_caption_screen(void);
+
+/** Show translation screen explicitly. */
+void display_show_translation_screen(void);
+
+/** Reset translation text de-dup/pending state so the next identical text can redraw. Thread-safe. */
+void display_reset_translation_text_state(void);
+
+/** Reset generic protobuf/display-text pending state. Current production flow shares this state with translation. */
 void display_reset_protobuf_text_state(void);
 
-/** Update DFU progress bar on welcome screen (below battery). show=1 to show and set percent (0..100), show=0 to hide. Thread-safe. */
+/** Update DFU progress bar on welcome screen (below battery). show=1 to show and set percent (0..100), show=0 to hide.
+ * Thread-safe. */
 void display_update_dfu_progress(uint8_t show, uint8_t percent);
 
-/** Update DFU status text line below battery (e.g. "DFU Updating... 45% (120 KB)"). text=NULL or "" to hide. Thread-safe. */
+/** Update DFU status text line below battery (e.g. "DFU Updating... 45% (120 KB)"). text=NULL or "" to hide.
+ * Thread-safe. */
 void display_update_dfu_status_text(const char *text);
 
 void display_send_frame(void *data_ptr);
@@ -205,4 +248,4 @@ void display_send_frame(void *data_ptr);
 // void handle_display_text(const mentraos_ble_DisplayText *txt);
 void lvgl_display_thread(void);
 void cycle_test_pattern(void);  // Cycle through test patterns
-#endif // !_MOS_LVGL_DISPLAY_H_
+#endif  // !_MOS_LVGL_DISPLAY_H_

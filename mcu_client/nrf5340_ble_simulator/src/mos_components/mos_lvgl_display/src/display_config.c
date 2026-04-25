@@ -6,10 +6,8 @@
 #include <zephyr/drivers/display.h>
 #include <zephyr/logging/log.h>
 
-#if defined(CONFIG_LVGL)
 #include "mos_binfont_lvgl.h"
 #include "mos_font_storage.h"
-#endif
 
 LOG_MODULE_REGISTER(display_config, LOG_LEVEL_DBG);
 
@@ -242,7 +240,6 @@ const lv_font_t *display_get_font(const char *text_type)
     {
         /* Return primary font by default (prefer external Flash font).
          * 默认返回primary字体（优先使用Flash字体）。 */
-#if defined(CONFIG_LVGL)
         const lv_font_t *dynamic_font = mos_binfont_get_lvgl_font();
         if (dynamic_font)
         {
@@ -250,7 +247,6 @@ const lv_font_t *display_get_font(const char *text_type)
             return dynamic_font;
         }
         LOG_WRN("display_get_font(null): dynamic font not available, using fallback");
-#endif
         return config->fonts.primary;
     }
 
@@ -258,7 +254,6 @@ const lv_font_t *display_get_font(const char *text_type)
     {
         /* GBK/CJK path: use external binfont, independent from config->fonts.cjk.
          * GBK/中文字库使用外置binfont，与 config->fonts.cjk 无关。 */
-#if defined(CONFIG_LVGL)
         const lv_font_t *ext_font = mos_binfont_get_lvgl_font();
         if (ext_font)
         {
@@ -266,7 +261,6 @@ const lv_font_t *display_get_font(const char *text_type)
             return ext_font;
         }
         LOG_ERR("display_get_font(gbk): binfont init failed - program font hex to font_storage");
-#endif
         return config->fonts.secondary;
     }
 
@@ -274,7 +268,6 @@ const lv_font_t *display_get_font(const char *text_type)
      * primary、secondary、large 都优先使用Flash字体。 */
     if (strcmp(text_type, "primary") == 0 || strcmp(text_type, "secondary") == 0 || strcmp(text_type, "large") == 0)
     {
-#if defined(CONFIG_LVGL)
         /* Prefer dynamic font.
          * 优先使用动态字体。 */
         const lv_font_t *dynamic_font = mos_binfont_get_lvgl_font();
@@ -284,7 +277,6 @@ const lv_font_t *display_get_font(const char *text_type)
             return dynamic_font;
         }
         LOG_WRN("display_get_font(%s): dynamic font not available, using fallback", text_type);
-#endif
     }
 
     /* Fall back to built-in fonts by default.

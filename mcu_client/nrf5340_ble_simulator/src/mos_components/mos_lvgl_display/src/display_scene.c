@@ -4,7 +4,7 @@
 
 static K_MUTEX_DEFINE(s_display_scene_lock);
 static display_scene_mode_t s_display_scene_mode = DISPLAY_SCENE_MODE_WELCOME;
-static int s_display_pattern_id = 4;
+static display_pattern_id_t s_display_pattern_id = DISPLAY_PATTERN_DEFAULT;
 /**
  * @brief Resets the display scene state, clearing all mode and pattern data.
  */
@@ -12,7 +12,7 @@ void display_scene_reset(void)
 {
     k_mutex_lock(&s_display_scene_lock, K_FOREVER);
     s_display_scene_mode = DISPLAY_SCENE_MODE_WELCOME;
-    s_display_pattern_id = 4;
+    s_display_pattern_id = DISPLAY_PATTERN_DEFAULT;
     k_mutex_unlock(&s_display_scene_lock);
 }
 
@@ -23,48 +23,14 @@ void display_scene_set_mode(display_scene_mode_t mode)
     k_mutex_unlock(&s_display_scene_lock);
 }
 
-display_scene_mode_t display_scene_get_mode(void)
+void display_scene_set_pattern(display_pattern_id_t pattern_id)
 {
-    display_scene_mode_t mode;
+    if (!display_pattern_id_is_valid((int)pattern_id))
+    {
+        return;
+    }
 
-    k_mutex_lock(&s_display_scene_lock, K_FOREVER);
-    mode = s_display_scene_mode;
-    k_mutex_unlock(&s_display_scene_lock);
-
-    return mode;
-}
-
-bool display_scene_is_welcome_active(void)
-{
-    return display_scene_get_mode() == DISPLAY_SCENE_MODE_WELCOME;
-}
-
-void display_scene_set_pattern(int pattern_id)
-{
     k_mutex_lock(&s_display_scene_lock, K_FOREVER);
     s_display_pattern_id = pattern_id;
     k_mutex_unlock(&s_display_scene_lock);
-}
-
-int display_scene_get_pattern(void)
-{
-    int pattern_id;
-
-    k_mutex_lock(&s_display_scene_lock, K_FOREVER);
-    pattern_id = s_display_pattern_id;
-    k_mutex_unlock(&s_display_scene_lock);
-
-    return pattern_id;
-}
-
-bool display_scene_allows_caption_render(void)
-{
-    bool allowed;
-
-    k_mutex_lock(&s_display_scene_lock, K_FOREVER);
-    allowed = (s_display_pattern_id == 4) 
-            && (s_display_scene_mode == DISPLAY_SCENE_MODE_WELCOME || s_display_scene_mode == DISPLAY_SCENE_MODE_CAPTION);
-    k_mutex_unlock(&s_display_scene_lock);
-
-    return allowed;
 }

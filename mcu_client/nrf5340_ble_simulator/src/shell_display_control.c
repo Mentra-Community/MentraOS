@@ -479,14 +479,16 @@ static int cmd_display_pattern(const struct shell *shell, size_t argc, char **ar
 
     int pattern_id = atoi(argv[1]);
 
-    if (pattern_id < 0 || pattern_id > 5)
+    if (!display_pattern_id_is_valid(pattern_id))
     {
-        shell_error(shell, "❌ Pattern ID must be 0-5");
+        shell_error(shell, "❌ Pattern ID must be %d-%d", DISPLAY_PATTERN_FIRST, DISPLAY_PATTERN_LAST);
         return -EINVAL;
     }
 
     // Send pattern change command to LVGL thread
-    display_cmd_t cmd = {.type = LCD_CMD_SHOW_PATTERN, .p.pattern = {.pattern_id = pattern_id}};
+    display_cmd_t cmd = {
+        .type = LCD_CMD_SHOW_PATTERN, .p.pattern = {.pattern_id = (display_pattern_id_t)pattern_id}
+    };
 
     // Use K_NO_WAIT to avoid blocking shell thread - LVGL will process it asynchronously
     if (k_msgq_put(&lvgl_display_msgq, &cmd, K_NO_WAIT) != 0)
@@ -1352,9 +1354,8 @@ static int cmd_display_fonts_test(const struct shell *shell, size_t argc, char *
 
     shell_print(shell, "Testing all font sizes with text: \"%s\"", test_text);
 
-    // Switch to Pattern 5 for XY positioning
-    // Switch to Pattern 5 (XY positioning) for testing
-    display_cmd_t cmd = {.type = LCD_CMD_SHOW_PATTERN, .p.pattern = {.pattern_id = 5}};
+    // Keep shell-facing Pattern 5 as the XY positioning test surface.
+    display_cmd_t cmd = {.type = LCD_CMD_SHOW_PATTERN, .p.pattern = {.pattern_id = DISPLAY_PATTERN_XY_TEXT}};
 
     if (k_msgq_put(&lvgl_display_msgq, &cmd, K_NO_WAIT) != 0)
     {
