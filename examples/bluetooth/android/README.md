@@ -2,7 +2,7 @@
 
 This example is a minimal native Android app that calls the Mentra Bluetooth SDK Kotlin API directly.
 
-It is intentionally not a React Native or Expo app. It demonstrates scanning, connecting, receiving events, displaying text, applying a simple setting, and cleaning up the SDK.
+It is intentionally not a React Native or Expo app. It demonstrates scanning, connecting, receiving hardware events, refreshing device status, counting mic frames, setting the glasses button mode, and cleaning up the SDK.
 
 ## Configure SDK Version
 
@@ -20,7 +20,11 @@ For a partner release, add the Maven repository and credentials supplied by Ment
 
 Open this folder in Android Studio, select the `app` configuration, and run on a physical Android device with Bluetooth enabled.
 
-The example asks for Bluetooth/location/microphone permissions, scans for Mentra Live glasses, connects to the first discovered device or the saved default, displays text, applies brightness/dashboard settings, and disconnects.
+The example asks for Bluetooth/location/microphone permissions, scans for Mentra Live glasses, and connects to the first discovered device or the saved default.
+
+The main screen is optimized for Mentra Live, which does not have a display. It shows connection/data-channel state, battery, Wi-Fi, firmware/version details, gallery counts, button events, and mic frame counters. Raw SDK debug logs are hidden by default; use **Show SDK debug logs** when collecting support details.
+
+The display buttons are kept in a separate **Display models** section so the same example can still be used with glasses that support display output.
 
 ## Files
 
