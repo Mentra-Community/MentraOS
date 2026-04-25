@@ -129,6 +129,14 @@ bool get_ble_connected_status(void)
 {
     return ble_connected;
 }
+void ble_force_disconnect(void)
+{
+    if (current_conn) {
+        LOG_WRN("[BLE] Forcing BLE disconnect due to ping/pong failure");
+        bt_conn_disconnect(current_conn, BT_HCI_ERR_REMOTE_USER_TERM_CONN);
+    }
+}
+
 static void connected(struct bt_conn *conn, uint8_t err)
 {
     char addr[BT_ADDR_LE_STR_LEN];
@@ -144,6 +152,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
     set_ble_connected_status(true);
     display_reset_protobuf_text_state();
     current_conn = bt_conn_ref(conn);
+    protobuf_reset_ping_state();
 }
 
 static void disconnected(struct bt_conn *conn, uint8_t reason)

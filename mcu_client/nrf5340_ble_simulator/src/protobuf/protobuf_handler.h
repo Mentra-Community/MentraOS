@@ -181,10 +181,23 @@ void protobuf_process_clear_display(void);
  * @brief Initialize ping/pong connectivity monitoring system
  *
  * Sets up periodic ping timer to send ping requests to phone every 10 seconds.
- * Phone should respond with pong messages. After 3 failed attempts, glasses
- * will enter sleep/disconnect mode.
+ * Phone should respond with pong messages. After 3 failed attempts, the BLE
+ * connection is forcefully dropped, triggering the hardware reconnect flow.
  */
 void protobuf_init_ping_monitoring(void);
+
+/**
+ * @brief Reset ping state on new BLE connection.
+ *
+ * Clears retry count, waiting flag, and sequence number so stale state
+ * from a previous session does not carry over. Call from the BLE connected
+ * callback.
+ */
+void protobuf_reset_ping_state(void);
+
+/* Provided by main.c — drops the active BLE link so the hardware disconnect
+ * path (advertising restart / phone GATT reconnect) takes over. */
+void ble_force_disconnect(void);
 
 /**
  * @brief Send pong response to phone after receiving ping (DEPRECATED)

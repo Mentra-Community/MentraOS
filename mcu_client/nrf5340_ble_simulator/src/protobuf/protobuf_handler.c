@@ -1087,39 +1087,40 @@ static void protobuf_send_ping_request(void)
 
     mentraos_ble_GlassesToPhone message = mentraos_ble_GlassesToPhone_init_zero;
     message.which_payload = mentraos_ble_GlassesToPhone_pong_tag;
+    message.payload.pong.dummy_field = 1;
 
-    // Note: Current protobuf only has dummy_field, no timestamp/sequence
-    // For now we'll track sequence numbers in our local variables
-    message.payload.pong.dummy_field = 1;  // Just to set something
-
-    // Encode the message
     uint8_t buffer[256];
-    pb_ostream_t stream = pb_ostream_from_buffer(buffer, sizeof(buffer));
+    size_t bytes_written;
 
-    if (pb_encode(&stream, mentraos_ble_GlassesToPhone_fields, &message))
-    {
-        size_t message_length = stream.bytes_written;
-
-        if (ping_logging_enabled)
-        {
-            LOG_DBG("[PING] Sending ping #%u (%zu bytes)", ping_sequence_number, message_length);
-        }
-        /* Start timeout timer only after successful send */
-        k_timer_start(&ping_timeout_timer, K_MSEC(PING_TIMEOUT_MS), K_NO_WAIT);
-
-        if (ping_logging_enabled)
-        {
-            LOG_INF("[PING] Waiting for pong response (timeout: %d ms)", PING_TIMEOUT_MS);
-        }
-    }
-    else
+    if (!encode_glasses_to_phone_message(&message, buffer + 1, sizeof(buffer) - 1, &bytes_written))
     {
         if (ping_logging_enabled)
         {
             LOG_ERR("[PING] Failed to encode ping request");
         }
         ping_waiting_for_pong = false;
+        return;
     }
+
+    buffer[0] = 0x02;
+    int ret = ble_send_data(buffer, bytes_written + 1);
+    if (ret != 0)
+    {
+        if (ping_logging_enabled)
+        {
+            LOG_WRN("[PING] Failed to send ping #%u (err=%d)", ping_sequence_number, ret);
+        }
+        ping_waiting_for_pong = false;
+        return;
+    }
+
+    if (ping_logging_enabled)
+    {
+        LOG_DBG("[PING] Sending ping #%u (%zu bytes)", ping_sequence_number, bytes_written + 1);
+        LOG_INF("[PING] Waiting for pong response (timeout: %d ms)", PING_TIMEOUT_MS);
+    }
+
+    k_timer_start(&ping_timeout_timer, K_MSEC(PING_TIMEOUT_MS), K_NO_WAIT);
 }
 
 // Process pong response from phone (tag 16: PhoneToGlasses.ping - reusing ping for pong)
@@ -1166,20 +1167,25 @@ static void protobuf_handle_ping_failure(void)
 
     if (ping_logging_enabled)
     {
-        LOG_ERR("[PING] Phone connection lost - entering sleep mode");
+        LOG_ERR("[PING] Phone connection lost - forcing BLE disconnect to trigger reconnect");
     }
 
-    // TODO: Implement sleep/disconnect logic:
-    // 1. Stop all non-essential operations
-    // 2. Reduce display brightness or turn off display
-    // 3. Stop audio streaming
-    // 4. Enter low-power mode
-    // 5. Wake up periodically to check for reconnection
+    /* Drop the BLE link. This fires the hardware disconnected() callback in
+     * main.c which shows the welcome screen, frees the conn object, and
+     * restarts advertising via recycled_cb(). The phone's GATT callback then
+     * sees STATE_DISCONNECTED and immediately attempts to reconnect. */
+    ble_force_disconnect();
+}
 
+void protobuf_reset_ping_state(void)
+{
+    k_timer_stop(&ping_timeout_timer);
+    ping_retry_count = 0;
+    ping_waiting_for_pong = false;
+    phone_connected = true;
     if (ping_logging_enabled)
     {
-        LOG_WRN("[PING] TODO: Implement sleep mode (display off, low power)");
-        LOG_WRN("[PING] TODO: Wake up periodically to check for phone reconnection");
+        LOG_INF("[PING] Ping state reset for new connection (seq=%u)", ping_sequence_number);
     }
 }
 
