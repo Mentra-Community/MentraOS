@@ -16,7 +16,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     deinit {
-        sdk.invalidate()
+        Task { @MainActor [sdk] in
+            sdk.invalidate()
+        }
     }
 
     func scan() {
