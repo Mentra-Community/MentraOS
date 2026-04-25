@@ -59,9 +59,9 @@ services:
       path: /metrics
       port: 80
       scrapeIntervalSeconds: 30
-    # Graceful shutdown — give WebSocket close frames time to flush
-    # See: cloud/issues/063-graceful-shutdown/spec.md
-    terminationGracePeriodSeconds: 30
+    # Fail-fast shutdown — we target <5s from SIGTERM to exit; K8s SIGKILL at 10s.
+    # See: cloud/issues/100-fail-fast-sigterm/spec.md (supersedes 063)
+    terminationGracePeriodSeconds: 10
     additionalPorts:
       - port: 8000
         protocol: UDP

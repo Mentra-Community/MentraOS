@@ -123,7 +123,7 @@ export default function GlassesPairingLoadingScreen() {
   }, [clearPairingTimeout, glassesFullyBooted, replace, deviceModel])
 
   return (
-    <Screen preset="fixed" safeAreaEdges={["bottom"]}>
+    <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
       <Header leftIcon="chevron-left" onLeftPress={handleGoBack} />
       <View className="flex-1">
         <View className="flex-1 justify-center">

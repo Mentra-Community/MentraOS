@@ -2,11 +2,14 @@ import os from "os";
 import { Logger } from "pino";
 // SessionStorage replaced by static registry in UserSession
 import { logger as rootLogger } from "../logging/pino-logger";
+import { MemoryOwnerStat } from "../metrics/memory-census";
+import { getDeviceStateCounters } from "../metrics/device-state-counters";
 import UserSession from "../session/UserSession";
 const ENABLED = process.env.MEMORY_TELEMETRY_ENABLED === "true" || false;
 
 export interface SessionMemoryStats {
   userId: string;
+  sessionId: string;
   startTime: string;
   // Audio
   audio: {
@@ -15,12 +18,13 @@ export interface SessionMemoryStats {
     orderedBufferChunks: number;
     orderedBufferBytes: number;
   };
-  // Transcription
+  // Transcription.
+  // transcriptLanguages / transcriptSegments were removed in issue 098 when
+  // the cloud stopped retaining transcript history. Only VAD buffer stats
+  // remain for telemetry.
   transcription: {
     vadBufferChunks: number;
     vadBufferBytes: number;
-    transcriptLanguages: number;
-    transcriptSegments: number;
   };
   // Microphone
   microphone: {
@@ -31,6 +35,10 @@ export interface SessionMemoryStats {
   apps: {
     running: number;
     websockets: number;
+  };
+  memory: {
+    estimatedBytes: number;
+    owners: MemoryOwnerStat[];
   };
 }
 
@@ -50,6 +58,26 @@ export interface MemoryTelemetrySnapshot {
     uptime: number;
   };
   sessions: SessionMemoryStats[];
+  memoryCensus: {
+    aggregate: {
+      estimatedBytes: number;
+      topOwners: Array<{ owner: string; estimatedBytes: number; itemCount: number }>;
+    };
+    topSessions: Array<{
+      userId: string;
+      sessionId: string;
+      estimatedBytes: number;
+      topOwners: Array<{ owner: string; estimatedBytes: number }>;
+    }>;
+  };
+  // Device-state storm counters since last reset (issue 099).
+  // Counters reset every vitals tick (~30 s), so this is a short-window view.
+  deviceState: {
+    updatesTotalSinceLastReset: number;
+    updatesDedupedSinceLastReset: number;
+    updatesAppliedSinceLastReset: number;
+    updatesRateLimitedSinceLastReset: number;
+  };
 }
 
 /**
@@ -77,10 +105,7 @@ export class MemoryTelemetryService {
     this.interval = setInterval(() => {
       try {
         const snapshot = this.getCurrentStats();
-        this.logger.info(
-          { telemetry: "memory", snapshot },
-          "Memory telemetry snapshot",
-        );
+        this.logger.info({ telemetry: "memory", snapshot }, "Memory telemetry snapshot");
       } catch (error) {
         this.logger.warn({ error }, "Failed to emit memory telemetry snapshot");
       }
@@ -126,6 +151,16 @@ export class MemoryTelemetryService {
         uptime: process.uptime(),
       },
       sessions: sessionStats,
+      memoryCensus: this.getMemoryCensus(sessionStats),
+      deviceState: (() => {
+        const ds = getDeviceStateCounters();
+        return {
+          updatesTotalSinceLastReset: ds.total,
+          updatesDedupedSinceLastReset: ds.deduped,
+          updatesAppliedSinceLastReset: ds.applied,
+          updatesRateLimitedSinceLastReset: ds.rateLimited,
+        };
+      })(),
     };
   }
 
@@ -141,39 +176,50 @@ export class MemoryTelemetryService {
     let orderedBufferChunks = 0;
     let orderedBufferBytes = 0;
     if ((session.audioManager as any).orderedBuffer?.chunks) {
-      const chunks = (session.audioManager as any).orderedBuffer
-        .chunks as Array<{
+      const chunks = (session.audioManager as any).orderedBuffer.chunks as Array<{
         data: ArrayBufferLike;
       }>;
       orderedBufferChunks = chunks.length;
-      for (const c of chunks)
-        orderedBufferBytes += this.estimateBytes(c.data as any);
+      for (const c of chunks) orderedBufferBytes += this.estimateBytes(c.data as any);
     }
 
-    // Transcription stats via helper method
+    // Transcription stats via helper method.
+    // Transcript-history counts were removed in issue 098; only VAD buffer
+    // telemetry is reported now.
     let vadBufferChunks = 0;
     let vadBufferBytes = 0;
-    let transcriptLanguages = 0;
-    let transcriptSegments = 0;
-    if (
-      typeof (session.transcriptionManager as any).getMemoryStats === "function"
-    ) {
-      const t = (session.transcriptionManager as any).getMemoryStats();
+    if (typeof (session.transcriptionManager as any).getMemoryTelemetryStats === "function") {
+      const t = (session.transcriptionManager as any).getMemoryTelemetryStats();
       vadBufferChunks = t.vadBufferChunks ?? 0;
       vadBufferBytes = t.vadBufferBytes ?? 0;
-      transcriptLanguages = t.transcriptLanguages ?? 0;
-      transcriptSegments = t.transcriptSegments ?? 0;
     }
 
     // Microphone timers
-    const micEnabled =
-      (session.microphoneManager as any).isEnabled?.() ?? false;
-    const keepAliveActive = Boolean(
-      (session.microphoneManager as any)["keepAliveTimer"],
-    );
+    const micEnabled = (session.microphoneManager as any).isEnabled?.() ?? false;
+    const keepAliveActive = Boolean((session.microphoneManager as any)["keepAliveTimer"]);
+
+    let census: SessionMemoryStats["memory"] = {
+      estimatedBytes: 0,
+      owners: [],
+    };
+    try {
+      if (typeof (session as any).getMemoryCensus === "function") {
+        census = (session as any).getMemoryCensus();
+      }
+    } catch (error) {
+      this.logger.error(
+        {
+          error,
+          userId: session.userId,
+          sessionId: session.sessionId,
+        },
+        "Failed to collect session memory census",
+      );
+    }
 
     return {
       userId: session.userId,
+      sessionId: session.sessionId,
       startTime: session.startTime.toISOString(),
       audio: {
         recentBufferChunks: recent.length,
@@ -184,8 +230,6 @@ export class MemoryTelemetryService {
       transcription: {
         vadBufferChunks,
         vadBufferBytes,
-        transcriptLanguages,
-        transcriptSegments,
       },
       microphone: {
         enabled: micEnabled,
@@ -195,13 +239,59 @@ export class MemoryTelemetryService {
         running: session.runningApps.size,
         websockets: session.appWebsockets.size,
       },
+      memory: census,
+    };
+  }
+
+  private getMemoryCensus(sessionStats: SessionMemoryStats[]): MemoryTelemetrySnapshot["memoryCensus"] {
+    const ownerTotals = new Map<string, { estimatedBytes: number; itemCount: number }>();
+
+    for (const session of sessionStats) {
+      for (const owner of session.memory.owners) {
+        const current = ownerTotals.get(owner.owner) ?? { estimatedBytes: 0, itemCount: 0 };
+        current.estimatedBytes += owner.estimatedBytes;
+        current.itemCount += owner.itemCount;
+        ownerTotals.set(owner.owner, current);
+      }
+    }
+
+    const topOwners = [...ownerTotals.entries()]
+      .map(([owner, stats]) => ({
+        owner,
+        estimatedBytes: stats.estimatedBytes,
+        itemCount: stats.itemCount,
+      }))
+      .sort((a, b) => b.estimatedBytes - a.estimatedBytes)
+      .slice(0, 10);
+
+    const topSessions = [...sessionStats]
+      .map((session) => ({
+        userId: session.userId,
+        sessionId: session.sessionId,
+        estimatedBytes: session.memory.estimatedBytes,
+        topOwners: [...session.memory.owners]
+          .sort((a, b) => b.estimatedBytes - a.estimatedBytes)
+          .slice(0, 3)
+          .map((owner) => ({
+            owner: owner.owner,
+            estimatedBytes: owner.estimatedBytes,
+          })),
+      }))
+      .sort((a, b) => b.estimatedBytes - a.estimatedBytes)
+      .slice(0, 10);
+
+    return {
+      aggregate: {
+        estimatedBytes: sessionStats.reduce((sum, session) => sum + session.memory.estimatedBytes, 0),
+        topOwners,
+      },
+      topSessions,
     };
   }
 
   private estimateBytes(data: any): number {
     if (!data) return 0;
-    if (typeof Buffer !== "undefined" && Buffer.isBuffer(data))
-      return data.length;
+    if (typeof Buffer !== "undefined" && Buffer.isBuffer(data)) return data.length;
     if (data instanceof ArrayBuffer) return data.byteLength;
     if (ArrayBuffer.isView(data)) return (data as ArrayBufferView).byteLength;
     // Fallback unknown

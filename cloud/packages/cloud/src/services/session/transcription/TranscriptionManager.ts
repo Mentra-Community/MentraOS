@@ -12,11 +12,12 @@ import {
   StreamType,
   CloudToAppMessageType,
   DataStream,
-  TranscriptSegment,
   LocalTranscription,
 } from "@mentra/sdk";
 
 import { PosthogService } from "../../logging/posthog.service";
+import { MemoryOwnerStat } from "../../metrics/memory-census";
+import { estimateArrayBufferBytes, sumEstimatedBytes } from "../../metrics/memory-estimate";
 import UserSession from "../UserSession";
 
 import { AlibabaTranscriptionProvider } from "./providers/AlibabaTranscriptionProvider";
@@ -87,19 +88,12 @@ export class TranscriptionManager {
   // Health Monitoring
   private healthCheckInterval?: NodeJS.Timeout;
 
-  // Transcript History Management
-  private transcriptHistory: {
-    segments: TranscriptSegment[]; // Legacy compatibility (en-US)
-    languageSegments: Map<string, TranscriptSegment[]>; // Multi-language support
-  } = {
-    segments: [],
-    languageSegments: new Map(),
-  };
-
-  // History Management Configuration
-  private readonly HISTORY_RETENTION_MS = 30 * 60 * 1000; // 30 minutes
-  private readonly HISTORY_PRUNE_INTERVAL_MS = 5 * 60 * 1000; // Prune every 5 minutes
-  private historyPruneInterval?: NodeJS.Timeout;
+  // Transcript history storage has been removed (issue 098).
+  // Rationale: the cloud used to retain 30 minutes of transcript segments per
+  // session to back a single REST endpoint (GET /api/transcripts/:appSessionId).
+  // That endpoint has been removed. Apps that want transcription history
+  // subscribe to the live transcription stream and keep their own buffer.
+  // See: cloud/issues/098-kill-transcript-history/
 
   constructor(
     private userSession: UserSession,
@@ -110,7 +104,6 @@ export class TranscriptionManager {
     // Start initialization but don't block constructor
     this.initializationPromise = this.initializeProviders();
     this.startHealthMonitoring();
-    this.startHistoryPruning();
 
     this.logger.info(
       {
@@ -902,13 +895,13 @@ export class TranscriptionManager {
   }
 
   /**
-   * Memory stats used by MemoryTelemetryService
+   * Lightweight summary stats used by MemoryTelemetryService.
+   * Transcript-history fields were removed in issue 098; only VAD buffer
+   * telemetry remains.
    */
-  public getMemoryStats(): {
+  public getMemoryTelemetryStats(): {
     vadBufferChunks: number;
     vadBufferBytes: number;
-    transcriptLanguages: number;
-    transcriptSegments: number;
   } {
     const vadBufferChunks = this.vadAudioBuffer.length;
     let vadBufferBytes = 0;
@@ -922,20 +915,41 @@ export class TranscriptionManager {
       }
     }
 
-    // Count transcript segments across languages
-    const transcriptLanguages =
-      this.transcriptHistory.languageSegments.size +
-      (this.transcriptHistory.segments.length > 0 && !this.transcriptHistory.languageSegments.has("en-US") ? 1 : 0);
-    const transcriptSegments =
-      this.transcriptHistory.segments.length +
-      Array.from(this.transcriptHistory.languageSegments.values()).reduce((sum, arr) => sum + arr.length, 0);
-
     return {
       vadBufferChunks,
       vadBufferBytes,
-      transcriptLanguages,
-      transcriptSegments,
     };
+  }
+
+  /**
+   * Best-effort ownership census for retained transcription state.
+   * This is not exact JSC heap accounting — it is a ranking tool that tells us
+   * which long-lived structures are likely owning memory growth.
+   */
+  public getMemoryStats(): MemoryOwnerStat[] {
+    // Transcript-history owners were removed in issue 098 — the cloud no
+    // longer retains transcription segments. Only live in-flight structures
+    // (VAD buffer, active streams) are reported below.
+    const stats: MemoryOwnerStat[] = [];
+
+    stats.push({
+      owner: "transcription.vad-audio-buffer",
+      scope: "session",
+      itemCount: this.vadAudioBuffer.length,
+      estimatedBytes: sumEstimatedBytes(this.vadAudioBuffer, (chunk) => estimateArrayBufferBytes(chunk)),
+    });
+
+    stats.push({
+      owner: "transcription.streams",
+      scope: "session",
+      itemCount: this.streams.size,
+      estimatedBytes: this.streams.size * 256,
+      metadata: {
+        activeSubscriptions: this.activeSubscriptions.size,
+      },
+    });
+
+    return stats;
   }
 
   // ===== PRIVATE METHODS =====
@@ -1904,9 +1918,6 @@ export class TranscriptionManager {
         effectiveSubscription = `${streamType}:en-US`; // Default fallback
       }
 
-      // Add to transcript history before relaying to apps
-      this.addToTranscriptHistory(data, streamType);
-
       // Get all apps subscribed to this base language
       const subscribedApps = this.userSession.subscriptionManager.getSubscribedApps(effectiveSubscription);
 
@@ -2004,259 +2015,6 @@ export class TranscriptionManager {
     }
   }
 
-  // ===== TRANSCRIPT HISTORY MANAGEMENT =====
-
-  /**
-   * Get transcript history for a specific language or all languages
-   * @param language Optional language code (e.g., 'en-US', 'fr-FR'). If not provided, returns all languages.
-   * @param timeRange Optional time range filter
-   * @returns Array of transcript segments
-   */
-  getTranscriptHistory(
-    language?: string,
-    timeRange?: { duration?: number; startTime?: Date; endTime?: Date },
-  ): TranscriptSegment[] {
-    let segments: TranscriptSegment[] = [];
-
-    if (language) {
-      // Get segments for specific language
-      if (language === "en-US") {
-        // For English, prefer languageSegments but fallback to legacy segments
-        segments = this.transcriptHistory.languageSegments.get(language) || this.transcriptHistory.segments;
-      } else {
-        segments = this.transcriptHistory.languageSegments.get(language) || [];
-      }
-    } else {
-      // Get all segments from all languages
-      segments = Array.from(this.transcriptHistory.languageSegments.values()).flat();
-      // Also include legacy segments if not already included
-      if (!this.transcriptHistory.languageSegments.has("en-US")) {
-        segments = segments.concat(this.transcriptHistory.segments);
-      }
-    }
-
-    // Apply time-based filtering if provided
-    if (timeRange) {
-      const currentTime = new Date();
-      segments = segments.filter((segment) => {
-        const segmentTime = new Date(segment.timestamp);
-
-        if (timeRange.duration) {
-          const durationMs = timeRange.duration * 1000;
-          const timeDiff = currentTime.getTime() - segmentTime.getTime();
-          return timeDiff <= durationMs;
-        }
-
-        if (timeRange.startTime && segmentTime < timeRange.startTime) {
-          return false;
-        }
-
-        if (timeRange.endTime && segmentTime > timeRange.endTime) {
-          return false;
-        }
-
-        return true;
-      });
-    }
-
-    // Sort by timestamp
-    segments.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-
-    return segments;
-  }
-
-  /**
-   * Get available languages in transcript history
-   * @returns Array of language codes that have transcript data
-   */
-  getAvailableLanguages(): string[] {
-    const languages = new Set<string>();
-
-    // Add languages from language-specific segments
-    for (const language of this.transcriptHistory.languageSegments.keys()) {
-      languages.add(language);
-    }
-
-    // Add 'en-US' if we have legacy segments and no specific en-US entry
-    if (this.transcriptHistory.segments.length > 0 && !languages.has("en-US")) {
-      languages.add("en-US");
-    }
-
-    return Array.from(languages).sort();
-  }
-
-  /**
-   * Add transcript data to history
-   * @param data Transcription data
-   * @param streamType Type of stream (transcription)
-   */
-  private addToTranscriptHistory(data: any, streamType: StreamType): void {
-    // Only process transcription data
-    if (streamType !== StreamType.TRANSCRIPTION || !data.text || !data.transcribeLanguage) {
-      return;
-    }
-
-    const language = data.transcribeLanguage;
-    const segment: TranscriptSegment = {
-      resultId: data.resultId || `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      speakerId: data.speakerId,
-      text: data.text,
-      timestamp: new Date(),
-      isFinal: data.isFinal || false,
-    };
-
-    // Initialize language segments if needed
-    if (!this.transcriptHistory.languageSegments.has(language)) {
-      this.transcriptHistory.languageSegments.set(language, []);
-    }
-
-    const languageSegments = this.transcriptHistory.languageSegments.get(language)!;
-    const legacySegments = this.transcriptHistory.segments;
-
-    // Handle interim vs final segments (same logic as old system)
-    const hasInterimLastLanguage =
-      languageSegments.length > 0 && !languageSegments[languageSegments.length - 1].isFinal;
-    const hasInterimLastLegacy = legacySegments.length > 0 && !legacySegments[legacySegments.length - 1].isFinal;
-
-    if (data.isFinal) {
-      // Final segment - replace interim if exists
-      if (hasInterimLastLanguage) {
-        languageSegments.pop();
-      }
-      languageSegments.push(segment);
-
-      // For English, also update legacy segments for backward compatibility
-      if (language === "en-US") {
-        if (hasInterimLastLegacy) {
-          legacySegments.pop();
-        }
-        legacySegments.push(segment);
-      }
-
-      this.logger.debug(
-        {
-          language,
-          text: segment.text.substring(0, 100),
-          segmentCount: languageSegments.length,
-          provider: data.provider,
-        },
-        "Added FINAL transcript segment to history",
-      );
-    } else {
-      // Interim segment - update or add
-      if (hasInterimLastLanguage) {
-        languageSegments[languageSegments.length - 1] = segment;
-      } else {
-        languageSegments.push(segment);
-      }
-
-      // For English, also update legacy segments
-      if (language === "en-US") {
-        if (hasInterimLastLegacy) {
-          legacySegments[legacySegments.length - 1] = segment;
-        } else {
-          legacySegments.push(segment);
-        }
-      }
-
-      this.logger.debug(
-        {
-          language,
-          text: segment.text.substring(0, 50),
-          segmentCount: languageSegments.length,
-          provider: data.provider,
-        },
-        "Added interim transcript segment to history",
-      );
-    }
-  }
-
-  /**
-   * Start periodic pruning of old transcript history
-   */
-  private startHistoryPruning(): void {
-    this.historyPruneInterval = setInterval(() => {
-      this.pruneOldTranscriptHistory();
-    }, this.HISTORY_PRUNE_INTERVAL_MS);
-
-    this.logger.debug(
-      {
-        retentionMs: this.HISTORY_RETENTION_MS,
-        pruneIntervalMs: this.HISTORY_PRUNE_INTERVAL_MS,
-      },
-      "Started transcript history pruning",
-    );
-  }
-
-  /**
-   * Remove transcript segments older than retention period
-   */
-  private pruneOldTranscriptHistory(): void {
-    const cutoffTime = new Date(Date.now() - this.HISTORY_RETENTION_MS);
-    let totalPruned = 0;
-
-    // Prune language-specific segments
-    for (const [language, segments] of this.transcriptHistory.languageSegments.entries()) {
-      const originalCount = segments.length;
-      const filteredSegments = segments.filter(
-        (segment) => segment.timestamp && new Date(segment.timestamp) >= cutoffTime,
-      );
-
-      this.transcriptHistory.languageSegments.set(language, filteredSegments);
-      const pruned = originalCount - filteredSegments.length;
-      totalPruned += pruned;
-
-      if (pruned > 0) {
-        this.logger.debug(
-          {
-            language,
-            prunedCount: pruned,
-            remainingCount: filteredSegments.length,
-          },
-          "Pruned old transcript segments for language",
-        );
-      }
-    }
-
-    // Prune legacy segments
-    const originalLegacyCount = this.transcriptHistory.segments.length;
-    this.transcriptHistory.segments = this.transcriptHistory.segments.filter(
-      (segment) => segment.timestamp && new Date(segment.timestamp) >= cutoffTime,
-    );
-    const legacyPruned = originalLegacyCount - this.transcriptHistory.segments.length;
-    totalPruned += legacyPruned;
-
-    if (totalPruned > 0) {
-      this.logger.info(
-        {
-          totalPruned,
-          cutoffTime: cutoffTime.toISOString(),
-          retentionMinutes: this.HISTORY_RETENTION_MS / (60 * 1000),
-        },
-        "Pruned old transcript history",
-      );
-    }
-  }
-
-  /**
-   * Clear all transcript history
-   */
-  clearTranscriptHistory(): void {
-    const totalSegments =
-      this.transcriptHistory.segments.length +
-      Array.from(this.transcriptHistory.languageSegments.values()).reduce((sum, segments) => sum + segments.length, 0);
-
-    this.transcriptHistory.segments = [];
-    this.transcriptHistory.languageSegments.clear();
-
-    this.logger.info(
-      {
-        clearedSegments: totalSegments,
-      },
-      "Cleared all transcript history",
-    );
-  }
-
   /**
    * Cleanup method - should be called when TranscriptionManager is being destroyed
    * This ensures all resources are properly released
@@ -2272,12 +2030,6 @@ export class TranscriptionManager {
       if (this.healthCheckInterval) {
         clearInterval(this.healthCheckInterval);
         this.healthCheckInterval = undefined;
-      }
-
-      // Stop history pruning
-      if (this.historyPruneInterval) {
-        clearInterval(this.historyPruneInterval);
-        this.historyPruneInterval = undefined;
       }
 
       // Stop all streams

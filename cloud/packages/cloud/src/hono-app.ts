@@ -73,7 +73,6 @@ import developerRoutes from "./api/hono/routes/developer.routes";
 import organizationRoutes from "./api/hono/routes/organization.routes";
 import audioRoutes, { textToSpeech } from "./api/hono/routes/audio.routes";
 import errorReportRoutes from "./api/hono/routes/error-report.routes";
-import transcriptsRoutes from "./api/hono/routes/transcripts.routes";
 
 // Hono middleware
 import { authenticateConsole, authenticateCLI, transformCLIToConsole } from "./api/hono/middleware";
@@ -436,9 +435,6 @@ app.get("/api/tts", textToSpeech);
 
 // Error report routes
 app.route("/", errorReportRoutes);
-
-// Transcripts routes
-app.route("/api/transcripts", transcriptsRoutes);
 
 // ============================================================================
 // Static Files

@@ -4,7 +4,7 @@ on:
   workflow_dispatch: # Manual trigger only — no auto-deploy
   push:
     branches:
-      - cloud/issues-077-heap-diagnostics
+      - cloud/issues-098-kill-transcript-history
     paths:
       - "cloud/**"
       - ".github/workflows/porter-us-west.yml"

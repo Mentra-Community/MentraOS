@@ -139,6 +139,12 @@ class CoreModule : Module() {
 
         AsyncFunction("forget") { coreManager?.forget() }
 
+        AsyncFunction("connectDefaultController") { coreManager?.connectDefaultController() }
+
+        AsyncFunction("disconnectController") { coreManager?.disconnectController() }
+
+        AsyncFunction("forgetController") { coreManager?.forgetController() }
+
         AsyncFunction("findCompatibleDevices") { deviceModel: String ->
             coreManager?.findCompatibleDevices(deviceModel)
         }

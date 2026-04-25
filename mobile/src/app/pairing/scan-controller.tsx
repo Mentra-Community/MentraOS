@@ -9,7 +9,7 @@ import {Icon, Button, Header, Screen, Text} from "@/components/ignite"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import Divider from "@/components/ui/Divider"
 import {Group} from "@/components/ui/Group"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
@@ -36,7 +36,11 @@ export default function SelectGlassesBluetoothScreen() {
   //   }, [setSearchResults]),
   // )
 
-  // focusEffectPreventBack()
+  focusEffectPreventBack(() => {
+    CoreModule.disconnectController()
+    CoreModule.forgetController()
+    goBack()
+  }, true)
 
   useEffect(() => {
     if (searchResults.some((result) => result.deviceName === "NOTREQUIREDSKIP")) {
@@ -119,8 +123,12 @@ export default function SelectGlassesBluetoothScreen() {
     })
   }, [searchResults])
 
+  const visibleResults = rememberedSearchResults.filter(
+    (r) => r.deviceModel === deviceModel,
+  )
+
   return (
-    <Screen preset="fixed" safeAreaEdges={["bottom"]}>
+    <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
       <Header leftIcon="chevron-left" onLeftPress={goBack} RightActionComponent={<MentraLogoStandalone />} />
       <View className="flex-1 justify-center">
         <GlassView className="gap-6 rounded-3xl bg-primary-foreground p-6">
@@ -130,14 +138,14 @@ export default function SelectGlassesBluetoothScreen() {
             text={translate("pairing:scanningForGlassesModel", {model: deviceModel})}
           />
 
-          {!rememberedSearchResults || rememberedSearchResults.length === 0 ? (
+          {visibleResults.length === 0 ? (
             <View className="justify-center min-h-20 py-4">
               <ActivityIndicator size="large" color={theme.colors.foreground} />
             </View>
           ) : (
             <ScrollView className="max-h-[300px] -mr-4 pr-4">
               <Group>
-                {rememberedSearchResults.map((res: DeviceSearchResult, index: number) => (
+                {visibleResults.map((res: DeviceSearchResult, index: number) => (
                   <TouchableOpacity
                     key={index}
                     className="h-[50px] flex-row items-center justify-between bg-background px-4 py-3"

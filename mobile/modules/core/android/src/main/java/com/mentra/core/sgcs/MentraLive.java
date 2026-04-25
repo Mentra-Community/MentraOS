@@ -2436,12 +2436,15 @@ public class MentraLive extends SGCManager {
                 final int BES2700_MTU_LIMIT = 256; // BES2700's known notification size limit
                 final int effectiveMtu = Math.min(currentMtu, BES2700_MTU_LIMIT);
                 Bridge.log("LIVE: 📦 Sending BLE MTU config: negotiated=" + currentMtu + ", BES2700 limit=" + BES2700_MTU_LIMIT + ", effective=" + effectiveMtu);
-                sendBleMtuConfig(effectiveMtu);
+                try { sendBleMtuConfig(effectiveMtu); }
+                catch (Throwable t) { Bridge.log("LIVE: ⚠️ glasses_ready: sendBleMtuConfig threw: " + t); }
 
                 // Now we can perform all SOC-dependent initialization
                 Bridge.log("LIVE: 🔄 Requesting battery and WiFi status from glasses");
-                requestBatteryStatus();
-                requestWifiStatus();
+                try { requestBatteryStatus(); }
+                catch (Throwable t) { Bridge.log("LIVE: ⚠️ glasses_ready: requestBatteryStatus threw: " + t); }
+                try { requestWifiStatus(); }
+                catch (Throwable t) { Bridge.log("LIVE: ⚠️ glasses_ready: requestWifiStatus threw: " + t); }
 
                 // Request version info from ASG client
                 Bridge.log("LIVE: 🔄 Requesting version info from ASG client");
@@ -2449,45 +2452,57 @@ public class MentraLive extends SGCManager {
                     JSONObject versionRequest = new JSONObject();
                     versionRequest.put("type", "request_version");
                     sendJson(versionRequest);
-                } catch (JSONException e) {
-                    Log.e(TAG, "Error creating version request", e);
+                } catch (Throwable t) {
+                    Bridge.log("LIVE: ⚠️ glasses_ready: request_version threw: " + t);
                 }
 
                 Bridge.log("LIVE: 🔄 Sending coreToken to ASG client");
-                sendCoreTokenToAsgClient();
+                try { sendCoreTokenToAsgClient(); }
+                catch (Throwable t) { Bridge.log("LIVE: ⚠️ glasses_ready: sendCoreTokenToAsgClient threw: " + t); }
 
                 // Send stored user email for crash reporting
-                sendStoredUserEmailToAsgClient();
+                try { sendStoredUserEmailToAsgClient(); }
+                catch (Throwable t) { Bridge.log("LIVE: ⚠️ glasses_ready: sendStoredUserEmailToAsgClient threw: " + t); }
 
                 //startDebugVideoCommandLoop();
 
                 // Start the heartbeat mechanism now that glasses are ready
-                startHeartbeat();
+                try { startHeartbeat(); }
+                catch (Throwable t) { Bridge.log("LIVE: ⚠️ glasses_ready: startHeartbeat threw: " + t); }
 
                 // Start the micbeat mechanism now that glasses are ready
                 // startMicBeat();
 
                 // Send user settings to glasses
-                sendUserSettings();
+                try { sendUserSettings(); }
+                catch (Throwable t) { Bridge.log("LIVE: ⚠️ glasses_ready: sendUserSettings threw: " + t); }
 
                 // Claim RGB LED control authority
                 // DISABLED: MentraLive is not supposed to send this command
                 // sendRgbLedControlAuthority(true);
 
                 // Initialize LC3 audio logging now that glasses are ready
-                initializeLc3Logging();
-                Bridge.log("LIVE: ✅ LC3 audio logging initialized for device");
+                try {
+                    initializeLc3Logging();
+                    Bridge.log("LIVE: ✅ LC3 audio logging initialized for device");
+                } catch (Throwable t) {
+                    Bridge.log("LIVE: ⚠️ glasses_ready: initializeLc3Logging threw: " + t);
+                }
 
                 // Restore mic state if it was enabled before reconnect
-                if (micIntentEnabled) {
-                    if (BLOCK_AUDIO_DUPLEX && phoneAudioMonitor != null && phoneAudioMonitor.isPlaying()) {
-                        micSuspendedForAudio = true;
-                        Bridge.log("LIVE: 🎤 Restoring mic intent after reconnect, but phone audio is playing - suspending");
-                    } else {
-                        micSuspendedForAudio = false;
-                        Bridge.log("LIVE: 🎤 Restoring mic state after reconnect");
-                        startMicBeat();
+                try {
+                    if (micIntentEnabled) {
+                        if (BLOCK_AUDIO_DUPLEX && phoneAudioMonitor != null && phoneAudioMonitor.isPlaying()) {
+                            micSuspendedForAudio = true;
+                            Bridge.log("LIVE: 🎤 Restoring mic intent after reconnect, but phone audio is playing - suspending");
+                        } else {
+                            micSuspendedForAudio = false;
+                            Bridge.log("LIVE: 🎤 Restoring mic state after reconnect");
+                            startMicBeat();
+                        }
                     }
+                } catch (Throwable t) {
+                    Bridge.log("LIVE: ⚠️ glasses_ready: mic restore threw: " + t);
                 }
 
                 // Audio Pairing: Only mark as fully connected if audio is also ready
@@ -3992,12 +4007,18 @@ public class MentraLive extends SGCManager {
                     BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
                     int bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.ERROR);
                     int previousBondState = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, BluetoothDevice.ERROR);
+                    // Hidden SystemApi extras — string keys are stable across Android versions.
+                    // EXTRA_REASON / EXTRA_UNBOND_REASON expose why the OS rejected/cleared a bond
+                    // (auth_failed, repeated_attempts, remote_auth_canceled, remote_device_down, etc.).
+                    int reason = intent.getIntExtra("android.bluetooth.device.extra.REASON", -1);
+                    int unbondReason = intent.getIntExtra("android.bluetooth.device.extra.UNBOND_REASON", -1);
 
                     if (device != null && connectedDevice != null &&
                         device.getAddress().equals(connectedDevice.getAddress())) {
 
                         Bridge.log("LIVE: CTKD: Bond state changed for device " + device.getName() +
-                              " - Current: " + bondState + ", Previous: " + previousBondState);
+                              " - Current: " + bondState + ", Previous: " + previousBondState +
+                              ", reason=" + reason + ", unbondReason=" + unbondReason);
 
                         switch (bondState) {
                             case BluetoothDevice.BOND_BONDED:
@@ -6314,7 +6335,8 @@ public class MentraLive extends SGCManager {
             return;
         }
 
-        int minutes = (Integer) GlassesStore.INSTANCE.get("core", "button_max_recording_time");
+        Object rawMinutes = GlassesStore.INSTANCE.get("core", "button_max_recording_time");
+        int minutes = (rawMinutes instanceof Number) ? ((Number) rawMinutes).intValue() : 10;
 
         try {
             JSONObject json = new JSONObject();

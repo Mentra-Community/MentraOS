@@ -1,7 +1,6 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {useRoute} from "@react-navigation/native"
-import CoreModule from "core"
-import {Linking, PermissionsAndroid, Image, Platform, ScrollView, View} from "react-native"
+import {Linking, PermissionsAndroid, Image, Platform, View} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
@@ -16,6 +15,7 @@ import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshoo
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {useAppletStatusStore} from "@/stores/applets"
 import {CDN_BASE_URL} from "@/constants/appConfig"
+import CoreModule from "core"
 
 export default function PairingPrepScreen() {
   const route = useRoute()

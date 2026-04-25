@@ -1,18 +1,23 @@
 const E2E_METRIC_PREFIX = "E2E_METRIC"
+const E2E_METRICS_ENABLED = process.env.EXPO_PUBLIC_ENABLE_E2E_METRICS === "true"
 
 export interface E2EMetricPayload {
   [key: string]: unknown
 }
 
 export const logE2EMetric = (event: string, payload: E2EMetricPayload = {}) => {
+  if (!E2E_METRICS_ENABLED) {
+    return
+  }
+
   try {
-    // console.log(
-    //   `${E2E_METRIC_PREFIX} ${JSON.stringify({
-    //     event,
-    //     ts_ms: Date.now(),
-    //     ...payload,
-    //   })}`,
-    // )
+    console.log(
+      `${E2E_METRIC_PREFIX} ${JSON.stringify({
+        event,
+        ts_ms: Date.now(),
+        ...payload,
+      })}`,
+    )
   } catch (error) {
     console.warn("E2E_METRIC: failed to serialize payload", error)
   }

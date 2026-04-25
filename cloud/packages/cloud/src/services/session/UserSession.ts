@@ -19,6 +19,8 @@ import { ResourceTracker } from "../../utils/resource-tracker";
 import appService from "../core/app.service";
 import { memoryLeakDetector } from "../debug/MemoryLeakDetector";
 import { connectionChurnTracker } from "../metrics/SystemVitalsLogger";
+import { MemoryOwnerStat, SessionMemoryCensus } from "../metrics/memory-census";
+import { estimateStringBytes, sumEstimatedBytes } from "../metrics/memory-estimate";
 import DisplayManager from "../layout/DisplayManager6.1";
 import { logger as rootLogger } from "../logging/pino-logger";
 import { PosthogService } from "../logging/posthog.service";
@@ -857,6 +859,78 @@ export class UserSession {
     // diagnostic data on a fixed 60s schedule without being triggered by user behavior.
     // See: cloud/issues/066-ws-disconnect-churn/spec.md (A7)
     // See: cloud/issues/067-heap-growth-investigation/spike.md
+  }
+
+  public getMemoryCensus(): SessionMemoryCensus {
+    const owners: MemoryOwnerStat[] = [
+      {
+        owner: "user-session.buffered-audio",
+        scope: "session",
+        itemCount: this.bufferedAudio.length,
+        estimatedBytes: sumEstimatedBytes(this.bufferedAudio, (buffer) => buffer.length),
+      },
+      {
+        owner: "user-session.recent-audio-buffer",
+        scope: "session",
+        itemCount: this.recentAudioBuffer.length,
+        estimatedBytes: sumEstimatedBytes(this.recentAudioBuffer, (buffer) => buffer.length),
+      },
+      {
+        owner: "user-session.audio-play-request-mapping",
+        scope: "session",
+        itemCount: this.audioPlayRequestMapping.size,
+        estimatedBytes: sumEstimatedBytes(this.audioPlayRequestMapping.entries(), ([requestId, packageName]) => {
+          return estimateStringBytes(requestId) + estimateStringBytes(packageName) + 16;
+        }),
+      },
+      {
+        owner: "user-session.app-health-cache",
+        scope: "session",
+        itemCount: this.appHealthCache.size,
+        estimatedBytes: sumEstimatedBytes(
+          this.appHealthCache.keys(),
+          (packageName) => estimateStringBytes(packageName) + 8,
+        ),
+      },
+      {
+        owner: "user-session.loading-apps",
+        scope: "session",
+        itemCount: this.loadingApps.size,
+        estimatedBytes: sumEstimatedBytes(this.loadingApps, (packageName) => estimateStringBytes(packageName) + 8),
+      },
+    ];
+
+    const sessionProviders = [
+      this.transcriptionManager,
+      this.translationManager,
+      this.calendarManager,
+      this.dashboardManager,
+      this.appAudioStreamManager,
+    ];
+
+    for (const provider of sessionProviders) {
+      if (provider && typeof (provider as any).getMemoryStats === "function") {
+        owners.push(...(((provider as any).getMemoryStats() as MemoryOwnerStat[]) ?? []));
+      }
+    }
+
+    for (const appSession of this.appManager.getAllAppSessions().values()) {
+      if (typeof (appSession as any).getMemoryStats === "function") {
+        const stats = ((appSession as any).getMemoryStats() as MemoryOwnerStat[]).map((owner) => ({
+          ...owner,
+          metadata: {
+            ...(owner.metadata || {}),
+            packageName: appSession.packageName,
+          },
+        }));
+        owners.push(...stats);
+      }
+    }
+
+    return {
+      estimatedBytes: owners.reduce((sum, owner) => sum + owner.estimatedBytes, 0),
+      owners,
+    };
   }
 
   /**

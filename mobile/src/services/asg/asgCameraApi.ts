@@ -38,16 +38,16 @@ export class AsgCameraApiClient {
     const newUrl = `http://${serverUrl.replace(/^https?:\/\//, "")}:${newPort}`
 
     console.log(`[ASG Camera API] Constructed newUrl: ${newUrl}`)
-    console.log(`[ASG Camera API] Current baseUrl: ${this.baseUrl}`)
+    // console.log(`[ASG Camera API] Current baseUrl: ${this.baseUrl}`)
 
     // Only update if the URL actually changed
     if (this.baseUrl !== newUrl) {
       const oldUrl = this.baseUrl
       this.baseUrl = newUrl
       this.port = newPort
-      console.log(`[ASG Camera API] Server changed from ${oldUrl} to ${this.baseUrl}`)
+      // console.log(`[ASG Camera API] Server changed from ${oldUrl} to ${this.baseUrl}`)
     } else {
-      console.log(`[ASG Camera API] Server URL unchanged: ${this.baseUrl}`)
+      // console.log(`[ASG Camera API] Server URL unchanged: ${this.baseUrl}`)
     }
   }
 
@@ -237,7 +237,7 @@ export class AsgCameraApiClient {
    */
   async getGallery(limit?: number, offset?: number): Promise<GalleryResponse> {
     console.log(`[ASG Camera API] getGallery called with limit=${limit}, offset=${offset}`)
-    console.log(`[ASG Camera API] Current baseUrl: ${this.baseUrl}`)
+    // console.log(`[ASG Camera API] Current baseUrl: ${this.baseUrl}`)
 
     // Build URL with optional query parameters
     let galleryUrl = `${this.baseUrl}/api/gallery`

@@ -96,7 +96,7 @@ class GallerySyncService {
     this.hotspotListenerRegistered = true
     this.isInitialized = true
 
-    console.log("[GallerySyncService] Initialized")
+    // console.log("[GallerySyncService] Initialized")
 
     // Check for resumable sync on startup
     this.checkForResumableSync()

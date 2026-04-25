@@ -13,6 +13,8 @@ import type { Logger } from "pino";
 
 import { StreamType, CloudToAppMessageType, type CalendarEvent, type DataStream } from "@mentra/sdk";
 
+import { MemoryOwnerStat } from "../metrics/memory-census";
+import { estimateStringBytes, sumEstimatedBytes } from "../metrics/memory-estimate";
 import { WebSocketReadyState } from "../websocket/types";
 
 import type UserSession from "./UserSession";
@@ -115,6 +117,30 @@ export class CalendarManager {
   dispose(): void {
     this.events = [];
     this.subscribedApps.clear();
+  }
+
+  getMemoryStats(): MemoryOwnerStat[] {
+    return [
+      {
+        owner: "calendar.events",
+        scope: "session",
+        itemCount: this.events.length,
+        estimatedBytes: sumEstimatedBytes(this.events, (event) => {
+          return (
+            estimateStringBytes(event.eventId) +
+            estimateStringBytes(event.title) +
+            estimateStringBytes(event.dtStart) +
+            estimateStringBytes(event.dtEnd) +
+            estimateStringBytes(event.timezone) +
+            estimateStringBytes(event.timeStamp) +
+            64
+          );
+        }),
+        metadata: {
+          subscribedApps: this.subscribedApps.size,
+        },
+      },
+    ];
   }
 
   // ===== Internals =====

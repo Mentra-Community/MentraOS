@@ -4,6 +4,8 @@
 
 Users reporting: "my apps stopped", "captions disappeared", "glasses disconnected", or general connectivity complaints. Or: high `wsDisconnects` count in system-vitals.
 
+> **Tip:** Run `bstack health` first to see which regions are up and how many sessions each has. This helps narrow down which region to investigate.
+
 ## Quick Check (30 seconds)
 
 ```bash
@@ -17,6 +19,22 @@ bstack sql "SELECT dt, JSONExtract(raw, 'wsDisconnects', 'Nullable(Int32)') as d
 ```
 
 Look at `codes` — if it's all `{"1006": N}`, that's client-side (abnormal closure, no close frame from client).
+
+## Step 0: Find the user's region
+
+If you know the user's email, find which region they're connected to:
+
+```bash
+bstack sql "SELECT dt, JSONExtract(raw, 'region', 'Nullable(String)') as region, JSONExtract(raw, 'message', 'Nullable(String)') as message FROM remote(t373499_mentracloud_prod_logs) WHERE raw LIKE '%USER_EMAIL_HERE%' AND dt > now() - INTERVAL 15 MINUTE ORDER BY dt DESC LIMIT 5"
+```
+
+Replace `USER_EMAIL_HERE` with the user's email. Use the region from the results in all subsequent commands.
+
+If the user isn't in hot storage, try the historical table:
+
+```bash
+bstack sql "SELECT dt, JSONExtract(raw, 'region', 'Nullable(String)') as region FROM s3Cluster(primary, t373499_mentracloud_prod_s3) WHERE _row_type = 1 AND raw LIKE '%USER_EMAIL_HERE%' AND dt > now() - INTERVAL 1 HOUR ORDER BY dt DESC LIMIT 5"
+```
 
 ## Diagnose (2-5 minutes)
 
@@ -61,6 +79,18 @@ Look for patterns:
 
 ```bash
 bstack diagnostics --region us-central --duration 30m
+```
+
+Also check MongoDB slow queries around that time:
+
+```bash
+bstack slow-queries --region <REGION> --duration 30m
+```
+
+And the operation budget (CPU utilization):
+
+```bash
+bstack budget --region <REGION> --duration 30m
 ```
 
 Check:

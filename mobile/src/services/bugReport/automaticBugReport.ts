@@ -62,27 +62,29 @@ export interface SubmitAutomaticBugIncidentParams extends SubmitCategorizedBugIn
   logTag?: string
 }
 
-export async function submitAutomaticBugIncident(params: SubmitAutomaticBugIncidentParams): Promise<void> {
+export type AutomaticBugIncidentResult =
+  | {status: "filed"; incidentId: string}
+  | {status: "skipped"; reason: string}
+  | {status: "failed"; error: string}
+
+export async function submitAutomaticBugIncident(
+  params: SubmitAutomaticBugIncidentParams,
+): Promise<AutomaticBugIncidentResult> {
   const logTag = params.logTag || "AutomaticBugReport"
 
   if (!restComms.getCoreToken()) {
     console.log(`[${logTag}] Skipping: no core token`)
-    return
+    return {status: "skipped", reason: "no_core_token"}
   }
 
   if (params.dedupeKey) {
     const now = Date.now()
     const dedupeWindowMs = params.dedupeWindowMs ?? DEFAULT_AUTOMATIC_INCIDENT_DEDUPE_MS
     if (
-      automaticIncidentReportDedupeShouldSkip(
-        params.dedupeKey,
-        now,
-        dedupeWindowMs,
-        automaticIncidentDedupeRegistry,
-      )
+      automaticIncidentReportDedupeShouldSkip(params.dedupeKey, now, dedupeWindowMs, automaticIncidentDedupeRegistry)
     ) {
       console.log(`[${logTag}] Skipping duplicate within window:`, params.dedupeKey)
-      return
+      return {status: "skipped", reason: "duplicate_within_window"}
     }
   }
 
@@ -90,12 +92,13 @@ export async function submitAutomaticBugIncident(params: SubmitAutomaticBugIncid
     const submitRes = await submitCategorizedBugIncident(params)
     if (!submitRes.ok) {
       console.error(`[${logTag}] submitBugIncident failed:`, submitRes.error)
-      return
+      return {status: "failed", error: submitRes.error.message}
     }
 
     console.log(`[${logTag}] Incident filed:`, submitRes.incidentId)
+    return {status: "filed", incidentId: submitRes.incidentId}
   } catch (error) {
     console.error(`[${logTag}] Unexpected error:`, error)
+    return {status: "failed", error: error instanceof Error ? error.message : String(error)}
   }
 }
-
