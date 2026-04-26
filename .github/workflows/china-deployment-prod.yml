@@ -135,6 +135,12 @@ jobs:
             value: "wss://stt-rt.soniox.com/transcribe-websocket" 
           - name: SONIOX_API_KEY
             value: "random"
+          - name: aliyun_logs_app
+            value: "stdout"
+          - name: aliyun_logs_app_project
+            value: "mentraos-prod-sls"
+          - name: aliyun_logs_app_logstore
+            value: "api"
           EOL
 
       # Create start.sh file
