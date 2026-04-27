@@ -263,7 +263,7 @@ Your webhook should accept multipart form data. Mentra Live currently sends:
 
 If you include `authToken`, the glasses add it as `Authorization: Bearer <token>` on the webhook request.
 
-For local development, run the companion server in `examples/photo-webhook-server` and use the printed LAN URL, such as `http://192.168.1.42:8787/upload`. Do not use `localhost`: the glasses, not the phone, make the upload request. The Android example demonstrates this by polling `GET /uploads/<requestId>.json` and displaying the returned `photoUrl`.
+For local development, run the companion server in `examples/photo-webhook-server` and use the printed LAN URL, such as `http://192.168.1.42:8787/upload`. Do not use `localhost`: the glasses, not the phone, make the upload request. The Android and iOS examples demonstrate this by polling `GET /uploads/<requestId>.json` and displaying the returned `photoUrl`.
 
 ## Wi-Fi And Hotspot
 

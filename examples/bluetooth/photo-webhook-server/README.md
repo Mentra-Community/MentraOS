@@ -18,7 +18,7 @@ The server prints URLs like:
 http://192.168.1.42:8787/upload
 ```
 
-Use the LAN URL, not `localhost`, in the Android example app. The URL shown in the Android example's empty input field is only a placeholder; paste the URL printed by this server. The glasses upload the photo directly to this URL, so the glasses, phone, and computer need to be on a network where the glasses can reach the computer.
+Use the LAN URL, not `localhost`, in the Android or iOS example app. The URL shown in each example's empty input field is only a placeholder; paste the URL printed by this server. The glasses upload the photo directly to this URL, so the glasses, phone, and computer need to be on a network where the glasses can reach the computer.
 
 ## Endpoints
 
