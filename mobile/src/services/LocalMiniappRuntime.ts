@@ -31,10 +31,12 @@ import type {MiniappEnvelope} from "@mentra/miniapp"
 import {getModelCapabilities, DeviceTypes} from "@/../../cloud/packages/types/src"
 import audioPlaybackService from "@/services/AudioPlaybackService"
 import devServerBridge from "@/services/DevServerBridge"
+import headingService from "@/services/HeadingService"
 import localDisplayManager from "@/services/LocalDisplayManager"
 import type {DisplayPayload} from "@/services/LocalDisplayManager"
 import localSttFallbackCoordinator from "@/services/LocalSttFallbackCoordinator"
 import micStateCoordinator from "@/services/MicStateCoordinator"
+import navigationService, {NavUpdate} from "@/services/NavigationService"
 import socketComms from "@/services/SocketComms"
 import {useGlassesStore} from "@/stores/glasses"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
@@ -454,6 +456,20 @@ class LocalMiniappRuntime {
     // Stop audio for this app
     audioPlaybackService.stopForApp(packageName)
 
+    // Stop navigation if this app started one
+    const navUnsub = this.navListeners.get(packageName)
+    if (navUnsub) {
+      navUnsub()
+      this.navListeners.delete(packageName)
+      navigationService.stop().catch((err) => {
+        console.error(`${LOG_TAG}: navigation stop on unregister failed:`, err)
+      })
+    }
+
+    // Recompute heading subscription — if this app was the last subscriber,
+    // the sensor will stop.
+    this.recomputeHeadingSubscription()
+
     // Clean up any pending cloud requests from this app
     for (const [reqId, pending] of this.pendingCloudRequests) {
       if (pending.packageName === packageName) {
@@ -539,6 +555,12 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.LOCATION_POLL:
         this.handleLocationPoll(packageName, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_START:
+        this.handleNavigationStart(packageName, payload, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_STOP:
+        this.handleNavigationStop(packageName, requestId)
         break
       case MiniappRequestType.STORAGE_GET:
         this.handleStorageGet(packageName, payload, requestId)
@@ -726,6 +748,7 @@ class LocalMiniappRuntime {
 
     this.recomputeMicRequirements()
     this.updateCloudSubscriptions()
+    this.recomputeHeadingSubscription()
     this.sendResult(packageName, requestId, true)
 
     // Fire initial snapshot values for stateful streams so miniapps don't have
@@ -1001,6 +1024,122 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Location error",
+      })
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Navigation
+  // ---------------------------------------------------------------------------
+
+  /** packageName → unsubscribe fn for that app's nav listener. */
+  private navListeners = new Map<string, () => void>()
+
+  /**
+   * Heading is a sensor stream — start the native compass when any mini
+   * app is subscribed to "heading_update", stop it when none are.
+   */
+  private headingUnsub: (() => void) | null = null
+  private recomputeHeadingSubscription(): void {
+    const wantsHeading = this.streamSubscribers.has(MiniappStreamType.HEADING_UPDATE)
+    if (wantsHeading && !this.headingUnsub) {
+      this.headingUnsub = headingService.addListener((degrees) => {
+        this.forwardEvent(MiniappStreamType.HEADING_UPDATE, {degrees})
+      })
+    } else if (!wantsHeading && this.headingUnsub) {
+      this.headingUnsub()
+      this.headingUnsub = null
+    }
+  }
+
+  private async handleNavigationStart(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    console.log(`${LOG_TAG}: handleNavigationStart from ${packageName}`, JSON.stringify(payload))
+    const lat = Number(payload.lat)
+    const lng = Number(payload.lng)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: "lat/lng required",
+      })
+      return
+    }
+    const simulate = payload.simulate === true
+    const speedNum = Number(payload.speedMultiplier)
+    const speedMultiplier = Number.isFinite(speedNum) && speedNum > 0 ? speedNum : 5
+
+    // Attach a per-app listener that forwards nav updates as a stream event.
+    if (!this.navListeners.has(packageName)) {
+      console.log(`${LOG_TAG}: attaching nav forwarder for ${packageName}`)
+      const unsubNav = navigationService.addListener((update: NavUpdate) => {
+        console.log(`${LOG_TAG}: forwarding nav update to ${packageName}: ${update.kind}`)
+        this.sendToMiniapp(packageName, {
+          type: MiniappResponseType.EVENT,
+          streamType: MiniappStreamType.NAVIGATION_UPDATE,
+          data: update,
+        })
+      })
+      // Forward the nav-SDK's road-snapped GPS fixes as a location_update
+      // stream, so the miniapp's existing session.events.onLocation(...) just
+      // works while a trip is active.
+      const unsubLoc = navigationService.addLocationListener((loc) => {
+        this.sendToMiniapp(packageName, {
+          type: MiniappResponseType.EVENT,
+          streamType: MiniappStreamType.LOCATION_UPDATE,
+          data: {
+            lat: loc.lat,
+            lng: loc.lng,
+            accuracy: loc.accuracy ?? undefined,
+            timestamp: loc.timestamp,
+          },
+        })
+      })
+      const unsubRoute = navigationService.addRouteListener((route) => {
+        console.log(`${LOG_TAG}: forwarding nav route to ${packageName}: ${route.points.length} pts`)
+        this.sendToMiniapp(packageName, {
+          type: MiniappResponseType.EVENT,
+          streamType: MiniappStreamType.NAVIGATION_ROUTE,
+          data: route,
+        })
+      })
+      this.navListeners.set(packageName, () => {
+        unsubNav()
+        unsubLoc()
+        unsubRoute()
+      })
+    } else {
+      console.log(`${LOG_TAG}: forwarder already exists for ${packageName}`)
+    }
+
+    try {
+      const result = await navigationService.start({lat, lng}, {simulate, speedMultiplier})
+      this.sendResult(packageName, requestId, result.ok, result, undefined)
+    } catch (err) {
+      console.error(`${LOG_TAG}: navigation start error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "navigation start error",
+      })
+    }
+  }
+
+  private async handleNavigationStop(packageName: string, requestId?: string): Promise<void> {
+    try {
+      const result = await navigationService.stop()
+      const unsub = this.navListeners.get(packageName)
+      if (unsub) {
+        unsub()
+        this.navListeners.delete(packageName)
+      }
+      this.sendResult(packageName, requestId, result.ok, result, undefined)
+    } catch (err) {
+      console.error(`${LOG_TAG}: navigation stop error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "navigation stop error",
       })
     }
   }

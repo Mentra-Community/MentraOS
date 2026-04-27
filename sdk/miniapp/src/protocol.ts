@@ -39,6 +39,11 @@ export enum MiniappRequestType {
   /** One-shot location poll. */
   LOCATION_POLL = "miniapp_location_poll",
 
+  /** Start a turn-by-turn navigation trip. Android only. */
+  NAVIGATION_START = "miniapp_navigation_start",
+  /** Stop the active navigation trip (if any). */
+  NAVIGATION_STOP = "miniapp_navigation_stop",
+
   /** Phone-local simple storage. */
   STORAGE_GET = "miniapp_storage_get",
   STORAGE_SET = "miniapp_storage_set",
@@ -147,6 +152,12 @@ export enum MiniappStreamType {
 
   // Phone sensors
   LOCATION_UPDATE = "location_update",
+  /** Compass heading in degrees (0=N, 90=E). Android only. */
+  HEADING_UPDATE = "heading_update",
+  /** Turn-by-turn navigation event (maneuver / rerouting / arrived / error). */
+  NAVIGATION_UPDATE = "navigation_update",
+  /** Active navigation route polyline — full path, fired once per route build. */
+  NAVIGATION_ROUTE = "navigation_route",
   PHONE_NOTIFICATION = "phone_notification",
   /**
    * A previously-posted notification was dismissed by the user.

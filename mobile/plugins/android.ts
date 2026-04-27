@@ -138,6 +138,30 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
       )
     }
 
+    // 4a. Enable Core Library Desugaring (required by :crust → Google Nav SDK).
+    if (!buildGradle.includes("coreLibraryDesugaringEnabled")) {
+      buildGradle = buildGradle.replace(
+        /(namespace\s+['"]com\.mentra\.mentra['"])/,
+        `$1
+    compileOptions {
+        coreLibraryDesugaringEnabled true
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }`,
+      )
+    }
+
+    // 4b. Add desugar_jdk_libs dependency (paired with coreLibraryDesugaringEnabled).
+    if (!buildGradle.includes("coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs")) {
+      buildGradle = buildGradle.replace(
+        /(implementation\("com\.facebook\.react:react-android"\))/,
+        `$1
+
+    // Required by :crust (Google Navigation SDK uses Java 8+ APIs).
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'`,
+      )
+    }
+
     // 4. Add additional packagingOptions
     if (!buildGradle.includes("pickFirst '**/libjsc.so'")) {
       buildGradle = buildGradle.replace(
@@ -336,6 +360,26 @@ function withAndroidManifestModifications(config: any) {
       }
       if (!app.$["android:enableOnBackInvokedCallback"]) {
         app.$["android:enableOnBackInvokedCallback"] = "true"
+      }
+
+      // Inject Google Navigation SDK API key from env. Read at build time.
+      // The Nav SDK reads this meta-data tag from the merged manifest at runtime.
+      const navApiKey = process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY ?? ""
+      if (!app["meta-data"]) {
+        app["meta-data"] = []
+      }
+      const existing = app["meta-data"].find(
+        (m: any) => m.$["android:name"] === "com.google.android.geo.API_KEY",
+      )
+      if (existing) {
+        existing.$["android:value"] = navApiKey
+      } else {
+        app["meta-data"].push({
+          $: {
+            "android:name": "com.google.android.geo.API_KEY",
+            "android:value": navApiKey,
+          },
+        })
       }
     }
 

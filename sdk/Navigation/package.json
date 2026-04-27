@@ -1,0 +1,19 @@
+{
+  "name": "navigation-miniapp",
+  "private": true,
+  "version": "1.0.1",
+  "scripts": {
+    "dev": "mentra-miniapp dev",
+    "build": "bun run build.ts",
+    "release": "mentra-miniapp release",
+    "pack": "mentra-miniapp pack"
+  },
+  "dependencies": {
+    "@mentra/miniapp": "workspace:*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@mentra/miniapp-cli": "workspace:*"
+  }
+}

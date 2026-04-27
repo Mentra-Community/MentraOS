@@ -73,6 +73,11 @@ export interface LocationData {
   correlationId?: string
 }
 
+export interface HeadingData {
+  /** Compass heading in degrees, 0 = north, 90 = east. */
+  degrees: number
+}
+
 export interface BatteryData {
   level: number
   charging: boolean

@@ -15,7 +15,14 @@ public class CrustModule: Module {
             Double.pi
         }
 
-        Events("onChange")
+        Events(
+            "onChange",
+            "onNavManeuver",
+            "onNavRerouting",
+            "onNavArrived",
+            "onNavError",
+            "onHeading"
+        )
 
         Function("hello") {
             "Hello world! 👋"
@@ -25,6 +32,22 @@ public class CrustModule: Module {
             self.sendEvent("onChange", [
                 "value": value,
             ])
+        }
+
+        // Navigation — Android only. iOS stubs return an error so the JS
+        // surface compiles cross-platform.
+        AsyncFunction("startNavigation") { (_: Double, _: Double, _: [String: Any]?) -> [String: Any] in
+            return ["ok": false, "error": "navigation is android-only in v1"]
+        }
+        AsyncFunction("stopNavigation") { () -> [String: Any] in
+            return ["ok": false, "error": "navigation is android-only in v1"]
+        }
+
+        AsyncFunction("startHeading") { () -> [String: Any] in
+            return ["ok": false, "error": "heading is android-only in v1"]
+        }
+        AsyncFunction("stopHeading") { () -> [String: Any] in
+            return ["ok": false, "error": "heading is android-only in v1"]
         }
 
         Function("showAVRoutePicker") { (tintColor: String?) in

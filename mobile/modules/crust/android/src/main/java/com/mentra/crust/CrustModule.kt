@@ -12,7 +12,16 @@ class CrustModule : Module() {
       Math.PI
     }
 
-    Events("onChange")
+    Events(
+      "onChange",
+      "onNavManeuver",
+      "onNavRerouting",
+      "onNavArrived",
+      "onNavError",
+      "onNavLocation",
+      "onNavRoute",
+      "onHeading",
+    )
 
     Function("hello") {
       "Hello world! 👋"
@@ -218,6 +227,128 @@ class CrustModule : Module() {
         android.util.Log.e("CrustModule", "Error saving to gallery: ${e.message}", e)
         mapOf("success" to false, "error" to e.message)
       }
+    }
+
+    // MARK: - Navigation Commands (Google Navigation SDK)
+
+    AsyncFunction("startNavigation") { lat: Double, lng: Double, options: Map<String, Any?>? ->
+      val activity = appContext.currentActivity
+        ?: return@AsyncFunction mapOf("ok" to false, "error" to "no current activity (app backgrounded?)")
+      val simulate = (options?.get("simulate") as? Boolean) ?: false
+      val speed = (options?.get("speedMultiplier") as? Number)?.toFloat() ?: 5f
+
+      val callbacks = object : NavigationManager.Callbacks {
+        override fun onManeuver(payload: NavigationManager.ManeuverPayload) {
+          sendEvent(
+            "onNavManeuver",
+            mapOf(
+              "maneuverType" to payload.maneuverType,
+              "distanceMeters" to payload.distanceMeters,
+              "fromRoad" to payload.fromRoad,
+              "toRoad" to payload.toRoad,
+            ),
+          )
+        }
+        override fun onRerouting() {
+          sendEvent("onNavRerouting", emptyMap<String, Any?>())
+        }
+        override fun onArrived() {
+          sendEvent("onNavArrived", emptyMap<String, Any?>())
+        }
+        override fun onError(message: String) {
+          sendEvent("onNavError", mapOf("message" to message))
+        }
+        override fun onLocation(payload: NavigationManager.LocationPayload) {
+          sendEvent(
+            "onNavLocation",
+            mapOf(
+              "lat" to payload.lat,
+              "lng" to payload.lng,
+              "accuracy" to payload.accuracy,
+              "timestamp" to payload.timestamp,
+            ),
+          )
+        }
+        override fun onRoute(points: List<NavigationManager.RoutePoint>) {
+          sendEvent(
+            "onNavRoute",
+            mapOf(
+              "points" to points.map { mapOf("lat" to it.lat, "lng" to it.lng) },
+            ),
+          )
+        }
+      }
+
+      activity.runOnUiThread {
+        // 1) Verify ACCESS_FINE_LOCATION is granted to this process. The
+        //    Google Nav SDK rejects getNavigator() with LOCATION_PERMISSION_MISSING
+        //    even if location was granted in another module's context — it
+        //    requires PackageManager.PERMISSION_GRANTED at call-time.
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+          activity,
+          android.Manifest.permission.ACCESS_FINE_LOCATION,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        if (!granted) {
+          // Request and abort this attempt. User taps Start again after granting.
+          androidx.core.app.ActivityCompat.requestPermissions(
+            activity,
+            arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION),
+            9001,
+          )
+          sendEvent(
+            "onNavError",
+            mapOf("message" to "ACCESS_FINE_LOCATION not granted — accept the prompt and tap Start again"),
+          )
+          return@runOnUiThread
+        }
+
+        // 2) Show T&C dialog (no-op after first acceptance), then start nav.
+        com.google.android.libraries.navigation.NavigationApi
+          .showTermsAndConditionsDialog(
+            activity,
+            "Mentra",
+            object : com.google.android.libraries.navigation.NavigationApi.OnTermsResponseListener {
+              override fun onTermsResponse(termsAccepted: Boolean) {
+                if (!termsAccepted) {
+                  sendEvent("onNavError", mapOf("message" to "user declined Google Nav T&C"))
+                  return
+                }
+                NavigationManager.start(activity, lat, lng, simulate, speed, callbacks)
+              }
+            },
+          )
+      }
+      mapOf("ok" to true)
+    }
+
+    AsyncFunction("stopNavigation") {
+      try {
+        NavigationManager.stop()
+        mapOf("ok" to true)
+      } catch (e: Exception) {
+        android.util.Log.e("CrustModule", "stopNavigation failed", e)
+        mapOf("ok" to false, "error" to (e.message ?: "stop failed"))
+      }
+    }
+
+    // MARK: - Heading (compass) — Android only
+
+    AsyncFunction("startHeading") {
+      val ctx = appContext.reactContext
+        ?: appContext.currentActivity
+        ?: return@AsyncFunction mapOf("ok" to false, "error" to "no context")
+      HeadingManager.start(ctx, object : HeadingManager.Callback {
+        override fun onHeading(degrees: Float) {
+          sendEvent("onHeading", mapOf("degrees" to degrees.toDouble()))
+        }
+      })
+      mapOf("ok" to true)
+    }
+
+    AsyncFunction("stopHeading") {
+      HeadingManager.stop()
+      mapOf("ok" to true)
     }
   }
 }

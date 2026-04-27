@@ -29,11 +29,13 @@ import {DashboardAPI} from "./modules/dashboard"
 import {DisplayManager} from "./modules/display"
 import {EventManager, type UnsubscribeFn} from "./modules/events"
 import {GlassesModule} from "./modules/glasses"
+import {HeadingModule} from "./modules/heading"
 import {ImuModule} from "./modules/imu"
 import {InputModule} from "./modules/input"
 import {LedModule} from "./modules/led"
 import {LocationModule} from "./modules/location"
 import {MicModule} from "./modules/mic"
+import {NavigationModule} from "./modules/navigation"
 import {PermissionsModule} from "./modules/permissions"
 import {PhoneModule} from "./modules/phone"
 import {TranscriptionModule} from "./modules/transcription"
@@ -143,11 +145,13 @@ export class MiniappSession {
   public readonly camera: CameraModule
   public readonly dashboard: DashboardAPI
   public readonly glasses: GlassesModule
+  public readonly heading: HeadingModule
   public readonly imu: ImuModule
   public readonly input: InputModule
   public readonly led: LedModule
   public readonly location: LocationModule
   public readonly mic: MicModule
+  public readonly navigation: NavigationModule
   public readonly permissions: PermissionsModule
   public readonly phone: PhoneModule
   public readonly storage: SimpleStorage
@@ -205,11 +209,13 @@ export class MiniappSession {
     this.dashboard = new DashboardAPI(this)
     this.display = new DisplayManager(this)
     this.glasses = new GlassesModule(this)
+    this.heading = new HeadingModule(this)
     this.imu = new ImuModule(this)
     this.input = new InputModule(this)
     this.led = new LedModule(this)
     this.location = new LocationModule(this)
     this.mic = new MicModule(this)
+    this.navigation = new NavigationModule(this)
     this.permissions = new PermissionsModule(this)
     this.phone = new PhoneModule(this)
     this.storage = new SimpleStorage(this)

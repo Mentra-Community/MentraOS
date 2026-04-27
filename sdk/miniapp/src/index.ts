@@ -73,6 +73,7 @@ export type {
   ButtonPressData,
   CalendarEventData,
   ConnectionData,
+  HeadingData,
   HeadPositionData,
   LocationData,
   NotificationDismissedData,
@@ -94,10 +95,12 @@ export type {ShareOptions, ShareResult, DownloadOptions, DownloadResult} from ".
 // (rare; most authors interact via session.<module>.<method> directly).
 export type {DisplayManager} from "./modules/display"
 export type {GlassesModule} from "./modules/glasses"
+export type {HeadingModule} from "./modules/heading"
 export type {ImuModule} from "./modules/imu"
 export type {InputModule} from "./modules/input"
 export type {LocationModule} from "./modules/location"
 export type {MicModule} from "./modules/mic"
+export type {NavigationModule, NavManeuver, NavRerouting, NavArrived, NavError, NavUpdate, NavRoute, StartNavigationOptions} from "./modules/navigation"
 export type {PermissionsModule, PermissionErrorEvent} from "./modules/permissions"
 export type {PhoneModule, PhoneNotificationsModule, PhoneCalendarModule} from "./modules/phone"
 export type {TranscriptionModule, TranscriptionConfig} from "./modules/transcription"

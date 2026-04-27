@@ -55,6 +55,18 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
     identifier?: string
     error?: string
   }>
+
+  // Navigation (Android only — iOS stubs return error)
+  startNavigation(
+    lat: number,
+    lng: number,
+    options?: {simulate?: boolean; speedMultiplier?: number},
+  ): Promise<{ok: boolean; error?: string}>
+  stopNavigation(): Promise<{ok: boolean; error?: string}>
+
+  // Heading / compass (Android only)
+  startHeading(): Promise<{ok: boolean; error?: string}>
+  stopHeading(): Promise<{ok: boolean; error?: string}>
 }
 
 // This call loads the native module object from the JSI.
