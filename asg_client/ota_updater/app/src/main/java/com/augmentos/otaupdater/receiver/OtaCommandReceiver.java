@@ -27,7 +27,7 @@ public class OtaCommandReceiver extends BroadcastReceiver {
 
 /* send command to OTAUpdater
 Intent intent = new Intent("com.mentra.asg_client.ACTION_INSTALL_OTA");
-intent.setPackage("com.augmentos.otaupdater"); // target OTA package name
+intent.setPackage("com.mentra.otaupdater"); // target OTA package name
 context.sendBroadcast(intent);
 
 * */

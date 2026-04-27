@@ -87,7 +87,7 @@ This document shows how all the pieces work together for the new OTA update syst
       "apkUrl": "https://...",
       "sha256": "..."
     },
-    "com.augmentos.otaupdater": {
+    "com.mentra.otaupdater": {
       "versionCode": 2,
       "apkUrl": "https://...",
       "sha256": "..."

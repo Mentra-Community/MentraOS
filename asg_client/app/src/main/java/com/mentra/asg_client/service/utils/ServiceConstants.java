@@ -24,8 +24,8 @@ public final class ServiceConstants {
     // ---------------------------------------------
     // OTA Update Actions
     // ---------------------------------------------
-    public static final String ACTION_DOWNLOAD_PROGRESS = "com.augmentos.otaupdater.ACTION_DOWNLOAD_PROGRESS";
-    public static final String ACTION_INSTALLATION_PROGRESS = "com.augmentos.otaupdater.ACTION_INSTALLATION_PROGRESS";
+    public static final String ACTION_DOWNLOAD_PROGRESS = "com.mentra.otaupdater.ACTION_DOWNLOAD_PROGRESS";
+    public static final String ACTION_INSTALLATION_PROGRESS = "com.mentra.otaupdater.ACTION_INSTALLATION_PROGRESS";
     
     // ---------------------------------------------
     // Service Health Monitoring

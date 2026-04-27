@@ -32,7 +32,7 @@ public class AsgConstants {
     public static final String REQUEST_APP_BY_PACKAGE_NAME_DOWNLOAD_LINK_ENDPOINT = "/request_app_by_package_name_download_link";
     
     // Battery status broadcast action
-    public static final String ACTION_GLASSES_BATTERY_STATUS = "com.augmentos.otaupdater.ACTION_GLASSES_BATTERY_STATUS";
+    public static final String ACTION_GLASSES_BATTERY_STATUS = "com.mentra.otaupdater.ACTION_GLASSES_BATTERY_STATUS";
     
     // RGB LED Control Constants (Glasses BES Chipset - Remote Control via Bluetooth)
     // NOTE: These are different from the local MTK recording LED

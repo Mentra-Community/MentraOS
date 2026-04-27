@@ -1,18 +1,21 @@
 # OTA Update System Overhaul
 
 ## Overview
+
 Complete plan for fixing the unreliable OTA updater across 400 deployed Android Smart Glasses.
 
-**IMPORTANT**: OTA Updater v2 is an UPDATE to the existing app (versionCode: 2), not a separate app. Same package name: `com.augmentos.otaupdater`
+**IMPORTANT**: OTA Updater v2 is an UPDATE to the existing app (versionCode: 2), not a separate app. Same package name: `com.mentra.otaupdater`
 
 ## Documentation Structure
 
 ### Core Plans
+
 1. **[ota-updater-update-plan.md](ota-updater-update-plan.md)** - Main implementation plan
 2. **[ota-updater-complete-flow.md](ota-updater-complete-flow.md)** - Complete system flow diagram
 3. **[ota-updater-v2-improvements.md](ota-updater-v2-improvements.md)** - Key improvements for v2
 
 ### Implementation Details
+
 4. **[ota-updater-manager-code.md](ota-updater-manager-code.md)** - OtaUpdaterManager implementation
 5. **[backup-apk-strategy.md](backup-apk-strategy.md)** - Backup and recovery strategy
 6. **[ota-updater-self-update-plan.md](ota-updater-self-update-plan.md)** - Self-update mechanism details
@@ -20,6 +23,7 @@ Complete plan for fixing the unreliable OTA updater across 400 deployed Android 
 ## Implementation Checklist
 
 ### ASG Client v6 Changes
+
 - [ ] Create `OtaUpdaterManager.java` class
 - [ ] Add OTA Updater v2 APK to assets folder
 - [ ] Register PackageInstallReceiver for auto-launch
@@ -27,6 +31,7 @@ Complete plan for fixing the unreliable OTA updater across 400 deployed Android 
 - [ ] Test recovery scenarios
 
 ### OTA Updater v2 Changes (versionCode: 2)
+
 - [ ] **Migrate to Foreground Service architecture**
 - [ ] Modify `OtaHelper.java` for multi-app support
 - [ ] Add sequential update logic (no concurrent downloads)
@@ -36,12 +41,14 @@ Complete plan for fixing the unreliable OTA updater across 400 deployed Android 
 - [ ] Support both legacy and new version.json formats
 
 ### Backend Changes
+
 - [ ] Create new version.json format with apps array
 - [ ] Maintain legacy format during transition
 - [ ] Upload OTA Updater v2 APK
 - [ ] Test gradual rollout strategy
 
 ### Testing Plan
+
 1. Test on single development device
 2. Deploy to 5-10 beta devices
 3. Monitor success rates
