@@ -1885,8 +1885,11 @@ static void update_display_height(uint16_t height)
     /* Make a mutable copy of the current config */
     display_config_t tmp = *config;
 
-    /* ABSOLUTE mapping: margin_top = 20 * height (no + / -) */
-    uint32_t mt = (config->height - config->layout.usable_height) - (40u * (uint32_t)(height-1));
+    uint32_t total_available_margin = config->height - config->layout.usable_height;
+
+    /* height 1 = top (zero margin), height 8 = bottom (max margin) */
+    float mt_f = (float)total_available_margin * ((float)(height - 1) / 7.0f);
+    uint32_t mt = (uint32_t)(mt_f + 0.5f);
 
     /* Clamp to uint16_t and screen bounds so it never goes off-screen */
     if (mt > UINT16_MAX)
