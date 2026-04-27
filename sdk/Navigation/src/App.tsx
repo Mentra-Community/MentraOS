@@ -153,13 +153,14 @@ export default function App() {
     append(formatUpdate(u))
     switch (u.kind) {
       case "maneuver":
-        // Gate out maneuvers that aren't actually imminent. The Nav SDK
-        // fires SLIGHT_LEFT/RIGHT and even TURN_LEFT/RIGHT for tiny path
-        // bends 100m+ ahead. Walking users only care about the next real
-        // decision — show only maneuvers within 30m, and skip pure path
-        // nudges (SLIGHT_*) which are almost never real turns on foot.
+        // Always update so the UI has *something* to show — the
+        // OrientationCard's NOW/NEXT split lets us render "Continue on
+        // <fromRoad> for X" while NEXT shows the upcoming turn. The
+        // imminent-turn filter from earlier was for when we showed only
+        // one line of text; now that we have two slots, the SDK's stream
+        // of STRAIGHT/TURN_* events maps cleanly onto them.
         setStatus("navigating")
-        if (isImminentRealTurn(u)) setManeuver(u)
+        setManeuver(u)
         break
       case "rerouting":
         setStatus("rerouting")
@@ -295,14 +296,9 @@ export default function App() {
           </div>
 
           {maneuver ? (
-            <ManeuverPill
-              glyph={maneuverGlyph(maneuver.maneuverType)}
-              primary={maneuverHeadline(maneuver)}
-            />
+            <ManeuverPill glyph={maneuverGlyph(maneuver.maneuverType)} primary={maneuverHeadline(maneuver)} />
           ) : (
-            <div style={styles.empty}>
-              {status === "rerouting" ? "Rebuilding route…" : "Waiting for first maneuver…"}
-            </div>
+            <div style={styles.empty}>{status === "rerouting" ? "Rebuilding route…" : "Starting navigation…"}</div>
           )}
         </>
       ) : null}
@@ -324,43 +320,6 @@ export default function App() {
       </div>
     </div>
   )
-}
-
-const IMMINENT_TURN_RADIUS_METERS = 30
-const STREET_CHANGE_RADIUS_METERS = 60
-
-function normalizeRoad(name: string | null | undefined): string {
-  return (name ?? "").trim().toLowerCase()
-}
-
-function isImminentRealTurn(m: NavManeuver): boolean {
-  // ARRIVE always passes — final maneuver, distance is meaningless.
-  if (m.maneuverType === "ARRIVE") return true
-  // STRAIGHT means "keep going" — never a turn.
-  if (m.maneuverType === "STRAIGHT") return false
-  // SHARP_* and U_TURN are always real turns regardless of street name.
-  const isMajor =
-    m.maneuverType === "SHARP_LEFT" ||
-    m.maneuverType === "SHARP_RIGHT" ||
-    m.maneuverType === "U_TURN"
-
-  if (m.distanceMeters < 0) return false
-
-  // Primary signal: real turns change the street name. The Nav SDK
-  // pumps out TURN_LEFT/RIGHT for tiny path nudges that stay on the
-  // same road — those are not turns the user needs to think about.
-  const from = normalizeRoad(m.fromRoad)
-  const to = normalizeRoad(m.toRoad)
-  if (from && to) {
-    if (isMajor) return m.distanceMeters <= STREET_CHANGE_RADIUS_METERS
-    if (from === to) return false
-    return m.distanceMeters <= STREET_CHANGE_RADIUS_METERS
-  }
-
-  // Fallback when the SDK hasn't supplied road names yet (e.g. just
-  // started, or unnamed paths): use the old distance-gate + drop SLIGHT_*.
-  if (m.maneuverType === "SLIGHT_LEFT" || m.maneuverType === "SLIGHT_RIGHT") return false
-  return m.distanceMeters <= IMMINENT_TURN_RADIUS_METERS
 }
 
 function formatUpdate(u: NavUpdate): string {
