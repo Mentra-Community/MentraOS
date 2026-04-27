@@ -81,7 +81,7 @@ static void clear_current_display_text(void);
 static void destroy_protobuf_scene(void);
 
 /* Welcome/BLE text share the same top margin within Pattern 4. */
-#define PROTOBUF_BLE_LABEL_YOFF 80
+#define PROTOBUF_BLE_LABEL_YOFF 0
 
 /* Copy text before lv_label_set_text.
  * If the input pointer aliases label internal text, LVGL v9 may skip relayout or trigger abnormal redraw.
@@ -1242,7 +1242,7 @@ static void restore_welcome_screen_state(void)
     if (welcome_label != NULL)
     {
         lv_obj_clear_flag(welcome_label, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_align(welcome_label, LV_ALIGN_TOP_LEFT, 0, 80);
+        lv_obj_align(welcome_label, LV_ALIGN_TOP_LEFT, 0, 0);
     }
 }
 
@@ -1294,6 +1294,9 @@ static void create_scrolling_text_container(lv_obj_t *screen)
     lv_obj_set_style_bg_opa(container, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(container, 0, 0);
     lv_obj_set_style_border_opa(container, LV_OPA_TRANSP, 0);
+    // lv_obj_set_style_border_width(container, 2, 0);
+    // lv_obj_set_style_border_color(container, display_get_text_color(), 0);
+    // lv_obj_set_style_border_opa(container, LV_OPA_COVER, 0);
 
     /* 欢迎界面主文案标签。 */
     lv_obj_t *label = lv_label_create(container);
@@ -1374,7 +1377,7 @@ static void create_scrolling_text_container(lv_obj_t *screen)
     add_dynamic_font_label(label);
 #endif
 
-    lv_obj_align(label, LV_ALIGN_TOP_LEFT, 0, 80);
+    lv_obj_align(label, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_update_layout(label);
     lv_obj_clear_flag(label, LV_OBJ_FLAG_HIDDEN);
     LOG_INF("Welcome: label visibility set to visible");
@@ -1457,6 +1460,9 @@ static void ensure_protobuf_scene_ready(void)
     lv_obj_set_style_bg_opa(protobuf_container, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(protobuf_container, 0, 0);
     lv_obj_set_style_border_opa(protobuf_container, LV_OPA_TRANSP, 0);
+    // lv_obj_set_style_border_width(protobuf_container, 2, 0);
+    // lv_obj_set_style_border_color(protobuf_container, display_get_text_color(), 0);
+    // lv_obj_set_style_border_opa(protobuf_container, LV_OPA_COVER, 0);
 
     protobuf_label = lv_label_create(protobuf_container);
     lv_obj_set_width(protobuf_label, config->layout.usable_width - (config->layout.padding * 2));
@@ -1754,6 +1760,9 @@ static void show_test_pattern(int pattern_id)
 
     lv_obj_set_style_bg_color(screen, display_get_background_color(), 0);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
+    // lv_obj_set_style_border_width(screen, 2, 0);
+    // lv_obj_set_style_border_color(screen, display_get_text_color(), 0);
+    // lv_obj_set_style_border_opa(screen, LV_OPA_COVER, 0);
 
     switch (pattern_id)
     {
@@ -1877,7 +1886,7 @@ static void update_display_height(uint16_t height)
     display_config_t tmp = *config;
 
     /* ABSOLUTE mapping: margin_top = 20 * height (no + / -) */
-    uint32_t mt = (config->height - config->layout.usable_height) - (20u * (uint32_t)height);
+    uint32_t mt = (config->height - config->layout.usable_height) - (40u * (uint32_t)(height-1));
 
     /* Clamp to uint16_t and screen bounds so it never goes off-screen */
     if (mt > UINT16_MAX)
