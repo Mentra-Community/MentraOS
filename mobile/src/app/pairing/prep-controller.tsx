@@ -8,10 +8,10 @@ import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {showAlert} from "@/utils/AlertUtils"
-import {completeSimulatedSetup} from "@/utils/completeSimulatedSetup"
 import {PermissionFeatures, checkConnectivityRequirementsUI, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {useState} from "react"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
+import CoreModule from "core"
 
 export default function PairingPrepScreen() {
   const route = useRoute()
@@ -209,7 +209,7 @@ export default function PairingPrepScreen() {
 
     // skip pairing for simulated glasses:
     if (deviceModel.startsWith(DeviceTypes.SIMULATED)) {
-      await completeSimulatedSetup()
+      await CoreModule.connectSimulated()
       clearHistoryAndGoHome()
       return
     }
@@ -287,7 +287,7 @@ export default function PairingPrepScreen() {
   }
 
   return (
-    <Screen preset="fixed" safeAreaEdges={["bottom"]}>
+    <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
       <Header
         title={deviceModel}
         leftIcon="chevron-left"

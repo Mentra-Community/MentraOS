@@ -37,10 +37,10 @@ class SocketComms {
     return SocketComms.instance
   }
 
-  public cleanup() {
+  public async cleanup() {
     console.log("SOCKET: cleanup()")
     udp.cleanup()
-    ws.cleanup()
+    await ws.cleanup()
   }
 
   // Connection Management
@@ -53,20 +53,20 @@ class SocketComms {
       console.error(`SOCKET: Invalid server URL`)
       return
     }
-    ws.connect(url, this.coreToken)
+    await ws.connect(url, this.coreToken)
   }
 
   public isWebSocketConnected(): boolean {
     return ws.isConnected()
   }
 
-  public restartConnection() {
+  public async restartConnection() {
     console.log(`SOCKET: restartConnection()`)
     if (ws.isConnected()) {
-      ws.disconnect()
-      this.connectWebsocket()
+      await ws.disconnect()
+      await this.connectWebsocket()
     } else {
-      this.connectWebsocket()
+      await this.connectWebsocket()
     }
   }
 

@@ -13,6 +13,8 @@ import {
 } from "@mentra/sdk";
 import UserSession from "../UserSession";
 import { PosthogService } from "../../logging/posthog.service";
+import { MemoryOwnerStat } from "../../metrics/memory-census";
+import { estimateArrayBufferBytes, sumEstimatedBytes } from "../../metrics/memory-estimate";
 // import subscriptionService from "../subscription.service";
 import {
   TranslationConfig,
@@ -410,6 +412,37 @@ export class TranslationManager {
     }
 
     return metrics;
+  }
+
+  getMemoryStats(): MemoryOwnerStat[] {
+    const stats: MemoryOwnerStat[] = [
+      {
+        owner: "translation.audio-buffer",
+        scope: "session",
+        itemCount: this.audioBuffer.length,
+        estimatedBytes: sumEstimatedBytes(this.audioBuffer, (chunk) => estimateArrayBufferBytes(chunk)),
+        metadata: {
+          buffering: this.isBufferingAudio,
+        },
+      },
+      {
+        owner: "translation.streams",
+        scope: "session",
+        itemCount: this.streams.size,
+        estimatedBytes: this.streams.size * 256,
+        metadata: {
+          activeSubscriptions: this.activeSubscriptions.size,
+        },
+      },
+    ];
+
+    for (const stream of this.streams.values()) {
+      if (typeof (stream as any).getMemoryStats === "function") {
+        stats.push(...((stream as any).getMemoryStats() as MemoryOwnerStat[]));
+      }
+    }
+
+    return stats;
   }
 
   /**

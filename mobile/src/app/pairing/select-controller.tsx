@@ -58,7 +58,7 @@ export default function SelectControllerScreen() {
         ]
       : [
           // Android:
-          // {deviceModel: DeviceTypes.SIMULATED, key: DeviceTypes.SIMULATED},
+          {deviceModel: ControllerTypes.R1, key: "evenrealities_r1"},
         ]
 
   const triggerGlassesPairingGuide = async (deviceModel: string) => {

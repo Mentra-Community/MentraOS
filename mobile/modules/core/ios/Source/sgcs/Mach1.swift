@@ -144,7 +144,7 @@ class Mach1: UltraliteBaseViewController, SGCManager {
         set { GlassesStore.shared.apply("glasses", "connected", newValue) }
     }
 
-    // Store discovered peripherals by their identifier
+    /// Store discovered peripherals by their identifier
     private var discoveredPeripherals: [String: CBPeripheral] = [:]
 
     private var textHandle: Int?
@@ -202,7 +202,7 @@ class Mach1: UltraliteBaseViewController, SGCManager {
         setupDone = true
     }
 
-    // Handle the tap event
+    /// Handle the tap event
     @objc func handleTapEvent(_ notification: Notification) {
         Bridge.log("MACH1: handleTapEvent called!")
 
@@ -295,7 +295,8 @@ class Mach1: UltraliteBaseViewController, SGCManager {
             UltraliteManager.shared.link(device: peripheral!, callback: linked)
             UltraliteManager.shared.currentDevice?.isConnected.bind(listener: isConnectedListener!)
             UltraliteManager.shared.currentDevice?.batteryLevel.bind(
-                listener: batteryLevelListener!)
+                listener: batteryLevelListener!
+            )
             return
         }
     }

@@ -4,6 +4,7 @@ import restComms from "@/services/RestComms"
 import {WebSocketStatus} from "@/services/ws-types"
 import {useConnectionStore} from "@/stores/connection"
 import {getGlasesInfoPartial, useGlassesStore} from "@/stores/glasses"
+import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {BackgroundTimer} from "@/utils/timers"
 
@@ -27,11 +28,18 @@ const PONG_TIMEOUT_MS = 5_000
 // Delay between reconnect attempts after a disconnect.
 const RECONNECT_INTERVAL_MS = 5_000
 
+// How long we wait for the old WebSocket's close event to fire before
+// starting a new WebSocket. Prevents the server from briefly observing
+// two active sockets for the same user (which it logs as
+// "Glasses connection closed (stale — newer WebSocket already active)").
+// 500 ms comfortably covers typical TCP close handshakes on mobile
+// networks without noticeably delaying legitimate reconnects.
+const CLOSE_WAIT_TIMEOUT_MS = 500
+
 class WebSocketManager extends EventEmitter {
   private static instance: WebSocketManager | null = null
   private webSocket: WebSocket | null = null
   private previousStatus: WebSocketStatus = WebSocketStatus.DISCONNECTED
-  private url: string | null = null
   private coreToken: string | null = null
   private reconnectInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0
   private manuallyDisconnected: boolean = false
@@ -42,9 +50,82 @@ class WebSocketManager extends EventEmitter {
   private awaitingPong: boolean = false
   private pingInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0
 
+  // Serializes concurrent connect() calls via a promise chain: each caller
+  // appends performConnect() onto the tail so only one runs at a time. Three
+  // paths can trigger connect(): backend_url subscription, NO_ACTIVE_SESSION,
+  // and actuallyReconnect. The earlier single-slot connectInFlight let
+  // multiple callers await the same promise and then all resume past it —
+  // each calling performConnect in parallel, each constructing a new
+  // WebSocket while detachAndCloseSocket early-returned on a null socket,
+  // and orphaning whichever one lost the race to assign this.webSocket. A
+  // chain forces real serialization across any number of concurrent callers.
+  private connectChain: Promise<void> = Promise.resolve()
+
+  // Monotonic token that lets an in-flight performConnect detect it has been
+  // superseded (by a newer connect() or by disconnect() / cleanup()) while
+  // awaiting detachAndCloseSocket()'s up-to-500ms close. After the await the
+  // attempt compares its captured token to the current one and bails if they
+  // differ, rather than pressing on to open a socket that's already stale —
+  // or, worse, reopening a socket the user just explicitly tore down. Same
+  // pattern used in mediaProcessingQueue.ts.
+  private connectGeneration: number = 0
+
+  // Zustand subscription — fires when Zustand backend_url changes so we can
+  // proactively tear down the old WS and reconnect to the new backend.
+  // Without this, a Zustand update without a corresponding ws.connect() call
+  // would leave WSM on the old URL until the next reconnect trigger (ping
+  // timeout, server close, NO_ACTIVE_SESSION). See 101 for the bug that
+  // pattern produced.
+  private backendUrlUnsub: (() => void) | null = null
+
   private constructor() {
     super()
     GlobalEventEmitter.on("NO_ACTIVE_SESSION", this.handleNoActiveSession)
+
+    // React to backend URL changes from the settings store. Any code path
+    // that calls setSetting(backend_url, newUrl) — dev settings screen,
+    // reset flows, programmatic override — triggers this handler and we
+    // cleanly switch to the new backend. The handler reads the current
+    // URL via getWsUrl() rather than trusting the selector's `newValue`,
+    // so it always lines up with getRestUrl() (both share backend_url).
+    this.backendUrlUnsub = useSettingsStore.subscribe(
+      (state) => state.getSetting(SETTINGS.backend_url.key) as string | undefined,
+      (newBackendUrl, prevBackendUrl) => {
+        if (!newBackendUrl || newBackendUrl === prevBackendUrl) return
+        this.handleBackendUrlChanged(newBackendUrl, prevBackendUrl)
+      },
+    )
+  }
+
+  /**
+   * React to a backend_url Zustand change: if we have credentials to connect
+   * with, disconnect cleanly from the old backend and reconnect to the new
+   * one. If we do not have a token yet (app is booting before auth), just
+   * leave the WSM idle — the first connect() will pick up the new URL
+   * naturally.
+   */
+  private handleBackendUrlChanged(newBackendUrl: string, prevBackendUrl: string | undefined): void {
+    const currentStoreUrl = useConnectionStore.getState().url
+    console.log(
+      `WSM: backend_url changed ${prevBackendUrl ?? "(unset)"} → ${newBackendUrl} (WS currently pointed at ${currentStoreUrl ?? "(none)"})`,
+    )
+
+    if (this.manuallyDisconnected) {
+      // If the caller explicitly disconnected, trust that. The next
+      // connect() call will read the fresh URL.
+      return
+    }
+
+    if (!this.coreToken) {
+      // No auth yet — nothing to reconnect with. The next connect() call
+      // from mantle.init() will pick up the new URL.
+      return
+    }
+
+    // Schedule a reconnect on a microtask so we don't hold up the Zustand
+    // set() caller. The reconnect path (connect() → detachAndCloseSocket →
+    // new WebSocket) is fully async inside.
+    void this.reconnectNow(`backend_url changed to ${newBackendUrl}`)
   }
 
   public static getInstance(): WebSocketManager {
@@ -57,6 +138,27 @@ class WebSocketManager extends EventEmitter {
   // -------------------------------------------------------------------------
   // Connection lifecycle
   // -------------------------------------------------------------------------
+
+  /**
+   * Read the current WebSocket URL from the settings store.
+   *
+   * We deliberately do NOT cache this as a field. Before issue 101 the WSM
+   * cached `this.url` at the last connect() call, which diverged from the
+   * Zustand `backend_url` setting any time it was changed without a full
+   * `mantle.cleanup() → mantle.init()` cycle. axios reads the URL fresh per
+   * request via getRestUrl(), so REST would follow the new backend while the
+   * WS kept reconnecting to the old one — producing a 90-opens-per-minute
+   * reconnect storm when combined with PR #2565's retry-on-503 logic.
+   * See: cloud/issues/101-mobile-ws-reconnect-storm/
+   */
+  private getCurrentWsUrl(): string | null {
+    try {
+      return useSettingsStore.getState().getWsUrl()
+    } catch (error) {
+      console.log("WSM: Failed to read WS URL from settings store:", error)
+      return null
+    }
+  }
 
   // things to run when the websocket status changes to connected:
   private onConnect() {
@@ -80,41 +182,145 @@ class WebSocketManager extends EventEmitter {
   }
 
   /**
-   * Detach all event handlers from the current WebSocket and close it.
+   * Detach handlers from the current WebSocket, close it, and wait for the
+   * actual close to fire before returning (up to CLOSE_WAIT_TIMEOUT_MS).
    *
-   * Nulling out handlers BEFORE calling .close() prevents a stale `onclose`
-   * callback from firing asynchronously and kicking off a rogue reconnect
-   * loop (e.g. when switching backends: disconnect() sets
-   * manuallyDisconnected = true, connect() resets it to false, then the
-   * stale onclose fires and calls startReconnectInterval against the old URL).
+   * Why await: connect() calls `new WebSocket(...)` immediately after tearing
+   * down the old socket. Without waiting, the cloud briefly sees two active
+   * sockets for the same user — it handles this by logging "stale — newer
+   * WebSocket already active, ignoring" on the old socket, but the overlap
+   * still costs both sides work and pollutes the logs.
+   *
+   * Why we null the attribute-style handlers after installing the one-shot
+   * close listener: the attribute handlers could fire stale reconnect paths
+   * on the old socket's close event. The one-shot listener only resolves the
+   * wait promise, and its own null assignment below happens after the wait.
    */
-  private detachAndCloseSocket() {
-    if (this.webSocket) {
-      this.webSocket.onclose = null
-      this.webSocket.onerror = null
-      this.webSocket.onmessage = null
-      this.webSocket.onopen = null
-      this.webSocket.close()
-      this.webSocket = null
+  private async detachAndCloseSocket(): Promise<void> {
+    const sock = this.webSocket
+    if (!sock) return
+
+    // Drop our reference first so anything else that checks this.webSocket
+    // during the wait treats us as "no socket" — important for onerror/onclose
+    // handlers that fire during the wait and would otherwise start a new
+    // reconnect interval on an already-being-closed socket.
+    this.webSocket = null
+
+    const closePromise = new Promise<void>((resolve) => {
+      sock.onclose = () => resolve()
+      sock.onerror = () => resolve()
+    })
+
+    sock.onmessage = null
+    sock.onopen = null
+
+    try {
+      sock.close()
+    } catch {
+      // Swallow — we're already tearing down. Native close will still fire.
     }
+
+    await Promise.race([
+      closePromise,
+      new Promise<void>((resolve) => BackgroundTimer.setTimeout(resolve, CLOSE_WAIT_TIMEOUT_MS)),
+    ])
+
+    // Null after wait so the one-shot handlers don't retain the socket.
+    sock.onclose = null
+    sock.onerror = null
   }
 
-  public connect(url: string, coreToken: string) {
-    console.log(`WSM: connect: ${url}`)
+  /**
+   * Connect (or reconnect) the WebSocket using the current backend URL from
+   * the settings store.
+   *
+   * The `url` parameter is deprecated and ignored — it only exists so the
+   * existing caller signature (socketComms.connectWebsocket) doesn't need
+   * changing in this PR. The URL is always read fresh from
+   * useSettingsStore.getWsUrl(). If you pass a URL argument that differs from
+   * the current setting, we log a warning and still use the setting.
+   */
+  public async connect(_urlDeprecated: string | null | undefined, coreToken: string): Promise<void> {
+    // A connect() call is an explicit intent to be online — clear any prior
+    // manual-disconnect flag. Doing this here (not inside performConnect)
+    // means a later disconnect() that runs while our attempt is still
+    // queued can set manuallyDisconnected=true and have the queued attempt
+    // observe it after its await, rather than our attempt clobbering that
+    // signal back to false when it finally gets its turn.
     this.manuallyDisconnected = false
-    this.url = url
     this.coreToken = coreToken
 
-    // Tear down any existing connection cleanly
-    this.stopLivenessMonitor()
-    this.detachAndCloseSocket()
+    // Claim a generation now so that if a newer connect() or a disconnect()
+    // fires before our turn on the chain, performConnect sees the bump and
+    // bails out instead of opening a socket that's already stale.
+    const myGeneration = ++this.connectGeneration
 
-    // Update status to connecting and set URL in store
+    // Append onto the chain tail: every caller waits for the current attempt
+    // to finish before running its own. One performConnect body at a time,
+    // no matter how many callers pile up.
+    const run = this.connectChain
+      .catch(() => {
+        // Swallow the prior attempt's failure — each attempt is independent.
+      })
+      .then(() => this.performConnect(_urlDeprecated, coreToken, myGeneration))
+    this.connectChain = run
+    await run
+  }
+
+  private async performConnect(
+    _urlDeprecated: string | null | undefined,
+    coreToken: string,
+    myGeneration: number,
+  ): Promise<void> {
+    // Superseded before we even started (a newer connect() was queued after
+    // us, or disconnect() bumped the generation while we waited our turn):
+    // skip the whole attempt — no teardown, no new socket.
+    if (this.connectGeneration !== myGeneration) {
+      console.log(`WSM: connect gen ${myGeneration} superseded before start, skipping`)
+      return
+    }
+    if (this.manuallyDisconnected) {
+      console.log(`WSM: connect gen ${myGeneration} cancelled by disconnect before start, skipping`)
+      return
+    }
+
+    const url = this.getCurrentWsUrl()
+    if (!url) {
+      console.error("WSM: connect(): no backend URL available in settings store")
+      return
+    }
+    if (_urlDeprecated && _urlDeprecated !== url) {
+      console.log(
+        `WSM: connect() called with URL argument ${_urlDeprecated} but settings store has ${url} — using settings store.`,
+      )
+    }
+    console.log(`WSM: connect: ${url}`)
+
+    // Tear down any existing connection cleanly BEFORE opening the new one,
+    // so the cloud never sees two active sockets for the same user.
+    this.stopLivenessMonitor()
+    await this.detachAndCloseSocket()
+
+    // Re-check after the awaited teardown: disconnect() or a newer connect()
+    // may have fired during the up-to-500ms close wait. Opening a socket
+    // past either of those is exactly the race called out in PR review — a
+    // logout would be undone, or a stale URL's socket would race the new
+    // one. Bail here instead.
+    if (this.connectGeneration !== myGeneration) {
+      console.log(`WSM: connect gen ${myGeneration} superseded during teardown, skipping`)
+      return
+    }
+    if (this.manuallyDisconnected) {
+      console.log(`WSM: connect gen ${myGeneration} cancelled by disconnect during teardown, skipping`)
+      return
+    }
+
+    // Update status and record the URL in the connection store for observability.
     this.updateStatus(WebSocketStatus.CONNECTING)
     const store = useConnectionStore.getState()
     store.setUrl(url)
 
-    // Create new WebSocket with authorization header
+    // Attach auth and feature flags as query params.
     const wsUrl = new URL(url)
     wsUrl.searchParams.set("token", coreToken)
     wsUrl.searchParams.set("livekit", "true")
@@ -123,8 +329,13 @@ class WebSocketManager extends EventEmitter {
     console.log("WSM: Connecting to WebSocket URL:", wsUrl.toString().replace(/token=[^&]+/, "token=REDACTED"))
 
     this.webSocket = new WebSocket(wsUrl.toString())
+    this.installWebSocketHandlers()
+  }
 
-    // Set up event handlers
+  private installWebSocketHandlers() {
+    if (!this.webSocket) return
+    const store = useConnectionStore.getState()
+
     this.webSocket.onopen = () => {
       console.log("WSM: WebSocket connection established")
       this.updateStatus(WebSocketStatus.CONNECTED)
@@ -135,16 +346,16 @@ class WebSocketManager extends EventEmitter {
       this.handleIncomingMessage(event.data)
     }
 
-    this.webSocket.onerror = (_error) => {
-      console.log("WSM: WebSocket error:", _error)
+    this.webSocket.onerror = (error) => {
+      console.log("WSM: WebSocket error:", error)
       this.stopLivenessMonitor()
       this.updateStatus(WebSocketStatus.ERROR)
-      store.setError(_error?.toString() || "WebSocket error")
+      store.setError(error?.toString() || "WebSocket error")
       this.startReconnectInterval()
     }
 
-    this.webSocket.onclose = (_event) => {
-      console.log("WSM: Connection closed with code:", _event.code)
+    this.webSocket.onclose = (event) => {
+      console.log("WSM: Connection closed with code:", event.code)
       this.stopLivenessMonitor()
       this.updateStatus(WebSocketStatus.DISCONNECTED)
       this.startReconnectInterval()
@@ -159,8 +370,9 @@ class WebSocketManager extends EventEmitter {
     // The old code only reconnected from DISCONNECTED — if onerror fired
     // without a subsequent onclose, the client was stuck in ERROR forever.
     if (store.status === WebSocketStatus.DISCONNECTED || store.status === WebSocketStatus.ERROR) {
-      if (this.url && this.coreToken) {
-        this.connect(this.url, this.coreToken)
+      if (this.coreToken) {
+        // URL is always read fresh inside connect().
+        void this.connect(null, this.coreToken)
       }
     }
     if (store.status === WebSocketStatus.CONNECTED) {
@@ -184,7 +396,7 @@ class WebSocketManager extends EventEmitter {
     this.reconnectInterval = BackgroundTimer.setInterval(this.actuallyReconnect.bind(this), RECONNECT_INTERVAL_MS)
   }
 
-  private reconnectNow(reason: string) {
+  private async reconnectNow(reason: string): Promise<void> {
     console.log(`WSM: Immediate reconnect requested: ${reason}`)
     if (this.manuallyDisconnected) {
       return
@@ -195,12 +407,9 @@ class WebSocketManager extends EventEmitter {
       this.reconnectInterval = 0
     }
 
-    this.stopLivenessMonitor()
-    this.detachAndCloseSocket()
-    this.updateStatus(WebSocketStatus.DISCONNECTED)
-
-    if (this.url && this.coreToken) {
-      this.connect(this.url, this.coreToken)
+    if (this.coreToken) {
+      // connect() handles its own teardown + URL read from settings.
+      await this.connect(null, this.coreToken)
       return
     }
 
@@ -212,11 +421,16 @@ class WebSocketManager extends EventEmitter {
       return
     }
 
-    this.reconnectNow("REST request returned NO_ACTIVE_SESSION")
+    void this.reconnectNow("REST request returned NO_ACTIVE_SESSION")
   }
 
-  public disconnect() {
+  public async disconnect(): Promise<void> {
     this.manuallyDisconnected = true
+    // Bump so any in-flight performConnect currently awaiting
+    // detachAndCloseSocket() — or any queued attempt still waiting its turn
+    // on the connect chain — sees the generation change and bails out
+    // instead of opening a fresh socket right after we tore one down.
+    this.connectGeneration++
 
     if (this.reconnectInterval) {
       BackgroundTimer.clearInterval(this.reconnectInterval)
@@ -224,7 +438,7 @@ class WebSocketManager extends EventEmitter {
     }
 
     this.stopLivenessMonitor()
-    this.detachAndCloseSocket()
+    await this.detachAndCloseSocket()
     this.updateStatus(WebSocketStatus.DISCONNECTED)
   }
 
@@ -254,7 +468,7 @@ class WebSocketManager extends EventEmitter {
       if (this.awaitingPong) {
         const elapsed = Date.now() - this.lastPingAt
         if (elapsed >= PONG_TIMEOUT_MS) {
-          this.reconnectNow(`pong timeout after ${elapsed}ms`)
+          void this.reconnectNow(`pong timeout after ${elapsed}ms`)
         }
         return
       }
@@ -366,9 +580,16 @@ class WebSocketManager extends EventEmitter {
   // Cleanup
   // -------------------------------------------------------------------------
 
-  public cleanup() {
+  public async cleanup(): Promise<void> {
     console.log("WSM: cleanup()")
-    this.disconnect()
+    // Note: we intentionally do NOT unsubscribe backendUrlUnsub here.
+    // WSM is a process-wide singleton and the constructor subscription is
+    // never recreated. Any later ws.cleanup() path (e.g. the dev "Clear
+    // Websocket" flow or mantle.cleanup()) would permanently disable
+    // backend_url reactivity for the rest of the session and let REST and
+    // WS diverge again (the bug this PR is fixing). The subscription is
+    // cheap; let it live for the process.
+    await this.disconnect()
     this.webSocket = null
     const store = useConnectionStore.getState()
     store.reset()

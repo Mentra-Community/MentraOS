@@ -151,10 +151,10 @@ export default function DeveloperSettingsScreen() {
               label="Clear Websocket"
               subtitle="Clear the Websocket"
               onPress={async () => {
-                ws.cleanup()
-                socketComms.cleanup()
+                await ws.cleanup()
+                await socketComms.cleanup()
                 await new Promise((resolve) => setTimeout(resolve, 3000))
-                socketComms.restartConnection()
+                await socketComms.restartConnection()
               }}
             />
           </Group>

@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - cloud/issues-048
+      - cloud/pod-loop-stall-cascade
     paths:
       - "cloud/**"
       - ".github/workflows/porter-debug.yml"

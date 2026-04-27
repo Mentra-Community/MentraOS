@@ -82,10 +82,17 @@ object GlassesStore {
         store.set("glasses", "hotspotPassword", "")
         store.set("glasses", "hotspotGatewayIp", "")
         store.set("glasses", "bluetoothName", "")
+        store.set("glasses", "controllerConnected", false)
+        store.set("glasses", "controllerFullyBooted", false)
+        store.set("glasses", "controllerMacAddress", "")
+        store.set("glasses", "controllerBatteryLevel", -1)
+        store.set("glasses", "controllerSignalStrength", -1)
+        store.set("glasses", "ringSignalStrength", -1)
 
         // CORE STATE:
         store.set("core", "systemMicUnavailable", false)
         store.set("core", "searching", false)
+        store.set("core", "searchingController", false)
         store.set("core", "micEnabled", false)
         store.set("core", "currentMic", "")
         store.set("core", "searchResults", emptyList<Any>())
@@ -98,6 +105,9 @@ object GlassesStore {
         store.set("core", "pending_wearable", "")
         store.set("core", "device_name", "")
         store.set("core", "device_address", "")
+        store.set("core", "default_controller", "")
+        store.set("core", "pending_controller", "")
+        store.set("core", "controller_device_name", "")
         store.set("core", "screen_disabled", false)
         store.set("core", "preferred_mic", "auto")
         store.set("core", "power_saving_mode", false)
@@ -156,6 +166,24 @@ object GlassesStore {
                         CoreManager.getInstance().handleDeviceDisconnected()
                     }
                     // we shouldn't call store.set in this function as this is only intended for side-effects, not driving state updates
+                }
+            }
+            "glasses" to "controllerFullyBooted" -> {
+                if (value is Boolean) {
+                    if (value) {
+                        CoreManager.getInstance().handleControllerReady()
+                    } else {
+                        CoreManager.getInstance().handleControllerDisconnected()
+                    }
+                }
+            }
+            "glasses" to "controllerMacAddress" -> {
+                if (value is String && value.isNotEmpty()) {
+                    CoroutineScope(Dispatchers.Main).launch {
+                        // give the glasses some extra time to finish booting:
+                        delay(1000)
+                        CoreManager.getInstance().sgc?.connectController()
+                    }
                 }
             }
             "glasses" to "headUp" -> {

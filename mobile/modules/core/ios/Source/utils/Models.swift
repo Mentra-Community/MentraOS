@@ -30,7 +30,7 @@ struct ThirdPartyCloudApp {
     let isRunning: Bool
 }
 
-// NCSNotification structure
+/// NCSNotification structure
 struct NCSNotification: Codable {
     let msgId: Int
     let type: Int
@@ -71,7 +71,7 @@ struct NCSNotification: Codable {
     }
 }
 
-// Notification structure
+/// Notification structure
 struct G1Notification: Codable {
     let ncsNotification: NCSNotification
     let type: String = "Add"
@@ -81,7 +81,7 @@ struct G1Notification: Codable {
         case type
     }
 
-    // Convert to JSON dictionary
+    /// Convert to JSON dictionary
     func toJson() -> [String: Any] {
         guard let data = try? JSONEncoder().encode(self) else { return [:] }
         guard let jsonObject = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -90,13 +90,13 @@ struct G1Notification: Codable {
         return jsonObject
     }
 
-    // Convert to JSON Data
+    /// Convert to JSON Data
     func toData() -> Data? {
         guard let jsonString = try? JSONEncoder().encode(self) else { return nil }
         return jsonString
     }
 
-    // Build notification chunks
+    /// Build notification chunks
     func constructNotification() async -> [[UInt8]] {
         guard let jsonData = toData() else { return [] }
 

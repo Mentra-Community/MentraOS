@@ -192,6 +192,8 @@ const en = {
     openSettings: "Open Settings",
   },
   onboarding: {
+    phoneMode: "Phone mode",
+    phoneModeDescription: "Phone Mode uses your phone instead of glasses. Camera features require real glasses.",
     pleaseFollowSteps: "Please follow the steps to continue.",
     doYouHaveGlasses: "Do you have smart glasses?",
     getStarted: "Let's get Started",
@@ -324,6 +326,7 @@ const en = {
     connectGlasses: "Connect glasses",
     connectRing: "Connect ring",
     connectController: "Connect ring",
+    start: "Start",
     getSupport: "Get support",
     getSupportMessage: "You will be taken to our support page in your browser.",
     connectingGlasses: "Connecting glasses...",

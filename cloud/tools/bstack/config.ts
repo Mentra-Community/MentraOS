@@ -6,44 +6,44 @@
  * "where is our data in BetterStack?"
  *
  * See: cloud/issues/064-bstack-cli/spike.md
- * See: cloud/tools/bstack/inventory.md (full resource documentation)
+ * See: cloud/tools/bstack/inventory.md (moved to cloud/issues/097-porter-mini-app-cleanup/inventory.md)
  */
 
 // ---------------------------------------------------------------------------
 // Credentials (from environment)
 // ---------------------------------------------------------------------------
 
-export const SQL_USERNAME = process.env.BETTERSTACK_SQL_USERNAME || process.env.BETTERSTACK_USERNAME || ""
-export const SQL_PASSWORD = process.env.BETTERSTACK_SQL_PASSWORD || process.env.BETTERSTACK_PASSWORD || ""
-export const API_TOKEN = process.env.BETTERSTACK_API_TOKEN || ""
+export const SQL_USERNAME = process.env.BETTERSTACK_SQL_USERNAME || process.env.BETTERSTACK_USERNAME || "";
+export const SQL_PASSWORD = process.env.BETTERSTACK_SQL_PASSWORD || process.env.BETTERSTACK_PASSWORD || "";
+export const API_TOKEN = process.env.BETTERSTACK_API_TOKEN || "";
 
 // ---------------------------------------------------------------------------
 // Endpoints
 // ---------------------------------------------------------------------------
 
 /** BetterStack ClickHouse SQL API — read-only HTTP endpoint for log/metric queries */
-export const SQL_ENDPOINT = "https://eu-nbg-2-connect.betterstackdata.com"
+export const SQL_ENDPOINT = "https://eu-nbg-2-connect.betterstackdata.com";
 
 /** BetterStack Uptime API */
-export const UPTIME_API = "https://uptime.betterstack.com/api/v2"
+export const UPTIME_API = "https://uptime.betterstack.com/api/v2";
 
 /** BetterStack Telemetry API (management — sources, collectors, dashboards) */
-export const TELEMETRY_API = "https://telemetry.betterstack.com/api/v1"
+export const TELEMETRY_API = "https://telemetry.betterstack.com/api/v1";
 
 // ---------------------------------------------------------------------------
 // Log Sources
 // ---------------------------------------------------------------------------
 
 export interface LogSource {
-  id: number
-  name: string
-  description: string
+  id: number;
+  name: string;
+  description: string;
   /** Recent logs (hot storage) */
-  logsTable: string
+  logsTable: string;
   /** Historical logs (cold/S3 storage). Use with `WHERE _row_type = 1` for logs. */
-  historicalTable: string
+  historicalTable: string;
   /** Metrics (aggregated time-series from this source) */
-  metricsTable: string
+  metricsTable: string;
 }
 
 export const LOG_SOURCES: Record<string, LogSource> = {
@@ -65,25 +65,25 @@ export const LOG_SOURCES: Record<string, LogSource> = {
     historicalTable: "s3Cluster(primary, t373499_augmentos_s3)",
     metricsTable: "remote(t373499_augmentos_metrics)",
   },
-}
+};
 
 /** Default source for prod queries */
-export const DEFAULT_PROD_SOURCE = LOG_SOURCES.prod
+export const DEFAULT_PROD_SOURCE = LOG_SOURCES.prod;
 
 /** Default source for dev/debug queries */
-export const DEFAULT_DEV_SOURCE = LOG_SOURCES.dev
+export const DEFAULT_DEV_SOURCE = LOG_SOURCES.dev;
 
 // ---------------------------------------------------------------------------
 // Collector Sources (infrastructure metrics from each cluster)
 // ---------------------------------------------------------------------------
 
 export interface CollectorSource {
-  collectorId: number
-  sourceId: number
-  name: string
-  region: string
-  clusterId: number
-  metricsTable: string
+  collectorId: number;
+  sourceId: number;
+  name: string;
+  region: string;
+  clusterId: number;
+  metricsTable: string;
 }
 
 export const COLLECTORS: Record<string, CollectorSource> = {
@@ -127,17 +127,17 @@ export const COLLECTORS: Record<string, CollectorSource> = {
     clusterId: 4977,
     metricsTable: "remote(t373499_mentra_us_east_metrics)",
   },
-}
+};
 
 // ---------------------------------------------------------------------------
 // Uptime Monitors
 // ---------------------------------------------------------------------------
 
 export interface UptimeMonitor {
-  id: number
-  name: string
-  url: string
-  description: string
+  id: number;
+  name: string;
+  url: string;
+  description: string;
 }
 
 export const UPTIME_MONITORS: Record<string, UptimeMonitor> = {
@@ -183,18 +183,18 @@ export const UPTIME_MONITORS: Record<string, UptimeMonitor> = {
     url: "https://cloud-uptime-tracker-10698-4a24a192-r2am9o43.onporter.run/health",
     description: "Prod transcription uptime tracker. Currently DOWN (SSL cert issue).",
   },
-}
+};
 
 // ---------------------------------------------------------------------------
 // Dashboards
 // ---------------------------------------------------------------------------
 
 export interface Dashboard {
-  id: number
-  name: string
-  sourceId: number
-  description: string
-  url: string
+  id: number;
+  name: string;
+  sourceId: number;
+  description: string;
+  url: string;
 }
 
 export const DASHBOARDS: Record<string, Dashboard> = {
@@ -214,18 +214,18 @@ export const DASHBOARDS: Record<string, Dashboard> = {
       "Legacy dashboard from 057 investigation. Log-based charts — mostly broken because dashboard {{source}} resolves to metrics table. Superseded by SRE dashboard.",
     url: "https://telemetry.betterstack.com/team/t329093/dashboards/971353",
   },
-}
+};
 
 // ---------------------------------------------------------------------------
 // Region Configuration
 // ---------------------------------------------------------------------------
 
 export interface Region {
-  name: string
-  clusterId: number
-  healthUrl: string
-  dopplerConfig: string
-  porterEnvGroup: string
+  name: string;
+  clusterId: number;
+  healthUrl: string;
+  dopplerConfig: string;
+  porterEnvGroup: string;
 }
 
 export const REGIONS: Record<string, Region> = {
@@ -264,7 +264,7 @@ export const REGIONS: Record<string, Region> = {
     dopplerConfig: "prod_us-east",
     porterEnvGroup: "cloud-prod-us-east",
   },
-}
+};
 
 // ---------------------------------------------------------------------------
 // Diagnostic Log Features (what our instrumentation emits)
@@ -281,9 +281,9 @@ export const DIAGNOSTIC_FEATURES = [
   "health-timing",
   "soniox-timing",
   "event-loop-lag",
-] as const
+] as const;
 
-export type DiagnosticFeature = (typeof DIAGNOSTIC_FEATURES)[number]
+export type DiagnosticFeature = (typeof DIAGNOSTIC_FEATURES)[number];
 
 // ---------------------------------------------------------------------------
 // Key Collector Metrics (for dashboard queries)
@@ -307,7 +307,7 @@ export const COLLECTOR_METRICS = {
   httpRequests: "container_http_requests_total",
   /** TCP active connections */
   tcpConnections: "container_net_tcp_active_connections",
-} as const
+} as const;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -318,7 +318,7 @@ export const COLLECTOR_METRICS = {
  * Defaults to prod. Pass "dev" or "debug" for the dev source.
  */
 export function getLogsTable(env: "prod" | "dev" = "prod"): string {
-  return env === "prod" ? LOG_SOURCES.prod.logsTable : LOG_SOURCES.dev.logsTable
+  return env === "prod" ? LOG_SOURCES.prod.logsTable : LOG_SOURCES.dev.logsTable;
 }
 
 /**
@@ -326,21 +326,21 @@ export function getLogsTable(env: "prod" | "dev" = "prod"): string {
  * Returns undefined if the region doesn't have a collector.
  */
 export function getCollectorTable(region: string): string | undefined {
-  return COLLECTORS[region]?.metricsTable
+  return COLLECTORS[region]?.metricsTable;
 }
 
 /**
  * Get the health URL for a region.
  */
 export function getHealthUrl(region: string): string | undefined {
-  return REGIONS[region]?.healthUrl
+  return REGIONS[region]?.healthUrl;
 }
 
 /**
  * All region names.
  */
 export function getAllRegions(): string[] {
-  return Object.keys(REGIONS)
+  return Object.keys(REGIONS);
 }
 
 /**
@@ -348,14 +348,14 @@ export function getAllRegions(): string[] {
  */
 export function validateSqlCredentials(): void {
   if (!SQL_USERNAME || !SQL_PASSWORD) {
-    console.error("❌ BetterStack SQL credentials not set.")
+    console.error("❌ BetterStack SQL credentials not set.");
     console.error(
       "   Set BETTERSTACK_SQL_USERNAME and BETTERSTACK_SQL_PASSWORD (or BETTERSTACK_USERNAME / BETTERSTACK_PASSWORD).",
-    )
+    );
     console.error(
       "   These are the ClickHouse HTTP API credentials from BetterStack Integrations → Connect ClickHouse HTTP client.",
-    )
-    process.exit(1)
+    );
+    process.exit(1);
   }
 }
 
@@ -366,6 +366,6 @@ export function validateApiToken(): void {
   if (!API_TOKEN) {
     throw new Error(
       "BETTERSTACK_API_TOKEN not set. This is the management API token from BetterStack → Integrations → API.",
-    )
+    );
   }
 }

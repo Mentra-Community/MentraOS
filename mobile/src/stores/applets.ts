@@ -352,11 +352,11 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
     })
 
     // add in the compatibility info:
-    let defaultWearable = useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key)
-    let capabilities = getModelCapabilities(defaultWearable || DeviceTypes.NONE)
+    let defaultWearable = useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key) || DeviceTypes.NONE
+    let capabilities = getModelCapabilities(defaultWearable)
 
     for (const applet of applets) {
-      // console.log(`APPLETS: ${applet.packageName} ${JSON.stringify(applet.hardwareRequirements)}`)
+      console.log(`APPLETS: ${defaultWearable} ${applet.packageName} ${JSON.stringify(applet.hardwareRequirements)}`)
       let result = HardwareCompatibility.checkCompatibility(applet.hardwareRequirements, capabilities)
       applet.compatibility = result
     }

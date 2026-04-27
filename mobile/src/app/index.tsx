@@ -1,5 +1,5 @@
 import {useRootNavigationState} from "expo-router"
-import {useState, useEffect, useRef} from "react"
+import {useState, useEffect, useRef, useCallback} from "react"
 import {View, ActivityIndicator, Platform, Linking} from "react-native"
 import semver from "semver"
 
@@ -44,6 +44,7 @@ export default function InitScreen() {
   const isNavigationReady = rootNavigationState?.key != null
 
   // State
+  const initStartedRef = useRef(false)
   const [state, setState] = useState<ScreenState>("loading")
   const [localVersion, setLocalVersion] = useState<string | null>(null)
   const [cloudVersion, setCloudVersion] = useState<string | null>(null)
@@ -84,15 +85,26 @@ export default function InitScreen() {
     }, 800)
   }
 
-  const navigateToDestination = async () => {
+  useEffect(() => {
+    console.log("INDEX: MOUNTED")
+    return () => console.log("INDEX: UNMOUNTED")
+  }, [])
+
+  const navigateToDestination = useCallback(async () => {
+    console.log("INDEX: navigateToDestination()")
     if (!user?.email) {
       await new Promise((resolve) => setTimeout(resolve, NAVIGATION_DELAY))
       replace("/auth/start", {transition: "fade"})
       return
     }
 
-    // Check onboarding status
-    if (!onboardingCompleted && !defaultWearable) {
+    // Read directly from the store so we see values that mantle.init() just
+    // loaded from the server, regardless of React render timing.
+    const store = useSettingsStore.getState()
+    const onboardingDone = store.getSetting(SETTINGS.onboarding_completed.key)
+    const wearable = store.getSetting(SETTINGS.default_wearable.key)
+
+    if (!onboardingDone && !wearable) {
       await new Promise((resolve) => setTimeout(resolve, NAVIGATION_DELAY))
       replace("/onboarding/welcome", {transition: "fade"})
       return
@@ -110,7 +122,16 @@ export default function InitScreen() {
     await new Promise((resolve) => setTimeout(resolve, NAVIGATION_DELAY))
     setAnimationDelayed()
     clearHistoryAndGoHome({transition: "fade"})
-  }
+  }, [
+    user,
+    getPendingRoute,
+    processUrl,
+    clearHistoryAndGoHome,
+    replace,
+    replaceAll,
+    setPendingRoute,
+    setAnimation,
+  ])
 
   const checkLoggedIn = async (): Promise<void> => {
     if (!user) {
@@ -121,6 +142,7 @@ export default function InitScreen() {
   }
 
   const handleTokenExchange = async (): Promise<void> => {
+    console.log("INDEX: handleTokenExchange()")
     const token = session?.token
     if (!token) {
       setState("auth")
@@ -139,9 +161,8 @@ export default function InitScreen() {
     const uid = user?.email || user?.id || ""
 
     socketComms.setAuthCreds(coreToken, uid)
-    console.log("INIT: Socket comms auth creds set")
+    console.log("INDEX: Socket comms auth creds set")
     await mantle.init()
-    console.log("INIT: Mantle initialized")
 
     await navigateToDestination()
   }
@@ -155,7 +176,7 @@ export default function InitScreen() {
     }
 
     const localVer = getLocalVersion()
-    console.log("INIT: Local version:", localVer)
+    console.log("INDEX: Local version:", localVer)
 
     if (!localVer) {
       console.error("Failed to get local version")
@@ -170,7 +191,7 @@ export default function InitScreen() {
 
       // Even offline, check cached required version to block outdated apps
       if (cachedRequiredVersion && semver.lt(localVer, cachedRequiredVersion)) {
-        console.log(`INIT: Offline but app is below cached required version (${localVer} < ${cachedRequiredVersion})`)
+        console.log(`INDEX: Offline but app is below cached required version (${localVer} < ${cachedRequiredVersion})`)
         setLocalVersion(localVer)
         setCloudVersion(cachedRequiredVersion)
         setCanSkipUpdate(false)
@@ -186,7 +207,7 @@ export default function InitScreen() {
     }
 
     const {required, recommended} = res.value
-    console.log(`INIT: Version check: local=${localVer}, required=${required}, recommended=${recommended}`)
+    console.log(`INDEX: Version check: local=${localVer}, required=${required}, recommended=${recommended}`)
 
     // Cache the required version for offline enforcement
     if (required && required !== cachedRequiredVersion) {
@@ -272,17 +293,18 @@ export default function InitScreen() {
 
   // Effects
   useEffect(() => {
-    console.log("INIT: Auth loading:", authLoading, "Navigation ready:", isNavigationReady)
+
+    console.log("INDEX: USE EFFECT: authLoading, isNavigationReady:", authLoading, isNavigationReady)
+    if (authLoading || !isNavigationReady) return
+    if (initStartedRef.current) return
+    initStartedRef.current = true
+
     const init = async () => {
+      console.log("INDEX: init()")
       await checkCustomUrl()
       await checkCloudVersion()
     }
-    // Wait for both auth to load AND navigation to be ready before initializing
-    // This prevents "navigate before mounting Root Layout" crashes (MENTRA-OS-152)
-    if (!authLoading && isNavigationReady) {
-      console.log("INIT: Auth loaded and navigation ready, starting init")
-      init()
-    }
+    init()
   }, [authLoading, isNavigationReady])
 
   // Clear cached required version when backend URL changes so a stricter

@@ -26,7 +26,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       // icon: "./assets/app-icons/ic_launcher.png",
       package: "com.mentra.mentra",
       googleServicesFile: "./google-services.json",
-      versionCode: 189,
+      versionCode: 197,
       adaptiveIcon: {
         foregroundImage: "./assets/app-icons/ic_launcher_foreground.png",
         // backgroundImage: "./assets/app-icons/ic_launcher.png",
@@ -64,7 +64,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       icon: "./assets/app-icons/ic_launcher.png",
       supportsTablet: false,
       requireFullScreen: true,
-      buildNumber: "189",
+      buildNumber: "197",
       bundleIdentifier: "com.mentra.mentra",
       googleServicesFile: "./GoogleService-Info.plist",
       associatedDomains: ["applinks:apps.mentra.glass", "applinks:apps.mentraglass.com"],

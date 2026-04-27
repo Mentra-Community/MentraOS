@@ -127,7 +127,7 @@ class GlassesStore {
         }
     }
 
-    // Apply changes with side effects
+    /// Apply changes with side effects
     func apply(_ category: String, _ key: String, _ value: Any) {
         let oldValue = store.get(category, key)
         store.set(category, key, value)

@@ -10,6 +10,8 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import androidx.core.content.ContextCompat
+import com.mentra.core.controllers.ControllerManager
+import com.mentra.core.controllers.R1
 import com.mentra.core.services.ForegroundService
 import com.mentra.core.services.PhoneMic
 import com.mentra.core.sgcs.G1
@@ -19,6 +21,7 @@ import com.mentra.core.sgcs.MentraLive
 import com.mentra.core.sgcs.MentraNex
 import com.mentra.core.sgcs.SGCManager
 import com.mentra.core.sgcs.Simulated
+import com.mentra.core.utils.ControllerTypes
 import com.mentra.core.utils.DeviceTypes
 import com.mentra.core.utils.MicMap
 import com.mentra.core.utils.MicTypes
@@ -66,6 +69,7 @@ class CoreManager {
 
     // MARK: - Properties
     var sgc: SGCManager? = null
+    var controller: ControllerManager? = null
 
     // settings:
     private var defaultWearable: String
@@ -83,6 +87,22 @@ class CoreManager {
     public var deviceAddress: String
         get() = GlassesStore.store.get("core", "device_address") as? String ?: ""
         set(value) = GlassesStore.apply("core", "device_address", value)
+
+    private var defaultController: String
+        get() = GlassesStore.store.get("core", "default_controller") as? String ?: ""
+        set(value) = GlassesStore.apply("core", "default_controller", value)
+
+    private var pendingController: String
+        get() = GlassesStore.store.get("core", "pending_controller") as? String ?: ""
+        set(value) = GlassesStore.apply("core", "pending_controller", value)
+
+    private var controllerDeviceName: String
+        get() = GlassesStore.store.get("core", "controller_device_name") as? String ?: ""
+        set(value) = GlassesStore.apply("core", "controller_device_name", value)
+
+    private var searchingController: Boolean
+        get() = GlassesStore.store.get("core", "searchingController") as? Boolean ?: false
+        set(value) = GlassesStore.apply("core", "searchingController", value)
 
     private var screenDisabled: Boolean
         get() = GlassesStore.store.get("core", "screen_disabled") as? Boolean ?: false
@@ -638,7 +658,7 @@ class CoreManager {
     private var isUpdatingMicState = false
     private var pendingMicStateUpdate = false
 
-    private fun updateMicState() {
+    internal fun updateMicState() {
         // Guard against re-entrant calls from onRouteChange callbacks
         if (isUpdatingMicState) {
             pendingMicStateUpdate = true
@@ -977,6 +997,24 @@ class CoreManager {
         GlassesStore.apply("glasses", "deviceModel", sgc?.type ?: "")
     }
 
+    fun initController(controllerType: String) {
+        Bridge.log("MAN: Initializing controller: $controllerType")
+        if (controller != null && controller?.type != controllerType) {
+            Bridge.log("MAN: Controller already initialized, cleaning up previous controller")
+            controller?.cleanup()
+            controller = null
+        }
+
+        if (controller != null) {
+            Bridge.log("MAN: Controller already initialized")
+            return
+        }
+
+        if (controllerType == ControllerTypes.R1) {
+            controller = R1()
+        }
+    }
+
     fun restartTranscriber() {
         Bridge.log("MAN: Restarting transcriber via command")
         transcriber?.restart()
@@ -1053,6 +1091,27 @@ class CoreManager {
     fun handleDeviceDisconnected() {
         Bridge.log("MAN: Device disconnected")
         GlassesStore.apply("glasses", "headUp", false)
+    }
+
+    fun handleControllerReady() {
+        val c = controller
+        if (c == null) {
+            Bridge.log("MAN: Controller is nil, returning")
+            return
+        }
+        Bridge.log("MAN: handleControllerReady(): ${c.type}")
+
+        pendingController = ""
+        defaultController = c.type
+        searching = false
+
+        // save the default_controller now that we're connected:
+        Bridge.saveSetting("default_controller", defaultController)
+        Bridge.saveSetting("controller_device_name", controllerDeviceName)
+    }
+
+    fun handleControllerDisconnected() {
+        Bridge.log("MAN: Controller disconnected")
     }
 
     // MARK: - Network Command handlers
@@ -1328,6 +1387,21 @@ class CoreManager {
         initSGC(defaultWearable)
         searching = true
         sgc?.connectById(deviceName)
+        connectDefaultController()
+    }
+
+    fun connectDefaultController() {
+        if (defaultController.isEmpty()) {
+            Bridge.log("MAN: No default controller, returning")
+            return
+        }
+        if (controllerDeviceName.isEmpty()) {
+            Bridge.log("MAN: No controller device name, returning")
+            return
+        }
+        initController(defaultController)
+        searchingController = true
+        controller?.connectById(controllerDeviceName)
     }
 
     fun connectByName(dName: String) {
@@ -1348,6 +1422,15 @@ class CoreManager {
         if (pendingWearable.isEmpty() && !defaultWearable.isEmpty()) {
             Bridge.log("MAN: No pending wearable, using default wearable")
             pendingWearable = defaultWearable
+        }
+
+        // if the pending wearable is a controller, don't disconnect the glasses;
+        // route through the controller manager instead
+        if (ControllerTypes.ALL.contains(pendingWearable)) {
+            controller?.disconnect()
+            initController(pendingWearable)
+            controller?.connectById(name)
+            return
         }
 
         disconnect()
@@ -1378,6 +1461,19 @@ class CoreManager {
         GlassesStore.apply("glasses", "deviceModel", "")
         GlassesStore.apply("glasses", "fullyBooted", false)
         GlassesStore.apply("glasses", "connected", false)
+        // disconnect the controller as well:
+        searchingController = false
+        GlassesStore.apply("glasses", "controllerConnected", false)
+        controller?.disconnect()
+        controller = null
+    }
+
+    fun disconnectController() {
+        searchingController = false
+        // disconnect the controller from the glasses if applicable:
+        sgc?.disconnectController()
+        controller?.disconnect()
+        controller = null
     }
 
     fun forget() {
@@ -1398,6 +1494,18 @@ class CoreManager {
         Bridge.saveSetting("device_address", "")
     }
 
+    fun forgetController() {
+        Bridge.log("MAN: Forgetting controller")
+        controller?.forget()
+        disconnectController()
+        // Clear state
+        defaultController = ""
+        controllerDeviceName = ""
+        Bridge.saveSetting("controller_device_name", "")
+        Bridge.saveSetting("default_controller", "")
+        GlassesStore.apply("glasses", "controllerConnected", false)
+    }
+
     fun findCompatibleDevices(deviceModel: String) {
         Bridge.log("MAN: Searching for compatible device names for: $deviceModel")
 
@@ -1406,6 +1514,13 @@ class CoreManager {
 
         if (DeviceTypes.ALL.contains(deviceModel)) {
             pendingWearable = deviceModel
+        }
+
+        if (ControllerTypes.ALL.contains(deviceModel)) {
+            pendingWearable = deviceModel
+            initController(deviceModel)
+            controller?.findCompatibleDevices()
+            return
         }
 
         initSGC(pendingWearable)

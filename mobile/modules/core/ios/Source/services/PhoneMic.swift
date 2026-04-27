@@ -21,7 +21,9 @@ class PhoneMic {
     /// when AVAudioEngine becomes invalid during audio route changes.
     /// See: MENTRA-OS-14P
     private var _isRecording = false
-    var isRecording: Bool { _isRecording }
+    var isRecording: Bool {
+        _isRecording
+    }
 
     private var currentMicMode: String = ""
     private var cancellables = Set<AnyCancellable>()
@@ -128,7 +130,8 @@ class PhoneMic {
         // If recording with a different mode, stop first
         if isRecording {
             Bridge.log(
-                "MIC: Already recording with different mode (\(currentMicMode)), stopping first")
+                "MIC: Already recording with different mode (\(currentMicMode)), stopping first"
+            )
             // stopRecording()
             // Brief delay to ensure clean stop
             // Thread.sleep(forTimeInterval: 0.05)

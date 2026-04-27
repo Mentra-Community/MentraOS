@@ -134,11 +134,7 @@ export const NEX_PROFILE: DisplayProfile = {
   displayWidthPx: 576,
   maxLines: 5,
 
-  // BLE constraints
-  // maxPayloadBytes matches firmware MAX_TEXT_LEN (nanopb DisplayText.text is char[247]).
-  // The TextWrapper uses this as the maxBytes ceiling so wrapped output never exceeds
-  // what the firmware decoder can accept in a single protobuf message.
-  maxPayloadBytes: 247,
+  maxPayloadBytes: 226,
   bleChunkSize: 176,
 
   // Font metrics
