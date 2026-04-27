@@ -38,17 +38,14 @@ export type ChangeEventPayload = {
 }
 
 export type NavManeuverPayload = {
-  instruction: string
-  roadName: string
+  /**
+   * Categorical type of the upcoming maneuver. One of: STRAIGHT,
+   * SLIGHT_LEFT, SLIGHT_RIGHT, TURN_LEFT, TURN_RIGHT, SHARP_LEFT,
+   * SHARP_RIGHT, U_TURN, ARRIVE.
+   */
   maneuverType: string
-  /** Distance in meters to the next maneuver. -1 if unknown. */
+  /** Distance in meters from the user's current position to that maneuver. -1 if unknown. */
   distanceMeters: number
-  /** Road the user will be on after the upcoming maneuver. "" if unknown. */
-  towardRoad: string
-  /** Categorical type of the maneuver after the next one. "" if unknown. */
-  nextManeuverType: string
-  /** UI label for the next maneuver, e.g. "Then". "" if no next maneuver. */
-  nextManeuverLabel: string
 }
 
 export type NavErrorPayload = {

@@ -37,18 +37,20 @@ object NavigationManager {
   private var pollRunnable: Runnable? = null
   private var lastEmittedKey: String? = null
   private var activeCallbacks: Callbacks? = null
+  /** Most recent road-snapped fix. Used to compute distance-to-maneuver. */
+  private var lastFixLat: Double = Double.NaN
+  private var lastFixLng: Double = Double.NaN
 
   data class ManeuverPayload(
-    val instruction: String,
-    val roadName: String,
+    /**
+     * Categorical type of the upcoming maneuver, derived from the
+     * bearing delta between consecutive route segments. One of:
+     * STRAIGHT, SLIGHT_LEFT, SLIGHT_RIGHT, TURN_LEFT, TURN_RIGHT,
+     * SHARP_LEFT, SHARP_RIGHT, U_TURN, ARRIVE.
+     */
     val maneuverType: String,
+    /** Meters from the user's current position to that maneuver. -1 if unknown. */
     val distanceMeters: Int,
-    /** Road the user will be on AFTER this maneuver completes. */
-    val towardRoad: String,
-    /** Categorical type of the maneuver after this one. Empty if unknown. */
-    val nextManeuverType: String,
-    /** UI hint label for the next maneuver, e.g. "Then". Empty if none. */
-    val nextManeuverLabel: String,
   )
 
   data class LocationPayload(
@@ -257,6 +259,8 @@ object NavigationManager {
         return
       }
       val listener = RoadSnappedLocationProvider.LocationListener { loc: Location ->
+        lastFixLat = loc.latitude
+        lastFixLng = loc.longitude
         callbacks.onLocation(
           LocationPayload(
             lat = loc.latitude,
@@ -277,51 +281,216 @@ object NavigationManager {
   private fun emitCurrentManeuverIfChanged(nav: Navigator, callbacks: Callbacks) {
     val payload = buildManeuverPayload(nav)
     if (payload == null) {
-      Log.d(TAG, "emit skipped — payload null (info or segment unavailable)")
+      Log.d(TAG, "emit skipped — no route data yet")
       return
     }
-    val key = "${payload.maneuverType}|${payload.roadName}|${payload.towardRoad}|${payload.distanceMeters}"
-    if (key == lastEmittedKey) {
-      Log.d(TAG, "emit skipped — same key=$key")
-      return
-    }
+    // Bucket distance into 5 m steps so we don't spam JS with a new event
+    // for every meter of movement.
+    val distBucket = if (payload.distanceMeters >= 0) payload.distanceMeters / 5 else -1
+    val key = "${payload.maneuverType}|$distBucket"
+    if (key == lastEmittedKey) return
     lastEmittedKey = key
-    Log.d(TAG, "emit → $payload")
+    Log.d(TAG, "emit → ${payload.maneuverType} in ${payload.distanceMeters}m")
     callbacks.onManeuver(payload)
   }
 
+  /**
+   * Find the next "real" maneuver in the route polyline.
+   *
+   * Walking polylines from Google contain many small zigzag artifacts —
+   * sidewalk jogs, curve approximations, curb encodings — that look like
+   * "turns" if you read them point-by-point. Naively reporting any
+   * 30° bend produces flapping callouts every meter or two near every
+   * intersection. We use three techniques together to give one stable
+   * callout per actual intersection:
+   *
+   *   1. DEADZONE: skip the first DEADZONE_METERS of path ahead of the
+   *      user before scanning. The polyline is noisiest right where
+   *      the user is standing (especially right after completing a
+   *      turn — curb geometry, etc.). Hiding that zone eliminates the
+   *      "TURN_RIGHT 4m → TURN_LEFT 5m → ..." flapping while keeping
+   *      the live distance countdown to the *real* next turn intact.
+   *
+   *   2. ACCUMULATION WINDOW: past the deadzone, walk forward
+   *      integrating bearing changes. A turn fires at the *anchor*
+   *      (start of the window) when the net heading change exceeds
+   *      NET_TURN_DEG within WINDOW_METERS of path. Zigzags whose
+   *      deltas cancel out within the window are silently ignored.
+   *
+   *   3. ANCHOR SLIDING: if the window expires without firing, slide
+   *      the anchor forward and keep looking. So a long curving path
+   *      with no real turn won't accidentally accumulate enough drift
+   *      to fire.
+   *
+   * No "single-step hard turn" fast path — at intersections the
+   * polyline often has 90°+ artifacts that we DON'T want to fire on.
+   * The window's net-delta threshold catches real intersections by
+   * itself (they produce >30° net change anyway).
+   *
+   * If no real turn remains in the route, emit ARRIVE.
+   */
   private fun buildManeuverPayload(nav: Navigator): ManeuverPayload? {
-    val info = nav.currentTimeAndDistance
-    val seg = nav.currentRouteSegment
-    Log.d(TAG, "build: info=${info?.meters} seg=${seg?.destinationWaypoint?.title}")
-    if (info == null) return null
+    if (lastFixLat.isNaN() || lastFixLng.isNaN()) return null
+    val flat = flattenRoute(nav) ?: return null
+    if (flat.size < 2) return null
 
-    // Google Nav SDK 6.x exposes coarse step data on the current segment.
-    // We extract what we can and fall back to safe defaults so the JS layer
-    // always receives a complete shape.
-    val curRoad = seg?.destinationWaypoint?.title ?: ""
+    val (startIdx, distToRoute) = closestSegmentIndex(flat, lastFixLat, lastFixLng)
+    if (distToRoute > 50.0) {
+      return ManeuverPayload(maneuverType = "STRAIGHT", distanceMeters = -1)
+    }
 
-    // Look ahead to the next segment for the "Then …" instruction.
-    val remaining = try {
+    val netTurnDeg = 30.0
+    val windowMeters = 40.0
+    val deadzoneMeters = 15.0
+
+    // Path distance from the user to the start of segment `i`.
+    var distFromUser = haversine(lastFixLat, lastFixLng, flat[startIdx].first, flat[startIdx].second)
+
+    var anchorBearing: Double? = null
+    var anchorDistFromUser = distFromUser
+
+    var i = startIdx
+    while (i < flat.size - 1) {
+      val segBearing = bearing(
+        flat[i].first, flat[i].second,
+        flat[i + 1].first, flat[i + 1].second,
+      )
+
+      // Only start scanning for turns once we're past the deadzone.
+      // Inside the deadzone we still walk the polyline forward (so
+      // distFromUser keeps incrementing correctly) but ignore bearings.
+      if (distFromUser >= deadzoneMeters) {
+        if (anchorBearing == null) {
+          anchorBearing = segBearing
+          anchorDistFromUser = distFromUser
+        } else {
+          val netDelta = signedAngleDiff(segBearing, anchorBearing)
+          if (kotlin.math.abs(netDelta) > netTurnDeg) {
+            return ManeuverPayload(
+              maneuverType = classifyTurn(netDelta),
+              distanceMeters = anchorDistFromUser.toInt(),
+            )
+          }
+          if (distFromUser - anchorDistFromUser > windowMeters) {
+            anchorBearing = segBearing
+            anchorDistFromUser = distFromUser
+          }
+        }
+      }
+
+      distFromUser += haversine(
+        flat[i].first, flat[i].second,
+        flat[i + 1].first, flat[i + 1].second,
+      )
+      i++
+    }
+
+    return ManeuverPayload(maneuverType = "ARRIVE", distanceMeters = distFromUser.toInt())
+  }
+
+  /** Flatten the full route into a list of (lat, lng) points. */
+  private fun flattenRoute(nav: Navigator): List<Pair<Double, Double>>? {
+    val segments = try {
       nav.routeSegments
     } catch (_: Throwable) {
       null
+    } ?: return null
+    val out = ArrayList<Pair<Double, Double>>()
+    for (seg in segments) {
+      val path = try {
+        seg.latLngs
+      } catch (_: Throwable) {
+        null
+      } ?: continue
+      for (ll in path) out.add(Pair(ll.latitude, ll.longitude))
     }
-    val nextSeg = remaining?.let { list ->
-      val idx = list.indexOf(seg)
-      if (idx >= 0 && idx + 1 < list.size) list[idx + 1] else null
-    }
-    val nextRoad = nextSeg?.destinationWaypoint?.title ?: ""
+    return out.takeIf { it.isNotEmpty() }
+  }
 
-    return ManeuverPayload(
-      instruction = if (curRoad.isNotEmpty()) curRoad else "Continue",
-      roadName = curRoad,
-      maneuverType = "STRAIGHT",
-      distanceMeters = info.meters,
-      towardRoad = nextRoad,
-      nextManeuverType = if (nextRoad.isNotEmpty()) "STRAIGHT" else "",
-      nextManeuverLabel = if (nextRoad.isNotEmpty()) "Then" else "",
-    )
+  /** Returns (segmentStartIndex, perpDistance) — closest segment to (lat, lng). */
+  private fun closestSegmentIndex(
+    pts: List<Pair<Double, Double>>,
+    lat: Double,
+    lng: Double,
+  ): Pair<Int, Double> {
+    var bestIdx = 0
+    var bestDist = Double.POSITIVE_INFINITY
+    for (i in 0 until pts.size - 1) {
+      val d = perpDistanceMeters(
+        lat, lng,
+        pts[i].first, pts[i].second,
+        pts[i + 1].first, pts[i + 1].second,
+      )
+      if (d < bestDist) {
+        bestDist = d
+        bestIdx = i
+      }
+    }
+    return Pair(bestIdx, bestDist)
+  }
+
+  /** Map signed angle delta (degrees, [-180, 180]) to a categorical turn. */
+  private fun classifyTurn(deltaDeg: Double): String {
+    val abs = kotlin.math.abs(deltaDeg)
+    val left = deltaDeg < 0
+    return when {
+      abs < 30.0 -> "STRAIGHT"
+      abs < 60.0 -> if (left) "SLIGHT_LEFT" else "SLIGHT_RIGHT"
+      abs < 120.0 -> if (left) "TURN_LEFT" else "TURN_RIGHT"
+      abs < 150.0 -> if (left) "SHARP_LEFT" else "SHARP_RIGHT"
+      else -> "U_TURN"
+    }
+  }
+
+  // ---- math helpers ----
+
+  private fun haversine(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
+    val r = 6_371_000.0
+    val dLat = Math.toRadians(lat2 - lat1)
+    val dLng = Math.toRadians(lng2 - lng1)
+    val a = kotlin.math.sin(dLat / 2).let { it * it } +
+      kotlin.math.cos(Math.toRadians(lat1)) *
+      kotlin.math.cos(Math.toRadians(lat2)) *
+      kotlin.math.sin(dLng / 2).let { it * it }
+    return 2 * r * kotlin.math.asin(kotlin.math.sqrt(a))
+  }
+
+  private fun bearing(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
+    val φ1 = Math.toRadians(lat1)
+    val φ2 = Math.toRadians(lat2)
+    val λ1 = Math.toRadians(lng1)
+    val λ2 = Math.toRadians(lng2)
+    val y = kotlin.math.sin(λ2 - λ1) * kotlin.math.cos(φ2)
+    val x = kotlin.math.cos(φ1) * kotlin.math.sin(φ2) -
+      kotlin.math.sin(φ1) * kotlin.math.cos(φ2) * kotlin.math.cos(λ2 - λ1)
+    val deg = Math.toDegrees(kotlin.math.atan2(y, x))
+    return (deg + 360.0) % 360.0
+  }
+
+  /** Smallest signed angular difference: target - actual, in [-180, 180]. */
+  private fun signedAngleDiff(target: Double, actual: Double): Double {
+    return ((target - actual + 540.0) % 360.0) - 180.0
+  }
+
+  /** Perpendicular distance from p to segment a→b in meters (small-angle). */
+  private fun perpDistanceMeters(
+    pLat: Double, pLng: Double,
+    aLat: Double, aLng: Double,
+    bLat: Double, bLng: Double,
+  ): Double {
+    val mPerDegLat = 111_320.0
+    val mPerDegLng = 111_320.0 * kotlin.math.cos(Math.toRadians(aLat))
+    val px = (pLng - aLng) * mPerDegLng
+    val py = (pLat - aLat) * mPerDegLat
+    val bx = (bLng - aLng) * mPerDegLng
+    val by = (bLat - aLat) * mPerDegLat
+    val len2 = bx * bx + by * by
+    if (len2 == 0.0) return kotlin.math.sqrt(px * px + py * py)
+    var t = (px * bx + py * by) / len2
+    t = t.coerceIn(0.0, 1.0)
+    val projx = t * bx
+    val projy = t * by
+    return kotlin.math.sqrt((px - projx).let { it * it } + (py - projy).let { it * it })
   }
 
 

@@ -242,13 +242,8 @@ class CrustModule : Module() {
           sendEvent(
             "onNavManeuver",
             mapOf(
-              "instruction" to payload.instruction,
-              "roadName" to payload.roadName,
               "maneuverType" to payload.maneuverType,
               "distanceMeters" to payload.distanceMeters,
-              "towardRoad" to payload.towardRoad,
-              "nextManeuverType" to payload.nextManeuverType,
-              "nextManeuverLabel" to payload.nextManeuverLabel,
             ),
           )
         }

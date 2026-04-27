@@ -17,13 +17,13 @@ const LOG_TAG = "NAV_SERVICE"
 
 export type NavManeuver = {
   kind: "maneuver"
-  instruction: string
-  roadName: string
+  /**
+   * Categorical type of the upcoming maneuver. One of: STRAIGHT,
+   * SLIGHT_LEFT, SLIGHT_RIGHT, TURN_LEFT, TURN_RIGHT, SHARP_LEFT,
+   * SHARP_RIGHT, U_TURN, ARRIVE.
+   */
   maneuverType: string
   distanceMeters: number
-  towardRoad: string
-  nextManeuverType: string
-  nextManeuverLabel: string
 }
 
 export type NavRerouting = {kind: "rerouting"}

@@ -1,11 +1,12 @@
 import {useEffect, useRef, useState} from "react"
 import {useSession} from "@mentra/miniapp/react"
-import type {LocationData, NavManeuver, NavRoute, NavUpdate} from "@mentra/miniapp"
+import type {HeadingData, LocationData, NavManeuver, NavRoute, NavUpdate} from "@mentra/miniapp"
 
 import {NavMap} from "./NavMap"
+import {OrientationCard} from "./OrientationCard"
 
-// SF Ferry Building. Replace with whatever you want to test.
-const DEFAULTS = {lat: "37.7956", lng: "-122.3933"}
+// Default test destination. Replace with whatever you want to test.
+const DEFAULTS = {lat: "37.768849", lng: "-122.422503"}
 
 type LogEntry = {ts: number; line: string}
 type Coords = {lat: number; lng: number; accuracy?: number; ts: number}
@@ -24,6 +25,7 @@ export default function App() {
   const [breadcrumbs, setBreadcrumbs] = useState<Array<{lat: number; lng: number}>>([])
   const [simulate, setSimulate] = useState(true)
   const [speedMultiplier, setSpeedMultiplier] = useState(5)
+  const [heading, setHeading] = useState<number | null>(null)
   const navUnsubRef = useRef<(() => void) | null>(null)
   const routeUnsubRef = useRef<(() => void) | null>(null)
 
@@ -32,6 +34,15 @@ export default function App() {
   useEffect(() => {
     const unsub = session.events.onLocation((d: LocationData) => {
       setCoords({lat: d.lat, lng: d.lng, accuracy: d.accuracy, ts: d.timestamp ?? Date.now()})
+    })
+    return unsub
+  }, [session])
+
+  // Live compass — used by OrientationCard to tell the user if they're
+  // physically facing the right way for the current segment.
+  useEffect(() => {
+    const unsub = session.events.onHeading((d: HeadingData) => {
+      setHeading(d.degrees)
     })
     return unsub
   }, [session])
@@ -186,6 +197,15 @@ export default function App() {
         )}
       </div>
 
+      {running ? (
+        <OrientationCard
+          me={coords ? {lat: coords.lat, lng: coords.lng} : null}
+          heading={heading}
+          maneuver={maneuver}
+          routePoints={routePoints}
+        />
+      ) : null}
+
       <div style={{marginBottom: 12}}>
         <NavMap
           me={coords ? {lat: coords.lat, lng: coords.lng} : null}
@@ -268,20 +288,10 @@ export default function App() {
           </div>
 
           {maneuver ? (
-            <>
-              <ManeuverPill
-                glyph={maneuverGlyph(maneuver.maneuverType)}
-                primary={primaryText(maneuver)}
-                primarySuffix={primarySuffix(maneuver)}
-                secondary={maneuver.towardRoad ? maneuver.towardRoad : undefined}
-              />
-              {maneuver.towardRoad && maneuver.nextManeuverType ? (
-                <ThenChip
-                  label={maneuver.nextManeuverLabel || "Then"}
-                  glyph={maneuverGlyph(maneuver.nextManeuverType)}
-                />
-              ) : null}
-            </>
+            <ManeuverPill
+              glyph={maneuverGlyph(maneuver.maneuverType)}
+              primary={maneuverHeadline(maneuver)}
+            />
           ) : (
             <div style={styles.empty}>
               {status === "rerouting" ? "Rebuilding route…" : "Waiting for first maneuver…"}
@@ -312,9 +322,7 @@ export default function App() {
 function formatUpdate(u: NavUpdate): string {
   switch (u.kind) {
     case "maneuver":
-      return `MANEUVER: ${u.instruction} • ${u.roadName || "?"} • ${u.distanceMeters}m • ${u.maneuverType}${
-        u.towardRoad ? ` • then ${u.nextManeuverType || "?"} onto ${u.towardRoad}` : ""
-      }`
+      return `MANEUVER: ${u.maneuverType} in ${u.distanceMeters}m`
     case "rerouting":
       return "REROUTING"
     case "arrived":
@@ -337,21 +345,19 @@ function maneuverGlyph(type: string): string {
       return "↰"
     case "TURN_RIGHT":
       return "↱"
-    case "TURN_SLIGHT_LEFT":
+    case "SLIGHT_LEFT":
       return "↖"
-    case "TURN_SLIGHT_RIGHT":
+    case "SLIGHT_RIGHT":
       return "↗"
-    case "TURN_SHARP_LEFT":
+    case "SHARP_LEFT":
       return "⤴"
-    case "TURN_SHARP_RIGHT":
+    case "SHARP_RIGHT":
       return "⤵"
-    case "UTURN_LEFT":
-    case "UTURN_RIGHT":
+    case "U_TURN":
       return "↶"
     case "STRAIGHT":
     case "CONTINUE":
       return "↑"
-    case "DESTINATION":
     case "ARRIVE":
       return "●"
     default:
@@ -359,71 +365,63 @@ function maneuverGlyph(type: string): string {
   }
 }
 
-/**
- * Current step's primary label. Prefer the road we're currently ON; fall
- * back to the instruction text if no road name.
- */
-function primaryText(m: NavManeuver): string {
-  if (m.roadName && m.roadName !== "Destination") return stripSuffix(m.roadName).name
-  return m.instruction || "Continue"
+/** Human-readable verb for a categorical maneuver type. */
+function humanManeuver(type: string): string {
+  switch (type.toUpperCase()) {
+    case "TURN_LEFT":
+      return "turn left"
+    case "TURN_RIGHT":
+      return "turn right"
+    case "SLIGHT_LEFT":
+      return "slight left"
+    case "SLIGHT_RIGHT":
+      return "slight right"
+    case "SHARP_LEFT":
+      return "sharp left"
+    case "SHARP_RIGHT":
+      return "sharp right"
+    case "U_TURN":
+      return "make a U-turn"
+    case "STRAIGHT":
+    case "CONTINUE":
+      return "continue straight"
+    case "ARRIVE":
+      return "arrive"
+    default:
+      return type.toLowerCase().replace(/_/g, " ")
+  }
 }
 
 /**
- * Optional suffix (e.g. "Ct", "Ave") to render smaller next to the primary.
+ * One-line headline for the maneuver pill. Built purely from the
+ * categorical type + distance — no road names.
+ *
+ *   "In 200 m, turn right"
+ *   "Sharp left in 50 m"
+ *   "Continue straight"
+ *   "Arriving in 35 m"
  */
-function primarySuffix(m: NavManeuver): string | undefined {
-  if (m.roadName && m.roadName !== "Destination") return stripSuffix(m.roadName).suffix
-  return undefined
+function maneuverHeadline(m: NavManeuver): string {
+  const verb = humanManeuver(m.maneuverType)
+  if (m.maneuverType === "ARRIVE") {
+    return m.distanceMeters > 0 ? `Arriving in ${formatDistance(m.distanceMeters)}` : "Arriving"
+  }
+  if (m.maneuverType === "STRAIGHT") {
+    return "Continue straight"
+  }
+  if (m.distanceMeters > 0) {
+    return `In ${formatDistance(m.distanceMeters)}, ${verb}`
+  }
+  return verb.charAt(0).toUpperCase() + verb.slice(1)
 }
 
-/**
- * Split "Oakton Ct" → { name: "Oakton", suffix: "Ct" }. Keeps common street
- * suffixes small so the main road name reads large. Falls back to the
- * whole string as name with no suffix.
- */
-function stripSuffix(road: string): {name: string; suffix?: string} {
-  const match = road.match(/^(.+?)\s+(Ct|Ave|St|Rd|Blvd|Dr|Ln|Way|Pkwy|Hwy|Pl|Ter|Cir|Loop)\.?$/i)
-  if (match) return {name: match[1], suffix: match[2]}
-  return {name: road}
-}
-
-function ManeuverPill({
-  glyph,
-  primary,
-  primarySuffix,
-  secondary,
-}: {
-  glyph: string
-  primary: string
-  primarySuffix?: string
-  secondary?: string
-}) {
+function ManeuverPill({glyph, primary}: {glyph: string; primary: string}) {
   return (
     <div style={styles.pill}>
       <div style={styles.pillGlyph}>{glyph}</div>
       <div style={styles.pillText}>
-        <div style={styles.pillPrimary}>
-          {primary}
-          {primarySuffix ? <span style={styles.pillPrimarySuffix}> {primarySuffix}</span> : null}
-        </div>
-        {secondary ? (
-          <div style={styles.pillSecondary}>
-            toward <span style={styles.pillSecondaryBold}>{stripSuffix(secondary).name}</span>
-            {stripSuffix(secondary).suffix ? (
-              <span style={styles.pillSecondarySuffix}> {stripSuffix(secondary).suffix}</span>
-            ) : null}
-          </div>
-        ) : null}
+        <div style={styles.pillPrimary}>{primary}</div>
       </div>
-    </div>
-  )
-}
-
-function ThenChip({label, glyph}: {label: string; glyph: string}) {
-  return (
-    <div style={styles.thenChip}>
-      <span style={styles.thenChipLabel}>{label}</span>
-      <span style={styles.thenChipGlyph}>{glyph}</span>
     </div>
   )
 }
