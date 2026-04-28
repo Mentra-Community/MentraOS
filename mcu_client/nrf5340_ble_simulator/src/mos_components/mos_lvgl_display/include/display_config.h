@@ -75,6 +75,12 @@ typedef struct {
 const display_config_t* display_get_config(void);
 
 /**
+ * @brief Persist a new margin_top value into the global display configuration
+ * @param margin_top New top margin in pixels
+ */
+void display_set_margin_top(uint16_t margin_top);
+
+/**
  * @brief Initialize display configuration system and detect active display
  * @return 0 on success, negative error code on failure
  */

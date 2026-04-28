@@ -212,6 +212,11 @@ const display_config_t *display_get_config(void)
     return &current_config;
 }
 
+void display_set_margin_top(uint16_t margin_top)
+{
+    current_config.layout.margin_top = margin_top;
+}
+
 int display_apply_container_config(lv_obj_t *container, lv_obj_t *parent, const display_config_t *config)
 {
     if (!container || !config)
