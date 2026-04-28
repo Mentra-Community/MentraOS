@@ -32,6 +32,7 @@ If your app also uses Firebase with static frameworks, Firebase modular header c
 
 - Android 12+ requires runtime Bluetooth scan/connect permissions.
 - Android scanning may require location permission or location services depending on OS version and device policy.
+- On some Android 12+ devices, scans can start successfully but return zero callbacks until `ACCESS_FINE_LOCATION` is granted.
 - iOS requires `NSBluetoothAlwaysUsageDescription`.
 - Microphone/audio features require `RECORD_AUDIO` on Android and `NSMicrophoneUsageDescription` on iOS.
 
@@ -39,6 +40,7 @@ If your app also uses Firebase with static frameworks, Firebase modular header c
 
 - Confirm the glasses are charged and in pairing mode.
 - Confirm OS Bluetooth permissions are granted.
+- On Android, confirm location permission is granted and device Location services are enabled.
 - Confirm the selected `MentraDeviceModel` matches the target glasses family.
 - Stop and restart scanning from the UI instead of scanning indefinitely.
 - Try pairing from a clean Bluetooth state after forgetting the device.

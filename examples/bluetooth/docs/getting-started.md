@@ -11,7 +11,7 @@ Use the SDK version and package repository supplied by Mentra. The snippets belo
 - Java 17 for Android builds
 - iOS deployment target `15.1` or newer for iOS apps
 - Xcode 15 or newer for iOS builds
-- Bluetooth permissions requested through your app's normal permission flow
+- Bluetooth permissions, and Android location permission where BLE scanning requires it, requested through your app's normal permission flow
 
 ## Android Installation
 
@@ -61,6 +61,8 @@ The SDK manifest contributes the service and baseline Bluetooth declarations, bu
 <uses-permission android:name="android.permission.RECORD_AUDIO" />
 <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 ```
+
+Some Android 12+ devices still require runtime location permission and Location services before they deliver BLE scan callbacks, even when `BLUETOOTH_SCAN` and `BLUETOOTH_CONNECT` are granted. Request `ACCESS_FINE_LOCATION` before scanning unless your app has intentionally configured Bluetooth scanning with `neverForLocation` and validated that policy on your target devices.
 
 See [Android example](../examples/android/README.md) for a complete app skeleton.
 

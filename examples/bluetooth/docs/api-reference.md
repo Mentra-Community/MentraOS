@@ -38,7 +38,7 @@ Keep one SDK instance per app session. The SDK owns Bluetooth connection state, 
 
 Your app owns user-facing permission prompts and explanation copy. Request Bluetooth permissions before scanning and microphone permission before enabling audio or transcription features.
 
-On Android, request the platform permissions required for your target SDK, such as `BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT`, `ACCESS_FINE_LOCATION`, `RECORD_AUDIO`, and `POST_NOTIFICATIONS` where applicable.
+On Android, request the platform permissions required for your target SDK, such as `BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT`, `ACCESS_FINE_LOCATION`, `RECORD_AUDIO`, and `POST_NOTIFICATIONS` where applicable. Some Android 12+ devices still require runtime location permission and Location services before they deliver BLE scan callbacks, even when Nearby Devices permissions are granted.
 
 On iOS, include the Bluetooth and microphone usage descriptions in your app `Info.plist`.
 
@@ -212,7 +212,7 @@ Raw audio and local transcription are advanced capabilities. Gate them behind ex
 
 ## Camera Photo Upload
 
-Use `requestPhoto` when your app needs the glasses to capture a photo and upload it to your backend. The phone sends the command to the glasses over Bluetooth, but the image upload is performed by the glasses over Wi-Fi to the `webhookUrl` you provide.
+Use `requestPhoto` when your app needs the glasses to capture a photo and upload it to your backend. The phone sends the command to the glasses over Bluetooth, then the photo is delivered to the `webhookUrl` you provide. Depending on device connectivity and firmware, delivery may happen directly from the glasses or through a supported SDK relay path.
 
 Android:
 
@@ -252,18 +252,19 @@ try await sdk.requestPhoto(
 )
 ```
 
-Your webhook should accept multipart form data. Mentra Live currently sends:
+Your webhook should accept multipart form data. Mentra Live sends:
 
 | Field | Description |
 | --- | --- |
 | `photo` | JPEG image file |
 | `requestId` | Your request identifier |
-| `type` | `photo_upload` |
-| `success` | `true` for a successful upload |
+| `source` | Optional source hint, such as `ble_transfer` |
+| `type` | Optional upload type, such as `photo_upload` |
+| `success` | Optional success marker |
 
-If you include `authToken`, the glasses add it as `Authorization: Bearer <token>` on the webhook request.
+If you include `authToken`, the uploader adds it as `Authorization: Bearer <token>` on the webhook request.
 
-For local development, run the companion server in `examples/photo-webhook-server` and use the printed LAN URL, such as `http://192.168.1.42:8787/upload`. Do not use `localhost`: the glasses, not the phone, make the upload request. The Android and iOS examples demonstrate this by polling `GET /uploads/<requestId>.json` and displaying the returned `photoUrl`.
+For local development, run the companion server in `examples/photo-webhook-server` and use the printed LAN URL, such as `http://192.168.1.42:8787/upload`. Do not use `localhost`: keep the glasses, phone, and computer on a network where the uploader can reach the computer. The Android, iOS, and React Native examples demonstrate this by polling `GET /uploads/<requestId>.json` and displaying the returned `photoUrl`.
 
 ## Wi-Fi And Hotspot
 

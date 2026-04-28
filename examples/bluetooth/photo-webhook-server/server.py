@@ -12,7 +12,7 @@ import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 
 DEFAULT_PORT = 8787
@@ -134,21 +134,23 @@ class PhotoWebhookHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:
-        if self.path == "/" or self.path.startswith("/?"):
+        request_path = urlparse(self.path).path
+
+        if request_path == "/":
             self.send_index()
             return
 
-        if self.path == "/latest.json":
+        if request_path == "/latest.json":
             self.send_json_file(self.uploads_dir / "latest.json")
             return
 
-        if self.path.startswith(UPLOADS_ROUTE) and self.path.endswith(".json"):
-            request_id = unquote(self.path[len(UPLOADS_ROUTE) : -len(".json")])
+        if request_path.startswith(UPLOADS_ROUTE) and request_path.endswith(".json"):
+            request_id = unquote(request_path[len(UPLOADS_ROUTE) : -len(".json")])
             self.send_json_file(self.uploads_dir / f"{sanitize_id(request_id)}.json")
             return
 
-        if self.path.startswith(PHOTOS_ROUTE):
-            filename = Path(unquote(self.path[len(PHOTOS_ROUTE) :])).name
+        if request_path.startswith(PHOTOS_ROUTE):
+            filename = Path(unquote(request_path[len(PHOTOS_ROUTE) :])).name
             self.send_static_file(self.uploads_dir / filename)
             return
 
@@ -225,6 +227,7 @@ class PhotoWebhookHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_cors_headers()
         self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -246,6 +249,7 @@ class PhotoWebhookHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_cors_headers()
         self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -265,7 +269,7 @@ def main() -> None:
     server.uploads_dir = uploads_dir  # type: ignore[attr-defined]
 
     print(f"Saving uploads to: {uploads_dir}")
-    print("Use one of these URLs in the Android example:")
+    print("Use one of these URLs in the Android, iOS, or React Native example:")
     for ip_address in local_ips():
         print(f"  http://{ip_address}:{options.port}{UPLOAD_ROUTE}")
     print("Press Ctrl+C to stop.")

@@ -9,7 +9,11 @@
         "NSBluetoothAlwaysUsageDescription": "This app uses Bluetooth to connect to Mentra smart glasses.",
         "NSBluetoothPeripheralUsageDescription": "This app uses Bluetooth to connect to Mentra smart glasses.",
         "NSMicrophoneUsageDescription": "This app can access glasses microphone audio when you enable audio examples.",
-        "NSCameraUsageDescription": "This app can request photos from supported smart glasses."
+        "NSCameraUsageDescription": "This app can request photos from supported smart glasses.",
+        "NSLocalNetworkUsageDescription": "This app connects to a local photo webhook server during SDK demos.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
       }
     },
     "android": {
@@ -29,6 +33,19 @@
         "@mentra/bluetooth-sdk",
         {
           "node": true
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 28,
+            "packagingOptions": {
+              "pickFirst": [
+                "**/libonnxruntime.so"
+              ]
+            }
+          }
         }
       ]
     ]
