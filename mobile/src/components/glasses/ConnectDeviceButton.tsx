@@ -1,8 +1,8 @@
-import {ControllerTypes, DeviceTypes} from "@/../../cloud/packages/types/src"
+import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import CoreModule from "core"
 import {ActivityIndicator, View} from "react-native"
 
-import {Button, Icon} from "@/components/ignite"
+import {Button} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useGlassesStore} from "@/stores/glasses"
@@ -46,7 +46,7 @@ export const ConnectDeviceButton = () => {
   // New handler: if already connecting, pressing the button calls disconnect.
   const handleConnectOrDisconnect = async () => {
     if (isSearching) {
-      await CoreModule.disconnectController()
+      await CoreModule.disconnect()
     } else {
       await connectGlasses()
     }
@@ -133,7 +133,7 @@ export const ConnectControllerButton = () => {
   // New handler: if already connecting, pressing the button calls disconnect.
   const handleConnectOrDisconnect = async () => {
     if (isSearching) {
-      await CoreModule.disconnect()
+      await CoreModule.disconnectController()
     } else {
       await connectController()
     }
