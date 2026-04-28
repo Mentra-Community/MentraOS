@@ -1,15 +1,11 @@
 import {memo, useEffect, useMemo, useRef, useState} from "react"
 import {View} from "react-native"
-import {useLocalMiniApps} from "@/stores/applets"
+import {appStore, appRegistry} from "island"
 import LocalMiniApp from "@/components/home/LocalMiniApp"
-import composer from "@/services/Composer"
 import {usePathname} from "expo-router"
 import {Screen, Text} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {MiniAppCapsuleMenu} from "@/components/miniapps/CapsuleMenu"
-import CoreModule, {MicPcmEvent} from "core"
-import {SETTINGS, useSetting} from "@/stores/settings"
-// import {useCactusSTT} from "cactus-react-native"
 
 const LmaContainer = memo(
   function LmaContainer({
@@ -54,13 +50,11 @@ const LmaContainer = memo(
 )
 
 function Compositor() {
-  const lmas = useLocalMiniApps()
+  const lmas = appStore.useApps()
   const pathname = usePathname()
   const viewShotRef = useRef<View>(null)
   const [packageName, setPackageName] = useState<string | null>(null)
   const {getCurrentParams} = useNavigationHistory()
-  const [offlineCaptionsRunning, setOfflineCaptionsRunning] = useSetting(SETTINGS.offline_captions_running.key)
-  const [offlineTranslationRunning, setOfflineTranslationRunning] = useSetting(SETTINGS.offline_translation_running.key)
 
   useEffect(() => {
     if (pathname.includes("/applet/local")) {
@@ -88,7 +82,7 @@ function Compositor() {
           console.error("COMPOSITOR: Local mini app has no version", lma.packageName)
           return null
         }
-        const htmlRes = composer.getLocalMiniAppHtml(lma.packageName, lma.version)
+        const htmlRes = appRegistry.getLocalMiniAppHtml(lma.packageName, lma.version)
         if (htmlRes.is_ok()) {
           return {packageName: lma.packageName, html: htmlRes.value, running: lma.running}
         }
@@ -101,93 +95,6 @@ function Compositor() {
   // return null
 
   // console.log("COMPOSITOR: Resolved Lmas", resolvedLmas.map((lma) => lma.packageName + " " + lma.running))
-
-  // const model = useSpeechToText({
-  //   model: WHISPER_TINY_EN,
-  // })
-
-  // const cactusSTT = useCactusSTT({
-  //   model: "whisper-medium",
-  //   options: {
-  //     pro: true,
-  //     // quantization: "int8",
-  //   },
-  // })
-
-  const transcription = useRef<string>("")
-  let useExecutorch = false
-  let useCactus = false
-  let useExpoSpeech = true
-
-  const handlePcm = async (pcm: ArrayBuffer) => {
-    // if (useExpoSpeech) {
-    //   const audioChunk = decodePcm16ToFloat32(pcm)
-    //   SpeechTranscriber.realtimeBufferTranscribe(
-    //     audioChunk, // Float32Array or number[]
-    //     16000, // sample rate
-    //   )
-    //   return
-    // }
-    // if (useExecutorch) {
-    //   // const audioChunk = new Float32Array(pcm)
-    //   const audioChunk = decodePcm16ToFloat32(pcm)
-    //   sttModule.streamInsert(audioChunk)
-    //   return
-    // }
-    // const audioChunk = Array.from(new Int16Array(pcm))
-    // // const audioChunk = decodePcm16ToFloat32(pcm)
-    // // const audioChunk = Array.from(new Float32Array(pcm))
-    // const result = await cactusSTT.streamTranscribeProcess({audio: audioChunk})
-    // if (result.confirmed) {
-    //   // console.log("COMPOSITOR: c:", result.confirmed)
-    //   transcription.current += " " + result.confirmed
-    //   // if (result.confirmed.length > 100) {
-    //   //   transcription.current = transcription.current.slice(-100)
-    //   // }
-    // }
-    // if (result.pending) {
-    //   console.log("COMP: P:", result.pending)
-    // }
-    // console.log("COMP: F:", transcription.current)
-  }
-
-  useEffect(() => {
-    const initSTT = async () => {
-      // await CoreModule.update("core", {
-      //   should_send_pcm: true,
-      // })
-
-      // await cactusSTT.download({
-      //   onProgress: (progress: number) => {
-      //     console.log("COMPOSITOR: Downloading cactus model...", progress)
-      //   },
-      // })
-
-      // await cactusSTT.streamTranscribeStart({
-      //   confirmationThreshold: 0.99,
-      //   minChunkSize: 32000,
-      // })
-
-      const pcmSub = CoreModule.addListener("mic_pcm", (event: MicPcmEvent) => {
-        // console.log("COMPOSITOR: Received mic pcm:", event.base64)
-        // const samples = decodePcm16Base64ToFloat32(event.base64)
-        // sttModule.streamInsert(samples)
-        handlePcm(event.pcm)
-      })
-
-      return () => {
-        pcmSub?.remove()
-      }
-    }
-    initSTT()
-  }, [])
-
-  useEffect(() => {
-    // cactusSTT.start()
-    return () => {
-      // cactusSTT.stop()
-    }
-  }, [offlineCaptionsRunning, offlineTranslationRunning])
 
   return (
     <View className={`absolute inset-0 ${isActive ? "z-11" : "z-0"}`} pointerEvents="box-none">

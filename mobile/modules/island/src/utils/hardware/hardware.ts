@@ -4,9 +4,8 @@ import {
   HardwareType,
   HardwareRequirementLevel,
   DeviceTypes,
-} from "@/../../cloud/packages/types/src"
-import {simulatedGlasses} from "@/../../cloud/packages/types/src/hardware"
-import { Platform } from "react-native"
+} from "../../types"
+import {simulatedGlasses} from "../../types/capabilities/simulated-glasses"
 
 /**
  * Result of a hardware compatibility check
@@ -225,14 +224,4 @@ export class HardwareCompatibility {
 
   //   return parts.join(" | ")
   // }
-}
-
-import * as Haptics from "expo-haptics"
-
-export const hapticBuzz = () => {
-  if (Platform.OS === "ios") {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-  } else {
-    Haptics.performAndroidHapticsAsync(Haptics.AndroidHaptics.Keyboard_Tap)
-  }
 }

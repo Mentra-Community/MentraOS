@@ -1,10 +1,10 @@
 import {useRef, useEffect} from "react"
-import {Platform, View, ActivityIndicator} from "react-native"
+import {View, ActivityIndicator} from "react-native"
 import {WebView} from "react-native-webview"
 
 import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import miniComms, {MiniAppMessage} from "@/services/MiniComms"
+import {webviewBridge} from "island"
 import {BackgroundTimer} from "@/utils/timers"
 
 interface LocalMiniAppProps {
@@ -29,7 +29,7 @@ export default function LocalMiniApp(props: LocalMiniAppProps) {
       }
     }
 
-    miniComms.setWebViewMessageHandler(packageName, sendToWebView)
+    webviewBridge.setWebViewMessageHandler(packageName, sendToWebView)
 
     // Listen for messages from SuperComms
     const handleMessage = (message: MiniAppMessage) => {
@@ -44,7 +44,7 @@ export default function LocalMiniApp(props: LocalMiniAppProps) {
     // miniComms.on("message", handleMessage)
 
     return () => {
-      miniComms.setWebViewMessageHandler(packageName, undefined)
+      webviewBridge.setWebViewMessageHandler(packageName, undefined)
       if (keepAliveIntervalRef.current) {
         clearInterval(keepAliveIntervalRef.current)
       }
@@ -54,7 +54,7 @@ export default function LocalMiniApp(props: LocalMiniAppProps) {
   // Handle messages from WebView
   const handleWebViewMessage = (event: any) => {
     const data = event.nativeEvent.data
-    miniComms.handleRawMessageFromMiniApp(packageName, data)
+    webviewBridge.handleRawMessageFromMiniApp(packageName, data)
   }
 
   let source: any = null
@@ -75,7 +75,6 @@ export default function LocalMiniApp(props: LocalMiniAppProps) {
       startInLoadingState={true}
       injectedJavaScriptBeforeContentLoaded={`
         window.MentraOS = {
-          platform: '${Platform.OS}',
           capabilities: ['share', 'open_url', 'copy_clipboard', 'download'],
         };
         window.receiveNativeMessage = window.receiveNativeMessage || function() {};

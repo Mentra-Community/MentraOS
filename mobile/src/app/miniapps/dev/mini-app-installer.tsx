@@ -4,11 +4,11 @@ import {Pressable, ScrollView, TextInput, TouchableOpacity, View} from "react-na
 import {Button, Icon, Screen, Text} from "@/components/ignite"
 import {MiniAppCapsuleMenu} from "@/components/miniapps/CapsuleMenu"
 import AppIcon from "@/components/home/AppIcon"
-import composer from "@/services/Composer"
 import Toast from "react-native-toast-message"
 import {useLocalMiniApps} from "@/stores/applets"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import LocalMiniApp from "@/components/home/LocalMiniApp"
+import {appRegistry} from "island"
 
 export default function MiniAppInstaller() {
   const viewShotRef = useRef<View>(null)
@@ -38,7 +38,7 @@ export default function MiniAppInstaller() {
   }
 
   const handleUninstall = async (packageName: string, version: string) => {
-    let result = await composer.uninstallMiniApp(packageName, version)
+    let result = await appRegistry.uninstall(packageName, version)
     if (result.is_ok()) {
       Toast.show({type: "success", text1: "Mini app uninstalled successfully"})
     } else {
@@ -48,7 +48,7 @@ export default function MiniAppInstaller() {
 
   const handleInstallMiniApp = async () => {
     console.log(`Installing MiniApp: ${url}`)
-    let result = await composer.installMiniApp(url)
+    let result = await appRegistry.install(url)
     console.log("result", result)
     if (result.is_ok()) {
       Toast.show({type: "success", text1: "Mini app installed successfully"})
@@ -59,8 +59,8 @@ export default function MiniAppInstaller() {
 
   const showVersions = async (packageName: string) => {
     console.log(`Showing versions for ${packageName}`)
-    const installedVersions: string[] = composer.getAppletInstalledVersions(packageName)
-    const activeVersion = await composer.getActiveAppletVersion(packageName)
+    const installedVersions: string[] = appRegistry.getAppInstalledVersions(packageName)
+    const activeVersion = await appRegistry.getActiveAppVersion(packageName)
     // show all the versions, set the active
     setActiveVersion(activeVersion)
     setPackageName(packageName)

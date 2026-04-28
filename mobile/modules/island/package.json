@@ -1,0 +1,51 @@
+{
+  "name": "island",
+  "version": "0.1.0",
+  "description": "Mentra Manager Island",
+  "main": "build/index.js",
+  "types": "build/index.d.ts",
+  "scripts": {
+    "build": "expo-module build",
+    "clean": "expo-module clean",
+    "lint": "expo-module lint",
+    "test": "expo-module test",
+    "prepare": "expo-module prepare",
+    "prepublishOnly": "expo-module prepublishOnly",
+    "expo-module": "expo-module"
+  },
+  "keywords": [
+    "react-native",
+    "expo",
+    "island",
+    "Island"
+  ],
+  "repository": "https://github.com/fossephate/core",
+  "bugs": {
+    "url": "https://github.com/fossephate/core/issues"
+  },
+  "author": "fossephate <6175367+fossephate@users.noreply.github.com> (https://github.com/fossephate)",
+  "license": "MIT",
+  "homepage": "https://github.com/fossephate/core#readme",
+  "dependencies": {
+    "babel-plugin-module-resolver": "5.0.0",
+    "typesafe-ts": "^1.7.1",
+    "zustand": "^5.0.11",
+    "react-native-zip-archive": "^7.0.2",
+    "core": "workspace:*"
+  },
+  "devDependencies": {
+    "expo-module-scripts": "^55.0.2"
+  },
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*",
+    "@types/react": "*",
+    "@expo/config-plugins": "*",
+    "expo-clipboard": "*",
+    "expo-file-system": "*",
+    "react-native-zip-archive": "*",
+    "react-native-nitro-bg-timer": "*",
+    "react-i18next": "*"
+  }
+}

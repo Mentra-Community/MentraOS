@@ -25,21 +25,21 @@ export interface MiniAppMessage {
   requestId?: string
 }
 
-class MiniComms {
-  private static instance: MiniComms | null = null
+class WebviewBridge {
+  private static instance: WebviewBridge | null = null
   private messageHandlers: Record<string, (stringified: string) => void> = {}
 
   private constructor() {}
 
-  public static getInstance(): MiniComms {
-    if (!MiniComms.instance) {
-      MiniComms.instance = new MiniComms()
+  public static getInstance(): WebviewBridge {
+    if (!WebviewBridge.instance) {
+      WebviewBridge.instance = new WebviewBridge()
     }
-    return MiniComms.instance
+    return WebviewBridge.instance
   }
 
   public cleanup() {
-    MiniComms.instance = null
+    WebviewBridge.instance = null
   }
 
   // Register the WebView message sender
@@ -213,9 +213,9 @@ class MiniComms {
     }
   }
 
-  private handleRequestTranscription(packageName: string, message: MiniAppMessage) {
-    // composer
-  }
+  // private handleRequestTranscription(packageName: string, message: MiniAppMessage) {
+  //   // composer
+  // }
 
   private sendResponse(packageName: string, requestId: string | undefined, result: any) {
     if (!requestId) return
@@ -269,5 +269,5 @@ class MiniComms {
   }
 }
 
-const miniComms = MiniComms.getInstance()
-export default miniComms
+const webviewBridge = WebviewBridge.getInstance()
+export default webviewBridge
