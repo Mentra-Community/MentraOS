@@ -76,6 +76,40 @@ export default function App() {
     }
   }, [])
 
+  // Mirror the front-end NOW/NEXT state to the glasses display. Every
+  // change in maneuver/status pushes a fresh layout — the glasses always
+  // reflect what the WebView is showing. clearView() on stop/arrived.
+  useEffect(() => {
+    if (!running) {
+      try {
+        session.display.clearView()
+      } catch (err) {
+        console.log("[NAV-MINI] display.clearView ignored:", err)
+      }
+      return
+    }
+    if (status === "rerouting" || !maneuver) {
+      session.display.showTextWall(
+        status === "rerouting" ? "Rebuilding route…" : "Starting navigation…",
+      )
+      return
+    }
+    if (status === "arrived" || maneuver.maneuverType === "ARRIVE") {
+      const dist = maneuver.distanceMeters
+      session.display.showReferenceCard(
+        "Arriving",
+        dist > 0 ? `In ${formatDistance(dist)}` : "You have arrived",
+      )
+      return
+    }
+    const {now, next} = formatGlassesLines(maneuver)
+    if (next) {
+      session.display.showDoubleTextWall(now, next)
+    } else {
+      session.display.showTextWall(now)
+    }
+  }, [running, status, maneuver, session])
+
   function append(line: string) {
     setLog((prev) => [{id: ++logIdSeq, ts: Date.now(), line}, ...prev].slice(0, 100))
   }
@@ -340,6 +374,52 @@ function formatUpdate(u: NavUpdate): string {
 function formatDistance(meters: number): string {
   if (meters < 1000) return `${meters} m`
   return `${(meters / 1000).toFixed(meters < 10000 ? 1 : 0)} km`
+}
+
+/**
+ * Two short lines for the glasses HUD — NOW (top) + NEXT (bottom).
+ * Returns `next: null` when the imminent turn IS the active instruction
+ * (≤ 30m), in which case the caller falls back to a single TextWall.
+ */
+const GLASSES_IMMINENT_M = 30
+
+function formatGlassesLines(m: NavManeuver): {now: string; next: string | null} {
+  const dist = m.distanceMeters
+  const isStraight = m.maneuverType === "STRAIGHT" || m.maneuverType === "CONTINUE"
+  const arrowed = (verb: string) => {
+    const a = m.maneuverType.includes("LEFT") ? "←" : m.maneuverType.includes("RIGHT") ? "→" : "↑"
+    return `${a} ${verb}`
+  }
+
+  // Imminent turn — promote to NOW, hide NEXT.
+  if (!isStraight && dist >= 0 && dist <= GLASSES_IMMINENT_M) {
+    const verb = humanManeuver(m.maneuverType)
+    const onto = m.toRoad ? ` onto ${m.toRoad}` : ""
+    return {now: arrowed(`${cap(verb)}${onto}`), next: null}
+  }
+
+  // Walking on a stretch — NOW = continue, NEXT = upcoming turn.
+  const road = m.fromRoad?.trim()
+  const distStr = dist > 0 ? formatDistance(dist) : null
+  const nowLine =
+    road && distStr
+      ? `↑ ${road} • ${distStr}`
+      : road
+        ? `↑ ${road}`
+        : distStr
+          ? `↑ Continue ${distStr}`
+          : "↑ Continue"
+
+  if (isStraight) {
+    return {now: nowLine, next: null}
+  }
+  const verb = humanManeuver(m.maneuverType)
+  const onto = m.toRoad ? ` onto ${m.toRoad}` : ""
+  return {now: nowLine, next: arrowed(`Then ${verb}${onto}`)}
+}
+
+function cap(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
 function maneuverGlyph(type: string): string {
