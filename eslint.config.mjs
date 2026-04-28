@@ -47,7 +47,7 @@ export default defineConfig([
       },
       "import/resolver": {
         typescript: {
-          project: ["./mobile/tsconfig.json", "./cloud/tsconfig.json"],
+          project: ["./mobile/tsconfig.json", "./mobile/e2e-tests/ui/tsconfig.json", "./cloud/tsconfig.json"],
         },
       },
     },
@@ -149,6 +149,19 @@ export default defineConfig([
       "react-native/no-inline-styles": "warn",
       "react-native/no-color-literals": "off",
       "react-native/no-raw-text": "error",
+    },
+  },
+
+  // Web-only dashboard app that lives under mobile/, but should not inherit RN-only lint rules
+  {
+    files: ["mobile/e2e-tests/ui/**/*.{js,ts,jsx,tsx}"],
+    rules: {
+      "no-restricted-imports": "off",
+      "react-native/no-unused-styles": "off",
+      "react-native/split-platform-components": "off",
+      "react-native/no-inline-styles": "off",
+      "react-native/no-color-literals": "off",
+      "react-native/no-raw-text": "off",
     },
   },
 

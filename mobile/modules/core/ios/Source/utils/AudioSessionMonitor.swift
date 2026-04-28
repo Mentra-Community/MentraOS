@@ -11,7 +11,7 @@ import Foundation
 import UIKit
 
 class AudioSessionMonitor {
-    // Singleton instance
+    /// Singleton instance
     private static var instance: AudioSessionMonitor?
 
     // Current monitoring state
@@ -129,8 +129,7 @@ class AudioSessionMonitor {
 
     /// Start monitoring for audio route changes
     /// Callback will be called when device matching pattern connects/disconnects
-    static func startMonitoring(devicePattern: String, callback: @escaping (Bool, String?) -> Void)
-    {
+    static func startMonitoring(devicePattern: String, callback: @escaping (Bool, String?) -> Void) {
         guard !isMonitoring else {
             Bridge.log("AudioMonitor: Already monitoring")
             return
@@ -188,9 +187,9 @@ class AudioSessionMonitor {
 
     @objc private func handleRouteChange(notification: Notification) {
         guard let userInfo = notification.userInfo,
-            let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
-            let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue),
-            let pattern = AudioSessionMonitor.devicePattern
+              let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue),
+              let pattern = AudioSessionMonitor.devicePattern
         else {
             return
         }
@@ -211,7 +210,8 @@ class AudioSessionMonitor {
                         $0.portName.localizedCaseInsensitiveContains(pattern)
                     })?.portName
                     Bridge.log(
-                        "AudioMonitor: ✅ Successfully detected newly paired device '\(pattern)'")
+                        "AudioMonitor: ✅ Successfully detected newly paired device '\(pattern)'"
+                    )
                     AudioSessionMonitor.callback?(true, deviceName)
                 } else {
                     Bridge.log("AudioMonitor: New device available but not matching '\(pattern)'")
@@ -259,7 +259,8 @@ class AudioSessionMonitor {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             Bridge.log(
-                "AudioMonitor: Attempt \(attempt + 1)/\(maxAttempts) to detect '\(pattern)'...")
+                "AudioMonitor: Attempt \(attempt + 1)/\(maxAttempts) to detect '\(pattern)'..."
+            )
 
             if AudioSessionMonitor.isDevicePaired(devicePattern: pattern) {
                 let session = AVAudioSession.sharedInstance()
@@ -274,7 +275,8 @@ class AudioSessionMonitor {
                     "AudioMonitor: Attempt \(attempt + 1) failed, retrying in \(delays[min(attempt + 1, delays.count - 1)])s..."
                 )
                 AudioSessionMonitor.attemptActivateDevice(
-                    pattern: pattern, attempt: attempt + 1, maxAttempts: maxAttempts)
+                    pattern: pattern, attempt: attempt + 1, maxAttempts: maxAttempts
+                )
             }
         }
     }

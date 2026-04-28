@@ -2,26 +2,60 @@
 import argparse
 import collections
 import json
+import mimetypes
 import os
 import re
+import shlex
+import shutil
 import signal
 import subprocess
 import sys
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+import tomllib
 
 
-# FIXME: THe maestro data retrieval method is to be removed (2s latency), the html ids have not been committed to the repo.
-SIMULATED_GLASSES_TEXT = "Simulated glasses"
-MIRROR_ROOT_RESOURCE_ID = "glasses-mirror-root"
-MIRROR_TEXT_WALL_RESOURCE_ID = "glasses-mirror-text-wall"
-MIRROR_LINE_RESOURCE_ID_PREFIX = "glasses-mirror-line-"
+DEFAULT_INCIDENT_CONFIG = {
+    "drop_event": {
+        "name": "Dropped Captions",
+        "enabled": True,
+        "incident_threshold_ms": 5000,
+        "alert_threshold_ms": 15000,
+    },
+    "audio_output_device_mismatch": {
+        "name": "Audio Output Device Mismatch",
+        "enabled": True,
+        "incident_threshold_ms": 0,
+        "alert_threshold_ms": 15000,
+    },
+    "app_not_foreground": {
+        "name": "MentraOS Not Foreground",
+        "enabled": True,
+        "incident_threshold_ms": 0,
+        "alert_threshold_ms": 15000,
+    },
+    "high_average_latency": {
+        "name": "High Average Latency",
+        "enabled": True,
+        "incident_threshold_ms": 10000,
+        "alert_threshold_ms": 15000,
+        "window_size": 10,
+        "resolve_threshold_ms": 10000,
+    },
+}
+CAPTIONS_TESTER_INCIDENT_RESULT_MARKER = "CAPTIONS_TESTER_INCIDENT_RESULT "
+CONSOLE_INCIDENT_BASE_URL = "https://console.mentra.glass/admin/incidents/"
+CAPTIONS_TESTER_FILED_RE = re.compile(r"CaptionsTesterBugReport\]\s+Incident filed:\s*([0-9a-fA-F-]+)")
+UI_DIST_DIR = Path(__file__).resolve().parent.parent / "ui" / "dist"
+DEFAULT_UI_DEV_ORIGIN = "http://127.0.0.1:5173"
+SNAPSHOT_WORD_HISTORY_MULTIPLIER = 8
 
 
 def parse_args() -> argparse.Namespace:
@@ -38,12 +72,51 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", required=True, help="Directory for monitor state and NDJSON history")
     parser.add_argument("--port", type=int, default=8765, help="Local dashboard port")
     parser.add_argument("--device", default=None, help="Optional adb device id")
+    parser.add_argument(
+        "--incident-config-path",
+        default=str(Path(__file__).resolve().parent.parent / "incident_config.toml"),
+        help="Path to the TOML config file that defines incident thresholds and alert thresholds.",
+    )
+    parser.add_argument(
+        "--audio-output-device",
+        default=None,
+        help="Require this macOS output device for local playback. If SwitchAudioSource is installed, the monitor will switch to it automatically.",
+    )
+    parser.add_argument(
+        "--alert-intent-action",
+        default="com.mentra.CAPTIONS_TESTER_INCIDENT",
+        help="Android broadcast action to fire when an alert is raised.",
+    )
+    parser.add_argument(
+        "--alert-intent-component",
+        default="com.mentra.mentra/com.mentra.core.receivers.CaptionsTesterIncidentReceiver",
+        help="Optional explicit Android broadcast component for alert dispatch.",
+    )
+    parser.add_argument(
+        "--disable-alert-intent-dispatch",
+        action="store_true",
+        help="Disable Android alert-intent dispatch even when alerts are raised.",
+    )
     parser.add_argument("--poll-interval", type=float, default=0.25, help="Hierarchy poll interval in seconds")
     parser.add_argument("--word-match-early-tolerance-ms", type=int, default=250, help="Allow a visible word match slightly before the expected word timestamp")
-    parser.add_argument("--drop-threshold-ms", type=int, default=5000, help="How long visible text can stagnate before a drop is recorded")
     parser.add_argument("--post-roll-ms", type=int, default=1200, help="Extra time after the last aligned word before closing an utterance")
     parser.add_argument("--inter-utterance-gap-ms", type=int, default=350, help="Gap between utterances in continuous playback")
     parser.add_argument("--max-history", type=int, default=500, help="How many completed utterances and drop events to keep in memory")
+    parser.add_argument(
+        "--ui-dev",
+        action="store_true",
+        help="Proxy UI requests to a Vite dev server instead of serving ui/dist. Useful for hot reloading frontend edits.",
+    )
+    parser.add_argument(
+        "--ui-dev-origin",
+        default=DEFAULT_UI_DEV_ORIGIN,
+        help="Origin for the Vite dev server used by --ui-dev (default: http://127.0.0.1:5173).",
+    )
+    parser.add_argument(
+        "--read-only",
+        action="store_true",
+        help="Serve the dashboard from archived monitor output only. No adb, playback, or live collectors are started.",
+    )
     parser.add_argument(
         "--local-playback-offset-ms",
         type=int,
@@ -64,86 +137,19 @@ def tokenize(value: str) -> list[str]:
     return [token for token in normalize_text(value).split() if token]
 
 
-def parse_hierarchy_output(raw_output: str) -> dict[str, Any]:
-    json_start = raw_output.find("{")
-    if json_start == -1:
-        raise ValueError("Maestro hierarchy output did not contain JSON")
-    return json.loads(raw_output[json_start:])
+def trimmed_mean_ms(values: list[int | float], trim_fraction: float = 0.10) -> float | None:
+    if not values:
+        return None
 
+    sorted_values = sorted(float(value) for value in values)
+    trim_count = int(len(sorted_values) * trim_fraction)
+    if trim_count * 2 >= len(sorted_values):
+        trim_count = max(0, (len(sorted_values) - 1) // 2)
 
-def find_parent_of_text(node: dict[str, Any], target: str) -> dict[str, Any] | None:
-    children = node.get("children") or []
-    for child in children:
-        attributes = child.get("attributes") or {}
-        if attributes.get("text") == target:
-            return node
-    for child in children:
-        found = find_parent_of_text(child, target)
-        if found:
-            return found
-    return None
-
-
-def find_first_by_resource_id(node: dict[str, Any], resource_id: str) -> dict[str, Any] | None:
-    attributes = node.get("attributes") or {}
-    if attributes.get("resource-id") == resource_id:
-        return node
-
-    for child in node.get("children") or []:
-        found = find_first_by_resource_id(child, resource_id)
-        if found:
-            return found
-    return None
-
-
-def extract_visible_transcript_lines(hierarchy: dict[str, Any]) -> tuple[bool, list[str]]:
-    mirror_root = find_first_by_resource_id(hierarchy, MIRROR_ROOT_RESOURCE_ID)
-    text_wall = find_first_by_resource_id(hierarchy, MIRROR_TEXT_WALL_RESOURCE_ID)
-    if mirror_root and text_wall:
-        indexed_lines: list[tuple[int, str]] = []
-        for child in text_wall.get("children") or []:
-            attributes = child.get("attributes") or {}
-            resource_id = attributes.get("resource-id") or ""
-            if not resource_id.startswith(MIRROR_LINE_RESOURCE_ID_PREFIX):
-                continue
-
-            text = (attributes.get("text") or "").strip()
-            if not text:
-                continue
-
-            try:
-                index = int(resource_id.removeprefix(MIRROR_LINE_RESOURCE_ID_PREFIX))
-            except ValueError:
-                continue
-            indexed_lines.append((index, text))
-
-        indexed_lines.sort(key=lambda item: item[0])
-        return True, [text for _, text in indexed_lines]
-
-    parent = find_parent_of_text(hierarchy, SIMULATED_GLASSES_TEXT)
-    if not parent:
-        return False, []
-
-    lines: list[str] = []
-    for child in parent.get("children") or []:
-        attributes = child.get("attributes") or {}
-        text = (attributes.get("text") or "").strip()
-        if not text or text == SIMULATED_GLASSES_TEXT:
-            continue
-        lines.append(text)
-    return True, lines
-
-
-def run_maestro_hierarchy(device: str | None) -> dict[str, Any]:
-    env = os.environ.copy()
-    env["JAVA_HOME"] = "/Applications/Android Studio.app/Contents/jbr/Contents/Home"
-    env["PATH"] = f'{env["JAVA_HOME"]}/bin:/opt/homebrew/bin:' + env["PATH"]
-    cmd = ["maestro"]
-    if device:
-        cmd.extend(["--device", device])
-    cmd.extend(["hierarchy", "--no-ansi"])
-    result = subprocess.run(cmd, check=True, capture_output=True, text=True, env=env)
-    return parse_hierarchy_output(result.stdout)
+    trimmed_values = sorted_values[trim_count : len(sorted_values) - trim_count] if trim_count else sorted_values
+    if not trimmed_values:
+        trimmed_values = sorted_values
+    return sum(trimmed_values) / len(trimmed_values)
 
 
 def write_ndjson(path: Path, record: dict[str, Any]) -> None:
@@ -170,10 +176,6 @@ class WordState:
     rn_true_visible_delay_ms: int | None = None
     logcat_true_first_visible_ts_ms: int | None = None
     logcat_true_visible_delay_ms: int | None = None
-    maestro_first_visible_ts_ms: int | None = None
-    maestro_visible_delay_ms: int | None = None
-    maestro_true_first_visible_ts_ms: int | None = None
-    maestro_true_visible_delay_ms: int | None = None
 
 
 @dataclass
@@ -185,16 +187,14 @@ class UtteranceState:
     end_ts_ms: int
     words: list[WordState]
     rn_matched_word_count: int = 0
-    maestro_matched_word_count: int = 0
     rn_last_matched_index: int = -1
     rn_true_last_matched_index: int = -1
     logcat_true_last_matched_index: int = -1
-    maestro_last_matched_index: int = -1
-    maestro_true_last_matched_index: int = -1
     first_visible_activity_ts_ms: int | None = None
     last_visible_change_ts_ms: int | None = None
     last_signature: str = ""
     drop_open: dict[str, Any] | None = None
+    active_drop_incident_id: str | None = None
 
 
 @dataclass
@@ -301,14 +301,172 @@ def load_cached_rows(output_dir: Path) -> dict[int, dict[str, Any]]:
     return cached_rows
 
 
+def load_incident_config(path: Path) -> dict[str, dict[str, Any]]:
+    config = {key: dict(value) for key, value in DEFAULT_INCIDENT_CONFIG.items()}
+    if path.exists():
+        with path.open("rb") as handle:
+            payload = tomllib.load(handle)
+        incidents = payload.get("incidents") or {}
+        for incident_type, incident_payload in incidents.items():
+            if incident_type not in config:
+                config[incident_type] = {}
+            config[incident_type].update(incident_payload)
+
+    for incident_type, incident_config in config.items():
+        incident_config.setdefault("name", incident_type.replace("_", " ").title())
+        incident_config.setdefault("enabled", True)
+        incident_config.setdefault("incident_threshold_ms", 0)
+        incident_config.setdefault("alert_threshold_ms", 0)
+        if incident_type == "high_average_latency":
+            incident_config.setdefault("window_size", 10)
+            incident_config.setdefault("resolve_threshold_ms", incident_config["incident_threshold_ms"])
+    return config
+
+
+def load_incident_history(
+    output_dir: Path,
+    max_history: int,
+    *,
+    include_ongoing: bool = False,
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], list[dict[str, Any]]]:
+    incidents_path = output_dir / "incidents.ndjson"
+    alerts_path = output_dir / "alerts.ndjson"
+
+    completed_incidents: list[dict[str, Any]] = []
+    ongoing_incidents: dict[str, dict[str, Any]] = {}
+    alerts: list[dict[str, Any]] = []
+
+    if incidents_path.exists():
+        for line in incidents_path.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            incident_id = payload.get("incident_id")
+            event = payload.get("event")
+            if not incident_id or not event:
+                continue
+            if event == "incident_started":
+                ongoing_incidents[incident_id] = {
+                    **payload,
+                    "status": "ongoing",
+                    "alerted_at_ms": payload.get("alerted_at_ms"),
+                }
+            elif event == "incident_ended":
+                started = ongoing_incidents.pop(incident_id, None)
+                if started is not None:
+                    completed_incidents.append({**started, **payload, "status": "ended"})
+                else:
+                    completed_incidents.append({**payload, "status": "ended"})
+
+    if alerts_path.exists():
+        alert_by_id: dict[str, dict[str, Any]] = {}
+        for line in alerts_path.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                alert = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            alert_id = alert.get("alert_id")
+            if alert_id:
+                alert_by_id[alert_id] = alert
+            else:
+                alerts.append(alert)
+        alerts.extend(alert_by_id.values())
+
+    alert_by_incident_id = {alert.get("incident_id"): alert for alert in alerts if alert.get("incident_id")}
+    if include_ongoing:
+        for incident_id, incident in ongoing_incidents.items():
+            alert = alert_by_incident_id.get(incident_id)
+            if alert is not None:
+                incident["alerted_at_ms"] = alert.get("alerted_at_ms")
+    for incident in completed_incidents:
+        alert = alert_by_incident_id.get(incident.get("incident_id"))
+        if alert is not None:
+            incident["alerted_at_ms"] = alert.get("alerted_at_ms")
+
+    if not include_ongoing:
+        ongoing_incidents = {}
+
+    return (
+        trim_history(completed_incidents, max_history),
+        ongoing_incidents,
+        trim_history(alerts, max_history),
+    )
+
+
+def load_monitor_history(
+    output_dir: Path,
+    max_history: int,
+) -> tuple[
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+]:
+    events_path = output_dir / "monitor_events.ndjson"
+    if not events_path.exists():
+        return [], [], [], [], [], [], []
+
+    completed_utterances: list[dict[str, Any]] = []
+    word_delay_points: list[dict[str, Any]] = []
+    rn_word_delay_points: list[dict[str, Any]] = []
+    rn_true_word_delay_points: list[dict[str, Any]] = []
+    logcat_true_word_delay_points: list[dict[str, Any]] = []
+    drop_events: list[dict[str, Any]] = []
+    last_events: list[dict[str, Any]] = []
+    word_history_limit = max_history * 40
+
+    for line in events_path.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+
+        kind = payload.get("kind")
+        last_events.append(payload)
+        if kind == "utterance_completed":
+            completed_utterances.append(payload)
+        elif kind == "drop_event":
+            drop_events.append(payload)
+        elif kind == "word_match":
+            word_delay_points.append(payload)
+            source = payload.get("source")
+            if source == "rn":
+                rn_word_delay_points.append(payload)
+            elif source == "rn_true":
+                rn_true_word_delay_points.append(payload)
+            elif source == "logcat_true":
+                logcat_true_word_delay_points.append(payload)
+
+    return (
+        trim_history(completed_utterances, max_history),
+        trim_history(word_delay_points, word_history_limit),
+        trim_history(rn_word_delay_points, word_history_limit),
+        trim_history(rn_true_word_delay_points, word_history_limit),
+        trim_history(logcat_true_word_delay_points, word_history_limit),
+        trim_history(drop_events, max_history),
+        trim_history(last_events, 100),
+    )
+
+
 class MonitorState:
-    def __init__(self, output_dir: Path, max_history: int, dataset: str, split: str) -> None:
+    def __init__(self, output_dir: Path, max_history: int, dataset: str, split: str, incident_config: dict[str, dict[str, Any]]) -> None:
         self.output_dir = output_dir
         self.max_history = max_history
         self.lock = threading.Lock()
         self.started_at_ms = int(time.time() * 1000)
         self.dataset = dataset
         self.split = split
+        self.incident_config = incident_config
         self.status = "starting"
         self.status_detail = "booting"
         self.last_error: str | None = None
@@ -320,21 +478,148 @@ class MonitorState:
         self.logcat_visible_lines: list[str] = []
         self.last_logcat_event_ts_ms: int | None = None
         self.current_utterance: UtteranceState | None = None
-        self.completed_utterances: list[dict[str, Any]] = []
-        self.word_delay_points: list[dict[str, Any]] = []
-        self.rn_word_delay_points: list[dict[str, Any]] = []
-        self.rn_true_word_delay_points: list[dict[str, Any]] = []
-        self.logcat_true_word_delay_points: list[dict[str, Any]] = []
-        self.maestro_word_delay_points: list[dict[str, Any]] = []
-        self.maestro_true_word_delay_points: list[dict[str, Any]] = []
-        self.drop_events: list[dict[str, Any]] = []
-        self.last_events: list[dict[str, Any]] = []
+        (
+            self.completed_utterances,
+            self.word_delay_points,
+            self.rn_word_delay_points,
+            self.rn_true_word_delay_points,
+            self.logcat_true_word_delay_points,
+            self.drop_events,
+            self.last_events,
+        ) = load_monitor_history(output_dir, max_history)
+        self.drop_last_signature = ""
+        self.drop_last_change_ts_ms: int | None = None
+        self.drop_open: dict[str, Any] | None = None
+        self.active_drop_incident_id: str | None = None
+        # Treat each monitor process as a fresh incident session. Historical
+        # incidents remain visible once ended, but previously open incidents do
+        # not carry over into a new server run.
+        self.completed_incidents, self.ongoing_incidents, self.alerts = load_incident_history(
+            output_dir,
+            max_history,
+            include_ongoing=False,
+        )
 
     def append_event(self, kind: str, payload: dict[str, Any]) -> None:
         event = {"kind": kind, **payload}
         self.last_events.append(event)
         self.last_events = trim_history(self.last_events, 100)
         write_ndjson(self.output_dir / "monitor_events.ndjson", event)
+
+    def snapshot_word_history_limit(self) -> int:
+        # Keep enough points to preserve the recent graph shape without sending
+        # multi-megabyte /state responses to the browser on every poll.
+        return max(200, self.max_history * SNAPSHOT_WORD_HISTORY_MULTIPLIER)
+
+    def build_incident_id(self, incident_type: str, started_at_ms: int, dataset_row_idx: int | None = None) -> str:
+        suffix = f":row{dataset_row_idx}" if dataset_row_idx is not None else ""
+        return f"{incident_type}:{started_at_ms}{suffix}"
+
+    def get_incident_rule(self, incident_type: str) -> dict[str, Any]:
+        return self.incident_config.get(incident_type, {"name": incident_type, "enabled": False, "incident_threshold_ms": 0, "alert_threshold_ms": 0})
+
+    def find_ongoing_incident_by_type(self, incident_type: str) -> dict[str, Any] | None:
+        for incident in self.ongoing_incidents.values():
+            if incident.get("incident_type") == incident_type:
+                return incident
+        return None
+
+    def start_incident(
+        self,
+        incident_type: str,
+        started_at_ms: int,
+        details: dict[str, Any],
+    ) -> str | None:
+        incident_rule = self.get_incident_rule(incident_type)
+        if not incident_rule.get("enabled", True):
+            return None
+
+        incident_id = self.build_incident_id(incident_type, started_at_ms, details.get("dataset_row_idx"))
+        if incident_id in self.ongoing_incidents:
+            return incident_id
+
+        incident = {
+            "incident_id": incident_id,
+            "incident_type": incident_type,
+            "incident_name": incident_rule.get("name", incident_type),
+            "event": "incident_started",
+            "status": "ongoing",
+            "started_at_ms": started_at_ms,
+            "incident_threshold_ms": int(incident_rule.get("incident_threshold_ms", 0)),
+            "alert_threshold_ms": int(incident_rule.get("alert_threshold_ms", 0)),
+            "alerted_at_ms": None,
+            **details,
+        }
+        self.ongoing_incidents[incident_id] = incident
+        write_ndjson(self.output_dir / "incidents.ndjson", incident)
+        self.append_event("incident_started", incident)
+        return incident_id
+
+    def maybe_alert_incident(self, incident_id: str, now_ms: int) -> dict[str, Any] | None:
+        incident = self.ongoing_incidents.get(incident_id)
+        if incident is None or incident.get("alerted_at_ms") is not None:
+            return None
+
+        started_at_ms = int(incident["started_at_ms"])
+        alert_threshold_ms = int(incident["alert_threshold_ms"])
+        if now_ms - started_at_ms < alert_threshold_ms:
+            return None
+
+        alert = {
+            "alert_id": f"alert:{incident_id}",
+            "incident_id": incident_id,
+            "incident_type": incident["incident_type"],
+            "incident_name": incident.get("incident_name", incident["incident_type"]),
+            "status": "pending_dispatch",
+            "started_at_ms": started_at_ms,
+            "alerted_at_ms": now_ms,
+            "duration_ms": now_ms - started_at_ms,
+            "alert_threshold_ms": alert_threshold_ms,
+            "dataset_row_idx": incident.get("dataset_row_idx"),
+            "utterance_text": incident.get("utterance_text"),
+            "reason": incident.get("reason"),
+        }
+        incident["alerted_at_ms"] = now_ms
+        self.alerts.append(alert)
+        self.alerts = trim_history(self.alerts, self.max_history)
+        write_ndjson(self.output_dir / "alerts.ndjson", alert)
+        self.append_event("incident_alerted", alert)
+        return alert
+
+    def update_alert(self, alert_id: str, **updates: Any) -> dict[str, Any] | None:
+        with self.lock:
+            for alert in self.alerts:
+                if alert.get("alert_id") != alert_id:
+                    continue
+                alert.update(updates)
+                write_ndjson(self.output_dir / "alerts.ndjson", alert)
+                self.append_event("alert_updated", {"alert_id": alert_id, **updates})
+                return alert
+        return None
+
+    def end_incident(self, incident_id: str, ended_at_ms: int, details: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        incident = self.ongoing_incidents.pop(incident_id, None)
+        if incident is None:
+            return None
+
+        ended = {
+            **incident,
+            "event": "incident_ended",
+            "status": "ended",
+            "ended_at_ms": ended_at_ms,
+            "duration_ms": ended_at_ms - int(incident["started_at_ms"]),
+            **(details or {}),
+        }
+        self.completed_incidents.append(ended)
+        self.completed_incidents = trim_history(self.completed_incidents, self.max_history)
+        write_ndjson(self.output_dir / "incidents.ndjson", ended)
+        self.append_event("incident_ended", ended)
+        return ended
+
+    def append_drop_event(self, drop: dict[str, Any]) -> None:
+        self.drop_events.append(drop)
+        self.drop_events = trim_history(self.drop_events, self.max_history)
+        self.append_event("drop_event", drop)
 
     def serialize_utterance(self, utterance: UtteranceState | None) -> dict[str, Any] | None:
         if utterance is None:
@@ -345,7 +630,6 @@ class MonitorState:
             "start_ts_ms": utterance.start_ts_ms,
             "end_ts_ms": utterance.end_ts_ms,
             "rn_matched_word_count": utterance.rn_matched_word_count,
-            "maestro_matched_word_count": utterance.maestro_matched_word_count,
             "word_count": len(utterance.words),
             "first_visible_activity_ts_ms": utterance.first_visible_activity_ts_ms,
             "last_visible_change_ts_ms": utterance.last_visible_change_ts_ms,
@@ -362,10 +646,6 @@ class MonitorState:
                     "rn_true_visible_delay_ms": word.rn_true_visible_delay_ms,
                     "logcat_true_first_visible_ts_ms": word.logcat_true_first_visible_ts_ms,
                     "logcat_true_visible_delay_ms": word.logcat_true_visible_delay_ms,
-                    "maestro_first_visible_ts_ms": word.maestro_first_visible_ts_ms,
-                    "maestro_visible_delay_ms": word.maestro_visible_delay_ms,
-                    "maestro_true_first_visible_ts_ms": word.maestro_true_first_visible_ts_ms,
-                    "maestro_true_visible_delay_ms": word.maestro_true_visible_delay_ms,
                 }
                 for word in utterance.words
             ],
@@ -373,6 +653,20 @@ class MonitorState:
 
     def snapshot(self) -> dict[str, Any]:
         with self.lock:
+            now_ms = int(time.time() * 1000)
+            snapshot_word_history_limit = self.snapshot_word_history_limit()
+            ongoing_incidents = []
+            for incident in self.ongoing_incidents.values():
+                started_at_ms = int(incident["started_at_ms"])
+                alerted_at_ms = incident.get("alerted_at_ms")
+                ongoing_incidents.append(
+                    {
+                        **incident,
+                        "current_duration_ms": now_ms - started_at_ms,
+                        "time_to_alert_ms": None if alerted_at_ms else max(0, int(incident["alert_threshold_ms"]) - (now_ms - started_at_ms)),
+                    }
+                )
+            ongoing_incidents.sort(key=lambda item: item["started_at_ms"])
             return {
                 "started_at_ms": self.started_at_ms,
                 "dataset": self.dataset,
@@ -389,13 +683,17 @@ class MonitorState:
                 "last_logcat_event_ts_ms": self.last_logcat_event_ts_ms,
                 "current_utterance": self.serialize_utterance(self.current_utterance),
                 "completed_utterances": list(self.completed_utterances),
-                "word_delay_points": list(self.word_delay_points),
-                "rn_word_delay_points": list(self.rn_word_delay_points),
-                "rn_true_word_delay_points": list(self.rn_true_word_delay_points),
-                "logcat_true_word_delay_points": list(self.logcat_true_word_delay_points),
-                "maestro_word_delay_points": list(self.maestro_word_delay_points),
-                "maestro_true_word_delay_points": list(self.maestro_true_word_delay_points),
+                "word_delay_points": trim_history(list(self.word_delay_points), snapshot_word_history_limit),
+                "rn_word_delay_points": trim_history(list(self.rn_word_delay_points), snapshot_word_history_limit),
+                "rn_true_word_delay_points": trim_history(list(self.rn_true_word_delay_points), snapshot_word_history_limit),
+                "logcat_true_word_delay_points": trim_history(
+                    list(self.logcat_true_word_delay_points),
+                    snapshot_word_history_limit,
+                ),
                 "drop_events": list(self.drop_events),
+                "ongoing_incidents": ongoing_incidents,
+                "completed_incidents": list(self.completed_incidents),
+                "alerts": list(self.alerts),
                 "last_events": list(self.last_events),
             }
 
@@ -488,7 +786,56 @@ def download_audio(cache_dir: Path, row_idx: int, audio_url: str) -> Path:
     return destination
 
 
-def play_audio_locally(audio_file: Path) -> subprocess.Popen[bytes]:
+def get_default_output_device_name() -> str | None:
+    result = subprocess.run(
+        ["system_profiler", "SPAudioDataType"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    lines = result.stdout.splitlines()
+    for index, raw_line in enumerate(lines):
+        line = raw_line.rstrip()
+        if "Default Output Device: Yes" not in line:
+            continue
+
+        for candidate in range(index - 1, -1, -1):
+            header = lines[candidate].rstrip()
+            stripped = header.strip()
+            if not stripped or stripped == "Devices:" or stripped == "Audio:" or ":" not in stripped:
+                continue
+            if header.startswith("        ") and not header.startswith("          "):
+                return stripped[:-1]
+    return None
+
+
+def ensure_audio_output_device(device_name: str) -> None:
+    current_device = get_default_output_device_name()
+    if current_device == device_name:
+        return
+
+    switch_audio_source = shutil.which("SwitchAudioSource")
+    if switch_audio_source:
+        subprocess.run(
+            [switch_audio_source, "-t", "output", "-s", device_name],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        current_device = get_default_output_device_name()
+        if current_device == device_name:
+            return
+
+    current_label = current_device or "unknown"
+    raise RuntimeError(
+        f"Expected audio output device '{device_name}', but macOS default output is '{current_label}'. "
+        "Switch to the expected device manually or install SwitchAudioSource to allow auto-switching."
+    )
+
+
+def play_audio_locally(audio_file: Path, audio_output_device: str | None = None) -> subprocess.Popen[bytes]:
+    if audio_output_device:
+        ensure_audio_output_device(audio_output_device)
     return subprocess.Popen(["afplay", str(audio_file)])
 
 
@@ -507,7 +854,196 @@ class MonitorWorker:
         self.rn_stream_process: subprocess.Popen[str] | None = None
         self.logcat_process: subprocess.Popen[str] | None = None
         self.use_rn_stream = False
-        self.use_maestro_stream = False
+        self.last_audio_output_check_ts_ms = 0
+        self.last_audio_output_device_name: str | None = None
+        self.last_audio_output_check_error: str | None = None
+        self.last_foreground_app_check_ts_ms = 0
+        self.last_is_app_foreground: bool | None = None
+        self.last_foreground_app_check_error: str | None = None
+        self.last_foreground_focus: str | None = None
+
+    @property
+    def adb_prefix(self) -> list[str]:
+        prefix = ["adb"]
+        if self.args.device:
+            prefix.extend(["-s", self.args.device])
+        return prefix
+
+    def _stop_subprocess(self, process: subprocess.Popen[Any] | None) -> None:
+        if process is None or process.poll() is not None:
+            return
+
+        process.terminate()
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=2)
+
+    def request_stop(self) -> None:
+        self.stop_event.set()
+        self._stop_subprocess(self.playback_process)
+        self._stop_subprocess(self.rn_stream_process)
+        self._stop_subprocess(self.logcat_process)
+
+    def maybe_alert_and_dispatch(self, incident_id: str, now_ms: int) -> dict[str, Any] | None:
+        alert = self.state.maybe_alert_incident(incident_id, now_ms)
+        if alert is not None:
+            threading.Thread(target=self.dispatch_alert_intent, args=(dict(alert), now_ms), daemon=True).start()
+        return alert
+
+    def dispatch_alert_intent(self, alert: dict[str, Any], now_ms: int) -> dict[str, Any] | None:
+        alert_id = str(alert.get("alert_id") or "")
+        if not alert_id:
+            return None
+
+        if self.args.disable_alert_intent_dispatch:
+            return self.state.update_alert(
+                alert_id,
+                status="dispatch_disabled",
+                dispatch_attempted_at_ms=now_ms,
+            )
+
+        action = (self.args.alert_intent_action or "").strip()
+        if not action:
+            return self.state.update_alert(
+                alert_id,
+                status="dispatch_disabled",
+                dispatch_attempted_at_ms=now_ms,
+                dispatch_error="No alert intent action configured.",
+            )
+
+        failure_message = (
+            f"{alert.get('incident_name', alert.get('incident_type', 'incident'))} alert reached after "
+            f"{int(alert.get('duration_ms') or 0) / 1000:.1f}s."
+        )
+        remote_cmd = [
+            "am",
+            "broadcast",
+            "-a",
+            action,
+        ]
+        component = (self.args.alert_intent_component or "").strip()
+        if component:
+            remote_cmd.extend(["-n", component])
+        remote_cmd.extend(
+            [
+                "--es",
+                "failure_code",
+                str(alert.get("incident_type") or "unknown_incident"),
+                "--es",
+                "failure_message",
+                failure_message,
+                "--es",
+                "test_run_id",
+                alert_id,
+                "--es",
+                "scenario_name",
+                str(alert.get("incident_name") or alert.get("incident_type") or "Unknown Incident"),
+                "--es",
+                "source",
+                "live_word_monitor",
+                "--es",
+                "alert_id",
+                alert_id,
+                "--es",
+                "incident_id",
+                str(alert.get("incident_id") or ""),
+                "--es",
+                "incident_type",
+                str(alert.get("incident_type") or ""),
+                "--es",
+                "incident_name",
+                str(alert.get("incident_name") or ""),
+                "--es",
+                "reason",
+                str(alert.get("reason") or ""),
+                "--ei",
+                "duration_ms",
+                str(int(alert.get("duration_ms") or 0)),
+                "--ei",
+                "alert_threshold_ms",
+                str(int(alert.get("alert_threshold_ms") or 0)),
+                "--el",
+                "started_at_ms",
+                str(int(alert.get("started_at_ms") or 0)),
+                "--el",
+                "alerted_at_ms",
+                str(int(alert.get("alerted_at_ms") or now_ms)),
+            ]
+        )
+        if alert.get("dataset_row_idx") is not None:
+            remote_cmd.extend(["--ei", "dataset_row_idx", str(int(alert["dataset_row_idx"]))])
+        if alert.get("utterance_text"):
+            remote_cmd.extend(["--es", "utterance_text", str(alert["utterance_text"])])
+
+        adb_cmd = self.adb_prefix + ["shell", " ".join(shlex.quote(part) for part in remote_cmd)]
+
+        try:
+            result = subprocess.run(adb_cmd, check=True, capture_output=True, text=True, timeout=15)
+            return self.state.update_alert(
+                alert_id,
+                status="dispatched",
+                dispatch_attempted_at_ms=now_ms,
+                dispatch_completed_at_ms=int(time.time() * 1000),
+                dispatch_output=(result.stdout or result.stderr).strip() or "broadcast_sent",
+            )
+        except Exception as exc:
+            return self.state.update_alert(
+                alert_id,
+                status="dispatch_failed",
+                dispatch_attempted_at_ms=now_ms,
+                dispatch_error=str(exc),
+            )
+
+    def handle_captions_tester_incident_result(self, payload: dict[str, Any], now_ms: int) -> dict[str, Any] | None:
+        alert_id = str(payload.get("alert_id") or payload.get("test_run_id") or "").strip()
+        if not alert_id:
+            return None
+
+        result_status = str(payload.get("status") or "").strip()
+        updates: dict[str, Any] = {
+            "report_state": result_status or "unknown",
+            "report_updated_at_ms": now_ms,
+        }
+        incident_id = str(payload.get("incident_id") or "").strip()
+        if incident_id:
+            updates["reported_incident_id"] = incident_id
+            updates["reported_incident_url"] = urllib.parse.urljoin(CONSOLE_INCIDENT_BASE_URL, incident_id)
+
+        reason = str(payload.get("reason") or "").strip()
+        error = str(payload.get("error") or "").strip()
+        if reason:
+            updates["report_reason"] = reason
+        if error:
+            updates["report_error"] = error
+        return self.state.update_alert(alert_id, **updates)
+
+    def find_latest_unreported_alert_id(self) -> str | None:
+        with self.state.lock:
+            ordered_alerts = sorted(self.state.alerts, key=lambda item: int(item.get("alerted_at_ms") or 0), reverse=True)
+            for alert in ordered_alerts:
+                alert_id = str(alert.get("alert_id") or "").strip()
+                if not alert_id or alert.get("reported_incident_id"):
+                    continue
+                return alert_id
+        return None
+
+    def handle_legacy_captions_tester_filed_log(self, line: str, now_ms: int) -> dict[str, Any] | None:
+        match = CAPTIONS_TESTER_FILED_RE.search(line)
+        if not match:
+            return None
+        alert_id = self.find_latest_unreported_alert_id()
+        if not alert_id:
+            return None
+        incident_id = match.group(1)
+        return self.state.update_alert(
+            alert_id,
+            report_state="filed",
+            report_updated_at_ms=now_ms,
+            reported_incident_id=incident_id,
+            reported_incident_url=urllib.parse.urljoin(CONSOLE_INCIDENT_BASE_URL, incident_id),
+        )
 
     def make_utterance(self, prepared_row: PreparedRow, now_ms: int) -> UtteranceState:
         row = prepared_row.row
@@ -549,7 +1085,7 @@ class MonitorWorker:
             return
 
         utterance = self.make_utterance(prepared_row, now_ms)
-        self.playback_process = play_audio_locally(prepared_row.audio_file)
+        self.playback_process = play_audio_locally(prepared_row.audio_file, self.args.audio_output_device)
         self.state.current_utterance = utterance
         self.state.status = "running_utterance"
         self.state.status_detail = f"row {utterance.dataset_row_idx}"
@@ -575,43 +1111,53 @@ class MonitorWorker:
             },
         )
 
-    def finalize_utterance(self, utterance: UtteranceState, now_ms: int) -> None:
-        if utterance.drop_open is not None:
-            duration_ms = now_ms - int(utterance.drop_open["started_at_ms"])
-            if duration_ms >= self.args.drop_threshold_ms:
-                drop = {
-                    "dataset_row_idx": utterance.dataset_row_idx,
-                    "started_at_ms": int(utterance.drop_open["started_at_ms"]),
-                    "ended_at_ms": now_ms,
-                    "duration_ms": duration_ms,
-                }
-                self.state.drop_events.append(drop)
-                self.state.drop_events = trim_history(self.state.drop_events, self.state.max_history)
-                self.state.append_event("drop_event", drop)
+    def end_active_drop_incident(self, now_ms: int, reason: str, details: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        incident_id = self.state.active_drop_incident_id
+        if incident_id is None:
+            return None
 
+        ended_incident = self.state.end_incident(
+            incident_id,
+            now_ms,
+            {
+                "reason": reason,
+                **(details or {}),
+            },
+        )
+        self.state.active_drop_incident_id = None
+        self.state.drop_open = None
+        if ended_incident is not None:
+            self.state.append_drop_event(
+                {
+                    "incident_id": ended_incident["incident_id"],
+                    "dataset_row_idx": ended_incident.get("dataset_row_idx"),
+                    "started_at_ms": ended_incident["started_at_ms"],
+                    "ended_at_ms": ended_incident["ended_at_ms"],
+                    "duration_ms": ended_incident["duration_ms"],
+                }
+            )
+        return ended_incident
+
+    def finalize_utterance(self, utterance: UtteranceState, now_ms: int) -> None:
         rn_delays = [word.rn_visible_delay_ms for word in utterance.words if word.rn_visible_delay_ms is not None]
         rn_true_delays = [word.rn_true_visible_delay_ms for word in utterance.words if word.rn_true_visible_delay_ms is not None]
         logcat_true_delays = [word.logcat_true_visible_delay_ms for word in utterance.words if word.logcat_true_visible_delay_ms is not None]
-        maestro_delays = [word.maestro_visible_delay_ms for word in utterance.words if word.maestro_visible_delay_ms is not None]
-        maestro_true_delays = [word.maestro_true_visible_delay_ms for word in utterance.words if word.maestro_true_visible_delay_ms is not None]
+        average_rn_delay_ms = trimmed_mean_ms(rn_delays)
+        average_rn_true_delay_ms = trimmed_mean_ms(rn_true_delays)
+        average_logcat_true_delay_ms = trimmed_mean_ms(logcat_true_delays)
         summary = {
             "dataset_row_idx": utterance.dataset_row_idx,
             "text": utterance.text,
             "start_ts_ms": utterance.start_ts_ms,
             "end_ts_ms": utterance.end_ts_ms,
             "rn_matched_words": utterance.rn_matched_word_count,
-            "maestro_matched_words": utterance.maestro_matched_word_count,
             "word_count": len(utterance.words),
-            "average_rn_delay_ms": int(sum(rn_delays) / len(rn_delays)) if rn_delays else None,
-            "average_rn_true_delay_ms": int(sum(rn_true_delays) / len(rn_true_delays)) if rn_true_delays else None,
-            "average_logcat_true_delay_ms": int(sum(logcat_true_delays) / len(logcat_true_delays)) if logcat_true_delays else None,
+            "average_rn_delay_ms": int(round(average_rn_delay_ms)) if average_rn_delay_ms is not None else None,
+            "average_rn_true_delay_ms": int(round(average_rn_true_delay_ms)) if average_rn_true_delay_ms is not None else None,
+            "average_logcat_true_delay_ms": int(round(average_logcat_true_delay_ms)) if average_logcat_true_delay_ms is not None else None,
             "max_rn_delay_ms": max(rn_delays) if rn_delays else None,
             "max_rn_true_delay_ms": max(rn_true_delays) if rn_true_delays else None,
             "max_logcat_true_delay_ms": max(logcat_true_delays) if logcat_true_delays else None,
-            "average_maestro_delay_ms": int(sum(maestro_delays) / len(maestro_delays)) if maestro_delays else None,
-            "max_maestro_delay_ms": max(maestro_delays) if maestro_delays else None,
-            "average_maestro_true_delay_ms": int(sum(maestro_true_delays) / len(maestro_true_delays)) if maestro_true_delays else None,
-            "max_maestro_true_delay_ms": max(maestro_true_delays) if maestro_true_delays else None,
         }
         self.state.completed_utterances.append(summary)
         self.state.completed_utterances = trim_history(self.state.completed_utterances, self.state.max_history)
@@ -625,27 +1171,340 @@ class MonitorWorker:
         self.state.status_detail = "waiting for next utterance"
         self.next_start_ts_ms = now_ms + self.args.inter_utterance_gap_ms
 
-    def update_drop_tracking(self, utterance: UtteranceState, now_ms: int, normalized_lines: list[str]) -> None:
+    def update_drop_tracking(self, utterance: UtteranceState | None, now_ms: int, normalized_lines: list[str]) -> None:
+        drop_rule = self.state.get_incident_rule("drop_event")
+        drop_threshold_ms = int(drop_rule.get("incident_threshold_ms", 0))
+        if not drop_rule.get("enabled", True):
+            self.end_active_drop_incident(now_ms, "incident_disabled")
+            return
+
         signature = "|".join(normalized_lines)
-        if signature != utterance.last_signature:
-            utterance.last_signature = signature
-            utterance.last_visible_change_ts_ms = now_ms
-            utterance.drop_open = None
-            if normalized_lines and utterance.first_visible_activity_ts_ms is None:
-                utterance.first_visible_activity_ts_ms = now_ms
+        if self.state.drop_last_change_ts_ms is None:
+            self.state.drop_last_signature = signature
+            self.state.drop_last_change_ts_ms = now_ms
             return
 
-        if utterance.first_visible_activity_ts_ms is None or utterance.last_visible_change_ts_ms is None:
+        if signature != self.state.drop_last_signature:
+            self.state.drop_last_signature = signature
+            self.state.drop_last_change_ts_ms = now_ms
+            if self.state.active_drop_incident_id is not None:
+                self.end_active_drop_incident(
+                    now_ms,
+                    "visible_lines_resumed",
+                    {
+                        "dataset_row_idx": utterance.dataset_row_idx if utterance is not None else None,
+                        "utterance_text": utterance.text if utterance is not None else None,
+                    },
+                )
+            else:
+                self.state.drop_open = None
             return
 
-        if now_ms - utterance.last_visible_change_ts_ms < self.args.drop_threshold_ms:
+        if self.state.drop_last_change_ts_ms is None:
             return
 
-        if utterance.drop_open is None:
-            utterance.drop_open = {
-                "dataset_row_idx": utterance.dataset_row_idx,
-                "started_at_ms": utterance.last_visible_change_ts_ms,
+        if self.state.active_drop_incident_id is not None:
+            self.maybe_alert_and_dispatch(self.state.active_drop_incident_id, now_ms)
+            return
+
+        if now_ms - self.state.drop_last_change_ts_ms < drop_threshold_ms:
+            return
+
+        if self.state.drop_open is None:
+            self.state.drop_open = {
+                "dataset_row_idx": utterance.dataset_row_idx if utterance is not None else None,
+                "started_at_ms": self.state.drop_last_change_ts_ms,
             }
+
+        incident_id = self.state.start_incident(
+            "drop_event",
+            int(self.state.drop_open["started_at_ms"]),
+            {
+                "dataset_row_idx": utterance.dataset_row_idx if utterance is not None else None,
+                "utterance_text": utterance.text if utterance is not None else None,
+                "reason": "visible_lines_stalled",
+            },
+        )
+
+        if incident_id is not None:
+            self.state.active_drop_incident_id = incident_id
+            self.maybe_alert_and_dispatch(incident_id, now_ms)
+
+    def evaluate_high_average_latency_incident(self, now_ms: int) -> None:
+        incident_rule = self.state.get_incident_rule("high_average_latency")
+        ongoing_incident = self.state.find_ongoing_incident_by_type("high_average_latency")
+
+        if not incident_rule.get("enabled", True):
+            if ongoing_incident is not None:
+                self.state.end_incident(ongoing_incident["incident_id"], now_ms, {"reason": "incident_disabled"})
+            return
+
+        window_size = max(1, int(incident_rule.get("window_size", 10)))
+        points = self.state.logcat_true_word_delay_points[-window_size:]
+        if len(points) < window_size:
+            return
+
+        trimmed_average_delay = trimmed_mean_ms([int(point["delay_ms"]) for point in points])
+        if trimmed_average_delay is None:
+            return
+        average_delay_ms = int(round(trimmed_average_delay))
+        threshold_ms = int(incident_rule.get("incident_threshold_ms", 0))
+        resolve_threshold_ms = int(incident_rule.get("resolve_threshold_ms", threshold_ms))
+
+        if ongoing_incident is not None:
+            ongoing_incident.update(
+                {
+                    "current_average_delay_ms": average_delay_ms,
+                    "current_trimmed_average_delay_ms": average_delay_ms,
+                    "window_size": window_size,
+                    "last_point_ts_ms": points[-1]["ts_ms"],
+                }
+            )
+
+        if average_delay_ms >= threshold_ms:
+            incident_id = ongoing_incident["incident_id"] if ongoing_incident is not None else self.state.start_incident(
+                "high_average_latency",
+                now_ms,
+                {
+                    "current_average_delay_ms": average_delay_ms,
+                    "current_trimmed_average_delay_ms": average_delay_ms,
+                    "window_size": window_size,
+                    "last_point_ts_ms": points[-1]["ts_ms"],
+                    "reason": "trimmed_moving_average_above_threshold",
+                },
+            )
+            if incident_id is not None:
+                active_incident = self.state.ongoing_incidents.get(incident_id)
+                if active_incident is not None:
+                    active_incident.update(
+                        {
+                            "current_average_delay_ms": average_delay_ms,
+                            "current_trimmed_average_delay_ms": average_delay_ms,
+                            "window_size": window_size,
+                            "last_point_ts_ms": points[-1]["ts_ms"],
+                        }
+                    )
+                self.maybe_alert_and_dispatch(incident_id, now_ms)
+            return
+
+        if ongoing_incident is not None and average_delay_ms < resolve_threshold_ms:
+            self.state.end_incident(
+                ongoing_incident["incident_id"],
+                now_ms,
+                {
+                    "reason": "moving_average_recovered",
+                    "recovered_average_delay_ms": average_delay_ms,
+                },
+            )
+
+    def get_audio_output_probe(self, now_ms: int, refresh_interval_ms: int = 2000) -> tuple[str | None, str | None]:
+        if self.last_audio_output_check_ts_ms and now_ms - self.last_audio_output_check_ts_ms < refresh_interval_ms:
+            return self.last_audio_output_device_name, self.last_audio_output_check_error
+
+        try:
+            self.last_audio_output_device_name = get_default_output_device_name()
+            self.last_audio_output_check_error = None
+        except Exception as exc:
+            self.last_audio_output_device_name = None
+            self.last_audio_output_check_error = str(exc)
+
+        self.last_audio_output_check_ts_ms = now_ms
+        return self.last_audio_output_device_name, self.last_audio_output_check_error
+
+    def evaluate_audio_output_device_incident(self, now_ms: int) -> None:
+        incident_type = "audio_output_device_mismatch"
+        incident_rule = self.state.get_incident_rule(incident_type)
+        ongoing_incident = self.state.find_ongoing_incident_by_type(incident_type)
+        expected_output_device = self.args.audio_output_device
+
+        if not incident_rule.get("enabled", True) or not expected_output_device:
+            if ongoing_incident is not None:
+                self.state.end_incident(
+                    ongoing_incident["incident_id"],
+                    now_ms,
+                    {
+                        "reason": "incident_disabled" if not incident_rule.get("enabled", True) else "output_device_monitoring_disabled",
+                    },
+                )
+            return
+
+        current_output_device, probe_error = self.get_audio_output_probe(now_ms)
+        details = {
+            "expected_output_device": expected_output_device,
+            "current_output_device": current_output_device,
+        }
+
+        if probe_error is not None:
+            incident_id = ongoing_incident["incident_id"] if ongoing_incident is not None else self.state.start_incident(
+                incident_type,
+                now_ms,
+                {
+                    **details,
+                    "reason": "output_device_probe_failed",
+                    "probe_error": probe_error,
+                },
+            )
+            if incident_id is not None:
+                active_incident = self.state.ongoing_incidents.get(incident_id)
+                if active_incident is not None:
+                    active_incident.update(
+                        {
+                            **details,
+                            "reason": "output_device_probe_failed",
+                            "probe_error": probe_error,
+                        }
+                    )
+                self.maybe_alert_and_dispatch(incident_id, now_ms)
+            return
+
+        if current_output_device != expected_output_device:
+            incident_id = ongoing_incident["incident_id"] if ongoing_incident is not None else self.state.start_incident(
+                incident_type,
+                now_ms,
+                {
+                    **details,
+                    "reason": "default_output_mismatch",
+                },
+            )
+            if incident_id is not None:
+                active_incident = self.state.ongoing_incidents.get(incident_id)
+                if active_incident is not None:
+                    active_incident.update(
+                        {
+                            **details,
+                            "reason": "default_output_mismatch",
+                        }
+                    )
+                self.maybe_alert_and_dispatch(incident_id, now_ms)
+            return
+
+        if ongoing_incident is not None:
+            self.state.end_incident(
+                ongoing_incident["incident_id"],
+                now_ms,
+                {
+                    **details,
+                    "reason": "expected_output_device_restored",
+                },
+            )
+
+    def get_foreground_app_probe(
+        self,
+        now_ms: int,
+        refresh_interval_ms: int = 2000,
+    ) -> tuple[bool | None, str | None, str | None]:
+        if self.last_foreground_app_check_ts_ms and now_ms - self.last_foreground_app_check_ts_ms < refresh_interval_ms:
+            return (
+                self.last_is_app_foreground,
+                self.last_foreground_focus,
+                self.last_foreground_app_check_error,
+            )
+
+        focused_app: str | None = None
+        probe_error: str | None = None
+        is_app_foreground: bool | None = None
+        try:
+            focus_result = subprocess.run(
+                [*self.adb_prefix, "shell", "dumpsys", "window"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            for line in focus_result.stdout.splitlines():
+                if "mCurrentFocus=" in line:
+                    focused_app = line.strip()
+                    break
+            is_app_foreground = bool(
+                focused_app
+                and "com.mentra.mentra" in focused_app
+                and "MainActivity" in focused_app
+            )
+        except Exception as exc:
+            probe_error = str(exc)
+            is_app_foreground = None
+
+        self.last_foreground_app_check_ts_ms = now_ms
+        self.last_is_app_foreground = is_app_foreground
+        self.last_foreground_focus = focused_app
+        self.last_foreground_app_check_error = probe_error
+        return is_app_foreground, focused_app, probe_error
+
+    def evaluate_app_not_foreground_incident(self, now_ms: int) -> None:
+        incident_type = "app_not_foreground"
+        incident_rule = self.state.get_incident_rule(incident_type)
+        ongoing_incident = self.state.find_ongoing_incident_by_type(incident_type)
+
+        if not incident_rule.get("enabled", True):
+            if ongoing_incident is not None:
+                self.state.end_incident(
+                    ongoing_incident["incident_id"],
+                    now_ms,
+                    {
+                        "reason": "incident_disabled",
+                    },
+                )
+            return
+
+        is_app_foreground, current_focus, probe_error = self.get_foreground_app_probe(now_ms)
+        details = {
+            "current_focus": current_focus,
+            "expected_package": "com.mentra.mentra",
+            "expected_activity": "MainActivity",
+        }
+
+        if probe_error is not None:
+            incident_id = ongoing_incident["incident_id"] if ongoing_incident is not None else self.state.start_incident(
+                incident_type,
+                now_ms,
+                {
+                    **details,
+                    "reason": "foreground_probe_failed",
+                    "probe_error": probe_error,
+                },
+            )
+            if incident_id is not None:
+                active_incident = self.state.ongoing_incidents.get(incident_id)
+                if active_incident is not None:
+                    active_incident.update(
+                        {
+                            **details,
+                            "reason": "foreground_probe_failed",
+                            "probe_error": probe_error,
+                        }
+                    )
+                self.maybe_alert_and_dispatch(incident_id, now_ms)
+            return
+
+        if not is_app_foreground:
+            incident_id = ongoing_incident["incident_id"] if ongoing_incident is not None else self.state.start_incident(
+                incident_type,
+                now_ms,
+                {
+                    **details,
+                    "reason": "mentraos_not_foreground",
+                },
+            )
+            if incident_id is not None:
+                active_incident = self.state.ongoing_incidents.get(incident_id)
+                if active_incident is not None:
+                    active_incident.update(
+                        {
+                            **details,
+                            "reason": "mentraos_not_foreground",
+                        }
+                    )
+                self.maybe_alert_and_dispatch(incident_id, now_ms)
+            return
+
+        if ongoing_incident is not None:
+            self.state.end_incident(
+                ongoing_incident["incident_id"],
+                now_ms,
+                {
+                    **details,
+                    "reason": "mentraos_foreground_restored",
+                },
+            )
 
     def maybe_record_word_matches(
         self,
@@ -664,8 +1523,6 @@ class MonitorWorker:
             "rn": utterance.rn_last_matched_index,
             "rn_true": utterance.rn_true_last_matched_index,
             "logcat_true": utterance.logcat_true_last_matched_index,
-            "maestro": utterance.maestro_last_matched_index,
-            "maestro_true": utterance.maestro_true_last_matched_index,
         }
         current_cursor = cursor_by_source[source]
         for run in consecutive_runs(matched_indices):
@@ -682,10 +1539,6 @@ class MonitorWorker:
                 if source == "rn_true" and word.rn_true_first_visible_ts_ms is not None:
                     continue
                 if source == "logcat_true" and word.logcat_true_first_visible_ts_ms is not None:
-                    continue
-                if source == "maestro" and word.maestro_first_visible_ts_ms is not None:
-                    continue
-                if source == "maestro_true" and word.maestro_true_first_visible_ts_ms is not None:
                     continue
                 if now_ms < word.expected_ts_ms - self.args.word_match_early_tolerance_ms:
                     continue
@@ -706,15 +1559,18 @@ class MonitorWorker:
                     word.logcat_true_first_visible_ts_ms = now_ms
                     word.logcat_true_visible_delay_ms = delay_ms
                     utterance.logcat_true_last_matched_index = ref_index
-                elif source == "maestro_true":
-                    word.maestro_true_first_visible_ts_ms = now_ms
-                    word.maestro_true_visible_delay_ms = delay_ms
-                    utterance.maestro_true_last_matched_index = ref_index
+                    self.state.drop_last_signature = "|".join(normalize_text(line) for line in visible_lines)
+                    self.state.drop_last_change_ts_ms = now_ms
+                    self.end_active_drop_incident(
+                        now_ms,
+                        "captions_resumed",
+                        {
+                            "dataset_row_idx": utterance.dataset_row_idx,
+                            "utterance_text": utterance.text,
+                        },
+                    )
                 else:
-                    word.maestro_first_visible_ts_ms = now_ms
-                    word.maestro_visible_delay_ms = delay_ms
-                    utterance.maestro_matched_word_count += 1
-                    utterance.maestro_last_matched_index = ref_index
+                    raise ValueError(f"Unsupported match source: {source}")
                 current_cursor = ref_index
 
                 point = {
@@ -737,12 +1593,8 @@ class MonitorWorker:
                 elif source == "logcat_true":
                     self.state.logcat_true_word_delay_points.append(point)
                     self.state.logcat_true_word_delay_points = trim_history(self.state.logcat_true_word_delay_points, self.state.max_history * 40)
-                elif source == "maestro_true":
-                    self.state.maestro_true_word_delay_points.append(point)
-                    self.state.maestro_true_word_delay_points = trim_history(self.state.maestro_true_word_delay_points, self.state.max_history * 40)
                 else:
-                    self.state.maestro_word_delay_points.append(point)
-                    self.state.maestro_word_delay_points = trim_history(self.state.maestro_word_delay_points, self.state.max_history * 40)
+                    raise ValueError(f"Unsupported point source: {source}")
                 self.state.append_event("word_match", point)
 
     def prefetch_loop(self) -> None:
@@ -866,6 +1718,17 @@ ws.on('error', (err) => process.stderr.write(String(err && err.message || err) +
                 for line in self.logcat_process.stdout:
                     if self.stop_event.is_set():
                         break
+                    now_ms = int(time.time() * 1000)
+                    if CAPTIONS_TESTER_INCIDENT_RESULT_MARKER in line:
+                        payload_text = line.split(CAPTIONS_TESTER_INCIDENT_RESULT_MARKER, 1)[1].strip()
+                        try:
+                            payload = json.loads(payload_text)
+                        except json.JSONDecodeError:
+                            continue
+                        self.handle_captions_tester_incident_result(payload, now_ms)
+                        continue
+                    if self.handle_legacy_captions_tester_filed_log(line, now_ms) is not None:
+                        continue
                     marker = "E2E_METRIC "
                     if marker not in line:
                         continue
@@ -878,7 +1741,7 @@ ws.on('error', (err) => process.stderr.write(String(err && err.message || err) +
                     if payload.get("event") != "display_store_update":
                         continue
 
-                    now_ms = int(payload.get("ts_ms") or time.time() * 1000)
+                    now_ms = int(payload.get("ts_ms") or now_ms)
                     visible_lines = payload.get("text_lines") or []
                     normalized_lines = [normalize_text(item) for item in visible_lines]
                     with self.state.lock:
@@ -908,47 +1771,30 @@ ws.on('error', (err) => process.stderr.write(String(err && err.message || err) +
             now_ms = int(started * 1000)
             try:
                 with self.state.lock:
-                    if self.use_maestro_stream:
-                        hierarchy = run_maestro_hierarchy(self.args.device)
-                        mirror_visible, visible_lines = extract_visible_transcript_lines(hierarchy)
-                        normalized_lines = [normalize_text(line) for line in visible_lines]
-                        self.state.mirror_visible = mirror_visible
-                        self.state.current_visible_lines = visible_lines
-                        self.state.last_snapshot_ts_ms = now_ms
-                        write_ndjson(
-                            self.state.output_dir / "live_snapshots.ndjson",
-                            {
-                                "ts_ms": now_ms,
-                                "mirror_visible": mirror_visible,
-                                "visible_lines": visible_lines,
-                                "normalized_visible_lines": normalized_lines,
-                                "source": "maestro",
-                            },
-                        )
-                    else:
-                        mirror_visible = True
-                        visible_lines = []
-                        normalized_lines = []
-                        self.state.mirror_visible = True
+                    visible_lines = list(self.state.logcat_visible_lines)
+                    normalized_lines = [normalize_text(line) for line in visible_lines]
+                    self.state.mirror_visible = True
+                    self.state.current_visible_lines = visible_lines
 
                     utterance = self.state.current_utterance
+                    self.update_drop_tracking(utterance, now_ms, normalized_lines)
                     if utterance is None:
-                        if self.use_maestro_stream and not mirror_visible:
-                            self.state.status = "waiting_for_mirror"
-                            self.state.status_detail = "Simulated glasses mirror is not visible"
-                        elif now_ms >= self.next_start_ts_ms:
+                        if now_ms >= self.next_start_ts_ms:
                             self.start_next_utterance(now_ms)
                         else:
                             self.state.status = "between_utterances"
                             self.state.status_detail = "waiting for next utterance"
+                        self.evaluate_audio_output_device_incident(now_ms)
+                        self.evaluate_app_not_foreground_incident(now_ms)
                     else:
-                        if self.use_maestro_stream:
-                            self.maybe_record_word_matches(utterance, now_ms, visible_lines, "maestro_true", min_run_length=1)
-                            self.maybe_record_word_matches(utterance, now_ms, visible_lines, "maestro")
-                            self.update_drop_tracking(utterance, now_ms, normalized_lines)
+                        self.evaluate_high_average_latency_incident(now_ms)
+                        self.evaluate_audio_output_device_incident(now_ms)
+                        self.evaluate_app_not_foreground_incident(now_ms)
                         if now_ms >= utterance.end_ts_ms:
                             self.finalize_utterance(utterance, now_ms)
 
+                    for incident_id in list(self.state.ongoing_incidents):
+                        self.maybe_alert_and_dispatch(incident_id, now_ms)
                     self.state.last_error = None
             except Exception as exc:
                 with self.state.lock:
@@ -968,266 +1814,93 @@ ws.on('error', (err) => process.stderr.write(String(err && err.message || err) +
             self.logcat_process.terminate()
 
 
-HTML_PAGE = """<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>MentraOS Word Delay Monitor</title>
-  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
-  <style>
-    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; background: #0b1220; color: #e5eef9; }
-    .wrap { max-width: 1500px; margin: 0 auto; padding: 20px; }
-    .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
-    .card { background: #121b2d; border: 1px solid #24314f; border-radius: 12px; padding: 14px; }
-    .wide { grid-column: span 2; }
-    h1, h2 { margin: 0 0 12px; font-weight: 700; }
-    h1 { font-size: 24px; margin-bottom: 16px; }
-    h2 { font-size: 16px; }
-    .label { color: #89a1c6; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
-    .value { font-size: 20px; font-weight: 700; margin-top: 4px; }
-    .pill { display: inline-block; border-radius: 999px; padding: 4px 10px; font-size: 12px; font-weight: 700; background: #203254; }
-    .ok { background: #184f33; color: #b6f2cf; }
-    .warn { background: #574115; color: #f7e2a2; }
-    .bad { background: #5e1f25; color: #ffbec4; }
-    .small { font-size: 12px; color: #9eb3d1; }
-    .lines { white-space: pre-wrap; line-height: 1.5; }
-    .long { max-height: 220px; overflow: auto; }
-    #chart { width: 100%; height: 360px; background: #0f1728; border-radius: 10px; border: 1px solid #24314f; }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th, td { padding: 8px 6px; text-align: left; border-bottom: 1px solid #24314f; vertical-align: top; }
-    th { color: #89a1c6; font-weight: 600; }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <h1>MentraOS Live Word Delay Monitor</h1>
-    <div class="grid">
-      <div class="card"><div class="label">Status</div><div id="status" class="value">Loading...</div><div id="statusDetail" class="small"></div></div>
-      <div class="card"><div class="label">Mirror Visible</div><div id="mirror" class="value">-</div><div id="snapshotAge" class="small"></div></div>
-      <div class="card"><div class="label">Current Row</div><div id="rowIdx" class="value">-</div><div id="wordProgress" class="small"></div></div>
-      <div class="card"><div class="label">Drop Events &gt; 5s</div><div id="dropCount" class="value">0</div><div class="small">Across all utterances</div></div>
-    </div>
-
-    <div class="grid">
-      <div class="card wide">
-        <h2>Word Delay Over Time</h2>
-        <div id="chart"></div>
-        <div class="small">Use the built-in range buttons, zoom, pan, and range slider to inspect incidents. Purple = raw points, orange = 10-point moving average.</div>
-      </div>
-      <div class="card">
-        <h2>Logcat Visible Text</h2>
-        <div id="logcatVisibleLines" class="lines small long"></div>
-      </div>
-    </div>
-
-    <div class="grid">
-      <div class="card wide">
-        <h2>Current Utterance</h2>
-        <div id="utteranceText" class="small lines long"></div>
-      </div>
-      <div class="card">
-        <h2>Source Ages</h2>
-        <div id="sourceAges" class="small lines"></div>
-      </div>
-    </div>
-
-    <div class="grid">
-      <div class="card wide">
-        <h2>Recent Word Matches</h2>
-        <table id="wordTable"><thead><tr><th>Word</th><th>Delay</th><th>Expected</th><th>Seen</th></tr></thead><tbody></tbody></table>
-      </div>
-      <div class="card">
-        <h2>Live Time</h2>
-        <div id="liveClock" class="value">-</div>
-        <div id="liveClockMs" class="small"></div>
-        <div class="label" style="margin-top: 12px;">Current Timing Window</div>
-        <div id="timingWindow" class="small lines long">-</div>
-      </div>
-      <div class="card wide">
-        <h2>Recent Utterances</h2>
-        <table id="utteranceTable"><thead><tr><th>Row</th><th>Avg Logcat True</th></tr></thead><tbody></tbody></table>
-      </div>
-    </div>
-  </div>
-  <script>
-    function fmtTs(ms) {
-      if (!ms) return '-';
-      return new Date(ms).toLocaleTimeString();
-    }
-    function fmtTsWithMs(ms) {
-      if (!ms) return '-';
-      const date = new Date(ms);
-      return `${date.toLocaleTimeString()}.${String(date.getMilliseconds()).padStart(3, '0')}`;
-    }
-    function fmtMs(ms) {
-      if (ms === null || ms === undefined) return '-';
-      return `${Math.round(ms)} ms`;
-    }
-    function ageFrom(ms) {
-      if (!ms) return '-';
-      const delta = Math.max(0, Date.now() - ms);
-      return `${(delta / 1000).toFixed(1)}s ago`;
-    }
-    function statusClass(status) {
-      if (status === 'running_utterance') return 'pill ok';
-      if (status === 'error') return 'pill bad';
-      return 'pill warn';
-    }
-    function fillRows(id, rows, colspan) {
-      const tbody = document.querySelector(`#${id} tbody`);
-      tbody.innerHTML = rows.length ? rows.join('') : `<tr><td colspan="${colspan}" class="small">No data yet</td></tr>`;
-    }
-    function renderChart(logcatTruePoints) {
-      const chart = document.getElementById('chart');
-      const points = [...logcatTruePoints].sort((a, b) => a.ts_ms - b.ts_ms);
-      if (!points.length) {
-        chart.innerHTML = '<div class="small" style="padding: 24px; color: #89a1c6;">Waiting for word delay points...</div>';
-        return;
-      }
-      const movingAveragePoints = [];
-      for (let index = 9; index < points.length; index += 1) {
-        const window = points.slice(index - 9, index + 1);
-        const avgDelay = window.reduce((sum, point) => sum + (point.delay_ms || 0), 0) / window.length;
-        movingAveragePoints.push({ ts_ms: points[index].ts_ms, delay_ms: avgDelay });
-      }
-      const traces = [
-        {
-          name: 'Logcat true',
-          type: 'scattergl',
-          mode: 'markers',
-          x: points.map((point) => new Date(point.ts_ms)),
-          y: points.map((point) => point.delay_ms),
-          text: points.map((point) => `Row ${point.dataset_row_idx} • ${point.word_text}`),
-          hovertemplate: '%{text}<br>%{x|%b %d, %I:%M:%S %p}<br>%{y:.0f} ms<extra></extra>',
-          marker: { color: '#c084fc', size: 5, opacity: 0.85 },
-        },
-        {
-          name: '10-pt avg',
-          type: 'scattergl',
-          mode: 'lines',
-          x: movingAveragePoints.map((point) => new Date(point.ts_ms)),
-          y: movingAveragePoints.map((point) => point.delay_ms),
-          hovertemplate: '%{x|%b %d, %I:%M:%S %p}<br>%{y:.0f} ms<extra></extra>',
-          line: { color: '#f59e0b', width: 3, shape: 'linear' },
-        },
-      ];
-      const layout = {
-        uirevision: 'word-delay-chart',
-        paper_bgcolor: '#0f1728',
-        plot_bgcolor: '#0f1728',
-        margin: { l: 72, r: 24, t: 16, b: 64 },
-        font: { color: '#e5eef9', family: 'ui-sans-serif, system-ui, sans-serif' },
-        hovermode: 'closest',
-        showlegend: true,
-        legend: { orientation: 'h', x: 0, y: 1.12 },
-        xaxis: {
-          type: 'date',
-          title: { text: 'Time' },
-          gridcolor: '#24314f',
-          zeroline: false,
-          tickformat: '%-I:%M %p',
-          rangeslider: { visible: true, bgcolor: '#121b2d', bordercolor: '#24314f' },
-          rangeselector: {
-            bgcolor: '#17233a',
-            activecolor: '#23406e',
-            bordercolor: '#314261',
-            font: { color: '#e5eef9' },
-            buttons: [
-              { count: 5, step: 'minute', stepmode: 'backward', label: '5m' },
-              { count: 15, step: 'minute', stepmode: 'backward', label: '15m' },
-              { count: 30, step: 'minute', stepmode: 'backward', label: '30m' },
-              { count: 1, step: 'hour', stepmode: 'backward', label: '1h' },
-              { count: 6, step: 'hour', stepmode: 'backward', label: '6h' },
-              { count: 24, step: 'hour', stepmode: 'backward', label: '24h' },
-              { step: 'all', label: 'All' },
-            ],
-          },
-        },
-        yaxis: {
-          title: { text: 'Delay' },
-          gridcolor: '#24314f',
-          zeroline: false,
-          rangemode: 'tozero',
-          range: [0, null],
-          tickformat: '~s',
-          tickvals: undefined,
-          ticktext: undefined,
-          hoverformat: '.0f',
-        },
-      };
-      const maxDelay = Math.max(3000, ...points.map((point) => point.delay_ms || 0), ...movingAveragePoints.map((point) => point.delay_ms || 0));
-      const stepMs = 500;
-      const tickvals = [];
-      const ticktext = [];
-      for (let value = 0; value <= Math.ceil(maxDelay / stepMs) * stepMs; value += stepMs) {
-        tickvals.push(value);
-        ticktext.push(`${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)}s`);
-      }
-      layout.yaxis.tickvals = tickvals;
-      layout.yaxis.ticktext = ticktext;
-      const config = {
-        responsive: true,
-        displaylogo: false,
-        modeBarButtonsToRemove: ['lasso2d', 'select2d', 'autoScale2d'],
-      };
-      Plotly.react(chart, traces, layout, config);
-    }
-    async function refresh() {
-      const state = await (await fetch('/state')).json();
-      document.getElementById('status').innerHTML = `<span class="${statusClass(state.status)}">${state.status}</span>`;
-      document.getElementById('statusDetail').textContent = state.status_detail || '';
-      document.getElementById('mirror').textContent = state.mirror_visible ? 'Yes' : 'No';
-      document.getElementById('snapshotAge').textContent = `Last Maestro snapshot ${ageFrom(state.last_snapshot_ts_ms)}`;
-      document.getElementById('rowIdx').textContent = state.current_utterance ? `#${state.current_utterance.dataset_row_idx}` : '-';
-      document.getElementById('wordProgress').textContent = state.current_utterance ? `RN ${state.current_utterance.rn_matched_word_count}/${state.current_utterance.word_count}, Maestro ${state.current_utterance.maestro_matched_word_count}/${state.current_utterance.word_count}` : 'Waiting for utterance';
-      document.getElementById('dropCount').textContent = String(state.drop_events.length);
-      document.getElementById('liveClock').textContent = fmtTs(Date.now());
-      document.getElementById('liveClockMs').textContent = fmtTsWithMs(Date.now());
-      document.getElementById('logcatVisibleLines').textContent = state.logcat_visible_lines.length ? state.logcat_visible_lines.join('\\n') : '(no logcat event yet)';
-      document.getElementById('utteranceText').textContent = state.current_utterance ? state.current_utterance.text : '(none)';
-      document.getElementById('sourceAges').textContent = `Logcat: ${ageFrom(state.last_logcat_event_ts_ms)}`;
-      if (state.current_utterance) {
-        const words = state.current_utterance.words || [];
-        const nextWord = words.find((word) => !word.rn_true_first_visible_ts_ms) || null;
-        const currentWord = [...words].reverse().find((word) => word.rn_true_first_visible_ts_ms) || null;
-        document.getElementById('timingWindow').textContent =
-          `Utterance start: ${fmtTsWithMs(state.current_utterance.start_ts_ms)}\n` +
-          `Utterance end: ${fmtTsWithMs(state.current_utterance.end_ts_ms)}\n` +
-          `Current/last matched word: ${currentWord ? `${currentWord.text} @ ${fmtTsWithMs(currentWord.expected_ts_ms)}` : '-'}\n` +
-          `Next expected word: ${nextWord ? `${nextWord.text} @ ${fmtTsWithMs(nextWord.expected_ts_ms)}` : '-'}`;
-      } else {
-        document.getElementById('timingWindow').textContent = '(waiting for utterance)';
-      }
-
-      const recentWords = state.word_delay_points.slice(-20).reverse().map((point) =>
-        `<tr><td>${point.word_text} <span class="small">(${point.source})</span></td><td>${fmtMs(point.delay_ms)}</td><td>${fmtTs(point.expected_ts_ms)}</td><td>${fmtTs(point.ts_ms)}</td></tr>`
-      );
-      fillRows('wordTable', recentWords, 4);
-
-      const recentUtterances = state.completed_utterances.slice().reverse().map((item) =>
-        `<tr><td>${item.dataset_row_idx}</td><td>${fmtMs(item.average_logcat_true_delay_ms)}</td></tr>`
-      );
-      fillRows('utteranceTable', recentUtterances, 2);
-
-      renderChart(state.logcat_true_word_delay_points);
-    }
-    refresh().catch(console.error);
-    setInterval(() => refresh().catch(console.error), 1000);
-  </script>
-</body>
-</html>
-"""
-
-
 class MonitorHandler(BaseHTTPRequestHandler):
     monitor_state: MonitorState | None = None
+    ui_dev_origin: str | None = None
+
+    def _send_bytes(self, body: bytes, content_type: str, extra_headers: dict[str, str] | None = None) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        for header, value in (extra_headers or {}).items():
+            self.send_header(header, value)
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            # Browsers polling /state can disconnect mid-response; treat that as a normal client abort.
+            pass
+
+    def _proxy_ui_dev_asset(self, request_path: str) -> bool:
+        if not self.ui_dev_origin:
+            return False
+
+        normalized_path = request_path if request_path.startswith("/") else f"/{request_path}"
+        upstream_url = urllib.parse.urljoin(f"{self.ui_dev_origin.rstrip('/')}/", normalized_path.lstrip("/"))
+        request = urllib.request.Request(
+            upstream_url,
+            headers={
+                "Accept": self.headers.get("Accept", "*/*"),
+                "User-Agent": self.headers.get("User-Agent", "MentraMonitor/1.0"),
+            },
+        )
+
+        try:
+            with urllib.request.urlopen(request, timeout=2) as response:
+                body = response.read()
+                content_type = response.headers.get("Content-Type", "application/octet-stream")
+                cache_control = response.headers.get("Cache-Control")
+                extra_headers = {"Cache-Control": cache_control} if cache_control else None
+                self._send_bytes(body, content_type, extra_headers)
+                return True
+        except urllib.error.HTTPError as exc:
+            body = exc.read()
+            self.send_response(exc.code)
+            self.send_header("Content-Type", exc.headers.get("Content-Type", "text/plain; charset=utf-8"))
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return True
+        except (urllib.error.URLError, TimeoutError):
+            return False
+
+    def _serve_ui_asset(self, request_path: str) -> bool:
+        if not UI_DIST_DIR.exists():
+            return False
+
+        normalized_path = urllib.parse.unquote(request_path.split("?", 1)[0])
+        relative_path = normalized_path.lstrip("/") or "index.html"
+        candidate = (UI_DIST_DIR / relative_path).resolve()
+        try:
+            candidate.relative_to(UI_DIST_DIR.resolve())
+        except ValueError:
+            return False
+
+        if candidate.is_dir():
+            candidate = candidate / "index.html"
+
+        if not candidate.exists() or not candidate.is_file():
+            return False
+
+        content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+        self._send_bytes(candidate.read_bytes(), content_type)
+        return True
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/":
-            body = HTML_PAGE.encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
+            if self._proxy_ui_dev_asset("/"):
+                return
+            if self._serve_ui_asset("/index.html"):
+                return
+            self.send_response(503)
+            body = (
+                b"UI build not found. Run `bun run build` in mobile/e2e-tests/ui, "
+                b"or start Vite and use `--ui-dev`."
+            )
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -1236,12 +1909,13 @@ class MonitorHandler(BaseHTTPRequestHandler):
         if self.path == "/state":
             assert self.monitor_state is not None
             body = json.dumps(self.monitor_state.snapshot()).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            self._send_bytes(body, "application/json; charset=utf-8", {"Cache-Control": "no-store"})
+            return
+
+        if self._proxy_ui_dev_asset(self.path):
+            return
+
+        if self._serve_ui_asset(self.path):
             return
 
         self.send_response(404)
@@ -1255,38 +1929,66 @@ def main() -> int:
     args = parse_args()
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    incident_config_path = Path(args.incident_config_path)
+    incident_config = load_incident_config(incident_config_path)
 
-    state = MonitorState(output_dir=output_dir, max_history=args.max_history, dataset=args.dataset, split=args.split)
-    cached_rows = load_cached_rows(output_dir)
-    cursor = DatasetCursor(dataset=args.dataset, config=args.config, split=args.split, page_size=args.page_size, cached_rows=cached_rows)
-    worker = MonitorWorker(args=args, state=state, cursor=cursor)
-
-    adb_prefix = ["adb"]
-    if args.device:
-        adb_prefix.extend(["-s", args.device])
-
-    subprocess.run(adb_prefix + ["forward", "tcp:7001", "tcp:7001"], check=False)
+    state = MonitorState(output_dir=output_dir, max_history=args.max_history, dataset=args.dataset, split=args.split, incident_config=incident_config)
     MonitorHandler.monitor_state = state
+    MonitorHandler.ui_dev_origin = args.ui_dev_origin if args.ui_dev else None
     server = ThreadingHTTPServer(("127.0.0.1", args.port), MonitorHandler)
     server.daemon_threads = True
 
-    worker_thread = threading.Thread(target=worker.monitor_loop, daemon=True)
-    prefetch_thread = threading.Thread(target=worker.prefetch_loop, daemon=True)
-    rn_stream_thread = threading.Thread(target=worker.rn_stream_loop, daemon=True)
-    logcat_thread = threading.Thread(target=worker.logcat_stream_loop, daemon=True)
-    prefetch_thread.start()
-    rn_stream_thread.start()
-    logcat_thread.start()
-    worker_thread.start()
+    worker: MonitorWorker | None = None
+    worker_thread: threading.Thread | None = None
+    prefetch_thread: threading.Thread | None = None
+    rn_stream_thread: threading.Thread | None = None
+    logcat_thread: threading.Thread | None = None
+
+    if args.read_only:
+        state.status = "archived"
+        state.status_detail = "read-only dashboard from archived output"
+    else:
+        cached_rows = load_cached_rows(output_dir)
+        cursor = DatasetCursor(dataset=args.dataset, config=args.config, split=args.split, page_size=args.page_size, cached_rows=cached_rows)
+        worker = MonitorWorker(args=args, state=state, cursor=cursor)
+
+        adb_prefix = ["adb"]
+        if args.device:
+            adb_prefix.extend(["-s", args.device])
+
+        subprocess.run(adb_prefix + ["forward", "tcp:7001", "tcp:7001"], check=False)
+
+        worker_thread = threading.Thread(target=worker.monitor_loop, daemon=True)
+        prefetch_thread = threading.Thread(target=worker.prefetch_loop, daemon=True)
+        rn_stream_thread = threading.Thread(target=worker.rn_stream_loop, daemon=True)
+        logcat_thread = threading.Thread(target=worker.logcat_stream_loop, daemon=True)
+        prefetch_thread.start()
+        rn_stream_thread.start()
+        logcat_thread.start()
+        worker_thread.start()
 
     print(f"Dashboard: http://127.0.0.1:{args.port}")
     print(f"Output dir: {output_dir}")
-    print(f"Dataset: {args.dataset} ({args.split})")
+    print(f"Incident config: {incident_config_path}")
+    if args.read_only:
+        print("Mode: read-only archive")
+    else:
+        print(f"Dataset: {args.dataset} ({args.split})")
     print("Press Ctrl-C to stop.")
 
+    shutdown_started = threading.Event()
+
+    def request_shutdown() -> None:
+        if shutdown_started.is_set():
+            return
+        shutdown_started.set()
+        if worker is not None:
+            worker.request_stop()
+        # `server.shutdown()` must run off the serve_forever thread.
+        threading.Thread(target=server.shutdown, daemon=True).start()
+
     def handle_signal(_signum: int, _frame: Any) -> None:
-        worker.stop_event.set()
-        server.shutdown()
+        request_shutdown()
 
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
@@ -1294,11 +1996,16 @@ def main() -> int:
     try:
         server.serve_forever(poll_interval=0.5)
     finally:
-        worker.stop_event.set()
-        worker_thread.join(timeout=5)
-        prefetch_thread.join(timeout=5)
-        rn_stream_thread.join(timeout=5)
-        logcat_thread.join(timeout=5)
+        if worker is not None:
+            worker.request_stop()
+        if worker_thread is not None:
+            worker_thread.join(timeout=5)
+        if prefetch_thread is not None:
+            prefetch_thread.join(timeout=5)
+        if rn_stream_thread is not None:
+            rn_stream_thread.join(timeout=5)
+        if logcat_thread is not None:
+            logcat_thread.join(timeout=5)
         server.server_close()
 
     return 0

@@ -225,13 +225,13 @@ That is what this issue proposes.
 
 ## Conclusions
 
-| Finding | Confidence |
-| ------- | ---------- |
-| The team is not back at square one | **Confirmed** — existing observability already ruled out multiple classes of failures |
-| Issue 077 is useful but insufficient | **Confirmed** — heap shape is not the same as code ownership |
-| The missing layer is ownership attribution, not more generic metrics | **High** |
-| A production-safe census of long-lived structures is the shortest path to root cause | **High** |
-| The census should focus on per-session retained structures first | **High** |
+| Finding                                                                              | Confidence                                                                            |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| The team is not back at square one                                                   | **Confirmed** — existing observability already ruled out multiple classes of failures |
+| Issue 077 is useful but insufficient                                                 | **Confirmed** — heap shape is not the same as code ownership                          |
+| The missing layer is ownership attribution, not more generic metrics                 | **High**                                                                              |
+| A production-safe census of long-lived structures is the shortest path to root cause | **High**                                                                              |
+| The census should focus on per-session retained structures first                     | **High**                                                                              |
 
 ---
 
@@ -243,3 +243,37 @@ That is what this issue proposes.
 4. Expose the full census in `/api/admin/memory/now`.
 5. Add a `bstack` command for owner growth over time.
 6. Use V8 snapshots only after the census points to a specific owner — snapshots become proof, not fishing.
+
+## Status Update
+
+### What this spike successfully drove
+
+The first local implementation pass now exists and covers the main ownership-census layers proposed here:
+
+- manager-level owner rows
+- per-session aggregation
+- `system-vitals` ownership logging
+- `/api/admin/memory/now` census exposure
+- `bstack memory-owners`
+
+So the spike was directionally correct: the missing layer really was code ownership attribution, and the branch now has that layer in first-pass form.
+
+### What the spike still understates
+
+The first audit showed that "ownership attribution exists" is not the same as "ownership attribution is trustworthy enough to drive a prod fix."
+
+The remaining gaps are now narrower:
+
+- alert attribution still needs to identify the session that actually grew
+- one major retained path, English transcription compatibility state, is not fully represented yet
+- some estimator choices may be too expensive if left unreviewed before prod
+
+### Updated conclusion
+
+The team is no longer blocked on overall observability architecture. The remaining work is signal quality, not conceptual direction.
+
+That is progress:
+
+- before 078, the cloud could not say which code path owned growth
+- after the first pass, it can start saying that
+- before deploy, we need one more tightening pass so engineers can trust the answer during a live incident

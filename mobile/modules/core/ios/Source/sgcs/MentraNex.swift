@@ -11,7 +11,7 @@ import Foundation
 import SwiftProtobuf
 import UIKit
 
-// Helper extension for debugging
+/// Helper extension for debugging
 extension Data {
     func toHexString() -> String {
         map { String(format: "%02x", $0) }.joined(separator: " ")
@@ -38,7 +38,7 @@ enum NexDashboardDisplayWire {
 @MainActor
 @objc(MentraNexSGC)
 class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCManager {
-    func sendIncidentId(_: String) {}
+    func sendIncidentId(_: String, apiBaseUrl _: String?) {}
 
     func sendJson(_: [String: Any], wakeUp _: Bool, requireAck _: Bool) {}
 
@@ -131,7 +131,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     func ping() {}
     func connectController() {}
     func disconnectController() {}
-    
+
     func dbg1() {}
     func dbg2() {}
 
@@ -149,7 +149,9 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     func queryGalleryStatus() {}
 
-    @objc static func requiresMainQueueSetup() -> Bool { true }
+    @objc static func requiresMainQueueSetup() -> Bool {
+        true
+    }
 
     func sendGalleryMode() {}
 
@@ -191,10 +193,10 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     private var whiteListedAlready = false
     private let WHITELIST_CMD: UInt8 = 0x04
 
-    // Protobuf version tracking (like Java implementation)
+    /// Protobuf version tracking (like Java implementation)
     private var protobufVersionPosted = false
 
-    // Device discovery cache (like MentraLive)
+    /// Device discovery cache (like MentraLive)
     private var discoveredPeripherals = [String: CBPeripheral]() // name -> peripheral
 
     // MARK: - Published Properties (G1-compatible)
@@ -238,7 +240,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     private let bluetoothQueue = DispatchQueue(label: "MentraNexBluetooth", qos: .userInitiated)
 
-    // Protocol-required connectionState (String)
+    /// Protocol-required connectionState (String)
     var connectionState: String = ConnTypes.DISCONNECTED
 
     // Protocol-required properties
@@ -266,7 +268,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         }
     }
 
-    // Custom Bluetooth queue for better performance (like G1)
+    /// Custom Bluetooth queue for better performance (like G1)
     private static let _bluetoothQueue = DispatchQueue(
         label: "com.mentra.nex.bluetooth", qos: .background
     )
@@ -389,7 +391,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         }
     }
 
-    // Enhanced method that uses MTU-optimized chunking
+    /// Enhanced method that uses MTU-optimized chunking
     private func queueDataWithOptimalChunking(
         _ data: Data, packetType: UInt8 = 0x02, waitTimeMs: Int = 0
     ) {
@@ -415,7 +417,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         queueChunks(chunks, waitTimeMs: waitTimeMs)
     }
 
-    // Helper method for queueing chunks with optional wait time
+    /// Helper method for queueing chunks with optional wait time
     private func queueChunks(_ chunks: [[UInt8]], waitTimeMs: Int = 0) {
         let cmd = BufferedCommand(chunks: chunks, waitTimeMs: waitTimeMs, chunkDelayMs: 8)
         Task { [weak self] in
@@ -569,7 +571,8 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         }
 
         Bridge.log(
-            "NEX-CONN: 🔵 Attempting to retrieve peripheral with stored UUID: \(uuid.uuidString)")
+            "NEX-CONN: 🔵 Attempting to retrieve peripheral with stored UUID: \(uuid.uuidString)"
+        )
         let peripherals = centralManager.retrievePeripherals(withIdentifiers: [uuid])
 
         if let peripheralToConnect = peripherals.first {
@@ -581,7 +584,8 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
             return true
         } else {
             Bridge.log(
-                "NEX-CONN: 🔵 Could not find peripheral for stored UUID. Will proceed to scan.")
+                "NEX-CONN: 🔵 Could not find peripheral for stored UUID. Will proceed to scan."
+            )
             return false
         }
     }
@@ -642,7 +646,8 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
         guard centralManager.state == .poweredOn else {
             Bridge.log(
-                "NEX-CONN: ❌ Bluetooth not powered on. State: \(centralManager.state.rawValue)")
+                "NEX-CONN: ❌ Bluetooth not powered on. State: \(centralManager.state.rawValue)"
+            )
             return
         }
 
@@ -694,7 +699,8 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         // Re-emit already discovered peripherals (like MentraLive)
         for (_, peripheral) in discoveredPeripherals {
             Bridge.log(
-                "NEX-CONN: 📡 (Re-emitting from cache) peripheral: \(peripheral.name ?? "Unknown")")
+                "NEX-CONN: 📡 (Re-emitting from cache) peripheral: \(peripheral.name ?? "Unknown")"
+            )
             if let name = peripheral.name {
                 emitDiscoveredDevice(name)
             }
@@ -1162,7 +1168,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         }
     }
 
-    // G1-compatible alias for microphone control
+    /// G1-compatible alias for microphone control
     func setMicEnabled(enabled: Bool) async -> Bool {
         setMicrophoneEnabled(enabled)
         return true
@@ -1841,7 +1847,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         // emitEvent("ProtobufSchemaVersionEvent", body: eventBody)
     }
 
-    // Save microphone state before disconnection (like Java implementation)
+    /// Save microphone state before disconnection (like Java implementation)
     private func saveMicrophoneStateBeforeDisconnection() {
         UserDefaults.standard.set(shouldUseGlassesMic, forKey: "microphoneStateBeforeDisconnection")
         microphoneStateBeforeDisconnection = shouldUseGlassesMic
@@ -2152,7 +2158,8 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         error: Error?
     ) {
         Bridge.log(
-            "NEX-CONN: 🔌 Disconnected from peripheral: \(disconnectedPeripheral.name ?? "Unknown")")
+            "NEX-CONN: 🔌 Disconnected from peripheral: \(disconnectedPeripheral.name ?? "Unknown")"
+        )
 
         if let error {
             Bridge.log("NEX-CONN: ⚠️ Disconnect error: \(error.localizedDescription)")
@@ -2316,7 +2323,8 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
         // 2. Restore previous microphone state (Java lines 657-665)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { // 20ms delay
             let shouldRestoreMic = UserDefaults.standard.bool(
-                forKey: "microphoneStateBeforeDisconnection")
+                forKey: "microphoneStateBeforeDisconnection"
+            )
             Bridge.log("NEX: 🎤 Restoring microphone state to: \(shouldRestoreMic)")
 
             if shouldRestoreMic {
@@ -2391,7 +2399,8 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     ) {
         if let error {
             Bridge.log(
-                "NEX-CONN: ❌ Error discovering characteristics: \(error.localizedDescription)")
+                "NEX-CONN: ❌ Error discovering characteristics: \(error.localizedDescription)"
+            )
             return
         }
 
@@ -2405,7 +2414,8 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
                 writeCharacteristic = characteristic
             } else if characteristic.uuid == NOTIFY_CHAR_UUID {
                 Bridge.log(
-                    "NEX-CONN: ✅ Found notify characteristic. Subscribing for notifications.")
+                    "NEX-CONN: ✅ Found notify characteristic. Subscribing for notifications."
+                )
                 notifyCharacteristic = characteristic
                 peripheral.setNotifyValue(true, for: characteristic)
             }

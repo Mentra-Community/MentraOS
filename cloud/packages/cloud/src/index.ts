@@ -196,80 +196,165 @@ logger.info(`\n
     ☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️\n`);
 
 // ---------------------------------------------------------------------------
-// Graceful shutdown on SIGTERM/SIGINT
-// Sends WebSocket close frames to all connected clients so phones detect
-// the disconnect immediately (<2s) instead of waiting for ping timeout (30-60s).
-// See: cloud/issues/063-graceful-shutdown/spec.md
+// Fail-fast shutdown on SIGTERM/SIGINT
+//
+// Goals (in priority order):
+//   1. Every connected WebSocket receives a close frame (1001) so the phone
+//      detects the disconnect immediately instead of waiting for ping timeout.
+//   2. Exit the process within SHUTDOWN_BUDGET_MS (5 s).
+//   3. Everything else — Mongo close, timer stopping, session dispose — is
+//      either irrelevant (process is dying) or best-effort.
+//
+// Why synchronous stderr for announce/complete lines:
+//   Pino is async-buffered. In prod, the "SIGTERM received" line from the
+//   previous graceful-shutdown implementation (issue 063) never appeared in
+//   BetterStack across 7 days of pod restarts, because logger.info returns
+//   before the log reaches the transport and process.exit kills the runtime
+//   before the buffer flushes. Synchronous stderr is guaranteed to leave
+//   the pod before exit.
+//
+// See: cloud/issues/100-fail-fast-sigterm/spec.md
+//      cloud/issues/063-graceful-shutdown/ (superseded)
 // ---------------------------------------------------------------------------
+
+const SHUTDOWN_BUDGET_MS = 5000;
+const PINO_FLUSH_TIMEOUT_MS = 500;
 
 let isShutdownInProgress = false;
 
-async function gracefulShutdown(signal: string): Promise<void> {
+function shutdownStderrLine(fields: Record<string, unknown>): void {
+  // Synchronous write. Bypasses Pino. Guaranteed to leave the pod before exit.
+  try {
+    process.stderr.write(JSON.stringify({ ts: new Date().toISOString(), ...fields }) + "\n");
+  } catch {
+    // stderr write failed; nothing useful we can do.
+  }
+}
+
+async function flushPinoWithTimeout(ms: number): Promise<"flushed" | "timeout" | "noop"> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      resolve("timeout");
+    }, ms);
+    timer.unref();
+
+    try {
+      // Pino exposes .flush(cb) on supported transports. Best-effort: if the API
+      // is unavailable we fall through to the timer.
+      const anyLogger = logger as unknown as {
+        flush?: (cb?: (err?: Error) => void) => void;
+      };
+      if (typeof anyLogger.flush === "function") {
+        anyLogger.flush(() => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve("flushed");
+        });
+      } else {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve("noop");
+      }
+    } catch {
+      // Fall through to the timer.
+    }
+  });
+}
+
+async function failFastShutdown(signal: string): Promise<void> {
   if (isShutdownInProgress) return;
   isShutdownInProgress = true;
-  setShuttingDown(); // shared flag — health check returns 503, new WS upgrades rejected
 
-  logger.info({ signal }, `${signal} received — starting graceful shutdown`);
+  const t0 = Date.now();
 
-  // 1. Close all WebSocket connections with close frames
+  // Shared flag: health check returns 503, new WS upgrades rejected.
+  setShuttingDown();
+
+  // Watchdog: if anything hangs, force-exit at the budget with a distinct code.
+  const watchdog = setTimeout(() => {
+    shutdownStderrLine({
+      event: "shutdown-watchdog-fired",
+      signal,
+      budgetMs: SHUTDOWN_BUDGET_MS,
+      elapsedMs: Date.now() - t0,
+    });
+
+    process.exit(1);
+  }, SHUTDOWN_BUDGET_MS);
+  watchdog.unref();
+
+  // Step 1: announce via synchronous stderr (Pino logs may not flush in time).
   const sessions = UserSession.getAllSessions();
+  shutdownStderrLine({
+    event: "shutdown-started",
+    signal,
+    pid: process.pid,
+    sessionCount: sessions.length,
+  });
+
+  // Step 2: close every WebSocket with code 1001. Per-socket try/catch so one
+  // bad close does not abort the loop. No await — close frames are queued by
+  // Bun's TCP stack and delivered on socket teardown.
   let closedGlasses = 0;
   let closedApps = 0;
-
   for (const session of sessions) {
     try {
-      if (session.websocket) {
-        session.websocket.close(1001, "Server shutting down");
-        closedGlasses++;
-      }
-      if (session.appWebsockets) {
-        for (const [, appWs] of session.appWebsockets) {
+      session.websocket?.close(1001, "Server shutting down");
+      closedGlasses++;
+    } catch {
+      // swallow per-socket
+    }
+    try {
+      const appWsMap = session.appWebsockets;
+      if (appWsMap) {
+        for (const [, appWs] of appWsMap) {
           try {
             appWs.close(1001, "Server shutting down");
             closedApps++;
           } catch {
-            // WebSocket might already be closed
+            // swallow per-socket
           }
         }
       }
-    } catch (error) {
-      logger.warn({ error, userId: session.userId }, "Error closing WebSocket during shutdown");
+    } catch {
+      // swallow per-session (getter / iteration failure must not abort the loop)
     }
   }
 
-  logger.info(
-    { closedGlasses, closedApps, totalSessions: sessions.length },
-    `Closed ${closedGlasses} glasses + ${closedApps} app WebSockets`,
-  );
-
-  // 2. Stop timers and services
+  // Step 3: fire-and-forget Mongo close. The server sees a TCP FIN and cleans
+  // up on its side; we do not block on mongoose's close handshake.
   try {
-    systemVitalsLogger.stop();
-    appCache.stop();
-    metricsService.stop();
+    void mongoose.connection.close();
   } catch {
-    // Timers might already be stopped
+    // swallow
   }
 
-  // 3. Close MongoDB connection
-  try {
-    await mongoose.connection.close();
-    logger.info("MongoDB connection closed");
-  } catch {
-    // Connection might already be closed
-  }
+  // Step 4: flush Pino with a short timeout so previously-buffered structured
+  // log lines have a chance to make it out.
+  const flushResult = await flushPinoWithTimeout(PINO_FLUSH_TIMEOUT_MS);
 
-  // Wait 2 seconds for WebSocket close frames to flush to clients before exiting.
-  // Without this delay, process.exit(0) can kill the runtime before Bun sends
-  // the close handshake on the wire, making the shutdown look like a crash.
-  logger.info("Graceful shutdown complete — waiting 2s for close frames to flush");
-  await new Promise((resolve) => setTimeout(resolve, 2000));
-  logger.info("Draining complete — exiting");
+  // Step 5: announce completion via synchronous stderr.
+  shutdownStderrLine({
+    event: "shutdown-complete",
+    signal,
+    elapsedMs: Date.now() - t0,
+    closedGlasses,
+    closedApps,
+    pinoFlush: flushResult,
+  });
+
+  clearTimeout(watchdog);
+
   process.exit(0);
 }
 
-process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => void failFastShutdown("SIGTERM"));
+process.on("SIGINT", () => void failFastShutdown("SIGINT"));
 
 // Generate core token for debugging with postman.
 // generateCoreToken

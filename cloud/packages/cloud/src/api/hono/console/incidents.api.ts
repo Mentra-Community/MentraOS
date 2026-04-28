@@ -56,15 +56,44 @@ async function listIncidents(c: AppContext) {
   try {
     const limit = Math.min(parseInt(c.req.query("limit") || "100", 10), 500);
     const offset = parseInt(c.req.query("offset") || "0", 10);
+    const submissionMode = c.req.query("submissionMode");
+    const triggerArea = c.req.query("triggerArea");
+    const triggerReason = c.req.query("triggerReason");
+    const queryText = (c.req.query("q") || "").trim();
 
-    const incidents = await Incident.find()
+    const query: Record<string, unknown> = {};
+    if (submissionMode) {
+      query.submissionMode = submissionMode;
+    }
+    if (triggerArea) {
+      query.triggerArea = triggerArea;
+    }
+    if (triggerReason) {
+      query.triggerReason = triggerReason;
+    }
+    if (queryText) {
+      const safeRegex = new RegExp(queryText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+      query.$or = [
+        { incidentId: safeRegex },
+        { userId: safeRegex },
+        { summary: safeRegex },
+        { triggerArea: safeRegex },
+        { triggerReason: safeRegex },
+        { sourceAppletPackageName: safeRegex },
+        { sourceAppletName: safeRegex },
+      ];
+    }
+
+    const incidents = await Incident.find(query)
       .sort({ createdAt: -1 })
       .skip(offset)
       .limit(limit)
-      .select("incidentId userId status summary linearIssueId linearIssueUrl errorMessage createdAt updatedAt")
+      .select(
+        "incidentId userId status submissionMode triggerArea triggerReason sourceAppletPackageName sourceAppletName summary linearIssueId linearIssueUrl errorMessage createdAt updatedAt",
+      )
       .lean();
 
-    const total = await Incident.countDocuments();
+    const total = await Incident.countDocuments(query);
 
     return c.json({
       success: true,
@@ -90,6 +119,10 @@ async function getIncident(c: AppContext) {
   const incidentId = c.req.param("incidentId");
   if (!incidentId) {
     return c.json({ error: "incidentId is required" }, 400);
+  }
+
+  if (!incidentId) {
+    return c.json({ error: "Missing required parameter: incidentId" }, 400);
   }
 
   try {

@@ -357,7 +357,8 @@ public class CommandProcessor {
             commandHandlerRegistry.registerHandler(new com.mentra.asg_client.service.core.handlers.PowerCommandHandler(context, serviceManager));
             Log.d(TAG, "✅ Registered PowerCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new UploadIncidentLogsCommandHandler(context, configurationManager, k900CommandHandler));
+            commandHandlerRegistry.registerHandler(new UploadIncidentLogsCommandHandler(context,
+                    configurationManager, k900CommandHandler, stateManager, serviceManager));
             Log.d(TAG, "✅ Registered UploadIncidentLogsCommandHandler");
 
             commandHandlerRegistry.registerHandler(new I2SAudioCommandHandler());

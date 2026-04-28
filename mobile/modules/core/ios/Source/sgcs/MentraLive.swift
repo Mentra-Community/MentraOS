@@ -30,7 +30,7 @@ struct MentraLiveDevice {
 class BlePhotoUploadService {
     static let TAG = "BlePhotoUploadService"
 
-    // Callback protocol
+    /// Callback protocol
     protocol UploadCallback {
         func onSuccess(requestId: String)
         func onError(requestId: String, error: String)
@@ -74,7 +74,8 @@ class BlePhotoUploadService {
         Task {
             do {
                 Bridge.log(
-                    "\(TAG): Processing BLE photo for upload. Image size: \(imageData.count) bytes")
+                    "\(TAG): Processing BLE photo for upload. Image size: \(imageData.count) bytes"
+                )
 
                 // 1. Decode image (AVIF or JPEG) to UIImage
                 guard let image = decodeImage(imageData: imageData) else {
@@ -179,7 +180,8 @@ class BlePhotoUploadService {
         // Add requestId field
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append(
-            "Content-Disposition: form-data; name=\"requestId\"\r\n\r\n".data(using: .utf8)!)
+            "Content-Disposition: form-data; name=\"requestId\"\r\n\r\n".data(using: .utf8)!
+        )
         body.append("\(requestId)\r\n".data(using: .utf8)!)
 
         // Add source field
@@ -191,7 +193,8 @@ class BlePhotoUploadService {
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append(
             "Content-Disposition: form-data; name=\"photo\"; filename=\"\(requestId).jpg\"\r\n"
-                .data(using: .utf8)!)
+                .data(using: .utf8)!
+        )
         body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
         body.append(jpegData)
         body.append("\r\n".data(using: .utf8)!)
@@ -213,7 +216,8 @@ class BlePhotoUploadService {
             if httpResponse.statusCode < 200 || httpResponse.statusCode >= 300 {
                 let errorBody = String(data: data, encoding: .utf8) ?? "No response body"
                 throw PhotoUploadError.uploadFailed(
-                    "Upload failed with code \(httpResponse.statusCode): \(errorBody)")
+                    "Upload failed with code \(httpResponse.statusCode): \(errorBody)"
+                )
             }
 
             print("LIVE: Upload successful. Response code: \(httpResponse.statusCode)")
@@ -379,8 +383,8 @@ private struct FileTransferSession {
     var isComplete: Bool = false
     var isAnnounced: Bool = false
 
-    // BES2700 firmware hardcodes FILE_PACK_SIZE=400 when calculating totalPack.
-    // Android glasses "lie" about fileSize to make BES expect correct packet count.
+    /// BES2700 firmware hardcodes FILE_PACK_SIZE=400 when calculating totalPack.
+    /// Android glasses "lie" about fileSize to make BES expect correct packet count.
     private static let BES_HARDCODED_PACK_SIZE = 400
 
     init(fileName: String, fileSize: Int, announcedPackets: Int? = nil) {
@@ -442,8 +446,9 @@ private struct FileTransferSession {
     mutating func addPacket(_ index: Int, data: Data) -> Bool {
         guard index >= 0 else { return false }
 
-        // On first packet, recalculate total packets based on actual pack size
-        if receivedPackets.isEmpty && !data.isEmpty {
+        // On first packet, recalculate total packets only when we do not already
+        // have an authoritative pack size from protocol metadata.
+        if receivedPackets.isEmpty && actualPackSize == 0 && !data.isEmpty {
             recalculateTotalPackets(actualPackSize: data.count)
         }
 
@@ -514,6 +519,28 @@ private struct BlePhotoTransfer {
         self.requestId = requestId
         self.webhookUrl = webhookUrl
         phoneStartTime = Date()
+    }
+}
+
+private enum BleIncidentLogRelayKind {
+    case firmware
+    case logcat
+}
+
+private final class BleIncidentLogRelayEntry {
+    let fileBaseKey: String
+    let incidentId: String
+    let apiBaseUrl: String
+    let kind: BleIncidentLogRelayKind
+    var session: FileTransferSession?
+
+    init(
+        fileBaseKey: String, incidentId: String, apiBaseUrl: String, kind: BleIncidentLogRelayKind
+    ) {
+        self.fileBaseKey = fileBaseKey
+        self.incidentId = incidentId
+        self.apiBaseUrl = apiBaseUrl
+        self.kind = kind
     }
 }
 
@@ -785,7 +812,8 @@ extension MentraLive: CBPeripheralDelegate {
         }
         if let error {
             Bridge.log(
-                "LIVE: Error updating value for characteristic: \(error.localizedDescription)")
+                "LIVE: Error updating value for characteristic: \(error.localizedDescription)"
+            )
             return
         }
 
@@ -864,7 +892,7 @@ enum MentraLiveConnectionState {
     case connected
 }
 
-// Type aliases for compatibility
+/// Type aliases for compatibility
 typealias JSONObject = [String: Any]
 
 // MARK: - Main Manager Class
@@ -905,7 +933,7 @@ class MentraLive: NSObject, SGCManager {
 
     func connectController() {}
     func disconnectController() {}
-    
+
     func dbg1() {}
     func dbg2() {}
 
@@ -985,6 +1013,7 @@ class MentraLive: NSObject, SGCManager {
     private var fileWriteCharacteristic: CBCharacteristic?
     private var activeFileTransfers = [String: FileTransferSession]()
     private var blePhotoTransfers = [String: BlePhotoTransfer]()
+    private var bleIncidentLogRelays = [String: BleIncidentLogRelayEntry]()
     private var rgbLedAuthorityClaimed = false
 
     // LC3 Audio properties
@@ -1016,14 +1045,16 @@ class MentraLive: NSObject, SGCManager {
     private let MIN_SEND_DELAY_MS: UInt64 = 160_000_000 // 160ms in nanoseconds
     private let READINESS_CHECK_INTERVAL_MS: TimeInterval = 2.5 // 2.5 seconds
 
-    // Device Settings Keys
+    /// Device Settings Keys
     private let PREFS_DEVICE_NAME = "MentraLiveLastConnectedDeviceName"
 
     // MARK: - Properties
 
-    @objc static func requiresMainQueueSetup() -> Bool { true }
+    @objc static func requiresMainQueueSetup() -> Bool {
+        true
+    }
 
-    // BLE Properties
+    /// BLE Properties
     private var centralManager: CBCentralManager?
 
     private var connectedPeripheral: CBPeripheral?
@@ -1061,7 +1092,7 @@ class MentraLive: NSObject, SGCManager {
     private var readinessCheckTimer: Timer?
     private var readinessCheckCounter = 0
 
-    // BES OTA progress tracking - only send to UI on 5% increments
+    /// BES OTA progress tracking - only send to UI on 5% increments
     private var lastBesOtaProgress = -1
 
     // Glasses media volume (K900 cs_getvol / cs_vol, sr_getvol / sr_vol)
@@ -1158,11 +1189,13 @@ class MentraLive: NSObject, SGCManager {
 
                 // Check if this is the device we want
                 if let savedDeviceName = UserDefaults.standard.string(
-                    forKey: PREFS_DEVICE_NAME),
+                    forKey: PREFS_DEVICE_NAME
+                ),
                     savedDeviceName == name
                 {
                     Bridge.log(
-                        "Found our remembered device already connected, connecting: \(name)")
+                        "Found our remembered device already connected, connecting: \(name)"
+                    )
                     connectToDevice(peripheral)
                     return
                 }
@@ -1465,7 +1498,8 @@ class MentraLive: NSObject, SGCManager {
             }
 
             Bridge.log(
-                "🔄 Retrying message mId: \(pendingMessage.id) (attempt \(retryMessage.retries)/3)")
+                "🔄 Retrying message mId: \(pendingMessage.id) (attempt \(retryMessage.retries)/3)"
+            )
         } else {
             Bridge.log("❌ Message failed after 3 retries - mId: \(pendingMessage.id)")
             // Optionally emit an event or callback for failed message
@@ -1585,8 +1619,8 @@ class MentraLive: NSObject, SGCManager {
             if self.connectedPeripheral == nil, !self.isKilled {
                 // Check for last known device name to start scan
                 if let lastDeviceName = UserDefaults.standard.string(
-                    forKey: self.PREFS_DEVICE_NAME), !lastDeviceName.isEmpty
-                {
+                    forKey: self.PREFS_DEVICE_NAME
+                ), !lastDeviceName.isEmpty {
                     Bridge.log(
                         "LIVE: Reconnection attempt \(self.reconnectAttempts) - looking for device with name: \(lastDeviceName)"
                     )
@@ -1650,11 +1684,12 @@ class MentraLive: NSObject, SGCManager {
             || commandType == K900ProtocolUtils.CMD_TYPE_DATA
         {
             Bridge.log(
-                "📦 DETECTED FILE TRANSFER PACKET (type: 0x\(String(format: "%02X", commandType)))")
+                "📦 DETECTED FILE TRANSFER PACKET (type: 0x\(String(format: "%02X", commandType)))"
+            )
 
             // Debug: Log the raw data
-            let hexDump = data.prefix(64).map { String(format: "%02X ", $0) }.joined()
-            Bridge.log("📦 Raw file packet data length=\(data.count), first 64 bytes: \(hexDump)")
+            // let hexDump = data.prefix(64).map { String(format: "%02X ", $0) }.joined()
+            // Bridge.log("📦 Raw file packet data length=\(data.count), first 64 bytes: \(hexDump)")
 
             // The data IS the file packet - it starts with ## and contains the full file packet structure
             if let packetInfo = K900ProtocolUtils.extractFilePacket(data) {
@@ -1738,7 +1773,8 @@ class MentraLive: NSObject, SGCManager {
                     pendingMessageTimer = nil
                 } else if pending?.id != nil {
                     Bridge.log(
-                        "LIVE: Received unexpected ACK! expected: \(pending!.id), received: \(mId)")
+                        "LIVE: Received unexpected ACK! expected: \(pending!.id), received: \(mId)"
+                    )
                 }
             }
             return // Don't send ACK for ACKs!
@@ -1818,7 +1854,8 @@ class MentraLive: NSObject, SGCManager {
             {
                 if let gestureName = mapK900GestureType(gestureType) {
                     Bridge.log(
-                        "LIVE: 👆 K900 touchpad event - Type: \(gestureType) -> \(gestureName)")
+                        "LIVE: 👆 K900 touchpad event - Type: \(gestureType) -> \(gestureName)"
+                    )
                     Bridge.sendTouchEvent(
                         deviceModel: "Mentra Live",
                         gestureName: gestureName,
@@ -2084,7 +2121,8 @@ class MentraLive: NSObject, SGCManager {
                 let isCharging = voltage > 4000
 
                 Bridge.log(
-                    "🔋 K900 Battery Status - Voltage: \(voltageVolts)V, Level: \(percentage)%")
+                    "🔋 K900 Battery Status - Voltage: \(voltageVolts)V, Level: \(percentage)%"
+                )
                 updateBatteryStatus(level: percentage, isCharging: isCharging)
             }
 
@@ -2172,7 +2210,8 @@ class MentraLive: NSObject, SGCManager {
             {
                 if let gestureName = mapK900GestureType(gestureType) {
                     Bridge.log(
-                        "LIVE: 👆 K900 touchpad event - Type: \(gestureType) -> \(gestureName)")
+                        "LIVE: 👆 K900 touchpad event - Type: \(gestureType) -> \(gestureName)"
+                    )
                     Bridge.sendTouchEvent(
                         deviceModel: deviceModel,
                         gestureName: gestureName,
@@ -2241,9 +2280,35 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
-    func sendIncidentId(_ incidentId: String) {
-        Bridge.log("LIVE: Sending incidentId to glasses for log upload: \(incidentId)")
-        sendJson(["type": "upload_incident_logs", "incidentId": incidentId], wakeUp: true)
+    func sendIncidentId(_ incidentId: String, apiBaseUrl: String?) {
+        var base = (apiBaseUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if base.isEmpty {
+            base = "https://api.mentra.glass"
+        }
+        while base.hasSuffix("/") {
+            base = String(base.dropLast())
+        }
+        let bKey = MentraLive.incidentBleFileBase(incidentId: incidentId, prefix: "B")
+        let lKey = MentraLive.incidentBleFileBase(incidentId: incidentId, prefix: "L")
+        bleIncidentLogRelays[bKey] = BleIncidentLogRelayEntry(
+            fileBaseKey: bKey, incidentId: incidentId, apiBaseUrl: base, kind: .firmware
+        )
+        bleIncidentLogRelays[lKey] = BleIncidentLogRelayEntry(
+            fileBaseKey: lKey, incidentId: incidentId, apiBaseUrl: base, kind: .logcat
+        )
+
+        Bridge.log(
+            "LIVE: Sending incidentId to glasses for log upload: \(incidentId) (BLE relay \(bKey), \(lKey))"
+        )
+        sendJson(["type": "upload_incident_logs", "incidentId": incidentId, "apiBaseUrl": base], wakeUp: true)
+    }
+
+    private static func incidentBleFileBase(incidentId: String, prefix: Character) -> String {
+        var compact = incidentId.replacingOccurrences(of: "-", with: "").lowercased()
+        if compact.count < 15 {
+            compact += String(repeating: "0", count: 15 - compact.count)
+        }
+        return String(prefix) + String(compact.prefix(15))
     }
 
     func forgetWifiNetwork(_ ssid: String) {
@@ -2470,7 +2535,8 @@ class MentraLive: NSObject, SGCManager {
         let compressionDurationMs = json["compressionDurationMs"] as? Int64 ?? 0
 
         Bridge.log(
-            "LIVE: 📸 BLE photo ready notification: bleImgId=\(bleImgId), requestId=\(requestId)")
+            "LIVE: 📸 BLE photo ready notification: bleImgId=\(bleImgId), requestId=\(requestId)"
+        )
 
         // Update the transfer with glasses compression duration
         if var transfer = blePhotoTransfers[bleImgId] {
@@ -2557,6 +2623,9 @@ class MentraLive: NSObject, SGCManager {
         if blePhotoTransfers.removeValue(forKey: bleImgId) != nil {
             Bridge.log("LIVE: 🧹 Cleaned up timed out BLE photo transfer for: \(bleImgId)")
         }
+        if bleIncidentLogRelays.removeValue(forKey: bleImgId) != nil {
+            Bridge.log("LIVE: 🧹 Cleaned up timed out BLE incident log relay for: \(bleImgId)")
+        }
     }
 
     private func handleTransferFailed(_ json: [String: Any]) {
@@ -2591,6 +2660,9 @@ class MentraLive: NSObject, SGCManager {
                 "LIVE: 🧹 Cleaned up failed BLE photo transfer for: \(bleImgId) (requestId: \(transfer.requestId))"
             )
         }
+        if bleIncidentLogRelays.removeValue(forKey: bleImgId) != nil {
+            Bridge.log("LIVE: 🧹 Cleaned up failed BLE incident log relay for: \(bleImgId)")
+        }
     }
 
     // requestMissingPackets() removed - no longer used with ACK system
@@ -2606,6 +2678,55 @@ class MentraLive: NSObject, SGCManager {
         if let dotIndex = bleImgId.lastIndex(of: ".") {
             bleImgId = String(bleImgId[..<dotIndex])
         }
+
+        if let incidentRelay = bleIncidentLogRelays[bleImgId] {
+            Bridge.log("LIVE: 📦 BLE incident log relay packet for: \(bleImgId)")
+
+            if incidentRelay.session == nil {
+                activeFileTransfers.removeValue(forKey: packetInfo.fileName)
+                var session = FileTransferSession(
+                    fileName: packetInfo.fileName, fileSize: Int(packetInfo.fileSize)
+                )
+                session.recalculateTotalPackets(actualPackSize: Int(packetInfo.packSize))
+                incidentRelay.session = session
+                Bridge.log(
+                    "LIVE: 📦 Started BLE incident log transfer: \(packetInfo.fileName) (\(packetInfo.fileSize) bytes, \(session.totalPackets) packets)"
+                )
+            }
+
+            guard var session = incidentRelay.session else { return }
+
+            let added = session.addPacket(Int(packetInfo.packIndex), data: packetInfo.data)
+            incidentRelay.session = session
+
+            if added {
+                if session.isComplete {
+                    if let payload = session.assembleFile() {
+                        uploadBleIncidentLogRelay(
+                            relay: incidentRelay, fileName: packetInfo.fileName, data: payload
+                        )
+                    } else {
+                        sendTransferCompleteConfirmation(fileName: packetInfo.fileName, success: false)
+                        // Keep relay entry for glasses retry after transfer_complete:false.
+                        incidentRelay.session = nil
+                    }
+                } else if session.isFinalPacket(Int(packetInfo.packIndex)) {
+                    let missing = session.missingPacketIndices()
+                    if !missing.isEmpty {
+                        Bridge.log(
+                            "LIVE: ❌ BLE incident log transfer incomplete. Missing \(missing.count) packets"
+                        )
+                        sendTransferCompleteConfirmation(fileName: packetInfo.fileName, success: false)
+                        // Keep relay entry for glasses retry after transfer_complete:false.
+                        incidentRelay.session = nil
+                    }
+                }
+            }
+
+            return
+        }
+
+        if bleImgId.hasPrefix("B") || bleImgId.hasPrefix("L") {}
 
         if var photoTransfer = blePhotoTransfers[bleImgId] {
             // This is a BLE photo transfer
@@ -2642,7 +2763,8 @@ class MentraLive: NSObject, SGCManager {
 
                         Bridge.log("✅ BLE photo transfer complete: \(packetInfo.fileName)")
                         Bridge.log(
-                            "⏱️ Total duration (request to complete): \(Int(totalDuration))ms")
+                            "⏱️ Total duration (request to complete): \(Int(totalDuration))ms"
+                        )
                         Bridge.log(
                             "⏱️ Glasses compression: \(photoTransfer.glassesCompressionDurationMs)ms"
                         )
@@ -2810,6 +2932,69 @@ class MentraLive: NSObject, SGCManager {
         ]
     }
 
+    private func uploadBleIncidentLogRelay(
+        relay: BleIncidentLogRelayEntry, fileName: String, data: Data
+    ) {
+        let token = GlassesStore.shared.get("core", "core_token") as? String ?? ""
+        guard !token.isEmpty else {
+            sendTransferCompleteConfirmation(fileName: fileName, success: false)
+            if let existing = bleIncidentLogRelays[relay.fileBaseKey] {
+                existing.session = nil
+            }
+            return
+        }
+
+        guard var components = URLComponents(string: relay.apiBaseUrl) else {
+            sendTransferCompleteConfirmation(fileName: fileName, success: false)
+            if let existing = bleIncidentLogRelays[relay.fileBaseKey] {
+                existing.session = nil
+            }
+            return
+        }
+        let basePath = components.path.hasSuffix("/")
+            ? String(components.path.dropLast())
+            : components.path
+        components.path = basePath + "/api/incidents/\(relay.incidentId)/logs"
+        guard let url = components.url else {
+            sendTransferCompleteConfirmation(fileName: fileName, success: false)
+            if let existing = bleIncidentLogRelays[relay.fileBaseKey] {
+                existing.session = nil
+            }
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = data
+
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            let ok: Bool
+            let statusCode: Int?
+            if error != nil {
+                ok = false
+                statusCode = nil
+            } else if let http = response as? HTTPURLResponse {
+                ok = (200 ..< 300).contains(http.statusCode)
+                statusCode = http.statusCode
+            } else {
+                ok = false
+                statusCode = nil
+            }
+            DispatchQueue.main.async {
+                if ok {
+                    Bridge.log("LIVE: ✅ Incident log BLE relay uploaded (\(relay.kind))")
+                    self.bleIncidentLogRelays.removeValue(forKey: relay.fileBaseKey)
+                } else if let existing = self.bleIncidentLogRelays[relay.fileBaseKey] {
+                    // Keep relay entry for glasses retry after transfer_complete:false.
+                    existing.session = nil
+                }
+                self.sendTransferCompleteConfirmation(fileName: fileName, success: ok)
+            }
+        }.resume()
+    }
+
     private func processAndUploadBlePhoto(_ transfer: BlePhotoTransfer, imageData: Data) {
         Bridge.log("LIVE: Processing BLE photo for upload. RequestId: \(transfer.requestId)")
 
@@ -2955,7 +3140,7 @@ class MentraLive: NSObject, SGCManager {
     private func sendCoreTokenToAsgClient() {
         Bridge.log("Preparing to send coreToken to ASG client")
 
-        let coreToken = GlassesStore.shared.get("core", "auth_token") as? String ?? ""
+        let coreToken = GlassesStore.shared.get("core", "core_token") as? String ?? ""
         if coreToken.isEmpty {
             Bridge.log("LIVE: No coreToken available to send to ASG client")
             return
@@ -3126,7 +3311,8 @@ class MentraLive: NSObject, SGCManager {
                 "LIVE: IMU Single Reading - Accel: [%.2f, %.2f, %.2f], Euler: [%.1f°, %.1f°, %.1f°]",
                 accel[0], accel[1], accel[2],
                 euler[0], euler[1], euler[2]
-            ))
+            )
+        )
 
         // Emit event for other components
         let eventBody: [String: Any] = [
@@ -3729,7 +3915,8 @@ extension MentraLive {
                     domain: "MentraLive",
                     code: -1002,
                     userInfo: [NSLocalizedDescriptionKey: "glasses_volume_invalid_response"]
-                ))
+                )
+            )
             return
         }
 
@@ -3808,7 +3995,9 @@ extension MentraLive {
                         domain: "MentraLive",
                         code: -1003,
                         userInfo: [NSLocalizedDescriptionKey: "glasses_volume_busy"]
-                    )))
+                    )
+                )
+            )
             return
         }
         glassesMediaVolumeGetCompletion = completion
@@ -3820,7 +4009,8 @@ extension MentraLive {
                     domain: "MentraLive",
                     code: -1004,
                     userInfo: [NSLocalizedDescriptionKey: "glasses_not_ready"]
-                ))
+                )
+            )
             return
         }
 
@@ -3831,7 +4021,8 @@ extension MentraLive {
                     domain: "MentraLive",
                     code: -1005,
                     userInfo: [NSLocalizedDescriptionKey: "glasses_volume_send_failed"]
-                ))
+                )
+            )
         }
     }
 
@@ -3846,7 +4037,9 @@ extension MentraLive {
                         domain: "MentraLive",
                         code: -1003,
                         userInfo: [NSLocalizedDescriptionKey: "glasses_volume_busy"]
-                    )))
+                    )
+                )
+            )
             return
         }
         glassesMediaVolumeSetCompletion = completion
@@ -3858,7 +4051,8 @@ extension MentraLive {
                     domain: "MentraLive",
                     code: -1004,
                     userInfo: [NSLocalizedDescriptionKey: "glasses_not_ready"]
-                ))
+                )
+            )
             return
         }
 
@@ -3869,7 +4063,8 @@ extension MentraLive {
                     domain: "MentraLive",
                     code: -1005,
                     userInfo: [NSLocalizedDescriptionKey: "glasses_volume_send_failed"]
-                ))
+                )
+            )
         }
     }
 
@@ -4099,8 +4294,7 @@ extension MentraLive {
         }
 
         // Extract payload
-        let payload = protocolData.subdata(in: 5 ..< (5 + length))
-        return payload
+        return protocolData.subdata(in: 5 ..< (5 + length))
     }
 
     // MARK: - Button Mode Settings
@@ -4210,7 +4404,8 @@ extension MentraLive {
         let finalFps = fps > 0 ? fps : 30
 
         Bridge.log(
-            "Sending button video recording settings: \(finalWidth)x\(finalHeight)@\(finalFps)fps")
+            "Sending button video recording settings: \(finalWidth)x\(finalHeight)@\(finalFps)fps"
+        )
 
         guard connectionState == ConnTypes.CONNECTED else {
             Bridge.log("Cannot send button video recording settings - not connected")

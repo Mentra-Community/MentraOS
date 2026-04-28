@@ -49,8 +49,8 @@ export default function SelectGlassesModelScreen() {
     }
   }
 
-  // Glasses models that should only be visible in super mode
-  const SUPER_MODE_ONLY_MODELS = new Set([DeviceTypes.NEX, DeviceTypes.G2])
+  // Glasses models that should only be visible in super mode.
+  const SUPER_MODE_ONLY_MODELS = new Set<string>([DeviceTypes.NEX])
 
   // Platform-specific glasses options
   const glassesOptions =
@@ -92,22 +92,24 @@ export default function SelectGlassesModelScreen() {
         RightActionComponent={<MentraLogoStandalone />}
       />
       <Spacer className="h-4" />
-      <ScrollView className="-mr-4 pr-4 pt-6">
+      <ScrollView className="-mx-6 px-6 pt-6">
         <View className="flex-col gap-4 pb-8">
           {glassesOptions
             .filter((glasses) => !SUPER_MODE_ONLY_MODELS.has(glasses.deviceModel) || superMode)
             .map((glasses) => (
               <TouchableOpacity key={glasses.key} onPress={() => triggerGlassesPairingGuide(glasses.deviceModel)}>
-                <GlassView className="bg-primary-foreground flex-col items-center justify-center h-[190px] rounded-2xl overflow-hidden">
-                  <View className="flex-col items-center justify-center gap-3 w-full">
-                    <View className="items-center justify-center min-h-6">
-                      {getManufacturerLogo(glasses.deviceModel)}
+                <GlassView className="bg-primary-foreground flex-col items-center justify-center p-6 rounded-2xl overflow-hidden">
+                  <View className="flex-row gap-4">
+                    <View className="flex-col flex-1 justify-center">
+                      <View className="justify-center min-h-6">
+                        {getManufacturerLogo(glasses.deviceModel)}
+                      </View>
+                      <Text className="text-2xl text-foreground" text={glasses.deviceModel} />
                     </View>
                     <Image
                       source={getGlassesImage(glasses.deviceModel)}
-                      className="w-[180px] max-h-[80px] object-contain"
+                      className="w-[90px] max-h-[80px] object-contain"
                     />
-                    <Text className="text-[16px] text-foreground" text={glasses.deviceModel} />
                   </View>
                 </GlassView>
               </TouchableOpacity>

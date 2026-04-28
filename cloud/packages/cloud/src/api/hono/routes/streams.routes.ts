@@ -111,6 +111,16 @@ async function addRestreamOutput(c: AppContext) {
     return c.json({ error: "streamId is required" }, 400);
   }
 
+  if (!streamId) {
+    return c.json(
+      {
+        error: "MISSING_STREAM_ID",
+        message: "streamId is required",
+      },
+      400,
+    );
+  }
+
   try {
     const body = await c.req.json().catch(() => ({}));
     const { url, name } = body as RestreamDestination;
@@ -251,6 +261,16 @@ async function removeRestreamOutput(c: AppContext) {
     return c.json({ error: "streamId and outputId are required" }, 400);
   }
 
+  if (!streamId || !outputId) {
+    return c.json(
+      {
+        error: "MISSING_ROUTE_PARAMS",
+        message: "streamId and outputId are required",
+      },
+      400,
+    );
+  }
+
   logger.info(
     {
       streamId,
@@ -351,6 +371,16 @@ async function listRestreamOutputs(c: AppContext) {
   const packageName = appDoc.packageName;
   if (!streamId) {
     return c.json({ error: "streamId is required" }, 400);
+  }
+
+  if (!streamId) {
+    return c.json(
+      {
+        error: "MISSING_STREAM_ID",
+        message: "streamId is required",
+      },
+      400,
+    );
   }
 
   try {

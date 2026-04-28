@@ -1,0 +1,25 @@
+[incidents.drop_event]
+name = "Dropped Captions"
+enabled = true
+incident_threshold_ms = 5000
+alert_threshold_ms = 15000
+
+[incidents.audio_output_device_mismatch]
+name = "Audio Output Device Mismatch"
+enabled = true
+incident_threshold_ms = 0
+alert_threshold_ms = 15000
+
+[incidents.app_not_foreground]
+name = "MentraOS Not Foreground"
+enabled = true
+incident_threshold_ms = 0
+alert_threshold_ms = 15000
+
+[incidents.high_average_latency]
+name = "High Average Latency"
+enabled = true
+window_size = 10
+incident_threshold_ms = 10000
+resolve_threshold_ms = 10000
+alert_threshold_ms = 15000

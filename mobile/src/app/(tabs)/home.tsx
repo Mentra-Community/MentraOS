@@ -39,7 +39,6 @@ export default function Homepage() {
   const glassesConnected = useGlassesStore((state) => state.connected)
   const isSearching = useCoreStore((state) => state.searching)
   const hasAttemptedInitialConnect = useRef(false)
-  const [appSwitcherUi] = useSetting(SETTINGS.app_switcher_ui.key)
   const swipeProgress = useSharedValue(0)
   const insets = useSaferAreaInsets()
   const bottomSheetRef = useRef<BottomSheet>(null)
@@ -82,13 +81,10 @@ export default function Homepage() {
     return (
       <>
         <Group>
-          {!appSwitcherUi && <CompactDeviceStatus />}
-          {appSwitcherUi && <DeviceStatus />}
-          {appSwitcherUi && <ControllerStatus />}
-          {!offlineMode && !appSwitcherUi && <BackgroundAppsLink />}
+          <DeviceStatus />
+          <ControllerStatus />
         </Group>
         <View className="h-2" />
-        {!appSwitcherUi && <ActiveForegroundApp />}
         <AppsGrid />
       </>
     )
@@ -106,7 +102,7 @@ export default function Homepage() {
     let height = insets.top * 1.5
     let start = 0.6
     if (Platform.OS === "android") {
-      height = insets.top * 2
+      // height = insets.top * 1.5
       start = 0.4
     }
 
@@ -155,63 +151,36 @@ export default function Homepage() {
 
   return (
     <>
-      <Screen preset="fixed" className={`${appSwitcherUi ? "px-0" : ""}`} KeyboardAvoidingViewProps={{enabled: false}}>
-        {appSwitcherUi && renderTopPadding()}
+      <Screen preset="fixed" className={"px-0"} KeyboardAvoidingViewProps={{enabled: false}}>
+        {renderTopPadding()}
         <BlurTargetView ref={blurTargetRef} style={{flex: 1}}>
-          {appSwitcherUi && <CustomBackground />}
-          {!appSwitcherUi && (
-            <Header
-              leftTx="home:title"
-              RightActionComponent={
-                <View className="flex-row items-center flex-1 justify-end">
-                  <WebsocketStatus />
-                  <NonProdWarning />
-                  <View className="w-2" />
-                  <MentraLogoStandalone />
-                </View>
-              }
-            />
-          )}
-
-          {/* {appSwitcherUi && (
-        <View className="px-6 flex-row">
-          <WebsocketStatus />
-          <NonProdWarning />
-        </View>
-      )} */}
-
-          {/* {appSwitcherUi && renderTopPadding()} */}
-
+          <CustomBackground />
           <ScrollView
             contentInsetAdjustmentBehavior="automatic"
             showsVerticalScrollIndicator={false}
-            contentContainerClassName={`${appSwitcherUi ? "px-6" : ""}`}
+            contentContainerClassName={"px-6"}
             contentContainerStyle={{flexGrow: 1}}
             scrollEventThrottle={16}>
-            {appSwitcherUi && Platform.OS === "android" && <View style={{paddingTop: insets.top}} />}
+            {Platform.OS === "android" && <View style={{paddingTop: insets.top}} />}
             <View className="h-4" />
             {renderContent()}
             <View className="h-4" />
-            {!appSwitcherUi && <IncompatibleApps />}
-            {/* spacer for scrolling to the bottom of the screen */}
-            {/* {appSwitcherUi && <View className="h-25" />} */}
           </ScrollView>
         </BlurTargetView>
-        {/* <View className="h-3 absolute bottom-0 w-screen bg-red-500 z-10" /> */}
-        {appSwitcherUi && (
-          <View className="px-6">
-            <View className="">
-              <AppSwitcherButton
-                swipeProgress={swipeProgress}
-                onGridButtonPress={handleGridButtonPress}
-                blurTargetRef={blurTargetRef}
-              />
-            </View>
+
+        <View className="px-6">
+          <View className="">
+            <AppSwitcherButton
+              swipeProgress={swipeProgress}
+              onGridButtonPress={handleGridButtonPress}
+              blurTargetRef={blurTargetRef}
+            />
           </View>
-        )}
-        {appSwitcherUi && <AppSwitcher swipeProgress={swipeProgress} blurTargetRef={blurTargetRef} />}
+        </View>
+
+        <AppSwitcher swipeProgress={swipeProgress} blurTargetRef={blurTargetRef} />
       </Screen>
-      {appSwitcherUi && <AllAppsGridSheet bottomSheetRef={bottomSheetRef} />}
+      <AllAppsGridSheet bottomSheetRef={bottomSheetRef} />
     </>
   )
 }

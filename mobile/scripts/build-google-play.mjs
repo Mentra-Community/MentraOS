@@ -9,7 +9,7 @@ console.log('Building AAB for Google Play...');
 await $({ stdio: 'inherit' })`bun expo prebuild --platform android`;
 
 // Bundle JS code
-await $({ stdio: 'inherit' })`bun expo export --platform android`;
+await $({ stdio: 'inherit' })`bun expo export --platform android --clear`;
 
 // Build release AAB
 await $({ stdio: 'inherit', cwd: 'android' })`./gradlew bundleRelease`;

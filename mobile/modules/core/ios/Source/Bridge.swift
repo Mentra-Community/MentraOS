@@ -7,10 +7,10 @@
 
 import Foundation
 
-// Bridge for core communication between Expo modules and native iOS code
-// Has commands for the core to use to send messages to JavaScript
+/// Bridge for core communication between Expo modules and native iOS code
+/// Has commands for the core to use to send messages to JavaScript
 class Bridge {
-    // Event callback for sending events to JS
+    /// Event callback for sending events to JS
     static var eventCallback: ((String, [String: Any]) -> Void)?
 
     static func initialize(callback: @escaping (String, [String: Any]) -> Void) {
@@ -82,7 +82,7 @@ class Bridge {
             "level": level,
             "charging": charging,
             "timestamp": Date().timeIntervalSince1970 * 1000,
-                // TODO: time remaining
+            // TODO: time remaining
         ]
 
         let jsonData = try! JSONSerialization.data(withJSONObject: vadMsg)
@@ -91,15 +91,13 @@ class Bridge {
         }
     }
 
-    static func sendDiscoveredDevice(_ deviceModel: String, _ deviceName: String, _ signalStrength: Int = -1) {
+    static func sendDiscoveredDevice(_ deviceModel: String, _ deviceName: String) {
         Task {
             await MainActor.run {
-                let searchResults =
-                    GlassesStore.shared.get("core", "searchResults") as? [[String: Any]] ?? []
+                let searchResults = GlassesStore.shared.get("core", "searchResults") as? [[String: Any]] ?? []
                 let newResult: [String: Any] = [
                     "deviceModel": deviceModel,
                     "deviceName": deviceName,
-                    "signalStrength": signalStrength,
                 ]
                 let allResults = searchResults + [newResult]
                 var seen = Set<String>()
@@ -141,12 +139,15 @@ class Bridge {
         Bridge.sendTypedMessage("button_press", body: body)
     }
 
-    static func sendTouchEvent(deviceModel: String, gestureName: String, timestamp: Int64) {
-        let body: [String: Any] = [
+    static func sendTouchEvent(deviceModel: String, gestureName: String, timestamp: Int64, source: Int32? = nil) {
+        var body: [String: Any] = [
             "device_model": deviceModel,
             "gesture_name": gestureName,
             "timestamp": timestamp,
         ]
+        if let source {
+            body["source"] = source
+        }
         Bridge.sendTypedMessage("touch_event", body: body)
     }
 
@@ -271,7 +272,7 @@ class Bridge {
                 "serial_number": serialNumber,
                 "style": style,
                 "color": color,
-            ]
+            ],
         ]
         Bridge.sendTypedMessage("glasses_serial_number", body: body)
     }
@@ -359,7 +360,7 @@ class Bridge {
         Bridge.sendTypedMessage("ota_progress", body: eventBody)
     }
 
-    // Arbitrary WS Comms (dont use these, make a dedicated function for your use case):
+    /// Arbitrary WS Comms (dont use these, make a dedicated function for your use case):
     static func sendWSText(_ msg: String) {
         let data = ["text": msg]
         Bridge.sendTypedMessage("ws_text", body: data)
@@ -371,8 +372,8 @@ class Bridge {
         Bridge.sendTypedMessage("ws_bin", body: body)
     }
 
-    // don't call this function directly, instead
-    // make a function above that calls this function:
+    /// don't call this function directly, instead
+    /// make a function above that calls this function:
     static func sendTypedMessage(_ type: String, body: [String: Any]) {
         var body = body
         body["type"] = type

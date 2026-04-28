@@ -96,7 +96,7 @@ class GallerySyncService {
     this.hotspotListenerRegistered = true
     this.isInitialized = true
 
-    console.log("[GallerySyncService] Initialized")
+    // console.log("[GallerySyncService] Initialized")
 
     // Check for resumable sync on startup
     this.checkForResumableSync()
@@ -691,10 +691,16 @@ class GallerySyncService {
       showAlert(translate("glasses:connectToGlassesTitle"), message, [
         {
           text: translate("common:ok"),
-          onPress: () => {
+          onPress: async () => {
             console.log("[GallerySyncService] User acknowledged WiFi explanation")
             // Mark as explained so we don't show again
             settingsStore.setSetting(SETTINGS.gallery_sync_explained.key, true, false)
+            // Android: the native WiFi connect call freezes the UI thread (screen dims
+            // instantly on Samsung), leaving the dialog mid-fade. Wait for the fade to
+            // complete before resolving so the dialog fully dismisses first.
+            if (Platform.OS === "android") {
+              await new Promise((r) => setTimeout(r, 150))
+            }
             resolve(true)
           },
         },

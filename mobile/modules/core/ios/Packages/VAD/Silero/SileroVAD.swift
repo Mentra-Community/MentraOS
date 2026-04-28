@@ -273,7 +273,7 @@ public class SileroVAD: NSObject {
 }
 
 public extension Data {
-    // 针对采样位数为 16 位的情况
+    /// 针对采样位数为 16 位的情况
     func int16Array() -> [Int16] {
         var array = [Int16](repeating: 0, count: count / MemoryLayout<Int16>.stride)
         _ = array.withUnsafeMutableBytes {

@@ -17,6 +17,14 @@ doppler run --project mentra-sre --config dev -- bstack sql "SELECT ..."
 
 **Important**: The hot storage table (`remote(t373499_mentracloud_prod_logs)`) only holds the last few minutes of data. For weekly audits, use the historical/S3 table: `s3Cluster(primary, t373499_mentracloud_prod_s3)` with `WHERE _row_type = 1`. Queries are slower (~3-5s) but have full history.
 
+## Step 0: Quick health check (30 seconds)
+
+```bash
+bstack health
+```
+
+Check all regions at a glance. Note which regions are up, session counts, RSS, and uptime. If a region has low uptime (recently restarted), investigate further with `bstack crash-timeline --region <REGION>`.
+
 ## Quick Check (30 seconds)
 
 ```bash
@@ -58,6 +66,20 @@ bstack sql "SELECT toStartOfHour(dt) as hour, avg(JSONExtractInt(raw, 'disposedS
 
 If `disposedSessionsPendingGC` climbs above 0 and stays there, sessions are leaking. Check the timer audit section in the pod-crash runbook.
 
+For per-region peak heap/RSS over the last week:
+
+```bash
+bstack sql "SELECT JSONExtract(raw, 'region', 'Nullable(String)') as region, max(JSONExtract(raw, 'heapUsedMB', 'Nullable(Float64)')) as peak_heap, max(JSONExtract(raw, 'rssMB', 'Nullable(Float64)')) as peak_rss FROM s3Cluster(primary, t373499_mentracloud_prod_s3) WHERE _row_type = 1 AND dt >= now() - INTERVAL 7 DAY AND JSONExtract(raw, 'feature', 'Nullable(String)') = 'system-vitals' GROUP BY region ORDER BY peak_heap DESC"
+```
+
+For a detailed memory breakdown by owner:
+
+```bash
+bstack memory-owners --region us-central
+```
+
+This shows which subsystems are consuming memory and which are growing. If a specific owner (e.g., `calendar.events`, `transcription.vad-audio-buffer`) is growing, that is your leak. Note: `transcription.history.*` owners were removed in issue 098.
+
 ### Step 3: Top Warnings by Count (2 minutes)
 
 ```bash
@@ -86,6 +108,14 @@ Target: reduce total log volume by 50% without losing diagnostic capability.
 bstack incidents --limit 20
 ```
 
+For any crash you want to investigate further:
+
+```bash
+bstack crash-timeline --region <REGION>
+```
+
+This shows the timeline of diagnostic events leading up to the crash — GC probes, event loop gaps, slow queries, and health timing.
+
 Compare to last week:
 
 | Trend                        | What it means                                           |
@@ -108,7 +138,17 @@ Is churn getting better or worse? Does it correlate with time of day (peak hours
 bstack memory --region us-central --duration 1h
 ```
 
+For per-owner breakdown:
+
+```bash
+bstack memory-owners --region us-central
+```
+
+Check the "Top owners by growth" section. If any owner is growing between snapshots, that's where the leak is.
+
 Is the heap stable (sawtooth pattern) or climbing (leak)? RSS should stay under 500MB with 80 sessions after the logging transport fix (issue 067).
+
+> **Note:** The queries above are scoped to `us-central`. Repeat Steps 1-7 for each active region: `france`, `east-asia`, `us-west`, `us-east`. Or use `bstack diagnostics --region <REGION>` for a quick all-in-one check per region.
 
 ## Fix
 
@@ -181,18 +221,19 @@ Use `JSONExtractString(raw, 'field')`, `JSONExtractInt(raw, 'field')`, `JSONExtr
 
 ### Hot vs historical storage
 
-| Table | Data range | Speed | Use for |
-|-------|-----------|-------|---------|
-| `remote(t373499_mentracloud_prod_logs)` | Last ~2-5 minutes | Fast (<1s) | Real-time debugging |
-| `s3Cluster(primary, t373499_mentracloud_prod_s3)` | Full history | Slow (3-5s) | Weekly audits, investigations |
-| `remote(t373499_augmentos_logs)` | Last ~2-5 minutes (dev/debug) | Fast | Dev/debug real-time |
-| `s3Cluster(primary, t373499_augmentos_s3)` | Full history (dev/debug) | Slow | Dev/debug investigations |
+| Table                                             | Data range                    | Speed       | Use for                       |
+| ------------------------------------------------- | ----------------------------- | ----------- | ----------------------------- |
+| `remote(t373499_mentracloud_prod_logs)`           | Last ~2-5 minutes             | Fast (<1s)  | Real-time debugging           |
+| `s3Cluster(primary, t373499_mentracloud_prod_s3)` | Full history                  | Slow (3-5s) | Weekly audits, investigations |
+| `remote(t373499_augmentos_logs)`                  | Last ~2-5 minutes (dev/debug) | Fast        | Dev/debug real-time           |
+| `s3Cluster(primary, t373499_augmentos_s3)`        | Full history (dev/debug)      | Slow        | Dev/debug investigations      |
 
 Always add `WHERE _row_type = 1` when querying S3 tables (filters to log rows, excludes metrics).
 
 ### Maintain this runbook
 
 After every audit, update:
+
 - New error patterns discovered
 - Query patterns that worked well
 - Thresholds that need adjusting

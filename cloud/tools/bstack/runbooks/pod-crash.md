@@ -30,6 +30,23 @@ porter kubectl --cluster <CLUSTER_ID> -- describe pod -n default -l "app.kuberne
 | **1**     | Unhandled exception — code bug      | Go to "Exit 1" below          |
 | **0**     | Clean shutdown — likely a deploy    | Check if a deploy was running |
 
+### Step 1b: Get the crash timeline
+
+```bash
+bstack crash-timeline --region <REGION>
+```
+
+This gives you a unified timeline of GC probes, event loop gaps, slow queries, health timing, and system vitals leading up to the crash. It's the single most useful command for understanding what happened before a kill.
+
+Look for:
+
+- GC duration spikes (>100ms) right before the crash
+- Event loop gaps correlating with the kill time
+- MongoDB slow queries (>1000ms) blocking the event loop
+- RSS/heap climbing steadily toward the kill
+
+If the timeline shows a clear pattern, you may not need Steps 2-4.
+
 ### Step 2: Exit 137 — Why did Kubernetes kill it?
 
 Check for OOM kills:
@@ -89,6 +106,16 @@ See issue 072 for a documented example.
 
 ### Memory leak (exit 137, RSS climbing)
 
+First, check what's consuming memory:
+
+```bash
+bstack memory-owners --region <REGION>
+```
+
+This shows top memory owners by size, growth rate, and per-session breakdown — without needing a heap snapshot. Look for owners that are growing over time (check the "Top owners by growth" section).
+
+If a specific owner is growing (e.g., `transcription.history`, `calendar.events`, `app-session.subscriptions`), you know where to look in the code.
+
 1. Check if the logging transport changed — the `@logtail/pino` transport caused 15 MB/min heap growth (issue 067)
 2. Check `disposedSessionsPendingGC` in system-vitals — if > 0, sessions are leaking
 3. Take a heap snapshot if the pod is still alive: `analyze-heap.ts live --host=<REGION_HOST>`
@@ -132,6 +159,12 @@ All regions should show `ok` status. Check that:
 ```bash
 bstack diagnostics --region <REGION> --duration 10m
 ```
+
+```bash
+bstack memory-owners --region <REGION>
+```
+
+Check that no owner is growing unboundedly.
 
 Verify zero event loop gaps and GC probes within range.
 
@@ -267,6 +300,7 @@ doppler run --project mentra-sre --config dev -- \
 ```
 
 Key things to look for in the snapshot:
+
 - `UserSession` count vs `activeSessions` from health endpoint — difference = phantom sessions
 - `Timeout` count — should be ~20× active sessions. Much higher = leaked timers
 - All manager types (DashboardManager, DeviceManager, etc.) should equal UserSession count
@@ -299,6 +333,7 @@ This runs the same build sequence as `Dockerfile.porter` locally in ~7 seconds: 
 ### Maintain this runbook
 
 After every investigation, add what you learned:
+
 - New query patterns that worked
 - Tools/credentials that were hard to find
 - Failure modes you discovered

@@ -481,7 +481,7 @@ async function downloadExport(c: AppContext) {
     }
 
     if (!id) {
-      return c.json({ error: "Export ID is required" }, 400);
+      return c.json({ error: "Missing required parameter: id" }, 400);
     }
 
     const exportRequest = exportRequests.get(id);

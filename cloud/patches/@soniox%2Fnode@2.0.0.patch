@@ -1,0 +1,92 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 9e0ed3b3b5c4aabaff12f5a3dabd3be4d0e27193..367f927a15f5e64d2b62a2d1aab4a72536ab2eb8 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -695,6 +695,7 @@ function filterSpecialTokens(tokens) {
+ var RealtimeSttSession = class {
+ 	emitter = new TypedEmitter();
+ 	eventQueue = new AsyncEventQueue();
++	iteratorAttached = false;
+ 	apiKey;
+ 	wsBaseUrl;
+ 	config;
+@@ -885,6 +886,7 @@ var RealtimeSttSession = class {
+ 	* Async iterator for consuming events.
+ 	*/
+ 	[Symbol.asyncIterator]() {
++		this.iteratorAttached = true;
+ 		return this.eventQueue[Symbol.asyncIterator]();
+ 	}
+ 	/**
+@@ -943,21 +945,21 @@ var RealtimeSttSession = class {
+ 				tokens: userTokens
+ 			};
+ 			this.emitter.emit("result", filteredResult);
+-			this.eventQueue.push({
++			if (this.iteratorAttached) this.eventQueue.push({
+ 				kind: "result",
+ 				data: filteredResult
+ 			});
+ 			if (hasEndpoint) {
+ 				this.emitter.emit("endpoint");
+-				this.eventQueue.push({ kind: "endpoint" });
++				if (this.iteratorAttached) this.eventQueue.push({ kind: "endpoint" });
+ 			}
+ 			if (hasFinalized) {
+ 				this.emitter.emit("finalized");
+-				this.eventQueue.push({ kind: "finalized" });
++				if (this.iteratorAttached) this.eventQueue.push({ kind: "finalized" });
+ 			}
+ 			if (result.finished) {
+ 				this.emitter.emit("finished");
+-				this.eventQueue.push({ kind: "finished" });
++				if (this.iteratorAttached) this.eventQueue.push({ kind: "finished" });
+ 				this.settleFinish();
+ 				this.cleanup("finished", void 0, "finished");
+ 			}
+diff --git a/dist/index.mjs b/dist/index.mjs
+index bf568ccb4ae2157cc5a4425be63263933190611b..8579117fce64354d9504fbb0be22502644b60d7d 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -695,6 +695,7 @@ function filterSpecialTokens(tokens) {
+ var RealtimeSttSession = class {
+ 	emitter = new TypedEmitter();
+ 	eventQueue = new AsyncEventQueue();
++	iteratorAttached = false;
+ 	apiKey;
+ 	wsBaseUrl;
+ 	config;
+@@ -885,6 +886,7 @@ var RealtimeSttSession = class {
+ 	* Async iterator for consuming events.
+ 	*/
+ 	[Symbol.asyncIterator]() {
++		this.iteratorAttached = true;
+ 		return this.eventQueue[Symbol.asyncIterator]();
+ 	}
+ 	/**
+@@ -943,21 +945,21 @@ var RealtimeSttSession = class {
+ 				tokens: userTokens
+ 			};
+ 			this.emitter.emit("result", filteredResult);
+-			this.eventQueue.push({
++			if (this.iteratorAttached) this.eventQueue.push({
+ 				kind: "result",
+ 				data: filteredResult
+ 			});
+ 			if (hasEndpoint) {
+ 				this.emitter.emit("endpoint");
+-				this.eventQueue.push({ kind: "endpoint" });
++				if (this.iteratorAttached) this.eventQueue.push({ kind: "endpoint" });
+ 			}
+ 			if (hasFinalized) {
+ 				this.emitter.emit("finalized");
+-				this.eventQueue.push({ kind: "finalized" });
++				if (this.iteratorAttached) this.eventQueue.push({ kind: "finalized" });
+ 			}
+ 			if (result.finished) {
+ 				this.emitter.emit("finished");
+-				this.eventQueue.push({ kind: "finished" });
++				if (this.iteratorAttached) this.eventQueue.push({ kind: "finished" });
+ 				this.settleFinish();
+ 				this.cleanup("finished", void 0, "finished");
+ 			}

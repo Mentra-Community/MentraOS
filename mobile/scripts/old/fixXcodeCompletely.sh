@@ -40,6 +40,6 @@ pod install
 cd ..
 
 echo "🚀 Reopening Xcode workspace..."
-open ios/MentraOS.xcworkspace
+open ios/Mentra.xcworkspace
 
 echo "✅ All done. Clean rebuild ready."

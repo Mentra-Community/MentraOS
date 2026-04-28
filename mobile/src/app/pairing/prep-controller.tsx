@@ -1,7 +1,6 @@
 import {ControllerTypes, DeviceTypes} from "@/../../cloud/packages/types/src"
 import {useRoute} from "@react-navigation/native"
-import CoreModule from "core"
-import {Linking, PermissionsAndroid, Image, Platform, ScrollView, View} from "react-native"
+import {Linking, PermissionsAndroid, Image, Platform, View} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
@@ -10,11 +9,9 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {showAlert} from "@/utils/AlertUtils"
 import {PermissionFeatures, checkConnectivityRequirementsUI, requestFeaturePermissions} from "@/utils/PermissionsUtils"
-import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
 import {useState} from "react"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
-import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
-import {useAppletStatusStore} from "@/stores/applets"
+import CoreModule from "core"
 
 export default function PairingPrepScreen() {
   const route = useRoute()
@@ -290,7 +287,7 @@ export default function PairingPrepScreen() {
   }
 
   return (
-    <Screen preset="fixed" safeAreaEdges={["bottom"]}>
+    <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
       <Header
         title={deviceModel}
         leftIcon="chevron-left"

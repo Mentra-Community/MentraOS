@@ -1,5 +1,5 @@
 import {router, useFocusEffect, usePathname, useSegments, useNavigation} from "expo-router"
-import {createContext, useContext, useEffect, useRef, useCallback, useState} from "react"
+import {createContext, useContext, useEffect, useRef, useCallback, useMemo, useState} from "react"
 import {BackHandler, Platform} from "react-native"
 import {CommonActions} from "@react-navigation/native"
 
@@ -545,6 +545,7 @@ export const focusEffectPreventBack = (backFn?: () => void, iosDontPreventBack?:
   if (Platform.OS === "ios") {
     useFocusEffect(
       useCallback(() => {
+        if (iosDontPreventBack) return // No listener needed; native gesture handles back
         const unsubscribe = navigation.addListener("beforeRemove", (e) => {
           backFn?.()
         })

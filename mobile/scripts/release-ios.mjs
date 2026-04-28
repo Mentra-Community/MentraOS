@@ -20,7 +20,7 @@ function ghTag(version) {
 
 function ipaPrefix(version) {
   const { major, minor } = parseVersion(version);
-  return `MentraOS_iOS_${major}p${minor}`;
+  return `Mentra_iOS_${major}p${minor}`;
 }
 
 // ── Load App Store Connect credentials ────────────────────────────────────────
@@ -103,9 +103,9 @@ if (!teamId) {
   process.exit(1);
 }
 
-const archivePath = path.resolve('build/MentraOS.xcarchive');
+const archivePath = path.resolve('build/Mentra.xcarchive');
 
-await $({ stdio: 'inherit' })`xcodebuild archive -workspace ios/MentraOS.xcworkspace -scheme MentraOS -configuration Release -destination generic/platform=iOS -archivePath ${archivePath} DEVELOPMENT_TEAM=${teamId} SWIFT_STRICT_CONCURRENCY=minimal`;
+await $({ stdio: 'inherit' })`xcodebuild archive -workspace ios/Mentra.xcworkspace -scheme Mentra -configuration Release -destination generic/platform=iOS -archivePath ${archivePath} DEVELOPMENT_TEAM=${teamId} SWIFT_STRICT_CONCURRENCY=minimal`;
 
 if (!existsSync(archivePath)) {
   console.error('Archive not found at:', archivePath);

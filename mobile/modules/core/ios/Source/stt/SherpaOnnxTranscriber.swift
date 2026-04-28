@@ -19,18 +19,18 @@ class SherpaOnnxTranscriber {
     private var processingQueue: DispatchQueue?
     private var processingTask: DispatchWorkItem?
 
-    // The underlying Sherpa-ONNX objects
+    /// The underlying Sherpa-ONNX objects
     private var recognizer: SherpaOnnxRecognizer?
 
     private var lastPartialResult = ""
 
-    // Parent context
+    /// Parent context
     private weak var context: UIViewController?
 
-    // Session start time for relative timestamps
+    /// Session start time for relative timestamps
     private var transcriptionSessionStart: Date
 
-    // Dynamic model path support
+    /// Dynamic model path support
     private static var customModelPath: String? {
         guard let storedPath = UserDefaults.standard.string(forKey: "STTModelPath") else {
             return nil

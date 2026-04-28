@@ -92,8 +92,6 @@ interface SessionInfo {
   transcription: {
     vadBufferChunks: number;
     vadBufferBytes: number;
-    transcriptLanguages: number;
-    transcriptSegments: number;
   };
   microphone: {
     enabled: boolean;
@@ -140,7 +138,6 @@ interface TimePoint {
   websockets: number;
   audioBufferBytes: number;
   vadBufferBytes: number;
-  transcriptSegments: number;
   uptime: number;
   loadavg: number[];
   micActive: number;
@@ -205,7 +202,7 @@ async function modeLive() {
   const startTime = Date.now();
 
   // Print header
-  const header = `${rpad("Time", 10)} ${pad("RSS", 10)} ${pad("Δ RSS", 10)} ${pad("Heap", 10)} ${pad("Δ Heap", 10)} ${pad("Ext", 10)} ${pad("ArrBuf", 10)} ${pad("Sessions", 9)} ${pad("Apps", 6)} ${pad("WS", 6)} ${pad("Audio", 10)} ${pad("VAD", 10)} ${pad("Segs", 7)} ${pad("Mic", 5)} ${pad("Uptime", 8)} ${pad("Load", 6)}`;
+  const header = `${rpad("Time", 10)} ${pad("RSS", 10)} ${pad("Δ RSS", 10)} ${pad("Heap", 10)} ${pad("Δ Heap", 10)} ${pad("Ext", 10)} ${pad("ArrBuf", 10)} ${pad("Sessions", 9)} ${pad("Apps", 6)} ${pad("WS", 6)} ${pad("Audio", 10)} ${pad("VAD", 10)} ${pad("Mic", 5)} ${pad("Uptime", 8)} ${pad("Load", 6)}`;
   console.log(header);
   console.log("─".repeat(header.length));
 
@@ -216,7 +213,6 @@ async function modeLive() {
 
       let totalAudioBytes = 0;
       let totalVadBytes = 0;
-      let totalSegments = 0;
       let totalApps = 0;
       let totalWs = 0;
       let micActive = 0;
@@ -224,7 +220,6 @@ async function modeLive() {
       for (const s of data.sessions) {
         totalAudioBytes += s.audio.recentBufferBytes + s.audio.orderedBufferBytes;
         totalVadBytes += s.transcription.vadBufferBytes;
-        totalSegments += s.transcription.transcriptSegments;
         totalApps += s.apps.running;
         totalWs += s.apps.websockets;
         if (s.microphone.enabled) micActive++;
@@ -244,7 +239,6 @@ async function modeLive() {
         websockets: totalWs,
         audioBufferBytes: totalAudioBytes,
         vadBufferBytes: totalVadBytes,
-        transcriptSegments: totalSegments,
         uptime: data.process.uptime,
         loadavg: data.process.loadavg,
         micActive,
@@ -253,7 +247,7 @@ async function modeLive() {
       history.push(point);
       const prev = history.length > 1 ? history[history.length - 2] : point;
 
-      const line = `${rpad(timestamp(), 10)} ${pad(fmt(point.memory.rss), 10)} ${pad(delta(point.memory.rss, prev.memory.rss), 10)} ${pad(fmt(point.memory.heapUsed), 10)} ${pad(delta(point.memory.heapUsed, prev.memory.heapUsed), 10)} ${pad(fmt(point.memory.external), 10)} ${pad(fmt(point.memory.arrayBuffers), 10)} ${pad(String(point.sessions), 9)} ${pad(String(point.apps), 6)} ${pad(String(point.websockets), 6)} ${pad(fmt(point.audioBufferBytes), 10)} ${pad(fmt(point.vadBufferBytes), 10)} ${pad(String(point.transcriptSegments), 7)} ${pad(String(point.micActive), 5)} ${pad(Math.round(point.uptime) + "s", 8)} ${pad(point.loadavg[0].toFixed(1), 6)}`;
+      const line = `${rpad(timestamp(), 10)} ${pad(fmt(point.memory.rss), 10)} ${pad(delta(point.memory.rss, prev.memory.rss), 10)} ${pad(fmt(point.memory.heapUsed), 10)} ${pad(delta(point.memory.heapUsed, prev.memory.heapUsed), 10)} ${pad(fmt(point.memory.external), 10)} ${pad(fmt(point.memory.arrayBuffers), 10)} ${pad(String(point.sessions), 9)} ${pad(String(point.apps), 6)} ${pad(String(point.websockets), 6)} ${pad(fmt(point.audioBufferBytes), 10)} ${pad(fmt(point.vadBufferBytes), 10)} ${pad(String(point.micActive), 5)} ${pad(Math.round(point.uptime) + "s", 8)} ${pad(point.loadavg[0].toFixed(1), 6)}`;
 
       console.log(line);
 
@@ -670,10 +664,8 @@ async function modeCompare() {
   if (persistent.length > 0) {
     console.log();
     console.log("  Persistent session changes:");
-    console.log(
-      `  ${rpad("User", 35)} ${pad("Δ Audio", 12)} ${pad("Δ VAD", 12)} ${pad("Δ Segments", 12)} ${pad("Δ Apps", 8)}`,
-    );
-    console.log("  " + "─".repeat(82));
+    console.log(`  ${rpad("User", 35)} ${pad("Δ Audio", 12)} ${pad("Δ VAD", 12)} ${pad("Δ Apps", 8)}`);
+    console.log("  " + "─".repeat(70));
 
     for (const userId of persistent) {
       const s1 = sessions1.get(userId)!;
@@ -684,13 +676,12 @@ async function modeCompare() {
         s2.audio.orderedBufferBytes -
         (s1.audio.recentBufferBytes + s1.audio.orderedBufferBytes);
       const dVad = s2.transcription.vadBufferBytes - s1.transcription.vadBufferBytes;
-      const dSeg = s2.transcription.transcriptSegments - s1.transcription.transcriptSegments;
       const dApps = s2.apps.running - s1.apps.running;
 
       // Only show if something changed
-      if (dAudio !== 0 || dVad !== 0 || dSeg !== 0 || dApps !== 0) {
+      if (dAudio !== 0 || dVad !== 0 || dApps !== 0) {
         console.log(
-          `  ${rpad(userId.slice(0, 34), 35)} ${pad(delta(0, -dAudio), 12)} ${pad(delta(0, -dVad), 12)} ${pad(deltaNum(s2.transcription.transcriptSegments, s1.transcription.transcriptSegments), 12)} ${pad(deltaNum(s2.apps.running, s1.apps.running), 8)}`,
+          `  ${rpad(userId.slice(0, 34), 35)} ${pad(delta(0, -dAudio), 12)} ${pad(delta(0, -dVad), 12)} ${pad(deltaNum(s2.apps.running, s1.apps.running), 8)}`,
         );
       }
     }

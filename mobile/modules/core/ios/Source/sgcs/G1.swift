@@ -29,7 +29,7 @@ extension Data {
         //    return map { String(format: "%02x", $0) }.joined(separator: ", ")
     }
 
-    // Extension for CRC32 calculation
+    /// Extension for CRC32 calculation
     var crc32: UInt32 {
         return withUnsafeBytes { bytes in
             let buffer = bytes.bindMemory(to: UInt8.self)
@@ -103,7 +103,7 @@ struct BufferedCommand {
     }
 }
 
-// Simple struct to hold app info
+/// Simple struct to hold app info
 struct AppInfo {
     let id: String
     let name: String
@@ -113,7 +113,7 @@ enum GlassesError: Error {
     case missingGlasses(String)
 }
 
-// Dedicated actor for timer management
+/// Dedicated actor for timer management
 actor HeartbeatManager {
     private var task: Task<Void, Never>?
     private let intervalSeconds: TimeInterval
@@ -144,7 +144,7 @@ actor HeartbeatManager {
     }
 }
 
-// Dedicated actor for command queue (you already have this partially)
+/// Dedicated actor for command queue (you already have this partially)
 actor CommandQueue {
     private var commands: [BufferedCommand] = []
     private var continuation: CheckedContinuation<BufferedCommand, Never>?
@@ -170,7 +170,7 @@ actor CommandQueue {
     }
 }
 
-// Actor for managing pending ACKs
+/// Actor for managing pending ACKs
 actor AckManager {
     private var pending: [String: CheckedContinuation<Bool, Never>] = [:]
 
@@ -212,7 +212,7 @@ actor AckManager {
     }
 }
 
-// Actor for reconnection logic
+/// Actor for reconnection logic
 actor ReconnectionManager {
     private var task: Task<Void, Never>?
     private let intervalSeconds: TimeInterval
@@ -271,7 +271,7 @@ actor ReconnectionManager {
 
 @MainActor
 class G1: NSObject, SGCManager {
-    func sendIncidentId(_: String) {}
+    func sendIncidentId(_: String, apiBaseUrl _: String?) {}
 
     func sendGalleryMode() {}
 
@@ -346,7 +346,9 @@ class G1: NSObject, SGCManager {
     var hasMic = true
 
     // TODO: we probably don't need this
-    @objc static func requiresMainQueueSetup() -> Bool { return true }
+    @objc static func requiresMainQueueSetup() -> Bool {
+        return true
+    }
 
     // Duplicate BMP prevention with timeout
     private var isDisplayingBMP = false
@@ -660,7 +662,7 @@ class G1: NSObject, SGCManager {
 
     // @@@ REACT NATIVE FUNCTIONS @@@
 
-    // this scans for glasses to connect to and only connnects if SEARCH_ID is set
+    /// this scans for glasses to connect to and only connnects if SEARCH_ID is set
     func startScan() -> Bool {
         if centralManager == nil {
             centralManager = CBCentralManager(
@@ -719,7 +721,7 @@ class G1: NSObject, SGCManager {
         startScan()
     }
 
-    // connect to glasses we've discovered:
+    /// connect to glasses we've discovered:
     @objc func RN_connectGlasses() -> Bool {
         Bridge.log("RN_connectGlasses()")
 
@@ -882,7 +884,8 @@ class G1: NSObject, SGCManager {
             // Calculate payload length
             let fixedBytes: [UInt8] = [0x03, 0x01, 0x00, 0x01, 0x00]
             let versionByte = UInt8(
-                Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 256))
+                Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 256)
+            )
             let payloadLength =
                 1 // Fixed byte
                 + 1 // Version byte
@@ -936,7 +939,7 @@ class G1: NSObject, SGCManager {
         quickNotes.removeAll()
     }
 
-    // only set to true when we receive init_ack response from the glasses
+    /// only set to true when we receive init_ack response from the glasses
     func setReadiness(left: Bool?, right: Bool?) {
         let prevLeftReady = leftReady
         let prevRightReady = rightReady
@@ -1090,7 +1093,7 @@ class G1: NSObject, SGCManager {
         }
     }
 
-    // Process a single number with timeouts
+    /// Process a single number with timeouts
     private func processCommand(_ command: BufferedCommand) async {
         if command.chunks.isEmpty {
             Bridge.log("G1: @@@ chunks was empty! @@@")
@@ -1141,10 +1144,9 @@ class G1: NSObject, SGCManager {
     }
 
     private func getConnectedDevices() -> [CBPeripheral] {
-        let connectedPeripherals = centralManager!.retrieveConnectedPeripherals(withServices: [
+        return centralManager!.retrieveConnectedPeripherals(withServices: [
             UART_SERVICE_UUID,
         ])
-        return connectedPeripherals
     }
 
     private func handleAck(from peripheral: CBPeripheral, success: Bool, sequenceNumber: Int = -1) {
@@ -1341,7 +1343,7 @@ class G1: NSObject, SGCManager {
 // MARK: Commands
 
 extension G1 {
-    // Handle whitelist functionality
+    /// Handle whitelist functionality
     func getWhitelistChunks() -> [[UInt8]] {
         // Define the hardcoded whitelist JSON
         let apps = [
@@ -1393,7 +1395,7 @@ extension G1 {
         }
     }
 
-    // Helper function to split JSON into chunks
+    /// Helper function to split JSON into chunks
     private func createWhitelistChunks(json: String) -> [[UInt8]] {
         let MAX_CHUNK_SIZE = 180 - 4 // Reserve space for the header
         guard let jsonData = json.data(using: .utf8) else { return [] }
@@ -1478,7 +1480,7 @@ extension G1 {
         )
     }
 
-    // don't call semaphore signals here as it's handled elswhere:
+    /// don't call semaphore signals here as it's handled elswhere:
     private func handleInitResponse(from peripheral: CBPeripheral, success: Bool) {
         if peripheral == leftPeripheral {
             leftInitialized = success
@@ -1594,7 +1596,7 @@ extension G1 {
         }
     }
 
-    // FAST BLE TRANSMISSION (.withoutResponse)
+    /// FAST BLE TRANSMISSION (.withoutResponse)
     func sendCommandToSideWithoutResponse(_ command: [UInt8], side: String) async {
         // Convert to Data
         let commandData = Data(command)
@@ -1862,7 +1864,7 @@ extension G1 {
         return invertedData
     }
 
-    // Core MentraOS-compatible BMP display implementation
+    /// Core MentraOS-compatible BMP display implementation
     private func sendBmp(bmpData: Data) async -> Bool {
         // Frame timing validation for animation smoothness
         let currentTime = Date()
@@ -1960,7 +1962,7 @@ extension G1 {
         return true
     }
 
-    // Helper function to calculate CRC32-XZ like MentraOS (matches Dart crclib)
+    /// Helper function to calculate CRC32-XZ like MentraOS (matches Dart crclib)
     private func calculateCRC32XZ(data: Data) -> UInt32 {
         // CRC32-XZ table-based implementation (matches Dart crclib exactly)
         let polynomial: UInt32 = 0x04C1_1DB7
@@ -1989,7 +1991,7 @@ extension G1 {
         return ~crc
     }
 
-    // Helper function to calculate CRC32 (simple implementation)
+    /// Helper function to calculate CRC32 (simple implementation)
     private func calculateCRC32(data: Data) -> UInt32 {
         let polynomial: UInt32 = 0xEDB8_8320
         var crc: UInt32 = 0xFFFF_FFFF
@@ -2066,7 +2068,7 @@ extension G1 {
         Bridge.log("G1: Sending CRC command, CRC value: \(String(format: "%08x", crcValue))")
 
         // Send CRC with retry
-        for attempt in 0 ..< maxAttempts {
+        for _ in 0 ..< maxAttempts {
             queueChunks([crcCommand], sendLeft: sendLeft, sendRight: sendRight)
 
             // Wait for CRC command to process
@@ -2138,7 +2140,7 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
         }
     }
 
-    // On BT discovery, automatically connect to both arms if we have them:
+    /// On BT discovery, automatically connect to both arms if we have them:
     func centralManager(
         _: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String: Any],
         rssi _: NSNumber
@@ -2269,7 +2271,7 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
         }
     }
 
-    // Connect by UUID
+    /// Connect by UUID
     func connectByUUID() -> Bool {
         // don't do this if we don't have a search id set:
         if DEVICE_SEARCH_ID == "NOT_SET" || DEVICE_SEARCH_ID.isEmpty {
@@ -2286,7 +2288,8 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
 
             if let leftDevice = leftDevices.first {
                 Bridge.log(
-                    "G1: 🔵 Successfully retrieved left glass: \(leftDevice.name ?? "Unknown")")
+                    "G1: 🔵 Successfully retrieved left glass: \(leftDevice.name ?? "Unknown")"
+                )
                 foundAny = true
                 leftPeripheral = leftDevice
                 leftDevice.delegate = self
@@ -2306,7 +2309,8 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
 
             if let rightDevice = rightDevices.first {
                 Bridge.log(
-                    "G1: 🔵 Successfully retrieved right glass: \(rightDevice.name ?? "Unknown")")
+                    "G1: 🔵 Successfully retrieved right glass: \(rightDevice.name ?? "Unknown")"
+                )
                 foundAny = true
                 rightPeripheral = rightDevice
                 rightDevice.delegate = self
@@ -2333,7 +2337,7 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
         }
     }
 
-    // Update peripheral(_:didDiscoverCharacteristicsFor:error:) to set services waiters
+    /// Update peripheral(_:didDiscoverCharacteristicsFor:error:) to set services waiters
     func peripheral(
         _ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService,
         error _: Error?
@@ -2350,7 +2354,8 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
                     // enable notification (needed for pairing from scracth!)
                     Thread.sleep(forTimeInterval: 0.5) // 500ms delay
                     let CLIENT_CHARACTERISTIC_CONFIG_UUID = CBUUID(
-                        string: "00002902-0000-1000-8000-00805f9b34fb")
+                        string: "00002902-0000-1000-8000-00805f9b34fb"
+                    )
                     if let descriptor = characteristic.descriptors?.first(where: {
                         $0.uuid == CLIENT_CHARACTERISTIC_CONFIG_UUID
                     }) {
@@ -2373,7 +2378,7 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
         }
     }
 
-    // called whenever bluetooth is initialized / turned on or off:
+    /// called whenever bluetooth is initialized / turned on or off:
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -2391,7 +2396,7 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
         }
     }
 
-    // called when we get data from the glasses:
+    /// called when we get data from the glasses:
     func peripheral(
         _ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic,
         error: Error?
@@ -2412,7 +2417,7 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
         }
     }
 
-    // L/R Synchronization - Handle BLE write completions
+    /// L/R Synchronization - Handle BLE write completions
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor _: CBCharacteristic, error: Error?) {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }

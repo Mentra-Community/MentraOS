@@ -113,6 +113,10 @@ Cloud services use Jest via `bun run test`; add suites in `cloud/tests/` mirrori
 
 Write imperative, present-tense commit subjects (e.g., "Add BLE retry delay") and keep scope focused. Reference issue IDs or Slack threads in the body when applicable. Before opening a PR, run relevant `bun run test` suites and platform builds, attach log excerpts for hardware-dependent steps, and call out configuration updates. PR descriptions should outline scope, test evidence, and screenshots or screen recordings for UI-impacting changes.
 
+### AI agent attribution
+
+Do not add `Co-Authored-By:` trailers that name AI assistants (Claude, Codex, Copilot, etc.) to commit messages. Do not include "Generated with" or similar attribution lines (e.g., `🤖 Generated with [Claude Code]`) in commit messages or PR descriptions. Commits and PRs should reflect the human author responsible for the change; the tools used to produce it are not part of the durable record.
+
 ## Environment & Security Notes
 
 Cloud services require `.env` files copied from `.env.example` that stay local. Mobile secrets belong in `mobile/app.config.ts` or the secure config service—avoid committing device-specific tokens. Rebuild native projects after modifying BLE or camera modules to keep generated code in sync, and install Java 17, Android Studio, Xcode, Docker, and Bun/Node before the first build.
@@ -123,7 +127,7 @@ Cloud services require `.env` files copied from `.env.example` that stay local. 
 
 ```yaml
 ports:
-  - "127.0.0.1:27017:27017"  # Correct - localhost only
+  - "127.0.0.1:27017:27017" # Correct - localhost only
   # NOT "27017:27017" which exposes to all interfaces
 ```
 

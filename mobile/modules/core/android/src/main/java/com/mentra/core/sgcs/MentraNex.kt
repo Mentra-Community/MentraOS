@@ -309,7 +309,9 @@ class MentraNex : SGCManager() {
 
     override fun sendUserEmailToGlasses(email: String) {  Bridge.log("Nex: sendUserEmailToGlasses operation not supported") }
 
-    override fun sendIncidentId(incidentId: String) { Bridge.log("Nex: sendIncidentId operation not supported") }
+    override fun sendIncidentId(incidentId: String, apiBaseUrl: String?) {
+        Bridge.log("Nex: sendIncidentId operation not supported")
+    }
 
     // Connection
     override fun findCompatibleDevices() {
@@ -606,7 +608,8 @@ class MentraNex : SGCManager() {
                 maxChunkSize = MAX_CHUNK_SIZE_DEFAULT
                 bmpChunkSize = MAX_CHUNK_SIZE_DEFAULT
                 mainServicesWaiter.setTrue()
-                Bridge.log("Set mainServicesWaiter to true")
+                mainWaiter.setFalse()
+                Bridge.log("[BLE] Disconnect: reset mainServicesWaiter=true, mainWaiter=false (unblock any in-flight write). isWorkerRunning=$isWorkerRunning")
                 forceSideDisconnection()
                 Bridge.log("Called forceSideDisconnection()")
                 currentMTU = 0
@@ -627,7 +630,7 @@ class MentraNex : SGCManager() {
                 //     Bridge.log("No GATT device available to disconnect")
                 // }
 
-                mainTaskHandler?.sendEmptyMessageDelayed(MAIN_TASK_HANDLER_CODE_RECONNECT_DEVICE, 0)
+                mainTaskHandler?.sendEmptyMessageDelayed(MAIN_TASK_HANDLER_CODE_RECONNECT_DEVICE, 2000)
             }
 
             private fun handleConnectionFailure(gatt: BluetoothGatt, status: Int) {
@@ -644,6 +647,8 @@ class MentraNex : SGCManager() {
 
                 // Mark as not ready
                 mainServicesWaiter.setTrue()
+                mainWaiter.setFalse()
+                Bridge.log("[BLE] ConnectionFailure: reset mainServicesWaiter=true, mainWaiter=false (unblock any in-flight write). isWorkerRunning=$isWorkerRunning")
                 Bridge.log("Stopped heartbeat monitoring and mic beat; cleared sendQueue due to connection failure")
                 Bridge.log("glass connection failed with status: $status")
                 
@@ -659,8 +664,9 @@ class MentraNex : SGCManager() {
                 forceSideDisconnection()
                 Bridge.log("Called forceSideDisconnection() after connection failure")
                 Bridge.log("GATT connection disconnected and closed due to failure")
+                updateConnectionState()
 
-                mainTaskHandler?.sendEmptyMessageDelayed(MAIN_TASK_HANDLER_CODE_RECONNECT_DEVICE, 0)
+                mainTaskHandler?.sendEmptyMessageDelayed(MAIN_TASK_HANDLER_CODE_RECONNECT_DEVICE, 2000)
             }
 
             private fun forceSideDisconnection() {
@@ -696,34 +702,31 @@ class MentraNex : SGCManager() {
                 val values = characteristic.value ?: byteArrayOf()
                 
                 if (status == BluetoothGatt.GATT_SUCCESS) {
-                    Bridge.log("onCharacteristicWrite PROC_QUEUE - glass write successful")
-                    Bridge.log("onCharacteristicWrite len - ${values.size}")
+                    Bridge.log("[BLE] onCharacteristicWrite: SUCCESS len=${values.size}")
                     val packetHex = values.joinToString("") { "%02X".format(it) }
                     Bridge.log("onCharacteristicWrite Values - $packetHex")
-                    
+
                     if (values.isNotEmpty()) {
                         val packetType = values[0]
                         val protobufData = values.copyOfRange(1, values.size)
-                        
+
                         if (packetType == NexBluetoothPacketTypes.PACKET_TYPE_PROTOBUF) {
                             // just for test
                             decodeProtobufsByWrite(protobufData, packetHex)
                         }
                     }
                 } else {
-                    Log.e(TAG, "glass write failed with status: $status")
-                    if (status == 133) {
-                        Bridge.log("GOT THAT 133 STATUS!")
-                    }
+                    Log.e(TAG, "[BLE] onCharacteristicWrite: FAILED status=$status${if (status == 133) " (GATT_ERROR 133 - likely disconnected mid-write)" else ""}")
                 }
-                
+
                 // clear the waiter
+                Bridge.log("[BLE] onCharacteristicWrite: releasing mainWaiter")
                 mainWaiter.setFalse()
             }
 
             override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-                Bridge.log("PROC - GOT DESCRIPTOR WRITE: $status")
-                // clear the waiter
+                val statusStr = if (status == BluetoothGatt.GATT_SUCCESS) "SUCCESS" else "FAILED($status)"
+                Bridge.log("[BLE] onDescriptorWrite: $statusStr — releasing mainServicesWaiter, worker can now send")
                 mainServicesWaiter.setFalse()
             }
 
@@ -862,10 +865,8 @@ class MentraNex : SGCManager() {
                 
                 if (shouldRestoreMic) {
                     startMicBeat(MICBEAT_INTERVAL_MS.toInt())
-                } else {
-                    stopMicBeat()
                 }
-
+                
                 // Enable our AugmentOS notification key
                 sendWhiteListCommand(10)
 
@@ -1575,13 +1576,13 @@ class MentraNex : SGCManager() {
 
     private fun processQueue() {
         // First wait until the services are ready to receive data
-        Bridge.log("Nex: PROC_QUEUE - waiting on services waiters")
+        Bridge.log("[BLE] PROC_QUEUE started — waiting for descriptor write (mainServicesWaiter)")
         try {
             mainServicesWaiter.waitWhileTrue()
         } catch (e: InterruptedException) {
             Log.e(TAG,"Nex: Interrupted waiting for descriptor writes: $e")
         }
-        Bridge.log("Nex: PROC_QUEUE - DONE waiting on services waiters")
+        Bridge.log("[BLE] PROC_QUEUE ready — descriptor write done, entering send loop")
 
         while (!isKilled) {
             try {
@@ -1589,7 +1590,9 @@ class MentraNex : SGCManager() {
                 mainServicesWaiter.waitWhileTrue()
 
                 // This will block until data is available
+                Bridge.log("[BLE] PROC_QUEUE waiting for data in sendQueue (size=${sendQueue.size})")
                 val requests = sendQueue.take()
+                Bridge.log("[BLE] PROC_QUEUE dequeued ${requests.size} request(s)")
 
                 for (request in requests) {
                     if (isKilled) {
@@ -1605,11 +1608,16 @@ class MentraNex : SGCManager() {
                         }
 
                         // Send to main glass
-                        if (mainGlassGatt != null && mainWriteChar != null && isMainConnected) {
+                        val canSend = mainGlassGatt != null && mainWriteChar != null && isMainConnected
+                        Bridge.log("[BLE] PROC_QUEUE send check: gatt=${mainGlassGatt != null} writeChar=${mainWriteChar != null} connected=$isMainConnected → canSend=$canSend len=${request.data.size}")
+                        if (canSend) {
                             mainWaiter.setTrue()
                             mainWriteChar?.value = request.data
                             mainGlassGatt?.writeCharacteristic(mainWriteChar)
                             lastSendTimestamp = System.currentTimeMillis()
+                            Bridge.log("[BLE] PROC_QUEUE writeCharacteristic issued, waiting for onCharacteristicWrite callback")
+                        } else {
+                            Bridge.log("[BLE] PROC_QUEUE skipping write — not ready, packet dropped")
                         }
 
                         mainWaiter.waitWhileTrue()

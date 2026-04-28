@@ -13,6 +13,7 @@ import { CloudToGlassesMessageType, ConnectionAck, StreamType } from "@mentra/sd
 import { AudioWriter } from "../debug/audio-writer";
 import { createLC3Service, LC3Service } from "../lc3/lc3.service";
 import { metricsService } from "../metrics/MetricsService";
+import { operationTimers } from "../metrics/SystemVitalsLogger";
 import { WebSocketReadyState } from "../websocket/types";
 
 import UserSession from "./UserSession";
@@ -55,6 +56,22 @@ export interface LC3Config {
   frameDurationMs: number; // 10ms
   frameSizeBytes: number; // 20 bytes per frame
 }
+
+// Issue 102: warn when a single relayAudioToApps invocation takes longer than
+// this. At the steady-state rate of ~115μs per audio call, 20ms indicates either
+// connection.send() backpressure (stuck app WS) or an unusually wide fan-out.
+const SLOW_RELAY_MS = 20;
+// Issue 102: warn when a session has more than this many audio_chunk subscribers.
+// Typical session has 1-5 apps subscribed. >10 suggests either subscriber-list
+// growth (hypothesis C) or an unusual app-install pattern worth investigating.
+const FANOUT_WARN = 10;
+// Issue 102: warn when one substage of processAudioData takes longer than this.
+// Each substage (LC3 decode, fan-out, transcription/translation feed, mic update)
+// is sub-millisecond in steady state; 10ms is ~10x normal — caught early without
+// flooding logs. The cumulative `op_audio_<stage>_ms` totals always emit per
+// vitals window regardless of this threshold.
+const SLOW_AUDIO_STAGE_MS = 10;
+type AudioStage = "lc3Decode" | "appFanout" | "transcriptionFeed" | "translationFeed" | "microphoneUpdate";
 
 /**
  * Manages audio data processing, buffering, and relaying
@@ -256,6 +273,11 @@ export class AudioManager {
         // Decode LC3 to PCM if audio format is LC3
         let buf: Buffer;
         if (this.audioFormat === "lc3" && this.lc3Service) {
+          // Issue 102: time the LC3 decode substage. The await means this
+          // captures wall-clock time including any loop yields; if the
+          // underlying decoder is sync (native binding), this is also the
+          // event-loop blocking time.
+          const tLc3 = performance.now();
           try {
             // IMPORTANT: Buffer.buffer returns the ENTIRE underlying ArrayBuffer, not just the slice.
             // For UDP audio, the buffer is sliced (buf.slice(6) to skip header), so byteOffset > 0.
@@ -270,13 +292,16 @@ export class AudioManager {
               if (this.processedFrameCount % 100 === 0) {
                 this.logger.warn({ feature: "lc3-decode" }, "LC3 decode returned empty data");
               }
+              this.recordAudioStage("lc3Decode", performance.now() - tLc3, incomingBuf.byteLength);
               return undefined;
             }
             buf = Buffer.from(pcmArrayBuffer);
           } catch (decodeError) {
             this.logger.error(decodeError, "LC3 decode error");
+            this.recordAudioStage("lc3Decode", performance.now() - tLc3, incomingBuf.byteLength);
             return undefined;
           }
+          this.recordAudioStage("lc3Decode", performance.now() - tLc3, incomingBuf.byteLength);
         } else {
           // PCM format - use incoming buffer directly
           buf = incomingBuf;
@@ -316,17 +341,31 @@ export class AudioManager {
 
         // Capture audio if enabled
 
+        // Issue 102: per-substage timings. Each substage gets its own
+        // op_audio_<stage>_ms cumulative bucket in vitals plus a
+        // slow-audio-stage outlier warning. Together they answer the
+        // "which substage burns the loop time" question that v1 of this
+        // PR could not — and that drives Phase 2's actual fix scope.
+
         // Relay to Apps if there are subscribers
+        const tFanout = performance.now();
         this.relayAudioToApps(buf);
+        this.recordAudioStage("appFanout", performance.now() - tFanout, buf.length);
 
         // Feed to TranscriptionManager
+        const tTranscription = performance.now();
         this.userSession.transcriptionManager.feedAudio(buf);
+        this.recordAudioStage("transcriptionFeed", performance.now() - tTranscription, buf.length);
 
         // Feed to TranslationManager (separate from transcription)
+        const tTranslation = performance.now();
         this.userSession.translationManager.feedAudio(buf);
+        this.recordAudioStage("translationFeed", performance.now() - tTranslation, buf.length);
 
         // Notify MicrophoneManager that we received audio
+        const tMic = performance.now();
         this.userSession.microphoneManager.onAudioReceived();
+        this.recordAudioStage("microphoneUpdate", performance.now() - tMic, buf.length);
       }
       return audioData;
     } catch (error) {
@@ -350,19 +389,60 @@ export class AudioManager {
    *
    * @param audioData Audio data to relay
    */
+  /**
+   * Issue 102: privacy-preserving correlation key shared across slow-audio-call,
+   * slow-audio-stage, and slow-audio-fanout warnings. Reads from
+   * UdpAudioManager which already maintains the FNV-1a 32-bit hash. Returns
+   * undefined for sessions whose UDP path hasn't registered yet (legacy WS
+   * audio path), in which case the userId is still in the logger context.
+   */
+  private getCorrelationUserIdHash(): number | undefined {
+    return this.userSession.udpAudioManager?.userIdHash;
+  }
+
+  /**
+   * Issue 102: record one substage's wall-time inside processAudioData. Adds
+   * to operationTimers (op_audio_<stage>_ms appears in vitals) and emits a
+   * slow-audio-stage warning on outliers. The async/sync semantics depend on
+   * the substage — LC3 decode is awaited (wall-clock time including loop
+   * yields), the rest are sync. Either reading is informative because the
+   * cumulative bucket per vitals window gives us the aggregate breakdown.
+   */
+  private recordAudioStage(stage: AudioStage, durationMs: number, bytes: number): void {
+    operationTimers.addTiming(`audio_${stage}`, durationMs);
+    if (durationMs > SLOW_AUDIO_STAGE_MS) {
+      this.logger.warn(
+        {
+          feature: "slow-audio-stage",
+          stage,
+          durationMs: Math.round(durationMs * 10) / 10,
+          userIdHash: this.getCorrelationUserIdHash(),
+          bytes,
+        },
+        `Slow audio substage ${stage}: ${Math.round(durationMs)}ms`,
+      );
+    }
+  }
+
   private relayAudioToApps(audioData: ArrayBuffer | Buffer): void {
+    // Issue 102: timer + fan-out instrumentation. Disambiguates cascade
+    // hypotheses A (cascade), B (pathological call), C (fan-out blowup).
+    const t0 = performance.now();
+    let subCount = 0;
+    let bytes = 0;
     try {
       // Get subscribers using subscriptionService instead of subscriptionManager
       const subscribedPackageNames = this.userSession.subscriptionManager.getSubscribedApps(StreamType.AUDIO_CHUNK);
+      subCount = subscribedPackageNames.length;
       // Skip if no subscribers
-      if (subscribedPackageNames.length === 0) {
+      if (subCount === 0) {
         if (this.logAudioChunkCount % 500 === 0) {
           this.logger.debug({ feature: "audio" }, "AUDIO_CHUNK: no subscribed apps");
         }
         this.logAudioChunkCount++;
         return;
       }
-      const bytes =
+      bytes =
         typeof Buffer !== "undefined" && Buffer.isBuffer(audioData)
           ? (audioData as Buffer).length
           : (audioData as ArrayBuffer).byteLength;
@@ -404,6 +484,23 @@ export class AudioManager {
       this.logAudioChunkCount++;
     } catch (error) {
       this.logger.error(error, `Error relaying audio:`);
+    } finally {
+      const durationMs = performance.now() - t0;
+      if (durationMs > SLOW_RELAY_MS || subCount > FANOUT_WARN) {
+        this.logger.warn(
+          {
+            feature: "slow-audio-fanout",
+            durationMs: Math.round(durationMs * 10) / 10,
+            subscribers: subCount,
+            bytes,
+            // Issue 102: correlation key matching slow-audio-call and
+            // slow-audio-stage so investigators can tie a fan-out warning
+            // back to the same UDP handler invocation / session.
+            userIdHash: this.getCorrelationUserIdHash(),
+          },
+          `Slow audio fan-out: ${Math.round(durationMs)}ms across ${subCount} subscribers`,
+        );
+      }
     }
   }
 

@@ -43,52 +43,14 @@ public class K900MessageParser {
         if (data == null || size <= 0) {
             return false;
         }
-        
-        // Check for message markers in this chunk
-        boolean hasStart = false;
-        int startPos = -1;
-        boolean hasEnd = false;
-        int endPos = -1;
-        
-        for (int i = 0; i < size - 1; i++) {
-            if (data[i] == START_MARKER_BYTES[0] && data[i+1] == START_MARKER_BYTES[1]) {
-                hasStart = true;
-                startPos = i;
-            }
-            if (data[i] == END_MARKER_BYTES[0] && data[i+1] == END_MARKER_BYTES[1]) {
-                hasEnd = true;
-                endPos = i;
-            }
+
+        // Always append the full UART read. parseMessages() is responsible for
+        // extracting all complete ##...$$ frames (including multiple frames per read).
+        boolean added = mCircleBuffer.add(data, 0, size);
+        if (!added) {
+            Log.w(TAG, "Failed to append " + size + " bytes to parser buffer");
         }
-        
-        // Keep core circle buffer handling logs but make them less verbose
-        if (hasStart && hasEnd && startPos < endPos) {
-            // Complete message in a single chunk - just add the exact portion
-            if (mCircleBuffer.getDataLen() > 0) {
-                Log.d(TAG, "Buffer has incomplete message - clearing");
-                mCircleBuffer.clear();
-            }
-            // Only add the relevant portion (from ## to $$ inclusive)
-            return mCircleBuffer.add(data, startPos, (endPos + 2) - startPos);
-        } else if (hasStart) {
-            // Found start of a new message
-            if (mCircleBuffer.getDataLen() > 0) {
-                Log.d(TAG, "New message start detected, clearing buffer");
-                mCircleBuffer.clear();
-            }
-            return mCircleBuffer.add(data, startPos, size - startPos);
-        } else if (hasEnd && mCircleBuffer.getDataLen() > 0) {
-            // Found end of a message and buffer already has content
-            return mCircleBuffer.add(data, 0, endPos + 2);
-        } else if (!hasStart && !hasEnd && mCircleBuffer.getDataLen() > 0) {
-            // Middle portion of a fragmented message
-            return mCircleBuffer.add(data, 0, size);
-        } else if (!hasStart && !hasEnd && mCircleBuffer.getDataLen() == 0) {
-            // Unexpected data with no markers and empty buffer
-            return true; // pretend we succeeded but don't store anything
-        } else {
-            return mCircleBuffer.add(data, 0, size);
-        }
+        return added;
     }
     
     /**

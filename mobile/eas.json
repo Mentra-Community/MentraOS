@@ -32,6 +32,13 @@
       "extends": "preview",
       "ios": {"simulator": false}
     },
+    "internal": {
+      "extends": "production",
+      "distribution": "internal",
+      "android": {
+        "gradleCommand": ":app:assembleInternal"
+      }
+    },
     "production": {}
   },
   "submit": {

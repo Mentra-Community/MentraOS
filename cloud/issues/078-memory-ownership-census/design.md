@@ -9,21 +9,21 @@
 
 ## Changes Summary
 
-| Component | File | What changes |
-| --------- | ---- | ------------ |
-| Shared types | `cloud/packages/cloud/src/services/metrics/memory-census.ts` | New `MemoryOwnerStat` and `MemoryStatsProvider` interfaces |
-| Shared helpers | `cloud/packages/cloud/src/services/metrics/memory-estimate.ts` | String/JSON/array size estimators |
-| Session aggregation | `cloud/packages/cloud/src/services/session/UserSession.ts` | `getMemoryCensus()` and direct session-owned stats |
-| Transcription | `cloud/packages/cloud/src/services/session/transcription/TranscriptionManager.ts` | Expose transcript history, VAD buffer, stream counts |
-| Translation | `cloud/packages/cloud/src/services/session/translation/TranslationManager.ts` | Expose translation audio buffer, stream counts |
-| Soniox provider | `cloud/packages/cloud/src/services/session/translation/providers/SonioxTranslationProvider.ts` | Expose utterance/pending-audio/token state |
-| App audio | `cloud/packages/cloud/src/services/session/AppAudioStreamManager.ts` | Expose pending chunks and stream counts |
-| Calendar | `cloud/packages/cloud/src/services/session/CalendarManager.ts` | Expose cached event counts/bytes |
-| Dashboard | `cloud/packages/cloud/src/services/session/dashboard/DashboardManager.ts` | Expose content-map counts/bytes |
-| App session | `cloud/packages/cloud/src/services/session/AppSession.ts` | Expose subscription history / set size |
-| Metrics | `cloud/packages/cloud/src/services/metrics/SystemVitalsLogger.ts` | Aggregate owners, compute deltas, log top owners and sessions |
-| Admin API | `cloud/packages/cloud/src/api/hono/routes/admin.routes.ts` | Add `memoryCensus` block to `/api/admin/memory/now` |
-| CLI | `cloud/tools/bstack/bstack.ts` | Add `memory-owners` command |
+| Component           | File                                                                                           | What changes                                                                   |
+| ------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Shared types        | `cloud/packages/cloud/src/services/metrics/memory-census.ts`                                   | New `MemoryOwnerStat` and `MemoryStatsProvider` interfaces                     |
+| Shared helpers      | `cloud/packages/cloud/src/services/metrics/memory-estimate.ts`                                 | String/JSON/array size estimators                                              |
+| Session aggregation | `cloud/packages/cloud/src/services/session/UserSession.ts`                                     | `getMemoryCensus()` and direct session-owned stats                             |
+| Transcription       | `cloud/packages/cloud/src/services/session/transcription/TranscriptionManager.ts`              | Expose VAD buffer and active stream counts (transcript history removed in 098) |
+| Translation         | `cloud/packages/cloud/src/services/session/translation/TranslationManager.ts`                  | Expose translation audio buffer, stream counts                                 |
+| Soniox provider     | `cloud/packages/cloud/src/services/session/translation/providers/SonioxTranslationProvider.ts` | Expose utterance/pending-audio/token state                                     |
+| App audio           | `cloud/packages/cloud/src/services/session/AppAudioStreamManager.ts`                           | Expose pending chunks and stream counts                                        |
+| Calendar            | `cloud/packages/cloud/src/services/session/CalendarManager.ts`                                 | Expose cached event counts/bytes                                               |
+| Dashboard           | `cloud/packages/cloud/src/services/session/dashboard/DashboardManager.ts`                      | Expose content-map counts/bytes                                                |
+| App session         | `cloud/packages/cloud/src/services/session/AppSession.ts`                                      | Expose subscription history / set size                                         |
+| Metrics             | `cloud/packages/cloud/src/services/metrics/SystemVitalsLogger.ts`                              | Aggregate owners, compute deltas, log top owners and sessions                  |
+| Admin API           | `cloud/packages/cloud/src/api/hono/routes/admin.routes.ts`                                     | Add `memoryCensus` block to `/api/admin/memory/now`                            |
+| CLI                 | `cloud/tools/bstack/bstack.ts`                                                                 | Add `memory-owners` command                                                    |
 
 ## Shared Types
 
@@ -89,13 +89,10 @@ Add `getMemoryStats()`.
 For transcript segments:
 
 ```typescript
-estimatedBytes =
-  sum(segments, (s) =>
-    estimateStringBytes(s.text) +
-    estimateStringBytes(s.resultId) +
-    estimateStringBytes(s.speakerId) +
-    64 // fixed scalar/object overhead proxy
-  )
+estimatedBytes = sum(
+  segments,
+  (s) => estimateStringBytes(s.text) + estimateStringBytes(s.resultId) + estimateStringBytes(s.speakerId) + 64, // fixed scalar/object overhead proxy
+);
 ```
 
 For `languageSegments`, emit one owner row per language. This matters because a single language may dominate.
@@ -248,11 +245,11 @@ Then sort sessions descending and keep top 10.
 #### New log fields
 
 ```typescript
-memoryEstimatedSessionBytes
-memoryOwnerCount
-memoryTopOwners
-memoryTopOwnerDeltas
-memoryTopSessions
+memoryEstimatedSessionBytes;
+memoryOwnerCount;
+memoryTopOwners;
+memoryTopOwnerDeltas;
+memoryTopSessions;
 ```
 
 All complex structures should be JSON strings, same pattern as other vitals fields.
@@ -358,17 +355,148 @@ The feature is successful if, after one prod deployment, the next heap-growth in
 
 ## Risks
 
-| Risk | Mitigation |
-| ---- | ---------- |
-| Too much CPU from estimation | Keep estimators shallow and payload-based; only inspect first-wave owners |
-| Log bloat | Log only top owners and top sessions, not the full census |
-| Misleading “exact bytes” interpretation | Call the field `estimatedBytes` everywhere |
-| Implementation spread across too many classes | First wave only; expand later if needed |
+| Risk                                          | Mitigation                                                                |
+| --------------------------------------------- | ------------------------------------------------------------------------- |
+| Too much CPU from estimation                  | Keep estimators shallow and payload-based; only inspect first-wave owners |
+| Log bloat                                     | Log only top owners and top sessions, not the full census                 |
+| Misleading “exact bytes” interpretation       | Call the field `estimatedBytes` everywhere                                |
+| Implementation spread across too many classes | First wave only; expand later if needed                                   |
 
 ## Decision Log
 
-| Decision | Alternatives considered | Why we chose this |
-| -------- | ----------------------- | ----------------- |
-| Use per-manager `getMemoryStats()` methods | One giant introspector in `SystemVitalsLogger` | Ownership belongs with the class that owns the structure. |
-| Estimate payload bytes instead of exact heap bytes | Deep heap walking / exact accounting | Exactness is not feasible in prod. Ranking and deltas are enough. |
-| Expose full detail only on admin endpoint | Put everything in logs | Full census would bloat logs; endpoint is better for drill-down. |
+| Decision                                           | Alternatives considered                        | Why we chose this                                                 |
+| -------------------------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------- |
+| Use per-manager `getMemoryStats()` methods         | One giant introspector in `SystemVitalsLogger` | Ownership belongs with the class that owns the structure.         |
+| Estimate payload bytes instead of exact heap bytes | Deep heap walking / exact accounting           | Exactness is not feasible in prod. Ranking and deltas are enough. |
+| Expose full detail only on admin endpoint          | Put everything in logs                         | Full census would bloat logs; endpoint is better for drill-down.  |
+
+## Implementation Notes
+
+### What was actually built on the branch
+
+The first implementation pass follows the planned architecture closely:
+
+- `memory-census.ts` provides shared types
+- `memory-estimate.ts` provides shallow estimator helpers
+- manager-level `getMemoryStats()` exists for the first-wave owners
+- `UserSession.getMemoryCensus()` aggregates direct session state plus manager/app-session stats
+- `SystemVitalsLogger` emits:
+  - `memoryEstimatedSessionBytes`
+  - `memoryOwnerCount`
+  - `memoryTopOwners`
+  - `memoryTopOwnerDeltas`
+  - `memoryTopSessions`
+- `MemoryTelemetryService` includes per-session `memory` rows plus aggregate `memoryCensus`
+- `bstack memory-owners` reads the new `system-vitals` fields
+
+### Additional branch work that was not part of the original design
+
+The implementation branch also includes a follow-up build-hygiene commit that fixes Hono route param narrowing and restores a clean cloud package build. That work is not part of the ownership census itself, but it materially improved reviewability and deployment readiness.
+
+## Design Adjustments After Implementation
+
+### Adjustment 1: Reuse the existing memory snapshot service
+
+Original design:
+
+- describe the admin endpoint extension directly in `admin.routes.ts`
+
+What changed:
+
+- the admin endpoint still lives in `admin.routes.ts`, but the actual census assembly is now folded into `MemoryTelemetryService.getCurrentStats()`
+
+Why:
+
+- it avoids duplicating snapshot assembly logic
+- it keeps `/api/admin/memory/now` and any memory-telemetry log snapshots on the same shape
+
+### Adjustment 2: Keep deltas in vitals logs first
+
+Original design:
+
+- expose both aggregate owners and top-owner deltas everywhere
+
+What changed:
+
+- owner deltas are currently logged in `system-vitals`
+- `/api/admin/memory/now` currently exposes aggregate owners and top sessions, but not owner deltas
+
+Why:
+
+- this kept the first pass smaller
+- it was enough to prove the logging/data-flow path before deciding whether the admin endpoint also needs delta state
+
+### Adjustment 3: Use shallow feature detection instead of threading interfaces broadly
+
+Original design:
+
+- mention `MemoryStatsProvider`
+
+What changed:
+
+- the implementation relies on shallow `typeof provider.getMemoryStats === "function"` checks in the aggregation path
+
+Why:
+
+- it kept the rollout incremental
+- it avoided widening the type surface across many session-owned classes in a single pass
+
+## Audit-Driven Concerns
+
+These came out of the first code audit and should inform the next implementation pass.
+
+### 1. Growth alert attribution is weaker than intended
+
+Current design gap:
+
+- `SystemVitalsLogger` tracks aggregate owner deltas correctly
+- but the associated `userId` on `memory-owner-growth` is currently the largest current holder, not the session that actually grew most recently
+
+Impact:
+
+- the alert can point engineers at the wrong session during an incident
+
+### 2. Alert thresholds are semantically misleading
+
+Current design gap:
+
+- a very large owner can still emit a warning that reads like "growth" even when its current delta is tiny
+
+Impact:
+
+- higher log noise
+- lower trust in the new forensic signal
+
+### 3. Transcript-history owners were removed by issue 098
+
+Current state:
+
+- cloud-side transcript history is no longer retained (see `cloud/issues/098-kill-transcript-history/spike.md`)
+- the transcription census now reports only live in-flight structures (VAD audio buffer, active streams)
+- the previous English-history undercounting concern is moot because no transcript history is stored
+
+### 4. Some estimators may be too expensive for steady-state prod use
+
+Current design gap:
+
+- dashboard layout content is estimated via guarded JSON serialization
+
+Impact:
+
+- acceptable for a first pass
+- but worth profiling before deployment because 078 should not meaningfully worsen allocation churn
+
+## Recommended Next Pass
+
+Before first deploy, the next implementation pass should:
+
+1. make `memory-owner-growth` mean real positive growth
+2. add true per-session owner-delta attribution
+3. review and, if needed, simplify expensive estimators
+
+## Traceability
+
+Relevant local commits on the implementation branch:
+
+- `5f79e9ed0` — initial 078 implementation
+- `a7dee4042` — route/build cleanup needed to restore a clean cloud build

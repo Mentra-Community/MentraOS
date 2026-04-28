@@ -43,7 +43,7 @@
     "@mentra/utils": "workspace:*",
     "@sentry/bun": "^9.1.0",
     "@sentry/cli": "^2.42.1",
-    "@soniox/node": "^1.1.1",
+    "@soniox/node": "^2.0.0",
     "@supabase/supabase-js": "^2.49.1",
     "@types/ali-oss": "^6.16.11",
     "ali-oss": "^6.23.0",

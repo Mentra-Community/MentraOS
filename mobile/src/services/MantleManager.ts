@@ -9,6 +9,7 @@ import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
 import {gallerySyncService} from "@/services/asg/gallerySyncService"
+import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
 import {useDisplayStore} from "@/stores/display"
 import {useGlassesStore, getGlasesInfoPartial} from "@/stores/glasses"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
@@ -52,6 +53,7 @@ class MantleManager {
   private MIC_TIMEOUT_MS: number = 1000
   private transcriptProcessor: TranscriptProcessor
   private subs: Array<any> = []
+  private initialized: boolean = false
 
   public static getInstance(): MantleManager {
     if (!MantleManager.instance) {
@@ -86,6 +88,13 @@ class MantleManager {
   // sets up the bridge and initializes app state
   public async init() {
     console.log("MANTLE: init()")
+
+    if (this.initialized) {
+      console.log("MANTLE: already initialized")
+      return
+    }
+    this.initialized = true
+
     await migrate() // do any local migrations here
     const res = await restComms.loadUserSettings() // get settings from server
     if (res.is_ok()) {
@@ -98,7 +107,8 @@ class MantleManager {
     // Send device timezone to cloud (used for calendar/time display)
     this.syncTimezone()
 
-    await CoreModule.updateCore(useSettingsStore.getState().getCoreSettings()) // send settings to core
+    const initialCoreSettings = useSettingsStore.getState().getCoreSettings()
+    await CoreModule.updateCore(initialCoreSettings) // send settings to core
     console.log("MANTLE: Settings sent to core")
 
     this.initServices()
@@ -130,7 +140,7 @@ class MantleManager {
     this.transcriptProcessor.clear()
 
     livekit.disconnect()
-    socketComms.cleanup()
+    await socketComms.cleanup()
     restComms.goodbye()
   }
 
@@ -358,6 +368,61 @@ class MantleManager {
       this.subs.push(
         CoreModule.addListener("pair_failure", (event) => {
           GlobalEventEmitter.emit("pair_failure", event.error)
+        }),
+      )
+
+      this.subs.push(
+        CoreModule.addListener("captions_tester_incident", (event) => {
+          const failureCode = typeof event.failure_code === "string" ? event.failure_code : "unknown"
+          const failureMessage =
+            typeof event.failure_message === "string" ? event.failure_message : "Captions tester incident detected."
+          const testRunId = typeof event.test_run_id === "string" ? event.test_run_id : undefined
+          const scenarioName = typeof event.scenario_name === "string" ? event.scenario_name : undefined
+          const alertId = typeof event.alert_id === "string" ? event.alert_id : testRunId
+
+          const actualBehavior = JSON.stringify(
+            {
+              failureCode,
+              failureMessage,
+              testRunId,
+              scenarioName,
+              event,
+            },
+            null,
+            2,
+          )
+
+          const dedupeKey = ["captions_tester", failureCode, scenarioName || "unknown", testRunId || "unknown"].join(
+            "|",
+          )
+
+          void (async () => {
+            const result = await submitAutomaticBugIncident({
+              categorization: {
+                submissionMode: "AUTOMATIC",
+                triggerArea: "captions_tester",
+                triggerReason: "captions_incident_detected",
+              },
+              expectedBehavior: "Captions tester runs should complete without a captions incident.",
+              actualBehavior,
+              severityRating: 4,
+              dedupeKey,
+              logTag: "CaptionsTesterBugReport",
+            })
+
+            console.log(
+              `CAPTIONS_TESTER_INCIDENT_RESULT ${JSON.stringify({
+                alert_id: alertId,
+                test_run_id: testRunId,
+                failure_code: failureCode,
+                scenario_name: scenarioName,
+                status: result.status,
+                incident_id: result.status === "filed" ? result.incidentId : undefined,
+                reason: result.status === "skipped" ? result.reason : undefined,
+                error: result.status === "failed" ? result.error : undefined,
+              })}`,
+            )
+          })()
         }),
       )
 
@@ -617,11 +682,11 @@ class MantleManager {
 
     // one time get all:
     const coreStatus = await CoreModule.getCoreStatus()
-    console.log("MANTLE: core status:", coreStatus)
+    // console.log("MANTLE: core status:", coreStatus)
     useCoreStore.getState().setCoreInfo(coreStatus)
 
     const glassesStatus = await CoreModule.getGlassesStatus()
-    console.log("MANTLE: glasses status:", glassesStatus)
+    // console.log("MANTLE: glasses status:", glassesStatus)
     useGlassesStore.getState().setGlassesInfo(glassesStatus)
   }
 
