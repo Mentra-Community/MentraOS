@@ -171,6 +171,17 @@ class NavigationService {
     return result
   }
 
+  /**
+   * Dev-only: nudge the simulator off-route to trigger an actual reroute
+   * from the Nav SDK. Useful for verifying the rerouting pipeline (UI
+   * flips to "Rebuilding route…", route polyline updates, glasses display
+   * mirrors the new path). No-op on iOS or with real GPS fixes.
+   */
+  public async simulateDeviation(offsetMeters: number = 20): Promise<{ok: boolean; error?: string}> {
+    console.log(`${LOG_TAG}: simulateDeviation(${offsetMeters}m)`)
+    return await CrustModule.simulateDeviation(offsetMeters)
+  }
+
   private attachNativeSubs(): void {
     console.log(`${LOG_TAG}: attachNativeSubs() — listeners=${this.listeners.size}`)
     this.subs.push(

@@ -90,6 +90,20 @@ export class NavigationModule {
   }
 
   /**
+   * Dev-only: nudge the simulator perpendicular to the route by ~`offsetMeters`
+   * so the Nav SDK detects an off-route condition and reroutes. Useful for
+   * testing the reroute pipeline without physically walking off-path.
+   * Default 20m. Android (simulated trips) only — iOS / real GPS is a no-op.
+   */
+  async deviate(offsetMeters: number = 20): Promise<{ok: boolean; error?: string}> {
+    const result = await this.session.sendRequest<{ok: boolean; error?: string}>({
+      type: MiniappRequestType.NAVIGATION_DEVIATE,
+      offsetMeters,
+    })
+    return result ?? {ok: false, error: "no response"}
+  }
+
+  /**
    * Subscribe to live navigation updates. Returns an unsubscribe function.
    * Maneuvers, rerouting events, arrival, and errors all arrive through
    * this single stream — discriminate by `update.kind`.

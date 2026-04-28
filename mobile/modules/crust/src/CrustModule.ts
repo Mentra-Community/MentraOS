@@ -64,6 +64,12 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
   ): Promise<{ok: boolean; error?: string}>
   stopNavigation(): Promise<{ok: boolean; error?: string}>
 
+  /**
+   * Dev-only: nudge the simulated user position ~offsetMeters perpendicular
+   * to the route so the Nav SDK reroutes. Default 20m. Android only.
+   */
+  simulateDeviation(offsetMeters?: number): Promise<{ok: boolean; error?: string}>
+
   // Heading / compass (Android only)
   startHeading(): Promise<{ok: boolean; error?: string}>
   stopHeading(): Promise<{ok: boolean; error?: string}>

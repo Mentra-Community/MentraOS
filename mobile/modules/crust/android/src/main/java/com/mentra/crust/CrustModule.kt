@@ -332,6 +332,19 @@ class CrustModule : Module() {
       }
     }
 
+    // Dev-only: nudge the simulated position ~offsetMeters off-route to
+    // exercise the Nav SDK's onRerouting() pipeline without having to
+    // physically walk off the planned path. No-op on real GPS fixes.
+    AsyncFunction("simulateDeviation") { offsetMeters: Double? ->
+      try {
+        NavigationManager.simulateDeviation(offsetMeters ?: 20.0)
+        mapOf("ok" to true)
+      } catch (e: Exception) {
+        android.util.Log.e("CrustModule", "simulateDeviation failed", e)
+        mapOf("ok" to false, "error" to (e.message ?: "deviate failed"))
+      }
+    }
+
     // MARK: - Heading (compass) — Android only
 
     AsyncFunction("startHeading") {

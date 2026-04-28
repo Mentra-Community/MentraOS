@@ -319,6 +319,21 @@ export default function App() {
         )}
       </div>
 
+      {/* Dev-only: deviate ~20m off-route to test the SDK's rerouting flow.
+          Only meaningful when a simulated trip is active. */}
+      {running && simulate ? (
+        <button
+          style={styles.deviateBtn}
+          onClick={async () => {
+            append("deviate → +20m off-route")
+            const result = await session.navigation.deviate(20)
+            console.log("[NAV-MINI] deviate result:", result)
+            append(`deviate ack: ${JSON.stringify(result)}`)
+          }}>
+          🚧 Deviate (test reroute)
+        </button>
+      ) : null}
+
       {/* Status + active maneuver — the big read-out */}
       {running || maneuver || status !== "idle" ? (
         <>
@@ -609,6 +624,17 @@ const styles = {
     padding: "12px 16px",
     borderRadius: 10,
     fontSize: 16,
+    fontWeight: 600,
+  } as React.CSSProperties,
+  deviateBtn: {
+    width: "100%",
+    marginTop: 8,
+    background: "#fff7ed",
+    color: "#9a3412",
+    border: "1px dashed #fdba74",
+    padding: "10px 12px",
+    borderRadius: 10,
+    fontSize: 14,
     fontWeight: 600,
   } as React.CSSProperties,
   statusRow: {

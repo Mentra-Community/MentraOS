@@ -37,6 +37,10 @@ object NavigationManager {
   private var pollRunnable: Runnable? = null
   private var lastEmittedKey: String? = null
   private var activeCallbacks: Callbacks? = null
+  /** True iff the active trip is using simulated locations. Drives reroute-restart logic. */
+  private var simulating: Boolean = false
+  /** Saved speed multiplier so deviation/reroute can resume at the same pace. */
+  private var simulationSpeed: Float = 1f
   /** Most recent road-snapped fix. Used to compute distance-to-maneuver. */
   private var lastFixLat: Double = Double.NaN
   private var lastFixLng: Double = Double.NaN
@@ -107,11 +111,86 @@ object NavigationManager {
     )
   }
 
+  /**
+   * Dev-only: nudge the simulator off-route so we can verify the rerouting
+   * pipeline end-to-end. Picks a small perpendicular offset (~`offsetMeters`)
+   * from the user's current road-snapped position and teleports the
+   * simulator there. The Nav SDK detects the user is off the polyline and
+   * fires `onRerouting()`, which our existing listener already handles.
+   *
+   * Keep `offsetMeters` modest (15–25m) so the reroute is plausible — far
+   * enough to leave the polyline tolerance, close enough that the rebuild
+   * just patches the route rather than dragging the user across the city.
+   */
+  fun simulateDeviation(offsetMeters: Double = 20.0) {
+    val nav = navigator ?: run {
+      Log.w(TAG, "simulateDeviation: no navigator")
+      return
+    }
+    if (lastFixLat.isNaN() || lastFixLng.isNaN()) {
+      Log.w(TAG, "simulateDeviation: no last fix")
+      return
+    }
+    val sim = nav.simulator ?: run {
+      Log.w(TAG, "simulateDeviation: no simulator (real fixes only?)")
+      return
+    }
+
+    // Pick a perpendicular bearing relative to the route's local direction
+    // so the offset actually leaves the road, not slides along it.
+    val flat = flattenRoute(nav)
+    val routeBearing = if (flat != null && flat.size >= 2) {
+      val (idx, _) = closestSegmentIndex(flat, lastFixLat, lastFixLng)
+      val a = flat[idx]
+      val b = flat[(idx + 1).coerceAtMost(flat.size - 1)]
+      bearing(a.first, a.second, b.first, b.second)
+    } else {
+      0.0
+    }
+    val perpBearing = (routeBearing + 90.0) % 360.0
+
+    val (offLat, offLng) = movePoint(lastFixLat, lastFixLng, offsetMeters, perpBearing)
+    Log.d(TAG, "simulateDeviation: $lastFixLat,$lastFixLng → $offLat,$offLng (offset ${offsetMeters}m bearing ${perpBearing}°)")
+
+    try {
+      // ONLY teleport — do NOT call simulateLocationsAlongExistingRoute() here.
+      // That method walks the *current* route from its start, which would
+      // snap the user back to the trip origin. Instead, we let the SDK
+      // notice we're off-route, fire onRouteChanged, and we restart the
+      // simulator on the NEW route from the deviated position inside
+      // routeChangedListener.
+      sim.pause()
+      sim.setUserLocation(com.google.android.gms.maps.model.LatLng(offLat, offLng))
+    } catch (e: Throwable) {
+      Log.e(TAG, "simulateDeviation failed", e)
+    }
+  }
+
+  /** Project a point along a bearing in meters. */
+  private fun movePoint(lat: Double, lng: Double, meters: Double, bearingDeg: Double): Pair<Double, Double> {
+    val r = 6_371_000.0 // Earth radius m
+    val brng = Math.toRadians(bearingDeg)
+    val lat1 = Math.toRadians(lat)
+    val lng1 = Math.toRadians(lng)
+    val ad = meters / r
+    val lat2 = kotlin.math.asin(
+      kotlin.math.sin(lat1) * kotlin.math.cos(ad) +
+        kotlin.math.cos(lat1) * kotlin.math.sin(ad) * kotlin.math.cos(brng),
+    )
+    val lng2 = lng1 + kotlin.math.atan2(
+      kotlin.math.sin(brng) * kotlin.math.sin(ad) * kotlin.math.cos(lat1),
+      kotlin.math.cos(ad) - kotlin.math.sin(lat1) * kotlin.math.sin(lat2),
+    )
+    return Math.toDegrees(lat2) to Math.toDegrees(lng2)
+  }
+
   fun stop() {
     Log.d(TAG, "stop")
     stopPolling()
     activeCallbacks = null
     lastEmittedKey = null
+    simulating = false
+    simulationSpeed = 1f
     navigator?.let { nav ->
       try {
         nav.simulator?.unsetUserLocation()
@@ -199,10 +278,12 @@ object NavigationManager {
         Navigator.RouteStatus.OK -> {
           Log.d(TAG, "route OK, starting guidance")
           nav.startGuidance()
+          simulating = simulate
+          simulationSpeed = speedMultiplier.coerceIn(0.5f, 50f)
           if (simulate) {
-            Log.d(TAG, "simulator engaged at ${speedMultiplier}x")
+            Log.d(TAG, "simulator engaged at ${simulationSpeed}x")
             nav.simulator?.simulateLocationsAlongExistingRoute(
-              SimulationOptions().speedMultiplier(speedMultiplier.coerceIn(0.5f, 50f)),
+              SimulationOptions().speedMultiplier(simulationSpeed),
             )
           }
           startPolling()
@@ -256,6 +337,19 @@ object NavigationManager {
       Log.d(TAG, "route changed — emitting next maneuver + new route")
       callbacks.onRerouting()
       lastEmittedKey = null // force re-emit after reroute
+      // If we're in simulate mode, the simulator was paused (either
+      // organically by the off-route detection, or explicitly by
+      // simulateDeviation). Restart it on the new route so the user keeps
+      // "walking" without having to do anything.
+      if (simulating) {
+        try {
+          nav.simulator?.simulateLocationsAlongExistingRoute(
+            SimulationOptions().speedMultiplier(simulationSpeed),
+          )
+        } catch (e: Throwable) {
+          Log.w(TAG, "failed to restart simulator after reroute: ${e.message}")
+        }
+      }
       emitCurrentManeuverIfChanged(nav, callbacks)
       emitRoute(nav, callbacks)
     }

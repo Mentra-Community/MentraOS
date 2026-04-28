@@ -42,6 +42,9 @@ public class CrustModule: Module {
         AsyncFunction("stopNavigation") { () -> [String: Any] in
             return ["ok": false, "error": "navigation is android-only in v1"]
         }
+        AsyncFunction("simulateDeviation") { (_: Double?) -> [String: Any] in
+            return ["ok": false, "error": "navigation is android-only in v1"]
+        }
 
         AsyncFunction("startHeading") { () -> [String: Any] in
             return ["ok": false, "error": "heading is android-only in v1"]

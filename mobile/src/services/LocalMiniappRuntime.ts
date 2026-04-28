@@ -562,6 +562,9 @@ class LocalMiniappRuntime {
       case MiniappRequestType.NAVIGATION_STOP:
         this.handleNavigationStop(packageName, requestId)
         break
+      case MiniappRequestType.NAVIGATION_DEVIATE:
+        this.handleNavigationDeviate(packageName, payload, requestId)
+        break
       case MiniappRequestType.STORAGE_GET:
         this.handleStorageGet(packageName, payload, requestId)
         break
@@ -1140,6 +1143,25 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "navigation stop error",
+      })
+    }
+  }
+
+  private async handleNavigationDeviate(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const offsetNum = Number(payload.offsetMeters)
+      const offsetMeters = Number.isFinite(offsetNum) && offsetNum > 0 ? offsetNum : 20
+      const result = await navigationService.simulateDeviation(offsetMeters)
+      this.sendResult(packageName, requestId, result.ok, result, undefined)
+    } catch (err) {
+      console.error(`${LOG_TAG}: navigation deviate error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "navigation deviate error",
       })
     }
   }
