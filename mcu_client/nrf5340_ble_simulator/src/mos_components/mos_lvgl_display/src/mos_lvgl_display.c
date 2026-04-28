@@ -1902,6 +1902,8 @@ static void update_display_height(uint16_t height)
         tmp.layout.margin_top = (tmp.height > tmp.layout.usable_height) ? (tmp.height - tmp.layout.usable_height) : 0;
     }
 
+    display_set_margin_top(tmp.layout.margin_top);
+
     if (welcome_container != NULL)
     {
         (void)display_apply_container_config(welcome_container, screen, &tmp);
