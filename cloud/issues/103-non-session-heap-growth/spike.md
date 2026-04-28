@@ -51,11 +51,11 @@ Raw log sample, dev, us-central-dev, v1011, 2026-04-24 17:09:41 UTC:
   "memoryEstimatedSessionBytes": 6214,
   "memoryOwnerCount": 16,
   "memoryTopOwners": [
-    {"owner": "calendar.events", "estimatedBytes": 3986, "itemCount": 23},
-    {"owner": "app-session.subscription-history", "estimatedBytes": 1583, "itemCount": 11},
-    {"owner": "app-session.subscriptions", "estimatedBytes": 277, "itemCount": 11},
-    {"owner": "transcription.streams", "estimatedBytes": 256, "itemCount": 1},
-    {"owner": "dashboard.widgets", "estimatedBytes": 65, "itemCount": 1}
+    { "owner": "calendar.events", "estimatedBytes": 3986, "itemCount": 23 },
+    { "owner": "app-session.subscription-history", "estimatedBytes": 1583, "itemCount": 11 },
+    { "owner": "app-session.subscriptions", "estimatedBytes": 277, "itemCount": 11 },
+    { "owner": "transcription.streams", "estimatedBytes": 256, "itemCount": 1 },
+    { "owner": "dashboard.widgets", "estimatedBytes": 65, "itemCount": 1 }
   ],
   "heapObjectCount": 7660597,
   "heapTopTypes": {

@@ -67,9 +67,9 @@ This is the largest change. Two parts:
 ```typescript
 // Issue 102: per-substage outlier threshold for processAudioData stages.
 // Each substage is sub-millisecond in steady state; 10ms = ~10× normal.
-const SLOW_AUDIO_STAGE_MS = 10
+const SLOW_AUDIO_STAGE_MS = 10;
 
-type AudioStage = "lc3Decode" | "appFanout" | "transcriptionFeed" | "translationFeed" | "microphoneUpdate"
+type AudioStage = "lc3Decode" | "appFanout" | "transcriptionFeed" | "translationFeed" | "microphoneUpdate";
 ```
 
 Also add a helper method on the class to record substage timings (cuts repetition):
@@ -210,7 +210,7 @@ Update `relayAudioToApps`'s finally block (already added in v1) to include the c
 #### Imports / new additions to AudioManager.ts
 
 ```typescript
-import {operationTimers} from "../metrics/SystemVitalsLogger"
+import { operationTimers } from "../metrics/SystemVitalsLogger";
 ```
 
 `operationTimers` is already exported from SystemVitalsLogger. New import.
@@ -220,12 +220,12 @@ For `fnv1a32`: check if `cloud/packages/cloud/src/services/udp/UdpAudioServer.ts
 ```typescript
 /** FNV-1a 32-bit hash, matches the userIdHash used in UdpAudioServer. */
 function fnv1a32(input: string): number {
-  let hash = 0x811c9dc5
+  let hash = 0x811c9dc5;
   for (let i = 0; i < input.length; i++) {
-    hash ^= input.charCodeAt(i)
-    hash = (hash * 0x01000193) >>> 0
+    hash ^= input.charCodeAt(i);
+    hash = (hash * 0x01000193) >>> 0;
   }
-  return hash
+  return hash;
 }
 ```
 
@@ -349,7 +349,7 @@ Add this as a public method on the `UdpAudioServer` class, near `start()` / `sto
 Import the singleton:
 
 ```typescript
-import {udpAudioServer} from "../udp/UdpAudioServer"
+import { udpAudioServer } from "../udp/UdpAudioServer";
 ```
 
 Add a private field to hold the previous snapshot:
@@ -369,7 +369,7 @@ Inside `logVitals` (near where mongoStats is read), compute the UDP delta:
 
 ```typescript
 // Issue 102: pod-level UDP counter deltas per 30s window
-const udpStats = udpAudioServer.getStatsSnapshot()
+const udpStats = udpAudioServer.getStatsSnapshot();
 const udpDelta = this.prevUdpStats
   ? {
       udpPacketsReceivedDelta: udpStats.packetsReceived - this.prevUdpStats.packetsReceived,
@@ -382,14 +382,14 @@ const udpDelta = this.prevUdpStats
       udpPacketsDroppedDelta: 0,
       udpPacketsDecryptedDelta: 0,
       udpDecryptionFailuresDelta: 0,
-    }
+    };
 this.prevUdpStats = {
   packetsReceived: udpStats.packetsReceived,
   packetsDropped: udpStats.packetsDropped,
   pingsReceived: udpStats.pingsReceived,
   packetsDecrypted: udpStats.packetsDecrypted,
   decryptionFailures: udpStats.decryptionFailures,
-}
+};
 ```
 
 Then merge `udpDelta` and `udpRegisteredSessions: udpStats.registeredSessions` into the final `logger.info(...)` payload that emits the system-vitals row. (Find the existing `logger.info({...}, "system-vitals")` call near the bottom of `logVitals` and spread the new fields into the object.)
@@ -477,7 +477,7 @@ Apply this AFTER S1-S6 have been deployed to one quiet region and validated.
 ### Added to `UdpAudioServer.ts`
 
 ```typescript
-const SLOW_AUDIO_CALL_MS = 50 // (already present from v1)
+const SLOW_AUDIO_CALL_MS = 50; // (already present from v1)
 ```
 
 Plus the new public method `getStatsSnapshot()`.
@@ -485,13 +485,13 @@ Plus the new public method `getStatsSnapshot()`.
 ### Added to `AudioManager.ts`
 
 ```typescript
-import {operationTimers} from "../metrics/SystemVitalsLogger"
+import { operationTimers } from "../metrics/SystemVitalsLogger";
 
-const SLOW_RELAY_MS = 20 // (already present from v1)
-const FANOUT_WARN = 10 // (already present from v1)
-const SLOW_AUDIO_STAGE_MS = 10 // NEW
+const SLOW_RELAY_MS = 20; // (already present from v1)
+const FANOUT_WARN = 10; // (already present from v1)
+const SLOW_AUDIO_STAGE_MS = 10; // NEW
 
-type AudioStage = "lc3Decode" | "appFanout" | "transcriptionFeed" | "translationFeed" | "microphoneUpdate"
+type AudioStage = "lc3Decode" | "appFanout" | "transcriptionFeed" | "translationFeed" | "microphoneUpdate";
 
 // fnv1a32 helper if not already imported from elsewhere
 ```
@@ -499,13 +499,13 @@ type AudioStage = "lc3Decode" | "appFanout" | "transcriptionFeed" | "translation
 ### Added / changed in `SystemVitalsLogger.ts`
 
 ```typescript
-import {PerformanceObserver} from "node:perf_hooks" // (already from v1)
-import {udpAudioServer} from "../udp/UdpAudioServer" // NEW
+import { PerformanceObserver } from "node:perf_hooks"; // (already from v1)
+import { udpAudioServer } from "../udp/UdpAudioServer"; // NEW
 
-const HEARTBEAT_INTERVAL_MS = 500 // (already from v1)
-const HEARTBEAT_GAP_THRESHOLD_MS = 1_000 // (already from v1)
-const VITALS_SELF_SLOW_MS = 500 // (already from v1)
-const NATURAL_GC_THRESHOLD_MS = 100 // (already from v1)
+const HEARTBEAT_INTERVAL_MS = 500; // (already from v1)
+const HEARTBEAT_GAP_THRESHOLD_MS = 1_000; // (already from v1)
+const VITALS_SELF_SLOW_MS = 500; // (already from v1)
+const NATURAL_GC_THRESHOLD_MS = 100; // (already from v1)
 ```
 
 No new external dependencies.

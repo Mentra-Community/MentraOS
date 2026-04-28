@@ -12,8 +12,8 @@ module.exports = {
   "!(cloud)/**/*.{js,jsx,ts,tsx,json,css,md,html,yml,yaml}": "prettier --write",
 
   // Root-level config files: prettier only (root eslint needs expo which may not be installed)
-  "*.json": "prettier --write",
-  "*.{md,html,yml,yaml}": "prettier --write",
+  "./*.json": "prettier --write",
+  "./*.{md,html,yml,yaml}": "prettier --write",
 
   // Swift files
   "*.swift": "swiftformat",
