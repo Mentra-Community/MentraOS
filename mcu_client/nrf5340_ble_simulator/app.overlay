@@ -24,8 +24,8 @@
         vad_power-gpios         = <&gpio1 0 GPIO_ACTIVE_HIGH>;
         gx8002_vad_int-gpios    = <&gpio0 22 GPIO_ACTIVE_HIGH>;
         vad_voice_detect-gpios  = <&gpio0 25 GPIO_ACTIVE_HIGH>;
-        ear_en-gpios            = <&gpio0 19 GPIO_ACTIVE_HIGH>;  // P0.19 for Ear Power Enable
-
+        imu_en-gpios            = <&gpio0 19 GPIO_ACTIVE_HIGH>;   // P0.19 for IMU Enable
+        watchdog_int-gpios      = <&gpio0 4 GPIO_ACTIVE_HIGH>;  // P0.04 for watchdog interrupt
         /* RDY: low asserted (per IQS / ProxFusion datasheet); idle high, falling edge = window start */
         iqs7211a_rdy-gpios      = <&gpio1 14 GPIO_ACTIVE_LOW>;
     };
