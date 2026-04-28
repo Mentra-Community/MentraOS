@@ -878,7 +878,8 @@ void protobuf_process_display_distance_config(const mentraos_ble_DisplayDistance
 
     if (v == 1U)
     {
-        distance_cm = 200U;
+        // distance_cm = 200U; 
+        distance_cm = 250U; // NOTE: It's a temporary hack
         legacy_tier = true;
     }
     else if (v == 2U)
@@ -888,7 +889,8 @@ void protobuf_process_display_distance_config(const mentraos_ble_DisplayDistance
     }
     else if (v == 3U)
     {
-        distance_cm = 500U;
+        // distance_cm = 500U;
+        distance_cm = 250U; // NOTE: It's a temporary hack
         legacy_tier = true;
     }
 
