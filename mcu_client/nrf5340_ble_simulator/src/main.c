@@ -440,7 +440,7 @@ static void num_comp_reply(bool accept)
  * @return 0 on success, negative value on error
  */
 #define USER_NODE DT_PATH(zephyr_user)
-static const struct gpio_dt_spec ear_en = GPIO_DT_SPEC_GET(USER_NODE, ear_en_gpios);
+static const struct gpio_dt_spec imu_en = GPIO_DT_SPEC_GET(USER_NODE, imu_en_gpios);
 #if DT_NODE_HAS_PROP(USER_NODE, vad_power_gpios)
 static const struct gpio_dt_spec mic_power = GPIO_DT_SPEC_GET(USER_NODE, vad_power_gpios);
 #define MIC_POWER_GPIO_AVAILABLE 1
@@ -449,13 +449,13 @@ static const struct gpio_dt_spec mic_power = GPIO_DT_SPEC_GET(USER_NODE, vad_pow
 #endif
 
 /**
- * @brief Control ear_en on/off | 控制 ear_en 开关
- * @param enable true to set HIGH, false to set LOW | true拉高，false拉低
+ * @brief Control IMU enable line | 控制 IMU 使能引脚
+ * @param enable true to drive IMU_EN high, false to drive it low | true 拉高使能，false 拉低关闭
  */
-void ear_en_control(bool enable)
+void imu_en_control(bool enable)
 {
-    gpio_pin_set_dt(&ear_en, enable ? 1 : 0);
-    LOG_INF("ear_en %s", enable ? "HIGH" : "LOW");
+    gpio_pin_set_dt(&imu_en, enable ? 1 : 0);
+    LOG_INF("imu_en %s (physical %s)", enable ? "ENABLED" : "DISABLED", enable ? "HIGH" : "LOW");
 }
 
 /**
@@ -481,21 +481,21 @@ void configure_default_low_pins(void)
 int init_user_gpio(void)
 {
     int err;
-    /* ear_en: configure as output and pull HIGH | ear_en：配置为输出并拉高 */
-    if (gpio_is_ready_dt(&ear_en))
+    /* imu_en: configure as output and default drive LOW | imu_en：配置为输出并默认拉低 */
+    if (gpio_is_ready_dt(&imu_en))
     {
-        err = gpio_pin_configure_dt(&ear_en, GPIO_OUTPUT_ACTIVE);
+        err = gpio_pin_configure_dt(&imu_en, GPIO_OUTPUT_INACTIVE);
         if (err != 0)
         {
-            LOG_ERR("ear_en GPIO config error: %d", err);
+            LOG_ERR("imu_en GPIO config error: %d", err);
             return err;
         }
-        ear_en_control(true);  // Ensure ear_en is HIGH
-        LOG_INF("ear_en GPIO configured and set to HIGH");
+        imu_en_control(false);  // Ensure IMU_EN defaults LOW
+        LOG_INF("imu_en GPIO configured and driven LOW by default");
     }
     else
     {
-        LOG_WRN("ear_en GPIO not ready, skipping");
+        LOG_WRN("imu_en GPIO not ready, skipping");
     }
 
     /* Mic power rail enable for both VAD and PDM paths */

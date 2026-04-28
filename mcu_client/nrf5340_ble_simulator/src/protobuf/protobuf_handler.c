@@ -753,12 +753,10 @@ void protobuf_process_display_text(const mentraos_ble_DisplayText *display_text)
 
     size_t text_length = strlen(display_text->text);
 
-    /* Ignore an empty first DisplayText while still on the welcome screen.
-     * Once we've already switched into the text scene, keep honoring BLE payloads as-is. */
-    if (text_length == 0U && display_is_welcome_screen_active())
+    /* Always honor app payload, including empty text, to avoid stale captions. */
+    if (text_length == 0U)
     {
-        LOG_INF("[PROTOBUF] Ignore empty DisplayText while welcome screen is active");
-        return;
+        LOG_INF("[PROTOBUF] DisplayText is empty, apply clear/hidden state from app payload");
     }
 
     uint32_t color_rgb888 = display_text->color;

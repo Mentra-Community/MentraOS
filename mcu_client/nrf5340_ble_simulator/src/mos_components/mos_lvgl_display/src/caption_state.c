@@ -37,10 +37,6 @@ void caption_state_ingest(const char *text)
     }
 
     text_len = strlen(text);
-    if (text_len == 0U)
-    {
-        return;
-    }
 
     if (text_len >= CAPTION_TEXT_MAX_CHARS)
     {
@@ -51,7 +47,13 @@ void caption_state_ingest(const char *text)
 
     k_mutex_lock(&s_caption_state_lock, K_FOREVER);
     s_caption_pending_seq++;
-    memcpy(s_caption_pending_text, text, text_len);
+    /* Only copy when payload has content; for empty payload we still keep this as a valid
+     * update and rely on the '\0' write below to clear the displayed caption text.
+     * 仅在有内容时执行拷贝；空载荷也要作为有效更新保留，并依赖下面写入 '\0' 来清空显示字幕。 */
+    if (text_len > 0U)
+    {
+        memcpy(s_caption_pending_text, text, text_len);
+    }
     s_caption_pending_text[text_len] = '\0';
     s_caption_pending_valid = true;
     s_caption_pending_arrival_ms = k_uptime_get_32();

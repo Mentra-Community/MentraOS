@@ -19,7 +19,7 @@
 
 /* External function from main.c | 来自main.c的外部函数 */
 extern void configure_default_low_pins(void);
-extern void ear_en_control(bool enable);
+extern void imu_en_control(bool enable);
 
 LOG_MODULE_REGISTER(mos_button_app, LOG_LEVEL_INF);
 
@@ -362,7 +362,7 @@ static int prepare_for_sleep(bool turn_off_peripherals)
         LOG_INF("Turning off peripherals before sleep...");
 
         (void)mos_gx8002_power_control(false);  // Disable GX8002(VAD) power control
-        ear_en_control(false);
+        imu_en_control(false);
         /* Disable LDSW1 | 禁用LDSW1 */
 
         /* Put OPT3006 into shutdown mode | 关闭 OPT3006 */
