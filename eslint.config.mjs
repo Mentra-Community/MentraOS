@@ -187,6 +187,11 @@ export default defineConfig([
       "mobile/**/*.ipa",
       "mobile/**/*.apk",
       "mobile/**/*.aab",
+
+      // sdk/ has its own workspace, ESLint config, and Bun-aware imports.
+      // Linting it from the root ESLint produces false-positive
+      // import-resolution errors on bun:* modules.
+      "sdk/**",
     ],
   },
 ])
