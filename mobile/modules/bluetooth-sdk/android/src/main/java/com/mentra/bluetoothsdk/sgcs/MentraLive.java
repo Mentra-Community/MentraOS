@@ -31,6 +31,8 @@ import android.util.Log;
 import androidx.core.app.ActivityCompat;
 // import androidx.preference.PreferenceManager;
 
+import java.nio.charset.StandardCharsets;
+
 // Mentra
 import com.mentra.bluetoothsdk.sgcs.SGCManager;
 import com.mentra.bluetoothsdk.DeviceManager;
@@ -44,7 +46,6 @@ import com.mentra.bluetoothsdk.utils.MessageChunker;
 import com.mentra.bluetoothsdk.utils.audio.Lc3Player;
 import com.mentra.bluetoothsdk.utils.BlePhotoUploadService;
 import com.mentra.bluetoothsdk.utils.IncidentLogBleRelayNaming;
-import com.mentra.bluetoothsdk.utils.IncidentLogBleUploadService;
 import com.mentra.bluetoothsdk.DeviceStore;
 import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor;
 
@@ -291,15 +292,12 @@ public class MentraLive extends SGCManager {
     private static final class BleIncidentLogRelay {
         final String fileBaseKey;
         final String incidentId;
-        final String apiBaseUrl;
         final BleIncidentLogKind kind;
         FileTransferSession session;
 
-        BleIncidentLogRelay(String fileBaseKey, String incidentId, String apiBaseUrl,
-                            BleIncidentLogKind kind) {
+        BleIncidentLogRelay(String fileBaseKey, String incidentId, BleIncidentLogKind kind) {
             this.fileBaseKey = fileBaseKey;
             this.incidentId = incidentId;
-            this.apiBaseUrl = apiBaseUrl;
             this.kind = kind;
             this.session = null;
         }
@@ -3328,15 +3326,12 @@ public class MentraLive extends SGCManager {
     public void sendIncidentId(String incidentId, String apiBaseUrl) {
         try {
             String base = apiBaseUrl != null ? apiBaseUrl.trim() : "";
-            if (base.isEmpty()) {
-                base = "https://api.mentra.glass";
-            }
             String bKey = IncidentLogBleRelayNaming.bleFileBaseName(incidentId, 'B');
             String lKey = IncidentLogBleRelayNaming.bleFileBaseName(incidentId, 'L');
             bleIncidentLogRelays.put(bKey,
-                    new BleIncidentLogRelay(bKey, incidentId, base, BleIncidentLogKind.FIRMWARE));
+                    new BleIncidentLogRelay(bKey, incidentId, BleIncidentLogKind.FIRMWARE));
             bleIncidentLogRelays.put(lKey,
-                    new BleIncidentLogRelay(lKey, incidentId, base, BleIncidentLogKind.LOGCAT));
+                    new BleIncidentLogRelay(lKey, incidentId, BleIncidentLogKind.LOGCAT));
 
             JSONObject json = new JSONObject();
             json.put("type", "upload_incident_logs");
@@ -5982,21 +5977,41 @@ public class MentraLive extends SGCManager {
 
     private void uploadBleIncidentLogPayload(BleIncidentLogRelay relay, String fileName,
                                            byte[] jsonUtf8) {
-        String token = getCoreToken();
-        IncidentLogBleUploadService.upload(relay.apiBaseUrl, relay.incidentId, token, jsonUtf8,
-                (success, message) -> new Handler(Looper.getMainLooper()).post(() -> {
-                    if (success) {
-                        Bridge.log("LIVE: ✅ Incident log BLE relay uploaded (" + relay.kind + "): "
-                                + relay.incidentId);
-                        bleIncidentLogRelays.remove(relay.fileBaseKey);
-                    } else {
-                        Log.e(TAG, "❌ Incident log BLE relay upload failed (" + relay.kind + "): "
-                                + message);
-                        // Keep relay entry so glasses can retry after transfer_complete:false.
-                        relay.session = null;
-                    }
-                    sendTransferCompleteConfirmation(fileName, success);
-                }));
+        HashMap<String, Object> body = new HashMap<>();
+        body.put("transferId", fileName);
+        body.put("incidentId", relay.incidentId);
+        body.put("kind", relay.kind == BleIncidentLogKind.FIRMWARE ? "glasses_firmware" : "glasses");
+        body.put("fileName", fileName);
+        body.put("payloadJson", new String(jsonUtf8, StandardCharsets.UTF_8));
+        body.put("timestamp", System.currentTimeMillis());
+        Bridge.sendTypedMessage("incident_log_payload", body);
+    }
+
+    @Override
+    public void completeIncidentLogUpload(String transferId, boolean success) {
+        String fileBaseKey = transferId;
+        int dotIndex = fileBaseKey.lastIndexOf('.');
+        if (dotIndex > 0) {
+            fileBaseKey = fileBaseKey.substring(0, dotIndex);
+        }
+
+        BleIncidentLogRelay relay = bleIncidentLogRelays.get(fileBaseKey);
+        if (relay == null) {
+            Log.w(TAG, "Incident log relay not found for completion: " + transferId);
+            sendTransferCompleteConfirmation(transferId, success);
+            return;
+        }
+
+        if (success) {
+            Bridge.log("LIVE: ✅ Incident log BLE relay uploaded by host (" + relay.kind + "): "
+                    + relay.incidentId);
+            bleIncidentLogRelays.remove(fileBaseKey);
+        } else {
+            Log.e(TAG, "❌ Incident log BLE relay upload failed in host (" + relay.kind + ")");
+            // Keep relay entry so glasses can retry after transfer_complete:false.
+            relay.session = null;
+        }
+        sendTransferCompleteConfirmation(transferId, success);
     }
 
     /**

@@ -108,6 +108,7 @@ class BluetoothSdkModule : Module() {
             "hotspot_status_change",
             "hotspot_error",
             "photo_response",
+            "incident_log_payload",
             "gallery_status",
             "compatible_glasses_search_stop",
             "heartbeat_sent",
@@ -251,6 +252,10 @@ class BluetoothSdkModule : Module() {
 
         AsyncFunction("sendIncidentId") { incidentId: String, apiBaseUrl: String? ->
             sdk?.sendIncidentId(incidentId, apiBaseUrl)
+        }
+
+        AsyncFunction("completeIncidentLogUpload") { transferId: String, success: Boolean ->
+            sdk?.completeIncidentLogUpload(transferId, success)
         }
 
         // MARK: - WiFi Commands

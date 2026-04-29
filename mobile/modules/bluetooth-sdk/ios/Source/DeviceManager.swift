@@ -1111,6 +1111,11 @@ struct ViewState {
         sgc?.sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
     }
 
+    func completeIncidentLogUpload(transferId: String, success: Bool) {
+        Bridge.log("MAN: Completing incident log upload: \(transferId) success=\(success)")
+        sgc?.completeIncidentLogUpload(transferId: transferId, success: success)
+    }
+
     func sendWifiCredentials(_ ssid: String, _ password: String) {
         Bridge.log("MAN: Sending wifi credentials: \(ssid) \(password)")
         sgc?.sendWifiCredentials(ssid, password)

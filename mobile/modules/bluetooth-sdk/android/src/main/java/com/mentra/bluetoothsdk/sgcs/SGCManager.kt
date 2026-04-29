@@ -104,6 +104,7 @@ abstract class SGCManager {
 
     // Incident Reporting
     abstract fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null)
+    open fun completeIncidentLogUpload(transferId: String, success: Boolean) {}
 
     // Gallery
     abstract fun queryGalleryStatus()

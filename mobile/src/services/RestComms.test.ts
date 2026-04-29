@@ -124,4 +124,23 @@ describe("RestComms", () => {
     expect(CoreModule.updateBluetoothSettings).toHaveBeenCalledWith({core_token: "new-core-token"})
     expect(useSettingsStore.getState().getSetting(SETTINGS.core_token.key)).not.toBe("new-core-token")
   })
+
+  it("uploads relayed glasses incident logs without changing the payload", async () => {
+    const payload = {
+      source: "glasses",
+      logs: [{timestamp: 123, level: "info", message: "hello"}],
+    }
+    mockRequest.mockResolvedValueOnce({data: {success: true}})
+
+    const result = await restComms.uploadIncidentLogPayload("incident-1", payload)
+
+    expect(result.is_ok()).toBe(true)
+    expect(mockRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "POST",
+        url: expect.stringContaining("/api/incidents/incident-1/logs"),
+        data: payload,
+      }),
+    )
+  })
 })

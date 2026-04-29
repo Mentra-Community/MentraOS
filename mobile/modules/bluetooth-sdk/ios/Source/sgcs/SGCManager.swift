@@ -96,6 +96,7 @@ protocol SGCManager {
     // MARK: - Incident Reporting
 
     func sendIncidentId(_ incidentId: String, apiBaseUrl: String?)
+    func completeIncidentLogUpload(transferId: String, success: Bool)
 
     // MARK: - Gallery
 
@@ -110,6 +111,10 @@ protocol SGCManager {
 /// doesn't seem to work for concurrency reasons :(
 /// we can make read-only getters for convienence though:
 extension SGCManager {
+    // MARK: - Incident Reporting
+
+    func completeIncidentLogUpload(transferId _: String, success _: Bool) {}
+
     // MARK: - Dashboard (default: combined wire format; Nex implements single-field)
 
     func setDashboardHeightOnly(_ height: Int) {

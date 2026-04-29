@@ -99,10 +99,13 @@ class MentraBluetoothSdk private constructor(
     fun sendShutdown()
     fun sendReboot()
     fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null)
+    fun completeIncidentLogUpload(transferId: String, success: Boolean)
 
     override fun close()
 }
 ```
+
+Incident-log collection stays device-protocol focused: the SDK requests logs from Mentra Live, emits an `incident_log_payload` event when logs are relayed over BLE, and waits for the host app to call `completeIncidentLogUpload(...)` after uploading or rejecting the payload.
 
 The core API should be Java-friendly. Avoid requiring coroutines, Flow, or AndroidX lifecycle owners in the base artifact. A later `mentra-bluetooth-sdk-ktx` artifact can add suspend functions and Flow wrappers.
 

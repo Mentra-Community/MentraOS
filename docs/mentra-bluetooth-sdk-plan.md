@@ -37,7 +37,7 @@ This is a descriptive list of what the module currently contains, not a restrict
 
 In practice, we have historically thrown some MentraOS-specific native helpers into `core` whenever we needed them quickly, especially Android-side app features like notification forwarding. This plan cleans that up by moving obvious app-layer/native MentraOS code into `crust`.
 
-A few MentraLive-specific plumbing paths still stay in Bluetooth SDK because the hardware depends on them today, including `core_token`, `auth_email`, and incident context sent down to the device.
+A few MentraLive-specific plumbing paths still stay in Bluetooth SDK because the hardware depends on them today, including `core_token`, `auth_email`, and incident-log collection commands sent down to the device. MentraOS remains responsible for uploading relayed incident logs to Mentra Cloud.
 
 ## Monorepo Approach
 
@@ -155,7 +155,8 @@ These values are not BLE transport credentials. They are MentraOS account/cloud 
 - `MantleManager` forwards the initial Bluetooth SDK setting subset and later setting diffs with `BluetoothSdk.updateBluetoothSettings(...)`.
 - `RestComms.setCoreToken(...)` also syncs refreshed `core_token` values into Bluetooth SDK state.
 - The native bridge writes these values into the native `DeviceStore` `bluetooth` category. Android also persists a non-empty `core_token` to SharedPreferences as a retry/backward-compatibility fallback.
-- MentraLive reads `core_token` / `auth_email` from `DeviceStore` and sends the relevant values to the ASG client. `core_token` is also used by current incident-log relay paths.
+- MentraLive reads `core_token` / `auth_email` from `DeviceStore` and sends the relevant values to the ASG client.
+- BLE-relayed incident logs are emitted back to the host app as `incident_log_payload` events. The host app uploads those logs and calls `completeIncidentLogUpload(...)` so Bluetooth SDK can acknowledge the BLE transfer.
 
 External/native customer guidance:
 
@@ -285,7 +286,8 @@ Keep the state split practical in this branch:
 - Move obvious MentraOS-only native features to Crust, especially notification listening / permission management
 - Move app/build-environment native helpers such as beta-build detection to Crust
 - Keep hardware-driven state and settings in Bluetooth SDK
-- Keep `contextual_dashboard`, `auth_email`, `core_token`, and incident plumbing in Bluetooth SDK for now because current hardware paths still depend on them
+- Keep `contextual_dashboard`, `auth_email`, `core_token`, and incident-log collection plumbing in Bluetooth SDK for now because current hardware paths still depend on them
+- Keep Mentra Cloud incident upload ownership in MentraOS app code
 - Leave offline STT control (`offline_mode` / `offline_captions_running`) unchanged in this workstream
 
 ### 2.3 Update GlassesStore.apply()
@@ -465,6 +467,8 @@ await BluetoothSdk.displayEvent(params)
 await BluetoothSdk.displayText(params)
 await BluetoothSdk.clearDisplay()
 await BluetoothSdk.sendIncidentId(incidentId, apiBaseUrl)
+BluetoothSdk.addListener("incident_log_payload", uploadRelayedLogs)
+await BluetoothSdk.completeIncidentLogUpload(transferId, success)
 await BluetoothSdk.photoRequest(...)
 await BluetoothSdk.queryGalleryStatus()
 await BluetoothSdk.requestWifiScan()
@@ -1100,7 +1104,8 @@ Keep focused regressions for the flows most likely to break during the refactor:
 - [x] Move NotificationListener manifest entry to Crust
 - [x] Keep the state split practical instead of redesigning it:
   - [x] Move obvious MentraOS-only native features to Crust
-  - [x] Keep `contextual_dashboard`, `auth_email`, `core_token`, and incident plumbing in Bluetooth SDK where hardware still depends on them
+  - [x] Keep `contextual_dashboard`, `auth_email`, `core_token`, and incident-log collection plumbing in Bluetooth SDK where hardware still depends on them
+  - [x] Keep Mentra Cloud incident upload ownership in MentraOS app code
 - [x] Leave offline STT control (`offline_mode` / `offline_captions_running`) unchanged in this branch
 - [x] Update DeviceStore.apply() to remove handlers for deleted keys
 - [x] Create Crust TypeScript interface

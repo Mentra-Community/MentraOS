@@ -684,6 +684,10 @@ public final class MentraBluetoothSDK {
         DeviceManager.shared.sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
     }
 
+    public func completeIncidentLogUpload(transferId: String, success: Bool) {
+        DeviceManager.shared.completeIncidentLogUpload(transferId: transferId, success: success)
+    }
+
     public func invalidate() {
         if let bridgeEventSinkId {
             Bridge.removeEventSink(bridgeEventSinkId)

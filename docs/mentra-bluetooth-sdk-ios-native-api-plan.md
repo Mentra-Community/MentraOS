@@ -88,10 +88,13 @@ public final class MentraBluetoothSDK {
     public func sendShutdown()
     public func sendReboot()
     public func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil)
+    public func completeIncidentLogUpload(transferId: String, success: Bool)
 
     public func invalidate()
 }
 ```
+
+Incident-log collection stays device-protocol focused: the SDK requests logs from Mentra Live, emits an `incident_log_payload` event when logs are relayed over BLE, and waits for the host app to call `completeIncidentLogUpload(...)` after uploading or rejecting the payload.
 
 `@MainActor` matches the current `DeviceManager` isolation and is idiomatic for a facade that interacts with CoreBluetooth state, audio state, and delegate callbacks. Long-running work should still happen inside the existing managers, not block the main actor.
 

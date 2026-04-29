@@ -1,4 +1,4 @@
-import CoreModule from "@mentra/bluetooth-sdk"
+import CoreModule, {type IncidentLogPayloadEvent} from "@mentra/bluetooth-sdk"
 import NetInfo from "@react-native-community/netinfo"
 import Constants from "expo-constants"
 import * as ImagePicker from "expo-image-picker"
@@ -16,6 +16,44 @@ import {logBuffer} from "@/utils/dev/logging"
 
 const SENSITIVE_SETTINGS_KEYS = ["core_token", "auth_token", "auth_email"] as const
 const SENSITIVE_GLASSES_KEYS = ["hotspotPassword"] as const
+
+let incidentLogPayloadSubscription: {remove: () => void} | null = null
+
+function ensureIncidentLogPayloadListener() {
+  if (incidentLogPayloadSubscription) {
+    return
+  }
+
+  incidentLogPayloadSubscription = CoreModule.addListener("incident_log_payload", (event: IncidentLogPayloadEvent) => {
+    void uploadRelayedIncidentLogs(event)
+  })
+}
+
+async function uploadRelayedIncidentLogs(event: IncidentLogPayloadEvent) {
+  const transferId = event.transferId || event.fileName
+  if (!transferId) {
+    console.error("Incident log relay missing transferId:", event)
+    return
+  }
+
+  let success = false
+  try {
+    const payload = JSON.parse(event.payloadJson) as Record<string, unknown>
+    const uploadRes = await restComms.uploadIncidentLogPayload(event.incidentId, payload)
+    success = uploadRes.is_ok()
+    if (uploadRes.is_error()) {
+      console.error("Error uploading relayed glasses incident logs:", uploadRes.error)
+    }
+  } catch (error) {
+    console.error("Error handling relayed glasses incident logs:", error)
+  }
+
+  try {
+    await CoreModule.completeIncidentLogUpload(transferId, success)
+  } catch (error) {
+    console.error("Error completing incident log relay:", error)
+  }
+}
 
 export interface BuildBugReportFeedbackDataForBugParams {
   expectedBehavior: string
@@ -246,6 +284,7 @@ export async function submitBugIncident(
 
   const glassesConnected = useGlassesStore.getState().connected
   if (glassesConnected) {
+    ensureIncidentLogPayloadListener()
     CoreModule.sendIncidentId(incidentId, phoneBackendUrl)
   }
 

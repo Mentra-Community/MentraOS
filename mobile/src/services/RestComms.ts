@@ -498,6 +498,22 @@ class RestComms {
   }
 
   /**
+   * Upload a complete incident-log payload collected by glasses and relayed through Bluetooth SDK.
+   */
+  public uploadIncidentLogPayload(incidentId: string, payload: Record<string, unknown>): AsyncResult<void, Error> {
+    const config: RequestConfig = {
+      method: "POST",
+      endpoint: `/api/incidents/${incidentId}/logs`,
+      data: payload,
+    }
+    interface Response {
+      success: boolean
+    }
+    const res = this.authenticatedRequest<Response>(config)
+    return res.map(() => undefined)
+  }
+
+  /**
    * Upload screenshot attachments to an incident.
    * Called after createIncident returns an incidentId.
    */

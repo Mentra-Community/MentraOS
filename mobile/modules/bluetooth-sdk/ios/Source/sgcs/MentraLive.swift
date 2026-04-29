@@ -529,16 +529,14 @@ private enum BleIncidentLogRelayKind {
 private final class BleIncidentLogRelayEntry {
     let fileBaseKey: String
     let incidentId: String
-    let apiBaseUrl: String
     let kind: BleIncidentLogRelayKind
     var session: FileTransferSession?
 
     init(
-        fileBaseKey: String, incidentId: String, apiBaseUrl: String, kind: BleIncidentLogRelayKind
+        fileBaseKey: String, incidentId: String, kind: BleIncidentLogRelayKind
     ) {
         self.fileBaseKey = fileBaseKey
         self.incidentId = incidentId
-        self.apiBaseUrl = apiBaseUrl
         self.kind = kind
     }
 }
@@ -2282,19 +2280,16 @@ class MentraLive: NSObject, SGCManager {
 
     func sendIncidentId(_ incidentId: String, apiBaseUrl: String?) {
         var base = (apiBaseUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if base.isEmpty {
-            base = "https://api.mentra.glass"
-        }
         while base.hasSuffix("/") {
             base = String(base.dropLast())
         }
         let bKey = MentraLive.incidentBleFileBase(incidentId: incidentId, prefix: "B")
         let lKey = MentraLive.incidentBleFileBase(incidentId: incidentId, prefix: "L")
         bleIncidentLogRelays[bKey] = BleIncidentLogRelayEntry(
-            fileBaseKey: bKey, incidentId: incidentId, apiBaseUrl: base, kind: .firmware
+            fileBaseKey: bKey, incidentId: incidentId, kind: .firmware
         )
         bleIncidentLogRelays[lKey] = BleIncidentLogRelayEntry(
-            fileBaseKey: lKey, incidentId: incidentId, apiBaseUrl: base, kind: .logcat
+            fileBaseKey: lKey, incidentId: incidentId, kind: .logcat
         )
 
         Bridge.log(
@@ -2935,64 +2930,38 @@ class MentraLive: NSObject, SGCManager {
     private func uploadBleIncidentLogRelay(
         relay: BleIncidentLogRelayEntry, fileName: String, data: Data
     ) {
-        let token = DeviceStore.shared.get("bluetooth", "core_token") as? String ?? ""
-        guard !token.isEmpty else {
-            sendTransferCompleteConfirmation(fileName: fileName, success: false)
-            if let existing = bleIncidentLogRelays[relay.fileBaseKey] {
-                existing.session = nil
-            }
+        let payloadJson = String(data: data, encoding: .utf8) ?? ""
+        let kind = relay.kind == .firmware ? "glasses_firmware" : "glasses"
+        Bridge.sendTypedMessage("incident_log_payload", body: [
+            "transferId": fileName,
+            "incidentId": relay.incidentId,
+            "kind": kind,
+            "fileName": fileName,
+            "payloadJson": payloadJson,
+            "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
+        ])
+    }
+
+    func completeIncidentLogUpload(transferId: String, success: Bool) {
+        var fileBaseKey = transferId
+        if let dotIndex = fileBaseKey.lastIndex(of: ".") {
+            fileBaseKey = String(fileBaseKey[..<dotIndex])
+        }
+
+        guard let relay = bleIncidentLogRelays[fileBaseKey] else {
+            Bridge.log("LIVE: Incident log relay not found for completion: \(transferId)")
+            sendTransferCompleteConfirmation(fileName: transferId, success: success)
             return
         }
 
-        guard var components = URLComponents(string: relay.apiBaseUrl) else {
-            sendTransferCompleteConfirmation(fileName: fileName, success: false)
-            if let existing = bleIncidentLogRelays[relay.fileBaseKey] {
-                existing.session = nil
-            }
-            return
+        if success {
+            Bridge.log("LIVE: ✅ Incident log BLE relay uploaded by host (\(relay.kind))")
+            bleIncidentLogRelays.removeValue(forKey: fileBaseKey)
+        } else if let existing = bleIncidentLogRelays[fileBaseKey] {
+            // Keep relay entry for glasses retry after transfer_complete:false.
+            existing.session = nil
         }
-        let basePath = components.path.hasSuffix("/")
-            ? String(components.path.dropLast())
-            : components.path
-        components.path = basePath + "/api/incidents/\(relay.incidentId)/logs"
-        guard let url = components.url else {
-            sendTransferCompleteConfirmation(fileName: fileName, success: false)
-            if let existing = bleIncidentLogRelays[relay.fileBaseKey] {
-                existing.session = nil
-            }
-            return
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.httpBody = data
-
-        URLSession.shared.dataTask(with: request) { _, response, error in
-            let ok: Bool
-            let statusCode: Int?
-            if error != nil {
-                ok = false
-                statusCode = nil
-            } else if let http = response as? HTTPURLResponse {
-                ok = (200 ..< 300).contains(http.statusCode)
-                statusCode = http.statusCode
-            } else {
-                ok = false
-                statusCode = nil
-            }
-            DispatchQueue.main.async {
-                if ok {
-                    Bridge.log("LIVE: ✅ Incident log BLE relay uploaded (\(relay.kind))")
-                    self.bleIncidentLogRelays.removeValue(forKey: relay.fileBaseKey)
-                } else if let existing = self.bleIncidentLogRelays[relay.fileBaseKey] {
-                    // Keep relay entry for glasses retry after transfer_complete:false.
-                    existing.session = nil
-                }
-                self.sendTransferCompleteConfirmation(fileName: fileName, success: ok)
-            }
-        }.resume()
+        sendTransferCompleteConfirmation(fileName: transferId, success: success)
     }
 
     private func processAndUploadBlePhoto(_ transfer: BlePhotoTransfer, imageData: Data) {

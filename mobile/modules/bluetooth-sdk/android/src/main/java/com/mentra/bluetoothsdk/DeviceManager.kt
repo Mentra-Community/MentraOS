@@ -1201,6 +1201,11 @@ class DeviceManager {
         sgc?.sendIncidentId(incidentId, apiBaseUrl)
     }
 
+    fun completeIncidentLogUpload(transferId: String, success: Boolean) {
+        Bridge.log("MAN: Completing incident log upload: $transferId success=$success")
+        sgc?.completeIncidentLogUpload(transferId, success)
+    }
+
     fun sendWifiCredentials(ssid: String, password: String) {
         Bridge.log("MAN: Sending wifi credentials: $ssid")
         sgc?.sendWifiCredentials(ssid, password)

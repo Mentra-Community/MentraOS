@@ -92,6 +92,7 @@ export const coreModuleMock = {
   showDashboard: jest.fn(() => Promise.resolve()),
   ping: jest.fn(() => Promise.resolve()),
   sendIncidentId: jest.fn(() => Promise.resolve()),
+  completeIncidentLogUpload: jest.fn(() => Promise.resolve()),
   requestWifiScan: jest.fn(() => Promise.resolve()),
   sendWifiCredentials: jest.fn(() => Promise.resolve()),
   forgetWifiNetwork: jest.fn(() => Promise.resolve()),

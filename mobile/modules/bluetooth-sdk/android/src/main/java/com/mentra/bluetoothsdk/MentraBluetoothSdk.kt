@@ -268,6 +268,10 @@ class MentraBluetoothSdk private constructor(
         deviceManager.sendIncidentId(incidentId, apiBaseUrl)
     }
 
+    fun completeIncidentLogUpload(transferId: String, success: Boolean) {
+        deviceManager.completeIncidentLogUpload(transferId, success)
+    }
+
     override fun close() {
         Bridge.removeEventSink(bridgeEventSinkId)
         DeviceStore.store.removeListener(storeListenerId)
