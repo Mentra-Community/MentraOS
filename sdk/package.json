@@ -1,0 +1,11 @@
+{
+  "private": true,
+  "workspaces": [
+    "*"
+  ],
+  "scripts": {
+    "build:miniapp": "cd miniapp && bun run build",
+    "build": "bun run build:miniapp",
+    "test": "cd miniapp && bun test"
+  }
+}
