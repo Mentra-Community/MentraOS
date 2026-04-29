@@ -301,22 +301,6 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
         content.addView(button("Stop saved video recording") {
             stopSavedVideoRecording()
         })
-        content.addView(button("Start rolling buffer") {
-            sdk.startBufferRecording()
-            updateCameraStatus("Camera: rolling buffer requested")
-            appendAppLog("Requested start buffer recording.")
-        })
-        content.addView(button("Save last 10s buffer") {
-            val requestId = nextRequestId("buffer")
-            sdk.saveBufferVideo(requestId = requestId, durationSeconds = 10)
-            updateCameraStatus("Camera: save buffer requested ($requestId)")
-            appendAppLog("Requested save buffer video: $requestId.")
-        })
-        content.addView(button("Stop rolling buffer") {
-            sdk.stopBufferRecording()
-            updateCameraStatus("Camera: stop buffer requested")
-            appendAppLog("Requested stop buffer recording.")
-        })
 
         content.addView(sectionTitle("Hardware button"))
         content.addView(button("Set button to photo") {

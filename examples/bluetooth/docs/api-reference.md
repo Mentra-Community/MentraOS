@@ -294,7 +294,7 @@ Advanced APIs are capability-gated because support differs by glasses model and 
 | --- | --- |
 | Camera/gallery | `requestPhoto`, `queryGalleryStatus`, `photo_response`, `gallery_status` |
 | Streaming | `startStream`, `keepStreamAlive`, `stopStream`, `stream_status` |
-| Video | `startVideoRecording`, `stopVideoRecording`, `startBufferRecording`, `saveBufferVideo` |
+| Video | `startVideoRecording`, `stopVideoRecording` |
 | Maintenance | `requestVersionInfo`, `sendOtaStart`, `sendShutdown`, `sendReboot` |
 | Local STT | model validation, transcription restart, `local_transcription` |
 | Diagnostics | partner-approved device diagnostic context |

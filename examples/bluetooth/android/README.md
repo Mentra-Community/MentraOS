@@ -26,7 +26,7 @@ The app is split into native Android tabs:
 
 - **Status** shows connection/data-channel state, battery, Wi-Fi, firmware/version details, and recent hardware events.
 - **Audio** exercises microphone input callbacks (`onMicPcm`, `onMicLc3`, and local transcription) and plays a short Android output tone while notifying the SDK that the app is producing audio.
-- **Camera** exercises photo requests, gallery status, saved video recording, rolling buffer recording, camera settings, and hardware button modes. The photo preview flow sends a new SDK photo request with a webhook URL, then polls the local webhook server by `requestId` and displays the uploaded image.
+- **Camera** exercises photo requests, gallery status, saved video recording, camera settings, and hardware button modes. The photo preview flow sends a new SDK photo request with a webhook URL, then polls the local webhook server by `requestId` and displays the uploaded image.
 - **Display** keeps display text/settings controls for glasses models that support display output.
 - **Logs** keeps SDK debug logs hidden by default; use **Show SDK debug logs** when collecting support details.
 
