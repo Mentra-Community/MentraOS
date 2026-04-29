@@ -1,5 +1,9 @@
 import {useEffect, useMemo, useRef, useState} from "react"
+import {AnimatePresence, motion} from "motion/react"
+import {Loader2, Search} from "lucide-react"
 
+import {useUser} from "@/backend/hooks/useUser"
+import {cardinal} from "@/backend/lib/geometry/geometry"
 import {PlacesSession} from "@/backend/lib/places/places"
 import type {PlaceDetails, PlaceSuggestion} from "@/backend/lib/places/places"
 
@@ -13,6 +17,7 @@ type Props = {
 const DEBOUNCE_MS = 200
 
 export function LocationSearch({selected, onSelect, onClear, disabled}: Props) {
+  const heading = useUser().heading
   const session = useMemo(() => new PlacesSession(), [])
   const [query, setQuery] = useState("")
   const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([])
@@ -88,60 +93,87 @@ export function LocationSearch({selected, onSelect, onClear, disabled}: Props) {
   }
 
   return (
-    <div className="relative mb-2">
-      <label className="block text-[12px] text-neutral-600 mb-1">Destination</label>
-      <div className="relative">
-        <input
-          className="block w-full px-3 py-2 pr-9 rounded-lg border border-neutral-300 text-[14px] disabled:bg-neutral-100"
-          value={query}
-          onChange={(e) => handleChange(e.target.value)}
-          onFocus={() => suggestions.length > 0 && setOpen(true)}
-          onBlur={() => setTimeout(() => setOpen(false), 150)}
-          placeholder="Search for a place or address"
-          disabled={disabled}
-          autoComplete="off"
-        />
-        {query ? (
-          <button
-            type="button"
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={handleClear}
+    <div className="relative bg-[#FAF7F0] mt-4 mx-[3px] rounded-2xl min-h-15 flex">
+      <div className="flex flex-row p-[5px] flex-1">
+        <div className="relative flex-1 mr-21  flex">
+          <Search
+            size={18}
+            strokeWidth={2.25}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-700 pointer-events-none z-10"
+          />
+          <input
+            className="block w-full h-full pl-10 pr-9 py-2 rounded-[15px] bg-[#f9ecd5] border border-none text-[16px] disabled:bg-neutral-100 focus:outline-none focus:ring-0"
+            style={{
+              WebkitMaskImage:
+                "linear-gradient(to right, black 0%, black 80%, transparent 100%)",
+              maskImage: "linear-gradient(to right, black 0%, black 80%, transparent 100%)",
+            }}
+            value={query}
+            onChange={(e) => handleChange(e.target.value)}
+            onFocus={() => suggestions.length > 0 && setOpen(true)}
+            onBlur={() => setTimeout(() => setOpen(false), 150)}
+            placeholder="Search Address"
             disabled={disabled}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700 text-lg leading-none"
-            aria-label="Clear">
-            ×
-          </button>
-        ) : null}
-      </div>
-
-      {open && suggestions.length > 0 ? (
-        <ul className="absolute z-10 left-0 right-0 mt-1 bg-white border border-neutral-200 rounded-lg shadow-lg max-h-72 overflow-auto">
-          {suggestions.map((s) => (
-            <li key={s.placeId}>
-              <button
-                type="button"
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => pick(s)}
-                className="w-full text-left px-3 py-2 hover:bg-neutral-100 border-b border-neutral-100 last:border-b-0">
-                <div className="text-[14px] text-neutral-900">{s.mainText}</div>
-                {s.secondaryText ? (
-                  <div className="text-[12px] text-neutral-500">{s.secondaryText}</div>
-                ) : null}
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-
-      {loading ? (
-        <div className="text-[12px] text-neutral-500 mt-1">searching…</div>
-      ) : error ? (
-        <div className="text-[12px] text-red-600 mt-1">{error}</div>
-      ) : selected ? (
-        <div className="text-[12px] text-neutral-500 mt-1 font-mono">
-          {selected.lat.toFixed(6)}, {selected.lng.toFixed(6)}
+            autoComplete="off"
+          />
+          {query ? (
+            <button
+              type="button"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={handleClear}
+              disabled={disabled}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-700 text-lg leading-none"
+              aria-label="Clear">
+              ×
+            </button>
+          ) : null}
         </div>
-      ) : null}
+
+        <div className="absolute right-2 bottom-1 px-2  rounded-full text-neutral-800  font-mono text-[11px]">
+          {heading != null ? `${Math.round(heading)}° ${cardinal(heading)}` : "—"}
+        </div>
+
+        <AnimatePresence>
+          {loading || (open && suggestions.length > 0) ? (
+            <motion.div
+              key="suggestions"
+              initial={{opacity: 0, y: -8}}
+              animate={{opacity: 1, y: 0}}
+              exit={{opacity: 0, y: -8}}
+              transition={{duration: 0.18, ease: "easeOut"}}
+              className="absolute z-10 left-0 right-0 mt-15 bg-[#FAF7F0] border border-neutral-200 rounded-lg shadow-lg max-h-72 overflow-auto">
+              {loading ? (
+                <div className="flex items-center justify-center gap-2 px-3 py-4 text-neutral-500">
+                  <Loader2 size={16} className="animate-spin" />
+                  <span className="text-[13px]">Searching…</span>
+                </div>
+              ) : (
+                <ul>
+                  {suggestions.map((s, i) => (
+                    <motion.li
+                      key={s.placeId}
+                      initial={{opacity: 0, y: -4}}
+                      animate={{opacity: 1, y: 0}}
+                      transition={{duration: 0.15, delay: i * 0.02, ease: "easeOut"}}>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => pick(s)}
+                        className="w-full text-left px-3 py-2 hover:bg-neutral-100 border-b border-neutral-100 last:border-b-0">
+                        <div className="text-[14px] text-neutral-900">{s.mainText}</div>
+                        {s.secondaryText ? (
+                          <div className="text-[12px] text-neutral-500">{s.secondaryText}</div>
+                        ) : null}
+                      </button>
+                    </motion.li>
+                  ))}
+                </ul>
+              )}
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+
+      </div>
     </div>
   )
 }

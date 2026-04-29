@@ -203,51 +203,76 @@ export function NavigationPage() {
   const me = coords ? {lat: coords.lat, lng: coords.lng} : null
 
   return (
-    <div className="p-4 max-w-2xl mx-auto">
-      <h1 className="text-2xl font-bold mb-3">Navigation</h1>
-
-      {running ? (
-        <OrientationCard
-          me={me}
-          heading={heading}
-          maneuver={maneuver}
-          routePoints={routePoints}
-        />
-      ) : null}
-
-      <LocationSearch
-        selected={destination}
-        onSelect={(place) => {
-          setDestination(place)
-          if (!running) setActiveDestination({lat: place.lat, lng: place.lng})
-        }}
-        onClear={() => {
-          setDestination(null)
-          if (!running) setActiveDestination(null)
-        }}
-        disabled={running}
+    <div className="fixed inset-0 overflow-hidden ">
+      <NavMap
+        me={me}
+        destination={activeDestination}
+        routePoints={routePoints}
+        breadcrumbs={breadcrumbs}
       />
 
-      <div className="mb-3">
-        <NavMap
-          me={me}
-          destination={activeDestination}
-          routePoints={routePoints}
-          breadcrumbs={breadcrumbs}
-        />
+      {/* Top floating stack — search bar, then orientation card while running. */}
+      <div className="absolute top-0 left-0 right-0  pt-3 flex flex-col gap-2 pointer-events-none bg-r">
+        <div className="pointer-events-auto ">
+          <LocationSearch
+            selected={destination}
+            onSelect={(place) => {
+              setDestination(place)
+              if (!running) setActiveDestination({lat: place.lat, lng: place.lng})
+            }}
+            onClear={() => {
+              setDestination(null)
+              if (!running) setActiveDestination(null)
+            }}
+            disabled={running}
+          />
+        </div>
+
+        {running ? (
+          <div className="pointer-events-auto shadow-lg rounded-xl">
+            <OrientationCard
+              me={me}
+              heading={heading}
+              maneuver={maneuver}
+              routePoints={routePoints}
+            />
+          </div>
+        ) : null}
       </div>
 
-      <StartStopButton
-        running={running}
-        canStart={!!destination}
-        simulate={simulate}
-        speedMultiplier={speedMultiplier}
-        onStart={handleStart}
-        onStop={handleStop}
-      />
+      {/* Bottom floating Start/Stop pill. */}
+      <div className="absolute bottom-6 left-0 right-0 px-6 flex justify-center pointer-events-none">
+        <div className="pointer-events-auto w-full max-w-sm">
+          <StartStopButton
+            running={running}
+            canStart={!!destination}
+            simulate={simulate}
+            speedMultiplier={speedMultiplier}
+            onStart={handleStart}
+            onStop={handleStop}
+          />
+        </div>
+      </div>
 
       <FloatingDevPanel title="Navigation Dev" storageKey="NavigationPage:dev">
         <MyLocationCard coords={coords} />
+        <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3">
+          <div className="text-[11px] font-bold tracking-wider text-neutral-500 uppercase">
+            🎯 Selected destination
+          </div>
+          {destination ? (
+            <>
+              <div className="text-[14px] text-neutral-900 mt-1">
+                {destination.name || destination.address || "(unnamed)"}
+              </div>
+              <div className="font-mono text-[12px] text-neutral-500 mt-0.5">
+                {destination.lat.toFixed(6)}, {destination.lng.toFixed(6)}
+              </div>
+            </>
+          ) : (
+            <div className="text-[13px] text-neutral-500 italic mt-1">(none picked)</div>
+          )}
+        </div>
         <SimulationControls
           simulate={simulate}
           setSimulate={setSimulate}

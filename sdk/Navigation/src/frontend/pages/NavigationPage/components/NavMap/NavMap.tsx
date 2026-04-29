@@ -3,6 +3,7 @@ import {useEffect, useRef, useState} from "react"
 import {useUser} from "@/backend/hooks/useUser"
 import {bearingDeg, cardinal, haversineMeters} from "@/backend/lib/geometry/geometry"
 import type {LatLng} from "@/backend/lib/geometry/geometry"
+import {RETRO_STYLE} from "@/frontend/pages/NavigationPage/components/NavMap/mapStyle"
 
 export function NavMap({
   me,
@@ -64,6 +65,7 @@ export function NavMap({
       gestureHandling: "greedy",
       mapTypeId: "roadmap",
       clickableIcons: false,
+      styles: RETRO_STYLE,
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready])
@@ -230,7 +232,7 @@ export function NavMap({
   }
 
   return (
-    <div className="relative h-80 rounded-xl overflow-hidden">
+    <div className="relative w-full h-full overflow-hidden">
       <div ref={containerRef} className="w-full h-full" />
 
       {!ready ? (
@@ -240,7 +242,7 @@ export function NavMap({
       ) : null}
 
       {effectiveHeading != null ? (
-        <div className="absolute right-2 bottom-2 bg-black/65 text-white px-2.5 py-1 rounded-lg text-xs font-mono">
+        <div className="absolute right-3 bottom-24 bg-black/65 text-white px-2.5 py-1 rounded-lg text-xs font-mono">
           {Math.round(effectiveHeading)}° {cardinal(effectiveHeading)}{" "}
           <span className="opacity-60 text-[10px] ml-1">
             {headingSource === "compass" ? "compass" : "gps"}
