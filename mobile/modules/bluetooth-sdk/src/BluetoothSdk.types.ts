@@ -85,11 +85,11 @@ export type PhotoResponseEvent = {
   errorMessage?: string
 }
 
-export type IncidentLogPayloadEvent = {
-  type: "incident_log_payload"
+export type IncidentLogReportEvent = {
+  type: "incident_log_report"
   transferId: string
   incidentId: string
-  kind: "glasses" | "glasses_firmware"
+  source: string
   fileName: string
   payloadJson: string
   timestamp: number
@@ -263,7 +263,7 @@ export type BluetoothSdkModuleEvents = {
   hotspot_status_change: (event: HotspotStatusChangeEvent) => void
   hotspot_error: (event: HotspotErrorEvent) => void
   photo_response: (event: PhotoResponseEvent) => void
-  incident_log_payload: (event: IncidentLogPayloadEvent) => void
+  incident_log_report: (event: IncidentLogReportEvent) => void
   gallery_status: (event: GalleryStatusEvent) => void
   compatible_glasses_search_stop: (event: CompatibleGlassesSearchStopEvent) => void
   heartbeat_sent: (event: HeartbeatSentEvent) => void

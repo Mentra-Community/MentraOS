@@ -2262,27 +2262,7 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
-    func sendUserEmailToGlasses(_ email: String) {
-        Bridge.log("LIVE: Sending user email to glasses for crash reporting")
-
-        guard !email.isEmpty else {
-            Bridge.log("LIVE: Cannot send user email - email is empty")
-            return
-        }
-
-        let json: [String: Any] = [
-            "type": "user_email",
-            "email": email,
-        ]
-
-        sendJson(json, wakeUp: true)
-    }
-
-    func sendIncidentId(_ incidentId: String, apiBaseUrl: String?) {
-        var base = (apiBaseUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        while base.hasSuffix("/") {
-            base = String(base.dropLast())
-        }
+    func requestIncidentLogs(_ incidentId: String) {
         let bKey = MentraLive.incidentBleFileBase(incidentId: incidentId, prefix: "B")
         let lKey = MentraLive.incidentBleFileBase(incidentId: incidentId, prefix: "L")
         bleIncidentLogRelays[bKey] = BleIncidentLogRelayEntry(
@@ -2293,9 +2273,9 @@ class MentraLive: NSObject, SGCManager {
         )
 
         Bridge.log(
-            "LIVE: Sending incidentId to glasses for log upload: \(incidentId) (BLE relay \(bKey), \(lKey))"
+            "LIVE: Requesting incident logs from glasses: \(incidentId) (BLE relay \(bKey), \(lKey))"
         )
-        sendJson(["type": "upload_incident_logs", "incidentId": incidentId, "apiBaseUrl": base], wakeUp: true)
+        sendJson(["type": "upload_incident_logs", "incidentId": incidentId], wakeUp: true)
     }
 
     private static func incidentBleFileBase(incidentId: String, prefix: Character) -> String {
@@ -2381,8 +2361,6 @@ class MentraLive: NSObject, SGCManager {
         requestBatteryStatus()
         requestWifiStatus()
         requestVersionInfo()
-        sendCoreTokenToAsgClient()
-        sendStoredUserEmailToAsgClient()
 
         // Send user settings to glasses
         sendUserSettings()
@@ -2931,18 +2909,18 @@ class MentraLive: NSObject, SGCManager {
         relay: BleIncidentLogRelayEntry, fileName: String, data: Data
     ) {
         let payloadJson = String(data: data, encoding: .utf8) ?? ""
-        let kind = relay.kind == .firmware ? "glasses_firmware" : "glasses"
-        Bridge.sendTypedMessage("incident_log_payload", body: [
+        let source = relay.kind == .firmware ? "glasses_firmware" : "glasses"
+        Bridge.sendTypedMessage("incident_log_report", body: [
             "transferId": fileName,
             "incidentId": relay.incidentId,
-            "kind": kind,
+            "source": source,
             "fileName": fileName,
             "payloadJson": payloadJson,
             "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
         ])
     }
 
-    func completeIncidentLogUpload(transferId: String, success: Bool) {
+    func completeIncidentLogReport(transferId: String, success: Bool) {
         var fileBaseKey = transferId
         if let dotIndex = fileBaseKey.lastIndex(of: ".") {
             fileBaseKey = String(fileBaseKey[..<dotIndex])
@@ -3104,37 +3082,6 @@ class MentraLive: NSObject, SGCManager {
     func requestVersionInfo() {
         let json: [String: Any] = ["type": "request_version"]
         sendJson(json)
-    }
-
-    private func sendCoreTokenToAsgClient() {
-        Bridge.log("Preparing to send coreToken to ASG client")
-
-        let coreToken = DeviceStore.shared.get("bluetooth", "core_token") as? String ?? ""
-        if coreToken.isEmpty {
-            Bridge.log("LIVE: No coreToken available to send to ASG client")
-            return
-        }
-
-        let json: [String: Any] = [
-            "type": "auth_token",
-            "coreToken": coreToken,
-            "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
-        ]
-
-        sendJson(json)
-    }
-
-    /// Send stored user email to the ASG client for Sentry crash reporting
-    private func sendStoredUserEmailToAsgClient() {
-        let storedEmail = DeviceStore.shared.store.get("bluetooth", "auth_email") as? String ?? ""
-
-        guard !storedEmail.isEmpty else {
-            Bridge.log("LIVE: No stored user email to send to ASG client")
-            return
-        }
-
-        Bridge.log("LIVE: Sending stored user email to ASG client")
-        sendUserEmailToGlasses(storedEmail)
     }
 
     // MARK: - Power Control Methods

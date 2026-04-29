@@ -108,7 +108,7 @@ class BluetoothSdkModule : Module() {
             "hotspot_status_change",
             "hotspot_error",
             "photo_response",
-            "incident_log_payload",
+            "incident_log_report",
             "gallery_status",
             "compatible_glasses_search_stop",
             "heartbeat_sent",
@@ -168,24 +168,6 @@ class BluetoothSdkModule : Module() {
         Function("update") { category: String, values: Map<String, Any> ->
             val normalizedCategory = ObservableStore.normalizeCategory(category)
             values.forEach { (key, value) -> DeviceStore.apply(normalizedCategory, key, value) }
-            // Persist core_token to SharedPreferences so MentraLive.getCoreToken() finds it
-            // (bridge may run this after glasses_ready; prefs survive retries and next connection)
-            if (normalizedCategory == ObservableStore.BLUETOOTH_CATEGORY) {
-                values["core_token"]?.let { token ->
-                    val len = (token as? String)?.length ?: 0
-                    android.util.Log.d("BluetoothSdkModule", "update(bluetooth) core_token received, len=$len")
-                    if (token is String && token.isNotEmpty()) {
-                        val ctx = appContext.reactContext ?: appContext.currentActivity
-                        ctx?.let {
-                            it.getSharedPreferences("augmentos_auth_prefs", android.content.Context.MODE_PRIVATE)
-                                .edit()
-                                .putString("core_token", token)
-                                .apply()
-                            android.util.Log.d("BluetoothSdkModule", "Persisted core_token to SharedPreferences, len=${token.length}")
-                        }
-                    }
-                }
-            }
         }
 
         // MARK: - Display Commands
@@ -250,12 +232,12 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - Incident Reporting
 
-        AsyncFunction("sendIncidentId") { incidentId: String, apiBaseUrl: String? ->
-            sdk?.sendIncidentId(incidentId, apiBaseUrl)
+        AsyncFunction("requestIncidentLogs") { incidentId: String ->
+            sdk?.requestIncidentLogs(incidentId)
         }
 
-        AsyncFunction("completeIncidentLogUpload") { transferId: String, success: Boolean ->
-            sdk?.completeIncidentLogUpload(transferId, success)
+        AsyncFunction("completeIncidentLogReport") { transferId: String, success: Boolean ->
+            sdk?.completeIncidentLogReport(transferId, success)
         }
 
         // MARK: - WiFi Commands

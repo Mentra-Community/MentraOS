@@ -2,7 +2,7 @@ import {AppletInterface} from "@/../../cloud/packages/types/src"
 import axios, {AxiosInstance, AxiosRequestConfig} from "axios"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
-import CoreModule, {GlassesStatus, PhotoResponseEvent} from "@mentra/bluetooth-sdk"
+import type {GlassesStatus, PhotoResponseEvent} from "@mentra/bluetooth-sdk"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {useConnectionStore} from "@/stores/connection"
 import {WebSocketStatus} from "@/services/ws-types"
@@ -47,13 +47,6 @@ class RestComms {
         token?.substring(0, 20) || "null"
       }`,
     )
-
-    // Sync to native DeviceStore (and persist to SharedPreferences in BluetoothSdkModule when bridge runs)
-    const value = token ?? ""
-    const updateResult = CoreModule.updateBluetoothSettings({core_token: value})
-    if (updateResult != null && typeof (updateResult as Promise<void>).then === "function") {
-      ;(updateResult as Promise<void>).catch(() => {})
-    }
 
     if (token) {
       console.log(`${this.TAG}: Core token set, emitting CORE_TOKEN_SET event`)
@@ -498,9 +491,9 @@ class RestComms {
   }
 
   /**
-   * Upload a complete incident-log payload collected by glasses and relayed through Bluetooth SDK.
+   * Upload a complete incident-log report collected by glasses and relayed through Bluetooth SDK.
    */
-  public uploadIncidentLogPayload(incidentId: string, payload: Record<string, unknown>): AsyncResult<void, Error> {
+  public uploadIncidentLogReport(incidentId: string, payload: Record<string, unknown>): AsyncResult<void, Error> {
     const config: RequestConfig = {
       method: "POST",
       endpoint: `/api/incidents/${incidentId}/logs`,

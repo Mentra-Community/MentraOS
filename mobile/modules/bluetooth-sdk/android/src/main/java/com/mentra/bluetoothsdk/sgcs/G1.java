@@ -1727,12 +1727,7 @@ public class G1 extends SGCManager {
     }
 
     @Override
-    public void sendUserEmailToGlasses(String email) {
-        // G1 doesn't support user email (no ASG client)
-    }
-
-    @Override
-    public void sendIncidentId(String incidentId, String apiBaseUrl) {
+    public void requestIncidentLogs(String incidentId) {
         // G1 doesn't support incident reporting (no ASG client)
     }
 

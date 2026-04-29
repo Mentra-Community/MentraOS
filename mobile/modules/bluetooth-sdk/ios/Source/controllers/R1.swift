@@ -451,7 +451,7 @@ class R1: NSObject, ControllerManager {
 
     // MARK: - No-op implementations (ring has no display/camera/wifi/mic)
 
-    func sendIncidentId(_: String, apiBaseUrl _: String?) {}
+    func requestIncidentLogs(_: String) {}
     func setMicEnabled(_: Bool) {}
     func sortMicRanking(list: [String]) -> [String] {
         return list
@@ -499,7 +499,6 @@ class R1: NSObject, ControllerManager {
     func forgetWifiNetwork(_: String) {}
     func sendHotspotState(_: Bool) {}
     func sendOtaStart() {}
-    func sendUserEmailToGlasses(_: String) {}
     func queryGalleryStatus() {}
     func sendGalleryMode() {}
     func requestVersionInfo() {}

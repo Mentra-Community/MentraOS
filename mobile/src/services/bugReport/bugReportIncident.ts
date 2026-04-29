@@ -1,4 +1,4 @@
-import CoreModule, {type IncidentLogPayloadEvent} from "@mentra/bluetooth-sdk"
+import CoreModule, {type IncidentLogReportEvent} from "@mentra/bluetooth-sdk"
 import NetInfo from "@react-native-community/netinfo"
 import Constants from "expo-constants"
 import * as ImagePicker from "expo-image-picker"
@@ -17,19 +17,19 @@ import {logBuffer} from "@/utils/dev/logging"
 const SENSITIVE_SETTINGS_KEYS = ["core_token", "auth_token", "auth_email"] as const
 const SENSITIVE_GLASSES_KEYS = ["hotspotPassword"] as const
 
-let incidentLogPayloadSubscription: {remove: () => void} | null = null
+let incidentLogReportSubscription: {remove: () => void} | null = null
 
-function ensureIncidentLogPayloadListener() {
-  if (incidentLogPayloadSubscription) {
+function ensureIncidentLogReportListener() {
+  if (incidentLogReportSubscription) {
     return
   }
 
-  incidentLogPayloadSubscription = CoreModule.addListener("incident_log_payload", (event: IncidentLogPayloadEvent) => {
-    void uploadRelayedIncidentLogs(event)
+  incidentLogReportSubscription = CoreModule.addListener("incident_log_report", (event: IncidentLogReportEvent) => {
+    void uploadIncidentLogReport(event)
   })
 }
 
-async function uploadRelayedIncidentLogs(event: IncidentLogPayloadEvent) {
+async function uploadIncidentLogReport(event: IncidentLogReportEvent) {
   const transferId = event.transferId || event.fileName
   if (!transferId) {
     console.error("Incident log relay missing transferId:", event)
@@ -39,7 +39,7 @@ async function uploadRelayedIncidentLogs(event: IncidentLogPayloadEvent) {
   let success = false
   try {
     const payload = JSON.parse(event.payloadJson) as Record<string, unknown>
-    const uploadRes = await restComms.uploadIncidentLogPayload(event.incidentId, payload)
+    const uploadRes = await restComms.uploadIncidentLogReport(event.incidentId, payload)
     success = uploadRes.is_ok()
     if (uploadRes.is_error()) {
       console.error("Error uploading relayed glasses incident logs:", uploadRes.error)
@@ -49,7 +49,7 @@ async function uploadRelayedIncidentLogs(event: IncidentLogPayloadEvent) {
   }
 
   try {
-    await CoreModule.completeIncidentLogUpload(transferId, success)
+    await CoreModule.completeIncidentLogReport(transferId, success)
   } catch (error) {
     console.error("Error completing incident log relay:", error)
   }
@@ -258,7 +258,7 @@ export interface SubmitBugIncidentOptions {
 }
 
 /**
- * createIncident + phone logs + sendIncidentId (+ optional screenshots).
+ * createIncident + phone logs + glasses log request (+ optional screenshots).
  * Mirrors the bug branch of Feedback after feedbackData is built.
  */
 export async function submitBugIncident(
@@ -266,7 +266,6 @@ export async function submitBugIncident(
   options?: SubmitBugIncidentOptions,
 ): Promise<{ok: true; incidentId: string} | {ok: false; error: Error}> {
   const phoneState = buildBugReportPhoneState()
-  const phoneBackendUrl = useSettingsStore.getState().getRestUrl()
   const res = await restComms.createIncident(feedbackData, phoneState)
   if (res.is_error()) {
     return {ok: false, error: res.error}
@@ -284,8 +283,8 @@ export async function submitBugIncident(
 
   const glassesConnected = useGlassesStore.getState().connected
   if (glassesConnected) {
-    ensureIncidentLogPayloadListener()
-    CoreModule.sendIncidentId(incidentId, phoneBackendUrl)
+    ensureIncidentLogReportListener()
+    CoreModule.requestIncidentLogs(incidentId)
   }
 
   if (options?.screenshots && options.screenshots.length > 0) {

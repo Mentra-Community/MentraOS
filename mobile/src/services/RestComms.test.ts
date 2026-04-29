@@ -117,22 +117,24 @@ describe("RestComms", () => {
     expect(mockRequest).toHaveBeenCalledTimes(1)
   })
 
-  it("syncs core tokens to native state", () => {
+  it("keeps core tokens in the MentraOS app instead of syncing them to Bluetooth SDK", () => {
     const CoreModule = require("@mentra/bluetooth-sdk").default
+    ;(CoreModule.updateBluetoothSettings as jest.Mock).mockClear()
+
     restComms.setCoreToken("new-core-token")
 
-    expect(CoreModule.updateBluetoothSettings).toHaveBeenCalledWith({core_token: "new-core-token"})
+    expect(CoreModule.updateBluetoothSettings).not.toHaveBeenCalled()
     expect(useSettingsStore.getState().getSetting(SETTINGS.core_token.key)).not.toBe("new-core-token")
   })
 
-  it("uploads relayed glasses incident logs without changing the payload", async () => {
+  it("uploads relayed glasses incident log reports without changing the payload", async () => {
     const payload = {
       source: "glasses",
       logs: [{timestamp: 123, level: "info", message: "hello"}],
     }
     mockRequest.mockResolvedValueOnce({data: {success: true}})
 
-    const result = await restComms.uploadIncidentLogPayload("incident-1", payload)
+    const result = await restComms.uploadIncidentLogReport("incident-1", payload)
 
     expect(result.is_ok()).toBe(true)
     expect(mockRequest).toHaveBeenCalledWith(

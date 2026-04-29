@@ -2396,12 +2396,6 @@ class G2 : SGCManager() {
     override fun forgetWifiNetwork(ssid: String) {}
     override fun sendHotspotState(enabled: Boolean) {}
 
-    // ---------- SGCManager: User Context ----------
-
-    override fun sendUserEmailToGlasses(email: String) {
-        // TODO: Could send via dev_settings
-    }
-
     // ---------- SGCManager: Gallery ----------
 
     override fun queryGalleryStatus() {}
@@ -2414,7 +2408,7 @@ class G2 : SGCManager() {
         requestDeviceInfo()
     }
 
-    override fun sendIncidentId(incidentId: String, apiBaseUrl: String?) {}
+    override fun requestIncidentLogs(incidentId: String) {}
 
     // ---------- BLE Scanning ----------
 

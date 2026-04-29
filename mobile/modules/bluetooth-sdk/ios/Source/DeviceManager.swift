@@ -1106,14 +1106,14 @@ struct ViewState {
         sgc?.requestWifiScan()
     }
 
-    func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil) {
-        Bridge.log("MAN: Sending incidentId to glasses for log upload: \(incidentId)")
-        sgc?.sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
+    func requestIncidentLogs(_ incidentId: String) {
+        Bridge.log("MAN: Requesting incident logs from glasses: \(incidentId)")
+        sgc?.requestIncidentLogs(incidentId)
     }
 
-    func completeIncidentLogUpload(transferId: String, success: Bool) {
-        Bridge.log("MAN: Completing incident log upload: \(transferId) success=\(success)")
-        sgc?.completeIncidentLogUpload(transferId: transferId, success: success)
+    func completeIncidentLogReport(transferId: String, success: Bool) {
+        Bridge.log("MAN: Completing incident log report: \(transferId) success=\(success)")
+        sgc?.completeIncidentLogReport(transferId: transferId, success: success)
     }
 
     func sendWifiCredentials(_ ssid: String, _ password: String) {

@@ -217,8 +217,6 @@ describe("MantleManager", () => {
     expect(coreModuleMock.updateBluetoothSettings).toHaveBeenCalledWith(
       expect.objectContaining({
         contextual_dashboard: true,
-        core_token: "server-token",
-        auth_email: "from-server@example.com",
         power_saving_mode: false,
       }),
     )
@@ -301,9 +299,9 @@ describe("MantleManager", () => {
     expect(socketComms.sendBatteryStatus).toHaveBeenCalledWith(88, true, 123456)
     ;(coreModuleMock.updateBluetoothSettings as jest.Mock).mockClear()
     await useSettingsStore.getState().setSetting(SETTINGS.core_token.key, "new-token", false)
-    expect(coreModuleMock.updateBluetoothSettings).toHaveBeenCalledWith(
+    expect(coreModuleMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
       expect.objectContaining({
-        core_token: "new-token",
+        core_token: expect.anything(),
       }),
     )
   })

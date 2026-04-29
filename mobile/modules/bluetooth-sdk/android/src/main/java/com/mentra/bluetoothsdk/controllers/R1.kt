@@ -711,7 +711,7 @@ class R1 : ControllerManager() {
 
     // MARK: - No-op implementations (ring has no display/camera/wifi/mic)
 
-    override fun sendIncidentId(incidentId: String) {}
+    override fun requestIncidentLogs(incidentId: String) {}
     override fun setMicEnabled(enabled: Boolean) {}
     override fun sortMicRanking(list: MutableList<String>): MutableList<String> = list
     override fun sendJson(jsonOriginal: Map<String, Any>, wakeUp: Boolean, requireAck: Boolean) {}
@@ -750,7 +750,6 @@ class R1 : ControllerManager() {
     override fun forgetWifiNetwork(ssid: String) {}
     override fun sendHotspotState(enabled: Boolean) {}
     override fun sendOtaStart() {}
-    override fun sendUserEmailToGlasses(email: String) {}
     override fun queryGalleryStatus() {}
     override fun sendGalleryMode() {}
     override fun requestVersionInfo() {}

@@ -33,19 +33,6 @@ public class ResponseBuilder implements IResponseBuilder {
     }
 
     @Override
-    public JSONObject buildTokenStatusResponse(boolean success) {
-        try {
-            JSONObject response = new JSONObject();
-            response.put("type", "token_status");
-            response.put("success", success);
-            return response;
-        } catch (JSONException e) {
-            Log.e(TAG, "Error creating token status response", e);
-            return new JSONObject();
-        }
-    }
-
-    @Override
     public JSONObject buildVideoRecordingStatusResponse(boolean success, String status, String details) {
         try {
             JSONObject response = new JSONObject();
@@ -151,7 +138,7 @@ public class ResponseBuilder implements IResponseBuilder {
     }
 
     @Override
-    public JSONObject buildDownloadProgressResponse(String status, int progress, long bytesDownloaded, 
+    public JSONObject buildDownloadProgressResponse(String status, int progress, long bytesDownloaded,
                                                    long totalBytes, String errorMessage, long timestamp) {
         try {
             JSONObject downloadProgress = new JSONObject();
@@ -172,7 +159,7 @@ public class ResponseBuilder implements IResponseBuilder {
     }
 
     @Override
-    public JSONObject buildInstallationProgressResponse(String status, String apkPath, 
+    public JSONObject buildInstallationProgressResponse(String status, String apkPath,
                                                        String errorMessage, long timestamp) {
         try {
             JSONObject installationProgress = new JSONObject();
@@ -248,4 +235,4 @@ public class ResponseBuilder implements IResponseBuilder {
             return new JSONObject();
         }
     }
-} 
+}

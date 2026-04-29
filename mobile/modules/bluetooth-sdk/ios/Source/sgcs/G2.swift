@@ -1038,7 +1038,7 @@ actor G2ReconnectionManager {
 
 @MainActor
 class G2: NSObject, SGCManager {
-    func sendIncidentId(_: String, apiBaseUrl _: String?) {}
+    func requestIncidentLogs(_: String) {}
 
     var type = DeviceTypes.G2
     let hasMic = true
@@ -2549,10 +2549,6 @@ class G2: NSObject, SGCManager {
     func sendOtaStart() {}
 
     // MARK: - SGCManager: User Context
-
-    func sendUserEmailToGlasses(_: String) {
-        // TODO: Could send via dev_settings
-    }
 
     // MARK: - SGCManager: Gallery
 

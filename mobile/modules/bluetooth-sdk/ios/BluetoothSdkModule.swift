@@ -22,7 +22,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "hotspot_status_change",
             "hotspot_error",
             "photo_response",
-            "incident_log_payload",
+            "incident_log_report",
             "gallery_status",
             "compatible_glasses_search_stop",
             "heartbeat_sent",
@@ -194,15 +194,15 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         // MARK: - Incident Reporting
 
-        AsyncFunction("sendIncidentId") { (incidentId: String, apiBaseUrl: String?) in
+        AsyncFunction("requestIncidentLogs") { (incidentId: String) in
             await MainActor.run {
-                self.bluetoothSdk().sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
+                self.bluetoothSdk().requestIncidentLogs(incidentId)
             }
         }
 
-        AsyncFunction("completeIncidentLogUpload") { (transferId: String, success: Bool) in
+        AsyncFunction("completeIncidentLogReport") { (transferId: String, success: Bool) in
             await MainActor.run {
-                self.bluetoothSdk().completeIncidentLogUpload(transferId: transferId, success: success)
+                self.bluetoothSdk().completeIncidentLogReport(transferId: transferId, success: success)
             }
         }
 

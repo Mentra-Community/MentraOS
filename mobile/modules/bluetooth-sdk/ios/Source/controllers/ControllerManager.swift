@@ -77,13 +77,9 @@ protocol ControllerManager {
     func sendHotspotState(_ enabled: Bool)
     func sendOtaStart()
 
-    // MARK: - User Context (for crash reporting)
-
-    func sendUserEmailToGlasses(_ email: String)
-
     // MARK: - Incident Reporting
 
-    func sendIncidentId(_ incidentId: String, apiBaseUrl: String?)
+    func requestIncidentLogs(_ incidentId: String)
 
     // MARK: - Gallery
 

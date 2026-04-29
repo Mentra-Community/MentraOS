@@ -270,7 +270,7 @@ actor ReconnectionManager {
 
 @MainActor
 class G1: NSObject, SGCManager {
-    func sendIncidentId(_: String, apiBaseUrl _: String?) {}
+    func requestIncidentLogs(_: String) {}
 
     func sendGalleryMode() {}
 
@@ -314,8 +314,6 @@ class G1: NSObject, SGCManager {
     func forgetWifiNetwork(_: String) {}
 
     func sendHotspotState(_: Bool) {}
-
-    func sendUserEmailToGlasses(_: String) {}
 
     func queryGalleryStatus() {}
 

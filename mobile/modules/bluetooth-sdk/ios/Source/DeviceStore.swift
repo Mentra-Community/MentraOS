@@ -90,8 +90,6 @@ class DeviceStore {
         store.set("bluetooth", "button_video_fps", 30)
         store.set("bluetooth", "preferred_mic", "auto")
         store.set("bluetooth", "lc3_frame_size", 60)
-        store.set("bluetooth", "auth_email", "")
-        store.set("bluetooth", "core_token", "")
         store.set("bluetooth", "should_send_pcm", false)
         store.set("bluetooth", "should_send_lc3", false)
         store.set("bluetooth", "should_send_transcript", false)

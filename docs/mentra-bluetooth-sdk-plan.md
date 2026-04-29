@@ -37,7 +37,7 @@ This is a descriptive list of what the module currently contains, not a restrict
 
 In practice, we have historically thrown some MentraOS-specific native helpers into `core` whenever we needed them quickly, especially Android-side app features like notification forwarding. This plan cleans that up by moving obvious app-layer/native MentraOS code into `crust`.
 
-A few MentraLive-specific plumbing paths still stay in Bluetooth SDK because the hardware depends on them today, including `core_token`, `auth_email`, and incident-log collection commands sent down to the device. MentraOS remains responsible for uploading relayed incident logs to Mentra Cloud.
+MentraLive incident-log collection still stays in Bluetooth SDK because it is device-protocol work, but MentraOS credentials do not. The SDK requests generic log reports from the device, emits them to the host app, and MentraOS remains responsible for uploading those relayed logs to Mentra Cloud.
 
 ## Monorepo Approach
 
@@ -145,29 +145,23 @@ Everything that's about the MentraOS application layer.
 
 **Note:** `contextual_dashboard` STAYS in Bluetooth SDK - it's actually used in `sendCurrentState()` and `displayEvent()` to control whether dashboard content shows when user looks up.
 
-### Compatibility Credential Plumbing
+### Host-Owned Incident Log Reports
 
-`auth_email` and `core_token` stay in Bluetooth SDK for now, but they should be treated as legacy MentraOS compatibility plumbing rather than as the public Bluetooth SDK authentication model.
+MentraOS credentials stay in MentraOS. The Bluetooth SDK must not receive, persist, or forward `core_token` / `auth_email` values.
 
-These values are not BLE transport credentials. They are MentraOS account/cloud values that current MentraLive / ASG companion paths still expect to receive through the device path:
+Incident reporting now uses a host-owned relay:
 
-- MentraOS TypeScript owns the user/session settings in `useSettingsStore`.
-- `MantleManager` forwards the initial Bluetooth SDK setting subset and later setting diffs with `BluetoothSdk.updateBluetoothSettings(...)`.
-- `RestComms.setCoreToken(...)` also syncs refreshed `core_token` values into Bluetooth SDK state.
-- The native bridge writes these values into the native `DeviceStore` `bluetooth` category. Android also persists a non-empty `core_token` to SharedPreferences as a retry/backward-compatibility fallback.
-- MentraLive reads `core_token` / `auth_email` from `DeviceStore` and sends the relevant values to the ASG client.
-- BLE-relayed incident logs are emitted back to the host app as `incident_log_payload` events. The host app uploads those logs and calls `completeIncidentLogUpload(...)` so Bluetooth SDK can acknowledge the BLE transfer.
+- MentraOS TypeScript owns the user/session settings in `useSettingsStore` and keeps cloud tokens in app code only.
+- `MantleManager` forwards only hardware-facing Bluetooth SDK settings.
+- `RestComms.setCoreToken(...)` stores the token for MentraOS REST/WebSocket calls only; it does not sync the token to Bluetooth SDK native state.
+- MentraLive receives `requestIncidentLogs(incidentId)`, asks the ASG client to collect logs, and relays the resulting report payloads over BLE.
+- Relayed incident logs are emitted back to the host app as `incident_log_report` events. The host app uploads those logs and calls `completeIncidentLogReport(...)` so Bluetooth SDK can acknowledge the BLE transfer.
 
 External/native customer guidance:
 
-- Apps that only use local BLE, display, camera, audio, and device-control APIs should leave these values empty.
-- Partner apps that intentionally use Mentra-hosted cloud or ASG companion features may need to provide equivalent credentials through the current compatibility bridge until Phase 6 introduces an explicit native configuration API.
-- Do not document `auth_email` or `core_token` as generally required Partner Kit setup fields.
-- Do not add `DeviceStore.apply()` side-effect branches for these keys; the current hardware paths read the latest stored values directly.
-
-Future cleanup:
-
-- Replace this key/value path with an explicit optional native API, such as `configureCloudCredentials(...)` or a `MentraBluetoothSdkConfiguration.cloudCredentials` field.
+- Apps that only use local BLE, display, camera, audio, and device-control APIs do not need MentraOS credentials.
+- Partner apps that upload SDK log reports should upload them through their own backend/auth path.
+- Do not document `auth_email` or `core_token` as Partner Kit setup fields.
 - Make the Mentra-hosted-cloud dependency opt-in and clearly separate from local Bluetooth functionality.
 - Clear persisted credentials on logout and remove Android SharedPreferences fallback once native authentication configuration is explicit.
 
@@ -286,7 +280,7 @@ Keep the state split practical in this branch:
 - Move obvious MentraOS-only native features to Crust, especially notification listening / permission management
 - Move app/build-environment native helpers such as beta-build detection to Crust
 - Keep hardware-driven state and settings in Bluetooth SDK
-- Keep `contextual_dashboard`, `auth_email`, `core_token`, and incident-log collection plumbing in Bluetooth SDK for now because current hardware paths still depend on them
+- Keep `contextual_dashboard` and incident-log collection plumbing in Bluetooth SDK; keep MentraOS credentials in MentraOS app code
 - Keep Mentra Cloud incident upload ownership in MentraOS app code
 - Leave offline STT control (`offline_mode` / `offline_captions_running`) unchanged in this workstream
 
@@ -330,7 +324,7 @@ Remove MentraOS-specific side effects from Bluetooth SDK. The `apply()` function
 "bluetooth" to "should_send_transcript" -> setMicState(...)
 ```
 
-`auth_email` and `core_token` remain Bluetooth SDK state for MentraLive plumbing, but they do not need `apply()` side-effect branches because hardware paths read the latest values directly from `DeviceStore`.
+`auth_email` and `core_token` are not Bluetooth SDK state. They remain MentraOS app/cloud values and must not be included in Bluetooth SDK setting sync.
 
 **Offline STT Note:**
 
@@ -466,9 +460,9 @@ await BluetoothSdk.ping()
 await BluetoothSdk.displayEvent(params)
 await BluetoothSdk.displayText(params)
 await BluetoothSdk.clearDisplay()
-await BluetoothSdk.sendIncidentId(incidentId, apiBaseUrl)
-BluetoothSdk.addListener("incident_log_payload", uploadRelayedLogs)
-await BluetoothSdk.completeIncidentLogUpload(transferId, success)
+await BluetoothSdk.requestIncidentLogs(incidentId)
+BluetoothSdk.addListener("incident_log_report", uploadRelayedLogs)
+await BluetoothSdk.completeIncidentLogReport(transferId, success)
 await BluetoothSdk.photoRequest(...)
 await BluetoothSdk.queryGalleryStatus()
 await BluetoothSdk.requestWifiScan()
@@ -964,7 +958,7 @@ Create the adapter under a Bluetooth-specific services folder so MentraOS can mi
 - `mobile/src/services/bluetooth/BluetoothSettingsSync.ts`
   - Extracts the current `useSettingsStore.getBluetoothSdkSettings()` subscription from `MantleManager`.
   - Translates setting diffs into typed calls in phases.
-  - Keeps compatibility handling for `auth_email`, `core_token`, offline STT settings, and `"core"` category normalization until their explicit removal phases.
+  - Keeps compatibility handling for offline STT settings and `"core"` category normalization until their explicit removal phases.
 - `mobile/src/services/bluetooth/BluetoothEventBridge.ts`
   - Owns typed native hardware event subscriptions.
   - Updates `useBluetoothStore` / `useGlassesStore`.
@@ -1048,7 +1042,7 @@ The SDK split should be tested as an API boundary change, not just a package ren
 - TypeScript adapter tests should cover MentraOS store-to-SDK sync, including initial setting sync, setting diffs, ignored non-SDK settings, typed status callbacks, and cloud-formatting ownership in TypeScript.
 - Native store/manager tests should cover `DeviceStore` defaults, `apply()` side effects, event serialization, device manager lifecycle, and hardware command dispatch where platform test infrastructure exists.
 - Mock SDK utilities should be reset between tests that mount/unmount screens or services so listener leakage does not hide regressions.
-- Compatibility tests should keep `auth_email`, `core_token`, offline STT settings, and `"core"` category normalization behavior stable until their explicit migration phases remove them.
+- Compatibility tests should keep offline STT settings and `"core"` category normalization behavior stable until their explicit migration phases remove them. MentraOS credentials should stay outside Bluetooth SDK setting sync.
 
 ### Integration Tests
 
@@ -1104,7 +1098,7 @@ Keep focused regressions for the flows most likely to break during the refactor:
 - [x] Move NotificationListener manifest entry to Crust
 - [x] Keep the state split practical instead of redesigning it:
   - [x] Move obvious MentraOS-only native features to Crust
-  - [x] Keep `contextual_dashboard`, `auth_email`, `core_token`, and incident-log collection plumbing in Bluetooth SDK where hardware still depends on them
+  - [x] Keep `contextual_dashboard` and incident-log collection plumbing in Bluetooth SDK where hardware still depends on them, while keeping MentraOS credentials in MentraOS app code
   - [x] Keep Mentra Cloud incident upload ownership in MentraOS app code
 - [x] Leave offline STT control (`offline_mode` / `offline_captions_running`) unchanged in this branch
 - [x] Update DeviceStore.apply() to remove handlers for deleted keys

@@ -238,10 +238,6 @@ class Simulated: SGCManager {
         Bridge.log("sendHotspotState")
     }
 
-    func sendUserEmailToGlasses(_ email: String) {
-        Bridge.log("sendUserEmailToGlasses: \(email)")
-    }
-
     func sendOtaStart() {
         Bridge.log("sendOtaStart")
     }
@@ -262,5 +258,5 @@ class Simulated: SGCManager {
         Bridge.log("requestVersionInfo - not supported on Simulated")
     }
 
-    func sendIncidentId(_: String, apiBaseUrl _: String?) {}
+    func requestIncidentLogs(_: String) {}
 }

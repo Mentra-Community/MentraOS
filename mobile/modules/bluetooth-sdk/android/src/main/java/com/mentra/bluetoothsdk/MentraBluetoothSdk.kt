@@ -264,12 +264,12 @@ class MentraBluetoothSdk private constructor(
         deviceManager.sendReboot()
     }
 
-    fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null) {
-        deviceManager.sendIncidentId(incidentId, apiBaseUrl)
+    fun requestIncidentLogs(incidentId: String) {
+        deviceManager.requestIncidentLogs(incidentId)
     }
 
-    fun completeIncidentLogUpload(transferId: String, success: Boolean) {
-        deviceManager.completeIncidentLogUpload(transferId, success)
+    fun completeIncidentLogReport(transferId: String, success: Boolean) {
+        deviceManager.completeIncidentLogReport(transferId, success)
     }
 
     override fun close() {

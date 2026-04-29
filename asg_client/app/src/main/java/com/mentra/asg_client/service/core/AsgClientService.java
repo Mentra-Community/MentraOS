@@ -126,7 +126,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     private BroadcastReceiver restartReceiver;
     private BroadcastReceiver otaProgressReceiver;
     private BroadcastReceiver mtkUpdateReceiver;
-    
+
     // ---------------------------------------------
     // Heartbeat Timeout Management
     // ---------------------------------------------
@@ -143,7 +143,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
         public void onServiceConnected(ComponentName name, IBinder service) {
             Log.i(TAG, "🔗 AugmentosService connected successfully");
             Log.d(TAG, "📋 Component name: " + name.getClassName());
-            
+
             try {
                 AugmentosService.LocalBinder binder = (AugmentosService.LocalBinder) service;
                 augmentosService = binder.getService();
@@ -172,7 +172,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
         public void onServiceDisconnected(ComponentName name) {
             Log.w(TAG, "🔌 AugmentosService disconnected");
             Log.d(TAG, "📋 Component name: " + name.getClassName());
-            
+
             isAugmentosBound = false;
             augmentosService = null;
 
@@ -253,7 +253,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.d(TAG, "🎯 onStartCommand() called - StartId: " + startId + ", Flags: " + flags);
-        
+
         super.onStartCommand(intent, flags, startId);
 
         try {
@@ -285,18 +285,18 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             // Delegate action handling to lifecycle manager
             lifecycleManager.handleAction(action, intent.getExtras());
             Log.d(TAG, "✅ Action processed successfully");
-            
+
         } catch (Exception e) {
             Log.e(TAG, "💥 Error in onStartCommand()", e);
         }
-        
+
         return START_STICKY;
     }
 
     @Override
     public void onDestroy() {
         Log.i(TAG, "🛑 AsgClientServiceV2 onDestroy() started");
-        
+
         try {
             // Unregister from EventBus
             if (EventBus.getDefault().isRegistered(this)) {
@@ -348,11 +348,11 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             // Release RGB LED control authority back to BES
             Log.d(TAG, "🚨 Releasing RGB LED control authority back to BES");
             sendRgbLedControlAuthority(false);
-            
+
             // Disable touch/swipe event reporting on service destroy
             Log.d(TAG, "🎯 Disabling touch event reporting on service destroy");
             handleTouchEventControl(true);
-            
+
             Log.d(TAG, "🎯 Disabling swipe volume control on service destroy");
             handleSwipeVolumeControl(true);
 
@@ -404,7 +404,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     // ---------------------------------------------
     // Touch/Swipe Event Commands
     // ---------------------------------------------
-    
+
     /**
      * Enable or disable touch event reporting
      * @param enable true to enable touch events, false to disable
@@ -479,26 +479,26 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     /**
      * Send RGB LED control authority command to BES chipset.
      * This tells BES whether MTK (our app) or BES should control the RGB LEDs.
-     * 
+     *
      * @param claimControl true = MTK claims control, false = BES resumes control
      */
     private void sendRgbLedControlAuthority(boolean claimControl) {
         Log.d(TAG, "🚨 sendRgbLedControlAuthority() called - Claim: " + claimControl);
-        
+
         try {
             // Build full K900 format (C, V, B) to avoid double-wrapping
             JSONObject authorityCommand = new JSONObject();
             authorityCommand.put("C", "android_control_led");
             authorityCommand.put("V", 1);  // Version field - REQUIRED to prevent double-wrapping
-            
+
             // Create proper JSON object for B field
             JSONObject bField = new JSONObject();
             bField.put("on", claimControl);
             authorityCommand.put("B", bField.toString());
-            
+
             String commandStr = authorityCommand.toString();
             Log.i(TAG, "🚨 Sending RGB LED authority command: " + commandStr);
-            
+
             if (serviceContainer == null || serviceContainer.getServiceManager() == null) {
                 Log.w(TAG, "⚠️ ServiceContainer not initialized; deferring RGB LED authority claim");
                 return;
@@ -533,7 +533,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     // ---------------------------------------------
     private void initializeServiceContainer() {
         Log.d(TAG, "🔧 initializeServiceContainer() started");
-        
+
         try {
             serviceContainer = new ServiceContainer(this, this );
             Log.d(TAG, "✅ ServiceContainer created successfully");
@@ -554,7 +554,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             stateManager = serviceContainer.getStateManager();
             streamingManager = serviceContainer.getStreamingManager();
             commandProcessor = serviceContainer.getCommandProcessor();
-            
+
             Log.d(TAG, "✅ All interface references obtained");
             Log.d(TAG, "📊 Interface status - LifecycleManager: " + (lifecycleManager != null ? "valid" : "null") +
                       ", CommunicationManager: " + (communicationManager != null ? "valid" : "null") +
@@ -578,7 +578,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
      */
     private void initializeWifiDebouncing() {
         Log.d(TAG, "📶 initializeWifiDebouncing() started");
-        
+
         try {
             wifiDebounceHandler = new Handler(Looper.getMainLooper());
             wifiDebounceRunnable = () -> {
@@ -631,7 +631,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
      */
     private void registerReceivers() {
         Log.d(TAG, "📻 registerReceivers() started");
-        
+
         try {
             registerHeartbeatReceiver();
             registerRestartReceiver();
@@ -648,7 +648,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
      */
     private void unregisterReceivers() {
         Log.d(TAG, "📻 unregisterReceivers() started");
-        
+
         try {
             if (heartbeatReceiver != null) {
                 Log.d(TAG, "💓 Unregistering heartbeat receiver");
@@ -657,7 +657,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             } else {
                 Log.d(TAG, "⏭️ Heartbeat receiver is null - skipping");
             }
-            
+
             if (restartReceiver != null) {
                 Log.d(TAG, "🔄 Unregistering restart receiver");
                 unregisterReceiver(restartReceiver);
@@ -665,7 +665,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             } else {
                 Log.d(TAG, "⏭️ Restart receiver is null - skipping");
             }
-            
+
             if (otaProgressReceiver != null) {
                 Log.d(TAG, "📥 Unregistering OTA progress receiver");
                 unregisterReceiver(otaProgressReceiver);
@@ -673,7 +673,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             } else {
                 Log.d(TAG, "⏭️ OTA progress receiver is null - skipping");
             }
-            
+
             if (mtkUpdateReceiver != null) {
                 Log.d(TAG, "🔄 Unregistering MTK update receiver");
                 unregisterReceiver(mtkUpdateReceiver);
@@ -681,10 +681,10 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             } else {
                 Log.d(TAG, "⏭️ MTK update receiver is null - skipping");
             }
-            
+
             // Stop heartbeat monitoring
             stopHeartbeatMonitoring();
-            
+
             Log.d(TAG, "✅ All receivers unregistered successfully");
         } catch (IllegalArgumentException e) {
             Log.w(TAG, "⚠️ Receiver was not registered: " + e.getMessage());
@@ -699,7 +699,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     @Override
     public void onWifiStateChanged(boolean isConnected) {
         Log.i(TAG, "🔄 WiFi state changed: " + (isConnected ? "CONNECTED" : "DISCONNECTED"));
-        Log.d(TAG, "📊 Previous state: " + (lastWifiState ? "CONNECTED" : "DISCONNECTED") + 
+        Log.d(TAG, "📊 Previous state: " + (lastWifiState ? "CONNECTED" : "DISCONNECTED") +
                   ", Pending state: " + (pendingWifiState ? "CONNECTED" : "DISCONNECTED"));
 
         pendingWifiState = isConnected;
@@ -726,25 +726,25 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     @Override
     public void onHotspotStateChanged(boolean isEnabled) {
         Log.i(TAG, "📡 Hotspot state changed: " + (isEnabled ? "ENABLED" : "DISABLED"));
-        
+
         // Send hotspot status update to phone
         try {
             if (serviceContainer != null && serviceContainer.getServiceManager() != null) {
                 var networkManager = serviceContainer.getServiceManager().getNetworkManager();
                 var commManager = serviceContainer.getCommunicationManager();
-                
+
                 if (networkManager != null && commManager != null) {
                     // Build hotspot status JSON
                     JSONObject hotspotStatus = new JSONObject();
                     hotspotStatus.put("type", "hotspot_status_update");
                     hotspotStatus.put("hotspot_enabled", isEnabled);
-                    
+
                     if (isEnabled) {
                         hotspotStatus.put("hotspot_ssid", networkManager.getHotspotSsid());
                         hotspotStatus.put("hotspot_password", networkManager.getHotspotPassword());
                         hotspotStatus.put("hotspot_gateway_ip", networkManager.getHotspotGatewayIp());
                     }
-                    
+
                     Log.d(TAG, "📡 🔥 Sending hotspot status update: " + hotspotStatus.toString());
                     boolean sent = commManager.sendBluetoothResponse(hotspotStatus);
                     Log.d(TAG, "📡 🔥 " + (sent ? "✅ Hotspot status sent successfully" : "❌ Failed to send hotspot status"));
@@ -816,15 +816,15 @@ public class AsgClientService extends Service implements NetworkStateListener, B
 
             Log.d(TAG, "📋 Sending version information after Bluetooth connection");
             sendVersionInfo();
-            
+
             // Claim RGB LED control authority when Bluetooth connects
             Log.d(TAG, "🚨 Claiming RGB LED control authority on Bluetooth connection");
             sendRgbLedControlAuthority(true);
-            
+
             // Enable touch/swipe event reporting when Bluetooth connects
             Log.d(TAG, "🎯 Enabling touch event reporting on Bluetooth connection");
             handleTouchEventControl(true);
-            
+
             Log.d(TAG, "🎯 Enabling swipe volume control on Bluetooth connection");
             handleSwipeVolumeControl(false);
         } else {
@@ -835,14 +835,14 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     @Override
     public void onDataReceived(byte[] data) {
         Log.d(TAG, "📥 Bluetooth onDataReceived() called");
-        
+
         if (data == null || data.length == 0) {
             Log.w(TAG, "⚠️ Received empty data packet from Bluetooth");
             return;
         }
 
         Log.i(TAG, "📥 Received " + data.length + " bytes from Bluetooth");
-        Log.d(TAG, "📋 Data preview: " + new String(data, 0, Math.min(data.length, 100)) + 
+        Log.d(TAG, "📋 Data preview: " + new String(data, 0, Math.min(data.length, 100)) +
                   (data.length > 100 ? "..." : ""));
 
         // BLE/serial can deliver data before getInterfaceReferences() runs (e.g. right after
@@ -868,7 +868,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
 
     private void onWifiConnected() {
         Log.i(TAG, "🌐 Connected to WiFi network");
-        
+
         // Note: AugmentosService check removed - no longer used
         /*
         if (isAugmentosBound && augmentosService != null) {
@@ -881,7 +881,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
 
     private void processMediaQueue() {
         Log.d(TAG, "📁 processMediaQueue() called");
-        
+
         if (serviceContainer.getServiceManager().getMediaQueueManager() != null) {
             if (!serviceContainer.getServiceManager().getMediaQueueManager().isQueueEmpty()) {
                 Log.i(TAG, "📁 WiFi connected - processing media upload queue");
@@ -999,9 +999,6 @@ public class AsgClientService extends Service implements NetworkStateListener, B
         }
     }
 
-    // REMOVED: saveCoreToken method - now handled directly by ConfigurationManager
-    // AuthTokenCommandHandler calls configurationManager.saveCoreToken() directly
-
     // ---------------------------------------------
     // Public API Methods (Delegating to managers)
     // ---------------------------------------------
@@ -1019,7 +1016,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     // ---------------------------------------------
     public MediaCaptureService.MediaCaptureListener getMediaCaptureListener() {
         Log.d(TAG, "📸 Creating media capture listener");
-        
+
         return new MediaCaptureService.MediaCaptureListener() {
             @Override
             public void onPhotoCapturing(String requestId) {
@@ -1079,12 +1076,12 @@ public class AsgClientService extends Service implements NetworkStateListener, B
 
     public ServiceCallbackInterface getServiceCallback() {
         Log.d(TAG, "📡 Creating service callback interface");
-        
+
         return new ServiceCallbackInterface() {
             @Override
             public void sendThroughBluetooth(byte[] data) {
                 Log.d(TAG, "📤 sendThroughBluetooth() called - Data length: " + (data != null ? data.length : "null"));
-                
+
                 if (serviceContainer.getServiceManager().getBluetoothManager() != null) {
                     Log.d(TAG, "📶 Sending data through Bluetooth");
                     serviceContainer.getServiceManager().getBluetoothManager().sendData(data);
@@ -1097,7 +1094,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             @Override
             public boolean sendFileViaBluetooth(String filePath) {
                 Log.d(TAG, "📁 sendFileViaBluetooth() called - File: " + filePath);
-                
+
                 if (serviceContainer.getServiceManager().getBluetoothManager() != null) {
                     Log.d(TAG, "📶 Starting BLE file transfer");
                     boolean started = serviceContainer.getServiceManager().getBluetoothManager().sendImageFile(filePath);
@@ -1112,11 +1109,11 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                     return false;
                 }
             }
-            
+
             @Override
             public boolean isBleTransferInProgress() {
                 Log.d(TAG, "📊 isBleTransferInProgress() called");
-                
+
                 if (serviceContainer.getServiceManager().getBluetoothManager() != null) {
                     boolean inProgress = serviceContainer.getServiceManager().getBluetoothManager().isFileTransferInProgress();
                     Log.d(TAG, "📊 BLE transfer in progress: " + inProgress);
@@ -1134,14 +1131,14 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     // ---------------------------------------------
     private void registerHeartbeatReceiver() {
         Log.d(TAG, "💓 registerHeartbeatReceiver() started");
-        
+
         try {
             heartbeatReceiver = new BroadcastReceiver() {
                 @Override
                 public void onReceive(Context context, Intent intent) {
                     String action = intent.getAction();
                     Log.d(TAG, "💓 Heartbeat receiver triggered - Action: " + action);
-                    
+
                     if (ACTION_HEARTBEAT.equals(action) ||
                             "com.augmentos.otaupdater.ACTION_HEARTBEAT".equals(action)) {
 
@@ -1178,19 +1175,19 @@ public class AsgClientService extends Service implements NetworkStateListener, B
      */
     private void resetHeartbeatTimeout() {
         Log.d(TAG, "💓 Resetting heartbeat timeout");
-        
+
         try {
             // Cancel any existing timeout
             heartbeatTimeoutHandler.removeCallbacks(heartbeatTimeoutRunnable);
-            
+
             // Mark as connected
             isConnected = true;
             Log.d(TAG, "🔌 Connection state changed to CONNECTED");
-            
+
             // Schedule new timeout
             heartbeatTimeoutHandler.postDelayed(heartbeatTimeoutRunnable, HEARTBEAT_TIMEOUT_MS);
             Log.d(TAG, "⏰ Heartbeat timeout scheduled for " + HEARTBEAT_TIMEOUT_MS + "ms");
-            
+
         } catch (Exception e) {
             Log.e(TAG, "💥 Error resetting heartbeat timeout", e);
         }
@@ -1201,7 +1198,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
      */
     public void startHeartbeatMonitoring() {
         Log.d(TAG, "💓 Starting heartbeat monitoring");
-        
+
         try {
             // Initialize heartbeat timeout handler if not already done
             if (heartbeatTimeoutHandler == null) {
@@ -1213,18 +1210,18 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                     Log.i(TAG, "🔌 Connection state changed to DISCONNECTED due to heartbeat timeout");
                 };
             }
-            
+
             // Cancel any existing timeout
             heartbeatTimeoutHandler.removeCallbacks(heartbeatTimeoutRunnable);
-            
+
             // Don't set connected state - wait for first heartbeat
             isConnected = false;
             Log.d(TAG, "🔌 Connection state initialized as DISCONNECTED - waiting for first heartbeat");
-            
+
             // Schedule initial timeout to detect if no heartbeat comes
             heartbeatTimeoutHandler.postDelayed(heartbeatTimeoutRunnable, HEARTBEAT_TIMEOUT_MS);
             Log.d(TAG, "⏰ Initial heartbeat timeout scheduled for " + HEARTBEAT_TIMEOUT_MS + "ms");
-            
+
         } catch (Exception e) {
             Log.e(TAG, "💥 Error starting heartbeat monitoring", e);
         }
@@ -1235,7 +1232,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
      */
     public void stopHeartbeatMonitoring() {
         Log.d(TAG, "💓 Stopping heartbeat monitoring");
-        
+
         try {
             heartbeatTimeoutHandler.removeCallbacks(heartbeatTimeoutRunnable);
             isConnected = false;
@@ -1257,21 +1254,21 @@ public class AsgClientService extends Service implements NetworkStateListener, B
      */
     public void onServiceHeartbeatReceived() {
         Log.d(TAG, "💓 Service heartbeat received from MentraLiveSGC");
-        
+
         // Reset heartbeat timeout and mark as connected
         resetHeartbeatTimeout();
     }
 
     private void registerRestartReceiver() {
         Log.d(TAG, "🔄 registerRestartReceiver() started");
-        
+
         try {
             restartReceiver = new BroadcastReceiver() {
                 @Override
                 public void onReceive(Context context, Intent intent) {
                     String action = intent.getAction();
                     Log.d(TAG, "🔄 Restart receiver triggered - Action: " + action);
-                    
+
                     if (ACTION_RESTART_SERVICE.equals(action)) {
                         Log.i(TAG, "🔄 Received restart request from OTA updater");
                     } else {
@@ -1290,7 +1287,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
 
     private void registerOtaProgressReceiver() {
         Log.d(TAG, "📥 registerOtaProgressReceiver() started");
-        
+
         try {
             otaProgressReceiver = new BroadcastReceiver() {
                 @Override
@@ -1326,7 +1323,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
 
     private void handleDownloadProgress(Intent intent) {
         Log.d(TAG, "📥 handleDownloadProgress() started");
-        
+
         try {
             String status = intent.getStringExtra("status");
             int progress = intent.getIntExtra("progress", 0);
@@ -1335,9 +1332,9 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             String errorMessage = intent.getStringExtra("error_message");
             long timestamp = intent.getLongExtra("timestamp", System.currentTimeMillis());
 
-            Log.i(TAG, "📥 Download progress: " + status + " - " + progress + "% (" + 
+            Log.i(TAG, "📥 Download progress: " + status + " - " + progress + "% (" +
                       bytesDownloaded + "/" + totalBytes + " bytes)");
-            
+
             if (errorMessage != null) {
                 Log.w(TAG, "⚠️ Download error: " + errorMessage);
             }
@@ -1356,7 +1353,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
 
     private void handleInstallationProgress(Intent intent) {
         Log.d(TAG, "🔧 handleInstallationProgress() started");
-        
+
         try {
             String status = intent.getStringExtra("status");
             String apkPath = intent.getStringExtra("apk_path");
@@ -1364,7 +1361,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             long timestamp = intent.getLongExtra("timestamp", System.currentTimeMillis());
 
             Log.i(TAG, "🔧 Installation progress: " + status + " - " + apkPath);
-            
+
             if (errorMessage != null) {
                 Log.w(TAG, "⚠️ Installation error: " + errorMessage);
             }
@@ -1383,7 +1380,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
 
     private void registerMtkUpdateReceiver() {
         Log.d(TAG, "🔄 registerMtkUpdateReceiver() started");
-        
+
         try {
             mtkUpdateReceiver = new BroadcastReceiver() {
                 @Override
@@ -1394,7 +1391,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                     }
                 }
             };
-            
+
             IntentFilter filter = new IntentFilter("com.mentra.asg_client.MTK_UPDATE_COMPLETE");
             registerReceiver(mtkUpdateReceiver, filter);
             Log.d(TAG, "✅ MTK update receiver registered successfully");
@@ -1424,7 +1421,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     @Subscribe(threadMode = ThreadMode.MAIN)
     public void onStreamingEvent(StreamingEvent event) {
         Log.d(TAG, "📹 Streaming event received: " + event.getClass().getSimpleName());
-        
+
         if (event instanceof StreamingEvent.Started) {
             Log.i(TAG, "✅ RTMP streaming started successfully");
         } else if (event instanceof StreamingEvent.Stopped) {
@@ -1475,7 +1472,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
         Log.i(TAG, "📹 ========================================");
         Log.i(TAG, "📹 AVAILABLE VIDEO RESOLUTIONS");
         Log.i(TAG, "📹 ========================================");
-        
+
         try {
             CameraManager cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
             if (cameraManager == null) {
@@ -1493,7 +1490,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                 try {
                     CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(cameraId);
                     StreamConfigurationMap map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-                    
+
                     if (map == null) {
                         Log.w(TAG, "📹 Camera " + cameraId + ": No stream configuration map");
                         continue;
@@ -1513,7 +1510,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                     Log.e(TAG, "📹 Error accessing camera " + cameraId, e);
                 }
             }
-            
+
             Log.i(TAG, "📹 ========================================");
         } catch (Exception e) {
             Log.e(TAG, "📹 Error querying video resolutions", e);
@@ -1591,4 +1588,4 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             Log.e(TAG, "🗑️ Error cleaning up orphaned BLE transfers", e);
         }
     }
-} 
+}

@@ -79,11 +79,8 @@ abstract class ControllerManager {
     abstract fun sendHotspotState(enabled: Boolean)
     abstract fun sendOtaStart()
 
-    // User Context (for crash reporting)
-    abstract fun sendUserEmailToGlasses(email: String)
-
     // Incident Reporting
-    abstract fun sendIncidentId(incidentId: String)
+    abstract fun requestIncidentLogs(incidentId: String)
 
     // Gallery
     abstract fun queryGalleryStatus()

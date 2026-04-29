@@ -200,12 +200,8 @@ class Simulated : SGCManager() {
         Bridge.log("sendHotspotState")
     }
 
-    override fun sendUserEmailToGlasses(email: String) {
-        Bridge.log("sendUserEmailToGlasses: $email")
-    }
-
-    override fun sendIncidentId(incidentId: String, apiBaseUrl: String?) {
-        Bridge.log("sendIncidentId: $incidentId")
+    override fun requestIncidentLogs(incidentId: String) {
+        Bridge.log("requestIncidentLogs: $incidentId")
     }
 
     // Gallery

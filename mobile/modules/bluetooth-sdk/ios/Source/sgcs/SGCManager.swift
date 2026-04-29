@@ -89,14 +89,10 @@ protocol SGCManager {
     func sendHotspotState(_ enabled: Bool)
     func sendOtaStart()
 
-    // MARK: - User Context (for crash reporting)
-
-    func sendUserEmailToGlasses(_ email: String)
-
     // MARK: - Incident Reporting
 
-    func sendIncidentId(_ incidentId: String, apiBaseUrl: String?)
-    func completeIncidentLogUpload(transferId: String, success: Bool)
+    func requestIncidentLogs(_ incidentId: String)
+    func completeIncidentLogReport(transferId: String, success: Bool)
 
     // MARK: - Gallery
 
@@ -113,7 +109,7 @@ protocol SGCManager {
 extension SGCManager {
     // MARK: - Incident Reporting
 
-    func completeIncidentLogUpload(transferId _: String, success _: Bool) {}
+    func completeIncidentLogReport(transferId _: String, success _: Bool) {}
 
     // MARK: - Dashboard (default: combined wire format; Nex implements single-field)
 

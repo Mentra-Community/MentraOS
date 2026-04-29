@@ -8,7 +8,6 @@ import android.util.Log;
 import androidx.annotation.NonNull;
 
 import com.mentra.asg_client.io.file.core.FileManager;
-import com.mentra.asg_client.io.media.upload.MediaUploadService;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
 import com.mentra.asg_client.io.media.interfaces.ServiceCallbackInterface;
 import com.mentra.asg_client.camera.CameraNeo;
@@ -1985,8 +1984,8 @@ public class MediaCaptureService {
 
 
     /**
-     * Upload a video file to AugmentOS Cloud
-     * Currently a stub - videos are kept on device
+     * Report a completed video file.
+     * Currently a stub - videos are kept on device.
      */
     public void uploadVideo(String videoFilePath, String requestId) {
         Log.d(TAG, "Video upload not implemented yet. Video saved locally: " + videoFilePath);
@@ -1997,120 +1996,6 @@ public class MediaCaptureService {
             // Notify that video is "uploaded" (actually just saved locally)
             mMediaCaptureListener.onVideoUploaded(requestId, videoFilePath);
         }
-    }
-
-    /**
-     * Upload media to AugmentOS Cloud
-     */
-    private void uploadMediaToCloud(String mediaFilePath, String requestId, int mediaType) {
-        // First save the media to device gallery
-        saveMediaToGallery(mediaFilePath, mediaType);
-
-        // Upload the media to AugmentOS Cloud
-        MediaUploadService.uploadMedia(
-                mContext,
-                mediaFilePath,
-                requestId,
-                mediaType,
-                new MediaUploadService.UploadCallback() {
-                    @Override
-                    public void onSuccess(String url) {
-                        String mediaTypeStr = mediaType == MediaUploadQueueManager.MEDIA_TYPE_PHOTO ? "Photo" : "Video";
-                        Log.d(TAG, mediaTypeStr + " uploaded successfully: " + url);
-                        sendMediaSuccessResponse(requestId, url, mediaType);
-
-                        // Check if we should save the photo
-                        Boolean save = photoSaveFlags.get(requestId);
-                        if (save == null || !save) {
-                            // Delete the original file to save storage
-                            try {
-                                File file = new File(mediaFilePath);
-                                if (file.exists() && file.delete()) {
-                                    Log.d(TAG, "🗑️ Deleted " + mediaTypeStr.toLowerCase() + " file after successful upload: " + mediaFilePath);
-                                } else {
-                                    Log.w(TAG, "Failed to delete " + mediaTypeStr.toLowerCase() + " file: " + mediaFilePath);
-                                }
-                            } catch (Exception e) {
-                                Log.e(TAG, "Error deleting " + mediaTypeStr.toLowerCase() + " file after upload", e);
-                            }
-                        } else {
-                            Log.d(TAG, "💾 Keeping " + mediaTypeStr.toLowerCase() + " file as requested: " + mediaFilePath);
-                        }
-
-                        // Clean up all tracking
-                        photoSaveFlags.remove(requestId);
-                        photoBleIds.remove(requestId);
-                        photoOriginalPaths.remove(requestId);
-    
-
-                        // Notify listener about successful upload
-                        if (mMediaCaptureListener != null) {
-                            if (mediaType == MediaUploadQueueManager.MEDIA_TYPE_PHOTO) {
-                                mMediaCaptureListener.onPhotoUploaded(requestId, url);
-                            } else {
-                                mMediaCaptureListener.onVideoUploaded(requestId, url);
-                            }
-                        }
-                    }
-
-                    @Override
-                    public void onFailure(String errorMessage) {
-                        String mediaTypeStr = mediaType == MediaUploadQueueManager.MEDIA_TYPE_PHOTO ? "Photo" : "Video";
-                        Log.e(TAG, mediaTypeStr + " upload failed: " + errorMessage);
-                        sendMediaErrorResponse(requestId, errorMessage, mediaType);
-
-                        // Check if we can fallback to BLE for photos
-                        String bleImgId = photoBleIds.get(requestId);
-                        if (mediaType == MediaUploadQueueManager.MEDIA_TYPE_PHOTO && bleImgId != null) {
-                            Log.d(TAG, "📱 WiFi upload failed, attempting BLE fallback for " + requestId);
-
-                            // Don't delete the photo yet - we need it for BLE
-                            // Clean up tracking (will be re-added by BLE transfer)
-                            photoBleIds.remove(requestId);
-                            photoOriginalPaths.remove(requestId);
-
-                            // Trigger BLE fallback - reuse the existing photo instead of taking a new one
-                            boolean shouldSaveFallback2 = Boolean.TRUE.equals(photoSaveFlags.get(requestId));
-                            String requestedSizeFallback2 = photoRequestedSizes.get(requestId);
-                            if (requestedSizeFallback2 == null || requestedSizeFallback2.isEmpty()) requestedSizeFallback2 = "medium";
-                            // Reuse the existing photo file that was already captured
-                            Log.d(TAG, "♻️ Reusing existing photo for BLE transfer: " + mediaFilePath);
-                            reusePhotoForBleTransfer(mediaFilePath, requestId, bleImgId, shouldSaveFallback2, requestedSizeFallback2);
-                            return; // Exit early - BLE transfer will handle cleanup
-                        }
-
-                        // No BLE fallback available, handle as normal failure
-                        // Check if we should save the photo
-                        Boolean save = photoSaveFlags.get(requestId);
-                        if (save == null || !save) {
-                            // Delete the file even on failure to prevent storage buildup
-                            try {
-                                File file = new File(mediaFilePath);
-                                if (file.exists() && file.delete()) {
-                                    Log.d(TAG, "🗑️ Deleted " + mediaTypeStr.toLowerCase() + " file after failed upload: " + mediaFilePath);
-                                } else {
-                                    Log.w(TAG, "Failed to delete " + mediaTypeStr.toLowerCase() + " file: " + mediaFilePath);
-                                }
-                            } catch (Exception e) {
-                                Log.e(TAG, "Error deleting " + mediaTypeStr.toLowerCase() + " file after failed upload", e);
-                            }
-                        } else {
-                            Log.d(TAG, "💾 Keeping " + mediaTypeStr.toLowerCase() + " file despite failed upload as requested: " + mediaFilePath);
-                        }
-
-                        // Clean up tracking
-                        photoSaveFlags.remove(requestId);
-                        photoBleIds.remove(requestId);
-                        photoOriginalPaths.remove(requestId);
-    
-
-                        // Notify listener about error
-                        if (mMediaCaptureListener != null) {
-                            mMediaCaptureListener.onMediaError(requestId, "Upload failed: " + errorMessage, mediaType);
-                        }
-                    }
-                }
-        );
     }
 
     /**

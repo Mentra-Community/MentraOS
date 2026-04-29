@@ -680,12 +680,12 @@ public final class MentraBluetoothSDK {
         DeviceManager.shared.sendReboot()
     }
 
-    public func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil) {
-        DeviceManager.shared.sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
+    public func requestIncidentLogs(_ incidentId: String) {
+        DeviceManager.shared.requestIncidentLogs(incidentId)
     }
 
-    public func completeIncidentLogUpload(transferId: String, success: Bool) {
-        DeviceManager.shared.completeIncidentLogUpload(transferId: transferId, success: success)
+    public func completeIncidentLogReport(transferId: String, success: Bool) {
+        DeviceManager.shared.completeIncidentLogReport(transferId: transferId, success: success)
     }
 
     public func invalidate() {

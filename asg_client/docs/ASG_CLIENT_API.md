@@ -637,20 +637,6 @@ The phone announces it has connected. Glasses respond with `glasses_ready`, then
 {"type": "glasses_ready", "timestamp": 1708963201234}
 ```
 
-#### `auth_token`
-
-```json
-{"type": "auth_token", "coreToken": "eyJhbGciOiJIUzI1NiJ9..."}
-```
-
-Response:
-
-```json
-{"type": "token_status", "success": true}
-```
-
-Empty token returns `token_status` with `success: false`.
-
 #### `user_email`
 
 Sets user identity for Sentry reporting context. No response.
@@ -710,15 +696,14 @@ Persisted via `AsgSettings.setSaveInGalleryMode`.
 #### `upload_incident_logs`
 
 ```json
-{"type": "upload_incident_logs", "incidentId": "550e8400-e29b-41d4-a716-446655440000", "apiBaseUrl": ""}
+{"type": "upload_incident_logs", "incidentId": "550e8400-e29b-41d4-a716-446655440000"}
 ```
 
-| Field        | Type   | Required | Description              |
-| ------------ | ------ | -------- | ------------------------ |
-| `incidentId` | string | yes      | Backend incident id      |
-| `apiBaseUrl` | string | no       | Override server base URL |
+| Field        | Type   | Required | Description                   |
+| ------------ | ------ | -------- | ----------------------------- |
+| `incidentId` | string | yes      | Host-owned incident/report id |
 
-With WiFi: POSTs the last 600 logcat lines plus BES firmware logs to `<base>/api/incidents/<incidentId>/logs`. Without WiFi: relays the same payloads to the phone over two sequential K900 BLE file transfers; the phone POSTs them.
+Collects the last 600 logcat lines plus BES firmware logs, then relays both payloads to the phone over two sequential K900 BLE file transfers. The phone/host owns any backend upload and confirms each transfer with `transfer_complete`.
 
 #### `ota_start`
 

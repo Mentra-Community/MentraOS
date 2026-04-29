@@ -19,12 +19,11 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-// Renamed from PhotoUploadService to MediaUploadService
-import com.mentra.asg_client.io.media.upload.MediaUploadService;
-
 /**
- * Manages a queue of media (photos/videos) to be uploaded.
- * Provides persistence, retry mechanism, and robust error handling.
+ * Manages legacy queued media metadata.
+ *
+ * <p>The old AugmentOS cloud uploader has been removed. If a stale queue entry exists on device,
+ * mark it failed instead of attempting a direct cloud upload from the glasses.</p>
  */
 public class MediaUploadQueueManager {
     private static final String TAG = "MediaUploadQueueManager"; // Renamed TAG
@@ -232,98 +231,24 @@ public class MediaUploadQueueManager {
                     // Only process queued media in this pass
                     if (STATUS_QUEUED.equals(status)) {
                         String requestId = media.getString("requestId");
-                        String appId = media.getString("appId");
-                        String queuedPath = media.getString("queuedPath");
                         int mediaType = media.getInt("mediaType"); // Get mediaType
 
-                        // Update status to uploading
-                        media.put("status", STATUS_UPLOADING);
-                        media.put("uploadStartTime", System.currentTimeMillis());
-                        updateMediaInManifest(i, media);
-
-                        // Attempt to upload the media
-                        uploadMedia(queuedPath, requestId, appId, mediaType, i);
+                        handleUploadFailure(
+                                requestId,
+                                "Legacy direct cloud media upload has been removed",
+                                mediaType,
+                                i);
 
                         processed++;
                     }
                 }
 
                 if (processed > 0) {
-                    Log.d(TAG, "Started uploading " + processed + " media items from queue");
+                    Log.d(TAG, "Marked " + processed + " legacy media queue items as failed");
                 }
 
             } catch (IOException | JSONException e) {
                 Log.e(TAG, "Error processing queue", e);
-            }
-        });
-    }
-
-    /**
-     * Upload a media item from the queue
-     */
-    private void uploadMedia(String queuedPath, String requestId, String appId, int mediaType, int index) {
-        MediaUploadService.uploadMedia(
-                mContext,
-                queuedPath,
-                requestId,
-                mediaType, // Pass mediaType
-                new MediaUploadService.UploadCallback() {
-                    @Override
-                    public void onSuccess(String url) {
-                        handleUploadSuccess(requestId, url, mediaType, index);
-                    }
-
-                    @Override
-                    public void onFailure(String errorMessage) {
-                        handleUploadFailure(requestId, errorMessage, mediaType, index);
-                    }
-                }
-        );
-    }
-
-    /**
-     * Handle a successful media upload
-     */
-    private void handleUploadSuccess(String requestId, String url, int mediaType, int index) {
-        mExecutor.execute(() -> {
-            try {
-                JSONObject manifest = readManifest();
-                JSONArray mediaItems = manifest.getJSONArray("mediaItems");
-
-                // Make sure the index is still valid
-                if (index >= 0 && index < mediaItems.length()) {
-                    JSONObject media = mediaItems.getJSONObject(index);
-
-                    // Verify this is the same media item (by requestId)
-                    if (requestId.equals(media.getString("requestId"))) {
-                        // Update status and add URL
-                        media.put("status", STATUS_COMPLETED);
-                        media.put("mediaUrl", url); // Changed from photoUrl
-                        media.put("completedTime", System.currentTimeMillis());
-
-                        // Update in manifest
-                        boolean updated = updateMediaInManifest(index, media);
-
-                        if (updated) {
-                            Log.d(TAG, "Media upload successful: " + requestId + ", URL: " + url);
-
-                            // Delete the queued file
-                            String queuedPath = media.getString("queuedPath");
-                            new File(queuedPath).delete();
-
-                            // Notify callback
-                            if (mCallback != null) {
-                                mCallback.onMediaUploaded(requestId, url, mediaType);
-                            }
-
-                            // Schedule cleanup of completed items
-                            cleanupCompleted();
-                        }
-                    }
-                }
-
-            } catch (IOException | JSONException e) {
-                Log.e(TAG, "Error handling upload success", e);
             }
         });
     }

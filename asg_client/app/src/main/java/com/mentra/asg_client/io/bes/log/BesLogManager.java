@@ -1,41 +1,26 @@
 package com.mentra.asg_client.io.bes.log;
 
-import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 
-import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
-import com.mentra.asg_client.utils.IncidentUploadOkHttp;
-import com.mentra.asg_client.utils.ServerConfigUtil;
-
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.IOException;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
-
-import okhttp3.Call;
-import okhttp3.Callback;
-import okhttp3.MediaType;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.RequestBody;
-import okhttp3.Response;
 
 /**
  * Manages BES chip log collection over UART.
  *
  * <p>When requested, sends {@code mh_logs} to BES and reassembles the streamed
- * {@code sr_log} response packets. On completion, uploads the assembled BES
- * trace buffer to the incident backend as source {@code "glasses_firmware"}.</p>
+ * {@code sr_log} response packets. On completion, delivers the assembled BES
+ * trace buffer as source {@code "glasses_firmware"} for the phone/host to handle.</p>
  *
  * <p>Timeout chain:
  * <ul>
  *   <li>2 s – first-packet timeout: BES may not support mh_logs in this build</li>
  *   <li>20 s – overall safety timeout: if we never receive the terminator (cur=255, body=end),
- *       we stop waiting and upload whatever we have. Kept long so we don't cut off a stream
+ *       we stop waiting and report whatever we have. Kept long so we don't cut off a stream
  *       that is still sending; only used when BES stalls or never sends terminator.</li>
  * </ul>
  * </p>
@@ -51,12 +36,7 @@ public class BesLogManager {
   private static final long FIRST_PACKET_TIMEOUT_MS = 2000;
   private static final long OVERALL_TIMEOUT_MS = 20_000; // 20 s — only fires if terminator never arrives
 
-  private static final MediaType JSON_MEDIA_TYPE =
-      MediaType.parse("application/json; charset=utf-8");
-
   private final String mIncidentId;
-  private final Context mContext;
-  private final IConfigurationManager mConfigurationManager;
   private final Handler mHandler;
 
   private final StringBuilder mLogBuffer = new StringBuilder();
@@ -67,54 +47,16 @@ public class BesLogManager {
   private final Runnable mOverallTimeout;
 
   /**
-   * When non-null, {@link #finish(String)} delivers JSON (same shape as HTTP upload) on a
-   * background thread instead of posting to the backend — used for BLE relay to the phone.
+   * When non-null, {@link #finish(String)} delivers JSON on a background thread for BLE relay to
+   * the phone.
    */
   private final Consumer<String> mRelayJsonCallback;
 
   /**
-   * Backend base URL for direct HTTP upload. When non-empty, takes precedence over
-   * {@link com.mentra.asg_client.utils.ServerConfigUtil#getServerBaseUrl(android.content.Context)}.
+   * @param relayJsonCallback if non-null, completion invokes this with glasses_firmware JSON.
    */
-  private final String mApiBaseUrl;
-
-  /**
-   * Create a new BES log collection session (HTTP upload on completion).
-   */
-  public BesLogManager(String incidentId, Context context,
-                       IConfigurationManager configurationManager) {
-    this(incidentId, context, configurationManager, "", null);
-  }
-
-  /**
-   * Create a new BES log collection session that uploads to {@code apiBaseUrl} instead of the
-   * glasses' built-in server config. Falls back to
-   * {@link com.mentra.asg_client.utils.ServerConfigUtil} when {@code apiBaseUrl} is empty.
-   */
-  public BesLogManager(String incidentId, Context context,
-                       IConfigurationManager configurationManager,
-                       String apiBaseUrl) {
-    this(incidentId, context, configurationManager, apiBaseUrl, null);
-  }
-
-  /**
-   * @param relayJsonCallback if non-null, completion invokes this with glasses_firmware JSON
-   *                          instead of HTTP upload
-   */
-  public BesLogManager(String incidentId, Context context,
-                       IConfigurationManager configurationManager,
-                       Consumer<String> relayJsonCallback) {
-    this(incidentId, context, configurationManager, "", relayJsonCallback);
-  }
-
-  private BesLogManager(String incidentId, Context context,
-                        IConfigurationManager configurationManager,
-                        String apiBaseUrl,
-                        Consumer<String> relayJsonCallback) {
+  public BesLogManager(String incidentId, Consumer<String> relayJsonCallback) {
     mIncidentId = incidentId;
-    mContext = context;
-    mConfigurationManager = configurationManager;
-    mApiBaseUrl = apiBaseUrl != null ? apiBaseUrl.trim() : "";
     mRelayJsonCallback = relayJsonCallback;
     mHandler = new Handler(Looper.getMainLooper());
 
@@ -127,7 +69,7 @@ public class BesLogManager {
 
     mOverallTimeout = () -> {
       if (!mFinished) {
-        Log.w(TAG, "⏰ Overall safety timeout (terminator not received) — uploading partial ("
+        Log.w(TAG, "⏰ Overall safety timeout (terminator not received) — reporting partial ("
             + mLogBuffer.length() + " chars)");
         finish("overall_timeout");
       }
@@ -173,7 +115,7 @@ public class BesLogManager {
   // -------------------------------------------------------------------------
 
   /**
-   * Finalize the collection and kick off the upload.
+   * Finalize the collection and deliver or print the result.
    *
    * @param timeoutReason null on normal completion, otherwise a reason string
    */
@@ -202,26 +144,16 @@ public class BesLogManager {
       return;
     }
 
-    if (mIncidentId == null || mIncidentId.isEmpty()) {
-      if (fullLog.isEmpty()) {
-        Log.i(TAG, "BES log buffer empty — nothing to print");
-      } else {
-        printLogsToLogcat(fullLog);
-      }
-      return;
-    }
-
     if (fullLog.isEmpty()) {
-      Log.i(TAG, "BES log buffer empty — nothing to upload");
+      Log.i(TAG, "BES log buffer empty — nothing to print");
       return;
     }
 
-    final String snapshot = fullLog;
-    new Thread(() -> uploadLogs(snapshot)).start();
+    printLogsToLogcat(fullLog);
   }
 
   /**
-   * JSON body for POST /api/incidents/.../logs with {@code source: glasses_firmware}.
+   * JSON body for a firmware log report with {@code source: glasses_firmware}.
    */
   public static String buildFirmwareUploadJson(String fullLog) {
     try {
@@ -267,66 +199,4 @@ public class BesLogManager {
     Log.i(TAG, "===== BES TRACE LOG END =====");
   }
 
-  private void uploadLogs(String logText) {
-    try {
-      String coreToken = mConfigurationManager.getCoreToken();
-      if (coreToken == null || coreToken.isEmpty()) {
-        Log.e(TAG, "No coreToken — cannot upload BES logs for incident " + mIncidentId);
-        return;
-      }
-
-      String baseUrl = (!mApiBaseUrl.isEmpty())
-          ? mApiBaseUrl
-          : ServerConfigUtil.getServerBaseUrl(mContext);
-      String url = baseUrl + "/api/incidents/" + mIncidentId + "/logs";
-
-      String bodyStr = buildFirmwareUploadJson(logText);
-      JSONObject body = new JSONObject(bodyStr);
-
-      RequestBody requestBody = RequestBody.create(bodyStr, JSON_MEDIA_TYPE);
-
-      // BES payload can be large (25k+ chars); backend may need time to merge + store to R2
-      OkHttpClient.Builder clientBuilder = new OkHttpClient.Builder()
-          .connectTimeout(15, TimeUnit.SECONDS)
-          .writeTimeout(45, TimeUnit.SECONDS)
-          .readTimeout(60, TimeUnit.SECONDS);
-      IncidentUploadOkHttp.applyRelaxedRevocation(clientBuilder);
-      OkHttpClient client = clientBuilder.build();
-
-      Request request = new Request.Builder()
-          .url(url)
-          .header("Authorization", "Bearer " + coreToken)
-          .post(requestBody)
-          .build();
-
-      JSONArray logs = body.optJSONArray("logs");
-      int logCount = logs != null ? logs.length() : 0;
-      int bodyPreviewLen = Math.min(bodyStr.length(), 1500);
-      Log.i(TAG, "[LOGS] Glasses firmware (BES) full request: method=POST url=" + url
-          + " body.source=glasses_firmware body.logs.length=" + logCount
-          + " bodyPreview=" + (bodyStr.length() > bodyPreviewLen ? bodyStr.substring(0, bodyPreviewLen) + "..." : bodyStr));
-
-      client.newCall(request).enqueue(new Callback() {
-        @Override
-        public void onFailure(Call call, IOException e) {
-          Log.e(TAG, "Failed to upload BES logs for incident " + mIncidentId, e);
-        }
-
-        @Override
-        public void onResponse(Call call, Response response) {
-          if (response.isSuccessful()) {
-            Log.i(TAG, "✅ BES (glasses_firmware) logs uploaded for incident "
-                + mIncidentId + " (" + logCount + " lines)");
-          } else {
-            Log.e(TAG, "❌ Server rejected BES logs upload — status: "
-                + response.code() + " for incident " + mIncidentId);
-          }
-          response.close();
-        }
-      });
-
-    } catch (Exception e) {
-      Log.e(TAG, "Error preparing BES logs upload for incident " + mIncidentId, e);
-    }
-  }
 }

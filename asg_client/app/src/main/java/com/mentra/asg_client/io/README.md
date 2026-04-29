@@ -22,7 +22,6 @@ io/
 │   ├── interfaces/         # Media operation contracts
 │   ├── core/              # Core media management
 │   ├── managers/          # Media operation managers
-│   ├── upload/            # Media upload operations
 │   └── utils/             # Media utility functions
 ├── bluetooth/              # Bluetooth communication
 │   ├── interfaces/         # Bluetooth operation contracts
@@ -50,7 +49,7 @@ The I/O package serves as the **communication layer** of the ASG client applicat
 
 - **File Systems**: Reading, writing, and managing files
 - **Networks**: HTTP requests, WebSocket connections, WiFi management
-- **Media**: Audio, video, and image capture, processing, and upload
+- **Media**: Audio, video, and image capture, processing, caller webhooks, and BLE transfer
 - **Devices**: Bluetooth communication, device pairing, data transfer
 - **Streaming**: Real-time data streaming and live video
 - **Updates**: Over-the-air system updates and rollbacks
@@ -63,7 +62,7 @@ Each subpackage handles a specific type of I/O operation:
 
 - **`file/`**: File system operations and management
 - **`network/`**: Network communication and connectivity
-- **`media/`**: Media capture, processing, and upload
+- **`media/`**: Media capture, processing, caller webhooks, and BLE transfer
 - **`bluetooth/`**: Bluetooth device communication
 - **`streaming/`**: Real-time data streaming
 - **`ota/`**: System updates and maintenance
@@ -140,9 +139,7 @@ mediaService.capturePhoto(new MediaCaptureCallback() {
     }
 });
 
-// Upload media
-MediaUploadService uploadService = new MediaUploadService();
-uploadService.uploadPhoto(filePath, uploadCallback);
+// Upload photos through MediaCaptureService using a caller-provided webhook URL.
 ```
 
 ### **Bluetooth Operations**

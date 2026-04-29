@@ -40,7 +40,6 @@ import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
-import androidx.preference.PreferenceManager;
 
 // import com.firebase.ui.auth.AuthUI;
 import com.mentra.asg_client.service.core.AsgClientService;
@@ -409,13 +408,6 @@ public class MainActivity extends AppCompatActivity {
 
     private static final int REQUEST_CODE_CAPTURE = 100;
 
-
-    public void setSavedAuthToken(Context context, String newAuthToken) {
-        PreferenceManager.getDefaultSharedPreferences(context)
-                .edit()
-                .putString("auth_token", newAuthToken)
-                .apply();
-    }
 
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {

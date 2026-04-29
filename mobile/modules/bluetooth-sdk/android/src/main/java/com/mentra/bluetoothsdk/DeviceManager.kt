@@ -1196,14 +1196,14 @@ class DeviceManager {
         sgc?.requestWifiScan()
     }
 
-    fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null) {
-        Bridge.log("MAN: Sending incidentId to glasses for log upload: $incidentId")
-        sgc?.sendIncidentId(incidentId, apiBaseUrl)
+    fun requestIncidentLogs(incidentId: String) {
+        Bridge.log("MAN: Requesting incident logs from glasses: $incidentId")
+        sgc?.requestIncidentLogs(incidentId)
     }
 
-    fun completeIncidentLogUpload(transferId: String, success: Boolean) {
-        Bridge.log("MAN: Completing incident log upload: $transferId success=$success")
-        sgc?.completeIncidentLogUpload(transferId, success)
+    fun completeIncidentLogReport(transferId: String, success: Boolean) {
+        Bridge.log("MAN: Completing incident log report: $transferId success=$success")
+        sgc?.completeIncidentLogReport(transferId, success)
     }
 
     fun sendWifiCredentials(ssid: String, password: String) {

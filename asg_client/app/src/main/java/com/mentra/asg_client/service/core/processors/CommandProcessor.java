@@ -18,7 +18,6 @@ import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
 import com.mentra.asg_client.service.core.handlers.PhotoCommandHandler;
 import com.mentra.asg_client.service.core.handlers.VideoCommandHandler;
 import com.mentra.asg_client.service.core.handlers.PhoneReadyCommandHandler;
-import com.mentra.asg_client.service.core.handlers.AuthTokenCommandHandler;
 import com.mentra.asg_client.service.core.handlers.PingCommandHandler;
 import com.mentra.asg_client.service.core.handlers.StreamCommandHandler;
 import com.mentra.asg_client.service.core.handlers.WifiCommandHandler;
@@ -49,7 +48,7 @@ import java.util.concurrent.TimeUnit;
  */
 public class CommandProcessor {
     private static final String TAG = "CommandProcessor";
-    
+
     // Duplicate detection
     private static final long DUPLICATE_WINDOW_MS = TimeUnit.SECONDS.toMillis(10);
     private final ConcurrentHashMap<Long, Long> processedMessageIds = new ConcurrentHashMap<>();
@@ -93,11 +92,11 @@ public class CommandProcessor {
         this.k900CommandHandler = new K900CommandHandler(serviceManager, stateManager, communicationManager);
         this.responseSender = new ResponseSender(serviceManager);
         this.chunkReassembler = new ChunkReassembler();
-        
+
         // Add chunked message support to protocol detector
         this.protocolDetector.addChunkedMessageSupport(chunkReassembler);
         Log.d(TAG, "✅ Chunked message support initialized");
-        
+
         // Wire K900CommandHandler to BesOtaManager for authorization requests
         com.mentra.asg_client.io.bes.BesOtaManager.setK900CommandHandler(this.k900CommandHandler);
         Log.d(TAG, "✅ K900CommandHandler wired to BesOtaManager");
@@ -297,9 +296,6 @@ public class CommandProcessor {
             commandHandlerRegistry.registerHandler(new PhoneReadyCommandHandler(communicationManager, stateManager, responseBuilder, serviceManager));
             Log.d(TAG, "✅ Registered PhoneReadyCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new AuthTokenCommandHandler(communicationManager, configurationManager));
-            Log.d(TAG, "✅ Registered AuthTokenCommandHandler");
-
             commandHandlerRegistry.registerHandler(new UserEmailCommandHandler(configurationManager, ReportManager.getInstance(context)));
             Log.d(TAG, "✅ Registered UserEmailCommandHandler");
 
@@ -335,7 +331,7 @@ public class CommandProcessor {
 
             commandHandlerRegistry.registerHandler(new ImuCommandHandler(context, responseSender));
             Log.d(TAG, "✅ Registered ImuCommandHandler");
-            
+
             commandHandlerRegistry.registerHandler(new GalleryCommandHandler(serviceManager, communicationManager));
             Log.d(TAG, "✅ Registered GalleryCommandHandler");
 
@@ -358,7 +354,7 @@ public class CommandProcessor {
             Log.d(TAG, "✅ Registered PowerCommandHandler");
 
             commandHandlerRegistry.registerHandler(new UploadIncidentLogsCommandHandler(context,
-                    configurationManager, k900CommandHandler, stateManager, serviceManager));
+                    k900CommandHandler, serviceManager));
             Log.d(TAG, "✅ Registered UploadIncidentLogsCommandHandler");
 
             commandHandlerRegistry.registerHandler(new I2SAudioCommandHandler());
@@ -448,12 +444,10 @@ public class CommandProcessor {
 
     /**
      * Request BES chip trace buffer logs and print them to logcat.
-     * Pass a non-null incidentId to also upload to the incident backend as "glasses_firmware".
      */
-    public void requestBesLogs(String incidentId, android.content.Context context,
-                               com.mentra.asg_client.service.system.interfaces.IConfigurationManager configManager) {
+    public void requestBesLogs(String incidentId) {
         if (k900CommandHandler != null) {
-            k900CommandHandler.requestBesLogs(incidentId, context, configManager);
+            k900CommandHandler.requestBesLogs(incidentId);
         } else {
             Log.w(TAG, "⚠️ K900CommandHandler not available — cannot request BES logs");
         }
@@ -484,20 +478,20 @@ public class CommandProcessor {
         }
 
         long now = System.currentTimeMillis();
-        
+
         // Clean up old entries periodically (entries older than duplicate window)
-        processedMessageIds.entrySet().removeIf(entry -> 
+        processedMessageIds.entrySet().removeIf(entry ->
             now - entry.getValue() > DUPLICATE_WINDOW_MS
         );
 
         // Check if we've seen this message ID recently
         Long previousTime = processedMessageIds.put(messageId, now);
-        
+
         if (previousTime != null && (now - previousTime) < DUPLICATE_WINDOW_MS) {
             // We've seen this message ID within the duplicate window
             return true;
         }
-        
+
         return false;
     }
-} 
+}

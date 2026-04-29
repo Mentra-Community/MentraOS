@@ -304,10 +304,8 @@ class MentraNex : SGCManager() {
 
     override fun sendCameraFovSetting() { Bridge.log("Nex: sendCameraFovSetting operation not supported") }
 
-    override fun sendUserEmailToGlasses(email: String) {  Bridge.log("Nex: sendUserEmailToGlasses operation not supported") }
-
-    override fun sendIncidentId(incidentId: String, apiBaseUrl: String?) {
-        Bridge.log("Nex: sendIncidentId operation not supported")
+    override fun requestIncidentLogs(incidentId: String) {
+        Bridge.log("Nex: requestIncidentLogs operation not supported")
     }
 
     // Connection

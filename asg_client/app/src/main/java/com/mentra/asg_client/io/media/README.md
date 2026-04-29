@@ -1,6 +1,6 @@
 # Media I/O Package
 
-A comprehensive media management system for the ASG client that provides photo, video, and audio capture, processing, and upload functionality.
+A media management system for the ASG client that provides photo, video, and audio capture, processing, caller-provided webhook upload, and BLE transfer functionality.
 
 ## 📁 Package Structure
 
@@ -15,11 +15,7 @@ io/media/
 │   ├── PhotoCaptureService.java         # Photo capture service
 │   └── CameraNeo.java                   # Advanced camera implementation
 ├── managers/
-│   ├── MediaUploadQueueManager.java     # Media upload queue management
-│   └── PhotoQueueManager.java           # Photo queue management
-├── upload/
-│   ├── MediaUploadService.java          # Media upload service
-│   └── PhotoUploadService.java          # Photo upload service
+│   └── MediaUploadQueueManager.java     # Legacy queue metadata cleanup
 ├── utils/
 │   └── MediaUtils.java                  # Media utility functions
 └── README.md                            # This documentation
@@ -60,7 +56,7 @@ Main service for handling photo and video capture:
 
 - **Photo Capture**: High-quality photo capture with auto-exposure
 - **Video Recording**: Video recording with configurable quality
-- **Upload Integration**: Automatic upload to cloud services
+- **Webhook Integration**: Direct photo upload to caller-provided webhooks
 - **BLE Transfer**: Bluetooth file transfer capabilities
 - **Gallery Integration**: Save media to device gallery
 
@@ -69,9 +65,9 @@ Main service for handling photo and video capture:
 Specialized service for photo capture operations:
 
 - **Button Press Handling**: Responds to photo button presses
-- **Cloud Integration**: REST API calls to cloud servers
+- **Webhook Integration**: REST API calls to caller-provided upload URLs
 - **Local Fallback**: Local photo capture when offline
-- **Upload Management**: Photo upload to cloud services
+- **Webhook Upload**: Photo upload to caller-provided endpoints
 
 #### **CameraNeo**
 
@@ -87,43 +83,11 @@ Advanced camera implementation with high-quality features:
 
 #### **MediaUploadQueueManager**
 
-Manages queues of media files for upload:
+Manages legacy queued media metadata:
 
 - **Persistence**: Queue survives app restarts
-- **Retry Logic**: Automatic retry of failed uploads
 - **Status Tracking**: Track upload progress and status
-- **Batch Processing**: Process multiple uploads efficiently
-- **Error Handling**: Robust error handling and recovery
-
-#### **PhotoQueueManager**
-
-Specialized queue manager for photo uploads:
-
-- **Photo-Specific Logic**: Optimized for photo upload workflows
-- **Metadata Management**: Track photo metadata and settings
-- **Compression**: Automatic photo compression for upload
-- **Gallery Integration**: Save photos to device gallery
-
-### **Media Upload Services**
-
-#### **MediaUploadService**
-
-Foreground service for media upload management:
-
-- **Background Processing**: Upload media in background
-- **User Notifications**: Keep users informed of upload progress
-- **Queue Processing**: Process upload queues automatically
-- **Network Management**: Handle network connectivity issues
-- **Statistics Tracking**: Track upload success/failure rates
-
-#### **PhotoUploadService**
-
-Specialized service for photo uploads:
-
-- **Photo-Specific Upload**: Optimized for photo file formats
-- **Metadata Handling**: Preserve photo metadata during upload
-- **Compression**: Automatic compression for faster uploads
-- **Gallery Integration**: Update gallery after successful upload
+- **Legacy Cleanup**: Stale direct-cloud upload entries are marked failed
 
 ### **Media Utilities**
 
@@ -170,38 +134,28 @@ mediaService.handlePhotoButtonPress();
 mediaService.handleVideoButtonPress();
 ```
 
-### **Photo Capture with Upload**
+### **Photo Capture with Webhook Upload**
 
 ```java
-// Initialize photo capture service
-PhotoCaptureService photoService = new PhotoCaptureService(context, photoQueueManager);
-
-// Set up callbacks
-photoService.setPhotoCaptureListener(new PhotoCaptureService.PhotoCaptureListener() {
-    @Override
-    public void onPhotoCaptured(String requestId, String filePath) {
-        Log.d("Photo", "Photo captured: " + filePath);
-    }
-
-    @Override
-    public void onPhotoUploaded(String requestId, String url) {
-        Log.d("Photo", "Photo uploaded: " + url);
-    }
-
-    @Override
-    public void onPhotoError(String requestId, String error) {
-        Log.e("Photo", "Photo error: " + error);
-    }
-});
-
-// Take photo and upload
-photoService.takePhotoAndUpload("/path/to/photo.jpg", "request123", "app456");
+// The phone requests a photo with a caller-provided webhook URL.
+// ASG client captures the photo, uploads it to that URL, then reports success/failure.
+mediaService.takePhotoAndUpload(
+    "/path/to/photo.jpg",
+    "request123",
+    "https://partner.example/upload",
+    "partner-auth-token",
+    false,
+    "medium",
+    false,
+    true,
+    "auto"
+);
 ```
 
-### **Media Upload Management**
+### **Legacy Queue Cleanup**
 
 ```java
-// Initialize upload queue manager
+// Initialize the legacy queue manager
 MediaUploadQueueManager uploadManager = new MediaUploadQueueManager(context);
 
 // Set up callbacks
@@ -212,20 +166,14 @@ uploadManager.setMediaQueueCallback(new MediaUploadQueueManager.MediaQueueCallba
     }
 
     @Override
-    public void onMediaUploaded(String requestId, String url, int mediaType) {
-        Log.d("Upload", "Media uploaded: " + url);
-    }
-
     @Override
     public void onMediaUploadFailed(String requestId, String error, int mediaType) {
-        Log.e("Upload", "Upload failed: " + error);
+        Log.e("Upload", "Legacy upload skipped: " + error);
     }
 });
 
-// Queue media for upload
+// Stale queued entries are marked failed; direct cloud upload has been removed.
 uploadManager.queueMedia("/path/to/media.jpg", "request123", MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
-
-// Process upload queue
 uploadManager.processQueue();
 ```
 
@@ -256,13 +204,12 @@ Log.d("Media", "File size: " + sizeStr);
 ### **Photo Capture Workflow**
 
 1. **Button Press**: User presses photo button
-2. **Cloud Check**: Service checks cloud connectivity
+2. **Request Mode**: Service determines webhook, BLE, or local-save handling
 3. **Capture**: Camera captures high-quality photo
 4. **Processing**: Photo is processed and optimized
-5. **Queue**: Photo is added to upload queue
-6. **Upload**: Photo is uploaded to cloud service
-7. **Gallery**: Photo is saved to device gallery
-8. **Notification**: User is notified of completion
+5. **Delivery**: Photo is uploaded to the caller webhook, relayed over BLE, or kept locally
+6. **Gallery**: Photo is saved to device gallery when requested
+7. **Notification**: User is notified of completion
 
 ### **Video Recording Workflow**
 
@@ -271,9 +218,8 @@ Log.d("Media", "File size: " + sizeStr);
 3. **Recording**: Video is recorded with optimal settings
 4. **Stop Recording**: User stops recording
 5. **Processing**: Video is processed and compressed
-6. **Queue**: Video is added to upload queue
-7. **Upload**: Video is uploaded to cloud service
-8. **Cleanup**: Temporary files are cleaned up
+6. **Delivery**: Video remains on device or is handled by the caller flow
+7. **Cleanup**: Temporary files are cleaned up
 
 ## 🛡️ Features
 
@@ -284,12 +230,12 @@ Log.d("Media", "File size: " + sizeStr);
 - **High Resolution**: Support for high-resolution capture
 - **Quality Optimization**: Automatic quality optimization
 
-### **Robust Upload System**
+### **Delivery Paths**
 
-- **Queue Management**: Persistent upload queues
-- **Retry Logic**: Automatic retry of failed uploads
-- **Network Handling**: Graceful network connectivity handling
-- **Progress Tracking**: Real-time upload progress tracking
+- **Webhook Upload**: Caller-provided URLs for photo upload
+- **BLE Transfer**: Local relay to the phone when needed
+- **Local Storage**: Device retention and gallery integration
+- **Legacy Cleanup**: Old queued direct-cloud uploads are marked failed
 
 ### **Storage Management**
 
@@ -309,7 +255,7 @@ Log.d("Media", "File size: " + sizeStr);
 
 1. **Unified Interface**: Single interface for all media operations
 2. **High Quality**: Professional-grade media capture
-3. **Reliable Upload**: Robust upload system with retry logic
+3. **Explicit Delivery**: Webhook, BLE, and local-save flows are owned by callers
 4. **Storage Efficient**: Optimized storage usage
 5. **User Friendly**: Intuitive user experience
 6. **Extensible**: Easy to add new media types and features
@@ -317,7 +263,7 @@ Log.d("Media", "File size: " + sizeStr);
 ## 🔮 Future Enhancements
 
 - **AI Enhancement**: AI-powered image and video enhancement
-- **Cloud Sync**: Real-time cloud synchronization
+- **Partner Sync**: Optional caller-owned synchronization
 - **Live Streaming**: Live video streaming capabilities
 - **Advanced Audio**: Multi-channel audio support
 - **Media Analytics**: Usage analytics and insights

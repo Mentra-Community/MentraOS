@@ -38,7 +38,7 @@ enum NexDashboardDisplayWire {
 @MainActor
 @objc(MentraNexSGC)
 class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SGCManager {
-    func sendIncidentId(_: String, apiBaseUrl _: String?) {}
+    func requestIncidentLogs(_: String) {}
 
     func sendJson(_: [String: Any], wakeUp _: Bool, requireAck _: Bool) {}
 
@@ -138,8 +138,6 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
     func sendHotspotState(_: Bool) {}
 
     func sendOtaStart() {}
-
-    func sendUserEmailToGlasses(_: String) {}
 
     func queryGalleryStatus() {}
 

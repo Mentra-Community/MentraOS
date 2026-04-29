@@ -20,7 +20,6 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.os.Build;
@@ -160,10 +159,6 @@ public class MentraLive extends SGCManager {
     private static final String PREFS_NAME = "MentraLivePrefs";
     private static final String PREF_DEVICE_NAME = "LastConnectedDeviceName";
 
-    // Auth settings
-    private static final String AUTH_PREFS_NAME = "augmentos_auth_prefs";
-    private static final String KEY_CORE_TOKEN = "core_token";
-
     // State tracking
     private Context context;
     // private PublishSubject<JSONObject> dataObservable;
@@ -201,9 +196,6 @@ public class MentraLive extends SGCManager {
     private Runnable connectionTimeoutRunnable;
     private Handler connectionTimeoutHandler = new Handler(Looper.getMainLooper());
     private Runnable processSendQueueRunnable;
-    private int coreTokenRetryCount = 0;
-    private static final int CORE_TOKEN_MAX_RETRIES = 3;
-    private static final long CORE_TOKEN_RETRY_DELAY_MS = 250;
     // Current MTU size
     private int currentMtu = 23; // Default BLE MTU
 
@@ -2286,12 +2278,6 @@ public class MentraLive extends SGCManager {
                 Bridge.updateWifiScanResults(networks);
                 break;
 
-            case "token_status":
-                // Process coreToken acknowledgment
-                boolean success = json.optBoolean("success", false);
-                Bridge.log("LIVE: Received token status from ASG client: " + (success ? "SUCCESS" : "FAILED"));
-                break;
-
             case "ota_update_available":
                 // Process OTA update available notification from glasses (background mode)
                 Bridge.log("LIVE: 📱 Received ota_update_available from glasses");
@@ -2470,14 +2456,6 @@ public class MentraLive extends SGCManager {
                 } catch (Throwable t) {
                     Bridge.log("LIVE: ⚠️ glasses_ready: request_version threw: " + t);
                 }
-
-                Bridge.log("LIVE: 🔄 Sending coreToken to ASG client");
-                try { sendCoreTokenToAsgClient(); }
-                catch (Throwable t) { Bridge.log("LIVE: ⚠️ glasses_ready: sendCoreTokenToAsgClient threw: " + t); }
-
-                // Send stored user email for crash reporting
-                try { sendStoredUserEmailToAsgClient(); }
-                catch (Throwable t) { Bridge.log("LIVE: ⚠️ glasses_ready: sendStoredUserEmailToAsgClient threw: " + t); }
 
                 //startDebugVideoCommandLoop();
 
@@ -3137,59 +3115,6 @@ public class MentraLive extends SGCManager {
     }
 
     /**
-     * Send the coreToken to the ASG client for direct backend authentication.
-     * Retries a few times with delay if token is empty (bridge may not have applied
-     * BluetoothSdkModule.update yet when glasses_ready runs).
-     */
-    private void sendCoreTokenToAsgClient() {
-        Bridge.log("LIVE: Preparing to send coreToken to ASG client");
-
-        String coreToken = getCoreToken();
-
-        if (coreToken == null || coreToken.isEmpty()) {
-            if (coreTokenRetryCount < CORE_TOKEN_MAX_RETRIES - 1) {
-                coreTokenRetryCount++;
-                Log.d(TAG, "getCoreToken empty, retrying in " + CORE_TOKEN_RETRY_DELAY_MS + "ms (attempt " + (coreTokenRetryCount + 1) + "/" + CORE_TOKEN_MAX_RETRIES + ")");
-                handler.postDelayed(this::sendCoreTokenToAsgClient, CORE_TOKEN_RETRY_DELAY_MS);
-                return;
-            }
-            Log.e(TAG, "No coreToken available to send to ASG client after " + CORE_TOKEN_MAX_RETRIES + " attempts");
-            coreTokenRetryCount = 0;
-            return;
-        }
-
-        coreTokenRetryCount = 0;
-        try {
-            JSONObject tokenMsg = new JSONObject();
-            tokenMsg.put("type", "auth_token");
-            tokenMsg.put("coreToken", coreToken);
-            tokenMsg.put("timestamp", System.currentTimeMillis());
-
-            Bridge.log("LIVE: Sending coreToken to ASG client");
-            sendJson(tokenMsg);
-
-        } catch (JSONException e) {
-            Log.e(TAG, "Error creating coreToken JSON message", e);
-        }
-    }
-
-    /**
-     * Send stored user email to the ASG client for Sentry crash reporting
-     */
-    private void sendStoredUserEmailToAsgClient() {
-        Object emailObj = DeviceStore.INSTANCE.get("bluetooth", "auth_email");
-        String storedEmail = emailObj instanceof String ? (String) emailObj : "";
-
-        if (storedEmail == null || storedEmail.isEmpty()) {
-            Bridge.log("LIVE: No stored user email to send to ASG client");
-            return;
-        }
-
-        Bridge.log("LIVE: Sending stored user email to ASG client");
-        sendUserEmailToGlasses(storedEmail);
-    }
-
-    /**
      * Convert bytes to hex string for debugging
      */
     private static String bytesToHex(byte[] bytes) {
@@ -3323,9 +3248,8 @@ public class MentraLive extends SGCManager {
     }
 
     @Override
-    public void sendIncidentId(String incidentId, String apiBaseUrl) {
+    public void requestIncidentLogs(String incidentId) {
         try {
-            String base = apiBaseUrl != null ? apiBaseUrl.trim() : "";
             String bKey = IncidentLogBleRelayNaming.bleFileBaseName(incidentId, 'B');
             String lKey = IncidentLogBleRelayNaming.bleFileBaseName(incidentId, 'L');
             bleIncidentLogRelays.put(bKey,
@@ -3336,9 +3260,8 @@ public class MentraLive extends SGCManager {
             JSONObject json = new JSONObject();
             json.put("type", "upload_incident_logs");
             json.put("incidentId", incidentId);
-            json.put("apiBaseUrl", base);
             sendJson(json, true);
-            Bridge.log("LIVE: Sent incidentId to glasses for log upload: " + incidentId
+            Bridge.log("LIVE: Requested incident logs from glasses: " + incidentId
                     + " (BLE relay keys " + bKey + ", " + lKey + ")");
         } catch (JSONException e) {
             Log.e(TAG, "Error creating upload_incident_logs command", e);
@@ -5446,31 +5369,6 @@ public class MentraLive extends SGCManager {
         }
     }
 
-    /**
-     * Sends user email to glasses for crash reporting identification
-     *
-     * @param email The user's email address
-     */
-    @Override
-    public void sendUserEmailToGlasses(String email) {
-        Bridge.log("LIVE: Sending user email to glasses for crash reporting");
-
-        if (email == null || email.isEmpty()) {
-            Log.w(TAG, "Cannot send user email - email is empty");
-            return;
-        }
-
-        try {
-            JSONObject emailCommand = new JSONObject();
-            emailCommand.put("type", "user_email");
-            emailCommand.put("email", email);
-            sendJson(emailCommand, true);
-            Log.d(TAG, "User email sent to glasses successfully");
-        } catch (JSONException e) {
-            Log.e(TAG, "Error creating user email JSON", e);
-        }
-    }
-
     public void sendCustomCommand(String commandJson) {
         Bridge.log("LIVE: Received custom command: " + commandJson);
 
@@ -5980,15 +5878,15 @@ public class MentraLive extends SGCManager {
         HashMap<String, Object> body = new HashMap<>();
         body.put("transferId", fileName);
         body.put("incidentId", relay.incidentId);
-        body.put("kind", relay.kind == BleIncidentLogKind.FIRMWARE ? "glasses_firmware" : "glasses");
+        body.put("source", relay.kind == BleIncidentLogKind.FIRMWARE ? "glasses_firmware" : "glasses");
         body.put("fileName", fileName);
         body.put("payloadJson", new String(jsonUtf8, StandardCharsets.UTF_8));
         body.put("timestamp", System.currentTimeMillis());
-        Bridge.sendTypedMessage("incident_log_payload", body);
+        Bridge.sendTypedMessage("incident_log_report", body);
     }
 
     @Override
-    public void completeIncidentLogUpload(String transferId, boolean success) {
+    public void completeIncidentLogReport(String transferId, boolean success) {
         String fileBaseKey = transferId;
         int dotIndex = fileBaseKey.lastIndexOf('.');
         if (dotIndex > 0) {
@@ -6100,24 +5998,6 @@ public class MentraLive extends SGCManager {
         } catch (JSONException e) {
             Log.e(TAG, "Error creating photo upload error message", e);
         }
-    }
-
-    /**
-     * Get the core authentication token.
-     * Reads from DeviceStore first (synced from JS via BluetoothSdkModule.update), then falls back to
-     * SharedPreferences for backward compatibility.
-     */
-    private String getCoreToken() {
-        Object fromStore = DeviceStore.INSTANCE.get("bluetooth", "core_token");
-        if (fromStore instanceof String) {
-            String token = (String) fromStore;
-            if (token != null && !token.isEmpty()) {
-                return token;
-            }
-        }
-        SharedPreferences prefs = context.getSharedPreferences(AUTH_PREFS_NAME, Context.MODE_PRIVATE);
-        String fromPrefs = prefs.getString(KEY_CORE_TOKEN, "");
-        return fromPrefs != null ? fromPrefs : "";
     }
 
     /**

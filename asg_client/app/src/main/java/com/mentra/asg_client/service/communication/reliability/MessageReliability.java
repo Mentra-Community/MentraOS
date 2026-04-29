@@ -16,7 +16,6 @@ public class MessageReliability {
         "video_started",
         "video_stopped",
         "video_failed",
-        "auth_token_status",
 
         // Important status changes
         "error",

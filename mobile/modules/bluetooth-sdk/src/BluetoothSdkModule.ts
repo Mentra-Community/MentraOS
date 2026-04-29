@@ -40,8 +40,8 @@ declare class BluetoothSdkModule extends NativeModule<BluetoothSdkModuleEvents> 
   ping(): Promise<void>
 
   // Incident Reporting
-  sendIncidentId(incidentId: string, apiBaseUrl?: string | null): Promise<void>
-  completeIncidentLogUpload(transferId: string, success: boolean): Promise<void>
+  requestIncidentLogs(incidentId: string): Promise<void>
+  completeIncidentLogReport(transferId: string, success: boolean): Promise<void>
 
   // WiFi Commands
   requestWifiScan(): Promise<void>

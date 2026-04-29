@@ -13,7 +13,7 @@ import UltraliteSDK
 
 @MainActor
 class Mach1: UltraliteBaseViewController, SGCManager {
-    func sendIncidentId(_: String, apiBaseUrl _: String?) {}
+    func requestIncidentLogs(_: String) {}
 
     func requestPhoto(
         _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
@@ -68,8 +68,6 @@ class Mach1: UltraliteBaseViewController, SGCManager {
     func forgetWifiNetwork(_: String) {}
 
     func sendHotspotState(_: Bool) {}
-
-    func sendUserEmailToGlasses(_: String) {}
 
     func queryGalleryStatus() {}
 
