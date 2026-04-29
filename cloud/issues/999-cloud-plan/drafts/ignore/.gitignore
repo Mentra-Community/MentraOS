@@ -1,0 +1,4 @@
+# Local-only drafts. Nothing in this folder is committed.
+# Keep this .gitignore tracked so the folder structure exists on clone.
+*
+!.gitignore
