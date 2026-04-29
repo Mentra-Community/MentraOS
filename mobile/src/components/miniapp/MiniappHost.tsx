@@ -1,7 +1,8 @@
 import {useEffect, useState, useCallback, useRef} from "react"
-import {View, StyleSheet, Alert, Platform} from "react-native"
+import {View, Alert, Platform} from "react-native"
 import {useSafeAreaInsets} from "react-native-safe-area-context"
 import {WebView, WebViewMessageEvent} from "react-native-webview"
+import {MiniappRequestType, parseEnvelope} from "@mentra/miniapp"
 
 import LeftEdgeBackSwipe from "@/components/miniapp/LeftEdgeBackSwipe"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
@@ -35,6 +36,7 @@ interface MountedMiniapp {
   mountKey: number
   appName?: string
   iconUrl?: string
+  manifest?: MountDevManifest
   onClose?: () => void
   onBack?: () => void
 }
@@ -67,11 +69,7 @@ export type MountDevManifest = {
 
 type MiniappHostAPI = {
   mount(packageName: string, bundleUri: string, options?: MiniappMountOptions): void
-  mountDev(
-    packageName: string,
-    devUrl: string,
-    options?: MiniappMountOptions,
-  ): Promise<MountDevManifest | undefined>
+  mountDev(packageName: string, devUrl: string, options?: MiniappMountOptions): Promise<MountDevManifest | undefined>
   unmount(packageName: string): void
   setForeground(packageName: string, callbacks?: {onClose?: () => void; onBack?: () => void}): void
   setBackground(packageName: string): void
@@ -128,18 +126,27 @@ export default function MiniappHost() {
 
   // -- helpers that operate on the map via setApps --------------------------
 
-  const registerRuntime = useCallback((packageName: string) => {
+  const registerRuntime = useCallback((packageName: string, manifest?: MountDevManifest) => {
     // Register with LocalMiniappRuntime so CONNECT messages from this WebView
     // are accepted. The sendFn injects the already-serialized envelope string
     // into the right WebView via its ref. raw is a JSON string, so we wrap it
     // in JSON.stringify again to embed as a JS string literal inside the
     // injected code (the transport expects receiveNativeMessage(stringPayload)
     // and does its own JSON.parse).
-    localMiniappRuntime.registerApp(packageName, (raw: string) => {
-      const ref = webViewRefs.current.get(packageName)
-      if (!ref) return
-      ref.injectJavaScript(`window.receiveNativeMessage(${JSON.stringify(raw)}); true;`)
-    })
+    localMiniappRuntime.registerApp(
+      packageName,
+      (raw: string) => {
+        const ref = webViewRefs.current.get(packageName)
+        if (!ref) return
+        ref.injectJavaScript(`window.receiveNativeMessage(${JSON.stringify(raw)}); true;`)
+      },
+      manifest
+        ? {
+            permissions: manifest.permissions,
+            hardwareRequirements: manifest.hardwareRequirements,
+          }
+        : undefined,
+    )
   }, [])
 
   const mount = useCallback(
@@ -156,12 +163,13 @@ export default function MiniappHost() {
           isForeground: false,
           isLoaded: false,
           mountKey: (prevEntry?.mountKey ?? 0) + 1,
+          manifest: options?.manifest,
         })
         return next
       })
       webViewRefs.current.delete(packageName)
       canGoBackMap.current.delete(packageName)
-      registerRuntime(packageName)
+      registerRuntime(packageName, options?.manifest)
       miniappRunningRegistry.add(packageName)
       if (options?.manifest) {
         localMiniappRuntime.setInstalledManifest(packageName, {
@@ -213,12 +221,13 @@ export default function MiniappHost() {
           isForeground: false,
           isLoaded: false,
           mountKey: (prevEntry?.mountKey ?? 0) + 1,
+          manifest,
         })
         return next
       })
       webViewRefs.current.delete(packageName)
       canGoBackMap.current.delete(packageName)
-      registerRuntime(packageName)
+      registerRuntime(packageName, manifest)
       miniappRunningRegistry.add(packageName)
       localMiniappRuntime.setInstalledManifest(packageName, {
         permissions: manifest?.permissions,
@@ -412,10 +421,21 @@ export default function MiniappHost() {
 
   // -- WebView event handlers -----------------------------------------------
 
-  const handleMessage = useCallback((packageName: string, event: WebViewMessageEvent) => {
-    const data = event.nativeEvent.data
-    localMiniappRuntime.handleRawMessage(packageName, data)
-  }, [])
+  const handleMessage = useCallback(
+    (packageName: string, event: WebViewMessageEvent) => {
+      const data = event.nativeEvent.data
+      const envelope = parseEnvelope(data)
+      const requestType = envelope?.payload ? (envelope.payload as Record<string, unknown>).type : undefined
+
+      if (requestType === MiniappRequestType.CONNECT) {
+        const manifest = apps.get(packageName)?.manifest
+        registerRuntime(packageName, manifest)
+      }
+
+      localMiniappRuntime.handleRawMessage(packageName, data)
+    },
+    [apps, registerRuntime],
+  )
 
   /**
    * Send a beforeevict envelope to the miniapp and wait up to 500ms for it to
@@ -620,17 +640,25 @@ export default function MiniappHost() {
 // Styles
 // ---------------------------------------------------------------------------
 
-const styles = StyleSheet.create({
+const absoluteFill = {
+  position: "absolute" as const,
+  left: 0,
+  right: 0,
+  top: 0,
+  bottom: 0,
+}
+
+const styles = {
   // MiniappHost sits above the Stack so the foregrounded WebView covers the
   // current route. zIndex/elevation keep us on top of native nav layers.
   container: {
-    ...StyleSheet.absoluteFillObject,
+    ...absoluteFill,
     zIndex: 9999,
     elevation: 9999,
   },
   foreground: {
     flex: 1,
-    ...StyleSheet.absoluteFillObject,
+    ...absoluteFill,
   },
   // Off-screen holder for backgrounded WebViews. 1×1 opaque-invisible rectangle
   // keeps them mounted without affecting layout or receiving touches.
@@ -645,4 +673,4 @@ const styles = StyleSheet.create({
   webview: {
     flex: 1,
   },
-})
+}

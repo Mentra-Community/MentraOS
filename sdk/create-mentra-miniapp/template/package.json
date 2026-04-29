@@ -1,18 +1,23 @@
 {
-  "name": "{{packageName}}",
+  "name": "{{projectName}}",
   "private": true,
   "scripts": {
+    "postinstall": "bun ./scripts/link-local-sdk-react.ts",
     "dev": "mentra-miniapp dev",
     "build": "bun run build.ts",
     "release": "mentra-miniapp release",
     "pack": "mentra-miniapp pack"
   },
   "dependencies": {
-    "@mentra/miniapp": "^0.1.0",
+    "@mentra/miniapp": "^0.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@mentra/miniapp-cli": "^0.1.0"
+    "@mentra/miniapp-cli": "^0.1.0",
+    "@types/bun": "^1.2.0",
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.6",
+    "typescript": "^5.0.0"
   }
 }

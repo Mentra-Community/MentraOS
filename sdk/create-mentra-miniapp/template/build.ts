@@ -15,8 +15,12 @@
  */
 
 import {rm} from "fs/promises"
+import {createRequire} from "module"
 
 const distDir = "./dist"
+const require = createRequire(import.meta.url)
+const appNodeModules = process.cwd()
+const sharedReactPackages = /^(react|react-dom|scheduler)(\/.*)?$/
 
 // Wipe dist/ so old chunks don't accumulate across builds.
 await rm(distDir, {recursive: true, force: true})
@@ -25,7 +29,16 @@ const result = await Bun.build({
   entrypoints: ["./index.html"],
   outdir: distDir,
   target: "browser",
-  plugins: [],
+  plugins: [
+    {
+      name: "app-react-singleton",
+      setup(build) {
+        build.onResolve({filter: sharedReactPackages}, (args) => ({
+          path: require.resolve(args.path, {paths: [appNodeModules]}),
+        }))
+      },
+    },
+  ],
   minify: true,
 })
 

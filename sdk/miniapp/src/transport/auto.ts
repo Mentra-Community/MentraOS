@@ -3,7 +3,6 @@
  */
 
 import {LocalSocketTransport, LocalSocketTransportOptions} from "./local-socket"
-import {MockTransport, isMockExplicitlyRequested} from "./mock"
 import {PostMessageTransport} from "./postmessage"
 import {Transport, TransportDisconnectHandler, TransportMessageHandler} from "./types"
 
@@ -36,7 +35,7 @@ export function createTransport(options: CreateTransportOptions = {}): Transport
 
   // Explicit opt-in to mock — useful for stories / framework-level testing.
   if (isMockExplicitlyRequested()) {
-    return new MockTransport()
+    return new LazyMockTransport()
   }
 
   if (typeof WebSocket !== "undefined") {
@@ -47,7 +46,27 @@ export function createTransport(options: CreateTransportOptions = {}): Transport
 
   // No WebSocket at all (some embedded contexts, jsdom without a polyfill).
   // MockTransport keeps the SDK from throwing during construction.
-  return new MockTransport()
+  return new LazyMockTransport()
+}
+
+function isMockExplicitlyRequested(): boolean {
+  if (typeof window === "undefined") return false
+  try {
+    if (typeof window.location !== "undefined" && window.location.search) {
+      const params = new URLSearchParams(window.location.search)
+      if (params.get("mentra") === "mock") return true
+    }
+  } catch {
+    /* ignore malformed URLs */
+  }
+  try {
+    if (typeof localStorage !== "undefined" && localStorage.getItem("MENTRA_MOCK") === "1") {
+      return true
+    }
+  } catch {
+    /* localStorage may be unavailable in embedded contexts */
+  }
+  return false
 }
 
 /**
@@ -85,7 +104,7 @@ class LocalSocketWithMockFallback implements Transport {
       } catch {
         /* ignore */
       }
-      const mock = new MockTransport()
+      const mock = new LazyMockTransport()
       await mock.open()
       this.active = mock
       // eslint-disable-next-line no-console
@@ -102,6 +121,45 @@ class LocalSocketWithMockFallback implements Transport {
 
   send(raw: string): void {
     if (!this.active) throw new Error("LocalSocketWithMockFallback: send() before open()")
+    this.active.send(raw)
+  }
+
+  onMessage(handler: TransportMessageHandler): void {
+    this.messageHandler = handler
+    this.active?.onMessage(handler)
+  }
+
+  onDisconnect(handler: TransportDisconnectHandler): void {
+    this.disconnectHandler = handler
+    this.active?.onDisconnect(handler)
+  }
+
+  close(): void {
+    this.active?.close()
+  }
+
+  isOpen(): boolean {
+    return this.active?.isOpen() === true
+  }
+}
+
+class LazyMockTransport implements Transport {
+  private active: Transport | null = null
+  private messageHandler: TransportMessageHandler | null = null
+  private disconnectHandler: TransportDisconnectHandler | null = null
+
+  async open(): Promise<void> {
+    if (!this.active) {
+      const {MockTransport} = await import("./mock")
+      this.active = new MockTransport()
+      if (this.messageHandler) this.active.onMessage(this.messageHandler)
+      if (this.disconnectHandler) this.active.onDisconnect(this.disconnectHandler)
+    }
+    await this.active.open()
+  }
+
+  send(raw: string): void {
+    if (!this.active) throw new Error("LazyMockTransport: send() before open()")
     this.active.send(raw)
   }
 
