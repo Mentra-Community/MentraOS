@@ -1,7 +1,17 @@
 /**
- * @mentra/js — server-runtime primitives
+ * @mentra/js/server — primitives for `server/` code (cloud-hosted)
  *
- *   import { onSession, onStop, onToolCall } from "@mentra/js/server";
+ *   import { onSession, onStop, type MentraSession } from "@mentra/js/server";
+ *
+ * ⚠️ **This module is for `server/` code only.**
+ * `server/` runs on the developer's cloud-hosted backend — multi-tenant,
+ * one `MentraSession` per connecting user, handlers fire per user.
+ *
+ * For `client/` code (runs on the phone, one user, singleton session),
+ * import from `@mentra/js` instead:
+ *
+ *   import { session } from "@mentra/js";
+ *   session.onReady(...);
  *
  * These are the primitives for `server/` code — Hono apps that run on
  * the developer's cloud-hosted backend to subscribe to audio + (where
@@ -65,7 +75,11 @@ declare global {
 }
 
 /**
- * Register a per-session handler.
+ * Register a per-session handler. Use inside `server/` code.
+ *
+ * ⚠️ **Do not use from `client/` code.** `client/` runs on the phone
+ * where there's only one user and one session — use `session.onReady()`
+ * from `@mentra/js` instead.
  *
  * Fires every time a user connects to this server. Your handler
  * receives a fresh `MentraSession` scoped to that user. This is the

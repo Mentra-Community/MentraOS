@@ -1,7 +1,18 @@
 /**
- * @mentra/js — Runtime for developer code
+ * @mentra/js — Runtime for `client/` code (phone-side)
  *
  *   import { session, state, defineConfig } from "@mentra/js";
+ *
+ * ⚠️ **This module is for `client/` code only.**
+ * `client/` runs on the phone — one user, one session, long-lived.
+ *
+ * For `server/` code (cloud-hosted, multi-tenant, one MentraSession per
+ * connecting user), import from `@mentra/js/server` instead:
+ *
+ *   import { onSession, type MentraSession } from "@mentra/js/server";
+ *
+ * `defineConfig` is the one export on this path that's safe to use from
+ * `mentra.config.ts` regardless of folder — it's a type-only helper.
  *
  * `session.*` is a thin proxy over a `MentraRuntime` adapter installed
  * by the dev server. Every call reads `globalThis.__mentraRuntime` at
@@ -149,6 +160,24 @@ interface Session {
   readonly location: LocationRuntime;
 }
 
+/**
+ * The phone-side session object. Use inside `client/` code.
+ *
+ * ⚠️ **Do not use from `server/` code.** The singleton session proxy
+ * here binds to whichever session is currently active on the phone; in
+ * a multi-tenant cloud-hosted server you want per-user sessions via
+ * `onSession` from `@mentra/js/server` instead.
+ *
+ * @example
+ * ```ts
+ * // client/index.ts
+ * import { session } from "@mentra/js";
+ *
+ * session.onReady(({ userId }) => {
+ *   session.display.showTextWall("Hello " + userId);
+ * });
+ * ```
+ */
 export const session: Session = {
   onReady(handler: (info?: MentraSessionInfo) => void): void {
     const r = globalThis.__mentraRuntime;

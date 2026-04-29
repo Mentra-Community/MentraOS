@@ -98,32 +98,102 @@ const BANNED_MODULES = new Set([
 
 const BANNED_PATTERNS = [/^react-native$/, /^react-native\//, /^expo-/, /^@react-native/];
 
-const clientDir = join(PROJECT_ROOT, "client");
-if (existsSync(clientDir)) {
-  const { readdir, readFile } = await import("fs/promises");
-  const files = (await readdir(clientDir, { recursive: true })).filter((f: string) => /\.(ts|tsx|js|jsx)$/.test(f));
+/**
+ * Cross-folder import rules. `client/` and `server/` code run in different
+ * runtimes — mixing their MentraOS imports produces subtle lifecycle bugs
+ * (singleton session in a multi-tenant server, per-user handlers on a
+ * single-user phone). Catch the obvious mistakes at dev-server start.
+ *
+ * Exempts:
+ *   - `@mentra/js/runtime` — the full forked-SDK surface, fine anywhere
+ *   - `@mentra/js/dedupe-plugin` — bundler-side, never executes in either
+ */
+interface FolderRules {
+  /** What shouldn't be imported from this folder. */
+  bannedModules: Set<string>;
+  /** Regex patterns that shouldn't be imported. */
+  bannedPatterns: RegExp[];
+  /** Human-readable hint shown when a banned import is found. */
+  hint: (importName: string) => string;
+}
 
-  let hasErrors = false;
+const CLIENT_RULES: FolderRules = {
+  bannedModules: new Set([
+    ...BANNED_MODULES,
+    // Cross-folder: `@mentra/js/server` is for multi-tenant cloud code
+    // and doesn't make sense on the phone.
+    "@mentra/js/server",
+  ]),
+  bannedPatterns: BANNED_PATTERNS,
+  hint: (imp) => {
+    if (imp === "@mentra/js/server") {
+      return `Move this to server/index.ts, or use "session" from "@mentra/js" for phone-side code.`;
+    }
+    return `Move this code to server/ if you need Node APIs.`;
+  },
+};
+
+const SERVER_RULES: FolderRules = {
+  bannedModules: new Set([
+    // Cross-folder: the phone-side `session` proxy doesn't work in a
+    // multi-tenant cloud process. Use `onSession` from `@mentra/js/server`.
+    "@mentra/js",
+  ]),
+  bannedPatterns: [
+    // react-native and expo have no business on a server
+    /^react-native$/,
+    /^react-native\//,
+    /^expo-/,
+    /^@react-native/,
+  ],
+  hint: (imp) => {
+    if (imp === "@mentra/js") {
+      return `In server/, use \`onSession\` from "@mentra/js/server" (per-user) instead of \`session\` (singleton).`;
+    }
+    return `This import looks wrong for server/ code.`;
+  },
+};
+
+async function validateImports(folder: string, rules: FolderRules): Promise<boolean> {
+  const dir = join(PROJECT_ROOT, folder);
+  if (!existsSync(dir)) return true;
+
+  const { readdir, readFile } = await import("fs/promises");
+  const files = (await readdir(dir, { recursive: true })).filter((f: string) => /\.(ts|tsx|js|jsx)$/.test(f));
+
+  let ok = true;
   for (const file of files) {
     if (file.endsWith(".disabled")) continue;
-    const content = await readFile(join(clientDir, file), "utf-8");
+    const content = await readFile(join(dir, file), "utf-8");
     const lines = content.split("\n");
     for (let i = 0; i < lines.length; i++) {
       const match = lines[i].match(/(?:import\s+.*from\s+['"]([^'"]+)['"]|require\s*\(['"]([^'"]+)['"]\))/);
-      if (match) {
-        const imp = match[1] || match[2];
-        const banned = BANNED_MODULES.has(imp) || BANNED_PATTERNS.some((p) => p.test(imp));
-        if (banned) {
-          if (!hasErrors) console.error("\n  ❌ Invalid imports in client/:\n");
-          hasErrors = true;
-          console.error(`    client/${file}:${i + 1} — "${imp}" is not available in the client runtime.`);
-          console.error(`    Move this code to server/ if you need Node APIs.\n`);
-        }
+      if (!match) continue;
+      const imp = match[1] || match[2];
+      const banned = rules.bannedModules.has(imp) || rules.bannedPatterns.some((p) => p.test(imp));
+      if (banned) {
+        if (ok) console.error(`\n  ❌ Invalid imports in ${folder}/:\n`);
+        ok = false;
+        console.error(`    ${folder}/${file}:${i + 1} — "${imp}" is not allowed here.`);
+        console.error(`    ${rules.hint(imp)}\n`);
       }
     }
   }
-  if (hasErrors) process.exit(1);
-  console.log("  ✅ client/ imports validated");
+  return ok;
+}
+
+// Validate client/ and server/ up front so mistakes surface at boot,
+// not as mysterious runtime behavior later.
+{
+  const clientOk = await validateImports("client", CLIENT_RULES);
+  const serverOk = await validateImports("server", SERVER_RULES);
+  if (!clientOk || !serverOk) process.exit(1);
+  if (existsSync(join(PROJECT_ROOT, "client"))) {
+    console.log("  ✅ client/ imports validated");
+  }
+  if (existsSync(join(PROJECT_ROOT, "server"))) {
+    console.log("  ✅ server/ imports validated");
+  }
 }
 
 // ─── Shared state manager ────────────────────────────────────────────────────
@@ -197,16 +267,17 @@ __flushServerHandlers();
 // Load server/index.ts BEFORE we boot MiniAppServer, so any onSession/onStop
 // handlers it registers are in the queue by the time sessions start firing.
 
-type HonoLike = { fetch: (req: Request) => Response | Promise<Response> };
+type HonoLike = { fetch: (req: Request) => Response | Promise<Response>; route?: any };
 let userServer: HonoLike | null = null;
+const userServerEntry = project.serverEntry;
 
-if (project.serverEntry) {
+if (userServerEntry) {
   try {
-    const mod = await import(project.serverEntry);
+    const mod = await import(userServerEntry);
     const exported = mod.default ?? mod.app ?? mod.server;
     if (exported && typeof exported.fetch === "function") {
       userServer = exported as HonoLike;
-      console.log(`  🛠  server/ mounted (${rel(PROJECT_ROOT, project.serverEntry)})`);
+      console.log(`  🛠  server/ mounted (${rel(PROJECT_ROOT, userServerEntry)})`);
     } else {
       console.warn(`  ⚠️  server/ loaded but no default export with .fetch() found — skipping.`);
       console.warn(`  \x1b[2m   Tip: \`export default new Hono()...\` from server/index.ts.\x1b[0m`);
@@ -228,14 +299,16 @@ if (project.serverEntry) {
 // sessions. Handler #1 is for the single-session client/-dev flow.
 
 let miniAppServerRunning = false;
+let miniAppServer: MiniAppServer | null = null;
 
 if (picked.needsMiniAppServer && runtime instanceof CloudAdapter) {
   try {
     const app = new MiniAppServer({
       packageName: config.packageName,
       apiKey: API_KEY,
-      port: PORT + 1,
+      port: PORT,
     });
+    miniAppServer = app;
 
     app.onSession(async (session: MentraSession) => {
       session.logger.info(`[mentra dev] Session started for ${session.userId}`);
@@ -270,6 +343,20 @@ if (picked.needsMiniAppServer && runtime instanceof CloudAdapter) {
       }
     });
 
+    // Mount user's server/ Hono app inside MiniAppServer so it shares
+    // auth middleware, session context, and routing with the SDK.
+    // Matches legacy flash's `app.route("/api", api)` pattern.
+    if (userServer) {
+      try {
+        // MiniAppServer extends Hono — `app.route(prefix, subApp)` is Hono.
+        // We mount at root so user's server/index.ts decides its own paths
+        // (typically `/api/*` via `app.route("/api", api)` inside server/).
+        (app as any).route("/", userServer);
+      } catch (err) {
+        console.warn(`  ⚠️  Failed to mount server/ inside MiniAppServer:`, err);
+      }
+    }
+
     if (serverToolCallHandlers.length > 0) {
       app.onToolCall(async (toolCall: any) => {
         // Run all handlers; take the first non-undefined result.
@@ -287,7 +374,10 @@ if (picked.needsMiniAppServer && runtime instanceof CloudAdapter) {
 
     await app.start();
     miniAppServerRunning = true;
-    console.log(`  📡 MiniAppServer on port ${PORT + 1} (webhooks + cloud protocol)`);
+    // No port log — MiniAppServer doesn't bind a port. The Bun.serve
+    // below uses `miniAppServer.fetch` as a fallback so /webhook,
+    // /photo-upload, /tool, and the user's server/ Hono routes all
+    // share the single PORT.
   } catch (err) {
     console.warn(`  ⚠️  MiniAppServer failed to start: ${err}`);
     console.warn("  Continuing with webview-only (cloud adapter idle).\n");
@@ -316,6 +406,10 @@ function getLocalIP(): string {
 const localIP = getLocalIP();
 const networkURL = `http://${localIP}:${PORT}`;
 
+// SSE stream + state write handler. Co-located at /__mentra/state:
+//   - GET  → subscribe via Server-Sent Events (snapshot + updates)
+//   - POST → set a key/value pair (used by webviews writing back state)
+//   - OPTIONS → CORS preflight
 const stateRoute = {
   GET(_req: Request): Response {
     const stream = new ReadableStream({
@@ -350,83 +444,88 @@ const stateRoute = {
       },
     });
   },
+
+  async POST(req: Request): Promise<Response> {
+    const body = (await req.json().catch(() => ({}))) as any;
+    if (body?.key && body?.value !== undefined) {
+      stateManager.set(body.key, body.value);
+    }
+    return Response.json({ ok: true }, { headers: { "Access-Control-Allow-Origin": "*" } });
+  },
+
+  OPTIONS(): Response {
+    return new Response(null, {
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  },
+};
+
+// ─── Framework routes (explicit, most-specific first) ───────────────────────
+// Each entry is either a Response, a single-arg handler, or a method-handler
+// object. Bun's router matches most-specific first, then falls through to the
+// wildcard that forwards into MiniAppServer.
+
+const stateJsonRoute = () =>
+  Response.json(stateManager.getAll(), {
+    headers: { "Access-Control-Allow-Origin": "*" },
+  });
+
+const runtimeInfoRoute = () =>
+  Response.json(
+    {
+      adapter: runtime.name,
+      reason: picked.reason,
+      miniAppServerRunning,
+      configRuntime: config.runtime ?? "auto",
+    },
+    { headers: { "Access-Control-Allow-Origin": "*" } },
+  );
+
+const injectTranscriptionRoute = {
+  async POST(req: Request): Promise<Response> {
+    const sim = (globalThis as any).__mentraSimAdapter as SimAdapter | undefined;
+    if (!sim) {
+      return Response.json({ ok: false, error: "inject/* is only available on the sim adapter" }, { status: 404 });
+    }
+    const body = (await req.json().catch(() => ({}))) as any;
+    sim.injectTranscription({
+      text: String(body.text ?? ""),
+      isFinal: body.isFinal !== false,
+      language: body.language,
+    });
+    return Response.json({ ok: true });
+  },
+};
+
+// Catch-all: forward anything not matched above into MiniAppServer. This is
+// how /webhook, /photo-upload, /tool, /health, /mentra-auth, and user-mounted
+// /api/* routes from server/index.ts reach the SDK. If we have no cloud
+// adapter (sim mode), MiniAppServer isn't booted, so we return 404.
+const catchAllRoute = (req: Request): Response | Promise<Response> => {
+  if (miniAppServer) return miniAppServer.fetch(req);
+  return new Response("Not found", { status: 404 });
 };
 
 Bun.serve({
   port: PORT,
   routes: {
+    // Webview entrypoints — HTMLRewriter + bundling + HMR.
     ...(webviewHtml ? { "/": webviewHtml, "/app/*": webviewHtml } : {}),
-    "/__mentra/state": stateRoute,
+
+    // Framework endpoints. All under /__mentra/* to avoid colliding with
+    // user's /api/* routes.
+    "/__mentra/state": stateRoute, // GET SSE, POST set, OPTIONS CORS
+    "/__mentra/state.json": stateJsonRoute, // GET → snapshot
+    "/__mentra/runtime": runtimeInfoRoute, // GET → adapter info
+    "/__mentra/inject/transcription": injectTranscriptionRoute, // POST (sim only)
+
+    // Everything else → MiniAppServer (or 404 if no cloud adapter).
+    "/*": catchAllRoute,
   } as any,
-  async fetch(req) {
-    const url = new URL(req.url);
-
-    if (url.pathname === "/__mentra/state.json") {
-      return Response.json(stateManager.getAll(), {
-        headers: { "Access-Control-Allow-Origin": "*" },
-      });
-    }
-
-    if (url.pathname === "/__mentra/state" && req.method === "POST") {
-      const body = await req.json();
-      if (body.key && body.value !== undefined) {
-        stateManager.set(body.key, body.value);
-      }
-      return Response.json({ ok: true }, { headers: { "Access-Control-Allow-Origin": "*" } });
-    }
-
-    // Runtime introspection — helpful for humans & integration tests.
-    if (url.pathname === "/__mentra/runtime") {
-      return Response.json(
-        {
-          adapter: runtime.name,
-          reason: picked.reason,
-          miniAppServerRunning,
-          configRuntime: config.runtime ?? "auto",
-        },
-        { headers: { "Access-Control-Allow-Origin": "*" } },
-      );
-    }
-
-    // Sim-only: inject a transcription event for testing. This endpoint
-    // simply doesn't exist when cloud adapter is active — injection into
-    // a real session would be wrong.
-    if (url.pathname === "/__mentra/inject/transcription" && req.method === "POST") {
-      const sim = (globalThis as any).__mentraSimAdapter as SimAdapter | undefined;
-      if (!sim) {
-        return Response.json({ ok: false, error: "inject/* is only available on the sim adapter" }, { status: 404 });
-      }
-      const body = (await req.json().catch(() => ({}))) as any;
-      sim.injectTranscription({
-        text: String(body.text ?? ""),
-        isFinal: body.isFinal !== false,
-        language: body.language,
-      });
-      return Response.json({ ok: true });
-    }
-
-    if (req.method === "OPTIONS") {
-      return new Response(null, {
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type",
-        },
-      });
-    }
-
-    if (userServer) {
-      try {
-        const res = await userServer.fetch(req);
-        if (res.status !== 404) return res;
-      } catch (err) {
-        console.error("  ❌ server/ handler threw:\n", err);
-        return new Response("server/ error", { status: 500 });
-      }
-    }
-
-    return new Response("Not found", { status: 404 });
-  },
   development: {
     hmr: true,
     console: true,
