@@ -14,6 +14,8 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@mentra/miniapp-cli": "workspace:*"
+    "@mentra/miniapp-cli": "workspace:*",
+    "bun-plugin-tailwind": "^0.1.2",
+    "tailwindcss": "^4.2.4"
   }
 }

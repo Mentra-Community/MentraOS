@@ -1,9 +1,8 @@
 import {useEffect, useRef, useState} from "react"
-import {useSession} from "@mentra/miniapp/react"
-import type {HeadingData} from "@mentra/miniapp"
-import {useGoogleMaps} from "./useGoogleMaps"
 
-type LatLng = {lat: number; lng: number}
+import {useUser} from "@/backend/hooks/useUser"
+import {bearingDeg, cardinal, haversineMeters} from "@/backend/lib/geometry/geometry"
+import type {LatLng} from "@/backend/lib/geometry/geometry"
 
 export function NavMap({
   me,
@@ -22,22 +21,12 @@ export function NavMap({
   breadcrumbs?: Array<LatLng>
   autoFollow?: boolean
 }) {
-  const {ready, error} = useGoogleMaps()
-  const session = useSession()
-
-  // Subscribe to native compass heading (TYPE_ROTATION_VECTOR fused
-  // through SensorManager on Android). The WebView's
-  // DeviceOrientationEvent doesn't work in this WebView build, so we
-  // get heading from the phone over the bridge instead.
-  const [compassHeading, setCompassHeading] = useState<number | null>(null)
-  useEffect(() => {
-    return session.heading.onUpdate((d: HeadingData) => {
-      setCompassHeading(d.degrees)
-    })
-  }, [session])
+  const user = useUser()
+  const ready = user.mapsReady
+  const error = user.mapsError
+  const compassHeading = user.heading
 
   // Fallback: derive heading from successive GPS positions while moving.
-  // Used only if the native compass never reports.
   const [gpsBearing, setGpsBearing] = useState<number | null>(null)
   const lastMeRef = useRef<LatLng | null>(null)
   useEffect(() => {
@@ -48,9 +37,9 @@ export function NavMap({
     const dist = haversineMeters(prev, me)
     if (dist < 3) return
     setGpsBearing(bearingDeg(prev, me))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [me?.lat, me?.lng])
 
-  // Prefer compass; fall back to GPS bearing.
   const effectiveHeading = compassHeading != null ? compassHeading : gpsBearing
   const headingSource: "compass" | "gps" | null =
     compassHeading != null ? "compass" : gpsBearing != null ? "gps" : null
@@ -76,21 +65,17 @@ export function NavMap({
       mapTypeId: "roadmap",
       clickableIcons: false,
     })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready])
 
   // "Me" cone (rotates with heading) + dot (always upright, drawn on top).
-  // We use two separate markers so the cone can rotate while the dot stays
-  // a clean circle — single-marker icons in google maps don't compose well.
   useEffect(() => {
     if (!ready || !mapRef.current || !me) return
     const g = window.google
     const pos = new g.maps.LatLng(me.lat, me.lng)
 
-    // Cone (rotates with heading; hidden when no heading)
     if (effectiveHeading != null) {
       const coneIcon = {
-        // Wide cone pointing UP (negative y). Big and bright so it's
-        // unambiguous which way the phone is facing.
         path: "M 0,-32 L 18,4 L 0,-2 L -18,4 Z",
         fillColor: "#1a73e8",
         fillOpacity: 0.55,
@@ -118,7 +103,6 @@ export function NavMap({
       meConeRef.current = null
     }
 
-    // Dot (always present, drawn on top of cone)
     const dotIcon = {
       path: g.maps.SymbolPath.CIRCLE,
       scale: 8,
@@ -173,15 +157,13 @@ export function NavMap({
     }
   }, [ready, destination?.lat, destination?.lng])
 
-  // Breadcrumb dots — where the user has actually been. We diff against
-  // the previous render so we only ever ADD markers (cheap), and clear
-  // everything when the array shrinks (start/stop/arrived).
+  // Breadcrumb dots — diff vs previous render so we only ADD markers
+  // (cheap), and clear everything when the array shrinks (start/stop).
   useEffect(() => {
     if (!ready || !mapRef.current) return
     const g = window.google
     const trail = breadcrumbs ?? []
 
-    // Reset condition: array shrank or was emptied
     if (trail.length < crumbMarkersRef.current.length) {
       crumbMarkersRef.current.forEach((m) => m.setMap(null))
       crumbMarkersRef.current = []
@@ -220,8 +202,8 @@ export function NavMap({
       routePoints && routePoints.length > 1
         ? routePoints
         : me && destination
-        ? [me, destination]
-        : []
+          ? [me, destination]
+          : []
 
     if (path.length < 2) {
       routeRef.current?.setMap(null)
@@ -244,83 +226,27 @@ export function NavMap({
   }, [ready, me?.lat, me?.lng, destination?.lat, destination?.lng, routePoints])
 
   if (error) {
-    return <div style={{padding: 12, color: "#b00", fontSize: 13}}>Map failed to load: {error}</div>
+    return <div className="p-3 text-red-700 text-[13px]">Map failed to load: {error}</div>
   }
 
   return (
-    <div style={{position: "relative", height: 320, borderRadius: 12, overflow: "hidden"}}>
-      <div ref={containerRef} style={{width: "100%", height: "100%"}} />
+    <div className="relative h-80 rounded-xl overflow-hidden">
+      <div ref={containerRef} className="w-full h-full" />
 
       {!ready ? (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "#f4f4f4",
-            color: "#888",
-            fontSize: 13,
-          }}>
+        <div className="absolute inset-0 flex items-center justify-center bg-neutral-100 text-neutral-500 text-[13px]">
           loading map…
         </div>
       ) : null}
 
-      {/* Heading readout */}
       {effectiveHeading != null ? (
-        <div style={overlayStyles.heading}>
+        <div className="absolute right-2 bottom-2 bg-black/65 text-white px-2.5 py-1 rounded-lg text-xs font-mono">
           {Math.round(effectiveHeading)}° {cardinal(effectiveHeading)}{" "}
-          <span style={overlayStyles.headingSource}>
+          <span className="opacity-60 text-[10px] ml-1">
             {headingSource === "compass" ? "compass" : "gps"}
           </span>
         </div>
       ) : null}
-
     </div>
   )
-}
-
-const overlayStyles = {
-  heading: {
-    position: "absolute",
-    right: 8,
-    bottom: 8,
-    background: "rgba(0,0,0,0.65)",
-    color: "white",
-    padding: "4px 10px",
-    borderRadius: 8,
-    fontSize: 12,
-    fontFamily: "ui-monospace, monospace",
-  } as React.CSSProperties,
-  headingSource: {opacity: 0.6, fontSize: 10, marginLeft: 4} as React.CSSProperties,
-}
-
-function cardinal(deg: number): string {
-  const dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
-  const idx = Math.round(((deg % 360) + 360) / 45) % 8
-  return dirs[idx]
-}
-
-function haversineMeters(a: LatLng, b: LatLng): number {
-  const R = 6371000
-  const toRad = (d: number) => (d * Math.PI) / 180
-  const dLat = toRad(b.lat - a.lat)
-  const dLng = toRad(b.lng - a.lng)
-  const lat1 = toRad(a.lat)
-  const lat2 = toRad(b.lat)
-  const h =
-    Math.sin(dLat / 2) ** 2 + Math.sin(dLng / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2)
-  return 2 * R * Math.asin(Math.sqrt(h))
-}
-
-function bearingDeg(a: LatLng, b: LatLng): number {
-  const toRad = (d: number) => (d * Math.PI) / 180
-  const toDeg = (r: number) => (r * 180) / Math.PI
-  const lat1 = toRad(a.lat)
-  const lat2 = toRad(b.lat)
-  const dLng = toRad(b.lng - a.lng)
-  const y = Math.sin(dLng) * Math.cos(lat2)
-  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng)
-  return (toDeg(Math.atan2(y, x)) + 360) % 360
 }

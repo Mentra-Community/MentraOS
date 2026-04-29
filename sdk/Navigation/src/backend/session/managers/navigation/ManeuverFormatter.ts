@@ -1,0 +1,151 @@
+/**
+ * ManeuverFormatter
+ *
+ * Pure presentation helpers for `NavManeuver` data — glyphs, arrows,
+ * human verbs, headlines, and the glasses NOW/NEXT line pair. Lives
+ * under `user.navigation.format` so anything maneuver-related has a
+ * single entry point.
+ *
+ * Stateless: every method is a pure function of its inputs. The class
+ * shape exists only so callers can reach the helpers via the
+ * NavigationManager (`user.navigation.format.headline(m)`).
+ */
+
+import type {NavManeuver} from "@mentra/miniapp"
+
+import {formatDistance} from "@/backend/lib/formatDistance/formatDistance"
+
+/** Distance threshold below which a turn becomes the active instruction. */
+const IMMINENT_M = 30
+
+export class ManeuverFormatter {
+  /** A "go straight" continuation rather than a turn. */
+  isStraight(m: NavManeuver | null): boolean {
+    return !!m && (m.maneuverType === "STRAIGHT" || m.maneuverType === "CONTINUE")
+  }
+
+  /** Capitalize first letter. */
+  cap(s: string): string {
+    return s.charAt(0).toUpperCase() + s.slice(1)
+  }
+
+  /** Big glyph for the OrientationCard / pill. */
+  glyph(type: string): string {
+    switch (type.toUpperCase()) {
+      case "TURN_LEFT":
+        return "↰"
+      case "TURN_RIGHT":
+        return "↱"
+      case "SLIGHT_LEFT":
+        return "↖"
+      case "SLIGHT_RIGHT":
+        return "↗"
+      case "SHARP_LEFT":
+        return "⤴"
+      case "SHARP_RIGHT":
+        return "⤵"
+      case "U_TURN":
+        return "↶"
+      case "STRAIGHT":
+      case "CONTINUE":
+        return "↑"
+      case "ARRIVE":
+        return "●"
+      default:
+        return "↑"
+    }
+  }
+
+  /** Compact arrow for short text lines (←/→/↑). */
+  arrow(type: string): string {
+    const t = type.toUpperCase()
+    if (t.includes("LEFT")) return "←"
+    if (t.includes("RIGHT")) return "→"
+    if (t === "U_TURN") return "↺"
+    return "↑"
+  }
+
+  /** Human-readable verb. */
+  humanize(type: string): string {
+    switch (type.toUpperCase()) {
+      case "TURN_LEFT":
+        return "turn left"
+      case "TURN_RIGHT":
+        return "turn right"
+      case "SLIGHT_LEFT":
+        return "slight left"
+      case "SLIGHT_RIGHT":
+        return "slight right"
+      case "SHARP_LEFT":
+        return "sharp left"
+      case "SHARP_RIGHT":
+        return "sharp right"
+      case "U_TURN":
+        return "make a U-turn"
+      case "STRAIGHT":
+      case "CONTINUE":
+        return "continue straight"
+      case "ARRIVE":
+        return "arrive"
+      default:
+        return type.toLowerCase().replace(/_/g, " ")
+    }
+  }
+
+  /**
+   * One-line headline for the maneuver pill. Built from the categorical
+   * type + distance — no road names.
+   *
+   *   "In 200 m, turn right"
+   *   "Continue straight"
+   *   "Arriving in 35 m"
+   */
+  headline(m: NavManeuver): string {
+    const verb = this.humanize(m.maneuverType)
+    if (m.maneuverType === "ARRIVE") {
+      return m.distanceMeters > 0 ? `Arriving in ${formatDistance(m.distanceMeters)}` : "Arriving"
+    }
+    if (m.maneuverType === "STRAIGHT") {
+      return "Continue straight"
+    }
+    if (m.distanceMeters > 0) {
+      return `In ${formatDistance(m.distanceMeters)}, ${verb}`
+    }
+    return this.cap(verb)
+  }
+
+  /**
+   * Two short lines for the glasses HUD — NOW (top) + NEXT (bottom).
+   * Returns `next: null` when the imminent turn IS the active instruction
+   * (≤ IMMINENT_M), in which case the caller falls back to a single line.
+   */
+  glassesLines(m: NavManeuver): {now: string; next: string | null} {
+    const dist = m.distanceMeters
+    const isStraightT = this.isStraight(m)
+    const arrowed = (verb: string) => `${this.arrow(m.maneuverType)} ${verb}`
+
+    if (!isStraightT && dist >= 0 && dist <= IMMINENT_M) {
+      const verb = this.humanize(m.maneuverType)
+      const onto = m.toRoad ? ` onto ${m.toRoad}` : ""
+      return {now: arrowed(`${this.cap(verb)}${onto}`), next: null}
+    }
+
+    const road = m.fromRoad?.trim()
+    const distStr = dist > 0 ? formatDistance(dist) : null
+    const nowLine =
+      road && distStr
+        ? `↑ ${road} • ${distStr}`
+        : road
+          ? `↑ ${road}`
+          : distStr
+            ? `↑ Continue ${distStr}`
+            : "↑ Continue"
+
+    if (isStraightT) {
+      return {now: nowLine, next: null}
+    }
+    const verb = this.humanize(m.maneuverType)
+    const onto = m.toRoad ? ` onto ${m.toRoad}` : ""
+    return {now: nowLine, next: arrowed(`Then ${verb}${onto}`)}
+  }
+}
