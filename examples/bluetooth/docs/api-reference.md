@@ -142,7 +142,6 @@ sdk.setDashboardPosition(
 sdk.setHeadUpAngle(angleDegrees = 20)
 sdk.setScreenDisabled(false)
 sdk.setGalleryMode(MentraGalleryMode.AUTO)
-sdk.setButtonMode(MentraButtonMode.PHOTO)
 sdk.setButtonPhotoSettings(MentraButtonPhotoSettings(size = MentraPhotoSize.MEDIUM))
 sdk.setButtonVideoRecordingSettings(
     MentraButtonVideoRecordingSettings(width = 1280, height = 720, fps = 30)
@@ -164,7 +163,6 @@ try await sdk.setDashboardPosition(
 try await sdk.setHeadUpAngle(20)
 try await sdk.setScreenDisabled(false)
 try await sdk.setGalleryMode(.auto)
-try await sdk.setButtonMode(.photo)
 try await sdk.setButtonPhotoSettings(
     MentraButtonPhotoSettings(size: .medium)
 )
@@ -177,6 +175,8 @@ try await sdk.setCameraFov(.wide)
 ```
 
 Unsupported settings should fail through a typed error or capability status, not silently succeed.
+
+`setGalleryMode` controls whether hardware-button presses also capture locally on Mentra Live. Button presses are always reported as SDK events; when local capture is enabled, a short press captures a photo and a long press starts or stops video recording. Use `setButtonPhotoSettings` and `setButtonVideoRecordingSettings` to configure those captures.
 
 ## Microphone And Audio
 
