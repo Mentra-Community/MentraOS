@@ -2,7 +2,6 @@
   "name": "{{projectName}}",
   "private": true,
   "scripts": {
-    "postinstall": "bun ./scripts/link-local-sdk-react.ts",
     "dev": "mentra-miniapp dev",
     "build": "bun run build.ts",
     "release": "mentra-miniapp release",

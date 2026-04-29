@@ -2,13 +2,11 @@
 
 import {existsSync} from "fs"
 import {cp, mkdir, readFile, writeFile} from "fs/promises"
-import {basename, dirname, join, relative, resolve} from "path"
+import {basename, dirname, join, resolve} from "path"
 import {fileURLToPath} from "url"
 import {confirm, intro, isCancel, outro, text} from "@clack/prompts"
 
 const here = dirname(fileURLToPath(import.meta.url))
-const packageRoot = resolve(here, "..")
-const sdkRoot = resolve(packageRoot, "..")
 const templateDir = resolve(here, "..", "template")
 
 interface CliArgs {
@@ -72,33 +70,6 @@ async function replaceInFile(path: string, replacements: Record<string, string>)
     contents = contents.replaceAll(`{{${key}}}`, value)
   }
   await writeFile(path, contents)
-}
-
-function relativeFileDependency(fromDir: string, toDir: string): string {
-  const rel = relative(fromDir, toDir).replaceAll("\\", "/")
-  if (rel.startsWith("..")) return `file:${toDir}`
-  return rel.startsWith(".") ? `file:${rel}` : `file:./${rel}`
-}
-
-async function applyLocalSdkDependenciesIfAvailable(targetDir: string): Promise<void> {
-  const miniappDir = join(sdkRoot, "miniapp")
-  const cliDir = join(sdkRoot, "miniapp-cli")
-  if (!existsSync(join(miniappDir, "package.json")) || !existsSync(join(cliDir, "package.json"))) {
-    return
-  }
-
-  const packageJsonPath = join(targetDir, "package.json")
-  const pkg = JSON.parse(await readFile(packageJsonPath, "utf8")) as {
-    dependencies?: Record<string, string>
-    devDependencies?: Record<string, string>
-  }
-
-  pkg.dependencies ??= {}
-  pkg.devDependencies ??= {}
-  pkg.dependencies["@mentra/miniapp"] = relativeFileDependency(targetDir, miniappDir)
-  pkg.devDependencies["@mentra/miniapp-cli"] = relativeFileDependency(targetDir, cliDir)
-
-  await writeFile(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`)
 }
 
 async function main(): Promise<void> {
@@ -179,7 +150,6 @@ async function main(): Promise<void> {
     replaceInFile(join(targetDir, "index.html"), replacements),
     replaceInFile(join(targetDir, "src", "App.tsx"), replacements),
   ])
-  await applyLocalSdkDependenciesIfAvailable(targetDir)
 
   outro(`Created ${projectName}. Next: cd ${targetDir} && bun install && bun run dev`)
 }
