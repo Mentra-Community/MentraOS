@@ -231,6 +231,8 @@ Also: `takePhoto()` should reject instantly if `isCurrentlyStreaming()` is true 
 | `stopStream()` transport closed            | Message dropped silently    | 0ms (looks like success) | Log warning, best-effort                             |
 | `checkExistingStream()` no response        | False negative              | 5s                       | Acceptable, but should indicate timeout vs confirmed |
 
+**See also: 096-k.** The 30-second timeouts on `takePhoto()` and `startStream()` (managed) are the canonical examples of "we waited 30s to learn nothing happened." Real-time per-hop acks (096-k) collapse those to ~1s for the delivery-failure case.
+
 ### 096-b: SpeakerManager — play/speak/stop fail silently
 
 7 `sendMessage` call sites. 5 are fire-and-forget with no feedback:
@@ -292,6 +294,8 @@ When the SDK's WebSocket to the cloud is closed (hop 3 transport down), what sho
    - **State-changing operations** (startStream direct): reject immediately. Setting local flags (`isStreaming = true`) when the message can't be delivered corrupts state.
 
 Option 3 matches the v3 design philosophy: simple cases stay simple (display commands just work or don't), complex cases give clear feedback (photo/stream requests tell you why they failed).
+
+**Interaction with 096-k.** Per-hop delivery acks change what "transport-down" means for request-response operations: instead of "is the SDK's WebSocket open right now?", it becomes "did the previous hops actually deliver our request?" Option 3's "request-response operations reject immediately if transport is down" upgrades to "request-response operations reject immediately if transport is down OR if no delivery ack arrived within 1s." Same architectural decision, sharper observable signal.
 
 ### 096-g: Cloud-side fast rejection
 
@@ -449,6 +453,98 @@ Target: given a request ID from a developer's error log, a team member can query
 [photo_req_abc123] Sent error response to app: "camera_busy_streaming"
 ```
 
+### 096-k: Real-time per-hop delivery acks
+
+**Sibling to 096-h.** Where 096-h gives us _post-hoc_ observability (correlate logs across hops after the fact), this gives us _real-time_ failure detection: the SDK knows in ~500ms whether a request was delivered, instead of waiting the full execution timeout.
+
+#### Motivation
+
+Today the SDK sends a command (`PHOTO_REQUEST`, `MANAGED_STREAM_REQUEST`, etc.) and the next thing it hears is the final result. If the request never gets delivered (cloud → phone WS dropped, phone → glasses BLE dropped, app crashed mid-flight), the SDK only finds out when its execution timeout fires:
+
+```
+14:43:27  PHOTO_REQUEST sent
+14:43:57  Photo request timed out after 30000ms  ← 30 second black box
+```
+
+The SDK has no way to distinguish:
+
+1. **Delivery failed** — cloud's send buffer is backed up, phone WS is in zombie state (dead but not yet detected by TCP), command never left the cloud
+2. **Delivery succeeded but execution failed silently** — phone forwarded to glasses, BLE timed out, ASG client got the command but crashed
+3. **Delivery and execution succeeded but ASG client is genuinely slow** — fell back from WiFi to BLE upload, transfer in progress
+
+All three look identical: 30 seconds of nothing. The right response to each is different (1 = retry immediately, 2 = log and abort, 3 = wait patiently). Without per-hop acks, the SDK has to assume worst case and waits the full timeout for all of them.
+
+#### Proposal
+
+Each hop emits a delivery ack as soon as it has the request enqueued for the next hop. The acks flow back to the SDK alongside (not in place of) the eventual result.
+
+```
+SDK                   Cloud                Phone               Glasses
+ │                      │                    │                   │
+ │ PHOTO_REQUEST ─────► │                    │                   │
+ │ ◄─ ack(cloud) ───────│  (cloud queued it for forward)         │
+ │                      │ photo_request ────►│                   │
+ │                      │ ◄─ ack(phone) ─────│  (phone got it)   │
+ │ ◄─ ack(phone) ───────│  (cloud relays the phone ack)          │
+ │                      │                    │ BLE cmd ────────► │
+ │                      │                    │ ◄── ble_ack ───── │
+ │ ◄─ ack(glasses) ─────│  (cloud relays)                        │
+ │                      │                    │                   │ (capturing)
+ │                      │                    │                   │
+ │ ◄─ PHOTO_RESULT ─────────────────────────────────────────── (eventual)
+```
+
+Acks are small JSON messages (`{ type: "request_ack", requestId, hop, receivedAt }`). They share the WebSocket with everything else.
+
+#### Minimum viable version
+
+Only one ack matters for unblocking 90% of the value: **"phone received."** That single ack confirms the request left the cloud's `glasses-ws` send buffer and reached the phone. After that, everything is physical — BLE radio, glasses hardware, WiFi — and "real" slowness is plausible.
+
+For the MVP:
+
+- Phone's `SocketComms` (in `mobile/modules/core`) emits `{ type: "request_ack", requestId, hop: "phone", receivedAt }` immediately when it receives any cloud command, before forwarding to glasses.
+- Cloud relays the ack back to the SDK over the same `/app-ws` connection, untouched.
+- SDK's pending-request tracker (`PhotoManager`, `CameraManager.startStream`, etc.) gains a state machine: `awaiting_ack` → `awaiting_result`. Two timeouts:
+  - `ACK_TIMEOUT` (1s default): if no ack arrives, the request almost certainly never left the cloud. **Retry once.** If the retry also doesn't ack, fail loudly with `"request not delivered to phone"` (hop-2 problem).
+  - `RESULT_TIMEOUT` (existing 15-30s): same as today. After ack but before result. Means glasses are slow or stuck.
+
+#### What this distinguishes
+
+When a developer sees a failure today, the error message can't differentiate causes. With acks:
+
+| Failure mode                               | Today                           | With acks                                                           |
+| ------------------------------------------ | ------------------------------- | ------------------------------------------------------------------- |
+| Cloud-to-phone WS dead (zombie)            | 30s timeout, generic            | 1s ack timeout → retry → fail with "phone not reachable"            |
+| Phone process crashed mid-request          | 30s timeout, generic            | 1s ack timeout → retry → fail with "phone unresponsive"             |
+| Phone got it, glasses BLE dropped          | 30s timeout, generic            | Ack(phone) received, then 30s timeout → fail with "glasses stalled" |
+| Phone got it, glasses processing slowly    | 30s timeout, looks like failure | Ack(phone) received, eventual success → no false alarm              |
+| Phone got it, glasses on WiFi, fast upload | Success in ~3s                  | Same as today, plus we observed 80ms ack latency                    |
+
+#### Why both 096-h and 096-k
+
+096-h (request ID propagation) and 096-k (delivery acks) attack the same problem from opposite ends:
+
+- **096-h is for the team after the fact.** Read the logs, see where the request stopped. Diagnose bug, ship fix.
+- **096-k is for the SDK in the moment.** Detect delivery failure in 1s, retry transparently, fail with a precise error if the retry also fails.
+
+Both are needed. 096-h alone means failures are diagnosable but still slow and silent. 096-k alone means failures are fast but the team has no breadcrumb trail to the root cause. Together they make the current architecture as legible as it can possibly be — which is the bridge we need until the client-side migration eliminates the multi-hop architecture entirely.
+
+#### Compatibility with the client-side migration
+
+This is not wasted work. On the post-migration architecture (mini app runs on the phone), most non-audio operations don't cross hops anymore — they're in-process. Acks are implicit (function call returned). Audio still crosses to the cloud SFU for the same reasons it does today, and audio operations (mic chunks, transcription, speaker streams) still benefit from real-time ack visibility.
+
+So 096-k delivers value now (immediate diagnostic improvement on the current architecture) and stays useful later (covers the only hops that survive the migration).
+
+#### Code pointers
+
+- **Phone (`mobile/modules/core`):** `SocketComms` is where commands are received from the cloud and forwarded to ASG. Add `request_ack` emission right after the receive.
+- **Cloud (`cloud/packages/cloud/src/services/session/handlers/`):** the `glasses-message-handler` and `app-message-handler` need to know `request_ack` is a passthrough message that should be relayed without filtering.
+- **SDK (`@mentra/sdk` / `@mentra/js/runtime/internals/session/managers/`):** every manager that uses `pendingRequests` (`PhotoManager`, `CameraManager` for managed streams, `LocationManager`, `SpeakerManager` for `play()` with response) needs the two-state tracking and two timeouts.
+
+#### Origin
+
+This issue was crystallized during the flash POC run on April 17 2026, where a photo timeout produced a 30-second black box despite the SDK having all the necessary plumbing (request IDs, async response handling) to detect delivery failure in 1 second. Per-hop acks turn that latent capability into observability.
+
 ### Managers that don't send messages (no sub-issue needed)
 
 | Manager              | Why no sub-issue                                                                                                                                              |
@@ -467,7 +563,8 @@ For the v3 beta:
 2. **096-f** (transport-down architectural decision) — unlocks all other sub-issues
 3. **096-e** (precondition checks) — quick wins, biggest fail-fast improvement
 4. **096-g** (cloud-side fast rejection) — biggest latency improvement, requires cloud changes
-5. **096-b** (SpeakerManager) — second most common developer operation after camera
-6. **096-h** (request ID propagation) — enables team debugging, cross-cutting
-7. **096-c** (DisplayManager) — lower priority, fire-and-forget is acceptable for display
-8. **096-d** (LedManager) — lowest priority, cosmetic failures
+5. **096-k** (real-time per-hop acks) — distinguishes delivery failure from execution failure in 1s instead of 30s
+6. **096-b** (SpeakerManager) — second most common developer operation after camera
+7. **096-h** (request ID propagation) — enables team debugging, cross-cutting (pairs with 096-k)
+8. **096-c** (DisplayManager) — lower priority, fire-and-forget is acceptable for display
+9. **096-d** (LedManager) — lowest priority, cosmetic failures
