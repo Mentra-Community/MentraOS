@@ -20,6 +20,10 @@ const apiKey = process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY ?? ""
 if (!apiKey) {
   console.warn("WARN: EXPO_PUBLIC_GOOGLE_NAV_API_KEY is not set — maps will fail to load.")
 }
+const placesKey = process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY ?? ""
+if (!placesKey) {
+  console.warn("WARN: EXPO_PUBLIC_GOOGLE_PLACES_API_KEY is not set — search will fail.")
+}
 
 const tailwind = (await import("bun-plugin-tailwind")).default
 
@@ -31,6 +35,7 @@ const result = await Bun.build({
   plugins: [tailwind],
   define: {
     "process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY": JSON.stringify(apiKey),
+    "process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY": JSON.stringify(placesKey),
   },
 })
 

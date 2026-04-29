@@ -3,7 +3,7 @@
  *
  * The miniapp ships as a static bundle in production, but during `bun run
  * dev` the WebView loads from this Bun.serve so we get HMR + can serve a
- * runtime `/api/config` endpoint (the prod build inlines the same value
+ * runtime `/api/config` endpoint (the prod build inlines the same values
  * via `define` in build.ts).
  */
 
@@ -19,6 +19,7 @@ Bun.serve({
     "/api/config": () =>
       Response.json({
         googleMapsApiKey: process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY ?? "",
+        googlePlacesApiKey: process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY ?? "",
       }),
   },
   development: {

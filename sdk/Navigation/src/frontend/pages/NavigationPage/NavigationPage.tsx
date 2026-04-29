@@ -1,20 +1,24 @@
 import {useEffect, useRef, useState} from "react"
 import type {NavManeuver, NavRoute, NavUpdate} from "@mentra/miniapp"
 
-import {Controls} from "@/frontend/pages/NavigationPage/components/Controls/Controls"
+import {FloatingDevPanel} from "@/frontend/components/FloatingDevPanel/FloatingDevPanel"
+import {
+  SimulationControls,
+  StartStopButton,
+} from "@/frontend/pages/NavigationPage/components/Controls/Controls"
 import {DeviateButton} from "@/frontend/pages/NavigationPage/components/DeviateButton/DeviateButton"
 import {LiveLog} from "@/frontend/pages/NavigationPage/components/LiveLog/LiveLog"
+import {LocationSearch} from "@/frontend/pages/NavigationPage/components/LocationSearch/LocationSearch"
 import {MyLocationCard} from "@/frontend/pages/NavigationPage/components/MyLocationCard/MyLocationCard"
 import {NavMap} from "@/frontend/pages/NavigationPage/components/NavMap/NavMap"
 import {OrientationCard} from "@/frontend/pages/NavigationPage/components/OrientationCard/OrientationCard"
 import {useUser} from "@/backend/hooks/useUser"
 import {formatDistance} from "@/backend/lib/formatDistance/formatDistance"
 import type {LatLng} from "@/backend/lib/geometry/geometry"
+import type {PlaceDetails} from "@/backend/lib/places/places"
 
 export type NavStatus = "idle" | "navigating" | "rerouting" | "arrived"
 export type LogEntry = {id: number; ts: number; line: string}
-
-const DEFAULTS = {lat: "37.7788527", lng: "-122.4297779"}
 
 let logIdSeq = 0
 
@@ -25,9 +29,9 @@ export function NavigationPage() {
   const user = useUser()
   const {coords, heading, navigation, display} = user
 
-  // Form state — controlled inputs for destination + simulation knobs.
-  const [lat, setLat] = useState(DEFAULTS.lat)
-  const [lng, setLng] = useState(DEFAULTS.lng)
+  // Destination chosen via Places search. `null` until the user picks one;
+  // setting it shows the pin on the map immediately, before Start.
+  const [destination, setDestination] = useState<PlaceDetails | null>(null)
   const [simulate, setSimulate] = useState(true)
   const [speedMultiplier, setSpeedMultiplier] = useState(5)
 
@@ -128,12 +132,11 @@ export function NavigationPage() {
   }
 
   async function handleStart() {
-    const latNum = Number(lat)
-    const lngNum = Number(lng)
-    if (!Number.isFinite(latNum) || !Number.isFinite(lngNum)) {
-      append("ERROR: lat/lng must be numbers")
+    if (!destination) {
+      append("ERROR: pick a destination first")
       return
     }
+    const {lat: latNum, lng: lngNum} = destination
 
     setLog([])
     setManeuver(null)
@@ -141,7 +144,9 @@ export function NavigationPage() {
     setActiveDestination({lat: latNum, lng: lngNum})
     setRoutePoints(null)
     setBreadcrumbs([])
-    append(`start → ${latNum}, ${lngNum}${simulate ? ` (sim ${speedMultiplier}x)` : ""}`)
+    append(
+      `start → ${destination.name || `${latNum}, ${lngNum}`}${simulate ? ` (sim ${speedMultiplier}x)` : ""}`,
+    )
 
     if (!navUpdateUnsubRef.current) {
       navUpdateUnsubRef.current = navigation.onUpdate(handleNavUpdate)
@@ -201,8 +206,6 @@ export function NavigationPage() {
     <div className="p-4 max-w-2xl mx-auto">
       <h1 className="text-2xl font-bold mb-3">Navigation</h1>
 
-      <MyLocationCard coords={coords} />
-
       {running ? (
         <OrientationCard
           me={me}
@@ -211,6 +214,19 @@ export function NavigationPage() {
           routePoints={routePoints}
         />
       ) : null}
+
+      <LocationSearch
+        selected={destination}
+        onSelect={(place) => {
+          setDestination(place)
+          if (!running) setActiveDestination({lat: place.lat, lng: place.lng})
+        }}
+        onClear={() => {
+          setDestination(null)
+          if (!running) setActiveDestination(null)
+        }}
+        disabled={running}
+      />
 
       <div className="mb-3">
         <NavMap
@@ -221,23 +237,27 @@ export function NavigationPage() {
         />
       </div>
 
-      <Controls
-        lat={lat}
-        lng={lng}
-        setLat={setLat}
-        setLng={setLng}
-        simulate={simulate}
-        setSimulate={setSimulate}
-        speedMultiplier={speedMultiplier}
-        setSpeedMultiplier={setSpeedMultiplier}
+      <StartStopButton
         running={running}
+        canStart={!!destination}
+        simulate={simulate}
+        speedMultiplier={speedMultiplier}
         onStart={handleStart}
         onStop={handleStop}
       />
 
-      {running && simulate ? <DeviateButton onDeviate={handleDeviate} /> : null}
-
-      <LiveLog log={log} running={running} status={status} maneuver={maneuver} />
+      <FloatingDevPanel title="Navigation Dev" storageKey="NavigationPage:dev">
+        <MyLocationCard coords={coords} />
+        <SimulationControls
+          simulate={simulate}
+          setSimulate={setSimulate}
+          speedMultiplier={speedMultiplier}
+          setSpeedMultiplier={setSpeedMultiplier}
+          running={running}
+        />
+        {running && simulate ? <DeviateButton onDeviate={handleDeviate} /> : null}
+        <LiveLog log={log} running={running} status={status} maneuver={maneuver} />
+      </FloatingDevPanel>
     </div>
   )
 }
