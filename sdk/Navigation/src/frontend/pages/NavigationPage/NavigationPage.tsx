@@ -2,10 +2,8 @@ import {useEffect, useRef, useState} from "react"
 import type {NavManeuver, NavRoute, NavUpdate} from "@mentra/miniapp"
 
 import {FloatingDevPanel} from "@/frontend/components/FloatingDevPanel/FloatingDevPanel"
-import {
-  SimulationControls,
-  StartStopButton,
-} from "@/frontend/pages/NavigationPage/components/Controls/Controls"
+import {SimulationControls} from "@/frontend/pages/NavigationPage/components/Controls/Controls"
+import {DestinationDrawer} from "@/frontend/pages/NavigationPage/components/DestinationDrawer/DestinationDrawer"
 import {DeviateButton} from "@/frontend/pages/NavigationPage/components/DeviateButton/DeviateButton"
 import {LiveLog} from "@/frontend/pages/NavigationPage/components/LiveLog/LiveLog"
 import {LocationSearch} from "@/frontend/pages/NavigationPage/components/LocationSearch/LocationSearch"
@@ -209,6 +207,7 @@ export function NavigationPage() {
         destination={activeDestination}
         routePoints={routePoints}
         breadcrumbs={breadcrumbs}
+        autoFollow={running}
       />
 
       {/* Top floating stack — search bar, then orientation card while running. */}
@@ -240,19 +239,20 @@ export function NavigationPage() {
         ) : null}
       </div>
 
-      {/* Bottom floating Start/Stop pill. */}
-      <div className="absolute bottom-6 left-0 right-0 px-6 flex justify-center pointer-events-none">
-        <div className="pointer-events-auto w-full max-w-sm">
-          <StartStopButton
-            running={running}
-            canStart={!!destination}
-            simulate={simulate}
-            speedMultiplier={speedMultiplier}
-            onStart={handleStart}
-            onStop={handleStop}
-          />
-        </div>
-      </div>
+      <DestinationDrawer
+        destination={destination}
+        me={me}
+        running={running}
+        canStart={!!destination}
+        simulate={simulate}
+        speedMultiplier={speedMultiplier}
+        onStart={handleStart}
+        onStop={handleStop}
+        onClose={() => {
+          setDestination(null)
+          if (!running) setActiveDestination(null)
+        }}
+      />
 
       <FloatingDevPanel title="Navigation Dev" storageKey="NavigationPage:dev">
         <MyLocationCard coords={coords} />
@@ -280,6 +280,27 @@ export function NavigationPage() {
           setSpeedMultiplier={setSpeedMultiplier}
           running={running}
         />
+        <button
+          onClick={() => {
+            // If no destination is picked yet, inject a fake one so the
+            // drawer becomes visible. Toggling `running` after that
+            // flips the drawer between preview and running layouts.
+            if (!destination) {
+              setDestination({
+                placeId: "dev-fake",
+                lat: 37.7956,
+                lng: -122.3933,
+                name: "Dev Test Destination",
+                address: "1 Embarcadero Center, San Francisco, CA",
+              })
+              setRunning(true)
+              return
+            }
+            setRunning((r) => !r)
+          }}
+          className="w-full mt-2 mb-1 px-3 py-2.5 rounded-xl text-sm font-semibold border border-dashed border-purple-300 bg-purple-50 text-purple-900">
+          🧪 Toggle drawer mode (running={String(running)})
+        </button>
         {running && simulate ? <DeviateButton onDeviate={handleDeviate} /> : null}
         <LiveLog log={log} running={running} status={status} maneuver={maneuver} />
       </FloatingDevPanel>

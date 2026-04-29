@@ -61,7 +61,7 @@ export function NavMap({
       center: me ?? destination ?? {lat: 37.7956, lng: -122.3933},
       zoom: 17,
       disableDefaultUI: true,
-      zoomControl: true,
+      zoomControl: false,
       gestureHandling: "greedy",
       mapTypeId: "roadmap",
       clickableIcons: false,
@@ -69,6 +69,20 @@ export function NavMap({
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready])
+
+  // Re-center on the user the first time their position arrives — handles
+  // the case where the map initialized before the GPS fix landed. After
+  // this initial centering, the user's manual panning is respected
+  // (subsequent updates only pan when autoFollow is on or a destination
+  // changes).
+  const initialCenteredRef = useRef(false)
+  useEffect(() => {
+    if (!ready || !mapRef.current || !me) return
+    if (initialCenteredRef.current) return
+    if (destination) return // a destination drives centering instead
+    initialCenteredRef.current = true
+    mapRef.current.panTo(new window.google.maps.LatLng(me.lat, me.lng))
+  }, [ready, me?.lat, me?.lng, destination])
 
   // "Me" cone (rotates with heading) + dot (always upright, drawn on top).
   useEffect(() => {
@@ -130,13 +144,17 @@ export function NavMap({
     }
   }, [ready, me?.lat, me?.lng, effectiveHeading, autoFollow])
 
-  // Destination marker
+  // Destination marker — also pan/zoom the map to the destination the
+  // first time it appears (or whenever it changes to a new place), so
+  // picking a search result re-centers the map on it.
+  const centeredDestRef = useRef<string | null>(null)
   useEffect(() => {
     if (!ready || !mapRef.current) return
     const g = window.google
     if (!destination) {
       destMarkerRef.current?.setMap(null)
       destMarkerRef.current = null
+      centeredDestRef.current = null
       return
     }
     const pos = new g.maps.LatLng(destination.lat, destination.lng)
@@ -156,6 +174,13 @@ export function NavMap({
       })
     } else {
       destMarkerRef.current.setPosition(pos)
+    }
+
+    const key = `${destination.lat.toFixed(6)},${destination.lng.toFixed(6)}`
+    if (centeredDestRef.current !== key) {
+      centeredDestRef.current = key
+      mapRef.current.panTo(pos)
+      mapRef.current.setZoom(16)
     }
   }, [ready, destination?.lat, destination?.lng])
 

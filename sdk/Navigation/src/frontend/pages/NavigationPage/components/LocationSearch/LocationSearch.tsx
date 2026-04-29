@@ -25,6 +25,7 @@ export function LocationSearch({selected, onSelect, onClear, disabled}: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const inputRef = useRef<HTMLInputElement | null>(null)
 
   // When something is selected, the input shows the chosen place and the
   // dropdown stays closed. Typing again clears the selection.
@@ -69,6 +70,8 @@ export function LocationSearch({selected, onSelect, onClear, disabled}: Props) {
     setOpen(false)
     setLoading(true)
     setError(null)
+    // Dismiss the on-screen keyboard.
+    inputRef.current?.blur()
     try {
       const details = await session.details(s.placeId)
       session.reset()
@@ -102,6 +105,7 @@ export function LocationSearch({selected, onSelect, onClear, disabled}: Props) {
             className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-700 pointer-events-none z-10"
           />
           <input
+            ref={inputRef}
             className="block w-full h-full pl-10 pr-9 py-2 rounded-[15px] bg-[#f9ecd5] border border-none text-[16px] disabled:bg-neutral-100 focus:outline-none focus:ring-0"
             style={{
               WebkitMaskImage:

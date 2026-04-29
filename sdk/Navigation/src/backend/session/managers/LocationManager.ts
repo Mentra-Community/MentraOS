@@ -21,4 +21,9 @@ export class LocationManager {
   onUpdate(handler: LocationListener): Unsubscribe {
     return this.session.location.onUpdate(handler)
   }
+
+  /** Request a single location fix. Useful at app load to seed UI. */
+  getOnce(): Promise<LocationData> {
+    return this.session.location.getOnce()
+  }
 }

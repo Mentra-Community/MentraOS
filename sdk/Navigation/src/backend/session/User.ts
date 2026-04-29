@@ -70,6 +70,30 @@ export class User {
     this.navigation = new NavigationManager(this.session)
 
     this.wireSensorsToState()
+    this.seedInitialFix()
+  }
+
+  /**
+   * Ask the SDK for a single location fix so the UI has coords to render
+   * before the continuous `onUpdate` stream warms up. The streaming
+   * subscription automatically supersedes this seed once it fires.
+   */
+  private seedInitialFix(): void {
+    this.location
+      .getOnce()
+      .then((data) => {
+        if (this.coords) return // streaming update got there first
+        this.coords = {
+          lat: data.lat,
+          lng: data.lng,
+          accuracy: data.accuracy,
+          ts: data.timestamp ?? Date.now(),
+        }
+        this.notify()
+      })
+      .catch((err) => {
+        console.warn("[User] location.getOnce failed:", err)
+      })
   }
 
   static getInstance(): User {
