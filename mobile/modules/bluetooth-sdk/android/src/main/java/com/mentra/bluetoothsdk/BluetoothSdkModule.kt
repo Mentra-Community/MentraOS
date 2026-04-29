@@ -80,6 +80,12 @@ class BluetoothSdkModule : Module() {
                 }
 
                 override fun onError(error: MentraBluetoothError) {
+                    val body = mutableMapOf<String, Any>(
+                            "code" to error.code,
+                            "message" to error.message
+                    )
+                    body.putAll(error.values)
+                    sendEvent("bluetooth_error", body)
                     sendEvent("pair_failure", mapOf("error" to error.message))
                 }
 
@@ -127,6 +133,7 @@ class BluetoothSdkModule : Module() {
             "mic_pcm",
             "mic_lc3",
             "stream_status",
+            "bluetooth_error",
             "keep_alive_ack",
             "mtk_update_complete",
             "ota_update_available",
@@ -158,6 +165,20 @@ class BluetoothSdkModule : Module() {
 
         Function("getBluetoothStatus") {
             sdk?.getBluetoothStatus()?.values ?: DeviceStore.store.getCategory(ObservableStore.BLUETOOTH_CATEGORY)
+        }
+
+        Function("getKnownDevices") { deviceModel: String? ->
+            sdk?.getKnownDevices(deviceModel?.let { MentraDeviceModel.fromDeviceType(it) })
+                    ?.map {
+                        mapOf(
+                                "deviceModel" to it.model.deviceType,
+                                "deviceName" to it.name,
+                                "deviceAddress" to it.address,
+                                "bonded" to it.bonded,
+                                "connected" to it.connected,
+                        )
+                    }
+                    ?: emptyList<Map<String, Any>>()
         }
 
         Function("set") { category: String, key: String, value: Any ->
@@ -216,6 +237,10 @@ class BluetoothSdkModule : Module() {
 
         AsyncFunction("connectDevice") { deviceModel: String, deviceName: String ->
             sdk?.connectByName(MentraDeviceModel.fromDeviceType(deviceModel), deviceName)
+        }
+
+        AsyncFunction("connectDeviceByAddress") { deviceModel: String, deviceAddress: String, deviceName: String? ->
+            sdk?.connectByAddress(MentraDeviceModel.fromDeviceType(deviceModel), deviceAddress, deviceName)
         }
 
         AsyncFunction("connectSimulated") { sdk?.connectSimulated() }

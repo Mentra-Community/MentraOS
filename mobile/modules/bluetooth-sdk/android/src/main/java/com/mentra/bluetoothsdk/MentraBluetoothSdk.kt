@@ -1,8 +1,16 @@
 package com.mentra.bluetoothsdk
 
+import android.Manifest
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import androidx.core.content.ContextCompat
 import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor
 import java.util.Collections
 
@@ -19,6 +27,7 @@ class MentraBluetoothSdk private constructor(
     private val discoveredDeviceNames = mutableSetOf<String>()
     private val bridgeEventSinkId: String
     private val storeListenerId: String
+    private var scanDiagnosticGeneration = 0
 
     init {
         listeners.add(listener)
@@ -57,20 +66,36 @@ class MentraBluetoothSdk private constructor(
     fun getBluetoothStatus(): MentraBluetoothStatus =
         MentraBluetoothStatus(DeviceStore.store.getCategory(ObservableStore.BLUETOOTH_CATEGORY))
 
+    @JvmOverloads
+    fun getKnownDevices(model: MentraDeviceModel? = null): List<MentraKnownDevice> =
+        collectKnownBluetoothDevices(model)
+
     fun startScan(model: MentraDeviceModel) {
         discoveredDeviceNames.clear()
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "searching", true)
         deviceManager.findCompatibleDevices(model.deviceType)
+        scheduleScanNoResultsDiagnostic(model)
     }
 
     fun stopScan() {
+        scanDiagnosticGeneration += 1
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "searching", false)
         dispatchToListeners { it.onScanStopped(MentraScanStopReason.CANCELLED) }
     }
 
     fun connect(device: MentraDiscoveredDevice) {
+        if (!device.address.isNullOrBlank()) {
+            connectByAddress(device.model, device.address, device.name)
+            return
+        }
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_wearable", device.model.deviceType)
         deviceManager.connectByName(device.name)
+    }
+
+    @JvmOverloads
+    fun connectByAddress(model: MentraDeviceModel, address: String, name: String? = null) {
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_wearable", model.deviceType)
+        deviceManager.connectByAddress(model.deviceType, address, name)
     }
 
     fun connectByName(model: MentraDeviceModel, deviceName: String) {
@@ -296,10 +321,147 @@ class MentraBluetoothSdk private constructor(
             val name = result["deviceName"] as? String ?: result["name"] as? String ?: return@forEach
             if (!discoveredDeviceNames.add(name)) return@forEach
             val model = MentraDeviceModel.fromDeviceType(result["deviceModel"] as? String)
-            val device = MentraDiscoveredDevice(model = model, name = name)
+            val device = MentraDiscoveredDevice(
+                model = model,
+                name = name,
+                address = result["deviceAddress"] as? String ?: result["address"] as? String,
+                rssi = (result["rssi"] as? Number)?.toInt(),
+            )
             dispatchToListeners { it.onDeviceDiscovered(device) }
         }
     }
+
+    private fun scheduleScanNoResultsDiagnostic(model: MentraDeviceModel) {
+        if (config.scanNoResultsDiagnosticDelayMs <= 0) return
+
+        val generation = ++scanDiagnosticGeneration
+        mainHandler.postDelayed(
+            {
+                if (generation != scanDiagnosticGeneration) return@postDelayed
+                val bluetoothStatus = DeviceStore.store.getCategory(ObservableStore.BLUETOOTH_CATEGORY)
+                val glassesStatus = DeviceStore.store.getCategory("glasses")
+                val isSearching = bluetoothStatus["searching"] as? Boolean ?: false
+                val isConnected = glassesStatus["connected"] as? Boolean ?: false
+                if (!isSearching || isConnected || discoveredDeviceNames.isNotEmpty()) return@postDelayed
+
+                val connectedKnownDevices = getKnownDevices(model).filter { it.connected }
+                if (connectedKnownDevices.isEmpty()) return@postDelayed
+
+                val deviceNames = connectedKnownDevices.joinToString { it.name }
+                val devices = connectedKnownDevices.map { it.toMap() }
+                dispatchToListeners {
+                    it.onError(
+                        MentraBluetoothError(
+                            code = "device_connected_elsewhere",
+                            message =
+                                "$deviceNames already appears connected at the Android Bluetooth layer. " +
+                                    "Only one app can own the glasses BLE connection at a time; close or force-stop " +
+                                    "any other app using the glasses, then retry scanning.",
+                            values = mapOf(
+                                "deviceModel" to model.deviceType,
+                                "devices" to devices,
+                            ),
+                        )
+                    )
+                }
+            },
+            config.scanNoResultsDiagnosticDelayMs,
+        )
+    }
+
+    private fun collectKnownBluetoothDevices(model: MentraDeviceModel?): List<MentraKnownDevice> {
+        if (!hasBluetoothConnectPermission()) return emptyList()
+
+        val bluetoothManager =
+            appContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+                ?: return emptyList()
+        val adapter = bluetoothManager.adapter ?: BluetoothAdapter.getDefaultAdapter() ?: return emptyList()
+        val devicesByAddress = linkedMapOf<String, BluetoothDevice>()
+
+        try {
+            adapter.bondedDevices?.forEach { device ->
+                device.address?.let { devicesByAddress[it] = device }
+            }
+        } catch (_: SecurityException) {
+            return emptyList()
+        }
+
+        val connectedGattDevices =
+            try {
+                bluetoothManager.getConnectedDevices(BluetoothProfile.GATT)
+            } catch (_: SecurityException) {
+                emptyList()
+            } catch (_: IllegalArgumentException) {
+                emptyList()
+            }
+
+        connectedGattDevices.forEach { device ->
+            device.address?.let { devicesByAddress[it] = device }
+        }
+        val connectedAddresses = connectedGattDevices.mapNotNull { it.address }.toSet()
+
+        return devicesByAddress.values.mapNotNull { device ->
+            val name = device.safeName() ?: return@mapNotNull null
+            val inferredModel = inferModelFromName(name) ?: return@mapNotNull null
+            if (model != null && inferredModel != model) return@mapNotNull null
+
+            val address = device.address ?: return@mapNotNull null
+            MentraKnownDevice(
+                model = inferredModel,
+                name = name,
+                address = address,
+                bonded = device.bondState == BluetoothDevice.BOND_BONDED,
+                connected =
+                    connectedAddresses.contains(address) ||
+                        isDeviceConnected(bluetoothManager, device),
+            )
+        }
+    }
+
+    private fun isDeviceConnected(bluetoothManager: BluetoothManager, device: BluetoothDevice): Boolean =
+        try {
+            bluetoothManager.getConnectionState(device, BluetoothProfile.GATT) == BluetoothProfile.STATE_CONNECTED
+        } catch (_: SecurityException) {
+            false
+        } catch (_: IllegalArgumentException) {
+            false
+        }
+
+    private fun BluetoothDevice.safeName(): String? =
+        try {
+            name
+        } catch (_: SecurityException) {
+            null
+        }
+
+    private fun hasBluetoothConnectPermission(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            ContextCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT) ==
+                PackageManager.PERMISSION_GRANTED
+
+    private fun inferModelFromName(name: String): MentraDeviceModel? =
+        when {
+            isMentraLiveName(name) -> MentraDeviceModel.MENTRA_LIVE
+            else -> null
+        }
+
+    private fun isMentraLiveName(name: String): Boolean {
+        val normalized = name.lowercase()
+        return name == "Xy_A" ||
+            name.startsWith("XyBLE_") ||
+            name.startsWith("MENTRA_LIVE_BLE") ||
+            name.startsWith("MENTRA_LIVE_BT") ||
+            normalized.startsWith("mentra_live")
+    }
+
+    private fun MentraKnownDevice.toMap(): Map<String, Any> =
+        mapOf(
+            "deviceModel" to model.deviceType,
+            "deviceName" to name,
+            "deviceAddress" to address,
+            "bonded" to bonded,
+            "connected" to connected,
+        )
 
     private fun dispatchBridgeEvent(eventName: String, data: Map<String, Any>) {
         when (eventName) {

@@ -48,11 +48,13 @@ class MentraBluetoothSdk private constructor(
 
     fun getGlassesStatus(): MentraGlassesStatus
     fun getBluetoothStatus(): MentraBluetoothStatus
+    fun getKnownDevices(model: MentraDeviceModel? = null): List<MentraKnownDevice>
 
     fun startScan(model: MentraDeviceModel)
     fun stopScan()
     fun connect(device: MentraDiscoveredDevice)
     fun connectByName(model: MentraDeviceModel, deviceName: String)
+    fun connectByAddress(model: MentraDeviceModel, address: String, name: String? = null)
     fun connectDefault()
     fun connectSimulated()
     fun disconnect()
@@ -164,12 +166,25 @@ Add typed public models before exposing the facade:
 
 - `MentraDeviceModel`: `G1`, `G2`, `MENTRA_LIVE`, `MENTRA_NEX`, `MACH1`, `Z100`, `FRAME`, `SIMULATED`, `R1`.
 - `MentraDiscoveredDevice`: `model`, `name`, optional `address`, optional `rssi`.
+- `MentraKnownDevice`: `model`, `name`, `address`, `bonded`, and Android system `connected` state. This powers partner diagnostics when Android already knows about a glasses device but BLE scan does not produce a usable advertisement.
 - `MentraGlassesStatus`: current snapshot of connected, fully booted, battery, charging, model, firmware, serial, Wi-Fi, hotspot, head-up, controller, and signal state.
 - `MentraBluetoothStatus`: current snapshot of searching, mic, current mic, search results, Wi-Fi scan results, permission availability, and audio availability.
 - `MentraDisplayTextRequest`, `MentraDisplayEventRequest`, `MentraDashboardPositionRequest`, `MentraDashboardMenuItem`, `MentraPhotoRequest`, `MentraStreamRequest`, `MentraVideoRecordingRequest`, `MentraMicConfig`, `MentraBluetoothError`.
 - Settings models/enums for values currently routed through `DeviceStore.apply()`: `MentraGalleryMode`, `MentraButtonMode`, `MentraButtonPhotoSettings`, `MentraButtonVideoRecordingSettings`, `MentraCameraFov`, and `MentraMicPreference`.
 
 For Java ergonomics, models with many optional fields should have builders instead of huge constructors.
+
+## Android Bluetooth Ownership Diagnostics
+
+Android does not expose which app owns a BLE GATT connection through public app APIs. The SDK can, however, detect that Android already has a matching glasses device bonded or connected at the system Bluetooth layer.
+
+Add these diagnostics to the Android facade:
+
+- `getKnownDevices(model)` returns matching bonded/connected Android Bluetooth devices, including address and connection state.
+- `connectByAddress(model, address, name)` attempts direct GATT connection to a known device address. This helps when a device is already paired or not advertising a useful name.
+- If a scan produces no SDK results after the configured diagnostic delay but Android reports a matching connected device, emit `MentraBluetoothError(code = "device_connected_elsewhere", ...)`.
+
+The error must not claim to know the owning package. In normal app APIs, Android does not reveal whether MentraOS, a React Native sample, a native sample, or another partner app owns that connection. Customer-facing copy should say another app or previous SDK process may already own the glasses connection and that only one app can own the glasses BLE connection at a time.
 
 ## Store Sync Boundary
 

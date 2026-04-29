@@ -7,6 +7,7 @@ import {
   GlassesMediaVolumeGetResult,
   GlassesMediaVolumeSetResult,
   GlassesStatus,
+  KnownDevice,
 } from "./BluetoothSdk.types"
 
 type GlassesListener = (changed: Partial<GlassesStatus>) => void
@@ -16,6 +17,7 @@ declare class BluetoothSdkModule extends NativeModule<BluetoothSdkModuleEvents> 
   // Observable Store Functions (native)
   getGlassesStatus(): GlassesStatus
   getBluetoothStatus(): BluetoothStatus
+  getKnownDevices(deviceModel?: string | null): KnownDevice[]
   update(category: string, values: Record<string, any>): Promise<void>
 
   // Display Commands
@@ -28,6 +30,7 @@ declare class BluetoothSdkModule extends NativeModule<BluetoothSdkModuleEvents> 
   connectDefault(): Promise<void>
   connectByName(deviceName: string): Promise<void>
   connectDevice(deviceModel: string, deviceName: string): Promise<void>
+  connectDeviceByAddress(deviceModel: string, deviceAddress: string, deviceName?: string | null): Promise<void>
   connectDiscoveredDevice(device: DeviceSearchResult): Promise<void>
   connectDefaultController(): Promise<void>
   disconnectController(): Promise<void>
@@ -131,6 +134,9 @@ NativeBluetoothSdkModule.updateBluetoothSettings = function (values: Record<stri
 }
 
 NativeBluetoothSdkModule.connectDiscoveredDevice = function (device: DeviceSearchResult) {
+  if (device.deviceAddress) {
+    return this.connectDeviceByAddress(device.deviceModel, device.deviceAddress, device.deviceName)
+  }
   return this.connectDevice(device.deviceModel, device.deviceName)
 }
 

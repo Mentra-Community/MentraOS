@@ -184,11 +184,22 @@ public class Bridge private constructor() {
         /** Send discovered device */
         @JvmStatic
         fun sendDiscoveredDevice(deviceModel: String, deviceName: String) {
+            sendDiscoveredDevice(deviceModel, deviceName, null)
+        }
+
+        /** Send discovered device */
+        @JvmStatic
+        fun sendDiscoveredDevice(deviceModel: String, deviceName: String, deviceAddress: String?) {
             val searchResults =
                     DeviceStore.store.getCategory("bluetooth")["searchResults"] as?
                             List<Map<String, String>>
                             ?: emptyList()
-            val newResult = mapOf("deviceModel" to deviceModel, "deviceName" to deviceName)
+            val newResult =
+                    mutableMapOf("deviceModel" to deviceModel, "deviceName" to deviceName).apply {
+                        if (!deviceAddress.isNullOrBlank()) {
+                            put("deviceAddress", deviceAddress)
+                        }
+                    }
             val allResults = searchResults + newResult
             val uniqueResults = allResults.associateBy { it["deviceName"] }.values.toList()
             DeviceStore.set("bluetooth", "searchResults", uniqueResults)

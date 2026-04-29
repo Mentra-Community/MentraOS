@@ -5,6 +5,7 @@ import com.mentra.bluetoothsdk.utils.DeviceTypes
 
 data class MentraBluetoothSdkConfig(
     val deliverCallbacksOnMainThread: Boolean = true,
+    val scanNoResultsDiagnosticDelayMs: Long = 5_000L,
 )
 
 enum class MentraDeviceModel(val deviceType: String) {
@@ -36,6 +37,14 @@ data class MentraPairedDevice(
     val model: MentraDeviceModel,
     val name: String,
     val address: String? = null,
+)
+
+data class MentraKnownDevice(
+    val model: MentraDeviceModel,
+    val name: String,
+    val address: String,
+    val bonded: Boolean,
+    val connected: Boolean,
 )
 
 data class MentraGlassesStatus(
@@ -207,6 +216,7 @@ data class MentraBluetoothError(
     val code: String,
     val message: String,
     val cause: Throwable? = null,
+    val values: Map<String, Any> = emptyMap(),
 )
 
 enum class MentraScanStopReason {

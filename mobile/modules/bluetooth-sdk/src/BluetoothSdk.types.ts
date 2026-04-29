@@ -140,6 +140,14 @@ export type PairFailureEvent = {
   error: string
 }
 
+export type BluetoothErrorEvent = {
+  type?: "bluetooth_error"
+  code: string
+  message: string
+  devices?: KnownDevice[]
+  deviceModel?: string
+}
+
 export type AudioPairingNeededEvent = {
   type: "audio_pairing_needed"
   device_name: string
@@ -261,6 +269,7 @@ export type BluetoothSdkModuleEvents = {
   switch_status: (event: SwitchStatusEvent) => void
   rgb_led_control_response: (event: RgbLedControlResponseEvent) => void
   pair_failure: (event: PairFailureEvent) => void
+  bluetooth_error: (event: BluetoothErrorEvent) => void
   audio_pairing_needed: (event: AudioPairingNeededEvent) => void
   audio_connected: (event: AudioConnectedEvent) => void
   audio_disconnected: (event: AudioDisconnectedEvent) => void
@@ -360,6 +369,14 @@ export interface DeviceSearchResult {
   deviceModel: string
   deviceName: string
   deviceAddress?: string
+}
+
+export interface KnownDevice {
+  deviceModel: string
+  deviceName: string
+  deviceAddress: string
+  bonded: boolean
+  connected: boolean
 }
 
 export interface WifiSearchResult {

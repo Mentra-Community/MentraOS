@@ -1419,6 +1419,28 @@ class DeviceManager {
         sgc?.connectById(deviceName)
     }
 
+    fun connectByAddress(deviceModel: String, address: String, name: String?) {
+        Bridge.log("MAN: Connecting to wearable by address: $address")
+
+        if (!DeviceTypes.ALL.contains(deviceModel)) {
+            Bridge.log("MAN: Unsupported wearable for address connection: $deviceModel")
+            return
+        }
+
+        val displayName = name?.takeIf { it.isNotBlank() } ?: address
+        pendingWearable = deviceModel
+        defaultWearable = deviceModel
+        deviceName = displayName
+        deviceAddress = address
+
+        disconnect()
+        Thread.sleep(100)
+        searching = true
+
+        initSGC(deviceModel)
+        sgc?.connectById(displayName)
+    }
+
     fun connectSimulated() {
         defaultWearable = DeviceTypes.SIMULATED
         deviceName = DeviceTypes.SIMULATED
