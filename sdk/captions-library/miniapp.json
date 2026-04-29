@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.mentra.captions-library",
+  "version": "1.0.0",
+  "name": "Captions (library shape)",
+  "description": "Design artifact: same Captions miniapp as captions-framework, written using the existing @mentra/miniapp library plus a glasses-controller convention. Used to surface anti-patterns the convention does not prevent.",
+  "permissions": [{"type": "MICROPHONE", "description": "Live transcription"}],
+  "hardwareRequirements": [
+    {"type": "DISPLAY", "level": "REQUIRED", "description": "Show captions on glasses HUD"},
+    {"type": "MICROPHONE", "level": "REQUIRED", "description": "Capture speech"}
+  ]
+}

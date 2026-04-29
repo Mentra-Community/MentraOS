@@ -1,0 +1,20 @@
+{
+  "name": "captions-library",
+  "private": true,
+  "description": "Design artifact: Captions miniapp using @mentra/miniapp library plus a glasses-controller convention. Counterpart to captions-framework. See ./README.md.",
+  "scripts": {
+    "dev": "mentra-miniapp dev",
+    "build": "bun build ./index.html --outdir=./dist --target=browser"
+  },
+  "dependencies": {
+    "@mentra/miniapp": "workspace:*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@mentra/miniapp-cli": "workspace:*",
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.6",
+    "typescript": "^5.0.0"
+  }
+}
