@@ -4092,9 +4092,9 @@ public class MentraLive extends SGCManager {
         }
     }
 
-    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean sound) {
+    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean sound, Long exposureTimeNs) {
         boolean hasAuthToken = authToken != null && !authToken.isEmpty();
-        Bridge.log("LIVE: Requesting photo: " + requestId + " for app: " + appId + " with size: " + size + ", webhookUrl: " + webhookUrl + ", authToken: " + (hasAuthToken ? "***" : "none") + ", compress=" + compress + ", flash=" + flash + ", sound=" + sound);
+        Bridge.log("LIVE: Requesting photo: " + requestId + " for app: " + appId + " with size: " + size + ", webhookUrl: " + webhookUrl + ", authToken: " + (hasAuthToken ? "***" : "none") + ", compress=" + compress + ", flash=" + flash + ", sound=" + sound + ", exposureTimeNs=" + exposureTimeNs);
 
         try {
             JSONObject json = new JSONObject();
@@ -4117,6 +4117,9 @@ public class MentraLive extends SGCManager {
             }
             json.put("flash", flash);
             json.put("sound", sound);
+            if (exposureTimeNs != null && exposureTimeNs > 0L) {
+                json.put("exposureTimeNs", exposureTimeNs);
+            }
 
             // Always generate BLE ID for potential fallback
             String bleImgId = "I" + String.format("%09d", System.currentTimeMillis() % 1000000000);

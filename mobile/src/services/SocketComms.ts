@@ -555,15 +555,17 @@ class SocketComms {
     const compress = normalizePhotoCompression(msg.compress)
     const flash = msg.flash ?? true
     const sound = msg.sound ?? true
+    const rawExp = msg.exposureTimeNs
+    const exposureTimeNs = typeof rawExp === "number" && Number.isFinite(rawExp) && rawExp > 0 ? rawExp : null
     console.log(
-      `Received photo_request, requestId: ${requestId}, appId: ${appId}, webhookUrl: ${webhookUrl}, size: ${size} authToken: ${authToken} compress: ${compress} flash: ${flash} sound: ${sound}`,
+      `Received photo_request, requestId: ${requestId}, appId: ${appId}, webhookUrl: ${webhookUrl}, size: ${size} authToken: ${authToken} compress: ${compress} flash: ${flash} sound: ${sound} exposureTimeNs: ${exposureTimeNs ?? "none"}`,
     )
     if (!requestId || !appId) {
       console.log("Invalid photo request: missing requestId or appId")
       return
     }
-    // Parameter order: requestId, appId, size, webhookUrl, authToken, compress, flash, sound
-    CoreModule.photoRequest(requestId, appId, size, webhookUrl, authToken, compress, flash, sound)
+    // Parameter order: requestId, appId, size, webhookUrl, authToken, compress, flash, sound, exposureTimeNs
+    CoreModule.photoRequest(requestId, appId, size, webhookUrl, authToken, compress, flash, sound, exposureTimeNs)
   }
 
   private handle_start_stream(msg: any) {
