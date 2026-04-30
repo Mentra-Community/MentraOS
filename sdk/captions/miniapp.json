@@ -1,0 +1,13 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.mentra.captions",
+  "version": "0.1.0",
+  "name": "Captions",
+  "description": "Live transcription on glasses with phone-side controls. Replica of the production cloud-hosted captions app, built on the @mentra/miniapp/framework primitives instead.",
+  "permissions": [{"type": "MICROPHONE", "description": "Live transcription"}],
+  "hardwareRequirements": [
+    {"type": "DISPLAY", "level": "REQUIRED", "description": "Captions on glasses HUD"},
+    {"type": "MICROPHONE", "level": "REQUIRED", "description": "Capture speech"}
+  ],
+  "port": 3003
+}
