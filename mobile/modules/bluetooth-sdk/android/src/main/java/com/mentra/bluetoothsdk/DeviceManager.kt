@@ -1380,12 +1380,20 @@ class CoreManager {
             authToken: String?,
             compress: String,
             flash: Boolean,
-            sound: Boolean
+            sound: Boolean,
+            exposureTimeNs: Double? = null,
     ) {
+        val exposureNs: Long? =
+                exposureTimeNs?.takeIf { it.isFinite() && it > 0 }?.let { v ->
+                    when {
+                        v > Long.MAX_VALUE.toDouble() -> Long.MAX_VALUE
+                        else -> v.toLong()
+                    }
+                }
         Bridge.log(
-                "MAN: onPhotoRequest: $requestId, $appId, $size, compress=$compress, flash=$flash, sound=$sound"
+                "MAN: onPhotoRequest: $requestId, $appId, $size, compress=$compress, flash=$flash, sound=$sound, exposureTimeNs=$exposureNs"
         )
-        sgc?.requestPhoto(requestId, appId, size, webhookUrl, authToken, compress, flash, sound)
+        sgc?.requestPhoto(requestId, appId, size, webhookUrl, authToken, compress, flash, sound, exposureNs)
     }
 
     fun rgbLedControl(

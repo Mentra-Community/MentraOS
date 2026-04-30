@@ -1311,7 +1311,7 @@ class MentraLive: NSObject, SGCManager {
 
     func requestPhoto(
         _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, flash: Bool, sound: Bool
+        compress: String?, flash: Bool, sound: Bool, exposureTimeNs: Double?
     ) {
         Bridge.log("Requesting photo: \(requestId) for app: \(appId), flash: \(flash), sound: \(sound)")
 
@@ -1359,6 +1359,10 @@ class MentraLive: NSObject, SGCManager {
 
         json["flash"] = flash
         json["sound"] = sound
+
+        if let e = exposureTimeNs, e.isFinite, e > 0, e <= Double(Int64.max) {
+            json["exposureTimeNs"] = Int64(e)
+        }
 
         Bridge.log("Using auto transfer mode with BLE fallback ID: \(bleImgId)")
 
