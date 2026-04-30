@@ -44,6 +44,18 @@ export interface TranscriptionData {
   text: string
   isFinal: boolean
   language?: string
+  /**
+   * Same ID across interim and final chunks of one utterance. Cloud SDK
+   * provides this; the runtime delivers it when available. Apps that
+   * need to detect "is this the same utterance the user is still
+   * dictating" can compare utteranceId across chunks.
+   */
+  utteranceId?: string
+  /**
+   * Speaker ID from diarization. Empty/undefined means single-speaker
+   * or unknown. Apps can use this to render `[1]: text` style prefixes.
+   */
+  speakerId?: string
 }
 
 export interface TranslationData {

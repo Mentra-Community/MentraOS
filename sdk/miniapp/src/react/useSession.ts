@@ -7,28 +7,15 @@
 
 import {useState} from "react"
 
-import {MiniappSession} from "../session"
-
-let sharedSession: MiniappSession | null = null
+import {getOrCreateSharedSession, __resetSharedSession as _reset} from "../internal/shared-session"
+import type {MiniappSession} from "../session"
 
 export function useSession(): MiniappSession {
-  const [session] = useState<MiniappSession>(() => {
-    if (!sharedSession) {
-      sharedSession = new MiniappSession()
-      // Fire-and-forget. Callers that care about readiness can observe
-      // session.ready / session.waitForReady(). Queue-before-ACK behavior
-      // in MiniappSession ensures no calls are lost if the UI invokes
-      // session.display.showTextWall(...) during the initial render.
-      sharedSession.connect().catch((err) => {
-        console.error("[@mentra/miniapp] connect failed:", err)
-      })
-    }
-    return sharedSession
-  })
+  const [session] = useState<MiniappSession>(() => getOrCreateSharedSession())
   return session
 }
 
 /** @internal — for tests. Clears the shared session without disconnecting. */
 export function __resetSharedSession(): void {
-  sharedSession = null
+  _reset()
 }

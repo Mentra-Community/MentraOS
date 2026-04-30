@@ -10,16 +10,44 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "development": {
+        "types": "./src/index.ts",
+        "default": "./src/index.ts"
+      },
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./react": {
+      "development": {
+        "types": "./src/react/index.ts",
+        "default": "./src/react/index.ts"
+      },
       "types": "./dist/react/index.d.ts",
       "default": "./dist/react/index.js"
     },
     "./protocol": {
+      "development": {
+        "types": "./src/protocol.ts",
+        "default": "./src/protocol.ts"
+      },
       "types": "./dist/protocol.d.ts",
       "default": "./dist/protocol.js"
+    },
+    "./framework": {
+      "development": {
+        "types": "./src/framework/index.ts",
+        "default": "./src/framework/index.ts"
+      },
+      "types": "./dist/framework/index.d.ts",
+      "default": "./dist/framework/index.js"
+    },
+    "./framework/react": {
+      "development": {
+        "types": "./src/framework/react.ts",
+        "default": "./src/framework/react.ts"
+      },
+      "types": "./dist/framework/react.d.ts",
+      "default": "./dist/framework/react.js"
     },
     "./package.json": "./package.json"
   },
