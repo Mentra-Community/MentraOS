@@ -1,50 +1,45 @@
 # ASG Client Command API
 
-## Overview
+`asg_client` exposes a JSON command API that controls hardware and system features on Mentra Live smart glasses. Every command is a JSON object with a `"type"` field that selects a handler.
 
-`asg_client` exposes a JSON command API that controls hardware and system features on Mentra Live smart glasses. Every command is a JSON object with a `"type"` field that determines which handler processes it.
+This API is reached over two transports:
 
-This API is used in two ways:
+1. **BLE (primary)** — the Mentra phone app sends commands over BLE.
+2. **Intent broadcast (debug/testing)** — the same commands can be sent via Android broadcast intents from a debug APK or `adb shell am broadcast`.
 
-1. **BLE (primary)** — The MentraOS phone app sends commands over BLE to `asg_client`. This is the standard communication path between the phone and the glasses.
-2. **Intent (debug/testing)** — The same commands can be sent via Android broadcast intents for development and testing without needing a phone connection. See [Debug Interface](#debug-interface-intent-broadcast) below.
+Both paths funnel into `CommandProcessor.processJsonCommand(JSONObject)`, so all command behavior is identical regardless of transport. See [Debug interface](#debug-interface-intent-broadcast) for the intent path.
 
-Both paths feed into the same `CommandProcessor.processJsonCommand(JSONObject)`, so all commands and behaviors are identical regardless of transport.
+> This document is the source-of-truth wire reference. Behavioral notes (lifecycle, reconnect, timeouts) live in the corresponding [feature docs](features/).
 
 ## Architecture
 
 ```
-ADB / Debug App (Intent)              Phone App (BLE)
-     │                                      │
-     ▼                                      ▼
-IntentCommandReceiver              K900BluetoothManager
-     │                                      │
-     └──────────────────┬───────────────────┘
-                        ▼
+ADB / Debug APK (intent)              Phone app (BLE)
+       │                                    │
+       ▼                                    ▼
+IntentCommandReceiver           K900BluetoothManager
+       │                                    │
+       └──────────────────┬─────────────────┘
+                          ▼
         CommandProcessor.processJsonCommand(JSONObject)
-                        │
-                        ▼
-                ICommandHandler (route by "type")
-                        │
-                        ▼
-              BaseBluetoothManager.sendData()
-                        │
-                ┌───────┴───────┐
-                ▼               ▼
-        K900 BLE send    Intent broadcast
-        (to phone)       (to registered debug listeners)
+                          │
+                          ▼
+            CommandHandlerRegistry → ICommandHandler
+                          │
+                          ▼
+      Outbound responses → BLE send + intent broadcast
 ```
 
-## Common Fields
+## Common fields
 
-Every command can include:
+Every command may include:
 
-- `type` (string, required) — Command type
-- `mId` (long, optional) — Message ID for ACK tracking. If provided, glasses send a `msg_ack` response
+| Field  | Type   | Required | Description                                                         |
+| ------ | ------ | -------- | ------------------------------------------------------------------- |
+| `type` | string | yes      | Command identifier (rows below)                                     |
+| `mId`  | long   | no       | Message ID. If present, glasses immediately reply with a `msg_ack`. |
 
-### ACK Response
-
-When `mId` is provided, glasses immediately respond:
+### `msg_ack` (auto-response when `mId` is set)
 
 ```json
 {"type": "msg_ack", "mId": 1234567890, "timestamp": 1708963201234}
@@ -52,41 +47,18 @@ When `mId` is provided, glasses immediately respond:
 
 ---
 
-## Command Reference
+## Command reference
 
-### 1. I2S Audio Control
+Sources:
 
-Mentra Live routes speaker audio through the MCU via I2S. The I2S path must be explicitly opened before playing audio, and audio must use `AudioManager.STREAM_NOTIFICATION` as the stream type.
+- Handler registrations: `app/src/main/java/com/mentra/asg_client/service/core/handlers/*CommandHandler.java`
+- Response wire formats: `service/communication/managers/ResponseBuilder.java`, `service/media/managers/MediaManager.java`, `io/media/core/MediaCaptureService.java`
 
-#### `enable_i2s` / `enable_android_audio`
-
-Opens the I2S path from the Android SoC to the speaker.
-
-```json
-{"type": "enable_i2s"}
-```
-
-No response. Fire-and-forget.
-
-#### `disable_i2s` / `disable_android_audio`
-
-Closes the I2S path.
-
-```json
-{"type": "disable_i2s"}
-```
-
-No response. Fire-and-forget.
-
----
-
-### 2. Photo Capture
+### Photo
 
 #### `take_photo`
 
-Capture a photo from the glasses camera.
-
-**Request:**
+Capture a still photo. The handler routes through `transferMethod` to one of three pipelines: direct upload to a webhook, BLE transfer to the phone, or auto (direct with BLE fallback).
 
 ```json
 {
@@ -94,39 +66,58 @@ Capture a photo from the glasses camera.
   "requestId": "photo_001",
   "packageName": "com.example.app",
   "webhookUrl": "https://api.example.com/upload",
-  "authToken": "token_abc123",
+  "authToken": "Bearer abc123",
   "transferMethod": "auto",
-  "save": true,
+  "bleImgId": "img_001",
+  "save": false,
   "size": "medium",
-  "silent": false
+  "compress": "none",
+  "flash": true,
+  "sound": true
 }
 ```
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `requestId` | string | Yes | - | Unique identifier for correlation |
-| `packageName` | string | Yes | - | Requesting app package |
-| `webhookUrl` | string | No | - | URL to upload photo |
-| `authToken` | string | No | - | Auth token for webhook |
-| `transferMethod` | string | No | "direct" | "direct", "ble", or "auto" |
-| `save` | boolean | No | false | Save photo locally |
-| `size` | string | No | "medium" | "small", "medium", "large" |
-| `silent` | boolean | No | false | Suppress LED/sound feedback |
+| Field            | Type    | Default             | Description                                                 |
+| ---------------- | ------- | ------------------- | ----------------------------------------------------------- |
+| `requestId`      | string  | —                   | Required; correlates request with response                  |
+| `packageName`    | string  | resolved by handler | Originating app package                                     |
+| `webhookUrl`     | string  | ""                  | HTTPS endpoint for `direct` / `auto` upload                 |
+| `authToken`      | string  | ""                  | Bearer token for the webhook                                |
+| `transferMethod` | string  | `"direct"`          | One of `direct`, `ble`, `auto`. `auto` requires `bleImgId`. |
+| `bleImgId`       | string  | ""                  | Required for `ble` and `auto` transfer methods              |
+| `save`           | boolean | `false`             | Also save the photo to local gallery                        |
+| `size`           | string  | `"medium"`          | `small`, `medium`, or `large`                               |
+| `compress`       | string  | `"none"`            | Compression preset passed to capture pipeline               |
+| `flash`          | boolean | `true`              | Fire the privacy LED during capture                         |
+| `sound`          | boolean | `true`              | Play shutter sound                                          |
 
-**Constraints:** Battery must be >= 10%. Cannot capture during video recording or active BLE transfer.
+**Constraints (all enforced in `PhotoCommandHandler`):**
 
-**Success Response:**
+- Battery ≥ `BatteryConstants.MIN_BATTERY_LEVEL` (currently 10%)
+- No video recording in progress
+- No BLE transfer in progress
+- No other photo capture in progress
+
+**Responses:** the handler can produce three different response types depending on the path taken.
+
+`photo_response` — direct/auto upload finished:
 
 ```json
 {
   "type": "photo_response",
   "requestId": "photo_001",
   "success": true,
-  "mediaUrl": "/storage/emulated/0/DCIM/photo_001.jpg"
+  "mediaUrl": "/storage/.../IMG_001.jpg"
 }
 ```
 
-**Error Response:**
+`ble_photo_ready` — BLE transfer started successfully:
+
+```json
+{"type": "ble_photo_ready", "bleImgId": "img_001", "requestId": "photo_001"}
+```
+
+`ble_photo_error` / `photo_error_response` — capture or transfer failed:
 
 ```json
 {
@@ -137,11 +128,13 @@ Capture a photo from the glasses camera.
 }
 ```
 
-Error codes: `BATTERY_LOW`, `VIDEO_RECORDING_ACTIVE`, `BLE_TRANSFER_BUSY`
+Error codes the handler can emit: `BATTERY_LOW`, `VIDEO_RECORDING_ACTIVE`, `BLE_TRANSFER_BUSY`, `CAMERA_BUSY`, `INSUFFICIENT_STORAGE`, `UPLOAD_SYSTEM_BUSY`, `CAPTURE_TIMEOUT`, `CAMERA_CAPTURE_FAILED`, `BLE_TRANSFER_BUSY`, `BLE_TRANSFER_FAILED`, `BLE_TRANSFER_FAILED_TO_START`.
 
 ---
 
-### 3. Video Recording
+### Video recording
+
+Wire response type for all video commands: `video_recording_status`.
 
 #### `start_video_recording`
 
@@ -150,39 +143,35 @@ Error codes: `BATTERY_LOW`, `VIDEO_RECORDING_ACTIVE`, `BLE_TRANSFER_BUSY`
   "type": "start_video_recording",
   "requestId": "video_001",
   "settings": {"width": 1280, "height": 720, "fps": 30},
-  "save": true,
-  "silent": false
+  "save": false,
+  "flash": true,
+  "sound": true
 }
 ```
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `requestId` | string | Yes | - | Unique identifier |
-| `settings.width` | int | No | 1280 | Video width |
-| `settings.height` | int | No | 720 | Video height |
-| `settings.fps` | int | No | 30 | Frames per second |
-| `save` | boolean | No | false | Save video locally |
-| `silent` | boolean | No | false | Suppress feedback |
+| Field             | Type    | Default        | Description                  |
+| ----------------- | ------- | -------------- | ---------------------------- |
+| `requestId`       | string  | `"video_<ts>"` | Used for stop validation     |
+| `settings.width`  | int     | sensor default | Optional capture width       |
+| `settings.height` | int     | sensor default | Optional capture height      |
+| `settings.fps`    | int     | 30             | Frames per second            |
+| `save`            | boolean | `false`        | Save to local gallery        |
+| `flash`           | boolean | `true`         | Privacy LED during recording |
+| `sound`           | boolean | `true`         | Start/stop tones             |
 
-**Response:**
+Same battery constraint as photo. Status values emitted: `recording_started`, `already_recording`, `battery_low`, `service_unavailable`, `missing_request_id`, `error`.
 
 ```json
-{"type": "video_recording_status_update", "recording": true, "status": "recording_started"}
+{"type": "video_recording_status", "success": true, "status": "recording_started", "timestamp": 1708963201234}
 ```
-
-Status values: `recording_started`, `already_recording`, `battery_low`, `service_unavailable`, `error`
 
 #### `stop_video_recording`
 
 ```json
-{"type": "stop_video_recording"}
+{"type": "stop_video_recording", "requestId": "video_001"}
 ```
 
-**Response:**
-
-```json
-{"type": "video_recording_status_update", "recording": false, "status": "recording_stopped"}
-```
+If `requestId` is provided, the capture service validates it matches the active recording. Status values: `recording_stopped`, `not_recording`, `service_unavailable`, `error`.
 
 #### `get_video_recording_status`
 
@@ -190,31 +179,92 @@ Status values: `recording_started`, `already_recording`, `battery_low`, `service
 {"type": "get_video_recording_status"}
 ```
 
-**Response (while recording):**
+Response while recording:
 
 ```json
-{"type": "video_recording_status_update", "recording": true, "duration_ms": 15000, "duration_formatted": "00:15"}
+{
+  "type": "video_recording_status",
+  "success": true,
+  "data": {"recording": true, "duration_ms": 15000, "duration_formatted": "00:15"}
+}
 ```
 
 ---
 
-### 4. Ping
+### Streaming (RTMP / SRT / WHIP)
 
-#### `ping`
+The handler is `StreamCommandHandler` (file: `service/core/handlers/StreamCommandHandler.java`). The same four commands handle all three protocols — the protocol is detected from the URL prefix (`rtmp://` / `rtmps://`, `srt://`, `http(s)://` for WHIP).
+
+See [features/rtmp-streaming.md](features/rtmp-streaming.md) for stream lifecycle, reconnect behavior, and the keep-alive/timeout contract.
+
+#### `start_stream`
 
 ```json
-{"type": "ping"}
+{
+  "type": "start_stream",
+  "streamUrl": "rtmp://streaming.example.com/live/stream",
+  "streamId": "stream_123",
+  "video": {"width": 1280, "height": 720, "fps": 30, "bitrate": 2500},
+  "audio": {"sample_rate": 48000, "bitrate": 128},
+  "flash": true,
+  "sound": true
+}
 ```
 
-**Response:**
+| Field       | Type    | Default  | Description                                                                                                                   |
+| ----------- | ------- | -------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `streamUrl` | string  | —        | Required. Legacy fallbacks: `rtmpUrl`, `srtUrl`, `whipUrl` (any one is accepted).                                             |
+| `streamId`  | string  | ""       | Used to validate keep-alives and ACKs                                                                                         |
+| `video`     | object  | defaults | `width`, `height`, `fps`, `bitrate`. Compact alias: `v`. Parsed by `RtmpStreamConfig.fromJson` / `WhipStreamConfig.fromJson`. |
+| `audio`     | object  | defaults | `sample_rate`, `bitrate`. Compact alias: `a`.                                                                                 |
+| `flash`     | boolean | `true`   | Privacy LED during stream                                                                                                     |
+| `sound`     | boolean | `true`   | Start/stop tones                                                                                                              |
+
+**Constraints:** battery ≥ 10%, WiFi connected. WHIP streams whose requested resolution exceeds the camera's supported output are rejected (`WhipCameraFormatSelector`).
+
+**Response wire type:** `stream_status` (new universal type from `MediaManager.sendStreamStatusResponse`). Legacy `rtmp_stream_status` is still produced by `ResponseBuilder` in some paths.
 
 ```json
-{"type": "ping_response", "timestamp": 1708963201234, "status": "pong"}
+{"type": "stream_status", "status": "streaming_started", "timestamp": 1708963201234}
+```
+
+#### `stop_stream`
+
+```json
+{"type": "stop_stream"}
+```
+
+Stops whichever stream service is active. Status: `stopping` / `error_not_streaming`.
+
+#### `get_stream_status`
+
+```json
+{"type": "get_stream_status"}
+```
+
+Response includes a `streaming` boolean and, when reconnecting, a `reconnecting` flag and `attempt` counter:
+
+```json
+{"type": "stream_status", "data": {"streaming": true, "reconnecting": false}, "timestamp": 1708963201234}
+```
+
+#### `keep_stream_alive`
+
+Heartbeat to extend the stream timeout. Both `streamId` and `ackId` are required; missing either is silently ignored.
+
+```json
+{"type": "keep_stream_alive", "streamId": "stream_123", "ackId": "ack_456"}
+```
+
+ACK response:
+
+```json
+{"type": "keep_alive_ack", "streamId": "stream_123", "ackId": "ack_456", "timestamp": 1708963201234}
 ```
 
 ---
 
-### 5. WiFi Management
+### WiFi & hotspot
 
 #### `set_wifi_credentials`
 
@@ -222,10 +272,18 @@ Status values: `recording_started`, `already_recording`, `battery_low`, `service
 {"type": "set_wifi_credentials", "ssid": "MyNetwork", "password": "password123"}
 ```
 
+Initiates connection. After ~3s the handler polls connection status up to 4 times and sends a `wifi_status` event when settled.
+
 #### `request_wifi_status`
 
 ```json
 {"type": "request_wifi_status"}
+```
+
+Response:
+
+```json
+{"type": "wifi_status", "connected": true}
 ```
 
 #### `request_wifi_scan`
@@ -234,13 +292,11 @@ Status values: `recording_started`, `already_recording`, `battery_low`, `service
 {"type": "request_wifi_scan"}
 ```
 
-**Response:**
+Streams results back over BLE as they're discovered:
 
 ```json
 {
   "type": "wifi_scan_result",
-  "timestamp": 1708963201234,
-  "networks": ["MyNetwork", "OtherNetwork"],
   "networks_neo": [{"ssid": "MyNetwork", "signal_strength": -45, "security": "WPA2"}]
 }
 ```
@@ -251,7 +307,7 @@ Status values: `recording_started`, `already_recording`, `battery_low`, `service
 {"type": "set_hotspot_state", "enabled": true}
 ```
 
-**Response:**
+Response:
 
 ```json
 {
@@ -275,9 +331,11 @@ Status values: `recording_started`, `already_recording`, `battery_low`, `service
 {"type": "forget_wifi", "ssid": "OldNetwork"}
 ```
 
+`ssid` is required; empty SSID returns `false` without action.
+
 ---
 
-### 6. Battery
+### Battery
 
 #### `request_battery_state`
 
@@ -287,79 +345,35 @@ Status values: `recording_started`, `already_recording`, `battery_low`, `service
 
 #### `battery_status`
 
-Update battery status (usually sent by phone to glasses).
+Update battery state on the glasses (used by the phone to push estimated state, e.g. while charging is detected externally):
 
 ```json
 {"type": "battery_status", "level": 85, "charging": false, "timestamp": 1708963201234}
 ```
 
+The glasses also emit `battery_status` outbound:
+
+```json
+{"type": "battery_status", "percent": 85, "charging": false}
+```
+
 ---
 
-### 7. Version / System Info
+### Version / system info
 
-#### `request_version`
+#### `request_version` / `cs_syvr`
 
 ```json
 {"type": "request_version"}
 ```
 
-**Response:**
-
-```json
-{"type": "version_info_response", "apk_version": "1.2.3", "os_version": "Android 12", "build_number": "20240226"}
-```
+Returns version information chunked across three messages — `version_info_1`, `version_info_2`, `version_info_3` — to fit BLE MTU. Each chunk carries APK build, OS version, MCU/BES firmware version, and serial.
 
 ---
 
-### 8. RTMP Streaming
+### IMU / sensors
 
-#### `start_rtmp_stream`
-
-```json
-{
-  "type": "start_rtmp_stream",
-  "rtmpUrl": "rtmp://streaming.example.com/live/stream",
-  "streamId": "stream_123",
-  "video": {"width": 1280, "height": 720, "fps": 30, "bitrate": 2500},
-  "audio": {"sample_rate": 48000, "bitrate": 128}
-}
-```
-
-**Constraints:** Battery must be >= 10%. WiFi must be connected.
-
-**Response:**
-
-```json
-{"type": "rtmp_status_response", "streaming": true, "status": "streaming_started"}
-```
-
-#### `stop_rtmp_stream`
-
-```json
-{"type": "stop_rtmp_stream"}
-```
-
-#### `get_rtmp_status`
-
-```json
-{"type": "get_rtmp_status"}
-```
-
-**Response:**
-
-```json
-{"type": "rtmp_status_response", "streaming": true, "reconnecting": false}
-```
-
-#### `keep_rtmp_stream_alive`
-
-```json
-{"type": "keep_rtmp_stream_alive", "streamId": "stream_123", "ackId": "ack_456"}
-```
-
----
-
-### 9. IMU / Sensors
+Handler: `ImuCommandHandler`. Power-optimized; streaming auto-times out.
 
 #### `imu_single`
 
@@ -367,7 +381,7 @@ Update battery status (usually sent by phone to glasses).
 {"type": "imu_single"}
 ```
 
-**Response:**
+Response (sample):
 
 ```json
 {
@@ -384,10 +398,10 @@ Update battery status (usually sent by phone to glasses).
 {"type": "imu_stream_start", "rate_hz": 50, "batch_ms": 100}
 ```
 
-| Field | Type | Default | Range | Description |
-|-------|------|---------|-------|-------------|
-| `rate_hz` | int | 50 | 1-100 | Sampling rate in Hz |
-| `batch_ms` | long | 0 | 0-1000 | Batching window in ms |
+| Field      | Type | Default | Range            |
+| ---------- | ---- | ------- | ---------------- |
+| `rate_hz`  | int  | 50      | 1-100 (clamped)  |
+| `batch_ms` | long | 0       | 0-1000 (clamped) |
 
 #### `imu_stream_stop`
 
@@ -395,21 +409,59 @@ Update battery status (usually sent by phone to glasses).
 {"type": "imu_stream_stop"}
 ```
 
-#### `set_mic_state`
+#### `imu_subscribe_gesture` _(under construction)_
+
+> **Under construction.** The handler accepts these commands but the gesture detection itself is not finished — don't rely on this in production code yet.
 
 ```json
-{"type": "set_mic_state"}
+{"type": "imu_subscribe_gesture", "gestures": ["head_up", "head_down", "nod_yes", "shake_no"]}
 ```
 
-#### `set_mic_vad_state`
+Acknowledgement:
 
 ```json
-{"type": "set_mic_vad_state"}
+{"type": "imu_gesture_subscribed", "gestures": ["head_up", "head_down"]}
+```
+
+When a subscribed gesture fires:
+
+```json
+{"type": "imu_gesture_response", "gesture": "head_up", "timestamp": 1708963201234}
+```
+
+#### `imu_unsubscribe_gesture` _(under construction)_
+
+```json
+{"type": "imu_unsubscribe_gesture"}
 ```
 
 ---
 
-### 10. RGB LED Control
+### I2S audio
+
+Mentra Live routes Android-side audio through the MCU via I2S. The path must be opened before audio can play, and audio must use `AudioManager.STREAM_NOTIFICATION`.
+
+#### `enable_i2s` / `enable_android_audio`
+
+```json
+{"type": "enable_i2s"}
+```
+
+Both names are aliases; either works. No response.
+
+#### `disable_i2s` / `disable_android_audio`
+
+```json
+{"type": "disable_i2s"}
+```
+
+No response.
+
+---
+
+### RGB LED control
+
+Controls the RGB LEDs on the glasses themselves (not the local MTK recording LED). See [features/led-control.md](features/led-control.md) for the layered architecture.
 
 #### `rgb_led_control_on`
 
@@ -424,13 +476,13 @@ Update battery status (usually sent by phone to glasses).
 }
 ```
 
-| Field | Type | Required | Range | Description |
-|-------|------|----------|-------|-------------|
-| `led` | int | Yes | 0-4 | 0=red, 1=green, 2=blue, 3=orange, 4=white |
-| `ontime` | int | Yes | >=0 | On duration in ms |
-| `offtime` | int | Yes | >=0 | Off duration in ms |
-| `count` | int | Yes | >=0 | Number of cycles |
-| `brightness` | int | No | 0-255 | Brightness level |
+| Field        | Type | Default                                           | Range                                     |
+| ------------ | ---- | ------------------------------------------------- | ----------------------------------------- |
+| `led`        | int  | 0 (red)                                           | 0=red, 1=green, 2=blue, 3=orange, 4=white |
+| `ontime`     | int  | 1000                                              | ≥ 0 ms                                    |
+| `offtime`    | int  | 1000                                              | ≥ 0 ms                                    |
+| `count`      | int  | 1                                                 | ≥ 0 cycles                                |
+| `brightness` | int  | `K900RgbLedController.DEFAULT_RGB_LED_BRIGHTNESS` | 0-255                                     |
 
 #### `rgb_led_control_off`
 
@@ -438,9 +490,27 @@ Update battery status (usually sent by phone to glasses).
 {"type": "rgb_led_control_off"}
 ```
 
+#### `rgb_led_photo_flash`
+
+```json
+{"type": "rgb_led_photo_flash", "duration": 5000, "brightness": 200}
+```
+
+White flash for photo capture. `duration` defaults to 5000 ms.
+
+#### `rgb_led_video_solid`
+
+```json
+{"type": "rgb_led_video_solid", "brightness": 200}
+```
+
+Solid white for video recording. Internal duration is 30 minutes — the recorder turns the LED off explicitly when recording stops.
+
+All four commands respond with either `<command>_response` (success: `true`) or `rgb_led_control_error` if the device doesn't support RGB LEDs or validation fails.
+
 ---
 
-### 11. Gallery
+### Gallery
 
 #### `query_gallery_status`
 
@@ -448,7 +518,7 @@ Update battery status (usually sent by phone to glasses).
 {"type": "query_gallery_status"}
 ```
 
-**Response:**
+Returns counts via `FileManager`. If the camera is busy (recording or streaming), the response reports zeros so the phone won't try to sync incomplete files.
 
 ```json
 {
@@ -457,21 +527,40 @@ Update battery status (usually sent by phone to glasses).
   "videos": 5,
   "total": 30,
   "total_size": 2147483648,
-  "has_content": true,
-  "camera_busy": null
+  "has_content": true
 }
 ```
 
-`camera_busy` values: `null`, `"video"`, `"stream"`
+When the camera is busy, an additional context field appears (`camera_busy`: `"video"` or `"stream"`).
 
 ---
 
-### 12. Settings
+### Settings
+
+#### `set_photo_mode`
+
+```json
+{"type": "set_photo_mode", "mode": "save_locally"}
+```
+
+Response:
+
+```json
+{"type": "set_photo_mode_ack", "mode": "save_locally"}
+```
 
 #### `button_video_recording_setting`
 
 ```json
 {"type": "button_video_recording_setting", "params": {"width": 1920, "height": 1080, "fps": 30}}
+```
+
+Persists the resolution/fps used when the hardware camera button starts a video.
+
+#### `button_max_recording_time`
+
+```json
+{"type": "button_max_recording_time", "minutes": 10}
 ```
 
 #### `button_photo_setting`
@@ -480,21 +569,41 @@ Update battery status (usually sent by phone to glasses).
 {"type": "button_photo_setting", "size": "large"}
 ```
 
+`size` is one of `small`, `medium`, `large`.
+
+Enables/disables the privacy LED during button-triggered capture.
+
 #### `button_mode_setting`
 
 ```json
 {"type": "button_mode_setting", "mode": "normal"}
 ```
 
-#### `set_ble_mtu`
+Currently echoes back as a `set_photo_mode_ack` and is reserved for future per-button-mode behavior.
+
+#### `camera_fov_setting` (Mentra Live / K900-class hardware)
 
 ```json
-{"type": "set_ble_mtu"}
+{"type": "camera_fov_setting", "params": {"fov": 118, "roi_position": 0}}
 ```
+
+Persists the FOV/ROI, applies them to the camera HAL via `DevApi.setCameraFov`, and restarts the HAL. A short cooldown (`CameraRestartCooldown`) blocks immediately-following capture commands. Falls back to persist-only on non-K900 hardware (no `libxydev`).
 
 ---
 
-### 13. Power Control
+### BLE configuration
+
+#### `set_ble_mtu`
+
+```json
+{"type": "set_ble_mtu", "mtu": 244}
+```
+
+Adjusts the file packet size to fit the MTU just negotiated by the phone. Effective payload is `mtu - 3` bytes, minus 32 bytes of K900 protocol overhead.
+
+---
+
+### Power
 
 #### `shutdown`
 
@@ -502,147 +611,124 @@ Update battery status (usually sent by phone to glasses).
 {"type": "shutdown"}
 ```
 
+Stops any active video recording (to finalize the moov atom) before calling `SysControl.shut()`.
+
 #### `reboot`
 
 ```json
 {"type": "reboot"}
 ```
 
+Same active-recording cleanup, then `SysControl.reboot()`.
+
 ---
 
-### 14. Internal Commands
-
-These are used by the MentraOS phone app for session management.
+### Session lifecycle (sent by the phone app)
 
 #### `phone_ready`
-
-Phone app signals it is connected and ready. Glasses respond with their own ready status and current hotspot state.
 
 ```json
 {"type": "phone_ready"}
 ```
 
-**Responses:**
+The phone announces it has connected. Glasses respond with `glasses_ready`, then 500 ms later auto-send WiFi status and hotspot status, and claim RGB LED control authority from the BES chip.
 
 ```json
 {"type": "glasses_ready", "timestamp": 1708963201234}
 ```
 
-```json
-{
-  "type": "hotspot_status_update",
-  "hotspot_enabled": true,
-  "hotspot_ssid": "MentraLive_XXXX",
-  "hotspot_password": "xxxxxxxx",
-  "hotspot_gateway_ip": "192.168.43.1"
-}
-```
-
-Also auto-sends WiFi status after 500ms and claims RGB LED control from the BES chip.
-
 #### `auth_token`
-
-Provide authentication token from Mentra app.
 
 ```json
 {"type": "auth_token", "coreToken": "eyJhbGciOiJIUzI1NiJ9..."}
 ```
 
-**Response:**
+Response:
 
 ```json
 {"type": "token_status", "success": true}
 ```
 
-No response if token is empty.
+Empty token returns `token_status` with `success: false`.
 
 #### `user_email`
 
-Set user email for Sentry error reporting context.
+Sets user identity for Sentry reporting context. No response.
 
 ```json
 {"type": "user_email", "email": "user@example.com"}
 ```
 
-No response. Fails silently if email is empty.
-
 #### `service_heartbeat`
-
-Keep-alive from the phone app to prevent service timeout.
 
 ```json
 {"type": "service_heartbeat", "timestamp": 1708963201234, "heartbeat_counter": 42}
 ```
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `timestamp` | long | No | current time | Heartbeat timestamp |
-| `heartbeat_counter` | int | No | - | Sequential counter for tracking |
+Resets the service heartbeat timeout. No response.
 
-No response.
+#### `ping`
+
+```json
+{"type": "ping"}
+```
+
+Also resets the heartbeat timeout. Response:
+
+```json
+{"type": "pong"}
+```
 
 #### `keep_awake`
 
-No-op keep-alive signal used to keep SoC awake during OTA updates.
+No-op keep-alive (used during OTA install windows). No response.
 
 ```json
 {"type": "keep_awake"}
 ```
 
-No response.
-
 #### `transfer_complete`
 
-Confirm that a media file transfer from glasses to phone completed.
+Phone confirms a media file BLE transfer finished.
 
 ```json
 {"type": "transfer_complete", "fileName": "photo_001.jpg", "success": true}
 ```
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `fileName` | string | Yes | - | Name of transferred file |
-| `success` | boolean | No | false | Whether transfer succeeded |
-
-No response. Fails if `fileName` is empty.
+`fileName` is required. No response.
 
 #### `save_in_gallery_mode`
 
-Enable or disable local photo/video capture on hardware button press.
+Toggles whether hardware-button presses save photos/videos locally (gallery mode). See [features/button-press-system.md](features/button-press-system.md).
 
 ```json
 {"type": "save_in_gallery_mode", "active": true}
 ```
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `active` | boolean | No | false | Enable button-triggered capture |
-
-No response.
+Persisted via `AsgSettings.setSaveInGalleryMode`.
 
 #### `upload_incident_logs`
 
-Upload recent logcat logs to the backend for a bug report. Runs asynchronously over WiFi.
-
 ```json
-{"type": "upload_incident_logs", "incidentId": "550e8400-e29b-41d4-a716-446655440000"}
+{"type": "upload_incident_logs", "incidentId": "550e8400-e29b-41d4-a716-446655440000", "apiBaseUrl": ""}
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `incidentId` | string | Yes | Backend incident identifier |
+| Field        | Type   | Required | Description              |
+| ------------ | ------ | -------- | ------------------------ |
+| `incidentId` | string | yes      | Backend incident id      |
+| `apiBaseUrl` | string | no       | Override server base URL |
 
-No direct response. Uploads last 400 log lines via HTTP POST and also collects BES firmware logs. Fails if `incidentId` is empty or no auth token is available.
+With WiFi: POSTs the last 600 logcat lines plus BES firmware logs to `<base>/api/incidents/<incidentId>/logs`. Without WiFi: relays the same payloads to the phone over two sequential K900 BLE file transfers; the phone POSTs them.
 
 #### `ota_start`
 
-Start an OTA update download and install.
+User accepted an OTA update.
 
 ```json
 {"type": "ota_start"}
 ```
 
-**Error Response (if OTA system unavailable after retries):**
+If `OtaHelper` isn't initialized yet (can happen right after APK install), the handler retries up to 4 times with 2 s backoff. After exhausting retries it sends:
 
 ```json
 {
@@ -653,64 +739,85 @@ Start an OTA update download and install.
   "bytes_downloaded": 0,
   "total_bytes": 0,
   "current_update": "apk",
-  "error_message": "OTA helper not initialized after 4 retries"
+  "error_message": "OTA service failed to initialize. Please restart glasses and try again."
 }
 ```
 
-Retries up to 4 times with 2-second delays if OTA system isn't ready.
+#### `ota_update_response` (deprecated)
 
-#### `ota_update_response`
-
-Legacy command for accepting/rejecting an OTA update prompt. Deprecated — use `ota_start` instead.
+Legacy accept/reject prompt, kept for older phone app versions. If `accepted` is `true`, delegates to `ota_start`.
 
 ```json
 {"type": "ota_update_response", "accepted": true}
 ```
 
-If `accepted` is true, delegates to `ota_start`. If false, logs rejection and takes no action.
+---
+
+### K900 protocol passthroughs
+
+The K900 microcontroller frames messages as `{"C": "<cmd>", "B": {...}, "V": 1}`. These are parsed by `K900CommandHandler` (not registered in `CommandHandlerRegistry` like the others — they're dispatched from the K900 protocol detector). Most are inbound-only and don't accept payloads from the phone, but a few translate to outbound JSON events:
+
+| Inbound `C`           | Meaning                                              | Outbound (if any)                         |
+| --------------------- | ---------------------------------------------------- | ----------------------------------------- |
+| `cs_pho`              | Camera button short press                            | `button_press`                            |
+| `cs_vdo`              | Camera button long press                             | `button_press`                            |
+| `hm_htsp` / `mh_htsp` | Hotspot start request                                | (handled internally)                      |
+| `hm_batv`             | Battery voltage update                               | `battery_status`                          |
+| `cs_flts`             | File-transfer ACK                                    | (handled internally)                      |
+| `sr_swst`             | Switch status report                                 | `switch_status`                           |
+| `sr_tpevt`            | Touch event report                                   | `touch_event`                             |
+| `sr_fbvol`            | Swipe volume status                                  | `swipe_volume_status`                     |
+| `hm_ota`              | BES OTA authorization response                       | (handled internally)                      |
+| `hs_ntfy`             | Hardware notification (newer firmware button format) | `button_press`                            |
+| `sr_vad`              | Voice Activity Detection event                       | (logged only)                             |
+| `hs_syvr`             | System version report                                | (cached, triggers `request_version` push) |
+| `sr_btaddr`           | BT MAC address                                       | (persisted to system properties)          |
+| `sr_keyevt`           | Power button short press                             | (announces battery via audio asset)       |
+| `sr_log`              | BES log stream packet                                | (forwarded to upload pipeline)            |
+| `cs_shut`             | BES requesting graceful shutdown                     | `sr_shut` ack, then shutdown              |
 
 ---
 
-## Debug Interface (Intent Broadcast)
+## Debug interface (intent broadcast)
 
-For development and testing, commands can be sent to `asg_client` via Android broadcast intents. This is useful for ADB-based testing, automated test harnesses, and debugging without a phone connection.
+For ADB-based testing and debug APKs.
 
-### Intent Actions
+### Intent actions
 
-| Action | Description |
-|--------|-------------|
-| `com.mentra.asg_client.ACTION_SEND_COMMAND` | Send a JSON command (extra: `json`) |
-| `com.mentra.asg_client.ACTION_REGISTER_LISTENER` | Register to receive responses (extra: `packageName`) |
-| `com.mentra.asg_client.ACTION_UNREGISTER_LISTENER` | Stop receiving responses (extra: `packageName`) |
-| `com.mentra.asg_client.ACTION_COMMAND_RESPONSE` | Response broadcast sent to registered listeners (extra: `json`) |
+| Action                                             | Direction | Extras                                                   |
+| -------------------------------------------------- | --------- | -------------------------------------------------------- |
+| `com.mentra.asg_client.ACTION_SEND_COMMAND`        | inbound   | `json` (string) — the command JSON                       |
+| `com.mentra.asg_client.ACTION_REGISTER_LISTENER`   | inbound   | `packageName` (string) — package to deliver responses to |
+| `com.mentra.asg_client.ACTION_UNREGISTER_LISTENER` | inbound   | `packageName` (string)                                   |
+| `com.mentra.asg_client.ACTION_COMMAND_RESPONSE`    | outbound  | `json` (string) — the response JSON                      |
 
-### ADB Examples
+The first three actions are declared in `AndroidManifest.xml` with the `IntentCommandReceiver`. `ACTION_COMMAND_RESPONSE` is an outgoing-only action — debug APKs declare a receiver for it themselves.
+
+### ADB examples
 
 ```bash
 # Ping
 adb shell am broadcast -a com.mentra.asg_client.ACTION_SEND_COMMAND \
   --es json '{"type":"ping","mId":12345}'
 
+# Take a photo (direct upload)
+adb shell am broadcast -a com.mentra.asg_client.ACTION_SEND_COMMAND \
+  --es json '{"type":"take_photo","requestId":"test1","packageName":"com.test","webhookUrl":"https://example.com/upload","authToken":"Bearer xyz"}'
+
+# Start a stream
+adb shell am broadcast -a com.mentra.asg_client.ACTION_SEND_COMMAND \
+  --es json '{"type":"start_stream","streamUrl":"rtmp://1.2.3.4/live/stream","streamId":"s1"}'
+
 # Enable I2S audio
 adb shell am broadcast -a com.mentra.asg_client.ACTION_SEND_COMMAND \
   --es json '{"type":"enable_i2s"}'
 
-# Take a photo
-adb shell am broadcast -a com.mentra.asg_client.ACTION_SEND_COMMAND \
-  --es json '{"type":"take_photo","requestId":"test1","packageName":"com.test"}'
-
 # Register a debug listener
 adb shell am broadcast -a com.mentra.asg_client.ACTION_REGISTER_LISTENER \
   --es packageName "com.example.testapp"
-
-# Unregister
-adb shell am broadcast -a com.mentra.asg_client.ACTION_UNREGISTER_LISTENER \
-  --es packageName "com.example.testapp"
 ```
 
-### Receiving Responses (for debug apps)
-
-To receive responses in a debug APK, declare a receiver and register as a listener:
+### Receiving responses
 
 ```xml
 <receiver android:name=".DebugResponseReceiver" android:enabled="true" android:exported="true">
@@ -722,21 +829,29 @@ To receive responses in a debug APK, declare a receiver and register as a listen
 
 ```java
 public class DebugResponseReceiver extends BroadcastReceiver {
-    @Override
-    public void onReceive(Context context, Intent intent) {
+    @Override public void onReceive(Context context, Intent intent) {
         String json = intent.getStringExtra("json");
         Log.d("Debug", "Response: " + json);
     }
 }
 ```
 
-## Logcat Tags
+---
 
-| Tag | Component |
-|-----|-----------|
-| `IntentCommandReceiver` | Incoming intent processing |
-| `IntentResponseBroadcaster` | Outgoing response broadcasts |
-| `I2SAudioCommandHandler` | I2S audio enable/disable |
-| `CommandProcessor` | Command routing and processing |
-| `CommunicationManager` | Response sending (BLE) |
-| `BaseBluetoothManager` | Outbound data + intent broadcast |
+## Logcat tags
+
+| Tag                                                                     | Component                     |
+| ----------------------------------------------------------------------- | ----------------------------- |
+| `IntentCommandReceiver`                                                 | Incoming intent processing    |
+| `IntentResponseBroadcaster`                                             | Outgoing response broadcasts  |
+| `CommandProcessor`                                                      | Command routing               |
+| `CommandHandlerRegistry`                                                | Handler registration / lookup |
+| `PhotoCommandHandler`                                                   | Photo capture                 |
+| `VideoCommandHandler`                                                   | Video + buffer recording      |
+| `StreamCommandHandler`                                                  | Stream start/stop/keep-alive  |
+| `RtmpStreamingService` / `SrtStreamingService` / `WhipStreamingService` | Stream lifecycle              |
+| `WifiCommandHandler`                                                    | WiFi operations               |
+| `RgbLedCommandHandler`                                                  | RGB LED                       |
+| `K900CommandHandler`                                                    | K900 protocol passthrough     |
+| `OtaCommandHandler`                                                     | OTA                           |
+| `UploadIncidentLogsHandler`                                             | Incident log upload           |

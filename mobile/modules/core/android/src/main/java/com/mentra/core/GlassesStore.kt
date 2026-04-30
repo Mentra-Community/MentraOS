@@ -250,7 +250,7 @@ object GlassesStore {
                     CoreManager.getInstance().sgc?.setHeadUpAngle(angle)
                 }
             }
-            "core" to "dashboard_menu_apps" -> {
+            "core" to "menu_apps" -> {
                 @Suppress("UNCHECKED_CAST")
                 (value as? List<Map<String, Any>>)?.let { items ->
                     CoreManager.getInstance().sgc?.setDashboardMenu(items)

@@ -6,7 +6,7 @@ import * as NavigationBar from "expo-navigation-bar"
 import {useSetting, SETTINGS} from "@/stores/settings"
 import {type Theme, type ThemeContexts, type ThemedStyle, type ThemedStyleArray, lightTheme, darkTheme} from "@/theme"
 import {setStatusBarStyle} from "expo-status-bar"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@/utils/timers"
 import {Uniwind} from "uniwind"
 
 type ThemeContextType = {
@@ -38,7 +38,7 @@ export const ThemeProvider: FC<{children: React.ReactNode}> = ({children}) => {
   const updateThemeType = (lightOrDark: "light" | "dark", updateUniwind = true) => {
     console.log("updateThemeType()", lightOrDark, updateUniwind)
     // somehow this helps with getting the status bar style to update:
-    BackgroundTimer.setTimeout(() => {
+    BgTimer.setTimeout(() => {
       setStatusBarStyle(lightOrDark === "dark" ? "light" : "dark", true)
       let theme = themeNameToTheme(lightOrDark)
       SystemUI.setBackgroundColorAsync(theme.colors.background)
@@ -65,7 +65,7 @@ export const ThemeProvider: FC<{children: React.ReactNode}> = ({children}) => {
       updateThemeType(themeType, false)
     }
 
-    BackgroundTimer.setTimeout(() => {
+    BgTimer.setTimeout(() => {
       hasLoaded.current = true
     }, 1000)
   }, [])

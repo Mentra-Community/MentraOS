@@ -135,8 +135,8 @@ export default function SelectGlassesBluetoothScreen() {
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
       <Header leftIcon="chevron-left" onLeftPress={goBack} RightActionComponent={<MentraLogoStandalone />} />
       <View className="flex-1 justify-center">
-        <GlassView className="gap-6 rounded-3xl bg-primary-foreground p-6">
-          <Image source={getGlassesOpenImage(deviceModel)} className="h-[90px] w-full" resizeMode="contain" />
+        <GlassView className="gap-6 rounded-3xl p-6 bg-background" transparent={false}>
+          <Image source={getGlassesOpenImage(deviceModel)} className="h-[90px] w-[156px] mx-auto" resizeMode="contain" />
           <Text
             className="text-center text-xl font-semibold text-text-dim"
             text={translate("pairing:scanningForGlassesModel", {model: deviceModel})}
@@ -147,22 +147,24 @@ export default function SelectGlassesBluetoothScreen() {
               <ActivityIndicator size="large" color={theme.colors.foreground} />
             </View>
           ) : (
-            <ScrollView className="max-h-[300px] -mr-4 pr-4">
+            <ScrollView className="max-h-[300px] -mr-4 pr-4" contentContainerClassName="my-4">
               <Group>
                 {visibleResults.map((res: DeviceSearchResult, index: number) => {
                   let deviceName = filterDeviceName(res.deviceName)
 
                   return (
-                    <TouchableOpacity
-                      key={index}
-                      className="h-[50px] flex-row items-center justify-between bg-primary-foreground px-4 py-3"
-                      onPress={() => triggerGlassesPairingGuide(res.deviceModel, res.deviceName)}>
-                      <View className="flex-1 px-2.5 flex-col">
-                        <Text text={deviceModel} className="flex-wrap text-sm font-semibold" numberOfLines={2} />
-                        <Text text={deviceName} className="text-xs text-muted-foreground" numberOfLines={1} />
-                      </View>
+                    <View className="flex-row items-center justify-between px-4 py-3 bg-primary-foreground/80">
+                      <TouchableOpacity
+                        key={index}
+                        className="flex-1"
+                        onPress={() => triggerGlassesPairingGuide(res.deviceModel, res.deviceName)}>
+                        <View className="flex-1 px-2.5 flex-col">
+                          <Text text={deviceModel} className="flex-wrap text-sm font-semibold" numberOfLines={2} />
+                          <Text text={deviceName} className="text-xs text-muted-foreground" numberOfLines={1} />
+                        </View>
+                      </TouchableOpacity>
                       <Icon name="chevron-right" size={24} color={theme.colors.text} />
-                    </TouchableOpacity>
+                    </View>
                   )
                 })}
               </Group>

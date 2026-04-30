@@ -78,14 +78,6 @@ class R1: NSObject, ControllerManager {
     private var centralManager: CBCentralManager?
     private var ringPeripheral: CBPeripheral?
     private var isDisconnecting = false
-    private var _ready = false
-    private var ready: Bool {
-        get { _ready }
-        set {
-            _ready = newValue
-            if !newValue { _batteryLevel = -1 }
-        }
-    }
 
     // BLE characteristics
     private var writeChar1: CBCharacteristic?
@@ -240,7 +232,7 @@ class R1: NSObject, ControllerManager {
         let writeChars = [writeChar1, writeChar2].compactMap { $0 }
         guard !writeChars.isEmpty else {
             Bridge.log("R1: No write characteristics found, skipping init")
-            markReady()
+            markConnected()
             return
         }
 
@@ -253,14 +245,13 @@ class R1: NSObject, ControllerManager {
             for wc in writeChars {
                 self.ringPeripheral?.writeValue(R1BLE.CONFIG_11, for: wc, type: .withoutResponse)
             }
-            self.markReady()
+            self.markConnected()
         }
     }
 
-    private func markReady() {
-        ready = true
+    private func markConnected() {
         Task { await reconnectionManager.stop() }
-        Bridge.log("R1: Ring ready")
+        Bridge.log("R1: Ring connected")
 
         if let name = ringPeripheral?.name, let id = extractRingId(name) {
             GlassesStore.shared.apply("core", "controller_device_name", id)
@@ -274,7 +265,7 @@ class R1: NSObject, ControllerManager {
         GlassesStore.shared.apply("glasses", "controllerMacAddress", mac)
 
         GlassesStore.shared.apply("glasses", "controllerConnected", true)
-        GlassesStore.shared.apply("glasses", "controllerFullyBooted", true)
+        // GlassesStore.shared.apply("glasses", "controllerFullyBooted", true)
 
         // after a second, connect the glasses to the controller if needed:
         Task {
@@ -293,7 +284,7 @@ class R1: NSObject, ControllerManager {
         heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) {
             [weak self] _ in
             DispatchQueue.main.async {
-                guard let self = self, self.ready else { return }
+                guard let self = self, GlassesStore.shared.get("glasses", "controllerConnected") as? Bool ?? false else { return }
                 // Read battery if we have the standard battery char
                 if let char = self.batteryLevelChar {
                     self.ringPeripheral?.readValue(for: char)
@@ -375,7 +366,6 @@ class R1: NSObject, ControllerManager {
         notifySubscriptionCount = 0
         initSequenceRun = false
         ringMacAddress = nil
-        ready = false
         GlassesStore.shared.apply("glasses", "controllerConnected", false)
         GlassesStore.shared.apply("glasses", "controllerFullyBooted", false)
     }
@@ -386,7 +376,7 @@ class R1: NSObject, ControllerManager {
         Task {
             await reconnectionManager.start { [weak self] in
                 guard let self else { return false }
-                if await MainActor.run(body: { self.ready }) {
+                if await MainActor.run(body: { GlassesStore.shared.get("glasses", "controllerConnected") as? Bool ?? false }) {
                     return true // already connected
                 }
                 Bridge.log("R1: Attempting reconnection...")
@@ -468,9 +458,6 @@ class R1: NSObject, ControllerManager {
     func startStream(_: [String: Any]) {}
     func stopStream() {}
     func sendStreamKeepAlive(_: [String: Any]) {}
-    func startBufferRecording() {}
-    func stopBufferRecording() {}
-    func saveBufferVideo(requestId _: String, durationSeconds _: Int) {}
     func sendButtonPhotoSettings() {}
     func sendButtonModeSetting() {}
     func sendButtonVideoRecordingSettings() {}

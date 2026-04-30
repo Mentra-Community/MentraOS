@@ -137,12 +137,6 @@ func sendRgbLedControl(requestId: String, packageName _: String?, action _: Stri
 
 //     func sendRtmpKeepAlive(_: [String: Any]) {}
 
-//     func startBufferRecording() {}
-
-//     func stopBufferRecording() {}
-
-//     func saveBufferVideo(requestId _: String, durationSeconds _: Int) {}
-
 //     func startVideoRecording(requestId _: String, save _: Bool) {}
 
 //     func stopVideoRecording(requestId _: String) {}

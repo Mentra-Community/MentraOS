@@ -6,7 +6,7 @@ import {translate} from "@/i18n"
 import {WebSocketStatus} from "@/services/WebSocketManager"
 import {useRefreshApplets} from "@/stores/applets"
 import {useConnectionStore} from "@/stores/connection"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@/utils/timers"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
@@ -66,7 +66,7 @@ export default function WebsocketStatus() {
 
     if (connectionStatus === WebSocketStatus.CONNECTED) {
       if (disconnectionTimerRef.current) {
-        BackgroundTimer.clearTimeout(disconnectionTimerRef.current)
+        BgTimer.clearTimeout(disconnectionTimerRef.current)
         disconnectionTimerRef.current = null
       }
       setDisplayStatus("connected")
@@ -82,10 +82,10 @@ export default function WebsocketStatus() {
       // we just disconnected
       setDisplayStatus("warning")
       if (disconnectionTimerRef.current) {
-        BackgroundTimer.clearTimeout(disconnectionTimerRef.current)
+        BgTimer.clearTimeout(disconnectionTimerRef.current)
         disconnectionTimerRef.current = null
       }
-      disconnectionTimerRef.current = BackgroundTimer.setTimeout(() => {
+      disconnectionTimerRef.current = BgTimer.setTimeout(() => {
         setDisplayStatus("disconnected")
         wasSustainedDisconnectedRef.current = true
         refreshApplets()
@@ -95,7 +95,7 @@ export default function WebsocketStatus() {
 
     return () => {
       if (disconnectionTimerRef.current) {
-        BackgroundTimer.clearTimeout(disconnectionTimerRef.current)
+        BgTimer.clearTimeout(disconnectionTimerRef.current)
         disconnectionTimerRef.current = null
       }
     }

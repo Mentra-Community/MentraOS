@@ -569,23 +569,6 @@ class SocketComms {
     CoreModule.keepStreamAlive(msg)
   }
 
-  private handle_save_buffer_video(msg: any) {
-    console.log(`SOCKET: Received SAVE_BUFFER_VIDEO: ${JSON.stringify(msg)}`)
-    const bufferRequestId = msg.requestId || `buffer_${Date.now()}`
-    const durationSeconds = msg.durationSeconds || 30
-    CoreModule.saveBufferVideo(bufferRequestId, durationSeconds)
-  }
-
-  private handle_start_buffer_recording() {
-    console.log("SOCKET: Received START_BUFFER_RECORDING")
-    CoreModule.startBufferRecording()
-  }
-
-  private handle_stop_buffer_recording() {
-    console.log("SOCKET: Received STOP_BUFFER_RECORDING")
-    CoreModule.stopBufferRecording()
-  }
-
   private handle_start_video_recording(msg: any) {
     console.log(`SOCKET: Received START_VIDEO_RECORDING: ${JSON.stringify(msg)}`)
     const videoRequestId = msg.requestId || `video_${Date.now()}`
@@ -770,18 +753,6 @@ class SocketComms {
 
       case "keep_stream_alive":
         this.handle_keep_stream_alive(msg)
-        break
-
-      case "start_buffer_recording":
-        this.handle_start_buffer_recording()
-        break
-
-      case "stop_buffer_recording":
-        this.handle_stop_buffer_recording()
-        break
-
-      case "save_buffer_video":
-        this.handle_save_buffer_video(msg)
         break
 
       case "start_video_recording":

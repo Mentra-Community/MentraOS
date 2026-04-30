@@ -26,9 +26,6 @@ abstract class SGCManager {
     abstract fun startStream(message: MutableMap<String, Any>)
     abstract fun stopStream()
     abstract fun sendStreamKeepAlive(message: MutableMap<String, Any>)
-    abstract fun startBufferRecording()
-    abstract fun stopBufferRecording()
-    abstract fun saveBufferVideo(requestId: String, durationSeconds: Int)
     abstract fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean)
     abstract fun stopVideoRecording(requestId: String)
 

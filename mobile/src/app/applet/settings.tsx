@@ -93,6 +93,7 @@ export default function AppSettings() {
     goBack()
   }
   focusEffectPreventBack(() => {
+    console.log("SETTINGS: focusEffectPreventBack() called")
     // On iOS, iosDontPreventBack=true lets the native gesture handle navigation,
     // so we only need to capture the screenshot. On Android, preventBack is still
     // true so we must also call goBack() to navigate.

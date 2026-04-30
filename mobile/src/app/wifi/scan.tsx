@@ -1,6 +1,6 @@
 import CoreModule, {WifiSearchResult} from "core"
 import {useFocusEffect} from "expo-router"
-import {useCallback, useEffect, useRef, useState} from "react"
+import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {ActivityIndicator, ScrollView, TouchableOpacity, View} from "react-native"
 import Toast from "react-native-toast-message"
 
@@ -16,7 +16,7 @@ import {useGlassesStore} from "@/stores/glasses"
 import showAlert from "@/utils/AlertUtils"
 import WifiCredentialsService from "@/utils/wifi/WifiCredentialsService"
 import {translate} from "@/i18n"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@/utils/timers"
 import {useCoreStore} from "@/stores/core"
 
 export default function WifiScanScreen() {
@@ -87,7 +87,7 @@ export default function WifiScanScreen() {
       }))
 
       if (scanTimeoutRef.current) {
-        BackgroundTimer.clearTimeout(scanTimeoutRef.current)
+        BgTimer.clearTimeout(scanTimeoutRef.current)
         scanTimeoutRef.current = null
       }
 
@@ -101,7 +101,7 @@ export default function WifiScanScreen() {
 
     return () => {
       if (scanTimeoutRef.current) {
-        BackgroundTimer.clearTimeout(scanTimeoutRef.current)
+        BgTimer.clearTimeout(scanTimeoutRef.current)
         scanTimeoutRef.current = null
       }
     }
@@ -115,10 +115,10 @@ export default function WifiScanScreen() {
     receivedResultsForSessionRef.current = false
 
     if (scanTimeoutRef.current) {
-      BackgroundTimer.clearTimeout(scanTimeoutRef.current)
+      BgTimer.clearTimeout(scanTimeoutRef.current)
     }
 
-    scanTimeoutRef.current = BackgroundTimer.setTimeout(() => {
+    scanTimeoutRef.current = BgTimer.setTimeout(() => {
       console.log("WIFI_SCAN: SCAN TIMEOUT - RETRYING...")
       scanTimeoutRef.current = null
     }, 15000)
@@ -129,7 +129,7 @@ export default function WifiScanScreen() {
     } catch (error) {
       console.error("WIFI_SCAN: Error scanning for WiFi networks:", error)
       if (scanTimeoutRef.current) {
-        BackgroundTimer.clearTimeout(scanTimeoutRef.current)
+        BgTimer.clearTimeout(scanTimeoutRef.current)
         scanTimeoutRef.current = null
       }
       setIsScanning(false)
@@ -237,8 +237,23 @@ export default function WifiScanScreen() {
     )
   }
 
+  // sort networks so that connected networks are at the top:
+  const sortedNetworks = useMemo(
+    () =>
+      networks.sort((a, b) => {
+        if (wifiConnected && wifiSsid === a.ssid) {
+          return -1
+        }
+        if (wifiConnected && wifiSsid === b.ssid) {
+          return 1
+        }
+        return 0
+      }),
+    [networks, wifiConnected, wifiSsid],
+  )
+
   return (
-    <Screen preset="fixed" safeAreaEdges={["bottom"]}>
+    <Screen preset="fixed" safeAreaEdges={["bottom"]} KeyboardAvoidingViewProps={{enabled: false}}>
       {showBack ? (
         <Header
           title="Wi-Fi"
@@ -272,7 +287,7 @@ export default function WifiScanScreen() {
             <>
               {/* <Text className="text-sm font-semibold text-text mb-2" tx="wifi:networks" /> */}
               <ScrollView className="flex-1 px-5 -mx-5" contentContainerClassName="pb-4">
-                <Group>{networks.map(renderNetworkItem)}</Group>
+                <Group>{sortedNetworks.map(renderNetworkItem)}</Group>
               </ScrollView>
             </>
           ) : (

@@ -9,6 +9,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import socketComms from "@/services/SocketComms"
 import {useDisplayStore} from "@/stores/display"
 import {ThemedStyle} from "@/theme"
+import { BgTimer } from "@/utils/timers"
 
 interface SimulatedGlassesControlsProps {}
 
@@ -54,7 +55,7 @@ export const SimulatedGlassesControls: React.FC<SimulatedGlassesControlsProps> =
   const handlePressIn = () => {
     console.log("SimulatedGlassesControls: Button press started")
     // Set a timer for long press (500ms threshold)
-    pressTimer = setTimeout(() => {
+    pressTimer = BgTimer.setTimeout(() => {
       handleButtonPress("long")
       pressTimer = null
     }, 500)
@@ -64,7 +65,7 @@ export const SimulatedGlassesControls: React.FC<SimulatedGlassesControlsProps> =
     console.log("SimulatedGlassesControls: Button press ended")
     // If timer is still active, it was a short press
     if (pressTimer) {
-      clearTimeout(pressTimer)
+      BgTimer.clearTimeout(pressTimer)
       pressTimer = null
       handleButtonPress("short")
     }

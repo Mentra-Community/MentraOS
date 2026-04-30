@@ -123,9 +123,7 @@ export default function SelectGlassesBluetoothScreen() {
     })
   }, [searchResults])
 
-  const visibleResults = rememberedSearchResults.filter(
-    (r) => r.deviceModel === deviceModel,
-  )
+  const visibleResults = rememberedSearchResults.filter((r) => r.deviceModel === deviceModel)
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
@@ -143,23 +141,25 @@ export default function SelectGlassesBluetoothScreen() {
               <ActivityIndicator size="large" color={theme.colors.foreground} />
             </View>
           ) : (
-            <ScrollView className="max-h-[300px] -mr-4 pr-4">
+            <ScrollView className="max-h-[300px] -mr-4 pr-4" contentContainerClassName="my-4">
               <Group>
-                {visibleResults.map((res: DeviceSearchResult, index: number) => (
-                  <TouchableOpacity
-                    key={index}
-                    className="h-[50px] flex-row items-center justify-between bg-background px-4 py-3"
-                    onPress={() => triggerGlassesPairingGuide(res.deviceModel, res.deviceName)}>
-                    <View className="flex-1 px-2.5">
-                      <Text
-                        text={`${deviceModel} - ${filterDeviceName(res.deviceName)}`}
-                        className="flex-wrap text-sm font-semibold"
-                        numberOfLines={2}
-                      />
+                {visibleResults.map((res: DeviceSearchResult, index: number) => {
+                  let deviceName = filterDeviceName(res.deviceName)
+                  return (
+                    <View className="flex-row items-center justify-between px-4 py-3 bg-primary-foreground/80">
+                      <TouchableOpacity
+                        key={index}
+                        className="flex-1"
+                        onPress={() => triggerGlassesPairingGuide(res.deviceModel, res.deviceName)}>
+                        <View className="flex-1 px-2.5 flex-col">
+                          <Text text={deviceModel} className="flex-wrap text-sm font-semibold" numberOfLines={2} />
+                          <Text text={deviceName} className="text-xs text-muted-foreground" numberOfLines={1} />
+                        </View>
+                      </TouchableOpacity>
+                      <Icon name="chevron-right" size={24} color={theme.colors.text} />
                     </View>
-                    <Icon name="chevron-right" size={24} color={theme.colors.text} />
-                  </TouchableOpacity>
-                ))}
+                  )
+                })}
               </Group>
             </ScrollView>
           )}

@@ -51,18 +51,6 @@ class Simulated : SGCManager() {
         Bridge.log("sendStreamKeepAlive")
     }
 
-    override fun startBufferRecording() {
-        Bridge.log("startBufferRecording")
-    }
-
-    override fun stopBufferRecording() {
-        Bridge.log("stopBufferRecording")
-    }
-
-    override fun saveBufferVideo(requestId: String, durationSeconds: Int) {
-        Bridge.log("saveBufferVideo")
-    }
-
     override fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean) {
         Bridge.log("startVideoRecording flash=$flash, sound=$sound")
     }

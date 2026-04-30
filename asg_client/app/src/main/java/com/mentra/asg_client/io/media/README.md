@@ -16,8 +16,7 @@ io/media/
 │   └── CameraNeo.java                   # Advanced camera implementation
 ├── managers/
 │   ├── MediaUploadQueueManager.java     # Media upload queue management
-│   ├── PhotoQueueManager.java           # Photo queue management
-│   └── GlassesMicrophoneManager.java    # Microphone management (REMOVED)
+│   └── PhotoQueueManager.java           # Photo queue management
 ├── upload/
 │   ├── MediaUploadService.java          # Media upload service
 │   └── PhotoUploadService.java          # Photo upload service
@@ -25,8 +24,6 @@ io/media/
 │   └── MediaUtils.java                  # Media utility functions
 └── README.md                            # This documentation
 ```
-
-**Note:** GlassesMicrophoneManager was removed in recent refactoring. Audio management is now handled elsewhere in the codebase.
 
 ## 🔧 Components
 

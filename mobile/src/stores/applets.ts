@@ -20,13 +20,14 @@ import STTModelManager from "@/services/STTModelManager"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import {showAlert} from "@/contexts/ModalContext"
 import {CompatibilityResult, HardwareCompatibility} from "@/utils/hardware"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@/utils/timers"
 import {storage} from "@/utils/storage"
 import {useShallow} from "zustand/react/shallow"
 import composer from "@/services/Composer"
 import {miniappHost} from "@/components/miniapp/MiniappHost"
 import {miniappRunningRegistry} from "@/services/miniapp/MiniappRunningRegistry"
 import {decideDevLaunchRoute} from "@/utils/devMiniappLaunch"
+import {getDefaultMenuApps, GlassesMenuItem} from "@/utils/glassesMenu"
 
 export interface ClientAppletInterface extends AppletInterface {
   offline: boolean
@@ -470,10 +471,10 @@ const getOfflineApplets = async (): Promise<ClientAppletInterface[]> => {
     if (runningRes.is_ok() && runningRes.value) {
       mapp.running = true
     }
-    // let screenshotRes = await storage.load<string>(`${mapp.packageName}_screenshot`)
-    // if (screenshotRes.is_ok() && screenshotRes.value) {
-    //   mapp.screenshot = screenshotRes.value
-    // }
+    let screenshotRes = await storage.load<string>(`${mapp.packageName}_screenshot`)
+    if (screenshotRes.is_ok() && screenshotRes.value) {
+      mapp.screenshot = screenshotRes.value
+    }
   }
   return miniApps as ClientAppletInterface[]
 }
@@ -499,8 +500,8 @@ const startStopOfflineApplet = (applet: ClientAppletInterface, status: boolean):
   })
 }
 
-let refreshTimeout: ReturnType<typeof BackgroundTimer.setTimeout> | null = null
-let refreshInterval: ReturnType<typeof BackgroundTimer.setInterval> | null = null
+let refreshTimeout: ReturnType<typeof BgTimer.setTimeout> | null = null
+let refreshInterval: ReturnType<typeof BgTimer.setInterval> | null = null
 // actually turn on or off an applet:
 const startStopApplet = (applet: ClientAppletInterface, status: boolean): AsyncResult<void, Error> => {
   // Offline apps don't need to wait for server confirmation
@@ -515,11 +516,11 @@ const startStopApplet = (applet: ClientAppletInterface, status: boolean): AsyncR
 
   // Clear any pending refresh timers
   if (refreshTimeout) {
-    BackgroundTimer.clearTimeout(refreshTimeout)
+    BgTimer.clearTimeout(refreshTimeout)
     refreshTimeout = null
   }
   if (refreshInterval) {
-    BackgroundTimer.clearInterval(refreshInterval)
+    BgTimer.clearInterval(refreshInterval)
     refreshInterval = null
   }
 
@@ -527,19 +528,19 @@ const startStopApplet = (applet: ClientAppletInterface, status: boolean): AsyncR
   if (status) {
     let pollCount = 0
     const MAX_POLLS = 6
-    refreshInterval = BackgroundTimer.setInterval(() => {
+    refreshInterval = BgTimer.setInterval(() => {
       pollCount++
       useAppletStatusStore.getState().refreshApplets()
       if (pollCount >= MAX_POLLS) {
         if (refreshInterval) {
-          BackgroundTimer.clearInterval(refreshInterval)
+          BgTimer.clearInterval(refreshInterval)
           refreshInterval = null
         }
       }
     }, 1000)
   } else {
     // For stop, single refresh after 2s is fine
-    refreshTimeout = BackgroundTimer.setTimeout(() => {
+    refreshTimeout = BgTimer.setTimeout(() => {
       useAppletStatusStore.getState().refreshApplets()
     }, 2000)
   }
@@ -557,17 +558,17 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
   retryStartApp: async (packageName: string) => {
     // Re-send start request and set up polling (used by error screen retry)
     if (refreshInterval) {
-      BackgroundTimer.clearInterval(refreshInterval)
+      BgTimer.clearInterval(refreshInterval)
       refreshInterval = null
     }
     let pollCount = 0
     const MAX_POLLS = 6
-    refreshInterval = BackgroundTimer.setInterval(() => {
+    refreshInterval = BgTimer.setInterval(() => {
       pollCount++
       useAppletStatusStore.getState().refreshApplets()
       if (pollCount >= MAX_POLLS) {
         if (refreshInterval) {
-          BackgroundTimer.clearInterval(refreshInterval)
+          BgTimer.clearInterval(refreshInterval)
           refreshInterval = null
         }
       }
@@ -589,7 +590,7 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
     console.log(`APPLETS: refreshApplets()`)
     // cancel any pending refresh timeouts:
     if (refreshTimeout) {
-      BackgroundTimer.clearTimeout(refreshTimeout)
+      BgTimer.clearTimeout(refreshTimeout)
       refreshTimeout = null
     }
 
@@ -656,7 +657,7 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
     let capabilities = getModelCapabilities(defaultWearable)
 
     for (const applet of applets) {
-      console.log(`APPLETS: ${defaultWearable} ${applet.packageName} ${JSON.stringify(applet.hardwareRequirements)}`)
+      // console.log(`APPLETS: ${defaultWearable} ${applet.packageName} ${JSON.stringify(applet.hardwareRequirements)}`)
       let result = HardwareCompatibility.checkCompatibility(applet.hardwareRequirements, capabilities)
       applet.compatibility = result
     }
@@ -679,6 +680,20 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
         applet.offlineRoute = "/miniapps/settings/notifications"
       }
     }
+
+    let menuItems = (await useSettingsStore.getState().getSetting(SETTINGS.menu_apps.key)) as GlassesMenuItem[]
+    if (!menuItems) {
+      menuItems = await getDefaultMenuApps(applets)
+    }
+    const itemsForNative = menuItems.map((item: GlassesMenuItem) => {
+      const app = applets.find((a) => a.packageName === item.packageName)
+      return {
+        name: item.name,
+        packageName: item.packageName,
+        running: app?.running ?? false,
+      }
+    })
+    useSettingsStore.getState().setSetting(SETTINGS.menu_apps.key, itemsForNative)
 
     set({apps: applets})
   },
@@ -928,7 +943,7 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
   },
 
   saveScreenshot: async (packageName: string, screenshot: string) => {
-    // await storage.save(`${packageName}_screenshot`, screenshot)
+    storage.save(`${packageName}_screenshot`, screenshot)
     set((state) => ({
       apps: state.apps.map((a) => (a.packageName === packageName ? {...a, screenshot} : a)),
     }))

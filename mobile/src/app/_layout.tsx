@@ -1,6 +1,6 @@
 import "react-native-get-random-values" // Must be first - required for tweetnacl crypto (UDP encryption)
 import "@/utils/polyfills/event" // Must be before any livekit imports
-import {registerGlobals} from "@livekit/react-native-webrtc"
+// import {registerGlobals} from "@livekit/react-native-webrtc"
 import * as Sentry from "@sentry/react-native"
 import {useFonts} from "expo-font"
 import {useNavigationContainerRef} from "expo-router"
@@ -39,7 +39,7 @@ function Root() {
       await initI18n()
       await loadDateFnsLocale()
       // initialize webrtc
-      await registerGlobals()
+      // await registerGlobals()
     } catch (error) {
       console.error("Error loading assets:", error)
     } finally {
@@ -71,6 +71,8 @@ function Root() {
   if (!loaded) {
     return null
   }
+
+  console.log("!!!!!!!!!!!!!!!!!!!!!!!!!!! ROOT RENDERED !!!!!!!!!!!!!!!!!!!!!!!!!!!!")
 
   return (
     <AllProviders>

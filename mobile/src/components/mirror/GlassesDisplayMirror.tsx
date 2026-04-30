@@ -7,6 +7,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useDisplayStore} from "@/stores/display"
 import {useGlassesStore} from "@/stores/glasses"
 import {ThemedStyle} from "@/theme"
+import GlassView from "@/components/ui/GlassView"
 
 interface GlassesDisplayMirrorProps {
   fallbackMessage?: string
@@ -215,11 +216,11 @@ const GlassesDisplayMirror: React.FC<GlassesDisplayMirrorProps> = ({
       return null
     }
     return (
-      <View style={[themed($glassesScreen), style]}>
+      <GlassView className="bg-primary-foreground" style={[themed($glassesScreen), style]}>
         <View style={themed($emptyContainer)}>
           <Text style={themed($emptyText)}>{fallbackMessage}</Text>
         </View>
-      </View>
+      </GlassView>
     )
   }
 

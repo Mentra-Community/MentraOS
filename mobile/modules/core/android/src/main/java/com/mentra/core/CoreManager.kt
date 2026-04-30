@@ -813,10 +813,10 @@ class CoreManager {
         // Cancel any pending clear display work item
         // sendStateWorkItem?.let { mainHandler.removeCallbacks(it) }
 
-        Bridge.log("MAN: parsing layoutType: ${currentViewState.layoutType}")
-        Bridge.log(
-                "MAN: viewState text: '${currentViewState.text}' (len=${currentViewState.text.length})"
-        )
+        // Bridge.log("MAN: parsing layoutType: ${currentViewState.layoutType}")
+        // Bridge.log(
+        //         "MAN: viewState text: '${currentViewState.text}' (len=${currentViewState.text.length})"
+        // )
 
         when (currentViewState.layoutType) {
             "text_wall" -> {
@@ -1313,21 +1313,6 @@ class CoreManager {
     fun sendReboot() {
         Bridge.log("MAN: 🔄 Sending reboot command to glasses")
         sgc?.sendReboot()
-    }
-
-    fun startBufferRecording() {
-        Bridge.log("MAN: onStartBufferRecording")
-        sgc?.startBufferRecording()
-    }
-
-    fun stopBufferRecording() {
-        Bridge.log("MAN: onStopBufferRecording")
-        sgc?.stopBufferRecording()
-    }
-
-    fun saveBufferVideo(requestId: String, durationSeconds: Int) {
-        Bridge.log("MAN: onSaveBufferVideo: requestId=$requestId, duration=$durationSeconds")
-        sgc?.saveBufferVideo(requestId, durationSeconds)
     }
 
     fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean) {

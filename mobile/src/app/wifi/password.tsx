@@ -69,7 +69,7 @@ export default function WifiPasswordScreen() {
   }
 
   return (
-    <Screen preset="fixed">
+    <Screen preset="fixed" KeyboardAvoidingViewProps={{enabled: false}}>
       <Header title={translate("wifi:wifi")} leftIcon="chevron-left" onLeftPress={goBack} />
       <View className="bg-primary-foreground rounded-3xl p-6 w-full items-center mt-12">
         {/* WiFi Icon */}
