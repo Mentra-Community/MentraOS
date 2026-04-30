@@ -44,6 +44,7 @@ Connect your Mentra Live using the **Infinity Cable** (magnetic USB-C clip-on ca
 ```
 
 This script will:
+
 1. Build your debug APK
 2. Replace the factory app with your build
 3. Grant all required permissions
