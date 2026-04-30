@@ -24,12 +24,16 @@ await app.start();
 
 ## Session Managers
 
-| Manager | Access | What it does |
-|---------|--------|-------------|
-| Transcription | `session.transcription` | Real-time speech-to-text |
-| Translation | `session.translation` | Real-time translation |
-| Display | `session.display` | Show text and graphics on the glasses |
-| Camera | `session.camera` | Take photos and stream video |
+| Manager       | Access                  | What it does                          |
+| ------------- | ----------------------- | ------------------------------------- |
+| Transcription | `session.transcription` | Real-time speech-to-text              |
+| Translation   | `session.translation`   | Real-time translation                 |
+| Display       | `session.display`       | Show text and graphics on the glasses |
+| Camera        | `session.camera`        | Take photos and stream video          |
+
+### Manual shutter (per-photo exposure)
+
+`await session.camera.takePhoto({ exposureTimeNs: 33_333_333 })` sets sensor exposure time in **nanoseconds** for that shot only (Camera2 `SENSOR_EXPOSURE_TIME`). It is **not** saved as a camera preference. Omit the field (or pass an invalid / non-positive value) for normal auto exposure. Unsupported hardware falls back to auto exposure on the glasses.
 | Speaker | `session.speaker` | Play audio and text-to-speech |
 | Mic | `session.mic` | Raw audio input and voice activity detection |
 | Device | `session.device` | Hardware state, battery, connection, events |
@@ -66,8 +70,8 @@ We are going to use ngrok to expose your local app to the internet. This is usef
 2. Create an ngrok account
 3. [Set up a static address/URL in the ngrok dashboard](https://dashboard.ngrok.com/)
 
-* Make sure you run the `ngrok config add-authtoken <your_authtoken>` line.
-* Make sure you select `Static Domain`, then generate a static domain.
+- Make sure you run the `ngrok config add-authtoken <your_authtoken>` line.
+- Make sure you select `Static Domain`, then generate a static domain.
 
 <center>
   <img width="75%" src="https://docs.mentra.glass/img/ngrok_guide_1.png"></img>
@@ -82,15 +86,15 @@ We are going to use ngrok to expose your local app to the internet. This is usef
 3. Click "Create App"
 4. Set a unique package name like `com.yourName.yourAppName`
 5. For "Public URL", enter your ngrok static URL
-6. In the edit app screen, add the microphone permission.  See the [Permissions](https://docs.mentra.glass/permissions) guide for details.
+6. In the edit app screen, add the microphone permission. See the [Permissions](https://docs.mentra.glass/permissions) guide for details.
 
-> This automatically installs the app for your user.  For other people to test the app (including others in your organization), they need to install the app.  Get the app install link from the app edit page under the `Share with Testers` section.
-
+> This automatically installs the app for your user. For other people to test the app (including others in your organization), they need to install the app. Get the app install link from the app edit page under the `Share with Testers` section.
 
 ### Get your app running
 
 1. [Install bun](https://bun.sh/docs/installation)
 2. Create a new repo from the template using the `Use this template` dropdown in the upper right of [the example app repository](https://github.com/Mentra-Community/MentraOS-Cloud-Example-App) or the following command:
+
    ```bash
    gh repo create --template Mentra-Community/MentraOS-Cloud-Example-App
    ```
@@ -98,6 +102,7 @@ We are going to use ngrok to expose your local app to the internet. This is usef
    ![Create repo from template](https://github.com/user-attachments/assets/c10e14e8-2dc5-4dfa-adac-dd334c1b73a5)
 
    **Note:** If you want a more in-depth example (recommended for those who've already completed this quickstart), you can use the [Extended Example](https://github.com/Mentra-Community/MentraOS-Extended-Example-App) which includes app settings support.
+
 3. Clone your new repo locally:
    ```bash
    git clone <your-repo-url>
@@ -108,18 +113,18 @@ We are going to use ngrok to expose your local app to the internet. This is usef
    bun install
    ```
 5. Set up your environment variables:
-   * Create a `.env` file in the root directory by copying the example:
+   - Create a `.env` file in the root directory by copying the example:
      ```bash
      cp .env.example .env
      ```
-   * Edit the `.env` file with your app details:
+   - Edit the `.env` file with your app details:
      ```
      PORT=3000
      PACKAGE_NAME=com.yourName.yourAppName
      MENTRAOS_API_KEY=your_api_key_from_console
      ```
-   * Make sure the `PACKAGE_NAME` matches what you registered in the MentraOS Console
-   * Get your `API_KEY` from the MentraOS Developer Console
+   - Make sure the `PACKAGE_NAME` matches what you registered in the MentraOS Console
+   - Get your `API_KEY` from the MentraOS Developer Console
 6. Run your app:
    ```bash
    bun run dev
