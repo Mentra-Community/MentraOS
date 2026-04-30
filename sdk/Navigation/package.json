@@ -1,7 +1,7 @@
 {
   "name": "navigation-miniapp",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.5",
   "scripts": {
     "dev": "mentra-miniapp dev",
     "build": "bun run build.ts",

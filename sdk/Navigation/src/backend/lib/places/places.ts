@@ -137,3 +137,42 @@ function newToken(): string {
   }
   return Math.random().toString(36).slice(2) + Date.now().toString(36)
 }
+
+/**
+ * Fetch a walking-route preview using the already-loaded Google Maps JS API.
+ * Returns the decoded polyline points, or null if the route can't be found.
+ */
+export function fetchPreviewRoute(
+  origin: {lat: number; lng: number},
+  destination: {lat: number; lng: number},
+  signal?: AbortSignal,
+): Promise<{lat: number; lng: number}[] | null> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve(null)
+
+    const g = window.google?.maps
+    if (!g) return resolve(null)
+
+    const svc = new g.DirectionsService()
+    svc.route(
+      {
+        origin: new g.LatLng(origin.lat, origin.lng),
+        destination: new g.LatLng(destination.lat, destination.lng),
+        travelMode: g.TravelMode.WALKING,
+      },
+      (result: any, status: string) => {
+        if (signal?.aborted) return resolve(null)
+        if (status !== "OK" || !result) return resolve(null)
+        const steps: any[] = result.routes?.[0]?.legs?.[0]?.steps ?? []
+        const points: {lat: number; lng: number}[] = []
+        for (const step of steps) {
+          const decoded: any[] = g.geometry.encoding.decodePath(step.polyline.points)
+          for (const p of decoded) {
+            points.push({lat: p.lat(), lng: p.lng()})
+          }
+        }
+        resolve(points.length > 0 ? points : null)
+      },
+    )
+  })
+}

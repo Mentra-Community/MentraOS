@@ -1,22 +1,29 @@
 import {useEffect, useMemo, useRef, useState} from "react"
 import {AnimatePresence, motion} from "motion/react"
-import {Loader2, Search} from "lucide-react"
+import {Loader2, MapPin, Search} from "lucide-react"
 
 import {useUser} from "@/backend/hooks/useUser"
 import {cardinal} from "@/backend/lib/geometry/geometry"
+import type {LatLng} from "@/backend/lib/geometry/geometry"
 import {PlacesSession} from "@/backend/lib/places/places"
 import type {PlaceDetails, PlaceSuggestion} from "@/backend/lib/places/places"
+import {OrientationCard} from "@/frontend/pages/NavigationPage/components/OrientationCard/OrientationCard"
+import type {NavManeuver} from "@mentra/miniapp"
 
 type Props = {
   selected: PlaceDetails | null
   onSelect: (place: PlaceDetails) => void
   onClear: () => void
   disabled?: boolean
+  running?: boolean
+  me?: LatLng | null
+  maneuver?: NavManeuver | null
+  routePoints?: LatLng[] | null
 }
 
 const DEBOUNCE_MS = 200
 
-export function LocationSearch({selected, onSelect, onClear, disabled}: Props) {
+export function LocationSearch({selected, onSelect, onClear, disabled, running, me, maneuver, routePoints}: Props) {
   const heading = useUser().heading
   const session = useMemo(() => new PlacesSession(), [])
   const [query, setQuery] = useState("")
@@ -96,17 +103,17 @@ export function LocationSearch({selected, onSelect, onClear, disabled}: Props) {
   }
 
   return (
-    <div className="relative bg-[#FAF7F0] mt-4 mx-[3px] rounded-2xl min-h-15 flex">
-      <div className="flex flex-row p-[5px] flex-1">
+    <div className="relative bg-[#FAF7F0] mt-4 mx-[3px] rounded-2xl flex flex-col">
+      <div className="relative flex flex-row p-[5px] min-h-15">
         <div className="relative flex-1 mr-21  flex">
-          <Search
-            size={18}
-            strokeWidth={2.25}
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-700 pointer-events-none z-10"
-          />
+          {running ? (
+            <MapPin size={18} strokeWidth={2.25} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#5C7A4F] pointer-events-none z-10" />
+          ) : (
+            <Search size={18} strokeWidth={2.25} className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-700 pointer-events-none z-10" />
+          )}
           <input
             ref={inputRef}
-            className="block w-full h-full pl-10 pr-9 py-2 rounded-[15px] bg-[#f9ecd5] border border-none text-[16px] disabled:bg-neutral-100 focus:outline-none focus:ring-0"
+            className="block w-full h-full pl-10 pr-9 py-2 rounded-[15px] bg-[#f9ecd5] border border-none text-[16px] focus:outline-none focus:ring-0"
             style={{
               WebkitMaskImage:
                 "linear-gradient(to right, black 0%, black 80%, transparent 100%)",
@@ -120,7 +127,7 @@ export function LocationSearch({selected, onSelect, onClear, disabled}: Props) {
             disabled={disabled}
             autoComplete="off"
           />
-          {query ? (
+          {query && !running ? (
             <button
               type="button"
               onMouseDown={(e) => e.preventDefault()}
@@ -176,8 +183,21 @@ export function LocationSearch({selected, onSelect, onClear, disabled}: Props) {
             </motion.div>
           ) : null}
         </AnimatePresence>
-
+        
       </div>
+      <AnimatePresence>
+        {running ? (
+          <motion.div
+            key="orientation"
+            initial={{opacity: 0, height: 0}}
+            animate={{opacity: 1, height: "auto"}}
+            exit={{opacity: 0, height: 0}}
+            transition={{duration: 0.22, ease: [0.22, 1, 0.36, 1]}}
+            style={{overflow: "hidden"}}>
+            <OrientationCard me={me ?? null} heading={heading} maneuver={maneuver ?? null} routePoints={routePoints ?? null} />
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </div>
   )
 }

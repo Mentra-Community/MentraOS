@@ -228,9 +228,7 @@ export function NavMap({
     const path: LatLng[] =
       routePoints && routePoints.length > 1
         ? routePoints
-        : me && destination
-          ? [me, destination]
-          : []
+        : []
 
     if (path.length < 2) {
       routeRef.current?.setMap(null)

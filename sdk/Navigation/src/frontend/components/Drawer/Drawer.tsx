@@ -86,7 +86,7 @@ export function Drawer({
   // whenever the measured height changes (so we don't show a wrong
   // offset on first paint).
   useEffect(() => {
-    const controls = animate(y, restingY, {type: "spring", stiffness: 320, damping: 32})
+    const controls = animate(y, restingY, {type: "spring", stiffness: 320, damping: 42})
     return controls.stop
   }, [restingY, y])
 
@@ -99,7 +99,7 @@ export function Drawer({
       if (dismissOnSwipeDown && (current > 80 || velocity > SWIPE_VELOCITY_THRESHOLD)) {
         onClose()
       } else {
-        animate(y, 0, {type: "spring", stiffness: 320, damping: 32})
+        animate(y, 0, {type: "spring", stiffness: 320, damping: 42})
       }
       return
     }
@@ -123,7 +123,7 @@ export function Drawer({
     if (nextExpanded !== expanded) {
       onExpandedChange?.(nextExpanded)
     } else {
-      animate(y, nextExpanded ? 0 : peekOffset, {type: "spring", stiffness: 320, damping: 32})
+      animate(y, nextExpanded ? 0 : peekOffset, {type: "spring", stiffness: 320, damping: 42})
     }
   }
 
@@ -143,7 +143,7 @@ export function Drawer({
   // `HOLE_TOP_INSET >= HOLE_RADIUS`. Otherwise the cut and button extend
   // past the drawer's rounded top edge and look like detached chrome.
   const HOLE_RADIUS = 22 // px (44px diameter)
-  const HOLE_TOP_INSET = 26 // 4px gap between top of cream and top of hole
+  const HOLE_TOP_INSET = 6 // 4px gap between top of cream and top of hole
   const HOLE_RIGHT_INSET = 32 // distance from right edge to circle center
   const surfaceMaskStyle = hasPeek
     ? ({
@@ -160,7 +160,7 @@ export function Drawer({
           initial={{y: "100%"}}
           animate={{y: 0}}
           exit={{y: "100%"}}
-          transition={{type: "spring", stiffness: 320, damping: 32}}
+          transition={{type: "spring", stiffness: 320, damping: 42}}
           className="fixed left-0 right-0 bottom-0 z-40 pointer-events-none">
           <motion.div
             ref={sheetRef}
@@ -234,7 +234,7 @@ function ChevronToggle({
         viewBox="0 0 24 24"
         fill="none"
         xmlns="http://www.w3.org/2000/svg"
-        animate={{rotate: expanded ? 0 : 180}}
+        animate={{rotate: expanded ? 180 : 0}}
         transition={{type: "spring", stiffness: 340, damping: 28}}>
         <path
           d="M6 14l6-6 6 6"
@@ -253,7 +253,7 @@ function DrawerHandleInternal({onTap}: {onTap: () => void}) {
     <button
       type="button"
       onClick={onTap}
-      className="flex justify-center items-center w-full pt-2.5 pb-1 cursor-pointer shrink-0"
+      className=""
       aria-label="Drawer handle">
     </button>
   )

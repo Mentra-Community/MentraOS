@@ -9,11 +9,11 @@ import {LiveLog} from "@/frontend/pages/NavigationPage/components/LiveLog/LiveLo
 import {LocationSearch} from "@/frontend/pages/NavigationPage/components/LocationSearch/LocationSearch"
 import {MyLocationCard} from "@/frontend/pages/NavigationPage/components/MyLocationCard/MyLocationCard"
 import {NavMap} from "@/frontend/pages/NavigationPage/components/NavMap/NavMap"
-import {OrientationCard} from "@/frontend/pages/NavigationPage/components/OrientationCard/OrientationCard"
 import {useUser} from "@/backend/hooks/useUser"
 import {formatDistance} from "@/backend/lib/formatDistance/formatDistance"
 import type {LatLng} from "@/backend/lib/geometry/geometry"
 import type {PlaceDetails} from "@/backend/lib/places/places"
+import {fetchPreviewRoute} from "@/backend/lib/places/places"
 
 export type NavStatus = "idle" | "navigating" | "rerouting" | "arrived"
 export type LogEntry = {id: number; ts: number; line: string}
@@ -25,7 +25,7 @@ export function NavigationPage() {
   // imperative managers, all behind one hook. Reads of `user.coords` /
   // `user.heading` / `user.mapsReady` re-render automatically.
   const user = useUser()
-  const {coords, heading, navigation, display} = user
+  const {coords, navigation, display} = user
 
   // Destination chosen via Places search. `null` until the user picks one;
   // setting it shows the pin on the map immediately, before Start.
@@ -40,7 +40,27 @@ export function NavigationPage() {
   const [activeDestination, setActiveDestination] = useState<LatLng | null>(null)
   const [routePoints, setRoutePoints] = useState<NavRoute["points"] | null>(null)
   const [breadcrumbs, setBreadcrumbs] = useState<LatLng[]>([])
+  const [previewRoutePoints, setPreviewRoutePoints] = useState<LatLng[] | null>(null)
   const [log, setLog] = useState<LogEntry[]>([])
+
+  // Fetch a preview route whenever destination changes and we're not navigating
+  const previewAbortRef = useRef<AbortController | null>(null)
+  useEffect(() => {
+    if (running || !destination || !coords) {
+      setPreviewRoutePoints(null)
+      return
+    }
+    previewAbortRef.current?.abort()
+    const ctrl = new AbortController()
+    previewAbortRef.current = ctrl
+    const origin = {lat: coords.lat, lng: coords.lng}
+    fetchPreviewRoute(origin, {lat: destination.lat, lng: destination.lng}, ctrl.signal).then(
+      (pts) => { if (!ctrl.signal.aborted) setPreviewRoutePoints(pts) },
+    )
+    return () => ctrl.abort()
+    // coords intentionally omitted — only re-fetch when destination changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, destination?.lat, destination?.lng])
 
   const navUpdateUnsubRef = useRef<(() => void) | null>(null)
   const navRouteUnsubRef = useRef<(() => void) | null>(null)
@@ -141,6 +161,7 @@ export function NavigationPage() {
     setStatus("navigating")
     setActiveDestination({lat: latNum, lng: lngNum})
     setRoutePoints(null)
+    setPreviewRoutePoints(null)
     setBreadcrumbs([])
     append(
       `start → ${destination.name || `${latNum}, ${lngNum}`}${simulate ? ` (sim ${speedMultiplier}x)` : ""}`,
@@ -205,14 +226,14 @@ export function NavigationPage() {
       <NavMap
         me={me}
         destination={activeDestination}
-        routePoints={routePoints}
+        routePoints={running ? routePoints : previewRoutePoints}
         breadcrumbs={breadcrumbs}
         autoFollow={running}
       />
 
       {/* Top floating stack — search bar, then orientation card while running. */}
       <div className="absolute top-0 left-0 right-0  pt-3 flex flex-col gap-2 pointer-events-none bg-r">
-        <div className="pointer-events-auto ">
+        <div className="pointer-events-auto">
           <LocationSearch
             selected={destination}
             onSelect={(place) => {
@@ -224,19 +245,12 @@ export function NavigationPage() {
               if (!running) setActiveDestination(null)
             }}
             disabled={running}
+            running={running}
+            me={me}
+            maneuver={maneuver}
+            routePoints={routePoints}
           />
         </div>
-
-        {running ? (
-          <div className="pointer-events-auto shadow-lg rounded-xl">
-            <OrientationCard
-              me={me}
-              heading={heading}
-              maneuver={maneuver}
-              routePoints={routePoints}
-            />
-          </div>
-        ) : null}
       </div>
 
       <DestinationDrawer
@@ -293,10 +307,27 @@ export function NavigationPage() {
                 name: "Dev Test Destination",
                 address: "1 Embarcadero Center, San Francisco, CA",
               })
+              setManeuver({
+                kind: "maneuver",
+                maneuverType: "TURN_RIGHT",
+                fromRoad: "Market St",
+                toRoad: "3rd St",
+                distanceMeters: 320,
+              } as NavManeuver)
               setRunning(true)
               return
             }
-            setRunning((r) => !r)
+            setRunning((r) => {
+              if (r) setManeuver(null)
+              else setManeuver({
+                kind: "maneuver",
+                maneuverType: "TURN_RIGHT",
+                fromRoad: "Market St",
+                toRoad: "3rd St",
+                distanceMeters: 320,
+              } as NavManeuver)
+              return !r
+            })
           }}
           className="w-full mt-2 mb-1 px-3 py-2.5 rounded-xl text-sm font-semibold border border-dashed border-purple-300 bg-purple-50 text-purple-900">
           🧪 Toggle drawer mode (running={String(running)})
