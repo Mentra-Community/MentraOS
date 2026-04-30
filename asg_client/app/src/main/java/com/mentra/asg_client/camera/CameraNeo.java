@@ -64,6 +64,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Queue;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -149,6 +150,12 @@ public class CameraNeo extends LifecycleService {
     private Rational exposureCompensationStep;
     private Range<Integer>[] availableFpsRanges;
     private Range<Integer> selectedFpsRange;
+
+    /** Cached for per-request manual still capture (not persisted). */
+    private boolean manualSensorSupported;
+    private Range<Long> sensorExposureTimeRange;
+    private Range<Integer> sensorSensitivityRange;
+    private volatile Integer mLastMeteredIso;
 
     // Autofocus capabilities
     private int[] availableAfModes;
@@ -265,15 +272,18 @@ public class CameraNeo extends LifecycleService {
         PhotoCaptureCallback callback;
         boolean enableLed;  // Whether to use LED flash for this photo
         boolean isFromSdk;  // true = SDK photo (optimized sizes), false = button photo (high quality)
+        /** Per-request only; null = auto exposure. */
+        Long exposureTimeNs;
         long timestamp;
         int retryCount;
 
-        PhotoRequest(String filePath, String size, boolean enableLed, boolean isFromSdk, PhotoCaptureCallback callback) {
+        PhotoRequest(String filePath, String size, boolean enableLed, boolean isFromSdk, Long exposureTimeNs, PhotoCaptureCallback callback) {
             this.requestId = "photo_" + System.currentTimeMillis() + "_" + filePath.hashCode();
             this.filePath = filePath;
             this.size = size;
             this.enableLed = enableLed;
             this.isFromSdk = isFromSdk;
+            this.exposureTimeNs = exposureTimeNs;
             this.callback = callback;
             this.timestamp = System.currentTimeMillis();
             this.retryCount = 0;
@@ -400,12 +410,13 @@ public class CameraNeo extends LifecycleService {
      * @param size Photo size (small/medium/large)
      * @param enableLed Whether to enable LED flash for this photo
      * @param isFromSdk true for SDK photos (optimized sizes), false for button photos (high quality)
+     * @param exposureTimeNs optional sensor exposure time in nanoseconds for this shot only; {@code null} = auto exposure
      * @param callback Callback to be notified when photo is captured
      */
-    public static void enqueuePhotoRequest(Context context, String filePath, String size, boolean enableLed, boolean isFromSdk, PhotoCaptureCallback callback) {
+    public static void enqueuePhotoRequest(Context context, String filePath, String size, boolean enableLed, boolean isFromSdk, Long exposureTimeNs, PhotoCaptureCallback callback) {
         synchronized (SERVICE_LOCK) {
             // Create and queue the request immediately
-            PhotoRequest request = new PhotoRequest(filePath, size, enableLed, isFromSdk, callback);
+            PhotoRequest request = new PhotoRequest(filePath, size, enableLed, isFromSdk, exposureTimeNs, callback);
             globalRequestQueue.offer(request);
             
             // Store callback in registry for later retrieval
@@ -432,6 +443,7 @@ public class CameraNeo extends LifecycleService {
                         sInstance.pendingPhotoPath = queuedRequest.filePath;
                         sInstance.pendingRequestedSize = queuedRequest.size;
                         sInstance.pendingIsFromSdk = queuedRequest.isFromSdk;
+                        sInstance.pendingExposureTimeNs = queuedRequest.exposureTimeNs;
                         sInstance.shotState = ShotState.WAITING_AE;
                         
                         if (sInstance.backgroundHandler != null) {
@@ -468,7 +480,7 @@ public class CameraNeo extends LifecycleService {
      */
     @Deprecated
     public static void takePictureWithCallback(Context context, String filePath, PhotoCaptureCallback callback) {
-        enqueuePhotoRequest(context, filePath, null, false, true, callback);
+        enqueuePhotoRequest(context, filePath, null, false, true, null, callback);
     }
 
     /**
@@ -479,7 +491,17 @@ public class CameraNeo extends LifecycleService {
      */
     @Deprecated
     public static void takePictureWithCallback(Context context, String filePath, PhotoCaptureCallback callback, String size) {
-        enqueuePhotoRequest(context, filePath, size, false, true, callback);
+        enqueuePhotoRequest(context, filePath, size, false, true, null, callback);
+    }
+
+    /**
+     * Legacy overload with optional manual exposure (nanoseconds). Null uses auto exposure.
+     *
+     * @deprecated Use {@link #enqueuePhotoRequest} instead
+     */
+    @Deprecated
+    public static void takePictureWithCallback(Context context, String filePath, PhotoCaptureCallback callback, String size, Long exposureTimeNs) {
+        enqueuePhotoRequest(context, filePath, size, false, true, exposureTimeNs, callback);
     }
 
     /**
@@ -599,6 +621,8 @@ public class CameraNeo extends LifecycleService {
 
     private String pendingRequestedSize;
     private boolean pendingIsFromSdk;  // true = SDK photo (optimized sizes), false = button photo
+    /** Per in-flight photo only; cleared when the capture completes or the next request loads. */
+    private Long pendingExposureTimeNs;
     private long photoRequestStartTimeMs;  // Timestamp when photo request started (for e2e timing)
 
     /**
@@ -681,6 +705,7 @@ public class CameraNeo extends LifecycleService {
                 Log.d(TAG, "Camera already open, taking next photo from queue");
                 pendingRequestedSize = request.size;
                 pendingIsFromSdk = request.isFromSdk;
+                pendingExposureTimeNs = request.exposureTimeNs;
                 pendingPhotoPath = request.filePath;
                 
                 // Check if we're already processing a photo
@@ -726,10 +751,12 @@ public class CameraNeo extends LifecycleService {
             sizeChanged = true;
         }
         sdkFlagChanged = (pendingIsFromSdk != request.isFromSdk);
+        boolean exposureChanged = !Objects.equals(pendingExposureTimeNs, request.exposureTimeNs);
 
-        // Now store the requested size, SDK flag, and LED state
+        // Now store the requested size, SDK flag, exposure, and LED state
         pendingRequestedSize = request.size;
         pendingIsFromSdk = request.isFromSdk;
+        pendingExposureTimeNs = request.exposureTimeNs;
         sPhotoCallback = request.callback;
 
         // Update LED state if any request needs LED
@@ -743,11 +770,13 @@ public class CameraNeo extends LifecycleService {
 
             // Need to reopen camera if size changed OR if SDK flag changed
             // (SDK flag affects resolution selection even for same size tier)
-            boolean needsReopen = sizeChanged || sdkFlagChanged;
+            // or manual exposure vs auto changes pipeline characteristics
+            boolean needsReopen = sizeChanged || sdkFlagChanged || exposureChanged;
 
             if (needsReopen) {
                 Log.d(TAG, "Camera config changed (sizeChanged=" + sizeChanged +
-                          ", sdkFlagChanged=" + sdkFlagChanged + "), reopening camera");
+                          ", sdkFlagChanged=" + sdkFlagChanged +
+                          ", exposureChanged=" + exposureChanged + "), reopening camera");
                 cancelKeepAliveTimer();
                 closeCamera();
                 openCameraInternal(request.filePath, false);
@@ -774,6 +803,9 @@ public class CameraNeo extends LifecycleService {
     }
     
     private void setupCameraAndTakePicture(String filePath, String requestedSize) {
+        // Legacy intent path — no per-shot exposure API
+        pendingExposureTimeNs = null;
+
         // Check if size has changed from the current configuration
         boolean sizeChanged = false;
         if (isCameraKeptAlive && pendingRequestedSize != null && requestedSize != null) {
@@ -792,7 +824,7 @@ public class CameraNeo extends LifecycleService {
                 Log.d(TAG, "Camera is busy (state: " + shotState + "), queuing photo request");
                 // Queue this request to be processed after current photo completes
                 // Inherit isFromSdk from current pending request context
-                photoRequestQueue.offer(new PhotoRequest(filePath, pendingRequestedSize, false, pendingIsFromSdk, sPhotoCallback));
+                photoRequestQueue.offer(new PhotoRequest(filePath, pendingRequestedSize, false, pendingIsFromSdk, pendingExposureTimeNs, sPhotoCallback));
                 return;
             }
             
@@ -1198,6 +1230,7 @@ public class CameraNeo extends LifecycleService {
                             Log.i(TAG, "HDR: Burst complete, base saved: " + targetPath);
                             pendingPhotoPath = null;
                             pendingRequestedSize = null;
+                            pendingExposureTimeNs = null;
 
                             shotState = ShotState.IDLE;
                             processQueuedPhotoRequests();
@@ -1225,6 +1258,7 @@ public class CameraNeo extends LifecycleService {
                         // Clear pending photo path and size after successful capture
                         pendingPhotoPath = null;
                         pendingRequestedSize = null;
+                        pendingExposureTimeNs = null;
                     } else {
                         // Cancel IMU recording on save failure
                         if (mImuRecorder != null) {
@@ -1254,6 +1288,7 @@ public class CameraNeo extends LifecycleService {
                         cancelKeepAliveTimer();
                         pendingPhotoPath = null;
                         pendingRequestedSize = null;
+                        pendingExposureTimeNs = null;
                         closeCamera();
                         stopSelf();
                     }
@@ -1675,6 +1710,7 @@ public class CameraNeo extends LifecycleService {
                                     pendingPhotoPath = firstRequest.filePath;
                                     pendingRequestedSize = firstRequest.size;
                                     pendingIsFromSdk = firstRequest.isFromSdk;
+                                    pendingExposureTimeNs = firstRequest.exposureTimeNs;
                                     // Store LED state from request
                                     pendingLedEnabled = firstRequest.enableLed;
                                 }
@@ -2065,6 +2101,7 @@ public class CameraNeo extends LifecycleService {
                     pendingPhotoPath = nextRequest.filePath;
                     pendingRequestedSize = nextRequest.size;
                     pendingIsFromSdk = nextRequest.isFromSdk;
+                    pendingExposureTimeNs = nextRequest.exposureTimeNs;
 
                     // Update LED state if this request needs LED
                     if (nextRequest.enableLed) {
@@ -2285,6 +2322,22 @@ public class CameraNeo extends LifecycleService {
         Log.d(TAG, "Exposure compensation range: " + exposureCompensationRange + ", step: " + exposureCompensationStep);
         Log.d(TAG, "Selected FPS range: " + selectedFpsRange);
         Log.d(TAG, "Autofocus available: " + hasAutoFocus + ", min focus distance: " + minimumFocusDistance);
+
+        int[] caps = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES);
+        manualSensorSupported = false;
+        if (caps != null) {
+            for (int c : caps) {
+                if (c == CameraMetadata.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR) {
+                    manualSensorSupported = true;
+                    break;
+                }
+            }
+        }
+        sensorExposureTimeRange = characteristics.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE);
+        sensorSensitivityRange = characteristics.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE);
+        Log.d(TAG, "Manual sensor: supported=" + manualSensorSupported
+                + ", exposureNsRange=" + sensorExposureTimeRange
+                + ", isoRange=" + sensorSensitivityRange);
     }
 
     /**
@@ -2368,6 +2421,20 @@ public class CameraNeo extends LifecycleService {
     private void startPrecaptureSequence() {
         try {
             shotState = ShotState.WAITING_AE;
+
+            if (shouldUseManualExposure()) {
+                Log.i(TAG, "Manual exposure (exposureTimeNs=" + pendingExposureTimeNs + "): skipping AE convergence");
+                mWaitingForAeConvergence = false;
+                mAeLockRequested = false;
+                Runnable runCapture = () -> capturePhoto();
+                if (backgroundHandler != null) {
+                    backgroundHandler.post(runCapture);
+                } else {
+                    runCapture.run();
+                }
+                return;
+            }
+
             mWaitingForAeConvergence = true;
             mAeLockRequested = false;
             aeStartTimeNs = System.nanoTime();
@@ -2412,6 +2479,11 @@ public class CameraNeo extends LifecycleService {
                                      @NonNull TotalCaptureResult result) {
 
             callbackCount++;
+
+            Integer sensEarly = result.get(CaptureResult.SENSOR_SENSITIVITY);
+            if (sensEarly != null && sensEarly > 0) {
+                mLastMeteredIso = sensEarly;
+            }
             
             // Log first few callbacks to verify it's being invoked
             if (callbackCount <= 10 || callbackCount % 30 == 0) {
@@ -2602,6 +2674,39 @@ public class CameraNeo extends LifecycleService {
         }
     }
 
+    private boolean shouldUseManualExposure() {
+        if (pendingExposureTimeNs == null || pendingExposureTimeNs <= 0) {
+            return false;
+        }
+        if (!manualSensorSupported) {
+            Log.w(TAG, "Manual exposure requested but MANUAL_SENSOR not supported; using auto exposure");
+            return false;
+        }
+        if (sensorExposureTimeRange == null || sensorSensitivityRange == null) {
+            Log.w(TAG, "Manual exposure requested but sensor ranges unavailable; using auto exposure");
+            return false;
+        }
+        return true;
+    }
+
+    private long clampExposureTimeNs(long requestedNs) {
+        if (sensorExposureTimeRange == null) {
+            return requestedNs;
+        }
+        long lo = sensorExposureTimeRange.getLower();
+        long hi = sensorExposureTimeRange.getUpper();
+        return Math.max(lo, Math.min(hi, requestedNs));
+    }
+
+    private int pickSensitivityForManualCapture() {
+        Integer last = mLastMeteredIso;
+        int iso = (last != null && last > 0) ? last.intValue() : 400;
+        if (sensorSensitivityRange != null) {
+            iso = Math.max(sensorSensitivityRange.getLower(), Math.min(sensorSensitivityRange.getUpper(), iso));
+        }
+        return iso;
+    }
+
     /**
      * Simplified photo capture - relies on AE convergence and automatic CONTINUOUS_PICTURE autofocus
      */
@@ -2635,12 +2740,25 @@ public class CameraNeo extends LifecycleService {
                 cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
             stillBuilder.addTarget(imageReader.getSurface());
 
-            // Copy settings from preview
-            stillBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
-            stillBuilder.set(CaptureRequest.CONTROL_AE_LOCK, true);  // Lock AE for capture (XyCamera2 pattern)
-            stillBuilder.set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO);
-            stillBuilder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, userExposureCompensation);
-            stillBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, selectedFpsRange);
+            boolean useManual = shouldUseManualExposure();
+            if (useManual) {
+                long clampedNs = clampExposureTimeNs(pendingExposureTimeNs);
+                int iso = pickSensitivityForManualCapture();
+                Log.i(TAG, "Manual still: SENSOR_EXPOSURE_TIME=" + clampedNs + "ns, SENSOR_SENSITIVITY=" + iso
+                        + " (requestedNs=" + pendingExposureTimeNs + "; ZSL/MFNR vendor path skipped)");
+                stillBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF);
+                stillBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, clampedNs);
+                stillBuilder.set(CaptureRequest.SENSOR_SENSITIVITY, iso);
+                stillBuilder.set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO);
+                stillBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, selectedFpsRange);
+            } else {
+                // Copy settings from preview — auto exposure / AE lock path
+                stillBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
+                stillBuilder.set(CaptureRequest.CONTROL_AE_LOCK, true);  // Lock AE for capture (XyCamera2 pattern)
+                stillBuilder.set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO);
+                stillBuilder.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, userExposureCompensation);
+                stillBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, selectedFpsRange);
+            }
 
             // Set up continuous autofocus (no manual triggers needed)
             if (hasAutoFocus) {
@@ -2659,10 +2777,12 @@ public class CameraNeo extends LifecycleService {
                     new MeteringRectangle(left, top, right - left, bottom - top, MeteringRectangle.METERING_WEIGHT_MAX)
                 });
 
-                // Also add center-weighted AE region for consistent exposure
-                stillBuilder.set(CaptureRequest.CONTROL_AE_REGIONS, new MeteringRectangle[]{
-                    new MeteringRectangle(left, top, right - left, bottom - top, MeteringRectangle.METERING_WEIGHT_MAX)
-                });
+                // Also add center-weighted AE region for consistent exposure (auto exposure path only)
+                if (!useManual) {
+                    stillBuilder.set(CaptureRequest.CONTROL_AE_REGIONS, new MeteringRectangle[]{
+                        new MeteringRectangle(left, top, right - left, bottom - top, MeteringRectangle.METERING_WEIGHT_MAX)
+                    });
+                }
             }
 
             // High quality settings - JPEG quality varies by size tier
@@ -2674,8 +2794,8 @@ public class CameraNeo extends LifecycleService {
             stillBuilder.set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation);
             Log.d(TAG, "Capturing photo with JPEG orientation: " + jpegOrientation + " for display orientation: " + displayOrientation);
 
-            // Apply ZSL + MFNR settings for photo capture (if supported)
-            if (mCameraSettings != null && mCameraSettings.isMfnrSupported()) {
+            // Apply ZSL + MFNR settings for photo capture (if supported) — skipped for manual exposure
+            if (!useManual && mCameraSettings != null && mCameraSettings.isMfnrSupported()) {
                 mCameraSettings.configureCaptureBuilder(stillBuilder);
             }
 

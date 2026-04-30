@@ -1214,6 +1214,7 @@ public class MediaCaptureService {
                 size,
                 enableFlash,
                 false,  // isFromSdk - button photo, use high quality resolution
+                null,  // exposureTimeNs — local/button photos use auto exposure
                 new CameraNeo.PhotoCaptureCallback() {
                     @Override
                     public void onPhotoCaptured(String filePath) {
@@ -1262,8 +1263,9 @@ public class MediaCaptureService {
      * @param enableFlash Whether to enable privacy flash LED
      * @param enableSound Whether to enable shutter sound
      * @param compress Compression level (none, medium, heavy)
+     * @param exposureTimeNs optional sensor exposure time in nanoseconds for this capture only; {@code null} = auto
      */
-    public void takePhotoAndUpload(String photoFilePath, String requestId, String webhookUrl, String authToken, boolean save, String size, boolean enableFlash, boolean enableSound, String compress) {
+    public void takePhotoAndUpload(String photoFilePath, String requestId, String webhookUrl, String authToken, boolean save, String size, boolean enableFlash, boolean enableSound, String compress, Long exposureTimeNs) {
         // Start timing for end-to-end photo capture performance measurement
         final long requestStartTimeMs = System.currentTimeMillis();
         recordTiming(requestId, "request_start");
@@ -1386,6 +1388,7 @@ public class MediaCaptureService {
                     size,
                     enableFlash,
                     true,  // isFromSdk - use optimized resolution for fast transfer
+                    exposureTimeNs,
                     new CameraNeo.PhotoCaptureCallback() {
                         @Override
                         public void onPhotoCaptured(String filePath) {
@@ -2206,8 +2209,9 @@ public class MediaCaptureService {
      * @param bleImgId BLE image ID for fallback
      * @param save Whether to keep the photo on device
      * @param compress Compression level (none, medium, heavy)
+     * @param exposureTimeNs optional sensor exposure time in nanoseconds for this capture only; {@code null} = auto
      */
-    public void takePhotoAutoTransfer(String photoFilePath, String requestId, String webhookUrl, String authToken, String bleImgId, boolean save, String size, boolean enableFlash, boolean enableSound, String compress) {
+    public void takePhotoAutoTransfer(String photoFilePath, String requestId, String webhookUrl, String authToken, String bleImgId, boolean save, String size, boolean enableFlash, boolean enableSound, String compress, Long exposureTimeNs) {
         // Check if camera HAL is restarting after FOV change
         if (CameraRestartCooldown.isActive()) {
             Log.w(TAG, "Cannot take photo - camera HAL restarting after FOV change");
@@ -2237,11 +2241,11 @@ public class MediaCaptureService {
             photoRequestedSizes.put(requestId, size);
 
             Log.d(TAG, "📶 WiFi connected - attempting direct upload for " + requestId);
-            takePhotoAndUpload(photoFilePath, requestId, webhookUrl, authToken, save, size, enableFlash, enableSound, compress);
+            takePhotoAndUpload(photoFilePath, requestId, webhookUrl, authToken, save, size, enableFlash, enableSound, compress, exposureTimeNs);
         } else {
             // No WiFi - skip webhook entirely, go straight to BLE (saves 2-5s timeout wait)
             Log.d(TAG, "📵 No WiFi - skipping webhook, using BLE transfer for " + requestId);
-            takePhotoForBleTransfer(photoFilePath, requestId, bleImgId, save, size, enableFlash, enableSound);
+            takePhotoForBleTransfer(photoFilePath, requestId, bleImgId, save, size, enableFlash, enableSound, exposureTimeNs);
         }
     }
 
@@ -2252,7 +2256,7 @@ public class MediaCaptureService {
      * @param bleImgId BLE image ID to use as filename
      * @param save Whether to keep the original photo on device
      */
-    public void takePhotoForBleTransfer(String photoFilePath, String requestId, String bleImgId, boolean save, String size, boolean enableFlash, boolean enableSound) {
+    public void takePhotoForBleTransfer(String photoFilePath, String requestId, String bleImgId, boolean save, String size, boolean enableFlash, boolean enableSound, Long exposureTimeNs) {
         // Start timing for end-to-end photo capture performance measurement
         final long requestStartTimeMs = System.currentTimeMillis();
         recordTiming(requestId, "ble_request_start");
@@ -2343,9 +2347,13 @@ public class MediaCaptureService {
         try {
             // Use CameraNeo for photo capture
             recordTiming(requestId, "enqueue_camera");
-            CameraNeo.takePictureWithCallback(
+            CameraNeo.enqueuePhotoRequest(
                     mContext,
                     photoFilePath,
+                    size,
+                    enableFlash,
+                    true,  // isFromSdk — same sizing as webhook SDK path
+                    exposureTimeNs,
                     new CameraNeo.PhotoCaptureCallback() {
                         @Override
                         public void onPhotoCaptured(String filePath) {
@@ -2389,8 +2397,7 @@ public class MediaCaptureService {
                                 mMediaCaptureListener.onMediaError(requestId, errorMessage, MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
                             }
                         }
-                    },
-                    size
+                    }
             );
         } catch (Exception e) {
             cancelCaptureSafetyTimeout();
