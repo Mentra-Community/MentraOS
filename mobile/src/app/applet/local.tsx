@@ -6,6 +6,7 @@ import {miniappHost} from "@/components/miniapp/MiniappHost"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import composer from "@/services/Composer"
 import devServerBridge from "@/services/DevServerBridge"
+import {installDevMiniappSnapshot, parseDevPort} from "@/services/miniapp/installDevSnapshot"
 import {storage} from "@/utils/storage/storage"
 
 /**
@@ -67,25 +68,9 @@ export default function LocalMiniAppPage() {
         const portNum = resolveDevPort(devPort, packageName)
         if (portNum !== null) {
           devServerBridge.connect(packageName, devUrl, portNum)
-          // Background snapshot via Composer's standard install pipeline:
-          // fetches the dev server's bundle.zip, unpacks into
-          // lmas/<pkg>/dev-<timestamp>/, then GCs older dev-* dirs.
-          // refreshApplets is auto-fired by installMiniApp so the new
-          // dev-<ts> directory surfaces in the applet store on next render
-          // — that's what populates the home tray + switcher entry.
-          const sidecarBase = buildSidecarBaseUrl(devUrl, portNum)
-          if (sidecarBase) {
-            const versionOverride = `dev-${Date.now()}`
-            void composer
-              .installMiniApp(`${sidecarBase}/__mentra_dev/bundle.zip`, {versionOverride})
-              .then((res) => {
-                if (res.is_error()) {
-                  console.warn(`Dev miniapp snapshot failed for ${packageName}:`, res.error)
-                } else {
-                  composer.gcDevVersions(packageName, 2)
-                }
-              })
-          }
+          void installDevMiniappSnapshot({packageName, devUrl, devPort: portNum}).catch((error) => {
+            console.warn(`Dev miniapp snapshot failed for ${packageName}:`, error)
+          })
         }
         storage.save(`${packageName}_dev_last_reachable`, Date.now())
       } else if (version) {
@@ -151,25 +136,9 @@ export default function LocalMiniAppPage() {
  * QR scan); fall back to the persisted MMKV key (home-tile-tap path).
  */
 function resolveDevPort(searchParam: string | undefined, packageName: string): number | null {
-  if (searchParam) {
-    const n = parseInt(searchParam, 10)
-    if (Number.isFinite(n)) return n
-  }
+  const searchPort = parseDevPort(searchParam)
+  if (searchPort !== null) return searchPort
   const stored = storage.load<number>(`${packageName}_dev_port`)
   if (stored.is_ok()) return stored.value
   return null
-}
-
-/**
- * Convert a dev miniapp's URL (`http://host:miniappPort`) plus the sidecar
- * port into the sidecar's base URL (`http://host:sidecarPort`). Returns
- * null if the URL can't be parsed.
- */
-function buildSidecarBaseUrl(devUrl: string, sidecarPort: number): string | null {
-  try {
-    const url = new URL(devUrl)
-    return `${url.protocol}//${url.hostname}:${sidecarPort}`
-  } catch {
-    return null
-  }
 }

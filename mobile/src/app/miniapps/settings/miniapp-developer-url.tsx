@@ -12,6 +12,11 @@ import {translate} from "@/i18n"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {decideDevLaunchRoute} from "@/utils/devMiniappLaunch"
+import {
+  inferDevSidecarPort,
+  installDevMiniappSnapshot,
+  persistDevMiniappLaunch,
+} from "@/services/miniapp/installDevSnapshot"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage/storage"
 import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
@@ -26,6 +31,7 @@ interface RecentDevApp {
   /** Resolved absolute icon URL (if the manifest declared one). Persisted
    *  so re-launching from the recent list doesn't show a placeholder. */
   iconUrl?: string
+  devPort?: number
   timestamp: number
 }
 
@@ -70,6 +76,16 @@ export default function MiniappDeveloperUrlScreen() {
       ? (launchResult.manifest.permissions as AppletPermission[])
       : []
 
+    try {
+      await installDevMiniappSnapshot({
+        packageName: entry.packageName,
+        devUrl: entry.url,
+        devPort: entry.devPort,
+      })
+    } catch (error) {
+      console.warn(`Dev miniapp registration failed for ${entry.packageName}:`, error)
+    }
+
     if (manifestPermissions.length > 0) {
       const fakeApplet = {
         packageName: entry.packageName,
@@ -98,6 +114,7 @@ export default function MiniappDeveloperUrlScreen() {
       devUrl: entry.url,
       appName: entry.name,
       iconUrl: entry.iconUrl,
+      ...(entry.devPort ? {devPort: String(entry.devPort)} : {}),
     })
   }
 
@@ -136,6 +153,7 @@ export default function MiniappDeveloperUrlScreen() {
         name: manifest.name || "Dev Mini App",
         url: trimmed,
         iconUrl: resolveIconUrl(trimmed, manifest.icon),
+        devPort: inferDevSidecarPort(trimmed) ?? undefined,
         timestamp: Date.now(),
       }
       const updated = [entry, ...recent.filter((r) => r.url !== entry.url)].slice(0, MAX_RECENT)
@@ -143,7 +161,7 @@ export default function MiniappDeveloperUrlScreen() {
       // Persist the dev URL keyed on packageName so Composer's
       // getLocalApplets sees it and so home-tile taps after a phone
       // restart can route to the live server.
-      storage.save(`${entry.packageName}_dev_url`, entry.url)
+      persistDevMiniappLaunch({packageName: entry.packageName, devUrl: entry.url, devPort: entry.devPort})
 
       // launchDevMiniapp re-runs the reachability + manifest fetch (cheap;
       // catches manifest changes between save and tap) and runs the

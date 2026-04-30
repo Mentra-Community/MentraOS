@@ -622,6 +622,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         // For dev-loaded miniapps, pass devUrl so /applet/local re-mounts against
         // the LAN dev server rather than looking for a bundle on disk.
         ...(applet.isMiniappDev && applet.devUrl ? {devUrl: applet.devUrl} : {}),
+        ...(applet.isMiniappDev && applet.devPort ? {devPort: String(applet.devPort)} : {}),
         ...(applet.logoUrl ? {iconUrl: applet.logoUrl} : {}),
         transition: "fade",
       })

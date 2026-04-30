@@ -44,6 +44,7 @@ export interface ClientAppletInterface extends AppletInterface {
   needsPcm?: boolean
   needsTranscript?: boolean
   devUrl?: string
+  devPort?: number
   isMiniappDev?: boolean
 }
 
@@ -780,6 +781,7 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
               push("/applet/local", {
                 packageName,
                 devUrl,
+                ...(applet.devPort ? {devPort: String(applet.devPort)} : {}),
                 appName,
                 transition: "zoom",
               })

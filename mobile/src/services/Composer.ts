@@ -578,9 +578,12 @@ class Composer {
         // already reads the flag (badge, lifecycle, bug-report skip) works.
         const isMiniappDev = versionString.startsWith("dev-")
         let devUrl: string | undefined
+        let devPort: number | undefined
         if (isMiniappDev) {
           const devUrlRes = storage.load<string>(`${lmaInfo.packageName}_dev_url`)
           if (devUrlRes.is_ok()) devUrl = devUrlRes.value
+          const devPortRes = storage.load<number>(`${lmaInfo.packageName}_dev_port`)
+          if (devPortRes.is_ok()) devPort = devPortRes.value
         }
 
         // `running` reflects MiniappHost mount state — a local miniapp is
@@ -605,6 +608,7 @@ class Composer {
           hardwareRequirements,
           ...(isMiniappDev ? {isMiniappDev: true} : {}),
           ...(devUrl ? {devUrl} : {}),
+          ...(devPort ? {devPort} : {}),
           onStart: () => saveLocalAppRunningState(lmaInfo.packageName, true),
           onStop: () => saveLocalAppRunningState(lmaInfo.packageName, false),
         })

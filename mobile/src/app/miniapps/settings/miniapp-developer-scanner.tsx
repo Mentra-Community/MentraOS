@@ -10,9 +10,9 @@ import {translate} from "@/i18n"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import {installMiniappFromUrl} from "@/services/miniapp/installFromUrl"
+import {installDevMiniappSnapshot, persistDevMiniappLaunch} from "@/services/miniapp/installDevSnapshot"
 import {decideDevLaunchRoute} from "@/utils/devMiniappLaunch"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
-import {storage} from "@/utils/storage/storage"
 import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
 
 export default function MiniappDeveloperScannerScreen() {
@@ -122,13 +122,7 @@ export default function MiniappDeveloperScannerScreen() {
       // can route the home-tile tap back to the live server. Composer's
       // getLocalApplets reads this key when populating the applet store.
       if (packageName) {
-        storage.save(`${packageName}_dev_url`, devUrl)
-        if (devPort) {
-          const portNum = parseInt(devPort, 10)
-          if (Number.isFinite(portNum)) {
-            storage.save(`${packageName}_dev_port`, portNum)
-          }
-        }
+        persistDevMiniappLaunch({packageName, devUrl, devPort})
       }
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {})
@@ -139,6 +133,12 @@ export default function MiniappDeveloperScannerScreen() {
       if (launchResult.decision === "offline") {
         replace("/applet/dev-offline", {packageName, name, iconUrl})
         return
+      }
+
+      try {
+        await installDevMiniappSnapshot({packageName, devUrl, devPort})
+      } catch (error) {
+        console.warn(`Dev miniapp registration failed for ${packageName}:`, error)
       }
 
       // Gate launch on OS permissions declared in the miniapp's manifest.
