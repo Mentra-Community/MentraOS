@@ -1280,14 +1280,15 @@ struct ViewState {
         _ authToken: String?,
         _ compress: String?,
         _ flash: Bool,
-        _ sound: Bool
+        _ sound: Bool,
+        exposureTimeNs: Double? = nil
     ) {
         Bridge.log(
-            "MAN: onPhotoRequest: \(requestId), \(appId), \(webhookUrl), size=\(size), compress=\(compress ?? "none"), flash=\(flash), sound=\(sound)"
+            "MAN: onPhotoRequest: \(requestId), \(appId), \(webhookUrl), size=\(size), compress=\(compress ?? "none"), flash=\(flash), sound=\(sound), exposureTimeNs=\(exposureTimeNs.map { String($0) } ?? "nil")"
         )
         sgc?.requestPhoto(
             requestId, appId: appId, size: size, webhookUrl: webhookUrl, authToken: authToken,
-            compress: compress, flash: flash, sound: sound
+            compress: compress, flash: flash, sound: sound, exposureTimeNs: exposureTimeNs
         )
     }
 
