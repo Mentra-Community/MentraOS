@@ -76,6 +76,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             String compress = data.optString("compress", "none"); // Default to none (no compression)
             boolean flash = data.optBoolean("flash", true);
             boolean sound = data.optBoolean("sound", true);
+            Long exposureTimeNs = PhotoExposureTimeNs.parse(data);
 
             // Generate file path with capture directory using base class functionality
             String photoFilePath = generateCaptureFilePath(packageName, "IMG_", ".jpg");
@@ -139,7 +140,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
 
             // Process photo capture based on transfer method
             boolean success = processPhotoCapture(captureService, photoFilePath, requestId, webhookUrl, authToken,
-                                                 bleImgId, save, size, transferMethod, flash, sound, compress);
+                                                 bleImgId, save, size, transferMethod, flash, sound, compress, exposureTimeNs);
             logCommandResult("take_photo", success, success ? null : "Photo capture failed");
             return success;
 
@@ -169,21 +170,22 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
      */
     private boolean processPhotoCapture(MediaCaptureService captureService, String photoFilePath,
                                       String requestId, String webhookUrl, String authToken, String bleImgId,
-                                      boolean save, String size, String transferMethod, boolean flash, boolean sound, String compress) {
+                                      boolean save, String size, String transferMethod, boolean flash, boolean sound, String compress,
+                                      Long exposureTimeNs) {
         Log.d(TAG, "789789Processing photo capture with transfer method: " + transferMethod);
         switch (transferMethod) {
             case "ble":
-                captureService.takePhotoForBleTransfer(photoFilePath, requestId, bleImgId, save, size, flash, sound);
+                captureService.takePhotoForBleTransfer(photoFilePath, requestId, bleImgId, save, size, flash, sound, exposureTimeNs);
                 return true;
             case "auto":
                 if (bleImgId.isEmpty()) {
                     Log.e(TAG, "Auto mode requires bleImgId for fallback");
                     return false;
                 }
-                captureService.takePhotoAutoTransfer(photoFilePath, requestId, webhookUrl, authToken, bleImgId, save, size, flash, sound, compress);
+                captureService.takePhotoAutoTransfer(photoFilePath, requestId, webhookUrl, authToken, bleImgId, save, size, flash, sound, compress, exposureTimeNs);
                 return true;
             default:
-                captureService.takePhotoAndUpload(photoFilePath, requestId, webhookUrl, authToken, save, size, flash, sound, compress);
+                captureService.takePhotoAndUpload(photoFilePath, requestId, webhookUrl, authToken, save, size, flash, sound, compress, exposureTimeNs);
                 return true;
         }
     }
