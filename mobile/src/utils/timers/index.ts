@@ -1,2 +1,2 @@
-import {BackgroundTimer, throttle, debounce} from "./timers"
-export {BackgroundTimer, throttle, debounce}
+import {BgTimer, throttle, debounce} from "./timers"
+export {BgTimer, throttle, debounce}

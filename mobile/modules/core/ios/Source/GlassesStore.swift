@@ -222,7 +222,7 @@ class GlassesStore {
                 CoreManager.shared.sgc?.setHeadUpAngle(angle)
             }
 
-        case ("core", "dashboard_menu_apps"):
+        case ("core", "menu_apps"):
             if let items = value as? [[String: Any]] {
                 CoreManager.shared.sgc?.setDashboardMenu(items)
             }

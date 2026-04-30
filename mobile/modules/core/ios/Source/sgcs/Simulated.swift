@@ -91,18 +91,6 @@ class Simulated: SGCManager {
         Bridge.log("sendStreamKeepAlive")
     }
 
-    func startBufferRecording() {
-        Bridge.log("startBufferRecording")
-    }
-
-    func stopBufferRecording() {
-        Bridge.log("stopBufferRecording")
-    }
-
-    func saveBufferVideo(requestId _: String, durationSeconds _: Int) {
-        Bridge.log("saveBufferVideo")
-    }
-
     func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {
         Bridge.log("startVideoRecording")
     }

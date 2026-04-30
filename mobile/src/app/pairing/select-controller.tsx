@@ -80,7 +80,7 @@ export default function SelectControllerScreen() {
         <View className="flex-col gap-4 pb-8">
           {controllerOptions.map((controller) => (
             <TouchableOpacity key={controller.key} onPress={() => triggerGlassesPairingGuide(controller.deviceModel)}>
-              <GlassView className="bg-primary-foreground flex-col items-center justify-center h-[190px] rounded-2xl overflow-hidden">
+              <GlassView className="bg-primary-foreground border border-background flex-col items-center justify-center h-[190px] rounded-2xl overflow-hidden">
                 <View className="flex-col items-center justify-center gap-3 w-full">
                   <View className="items-center justify-center min-h-6">
                     {getManufacturerLogo(controller.deviceModel)}

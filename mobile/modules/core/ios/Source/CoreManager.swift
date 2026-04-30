@@ -1181,23 +1181,6 @@ struct ViewState {
         sgc?.sendReboot()
     }
 
-    func startBufferRecording() {
-        Bridge.log("MAN: onStartBufferRecording")
-        sgc?.startBufferRecording()
-    }
-
-    func stopBufferRecording() {
-        Bridge.log("MAN: onStopBufferRecording")
-        sgc?.stopBufferRecording()
-    }
-
-    func saveBufferVideo(_ requestId: String, _ durationSeconds: Int) {
-        Bridge.log(
-            "MAN: onSaveBufferVideo: requestId=\(requestId), duration=\(durationSeconds)s"
-        )
-        sgc?.saveBufferVideo(requestId: requestId, durationSeconds: durationSeconds)
-    }
-
     func startVideoRecording(_ requestId: String, _ save: Bool, _ flash: Bool, _ sound: Bool) {
         Bridge.log(
             "MAN: onStartVideoRecording: requestId=\(requestId), save=\(save), flash=\(flash), sound=\(sound)"

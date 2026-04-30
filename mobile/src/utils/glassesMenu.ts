@@ -10,11 +10,12 @@ import {sortAppsByLastOpenTime, SYSTEM_APPS, useAppletStatusStore, type ClientAp
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
-import CoreModule from "core"
+// import CoreModule from "core"
 
 export interface GlassesMenuItem {
   packageName: string
   name: string
+  running?: boolean
 }
 
 const MAX_MENU_ITEMS = 10
@@ -67,35 +68,30 @@ export function filterCompatibleMenuItems(
  * This is the SINGLE codepath for sending menu data to glasses.
  * Triggered by: glasses connect, applet store changes, settings screen save.
  */
-export async function syncDashboardMenu() {
-  const defaultWearable = useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key)
-  if (defaultWearable !== DeviceTypes.G2) return
-  if (!useGlassesStore.getState().fullyBooted) return
-
-  const savedMenuApps = useSettingsStore.getState().getSetting(SETTINGS.glasses_menu_apps.key) as
-    | GlassesMenuItem[]
-    | null
-
-  const allApps = useAppletStatusStore.getState().apps
-  let menuItems: GlassesMenuItem[]
-
-  if (savedMenuApps && savedMenuApps.length > 0) {
-    menuItems = filterCompatibleMenuItems(savedMenuApps, allApps)
-  } else {
-    menuItems = await getDefaultMenuApps(allApps)
-  }
-
-  // Send to native: [{name, packageName, running}]
-  // G2.swift handles truncation, running prefix, padding, numeric IDs
-  const itemsForNative = menuItems.map((item) => {
-    const app = allApps.find((a) => a.packageName === item.packageName)
-    return {
-      name: item.name,
-      packageName: item.packageName,
-      running: app?.running ?? false,
-    }
-  })
-
-  CoreModule.updateCore({dashboard_menu_apps: itemsForNative})
-  console.log(`GLASSES_MENU: Synced ${itemsForNative.length} miniapps to G2 dashboard menu`)
-}
+// export async function syncDashboardMenu() {
+//   const defaultWearable = useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key)
+//   if (defaultWearable !== DeviceTypes.G2) return
+//   if (!useGlassesStore.getState().fullyBooted) return
+//   const savedMenuApps = useSettingsStore.getState().getSetting(SETTINGS.menu_apps.key) as
+//     | GlassesMenuItem[]
+//     | null
+//   const allApps = useAppletStatusStore.getState().apps
+//   let menuItems: GlassesMenuItem[]
+//   if (savedMenuApps && savedMenuApps.length > 0) {
+//     menuItems = filterCompatibleMenuItems(savedMenuApps, allApps)
+//   } else {
+//     menuItems = await getDefaultMenuApps(allApps)
+//   }
+//   // Send to native: [{name, packageName, running}]
+//   // G2.swift handles truncation, running prefix, padding, numeric IDs
+//   const itemsForNative = menuItems.map((item) => {
+//     const app = allApps.find((a) => a.packageName === item.packageName)
+//     return {
+//       name: item.name,
+//       packageName: item.packageName,
+//       running: app?.running ?? false,
+//     }
+//   })
+//   useSettingsStore.getState().setSetting(SETTINGS.menu_apps.key, itemsForNative)
+//   console.log(`GLASSES_MENU: Synced ${itemsForNative.length} miniapps to G2 dashboard menu`)
+// }

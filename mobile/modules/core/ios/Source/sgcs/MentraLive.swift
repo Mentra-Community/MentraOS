@@ -4315,52 +4315,6 @@ extension MentraLive {
         sendJson(json)
     }
 
-    // MARK: - Buffer Recording Methods
-
-    func startBufferRecording() {
-        Bridge.log("Starting buffer recording on glasses")
-
-        guard connectionState == ConnTypes.CONNECTED else {
-            Bridge.log("Cannot start buffer recording - not connected")
-            return
-        }
-
-        let json: [String: Any] = [
-            "type": "start_buffer_recording",
-        ]
-        sendJson(json)
-    }
-
-    func stopBufferRecording() {
-        Bridge.log("Stopping buffer recording on glasses")
-
-        guard connectionState == ConnTypes.CONNECTED else {
-            Bridge.log("Cannot stop buffer recording - not connected")
-            return
-        }
-
-        let json: [String: Any] = [
-            "type": "stop_buffer_recording",
-        ]
-        sendJson(json)
-    }
-
-    func saveBufferVideo(requestId: String, durationSeconds: Int) {
-        Bridge.log("Saving buffer video: requestId=\(requestId), duration=\(durationSeconds)s")
-
-        guard connectionState == ConnTypes.CONNECTED else {
-            Bridge.log("Cannot save buffer video - not connected")
-            return
-        }
-
-        let json: [String: Any] = [
-            "type": "save_buffer_video",
-            "request_id": requestId,
-            "duration_seconds": durationSeconds,
-        ]
-        sendJson(json)
-    }
-
     private func sendUserSettings() {
         Bridge.log("Sending user settings to glasses")
 

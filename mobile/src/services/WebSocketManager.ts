@@ -6,7 +6,7 @@ import {useConnectionStore} from "@/stores/connection"
 import {getGlasesInfoPartial, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@/utils/timers"
 
 export {WebSocketStatus}
 
@@ -41,14 +41,14 @@ class WebSocketManager extends EventEmitter {
   private webSocket: WebSocket | null = null
   private previousStatus: WebSocketStatus = WebSocketStatus.DISCONNECTED
   private coreToken: string | null = null
-  private reconnectInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0
+  private reconnectInterval: ReturnType<typeof BgTimer.setInterval> = 0
   private manuallyDisconnected: boolean = false
 
   // Liveness detection state
   private lastPingAt: number = 0
   private lastPongTime: number = 0
   private awaitingPong: boolean = false
-  private pingInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0
+  private pingInterval: ReturnType<typeof BgTimer.setInterval> = 0
 
   // Serializes concurrent connect() calls via a promise chain: each caller
   // appends performConnect() onto the tail so only one runs at a time. Three
@@ -222,7 +222,7 @@ class WebSocketManager extends EventEmitter {
 
     await Promise.race([
       closePromise,
-      new Promise<void>((resolve) => BackgroundTimer.setTimeout(resolve, CLOSE_WAIT_TIMEOUT_MS)),
+      new Promise<void>((resolve) => BgTimer.setTimeout(resolve, CLOSE_WAIT_TIMEOUT_MS)),
     ])
 
     // Null after wait so the one-shot handlers don't retain the socket.
@@ -377,14 +377,14 @@ class WebSocketManager extends EventEmitter {
     }
     if (store.status === WebSocketStatus.CONNECTED) {
       console.log("WSM: Connected, stopping reconnect interval")
-      BackgroundTimer.clearInterval(this.reconnectInterval)
+      BgTimer.clearInterval(this.reconnectInterval)
     }
   }
 
   private startReconnectInterval() {
     console.log("WSM: Starting reconnect interval, manuallyDisconnected:", this.manuallyDisconnected)
     if (this.reconnectInterval) {
-      BackgroundTimer.clearInterval(this.reconnectInterval)
+      BgTimer.clearInterval(this.reconnectInterval)
       this.reconnectInterval = 0
     }
 
@@ -393,7 +393,7 @@ class WebSocketManager extends EventEmitter {
       return
     }
 
-    this.reconnectInterval = BackgroundTimer.setInterval(this.actuallyReconnect.bind(this), RECONNECT_INTERVAL_MS)
+    this.reconnectInterval = BgTimer.setInterval(this.actuallyReconnect.bind(this), RECONNECT_INTERVAL_MS)
   }
 
   private async reconnectNow(reason: string): Promise<void> {
@@ -403,7 +403,7 @@ class WebSocketManager extends EventEmitter {
     }
 
     if (this.reconnectInterval) {
-      BackgroundTimer.clearInterval(this.reconnectInterval)
+      BgTimer.clearInterval(this.reconnectInterval)
       this.reconnectInterval = 0
     }
 
@@ -433,7 +433,7 @@ class WebSocketManager extends EventEmitter {
     this.connectGeneration++
 
     if (this.reconnectInterval) {
-      BackgroundTimer.clearInterval(this.reconnectInterval)
+      BgTimer.clearInterval(this.reconnectInterval)
       this.reconnectInterval = 0
     }
 
@@ -462,7 +462,7 @@ class WebSocketManager extends EventEmitter {
 
     this.sendPing()
 
-    this.pingInterval = BackgroundTimer.setInterval(() => {
+    this.pingInterval = BgTimer.setInterval(() => {
       if (!this.isConnected()) return
 
       if (this.awaitingPong) {
@@ -497,7 +497,7 @@ class WebSocketManager extends EventEmitter {
    */
   private stopLivenessMonitor() {
     if (this.pingInterval) {
-      BackgroundTimer.clearInterval(this.pingInterval)
+      BgTimer.clearInterval(this.pingInterval)
       this.pingInterval = 0
     }
 

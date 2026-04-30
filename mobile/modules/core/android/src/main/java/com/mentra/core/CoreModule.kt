@@ -242,14 +242,6 @@ class CoreModule : Module() {
 
         // MARK: - Video Recording Commands
 
-        AsyncFunction("startBufferRecording") { coreManager?.startBufferRecording() }
-
-        AsyncFunction("stopBufferRecording") { coreManager?.stopBufferRecording() }
-
-        AsyncFunction("saveBufferVideo") { requestId: String, durationSeconds: Int ->
-            coreManager?.saveBufferVideo(requestId, durationSeconds)
-        }
-
         AsyncFunction("startVideoRecording") { requestId: String, save: Boolean, flash: Boolean, sound: Boolean ->
             coreManager?.startVideoRecording(requestId, save, flash, sound)
         }

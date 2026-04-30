@@ -1,11 +1,11 @@
 {
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
-  "packageName": "{{packageName}}",
+  "packageName": "com.mentra.my_miniapp",
   "version": "1.0.0",
-  "name": "{{appName}}",
+  "name": "My Miniapp",
   "description": "A MentraOS miniapp",
   "icon": "icon.png",
   "port": 3000,
   "permissions": [],
-  "hardwareRequirements": [{"type": "DISPLAY", "level": "REQUIRED"}]
+  "hardwareRequirements": []
 }

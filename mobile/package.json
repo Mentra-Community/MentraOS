@@ -3,15 +3,19 @@
   "version": "0.0.1",
   "private": true,
   "main": "expo-router/entry",
+  "workspaces": [
+    "modules/*"
+  ],
   "scripts": {
     "preinstall": "zx ./scripts/preinstall.mjs",
     "postinstall": "zx ./scripts/postinstall.mjs",
     "start": "zx ./scripts/start.mjs",
     "android": "zx ./scripts/android.mjs",
-    "android:internal": "zx ./scripts/android-internal.mjs",
     "ios": "zx ./scripts/ios.mjs",
     "ios:release": "zx ./scripts/ios-release.mjs",
+    "android:wireless": "zx ./scripts/android-wireless.mjs",
     "android:release": "zx ./scripts/android-release.mjs",
+    "android:internal": "zx ./scripts/android-internal.mjs",
     "build:android:release": "zx ./scripts/android-release.mjs",
     "build:android:internal": "zx ./scripts/android-internal.mjs",
     "android:flash:prebuilt": "zx ./scripts/android-flash-prebuilt.mjs",
@@ -59,8 +63,8 @@
     "authing-js-sdk": "^4.23.55",
     "axios": "^1.13.6",
     "babel-plugin-module-resolver": "5.0.0",
-    "core": "file:./modules/core",
-    "crust": "file:./modules/crust",
+    "core": "workspace:*",
+    "crust": "workspace:*",
     "date-fns": "^4.1.0",
     "dotenv": "^17.3.1",
     "expo": "^55.0.5",
@@ -105,7 +109,7 @@
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "react-i18next": "^16.5.6",
-    "react-native": "0.83.2",
+    "react-native": "0.83.6",
     "react-native-auto-size-text": "^1.1.1",
     "react-native-awesome-gallery": "^0.4.3",
     "react-native-ble-manager": "^12.4.4",
@@ -142,7 +146,7 @@
     "react-native-view-shot": "^4.0.3",
     "react-native-webview": "13.16.0",
     "react-native-wifi-reborn": "^4.13.6",
-    "react-native-worklets": "0.7.2",
+    "react-native-worklets": "0.7.4",
     "react-native-zip-archive": "^7.0.2",
     "semver": "^7.7.4",
     "tailwindcss": "^4.2.1",
@@ -164,7 +168,7 @@
     "react-native-svg-transformer": "^1.5.3",
     "react-test-renderer": "19.2.0",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.2"
+    "typescript": "~5.9.2"
   },
   "engines": {
     "node": "^20.19.4 || ^22.13.0 || ^24.3.0 || ^25.0.0"

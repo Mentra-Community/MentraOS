@@ -9,7 +9,7 @@ import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/Navigatio
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {translate} from "@/i18n/translate"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@/utils/timers"
 
 interface BaseStep {
   name: string
@@ -142,17 +142,17 @@ export function OnboardingGuide({
 
     if (step.transition) {
       // Auto-advance transition images
-      const timer = BackgroundTimer.setTimeout(() => {
+      const timer = BgTimer.setTimeout(() => {
         handleNext(false)
       }, step.duration ?? 500)
       return () => clearTimeout(timer)
     }
 
     if (step.duration) {
-      const timer = BackgroundTimer.setTimeout(() => {
+      const timer = BgTimer.setTimeout(() => {
         setShowNextButton(true)
       }, step.duration)
-      return () => BackgroundTimer.clearTimeout(timer)
+      return () => BgTimer.clearTimeout(timer)
     } else {
       setShowNextButton(true)
     }
@@ -177,10 +177,10 @@ export function OnboardingGuide({
       return
     }
 
-    const timer = BackgroundTimer.setTimeout(() => {
+    const timer = BgTimer.setTimeout(() => {
       setShowPoster(true)
     }, 2000)
-    return () => BackgroundTimer.clearTimeout(timer)
+    return () => BgTimer.clearTimeout(timer)
   }, [player1Loading, player2Loading, activePlayer])
 
   // Function to perform the actual navigation
@@ -207,7 +207,7 @@ export function OnboardingGuide({
       console.log(`ONBOARD: current: ${currentIndex} next: ${nextIndex}`)
 
       resettingRef.current = true
-      BackgroundTimer.setTimeout(() => {
+      BgTimer.setTimeout(() => {
         resettingRef.current = false
       }, 100)
 
@@ -217,7 +217,7 @@ export function OnboardingGuide({
       setPlayCount(0)
       setShowStepSkipButton(false)
       if (stepSkipTimeoutRef.current) {
-        BackgroundTimer.clearTimeout(stepSkipTimeoutRef.current)
+        BgTimer.clearTimeout(stepSkipTimeoutRef.current)
         stepSkipTimeoutRef.current = null
       }
 
@@ -380,7 +380,7 @@ export function OnboardingGuide({
         player2.currentTime = 0
         player2.pause()
       }
-      BackgroundTimer.setTimeout(() => {
+      BgTimer.setTimeout(() => {
         resettingRef.current = false
       }, 0)
       return
@@ -761,7 +761,7 @@ export function OnboardingGuide({
     step.waitFn().then(() => {
       if (cancelled) return
       setWaitState(false)
-      BackgroundTimer.setTimeout(() => {
+      BgTimer.setTimeout(() => {
         if (cancelled) return
         handleNext(true)
       }, 1500)
@@ -784,13 +784,13 @@ export function OnboardingGuide({
 
   useEffect(() => {
     if (step.waitFn) {
-      stepSkipTimeoutRef.current = BackgroundTimer.setTimeout(() => {
+      stepSkipTimeoutRef.current = BgTimer.setTimeout(() => {
         setShowStepSkipButton(true)
       }, 10000)
     } else {
       setShowStepSkipButton(false)
       if (stepSkipTimeoutRef.current) {
-        BackgroundTimer.clearTimeout(stepSkipTimeoutRef.current)
+        BgTimer.clearTimeout(stepSkipTimeoutRef.current)
       }
     }
   }, [step.waitFn])
@@ -798,7 +798,7 @@ export function OnboardingGuide({
   // Fallback timeout to show button if video doesn't finish
   useEffect(() => {
     if (buttonFallbackTimeoutRef.current) {
-      BackgroundTimer.clearTimeout(buttonFallbackTimeoutRef.current)
+      BgTimer.clearTimeout(buttonFallbackTimeoutRef.current)
       buttonFallbackTimeoutRef.current = null
     }
 
@@ -808,7 +808,7 @@ export function OnboardingGuide({
 
     const timeoutMs = step.type === "video" ? step.buttonTimeoutMs : undefined
     if (timeoutMs) {
-      buttonFallbackTimeoutRef.current = BackgroundTimer.setTimeout(() => {
+      buttonFallbackTimeoutRef.current = BgTimer.setTimeout(() => {
         console.log("ONBOARD: button fallback timeout triggered")
         setShowNextButton(true)
       }, timeoutMs)
@@ -816,7 +816,7 @@ export function OnboardingGuide({
 
     return () => {
       if (buttonFallbackTimeoutRef.current) {
-        BackgroundTimer.clearTimeout(buttonFallbackTimeoutRef.current)
+        BgTimer.clearTimeout(buttonFallbackTimeoutRef.current)
         buttonFallbackTimeoutRef.current = null
       }
     }

@@ -9,19 +9,26 @@ const logger = rootLogger.child({ service: "temp-token.service" });
 
 // Environment variable for JWT signing
 export const APP_AUTH_JWT_PRIVATE_KEY: string | null =
-  process.env.APP_AUTH_JWT_PRIVATE_KEY ||
-  process.env.TPA_AUTH_JWT_PRIVATE_KEY ||
-  null;
+  process.env.APP_AUTH_JWT_PRIVATE_KEY || process.env.TPA_AUTH_JWT_PRIVATE_KEY || null;
 if (!APP_AUTH_JWT_PRIVATE_KEY) {
   console.warn("[token.service] APP_AUTH_JWT_PRIVATE_KEY is not set");
 }
 
 /**
- * Interface for the result of exchanging a temporary token
+ * Reason a temp token exchange failed. Surfaced to callers via a stable
+ * machine-readable code; richer detail (mismatched package names, token
+ * prefix, etc.) is logged server-side rather than returned in the response.
  */
-interface ExchangeTokenResult {
-  userId: string;
-}
+export type ExchangeTokenFailureReason =
+  | "token_not_found"
+  | "token_used"
+  | "token_expired"
+  | "token_package_mismatch"
+  | "exchange_error";
+
+export type ExchangeTokenOutcome =
+  | { success: true; userId: string }
+  | { success: false; reason: ExchangeTokenFailureReason };
 
 /**
  * Service for managing temporary tokens and user authentication tokens.
@@ -37,10 +44,7 @@ export class TokenService {
    * @returns Promise resolving to the generated temporary token string
    * @throws Error if token generation or storage fails
    */
-  async generateTemporaryToken(
-    userId: string,
-    packageName: string,
-  ): Promise<string> {
+  async generateTemporaryToken(userId: string, packageName: string): Promise<string> {
     const logger = rootLogger.child({
       service: "temp-token.service",
       userId,
@@ -60,17 +64,12 @@ export class TokenService {
 
     try {
       await tempTokenDoc.save();
-      logger.info(
-        `Generated temporary token for user ${userId} and package ${packageName}`,
-      );
+      logger.info(`Generated temporary token for user ${userId} and package ${packageName}`);
       return token;
     } catch (error) {
       {
         const err = error instanceof Error ? error : new Error(String(error));
-        logger.error(
-          err,
-          `Error saving temporary token for user ${userId}, package ${packageName}:`,
-        );
+        logger.error(err, `Error saving temporary token for user ${userId}, package ${packageName}:`);
       }
       throw new Error("Failed to generate temporary token");
     }
@@ -86,12 +85,11 @@ export class TokenService {
    *
    * @param tempToken - The temporary token string to exchange
    * @param requestingPackageName - The package name of the App making the exchange request
-   * @returns Promise resolving to an object containing the userId if valid, null otherwise
+   * @returns Promise resolving to a discriminated outcome. On failure,
+   *   `reason` identifies which check failed so callers can surface a
+   *   precise error to clients without leaking server-side detail.
    */
-  async exchangeTemporaryToken(
-    tempToken: string,
-    requestingPackageName: string,
-  ): Promise<ExchangeTokenResult | null> {
+  async exchangeTemporaryToken(tempToken: string, requestingPackageName: string): Promise<ExchangeTokenOutcome> {
     const logger = rootLogger.child({
       service: "temp-token.service",
       requestingPackageName,
@@ -104,12 +102,12 @@ export class TokenService {
 
       if (!tokenDoc) {
         logger.warn(`Temporary token not found: ${tempToken}`);
-        return null; // Token doesn't exist
+        return { success: false, reason: "token_not_found" };
       }
 
       if (tokenDoc.used) {
         logger.warn(`Temporary token already used: ${tempToken}`);
-        return null; // Token already used
+        return { success: false, reason: "token_used" };
       }
 
       // Check if the token has expired (TTL index should handle this, but double-check)
@@ -122,15 +120,13 @@ export class TokenService {
         logger.warn(`Temporary token expired: ${tempToken}`);
         // Optionally delete the expired token here if TTL isn't reliable enough
         // await TempToken.deleteOne({ token: tempToken });
-        return null;
+        return { success: false, reason: "token_expired" };
       }
 
       // **Crucial Security Check:** Verify the requesting App matches the one the token was issued for.
       if (tokenDoc.packageName !== requestingPackageName) {
-        logger.error(
-          `Token mismatch: Token for ${tokenDoc.packageName} used by ${requestingPackageName}`,
-        );
-        return null; // Token not intended for this application
+        logger.error(`Token mismatch: Token for ${tokenDoc.packageName} used by ${requestingPackageName}`);
+        return { success: false, reason: "token_package_mismatch" };
       }
 
       // Mark the token as used to prevent replay attacks
@@ -140,13 +136,13 @@ export class TokenService {
       logger.info(
         `Successfully exchanged temporary token for user ${tokenDoc.userId}, requested by ${requestingPackageName}`,
       );
-      return { userId: tokenDoc.userId };
+      return { success: true, userId: tokenDoc.userId };
     } catch (error) {
       {
         const err = error instanceof Error ? error : new Error(String(error));
         logger.error(err, `Error exchanging temporary token ${tempToken}:`);
       }
-      return null; // Return null on any error during exchange
+      return { success: false, reason: "exchange_error" };
     }
   }
 
@@ -163,10 +159,7 @@ export class TokenService {
    * @returns Promise resolving to a signed JWT token string
    * @throws Error if private key is not configured or token generation fails
    */
-  async issueUserToken(
-    aosUserId: string,
-    packageName: string,
-  ): Promise<string> {
+  async issueUserToken(aosUserId: string, packageName: string): Promise<string> {
     // Algorithm used for signing - RS256 (RSA with SHA-256)
     const alg: string = "RS256";
 
@@ -181,10 +174,7 @@ export class TokenService {
 
       // Generate a frontend token using the app's API key hash instead of a shared secret
       // This allows the App to verify the token using their own API key
-      const frontendTokenHash: string = await appService.hashWithApiKey(
-        aosUserId,
-        packageName,
-      );
+      const frontendTokenHash: string = await appService.hashWithApiKey(aosUserId, packageName);
 
       // Create and sign the JWT token with both user ID and frontend token
       const token: string = await new SignJWT({
@@ -198,10 +188,7 @@ export class TokenService {
         .sign(privateKey);
       return token;
     } catch (error) {
-      logger.error(
-        { error, aosUserId, packageName },
-        "[token.service] Failed to issue user token",
-      );
+      logger.error({ error, aosUserId, packageName }, "[token.service] Failed to issue user token");
       throw new Error("[token.service] Failed to generate signed user token");
     }
   }

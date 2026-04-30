@@ -92,12 +92,6 @@ class Mach1: UltraliteBaseViewController, SGCManager {
 
     func sendStreamKeepAlive(_: [String: Any]) {}
 
-    func startBufferRecording() {}
-
-    func stopBufferRecording() {}
-
-    func saveBufferVideo(requestId _: String, durationSeconds _: Int) {}
-
     func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {}
 
     func stopVideoRecording(requestId _: String) {}

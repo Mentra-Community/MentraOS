@@ -8,6 +8,7 @@ import {confirm, intro, isCancel, outro, text} from "@clack/prompts"
 
 const here = dirname(fileURLToPath(import.meta.url))
 const templateDir = resolve(here, "..", "template")
+const DEFAULT_HARDWARE_REQUIREMENTS = [{type: "DISPLAY", level: "REQUIRED"}]
 
 interface CliArgs {
   target?: string
@@ -70,6 +71,34 @@ async function replaceInFile(path: string, replacements: Record<string, string>)
     contents = contents.replaceAll(`{{${key}}}`, value)
   }
   await writeFile(path, contents)
+}
+
+function jsonStringContent(value: string): string {
+  return JSON.stringify(value).slice(1, -1)
+}
+
+function escapeHtmlText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+}
+
+async function writeGeneratedManifest(targetDir: string, packageName: string, appName: string): Promise<void> {
+  const manifest = {
+    $schema: "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+    packageName,
+    version: "1.0.0",
+    name: appName,
+    description: "A MentraOS miniapp",
+    icon: "icon.png",
+    port: 3000,
+    permissions: [],
+    hardwareRequirements: DEFAULT_HARDWARE_REQUIREMENTS,
+  }
+  await writeFile(join(targetDir, "miniapp.json"), `${JSON.stringify(manifest, null, 2)}\n`)
 }
 
 async function main(): Promise<void> {
@@ -139,16 +168,16 @@ async function main(): Promise<void> {
   await cp(templateDir, targetDir, {recursive: true})
 
   const replacements = {
-    packageName: String(packageAnswer),
-    projectName,
-    appName: String(nameAnswer),
+    projectName: jsonStringContent(projectName),
+    appNameHtml: escapeHtmlText(String(nameAnswer)),
+    appNameTsString: jsonStringContent(String(nameAnswer)),
   }
 
   await Promise.all([
     replaceInFile(join(targetDir, "package.json"), replacements),
-    replaceInFile(join(targetDir, "miniapp.json"), replacements),
     replaceInFile(join(targetDir, "index.html"), replacements),
     replaceInFile(join(targetDir, "src", "App.tsx"), replacements),
+    writeGeneratedManifest(targetDir, String(packageAnswer), String(nameAnswer)),
   ])
 
   outro(`Created ${projectName}. Next: cd ${targetDir} && bun install && bun run dev`)

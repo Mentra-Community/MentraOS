@@ -6,6 +6,7 @@ on:
     branches:
       - cloud/issues-048
       - cloud/pod-loop-stall-cascade
+      - cloud/104-soniox-eventqueue-leak-fix
     paths:
       - "cloud/**"
       - ".github/workflows/porter-debug.yml"

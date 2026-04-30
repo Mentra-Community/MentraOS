@@ -212,7 +212,6 @@ public class MediaCaptureService {
     private final MediaUploadQueueManager mMediaQueueManager;
     private MediaCaptureListener mMediaCaptureListener;
     private ServiceCallbackInterface mServiceCallback;
-    private CircularVideoBuffer mVideoBuffer;
     private final IHardwareManager hardwareManager;
 
     // Track current video recording
@@ -360,49 +359,6 @@ public class MediaCaptureService {
         // Initialize hardware manager
         hardwareManager = HardwareManagerFactory.getInstance(context);
         Log.d(TAG, "Hardware manager initialized: " + hardwareManager.getDeviceModel());
-        
-        // Initialize video buffer
-        mVideoBuffer = new CircularVideoBuffer(context);
-        mVideoBuffer.setCallback(new CircularVideoBuffer.BufferCallback() {
-            @Override
-            public void onBufferingStarted() {
-                Log.d(TAG, "Video buffering started");
-            }
-
-            @Override
-            public void onBufferingStopped() {
-                Log.d(TAG, "Video buffering stopped");
-            }
-
-            @Override
-            public void onSegmentRecorded(int segmentIndex, String filePath) {
-                Log.d(TAG, "Buffer segment " + segmentIndex + " recorded: " + filePath);
-            }
-
-            @Override
-            public void onBufferSaved(String outputPath, int durationSeconds) {
-                Log.d(TAG, "Buffer saved: " + outputPath + " (" + durationSeconds + " seconds)");
-                // Notify listener if needed
-                if (mMediaCaptureListener != null) {
-                    // Use a special ID for buffer saves
-                    mMediaCaptureListener.onVideoUploaded("buffer_save", outputPath);
-                }
-                
-                // Send gallery status update to phone after buffer video save
-                sendGalleryStatusUpdate();
-            }
-
-            @Override
-            public void onBufferError(String error) {
-                Log.e(TAG, "Buffer error: " + error);
-                // Turn off LED on buffer error
-                hardwareManager.setRecordingLedOff();
-                Log.d(TAG, "Recording LED turned OFF (buffer error)");
-                if (mMediaCaptureListener != null) {
-                    mMediaCaptureListener.onMediaError("buffer", error, MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
-                }
-            }
-        });
     }
 
     /**
@@ -1117,123 +1073,6 @@ public class MediaCaptureService {
         }
 
         return System.currentTimeMillis() - recordingStartTime;
-    }
-
-    /**
-     * Start buffer recording - continuously records last 30 seconds
-     */
-    public void startBufferRecording() {
-        // Check battery level before proceeding
-        if (mStateManager != null) {
-            int batteryLevel = mStateManager.getBatteryLevel();
-            if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
-                Log.w(TAG, "🚫 Buffer recording rejected - battery too low (" + batteryLevel + "%)");
-                playBatteryLowSound();
-                if (mMediaCaptureListener != null) {
-                    mMediaCaptureListener.onMediaError("buffer", "Battery too low to start buffer recording (" + batteryLevel + "%)", MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
-                }
-                return;
-            }
-        } else {
-            Log.w(TAG, "⚠️ StateManager not initialized - skipping battery check for buffer recording");
-        }
-
-        // Check if camera is already in use
-        if (CameraNeo.isCameraInUse()) {
-            Log.w(TAG, "Cannot start buffer recording - camera is in use");
-            if (mMediaCaptureListener != null) {
-                mMediaCaptureListener.onMediaError("buffer", "Camera is busy", MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
-            }
-            return;
-        }
-
-        // Close kept-alive camera if it exists to free resources for buffer recording
-        CameraNeo.closeKeptAliveCamera();
-
-        Log.d(TAG, "Starting buffer recording via CameraNeo");
-
-        // Use CameraNeo's buffer mode instead of local CircularVideoBuffer
-        CameraNeo.startBufferRecording(mContext, new CameraNeo.BufferCallback() {
-            @Override
-            public void onBufferStarted() {
-                Log.d(TAG, "Buffer recording started");
-                // Start blinking LED for buffer recording mode
-                hardwareManager.setRecordingLedBlinking(1000, 2000); // On for 1s, off for 2s
-                Log.d(TAG, "Recording LED set to BLINKING mode (buffer recording)");
-            }
-
-            @Override
-            public void onBufferStopped() {
-                Log.d(TAG, "Buffer recording stopped");
-                // Turn off LED when buffer recording stops
-                hardwareManager.setRecordingLedOff();
-                Log.d(TAG, "Recording LED turned OFF (buffer stopped)");
-            }
-
-            @Override
-            public void onBufferSaved(String filePath, int durationSeconds) {
-                Log.d(TAG, "Buffer saved: " + filePath + " (" + durationSeconds + " seconds)");
-                if (mMediaCaptureListener != null) {
-                    mMediaCaptureListener.onVideoUploaded("buffer_save", filePath);
-                }
-            }
-
-            @Override
-            public void onBufferError(String error) {
-                Log.e(TAG, "Buffer error: " + error);
-                // Turn off LED on buffer error
-                hardwareManager.setRecordingLedOff();
-                Log.d(TAG, "Recording LED turned OFF (buffer error)");
-                if (mMediaCaptureListener != null) {
-                    mMediaCaptureListener.onMediaError("buffer", error, MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
-                }
-            }
-        });
-    }
-
-    /**
-     * Stop buffer recording
-     */
-    public void stopBufferRecording() {
-        Log.d(TAG, "Stopping buffer recording via CameraNeo");
-        CameraNeo.stopBufferRecording(mContext);
-        // Ensure LED is turned off when manually stopping buffer
-        hardwareManager.setRecordingLedOff();
-        Log.d(TAG, "Recording LED turned OFF (manual buffer stop)");
-    }
-
-    /**
-     * Save the last N seconds from buffer
-     * @param secondsToSave Number of seconds to save (max 30)
-     * @param requestId Request ID for tracking
-     */
-    public void saveBufferVideo(int secondsToSave, String requestId) {
-        Log.d(TAG, "Saving last " + secondsToSave + " seconds of buffer, requestId: " + requestId);
-        CameraNeo.saveBufferVideo(mContext, secondsToSave, requestId);
-    }
-
-    /**
-     * Get buffer recording status
-     * Note: This would need to be implemented via a callback or service binding
-     * For now, returning a basic status
-     */
-    public JSONObject getBufferStatus() {
-        JSONObject status = new JSONObject();
-        try {
-            // Basic status - would need proper implementation with CameraNeo
-            status.put("isBuffering", false); // Would need to track this
-            status.put("availableDuration", 0);
-        } catch (JSONException e) {
-            Log.e(TAG, "Error creating buffer status", e);
-        }
-        return status;
-    }
-
-    /**
-     * Check if buffer is currently recording
-     */
-    public boolean isBuffering() {
-        return CameraNeo.isInBufferMode();
     }
 
     /**
@@ -2985,16 +2824,6 @@ public class MediaCaptureService {
                 stopVideoRecording(StopReason.ERROR);
             }
 
-            // Release video buffer
-            if (mVideoBuffer != null) {
-                try {
-                    mVideoBuffer.release();
-                } catch (Exception e) {
-                    Log.e(TAG, "Error releasing video buffer", e);
-                }
-                mVideoBuffer = null;
-            }
-
             // Nuclear cleanup of handlers
             if (mBatteryMonitorHandler != null) {
                 mBatteryMonitorHandler.removeCallbacksAndMessages(null);
@@ -3047,6 +2876,4 @@ public class MediaCaptureService {
             Log.e(TAG, "📸 Error creating gallery status update", e);
         }
     }
-
-    // ========== CIRCULAR VIDEO BUFFER METHODS ==========
 }

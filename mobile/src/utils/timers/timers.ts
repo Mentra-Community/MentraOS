@@ -3,7 +3,7 @@
 import {Platform} from "react-native"
 import {BackgroundTimer as NitroTimer} from "react-native-nitro-bg-timer"
 
-export class BackgroundTimer {
+export class BgTimer {
   static setInterval(callback: () => void, delay: number): number {
     if (Platform.OS === "android") {
       return NitroTimer.setInterval(callback, delay)

@@ -15,7 +15,7 @@ import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import {SplashVideo} from "@/components/splash/SplashVideo"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@/utils/timers"
 
 // Types
 type ScreenState = "loading" | "connection" | "auth" | "outdated" | "success"
@@ -80,7 +80,7 @@ export default function InitScreen() {
   }
 
   const setAnimationDelayed = () => {
-    BackgroundTimer.setTimeout(() => {
+    BgTimer.setTimeout(() => {
       setAnimation("simple_push")
     }, 800)
   }

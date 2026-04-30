@@ -10,7 +10,7 @@ import {WebSocketStatus} from "@/services/WebSocketManager"
 import {useRefreshApplets} from "@/stores/applets"
 import {useConnectionStore} from "@/stores/connection"
 import {ThemedStyle} from "@/theme"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@/utils/timers"
 
 export default function CloudConnection() {
   const connectionStatus = useConnectionStore((state) => state.status)
@@ -86,7 +86,7 @@ export default function CloudConnection() {
 
       // Clear any pending timer
       if (disconnectionTimerRef.current) {
-        BackgroundTimer.clearTimeout(disconnectionTimerRef.current)
+        BgTimer.clearTimeout(disconnectionTimerRef.current)
         disconnectionTimerRef.current = null
       }
 
@@ -102,10 +102,10 @@ export default function CloudConnection() {
         firstDisconnectedTimeRef.current = Date.now()
 
         // Start timer to show banner after delay
-        disconnectionTimerRef.current = BackgroundTimer.setTimeout(() => {
+        disconnectionTimerRef.current = BgTimer.setTimeout(() => {
           setDelayedStatus(connectionStatus)
           cloudConnectionStatusAnim.value = withTiming(1, {duration: 500})
-          BackgroundTimer.setTimeout(() => {
+          BgTimer.setTimeout(() => {
             setHideCloudConnection(false)
           }, 500)
         }, DISCONNECTION_DELAY)
@@ -125,7 +125,7 @@ export default function CloudConnection() {
     // Cleanup function
     return () => {
       if (disconnectionTimerRef.current) {
-        BackgroundTimer.clearTimeout(disconnectionTimerRef.current)
+        BgTimer.clearTimeout(disconnectionTimerRef.current)
         disconnectionTimerRef.current = null
       }
     }

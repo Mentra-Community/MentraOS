@@ -25,9 +25,6 @@ protocol ControllerManager {
     func startStream(_ message: [String: Any])
     func stopStream()
     func sendStreamKeepAlive(_ message: [String: Any])
-    func startBufferRecording()
-    func stopBufferRecording()
-    func saveBufferVideo(requestId: String, durationSeconds: Int)
     func startVideoRecording(requestId: String, save: Bool, flash: Bool, sound: Bool)
     func stopVideoRecording(requestId: String)
 

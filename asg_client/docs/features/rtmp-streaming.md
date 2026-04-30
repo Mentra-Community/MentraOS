@@ -1,284 +1,112 @@
-# RTMP Streaming
+# Live streaming (RTMP / SRT / WHIP)
 
-The ASG Client supports live video streaming via RTMP (Real-Time Messaging Protocol), allowing real-time video transmission from the glasses to remote servers.
+ASG Client streams the camera feed to a remote server in real time. Three protocols are supported and selected automatically by URL prefix:
 
-## Overview
+| Prefix | Protocol | Service class |
+|--------|----------|---------------|
+| `rtmp://` / `rtmps://` | RTMP | `RtmpStreamingService` |
+| `srt://` | SRT | `SrtStreamingService` |
+| `https://` / `http://` | WHIP (WebRTC) | `WhipStreamingService` |
 
-RTMP streaming enables:
+Source: `app/src/main/java/com/mentra/asg_client/io/streaming/services/`. Phone-side dispatch goes through `StreamCommandHandler`.
 
-- Live video broadcasting from glasses
-- Real-time video analysis by apps
-- Remote assistance scenarios
-- Video recording to cloud servers
+The wire-level command schema (request fields, response types, error codes) lives in [ASG_CLIENT_API.md → Streaming](../ASG_CLIENT_API.md#streaming-rtmp--srt--whip). This doc covers the **lifecycle** and **operational behavior**.
 
-## RTMP Commands
+## Commands
 
-The system uses four main commands for RTMP control:
+Four commands handle all three protocols:
 
-### 1. start_rtmp_stream
+- `start_stream` — start a stream (URL prefix selects the protocol)
+- `stop_stream` — stop whichever stream is active
+- `get_stream_status` — query streaming/reconnecting state
+- `keep_stream_alive` — heartbeat to extend the timeout
 
-Initiates an RTMP stream to a specified URL.
+See the [API doc](../ASG_CLIENT_API.md#streaming-rtmp--srt--whip) for fields and response shapes.
 
-**Command Structure:**
+## Stream lifecycle
 
-```json
-{
-  "type": "start_rtmp_stream",
-  "rtmpUrl": "rtmp://server.com/live/stream-key",
-  "streamId": "unique-stream-id",
-  "video": {
-    "width": 1280,
-    "height": 720,
-    "bitrate": 2000000
-  }
-}
-```
+### Start
 
-**Requirements:**
+1. **Validate URL.** The URL prefix selects the protocol; an unknown prefix is rejected with `Unknown stream URL protocol`.
+2. **Battery check.** Reject if battery is below `BatteryConstants.MIN_BATTERY_LEVEL` (currently 10%) — `BATTERY_LOW` error.
+3. **WiFi check.** All three protocols require WiFi.
+4. **Stop any existing stream** to avoid camera contention; brief pause so the camera HAL releases.
+5. **Resolution check (WHIP only).** Reject if requested resolution exceeds the camera's supported output (`WhipCameraFormatSelector`).
+6. **Disable EIS** during streaming to reduce camera HAL thermal load (`SysControl.setEisEnable(context, false)`). Re-enabled on stop.
+7. **Start the protocol-specific service** with the resolved `streamId`, `flash`, `sound`, and the protocol's config object.
 
-- Active WiFi connection
-- Valid RTMP URL
-- Sufficient bandwidth
+### Active stream
 
-**Response:**
+Status callbacks emit `stream_status` messages back to the phone. Status values include `streaming_started`, `reconnecting`, `error`, `stopping`, `error_not_streaming`.
 
-```json
-{
-  "type": "rtmp_stream_status",
-  "status": "initializing",
-  "streamId": "unique-stream-id"
-}
-```
+### Keep-alive timeout
 
-### 2. stop_rtmp_stream
-
-Terminates the active RTMP stream.
-
-**Command Structure:**
-
-```json
-{
-  "type": "stop_rtmp_stream",
-  "streamId": "unique-stream-id"
-}
-```
-
-**Response:**
-
-```json
-{
-  "type": "rtmp_stream_status",
-  "status": "stopped",
-  "streamId": "unique-stream-id"
-}
-```
-
-### 3. keep_rtmp_stream_alive
-
-Keep-alive mechanism to prevent stream timeout. Must be sent at least every 60 seconds.
-
-**Command Structure:**
-
-```json
-{
-  "type": "keep_rtmp_stream_alive",
-  "streamId": "unique-stream-id",
-  "ackId": "unique-ack-id",
-  "timestamp": "2024-01-01T12:00:00Z"
-}
-```
-
-**ACK Response (from glasses):**
-
-```json
-{
-  "type": "keep_alive_ack",
-  "streamId": "unique-stream-id",
-  "ackId": "unique-ack-id",
-  "timestamp": 1234567890
-}
-```
-
-### 4. get_rtmp_status
-
-Queries the current streaming status.
-
-**Command Structure:**
-
-```json
-{
-  "type": "get_rtmp_status"
-}
-```
-
-**Response:**
-
-```json
-{
-  "type": "rtmp_stream_status",
-  "status": "active", // or "stopped", "error", etc.
-  "streamId": "unique-stream-id",
-  "stats": {
-    "bitrate": 1950000,
-    "fps": 30,
-    "droppedFrames": 5
-  }
-}
-```
-
-## Stream Lifecycle
-
-### Starting a Stream
-
-1. **Request received**: Phone sends `start_rtmp_stream` via BLE
-2. **WiFi check**: Verify WiFi connection is active
-3. **Stream init**: Initialize RTMP encoder and connection
-4. **Start streaming**: Begin sending video data
-5. **Status updates**: Send status back to phone/cloud
-
-### Keep-Alive Mechanism
-
-The stream has a **60-second timeout** that requires periodic keep-alive messages:
-
-1. **Cloud sends keep-alive** every 15 seconds with unique `ackId`
-2. **Glasses reset timeout** and respond with ACK containing same `ackId`
-3. **If no keep-alive for 60 seconds**, stream automatically stops
-4. **If 3 ACKs are missed**, cloud marks connection as degraded
+Each stream has a **60-second inactivity timeout** (`STREAM_TIMEOUT_MS = 60000` in each `*StreamingService`). The phone must call `keep_stream_alive` regularly to prevent it.
 
 ```
-Cloud → Glasses: keep_rtmp_stream_alive (every 15s)
-Glasses → Cloud: keep_alive_ack (immediate response)
+phone   ─►  glasses : keep_stream_alive (streamId, ackId)
+glasses ─►  phone   : keep_alive_ack (streamId, ackId)
 ```
 
-### Stopping a Stream
+Recommended cadence: every 15 seconds. The phone gets up to ~3 missed ACKs before considering the link degraded.
 
-Streams can stop in three ways:
+`StreamCommandHandler` validates the `streamId` against the active stream and silently drops keep-alives missing either `streamId` or `ackId`.
 
-1. **Explicit stop**: Via `stop_rtmp_stream` command
-2. **Timeout**: No keep-alive received for 60 seconds
-3. **Error**: Network failure, encoder error, etc.
+### Reconnect
 
-## Implementation Details
+If the network drops mid-stream, the streaming service enters reconnect:
 
-### RtmpStreamingService
+- `isReconnecting()` returns true
+- `getReconnectAttempt()` reports the attempt counter
+- Status response includes `"reconnecting": true, "attempt": N`
 
-The main service handling RTMP streaming:
+The reconnection backoff is internal to each streaming service. The phone can call `get_stream_status` at any time to inspect the current attempt.
 
-```java
-// Start streaming
-RtmpStreamingService.startStreaming(context, rtmpUrl);
+### Stop
 
-// Stop streaming
-RtmpStreamingService.stopStreaming(context);
+`stop_stream` finds whichever service is currently active (`isStreaming()` or `isReconnecting()`), calls `stopStreaming(context)`, and re-enables EIS.
 
-// Check status
-boolean isStreaming = RtmpStreamingService.isStreaming();
-```
+If no stream is active, the response is `error_not_streaming`.
 
-### Stream Timeout Handling
+## Resource constraints
 
-```java
-// In AsgClientService
-case "keep_rtmp_stream_alive":
-    String streamId = dataToProcess.optString("streamId", "");
-    String ackId = dataToProcess.optString("ackId", "");
+- **Battery** — start gated at `MIN_BATTERY_LEVEL`. The phone gets `BATTERY_LOW` and the user hears a low-battery audio cue.
+- **WiFi** — required for all three protocols. Mobile data is not used.
+- **Camera contention** — only one stream at a time; starting a second stream stops the first. Buffer recording, photos, and video recording all share the same camera and yield to (or reject) streams.
+- **Thermal** — EIS is disabled while streaming.
 
-    // Reset the 60-second timeout
-    RtmpStreamingService.resetStreamTimeout(streamId);
+## Network expectations
 
-    // Send ACK back
-    sendKeepAliveAck(streamId, ackId);
-    break;
-```
+| | Minimum | Recommended |
+|---|---------|-------------|
+| Upload bandwidth | 1 Mbps | 2-3 Mbps |
+| Latency | < 200 ms RTT | < 100 ms RTT |
+| Stability | reconnects within ~30 s tolerated | sustained connection |
 
-### Status Messages
+## Logcat tags
 
-The glasses send various status updates during streaming:
+| Tag | What |
+|-----|------|
+| `StreamCommandHandler` | Command dispatch, protocol detection |
+| `RtmpStreamingService` | RTMP lifecycle, reconnect |
+| `SrtStreamingService` | SRT lifecycle |
+| `WhipStreamingService` | WHIP lifecycle |
+| `WhipCameraFormatSelector` | WHIP resolution validation |
+| `MediaManager` | Status callback dispatch over BLE |
 
-- `initializing` - Stream setup in progress
-- `active` - Streaming successfully
-- `reconnecting` - Attempting to reconnect after failure
-- `error` - Stream failed with error details
-- `stopped` - Stream terminated
-- `timeout` - Stream stopped due to keep-alive timeout
-
-## Network Requirements
-
-### Bandwidth
-
-- Minimum: 1 Mbps upload
-- Recommended: 2-3 Mbps upload
-- Adapts bitrate based on connection
-
-### WiFi Stability
-
-- Requires stable WiFi connection
-- Automatic reconnection on brief disconnects
-- Stops on extended network loss
-
-## Error Handling
-
-### Common Errors
-
-1. **No WiFi Connection**
-
-   ```json
-   {
-     "status": "error",
-     "error": "no_wifi_connection"
-   }
-   ```
-
-2. **Invalid RTMP URL**
-
-   ```json
-   {
-     "status": "error",
-     "error": "invalid_rtmp_url"
-   }
-   ```
-
-3. **Stream Timeout**
-   ```json
-   {
-     "status": "error",
-     "errorDetails": "Stream timed out - no keep-alive from cloud"
-   }
-   ```
-
-### Recovery Mechanisms
-
-- **Auto-reconnect**: Attempts reconnection on temporary failures
-- **Backoff strategy**: Increasing delays between reconnection attempts
-- **Clean shutdown**: Proper resource cleanup on errors
-
-## Best Practices
-
-1. **Always send keep-alives** at 15-second intervals
-2. **Monitor ACK responses** to detect connection issues
-3. **Handle status updates** to show stream state in UI
-4. **Implement proper cleanup** when app disconnects
-5. **Check WiFi** before starting streams
-6. **Use unique streamIds** for tracking
-
-## Debugging
-
-### Log Filters
+Useful filters:
 
 ```bash
-# All RTMP logs
-adb logcat | grep -E "RtmpStreaming|RTMP"
+# Everything streaming-related
+adb logcat | grep -E "StreamCommandHandler|RtmpStreamingService|SrtStreamingService|WhipStreamingService"
 
-# Keep-alive activity
-adb logcat | grep "keep_rtmp_stream_alive\|keep_alive_ack"
-
-# Stream status
-adb logcat | grep "rtmp_stream_status"
+# Keep-alive traffic
+adb logcat | grep -E "keep_stream_alive|keep_alive_ack"
 ```
 
-### Common Issues
+## Common issues
 
-1. **Stream stops after ~5 minutes**: Check keep-alive implementation
-2. **ACKs not received**: Verify BLE communication both ways
-3. **Poor quality**: Check WiFi signal strength and bandwidth
-4. **Can't start stream**: Ensure only one stream active at a time
+- **Stream stops after ~60 s** — keep-alives aren't reaching the glasses, or `streamId` doesn't match the active stream.
+- **`error_not_streaming` on stop** — stream already stopped on its own (timeout, reconnect-failure). Treat as idempotent.
+- **WHIP `Resolution too high`** — requested `width`/`height` exceeds what the camera can output. Reduce resolution or let the config use defaults.
+- **Stream won't start** — check the `BATTERY_LOW` / `no_wifi_connection` error details and the `Unknown stream URL protocol` log.

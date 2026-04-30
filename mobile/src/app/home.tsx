@@ -82,6 +82,8 @@ export default function Homepage() {
       <>
         <Group>
           <DeviceStatus />
+        </Group>
+        <Group>
           <ControllerStatus />
         </Group>
         <View className="h-2" />

@@ -380,6 +380,16 @@ export interface GlassesStatus {
   controllerSignalStrength: number
 }
 
+interface DashboardMenuItem {
+  name: string
+  packageName: string
+  running: boolean
+}
+
+export interface CoreSettings {
+  menu_apps: DashboardMenuItem[]
+}
+
 export type MicRanking = "auto" | "phone" | "glasses" | "bluetooth"
 
 export interface DeviceSearchResult {

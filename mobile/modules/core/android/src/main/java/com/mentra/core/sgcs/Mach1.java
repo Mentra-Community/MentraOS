@@ -152,21 +152,6 @@ public class Mach1 extends SGCManager {
     }
 
     @Override
-    public void startBufferRecording() {
-
-    }
-
-    @Override
-    public void stopBufferRecording() {
-
-    }
-
-    @Override
-    public void saveBufferVideo(@NonNull String requestId, int durationSeconds) {
-
-    }
-
-    @Override
     public void startVideoRecording(@NonNull String requestId, boolean save, boolean flash, boolean sound) {
 
     }
