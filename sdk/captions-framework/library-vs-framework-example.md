@@ -23,11 +23,23 @@ This runtime model strengthens the case for the framework's structural split. Un
 
 ## The app
 
-A captions miniapp. Subscribes to glasses transcription. Formats the transcript into HUD lines using a configurable `displayLines` setting (2 to 5). Sends the formatted text to the glasses display. Renders the same formatted text in the webview as a HUD preview that visually mimics the glasses display. The webview has one setting: a slider for `displayLines` that updates both surfaces.
+A captions miniapp. Subscribes to glasses transcription. Maintains an interim/final utterance lifecycle with diarization (speaker IDs). Formats the most recent transcripts into HUD lines using a configurable `displayLines` setting (2 to 5). Sends the formatted lines to the glasses display. Renders the same lines in the webview as a HUD preview that visually mimics the glasses display, then below that a scrolling transcript history showing every finalized utterance plus the current interim line in italic.
 
-This is a real captions app shape. It maps to the production captions miniapp's settings model (which has language, language hints, lines, and width). We pared it to one setting on purpose: the structural argument lands clearly with one setting, and adding more is just more of the same shape.
+One setting: a slider for `displayLines`.
 
-What the app deliberately does not do: font size (no such control on real glasses), color (G1 is monochrome), camera (this app has no use for it), backend (no per-user server logic).
+### Real transcription behavior the example handles
+
+`session.transcription.on(handler)` fires repeatedly with chunks like:
+
+```ts
+{ text: string, isFinal: boolean, utteranceId?: string, speakerId?: string }
+```
+
+During an utterance, you receive a stream of interim chunks (each a longer prefix of the same utterance), then exactly one final chunk that locks the utterance in. Interim and final for the same utterance share the same `utteranceId`. With diarization on, each chunk carries a `speakerId`. New speaker means a new utterance from a different person.
+
+Note: `@mentra/miniapp`'s current `TranscriptionData` lacks `utteranceId` and `speakerId` (the cloud SDK has both). The example casts at the boundary and treats both as optional. Adding the fields to `@mentra/miniapp` is a non-breaking change that should happen separately.
+
+What the app deliberately does not do: font size (no such control on real glasses), color (G1 is monochrome), camera (no use here), backend (no per-user server logic).
 
 ## Framework version
 
@@ -44,51 +56,74 @@ captions-framework/
   tsconfig.json
 ```
 
-About 75 lines of user code. The full source is in this folder. The key files:
-
-### `mentra.config.ts`
-
-```ts
-import {defineConfig} from "@mentra/miniapp/framework"
-
-export default defineConfig({
-  packageName: "com.mentra.captions-framework",
-  name: "Captions",
-  permissions: ["microphone", "display"],
-})
-```
-
-### `client/index.ts`
+About 130 lines of user code. The full source is in this folder. The key file is `client/index.ts`, which owns the interim/final lifecycle and rendering:
 
 ```ts
 import {session, state} from "@mentra/miniapp/framework"
-import {CHARS_PER_LINE, type AppState} from "../shared/types"
+import {CHARS_PER_LINE, type AppState, type TranscriptionEvent, type UtteranceEntry} from "../shared/types"
 
 state.init<AppState>({
-  transcript: "",
+  history: [],
+  interim: null,
   displayLines: 3,
   preview: [],
 })
 
-function formatLines(text: string, maxLines: number): string[] {
-  const lines: string[] = []
-  for (let i = 0; i < text.length; i += CHARS_PER_LINE) {
-    lines.push(text.slice(i, i + CHARS_PER_LINE))
+function formatUtterance(u: UtteranceEntry): string {
+  return u.speakerId ? `[${u.speakerId}]: ${u.text}` : u.text
+}
+
+function formatHudLines(history: UtteranceEntry[], interim: UtteranceEntry | null, maxLines: number): string[] {
+  const utterances = interim ? [...history, interim] : history
+  const allLines: string[] = []
+  for (const u of utterances) {
+    const formatted = formatUtterance(u)
+    for (let i = 0; i < formatted.length; i += CHARS_PER_LINE) {
+      allLines.push(formatted.slice(i, i + CHARS_PER_LINE))
+    }
   }
-  return lines.slice(-maxLines)
+  return allLines.slice(-maxLines)
 }
 
 function render(): void {
-  const lines = formatLines(state.get<string>("transcript"), state.get<number>("displayLines"))
+  const lines = formatHudLines(
+    state.get<UtteranceEntry[]>("history"),
+    state.get<UtteranceEntry | null>("interim"),
+    state.get<number>("displayLines"),
+  )
   state.set("preview", lines)
   session.display.showText(lines.join("\n"))
 }
 
+function applyTranscription(data: TranscriptionEvent): void {
+  const speakerId = data.speakerId ?? ""
+  const interim = state.get<UtteranceEntry | null>("interim")
+
+  if (data.isFinal) {
+    const utteranceId = data.utteranceId ?? interim?.utteranceId ?? makeId()
+    state.set("history", [...state.get<UtteranceEntry[]>("history"), {utteranceId, speakerId, text: data.text}])
+    state.set("interim", null)
+  } else {
+    const sameUtterance =
+      interim != null &&
+      ((data.utteranceId !== undefined && data.utteranceId === interim.utteranceId) ||
+        (data.utteranceId === undefined && speakerId === interim.speakerId))
+
+    if (sameUtterance && interim) {
+      state.set("interim", {...interim, text: data.text})
+    } else {
+      if (interim) {
+        // Speaker switched; commit the unfinalized previous interim.
+        state.set("history", [...state.get<UtteranceEntry[]>("history"), interim])
+      }
+      state.set("interim", {utteranceId: data.utteranceId ?? makeId(), speakerId, text: data.text})
+    }
+  }
+  render()
+}
+
 session.onReady(() => {
-  session.transcription.on((data) => {
-    state.set("transcript", data.text)
-    render()
-  })
+  session.transcription.on((data) => applyTranscription(data as unknown as TranscriptionEvent))
 })
 
 export function setDisplayLines(n: number): void {
@@ -98,57 +133,9 @@ export function setDisplayLines(n: number): void {
 }
 ```
 
-### `webview/App.tsx`
+The webview is three components reading reactive state: `GlassesPreview` renders `mentra.state.preview` in the green-on-black HUD style; `SettingsPanel` is the slider; `TranscriptHistory` shows every finalized utterance plus the current interim line in italic. None subscribe to anything. They consume snapshots from `useMentra()`.
 
-```tsx
-import {useMentra} from "@mentra/miniapp/framework/react"
-import {CHARS_PER_LINE} from "../shared/types"
-
-export default function App() {
-  return (
-    <main>
-      <h1>Captions</h1>
-      <GlassesPreview />
-      <SettingsPanel />
-    </main>
-  )
-}
-
-function GlassesPreview() {
-  const mentra = useMentra()
-  return (
-    <div
-      style={{
-        background: "#000",
-        color: "#0f0",
-        fontFamily: "monospace",
-        padding: 12,
-        width: `${CHARS_PER_LINE}ch`,
-        whiteSpace: "pre",
-      }}>
-      {mentra.state.preview.map((line, i) => (
-        <div key={i}>{line || " "}</div>
-      ))}
-    </div>
-  )
-}
-
-function SettingsPanel() {
-  const mentra = useMentra()
-  return (
-    <input
-      type="range"
-      min={2}
-      max={5}
-      step={1}
-      value={mentra.state.displayLines}
-      onChange={(e) => mentra.client.setDisplayLines(Number(e.target.value))}
-    />
-  )
-}
-```
-
-That is the entire app. There is no manual subscription, no manual cleanup, no `useEffect` for runtime behavior, no `subscribe`/`notify` bridge. The webview cannot import `session`. There is no `session` available in `webview/`. The runtime is not in scope, by construction.
+There is no manual subscription, no manual cleanup, no `useEffect` for runtime behavior, no `subscribe`/`notify` bridge. The webview cannot import `session`. The runtime is not in scope there, by construction.
 
 ## Library plus convention version
 
@@ -171,46 +158,48 @@ captions-library/
   tsconfig.json
 ```
 
-About 110 lines of user code, plus a hand-rolled subscribe/notify bridge that every library-shape app has to invent. See `../captions-library/` for the full source. The key file:
-
-### `src/glasses-controller.ts`
+About 200 lines of user code, plus a hand-rolled subscribe/notify bridge that every library-shape app has to invent. See `../captions-library/` for the full source. The key file:
 
 ```ts
+// src/glasses-controller.ts
 import {MiniappSession} from "@mentra/miniapp"
-import {CHARS_PER_LINE} from "./types"
+import {CHARS_PER_LINE, type TranscriptionEvent, type UtteranceEntry} from "./types"
 
 export const session = new MiniappSession()
 
 let settings = {displayLines: 3}
-let currentTranscript = ""
+let history: UtteranceEntry[] = []
+let interim: UtteranceEntry | null = null
 let currentPreview: string[] = []
 const listeners = new Set<() => void>()
 const notify = () => listeners.forEach((cb) => cb())
 
-function formatLines(text: string, maxLines: number): string[] {
-  const lines: string[] = []
-  for (let i = 0; i < text.length; i += CHARS_PER_LINE) {
-    lines.push(text.slice(i, i + CHARS_PER_LINE))
-  }
-  return lines.slice(-maxLines)
+function formatHudLines(/* same shape as the framework version */): string[] {
+  /* ... */
 }
 
 session.connect().then(() => {
   // Senior dev pulls `displayLines` into a local const at the top of
-  // handler setup for readability.
+  // handler setup for readability. This is the bug.
   const {displayLines} = settings
 
-  session.transcription.on((data) => {
-    currentTranscript = data.text
-    const lines = formatLines(data.text, displayLines) // captured value
-    currentPreview = lines
-    session.layouts.showTextWall(lines.join("\n"))
+  session.transcription.on((rawData) => {
+    const data = rawData as unknown as TranscriptionEvent
+    // ... maintain history/interim from chunk ...
+    currentPreview = formatHudLines(history, interim, displayLines) // STALE
+    session.layouts.showTextWall(currentPreview.join("\n"))
     notify()
   })
 })
 
 export function getSettings() {
   return settings
+}
+export function getHistory() {
+  return history
+}
+export function getInterim() {
+  return interim
 }
 export function getPreview() {
   return currentPreview
@@ -224,30 +213,16 @@ export function subscribe(cb: () => void) {
 
 export function setDisplayLines(n: number) {
   settings = {...settings, displayLines: n}
-  const lines = formatLines(currentTranscript, n)
-  currentPreview = lines
-  session.layouts.showTextWall(lines.join("\n"))
+  // Re-render directly with `n`, so the slider appears to work
+  // immediately. Until the next transcription chunk overwrites
+  // currentPreview using the stale captured `displayLines`.
+  currentPreview = formatHudLines(history, interim, n)
+  session.layouts.showTextWall(currentPreview.join("\n"))
   notify()
 }
 ```
 
-### Components
-
-```tsx
-// GlassesPreview.tsx
-export function GlassesPreview() {
-  const [lines, setLines] = useState(getPreview())
-  useEffect(() => subscribe(() => setLines(getPreview())), [])
-  return <div style={...}>{lines.map(...)}</div>
-}
-
-// SettingsPanel.tsx
-export function SettingsPanel() {
-  const [lines, setLines] = useState(getSettings().displayLines)
-  useEffect(() => subscribe(() => setLines(getSettings().displayLines)), [])
-  return <input type="range" value={lines} onChange={(e) => setDisplayLines(Number(e.target.value))} />
-}
-```
+Three components subscribe via the hand-rolled bridge: `GlassesPreview`, `SettingsPanel`, `TranscriptHistory`. Each calls `useEffect(() => subscribe(...), [])` to fan out per-chunk state changes into React state setters.
 
 This compiles. It runs. It is reasonable code. The developer followed the convention.
 
@@ -287,21 +262,34 @@ The dev moves settings into a struct because they expect to add more settings la
 session.connect().then(() => {
   const {displayLines} = settings // captured at handler registration
   session.transcription.on((data) => {
-    const lines = formatLines(data.text, displayLines) // always the captured value
-    // ...
+    // ... maintain history/interim from chunk ...
+    currentPreview = formatHudLines(history, interim, displayLines) // STALE
+    session.layouts.showTextWall(currentPreview.join("\n"))
+    notify()
   })
 })
 ```
 
-This is correct JavaScript. The destructured `displayLines` is captured at the moment `session.connect().then(...)` resolves. It does not update when the user changes the setting through the webview. The settings panel correctly shows "5 selected." The glasses HUD keeps showing 3 lines. The webview preview keeps showing 3 lines, because it reads `currentPreview`, which the handler computed using the stale 3.
+This is correct JavaScript. The destructured `displayLines` is captured at the moment `session.connect().then(...)` resolves. It does not update when the user changes the setting via the webview.
+
+When the user moves the slider from 3 to 5, two things happen on different code paths:
+
+- `setDisplayLines()` formats the preview using the parameter `n` directly (not the closure), so the HUD briefly shows 5 lines as soon as the slider moves.
+- The webview slider position updates correctly because every render reads `getSettings().displayLines` fresh.
+
+So the slider appears to work. Then the next transcription chunk arrives. The handler overwrites `currentPreview` using the stale captured `displayLines = 3`. The HUD snaps back to 3 lines. On every subsequent chunk it stays at 3.
+
+The user moves the slider to 5, the HUD flashes to 5 lines, then collapses back to 3 the moment someone speaks. They move it again. Same flicker. They give up and report "the lines setting is broken."
 
 The dev does not see this in development because:
 
-- The webview UI shows the new setting (it reads `settings.displayLines` separately, on the click path).
-- The transcription is still flowing.
-- They are not paired to glasses while iterating.
+- The webview UI looks right (slider position, settings display).
+- The setDisplayLines path apparently works.
+- They are not paired to glasses with active speech while iterating.
 
-The bug ships. It is reproducible only when paired to glasses and the user changes the setting mid-session. The fix is to read `settings.displayLines` directly inside the handler instead of destructuring once. The library cannot warn that the destructured const is wrong; both versions are correct JavaScript.
+The bug ships. It is reproducible only when paired to glasses, the user changes the setting, and speech keeps coming in. The fix is to read `settings.displayLines` directly inside the handler instead of destructuring once.
+
+The library cannot warn that the destructured const is wrong; both versions are correct JavaScript.
 
 The framework version reads `state.get("displayLines")` inside the handler. There is no module-scope variable to capture, no destructure that begs to happen. The dev would have to deliberately pull `state.get(...)` out into a captured const above the handler, which is a visibly suspicious pattern.
 
@@ -389,7 +377,7 @@ If the strategic story is "we own a platform that enterprise customers and OEM p
 
 ## What I want from the next conversation
 
-Read the two versions of the code in this folder and `../captions-library/`. Sit with the five items in "what silently breaks." Anti-pattern #4 is the one to focus on: change the slider in the library version's webview, watch the glasses display not update, look at the source, see that the bug is one destructure away.
+Read the two versions of the code in this folder and `../captions-library/`. Sit with the five items in "what silently breaks." Anti-pattern #4 is the one to focus on: in the library version, move the slider while someone is speaking, watch the HUD flash to the new line count then snap back to the old one on the next word. Look at `glasses-controller.ts`, see that the bug is one destructure away.
 
 If your reaction is "yes, those are real, but a good dev would catch them," we are betting we will catch them, which means we are betting on reviewing the code. If your reaction is "those would ship to production and we would not see them until enterprise customers complained," we are betting on a population of code we do not see, and the framework is the contract that lets us not see it.
 

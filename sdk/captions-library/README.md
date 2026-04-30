@@ -4,11 +4,17 @@
 
 This is the same app as `../captions-framework/`, written by a senior React developer faithfully following the convention. It compiles. It is reasonable code.
 
-It also has five anti-patterns that the convention does not prevent. They are annotated inline by number and explained below. The most important one, #4 (stale closure on settings), is the kind of bug that ships without anyone noticing in development because tests do not "change setting then assert glasses display."
+It also has five anti-patterns the convention does not prevent. They are annotated inline by number. The most important is #4 (stale closure on settings), which manifests only when paired to glasses, the user changes the slider, and they keep speaking. The kind of bug that ships green code review.
 
 ## What this app does
 
-Subscribes to glasses transcription. Formats the text into HUD lines using a `displayLines` setting (2 to 5). Sends the formatted text to the glasses display, and renders the same formatted text in the webview as a HUD preview. The webview's settings panel changes `displayLines`.
+Subscribes to glasses transcription. Maintains an interim/final utterance lifecycle with diarization. Formats the most recent transcripts into HUD lines using a `displayLines` setting (2 to 5). Sends formatted lines to glasses display. Renders the same lines in the webview as a HUD preview. Below the preview, a settings slider; below that, a scrolling transcript history showing every finalized utterance plus the current interim line in italic.
+
+## What real transcription looks like
+
+`session.transcription.on(handler)` fires repeatedly with `{ text, isFinal, utteranceId?, speakerId? }`. Interim chunks for the same utterance share `utteranceId`. The final chunk locks the utterance in. With diarization on, each chunk carries a `speakerId`.
+
+`@mentra/miniapp`'s current `TranscriptionData` lacks `utteranceId` and `speakerId` (the cloud SDK has both). The example casts at the boundary and treats both as optional. Adding the fields to `@mentra/miniapp` is a non-breaking change worth doing separately.
 
 ## Folder shape
 
@@ -25,11 +31,12 @@ captions-library/
     components/
       GlassesPreview.tsx
       SettingsPanel.tsx
+      TranscriptHistory.tsx
   package.json
   tsconfig.json
 ```
 
-About 110 lines of user code, plus a hand-rolled subscribe/notify bridge that every library-shape app has to invent.
+About 200 lines of user code, plus a hand-rolled subscribe/notify bridge that every library-shape app has to invent.
 
 ## How the proposed runtime model amplifies these anti-patterns
 
@@ -59,69 +66,82 @@ Each is correct React or correct JavaScript, follows the convention, ships green
 
 ### 1. Subscription registered after `connect()` resolves
 
-`session.transcription.on(...)` is registered inside `.then(() => ...)` after `connect()`. Whether early transcription frames are buffered or dropped depends on the transport implementation. The developer has no signal in the API that this matters. See `glasses-controller.ts` line ~21.
+`session.transcription.on(...)` is registered inside `.then(() => ...)` after `connect()`. Whether early transcription frames are buffered or dropped depends on the transport implementation. The dev cannot tell without reading the transport. See `glasses-controller.ts` line ~22.
 
-The framework version handles this because `session.onReady()` is the platform's job, not the developer's.
+The framework version handles this because `session.onReady()` is the platform's job.
 
 ### 2. Each component subscribes independently
 
-Two components mount, two calls to `subscribe(...)`. Each closure runs on every transcription chunk. Add a third component (notification badge, status indicator) and the fan-out scales linearly. Under "WebView always alive," this fan-out runs continuously for the lifetime of the install. See `components/GlassesPreview.tsx`, `components/SettingsPanel.tsx`.
+Three components mount, three calls to `subscribe(...)`. Each closure runs on every transcription chunk. Add a fourth component (status indicator, badge) and the fan-out scales linearly. Under "WebView always alive" this fan-out runs continuously for the lifetime of the install. See `components/GlassesPreview.tsx`, `components/SettingsPanel.tsx`, `components/TranscriptHistory.tsx`.
 
-The framework version subscribes once in the runtime layer and pushes state changes via the platform's reactive update path. Components consume snapshots, not closures.
+The framework version subscribes once at the runtime layer and pushes state changes via the platform's reactive update path.
 
 ### 3. Module-scope state has no persistence
 
-Settings, current transcript, current preview all live in JS module scope inside the WebView's bundle. If the WebView dies (memory pressure, OS forced kill), the module re-initializes and all state is lost: settings reset to default, transcript empty. Under "WebView always alive" the WebView rarely dies, so this is rare but high-impact when it does.
+Settings, history, interim, currentPreview all live in JS module scope inside the WebView's bundle. If the WebView dies (memory pressure, OS forced kill), the module re-initializes and all state is lost: settings reset, transcript empty. Under "WebView always alive" the WebView rarely dies, so this is rare but high-impact.
 
-The fix the developer would invent: persist to `localStorage` or call `session.simpleStorage.set("displayLines", ...)` manually. Now they are hand-rolling persistence. Cross-account leakage is a separate hazard the API does not warn about.
+The fix the developer would invent: persist to `localStorage` or call `session.simpleStorage.set(...)` manually. Now they are hand-rolling persistence. Cross-account leakage is a separate hazard the API does not warn about.
 
-The framework version's state primitive persists state through phone-side storage automatically.
+The framework version's state primitive persists through phone-side storage automatically.
 
 ### 4. Stale closure on settings inside the subscription handler
 
-The most subtle and most damaging.
+The most damaging item.
 
 The dev refactors settings into a struct, then destructures at the top of the handler setup for readability:
 
 ```ts
-const {displayLines} = settings // captured at handler registration
-session.transcription.on((data) => {
-  const lines = formatLines(data.text, displayLines) // always the captured value
-  // ...
+session.connect().then(() => {
+  const {displayLines} = settings // captured at handler registration
+
+  session.transcription.on((data) => {
+    // ... maintain history/interim ...
+    currentPreview = formatHudLines(history, interim, displayLines) // STALE
+    // ...
+  })
 })
 ```
 
-This is correct JavaScript. The destructured `displayLines` is captured at the moment `session.connect().then(...)` resolves. It does not update when the user changes the setting via the webview. The settings panel correctly shows "5 selected." The glasses keep showing 3 lines. The webview preview keeps showing 3 lines (because it reads `currentPreview`, which the handler computed using the stale 3).
+This is correct JavaScript. The destructured `displayLines` is captured at the moment `session.connect().then(...)` resolves. It does not update when the user changes the setting via the webview.
+
+When the user moves the slider from 3 to 5:
+
+- `setDisplayLines()` formats the preview correctly with the new value (it uses the parameter `n` directly, not the closure), so the HUD briefly shows 5 lines.
+- The webview slider position updates correctly (it reads `settings.displayLines` separately on every render).
+- Then the next transcription chunk fires the handler. The handler overwrites `currentPreview` using the stale captured `displayLines = 3`. The HUD snaps back to 3 lines.
+- Repeat on every chunk. The user sees the slider visually at 5, but the HUD flickers between 5 (when they last touched the slider) and 3 (whenever someone speaks).
 
 The dev does not see this in development because:
 
-- The webview UI looks right (it reads `settings.displayLines` separately).
-- The transcription is still flowing.
+- The webview UI looks right (the slider position, the settings panel display).
+- The setDisplayLines path apparently works.
 - They are not paired to glasses while iterating.
 
-The bug ships. It is reproducible only when paired to glasses and the user changes the setting mid-session. The fix is to read `settings.displayLines` directly inside the handler instead of destructuring once. The library cannot warn that the destructured const is wrong; both versions are correct JavaScript.
+The bug ships. It is reproducible only when paired to glasses, the user changes the setting, and speech keeps coming in. The fix is to read `settings.displayLines` directly inside the handler instead of destructuring once.
+
+The library cannot warn that the destructured const is wrong; both versions are correct JavaScript.
 
 The framework version reads `state.get("displayLines")` inside the handler. There is no module-scope variable to capture, no destructure that begs to happen. The dev would have to deliberately pull `state.get(...)` out into a captured const above the handler, which is a visibly suspicious pattern.
 
-See `glasses-controller.ts` line ~56 for the inline annotation.
+See `glasses-controller.ts` line ~75 for the inline annotation.
 
 ### 5. Multi-Provider creates duplicate sessions
 
 A future feature adds a `<DevModeProvider>` for testing, then a `<MentraSessionProvider>` for multi-user scenarios. They nest. Two `MiniappSession`s exist at runtime. Both connect. Most of the app uses one, the test subtree uses the other. Bug reports about "transcription works in main view but not in test screen."
 
-Under "WebView always alive," the leaked second session lives for the lifetime of the install. Garbage collection cannot reclaim it because it is reachable from React context. The leak compounds across feature additions.
+Under "WebView always alive," the leaked second session lives for the lifetime of the install. The leak compounds across feature additions.
 
-The framework version has no Provider for the runtime. There is one runtime, owned by the platform, surfaced through `useMentra()`. Multiple Providers are not possible because the runtime is not Provider-scoped.
+The framework version has no Provider for the runtime. Multiple Providers are not possible because the runtime is not Provider-scoped.
 
 ## The pattern under all five
 
-In every case, the convention says **where code goes**. The bugs are about **call shape and data flow** (timing, identity, lifetime, multiplicity, value capture). A file convention cannot speak to those axes. The proposed runtime model amplifies the cost of every miss because the JavaScript context is now long-lived by platform design.
+The convention says **where code goes**. The bugs are about **call shape and data flow** (timing, identity, lifetime, multiplicity, value capture). A file convention cannot speak to those axes.
 
 ## What it would take to make this run
 
 This version is close to running. The library it depends on (`@mentra/miniapp`) exists. The static-file server template is identical to `sdk/example-miniapp/`. A working version is a few hours of plumbing.
 
-We may invest that time so the team can interactively see anti-pattern #4 surface (change the slider, watch the glasses preview not update). For today's design conversation, reading the files is enough.
+We may invest that time so the team can interactively see anti-pattern #4 surface (move the slider, watch the HUD revert on the next word). For today's design conversation, reading the files is enough.
 
 ## Read alongside
 

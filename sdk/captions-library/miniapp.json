@@ -8,5 +8,6 @@
   "hardwareRequirements": [
     {"type": "DISPLAY", "level": "REQUIRED", "description": "Show captions on glasses HUD"},
     {"type": "MICROPHONE", "level": "REQUIRED", "description": "Capture speech"}
-  ]
+  ],
+  "port": 3002
 }

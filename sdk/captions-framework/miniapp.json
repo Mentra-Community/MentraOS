@@ -1,0 +1,13 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.mentra.captions-framework",
+  "version": "0.1.0",
+  "name": "Captions (framework)",
+  "description": "Captions miniapp using the proposed @mentra/miniapp/framework primitives. Subscribes to transcription, formats with displayLines, mirrors to glasses HUD, renders the same lines in a webview HUD preview, plus a scrolling transcript history.",
+  "permissions": [{"type": "MICROPHONE", "description": "Live transcription"}],
+  "hardwareRequirements": [
+    {"type": "DISPLAY", "level": "REQUIRED", "description": "Show captions on glasses HUD"},
+    {"type": "MICROPHONE", "level": "REQUIRED", "description": "Capture speech"}
+  ],
+  "port": 3001
+}

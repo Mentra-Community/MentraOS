@@ -1,10 +1,11 @@
 {
   "name": "captions-framework",
   "private": true,
-  "description": "Design artifact: Captions miniapp demonstrating the proposed @mentra/miniapp framework shape. See ./README.md.",
+  "description": "Captions miniapp using the proposed @mentra/miniapp/framework primitives. See ./README.md.",
   "scripts": {
-    "dev": "mentra dev",
-    "build": "mentra build"
+    "dev": "mentra-miniapp dev",
+    "build": "bun build ./index.html --outdir=./dist --target=browser",
+    "pack": "mentra-miniapp pack"
   },
   "dependencies": {
     "@mentra/miniapp": "workspace:*",

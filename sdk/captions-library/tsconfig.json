@@ -3,6 +3,7 @@
     "target": "ES2020",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "customConditions": ["development"],
     "lib": ["ES2020", "DOM"],
     "jsx": "react-jsx",
     "strict": true,
