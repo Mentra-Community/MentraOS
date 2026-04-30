@@ -23,12 +23,11 @@ import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import TranscriptProcessor from "@/utils/TranscriptProcessor"
 import {useCoreStore} from "@/stores/core"
 import udp from "@/services/UdpManager"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@/utils/timers"
 import {useDebugStore} from "@/stores/debug"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
 import {logE2EMetric} from "@/utils/e2eMetrics"
 import {useAppletStatusStore} from "@/stores/applets"
-import {syncDashboardMenu} from "@/utils/glassesMenu"
 
 const LOCATION_TASK_NAME = "handleLocationUpdates"
 
@@ -62,12 +61,13 @@ TaskManager.defineTask(LOCATION_TASK_NAME, ({data: {locations}, error}) => {
 
 class MantleManager {
   private static instance: MantleManager | null = null
-  private calendarSyncTimer: ReturnType<typeof BackgroundTimer.setInterval> | null = null
-  private clearTextTimeout: ReturnType<typeof BackgroundTimer.setTimeout> | null = null
-  private micDataTimeout: ReturnType<typeof BackgroundTimer.setTimeout> | null = null
+  private calendarSyncTimer: ReturnType<typeof BgTimer.setInterval> | null = null
+  private clearTextTimeout: ReturnType<typeof BgTimer.setTimeout> | null = null
+  private micDataTimeout: ReturnType<typeof BgTimer.setTimeout> | null = null
   private MIC_TIMEOUT_MS: number = 1000
   private transcriptProcessor: TranscriptProcessor
   private subs: Array<any> = []
+  private initialized: boolean = false
 
   public static getInstance(): MantleManager {
     if (!MantleManager.instance) {
@@ -102,10 +102,25 @@ class MantleManager {
   // sets up the bridge and initializes app state
   public async init() {
     console.log("MANTLE: init()")
+
+    if (this.initialized) {
+      console.log("MANTLE: already initialized")
+      return
+    }
+    this.initialized = true
+
     await migrate() // do any local migrations here
     const res = await restComms.loadUserSettings() // get settings from server
     if (res.is_ok()) {
-      const loadedSettings = res.value
+      let loadedSettings = res.value
+      // exclude default_wearable and pending_wearable from the settings when pulling from the server:
+      delete loadedSettings["default_wearable"]
+      delete loadedSettings["pending_wearable"]
+      delete loadedSettings["default_controller"]
+      delete loadedSettings["pending_controller"]
+      delete loadedSettings["controller_device_name"]
+      delete loadedSettings["controller_address"]
+
       await useSettingsStore.getState().setManyLocally(loadedSettings) // write settings to local storage
     } else {
       console.error("MANTLE: No settings received from server")
@@ -114,9 +129,12 @@ class MantleManager {
     // Send device timezone to cloud (used for calendar/time display)
     this.syncTimezone()
 
-    const initialCoreSettings = useSettingsStore.getState().getCoreSettings()
-    await CoreModule.updateCore(initialCoreSettings) // send settings to core
-    console.log("MANTLE: Settings sent to core")
+    // give the core some time to boot before sending all the initial settings:
+    BgTimer.setTimeout(() => {
+      const initialCoreSettings = useSettingsStore.getState().getCoreSettings()
+      CoreModule.updateCore(initialCoreSettings) // send settings to core
+      console.log("MANTLE: Settings sent to core")
+    }, 1000)
 
     this.initServices()
     this.setupPeriodicTasks()
@@ -151,7 +169,7 @@ class MantleManager {
     miniSockets.stop()
 
     livekit.disconnect()
-    socketComms.cleanup()
+    await socketComms.cleanup()
     restComms.goodbye()
   }
 
@@ -181,12 +199,9 @@ class MantleManager {
   private async setupPeriodicTasks() {
     this.sendCalendarEvents()
     // Calendar sync every hour
-    this.calendarSyncTimer = BackgroundTimer.setInterval(
-      () => {
-        this.sendCalendarEvents()
-      },
-      60 * 60 * 1000,
-    ) // 1 hour
+    this.calendarSyncTimer = BgTimer.setInterval(() => {
+      this.sendCalendarEvents()
+    }, 60 * 60 * 1000) // 1 hour
 
     try {
       // only start location updates if we have the location permission:
@@ -211,7 +226,7 @@ class MantleManager {
     //       return
     //     }
     //     // give some time for the glasses to be fully ready:
-    //     BackgroundTimer.setTimeout(async () => {
+    //     BgTimer.setTimeout(async () => {
     //       await CoreModule.connectDefault()
     //     }, 3000)
     //   } catch (error) {
@@ -377,8 +392,8 @@ class MantleManager {
 
       this.subs.push(
         CoreModule.addListener("switch_status", (event) => {
-          const switchType = typeof event.switch_type === "number" ? event.switch_type : (event.switchType ?? -1)
-          const switchValue = typeof event.switch_value === "number" ? event.switch_value : (event.switchValue ?? -1)
+          const switchType = typeof event.switch_type === "number" ? event.switch_type : event.switchType ?? -1
+          const switchValue = typeof event.switch_value === "number" ? event.switch_value : event.switchValue ?? -1
           const timestamp = typeof event.timestamp === "number" ? event.timestamp : Date.now()
           socketComms.sendSwitchStatus(switchType, switchValue, timestamp)
           // TODO: remove
@@ -410,6 +425,7 @@ class MantleManager {
             typeof event.failure_message === "string" ? event.failure_message : "Captions tester incident detected."
           const testRunId = typeof event.test_run_id === "string" ? event.test_run_id : undefined
           const scenarioName = typeof event.scenario_name === "string" ? event.scenario_name : undefined
+          const alertId = typeof event.alert_id === "string" ? event.alert_id : testRunId
 
           const actualBehavior = JSON.stringify(
             {
@@ -427,18 +443,33 @@ class MantleManager {
             "|",
           )
 
-          void submitAutomaticBugIncident({
-            categorization: {
-              submissionMode: "AUTOMATIC",
-              triggerArea: "captions_tester",
-              triggerReason: "captions_incident_detected",
-            },
-            expectedBehavior: "Captions tester runs should complete without a captions incident.",
-            actualBehavior,
-            severityRating: 4,
-            dedupeKey,
-            logTag: "CaptionsTesterBugReport",
-          })
+          void (async () => {
+            const result = await submitAutomaticBugIncident({
+              categorization: {
+                submissionMode: "AUTOMATIC",
+                triggerArea: "captions_tester",
+                triggerReason: "captions_incident_detected",
+              },
+              expectedBehavior: "Captions tester runs should complete without a captions incident.",
+              actualBehavior,
+              severityRating: 4,
+              dedupeKey,
+              logTag: "CaptionsTesterBugReport",
+            })
+
+            console.log(
+              `CAPTIONS_TESTER_INCIDENT_RESULT ${JSON.stringify({
+                alert_id: alertId,
+                test_run_id: testRunId,
+                failure_code: failureCode,
+                scenario_name: scenarioName,
+                status: result.status,
+                incident_id: result.status === "filed" ? result.incidentId : undefined,
+                reason: result.status === "skipped" ? result.reason : undefined,
+                error: result.status === "failed" ? result.error : undefined,
+              })}`,
+            )
+          })()
         }),
       )
 
@@ -591,27 +622,6 @@ class MantleManager {
         }),
       )
 
-      // G2 dashboard menu: sync on glasses connect
-      this.subs.push(
-        useGlassesStore.subscribe(
-          (state) => state.fullyBooted,
-          async (fullyBooted) => {
-            if (!fullyBooted) return
-            await syncDashboardMenu()
-          },
-        ),
-      )
-
-      // G2 dashboard menu: re-sync when app list changes (handles app install/uninstall,
-      // server refresh after connect, and race where apps weren't loaded on first connect)
-      this.subs.push(
-        useAppletStatusStore.subscribe(async (state, prevState) => {
-          if (state.apps !== prevState.apps && state.apps.length > 0) {
-            await syncDashboardMenu()
-          }
-        }),
-      )
-
       this.subs.push(
         CoreModule.addListener("local_transcription", (event) => {
           mantle.handle_local_transcription(event)
@@ -690,9 +700,9 @@ class MantleManager {
       this.subs.push(
         CoreModule.addListener("mic_lc3", (event) => {
           if (this.micDataTimeout) {
-            BackgroundTimer.clearTimeout(this.micDataTimeout)
+            BgTimer.clearTimeout(this.micDataTimeout)
           }
-          this.micDataTimeout = BackgroundTimer.setTimeout(() => {
+          this.micDataTimeout = BgTimer.setTimeout(() => {
             useDebugStore.getState().setDebugInfo({micDataRecvd: false})
           }, this.MIC_TIMEOUT_MS)
           useDebugStore.getState().setDebugInfo({micDataRecvd: true})
@@ -718,9 +728,9 @@ class MantleManager {
           // we'd interleave them with LC3 frames on the same binary
           // WebSocket and corrupt the cloud's audio decoder.
           if (this.micDataTimeout) {
-            BackgroundTimer.clearTimeout(this.micDataTimeout)
+            BgTimer.clearTimeout(this.micDataTimeout)
           }
-          this.micDataTimeout = BackgroundTimer.setTimeout(() => {
+          this.micDataTimeout = BgTimer.setTimeout(() => {
             useDebugStore.getState().setDebugInfo({micDataRecvd: false})
           }, this.MIC_TIMEOUT_MS)
           useDebugStore.getState().setDebugInfo({micDataRecvd: true})
@@ -812,11 +822,11 @@ class MantleManager {
 
     // one time get all:
     const coreStatus = await CoreModule.getCoreStatus()
-    console.log("MANTLE: core status:", coreStatus)
+    // console.log("MANTLE: core status:", coreStatus)
     useCoreStore.getState().setCoreInfo(coreStatus)
 
     const glassesStatus = await CoreModule.getGlassesStatus()
-    console.log("MANTLE: glasses status:", glassesStatus)
+    // console.log("MANTLE: glasses status:", glassesStatus)
     useGlassesStore.getState().setGlassesInfo(glassesStatus)
   }
 
@@ -952,9 +962,9 @@ class MantleManager {
   public async resetDisplayTimeout() {
     if (this.clearTextTimeout) {
       // console.log("MANTLE: canceling pending timeout")
-      BackgroundTimer.clearTimeout(this.clearTextTimeout)
+      BgTimer.clearTimeout(this.clearTextTimeout)
     }
-    this.clearTextTimeout = BackgroundTimer.setTimeout(() => {
+    this.clearTextTimeout = BgTimer.setTimeout(() => {
       console.log("MANTLE: clearing text from wall")
     }, 10000) // 10 seconds
   }

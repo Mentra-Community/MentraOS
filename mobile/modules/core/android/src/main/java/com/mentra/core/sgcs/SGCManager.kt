@@ -26,9 +26,6 @@ abstract class SGCManager {
     abstract fun startStream(message: MutableMap<String, Any>)
     abstract fun stopStream()
     abstract fun sendStreamKeepAlive(message: MutableMap<String, Any>)
-    abstract fun startBufferRecording()
-    abstract fun stopBufferRecording()
-    abstract fun saveBufferVideo(requestId: String, durationSeconds: Int)
     abstract fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean)
     abstract fun stopVideoRecording(requestId: String)
 
@@ -63,6 +60,10 @@ abstract class SGCManager {
 
     // Dashboard Menu (default no-op — only G2 supports this)
     open fun setDashboardMenu(items: List<Map<String, Any>>) {}
+
+    // Controller bridging (default no-op — only G2 supports pairing with a ring controller)
+    open fun connectController() {}
+    open fun disconnectController() {}
 
     // Device Control
     abstract fun setHeadUpAngle(angle: Int)

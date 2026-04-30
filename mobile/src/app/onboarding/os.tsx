@@ -12,7 +12,6 @@ export default function MentraOSOnboarding() {
   const {pushPrevious} = useNavigationHistory()
   const [_onboardingOsCompleted, setOnboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  // focusEffectPreventBack()
 
   // NOTE: you can't have 2 transition videos in a row or things will break:
   const steps: OnboardingStep[] = [

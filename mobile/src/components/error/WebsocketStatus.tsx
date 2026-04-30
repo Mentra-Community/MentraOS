@@ -6,7 +6,7 @@ import {translate} from "@/i18n"
 import {WebSocketStatus} from "@/services/WebSocketManager"
 import {useRefreshApplets} from "@/stores/applets"
 import {useConnectionStore} from "@/stores/connection"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@/utils/timers"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
@@ -46,6 +46,18 @@ export default function WebsocketStatus() {
   const prevConnectionStatusRef = useRef(connectionStatus)
   const {push} = useNavigationHistory()
 
+  // Track whether the WS was observed as disconnected long enough that we
+  // might genuinely have missed applet state changes. Flipped true by the
+  // DISCONNECTION_DELAY timer below. Cleared on the next CONNECTED after
+  // refresh fires. Under a reconnect storm (issue 101), the WS can flap
+  // CONNECTED → DISCONNECTED → CONNECTED within a sub-second cycle; a flap
+  // is not evidence we lost applet state, so refreshing on every CONNECTED
+  // was amplifying the storm into a matching REST-call storm. This ref only
+  // allows the refresh when the prior disconnect actually persisted past
+  // the 3-second threshold the user-visible "warning → disconnected"
+  // transition already respects.
+  const wasSustainedDisconnectedRef = useRef(false)
+
   useEffect(() => {
     const prevStatus = prevConnectionStatusRef.current
     prevConnectionStatusRef.current = connectionStatus
@@ -54,11 +66,14 @@ export default function WebsocketStatus() {
 
     if (connectionStatus === WebSocketStatus.CONNECTED) {
       if (disconnectionTimerRef.current) {
-        BackgroundTimer.clearTimeout(disconnectionTimerRef.current)
+        BgTimer.clearTimeout(disconnectionTimerRef.current)
         disconnectionTimerRef.current = null
       }
       setDisplayStatus("connected")
-      refreshApplets()
+      if (wasSustainedDisconnectedRef.current) {
+        wasSustainedDisconnectedRef.current = false
+        refreshApplets()
+      }
       return
     }
 
@@ -67,11 +82,12 @@ export default function WebsocketStatus() {
       // we just disconnected
       setDisplayStatus("warning")
       if (disconnectionTimerRef.current) {
-        BackgroundTimer.clearTimeout(disconnectionTimerRef.current)
+        BgTimer.clearTimeout(disconnectionTimerRef.current)
         disconnectionTimerRef.current = null
       }
-      disconnectionTimerRef.current = BackgroundTimer.setTimeout(() => {
+      disconnectionTimerRef.current = BgTimer.setTimeout(() => {
         setDisplayStatus("disconnected")
+        wasSustainedDisconnectedRef.current = true
         refreshApplets()
       }, DISCONNECTION_DELAY)
       return
@@ -79,7 +95,7 @@ export default function WebsocketStatus() {
 
     return () => {
       if (disconnectionTimerRef.current) {
-        BackgroundTimer.clearTimeout(disconnectionTimerRef.current)
+        BgTimer.clearTimeout(disconnectionTimerRef.current)
         disconnectionTimerRef.current = null
       }
     }

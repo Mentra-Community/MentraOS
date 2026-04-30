@@ -121,6 +121,10 @@ async function getIncident(c: AppContext) {
     return c.json({ error: "incidentId is required" }, 400);
   }
 
+  if (!incidentId) {
+    return c.json({ error: "Missing required parameter: incidentId" }, 400);
+  }
+
   try {
     const incident = await Incident.findOne({ incidentId }).lean();
 

@@ -215,6 +215,12 @@
       "mode 1": "#f5f5f5"
     }
   },
+  "neutral_150": {
+    "type": "color",
+    "modes": {
+      "mode 1": "#ededed"
+    }
+  },
   "neutral_200": {
     "type": "color",
     "modes": {
@@ -1567,6 +1573,13 @@
     "modes": {
       "light mode": "white",
       "dark mode": "neutral900"
+    }
+  },
+  "gradient": {
+    "type": "color",
+    "modes": {
+      "light mode": "neutral150",
+      "dark mode": "neutral800"
     }
   },
   "foreground": {

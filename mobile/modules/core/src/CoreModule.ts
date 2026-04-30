@@ -2,6 +2,7 @@ import {NativeModule, requireNativeModule} from "expo"
 
 import {
   CoreModuleEvents,
+  CoreSettings,
   CoreStatus,
   GlassesMediaVolumeGetResult,
   GlassesMediaVolumeSetResult,
@@ -67,9 +68,6 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   requestVersionInfo(): Promise<void>
 
   // Video Recording Commands
-  startBufferRecording(): Promise<void>
-  stopBufferRecording(): Promise<void>
-  saveBufferVideo(requestId: string, durationSeconds: number): Promise<void>
   startVideoRecording(requestId: string, save: boolean, flash: boolean, sound: boolean): Promise<void>
   stopVideoRecording(requestId: string): Promise<void>
 
@@ -129,7 +127,7 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
 
   // Helper methods for type-safe observable store access
   updateGlasses(values: Partial<GlassesStatus>): Promise<void>
-  updateCore(values: Partial<CoreStatus>): Promise<void>
+  updateCore(values: Partial<CoreSettings>): Promise<void>
   onGlassesStatus(callback: GlassesListener): () => void
   onCoreStatus(callback: CoreListener): () => void
 }
@@ -143,7 +141,7 @@ NativeCoreModule.updateGlasses = function (values: Partial<GlassesStatus>) {
   return this.update("glasses", values)
 }
 
-NativeCoreModule.updateCore = function (values: Partial<CoreStatus>) {
+NativeCoreModule.updateCore = function (values: Partial<CoreSettings>) {
   return this.update("core", values)
 }
 

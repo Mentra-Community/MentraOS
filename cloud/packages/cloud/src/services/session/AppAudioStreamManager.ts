@@ -41,6 +41,9 @@
 
 import type { Logger } from "pino";
 
+import { MemoryOwnerStat } from "../metrics/memory-census";
+import { sumEstimatedBytes } from "../metrics/memory-estimate";
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 /**
@@ -409,6 +412,29 @@ export class AppAudioStreamManager {
 
   getStreamCount(): number {
     return this.streams.size;
+  }
+
+  getMemoryStats(): MemoryOwnerStat[] {
+    const pendingChunks = Array.from(this.streams.values()).flatMap((stream) => stream.pendingChunks);
+    const reconnectingCount = Array.from(this.streams.values()).filter((stream) => stream.reconnecting).length;
+
+    return [
+      {
+        owner: "app-audio.pending-chunks",
+        scope: "session",
+        itemCount: pendingChunks.length,
+        estimatedBytes: sumEstimatedBytes(pendingChunks, (chunk) => chunk.length),
+      },
+      {
+        owner: "app-audio.streams",
+        scope: "session",
+        itemCount: this.streams.size,
+        estimatedBytes: this.streams.size * 256,
+        metadata: {
+          reconnecting: reconnectingCount,
+        },
+      },
+    ];
   }
 
   // ─── Dispose ─────────────────────────────────────────────────────────────

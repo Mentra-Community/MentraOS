@@ -7,7 +7,7 @@ import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {useConnectionStore} from "@/stores/connection"
 import {WebSocketStatus} from "@/services/ws-types"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@/utils/timers"
 
 interface RequestConfig {
   method: "GET" | "POST" | "DELETE"
@@ -141,7 +141,7 @@ class RestComms {
   private waitForNextConnected(timeoutMs: number): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       let settled = false
-      const timer = BackgroundTimer.setTimeout(() => {
+      const timer = BgTimer.setTimeout(() => {
         if (settled) return
         settled = true
         unsub()
@@ -160,7 +160,7 @@ class RestComms {
         // resolving on the stale pre-reconnect CONNECTED state.
         if (sawNonConnected) {
           settled = true
-          BackgroundTimer.clearTimeout(timer)
+          BgTimer.clearTimeout(timer)
           unsub()
           resolve()
         }

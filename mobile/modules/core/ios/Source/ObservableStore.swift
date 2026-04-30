@@ -45,7 +45,7 @@ class ObservableStore {
         return result
     }
 
-    // Helper to compare values
+    /// Helper to compare values
     private func areEqual(_ lhs: Any, _ rhs: Any) -> Bool {
         if let l = lhs as? String, let r = rhs as? String { return l == r }
         if let l = lhs as? Int, let r = rhs as? Int { return l == r }

@@ -1,14 +1,13 @@
 ### CameraNeo Service (Camera2) – Architecture and Usage Guide
 
-This document explains how `CameraNeo` works end-to-end and how to use it to capture photos, record videos, and run buffered recording. It is designed for developers integrating or extending the camera service.
+This document explains how `CameraNeo` works end-to-end and how to use it to capture photos and record videos. It is designed for developers integrating or extending the camera service.
 
-- **Location**: `asg_client/app/src/main/java/com/augmentos/asg_client/camera/CameraNeo.java`
+- **Location**: `asg_client/app/src/main/java/com/mentra/asg_client/camera/CameraNeo.java`
 - **Type**: Android `LifecycleService` using Camera2 API
 - **Primary responsibilities**:
   - Foreground service that owns camera lifecycle
   - Photo capture with brief auto-exposure convergence
   - Single video recording with `MediaRecorder`
-  - Circular buffer recording via `CircularVideoBufferInternal`
 
 ---
 
@@ -40,28 +39,12 @@ CameraNeo.startVideoRecording(
     }
 );
 CameraNeo.stopVideoRecording(context, videoId);
-
-// 3) Buffered recording (continuous background recording into rotating segments)
-CameraNeo.startBufferRecording(
-    context,
-    new CameraNeo.BufferCallback() {
-      @Override public void onBufferStarted() {}
-      @Override public void onBufferStopped() {}
-      @Override public void onBufferSaved(String filePath, int durationSeconds) {}
-      @Override public void onBufferError(String error) {}
-    }
-);
-// Save the last N seconds while buffer mode is running
-CameraNeo.saveBufferVideo(context, /*seconds*/ 30, /*requestId*/ "myReq123");
-// Stop buffer mode
-CameraNeo.stopBufferRecording(context);
 ```
 
-Utility status checks:
+Utility status check:
 
 ```java
 boolean isBusy = CameraNeo.isCameraInUse();
-boolean buffering = CameraNeo.isInBufferMode();
 ```
 
 ---
@@ -71,11 +54,10 @@ boolean buffering = CameraNeo.isInBufferMode();
 - **Foreground service**: Keeps the process alive and visible to the system via a persistent notification. Creates a background `HandlerThread` for camera work.
 - **Single owner of the camera**: All camera operations are owned by the service, avoiding lifecycle coupling with activities.
 - **Intents as commands**: Public static methods build intents and start the service. `onStartCommand` routes actions to internal methods.
-- **Callbacks for results**: Static callbacks (`PhotoCaptureCallback`, `VideoRecordingCallback`, `BufferCallback`) deliver asynchronous results back to the caller.
+- **Callbacks for results**: Static callbacks (`PhotoCaptureCallback`, `VideoRecordingCallback`) deliver asynchronous results back to the caller.
 - **State machines**:
   - Photo: simplified AE wait → capture
   - Video: start `MediaRecorder` and stream frames via a capture session
-  - Buffer: rotate `MediaRecorder` segments using `CircularVideoBufferInternal`
 
 ---
 
@@ -94,7 +76,6 @@ boolean buffering = CameraNeo.isInBufferMode();
 - JPEG quality: `90`
 - Orientation hint: `270` degrees
 - Default video size: closest to `1280x720`
-- Buffer segment length: `5000 ms`
 - AE wait timeout before capture: `0.5 s`
 
 You can tweak these via the constants in `CameraNeo.java`.
@@ -112,9 +93,6 @@ You can tweak these via the constants in `CameraNeo.java`.
      - `ACTION_TAKE_PHOTO` → `setupCameraAndTakePicture`
      - `ACTION_START_VIDEO_RECORDING` → `setupCameraAndStartRecording`
      - `ACTION_STOP_VIDEO_RECORDING` → `stopCurrentVideoRecording`
-     - `ACTION_START_BUFFER` → `startBufferMode`
-     - `ACTION_STOP_BUFFER` → `stopBufferMode`
-     - `ACTION_SAVE_BUFFER` → `saveBufferVideo`
 
 3. `onDestroy`
    - Ensures recording is stopped, closes camera, stops background thread, releases wake locks
@@ -167,7 +145,7 @@ Notes:
 2. Service wakes screen and calls `openCameraInternal(filePath, forVideo=true)`.
 3. Video configuration:
    - Chooses video size close to `1280x720` from `StreamConfigurationMap.getOutputSizes(MediaRecorder.class)`.
-   - Initializes and prepares a single `MediaRecorder` (unless buffer mode is active).
+   - Initializes and prepares a single `MediaRecorder`.
 4. Camera open → `videoStateCallback.onOpened` → `createCameraSessionInternal(true)`.
 5. Session setup for record:
    - Uses `TEMPLATE_RECORD` and targets the `MediaRecorder` surface
@@ -186,44 +164,11 @@ Notes:
 
 ---
 
-### Buffered Recording Flow (Circular Buffer)
-
-This mode continuously records to a rolling set of segments managed by `CircularVideoBufferInternal`, enabling “save the last N seconds.”
-
-1. API layer calls `startBufferRecording(context, callback)` → `ACTION_START_BUFFER` → `startBufferMode()`.
-2. `startBufferMode()`:
-   - Instantiates `CircularVideoBufferInternal`
-   - Registers a segment switch callback:
-     - On switch: replaces the recorder surface in-place in the active session
-     - On error: forwards via `BufferCallback`
-   - Calls `prepareAllRecorders()` on the buffer manager
-   - Sets `currentMode = BUFFER` and `isInBufferMode = true`
-   - Wakes screen and opens the camera for video
-   - Starts a segment switch scheduler every `SEGMENT_DURATION_MS` (5s)
-   - Emits `onBufferStarted()`
-3. Session configuration (`createCameraSessionInternal(true)`):
-   - When in BUFFER mode, the session targets the surface provided by `bufferManager.getCurrentSurface()`
-   - On configured: `startBufferRecordingInternal()` starts repeating requests and `bufferManager.startCurrentSegment()`
-4. Saving a clip:
-   - Caller invokes `saveBufferVideo(context, seconds, requestId)` → `saveBufferVideo(int, String)`
-   - Buffer manager writes the last N seconds to a new MP4 at a generated path, then `onBufferSaved(path, seconds)`
-5. Stopping:
-   - Caller invokes `stopBufferRecording(context)` → `stopBufferMode()`
-   - Cancels segment switching, stops buffer manager, closes camera, emits `onBufferStopped()`, and stops the service
-
-Notes:
-
-- There are older/alternate buffer helpers (`startBufferRecording/stopBufferRecording/switchToNewSegment/startSegmentSwitchTimer`) still present but the active path is `startBufferMode/stopBufferMode` with `scheduleNextSegmentSwitch()`.
-- In buffer mode, the single-video `MediaRecorder` is not used; the buffer manager owns recorder instances.
-
----
-
 ### Error Handling and Recovery
 
 - Permission checks are performed before opening the camera; missing permissions are reported via callbacks.
 - `CameraAccessException` reasons are mapped to user-friendly messages. The service tries to release resources and, in some cases, suggests a delayed retry (`restartCameraServiceIfNeeded`).
 - Any failure during session configuration or capture triggers the appropriate error callback and ensures resources are cleaned up.
-- `conditionalStopSelf()` stops the service automatically only when not in buffer mode.
 
 ---
 
@@ -236,7 +181,6 @@ Notes:
 - AE/AF config: `availableAeModes`, `exposureCompensationRange`, `exposureCompensationStep`, `availableFpsRanges`, `selectedFpsRange`, `availableAfModes`, `hasAutoFocus`, `minimumFocusDistance`
 - Photo state machine: `ShotState { IDLE, WAITING_AE, SHOOTING }`, `SimplifiedAeCallback`, `AE_WAIT_NS`
 - Video: `MediaRecorder mediaRecorder`, `Surface recorderSurface`, `Size videoSize`, `isRecording`, timers
-- Buffer: `RecordingMode { SINGLE_VIDEO, BUFFER }`, `CircularVideoBufferInternal bufferManager`, `isInBufferMode`, segment switching
 
 ---
 
@@ -253,12 +197,5 @@ public interface VideoRecordingCallback {
   void onRecordingProgress(String videoId, long durationMs);
   void onRecordingStopped(String videoId, String filePath);
   void onRecordingError(String videoId, String errorMessage);
-}
-
-public interface BufferCallback {
-  void onBufferStarted();
-  void onBufferStopped();
-  void onBufferSaved(String filePath, int durationSeconds);
-  void onBufferError(String error);
 }
 ```

@@ -149,7 +149,7 @@ async function getAudio(c: AppContext) {
     const userId = c.req.param("userId");
 
     if (!userId) {
-      return c.json({ error: "Missing userId" }, 400);
+      return c.json({ error: "Missing required parameter: userId" }, 400);
     }
 
     const userSession = UserSession.getById(userId);

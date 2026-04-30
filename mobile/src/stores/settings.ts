@@ -8,13 +8,6 @@ import * as Device from "expo-device"
 import restComms from "@/services/RestComms"
 import {storage} from "@/utils/storage"
 
-/** Display depth is 1–3 (default 2); clamps legacy 4–5 from older builds. */
-function clampDashboardDepth(raw: unknown): number {
-  const n = typeof raw === "number" ? raw : Number(raw)
-  if (!Number.isFinite(n)) return 2
-  return Math.min(3, Math.max(1, Math.round(n)))
-}
-
 interface Setting {
   key: string
   defaultValue: () => any
@@ -374,8 +367,8 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  glasses_menu_apps: {
-    key: "glasses_menu_apps",
+  menu_apps: {
+    key: "menu_apps",
     defaultValue: () => null,
     writable: true,
     saveOnServer: true,
@@ -590,6 +583,7 @@ const CORE_SETTINGS_KEYS: string[] = [
   SETTINGS.auto_brightness.key,
   SETTINGS.dashboard_height.key,
   SETTINGS.dashboard_depth.key,
+  // SETTINGS.menu_apps.key,
   // button:
   SETTINGS.button_mode.key,
   SETTINGS.button_photo_size.key,
@@ -671,10 +665,6 @@ export const useSettingsStore = create<SettingsState>()(
           throw new Error(`SETTINGS: ${originalKey} is not writable!`)
         }
 
-        if (originalKey === SETTINGS.dashboard_depth.key) {
-          value = clampDashboardDepth(value)
-        }
-
         // Update store immediately for optimistic UI
         console.log(`SETTINGS: SET: ${key} = ${value}`)
         set((state) => ({
@@ -722,9 +712,6 @@ export const useSettingsStore = create<SettingsState>()(
 
       try {
         const raw = state.settings[key] ?? SETTINGS[originalKey].defaultValue()
-        if (originalKey === SETTINGS.dashboard_depth.key) {
-          return clampDashboardDepth(raw)
-        }
         return raw
       } catch (e) {
         // for dynamically created settings, we need to create a new setting in SETTINGS:
@@ -748,10 +735,7 @@ export const useSettingsStore = create<SettingsState>()(
           }
           settingsToLoad[key.toLowerCase()] = value
         }
-
-        if (settingsToLoad.dashboard_depth !== undefined) {
-          settingsToLoad.dashboard_depth = clampDashboardDepth(settingsToLoad.dashboard_depth)
-        }
+        // console.log("SETTINGS: SET MANY LOCALLY: ", settingsToLoad)
 
         set((state) => ({
           settings: {...state.settings, ...settingsToLoad},
@@ -809,10 +793,6 @@ export const useSettingsStore = create<SettingsState>()(
         // console.log("##############################################")
         // console.log(loadedSettings)
         // console.log("##############################################")
-
-        if (loadedSettings.dashboard_depth !== undefined) {
-          loadedSettings.dashboard_depth = clampDashboardDepth(loadedSettings.dashboard_depth)
-        }
 
         set((state) => ({
           isInitialized: true,

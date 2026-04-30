@@ -9,7 +9,7 @@ import {Icon, Button, Header, Screen, Text} from "@/components/ignite"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import Divider from "@/components/ui/Divider"
 import {Group} from "@/components/ui/Group"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
@@ -36,7 +36,11 @@ export default function SelectGlassesBluetoothScreen() {
   //   }, [setSearchResults]),
   // )
 
-  // focusEffectPreventBack()
+  focusEffectPreventBack(() => {
+    CoreModule.disconnectController()
+    CoreModule.forgetController()
+    goBack()
+  }, true)
 
   useEffect(() => {
     if (searchResults.some((result) => result.deviceName === "NOTREQUIREDSKIP")) {
@@ -119,8 +123,10 @@ export default function SelectGlassesBluetoothScreen() {
     })
   }, [searchResults])
 
+  const visibleResults = rememberedSearchResults.filter((r) => r.deviceModel === deviceModel)
+
   return (
-    <Screen preset="fixed" safeAreaEdges={["bottom"]}>
+    <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
       <Header leftIcon="chevron-left" onLeftPress={goBack} RightActionComponent={<MentraLogoStandalone />} />
       <View className="flex-1 justify-center">
         <GlassView className="gap-6 rounded-3xl bg-primary-foreground p-6">
@@ -130,28 +136,30 @@ export default function SelectGlassesBluetoothScreen() {
             text={translate("pairing:scanningForGlassesModel", {model: deviceModel})}
           />
 
-          {!rememberedSearchResults || rememberedSearchResults.length === 0 ? (
+          {visibleResults.length === 0 ? (
             <View className="justify-center min-h-20 py-4">
               <ActivityIndicator size="large" color={theme.colors.foreground} />
             </View>
           ) : (
-            <ScrollView className="max-h-[300px] -mr-4 pr-4">
+            <ScrollView className="max-h-[300px] -mr-4 pr-4" contentContainerClassName="my-4">
               <Group>
-                {rememberedSearchResults.map((res: DeviceSearchResult, index: number) => (
-                  <TouchableOpacity
-                    key={index}
-                    className="h-[50px] flex-row items-center justify-between bg-background px-4 py-3"
-                    onPress={() => triggerGlassesPairingGuide(res.deviceModel, res.deviceName)}>
-                    <View className="flex-1 px-2.5">
-                      <Text
-                        text={`${deviceModel} - ${filterDeviceName(res.deviceName)}`}
-                        className="flex-wrap text-sm font-semibold"
-                        numberOfLines={2}
-                      />
+                {visibleResults.map((res: DeviceSearchResult, index: number) => {
+                  let deviceName = filterDeviceName(res.deviceName)
+                  return (
+                    <View className="flex-row items-center justify-between px-4 py-3 bg-primary-foreground/80">
+                      <TouchableOpacity
+                        key={index}
+                        className="flex-1"
+                        onPress={() => triggerGlassesPairingGuide(res.deviceModel, res.deviceName)}>
+                        <View className="flex-1 px-2.5 flex-col">
+                          <Text text={deviceModel} className="flex-wrap text-sm font-semibold" numberOfLines={2} />
+                          <Text text={deviceName} className="text-xs text-muted-foreground" numberOfLines={1} />
+                        </View>
+                      </TouchableOpacity>
+                      <Icon name="chevron-right" size={24} color={theme.colors.text} />
                     </View>
-                    <Icon name="chevron-right" size={24} color={theme.colors.text} />
-                  </TouchableOpacity>
-                ))}
+                  )
+                })}
               </Group>
             </ScrollView>
           )}

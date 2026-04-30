@@ -1536,21 +1536,6 @@ public class G1 extends SGCManager {
     }
 
     @Override
-    public void startBufferRecording() {
-
-    }
-
-    @Override
-    public void stopBufferRecording() {
-
-    }
-
-    @Override
-    public void saveBufferVideo(String requestId, int durationSeconds) {
-
-    }
-
-    @Override
     public void startVideoRecording(String requestId, boolean save, boolean flash, boolean sound) {
 
     }

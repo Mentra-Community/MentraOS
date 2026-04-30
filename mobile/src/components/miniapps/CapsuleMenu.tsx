@@ -12,11 +12,14 @@ import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import AppIcon from "@/components/home/AppIcon"
 import GlassView from "@/components/ui/GlassView"
 import * as ImageManipulator from "expo-image-manipulator"
+import {withUniwind} from "uniwind"
 
 interface CapsuleButtonProps {
   onMinusPress?: () => void
   onEllipsisPress?: () => void
 }
+
+const WrappedPressable = withUniwind(Pressable)
 
 export function CapsuleButton({onMinusPress, onEllipsisPress}: CapsuleButtonProps) {
   // const [isChina] = useSetting(SETTINGS.china_deployment.key)
@@ -27,13 +30,51 @@ export function CapsuleButton({onMinusPress, onEllipsisPress}: CapsuleButtonProp
   const androidStyle = Platform.OS === "android" ? {backgroundColor: theme.colors.card} : undefined
 
   return (
-    <GlassView transparent={true} className="flex-row gap-2 rounded-full px-2 h-7.5 items-center" style={androidStyle}>
-      <Pressable hitSlop={10} onPress={onEllipsisPress} style={{width: 24, alignItems: "center"}}>
-        <Icon name="ellipsis" size={18} color={theme.colors.foreground} />
+    <GlassView
+      transparent={true}
+      className="flex-row justify-between rounded-full h-8 w-20 items-center"
+      style={androidStyle}>
+      <Pressable
+        hitSlop={10}
+        onPress={onEllipsisPress}
+        // className="w-8 h-full items-center justify-center rounded-l-full bg-red-500"
+        style={({pressed}) => [
+          pressed && {backgroundColor: theme.colors.input},
+          {
+            position: "absolute",
+            left: 0,
+            width: 40,
+            height: "100%",
+            alignItems: "center",
+            justifyContent: "center",
+            borderTopLeftRadius: 40,
+            borderBottomLeftRadius: 40,
+          },
+        ]}>
+        <Icon name="ellipsis" size={20} color={theme.colors.foreground} />
       </Pressable>
-      <View className="h-4 w-px bg-primary-foreground/80" />
-      <Pressable hitSlop={10} onPress={onMinusPress} style={{width: 24, alignItems: "center"}}>
-        <Icon name={"circle-x"} size={18} color={theme.colors.foreground} />
+      <View className="h-4 w-px bg-primary-foreground/80 absolute left-1/2 -translate-x-1/2" />
+      <Pressable
+        hitSlop={10}
+        onPress={onMinusPress}
+        style={({pressed}) => [
+          pressed && {backgroundColor: theme.colors.input},
+          {
+            position: "absolute",
+            right: 0,
+            width: 40,
+            height: "100%",
+            alignItems: "center",
+            justifyContent: "center",
+            borderTopRightRadius: 40,
+            borderBottomRightRadius: 40,
+          },
+        ]}>
+        {/* position circle under the icon: */}
+        <View className="relative -top-[1px] left-0 w-4 h-4">
+          <View className="w-5.5 h-5.5 bg-input rounded-full z-0 absolute -top-0.5 -left-0.5" />
+          <Icon name={"x"} size={16} color={theme.colors.foreground} className="z-0 absolute top-[1px] left-[1px]" />
+        </View>
       </Pressable>
     </GlassView>
   )
@@ -142,6 +183,7 @@ export function MiniAppCapsuleMenu({
           onBackPress()
         }
       : () => {
+          console.log("CAPSULE MENU: focusEffectPreventBack() called")
           // Defer screenshot capture so it doesn't block the navigation animation
           InteractionManager.runAfterInteractions(() => {
             let shouldGoBack = Platform.OS === "android"
@@ -163,6 +205,7 @@ export function MiniAppCapsuleMenu({
     </View>
   )
 }
+
 interface MiniAppMoreActionsSheetProps {
   packageName: string
   appNameOverride?: string

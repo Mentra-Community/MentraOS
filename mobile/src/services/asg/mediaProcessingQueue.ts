@@ -11,7 +11,7 @@ import CrustModule from "crust"
 import {asgCameraApi} from "@/services/asg/asgCameraApi"
 import {localStorageService} from "@/services/asg/localStorageService"
 import {useGallerySyncStore} from "@/stores/gallerySync"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@/utils/timers"
 import {MediaLibraryPermissions} from "@/utils/permissions/MediaLibraryPermissions"
 
 const TAG = "[MediaProcessingQueue]"
@@ -103,7 +103,7 @@ class MediaProcessingQueue {
           this.abort()
           reject(new Error(`Processing queue timed out after ${timeoutMs / 1000}s`))
         } else {
-          BackgroundTimer.setTimeout(check, 200)
+          BgTimer.setTimeout(check, 200)
         }
       }
       check()

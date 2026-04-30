@@ -16,7 +16,6 @@ import {
   buildMenuItems,
   filterCompatibleMenuItems,
   getDefaultMenuApps,
-  syncDashboardMenu,
   type GlassesMenuItem,
 } from "@/utils/glassesMenu"
 
@@ -26,7 +25,7 @@ export default function GlassesMenuScreen() {
   const {theme} = useAppTheme()
   const {goBack} = useNavigationHistory()
   const applets = useApplets()
-  const [savedMenuApps, setSavedMenuApps] = useSetting<GlassesMenuItem[] | null>(SETTINGS.glasses_menu_apps.key)
+  const [savedMenuApps, setSavedMenuApps] = useSetting<GlassesMenuItem[] | null>(SETTINGS.menu_apps.key)
   const [menuItems, setMenuItems] = useState<GlassesMenuItem[]>([])
   const [showPicker, setShowPicker] = useState(false)
   const [sortedAvailable, setSortedAvailable] = useState<ClientAppletInterface[]>([])
@@ -50,7 +49,6 @@ export default function GlassesMenuScreen() {
     async (items: GlassesMenuItem[]) => {
       setMenuItems(items)
       await setSavedMenuApps(items)
-      await syncDashboardMenu()
     },
     [setSavedMenuApps],
   )
@@ -60,7 +58,6 @@ export default function GlassesMenuScreen() {
       setMenuItems((current) => {
         const updated = current.filter((item) => item.packageName !== packageName)
         setSavedMenuApps(updated)
-        syncDashboardMenu()
         return updated
       })
     },
@@ -212,7 +209,6 @@ export default function GlassesMenuScreen() {
           const defaults = await getDefaultMenuApps(applets)
           setMenuItems(defaults)
           await setSavedMenuApps(null)
-          await syncDashboardMenu()
         }}
       />
     </View>
@@ -239,7 +235,6 @@ export default function GlassesMenuScreen() {
           onDragEnd={({data}) => {
             setMenuItems(data)
             setSavedMenuApps(data)
-            syncDashboardMenu()
           }}
           ListHeaderComponent={listHeader}
           ListFooterComponent={listFooter}

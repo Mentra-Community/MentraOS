@@ -127,7 +127,7 @@ class GlassesStore {
         }
     }
 
-    // Apply changes with side effects
+    /// Apply changes with side effects
     func apply(_ category: String, _ key: String, _ value: Any) {
         let oldValue = store.get(category, key)
         store.set(category, key, value)
@@ -222,7 +222,7 @@ class GlassesStore {
                 CoreManager.shared.sgc?.setHeadUpAngle(angle)
             }
 
-        case ("core", "dashboard_menu_apps"):
+        case ("core", "menu_apps"):
             if let items = value as? [[String: Any]] {
                 CoreManager.shared.sgc?.setDashboardMenu(items)
             }

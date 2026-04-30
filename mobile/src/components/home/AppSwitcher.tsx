@@ -594,7 +594,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
   )
 
   const handleSelect = (packageName: string) => {
-    console.log("selecting", packageName)
+    // console.log("selecting", packageName)
 
     const applet = apps.find((app) => app.packageName === packageName)
     if (!applet) {

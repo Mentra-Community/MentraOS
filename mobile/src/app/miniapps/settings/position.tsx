@@ -7,15 +7,18 @@ import SliderSetting from "@/components/settings/SliderSetting"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {useKonamiCode} from "@/utils/dev/konami"
 
 export default function ScreenSettingsScreen() {
   const {goBack} = useNavigationHistory()
   const [dashboardDepth, setDashboardDepth] = useSetting(SETTINGS.dashboard_depth.key)
   const [dashboardHeight, setDashboardHeight] = useSetting(SETTINGS.dashboard_height.key)
   const [_screenDisabled, setScreenDisabled] = useSetting(SETTINGS.screen_disabled.key)
+<<<<<<< HEAD
   const deviceModel = useGlassesStore((state) => state.deviceModel)
   const {setEnabled} = useKonamiCode()
+=======
+  const deviceModel = useGlassesStore(state => state.deviceModel)
+>>>>>>> dev
 
   const depthClamped = Math.min(3, Math.max(1, Number(dashboardDepth ?? 2)))
 
@@ -30,11 +33,6 @@ export default function ScreenSettingsScreen() {
       }
     }, [isG1]),
   )
-
-  useEffect(() => {
-    setEnabled(false)
-    return () => setEnabled(true)
-  }, [setEnabled])
 
   return (
     <Screen preset="fixed">

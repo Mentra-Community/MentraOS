@@ -6,7 +6,7 @@
 import * as RNFS from "@dr.pogodin/react-native-fs"
 
 import {PhotoInfo} from "@/types/asg"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@/utils/timers"
 import {storage} from "@/utils/storage"
 
 export interface DownloadedFile {
@@ -473,7 +473,7 @@ export class LocalStorageService {
       } catch (error) {
         console.error(`[LocalStorage] Error clearing sync queue (attempt ${attempt}/3):`, error)
         if (attempt < 3) {
-          await new Promise((resolve) => BackgroundTimer.setTimeout(resolve, 100))
+          await new Promise((resolve) => BgTimer.setTimeout(resolve, 100))
         }
       }
     }

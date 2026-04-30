@@ -274,24 +274,6 @@ public class CoreModule: Module {
 
         // MARK: - Video Recording Commands
 
-        AsyncFunction("startBufferRecording") {
-            await MainActor.run {
-                CoreManager.shared.startBufferRecording()
-            }
-        }
-
-        AsyncFunction("stopBufferRecording") {
-            await MainActor.run {
-                CoreManager.shared.stopBufferRecording()
-            }
-        }
-
-        AsyncFunction("saveBufferVideo") { (requestId: String, durationSeconds: Int) in
-            await MainActor.run {
-                CoreManager.shared.saveBufferVideo(requestId, durationSeconds)
-            }
-        }
-
         AsyncFunction("startVideoRecording") { (requestId: String, save: Bool, flash: Bool, sound: Bool) in
             await MainActor.run {
                 CoreManager.shared.startVideoRecording(requestId, save, flash, sound)

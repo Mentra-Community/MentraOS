@@ -137,12 +137,7 @@ public class GalleryCommandHandler implements ICommandHandler {
                 Log.d(TAG, "Camera is busy: Video recording active");
                 return "video";
             }
-            
-            // TODO: Add check for buffer recording when implemented
-            // if (bufferRecordingActive) {
-            //     return "buffer";
-            // }
-            
+
             // Camera is not busy
             return null;
         } catch (Exception e) {

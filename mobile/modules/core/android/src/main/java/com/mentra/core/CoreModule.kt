@@ -139,6 +139,12 @@ class CoreModule : Module() {
 
         AsyncFunction("forget") { coreManager?.forget() }
 
+        AsyncFunction("connectDefaultController") { coreManager?.connectDefaultController() }
+
+        AsyncFunction("disconnectController") { coreManager?.disconnectController() }
+
+        AsyncFunction("forgetController") { coreManager?.forgetController() }
+
         AsyncFunction("findCompatibleDevices") { deviceModel: String ->
             coreManager?.findCompatibleDevices(deviceModel)
         }
@@ -235,14 +241,6 @@ class CoreModule : Module() {
         AsyncFunction("sendReboot") { coreManager?.sendReboot() }
 
         // MARK: - Video Recording Commands
-
-        AsyncFunction("startBufferRecording") { coreManager?.startBufferRecording() }
-
-        AsyncFunction("stopBufferRecording") { coreManager?.stopBufferRecording() }
-
-        AsyncFunction("saveBufferVideo") { requestId: String, durationSeconds: Int ->
-            coreManager?.saveBufferVideo(requestId, durationSeconds)
-        }
 
         AsyncFunction("startVideoRecording") { requestId: String, save: Boolean, flash: Boolean, sound: Boolean ->
             coreManager?.startVideoRecording(requestId, save, flash, sound)

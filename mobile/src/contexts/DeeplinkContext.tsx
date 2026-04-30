@@ -6,7 +6,7 @@ import {AppState, Platform} from "react-native"
 import {NavObject, useNavigationHistory, getCurrentRoute} from "@/contexts/NavigationHistoryContext"
 import {useAppletStatusStore} from "@/stores/applets"
 import mentraAuth from "@/utils/auth/authClient"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@/utils/timers"
 
 /** Returns immediately if the app is already active, otherwise waits for it. */
 const waitForActive = (): Promise<void> => {
@@ -261,7 +261,7 @@ const deepLinkRoutes: DeepLinkRoute[] = [
         // Use replace() instead of replaceAll() to avoid POP_TO_TOP errors
         // when the navigation stack is empty (coming back from browser)
         console.log("[LOGIN DEBUG] About to set timeout for navigation")
-        BackgroundTimer.setTimeout(() => {
+        BgTimer.setTimeout(() => {
           console.log("[LOGIN DEBUG] Inside setTimeout, navigating to index")
           try {
             navObject.setAnimation("none")

@@ -212,16 +212,18 @@ function Compositor() {
   return (
     <View className={`absolute inset-0 ${isActive ? "z-11" : "z-0"}`} pointerEvents="box-none">
       <View className="z-12">
-        <MiniAppCapsuleMenu
-          viewShotRef={viewShotRef}
-          onEllipsisPress={() => {
-            // push("/applet/settings", {
-            //   packageName: packageName as string,
-            //   fromWebView: "true",
-            // })
-          }}
-          packageName={packageName as string}
-        />
+        {isActive && (
+          <MiniAppCapsuleMenu
+            viewShotRef={viewShotRef}
+            onEllipsisPress={() => {
+              // push("/applet/settings", {
+              //   packageName: packageName as string,
+              //   fromWebView: "true",
+              // })
+            }}
+            packageName={packageName as string}
+          />
+        )}
       </View>
       <Screen preset="fixed" safeAreaEdges={["top"]} KeyboardAvoidingViewProps={{enabled: true}} ref={viewShotRef}>
         <View className="flex-1 -mx-6">

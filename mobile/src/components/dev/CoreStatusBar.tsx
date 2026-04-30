@@ -9,7 +9,7 @@ import {useDebugStore} from "@/stores/debug"
 import {useGlassesStore} from "@/stores/glasses"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import CoreModule, {TouchEvent} from "core"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@/utils/timers"
 
 function Tag({icon, label, bg}: {icon: string; label: string; bg: string}) {
   const {theme} = useAppTheme()
@@ -40,8 +40,8 @@ export default function CoreStatusBar() {
   useEffect(() => {
     let sub = CoreModule.addListener("touch_event", (event: TouchEvent) => {
       setTouchEvent(event)
-      BackgroundTimer.clearTimeout(touchEventTimer.current ?? 0)
-      touchEventTimer.current = BackgroundTimer.setTimeout(() => {
+      BgTimer.clearTimeout(touchEventTimer.current ?? 0)
+      touchEventTimer.current = BgTimer.setTimeout(() => {
         setTouchEvent(null)
       }, 1000)
       // console.log("touch_event", event)

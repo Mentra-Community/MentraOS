@@ -60,7 +60,7 @@ jest.mock("expo-audio", () => ({
 
 // Mock react-native-nitro-bg-timer for non-native Jest runs
 jest.mock("react-native-nitro-bg-timer", () => ({
-  BackgroundTimer: {
+  BgTimer: {
     setInterval: jest.fn((callback, delay) => setInterval(callback, delay)),
     clearInterval: jest.fn((id) => clearInterval(id)),
     setTimeout: jest.fn((callback, delay) => setTimeout(callback, delay)),

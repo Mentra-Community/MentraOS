@@ -57,12 +57,12 @@ function DeviceSettings() {
     })
     if (result === 1) {
       CoreModule.forget()
-      useAppletStatusStore.getState().stopAllApplets()
-      useAppletStatusStore.getState().refreshApplets()
-      // give us a second to forget the glasses before going back
-      setTimeout(() => {
-        goBack()
-      }, 500)
+      // useAppletStatusStore.getState().stopAllApplets()
+      // useAppletStatusStore.getState().refreshApplets()
+      // // give us a second to forget the glasses before going back
+      // setTimeout(() => {
+      //   goBack()
+      // }, 500)
     }
   }
 
