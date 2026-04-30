@@ -303,21 +303,11 @@ class CrustModule : Module() {
           return@runOnUiThread
         }
 
-        // 2) Show T&C dialog (no-op after first acceptance), then start nav.
-        com.google.android.libraries.navigation.NavigationApi
-          .showTermsAndConditionsDialog(
-            activity,
-            "Mentra",
-            object : com.google.android.libraries.navigation.NavigationApi.OnTermsResponseListener {
-              override fun onTermsResponse(termsAccepted: Boolean) {
-                if (!termsAccepted) {
-                  sendEvent("onNavError", mapOf("message" to "user declined Google Nav T&C"))
-                  return
-                }
-                NavigationManager.start(activity, lat, lng, simulate, speed, callbacks)
-              }
-            },
-          )
+        // 2) NavigationManager owns the T&C flow — it shows the dialog
+        //    only on the very first run (persisted), and passes
+        //    `SKIPPED` to `getNavigator` afterward to suppress the
+        //    "Welcome to Google Maps" toast.
+        NavigationManager.start(activity, lat, lng, simulate, speed, callbacks)
       }
       mapOf("ok" to true)
     }

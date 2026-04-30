@@ -1,6 +1,7 @@
 package com.mentra.crust
 
 import android.app.Activity
+import android.content.Context
 import android.location.Location
 import android.os.Handler
 import android.os.Looper
@@ -11,6 +12,7 @@ import com.google.android.libraries.navigation.Navigator
 import com.google.android.libraries.navigation.RoadSnappedLocationProvider
 import com.google.android.libraries.navigation.RoutingOptions
 import com.google.android.libraries.navigation.SimulationOptions
+import com.google.android.libraries.navigation.TermsAndConditionsCheckOption
 import com.google.android.libraries.navigation.Waypoint
 
 /**
@@ -79,7 +81,34 @@ object NavigationManager {
     fun onRoute(points: List<RoutePoint>)
   }
 
-  /** Start a navigation session. Initializes the Navigator on first call. */
+  /** Process-lifetime flag: set to true once the user has accepted T&C in
+   *  this app run. Backstop in case `NavigationApi.areTermsAccepted()`
+   *  returns stale data within the same process. */
+  private var termsAcceptedThisProcess: Boolean = false
+
+  private const val PREFS_NAME = "mentra_nav_prefs"
+  private const val PREF_TERMS_ACCEPTED = "terms_accepted"
+
+  private fun readTermsAcceptedPref(activity: Activity): Boolean {
+    return activity.applicationContext
+      .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      .getBoolean(PREF_TERMS_ACCEPTED, false)
+  }
+
+  private fun writeTermsAcceptedPref(activity: Activity) {
+    activity.applicationContext
+      .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+      .edit()
+      .putBoolean(PREF_TERMS_ACCEPTED, true)
+      .apply()
+  }
+
+  /** Start a navigation session. Initializes the Navigator on first call.
+   *
+   *  Suppresses the "Welcome to Google Maps Navigation" toast and the
+   *  "Don't forget to pay attention" reminder dialog by accepting Terms
+   *  & Conditions once via our own explicit dialog call, then reusing
+   *  that acceptance (`SKIPPED`) for every subsequent `getNavigator`. */
   fun start(
     activity: Activity,
     lat: Double,
@@ -90,12 +119,58 @@ object NavigationManager {
   ) {
     Log.d(TAG, "start lat=$lat lng=$lng simulate=$simulate speed=$speedMultiplier")
 
+    val sdkAccepted = NavigationApi.areTermsAccepted(activity.application)
+    val prefAccepted = readTermsAcceptedPref(activity)
+    Log.d(
+      TAG,
+      "T&C state — sdkAccepted=$sdkAccepted, prefAccepted=$prefAccepted, processFlag=$termsAcceptedThisProcess",
+    )
+
+    if (sdkAccepted || prefAccepted || termsAcceptedThisProcess) {
+      startNavigatorSkippingTerms(activity, lat, lng, simulate, speedMultiplier, callbacks)
+      return
+    }
+
+    // First start ever: show our own dialog so we control the listener
+    // and can record acceptance reliably both in-process and on disk.
+    NavigationApi.showTermsAndConditionsDialog(
+      activity,
+      "Mentra",
+      object : NavigationApi.OnTermsResponseListener {
+        override fun onTermsResponse(accepted: Boolean) {
+          Log.d(TAG, "T&C dialog response: accepted=$accepted")
+          if (!accepted) {
+            callbacks.onError("Navigation terms not accepted")
+            return
+          }
+          termsAcceptedThisProcess = true
+          writeTermsAcceptedPref(activity)
+          startNavigatorSkippingTerms(activity, lat, lng, simulate, speedMultiplier, callbacks)
+        }
+      },
+    )
+  }
+
+  private fun startNavigatorSkippingTerms(
+    activity: Activity,
+    lat: Double,
+    lng: Double,
+    simulate: Boolean,
+    speedMultiplier: Float,
+    callbacks: Callbacks,
+  ) {
     NavigationApi.getNavigator(
       activity,
       object : NavigationApi.NavigatorListener {
         override fun onNavigatorReady(nav: Navigator) {
           Log.d(TAG, "navigator ready")
           navigator = nav
+          // Silence the SDK's voice guidance — we render our own UI/HUD.
+          try {
+            nav.setAudioGuidance(Navigator.AudioGuidance.SILENT)
+          } catch (e: Throwable) {
+            Log.w(TAG, "setAudioGuidance(SILENT) failed", e)
+          }
           attachListeners(nav, callbacks)
           attachLocationListener(activity, callbacks)
           registerNavInfoUpdates(activity, nav)
@@ -108,6 +183,7 @@ object NavigationManager {
           callbacks.onError(msg)
         }
       },
+      TermsAndConditionsCheckOption.SKIPPED,
     )
   }
 

@@ -1011,15 +1011,17 @@ class LocalMiniappRuntime {
         return
       }
 
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      })
+      // Try the OS cache first — usually instant — and only fall back to
+      // a fresh fix if the cache is empty. Use Low accuracy on the fresh
+      // path so we get a cell/wifi-tower fix in ~1s instead of waiting
+      // for full GPS warm-up.
+      const cached = await Location.getLastKnownPositionAsync({maxAge: 60_000})
+      const location = cached ?? (await Location.getCurrentPositionAsync({accuracy: Location.Accuracy.Low}))
 
       this.sendResult(packageName, requestId, true, {
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-        altitude: location.coords.altitude,
-        accuracy: location.coords.accuracy,
+        lat: location.coords.latitude,
+        lng: location.coords.longitude,
+        accuracy: location.coords.accuracy ?? undefined,
         timestamp: location.timestamp,
       })
     } catch (err) {
