@@ -16,13 +16,14 @@ import {storage} from "@/utils/storage/storage"
  * never flash this route on the way there.
  */
 export default function LocalMiniAppPage() {
-  const {appName, packageName, version, devUrl, iconUrl, devPort} = useLocalSearchParams<{
+  const {appName, packageName, version, devUrl, iconUrl, devPort, manifestJson} = useLocalSearchParams<{
     appName: string
     packageName: string
     version?: string
     devUrl?: string
     iconUrl?: string
     devPort?: string
+    manifestJson?: string
   }>()
   const {goBack, setForceGestureEnabled} = useNavigationHistory()
 
@@ -53,26 +54,26 @@ export default function LocalMiniAppPage() {
       }
     }
 
-    let cancelled = false
-    ;(async () => {
-      const isDev = !!devUrl
-
-      if (isDev) {
-        // Reachability was pre-flighted by the entry point. Mount live.
-        await miniappHost.mountDev(packageName, devUrl, {
-          developerMode: true,
-          appName,
-          iconUrl,
-        })
+    if (devUrl) {
+      // Parse the pre-fetched manifest from route params so mountDev
+      // doesn't need a second network round-trip to get permissions.
+      let parsedManifest: {permissions?: Array<{type: string}>; hardwareRequirements?: Array<{type: string; level: string}>} | undefined
+      if (manifestJson) {
+        try { parsedManifest = JSON.parse(manifestJson) } catch { /* ignore */ }
+      }
+      // Reachability was pre-flighted by the entry point. Mount live.
+      // setForeground is called synchronously before the async mount so a
+      // re-render during the manifest fetch can't set cancelled=true and
+      // prevent the miniapp from ever becoming visible.
+      miniappHost.mountDev(packageName, devUrl, {
+        developerMode: true,
+        appName,
+        iconUrl,
+        manifest: parsedManifest,
+      }).then(() => {
         const portNum = resolveDevPort(devPort, packageName)
         if (portNum !== null) {
           devServerBridge.connect(packageName, devUrl, portNum)
-          // Background snapshot via Composer's standard install pipeline:
-          // fetches the dev server's bundle.zip, unpacks into
-          // lmas/<pkg>/dev-<timestamp>/, then GCs older dev-* dirs.
-          // refreshApplets is auto-fired by installMiniApp so the new
-          // dev-<ts> directory surfaces in the applet store on next render
-          // — that's what populates the home tray + switcher entry.
           const sidecarBase = buildSidecarBaseUrl(devUrl, portNum)
           if (sidecarBase) {
             const versionOverride = `dev-${Date.now()}`
@@ -88,34 +89,32 @@ export default function LocalMiniAppPage() {
           }
         }
         storage.save(`${packageName}_dev_last_reachable`, Date.now())
-      } else if (version) {
-        const bundleDir = composer.getBundleDir(packageName, version)
-        const bundleUri = `${bundleDir}/index.html`
-        // Read the bundle's manifest from disk so the runtime can gate
-        // SUBSCRIBE / one-shot calls against declared permissions. The
-        // mountDev path fetches this from the live server; the installed
-        // path reads from the unzipped bundle.
-        const manifest = composer.getMiniappManifest(packageName, version) as
-          | {permissions?: Array<{type: string; required?: boolean; description?: string}>; hardwareRequirements?: Array<{type: string; level: string; description?: string}>}
-          | null
-        miniappHost.mount(packageName, bundleUri, {
-          developerMode: false,
-          appName,
-          iconUrl,
-          manifest: manifest ?? undefined,
-        })
-      }
-
-      if (cancelled) return
+      })
       miniappHost.setForeground(packageName, {onClose: handleClose, onBack: handleBack})
-    })()
+    } else if (version) {
+      const bundleDir = composer.getBundleDir(packageName, version)
+      const bundleUri = `${bundleDir}/index.html`
+      // Read the bundle's manifest from disk so the runtime can gate
+      // SUBSCRIBE / one-shot calls against declared permissions. The
+      // mountDev path fetches this from the live server; the installed
+      // path reads from the unzipped bundle.
+      const manifest = composer.getMiniappManifest(packageName, version) as
+        | {permissions?: Array<{type: string; required?: boolean; description?: string}>; hardwareRequirements?: Array<{type: string; level: string; description?: string}>}
+        | null
+      miniappHost.mount(packageName, bundleUri, {
+        developerMode: false,
+        appName,
+        iconUrl,
+        manifest: manifest ?? undefined,
+      })
+      miniappHost.setForeground(packageName, {onClose: handleClose, onBack: handleBack})
+    }
 
     return () => {
-      cancelled = true
       // Background on navigate away, don't unmount — keep it alive
       miniappHost.setBackground(packageName)
     }
-  }, [packageName, version, devUrl, devPort, appName, iconUrl])
+  }, [packageName, version, devUrl, devPort, appName, iconUrl, manifestJson])
 
   // Track WebView navigation state so we know whether "back" should pop the
   // WebView stack or exit the miniapp.

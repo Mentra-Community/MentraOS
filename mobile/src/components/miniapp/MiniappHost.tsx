@@ -190,12 +190,17 @@ export default function MiniappHost() {
       //
       // Returns the parsed manifest (if fetch succeeded) so callers can feed
       // hardwareRequirements into the applets store for compatibility checks.
-      let manifest: MountDevManifest | undefined
-      try {
-        const res = await fetch(`${devUrl.replace(/\/$/, "")}/miniapp.json`)
-        manifest = (await res.json()) as MountDevManifest
-      } catch (err) {
-        console.warn(`MiniappHost: failed to fetch ${devUrl}/miniapp.json`, err)
+      let manifest: MountDevManifest | undefined = options?.manifest
+      if (!manifest) {
+        try {
+          const controller = new AbortController()
+          const timer = setTimeout(() => controller.abort(), 1500)
+          const res = await fetch(`${devUrl.replace(/\/$/, "")}/miniapp.json`, {signal: controller.signal})
+          clearTimeout(timer)
+          manifest = (await res.json()) as MountDevManifest
+        } catch (err) {
+          console.warn(`MiniappHost: failed to fetch ${devUrl}/miniapp.json`, err)
+        }
       }
 
       setApps((prev) => {

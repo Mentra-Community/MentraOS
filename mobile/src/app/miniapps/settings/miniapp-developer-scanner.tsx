@@ -183,6 +183,7 @@ export default function MiniappDeveloperScannerScreen() {
         appName: name,
         iconUrl,
         ...(devPort ? {devPort} : {}),
+        ...(manifest ? {manifestJson: JSON.stringify(manifest)} : {}),
       })
     } catch (error) {
       showAlert("Error", String(error), [{text: "OK", onPress: () => setScanned(false)}])

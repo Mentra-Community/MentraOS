@@ -180,22 +180,8 @@ export const AllProviders = withWrappers(
     return (
       <>
         {props.children}
-<<<<<<< HEAD
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            gestureEnabled: forceGestureEnabled || !preventBack,
-            gestureDirection: "horizontal",
-            animation: convertToNativeAnimation(animation) as any,
-            contentStyle: {backgroundColor: "transparent"},
-            // animation: "default",
-            // cardStyleInterpolator: getAnimation(animation),
-          }}
-        />
-        <MiniappHost />
-=======
         <Stack screenOptions={screenOptions} />
->>>>>>> dev
+        <MiniappHost />
       </>
     )
 

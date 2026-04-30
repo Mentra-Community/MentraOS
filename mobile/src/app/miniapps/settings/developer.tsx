@@ -177,7 +177,6 @@ export default function DeveloperSettingsScreen() {
             <RouteButton label="Test Mini App" subtitle="Test the Mini App" onPress={() => push("/test/mini-app")} />
 
             <RouteButton
-<<<<<<< HEAD
               label="Buffer Recording Debug"
               subtitle="Control 30-second video buffer on glasses"
               onPress={() => push("/miniapps/settings/buffer-debug")}
@@ -215,8 +214,6 @@ export default function DeveloperSettingsScreen() {
             />
 
             <RouteButton
-=======
->>>>>>> dev
               label="Clear Websocket"
               subtitle="Clear the Websocket"
               onPress={async () => {

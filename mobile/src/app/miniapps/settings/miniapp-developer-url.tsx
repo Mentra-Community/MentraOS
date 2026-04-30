@@ -98,6 +98,7 @@ export default function MiniappDeveloperUrlScreen() {
       devUrl: entry.url,
       appName: entry.name,
       iconUrl: entry.iconUrl,
+      manifestJson: JSON.stringify(launchResult.manifest),
     })
   }
 

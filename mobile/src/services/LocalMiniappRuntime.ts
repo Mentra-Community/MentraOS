@@ -40,7 +40,7 @@ import navigationService, {NavUpdate} from "@/services/NavigationService"
 import socketComms from "@/services/SocketComms"
 import {useGlassesStore} from "@/stores/glasses"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer as BackgroundTimer} from "@/utils/timers"
 
 // =============================================================================
 // Types

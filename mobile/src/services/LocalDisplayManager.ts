@@ -23,7 +23,7 @@ import CoreModule from "core"
 
 import displayProcessor from "@/services/DisplayProcessor"
 import {useDisplayStore} from "@/stores/display"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer as BackgroundTimer} from "@/utils/timers"
 
 // =============================================================================
 // Types
