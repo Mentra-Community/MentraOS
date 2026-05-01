@@ -16,7 +16,7 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@mentra/client": "file:../client"
+    "@mentra/client": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "latest",

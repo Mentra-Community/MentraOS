@@ -21,8 +21,8 @@
   },
   "dependencies": {
     "@logtail/pino": "^0.5.4",
-    "@mentra/types": "file:../types",
-    "@mentra/display-utils": "file:../display-utils",
+    "@mentra/types": "workspace:*",
+    "@mentra/display-utils": "workspace:*",
     "axios": "^1.8.1",
     "chalk": "^5.6.2",
     "dotenv": "^16.4.0",
@@ -60,8 +60,8 @@
     }
   },
   "devDependencies": {
-    "@mentra/client": "file:../client",
-    "@mentra/simulated-glasses": "file:../simulated-glasses",
+    "@mentra/client": "workspace:*",
+    "@mentra/simulated-glasses": "workspace:*",
     "@types/bun": "latest",
     "@types/jsonwebtoken": "^9.0.2",
     "@types/jsrsasign": "^10.5.15",
