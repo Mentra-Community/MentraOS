@@ -797,6 +797,7 @@ export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
                 devUrl,
                 appName,
                 transition: "zoom",
+                manifestJson: JSON.stringify(result.manifest),
               })
             } else {
               push("/applet/dev-offline", {

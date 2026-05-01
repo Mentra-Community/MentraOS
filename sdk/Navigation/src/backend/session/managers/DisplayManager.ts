@@ -16,15 +16,14 @@ export class DisplayManager {
     this.safeCall(() => this.session.display.showTextWall(text))
   }
 
-  /** Two stacked lines — top + bottom. */
-  showTwoLines(top: string, bottom: string): void {
-    this.safeCall(() => this.session.display.showDoubleTextWall(top, bottom))
-  }
+  // showTwoLines(top: string, bottom: string): void {
+  //   this.showText(`${top} / ${bottom}`)
+  // }
 
-  /** Title + body card. */
-  showCard(title: string, body: string): void {
-    this.safeCall(() => this.session.display.showReferenceCard(title, body))
-  }
+  // /** Title + body card. */
+  // showCard(title: string, body: string): void {
+  //   this.showText(`${title} — ${body}`)
+  // }
 
   /** Wipe whatever's on the glasses. */
   clear(): void {

@@ -54,9 +54,9 @@ export function NavigationPage() {
     const ctrl = new AbortController()
     previewAbortRef.current = ctrl
     const origin = {lat: coords.lat, lng: coords.lng}
-    fetchPreviewRoute(origin, {lat: destination.lat, lng: destination.lng}, ctrl.signal).then(
-      (pts) => { if (!ctrl.signal.aborted) setPreviewRoutePoints(pts) },
-    )
+    fetchPreviewRoute(origin, {lat: destination.lat, lng: destination.lng}, ctrl.signal).then((pts) => {
+      if (!ctrl.signal.aborted) setPreviewRoutePoints(pts)
+    })
     return () => ctrl.abort()
     // coords intentionally omitted — only re-fetch when destination changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -91,21 +91,32 @@ export function NavigationPage() {
 
   useEffect(() => {
     if (!running) {
-      display.clear()
+      console.log("[NAV-MINI] display.showText:", "hello world ")
+      display.showText("hello world ")
       return
     }
     if (status === "rerouting" || !maneuver) {
-      display.showText(status === "rerouting" ? "Rebuilding route…" : "Starting navigation…")
+      const msg = status === "rerouting" ? "Rebuilding route…" : "Starting navigation…"
+      console.log("[NAV-MINI] display.showText:", msg)
+      display.showText(msg)
       return
     }
     if (status === "arrived" || maneuver.maneuverType === "ARRIVE") {
       const dist = maneuver.distanceMeters
-      display.showCard("Arriving", dist > 0 ? `In ${formatDistance(dist)}` : "You have arrived")
+      const body = dist > 0 ? `In ${formatDistance(dist)}` : "You have arrived"
+      console.log("[NAV-MINI] display.showCard:", "Arriving", body)
+      display.showText(`Arriving ${body}` )
       return
     }
     const {now, next} = navigation.format.glassesLines(maneuver)
-    if (next) display.showTwoLines(now, next)
-    else display.showText(now)
+    if (next) {
+      console.log("[NAV-MINI] display.showTwoLines:", now, next)
+      display.showText(`${now}\n${next}`)
+
+    } else {
+      console.log("[NAV-MINI] display.showText:", now)
+      display.showText(now)
+    }
   }, [display, navigation, running, status, maneuver])
 
   // ---- subscription cleanup on unmount -----------------------------------
@@ -163,9 +174,7 @@ export function NavigationPage() {
     setRoutePoints(null)
     setPreviewRoutePoints(null)
     setBreadcrumbs([])
-    append(
-      `start → ${destination.name || `${latNum}, ${lngNum}`}${simulate ? ` (sim ${speedMultiplier}x)` : ""}`,
-    )
+    append(`start → ${destination.name || `${latNum}, ${lngNum}`}${simulate ? ` (sim ${speedMultiplier}x)` : ""}`)
 
     if (!navUpdateUnsubRef.current) {
       navUpdateUnsubRef.current = navigation.onUpdate(handleNavUpdate)
@@ -271,9 +280,7 @@ export function NavigationPage() {
       <FloatingDevPanel title="Navigation Dev" storageKey="NavigationPage:dev">
         <MyLocationCard coords={coords} />
         <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3">
-          <div className="text-[11px] font-bold tracking-wider text-neutral-500 uppercase">
-            🎯 Selected destination
-          </div>
+          <div className="text-[11px] font-bold tracking-wider text-neutral-500 uppercase">🎯 Selected destination</div>
           {destination ? (
             <>
               <div className="text-[14px] text-neutral-900 mt-1">
@@ -294,6 +301,14 @@ export function NavigationPage() {
           setSpeedMultiplier={setSpeedMultiplier}
           running={running}
         />
+        <button
+          onClick={() => {
+            console.log("[NAV-MINI] display.showText:", "go left")
+            display.showText("go left")
+          }}
+          className="w-full mt-2 mb-1 px-3 py-2.5 rounded-xl text-sm font-semibold border border-dashed border-blue-300 bg-blue-50 text-blue-900">
+          🧪 Send "go left" to glasses
+        </button>
         <button
           onClick={() => {
             // If no destination is picked yet, inject a fake one so the
@@ -319,13 +334,14 @@ export function NavigationPage() {
             }
             setRunning((r) => {
               if (r) setManeuver(null)
-              else setManeuver({
-                kind: "maneuver",
-                maneuverType: "TURN_RIGHT",
-                fromRoad: "Market St",
-                toRoad: "3rd St",
-                distanceMeters: 320,
-              } as NavManeuver)
+              else
+                setManeuver({
+                  kind: "maneuver",
+                  maneuverType: "TURN_RIGHT",
+                  fromRoad: "Market St",
+                  toRoad: "3rd St",
+                  distanceMeters: 320,
+                } as NavManeuver)
               return !r
             })
           }}
@@ -355,4 +371,3 @@ function formatUpdate(u: NavUpdate): string {
       return JSON.stringify(u)
   }
 }
-
