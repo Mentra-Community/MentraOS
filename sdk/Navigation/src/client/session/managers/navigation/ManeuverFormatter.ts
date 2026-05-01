@@ -123,14 +123,15 @@ export class ManeuverFormatter {
     const dist = m.distanceMeters
     const isStraightT = this.isStraight(m)
     const arrowed = (verb: string) => `${this.arrow(m.maneuverType)} ${verb}`
+    const toRoad = this.cleanRoad(m.toRoad, m.maneuverType)
 
     if (!isStraightT && dist >= 0 && dist <= IMMINENT_M) {
       const verb = this.humanize(m.maneuverType)
-      const onto = m.toRoad ? ` onto ${m.toRoad}` : ""
+      const onto = toRoad ? ` onto ${toRoad}` : ""
       return {now: arrowed(`${this.cap(verb)}${onto}`), next: null}
     }
 
-    const road = m.fromRoad?.trim()
+    const road = this.cleanRoad(m.fromRoad, m.maneuverType)
     const distStr = dist > 0 ? formatDistance(dist) : null
     const nowLine =
       road && distStr
@@ -145,7 +146,23 @@ export class ManeuverFormatter {
       return {now: nowLine, next: null}
     }
     const verb = this.humanize(m.maneuverType)
-    const onto = m.toRoad ? ` onto ${m.toRoad}` : ""
+    const onto = toRoad ? ` onto ${toRoad}` : ""
     return {now: nowLine, next: arrowed(`Then ${verb}${onto}`)}
+  }
+
+  /**
+   * Drop a "road name" that's actually the maneuver instruction. The
+   * Google Nav SDK falls back to its instruction text (e.g. "Turn left")
+   * when the underlying road has no name, and that bubbles all the way
+   * here — concatenated naively, you'd render "Turn left onto Turn left".
+   * Returns null when the road string is empty or duplicates the verb.
+   */
+  private cleanRoad(road: string | null | undefined, maneuverType: string): string | null {
+    const trimmed = road?.trim()
+    if (!trimmed) return null
+    const verb = this.humanize(maneuverType).toLowerCase()
+    const lower = trimmed.toLowerCase()
+    if (lower === verb || lower.startsWith(verb)) return null
+    return trimmed
   }
 }

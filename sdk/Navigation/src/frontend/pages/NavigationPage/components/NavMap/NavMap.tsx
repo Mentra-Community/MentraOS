@@ -10,7 +10,6 @@ export function NavMap({
   routePoints,
   breadcrumbs,
   autoFollow = true,
-  bottomInset = 0,
 }: {
   me: LatLng | null
   destination: LatLng | null
@@ -21,10 +20,6 @@ export function NavMap({
    *  small dots behind the position marker. */
   breadcrumbs?: Array<LatLng>
   autoFollow?: boolean
-  /** Pixels of the bottom of the viewport occluded by overlay UI (e.g.
-   *  the destination drawer). Floating map controls offset themselves
-   *  by this so they ride up with the drawer instead of being hidden. */
-  bottomInset?: number
 }) {
   const user = useUser()
   const ready = user.mapsReady
@@ -56,6 +51,11 @@ export function NavMap({
   const destMarkerRef = useRef<any | null>(null)
   const routeRef = useRef<any | null>(null)
   const crumbMarkersRef = useRef<any[]>([])
+  const isTouchingRef = useRef(false)
+  // Last rotation we pushed to the cone marker. Used to skip setIcon calls
+  // when the heading hasn't moved meaningfully (≥1°), since setIcon on a
+  // vector map re-tessellates the SVG path each call.
+  const lastConeRotationRef = useRef<number | null>(null)
 
   // Follow-user mode: starts from the `autoFollow` prop, breaks when the
   // user pans, and is re-engaged by the recenter button. Once broken, it
@@ -64,6 +64,11 @@ export function NavMap({
   useEffect(() => {
     setFollowUser(autoFollow)
   }, [autoFollow])
+
+  // Live map heading (0 = north-up). Mirrors `map.getHeading()` so the
+  // compass badge can rotate counter to it. Vector maps emit
+  // `heading_changed` whenever the user twists with two fingers.
+  const [mapHeading, setMapHeading] = useState(0)
 
   // One-time map init
   useEffect(() => {
@@ -85,35 +90,76 @@ export function NavMap({
     // User drag breaks follow-mode. Recenter button re-engages it.
     mapRef.current.addListener("dragstart", () => setFollowUser(false))
 
-    // Pinch-leak fix: when a 2-finger pinch ends and one finger remains,
-    // Google Maps' gesture state can keep zooming on the surviving finger's
-    // movement. We detect the pinch with a flag, and on touchend we
-    // suppress the next single-finger gesture by capturing/preventing
-    // touchmove until all fingers lift. This severs the pinch state.
+    // Mirror map heading into React state so the compass badge can
+    // rotate counter to it. Vector maps emit `heading_changed` on
+    // every two-finger twist tick. We unwrap the angle (carry it past
+    // ±360 instead of resetting) so the badge takes the short way
+    // across the 0/360 seam — otherwise crossing north visually spins
+    // the needle the long way around.
+    mapRef.current.addListener("heading_changed", () => {
+      const h = mapRef.current?.getHeading?.() ?? 0
+      setMapHeading((prev) => {
+        let delta = h - (((prev % 360) + 360) % 360)
+        if (delta > 180) delta -= 360
+        else if (delta < -180) delta += 360
+        return prev + delta
+      })
+    })
+    console.log("[NavMap] map init complete, initial heading:", mapRef.current.getHeading?.())
+
+    // Pinch-leak fix: Google Maps' gesture recognizer can stay in zoom mode
+    // after one finger lifts from a 2-finger pinch, so the surviving
+    // finger's pan keeps zooming. Suppressing events doesn't reset the
+    // recognizer — it just delays the bug. The reliable fix is to dispatch
+    // a synthetic `touchcancel` to the map's deepest touch target so the
+    // recognizer fully resets, then let the next touchstart begin a fresh
+    // gesture cleanly.
     let pinching = false
-    let suppressUntilLift = false
+    const cancelGesture = (e: TouchEvent) => {
+      const target = (e.target as Element | null) ?? container
+      try {
+        const synthetic = new TouchEvent("touchcancel", {
+          bubbles: true,
+          cancelable: false,
+          touches: [],
+          targetTouches: [],
+          changedTouches: [],
+        })
+        target.dispatchEvent(synthetic)
+      } catch {
+        // Some WebViews disallow synthetic TouchEvent construction. Fall
+        // back to a CustomEvent — Google Maps' recognizer treats any
+        // touchcancel-shaped event as a reset signal.
+        target.dispatchEvent(new Event("touchcancel", {bubbles: true}))
+      }
+    }
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length >= 2) pinching = true
     }
     const onTouchEnd = (e: TouchEvent) => {
       if (pinching && e.touches.length === 1) {
-        suppressUntilLift = true
-      }
-      if (e.touches.length === 0) {
+        // Pinch ended but a finger remains. Reset the recognizer so the
+        // surviving finger starts a fresh single-touch gesture.
+        cancelGesture(e)
         pinching = false
-        suppressUntilLift = false
-      }
-    }
-    const onTouchMove = (e: TouchEvent) => {
-      if (suppressUntilLift && e.touches.length === 1) {
-        e.stopPropagation()
-        e.preventDefault()
+      } else if (e.touches.length === 0) {
+        pinching = false
       }
     }
     container.addEventListener("touchstart", onTouchStart, {passive: true, capture: true})
     container.addEventListener("touchend", onTouchEnd, {passive: true, capture: true})
     container.addEventListener("touchcancel", onTouchEnd, {passive: true, capture: true})
-    container.addEventListener("touchmove", onTouchMove, {passive: false, capture: true})
+
+    // Skip GPS-driven panTo while the user is touching the map — otherwise
+    // every coords update fights the in-flight gesture. `isTouching` ref
+    // is read by the me-marker effect.
+    const onTouchActive = () => { isTouchingRef.current = true }
+    const onTouchInactive = (e: TouchEvent) => {
+      if (e.touches.length === 0) isTouchingRef.current = false
+    }
+    container.addEventListener("touchstart", onTouchActive, {passive: true, capture: true})
+    container.addEventListener("touchend", onTouchInactive, {passive: true, capture: true})
+    container.addEventListener("touchcancel", onTouchInactive, {passive: true, capture: true})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready])
 
@@ -138,32 +184,48 @@ export function NavMap({
     const pos = new g.maps.LatLng(me.lat, me.lng)
 
     if (effectiveHeading != null) {
-      const coneIcon = {
-        path: "M 0,-32 L 18,4 L 0,-2 L -18,4 Z",
-        fillColor: "#1a73e8",
-        fillOpacity: 0.55,
-        strokeColor: "#1a73e8",
-        strokeOpacity: 0.95,
-        strokeWeight: 2,
-        scale: 1,
-        rotation: effectiveHeading,
-        anchor: new g.maps.Point(0, 0),
-      }
+      const last = lastConeRotationRef.current
+      const rotationChanged = last == null || Math.abs(effectiveHeading - last) >= 1
       if (!meConeRef.current) {
         meConeRef.current = new g.maps.Marker({
           map: mapRef.current,
           position: pos,
           zIndex: 998,
-          icon: coneIcon,
+          icon: {
+            path: "M 0,-32 L 18,4 L 0,-2 L -18,4 Z",
+            fillColor: "#1a73e8",
+            fillOpacity: 0.55,
+            strokeColor: "#1a73e8",
+            strokeOpacity: 0.95,
+            strokeWeight: 2,
+            scale: 1,
+            rotation: effectiveHeading,
+            anchor: new g.maps.Point(0, 0),
+          },
           clickable: false,
         })
+        lastConeRotationRef.current = effectiveHeading
       } else {
         meConeRef.current.setPosition(pos)
-        meConeRef.current.setIcon(coneIcon)
+        if (rotationChanged) {
+          meConeRef.current.setIcon({
+            path: "M 0,-32 L 18,4 L 0,-2 L -18,4 Z",
+            fillColor: "#1a73e8",
+            fillOpacity: 0.55,
+            strokeColor: "#1a73e8",
+            strokeOpacity: 0.95,
+            strokeWeight: 2,
+            scale: 1,
+            rotation: effectiveHeading,
+            anchor: new g.maps.Point(0, 0),
+          })
+          lastConeRotationRef.current = effectiveHeading
+        }
       }
     } else if (meConeRef.current) {
       meConeRef.current.setMap(null)
       meConeRef.current = null
+      lastConeRotationRef.current = null
     }
 
     const dotIcon = {
@@ -186,7 +248,9 @@ export function NavMap({
       meDotRef.current.setPosition(pos)
     }
 
-    if (followUser) {
+    // Don't fight the user — skip GPS-driven panTo while a finger is on
+    // the map. The next GPS update after they lift will catch us up.
+    if (followUser && !isTouchingRef.current) {
       mapRef.current.panTo(pos)
     }
   }, [ready, me?.lat, me?.lng, effectiveHeading, followUser])
@@ -314,9 +378,26 @@ export function NavMap({
 
 
       {ready ? (
-        <div
-          className="absolute right-3 flex flex-col gap-2"
-          style={{bottom: bottomInset + 12}}>
+        <div className="absolute right-3 top-1/2 -translate-y-1/2 flex flex-col gap-2">
+          <button
+            type="button"
+            aria-label="Reset bearing to north"
+            onClick={() => {
+              mapRef.current?.setHeading?.(0)
+              setMapHeading(0)
+            }}
+            className="w-11 h-11 rounded-full bg-white shadow-md border border-neutral-200 flex items-center justify-center active:bg-neutral-100">
+            <svg
+              width="22"
+              height="22"
+              viewBox="0 0 24 24"
+              style={{transform: `rotate(${-mapHeading}deg)`}}>
+              <polygon points="12,3 15,13 12,11 9,13" fill="#d93025" />
+              <polygon points="12,21 9,11 12,13 15,11" fill="#5f6368" />
+              <text x="12" y="8" textAnchor="middle" fontSize="5" fontWeight="700" fill="#d93025" fontFamily="system-ui, -apple-system, sans-serif">N</text>
+            </svg>
+          </button>
+
           <button
             type="button"
             aria-label="Zoom in"
@@ -328,6 +409,7 @@ export function NavMap({
             }}>
             +
           </button>
+
           <button
             type="button"
             aria-label="Zoom out"
@@ -339,6 +421,7 @@ export function NavMap({
             }}>
             −
           </button>
+
           <button
             type="button"
             aria-label="Recenter on me"

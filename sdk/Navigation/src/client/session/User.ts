@@ -161,12 +161,48 @@ export class User {
       }),
     )
 
+    // Throttle compass updates to ~10Hz. The IMU pushes far more
+    // frequently than the UI can use, and every notify re-renders every
+    // useUser consumer (NavigationPage, NavMap, dev panel...). At 10Hz
+    // the cone redraw stays smooth without saturating the main thread
+    // during pinch/rotate gestures.
+    const HEADING_MIN_INTERVAL_MS = 100
+    let lastHeadingNotifyAt = 0
+    let pendingHeading: number | null = null
+    let pendingTimer: ReturnType<typeof setTimeout> | null = null
+    const flushHeading = () => {
+      pendingTimer = null
+      if (pendingHeading == null) return
+      this.heading = pendingHeading
+      pendingHeading = null
+      lastHeadingNotifyAt = Date.now()
+      this.notify()
+    }
     this.sensorUnsubs.push(
       this.compass.onUpdate((d) => {
-        this.heading = d.degrees
-        this.notify()
+        const now = Date.now()
+        const elapsed = now - lastHeadingNotifyAt
+        if (elapsed >= HEADING_MIN_INTERVAL_MS) {
+          this.heading = d.degrees
+          lastHeadingNotifyAt = now
+          this.notify()
+        } else {
+          // Queue the freshest sample to fire when the throttle window
+          // closes, so we don't drop the final heading on a fast burst.
+          pendingHeading = d.degrees
+          if (!pendingTimer) {
+            pendingTimer = setTimeout(flushHeading, HEADING_MIN_INTERVAL_MS - elapsed)
+          }
+        }
       }),
     )
+    // Cancel any pending throttle timer on dispose so we don't fire
+    // notify() against a torn-down store.
+    this.sensorUnsubs.push(() => {
+      if (pendingTimer) clearTimeout(pendingTimer)
+      pendingTimer = null
+      pendingHeading = null
+    })
 
     // Maps loads once on construction; poll its imperative API and
     // notify when it flips.

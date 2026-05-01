@@ -230,32 +230,6 @@ export function NavigationPage() {
 
   const me = coords ? {lat: coords.lat, lng: coords.lng} : null
 
-  // Tracks how many pixels of the bottom of the viewport are covered by
-  // the destination drawer, so floating map controls can ride up with it.
-  // A RAF loop reads the drawer's live position (drawer animates via
-  // motion's transform, so getBoundingClientRect reflects the in-flight
-  // value). Loop only runs while the drawer is mounted to keep cost low.
-  const drawerWrapRef = useRef<HTMLDivElement | null>(null)
-  const [drawerInset, setDrawerInset] = useState(0)
-  useEffect(() => {
-    if (!destination) {
-      setDrawerInset(0)
-      return
-    }
-    let raf = 0
-    const tick = () => {
-      const node = drawerWrapRef.current?.firstElementChild as HTMLElement | null
-      if (node) {
-        const rect = node.getBoundingClientRect()
-        const visible = Math.max(0, window.innerHeight - rect.top)
-        setDrawerInset(visible)
-      }
-      raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [destination])
-
   return (
     <div className="fixed inset-0 overflow-hidden ">
       <NavMap
@@ -264,7 +238,6 @@ export function NavigationPage() {
         routePoints={running ? routePoints : previewRoutePoints}
         breadcrumbs={breadcrumbs}
         autoFollow={running}
-        bottomInset={drawerInset}
       />
 
       {/* Top floating stack — search bar, then orientation card while running. */}
@@ -289,22 +262,20 @@ export function NavigationPage() {
         </div>
       </div>
 
-      <div ref={drawerWrapRef}>
-        <DestinationDrawer
-          destination={destination}
-          me={me}
-          running={running}
-          canStart={!!destination}
-          simulate={simulate}
-          speedMultiplier={speedMultiplier}
-          onStart={handleStart}
-          onStop={handleStop}
-          onClose={() => {
-            setDestination(null)
-            if (!running) setActiveDestination(null)
-          }}
-        />
-      </div>
+      <DestinationDrawer
+        destination={destination}
+        me={me}
+        running={running}
+        canStart={!!destination}
+        simulate={simulate}
+        speedMultiplier={speedMultiplier}
+        onStart={handleStart}
+        onStop={handleStop}
+        onClose={() => {
+          setDestination(null)
+          if (!running) setActiveDestination(null)
+        }}
+      />
 
       <FloatingDevPanel title="Navigation Dev" storageKey="NavigationPage:dev">
         <MyLocationCard coords={coords} />
