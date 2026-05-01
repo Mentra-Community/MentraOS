@@ -317,8 +317,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         let connected = boolValue(glassesValues["connected"]) ?? false
         let fullyBooted = boolValue(glassesValues["fullyBooted"]) ?? boolValue(glassesValues["fully_booted"])
         let searching = boolValue(bluetoothValues["searching"]) ?? false
-        let batteryLevel = intValue(glassesValues["batteryLevel"] ?? glassesValues["battery_level"])
+        let reportedBatteryLevel = intValue(glassesValues["batteryLevel"] ?? glassesValues["battery_level"])
             .map { min(max($0, 0), 100) }
+        let batteryLevel = connected ? reportedBatteryLevel : nil
         let charging = boolValue(glassesValues["charging"])
         let wifiConnected = boolValue(glassesValues["wifiConnected"] ?? glassesValues["wifi_connected"])
         let wifiSsid = stringValue(glassesValues, keys: ["wifiSsid", "wifi_ssid"])
@@ -329,7 +330,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 imageName: imageName(for: modelName),
                 connectionText: connectionText(connected: connected, fullyBooted: fullyBooted),
                 bluetoothText: bluetoothText(searching: searching, connected: connected),
-                batteryText: batteryText(level: batteryLevel, charging: charging),
+                batteryText: batteryText(level: batteryLevel, charging: charging, connected: connected),
                 batteryLevel: batteryLevel.map(Double.init),
                 wifiText: wifiText(connected: wifiConnected, ssid: wifiSsid),
                 isConnected: connected && fullyBooted != false,
@@ -399,7 +400,11 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         return "Bluetooth idle"
     }
 
-    private func batteryText(level: Int?, charging: Bool?) -> String {
+    private func batteryText(level: Int?, charging: Bool?, connected: Bool) -> String {
+        if !connected {
+            return "Not connected"
+        }
+
         guard let level else {
             return "Waiting for status"
         }

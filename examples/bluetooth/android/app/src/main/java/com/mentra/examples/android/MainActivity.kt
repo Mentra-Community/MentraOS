@@ -1105,9 +1105,14 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
                     strokeColor =
                         if (searching == true) Color.argb(115, 244, 183, 85) else Color.argb(36, 255, 250, 240),
                 )
-            val batteryLevel = intValue(glassesValues["batteryLevel"])?.takeIf { it >= 0 }?.coerceAtMost(100)
+            val batteryLevel =
+                if (connected == true) {
+                    intValue(glassesValues["batteryLevel"])?.takeIf { it >= 0 }?.coerceAtMost(100)
+                } else {
+                    null
+                }
             val charging = boolValue(glassesValues["charging"])
-            previewBatteryText.text = formatPreviewBattery(batteryLevel, charging)
+            previewBatteryText.text = formatPreviewBattery(batteryLevel, charging, connected == true)
             setPreviewBatteryProgress(batteryLevel)
             previewWifiText.text = formatPreviewWifi()
             updateMicStatus()
@@ -1124,7 +1129,8 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
             else -> R.drawable.unknown_wearable
         }
 
-    private fun formatPreviewBattery(level: Int?, charging: Boolean?): String {
+    private fun formatPreviewBattery(level: Int?, charging: Boolean?, connected: Boolean): String {
+        if (!connected) return "Not connected"
         if (level == null) return "Waiting for status"
         return "$level%${if (charging == true) " charging" else ""}"
     }

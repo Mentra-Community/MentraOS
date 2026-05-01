@@ -83,7 +83,11 @@ export default function App() {
 
   useEffect(() => {
     const removeGlasses = BluetoothSdk.onGlassesStatus((changed) => {
-      setGlassesStatus((current) => ({ ...current, ...changed }));
+      setGlassesStatus((current) =>
+        changed.connected === false
+          ? disconnectedGlassesStatus(changed)
+          : { ...current, ...changed },
+      );
     });
 
     const removeBluetooth = BluetoothSdk.onCoreStatus((changed) => {
@@ -472,7 +476,10 @@ export default function App() {
               active={activeAction === "Disconnect"}
               title="Disconnect"
               onPress={() =>
-                void runAction("Disconnect", () => BluetoothSdk.disconnect())
+                void runAction("Disconnect", async () => {
+                  await BluetoothSdk.disconnect();
+                  setGlassesStatus(disconnectedGlassesStatus({ connected: false }));
+                })
               }
             />
           </Section>
@@ -932,6 +939,25 @@ function cacheBustedUrl(url: string) {
   return `${url}${separator}poll=${Date.now()}`;
 }
 
+function disconnectedGlassesStatus(
+  changed: Partial<GlassesStatus>,
+): Partial<GlassesStatus> {
+  return {
+    ...changed,
+    batteryLevel: -1,
+    caseBatteryLevel: -1,
+    caseCharging: false,
+    caseOpen: false,
+    caseRemoved: true,
+    charging: false,
+    connected: false,
+    fullyBooted: false,
+    wifiConnected: false,
+    wifiLocalIp: "",
+    wifiSsid: "",
+  };
+}
+
 function formatConnectionStatus(status: Partial<GlassesStatus>) {
   if (status.connectionState) {
     return status.connectionState;
@@ -954,6 +980,10 @@ function formatDeviceLabel(status: Partial<GlassesStatus>) {
 }
 
 function formatBatteryStatus(status: Partial<GlassesStatus>) {
+  if (status.connected === false) {
+    return "Not connected";
+  }
+
   const batteryLevel = normalizedBatteryLevel(status);
   if (batteryLevel === null) {
     return "Waiting for status";
@@ -1004,7 +1034,11 @@ function previewImageSource(model: string) {
 }
 
 function normalizedBatteryLevel(status: Partial<GlassesStatus>) {
-  if (typeof status.batteryLevel !== "number" || status.batteryLevel < 0) {
+  if (
+    status.connected === false ||
+    typeof status.batteryLevel !== "number" ||
+    status.batteryLevel < 0
+  ) {
     return null;
   }
 
