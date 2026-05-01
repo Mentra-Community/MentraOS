@@ -11,6 +11,7 @@
 		A10000000000000000000001 /* MentraBareIosExampleApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000011 /* MentraBareIosExampleApp.swift */; };
 		A10000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000012 /* ContentView.swift */; };
 		A10000000000000000000003 /* BluetoothViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000013 /* BluetoothViewModel.swift */; };
+		A10000000000000000000100 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000101 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -21,6 +22,7 @@
 		A10000000000000000000012 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A10000000000000000000013 /* BluetoothViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BluetoothViewModel.swift; sourceTree = "<group>"; };
 		A10000000000000000000014 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A10000000000000000000101 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		CA281437BB6B0FA7F47A0616 /* Pods_MentraBareIosExample.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_MentraBareIosExample.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -63,6 +65,7 @@
 				A10000000000000000000012 /* ContentView.swift */,
 				A10000000000000000000013 /* BluetoothViewModel.swift */,
 				A10000000000000000000014 /* Info.plist */,
+				A10000000000000000000101 /* Assets.xcassets */,
 			);
 			path = MentraBareIosExample;
 			sourceTree = "<group>";
@@ -144,6 +147,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A10000000000000000000100 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
