@@ -1,19 +1,16 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import DontHaveGlassesSvg from "@assets/glasses/dont-have.svg"
 import HaveGlassesSvg from "@assets/glasses/have.svg"
-import {TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
+import {TouchableOpacity, View} from "react-native"
 import {SvgProps} from "react-native-svg"
 
 import {Screen, Text} from "@/components/ignite"
-import {Spacer} from "@/components/ui/Spacer"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {TxKeyPath} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {ThemedStyle} from "@/theme"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
-
-// Import SVG components
+import GlassView from "@/components/ui/GlassView"
 
 const CardButton = ({
   onPress,
@@ -23,53 +20,21 @@ const CardButton = ({
   onPress: () => void
   tx: string
   SvgComponent: React.FC<SvgProps>
-}) => {
-  const {themed} = useAppTheme()
-  return (
-    <TouchableOpacity activeOpacity={0.6} onPress={onPress} style={themed($cardButton)}>
-      <View style={themed($cardButtonImageContainer)}>
+}) => (
+  <TouchableOpacity activeOpacity={0.6} onPress={onPress}>
+    <GlassView className="p-4 h-[190px] rounded-2xl justify-center items-center bg-primary-foreground">
+      <View className="w-[120px] h-[60px] items-center justify-center mb-2">
         <SvgComponent width={120} height={60} />
       </View>
-      <Text tx={tx as TxKeyPath} style={themed($cardButtonText)} />
-    </TouchableOpacity>
-  )
-}
-
-const $cardButton: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.background,
-  flex: 1,
-  maxHeight: 190,
-  borderRadius: spacing.s6,
-  padding: 16,
-  shadowColor: "#000",
-  shadowOffset: {
-    width: 0,
-    height: 2,
-  },
-  shadowOpacity: 0.03,
-  shadowRadius: 3.84,
-  alignItems: "center",
-  justifyContent: "center",
-  gap: spacing.s4,
-})
-
-const $cardButtonImageContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  width: 120,
-  height: 60,
-  marginRight: spacing.s2,
-  alignItems: "center",
-  justifyContent: "center",
-})
-
-const $cardButtonText: ThemedStyle<TextStyle> = ({colors}) => ({
-  color: colors.secondary_foreground,
-  fontSize: 20,
-})
+      <Text tx={tx as TxKeyPath} className="text-[20px] text-secondary_foreground" />
+    </GlassView>
+  </TouchableOpacity>
+)
 
 export default function OnboardingWelcome() {
-  const {theme, themed} = useAppTheme()
   const {push} = useNavigationHistory()
   const [_onboarding, setOnboardingCompleted] = useSetting(SETTINGS.onboarding_completed.key)
+  const {theme} = useAppTheme()
 
   // User has smart glasses - go to glasses selection screen
   const handleHasGlasses = async () => {
@@ -89,19 +54,18 @@ export default function OnboardingWelcome() {
   }
 
   return (
-    <Screen
-      preset="fixed"
-      backgroundColor={theme.colors.primary_foreground}
-      style={[{paddingHorizontal: theme.spacing.s2}]}
-      safeAreaEdges={["top"]}>
-      <View style={themed($logoContainer)}>
+    <Screen preset="fixed" className="px-6" safeAreaEdges={["top"]}>
+      <View className="items-center justify-center mt-6 mb-8">
         <MentraLogoStandalone width={100} height={48} />
       </View>
 
-      <View style={themed($infoContainer)}>
-        <Text style={themed($title)} tx="onboarding:welcome" className="font-semibold" />
+      <View className="items-center w-full justify-center">
+        <Text
+          tx="onboarding:welcome"
+          className="text-[30px] leading-[30px] text-center text-secondary_foreground font-semibold"
+        />
         <View className="h-4" />
-        <Text style={themed($subtitle)} tx="onboarding:doYouHaveGlasses" />
+        <Text tx="onboarding:doYouHaveGlasses" className="text-[20px] text-center text-secondary_foreground" />
       </View>
       <View className="h-12" />
       <CardButton onPress={handleHasGlasses} tx="onboarding:haveGlasses" SvgComponent={HaveGlassesSvg} />
@@ -110,31 +74,3 @@ export default function OnboardingWelcome() {
     </Screen>
   )
 }
-
-const $logoContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  alignSelf: "center",
-  alignItems: "center",
-  justifyContent: "center",
-  marginTop: spacing.s6,
-  marginBottom: spacing.s8,
-})
-
-const $infoContainer: ThemedStyle<ViewStyle> = () => ({
-  alignItems: "center",
-  flex: 0,
-  justifyContent: "center",
-  width: "100%",
-})
-
-const $title: ThemedStyle<TextStyle> = ({colors}) => ({
-  fontSize: 30,
-  lineHeight: 30,
-  textAlign: "center",
-  color: colors.secondary_foreground,
-})
-
-const $subtitle: ThemedStyle<TextStyle> = ({colors}) => ({
-  fontSize: 20,
-  textAlign: "center",
-  color: colors.secondary_foreground,
-})

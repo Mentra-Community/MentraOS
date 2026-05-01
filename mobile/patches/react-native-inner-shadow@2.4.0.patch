@@ -1,0 +1,36 @@
+diff --git a/lib/commonjs/components/BaseShadowComponent.js b/lib/commonjs/components/BaseShadowComponent.js
+index 7d07e9a257a575aba2fd86febe60c052add65053..7716c6b72baefb6a1eb7da9151b15d1e63b90ce2 100644
+--- a/lib/commonjs/components/BaseShadowComponent.js
++++ b/lib/commonjs/components/BaseShadowComponent.js
+@@ -50,6 +50,7 @@ const BaseShadowComponent = exports.BaseShadowComponent = /*#__PURE__*/(0, _reac
+     style: [flatStyle, _constants.COMMON_STYLES.canvasContainer],
+     onLayout: onLayout,
+     children: [canRenderCanvas && /*#__PURE__*/(0, _jsxRuntime.jsx)(_reactNativeSkia.Canvas, {
++      pointerEvents: "none",
+       style: [_constants.COMMON_STYLES.canvas, {
+         width: layout.width + _constants.CANVAS_PADDING * 2,
+         height: layout.height + _constants.CANVAS_PADDING * 2
+diff --git a/lib/module/components/BaseShadowComponent.js b/lib/module/components/BaseShadowComponent.js
+index 9dd37a5949962ae0eed4c08f2f58839c47ea6d16..6b487cc565e97f724eaf3bb02157a057a46cea57 100644
+--- a/lib/module/components/BaseShadowComponent.js
++++ b/lib/module/components/BaseShadowComponent.js
+@@ -46,6 +46,7 @@ export const BaseShadowComponent = /*#__PURE__*/memo(function BaseShadowComponen
+     style: [flatStyle, COMMON_STYLES.canvasContainer],
+     onLayout: onLayout,
+     children: [canRenderCanvas && /*#__PURE__*/_jsx(Canvas, {
++      pointerEvents: "none",
+       style: [COMMON_STYLES.canvas, {
+         width: layout.width + CANVAS_PADDING * 2,
+         height: layout.height + CANVAS_PADDING * 2
+diff --git a/src/components/BaseShadowComponent.tsx b/src/components/BaseShadowComponent.tsx
+index a55e729535f3be1a7437ce4fa9b5f4d5518b2b62..475a7c692a7162ab8b0c752fedbda548628c535e 100644
+--- a/src/components/BaseShadowComponent.tsx
++++ b/src/components/BaseShadowComponent.tsx
+@@ -54,6 +54,7 @@ export const BaseShadowComponent = memo(function BaseShadowComponent({
+     >
+       {canRenderCanvas && (
+         <Canvas
++          pointerEvents="none"
+           style={[
+             COMMON_STYLES.canvas,
+             {

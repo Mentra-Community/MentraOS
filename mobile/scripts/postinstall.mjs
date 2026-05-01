@@ -3,7 +3,7 @@
 console.log('Running postinstall...');
 
 // Patch packages (--error-on-fail to allow version mismatches - patches are iOS-only anyway)
-await $({ stdio: 'inherit', nothrow: true })`patch-package`;
+// await $({ stdio: 'inherit', nothrow: true })`patch-package`;
 
 console.log('Building core module...');
 // Workspace setup hoists deps to root node_modules — per-module `bun install`

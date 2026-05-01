@@ -94,7 +94,7 @@ export function RouteButton({
 
   return (
     <GlassView className="bg-primary-foreground px-4 rounded-2xl" style={[disabled && {opacity: 0.5}, style]}>
-      <TouchableOpacity onPress={onPress} disabled={disabled || !onPress}>
+      <TouchableOpacity onPress={onPress} disabled={disabled || !onPress} hitSlop={4}>
         <View className="items-center py-2 flex-row">
           <View
             style={{

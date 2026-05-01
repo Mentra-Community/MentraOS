@@ -23,7 +23,7 @@ import GlassView from "@/components/ui/GlassView"
 export default function SelectGlassesBluetoothScreen() {
   const {deviceModel}: {deviceModel: string} = useLocalSearchParams()
   const {theme} = useAppTheme()
-  const {goBack, replace, pushUnder} = useNavigationHistory()
+  const {goBack, replace, pushUnder, push} = useNavigationHistory()
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
   const btcConnected = useGlassesStore((state) => state.btcConnected)
   const [_deviceName, setDeviceName] = useSetting(SETTINGS.device_name.key)
@@ -91,7 +91,8 @@ export default function SelectGlassesBluetoothScreen() {
       setTimeout(() => {
         CoreModule.connectByName(deviceName)
       }, 2000)
-      replace("/pairing/loading", {deviceModel: deviceModel, deviceName: deviceName})
+      push("/pairing/loading", {deviceModel: deviceModel, deviceName: deviceName})
+      // push("/pairing/success", {deviceModel: deviceModel})
       return
     }
 

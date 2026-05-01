@@ -216,11 +216,11 @@ const GlassesDisplayMirror: React.FC<GlassesDisplayMirrorProps> = ({
       return null
     }
     return (
-      <GlassView className="bg-primary-foreground" style={[themed($glassesScreen), style]}>
+      <View style={[themed($glassesScreen), style]}>
         <View style={themed($emptyContainer)}>
           <Text style={themed($emptyText)}>{fallbackMessage}</Text>
         </View>
-      </GlassView>
+      </View>
     )
   }
 
@@ -239,7 +239,7 @@ const $glassesScreen: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   width: "100%",
   minHeight: 170,
   maxHeight: 170,
-  backgroundColor: colors.primary_foreground,
+  backgroundColor: colors.primary,
   borderRadius: spacing.s4,
   paddingHorizontal: spacing.s2,
   paddingVertical: spacing.s3,

@@ -256,7 +256,7 @@ export default function Glasses() {
   }
 
   return (
-    <Screen preset="fixed">
+    <Screen preset="fixed" extraAndroidInsets>
       <Header
         title={translate("deviceSettings:title")}
         subtitle={pageSubtitle}

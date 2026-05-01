@@ -28,6 +28,7 @@ import {useDebugStore} from "@/stores/debug"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
 import {logE2EMetric} from "@/utils/e2eMetrics"
 import {useAppletStatusStore} from "@/stores/applets"
+import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 
 const LOCATION_TASK_NAME = "handleLocationUpdates"
 
@@ -134,6 +135,8 @@ class MantleManager {
       const initialCoreSettings = useSettingsStore.getState().getCoreSettings()
       CoreModule.updateCore(initialCoreSettings) // send settings to core
       console.log("MANTLE: Settings sent to core")
+      // settings are now in native; safe to attempt auto-connect
+      attemptReconnectToDefaultWearable()
     }, 1000)
 
     this.initServices()

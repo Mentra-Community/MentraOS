@@ -4,7 +4,6 @@ import {FC, ReactNode, createContext, useContext, useEffect} from "react"
 import {AppState, Platform} from "react-native"
 
 import {NavObject, useNavigationHistory, getCurrentRoute} from "@/contexts/NavigationHistoryContext"
-import {useSplashLoader} from "@/contexts/SplashLoaderProvider"
 import {useAppletStatusStore} from "@/stores/applets"
 import mentraAuth from "@/utils/auth/authClient"
 import {BgTimer} from "@/utils/timers"
@@ -428,7 +427,6 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
     getCurrentRoute,
     getCurrentParams,
   } = useNavigationHistory()
-  const {setSplashEnabled} = useSplashLoader()
   const config = {
     scheme: "com.mentra",
     host: "apps.mentra.glass",
@@ -620,13 +618,8 @@ export const DeeplinkProvider: FC<{children: ReactNode}> = ({children}) => {
           getCurrentRoute,
           getCurrentParams,
         }
-        setSplashEnabled(true)
-        BgTimer.setTimeout(async () => {
-          await matchedRoute.handler(url, params, navObject)
-          setTimeout(() => {
-            setSplashEnabled(false)
-          }, 2500)
-        }, 100)
+        await matchedRoute.handler(url, params, navObject)
+        
       } catch (error) {
         console.warn("Route handler failed, router may not be ready:", error)
       }

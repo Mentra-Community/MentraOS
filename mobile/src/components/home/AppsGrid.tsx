@@ -195,9 +195,9 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
       if (app.hidden) {
         return false
       }
-      // if (!app.compatibility?.isCompatible) {
-      //   return false
-      // }
+      if (!app.compatibility?.isCompatible) {
+        return false
+      }
       return true
     })
 

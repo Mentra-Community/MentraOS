@@ -9,6 +9,7 @@ import {useMemo} from "react"
 import {Platform} from "react-native"
 import {AsyncResult, result as Res, Result} from "typesafe-ts"
 import {create} from "zustand"
+import {subscribeWithSelector} from "zustand/middleware"
 import * as Sentry from "@sentry/react-native"
 
 import {getCurrentRoute, push} from "@/contexts/NavigationHistoryContext"
@@ -552,404 +553,414 @@ const startStopApplet = (applet: ClientAppletInterface, status: boolean): AsyncR
   }
 }
 
-export const useAppletStatusStore = create<AppStatusState>((set, get) => ({
-  apps: [],
-
-  retryStartApp: async (packageName: string) => {
-    // Re-send start request and set up polling (used by error screen retry)
-    if (refreshInterval) {
-      BgTimer.clearInterval(refreshInterval)
-      refreshInterval = null
+// Rebuilds menu_apps from the user's saved menu order, refreshing each item's
+// running flag against the current applets list. Falls back to default menu if
+// nothing is saved.
+const syncMenuAppsRunningState = async () => {
+  const apps = useAppletStatusStore.getState().apps
+  const state = useSettingsStore.getState()
+  let menuItems = (await state.getSetting(SETTINGS.menu_apps.key)) as GlassesMenuItem[]
+  if (!menuItems) {
+    menuItems = await getDefaultMenuApps(apps)
+  }
+  const itemsForNative = menuItems.map((item: GlassesMenuItem) => {
+    const app = apps.find((a) => a.packageName === item.packageName)
+    return {
+      name: item.name,
+      packageName: item.packageName,
+      running: app?.running ?? false,
     }
-    let pollCount = 0
-    const MAX_POLLS = 6
-    refreshInterval = BgTimer.setInterval(() => {
-      pollCount++
-      useAppletStatusStore.getState().refreshApplets()
-      if (pollCount >= MAX_POLLS) {
-        if (refreshInterval) {
-          BgTimer.clearInterval(refreshInterval)
-          refreshInterval = null
+  })
+  state.setSetting(SETTINGS.menu_apps.key, itemsForNative)
+}
+
+export const useAppletStatusStore = create<AppStatusState>()(
+  subscribeWithSelector((set, get) => ({
+    apps: [],
+
+    retryStartApp: async (packageName: string) => {
+      // Re-send start request and set up polling (used by error screen retry)
+      if (refreshInterval) {
+        BgTimer.clearInterval(refreshInterval)
+        refreshInterval = null
+      }
+      let pollCount = 0
+      const MAX_POLLS = 6
+      refreshInterval = BgTimer.setInterval(() => {
+        pollCount++
+        useAppletStatusStore.getState().refreshApplets()
+        if (pollCount >= MAX_POLLS) {
+          if (refreshInterval) {
+            BgTimer.clearInterval(refreshInterval)
+            refreshInterval = null
+          }
+        }
+      }, 1000)
+      const applet = get().apps.find((app) => app.packageName === packageName)
+      const startResult = await restComms.startApp(packageName)
+      if (startResult.is_error() && applet) {
+        console.error(`Failed to retry start applet ${packageName}: ${startResult.error}`)
+        // Skip bug-report for dev miniapps — it's the developer's own code,
+        // not actionable in the incident pipeline.
+        if (!applet.isMiniappDev) {
+          void submitMiniappStartFailedBugReport(applet, startResult.error, "retry_start")
         }
       }
-    }, 1000)
-    const applet = get().apps.find((app) => app.packageName === packageName)
-    const startResult = await restComms.startApp(packageName)
-    if (startResult.is_error() && applet) {
-      console.error(`Failed to retry start applet ${packageName}: ${startResult.error}`)
-      // Skip bug-report for dev miniapps — it's the developer's own code,
-      // not actionable in the incident pipeline.
-      if (!applet.isMiniappDev) {
-        void submitMiniappStartFailedBugReport(applet, startResult.error, "retry_start")
+    },
+
+    refreshApplets: async () => {
+      const state = get()
+      console.log(`APPLETS: refreshApplets()`)
+      // cancel any pending refresh timeouts:
+      if (refreshTimeout) {
+        BgTimer.clearTimeout(refreshTimeout)
+        refreshTimeout = null
       }
-    }
-  },
 
-  refreshApplets: async () => {
-    const state = get()
-    console.log(`APPLETS: refreshApplets()`)
-    // cancel any pending refresh timeouts:
-    if (refreshTimeout) {
-      BgTimer.clearTimeout(refreshTimeout)
-      refreshTimeout = null
-    }
+      let onlineApps: ClientAppletInterface[] = []
+      let res = await restComms.getApplets()
+      if (res.is_error()) {
+        console.error(`APPLETS: Failed to get applets: ${res.error}`)
+        Sentry.captureException(res.error)
+        // Bail out instead of replacing the store with an empty list. On transient
+        // failures (WS reconnecting, server 503, offline) we'd otherwise flip
+        // every app's running flag to false, cascading into a "Cannot reach"
+        // error screen for any open miniapp webview. The server is the source
+        // of truth — if we can't reach it, keep the last known state.
+        return
+      } else {
+        // convert to the client applet interface:
+        onlineApps = res.value.map((app) => ({
+          ...app,
+          loading: false,
+          offline: false,
+          offlineRoute: "",
+          local: false,
+          hidden: false,
+          hardwareRequirements: [
+            ...app.hardwareRequirements,
+            {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
+          ],
+        }))
+      }
 
-    let onlineApps: ClientAppletInterface[] = []
-    let res = await restComms.getApplets()
-    if (res.is_error()) {
-      console.error(`APPLETS: Failed to get applets: ${res.error}`)
-      Sentry.captureException(res.error)
-      // Bail out instead of replacing the store with an empty list. On transient
-      // failures (WS reconnecting, server 503, offline) we'd otherwise flip
-      // every app's running flag to false, cascading into a "Cannot reach"
-      // error screen for any open miniapp webview. The server is the source
-      // of truth — if we can't reach it, keep the last known state.
-      return
-    } else {
-      // convert to the client applet interface:
-      onlineApps = res.value.map((app) => ({
-        ...app,
-        loading: false,
-        offline: false,
-        offlineRoute: "",
-        local: false,
-        hidden: false,
-        hardwareRequirements: [
-          ...app.hardwareRequirements,
-          {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
-        ],
+      // Dev miniapps come from composer.getLocalApplets() — their dev-<ts>
+      // version directory IS the persistence (see miniapp-dev-applets-as-installed-apps-plan.md).
+      // No parallel devApplets merge.
+      let applets: ClientAppletInterface[] = [
+        ...onlineApps,
+        ...(await getOfflineApplets()),
+        ...(await composer.getLocalApplets()),
+      ]
+
+      // remove duplicates and keep the online versions:
+      const packageNameMap = new Map<string, ClientAppletInterface>()
+      applets.forEach((app) => {
+        const existing = packageNameMap.get(app.packageName)
+        if (!existing) {
+          packageNameMap.set(app.packageName, app)
+        }
+      })
+      applets = Array.from(packageNameMap.values())
+
+      // add in any existing screenshots:
+      let oldApplets = useAppletStatusStore.getState().apps
+      oldApplets.forEach((app) => {
+        if (app.screenshot) {
+          for (const applet of applets) {
+            if (applet.packageName === app.packageName) {
+              applet.screenshot = app.screenshot
+            }
+          }
+        }
+      })
+
+      // add in the compatibility info:
+      let defaultWearable = useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key) || DeviceTypes.NONE
+      let capabilities = getModelCapabilities(defaultWearable)
+
+      for (const applet of applets) {
+        // console.log(`APPLETS: ${defaultWearable} ${applet.packageName} ${JSON.stringify(applet.hardwareRequirements)}`)
+        let result = HardwareCompatibility.checkCompatibility(applet.hardwareRequirements, capabilities)
+        applet.compatibility = result
+      }
+
+      for (const applet of applets) {
+        applet.hidden = state.getHiddenStatus(applet.packageName)
+      }
+
+      // Platform-specific app filtering and routing
+      applets = applets.filter((applet) => {
+        // Notify is not supported on iOS yet - remove entirely
+        if (Platform.OS === "ios" && applet.packageName === notifyPackageName) {
+          return false
+        }
+        return true
+      })
+      for (const applet of applets) {
+        if (applet.packageName === notifyPackageName) {
+          // On Android, route to notification settings instead of generic webview settings
+          applet.offlineRoute = "/miniapps/settings/notifications"
+        }
+      }
+
+      await syncMenuAppsRunningState()
+
+      set({apps: applets})
+    },
+
+    startApplet: async (applet: ClientAppletInterface, options?: {skipNavigation?: boolean}) => {
+      const packageName = applet.packageName
+
+      if (!applet) {
+        console.error(`Applet not found for package name: ${packageName}`)
+        return
+      }
+
+      // do nothing if any applet is currently loading:
+      if (get().apps.some((a) => a.loading)) {
+        console.log(`APPLETS: Skipping start applet ${packageName} because another applet is currently loading`)
+        return
+      }
+
+      // console.log(`APPLETS: Starting applet ${packageName}`, applet.compatibility)
+      // console.log(`APPLETS: All apps: ${applet}`)
+
+      // show incompatible alert if the applet is incompatible:
+      if (!applet.compatibility?.isCompatible) {
+        // if one of the missing types is EXIST, show a specific message:
+        const missingTypes = applet.compatibility?.missingRequired?.map((req) => req.type) || []
+        if (missingTypes.includes(HardwareType.EXIST)) {
+          await showAlert({
+            title: translate("home:glassesRequired"),
+            buttons: [{text: translate("common:ok")}],
+            message: translate("home:glassesRequiredMessage", {app: applet.name}),
+          })
+          return
+        }
+        const missingHardware =
+          missingTypes
+            .filter((t) => t !== HardwareType.EXIST)
+            .map((t) => t.toLowerCase())
+            .join(", ") || "required features"
+
+        await showAlert({
+          title: translate("home:hardwareIncompatible"),
+          buttons: [{text: translate("common:ok")}],
+          message: translate("home:hardwareIncompatibleMessage", {
+            app: applet.name,
+            missing: missingHardware,
+          }),
+        })
+
+        return
+      }
+
+      // Handle foreground apps - only one can run at a time
+      if (applet.type === "standard") {
+        const runningForegroundApps = get().apps.filter(
+          (app) => app.running && app.type === "standard" && app.packageName !== packageName,
+        )
+
+        console.log(`Found ${runningForegroundApps.length} running foreground apps to stop`)
+
+        // Stop all other running foreground apps (both online and offline)
+        for (const runningApp of runningForegroundApps) {
+          console.log(`Stopping foreground app: ${runningApp.name} (${runningApp.packageName})`)
+
+          startStopApplet(runningApp, false)
+        }
+      }
+
+      // offline apps should not need to load:
+      let shouldLoad = !applet.offline && !applet.local
+
+      // Start the new app
+      set((state) => ({
+        apps: state.apps.map((a) => (a.packageName === packageName ? {...a, running: true, loading: shouldLoad} : a)),
       }))
-    }
 
-    // Dev miniapps come from composer.getLocalApplets() — their dev-<ts>
-    // version directory IS the persistence (see miniapp-dev-applets-as-installed-apps-plan.md).
-    // No parallel devApplets merge.
-    let applets: ClientAppletInterface[] = [
-      ...onlineApps,
-      ...(await getOfflineApplets()),
-      ...(await composer.getLocalApplets()),
-    ]
-
-    // remove duplicates and keep the online versions:
-    const packageNameMap = new Map<string, ClientAppletInterface>()
-    applets.forEach((app) => {
-      const existing = packageNameMap.get(app.packageName)
-      if (!existing) {
-        packageNameMap.set(app.packageName, app)
-      }
-    })
-    applets = Array.from(packageNameMap.values())
-
-    // add in any existing screenshots:
-    let oldApplets = useAppletStatusStore.getState().apps
-    oldApplets.forEach((app) => {
-      if (app.screenshot) {
-        for (const applet of applets) {
-          if (applet.packageName === app.packageName) {
-            applet.screenshot = app.screenshot
+      // open the app webview if it has one:
+      if (!options?.skipNavigation) {
+        // only open if the current route is home:
+        const currentRoute = getCurrentRoute()
+        if (currentRoute === "/home") {
+          saveLastOpenTime(applet.packageName)
+          if (applet.offlineRoute) {
+            push(applet.offlineRoute, {transition: "zoom"})
+          } else if (applet.offline) {
+            // offline app with no route - nothing to navigate to
+          } else if (applet.isMiniappDev && applet.devUrl) {
+            // Dev miniapps: pre-flight the dev server's reachability so we
+            // land on the right route in one transition. /applet/local
+            // assumes the server is up; /applet/dev-offline takes over
+            // when it isn't. Without the pre-flight, tapping a tile while
+            // the dev server is down briefly flashes /applet/local before
+            // it replaces to dev-offline.
+            const devUrl = applet.devUrl
+            const packageName = applet.packageName
+            const appName = applet.name
+            const logoUrl = applet.logoUrl
+            void decideDevLaunchRoute(packageName, devUrl).then((result) => {
+              if (result.decision === "live") {
+                push("/applet/local", {
+                  packageName,
+                  devUrl,
+                  appName,
+                  transition: "zoom",
+                })
+              } else {
+                push("/applet/dev-offline", {
+                  packageName,
+                  name: appName,
+                  iconUrl: logoUrl,
+                })
+              }
+            })
+          } else if (applet.local) {
+            push("/applet/local", {
+              packageName: applet.packageName,
+              version: applet.version,
+              appName: applet.name,
+              transition: "zoom",
+            })
+          } else if (applet.webviewUrl && applet.healthy) {
+            // Check if app has webviewURL and navigate directly to it
+            push("/applet/webview", {
+              webviewURL: applet.webviewUrl,
+              appName: applet.name,
+              packageName: applet.packageName,
+              transition: "zoom",
+            })
+          } else {
+            // open settings page
+            push("/applet/settings", {
+              packageName: applet.packageName,
+              appName: applet.name,
+              transition: "zoom",
+            })
           }
         }
       }
-    })
 
-    // add in the compatibility info:
-    let defaultWearable = useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key) || DeviceTypes.NONE
-    let capabilities = getModelCapabilities(defaultWearable)
-
-    for (const applet of applets) {
-      // console.log(`APPLETS: ${defaultWearable} ${applet.packageName} ${JSON.stringify(applet.hardwareRequirements)}`)
-      let result = HardwareCompatibility.checkCompatibility(applet.hardwareRequirements, capabilities)
-      applet.compatibility = result
-    }
-
-    for (const applet of applets) {
-      applet.hidden = state.getHiddenStatus(applet.packageName)
-    }
-
-    // Platform-specific app filtering and routing
-    applets = applets.filter((applet) => {
-      // Notify is not supported on iOS yet - remove entirely
-      if (Platform.OS === "ios" && applet.packageName === notifyPackageName) {
-        return false
-      }
-      return true
-    })
-    for (const applet of applets) {
-      if (applet.packageName === notifyPackageName) {
-        // On Android, route to notification settings instead of generic webview settings
-        applet.offlineRoute = "/miniapps/settings/notifications"
-      }
-    }
-
-    let menuItems = (await useSettingsStore.getState().getSetting(SETTINGS.menu_apps.key)) as GlassesMenuItem[]
-    if (!menuItems) {
-      menuItems = await getDefaultMenuApps(applets)
-    }
-    const itemsForNative = menuItems.map((item: GlassesMenuItem) => {
-      const app = applets.find((a) => a.packageName === item.packageName)
-      return {
-        name: item.name,
-        packageName: item.packageName,
-        running: app?.running ?? false,
-      }
-    })
-    useSettingsStore.getState().setSetting(SETTINGS.menu_apps.key, itemsForNative)
-
-    set({apps: applets})
-  },
-
-  startApplet: async (applet: ClientAppletInterface, options?: {skipNavigation?: boolean}) => {
-    const packageName = applet.packageName
-
-    if (!applet) {
-      console.error(`Applet not found for package name: ${packageName}`)
-      return
-    }
-
-    // do nothing if any applet is currently loading:
-    if (get().apps.some((a) => a.loading)) {
-      console.log(`APPLETS: Skipping start applet ${packageName} because another applet is currently loading`)
-      return
-    }
-
-    // console.log(`APPLETS: Starting applet ${packageName}`, applet.compatibility)
-    // console.log(`APPLETS: All apps: ${applet}`)
-
-    // show incompatible alert if the applet is incompatible:
-    if (!applet.compatibility?.isCompatible) {
-      // if one of the missing types is EXIST, show a specific message:
-      const missingTypes = applet.compatibility?.missingRequired?.map((req) => req.type) || []
-      if (missingTypes.includes(HardwareType.EXIST)) {
-        await showAlert({
-          title: translate("home:glassesRequired"),
-          buttons: [{text: translate("common:ok")}],
-          message: translate("home:glassesRequiredMessage", {app: applet.name}),
-        })
+      const result = await startStopApplet(applet, true)
+      if (result.is_error()) {
+        console.error(`Failed to start applet ${applet.packageName}: ${result.error}`)
+        // Skip bug-report for dev miniapps — it's the developer's own code,
+        // not actionable in the incident pipeline.
+        if (!applet.isMiniappDev) {
+          void submitMiniappStartFailedBugReport(applet, result.error, "initial_start")
+        }
+        set((state) => ({
+          apps: state.apps.map((a) => (a.packageName === packageName ? {...a, running: false, loading: false} : a)),
+        }))
         return
       }
-      const missingHardware =
-        missingTypes
-          .filter((t) => t !== HardwareType.EXIST)
-          .map((t) => t.toLowerCase())
-          .join(", ") || "required features"
 
-      await showAlert({
-        title: translate("home:hardwareIncompatible"),
-        buttons: [{text: translate("common:ok")}],
-        message: translate("home:hardwareIncompatibleMessage", {
-          app: applet.name,
-          missing: missingHardware,
-        }),
-      })
+      await useSettingsStore.getState().setSetting(SETTINGS.has_ever_activated_app.key, true)
+    },
 
-      return
-    }
-
-    // Handle foreground apps - only one can run at a time
-    if (applet.type === "standard") {
-      const runningForegroundApps = get().apps.filter(
-        (app) => app.running && app.type === "standard" && app.packageName !== packageName,
-      )
-
-      console.log(`Found ${runningForegroundApps.length} running foreground apps to stop`)
-
-      // Stop all other running foreground apps (both online and offline)
-      for (const runningApp of runningForegroundApps) {
-        console.log(`Stopping foreground app: ${runningApp.name} (${runningApp.packageName})`)
-
-        startStopApplet(runningApp, false)
+    stopApplet: async (packageName: string) => {
+      const applet = get().apps.find((a) => a.packageName === packageName)
+      if (!applet) {
+        console.error(`Applet with package name ${packageName} not found`)
+        return
       }
-    }
 
-    // offline apps should not need to load:
-    let shouldLoad = !applet.offline && !applet.local
+      // Dev-loaded miniapps: tear down the WebView. The entry stays — it's
+      // owned by Composer's filesystem scan via the dev-<ts>/ directory and
+      // will continue to render in the tray (running: false) until the user
+      // explicitly removes it via long-press → uninstallApplet. The miniapp
+      // never went through normal install, so startStopApplet has nothing to
+      // do server-side.
+      if (applet.isMiniappDev) {
+        miniappHost.unmount(packageName)
+        return
+      }
 
-    // Start the new app
-    set((state) => ({
-      apps: state.apps.map((a) => (a.packageName === packageName ? {...a, running: true, loading: shouldLoad} : a)),
-    }))
+      let shouldLoad = !applet.offline && !applet.local
+      set((state) => ({
+        apps: state.apps.map((a) =>
+          a.packageName === packageName ? {...a, running: false, screenshot: undefined, loading: shouldLoad} : a,
+        ),
+      }))
 
-    // open the app webview if it has one:
-    if (!options?.skipNavigation) {
-      // only open if the current route is home:
-      const currentRoute = getCurrentRoute()
-      if (currentRoute === "/home") {
-        saveLastOpenTime(applet.packageName)
-        if (applet.offlineRoute) {
-          push(applet.offlineRoute, {transition: "zoom"})
-        } else if (applet.offline) {
-          // offline app with no route - nothing to navigate to
-        } else if (applet.isMiniappDev && applet.devUrl) {
-          // Dev miniapps: pre-flight the dev server's reachability so we
-          // land on the right route in one transition. /applet/local
-          // assumes the server is up; /applet/dev-offline takes over
-          // when it isn't. Without the pre-flight, tapping a tile while
-          // the dev server is down briefly flashes /applet/local before
-          // it replaces to dev-offline.
-          const devUrl = applet.devUrl
-          const packageName = applet.packageName
-          const appName = applet.name
-          const logoUrl = applet.logoUrl
-          void decideDevLaunchRoute(packageName, devUrl).then((result) => {
-            if (result.decision === "live") {
-              push("/applet/local", {
-                packageName,
-                devUrl,
-                appName,
-                transition: "zoom",
-              })
-            } else {
-              push("/applet/dev-offline", {
-                packageName,
-                name: appName,
-                iconUrl: logoUrl,
-              })
-            }
-          })
-        } else if (applet.local) {
-          push("/applet/local", {
-            packageName: applet.packageName,
-            version: applet.version,
-            appName: applet.name,
-            transition: "zoom",
-          })
-        } else if (applet.webviewUrl && applet.healthy) {
-          // Check if app has webviewURL and navigate directly to it
-          push("/applet/webview", {
-            webviewURL: applet.webviewUrl,
-            appName: applet.name,
-            packageName: applet.packageName,
-            transition: "zoom",
-          })
-        } else {
-          // open settings page
-          push("/applet/settings", {
-            packageName: applet.packageName,
-            appName: applet.name,
-            transition: "zoom",
-          })
+      startStopApplet(applet, false)
+    },
+
+    uninstallApplet: async (packageName: string) => {
+      const applet = get().apps.find((a) => a.packageName === packageName)
+      if (!applet) {
+        console.error(`Applet with package name ${packageName} not found`)
+        return
+      }
+
+      if (applet.running) {
+        await startStopApplet(applet, false)
+      }
+
+      if (applet.isMiniappDev) {
+        // Dev miniapps live entirely on-device: delete the lmas/<pkg>/ tree
+        // (this also wipes any dev-* caches inside it) plus the MMKV keys.
+        // The cloud has no knowledge of dev miniapps, so no restComms call.
+        // composer.uninstallMiniApp already sets refreshNeeded internally.
+        const res = await composer.uninstallMiniApp(packageName)
+        if (res.is_error()) {
+          console.error(`Failed to uninstall dev miniapp ${packageName}:`, res.error)
         }
-      }
-    }
-
-    const result = await startStopApplet(applet, true)
-    if (result.is_error()) {
-      console.error(`Failed to start applet ${applet.packageName}: ${result.error}`)
-      // Skip bug-report for dev miniapps — it's the developer's own code,
-      // not actionable in the incident pipeline.
-      if (!applet.isMiniappDev) {
-        void submitMiniappStartFailedBugReport(applet, result.error, "initial_start")
+        storage.remove(`${packageName}_dev_url`)
+        storage.remove(`${packageName}_dev_port`)
+        storage.remove(`${packageName}_dev_last_reachable`)
+        storage.remove(`${packageName}_active_version`)
+      } else {
+        await restComms.uninstallApp(packageName)
       }
       set((state) => ({
-        apps: state.apps.map((a) => (a.packageName === packageName ? {...a, running: false, loading: false} : a)),
+        apps: state.apps.filter((a) => a.packageName !== packageName),
       }))
-      return
-    }
+    },
 
-    await useSettingsStore.getState().setSetting(SETTINGS.has_ever_activated_app.key, true)
-  },
-
-  stopApplet: async (packageName: string) => {
-    const applet = get().apps.find((a) => a.packageName === packageName)
-    if (!applet) {
-      console.error(`Applet with package name ${packageName} not found`)
-      return
-    }
-
-    // Dev-loaded miniapps: tear down the WebView. The entry stays — it's
-    // owned by Composer's filesystem scan via the dev-<ts>/ directory and
-    // will continue to render in the tray (running: false) until the user
-    // explicitly removes it via long-press → uninstallApplet. The miniapp
-    // never went through normal install, so startStopApplet has nothing to
-    // do server-side.
-    if (applet.isMiniappDev) {
-      miniappHost.unmount(packageName)
-      return
-    }
-
-    let shouldLoad = !applet.offline && !applet.local
-    set((state) => ({
-      apps: state.apps.map((a) =>
-        a.packageName === packageName ? {...a, running: false, screenshot: undefined, loading: shouldLoad} : a,
-      ),
-    }))
-
-    startStopApplet(applet, false)
-  },
-
-  uninstallApplet: async (packageName: string) => {
-    const applet = get().apps.find((a) => a.packageName === packageName)
-    if (!applet) {
-      console.error(`Applet with package name ${packageName} not found`)
-      return
-    }
-
-    if (applet.running) {
-      await startStopApplet(applet, false)
-    }
-
-    if (applet.isMiniappDev) {
-      // Dev miniapps live entirely on-device: delete the lmas/<pkg>/ tree
-      // (this also wipes any dev-* caches inside it) plus the MMKV keys.
-      // The cloud has no knowledge of dev miniapps, so no restComms call.
-      // composer.uninstallMiniApp already sets refreshNeeded internally.
-      const res = await composer.uninstallMiniApp(packageName)
-      if (res.is_error()) {
-        console.error(`Failed to uninstall dev miniapp ${packageName}:`, res.error)
+    setHiddenStatus: (packageName: string, status: boolean) => {
+      set((state) => ({
+        apps: state.apps.map((a) => (a.packageName === packageName ? {...a, hidden: status} : a)),
+      }))
+      storage.save(`${packageName}_hidden`, status)
+      if (!status) {
+        // update the order map to remove the entry for the package name:
+        const orderMap = getAppsOrder()
+        if (orderMap.is_ok()) {
+          delete orderMap.value[packageName]
+          saveAppsOrder(orderMap.value)
+        }
       }
-      storage.remove(`${packageName}_dev_url`)
-      storage.remove(`${packageName}_dev_port`)
-      storage.remove(`${packageName}_dev_last_reachable`)
-      storage.remove(`${packageName}_active_version`)
-    } else {
-      await restComms.uninstallApp(packageName)
-    }
-    set((state) => ({
-      apps: state.apps.filter((a) => a.packageName !== packageName),
-    }))
-  },
+    },
 
-  setHiddenStatus: (packageName: string, status: boolean) => {
-    set((state) => ({
-      apps: state.apps.map((a) => (a.packageName === packageName ? {...a, hidden: status} : a)),
-    }))
-    storage.save(`${packageName}_hidden`, status)
-    if (!status) {
-      // update the order map to remove the entry for the package name:
-      const orderMap = getAppsOrder()
-      if (orderMap.is_ok()) {
-        delete orderMap.value[packageName]
-        saveAppsOrder(orderMap.value)
+    getHiddenStatus: (packageName: string): boolean => {
+      const hidden = storage.load<boolean>(`${packageName}_hidden`)
+      if (hidden.is_ok()) {
+        return hidden.value
       }
-    }
-  },
+      return false
+    },
 
-  getHiddenStatus: (packageName: string): boolean => {
-    const hidden = storage.load<boolean>(`${packageName}_hidden`)
-    if (hidden.is_ok()) {
-      return hidden.value
-    }
-    return false
-  },
+    stopAllApplets: (): AsyncResult<void, Error> => {
+      return Res.try_async(async () => {
+        const runningApps = get().apps.filter((app) => app.running)
 
-  stopAllApplets: (): AsyncResult<void, Error> => {
-    return Res.try_async(async () => {
-      const runningApps = get().apps.filter((app) => app.running)
+        for (const app of runningApps) {
+          await get().stopApplet(app.packageName)
+        }
+      })
+    },
 
-      for (const app of runningApps) {
-        await get().stopApplet(app.packageName)
-      }
-    })
-  },
-
-  saveScreenshot: async (packageName: string, screenshot: string) => {
-    storage.save(`${packageName}_screenshot`, screenshot)
-    set((state) => ({
-      apps: state.apps.map((a) => (a.packageName === packageName ? {...a, screenshot} : a)),
-    }))
-  },
-
-}))
+    saveScreenshot: async (packageName: string, screenshot: string) => {
+      storage.save(`${packageName}_screenshot`, screenshot)
+      set((state) => ({
+        apps: state.apps.map((a) => (a.packageName === packageName ? {...a, screenshot} : a)),
+      }))
+    },
+  })),
+)
 
 // When MiniappHost mounts or unmounts a local miniapp, project that into
 // the store's `running` field for matching local applets so the home tray
@@ -992,6 +1003,27 @@ useSettingsStore.subscribe(
     if (changed) {
       useAppletStatusStore.setState({apps: updatedApps})
     }
+  },
+)
+
+// Refresh menu_apps running flags whenever the running set changes
+useAppletStatusStore.subscribe(
+  (state) => state.apps.filter((app) => app.running).map((a) => a.packageName).join("|"),
+  () => {
+    syncMenuAppsRunningState()
+  },
+)
+
+// Refresh menu_apps running flags whenever the menu_apps list itself changes
+// (e.g. user reorders or edits the menu). Compare by package-name identity to
+// avoid re-firing on the helper's own writes when running flags didn't change.
+useSettingsStore.subscribe(
+  (state) =>
+    ((state.settings[SETTINGS.menu_apps.key] as GlassesMenuItem[] | undefined) ?? [])
+      .map((i) => i.packageName)
+      .join("|"),
+  () => {
+    syncMenuAppsRunningState()
   },
 )
 

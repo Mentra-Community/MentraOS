@@ -986,6 +986,7 @@ class G2 : SGCManager() {
     private var leftInitialized: Boolean = false
     private var rightInitialized: Boolean = false
     private var isDisconnecting = false
+    private var pairingTimeoutRunnable: Runnable? = null
 
     // Device search
     private var DEVICE_SEARCH_ID = "NOT_SET"
@@ -2211,11 +2212,30 @@ class G2 : SGCManager() {
         Bridge.log("G2: connectById($id)")
         DEVICE_SEARCH_ID = id
         startScan()
+        startPairingTimeout()
+    }
+
+    private fun startPairingTimeout() {
+        pairingTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        val work = Runnable {
+            if (leftGatt != null && rightGatt == null) {
+                Bridge.log("G2: pairing timeout — found LEFT but not RIGHT")
+                Bridge.sendPairFailureEvent("errors:pairNeedDisconnect")
+            }
+        }
+        pairingTimeoutRunnable = work
+        mainHandler.postDelayed(work, 10_000)
+    }
+
+    private fun cancelPairingTimeout() {
+        pairingTimeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+        pairingTimeoutRunnable = null
     }
 
     override fun disconnect() {
         Bridge.log("G2: disconnect()")
         isDisconnecting = true
+        cancelPairingTimeout()
         stopScan()
         stopHeartbeats()
         reconnectionManager.stop()
@@ -2501,6 +2521,7 @@ class G2 : SGCManager() {
                             // Stop scanning once we have both
                             if (leftGatt != null && rightGatt != null) {
                                 stopScan()
+                                cancelPairingTimeout()
                                 Bridge.log("G2: Stopped scan after discovering both devices2")
                             }
                         }

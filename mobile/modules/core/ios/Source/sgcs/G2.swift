@@ -1060,6 +1060,7 @@ class G2: NSObject, SGCManager {
     private var leftInitialized: Bool = false
     private var rightInitialized: Bool = false
     private var isDisconnecting = false
+    private var pairingTimeoutTimer: DispatchWorkItem?
 
     /// Device search
     var DEVICE_SEARCH_ID = "NOT_SET"
@@ -1238,6 +1239,19 @@ class G2: NSObject, SGCManager {
     }
 
     // MARK: - Authentication Sequence
+
+    private func authLeft() {
+        // Auth to left side
+        if leftPeripheral != nil && leftWriteChar != nil {
+            let authL = DevSettingsProto.authCmd(magicRandom: sendManager.nextMagicRandom())
+            sendDevSettingsCommand(authL, left: true, right: false)
+        }
+    }
+
+    private func authRight() {
+        let authR = DevSettingsProto.authCmd(magicRandom: sendManager.nextMagicRandom())
+        sendDevSettingsCommand(authR, left: false, right: true)
+    }
 
     private func runAuthSequence() {
         Bridge.log("G2: Running auth sequence")
@@ -2262,11 +2276,31 @@ class G2: NSObject, SGCManager {
         Bridge.log("G2: connectById(\(id))")
         DEVICE_SEARCH_ID = id
         startScan()
+        startPairingTimeout()
+    }
+
+    private func startPairingTimeout() {
+        pairingTimeoutTimer?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            if self.leftPeripheral != nil && self.rightPeripheral == nil {
+                Bridge.log("G2: pairing timeout — found LEFT but not RIGHT")
+                Bridge.sendPairFailureEvent("errors:pairNeedDisconnect")
+            }
+        }
+        pairingTimeoutTimer = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: work)
+    }
+
+    private func cancelPairingTimeout() {
+        pairingTimeoutTimer?.cancel()
+        pairingTimeoutTimer = nil
     }
 
     func disconnect() {
         Bridge.log("G2: disconnect()")
         isDisconnecting = true
+        cancelPairingTimeout()
         stopHeartbeats()
         Task { await reconnectionManager.stop() }
 
@@ -3375,6 +3409,7 @@ extension G2: CBCentralManagerDelegate {
             // Stop scanning once we have both
             if self.leftPeripheral != nil && self.rightPeripheral != nil {
                 self.stopScan()
+                self.cancelPairingTimeout()
             }
         }
     }

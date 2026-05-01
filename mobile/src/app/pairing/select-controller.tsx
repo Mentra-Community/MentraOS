@@ -89,7 +89,7 @@ export default function SelectControllerScreen() {
                     source={getGlassesImage(controller.deviceModel)}
                     className="w-[180px] max-h-[80px] object-contain"
                   />
-                  <Text className="text-[16px] text-foreground" text={controller.deviceModel} />
+                  <Text className="text-2xl text-foreground" adjustsFontSizeToFit text={controller.deviceModel} />
                 </View>
               </GlassView>
             </TouchableOpacity>

@@ -1,7 +1,7 @@
 import CoreModule from "core"
 import {useLocalSearchParams} from "expo-router"
 import {useEffect} from "react"
-import {View, ViewStyle, TextStyle} from "react-native"
+import {View} from "react-native"
 import Animated, {useAnimatedStyle, useSharedValue, withTiming} from "react-native-reanimated"
 import Icon from "react-native-vector-icons/FontAwesome"
 
@@ -10,10 +10,9 @@ import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {TxKeyPath} from "@/i18n"
 import {translate} from "@/i18n/translate"
-import {ThemedStyle} from "@/theme"
 
 export default function PairingFailureScreen() {
-  const {themed, theme} = useAppTheme()
+  const {theme} = useAppTheme()
   const {clearHistory, replace, clearHistoryAndGoHome} = useNavigationHistory()
 
   const {error, deviceModel}: {error: string; deviceModel?: string} = useLocalSearchParams()
@@ -42,86 +41,40 @@ export default function PairingFailureScreen() {
   }
 
   return (
-    <Screen preset="fixed" style={themed($screen)}>
+    <Screen preset="fixed" className="" safeAreaEdges={["top", "bottom"]}>
       <Header />
 
-      <Animated.View style={[themed($container), animatedContainerStyle]}>
-        <View style={themed($iconContainer)}>
-          <Icon name="exclamation-circle" size={80} color={theme.colors.error} />
+      <Animated.View style={animatedContainerStyle} className="flex-1 items-center justify-center px-4">
+        <View
+          className="p-6 rounded-[130px] mb-8 w-[130px] h-[130px] items-center justify-center"
+          style={{backgroundColor: theme.colors.errorBackground || theme.colors.palette.angry100}}
+        >
+          <Icon name="exclamation-circle" size={80} color={theme.colors.chart_5} />
         </View>
 
-        <Text tx="pairing:pairingFailed" preset="heading" style={themed($title)} />
+        <Text tx="pairing:pairingFailed" preset="heading" className="text-[28px] font-bold mb-4 text-center text-text" />
 
         <Text
           text={translate(error as TxKeyPath, {glassesModel: deviceModel || "glasses"})}
           preset="default"
-          style={themed($description)}
+          className="text-[16px] text-center mb-12 leading-6 px-4 text-text-dim"
         />
 
-        <View style={themed($buttonContainer)}>
-          <Button tx="common:tryAgain" preset="primary" onPress={handleRetry} style={themed($button)} />
+        <View className="w-full gap-3 flex-grow items-end justify-end">
+          <Button tx="common:tryAgain" preset="primary" onPress={handleRetry} className="w-full" />
 
-          <Button tx="pairing:goHome" preset="alternate" onPress={handleGoHome} style={themed($button)} />
+          <Button tx="pairing:goHome" preset="alternate" onPress={handleGoHome} className="w-full" />
         </View>
 
-        {/* <View style={themed($helpContainer)}>
+        {/* <View className="flex-row items-center mt-8">
           <Icon name="info-circle" size={16} color={theme.colors.textDim} />
           <Text
             text="Make sure your glasses are powered on and in pairing mode"
             preset="formHelper"
-            style={themed($helpText)}
+            className="ml-2 text-xs text-text-dim"
           />
         </View> */}
       </Animated.View>
     </Screen>
   )
 }
-
-const $screen: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  paddingHorizontal: spacing.s4,
-})
-
-const $container: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  flex: 1,
-  alignItems: "center",
-  justifyContent: "center",
-  paddingHorizontal: spacing.s4,
-})
-
-const $iconContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  padding: spacing.s6,
-  borderRadius: 130,
-  backgroundColor: colors.errorBackground || colors.palette.angry100,
-  marginBottom: spacing.s8,
-  width: 130,
-  height: 130,
-  alignItems: "center",
-  justifyContent: "center",
-})
-
-const $title: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: 28,
-  fontWeight: "bold",
-  marginBottom: spacing.s4,
-  textAlign: "center",
-  color: colors.text,
-})
-
-const $description: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: 16,
-  textAlign: "center",
-  marginBottom: spacing.s12,
-  lineHeight: 24,
-  paddingHorizontal: spacing.s4,
-  color: colors.textDim,
-})
-
-const $buttonContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  width: "100%",
-  paddingHorizontal: spacing.s4,
-  gap: spacing.s3,
-})
-
-const $button: ThemedStyle<ViewStyle> = () => ({
-  width: "100%",
-})

@@ -814,6 +814,7 @@ const en = {
     pairingBatteryTooLow:
       "The battery on your {{glassesModel}} is too low to pair. Please charge your {{glassesModel}} to at least 25% and try again.",
     invalidEmail: "Invalid email address.",
+    pairNeedDisconnect: "Pairing failed. Please make sure to disconnect your glasses in your phone's Bluetooth settings before trying again.",
   },
   common: {
     ok: "OK",

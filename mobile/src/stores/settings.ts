@@ -583,7 +583,7 @@ const CORE_SETTINGS_KEYS: string[] = [
   SETTINGS.auto_brightness.key,
   SETTINGS.dashboard_height.key,
   SETTINGS.dashboard_depth.key,
-  // SETTINGS.menu_apps.key,
+  SETTINGS.menu_apps.key,
   // button:
   SETTINGS.button_mode.key,
   SETTINGS.button_photo_size.key,
