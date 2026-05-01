@@ -57,6 +57,11 @@ export class User {
   private version = 0
   private subscribers: Set<() => void> = new Set()
 
+  /** Sensor subscription handles, released in `dispose()`. */
+  private sensorUnsubs: Array<() => void> = []
+  /** True after `dispose()`; prevents double-teardown. */
+  private disposed = false
+
   private constructor() {
     this.session = new MiniappSession()
     this.session.connect().catch((err) => {
@@ -68,6 +73,16 @@ export class User {
     this.maps = new GoogleMapsManager()
     this.display = new DisplayManager(this.session)
     this.navigation = new NavigationManager(this.session)
+
+    // Last-chance teardown. Fires on phone-initiated WILL_DISCONNECT and
+    // also when this.session.disconnect() runs locally — the SDK emits
+    // beforeDisconnect before closing the transport, so any final
+    // sendOneShot calls inside dispose() (display.clear, navigation.stop)
+    // still reach the host.
+    this.session.onBeforeDisconnect((reason) => {
+      console.log("[User] beforeDisconnect:", reason, "— running dispose")
+      this.dispose()
+    })
 
     this.wireSensorsToState()
     this.seedInitialFix()
@@ -134,20 +149,24 @@ export class User {
    * once and translate updates into version bumps.
    */
   private wireSensorsToState(): void {
-    this.location.onUpdate((d) => {
-      this.coords = {
-        lat: d.lat,
-        lng: d.lng,
-        accuracy: d.accuracy,
-        ts: d.timestamp ?? Date.now(),
-      }
-      this.notify()
-    })
+    this.sensorUnsubs.push(
+      this.location.onUpdate((d) => {
+        this.coords = {
+          lat: d.lat,
+          lng: d.lng,
+          accuracy: d.accuracy,
+          ts: d.timestamp ?? Date.now(),
+        }
+        this.notify()
+      }),
+    )
 
-    this.compass.onUpdate((d) => {
-      this.heading = d.degrees
-      this.notify()
-    })
+    this.sensorUnsubs.push(
+      this.compass.onUpdate((d) => {
+        this.heading = d.degrees
+        this.notify()
+      }),
+    )
 
     // Maps loads once on construction; poll its imperative API and
     // notify when it flips.
@@ -156,10 +175,81 @@ export class User {
       this.mapsError = this.maps.error
     } else {
       this.maps.whenReady().finally(() => {
+        if (this.disposed) return
         this.mapsReady = this.maps.ready
         this.mapsError = this.maps.error
         this.notify()
       })
     }
   }
+
+  /**
+   * Tear down all session state. Safe to call multiple times. Called
+   * when the WebView closes (pagehide / beforeunload) or the user
+   * disconnects, so the SDK side doesn't leak subscriptions and the
+   * glasses display doesn't stay stuck on whatever we last drew.
+   *
+   * Order matters: stop navigation BEFORE disconnecting the session,
+   * otherwise the stop request never reaches the host.
+   */
+
+  
+  dispose(): void {
+    console.log("[User] dispose called, disposed=", this.disposed)
+    if (this.disposed) {
+      console.log("[User] dispose early return — already disposed")
+      return
+    }
+    this.disposed = true
+
+    // Stop any active trip. Fire-and-forget — the request is on its way
+    // even if we tear down the session before the ack lands.
+    try {
+      console.log("[User] calling navigation.stop()")
+      this.navigation.stop().catch((err) => {
+        console.warn("[User] navigation.stop during dispose failed:", err)
+      })
+      console.log("[User] navigation.stop() returned")
+    } catch (err) {
+      console.warn("[User] navigation.stop threw synchronously:", err)
+    }
+
+    // Wipe the glasses display so we don't leave a stale frame.
+    try {
+      console.log("[User] clearing display during dispose")
+      this.display.clear()
+    } catch (err) {
+      console.warn("[User] display.clear during dispose failed:", err)
+    }
+
+    // Release sensor subscriptions.
+    for (const unsub of this.sensorUnsubs) {
+      try {
+        unsub()
+      } catch (err) {
+        console.warn("[User] sensor unsubscribe threw:", err)
+      }
+    }
+    this.sensorUnsubs = []
+
+    // Drop React subscribers — no further notifies.
+    this.subscribers.clear()
+
+    // Tear down the SDK session last.
+    try {
+      this.session.disconnect()
+    } catch (err) {
+      console.warn("[User] session.disconnect threw:", err)
+    }
+
+    // Reset reactive state and the singleton so a future getInstance()
+    // (e.g. after fast-refresh) starts clean.
+    this.coords = null
+    this.heading = null
+    this.mapsReady = false
+    this.mapsError = null
+    User.instance = null
+  }
 }
+
+

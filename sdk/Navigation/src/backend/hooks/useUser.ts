@@ -20,7 +20,28 @@ import {useSyncExternalStore} from "react"
 
 import {User} from "@/backend/session/User"
 
+// Install one-time global teardown listeners. WebView close fires
+// `pagehide` reliably on iOS/Android; `beforeunload` covers
+// desktop/dev. Both end up calling `User.dispose()`, which is
+// idempotent so duplicate fires are harmless.
+let teardownInstalled = false
+function installTeardownOnce(): void {
+  if (teardownInstalled) return
+  if (typeof window === "undefined") return
+  teardownInstalled = true
+  const teardown = () => {
+    try {
+      User.getInstance().dispose()
+    } catch (err) {
+      console.warn("[useUser] dispose on unload failed:", err)
+    }
+  }
+  window.addEventListener("pagehide", teardown)
+  window.addEventListener("beforeunload", teardown)
+}
+
 export function useUser(): User {
+  installTeardownOnce()
   const user = User.getInstance()
   useSyncExternalStore(user.subscribe, user.getSnapshot, user.getSnapshot)
   return user

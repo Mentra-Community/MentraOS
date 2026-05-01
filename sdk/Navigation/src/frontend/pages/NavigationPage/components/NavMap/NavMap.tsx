@@ -3,7 +3,6 @@ import {useEffect, useRef, useState} from "react"
 import {useUser} from "@/backend/hooks/useUser"
 import {bearingDeg, cardinal, haversineMeters} from "@/backend/lib/geometry/geometry"
 import type {LatLng} from "@/backend/lib/geometry/geometry"
-import {RETRO_STYLE} from "@/frontend/pages/NavigationPage/components/NavMap/mapStyle"
 
 export function NavMap({
   me,
@@ -11,6 +10,7 @@ export function NavMap({
   routePoints,
   breadcrumbs,
   autoFollow = true,
+  bottomInset = 0,
 }: {
   me: LatLng | null
   destination: LatLng | null
@@ -21,6 +21,10 @@ export function NavMap({
    *  small dots behind the position marker. */
   breadcrumbs?: Array<LatLng>
   autoFollow?: boolean
+  /** Pixels of the bottom of the viewport occluded by overlay UI (e.g.
+   *  the destination drawer). Floating map controls offset themselves
+   *  by this so they ride up with the drawer instead of being hidden. */
+  bottomInset?: number
 }) {
   const user = useUser()
   const ready = user.mapsReady
@@ -53,20 +57,63 @@ export function NavMap({
   const routeRef = useRef<any | null>(null)
   const crumbMarkersRef = useRef<any[]>([])
 
+  // Follow-user mode: starts from the `autoFollow` prop, breaks when the
+  // user pans, and is re-engaged by the recenter button. Once broken, it
+  // stays broken until the user explicitly taps recenter.
+  const [followUser, setFollowUser] = useState(autoFollow)
+  useEffect(() => {
+    setFollowUser(autoFollow)
+  }, [autoFollow])
+
   // One-time map init
   useEffect(() => {
     if (!ready || !containerRef.current || mapRef.current) return
     const g = window.google
-    mapRef.current = new g.maps.Map(containerRef.current, {
+    const container = containerRef.current
+    mapRef.current = new g.maps.Map(container, {
       center: me ?? destination ?? {lat: 37.7956, lng: -122.3933},
       zoom: 17,
+      minZoom: 3,
       disableDefaultUI: true,
       zoomControl: false,
       gestureHandling: "greedy",
       mapTypeId: "roadmap",
       clickableIcons: false,
-      styles: RETRO_STYLE,
+      mapId: "e21e99f3286922559250c28e",
     })
+
+    // User drag breaks follow-mode. Recenter button re-engages it.
+    mapRef.current.addListener("dragstart", () => setFollowUser(false))
+
+    // Pinch-leak fix: when a 2-finger pinch ends and one finger remains,
+    // Google Maps' gesture state can keep zooming on the surviving finger's
+    // movement. We detect the pinch with a flag, and on touchend we
+    // suppress the next single-finger gesture by capturing/preventing
+    // touchmove until all fingers lift. This severs the pinch state.
+    let pinching = false
+    let suppressUntilLift = false
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length >= 2) pinching = true
+    }
+    const onTouchEnd = (e: TouchEvent) => {
+      if (pinching && e.touches.length === 1) {
+        suppressUntilLift = true
+      }
+      if (e.touches.length === 0) {
+        pinching = false
+        suppressUntilLift = false
+      }
+    }
+    const onTouchMove = (e: TouchEvent) => {
+      if (suppressUntilLift && e.touches.length === 1) {
+        e.stopPropagation()
+        e.preventDefault()
+      }
+    }
+    container.addEventListener("touchstart", onTouchStart, {passive: true, capture: true})
+    container.addEventListener("touchend", onTouchEnd, {passive: true, capture: true})
+    container.addEventListener("touchcancel", onTouchEnd, {passive: true, capture: true})
+    container.addEventListener("touchmove", onTouchMove, {passive: false, capture: true})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready])
 
@@ -139,10 +186,10 @@ export function NavMap({
       meDotRef.current.setPosition(pos)
     }
 
-    if (autoFollow) {
+    if (followUser) {
       mapRef.current.panTo(pos)
     }
-  }, [ready, me?.lat, me?.lng, effectiveHeading, autoFollow])
+  }, [ready, me?.lat, me?.lng, effectiveHeading, followUser])
 
   // Destination marker — also pan/zoom the map to the destination the
   // first time it appears (or whenever it changes to a new place), so
@@ -264,12 +311,54 @@ export function NavMap({
         </div>
       ) : null}
 
-      {effectiveHeading != null ? (
-        <div className="absolute right-3 bottom-24 bg-black/65 text-white px-2.5 py-1 rounded-lg text-xs font-mono">
-          {Math.round(effectiveHeading)}° {cardinal(effectiveHeading)}{" "}
-          <span className="opacity-60 text-[10px] ml-1">
-            {headingSource === "compass" ? "compass" : "gps"}
-          </span>
+
+
+      {ready ? (
+        <div
+          className="absolute right-3 flex flex-col gap-2"
+          style={{bottom: bottomInset + 12}}>
+          <button
+            type="button"
+            aria-label="Zoom in"
+            className="w-11 h-11 rounded-full bg-white shadow-md border border-neutral-200 text-neutral-800 text-xl font-semibold active:bg-neutral-100"
+            onClick={() => {
+              const m = mapRef.current
+              if (!m) return
+              m.setZoom(Math.min((m.getZoom() ?? 17) + 1, 21))
+            }}>
+            +
+          </button>
+          <button
+            type="button"
+            aria-label="Zoom out"
+            className="w-11 h-11 rounded-full bg-white shadow-md border border-neutral-200 text-neutral-800 text-xl font-semibold active:bg-neutral-100"
+            onClick={() => {
+              const m = mapRef.current
+              if (!m) return
+              m.setZoom(Math.max((m.getZoom() ?? 17) - 1, 3))
+            }}>
+            −
+          </button>
+          <button
+            type="button"
+            aria-label="Recenter on me"
+            className={
+              "w-11 h-11 rounded-full shadow-md border flex items-center justify-center active:opacity-80 " +
+              (followUser
+                ? "bg-blue-600 border-blue-600 text-white"
+                : "bg-white border-neutral-200 text-neutral-800")
+            }
+            onClick={() => {
+              const m = mapRef.current
+              if (!m || !me) return
+              m.panTo(new window.google.maps.LatLng(me.lat, me.lng))
+              setFollowUser(true)
+            }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+            </svg>
+          </button>
         </div>
       ) : null}
     </div>

@@ -247,25 +247,34 @@ export default function MiniappHost() {
   }, [])
 
   const unmount = useCallback((packageName: string) => {
-    setApps((prev) => {
-      const next = new Map(prev)
-      next.delete(packageName)
-      return next
+    // Graceful path: notify the miniapp first so its `beforeDisconnect`
+    // handlers can flush a final message (e.g. `display.clear()`),
+    // wait the 50ms grace, then tear the WebView down. Sync teardown
+    // would race the heads-up out the door before the miniapp could
+    // respond on its still-open transport.
+    void localMiniappRuntime.gracefullyUnregisterApp(packageName, "miniapp unmounted").finally(() => {
+      setApps((prev) => {
+        const next = new Map(prev)
+        next.delete(packageName)
+        return next
+      })
+      webViewRefs.current.delete(packageName)
+      canGoBackMap.current.delete(packageName)
+      canGoBackListeners.current.delete(packageName)
+      setCanGoBackState((m) => {
+        if (!m.has(packageName)) return m
+        const next = new Map(m)
+        next.delete(packageName)
+        return next
+      })
+      miniComms.setWebViewMessageHandler(packageName, undefined)
+      miniappRunningRegistry.remove(packageName)
+      // Display teardown is handled inside gracefullyUnregisterApp →
+      // unregisterApp → localDisplayManager.onUnmount; calling it
+      // again here would re-push the saved coreAppDisplay snapshot
+      // and cause a flicker.
+      devServerBridge.disconnect(packageName)
     })
-    webViewRefs.current.delete(packageName)
-    canGoBackMap.current.delete(packageName)
-    canGoBackListeners.current.delete(packageName)
-    setCanGoBackState((m) => {
-      if (!m.has(packageName)) return m
-      const next = new Map(m)
-      next.delete(packageName)
-      return next
-    })
-    miniComms.setWebViewMessageHandler(packageName, undefined)
-    localMiniappRuntime.unregisterApp(packageName)
-    miniappRunningRegistry.remove(packageName)
-    localDisplayManager.onUnmount(packageName)
-    devServerBridge.disconnect(packageName)
   }, [])
 
   const goBackInWebView = useCallback((packageName: string): boolean => {

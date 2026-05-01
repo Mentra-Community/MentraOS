@@ -122,6 +122,14 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 10_000
 type SessionEmitterEvents = {
   ready: () => void
   error: (error: Error) => void
+  /**
+   * Last-chance hook before the transport closes. Fires when the phone
+   * sends WILL_DISCONNECT, or when this session calls `disconnect()`
+   * locally. Handlers run synchronously and may issue one final
+   * `sendOneShot` (e.g. `display.clear()`); async work won't complete
+   * before the socket closes.
+   */
+  beforeDisconnect: (reason: string) => void
   disconnect: (reason: string) => void
   visibility: (v: MiniappVisibility) => void
   capabilities: (cap: GlassesCapabilities | null) => void
@@ -326,6 +334,14 @@ export class MiniappSession {
   disconnect(): void {
     if (this.disposed) return
     this.disposed = true
+    // Give listeners one synchronous chance to flush final messages
+    // (e.g. display.clear()) before we tear down the transport.
+    try {
+      this.emitter.emit("beforeDisconnect", "disconnect called")
+    } catch (err) {
+      // A throwing handler must not block teardown.
+      console.warn("[MiniappSession] beforeDisconnect handler threw:", err)
+    }
     this.failAllPending({code: MiniappErrorCode.REQUEST_ABORTED, message: "Session disconnected"})
     try {
       this.transport.close()
@@ -377,6 +393,18 @@ export class MiniappSession {
 
   off<K extends keyof SessionEmitterEvents>(event: K, handler: SessionEmitterEvents[K]): void {
     this.emitter.off(event, handler as (...args: unknown[]) => void)
+  }
+
+  /**
+   * Last-chance hook before the transport closes. Fires either when the
+   * phone notifies the session of an imminent disconnect (~50ms grace
+   * window before the socket is torn down) or when this session's
+   * `disconnect()` is called locally. Use it to flush final cleanup
+   * messages — e.g. `display.clear()` — synchronously. Async work
+   * started here will not complete before the socket closes.
+   */
+  onBeforeDisconnect(handler: (reason: string) => void): () => void {
+    return this.on("beforeDisconnect", handler)
   }
 
   onVisibilityChange(handler: (v: MiniappVisibility) => void): () => void {
@@ -534,6 +562,16 @@ export class MiniappSession {
           pending.reject(err)
         } else {
           pending.resolve(payload.data ?? null)
+        }
+        return
+      }
+
+      case MiniappResponseType.WILL_DISCONNECT: {
+        const reason = (payload.reason as string | undefined) ?? "phone unregistering"
+        try {
+          this.emitter.emit("beforeDisconnect", reason)
+        } catch (err) {
+          console.warn("[MiniappSession] beforeDisconnect handler threw:", err)
         }
         return
       }

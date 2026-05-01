@@ -434,6 +434,31 @@ class LocalMiniappRuntime {
     })
   }
 
+  /**
+   * Graceful version of {@link unregisterApp}: notify the miniapp via
+   * `WILL_DISCONNECT`, wait ~50ms so its `beforeDisconnect` handlers can
+   * fire one last `sendOneShot` (e.g. `display.clear()`), then run the
+   * normal teardown. Use this for any disconnect path where the socket
+   * is still open. For ungraceful paths (transport already closed),
+   * call {@link unregisterApp} directly — the heads-up would be
+   * undeliverable anyway.
+   */
+  public async gracefullyUnregisterApp(packageName: string, reason = "unregistering"): Promise<void> {
+    const app = this.connectedApps.get(packageName)
+    if (!app) return
+
+    console.log(`${LOG_TAG}: gracefullyUnregisterApp(${packageName}) — sending WILL_DISCONNECT`)
+    this.sendToMiniapp(packageName, {
+      type: MiniappResponseType.WILL_DISCONNECT,
+      reason,
+    })
+    // 50 ms: imperceptible to the user, plenty of time for the SDK's
+    // synchronous `beforeDisconnect` handlers to flush a final
+    // sendOneShot through the still-open transport.
+    await new Promise<void>((resolve) => setTimeout(resolve, 50))
+    this.unregisterApp(packageName)
+  }
+
   public unregisterApp(packageName: string): void {
     console.log(`${LOG_TAG}: unregisterApp(${packageName})`)
     const app = this.connectedApps.get(packageName)
@@ -476,6 +501,11 @@ class LocalMiniappRuntime {
         this.pendingCloudRequests.delete(reqId)
       }
     }
+
+    // Release any display real estate this app held — if it owned the
+    // current on-glasses frame, this clears the glasses (or restores the
+    // core app's saved frame).
+    localDisplayManager.onUnmount(packageName)
 
     this.connectedApps.delete(packageName)
     this.recomputeMicRequirements()

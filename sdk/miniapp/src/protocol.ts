@@ -127,6 +127,14 @@ export enum MiniappResponseType {
   /** Reply to PING. SDK auto-handles this; developers never see it. */
   PONG = "miniapp_pong",
 
+  /**
+   * Push: phone is about to tear down the miniapp's session. Gives the SDK
+   * a brief window (~50ms grace on the phone side) to fire one last
+   * `sendOneShot` before the transport closes — used to flush final
+   * cleanup like `display.clear()`. Synchronous handlers only.
+   */
+  WILL_DISCONNECT = "miniapp_will_disconnect",
+
   /** Async error not tied to a specific request. */
   ERROR = "miniapp_error",
 }
