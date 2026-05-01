@@ -58,6 +58,7 @@ granted for the app and that device Location services are enabled.
 
 ## What It Demonstrates
 
+- Showing a compact glasses preview card with local device images, battery level, Bluetooth state, and Wi-Fi state
 - Subscribing to glasses and Bluetooth status
 - Scanning for compatible glasses
 - Connecting to discovered or saved/default glasses

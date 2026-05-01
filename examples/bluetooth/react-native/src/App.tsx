@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
+  type ImageSourcePropType,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -15,15 +16,17 @@ import {
 } from "react-native";
 import BluetoothSdk, {
   type BatteryStatusEvent,
-  type BluetoothStatus,
   type ButtonPressEvent,
   type CompatibleGlassesSearchStopEvent,
+  type CoreStatus,
   type DeviceSearchResult,
   type GlassesStatus,
   type LogEvent,
   type PhotoResponseEvent,
 } from "@mentra/bluetooth-sdk";
 import type { ReactNode } from "react";
+
+type BluetoothStatus = CoreStatus;
 
 declare const process: {
   env?: {
@@ -36,6 +39,23 @@ const DEFAULT_WEBHOOK_URL =
 const PHOTO_APP_ID = "com.mentra.examples.reactnative";
 const PHOTO_POLL_ATTEMPTS = 45;
 const ANDROID_12_API_LEVEL = 31;
+const UNKNOWN_GLASSES_IMAGE = require("../assets/glasses/unknown_wearable.png");
+const GLASSES_IMAGE_BY_MODEL: Record<string, ImageSourcePropType> = {
+  "Mentra Live": require("../assets/glasses/mentra_live.png"),
+  mentra_live: require("../assets/glasses/mentra_live.png"),
+  "Mentra Display": require("../assets/glasses/mentra_display.png"),
+  "Even Realities G1": require("../assets/glasses/even_realities_g1.png"),
+  evenrealities_g1: require("../assets/glasses/even_realities_g1.png"),
+  g1: require("../assets/glasses/even_realities_g1.png"),
+  "Even Realities G2": require("../assets/glasses/even_realities_g2.png"),
+  evenrealities_g2: require("../assets/glasses/even_realities_g2.png"),
+  g2: require("../assets/glasses/even_realities_g2.png"),
+  "Vuzix Z100": require("../assets/glasses/vuzix_z100.png"),
+  "Vuzix-z100": require("../assets/glasses/vuzix_z100.png"),
+  "Vuzix Ultralite": require("../assets/glasses/vuzix_z100.png"),
+  "Mentra Mach1": require("../assets/glasses/vuzix_z100.png"),
+  Mach1: require("../assets/glasses/vuzix_z100.png"),
+};
 
 export default function App() {
   const [glassesStatus, setGlassesStatus] = useState<Partial<GlassesStatus>>(
@@ -66,7 +86,7 @@ export default function App() {
       setGlassesStatus((current) => ({ ...current, ...changed }));
     });
 
-    const removeBluetooth = BluetoothSdk.onBluetoothStatus((changed) => {
+    const removeBluetooth = BluetoothSdk.onCoreStatus((changed) => {
       setBluetoothStatus((current) => ({ ...current, ...changed }));
     });
 
@@ -178,7 +198,7 @@ export default function App() {
 
   async function applyDisplaySettings() {
     try {
-      await BluetoothSdk.updateBluetoothSettings({
+      await BluetoothSdk.updateCore({
         brightness: 60,
         dashboard_height: 4,
         dashboard_depth: 6,
@@ -201,7 +221,7 @@ export default function App() {
       return;
     }
 
-    const currentBluetoothStatus = BluetoothSdk.getBluetoothStatus() as Partial<
+    const currentBluetoothStatus = BluetoothSdk.getCoreStatus() as Partial<
       BluetoothStatus
     > &
       Record<string, unknown>;
@@ -369,6 +389,12 @@ export default function App() {
           <Text style={styles.title}>Mentra Bluetooth SDK</Text>
           <Text style={styles.subtitle}>Partner integration example</Text>
 
+          <GlassesPreviewCard
+            bluetoothStatus={bluetoothStatus}
+            discoveredDevices={discoveredDevices}
+            glassesStatus={glassesStatus}
+          />
+
           <Section title="Live Status">
             <StatusRow label="Last action" value={lastAction} />
             <StatusRow
@@ -535,6 +561,90 @@ export default function App() {
   );
 }
 
+function GlassesPreviewCard(props: {
+  bluetoothStatus: Partial<BluetoothStatus>;
+  discoveredDevices: DeviceSearchResult[];
+  glassesStatus: Partial<GlassesStatus>;
+}) {
+  const model = previewModel(
+    props.glassesStatus,
+    props.bluetoothStatus,
+    props.discoveredDevices,
+  );
+  const batteryLevel = normalizedBatteryLevel(props.glassesStatus);
+  const batteryRemainder = batteryLevel === null ? 1 : 100 - batteryLevel;
+  const imageSource = previewImageSource(model);
+  const connected = props.glassesStatus.connected === true;
+  const fullyBooted = props.glassesStatus.fullyBooted === true;
+
+  return (
+    <View style={styles.previewCard}>
+      <View style={styles.previewHalo} />
+      <Image
+        resizeMode="contain"
+        source={imageSource}
+        style={styles.previewImage}
+      />
+      <View style={styles.previewDetails}>
+        <Text style={styles.previewEyebrow}>Glasses</Text>
+        <Text numberOfLines={1} style={styles.previewTitle}>
+          {model}
+        </Text>
+        <View style={styles.previewPillRow}>
+          <PreviewPill
+            label={formatPreviewConnectionStatus(props.glassesStatus)}
+            tone={connected && fullyBooted ? "good" : "neutral"}
+          />
+          <PreviewPill
+            label={formatPreviewBluetoothStatus(
+              props.bluetoothStatus,
+              props.discoveredDevices.length,
+              connected,
+            )}
+            tone={props.bluetoothStatus.searching ? "busy" : "neutral"}
+          />
+        </View>
+        <View style={styles.previewMetricRow}>
+          <Text style={styles.previewMetricLabel}>Battery</Text>
+          <Text style={styles.previewMetricValue}>
+            {formatBatteryStatus(props.glassesStatus)}
+          </Text>
+        </View>
+        <View style={styles.previewBatteryTrack}>
+          <View
+            style={[
+              styles.previewBatteryFill,
+              batteryLevel === null ? styles.previewBatteryFillUnknown : null,
+              { flex: batteryLevel ?? 0 },
+            ]}
+          />
+          <View style={{ flex: batteryRemainder }} />
+        </View>
+        <View style={styles.previewMetricRow}>
+          <Text style={styles.previewMetricLabel}>Wi-Fi</Text>
+          <Text style={styles.previewMetricValue}>
+            {formatWifiStatus(props.glassesStatus)}
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function PreviewPill(props: { label: string; tone: "busy" | "good" | "neutral" }) {
+  return (
+    <View
+      style={[
+        styles.previewPill,
+        props.tone === "good" ? styles.previewPillGood : null,
+        props.tone === "busy" ? styles.previewPillBusy : null,
+      ]}
+    >
+      <Text style={styles.previewPillText}>{props.label}</Text>
+    </View>
+  );
+}
+
 function Section(props: { title: string; children: ReactNode }) {
   return (
     <View style={styles.section}>
@@ -595,6 +705,102 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 16,
     color: "#546158",
+  },
+  previewCard: {
+    backgroundColor: "#17251f",
+    borderRadius: 24,
+    flexDirection: "row",
+    minHeight: 178,
+    overflow: "hidden",
+    padding: 18,
+  },
+  previewHalo: {
+    backgroundColor: "#d9f2df",
+    borderRadius: 140,
+    height: 180,
+    left: -54,
+    opacity: 0.22,
+    position: "absolute",
+    top: -46,
+    width: 180,
+  },
+  previewImage: {
+    alignSelf: "center",
+    height: 126,
+    marginRight: 12,
+    width: "43%",
+  },
+  previewDetails: {
+    flex: 1,
+    gap: 9,
+    justifyContent: "center",
+    minWidth: 0,
+  },
+  previewEyebrow: {
+    color: "#b7cabf",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 1.1,
+    textTransform: "uppercase",
+  },
+  previewTitle: {
+    color: "#fffaf0",
+    fontSize: 22,
+    fontWeight: "800",
+  },
+  previewPillRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  previewPill: {
+    backgroundColor: "rgba(255, 250, 240, 0.12)",
+    borderColor: "rgba(255, 250, 240, 0.14)",
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  previewPillBusy: {
+    backgroundColor: "rgba(244, 183, 85, 0.22)",
+    borderColor: "rgba(244, 183, 85, 0.45)",
+  },
+  previewPillGood: {
+    backgroundColor: "rgba(111, 211, 154, 0.22)",
+    borderColor: "rgba(111, 211, 154, 0.45)",
+  },
+  previewPillText: {
+    color: "#fffaf0",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  previewMetricRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  previewMetricLabel: {
+    color: "#b7cabf",
+    fontSize: 13,
+  },
+  previewMetricValue: {
+    color: "#fffaf0",
+    flexShrink: 1,
+    fontSize: 13,
+    fontWeight: "700",
+    textAlign: "right",
+  },
+  previewBatteryTrack: {
+    backgroundColor: "rgba(255, 250, 240, 0.16)",
+    borderRadius: 999,
+    flexDirection: "row",
+    height: 8,
+    overflow: "hidden",
+  },
+  previewBatteryFill: {
+    backgroundColor: "#7ee0a5",
+  },
+  previewBatteryFillUnknown: {
+    backgroundColor: "rgba(255, 250, 240, 0.24)",
   },
   section: {
     backgroundColor: "#ffffff",
@@ -748,12 +954,13 @@ function formatDeviceLabel(status: Partial<GlassesStatus>) {
 }
 
 function formatBatteryStatus(status: Partial<GlassesStatus>) {
-  if (typeof status.batteryLevel !== "number") {
+  const batteryLevel = normalizedBatteryLevel(status);
+  if (batteryLevel === null) {
     return "Waiting for status";
   }
 
   const chargingText = status.charging ? " charging" : "";
-  return `${status.batteryLevel}%${chargingText}`;
+  return `${batteryLevel}%${chargingText}`;
 }
 
 function formatBluetoothSearchStatus(status: Partial<BluetoothStatus>) {
@@ -773,6 +980,71 @@ function formatDiscoveredDevices(devices: DeviceSearchResult[]) {
 
 function stringValue(value: unknown) {
   return typeof value === "string" ? value : "";
+}
+
+function previewModel(
+  glassesStatus: Partial<GlassesStatus>,
+  bluetoothStatus: Partial<BluetoothStatus>,
+  discoveredDevices: DeviceSearchResult[],
+) {
+  const savedDefault = stringValue(
+    (bluetoothStatus as Record<string, unknown>).default_wearable,
+  );
+
+  return (
+    glassesStatus.deviceModel ||
+    discoveredDevices[0]?.deviceModel ||
+    savedDefault ||
+    "Mentra Live"
+  );
+}
+
+function previewImageSource(model: string) {
+  return GLASSES_IMAGE_BY_MODEL[model] ?? UNKNOWN_GLASSES_IMAGE;
+}
+
+function normalizedBatteryLevel(status: Partial<GlassesStatus>) {
+  if (typeof status.batteryLevel !== "number" || status.batteryLevel < 0) {
+    return null;
+  }
+
+  return Math.min(status.batteryLevel, 100);
+}
+
+function formatPreviewConnectionStatus(status: Partial<GlassesStatus>) {
+  if (status.connected && status.fullyBooted === false) {
+    return "Booting";
+  }
+
+  return formatConnectionStatus(status);
+}
+
+function formatPreviewBluetoothStatus(
+  status: Partial<BluetoothStatus>,
+  discoveredCount: number,
+  connected: boolean,
+) {
+  if (status.searching) {
+    return `Scanning ${discoveredCount}`;
+  }
+
+  if (connected) {
+    return "Bluetooth linked";
+  }
+
+  if (discoveredCount > 0) {
+    return `${discoveredCount} found`;
+  }
+
+  return "Bluetooth idle";
+}
+
+function formatWifiStatus(status: Partial<GlassesStatus>) {
+  if (typeof status.wifiConnected !== "boolean") {
+    return "Unknown";
+  }
+
+  return status.wifiConnected ? status.wifiSsid || "Connected" : "Disconnected";
 }
 
 function androidRuntimePermissions() {
