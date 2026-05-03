@@ -136,6 +136,47 @@ object NavigationManager {
     val speedMultiplier: Float = 5f,
   )
 
+  /**
+   * Ensure the Google Nav SDK Terms & Conditions dialog has been accepted,
+   * without starting a trip. Resolves immediately when acceptance is
+   * already on file (SDK, on-disk pref, or in-process flag); otherwise
+   * shows the dialog and resolves with the user's response.
+   *
+   * Designed to be called once, eagerly, when a navigation-aware miniapp
+   * mounts — so by the time the user hits "start" the dialog is out of
+   * the way. Idempotent and safe to call repeatedly.
+   */
+  fun ensureTermsAccepted(
+    activity: Activity,
+    onResult: (accepted: Boolean) -> Unit,
+  ) {
+    val sdkAccepted = NavigationApi.areTermsAccepted(activity.application)
+    val prefAccepted = readTermsAcceptedPref(activity)
+    Log.d(
+      TAG,
+      "ensureTermsAccepted — sdkAccepted=$sdkAccepted, prefAccepted=$prefAccepted, processFlag=$termsAcceptedThisProcess",
+    )
+    if (sdkAccepted || prefAccepted || termsAcceptedThisProcess) {
+      termsAcceptedThisProcess = true
+      onResult(true)
+      return
+    }
+    NavigationApi.showTermsAndConditionsDialog(
+      activity,
+      "Mentra",
+      object : NavigationApi.OnTermsResponseListener {
+        override fun onTermsResponse(accepted: Boolean) {
+          Log.d(TAG, "T&C dialog response: accepted=$accepted")
+          if (accepted) {
+            termsAcceptedThisProcess = true
+            writeTermsAcceptedPref(activity)
+          }
+          onResult(accepted)
+        }
+      },
+    )
+  }
+
   /** Start a navigation session. Initializes the Navigator on first call.
    *
    *  Suppresses the "Welcome to Google Maps Navigation" toast and the
@@ -152,37 +193,16 @@ object NavigationManager {
       callbacks.onError("at least one stop is required")
       return
     }
-
-    val sdkAccepted = NavigationApi.areTermsAccepted(activity.application)
-    val prefAccepted = readTermsAcceptedPref(activity)
-    Log.d(
-      TAG,
-      "T&C state — sdkAccepted=$sdkAccepted, prefAccepted=$prefAccepted, processFlag=$termsAcceptedThisProcess",
-    )
-
-    if (sdkAccepted || prefAccepted || termsAcceptedThisProcess) {
+    // Fall back to showing the T&C dialog here if a miniapp didn't call
+    // ensureTermsAccepted() up front. Once accepted, proceed straight
+    // into navigator init.
+    ensureTermsAccepted(activity) { accepted ->
+      if (!accepted) {
+        callbacks.onError("Navigation terms not accepted")
+        return@ensureTermsAccepted
+      }
       startNavigatorSkippingTerms(activity, options, callbacks)
-      return
     }
-
-    // First start ever: show our own dialog so we control the listener
-    // and can record acceptance reliably both in-process and on disk.
-    NavigationApi.showTermsAndConditionsDialog(
-      activity,
-      "Mentra",
-      object : NavigationApi.OnTermsResponseListener {
-        override fun onTermsResponse(accepted: Boolean) {
-          Log.d(TAG, "T&C dialog response: accepted=$accepted")
-          if (!accepted) {
-            callbacks.onError("Navigation terms not accepted")
-            return
-          }
-          termsAcceptedThisProcess = true
-          writeTermsAcceptedPref(activity)
-          startNavigatorSkippingTerms(activity, options, callbacks)
-        }
-      },
-    )
   }
 
   private fun startNavigatorSkippingTerms(

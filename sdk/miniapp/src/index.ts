@@ -110,6 +110,7 @@ export type {
   NavigationModule,
   NavManeuver,
   NavOffRoute,
+  NavPermissionResult,
   NavRerouting,
   NavRoute,
   NavState,

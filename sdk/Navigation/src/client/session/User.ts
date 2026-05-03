@@ -86,6 +86,27 @@ export class User {
 
     this.wireSensorsToState()
     this.seedInitialFix()
+    this.primeNavigationPermission()
+  }
+
+  /**
+   * Fire the Google Nav SDK T&C dialog as soon as the session is ready,
+   * so by the time the user picks a destination and hits Start the
+   * dialog is already out of the way. Idempotent — resolves immediately
+   * if the user previously accepted. Failures are logged but otherwise
+   * harmless: the legacy fallback inside `start()` will retry the dialog
+   * if needed.
+   */
+  private primeNavigationPermission(): void {
+    this.session
+      .waitForReady()
+      .then(() => this.navigation.requestPermission())
+      .then((result) => {
+        console.log("[User] requestPermission result:", result)
+      })
+      .catch((err) => {
+        console.warn("[User] requestPermission failed:", err)
+      })
   }
 
   /**

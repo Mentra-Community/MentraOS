@@ -359,6 +359,23 @@ class CrustModule : Module() {
       mapOf("ok" to true)
     }
 
+    // Eager T&C dialog. Lets a miniapp surface the Google Nav SDK terms
+    // dialog at mount time so the actual startNavigation() call later is
+    // friction-free. Idempotent — resolves immediately when the user has
+    // already accepted (in-process flag, on-disk pref, or SDK state).
+    AsyncFunction("requestNavigationPermission") { promise: expo.modules.kotlin.Promise ->
+      val activity = appContext.currentActivity
+      if (activity == null) {
+        promise.resolve(mapOf("ok" to false, "accepted" to false, "error" to "no current activity"))
+        return@AsyncFunction
+      }
+      activity.runOnUiThread {
+        NavigationManager.ensureTermsAccepted(activity) { accepted ->
+          promise.resolve(mapOf("ok" to true, "accepted" to accepted))
+        }
+      }
+    }
+
     AsyncFunction("stopNavigation") {
       try {
         NavigationManager.stop()

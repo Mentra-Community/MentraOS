@@ -128,6 +128,19 @@ export type NavState = {
   speedLimitMps?: number | null
 }
 
+/** Result of `requestPermission()`. */
+export type NavPermissionResult = {
+  /** True if the request reached the host. False on platforms with no nav backend (e.g. iOS). */
+  ok: boolean
+  /**
+   * True if the user has accepted the Google Nav SDK Terms & Conditions.
+   * On platforms that don't gate navigation behind a T&C dialog, this is
+   * always true when `ok` is true.
+   */
+  accepted: boolean
+  error?: string
+}
+
 /** Standalone route compute — does NOT start a trip. */
 export type ComputeRouteOptions = {
   origin: LatLng
@@ -161,6 +174,29 @@ export class NavigationModule {
   /** True iff `LOCATION` is declared in the miniapp's manifest. */
   get hasPermission(): boolean {
     return this.session._hasManifestPermission("LOCATION")
+  }
+
+  /**
+   * Trigger the Google Nav SDK Terms & Conditions dialog up front. Call
+   * this once when a navigation-aware miniapp mounts so the dialog is out
+   * of the way before the user hits "start". Idempotent — resolves
+   * immediately with `{accepted: true}` when the user has already
+   * accepted (cached in-process / on-disk).
+   *
+   * Throws `{code: PERMISSION_NOT_DECLARED}` synchronously if the miniapp
+   * manifest is missing the LOCATION permission, since the host would
+   * reject anyway.
+   */
+  requestPermission(): Promise<NavPermissionResult> {
+    if (!this.hasPermission) {
+      throw {
+        code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
+        message: "LOCATION permission not declared in miniapp.json (required for navigation.requestPermission).",
+      }
+    }
+    return this.session.sendRequest<NavPermissionResult>({
+      type: MiniappRequestType.NAVIGATION_REQUEST_PERMISSION,
+    })
   }
 
   /**

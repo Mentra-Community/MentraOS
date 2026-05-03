@@ -245,6 +245,16 @@ class NavigationService {
   }
 
   /**
+   * Trigger the Google Nav SDK Terms & Conditions dialog if the user
+   * hasn't accepted yet. Resolves immediately when acceptance is already
+   * on file, so it's safe (and intended) to call eagerly on mount.
+   */
+  public async requestPermission(): Promise<{ok: boolean; accepted: boolean; error?: string}> {
+    console.log(`${LOG_TAG}: requestPermission`)
+    return await CrustModule.requestNavigationPermission()
+  }
+
+  /**
    * Dev-only: nudge the simulator off-route to trigger an actual reroute
    * from the Nav SDK. Useful for verifying the rerouting pipeline (UI
    * flips to "Rebuilding route…", route polyline updates, glasses display

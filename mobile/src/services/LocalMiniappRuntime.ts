@@ -601,6 +601,9 @@ class LocalMiniappRuntime {
       case MiniappRequestType.NAVIGATION_COMPUTE_ROUTE:
         this.handleNavigationComputeRoute(packageName, payload, requestId)
         break
+      case MiniappRequestType.NAVIGATION_REQUEST_PERMISSION:
+        this.handleNavigationRequestPermission(packageName, requestId)
+        break
       case MiniappRequestType.STORAGE_GET:
         this.handleStorageGet(packageName, payload, requestId)
         break
@@ -1235,6 +1238,19 @@ class LocalMiniappRuntime {
   private handleNavigationGetState(packageName: string, requestId?: string): void {
     const snapshot = navigationService.getSnapshot()
     this.sendResult(packageName, requestId, true, {state: snapshot})
+  }
+
+  private async handleNavigationRequestPermission(packageName: string, requestId?: string): Promise<void> {
+    try {
+      const result = await navigationService.requestPermission()
+      this.sendResult(packageName, requestId, true, result)
+    } catch (err) {
+      console.error(`${LOG_TAG}: navigation requestPermission error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "navigation requestPermission error",
+      })
+    }
   }
 
   private async handleNavigationComputeRoute(

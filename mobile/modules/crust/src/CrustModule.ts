@@ -73,6 +73,14 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
   stopNavigation(): Promise<{ok: boolean; error?: string}>
 
   /**
+   * Show the Google Nav SDK Terms & Conditions dialog if not already
+   * accepted. Idempotent — resolves immediately with `{accepted: true}`
+   * when the user has already accepted (cached in-process / on-disk /
+   * inside the SDK).
+   */
+  requestNavigationPermission(): Promise<{ok: boolean; accepted: boolean; error?: string}>
+
+  /**
    * Dev-only: nudge the simulated user position ~offsetMeters perpendicular
    * to the route so the Nav SDK reroutes. Default 20m. Android only.
    */

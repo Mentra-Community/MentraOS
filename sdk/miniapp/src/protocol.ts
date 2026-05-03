@@ -49,6 +49,8 @@ export enum MiniappRequestType {
   NAVIGATION_GET_STATE = "miniapp_navigation_get_state",
   /** Compute a route without starting a trip. Replaces hand-rolled Directions calls. */
   NAVIGATION_COMPUTE_ROUTE = "miniapp_navigation_compute_route",
+  /** Trigger the Google Nav SDK T&C dialog up-front so start() doesn't have to. */
+  NAVIGATION_REQUEST_PERMISSION = "miniapp_navigation_request_permission",
 
   /** Phone-local simple storage. */
   STORAGE_GET = "miniapp_storage_get",

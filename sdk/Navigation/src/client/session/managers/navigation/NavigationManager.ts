@@ -37,6 +37,14 @@ export class NavigationManager {
     return this.session.navigation.hasPermission
   }
 
+  /**
+   * Trigger the Google Nav SDK Terms & Conditions dialog. Idempotent and
+   * intended to be called eagerly on mount so `start()` is friction-free.
+   */
+  requestPermission(): Promise<{ok: boolean; accepted: boolean; error?: string}> {
+    return this.session.navigation.requestPermission()
+  }
+
   /** Begin a turn-by-turn trip. */
   start(opts: StartNavigationOptions): Promise<{ok: boolean; error?: string}> {
     return this.session.navigation.start(opts)

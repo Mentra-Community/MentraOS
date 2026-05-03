@@ -47,7 +47,7 @@ android {
 }
 
 dependencies {
-  // Google Navigation SDK for Android (Beta).
+  // Google Navigation SDK for Android.
   // Used by NavigationManager.kt to drive headless turn-by-turn nav.
   implementation 'com.google.android.libraries.navigation:navigation:6.0.0'
 
