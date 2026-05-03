@@ -100,7 +100,24 @@ export type {ImuModule} from "./modules/imu"
 export type {InputModule} from "./modules/input"
 export type {LocationModule} from "./modules/location"
 export type {MicModule} from "./modules/mic"
-export type {NavigationModule, NavManeuver, NavRerouting, NavArrived, NavError, NavUpdate, NavRoute, StartNavigationOptions} from "./modules/navigation"
+export type {
+  ComputedRoute,
+  ComputeRouteOptions,
+  ComputeRouteResult,
+  LatLng,
+  NavArrived,
+  NavError,
+  NavigationModule,
+  NavManeuver,
+  NavOffRoute,
+  NavRerouting,
+  NavRoute,
+  NavState,
+  NavUpdate,
+  RouteAvoidances,
+  StartNavigationOptions,
+  TravelMode,
+} from "./modules/navigation"
 export type {PermissionsModule, PermissionErrorEvent} from "./modules/permissions"
 export type {PhoneModule, PhoneNotificationsModule, PhoneCalendarModule} from "./modules/phone"
 export type {TranscriptionModule, TranscriptionConfig} from "./modules/transcription"

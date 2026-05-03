@@ -13,7 +13,7 @@
 
 import type {NavManeuver} from "@mentra/miniapp"
 
-import {formatDistance} from "@/backend/lib/formatDistance/formatDistance"
+import {formatDistance, formatDuration} from "@/backend/lib/formatDistance/formatDistance"
 
 /** Distance threshold below which a turn becomes the active instruction. */
 const IMMINENT_M = 30
@@ -148,6 +148,22 @@ export class ManeuverFormatter {
     const verb = this.humanize(m.maneuverType)
     const onto = toRoad ? ` onto ${toRoad}` : ""
     return {now: nowLine, next: arrowed(`Then ${verb}${onto}`)}
+  }
+
+  /**
+   * Third HUD line: "1.2 km to destination · 14 min". Returns null when
+   * the engine hasn't supplied trip totals yet (-1 sentinels), so the UI
+   * can hide the line instead of rendering em-dashes.
+   */
+  glassesProgressLine(m: NavManeuver): string | null {
+    const dist = m.distanceToDestinationMeters
+    const time = m.timeToDestinationSeconds
+    const haveDist = typeof dist === "number" && dist >= 0
+    const haveTime = typeof time === "number" && time >= 0
+    if (!haveDist && !haveTime) return null
+    const distStr = haveDist ? `${formatDistance(dist!)} to destination` : null
+    const timeStr = haveTime ? formatDuration(time!) : null
+    return [distStr, timeStr].filter(Boolean).join(" · ")
   }
 
   /**

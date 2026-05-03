@@ -11,7 +11,8 @@
     "rootDir": ".",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@/backend/*": ["./src/client/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"]

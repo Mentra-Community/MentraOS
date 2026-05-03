@@ -12,7 +12,13 @@ export type CrustModuleEvents = {
   onNavError: (params: NavErrorPayload) => void
   onNavLocation: (params: NavLocationPayload) => void
   onNavRoute: (params: NavRoutePayload) => void
+  onNavOffRoute: (params: NavOffRoutePayload) => void
   onHeading: (params: HeadingPayload) => void
+}
+
+export type NavOffRoutePayload = {
+  /** Approximate perpendicular distance in meters from the route. */
+  offRouteDistanceMeters: number
 }
 
 export type HeadingPayload = {
@@ -50,6 +56,16 @@ export type NavManeuverPayload = {
   fromRoad?: string | null
   /** Road the user will be on after the maneuver, per the Nav SDK. Null if unavailable. */
   toRoad?: string | null
+  /** Total remaining distance to final destination, meters. -1 if unknown. */
+  distanceToDestinationMeters?: number
+  /** Total remaining travel time, seconds. -1 if unknown. */
+  timeToDestinationSeconds?: number
+  /** Current speed in m/s. Null if unavailable. */
+  currentSpeedMps?: number | null
+  /** Speed limit on the current road segment in m/s. Null if unknown / not regulated. */
+  speedLimitMps?: number | null
+  /** Bearing along the route at the user's current position, 0–360. Null if unknown. */
+  routeHeadingDeg?: number | null
 }
 
 export type NavErrorPayload = {

@@ -242,10 +242,7 @@ export class User {
     // even if we tear down the session before the ack lands.
     try {
       console.log("[User] calling navigation.stop()")
-      this.navigation.stop().catch((err) => {
-        console.warn("[User] navigation.stop during dispose failed:", err)
-      })
-      console.log("[User] navigation.stop() returned")
+      this.navigation.stop()
     } catch (err) {
       console.warn("[User] navigation.stop threw synchronously:", err)
     }

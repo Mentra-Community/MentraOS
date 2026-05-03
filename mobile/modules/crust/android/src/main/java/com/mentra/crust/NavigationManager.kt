@@ -46,6 +46,12 @@ object NavigationManager {
   /** Most recent road-snapped fix. Used to compute distance-to-maneuver. */
   private var lastFixLat: Double = Double.NaN
   private var lastFixLng: Double = Double.NaN
+  /** Most recent speed in m/s, off the road-snapped Location. Null until first sample. */
+  private var lastSpeedMps: Float? = null
+  /** Set true once we cross the off-route threshold; cleared by the route-changed listener. */
+  private var offRouteFired: Boolean = false
+  /** Distance threshold (meters) at which we declare the user has left the route. */
+  private val OFF_ROUTE_THRESHOLD_M = 30.0
 
   data class ManeuverPayload(
     /**
@@ -61,6 +67,16 @@ object NavigationManager {
     val fromRoad: String?,
     /** Road the user will be on after the maneuver, per the Nav SDK. Null if unavailable. */
     val toRoad: String?,
+    /** Total remaining distance to final destination, meters. -1 if unknown. */
+    val distanceToDestinationMeters: Int = -1,
+    /** Total remaining travel time, seconds. -1 if unknown. */
+    val timeToDestinationSeconds: Int = -1,
+    /** Current speed in m/s. Null if unavailable. */
+    val currentSpeedMps: Float? = null,
+    /** Speed limit on the current road segment in m/s. Null if unknown. */
+    val speedLimitMps: Float? = null,
+    /** Bearing along the route at the user's current position, 0–360. Null if unknown. */
+    val routeHeadingDeg: Float? = null,
   )
 
   data class LocationPayload(
@@ -79,6 +95,12 @@ object NavigationManager {
     fun onError(message: String)
     fun onLocation(payload: LocationPayload)
     fun onRoute(points: List<RoutePoint>)
+    /**
+     * Fires once when the user crosses the off-route threshold. Always
+     * arrives before `onRerouting` for the same deviation so a miniapp
+     * can render an "off route" banner before the rebuild starts.
+     */
+    fun onOffRoute(perpendicularDistanceMeters: Double)
   }
 
   /** Process-lifetime flag: set to true once the user has accepted T&C in
@@ -103,6 +125,17 @@ object NavigationManager {
       .apply()
   }
 
+  /** Trip configuration. `stops` is the canonical destination list (last is final). */
+  data class StartOptions(
+    val stops: List<Pair<Double, Double>>,
+    val mode: String = "driving",
+    val avoidHighways: Boolean = false,
+    val avoidTolls: Boolean = false,
+    val avoidFerries: Boolean = false,
+    val simulate: Boolean = false,
+    val speedMultiplier: Float = 5f,
+  )
+
   /** Start a navigation session. Initializes the Navigator on first call.
    *
    *  Suppresses the "Welcome to Google Maps Navigation" toast and the
@@ -111,13 +144,14 @@ object NavigationManager {
    *  that acceptance (`SKIPPED`) for every subsequent `getNavigator`. */
   fun start(
     activity: Activity,
-    lat: Double,
-    lng: Double,
-    simulate: Boolean,
-    speedMultiplier: Float,
+    options: StartOptions,
     callbacks: Callbacks,
   ) {
-    Log.d(TAG, "start lat=$lat lng=$lng simulate=$simulate speed=$speedMultiplier")
+    Log.d(TAG, "start stops=${options.stops.size} mode=${options.mode} simulate=${options.simulate} speed=${options.speedMultiplier}")
+    if (options.stops.isEmpty()) {
+      callbacks.onError("at least one stop is required")
+      return
+    }
 
     val sdkAccepted = NavigationApi.areTermsAccepted(activity.application)
     val prefAccepted = readTermsAcceptedPref(activity)
@@ -127,7 +161,7 @@ object NavigationManager {
     )
 
     if (sdkAccepted || prefAccepted || termsAcceptedThisProcess) {
-      startNavigatorSkippingTerms(activity, lat, lng, simulate, speedMultiplier, callbacks)
+      startNavigatorSkippingTerms(activity, options, callbacks)
       return
     }
 
@@ -145,7 +179,7 @@ object NavigationManager {
           }
           termsAcceptedThisProcess = true
           writeTermsAcceptedPref(activity)
-          startNavigatorSkippingTerms(activity, lat, lng, simulate, speedMultiplier, callbacks)
+          startNavigatorSkippingTerms(activity, options, callbacks)
         }
       },
     )
@@ -153,10 +187,7 @@ object NavigationManager {
 
   private fun startNavigatorSkippingTerms(
     activity: Activity,
-    lat: Double,
-    lng: Double,
-    simulate: Boolean,
-    speedMultiplier: Float,
+    options: StartOptions,
     callbacks: Callbacks,
   ) {
     NavigationApi.getNavigator(
@@ -174,7 +205,7 @@ object NavigationManager {
           attachListeners(nav, callbacks)
           attachLocationListener(activity, callbacks)
           registerNavInfoUpdates(activity, nav)
-          setDestinationAndStart(nav, lat, lng, simulate, speedMultiplier, callbacks)
+          setDestinationAndStart(nav, options, callbacks)
         }
 
         override fun onError(errorCode: Int) {
@@ -283,6 +314,8 @@ object NavigationManager {
       }
     }
     NavInfoHolder.reset()
+    lastSpeedMps = null
+    offRouteFired = false
   }
 
   /**
@@ -329,34 +362,45 @@ object NavigationManager {
 
   private fun setDestinationAndStart(
     nav: Navigator,
-    lat: Double,
-    lng: Double,
-    simulate: Boolean,
-    speedMultiplier: Float,
+    options: StartOptions,
     callbacks: Callbacks,
   ) {
-    val waypoint = try {
-      Waypoint.builder()
-        .setLatLng(lat, lng)
-        .setTitle("Destination")
-        .build()
+    val waypoints = try {
+      options.stops.mapIndexed { idx, (lat, lng) ->
+        Waypoint.builder()
+          .setLatLng(lat, lng)
+          .setTitle(if (idx == options.stops.lastIndex) "Destination" else "Stop ${idx + 1}")
+          .build()
+      }
     } catch (e: Waypoint.UnsupportedPlaceIdException) {
       callbacks.onError("Unsupported destination: ${e.message}")
       return
     }
 
+    val routingOptions = RoutingOptions()
+      .travelMode(translateMode(options.mode))
+      .avoidHighways(options.avoidHighways)
+      .avoidTolls(options.avoidTolls)
+      .avoidFerries(options.avoidFerries)
+
     activeCallbacks = callbacks
-    nav.setDestination(
-      waypoint,
-      RoutingOptions().travelMode(RoutingOptions.TravelMode.WALKING),
-    ).setOnResultListener { status ->
+    val resultPending = if (waypoints.size == 1) {
+      // Single-destination call path keeps using setDestination(), which is
+      // the only API exposed by older SDK builds. Multi-stop trips upgrade
+      // to setDestinations(...) below.
+      nav.setDestination(waypoints[0], routingOptions)
+    } else {
+      nav.setDestinations(waypoints, routingOptions)
+    }
+
+    resultPending.setOnResultListener { status ->
       when (status) {
         Navigator.RouteStatus.OK -> {
           Log.d(TAG, "route OK, starting guidance")
           nav.startGuidance()
-          simulating = simulate
-          simulationSpeed = speedMultiplier.coerceIn(0.5f, 50f)
-          if (simulate) {
+          simulating = options.simulate
+          simulationSpeed = options.speedMultiplier.coerceIn(0.5f, 50f)
+          if (options.simulate) {
             Log.d(TAG, "simulator engaged at ${simulationSpeed}x")
             nav.simulator?.simulateLocationsAlongExistingRoute(
               SimulationOptions().speedMultiplier(simulationSpeed),
@@ -372,6 +416,30 @@ object NavigationManager {
           callbacks.onError(msg)
         }
       }
+    }
+  }
+
+  /**
+   * Map the SDK-agnostic mode string to a Google Nav SDK TravelMode. Falls
+   * back to DRIVING when the SDK build doesn't expose a value (e.g. older
+   * SDKs lack TWO_WHEELER) so we never crash on a missing constant.
+   */
+  private fun translateMode(mode: String): RoutingOptions.TravelMode {
+    return when (mode.lowercase()) {
+      "walking" -> RoutingOptions.TravelMode.WALKING
+      "cycling" -> tryTravelMode("CYCLING") ?: RoutingOptions.TravelMode.WALKING
+      "two_wheeler" -> tryTravelMode("TWO_WHEELER") ?: RoutingOptions.TravelMode.DRIVING
+      else -> RoutingOptions.TravelMode.DRIVING
+    }
+  }
+
+  private fun tryTravelMode(name: String): RoutingOptions.TravelMode? {
+    return try {
+      RoutingOptions.TravelMode::class.java
+        .enumConstants
+        ?.firstOrNull { it.name == name }
+    } catch (_: Throwable) {
+      null
     }
   }
 
@@ -413,6 +481,8 @@ object NavigationManager {
       Log.d(TAG, "route changed — emitting next maneuver + new route")
       callbacks.onRerouting()
       lastEmittedKey = null // force re-emit after reroute
+      // Now that the route has been rebuilt, the user is on-route again.
+      offRouteFired = false
       // If we're in simulate mode, the simulator was paused (either
       // organically by the off-route detection, or explicitly by
       // simulateDeviation). Restart it on the new route so the user keeps
@@ -463,6 +533,7 @@ object NavigationManager {
       val listener = RoadSnappedLocationProvider.LocationListener { loc: Location ->
         lastFixLat = loc.latitude
         lastFixLng = loc.longitude
+        lastSpeedMps = if (loc.hasSpeed()) loc.speed else null
         callbacks.onLocation(
           LocationPayload(
             lat = loc.latitude,
@@ -471,6 +542,22 @@ object NavigationManager {
             timestamp = loc.time,
           ),
         )
+        // Off-route detection. We compute perpendicular distance to the
+        // active polyline and fire onOffRoute once when it crosses the
+        // threshold. The Nav SDK's reroute pipeline kicks in shortly
+        // after; the routeChangedListener clears `offRouteFired` so the
+        // next deviation can fire again.
+        val nav = navigator
+        if (nav != null && !offRouteFired) {
+          val flat = flattenRoute(nav)
+          if (flat != null && flat.size >= 2) {
+            val (_, perp) = closestSegmentIndex(flat, loc.latitude, loc.longitude)
+            if (perp > OFF_ROUTE_THRESHOLD_M) {
+              offRouteFired = true
+              callbacks.onOffRoute(perp)
+            }
+          }
+        }
       }
       provider.addLocationListener(listener)
       roadSnappedProvider = provider
@@ -487,12 +574,15 @@ object NavigationManager {
       return
     }
     // Bucket distance into 5 m steps so we don't spam JS with a new event
-    // for every meter of movement.
+    // for every meter of movement. Also bucket the trip-total distance so
+    // the countdown advances smoothly even when the upcoming-maneuver
+    // bucket hasn't moved (long straight stretches).
     val distBucket = if (payload.distanceMeters >= 0) payload.distanceMeters / 5 else -1
-    val key = "${payload.maneuverType}|$distBucket"
+    val tripBucket = if (payload.distanceToDestinationMeters >= 0) payload.distanceToDestinationMeters / 10 else -1
+    val key = "${payload.maneuverType}|$distBucket|$tripBucket"
     if (key == lastEmittedKey) return
     lastEmittedKey = key
-    Log.d(TAG, "emit → ${payload.maneuverType} in ${payload.distanceMeters}m")
+    Log.d(TAG, "emit → ${payload.maneuverType} in ${payload.distanceMeters}m (trip ${payload.distanceToDestinationMeters}m)")
     callbacks.onManeuver(payload)
   }
 
@@ -552,12 +642,23 @@ object NavigationManager {
     val sdkManeuver = NavInfoHolder.sdkManeuverType
     val sdkDistance = NavInfoHolder.distanceToCurrentStepMeters
 
+    // Trip totals + speed are independent of the per-step maneuver selection,
+    // so compute them once up front and stamp every payload below with the
+    // same set. Negative trip totals stay negative on the wire — JS treats
+    // -1 as "unknown" and renders accordingly.
+    val distToDest = NavInfoHolder.distanceToFinalDestinationMeters ?: -1
+    val timeToDest = NavInfoHolder.timeToFinalDestinationSeconds ?: -1
+    val speedMps = lastSpeedMps
+
     if (sdkManeuver != null && sdkDistance != null && sdkDistance >= 0) {
       return ManeuverPayload(
         maneuverType = sdkManeuver,
         distanceMeters = sdkDistance,
         fromRoad = fromRoad,
         toRoad = toRoad,
+        distanceToDestinationMeters = distToDest,
+        timeToDestinationSeconds = timeToDest,
+        currentSpeedMps = speedMps,
       )
     }
 
@@ -568,7 +669,17 @@ object NavigationManager {
         distanceMeters = -1,
         fromRoad = fromRoad,
         toRoad = toRoad,
+        distanceToDestinationMeters = distToDest,
+        timeToDestinationSeconds = timeToDest,
+        currentSpeedMps = speedMps,
       )
+    }
+    // Bearing of the closest segment, surfaced as routeHeadingDeg on the
+    // payload so consumers can rotate map cones without recomputing it.
+    val routeHeadingFloat: Float? = run {
+      val a = flat[startIdx]
+      val b = flat[(startIdx + 1).coerceAtMost(flat.size - 1)]
+      bearing(a.first, a.second, b.first, b.second).toFloat()
     }
 
     val netTurnDeg = 30.0
@@ -608,6 +719,10 @@ object NavigationManager {
               distanceMeters = anchorDistFromUser.toInt(),
               fromRoad = fromRoad,
               toRoad = toRoad,
+              distanceToDestinationMeters = distToDest,
+              timeToDestinationSeconds = timeToDest,
+              currentSpeedMps = speedMps,
+              routeHeadingDeg = routeHeadingFloat,
             )
           }
           if (distFromUser - anchorDistFromUser > windowMeters) {
@@ -629,6 +744,10 @@ object NavigationManager {
       distanceMeters = distFromUser.toInt(),
       fromRoad = fromRoad,
       toRoad = toRoad,
+      distanceToDestinationMeters = distToDest,
+      timeToDestinationSeconds = timeToDest,
+      currentSpeedMps = speedMps,
+      routeHeadingDeg = routeHeadingFloat,
     )
   }
 

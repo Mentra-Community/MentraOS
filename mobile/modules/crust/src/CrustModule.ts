@@ -60,7 +60,15 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
   startNavigation(
     lat: number,
     lng: number,
-    options?: {simulate?: boolean; speedMultiplier?: number},
+    options?: {
+      simulate?: boolean
+      speedMultiplier?: number
+      /** Optional multi-stop list. When present takes precedence over lat/lng. Last entry is the final destination. */
+      stops?: Array<{lat: number; lng: number}>
+      /** "walking" | "driving" | "cycling" | "two_wheeler". Defaults driving. */
+      mode?: string
+      avoid?: {highways?: boolean; tolls?: boolean; ferries?: boolean}
+    },
   ): Promise<{ok: boolean; error?: string}>
   stopNavigation(): Promise<{ok: boolean; error?: string}>
 

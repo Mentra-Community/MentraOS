@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from "react"
-import type {NavManeuver, NavRoute, NavUpdate} from "@mentra/miniapp"
+import type {NavManeuver, NavRoute, NavUpdate, TravelMode} from "@mentra/miniapp"
 
 import {FloatingDevPanel} from "@/frontend/components/FloatingDevPanel/FloatingDevPanel"
 import {SimulationControls} from "@/frontend/pages/NavigationPage/components/Controls/Controls"
@@ -13,7 +13,6 @@ import {useUser} from "@/backend/hooks/useUser"
 import {formatDistance} from "@/backend/lib/formatDistance/formatDistance"
 import type {LatLng} from "@/backend/lib/geometry/geometry"
 import type {PlaceDetails} from "@/backend/lib/places/places"
-import {fetchPreviewRoute} from "@/backend/lib/places/places"
 
 export type NavStatus = "idle" | "navigating" | "rerouting" | "arrived"
 export type LogEntry = {id: number; ts: number; line: string}
@@ -32,11 +31,13 @@ export function NavigationPage() {
   const [destination, setDestination] = useState<PlaceDetails | null>(null)
   const [simulate, setSimulate] = useState(true)
   const [speedMultiplier, setSpeedMultiplier] = useState(5)
+  const [travelMode, setTravelMode] = useState<TravelMode>("walking")
 
   // Trip state — owned by the page; navigation manager is just an SDK wrapper.
   const [running, setRunning] = useState(false)
   const [status, setStatus] = useState<NavStatus>("idle")
   const [maneuver, setManeuver] = useState<NavManeuver | null>(null)
+  const [offRouteAt, setOffRouteAt] = useState<number | null>(null)
   const [activeDestination, setActiveDestination] = useState<LatLng | null>(null)
   const [routePoints, setRoutePoints] = useState<NavRoute["points"] | null>(null)
   const [breadcrumbs, setBreadcrumbs] = useState<LatLng[]>([])
@@ -54,9 +55,17 @@ export function NavigationPage() {
     const ctrl = new AbortController()
     previewAbortRef.current = ctrl
     const origin = {lat: coords.lat, lng: coords.lng}
-    fetchPreviewRoute(origin, {lat: destination.lat, lng: destination.lng}, ctrl.signal).then((pts) => {
-      if (!ctrl.signal.aborted) setPreviewRoutePoints(pts)
-    })
+    navigation
+      .computeRoute({
+        origin,
+        stops: [{lat: destination.lat, lng: destination.lng}],
+        mode: travelMode,
+      })
+      .then((result) => {
+        if (ctrl.signal.aborted) return
+        const pts = result.routes?.[0]?.points ?? null
+        setPreviewRoutePoints(pts)
+      })
     return () => ctrl.abort()
     // coords intentionally omitted — only re-fetch when destination changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -109,15 +118,41 @@ export function NavigationPage() {
       return
     }
     const {now, next} = navigation.format.glassesLines(maneuver)
-    if (next) {
-      console.log("[NAV-MINI] display.showTwoLines:", now, next)
-      display.showText(`${now}\n${next}`)
-
-    } else {
-      console.log("[NAV-MINI] display.showText:", now)
-      display.showText(now)
-    }
+    const total = navigation.format.glassesProgressLine(maneuver)
+    const lines = [now, next, total].filter((l): l is string => !!l)
+    console.log("[NAV-MINI] display.showLines:", lines)
+    display.showText(lines.join("\n"))
   }, [display, navigation, running, status, maneuver])
+
+  // ---- mid-trip hydration ------------------------------------------------
+
+  // On first mount, ask the host whether there's already a trip running.
+  // If so, populate state from the snapshot AND attach the streams so the
+  // page picks up new events from this point forward.
+  useEffect(() => {
+    let cancelled = false
+    navigation.getState().then((state) => {
+      if (cancelled || !state || !state.active) return
+      if (state.maneuver) setManeuver(state.maneuver as NavManeuver)
+      if (state.route) setRoutePoints(state.route.points)
+      const finalStop = state.stops?.[state.stops.length - 1]
+      if (finalStop) setActiveDestination({lat: finalStop.lat, lng: finalStop.lng})
+      setStatus("navigating")
+      setRunning(true)
+      if (!navUpdateUnsubRef.current) navUpdateUnsubRef.current = navigation.onUpdate(handleNavUpdate)
+      if (!navRouteUnsubRef.current) {
+        navRouteUnsubRef.current = navigation.onRoute((route: NavRoute) => {
+          setRoutePoints(route.points)
+        })
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+    // Hydration is a one-shot mount effect; intentionally not re-run on
+    // identity changes of `navigation` (it's stable for the User singleton).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // ---- subscription cleanup on unmount -----------------------------------
 
@@ -138,6 +173,10 @@ export function NavigationPage() {
       case "maneuver":
         setStatus("navigating")
         setManeuver(u)
+        setOffRouteAt(null)
+        break
+      case "off_route":
+        setOffRouteAt(Date.now())
         break
       case "rerouting":
         setStatus("rerouting")
@@ -149,6 +188,7 @@ export function NavigationPage() {
         setActiveDestination(null)
         setRoutePoints(null)
         setBreadcrumbs([])
+        setOffRouteAt(null)
         navUpdateUnsubRef.current?.()
         navUpdateUnsubRef.current = null
         navRouteUnsubRef.current?.()
@@ -187,8 +227,8 @@ export function NavigationPage() {
     }
 
     const result = await navigation.start({
-      lat: latNum,
-      lng: lngNum,
+      stops: [{lat: latNum, lng: lngNum}],
+      mode: travelMode,
       simulate,
       speedMultiplier,
     })
@@ -207,9 +247,9 @@ export function NavigationPage() {
     }
   }
 
-  async function handleStop() {
-    const result = await navigation.stop()
-    append(`stop ack: ${JSON.stringify(result)}`)
+  function handleStop() {
+    navigation.stop()
+    append("stop sent")
     navUpdateUnsubRef.current?.()
     navUpdateUnsubRef.current = null
     navRouteUnsubRef.current?.()
@@ -220,12 +260,12 @@ export function NavigationPage() {
     setActiveDestination(null)
     setRoutePoints(null)
     setBreadcrumbs([])
+    setOffRouteAt(null)
   }
 
-  async function handleDeviate() {
+  function handleDeviate() {
     append("deviate → +20m off-route")
-    const result = await navigation.deviate(20)
-    append(`deviate ack: ${JSON.stringify(result)}`)
+    navigation.deviate(20)
   }
 
   const me = coords ? {lat: coords.lat, lng: coords.lng} : null
@@ -260,6 +300,11 @@ export function NavigationPage() {
             routePoints={routePoints}
           />
         </div>
+        {offRouteAt != null && status !== "rerouting" ? (
+          <div className="pointer-events-none mx-3 px-3 py-2 rounded-lg bg-amber-500/95 text-white text-sm font-semibold shadow">
+            Off route — recalculating…
+          </div>
+        ) : null}
       </div>
 
       <DestinationDrawer
@@ -301,6 +346,26 @@ export function NavigationPage() {
           setSpeedMultiplier={setSpeedMultiplier}
           running={running}
         />
+        <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3">
+          <div className="text-[11px] font-bold tracking-wider text-neutral-500 uppercase mb-2">
+            🚶 Travel mode
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {(["walking", "driving", "cycling", "two_wheeler"] as const).map((m) => (
+              <button
+                key={m}
+                disabled={running}
+                onClick={() => setTravelMode(m)}
+                className={`px-3 py-2 rounded-lg text-sm font-medium border ${
+                  travelMode === m
+                    ? "border-blue-500 bg-blue-50 text-blue-900"
+                    : "border-neutral-200 bg-white text-neutral-700"
+                } disabled:opacity-50`}>
+                {m.replace("_", " ")}
+              </button>
+            ))}
+          </div>
+        </div>
         <button
           onClick={() => {
             console.log("[NAV-MINI] display.showText:", "go left")
@@ -361,6 +426,8 @@ function formatUpdate(u: NavUpdate): string {
   switch (u.kind) {
     case "maneuver":
       return `MANEUVER: ${u.maneuverType} in ${u.distanceMeters}m`
+    case "off_route":
+      return `OFF_ROUTE: ${Math.round(u.offRouteDistanceMeters)}m off`
     case "rerouting":
       return "REROUTING"
     case "arrived":

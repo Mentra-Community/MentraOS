@@ -68,6 +68,10 @@ class NavInfoReceiverService : Service() {
           nextRoad = upcomingRoad,
           sdkManeuverType = current?.maneuver?.let { mapManeuver(it) },
           distanceToCurrentStepMeters = navInfo.distanceToCurrentStepMeters,
+          // Trip totals come straight off NavInfo. Treat negative SDK values
+          // as "unknown" — caller decides how to surface that on the wire.
+          distanceToFinalDestinationMeters = readPositive(navInfo, "getDistanceToFinalDestinationMeters"),
+          timeToFinalDestinationSeconds = readPositive(navInfo, "getTimeToFinalDestinationSeconds"),
         )
       }
     }
@@ -88,6 +92,25 @@ class NavInfoReceiverService : Service() {
     fun resetStepTracking() {
       previousStepRoad = null
       lastSeenStepRoad = null
+    }
+
+    /**
+     * Pull a non-negative number off NavInfo via reflection. The Google Nav
+     * SDK exposes total-trip getters on `NavInfo` but the exact method
+     * names + signatures vary by SDK version, so we probe defensively
+     * instead of pinning to one shape and crashing on a mismatch. Returns
+     * null when the method is missing or the value is negative ("unknown"
+     * per SDK convention).
+     */
+    private fun readPositive(navInfo: NavInfo, getter: String): Int? {
+      return try {
+        val m = navInfo::class.java.methods.firstOrNull { it.name == getter && it.parameterCount == 0 }
+        val v = m?.invoke(navInfo) as? Number ?: return null
+        val i = v.toInt()
+        if (i >= 0) i else null
+      } catch (_: Throwable) {
+        null
+      }
     }
 
     /**
@@ -197,17 +220,25 @@ object NavInfoHolder {
    * SDK doesn't supply it.
    */
   @Volatile var distanceToCurrentStepMeters: Int? = null
+  /** Total trip distance remaining in meters. Null = SDK didn't supply. */
+  @Volatile var distanceToFinalDestinationMeters: Int? = null
+  /** Total trip time remaining in seconds. Null = SDK didn't supply. */
+  @Volatile var timeToFinalDestinationSeconds: Int? = null
 
   fun update(
     currentRoad: String?,
     nextRoad: String?,
     sdkManeuverType: String?,
     distanceToCurrentStepMeters: Int?,
+    distanceToFinalDestinationMeters: Int? = null,
+    timeToFinalDestinationSeconds: Int? = null,
   ) {
     this.currentRoad = currentRoad?.takeIf { it.isNotBlank() }
     this.nextRoad = nextRoad?.takeIf { it.isNotBlank() }
     this.sdkManeuverType = sdkManeuverType
     this.distanceToCurrentStepMeters = distanceToCurrentStepMeters
+    this.distanceToFinalDestinationMeters = distanceToFinalDestinationMeters
+    this.timeToFinalDestinationSeconds = timeToFinalDestinationSeconds
   }
 
   fun reset() {
@@ -215,6 +246,8 @@ object NavInfoHolder {
     nextRoad = null
     sdkManeuverType = null
     distanceToCurrentStepMeters = null
+    distanceToFinalDestinationMeters = null
+    timeToFinalDestinationSeconds = null
     NavInfoReceiverService.resetStepTracking()
   }
 }

@@ -595,6 +595,12 @@ class LocalMiniappRuntime {
       case MiniappRequestType.NAVIGATION_DEVIATE:
         this.handleNavigationDeviate(packageName, payload, requestId)
         break
+      case MiniappRequestType.NAVIGATION_GET_STATE:
+        this.handleNavigationGetState(packageName, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_COMPUTE_ROUTE:
+        this.handleNavigationComputeRoute(packageName, payload, requestId)
+        break
       case MiniappRequestType.STORAGE_GET:
         this.handleStorageGet(packageName, payload, requestId)
         break
@@ -1093,18 +1099,43 @@ class LocalMiniappRuntime {
     requestId?: string,
   ): Promise<void> {
     console.log(`${LOG_TAG}: handleNavigationStart from ${packageName}`, JSON.stringify(payload))
-    const lat = Number(payload.lat)
-    const lng = Number(payload.lng)
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+
+    // v2 wire shape sends `stops`; v1 shape sends bare lat/lng. Accept both.
+    const rawStops = payload.stops as Array<{lat?: unknown; lng?: unknown}> | undefined
+    const stops: Array<{lat: number; lng: number}> = []
+    if (Array.isArray(rawStops)) {
+      for (const s of rawStops) {
+        const sLat = Number(s?.lat)
+        const sLng = Number(s?.lng)
+        if (Number.isFinite(sLat) && Number.isFinite(sLng)) stops.push({lat: sLat, lng: sLng})
+      }
+    }
+    if (stops.length === 0) {
+      const lat = Number(payload.lat)
+      const lng = Number(payload.lng)
+      if (Number.isFinite(lat) && Number.isFinite(lng)) stops.push({lat, lng})
+    }
+    if (stops.length === 0) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
-        message: "lat/lng required",
+        message: "stops or lat/lng required",
       })
       return
     }
+    const lat = stops[0].lat
+    const lng = stops[0].lng
     const simulate = payload.simulate === true
     const speedNum = Number(payload.speedMultiplier)
     const speedMultiplier = Number.isFinite(speedNum) && speedNum > 0 ? speedNum : 5
+    const mode = typeof payload.mode === "string" ? payload.mode : "driving"
+    const avoidRaw = payload.avoid as Record<string, unknown> | undefined
+    const avoid = avoidRaw
+      ? {
+          highways: avoidRaw.highways === true,
+          tolls: avoidRaw.tolls === true,
+          ferries: avoidRaw.ferries === true,
+        }
+      : undefined
 
     // Attach a per-app listener that forwards nav updates as a stream event.
     if (!this.navListeners.has(packageName)) {
@@ -1150,7 +1181,10 @@ class LocalMiniappRuntime {
     }
 
     try {
-      const result = await navigationService.start({lat, lng}, {simulate, speedMultiplier})
+      const result = await navigationService.start(
+        {lat, lng},
+        {simulate, speedMultiplier, stops, mode, avoid},
+      )
       this.sendResult(packageName, requestId, result.ok, result, undefined)
     } catch (err) {
       console.error(`${LOG_TAG}: navigation start error:`, err)
@@ -1194,6 +1228,28 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "navigation deviate error",
+      })
+    }
+  }
+
+  private handleNavigationGetState(packageName: string, requestId?: string): void {
+    const snapshot = navigationService.getSnapshot()
+    this.sendResult(packageName, requestId, true, {state: snapshot})
+  }
+
+  private async handleNavigationComputeRoute(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const result = await navigationService.computeRoute(payload)
+      this.sendResult(packageName, requestId, result.ok !== false, result)
+    } catch (err) {
+      console.error(`${LOG_TAG}: navigation computeRoute error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "navigation computeRoute error",
       })
     }
   }

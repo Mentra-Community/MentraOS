@@ -20,6 +20,7 @@ class CrustModule : Module() {
       "onNavError",
       "onNavLocation",
       "onNavRoute",
+      "onNavOffRoute",
       "onHeading",
     )
 
@@ -236,6 +237,29 @@ class CrustModule : Module() {
         ?: return@AsyncFunction mapOf("ok" to false, "error" to "no current activity (app backgrounded?)")
       val simulate = (options?.get("simulate") as? Boolean) ?: false
       val speed = (options?.get("speedMultiplier") as? Number)?.toFloat() ?: 5f
+      val mode = (options?.get("mode") as? String) ?: "driving"
+
+      // Prefer the v2 `stops` array when present. Fall back to lat/lng for
+      // older callers that haven't been upgraded yet.
+      val rawStops = options?.get("stops") as? List<*>
+      val stops: List<Pair<Double, Double>> = if (rawStops != null && rawStops.isNotEmpty()) {
+        rawStops.mapNotNull { item ->
+          val map = item as? Map<*, *> ?: return@mapNotNull null
+          val sLat = (map["lat"] as? Number)?.toDouble() ?: return@mapNotNull null
+          val sLng = (map["lng"] as? Number)?.toDouble() ?: return@mapNotNull null
+          sLat to sLng
+        }
+      } else {
+        listOf(lat to lng)
+      }
+      if (stops.isEmpty()) {
+        return@AsyncFunction mapOf("ok" to false, "error" to "no valid stops")
+      }
+
+      val avoidMap = options?.get("avoid") as? Map<*, *>
+      val avoidHighways = (avoidMap?.get("highways") as? Boolean) ?: false
+      val avoidTolls = (avoidMap?.get("tolls") as? Boolean) ?: false
+      val avoidFerries = (avoidMap?.get("ferries") as? Boolean) ?: false
 
       val callbacks = object : NavigationManager.Callbacks {
         override fun onManeuver(payload: NavigationManager.ManeuverPayload) {
@@ -246,6 +270,11 @@ class CrustModule : Module() {
               "distanceMeters" to payload.distanceMeters,
               "fromRoad" to payload.fromRoad,
               "toRoad" to payload.toRoad,
+              "distanceToDestinationMeters" to payload.distanceToDestinationMeters,
+              "timeToDestinationSeconds" to payload.timeToDestinationSeconds,
+              "currentSpeedMps" to payload.currentSpeedMps,
+              "speedLimitMps" to payload.speedLimitMps,
+              "routeHeadingDeg" to payload.routeHeadingDeg,
             ),
           )
         }
@@ -275,6 +304,12 @@ class CrustModule : Module() {
             mapOf(
               "points" to points.map { mapOf("lat" to it.lat, "lng" to it.lng) },
             ),
+          )
+        }
+        override fun onOffRoute(perpendicularDistanceMeters: Double) {
+          sendEvent(
+            "onNavOffRoute",
+            mapOf("offRouteDistanceMeters" to perpendicularDistanceMeters),
           )
         }
       }
@@ -307,7 +342,19 @@ class CrustModule : Module() {
         //    only on the very first run (persisted), and passes
         //    `SKIPPED` to `getNavigator` afterward to suppress the
         //    "Welcome to Google Maps" toast.
-        NavigationManager.start(activity, lat, lng, simulate, speed, callbacks)
+        NavigationManager.start(
+          activity,
+          NavigationManager.StartOptions(
+            stops = stops,
+            mode = mode,
+            avoidHighways = avoidHighways,
+            avoidTolls = avoidTolls,
+            avoidFerries = avoidFerries,
+            simulate = simulate,
+            speedMultiplier = speed,
+          ),
+          callbacks,
+        )
       }
       mapOf("ok" to true)
     }
