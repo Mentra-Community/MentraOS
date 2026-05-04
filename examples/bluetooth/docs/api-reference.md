@@ -302,11 +302,14 @@ Android:
 
 ```kotlin
 val streamUrl = "http://192.168.1.42:8889/mentra-live/whip"
+val streamId = "stream-${System.currentTimeMillis()}"
 
 sdk.startStream(
     MentraStreamRequest(
         values = mapOf(
+            "type" to "start_stream",
             "streamUrl" to streamUrl,
+            "streamId" to streamId,
             "protocol" to "webrtc",
             "keepAlive" to true,
             "keepAliveIntervalSeconds" to 15,
@@ -315,7 +318,15 @@ sdk.startStream(
 )
 
 // Call while streaming if you manage the lifecycle yourself.
-sdk.keepStreamAlive(MentraStreamKeepAliveRequest(values = mapOf("streamUrl" to streamUrl)))
+sdk.keepStreamAlive(
+    MentraStreamKeepAliveRequest(
+        values = mapOf(
+            "type" to "keep_stream_alive",
+            "streamId" to streamId,
+            "ackId" to "ack-${System.currentTimeMillis()}",
+        )
+    )
+)
 
 sdk.stopStream()
 ```
@@ -324,11 +335,14 @@ iOS:
 
 ```swift
 let streamUrl = "http://192.168.1.42:8889/mentra-live/whip"
+let streamId = "stream-\(Int(Date().timeIntervalSince1970 * 1000))"
 
 sdk.startStream(
     MentraStreamRequest(
         values: [
+            "type": "start_stream",
             "streamUrl": streamUrl,
+            "streamId": streamId,
             "protocol": "webrtc",
             "keepAlive": true,
             "keepAliveIntervalSeconds": 15
@@ -337,12 +351,20 @@ sdk.startStream(
 )
 
 // Call while streaming if you manage the lifecycle yourself.
-sdk.keepStreamAlive(MentraStreamKeepAliveRequest(values: ["streamUrl": streamUrl]))
+sdk.keepStreamAlive(
+    MentraStreamKeepAliveRequest(
+        values: [
+            "type": "keep_stream_alive",
+            "streamId": streamId,
+            "ackId": "ack-\(Int(Date().timeIntervalSince1970 * 1000))"
+        ]
+    )
+)
 
 sdk.stopStream()
 ```
 
-For local WebRTC development, run the companion MediaMTX helper in `examples/local-webrtc-server` and use the printed WHIP URL, such as `http://192.168.1.42:8889/mentra-live/whip`, in the example app. Open the printed browser preview URL, such as `http://192.168.1.42:8889/mentra-live`, to watch the stream. Do not use `localhost`: keep the glasses, phone, and computer on a network where the glasses and phone can reach the computer.
+For local streaming development, run the companion local demo cloud in `examples/local-demo-cloud`. For RTMP, use the printed RTMP publish URL, such as `rtmp://192.168.1.42:1935/mentra-live`, in the example app and open the printed HLS preview URL, such as `http://192.168.1.42:8888/mentra-live`, on your computer. For WebRTC, use the printed WHIP URL, such as `http://192.168.1.42:8889/mentra-live/whip`, in the example app and open the printed WebRTC preview URL, such as `http://192.168.1.42:8889/mentra-live`. Do not use `localhost`: keep the glasses, phone, and computer on a network where the glasses and phone can reach the computer.
 
 ## Wi-Fi And Hotspot
 

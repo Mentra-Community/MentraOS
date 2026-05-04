@@ -9,8 +9,11 @@ import { streamUptime } from '../sdkFormat';
 import { STREAM_DEFAULT_URLS, type MentraSdkModel, type StreamProtocol } from '../useMentraSdk';
 
 const bars = [18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40];
-const streamSdkCall = `await BluetoothSdk.startStream({
+const streamSdkCall = `const streamId = \`rn-\${Date.now()}\`;
+await BluetoothSdk.startStream({
+  type: 'start_stream',
   protocol: streamProtocol,
+  streamId,
   streamUrl,
   keepAlive: true,
   keepAliveIntervalSeconds: 15,
@@ -19,6 +22,7 @@ const streamSdkCall = `await BluetoothSdk.startStream({
 export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
   const isLive = sdk.streamStartedAt !== null;
   const uptime = streamUptime(sdk.streamStartedAt);
+  const setupHint = localStreamSetupHint(sdk.streamProtocol, sdk.streamUrl, sdk.streamStatus);
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
@@ -107,6 +111,7 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
             <Path d="m18.5 2.5 3 3L12 15l-4 1 1-4z" />
           </Svg>
         </View>
+        {setupHint ? <Text style={styles.setupHint}>{setupHint}</Text> : null}
       </LinearGradient>
     </ScrollView>
   );
@@ -114,6 +119,28 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
 
 function streamProtocolLabel(protocol: StreamProtocol) {
   return protocol === 'webrtc' ? 'WHIP' : protocol.toUpperCase();
+}
+
+function localStreamSetupHint(protocol: StreamProtocol, streamUrl: string, status: string) {
+  if (protocol !== 'rtmp' && protocol !== 'webrtc') {
+    return null;
+  }
+  const normalized = status.toLowerCase();
+  const url = streamUrl.trim();
+  const needsSetup =
+    url.length === 0 ||
+    url.includes('<computer-ip>') ||
+    url.includes('YOUR_') ||
+    normalized.includes('not reachable') ||
+    normalized.includes('replace') ||
+    normalized.includes('required');
+  if (!needsSetup) {
+    return null;
+  }
+  if (protocol === 'rtmp') {
+    return 'Local RTMP setup: run python3 examples/local-demo-cloud/server.py, paste the printed RTMP publish URL here, then open the HLS preview URL on your computer. The printed ffplay command is optional for debugging.';
+  }
+  return 'Local WebRTC setup: run python3 examples/local-demo-cloud/server.py, paste the printed WHIP publish URL here, then open the WebRTC preview URL on your computer.';
 }
 
 const styles = StyleSheet.create({
@@ -156,6 +183,7 @@ const styles = StyleSheet.create({
   protoText: { color: colors.muted, fontSize: 12, fontWeight: '500' },
   protoTextActive: { color: colors.ink, fontWeight: '700' },
   urlBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(15,42,29,0.04)', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, gap: 10 },
+  setupHint: { color: colors.muted, fontSize: 11, fontWeight: '500', lineHeight: 15, backgroundColor: 'rgba(15,42,29,0.04)', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12 },
   method: { color: colors.greenAccent, fontSize: 11, fontWeight: '600', letterSpacing: 0.5 },
   divider: { width: 1, height: 14, backgroundColor: 'rgba(15,42,29,0.12)' },
   url: { flex: 1, color: colors.ink, fontSize: 13, fontWeight: '500' },

@@ -40,22 +40,21 @@ pod install
 - Sending RGB LED mode requests.
 - Showing button, touch, BLE, TX, STORE, and raw status events in the console.
 
-For local photo preview testing, run the webhook server from the repo root and
-paste the printed LAN `/upload` URL into the Camera screen:
+For local photo preview and RTMP/WebRTC testing, run the local demo cloud from the
+repo root:
 
 ```bash
-python3 examples/photo-webhook-server/server.py
+python3 examples/local-demo-cloud/server.py
 ```
 
-For local WebRTC streaming, run the MediaMTX helper from the repo root and
-paste the printed WHIP URL into the Stream screen's WebRTC field:
+Paste the printed LAN `/upload` URL into the Camera screen. Paste the printed
+RTMP publish URL into the Stream screen's RTMP field, or the printed WHIP URL
+into the WebRTC field. If Docker is not installed or not running, the command
+still starts the photo webhook and skips streaming with a
+warning.
 
-```bash
-examples/local-webrtc-server/run-mediamtx.sh
-```
-
-Open the printed browser preview URL on your computer to watch the stream. See
-[`examples/local-webrtc-server`](../local-webrtc-server/README.md) for details.
+Open the printed HLS or WebRTC browser preview URL on your computer to watch a stream.
+See [`examples/local-demo-cloud`](../local-demo-cloud/README.md) for details.
 
 ## Files
 

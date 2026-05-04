@@ -8,6 +8,11 @@ struct ExampleEvent: Identifiable {
     let text: String
 }
 
+struct ExampleActionError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
+}
+
 enum ExampleStreamProtocol: String, CaseIterable {
     case rtmp
     case srt
@@ -18,7 +23,7 @@ enum ExampleStreamProtocol: String, CaseIterable {
     var defaultUrl: String {
         switch self {
         case .rtmp:
-            return "rtmps://a.rtmps.youtube.com/live2/YOUR_STREAM_KEY"
+            return "rtmp://<computer-ip>:1935/mentra-live"
         case .srt:
             return "srt://srt.example.com:4201?streamid=YOUR_STREAM_ID&passphrase=YOUR_PASSPHRASE"
         case .webrtc:
@@ -55,6 +60,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private let sdk = MentraBluetoothSDK()
     private var activePhotoRequestId: String?
+    private var activeStreamId: String?
     private var pollGeneration = 0
     private var keepAliveTask: Task<Void, Never>?
 
@@ -99,6 +105,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         runAction("Disconnect") {
             stopKeepAlive()
             sdk.disconnect()
+            activeStreamId = nil
             glassesValues = disconnectedGlassesValues()
             streamStartedAt = nil
             streamStatus = "Disconnected"
@@ -203,6 +210,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             runAction("Stop stream") {
                 stopKeepAlive()
                 sdk.stopStream()
+                activeStreamId = nil
                 streamStartedAt = nil
                 streamStatus = "Stopped"
             }
@@ -210,16 +218,46 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
 
         runAction("Start stream") {
+            let url = streamUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let validationMessage = streamUrlValidationMessage(url) {
+                streamStatus = validationMessage
+                throw ExampleActionError(message: validationMessage)
+            }
+            let streamId = "ios-\(Int(Date().timeIntervalSince1970 * 1000))"
             let params: [String: Any] = [
-                "streamUrl": streamUrl.trimmingCharacters(in: .whitespacesAndNewlines),
+                "type": "start_stream",
+                "streamUrl": url,
+                "streamId": streamId,
                 "protocol": streamProtocol.rawValue,
                 "keepAlive": true,
                 "keepAliveIntervalSeconds": 15,
             ]
-            sdk.startStream(MentraStreamRequest(values: params))
-            streamStartedAt = Date()
-            streamStatus = "LIVE · \(streamProtocol.rawValue.uppercased())"
-            startKeepAlive(params)
+            if streamProtocol == .webrtc {
+                streamStatus = "Checking local WebRTC server"
+                Task {
+                    do {
+                        try await checkLocalWebrtcServer(whipUrl: url)
+                        startStream(params)
+                    } catch {
+                        let message = error.localizedDescription
+                        streamStatus = message
+                        lastAction = "Failed: Start stream - \(message)"
+                        append(tag: "TX", text: "Start stream failed: \(message)")
+                    }
+                }
+                return
+            }
+            startStream(params)
+        }
+    }
+
+    private func startStream(_ params: [String: Any]) {
+        sdk.startStream(MentraStreamRequest(values: params))
+        activeStreamId = stringValue(params, "streamId")
+        streamStartedAt = Date()
+        streamStatus = "LIVE · \(streamProtocol.rawValue.uppercased())"
+        if let activeStreamId {
+            startKeepAlive(streamId: activeStreamId)
         }
     }
 
@@ -322,12 +360,17 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         append(tag: "TX", text: error.description)
     }
 
-    private func runAction(_ label: String, _ action: () -> Void) {
+    private func runAction(_ label: String, _ action: () throws -> Void) {
         activeAction = label
         lastAction = "Running: \(label)"
         append(tag: "TX", text: label)
-        action()
-        lastAction = "Requested: \(label)"
+        do {
+            try action()
+            lastAction = "Requested: \(label)"
+        } catch {
+            lastAction = "Failed: \(label) - \(error.localizedDescription)"
+            append(tag: "TX", text: "\(label) failed: \(error.localizedDescription)")
+        }
         activeAction = nil
     }
 
@@ -352,10 +395,29 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         case "photo_response":
             handlePhotoResponse(values)
         case "stream_status":
+            applyStreamStatus(values)
             streamStatus = summarize(values)
             append(tag: "LIVE", text: "stream \(summarize(values))")
         default:
             append(tag: "LIVE", text: "\(name) \(summarize(values))")
+        }
+    }
+
+    private func applyStreamStatus(_ values: [String: Any]) {
+        switch stringValue(values, "status") {
+        case "streaming", "initializing", "starting":
+            if streamStartedAt == nil {
+                streamStartedAt = Date()
+            }
+            if let streamId = stringValue(values, "streamId") {
+                activeStreamId = streamId
+            }
+        case "stopped", "stopping", "error", "error_not_streaming":
+            streamStartedAt = nil
+            activeStreamId = nil
+            stopKeepAlive()
+        default:
+            break
         }
     }
 
@@ -407,13 +469,21 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    private func startKeepAlive(_ params: [String: Any]) {
+    private func startKeepAlive(streamId: String) {
         stopKeepAlive()
         keepAliveTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 15_000_000_000)
                 guard let self else { return }
-                self.sdk.keepStreamAlive(MentraStreamKeepAliveRequest(values: params))
+                self.sdk.keepStreamAlive(
+                    MentraStreamKeepAliveRequest(
+                        values: [
+                            "type": "keep_stream_alive",
+                            "streamId": streamId,
+                            "ackId": "ack-\(Int(Date().timeIntervalSince1970 * 1000))",
+                        ]
+                    )
+                )
                 self.append(tag: "TX", text: "stream keep alive")
             }
         }
@@ -557,4 +627,57 @@ func webhookHealthUrl(_ uploadUrlText: String) -> URL? {
     components.port = uploadUrl.port
     components.path = "/"
     return components.url
+}
+
+func checkLocalWebrtcServer(whipUrl: String) async throws {
+    guard let previewUrl = webrtcPreviewUrl(whipUrl) else {
+        throw ExampleActionError(message: "Enter a valid http:// or https:// WHIP URL.")
+    }
+    var request = URLRequest(url: previewUrl)
+    request.cachePolicy = .reloadIgnoringLocalCacheData
+    request.timeoutInterval = 3
+    do {
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw ExampleActionError(message: localWebrtcSetupMessage("invalid response"))
+        }
+        // MediaMTX returns 404 before a stream exists; any HTTP response means it is reachable.
+        _ = http.statusCode
+    } catch let error as ExampleActionError {
+        throw error
+    } catch {
+        throw ExampleActionError(message: localWebrtcSetupMessage(error.localizedDescription))
+    }
+}
+
+func webrtcPreviewUrl(_ whipUrlText: String) -> URL? {
+    guard var components = URLComponents(string: whipUrlText),
+          components.scheme == "http" || components.scheme == "https",
+          components.host != nil
+    else { return nil }
+    if components.path.hasSuffix("/whip") {
+        components.path = String(components.path.dropLast("/whip".count))
+    }
+    if components.path.isEmpty {
+        components.path = "/"
+    }
+    components.query = nil
+    return components.url
+}
+
+func localWebrtcSetupMessage(_ detail: String) -> String {
+    "Local WebRTC server not reachable (\(detail)). Run python3 examples/local-demo-cloud/server.py and paste the printed WHIP publish URL."
+}
+
+func streamUrlValidationMessage(_ streamUrl: String) -> String? {
+    if streamUrl.isEmpty {
+        return "Stream URL is required."
+    }
+    if streamUrl.contains("<computer-ip>") {
+        return "Replace <computer-ip> with the matching publish URL printed by local demo cloud."
+    }
+    if streamUrl.contains("<") || streamUrl.contains(">") || streamUrl.contains("YOUR_") {
+        return "Replace the placeholder stream URL before starting."
+    }
+    return nil
 }

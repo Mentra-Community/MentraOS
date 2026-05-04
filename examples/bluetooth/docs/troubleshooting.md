@@ -52,14 +52,15 @@ If your app also uses Firebase with static frameworks, Firebase modular header c
 - Confirm the hardware feature is available on the connected model.
 - Watch SDK log callbacks for native diagnostics.
 
-## Local WebRTC Preview Does Not Show Video
+## Local Stream Preview Does Not Show Video
 
-- Confirm the local MediaMTX helper is still running.
-- Use the printed LAN URL, not `localhost`, in the example app's WebRTC field.
+- Confirm the local demo cloud or MediaMTX helper is still running.
+- Use the printed LAN URL, not `localhost`, in the example app's RTMP or WebRTC field.
 - Confirm the glasses, phone, and computer are on a network where local device-to-device traffic is allowed.
 - Confirm Mentra Live is connected to Wi-Fi before starting the stream.
+- For RTMP, open or refresh the printed HLS preview URL after tapping **Start stream**.
 - If Docker is running in bridge mode, confirm UDP ports `8890` and `8189` are published.
-- If the helper picked the wrong network interface, restart it with `MENTRA_WEBRTC_HOST_IP=<computer-lan-ip>`.
+- If the helper picked the wrong network interface, restart it with `python3 examples/local-demo-cloud/server.py --host-ip <computer-lan-ip>`.
 
 ## React Native Or Expo Apps
 

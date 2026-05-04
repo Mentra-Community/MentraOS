@@ -42,6 +42,7 @@ import com.mentra.examples.android.ui.StatusBarRow
 fun CameraScreen(controller: MentraExampleController) {
     val state = controller.state
     val cameraStatusFailed = isCameraStatusFailure(state.cameraStatus)
+    val setupHint = localCameraSetupHint(state.webhookUrl, state.cameraStatus)
     val clipboardManager = LocalClipboardManager.current
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
         StatusBarRow()
@@ -188,6 +189,20 @@ fun CameraScreen(controller: MentraExampleController) {
                 )
             }
             Spacer(Modifier.height(12.dp))
+            if (setupHint != null) {
+                Text(
+                    setupHint,
+                    color = AppColor.muted,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(AppColor.ink.copy(alpha = 0.04f))
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                )
+                Spacer(Modifier.height(12.dp))
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Chip("size", "medium")
                 Chip("compress", "medium")
@@ -221,6 +236,19 @@ private fun isCameraStatusFailure(status: String): Boolean {
         normalized.contains("reported") ||
         normalized.contains("invalid") ||
         normalized.contains("enter a webhook url like")
+}
+
+private fun localCameraSetupHint(webhookUrl: String, status: String): String? {
+    val normalized = status.lowercase()
+    val needsSetup = webhookUrl.trim().isEmpty() ||
+        normalized.contains("webhook test failed") ||
+        normalized.contains("returned http") ||
+        normalized.contains("timed out") ||
+        normalized.contains("enter a webhook url like")
+    if (!needsSetup) {
+        return null
+    }
+    return "Local setup: run python3 examples/local-demo-cloud/server.py from the Partner Kit repo root, then paste the printed Photo upload URL here."
 }
 
 @Composable

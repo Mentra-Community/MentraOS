@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-STREAM_PATH="${MENTRA_WEBRTC_STREAM_PATH:-mentra-live}"
+STREAM_PATH="${MENTRA_STREAM_PATH:-${MENTRA_WEBRTC_STREAM_PATH:-mentra-live}}"
 
 detect_host_ip() {
   if [ -n "${MENTRA_WEBRTC_HOST_IP:-}" ]; then
@@ -41,13 +41,22 @@ EOF
 HOST_IP="$(detect_host_ip)"
 
 cat <<EOF
-Starting local MediaMTX WHIP/WHEP server.
+Starting local MediaMTX streaming server.
 
 Use these URLs while the container is running:
+  RTMP publish URL for the example app:
+    rtmp://$HOST_IP:1935/$STREAM_PATH
+
+  RTMP browser preview (HLS):
+    http://$HOST_IP:8888/$STREAM_PATH
+
+  Optional RTMP ffplay preview:
+    ffplay -fflags nobuffer -flags low_delay -framedrop rtmp://$HOST_IP:1935/$STREAM_PATH
+
   WHIP publish URL for the example app:
     http://$HOST_IP:8889/$STREAM_PATH/whip
 
-  Browser preview:
+  WebRTC browser preview:
     http://$HOST_IP:8889/$STREAM_PATH
 
   WHEP playback URL:
@@ -60,6 +69,8 @@ EOF
 
 exec docker run --rm -it --name mentra-webrtc \
   -e MTX_WEBRTCADDITIONALHOSTS="$HOST_IP" \
+  -p 1935:1935 \
+  -p 8888:8888 \
   -p 8889:8889 \
   -p 8890:8890/udp \
   -p 8189:8189/udp \

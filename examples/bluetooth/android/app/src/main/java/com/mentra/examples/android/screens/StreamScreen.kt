@@ -37,10 +37,13 @@ import com.mentra.examples.android.ui.StatusBarRow
 
 private val barHeights = listOf(18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40)
 private val streamSdkCall = """
+val streamId = "android-${'$'}{System.currentTimeMillis()}"
 sdk.startStream(
   MentraStreamRequest(
     mapOf(
+      "type" to "start_stream",
       "streamUrl" to streamUrl,
+      "streamId" to streamId,
       "protocol" to streamProtocol,
       "keepAlive" to true,
       "keepAliveIntervalSeconds" to 15,
@@ -54,6 +57,7 @@ fun StreamScreen(controller: MentraExampleController) {
     val state = controller.state
     val isLive = state.streamStartedAt != null
     val uptime = elapsedText(state.streamStartedAt)
+    val setupHint = localStreamSetupHint(state.streamProtocol, state.streamUrl, state.streamStatus)
     val clipboardManager = LocalClipboardManager.current
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
         StatusBarRow()
@@ -192,10 +196,45 @@ fun StreamScreen(controller: MentraExampleController) {
                 )
                 Icon(Icons.Outlined.Edit, null, tint = AppColor.muted, modifier = Modifier.size(14.dp))
             }
+            if (setupHint != null) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    setupHint,
+                    color = AppColor.muted,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(AppColor.ink.copy(alpha = 0.04f))
+                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                )
+            }
         }
 
         Spacer(Modifier.height(140.dp))
     }
+}
+
+private fun localStreamSetupHint(protocol: String, streamUrl: String, status: String): String? {
+    if (protocol != "rtmp" && protocol != "webrtc") {
+        return null
+    }
+    val normalized = status.lowercase()
+    val url = streamUrl.trim()
+    val needsSetup = url.isEmpty() ||
+        url.contains("<computer-ip>") ||
+        url.contains("YOUR_") ||
+        normalized.contains("not reachable") ||
+        normalized.contains("replace") ||
+        normalized.contains("required")
+    if (!needsSetup) {
+        return null
+    }
+    if (protocol == "rtmp") {
+        return "Local RTMP setup: run python3 examples/local-demo-cloud/server.py, paste the printed RTMP publish URL here, then open the HLS preview URL on your computer. The printed ffplay command is optional for debugging."
+    }
+    return "Local WebRTC setup: run python3 examples/local-demo-cloud/server.py, paste the printed WHIP publish URL here, then open the WebRTC preview URL on your computer."
 }
 
 @Composable

@@ -20,6 +20,7 @@ const cameraSdkCall = `await BluetoothSdk.photoRequest(
 
 export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
   const cameraStatusFailed = isCameraStatusFailure(sdk.cameraStatus);
+  const setupHint = localCameraSetupHint(sdk.webhookUrl, sdk.cameraStatus);
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
@@ -105,6 +106,7 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
             value={sdk.webhookUrl}
           />
         </View>
+        {setupHint ? <Text style={styles.setupHint}>{setupHint}</Text> : null}
         <View style={styles.chipRow}>
           <Chip label="size" value="medium" />
           <Chip label="compress" value="medium" />
@@ -125,6 +127,20 @@ function isCameraStatusFailure(status: string) {
     normalized.includes('invalid') ||
     normalized.includes('enter a webhook url like')
   );
+}
+
+function localCameraSetupHint(webhookUrl: string, status: string) {
+  const normalized = status.toLowerCase();
+  const needsSetup =
+    webhookUrl.trim().length === 0 ||
+    normalized.includes('webhook test failed') ||
+    normalized.includes('returned http') ||
+    normalized.includes('timed out') ||
+    normalized.includes('enter a webhook url like');
+  if (!needsSetup) {
+    return null;
+  }
+  return 'Local setup: run python3 examples/local-demo-cloud/server.py from the Partner Kit repo root, then paste the printed Photo upload URL here.';
 }
 
 function Chip({ label, value }: { label: string; value: string }) {
@@ -168,6 +184,7 @@ const styles = StyleSheet.create({
   uploadCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 22, paddingVertical: 16, paddingHorizontal: 18, gap: 12, borderWidth: 1, borderColor: colors.borderSoft },
   eyebrow: { color: colors.muted, fontSize: 10, fontWeight: '600', letterSpacing: 1.2 },
   urlBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(15,42,29,0.04)', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, gap: 10 },
+  setupHint: { color: colors.muted, fontSize: 11, fontWeight: '500', lineHeight: 15, backgroundColor: 'rgba(15,42,29,0.04)', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12 },
   method: { color: colors.greenAccent, fontSize: 11, fontWeight: '600', letterSpacing: 0.5 },
   divider: { width: 1, height: 14, backgroundColor: 'rgba(15,42,29,0.12)' },
   url: { flex: 1, color: colors.ink, fontSize: 13, fontWeight: '500' },

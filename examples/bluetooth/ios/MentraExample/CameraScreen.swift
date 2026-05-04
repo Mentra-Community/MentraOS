@@ -20,6 +20,9 @@ struct CameraScreen: View {
     private var cameraStatusFailed: Bool {
         isCameraStatusFailure(model.cameraStatus)
     }
+    private var setupHint: String? {
+        localCameraSetupHint(webhookUrl: model.webhookUrl, status: model.cameraStatus)
+    }
 
     var body: some View {
         ScrollView {
@@ -162,6 +165,18 @@ struct CameraScreen: View {
             .background(AppColor.ink.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 12))
             .padding(.bottom, 12)
 
+            if let setupHint {
+                Text(setupHint)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(AppColor.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(AppColor.ink.opacity(0.04))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .padding(.bottom, 12)
+            }
+
             HStack(spacing: 8) {
                 Chip(label: "size", value: "medium")
                 Chip(label: "compress", value: "medium")
@@ -180,6 +195,19 @@ private func isCameraStatusFailure(_ status: String) -> Bool {
         normalized.contains("reported") ||
         normalized.contains("invalid") ||
         normalized.contains("enter a webhook url like")
+}
+
+private func localCameraSetupHint(webhookUrl: String, status: String) -> String? {
+    let normalized = status.lowercased()
+    let needsSetup = webhookUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+        normalized.contains("webhook test failed") ||
+        normalized.contains("returned http") ||
+        normalized.contains("timed out") ||
+        normalized.contains("enter a webhook url like")
+    if !needsSetup {
+        return nil
+    }
+    return "Local setup: run python3 examples/local-demo-cloud/server.py from the Partner Kit repo root, then paste the printed Photo upload URL here."
 }
 
 struct Chip: View {

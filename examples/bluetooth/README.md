@@ -35,8 +35,9 @@ The public SDK API exposes typed native commands and typed native events. Partne
 - `examples/android`: bare Android Kotlin app using `com.mentra:bluetooth-sdk`
 - `examples/ios`: bare iOS SwiftUI app using the `MentraBluetoothSDK` CocoaPod
 - `examples/react-native`: optional React Native/Expo example for partners who have explicit access to that integration path
+- `examples/local-demo-cloud`: recommended local companion service for photo upload and streaming demos
 - `examples/photo-webhook-server`: local photo upload receiver for camera demos
-- `examples/local-webrtc-server`: local WHIP/WHEP server for WebRTC streaming demos
+- `examples/local-webrtc-server`: lower-level MediaMTX helper for local streaming demos
 
 ## Access Model
 

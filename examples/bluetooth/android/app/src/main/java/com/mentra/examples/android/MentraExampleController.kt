@@ -39,7 +39,7 @@ import java.util.Date
 import java.util.Locale
 
 val streamDefaultUrls = mapOf(
-    "rtmp" to "rtmps://a.rtmps.youtube.com/live2/YOUR_STREAM_KEY",
+    "rtmp" to "rtmp://<computer-ip>:1935/mentra-live",
     "srt" to "srt://srt.example.com:4201?streamid=YOUR_STREAM_ID&passphrase=YOUR_PASSPHRASE",
     "webrtc" to "http://<computer-ip>:8889/mentra-live/whip",
 )
@@ -229,18 +229,45 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             state = state.copy(streamStartedAt = null, streamStatus = "Stopped")
             return@runAction
         }
+        val streamUrl = state.streamUrl.trim()
+        streamUrlValidationMessage(streamUrl)?.let { message ->
+            state = state.copy(streamStatus = message)
+            throw IllegalArgumentException(message)
+        }
+        val streamId = "android-${System.currentTimeMillis()}"
         val params = mapOf(
-            "streamUrl" to state.streamUrl.trim(),
+            "type" to "start_stream",
+            "streamUrl" to streamUrl,
+            "streamId" to streamId,
             "protocol" to state.streamProtocol,
             "keepAlive" to true,
             "keepAliveIntervalSeconds" to 15,
         )
+        if (state.streamProtocol == "webrtc") {
+            state = state.copy(streamStatus = "Checking local WebRTC server")
+            scope.launch(Dispatchers.IO) {
+                val reachabilityMessage = localWebrtcReachabilityMessage(streamUrl)
+                scope.launch {
+                    if (reachabilityMessage != null) {
+                        state = state.copy(streamStatus = reachabilityMessage)
+                        addEvent("TX", "stream failed: $reachabilityMessage")
+                        return@launch
+                    }
+                    startStream(params)
+                }
+            }
+            return@runAction
+        }
+        startStream(params)
+    }
+
+    private fun startStream(params: Map<String, Any>) {
         sdk.startStream(MentraStreamRequest(params))
         state = state.copy(
             streamStartedAt = System.currentTimeMillis(),
             streamStatus = "LIVE · ${state.streamProtocol.uppercase()}",
         )
-        startKeepAlive(params)
+        startKeepAlive(params["streamId"].toString())
     }
 
     fun requestWifiScan() = runAction("Scan Wi-Fi") {
@@ -388,12 +415,20 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         state = state.copy(events = (listOf(exampleEvent(tag, text)) + state.events).take(30))
     }
 
-    private fun startKeepAlive(params: Map<String, Any>) {
+    private fun startKeepAlive(streamId: String) {
         stopKeepAlive()
         keepAliveJob = scope.launch {
             while (isActive) {
                 delay(15_000)
-                sdk.keepStreamAlive(MentraStreamKeepAliveRequest(params))
+                sdk.keepStreamAlive(
+                    MentraStreamKeepAliveRequest(
+                        mapOf(
+                            "type" to "keep_stream_alive",
+                            "streamId" to streamId,
+                            "ackId" to "ack-${System.currentTimeMillis()}",
+                        ),
+                    ),
+                )
                 addEvent("TX", "stream keep alive")
             }
         }
@@ -475,6 +510,48 @@ fun webhookHealthUrl(uploadUrlText: String): String {
     }
     val port = url.port.takeIf { it >= 0 }?.let { ":$it" } ?: ""
     return "${url.protocol}://${url.host}$port/"
+}
+
+fun localWebrtcReachabilityMessage(whipUrlText: String): String? {
+    val previewUrl = try {
+        webrtcPreviewUrl(whipUrlText)
+    } catch (_: Exception) {
+        return "Enter a valid http:// or https:// WHIP URL."
+    }
+
+    return try {
+        val connection = URL(previewUrl).openConnection() as HttpURLConnection
+        connection.connectTimeout = 1500
+        connection.readTimeout = 1500
+        // MediaMTX returns 404 before a stream exists; any HTTP response means it is reachable.
+        connection.responseCode
+        connection.disconnect()
+        null
+    } catch (error: Exception) {
+        localWebrtcSetupMessage(error.message ?: error.javaClass.simpleName)
+    }
+}
+
+fun webrtcPreviewUrl(whipUrlText: String): String {
+    val url = URL(whipUrlText)
+    if (url.protocol != "http" && url.protocol != "https") {
+        throw IllegalArgumentException("Only http and https WHIP URLs are supported.")
+    }
+    val port = url.port.takeIf { it >= 0 }?.let { ":$it" } ?: ""
+    val path = url.path.removeSuffix("/whip").ifBlank { "/" }
+    return "${url.protocol}://${url.host}$port$path"
+}
+
+fun localWebrtcSetupMessage(detail: String): String =
+    "Local WebRTC server not reachable ($detail). Run python3 examples/local-demo-cloud/server.py and paste the printed WHIP publish URL."
+
+fun streamUrlValidationMessage(streamUrl: String): String? = when {
+    streamUrl.isEmpty() -> "Stream URL is required."
+    streamUrl.contains("<computer-ip>") ->
+        "Replace <computer-ip> with the matching publish URL printed by local demo cloud."
+    streamUrl.contains("<") || streamUrl.contains(">") || streamUrl.contains("YOUR_") ->
+        "Replace the placeholder stream URL before starting."
+    else -> null
 }
 
 fun summarize(values: Map<String, Any>): String =

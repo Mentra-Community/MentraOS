@@ -21,7 +21,7 @@ export type StreamProtocol = 'rtmp' | 'srt' | 'webrtc';
 export type LedMode = 'Off' | 'Solid' | 'Pulse' | 'Blink';
 
 export const STREAM_DEFAULT_URLS: Record<StreamProtocol, string> = {
-  rtmp: 'rtmps://a.rtmps.youtube.com/live2/YOUR_STREAM_KEY',
+  rtmp: 'rtmp://<computer-ip>:1935/mentra-live',
   srt: 'srt://srt.example.com:4201?streamid=YOUR_STREAM_ID&passphrase=YOUR_PASSPHRASE',
   webrtc: 'http://<computer-ip>:8889/mentra-live/whip',
 };
@@ -487,26 +487,43 @@ export function useMentraSdk(): MentraSdkModel {
 
     await runAction('Start stream', async () => {
       const url = streamUrl.trim();
-      if (!url) {
-        throw new Error('Stream URL is required.');
+      const validationMessage = streamUrlValidationMessage(url);
+      if (validationMessage) {
+        setStreamStatus(validationMessage);
+        throw new Error(validationMessage);
       }
+      if (streamProtocol === 'webrtc') {
+        setStreamStatus('Checking local WebRTC server');
+        const reachabilityMessage = await localWebrtcReachabilityMessage(url);
+        if (reachabilityMessage) {
+          setStreamStatus(reachabilityMessage);
+          throw new Error(reachabilityMessage);
+        }
+      }
+      const streamId = `rn-${Date.now()}`;
       const params = {
         keepAlive: true,
         keepAliveIntervalSeconds: 15,
         protocol: streamProtocol,
+        streamId,
         streamUrl: url,
+        type: 'start_stream',
       };
       await BluetoothSdk.startStream(params);
       setStreamStartedAt(Date.now());
       setStreamStatus(`LIVE · ${streamProtocol.toUpperCase()}`);
-      startKeepAlive(params);
+      startKeepAlive(streamId);
     });
   }
 
-  function startKeepAlive(params: Record<string, unknown>) {
+  function startKeepAlive(streamId: string) {
     stopKeepAlive();
     keepAliveTimerRef.current = setInterval(() => {
-      void BluetoothSdk.keepStreamAlive(params);
+      void BluetoothSdk.keepStreamAlive({
+        ackId: `ack-${Date.now()}`,
+        streamId,
+        type: 'keep_stream_alive',
+      });
       addEvent('TX', 'stream keep alive');
     }, 15000);
   }
@@ -654,6 +671,56 @@ function webhookHealthUrl(uploadUrlText: string) {
     throw new Error('Only http and https webhook URLs are supported.');
   }
   return `${uploadUrl.protocol}//${uploadUrl.host}/`;
+}
+
+async function localWebrtcReachabilityMessage(whipUrlText: string) {
+  let previewUrl = '';
+  try {
+    previewUrl = webrtcPreviewUrl(whipUrlText);
+  } catch {
+    return 'Enter a valid http:// or https:// WHIP URL.';
+  }
+
+  try {
+    const response = await fetch(cacheBustedUrl(previewUrl), {
+      cache: 'no-store',
+      headers: {'Cache-Control': 'no-cache', Pragma: 'no-cache'},
+    });
+    // MediaMTX returns 404 before a stream exists; any HTTP response means it is reachable.
+    void response.status;
+    return null;
+  } catch (error) {
+    return localWebrtcSetupMessage(formatError(error));
+  }
+}
+
+function webrtcPreviewUrl(whipUrlText: string) {
+  const whipUrl = new URL(whipUrlText);
+  if (whipUrl.protocol !== 'http:' && whipUrl.protocol !== 'https:') {
+    throw new Error('Only http and https WHIP URLs are supported.');
+  }
+  if (whipUrl.pathname.endsWith('/whip')) {
+    whipUrl.pathname = whipUrl.pathname.slice(0, -'/whip'.length) || '/';
+  }
+  whipUrl.search = '';
+  return whipUrl.toString();
+}
+
+function localWebrtcSetupMessage(detail: string) {
+  return `Local WebRTC server not reachable (${detail}). Run python3 examples/local-demo-cloud/server.py and paste the printed WHIP publish URL.`;
+}
+
+function streamUrlValidationMessage(streamUrl: string) {
+  if (!streamUrl) {
+    return 'Stream URL is required.';
+  }
+  if (streamUrl.includes('<computer-ip>')) {
+    return 'Replace <computer-ip> with the matching publish URL printed by local demo cloud.';
+  }
+  if (streamUrl.includes('<') || streamUrl.includes('>') || streamUrl.includes('YOUR_')) {
+    return 'Replace the placeholder stream URL before starting.';
+  }
+  return null;
 }
 
 function cacheBustedUrl(url: string) {

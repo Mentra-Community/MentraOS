@@ -1,11 +1,15 @@
 import SwiftUI
 import UIKit
+import WebKit
 
 private let streamSdkCall = """
+let streamId = "ios-..."
 sdk.startStream(
   MentraStreamRequest(
     values: [
+      "type": "start_stream",
       "streamUrl": streamUrl,
+      "streamId": streamId,
       "protocol": streamProtocol.rawValue,
       "keepAlive": true,
       "keepAliveIntervalSeconds": 15
@@ -17,6 +21,13 @@ sdk.startStream(
 struct StreamScreen: View {
     @ObservedObject var model: BluetoothViewModel
     private let bars: [CGFloat] = [18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40]
+    private var setupHint: String? {
+        localStreamSetupHint(protocol: model.streamProtocol, streamUrl: model.streamUrl, status: model.streamStatus)
+    }
+    private var livePreviewUrl: URL? {
+        guard model.streamStartedAt != nil, model.streamProtocol == .webrtc else { return nil }
+        return webrtcPreviewUrl(model.streamUrl)
+    }
 
     var body: some View {
         ScrollView {
@@ -35,48 +46,7 @@ struct StreamScreen: View {
 
     private var previewCard: some View {
         GlassCard(padding: EdgeInsets(top: 8, leading: 8, bottom: 14, trailing: 8)) {
-            ZStack {
-                LinearGradient(colors: [Color(hex: 0x163A26), Color(hex: 0x26583E), Color(hex: 0x7DD89E), Color(hex: 0x3F8F5C)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                    .frame(height: 160).clipShape(RoundedRectangle(cornerRadius: 22))
-                Circle().fill(Color.white.opacity(0.2)).frame(width: 220, height: 220).blur(radius: 10).offset(x: -90, y: -100)
-                Circle().fill(AppColor.greenSoft.opacity(0.3)).frame(width: 240, height: 240).blur(radius: 10).offset(x: 100, y: 110)
-
-                VStack {
-                    HStack {
-                        HStack(spacing: 6) {
-                            Circle().fill(model.streamStartedAt == nil ? AppColor.greenSoft : AppColor.redLive).frame(width: 7, height: 7)
-                            Text(model.streamStartedAt == nil ? "READY" : "LIVE").font(.system(size: 11, weight: .bold)).tracking(0.8).foregroundColor(.white)
-                        }
-                        .padding(.horizontal, 11).padding(.vertical, 6)
-                        .background(Color.black.opacity(0.45))
-                        .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
-                        .clipShape(Capsule())
-                        Spacer()
-                        Text(elapsedText(model.streamStartedAt)).font(.system(size: 13, weight: .semibold)).foregroundColor(.white)
-                    }
-                    .padding(.horizontal, 14).padding(.top, 14)
-
-                    Spacer()
-
-                    HStack(alignment: .bottom, spacing: 5) {
-                        ForEach(0..<bars.count, id: \.self) { i in
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(i % 3 == 2 ? Color.white : Color.white.opacity(0.85))
-                                .frame(width: 5, height: bars[i])
-                        }
-                    }
-                    .padding(.bottom, 56)
-
-                    HStack {
-                        Text(model.streamStartedAt == nil ? "Ready · enter stream URL" : "\(model.streamProtocol.rawValue.uppercased()) · keep-alive 15s")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(Color.white.opacity(0.85))
-                        Spacer()
-                    }
-                    .padding(.horizontal, 14).padding(.bottom, 14)
-                }
-                .frame(height: 160)
-            }
+            previewSurface
 
             Button {
                 model.toggleStream()
@@ -91,6 +61,69 @@ struct StreamScreen: View {
             }
             .padding(.horizontal, 6).padding(.top, 14)
         }
+    }
+
+    @ViewBuilder
+    private var previewSurface: some View {
+        if let livePreviewUrl {
+            ZStack {
+                WebRtcPreviewView(url: livePreviewUrl)
+                    .frame(height: 160)
+                    .background(Color.black)
+                    .clipShape(RoundedRectangle(cornerRadius: 22))
+                previewChrome(label: "LIVE", detail: "\(model.streamProtocol.rawValue.uppercased()) · keep-alive 15s")
+            }
+        } else {
+            ZStack {
+                LinearGradient(colors: [Color(hex: 0x163A26), Color(hex: 0x26583E), Color(hex: 0x7DD89E), Color(hex: 0x3F8F5C)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .frame(height: 160).clipShape(RoundedRectangle(cornerRadius: 22))
+                Circle().fill(Color.white.opacity(0.2)).frame(width: 220, height: 220).blur(radius: 10).offset(x: -90, y: -100)
+                Circle().fill(AppColor.greenSoft.opacity(0.3)).frame(width: 240, height: 240).blur(radius: 10).offset(x: 100, y: 110)
+
+                VStack {
+                    previewChrome(label: model.streamStartedAt == nil ? "READY" : "LIVE", detail: model.streamStartedAt == nil ? "Ready · enter stream URL" : "\(model.streamProtocol.rawValue.uppercased()) · keep-alive 15s")
+
+                    Spacer()
+
+                    HStack(alignment: .bottom, spacing: 5) {
+                        ForEach(0..<bars.count, id: \.self) { i in
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(i % 3 == 2 ? Color.white : Color.white.opacity(0.85))
+                                .frame(width: 5, height: bars[i])
+                        }
+                    }
+                    .padding(.bottom, 56)
+                }
+                .frame(height: 160)
+            }
+        }
+    }
+
+    private func previewChrome(label: String, detail: String) -> some View {
+        VStack {
+            HStack {
+                HStack(spacing: 6) {
+                    Circle().fill(label == "READY" ? AppColor.greenSoft : AppColor.redLive).frame(width: 7, height: 7)
+                    Text(label).font(.system(size: 11, weight: .bold)).tracking(0.8).foregroundColor(.white)
+                }
+                .padding(.horizontal, 11).padding(.vertical, 6)
+                .background(Color.black.opacity(0.45))
+                .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
+                .clipShape(Capsule())
+                Spacer()
+                Text(elapsedText(model.streamStartedAt)).font(.system(size: 13, weight: .semibold)).foregroundColor(.white)
+            }
+            .padding(.horizontal, 14).padding(.top, 14)
+            Spacer()
+            HStack {
+                Text(detail)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(Color.white.opacity(0.85))
+                Spacer()
+            }
+            .padding(.horizontal, 14).padding(.bottom, 14)
+        }
+        .frame(height: 160)
     }
 
     private var sdkCard: some View {
@@ -164,6 +197,18 @@ struct StreamScreen: View {
             }
             .padding(.horizontal, 14).padding(.vertical, 12)
             .background(AppColor.ink.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 12))
+
+            if let setupHint {
+                Text(setupHint)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(AppColor.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(AppColor.ink.opacity(0.04))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .padding(.top, 12)
+            }
         }
     }
 }
@@ -184,4 +229,48 @@ struct ProtocolTab: View {
                 .clipShape(RoundedRectangle(cornerRadius: 10))
         }
     }
+}
+
+struct WebRtcPreviewView: UIViewRepresentable {
+    let url: URL
+
+    func makeUIView(context _: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.allowsInlineMediaPlayback = true
+        configuration.mediaTypesRequiringUserActionForPlayback = []
+
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.isOpaque = false
+        webView.backgroundColor = .black
+        webView.scrollView.isScrollEnabled = false
+        webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+        return webView
+    }
+
+    func updateUIView(_ webView: WKWebView, context _: Context) {
+        if webView.url?.absoluteString != url.absoluteString {
+            webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
+        }
+    }
+}
+
+private func localStreamSetupHint(protocol streamProtocol: ExampleStreamProtocol, streamUrl: String, status: String) -> String? {
+    guard streamProtocol == .rtmp || streamProtocol == .webrtc else {
+        return nil
+    }
+    let normalized = status.lowercased()
+    let url = streamUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+    let needsSetup = url.isEmpty ||
+        url.contains("<computer-ip>") ||
+        url.contains("YOUR_") ||
+        normalized.contains("not reachable") ||
+        normalized.contains("replace") ||
+        normalized.contains("required")
+    if !needsSetup {
+        return nil
+    }
+    if streamProtocol == .rtmp {
+        return "Local RTMP setup: run python3 examples/local-demo-cloud/server.py, paste the printed RTMP publish URL here, then open the HLS preview URL on your computer. The printed ffplay command is optional for debugging."
+    }
+    return "Local WebRTC setup: run python3 examples/local-demo-cloud/server.py, paste the printed WHIP publish URL here, then open the WebRTC preview URL on your computer."
 }

@@ -20,12 +20,18 @@ MENTRA_BLUETOOTH_SDK_INCLUDE_EXPO_ADAPTER=1 npx expo prebuild
 MENTRA_BLUETOOTH_SDK_INCLUDE_EXPO_ADAPTER=1 npx expo run:android
 ```
 
-For local photo preview testing, run the companion webhook server from the repo
-root and paste the printed LAN `/upload` URL into the app:
+For local photo preview and RTMP/WebRTC testing, run the local demo cloud from the
+repo root:
 
 ```sh
-python3 examples/photo-webhook-server/server.py
+python3 examples/local-demo-cloud/server.py
 ```
+
+Paste the printed LAN `/upload` URL into the Camera screen. Paste the printed
+RTMP publish URL into the Stream screen's RTMP field, or the printed WHIP URL
+into the WebRTC field. If Docker is not installed or not running, the command
+still starts the photo webhook and skips streaming with a
+warning.
 
 You can also prefill the field when starting the Expo development build:
 
@@ -33,15 +39,8 @@ You can also prefill the field when starting the Expo development build:
 EXPO_PUBLIC_MENTRA_PHOTO_WEBHOOK_URL=http://<computer-ip>:8787/upload npx expo run:ios
 ```
 
-For local WebRTC streaming, run the MediaMTX helper from the repo root and
-paste the printed WHIP URL into the Stream screen's WebRTC field:
-
-```sh
-examples/local-webrtc-server/run-mediamtx.sh
-```
-
-Open the printed browser preview URL on your computer to watch the stream. See
-[`examples/local-webrtc-server`](../local-webrtc-server/README.md) for details.
+Open the printed HLS or WebRTC browser preview URL on your computer to watch a stream.
+See [`examples/local-demo-cloud`](../local-demo-cloud/README.md) for details.
 
 When testing from a local SDK package before the npm package is published,
 install that package path and let Metro know where it lives:
