@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, Pressable, StyleSheet, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Line, Path, Polyline, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
@@ -22,6 +22,15 @@ import {
 } from '../sdkFormat';
 import type { MentraSdkModel } from '../useMentraSdk';
 
+const glassesImages = {
+  evenRealitiesG1: require('../../assets/glasses/even_realities_g1.png'),
+  evenRealitiesG2: require('../../assets/glasses/even_realities_g2.png'),
+  mentraDisplay: require('../../assets/glasses/mentra_display.png'),
+  mentraLive: require('../../assets/glasses/mentra_live.png'),
+  unknownWearable: require('../../assets/glasses/unknown_wearable.png'),
+  vuzixZ100: require('../../assets/glasses/vuzix_z100.png'),
+};
+
 export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
   const level = batteryLevel(sdk.glassesStatus);
   const connected = sdk.glassesStatus.connected === true;
@@ -41,7 +50,7 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
             <Text style={styles.heroTitle}>{modelLabel(sdk.glassesStatus)}</Text>
             <Text style={styles.heroSub}>{deviceLabel(sdk.glassesStatus)}</Text>
           </View>
-          <View style={styles.glasses} />
+          <Image source={glassesImageFor(sdk.glassesStatus)} style={styles.glasses} resizeMode="contain" />
         </View>
         <View style={styles.heroDivider} />
         <View style={styles.batteryRow}>
@@ -165,6 +174,28 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
   );
 }
 
+function glassesImageFor(status: MentraSdkModel['glassesStatus']) {
+  const rawStatus = status as Record<string, unknown>;
+  const model = [status.deviceModel, status.bluetoothName, rawStatus.defaultWearable].filter(Boolean).join(' ').toLowerCase();
+
+  if (model.includes('even') && model.includes('g2')) {
+    return glassesImages.evenRealitiesG2;
+  }
+  if (model.includes('even') || model.includes('g1')) {
+    return glassesImages.evenRealitiesG1;
+  }
+  if (model.includes('display')) {
+    return glassesImages.mentraDisplay;
+  }
+  if (model.includes('vuzix') || model.includes('z100')) {
+    return glassesImages.vuzixZ100;
+  }
+  if (model.includes('unknown')) {
+    return glassesImages.unknownWearable;
+  }
+  return glassesImages.mentraLive;
+}
+
 function StatCard({ label, value, sub, subColor, bold }: { label: string; value: string; sub: string; subColor: string; bold?: boolean }) {
   return (
     <View style={styles.statCard}>
@@ -202,7 +233,7 @@ const styles = StyleSheet.create({
   eyebrow: { color: colors.muted, fontSize: 10, fontWeight: '600', letterSpacing: 1.2 },
   heroTitle: { color: colors.ink, fontSize: 28, fontWeight: '800', letterSpacing: -0.7 },
   heroSub: { color: colors.muted, fontSize: 11, fontWeight: '500' },
-  glasses: { width: 145, height: 46, backgroundColor: '#1A1A1A', borderRadius: 16 },
+  glasses: { width: 145, height: 52 },
   heroDivider: { borderTopWidth: 1, borderColor: colors.hairline, paddingTop: 6 },
   batteryRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 },
   batteryNumRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6 },

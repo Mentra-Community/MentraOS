@@ -12,6 +12,7 @@
 		636D70A07E2D7BAD88CFBCD2 /* MentraExampleApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB9A9B8B86FC0ACF59F91AF8 /* MentraExampleApp.swift */; };
 		657B565C6F560BB6DDA9C415 /* CameraScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85A06A4B5AFA293DC25C9582 /* CameraScreen.swift */; };
 		7B91A32153C6403B858F7061 /* BluetoothViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C44F0B2F295E4B4593F7C2D7 /* BluetoothViewModel.swift */; };
+		A1B2C3D4E5F60718293A4B5C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C1B2C3D4E5F60718293A4B5C /* Assets.xcassets */; };
 		ACC7B6CBE3726BEDEFC145A5 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4334B27A5FE9C5FECB2F7DF8 /* Theme.swift */; };
 		B2C9CEB092C7392809B1920E /* StreamScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = B886745ADD1960CBF8453687 /* StreamScreen.swift */; };
 		B9993996613A5A1F552A67D5 /* ConsoleScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28C1C2066D3512195360A795 /* ConsoleScreen.swift */; };
@@ -30,6 +31,7 @@
 		B886745ADD1960CBF8453687 /* StreamScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamScreen.swift; sourceTree = "<group>"; };
 		BB9A9B8B86FC0ACF59F91AF8 /* MentraExampleApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MentraExampleApp.swift; sourceTree = "<group>"; };
 		C44F0B2F295E4B4593F7C2D7 /* BluetoothViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BluetoothViewModel.swift; sourceTree = "<group>"; };
+		C1B2C3D4E5F60718293A4B5C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D43C5E9E9C7C6DB117B9DA91 /* Pods_MentraExample.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_MentraExample.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		EA0ECF511371DFD443892300 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		FFBF10A3E7C9332B4E988290 /* Pods-MentraExample.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-MentraExample.release.xcconfig"; path = "Target Support Files/Pods-MentraExample/Pods-MentraExample.release.xcconfig"; sourceTree = "<group>"; };
@@ -79,6 +81,7 @@
 			isa = PBXGroup;
 			children = (
 				C44F0B2F295E4B4593F7C2D7 /* BluetoothViewModel.swift */,
+				C1B2C3D4E5F60718293A4B5C /* Assets.xcassets */,
 				85A06A4B5AFA293DC25C9582 /* CameraScreen.swift */,
 				28C1C2066D3512195360A795 /* ConsoleScreen.swift */,
 				4558D51EE6D8AEE7C32E4C58 /* DeviceScreen.swift */,
@@ -109,6 +112,7 @@
 				CB0E901F2019649198E6AED7 /* [CP] Check Pods Manifest.lock */,
 				F57C61A872789A90F58473E5 /* Sources */,
 				8B63371EB5DD19BE924ABA94 /* Frameworks */,
+				B1B2C3D4E5F60718293A4B5C /* Resources */,
 				EA361D6916E8BAB2C9BF49DD /* [CP] Embed Pods Frameworks */,
 				7B0AACBC4A2E876B72A32DF9 /* [CP] Copy Pods Resources */,
 			);
@@ -153,6 +157,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		B1B2C3D4E5F60718293A4B5C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1B2C3D4E5F60718293A4B5C /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
 		7B0AACBC4A2E876B72A32DF9 /* [CP] Copy Pods Resources */ = {
@@ -237,7 +252,6 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 2B95C649CCFB26DB6BA7AD81 /* Pods-MentraExample.debug.xcconfig */;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Mentra Bluetooth SDK uses Bluetooth to discover and connect to smart glasses.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Mentra Bluetooth SDK examples request photo capture from connected smart glasses.";
@@ -258,7 +272,6 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = FFBF10A3E7C9332B4E988290 /* Pods-MentraExample.release.xcconfig */;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Mentra Bluetooth SDK uses Bluetooth to discover and connect to smart glasses.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Mentra Bluetooth SDK examples request photo capture from connected smart glasses.";

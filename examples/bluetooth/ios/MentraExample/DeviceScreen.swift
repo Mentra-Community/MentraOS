@@ -47,9 +47,10 @@ struct DeviceScreen: View {
                         .foregroundColor(AppColor.muted)
                 }
                 Spacer()
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(Color(hex: 0x1A1A1A))
-                    .frame(width: 145, height: 46)
+                Image(glassesAssetName(model.glassesValues))
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 145, height: 52)
             }
             Divider().background(AppColor.hairline).padding(.top, 14).padding(.bottom, 12)
             HStack(alignment: .bottom) {
@@ -192,6 +193,34 @@ struct DeviceScreen: View {
             .padding(.horizontal, 18)
         }
     }
+}
+
+private func glassesAssetName(_ values: [String: Any]) -> String {
+    let model = [
+        stringValue(values, "deviceModel"),
+        stringValue(values, "bluetoothName"),
+        stringValue(values, "defaultWearable"),
+    ]
+    .compactMap { $0 }
+    .joined(separator: " ")
+    .lowercased()
+
+    if model.contains("even"), model.contains("g2") {
+        return "even_realities_g2"
+    }
+    if model.contains("even") || model.contains("g1") {
+        return "even_realities_g1"
+    }
+    if model.contains("display") {
+        return "mentra_display"
+    }
+    if model.contains("vuzix") || model.contains("z100") {
+        return "vuzix_z100"
+    }
+    if model.contains("unknown") {
+        return "unknown_wearable"
+    }
+    return "mentra_live"
 }
 
 struct StatTile: View {

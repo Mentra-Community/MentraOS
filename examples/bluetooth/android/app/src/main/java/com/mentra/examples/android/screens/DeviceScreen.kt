@@ -3,6 +3,7 @@ package com.mentra.examples.android.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -21,10 +22,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mentra.examples.android.MentraExampleController
+import com.mentra.examples.android.R
 import com.mentra.examples.android.batteryLabel
 import com.mentra.examples.android.batteryLevel
 import com.mentra.examples.android.bluetoothSearchLabel
@@ -33,6 +37,7 @@ import com.mentra.examples.android.deviceLabel
 import com.mentra.examples.android.firmwareLabel
 import com.mentra.examples.android.modelLabel
 import com.mentra.examples.android.rssiLabel
+import com.mentra.examples.android.stringValue
 import com.mentra.examples.android.wifiLabel
 import com.mentra.examples.android.ui.AppColor
 import com.mentra.examples.android.ui.Eyebrow
@@ -60,7 +65,12 @@ fun DeviceScreen(controller: MentraExampleController) {
                     Text(modelLabel(glasses), color = AppColor.ink, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.7).sp)
                     Text(deviceLabel(glasses), color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                 }
-                Box(modifier = Modifier.size(width = 145.dp, height = 46.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF1A1A1A)))
+                Image(
+                    painter = painterResource(id = glassesImageRes(glasses)),
+                    contentDescription = "Connected glasses preview",
+                    modifier = Modifier.size(width = 145.dp, height = 52.dp),
+                    contentScale = ContentScale.Fit
+                )
             }
             Spacer(Modifier.height(14.dp))
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(AppColor.hairline))
@@ -195,6 +205,23 @@ fun DeviceScreen(controller: MentraExampleController) {
         }
 
         Spacer(Modifier.height(140.dp))
+    }
+}
+
+private fun glassesImageRes(values: Map<String, Any>): Int {
+    val model = listOfNotNull(
+        stringValue(values, "deviceModel"),
+        stringValue(values, "bluetoothName"),
+        stringValue(values, "defaultWearable"),
+    ).joinToString(" ").lowercase()
+
+    return when {
+        "even" in model && "g2" in model -> R.drawable.even_realities_g2
+        "even" in model || "g1" in model -> R.drawable.even_realities_g1
+        "display" in model -> R.drawable.mentra_display
+        "vuzix" in model || "z100" in model -> R.drawable.vuzix_z100
+        "unknown" in model -> R.drawable.unknown_wearable
+        else -> R.drawable.mentra_live
     }
 }
 
