@@ -7,7 +7,7 @@ struct DeviceScreen: View {
         ScrollView {
             VStack(spacing: 0) {
                 StatusBarRow()
-                PageHeader(title: "Device")
+                PageHeader(title: "Device", connected: boolValue(model.glassesValues, "connected") == true)
 
                 heroCard
                     .padding(.horizontal, 16)
@@ -181,7 +181,7 @@ struct DeviceScreen: View {
                         HStack(spacing: 6) {
                             HStack(spacing: 4) {
                                 Circle().fill(AppColor.greenPrimary).frame(width: 5, height: 5)
-                                Text("LIVE").font(.system(size: 10, weight: .semibold).monospaced()).foregroundColor(AppColor.greenPrimary)
+                                Text(model.events.first?.tag ?? "NONE").font(.system(size: 10, weight: .semibold).monospaced()).foregroundColor(AppColor.greenPrimary)
                             }
                             .padding(.horizontal, 7).padding(.vertical, 2).background(AppColor.greenPrimary.opacity(0.08)).clipShape(RoundedRectangle(cornerRadius: 5))
                             Text(model.events.first?.time ?? "--:--:--").font(.system(size: 11, design: .monospaced)).foregroundColor(AppColor.inkAlt.opacity(0.65))

@@ -1,4 +1,18 @@
 import SwiftUI
+import UIKit
+
+private let streamSdkCall = """
+sdk.startStream(
+  MentraStreamRequest(
+    values: [
+      "streamUrl": streamUrl,
+      "protocol": streamProtocol.rawValue,
+      "keepAlive": true,
+      "keepAliveIntervalSeconds": 15
+    ]
+  )
+)
+"""
 
 struct StreamScreen: View {
     @ObservedObject var model: BluetoothViewModel
@@ -8,7 +22,7 @@ struct StreamScreen: View {
         ScrollView {
             VStack(spacing: 0) {
                 StatusBarRow()
-                PageHeader(title: "Stream")
+                PageHeader(title: "Stream", connected: boolValue(model.glassesValues, "connected") == true)
 
                 previewCard.padding(.horizontal, 16).padding(.top, 8)
                 sdkCard.padding(.horizontal, 16).padding(.top, 12)
@@ -30,8 +44,8 @@ struct StreamScreen: View {
                 VStack {
                     HStack {
                         HStack(spacing: 6) {
-                            Circle().fill(AppColor.redLive).frame(width: 7, height: 7)
-                            Text("LIVE").font(.system(size: 11, weight: .bold)).tracking(0.8).foregroundColor(.white)
+                            Circle().fill(model.streamStartedAt == nil ? AppColor.greenSoft : AppColor.redLive).frame(width: 7, height: 7)
+                            Text(model.streamStartedAt == nil ? "READY" : "LIVE").font(.system(size: 11, weight: .bold)).tracking(0.8).foregroundColor(.white)
                         }
                         .padding(.horizontal, 11).padding(.vertical, 6)
                         .background(Color.black.opacity(0.45))
@@ -85,14 +99,19 @@ struct StreamScreen: View {
                 HStack {
                     Text("SDK CALL").font(.system(size: 9, weight: .bold)).tracking(1.1).foregroundColor(AppColor.greenAccent)
                     Spacer()
-                    HStack(spacing: 4) {
-                        Image(systemName: "doc.on.doc").font(.system(size: 9)).foregroundColor(AppColor.consoleText)
-                        Text("Copy").font(.system(size: 10, weight: .semibold)).foregroundColor(AppColor.consoleText)
+                    Button {
+                        UIPasteboard.general.string = streamSdkCall
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "doc.on.doc").font(.system(size: 9)).foregroundColor(AppColor.consoleText)
+                            Text("Copy").font(.system(size: 10, weight: .semibold)).foregroundColor(AppColor.consoleText)
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Color.white.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius: 6))
                     }
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(Color.white.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius: 6))
+                    .buttonStyle(.plain)
                 }
-                Text("await mentra.stream.start({\n  protocol: \"rtmp\",\n  url: streamURL,\n  keepAliveMs: 15_000,\n})")
+                Text(streamSdkCall)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(AppColor.consoleText)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -122,9 +141,9 @@ struct StreamScreen: View {
     private var protocolCard: some View {
         GlassCard(corner: 22, padding: EdgeInsets(top: 14, leading: 14, bottom: 14, trailing: 14)) {
             HStack(spacing: 4) {
-                ProtocolTab(title: "RTMP", active: model.streamProtocol == .rtmp) { model.streamProtocol = .rtmp }
-                ProtocolTab(title: "SRT", active: model.streamProtocol == .srt) { model.streamProtocol = .srt }
-                ProtocolTab(title: "WebRTC", active: model.streamProtocol == .webrtc) { model.streamProtocol = .webrtc }
+                ProtocolTab(title: "RTMP", active: model.streamProtocol == .rtmp) { model.selectStreamProtocol(.rtmp) }
+                ProtocolTab(title: "SRT", active: model.streamProtocol == .srt) { model.selectStreamProtocol(.srt) }
+                ProtocolTab(title: "WebRTC", active: model.streamProtocol == .webrtc) { model.selectStreamProtocol(.webrtc) }
             }
             .padding(4)
             .background(AppColor.ink.opacity(0.05))
@@ -132,9 +151,9 @@ struct StreamScreen: View {
             .padding(.bottom, 12)
 
             HStack(spacing: 10) {
-                Text("\(model.streamProtocol.rawValue)://").font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundColor(AppColor.greenAccent)
+                Text(model.streamProtocol.inputLabel).font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundColor(AppColor.greenAccent)
                 Rectangle().fill(AppColor.ink.opacity(0.12)).frame(width: 1, height: 14)
-                TextField("live.mentra.dev/app/key", text: $model.streamUrl)
+                TextField(model.streamProtocol.defaultUrl, text: $model.streamUrl)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .font(.system(size: 13, weight: .medium))

@@ -1,14 +1,20 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet, TextInput } from 'react-native';
+import { View, Text, ScrollView, Pressable, StyleSheet, TextInput, Clipboard } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path, Polyline, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
 import { StatusBarBar } from '../components/StatusBarBar';
 import { colors } from '../components/theme';
 import { streamUptime } from '../sdkFormat';
-import type { MentraSdkModel, StreamProtocol } from '../useMentraSdk';
+import { STREAM_DEFAULT_URLS, type MentraSdkModel, type StreamProtocol } from '../useMentraSdk';
 
 const bars = [18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40];
+const streamSdkCall = `await BluetoothSdk.startStream({
+  protocol: streamProtocol,
+  streamUrl,
+  keepAlive: true,
+  keepAliveIntervalSeconds: 15,
+})`;
 
 export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
   const isLive = sdk.streamStartedAt !== null;
@@ -17,7 +23,7 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
       <StatusBarBar />
-      <Header title="Stream" />
+      <Header connected={sdk.glassesStatus.connected === true} title="Stream" />
 
       {/* Live preview */}
       <LinearGradient colors={['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.55)']} style={styles.card}>
@@ -26,8 +32,8 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
             <View style={styles.glow1} />
             <View style={styles.glow2} />
             <View style={styles.livePill}>
-              <View style={styles.liveDot} />
-              <Text style={styles.liveText}>LIVE</Text>
+              <View style={[styles.liveDot, !isLive && styles.readyDot]} />
+              <Text style={styles.liveText}>{isLive ? 'LIVE' : 'READY'}</Text>
             </View>
             <Text style={styles.timer}>{uptime}</Text>
             <View style={styles.eqWrap}>
@@ -52,15 +58,15 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
         <View style={styles.sdkBlock}>
           <View style={styles.cardHead}>
             <Text style={styles.sdkEyebrow}>SDK CALL</Text>
-            <View style={styles.copyChip}>
+            <Pressable style={({pressed}) => [styles.copyChip, pressed && styles.copyChipPressed]} onPress={() => Clipboard.setString(streamSdkCall)}>
               <Svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke={colors.consoleText} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
                 <Rect x={9} y={9} width={13} height={13} rx={2} />
                 <Path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
               </Svg>
               <Text style={styles.copyText}>Copy</Text>
-            </View>
+            </Pressable>
           </View>
-          <Text style={styles.sdkCode}>{`await mentra.stream.start({\n  protocol: "rtmp",\n  url: streamURL,\n  keepAliveMs: 15_000,\n})`}</Text>
+          <Text style={styles.sdkCode}>{streamSdkCall}</Text>
         </View>
         <View style={styles.statusBar}>
           <View style={styles.redCircle}>
@@ -84,14 +90,14 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
           ))}
         </View>
         <View style={styles.urlBar}>
-          <Text style={styles.method}>{sdk.streamProtocol}://</Text>
+          <Text style={styles.method}>{streamProtocolLabel(sdk.streamProtocol)}</Text>
           <View style={styles.divider} />
           <TextInput
             autoCapitalize="none"
             autoCorrect={false}
             keyboardType="url"
             onChangeText={sdk.setStreamUrl}
-            placeholder={`${sdk.streamProtocol}://...`}
+            placeholder={STREAM_DEFAULT_URLS[sdk.streamProtocol]}
             placeholderTextColor={colors.muted}
             style={styles.url}
             value={sdk.streamUrl}
@@ -106,6 +112,10 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
   );
 }
 
+function streamProtocolLabel(protocol: StreamProtocol) {
+  return protocol === 'webrtc' ? 'WHIP' : protocol.toUpperCase();
+}
+
 const styles = StyleSheet.create({
   card: { marginHorizontal: 16, marginTop: 8, borderRadius: 28, paddingTop: 8, paddingBottom: 14, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 8 },
   previewWrap: { borderRadius: 22, overflow: 'hidden', height: 160 },
@@ -114,6 +124,7 @@ const styles = StyleSheet.create({
   glow2: { position: 'absolute', bottom: -80, right: -50, width: 240, height: 240, borderRadius: 999, backgroundColor: 'rgba(125,216,158,0.25)' },
   livePill: { position: 'absolute', top: 14, left: 14, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.45)', paddingVertical: 6, paddingHorizontal: 11, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
   liveDot: { width: 7, height: 7, borderRadius: 999, backgroundColor: colors.redLive },
+  readyDot: { backgroundColor: colors.greenSoft },
   liveText: { color: '#fff', fontSize: 11, fontWeight: '700', letterSpacing: 0.8 },
   timer: { position: 'absolute', top: 14, right: 14, color: '#fff', fontSize: 13, fontWeight: '600' },
   eqWrap: { position: 'absolute', bottom: 56, left: 0, right: 0, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center', gap: 5, height: 56 },
@@ -128,6 +139,7 @@ const styles = StyleSheet.create({
   cardHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   sdkEyebrow: { color: colors.greenAccent, fontSize: 9, fontWeight: '700', letterSpacing: 1.1 },
   copyChip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,255,255,0.06)', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6 },
+  copyChipPressed: { opacity: 0.6 },
   copyText: { color: colors.consoleText, fontSize: 10, fontWeight: '600' },
   sdkCode: { color: colors.consoleText, fontSize: 11, lineHeight: 16, fontFamily: 'Courier' },
   statusBar: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, gap: 10 },

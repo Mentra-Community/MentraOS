@@ -73,9 +73,11 @@ struct GlassCard<Content: View>: View {
 struct StatusBarRow: View {
     var body: some View {
         HStack {
-            Text("9:41")
-                .font(.system(size: 17, weight: .semibold))
-                .frame(maxWidth: .infinity)
+            TimelineView(.periodic(from: .now, by: 30)) { timeline in
+                Text(statusTimeFormatter.string(from: timeline.date))
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+            }
             HStack(spacing: 6) {
                 Image(systemName: "chart.bar.fill").font(.system(size: 13))
                 Image(systemName: "wifi").font(.system(size: 13))
@@ -91,6 +93,8 @@ struct StatusBarRow: View {
 
 struct PageHeader: View {
     let title: String
+    var connected = false
+
     var body: some View {
         HStack {
             Circle()
@@ -106,8 +110,8 @@ struct PageHeader: View {
                 .tracking(-0.17)
             Spacer()
             HStack(spacing: 6) {
-                Circle().fill(AppColor.greenAccent).frame(width: 7, height: 7)
-                Text("Live").font(.system(size: 13, weight: .semibold)).foregroundColor(AppColor.ink)
+                Circle().fill(connected ? AppColor.greenAccent : AppColor.mutedSoft).frame(width: 7, height: 7)
+                Text(connected ? "Live" : "Offline").font(.system(size: 13, weight: .semibold)).foregroundColor(AppColor.ink)
             }
             .padding(.horizontal, 11)
             .frame(height: 34)
@@ -120,3 +124,9 @@ struct PageHeader: View {
         .padding(.bottom, 14)
     }
 }
+
+private let statusTimeFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateFormat = "h:mm"
+    return formatter
+}()

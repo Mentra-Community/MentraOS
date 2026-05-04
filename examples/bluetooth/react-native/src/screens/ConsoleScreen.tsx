@@ -21,7 +21,7 @@ export function ConsoleScreen({ sdk }: { sdk: MentraSdkModel }) {
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
       <StatusBarBar />
-      <Header title="Console" />
+      <Header connected={sdk.glassesStatus.connected === true} title="Console" />
 
       {/* Filter chips */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 6 }} style={{ marginTop: 8 }}>

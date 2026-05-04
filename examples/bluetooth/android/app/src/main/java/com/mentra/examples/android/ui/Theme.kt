@@ -12,6 +12,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -21,6 +26,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 object AppColor {
     val bg = Color.White
@@ -84,6 +93,15 @@ fun Eyebrow(text: String, color: Color = AppColor.muted, mono: Boolean = false) 
 
 @Composable
 fun StatusBarRow(modifier: Modifier = Modifier) {
+    var time by remember { mutableStateOf(currentStatusTime()) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(30_000)
+            time = currentStatusTime()
+        }
+    }
+
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -92,7 +110,10 @@ fun StatusBarRow(modifier: Modifier = Modifier) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        Text("9:41", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = Color.Black)
+        Text(time, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = Color.Black)
         Text("● ◐ ▮", fontSize = 12.sp, color = Color.Black)
     }
 }
+
+private fun currentStatusTime(): String =
+    SimpleDateFormat("h:mm", Locale.US).format(Date())

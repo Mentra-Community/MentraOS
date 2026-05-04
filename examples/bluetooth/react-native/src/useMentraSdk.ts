@@ -20,6 +20,14 @@ import BluetoothSdk, {
 export type StreamProtocol = 'rtmp' | 'srt' | 'webrtc';
 export type LedMode = 'Off' | 'Solid' | 'Pulse' | 'Blink';
 
+export const STREAM_DEFAULT_URLS: Record<StreamProtocol, string> = {
+  rtmp: 'rtmps://a.rtmps.youtube.com/live2/YOUR_STREAM_KEY',
+  srt: 'srt://srt.example.com:4201?streamid=YOUR_STREAM_ID&passphrase=YOUR_PASSPHRASE',
+  webrtc: 'https://whip.example.com/live/YOUR_STREAM_ID',
+};
+
+const STREAM_DEFAULT_URL_VALUES = new Set(Object.values(STREAM_DEFAULT_URLS));
+
 export type SdkConsoleEvent = {
   tag: 'LIVE' | 'STORE' | 'BLE' | 'TX';
   text: string;
@@ -66,6 +74,7 @@ export type MentraSdkActions = {
   setStreamUrl: (url: string) => void;
   setWebhookUrl: (url: string) => void;
   startScan: () => Promise<void>;
+  testWebhook: () => Promise<void>;
   toggleHotspot: () => Promise<void>;
   toggleMic: () => Promise<void>;
   toggleStream: () => Promise<void>;
@@ -109,7 +118,7 @@ export function useMentraSdk(): MentraSdkModel {
   const [streamProtocol, setStreamProtocol] =
     useState<StreamProtocol>('rtmp');
   const [streamUrl, setStreamUrl] = useState(
-    process.env?.EXPO_PUBLIC_MENTRA_STREAM_URL ?? 'rtmp://live.mentra.dev/app/key',
+    process.env?.EXPO_PUBLIC_MENTRA_STREAM_URL ?? STREAM_DEFAULT_URLS.rtmp,
   );
   const [streamStartedAt, setStreamStartedAt] = useState<number | null>(null);
   const [streamStatus, setStreamStatus] = useState('Ready to start stream');
@@ -355,12 +364,43 @@ export function useMentraSdk(): MentraSdkModel {
         PHOTO_APP_ID,
         'medium',
         uploadUrlText,
-        '',
+        null,
         'medium',
         false,
         true,
       );
       void pollPhotoPreview(requestId, statusUrl, pollGeneration);
+    });
+  }
+
+  async function testWebhook() {
+    await runAction('Test webhook', async () => {
+      let healthUrl = '';
+      try {
+        healthUrl = webhookHealthUrl(webhookUrl.trim());
+      } catch {
+        setCameraStatus('Camera: enter a webhook URL like http://<computer-ip>:8787/upload');
+        throw new Error('Invalid webhook URL.');
+      }
+
+      setCameraStatus('Camera: testing local webhook');
+      try {
+        const response = await fetch(cacheBustedUrl(healthUrl), {
+          cache: 'no-store',
+          headers: {'Cache-Control': 'no-cache', Pragma: 'no-cache'},
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const json = (await response.json()) as {uploadUrl?: string};
+        const host = new URL(healthUrl).host;
+        setCameraStatus(`Camera: webhook reachable (${host})`);
+        addEvent('LIVE', `webhook reachable ${json.uploadUrl ?? healthUrl}`);
+      } catch (error) {
+        const message = formatError(error);
+        setCameraStatus(`Camera: webhook test failed: ${message}`);
+        throw error;
+      }
     });
   }
 
@@ -425,6 +465,13 @@ export function useMentraSdk(): MentraSdkModel {
 
   function selectProtocol(protocol: StreamProtocol) {
     setStreamProtocol(protocol);
+    setStreamUrl((current) => {
+      const trimmed = current.trim();
+      if (!trimmed || STREAM_DEFAULT_URL_VALUES.has(trimmed)) {
+        return STREAM_DEFAULT_URLS[protocol];
+      }
+      return current;
+    });
   }
 
   async function toggleStream() {
@@ -554,6 +601,7 @@ export function useMentraSdk(): MentraSdkModel {
     streamStartedAt,
     streamStatus,
     streamUrl,
+    testWebhook,
     toggleHotspot,
     toggleMic,
     toggleStream,
@@ -598,6 +646,14 @@ function photoStatusUrl(uploadUrlText: string, requestId: string) {
     throw new Error('Only http and https webhook URLs are supported.');
   }
   return `${uploadUrl.protocol}//${uploadUrl.host}/uploads/${requestId}.json`;
+}
+
+function webhookHealthUrl(uploadUrlText: string) {
+  const uploadUrl = new URL(uploadUrlText);
+  if (uploadUrl.protocol !== 'http:' && uploadUrl.protocol !== 'https:') {
+    throw new Error('Only http and https webhook URLs are supported.');
+  }
+  return `${uploadUrl.protocol}//${uploadUrl.host}/`;
 }
 
 function cacheBustedUrl(url: string) {

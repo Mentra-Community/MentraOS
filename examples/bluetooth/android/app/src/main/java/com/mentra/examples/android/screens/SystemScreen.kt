@@ -36,11 +36,12 @@ import com.mentra.examples.android.ui.StatusBarRow
 @Composable
 fun SystemScreen(controller: MentraExampleController) {
     val state = controller.state
+    val connected = state.glassesStatus["connected"] == true
     val networks = wifiScanResults(state.bluetoothStatus)
     val inputEvents = state.events.filter { it.text.contains("button") || it.text.contains("touch") }.take(3)
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
         StatusBarRow()
-        PageHeader("System")
+        PageHeader("System", connected)
 
         // Wi-Fi card
         GlassCard(
@@ -148,8 +149,8 @@ fun SystemScreen(controller: MentraExampleController) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(AppColor.greenAccent))
-                    Text("LIVE", color = AppColor.greenDeep, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
+                    Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(if (connected) AppColor.greenAccent else AppColor.mutedSoft))
+                    Text(if (connected) "LIVE" else "OFF", color = AppColor.greenDeep, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
                 }
             }
             Spacer(Modifier.height(10.dp))

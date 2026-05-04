@@ -12,6 +12,23 @@ enum ExampleStreamProtocol: String, CaseIterable {
     case rtmp
     case srt
     case webrtc
+
+    static let defaultUrls = Set(Self.allCases.map(\.defaultUrl))
+
+    var defaultUrl: String {
+        switch self {
+        case .rtmp:
+            return "rtmps://a.rtmps.youtube.com/live2/YOUR_STREAM_KEY"
+        case .srt:
+            return "srt://srt.example.com:4201?streamid=YOUR_STREAM_ID&passphrase=YOUR_PASSPHRASE"
+        case .webrtc:
+            return "https://whip.example.com/live/YOUR_STREAM_ID"
+        }
+    }
+
+    var inputLabel: String {
+        self == .webrtc ? "WHIP" : rawValue.uppercased()
+    }
 }
 
 @MainActor
@@ -26,7 +43,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published var webhookUrl = ""
     @Published private(set) var photoPreviewUrl: URL?
     @Published var streamProtocol: ExampleStreamProtocol = .rtmp
-    @Published var streamUrl = "rtmp://live.mentra.dev/app/key"
+    @Published var streamUrl = ExampleStreamProtocol.rtmp.defaultUrl
     @Published private(set) var streamStartedAt: Date?
     @Published private(set) var streamStatus = "Ready to start stream"
     @Published private(set) var hotspotEnabled = false
@@ -136,13 +153,48 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                     appId: "com.mentra.examples.ios",
                     size: "medium",
                     webhookUrl: uploadUrl,
-                    authToken: "",
                     compress: "medium",
                     flash: false,
                     sound: true
                 )
             )
             pollPhotoPreview(requestId: requestId, statusUrl: statusUrl.deletingLastPathComponent().appendingPathComponent("\(requestId).json"), generation: generation)
+        }
+    }
+
+    func testWebhook() {
+        runAction("Test webhook") {
+            let uploadUrl = webhookUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let healthUrl = webhookHealthUrl(uploadUrl) else {
+                cameraStatus = "Camera: enter a webhook URL like http://<computer-ip>:8787/upload"
+                append(tag: "TX", text: "Test webhook failed: invalid URL")
+                return
+            }
+
+            cameraStatus = "Camera: testing local webhook"
+            Task {
+                do {
+                    var request = URLRequest(url: URL(string: "\(healthUrl.absoluteString)?poll=\(Int(Date().timeIntervalSince1970 * 1000))")!)
+                    request.cachePolicy = .reloadIgnoringLocalCacheData
+                    request.timeoutInterval = 3
+                    let (_, response) = try await URLSession.shared.data(for: request)
+                    guard let http = response as? HTTPURLResponse else {
+                        cameraStatus = "Camera: webhook test failed: invalid response"
+                        append(tag: "LIVE", text: "webhook test failed: invalid response")
+                        return
+                    }
+                    guard (200..<300).contains(http.statusCode) else {
+                        cameraStatus = "Camera: webhook returned HTTP \(http.statusCode)"
+                        append(tag: "LIVE", text: "webhook returned HTTP \(http.statusCode)")
+                        return
+                    }
+                    cameraStatus = "Camera: webhook reachable (\(healthUrl.host ?? "server"))"
+                    append(tag: "LIVE", text: "webhook reachable \(healthUrl.absoluteString)")
+                } catch {
+                    cameraStatus = "Camera: webhook test failed: \(error.localizedDescription)"
+                    append(tag: "LIVE", text: "webhook test failed: \(error.localizedDescription)")
+                }
+            }
         }
     }
 
@@ -168,6 +220,15 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             streamStartedAt = Date()
             streamStatus = "LIVE · \(streamProtocol.rawValue.uppercased())"
             startKeepAlive(params)
+        }
+    }
+
+    func selectStreamProtocol(_ nextProtocol: ExampleStreamProtocol) {
+        let currentUrl = streamUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        let shouldUseDefault = currentUrl.isEmpty || ExampleStreamProtocol.defaultUrls.contains(currentUrl)
+        streamProtocol = nextProtocol
+        if shouldUseDefault {
+            streamUrl = nextProtocol.defaultUrl
         }
     }
 
@@ -482,5 +543,18 @@ func photoStatusUrl(_ uploadUrlText: String, requestId: String) -> URL? {
     components.host = host
     components.port = uploadUrl.port
     components.path = "/uploads/\(requestId).json"
+    return components.url
+}
+
+func webhookHealthUrl(_ uploadUrlText: String) -> URL? {
+    guard let uploadUrl = URL(string: uploadUrlText),
+          uploadUrl.scheme == "http" || uploadUrl.scheme == "https",
+          let host = uploadUrl.host
+    else { return nil }
+    var components = URLComponents()
+    components.scheme = uploadUrl.scheme
+    components.host = host
+    components.port = uploadUrl.port
+    components.path = "/"
     return components.url
 }

@@ -38,6 +38,16 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+val streamDefaultUrls = mapOf(
+    "rtmp" to "rtmps://a.rtmps.youtube.com/live2/YOUR_STREAM_KEY",
+    "srt" to "srt://srt.example.com:4201?streamid=YOUR_STREAM_ID&passphrase=YOUR_PASSPHRASE",
+    "webrtc" to "https://whip.example.com/live/YOUR_STREAM_ID",
+)
+
+fun defaultStreamUrl(protocol: String): String = streamDefaultUrls[protocol] ?: streamDefaultUrls.getValue("rtmp")
+
+fun streamProtocolLabel(protocol: String): String = if (protocol == "webrtc") "WHIP" else protocol.uppercase()
+
 data class ExampleEvent(
     val time: String,
     val tag: String,
@@ -62,7 +72,7 @@ data class MentraExampleState(
     val streamProtocol: String = "rtmp",
     val streamStartedAt: Long? = null,
     val streamStatus: String = "Ready to start stream",
-    val streamUrl: String = "rtmp://live.mentra.dev/app/key",
+    val streamUrl: String = defaultStreamUrl("rtmp"),
     val webhookUrl: String = "",
 )
 
@@ -153,7 +163,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 appId = "com.mentra.examples.android",
                 size = "medium",
                 webhookUrl = uploadUrl,
-                authToken = "",
                 compress = "medium",
                 flash = false,
                 sound = true,
@@ -162,8 +171,51 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         pollPhotoPreview(requestId, statusUrl, generation)
     }
 
+    fun testWebhook() = runAction("Test webhook") {
+        val healthUrl = try {
+            webhookHealthUrl(state.webhookUrl.trim())
+        } catch (_: Exception) {
+            state = state.copy(cameraStatus = "Camera: enter a webhook URL like http://<computer-ip>:8787/upload")
+            throw IllegalArgumentException("Invalid webhook URL")
+        }
+
+        state = state.copy(cameraStatus = "Camera: testing local webhook")
+        scope.launch(Dispatchers.IO) {
+            try {
+                val connection = URL(healthUrl).openConnection() as HttpURLConnection
+                connection.connectTimeout = 1500
+                connection.readTimeout = 1500
+                val code = connection.responseCode
+                if (code in 200..299) {
+                    connection.inputStream.close()
+                    scope.launch {
+                        state = state.copy(cameraStatus = "Camera: webhook reachable (${URL(healthUrl).host})")
+                        addEvent("LIVE", "webhook reachable $healthUrl")
+                    }
+                } else {
+                    scope.launch {
+                        state = state.copy(cameraStatus = "Camera: webhook returned HTTP $code")
+                        addEvent("LIVE", "webhook returned HTTP $code")
+                    }
+                }
+                connection.disconnect()
+            } catch (error: Exception) {
+                val message = error.message ?: error.javaClass.simpleName
+                scope.launch {
+                    state = state.copy(cameraStatus = "Camera: webhook test failed: $message")
+                    addEvent("LIVE", "webhook test failed: $message")
+                }
+            }
+        }
+    }
+
     fun selectProtocol(protocol: String) {
-        state = state.copy(streamProtocol = protocol)
+        val currentUrl = state.streamUrl.trim()
+        val shouldUseDefault = currentUrl.isEmpty() || currentUrl in streamDefaultUrls.values
+        state = state.copy(
+            streamProtocol = protocol,
+            streamUrl = if (shouldUseDefault) defaultStreamUrl(protocol) else state.streamUrl,
+        )
     }
 
     fun setStreamUrl(url: String) {
@@ -414,6 +466,15 @@ fun photoStatusUrl(uploadUrlText: String, requestId: String): String {
         throw IllegalArgumentException("Only http and https webhook URLs are supported.")
     }
     return "${url.protocol}://${url.host}:${url.port.takeIf { it >= 0 } ?: url.defaultPort}/uploads/$requestId.json"
+}
+
+fun webhookHealthUrl(uploadUrlText: String): String {
+    val url = URL(uploadUrlText)
+    if (url.protocol != "http" && url.protocol != "https") {
+        throw IllegalArgumentException("Only http and https webhook URLs are supported.")
+    }
+    val port = url.port.takeIf { it >= 0 }?.let { ":$it" } ?: ""
+    return "${url.protocol}://${url.host}$port/"
 }
 
 fun summarize(values: Map<String, Any>): String =

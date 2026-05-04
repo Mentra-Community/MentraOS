@@ -1,13 +1,31 @@
 import SwiftUI
+import UIKit
+
+private let cameraSdkCall = """
+sdk.requestPhoto(
+  MentraPhotoRequest(
+    requestId: requestId,
+    appId: "com.mentra.examples.ios",
+    size: "medium",
+    webhookUrl: uploadUrl,
+    compress: "medium",
+    flash: false,
+    sound: true
+  )
+)
+"""
 
 struct CameraScreen: View {
     @ObservedObject var model: BluetoothViewModel
+    private var cameraStatusFailed: Bool {
+        isCameraStatusFailure(model.cameraStatus)
+    }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
                 StatusBarRow()
-                PageHeader(title: "Camera")
+                PageHeader(title: "Camera", connected: boolValue(model.glassesValues, "connected") == true)
 
                 previewCard.padding(.horizontal, 16).padding(.top, 8)
                 sdkCard.padding(.horizontal, 16).padding(.top, 12)
@@ -73,14 +91,19 @@ struct CameraScreen: View {
                 HStack {
                     Text("SDK CALL").font(.system(size: 9, weight: .bold)).tracking(1.1).foregroundColor(AppColor.greenAccent)
                     Spacer()
-                    HStack(spacing: 4) {
-                        Image(systemName: "doc.on.doc").font(.system(size: 9)).foregroundColor(AppColor.consoleText)
-                        Text("Copy").font(.system(size: 10, weight: .semibold)).foregroundColor(AppColor.consoleText)
+                    Button {
+                        UIPasteboard.general.string = cameraSdkCall
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "doc.on.doc").font(.system(size: 9)).foregroundColor(AppColor.consoleText)
+                            Text("Copy").font(.system(size: 10, weight: .semibold)).foregroundColor(AppColor.consoleText)
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Color.white.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius: 6))
                     }
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(Color.white.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius: 6))
+                    .buttonStyle(.plain)
                 }
-                Text("await mentra.camera.capture({\n  size: \"2K\", quality: 85,\n  flash: \"auto\",\n  uploadTo: webhookURL,\n})")
+                Text(cameraSdkCall)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(AppColor.consoleText)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -90,8 +113,12 @@ struct CameraScreen: View {
 
             HStack(spacing: 10) {
                 ZStack {
-                    Circle().fill(AppColor.greenAccent.opacity(0.16)).frame(width: 22, height: 22)
-                    Image(systemName: "checkmark").font(.system(size: 10, weight: .heavy)).foregroundColor(AppColor.greenAccent)
+                    Circle()
+                        .fill((cameraStatusFailed ? AppColor.red : AppColor.greenAccent).opacity(0.16))
+                        .frame(width: 22, height: 22)
+                    Image(systemName: cameraStatusFailed ? "xmark" : "checkmark")
+                        .font(.system(size: 10, weight: .heavy))
+                        .foregroundColor(cameraStatusFailed ? AppColor.red : AppColor.greenAccent)
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(model.cameraStatus).font(.system(size: 11, weight: .semibold)).foregroundColor(AppColor.ink)
@@ -112,7 +139,12 @@ struct CameraScreen: View {
             HStack {
                 Text("UPLOAD TO").font(.system(size: 10, weight: .semibold)).tracking(1.2).foregroundColor(AppColor.muted)
                 Spacer()
-                Text("test webhook ↗").font(.system(size: 11, weight: .medium)).foregroundColor(AppColor.greenAccent)
+                Button {
+                    model.testWebhook()
+                } label: {
+                    Text("test webhook ↗").font(.system(size: 11, weight: .medium)).foregroundColor(AppColor.greenAccent)
+                }
+                .buttonStyle(.plain)
             }
             .padding(.bottom, 12)
 
@@ -131,12 +163,23 @@ struct CameraScreen: View {
             .padding(.bottom, 12)
 
             HStack(spacing: 8) {
-                Chip(label: "size", value: "2K")
-                Chip(label: "quality", value: "85")
+                Chip(label: "size", value: "medium")
+                Chip(label: "compress", value: "medium")
+                Chip(label: "flash", value: "off")
                 Spacer()
             }
         }
     }
+}
+
+private func isCameraStatusFailure(_ status: String) -> Bool {
+    let normalized = status.lowercased()
+    return normalized.contains("failed") ||
+        normalized.contains("returned http") ||
+        normalized.contains("timed out") ||
+        normalized.contains("reported") ||
+        normalized.contains("invalid") ||
+        normalized.contains("enter a webhook url like")
 }
 
 struct Chip: View {

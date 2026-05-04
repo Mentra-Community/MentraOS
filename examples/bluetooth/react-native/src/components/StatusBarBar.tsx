@@ -1,11 +1,18 @@
-import React from 'react';
+import React, {useEffect, useState} from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 
 export function StatusBarBar() {
+  const [time, setTime] = useState(formatTime);
+
+  useEffect(() => {
+    const timer = setInterval(() => setTime(formatTime()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
   return (
     <View style={styles.row}>
-      <Text style={styles.time}>9:41</Text>
+      <Text style={styles.time}>{time}</Text>
       <View style={styles.right}>
         <Svg width={82} height={22} viewBox="0 0 82 22">
           <Path d="M3.7 13H2.5a1 1 0 0 0-1 1v2.5a1 1 0 0 0 1 1h1.2a1 1 0 0 0 1-1V14a1 1 0 0 0-1-1m5.2-2.5H7.7a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h1.2a1 1 0 0 0 1-1v-5a1 1 0 0 0-1-1M14.1 8h-1.2a1 1 0 0 0-1 1v7.5a1 1 0 0 0 1 1h1.2a1 1 0 0 0 1-1V9a1 1 0 0 0-1-1m5.2-2.5h-1.2a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h1.2a1 1 0 0 0 1-1v-10a1 1 0 0 0-1-1" />
@@ -23,6 +30,10 @@ export function StatusBarBar() {
       </View>
     </View>
   );
+}
+
+function formatTime() {
+  return new Date().toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
 }
 
 const styles = StyleSheet.create({

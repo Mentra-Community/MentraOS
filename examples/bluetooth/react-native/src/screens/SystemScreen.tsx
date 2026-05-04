@@ -10,12 +10,13 @@ import type { LedMode, MentraSdkModel } from '../useMentraSdk';
 
 export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
   const networks = sdk.bluetoothStatus.wifiScanResults ?? [];
+  const connected = sdk.glassesStatus.connected === true;
   const inputEvents = sdk.events.filter((item) => item.text.includes('button') || item.text.includes('touch')).slice(0, 3);
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
       <StatusBarBar />
-      <Header title="System" />
+      <Header connected={sdk.glassesStatus.connected === true} title="System" />
 
       {/* Wi-Fi card */}
       <LinearGradient colors={['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.55)']} style={styles.bigCard}>
@@ -119,8 +120,8 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
             </View>
           </View>
           <View style={styles.livePill2}>
-            <View style={{ width: 5, height: 5, borderRadius: 999, backgroundColor: colors.greenAccent }} />
-            <Text style={styles.livePill2Text}>LIVE</Text>
+            <View style={{ width: 5, height: 5, borderRadius: 999, backgroundColor: connected ? colors.greenAccent : colors.mutedSoft }} />
+            <Text style={styles.livePill2Text}>{connected ? 'LIVE' : 'OFF'}</Text>
           </View>
         </View>
         <View style={styles.inputChips}>

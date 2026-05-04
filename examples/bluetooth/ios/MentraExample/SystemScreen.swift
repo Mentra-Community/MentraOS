@@ -7,7 +7,7 @@ struct SystemScreen: View {
         ScrollView {
             VStack(spacing: 0) {
                 StatusBarRow()
-                PageHeader(title: "System")
+                PageHeader(title: "System", connected: boolValue(model.glassesValues, "connected") == true)
 
                 wifiCard.padding(.horizontal, 16).padding(.top, 8)
                 tilesRow.padding(.horizontal, 16).padding(.top, 12)
@@ -131,8 +131,8 @@ struct SystemScreen: View {
                 }
                 Spacer()
                 HStack(spacing: 5) {
-                    Circle().fill(AppColor.greenAccent).frame(width: 5, height: 5)
-                    Text("LIVE").font(.system(size: 10, weight: .bold)).tracking(0.5).foregroundColor(AppColor.greenDeep)
+                    Circle().fill(boolValue(model.glassesValues, "connected") == true ? AppColor.greenAccent : AppColor.mutedSoft).frame(width: 5, height: 5)
+                    Text(boolValue(model.glassesValues, "connected") == true ? "LIVE" : "OFF").font(.system(size: 10, weight: .bold)).tracking(0.5).foregroundColor(AppColor.greenDeep)
                 }
                 .padding(.horizontal, 9).padding(.vertical, 4)
                 .background(AppColor.greenAccent.opacity(0.16))

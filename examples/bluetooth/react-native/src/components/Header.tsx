@@ -3,7 +3,9 @@ import { View, Text, StyleSheet } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { colors } from './theme';
 
-export function Header({ title }: { title: string }) {
+export function Header({ connected = false, title }: { connected?: boolean; title: string }) {
+  const label = connected ? 'Live' : 'Offline';
+
   return (
     <View style={styles.row}>
       <View style={styles.iconCircle}>
@@ -14,8 +16,8 @@ export function Header({ title }: { title: string }) {
       </View>
       <Text style={styles.title}>{title}</Text>
       <View style={styles.livePill}>
-        <View style={styles.liveDot} />
-        <Text style={styles.liveText}>Live</Text>
+        <View style={[styles.liveDot, !connected && styles.offlineDot]} />
+        <Text style={styles.liveText}>{label}</Text>
       </View>
     </View>
   );
@@ -73,6 +75,9 @@ const styles = StyleSheet.create({
     height: 7,
     borderRadius: 999,
     backgroundColor: colors.greenAccent,
+  },
+  offlineDot: {
+    backgroundColor: colors.mutedSoft,
   },
   liveText: {
     color: colors.ink,

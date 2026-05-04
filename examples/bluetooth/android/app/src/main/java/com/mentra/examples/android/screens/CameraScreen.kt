@@ -12,6 +12,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.outlined.Camera
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Refresh
@@ -25,6 +26,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -38,9 +41,11 @@ import com.mentra.examples.android.ui.StatusBarRow
 @Composable
 fun CameraScreen(controller: MentraExampleController) {
     val state = controller.state
+    val cameraStatusFailed = isCameraStatusFailure(state.cameraStatus)
+    val clipboardManager = LocalClipboardManager.current
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
         StatusBarRow()
-        PageHeader("Camera")
+        PageHeader("Camera", state.glassesStatus["connected"] == true)
 
         // Preview card
         GlassCard(
@@ -99,7 +104,11 @@ fun CameraScreen(controller: MentraExampleController) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("SDK CALL", color = AppColor.greenAccent, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
                     Row(
-                        modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color.White.copy(alpha = 0.06f)).padding(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color.White.copy(alpha = 0.06f))
+                            .clickable { clipboardManager.setText(AnnotatedString(cameraSdkCall)) }
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
@@ -109,7 +118,7 @@ fun CameraScreen(controller: MentraExampleController) {
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "await mentra.camera.capture({\n  size: \"2K\", quality: 85,\n  flash: \"auto\",\n  uploadTo: webhookURL,\n})",
+                    cameraSdkCall,
                     color = AppColor.consoleText, fontSize = 11.sp, fontFamily = FontFamily.Monospace
                 )
             }
@@ -118,8 +127,19 @@ fun CameraScreen(controller: MentraExampleController) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Box(modifier = Modifier.size(22.dp).clip(CircleShape).background(AppColor.greenAccent.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Filled.Check, null, tint = AppColor.greenAccent, modifier = Modifier.size(12.dp))
+                Box(
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background((if (cameraStatusFailed) AppColor.red else AppColor.greenAccent).copy(alpha = 0.16f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        if (cameraStatusFailed) Icons.Filled.Close else Icons.Filled.Check,
+                        null,
+                        tint = if (cameraStatusFailed) AppColor.red else AppColor.greenAccent,
+                        modifier = Modifier.size(12.dp)
+                    )
                 }
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                     Text(state.cameraStatus, color = AppColor.ink, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
@@ -137,7 +157,13 @@ fun CameraScreen(controller: MentraExampleController) {
         ) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Eyebrow("UPLOAD TO")
-                Text("test webhook ↗", color = AppColor.greenAccent, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                Text(
+                    "test webhook ↗",
+                    color = AppColor.greenAccent,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.clickable { controller.testWebhook() }
+                )
             }
             Spacer(Modifier.height(12.dp))
             Row(
@@ -163,13 +189,38 @@ fun CameraScreen(controller: MentraExampleController) {
             }
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Chip("size", "2K")
-                Chip("quality", "85")
+                Chip("size", "medium")
+                Chip("compress", "medium")
+                Chip("flash", "off")
             }
         }
 
         Spacer(Modifier.height(140.dp))
     }
+}
+
+private val cameraSdkCall = """
+sdk.requestPhoto(
+  MentraPhotoRequest(
+    requestId = requestId,
+    appId = "com.mentra.examples.android",
+    size = "medium",
+    webhookUrl = uploadUrl,
+    compress = "medium",
+    flash = false,
+    sound = true,
+  )
+)
+""".trimIndent()
+
+private fun isCameraStatusFailure(status: String): Boolean {
+    val normalized = status.lowercase()
+    return normalized.contains("failed") ||
+        normalized.contains("returned http") ||
+        normalized.contains("timed out") ||
+        normalized.contains("reported") ||
+        normalized.contains("invalid") ||
+        normalized.contains("enter a webhook url like")
 }
 
 @Composable

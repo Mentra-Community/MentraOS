@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet, Image, TextInput } from 'react-native';
+import { View, Text, ScrollView, Pressable, StyleSheet, Image, TextInput, Clipboard } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Path, Polyline, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
@@ -7,11 +7,24 @@ import { StatusBarBar } from '../components/StatusBarBar';
 import { colors } from '../components/theme';
 import type { MentraSdkModel } from '../useMentraSdk';
 
+const cameraSdkCall = `await BluetoothSdk.photoRequest(
+  requestId,
+  PHOTO_APP_ID,
+  "medium",
+  webhookUrl,
+  null,
+  "medium",
+  false,
+  true,
+)`;
+
 export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
+  const cameraStatusFailed = isCameraStatusFailure(sdk.cameraStatus);
+
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
       <StatusBarBar />
-      <Header title="Camera" />
+      <Header connected={sdk.glassesStatus.connected === true} title="Camera" />
 
       {/* Preview card */}
       <LinearGradient colors={['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.55)']} style={styles.card}>
@@ -44,20 +57,20 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
         <View style={styles.sdkBlock}>
           <View style={styles.cardHead}>
             <Text style={styles.sdkEyebrow}>SDK CALL</Text>
-            <View style={styles.copyChip}>
+            <Pressable style={({pressed}) => [styles.copyChip, pressed && styles.copyChipPressed]} onPress={() => Clipboard.setString(cameraSdkCall)}>
               <Svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke={colors.consoleText} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
                 <Rect x={9} y={9} width={13} height={13} rx={2} />
                 <Path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
               </Svg>
               <Text style={styles.copyText}>Copy</Text>
-            </View>
+            </Pressable>
           </View>
-          <Text style={styles.sdkCode}>{`await mentra.camera.capture({\n  size: "2K", quality: 85,\n  flash: "auto",\n  uploadTo: webhookURL,\n})`}</Text>
+          <Text style={styles.sdkCode}>{cameraSdkCall}</Text>
         </View>
         <View style={styles.statusBar}>
-          <View style={styles.checkCircle}>
-            <Svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke={colors.greenAccent} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
-              <Polyline points="20 6 9 17 4 12" />
+          <View style={[styles.statusIconCircle, cameraStatusFailed && styles.statusIconCircleError]}>
+            <Svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke={cameraStatusFailed ? colors.red : colors.greenAccent} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
+              {cameraStatusFailed ? <Path d="M18 6 6 18M6 6l12 12" /> : <Polyline points="20 6 9 17 4 12" />}
             </Svg>
           </View>
           <View style={{ flex: 1 }}>
@@ -72,7 +85,11 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
       <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={styles.uploadCard}>
         <View style={styles.cardHead}>
           <Text style={styles.eyebrow}>UPLOAD TO</Text>
-          <Text style={[styles.linkRight, { color: colors.greenAccent }]}>test webhook ↗</Text>
+          <Pressable onPress={sdk.testWebhook}>
+            {({pressed}) => (
+              <Text style={[styles.linkRight, { color: colors.greenAccent, opacity: pressed ? 0.6 : 1 }]}>test webhook ↗</Text>
+            )}
+          </Pressable>
         </View>
         <View style={styles.urlBar}>
           <Text style={styles.method}>POST</Text>
@@ -89,11 +106,24 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
           />
         </View>
         <View style={styles.chipRow}>
-          <Chip label="size" value="2K" />
-          <Chip label="quality" value="85" />
+          <Chip label="size" value="medium" />
+          <Chip label="compress" value="medium" />
+          <Chip label="flash" value="off" />
         </View>
       </LinearGradient>
     </ScrollView>
+  );
+}
+
+function isCameraStatusFailure(status: string) {
+  const normalized = status.toLowerCase();
+  return (
+    normalized.includes('failed') ||
+    normalized.includes('returned http') ||
+    normalized.includes('timed out') ||
+    normalized.includes('reported') ||
+    normalized.includes('invalid') ||
+    normalized.includes('enter a webhook url like')
   );
 }
 
@@ -124,11 +154,13 @@ const styles = StyleSheet.create({
   cardHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   sdkEyebrow: { color: colors.greenAccent, fontSize: 9, fontWeight: '700', letterSpacing: 1.1 },
   copyChip: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(255,255,255,0.06)', paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6 },
+  copyChipPressed: { opacity: 0.6 },
   copyText: { color: colors.consoleText, fontSize: 10, fontWeight: '600' },
   sdkCode: { color: colors.consoleText, fontSize: 11, lineHeight: 16, fontFamily: 'Courier' },
 
   statusBar: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, gap: 10 },
-  checkCircle: { width: 22, height: 22, borderRadius: 999, backgroundColor: 'rgba(52,199,89,0.16)', alignItems: 'center', justifyContent: 'center' },
+  statusIconCircle: { width: 22, height: 22, borderRadius: 999, backgroundColor: 'rgba(52,199,89,0.16)', alignItems: 'center', justifyContent: 'center' },
+  statusIconCircleError: { backgroundColor: 'rgba(255,59,48,0.16)' },
   statusTitle: { color: colors.ink, fontSize: 11, fontWeight: '600' },
   statusSub: { color: colors.muted, fontSize: 10, fontWeight: '500' },
   linkRight: { color: colors.muted, fontSize: 10, fontWeight: '600' },

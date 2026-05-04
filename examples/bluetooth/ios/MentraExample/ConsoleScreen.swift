@@ -2,16 +2,21 @@ import SwiftUI
 
 struct ConsoleScreen: View {
     @ObservedObject var model: BluetoothViewModel
+    @State private var filter = "ALL"
+
+    private var filteredEvents: [ExampleEvent] {
+        filter == "ALL" ? model.events : model.events.filter { $0.tag == filter }
+    }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
                 StatusBarRow()
-                PageHeader(title: "Console")
+                PageHeader(title: "Console", connected: boolValue(model.glassesValues, "connected") == true)
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
-                        Button {} label: {
+                        Button { filter = "ALL" } label: {
                             HStack(spacing: 6) {
                                 Text("ALL").font(.system(size: 11, weight: .bold)).tracking(0.5).foregroundColor(.white)
                                 Text("\(model.events.count)").font(.system(size: 10, weight: .medium)).foregroundColor(Color.white.opacity(0.5))
@@ -20,10 +25,10 @@ struct ConsoleScreen: View {
                             .background(LinearGradient(colors: [Color(hex: 0x28473A), Color(hex: 0x1F3A2A)], startPoint: .top, endPoint: .bottom))
                             .clipShape(Capsule())
                         }
-                        FilterChip(color: Color(hex: 0x00C7BE), labelColor: Color(hex: 0x00807B), label: "LIVE", count: "\(model.events.filter { $0.tag == "LIVE" }.count)")
-                        FilterChip(color: Color(hex: 0x84B5E8), labelColor: Color(hex: 0x3478B8), label: "BLE", count: "\(model.events.filter { $0.tag == "BLE" }.count)")
-                        FilterChip(color: AppColor.amber, labelColor: Color(hex: 0xB86A00), label: "TX", count: "\(model.events.filter { $0.tag == "TX" }.count)")
-                        FilterChip(color: AppColor.gold, labelColor: Color(hex: 0x8C7400), label: "STORE", count: "\(model.events.filter { $0.tag == "STORE" }.count)")
+                        FilterChip(color: Color(hex: 0x00C7BE), labelColor: Color(hex: 0x00807B), label: "LIVE", count: "\(model.events.filter { $0.tag == "LIVE" }.count)", active: filter == "LIVE") { filter = "LIVE" }
+                        FilterChip(color: Color(hex: 0x84B5E8), labelColor: Color(hex: 0x3478B8), label: "BLE", count: "\(model.events.filter { $0.tag == "BLE" }.count)", active: filter == "BLE") { filter = "BLE" }
+                        FilterChip(color: AppColor.amber, labelColor: Color(hex: 0xB86A00), label: "TX", count: "\(model.events.filter { $0.tag == "TX" }.count)", active: filter == "TX") { filter = "TX" }
+                        FilterChip(color: AppColor.gold, labelColor: Color(hex: 0x8C7400), label: "STORE", count: "\(model.events.filter { $0.tag == "STORE" }.count)", active: filter == "STORE") { filter = "STORE" }
                     }
                     .padding(.horizontal, 16)
                 }
@@ -62,7 +67,7 @@ struct ConsoleScreen: View {
             .overlay(alignment: .bottom) { Rectangle().fill(Color.white.opacity(0.06)).frame(height: 1) }
 
             VStack(spacing: 10) {
-                ForEach(model.events) { e in
+                ForEach(filteredEvents) { e in
                     HStack(alignment: .top, spacing: 10) {
                         Text(e.time)
                             .font(.system(size: 10, design: .monospaced))
@@ -135,17 +140,21 @@ private func tagColor(_ tag: String) -> Color {
 
 struct FilterChip: View {
     let color: Color; let labelColor: Color; let label: String; let count: String
+    var active = false
+    let action: () -> Void
+
     var body: some View {
-        Button {} label: {
+        Button(action: action) {
             HStack(spacing: 6) {
                 Circle().fill(color).frame(width: 6, height: 6)
                 Text(label).font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundColor(labelColor)
                 Text(count).font(.system(size: 10, weight: .medium)).foregroundColor(AppColor.muted)
             }
             .padding(.horizontal, 12).padding(.vertical, 7)
-            .background(Color.white.opacity(0.6))
-            .overlay(Capsule().stroke(Color.white.opacity(0.75), lineWidth: 1))
+            .background(active ? color.opacity(0.14) : Color.white.opacity(0.6))
+            .overlay(Capsule().stroke(active ? color.opacity(0.35) : Color.white.opacity(0.75), lineWidth: 1))
             .clipShape(Capsule())
         }
+        .buttonStyle(.plain)
     }
 }

@@ -21,11 +21,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mentra.examples.android.MentraExampleController
+import com.mentra.examples.android.streamProtocolLabel
 import com.mentra.examples.android.elapsedText
 import com.mentra.examples.android.ui.AppColor
 import com.mentra.examples.android.ui.GlassCard
@@ -33,15 +36,28 @@ import com.mentra.examples.android.ui.PageHeader
 import com.mentra.examples.android.ui.StatusBarRow
 
 private val barHeights = listOf(18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40)
+private val streamSdkCall = """
+sdk.startStream(
+  MentraStreamRequest(
+    mapOf(
+      "streamUrl" to streamUrl,
+      "protocol" to streamProtocol,
+      "keepAlive" to true,
+      "keepAliveIntervalSeconds" to 15,
+    )
+  )
+)
+""".trimIndent()
 
 @Composable
 fun StreamScreen(controller: MentraExampleController) {
     val state = controller.state
     val isLive = state.streamStartedAt != null
     val uptime = elapsedText(state.streamStartedAt)
+    val clipboardManager = LocalClipboardManager.current
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
         StatusBarRow()
-        PageHeader("Stream")
+        PageHeader("Stream", state.glassesStatus["connected"] == true)
 
         // Live preview card
         GlassCard(
@@ -62,8 +78,8 @@ fun StreamScreen(controller: MentraExampleController) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(AppColor.redLive))
-                    Text("LIVE", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
+                    Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(if (isLive) AppColor.redLive else AppColor.greenSoft))
+                    Text(if (isLive) "LIVE" else "READY", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
                 }
                 Text(uptime, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.align(Alignment.TopEnd).padding(14.dp))
 
@@ -111,7 +127,11 @@ fun StreamScreen(controller: MentraExampleController) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("SDK CALL", color = AppColor.greenAccent, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
                     Row(
-                        modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color.White.copy(alpha = 0.06f)).padding(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color.White.copy(alpha = 0.06f))
+                            .clickable { clipboardManager.setText(AnnotatedString(streamSdkCall)) }
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
@@ -121,7 +141,7 @@ fun StreamScreen(controller: MentraExampleController) {
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "await mentra.stream.start({\n  protocol: \"rtmp\",\n  url: streamURL,\n  keepAliveMs: 15_000,\n})",
+                    streamSdkCall,
                     color = AppColor.consoleText, fontSize = 11.sp, fontFamily = FontFamily.Monospace
                 )
             }
@@ -161,7 +181,7 @@ fun StreamScreen(controller: MentraExampleController) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("${state.streamProtocol}://", color = AppColor.greenAccent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
+                Text(streamProtocolLabel(state.streamProtocol), color = AppColor.greenAccent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
                 Box(modifier = Modifier.size(width = 1.dp, height = 14.dp).background(AppColor.ink.copy(alpha = 0.12f)))
                 BasicTextField(
                     value = state.streamUrl,

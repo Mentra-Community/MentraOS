@@ -25,7 +25,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
-fun PageHeader(title: String) {
+fun PageHeader(title: String, connected: Boolean = false) {
+    val label = if (connected) "Live" else "Offline"
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -60,8 +62,8 @@ fun PageHeader(title: String) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(AppColor.greenAccent))
-            Text("Live", color = AppColor.ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(if (connected) AppColor.greenAccent else AppColor.mutedSoft))
+            Text(label, color = AppColor.ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }

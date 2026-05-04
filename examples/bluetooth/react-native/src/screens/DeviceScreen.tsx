@@ -40,7 +40,7 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
       <StatusBarBar />
-      <Header title="Device" />
+      <Header connected={connected} title="Device" />
 
       {/* Hero card */}
       <LinearGradient colors={['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.55)']} style={styles.heroCard}>

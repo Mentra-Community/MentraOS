@@ -15,6 +15,10 @@ import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -33,10 +37,12 @@ import com.mentra.examples.android.ui.StatusBarRow
 @Composable
 fun ConsoleScreen(controller: MentraExampleController) {
     val state = controller.state
-    val events = state.events
+    var filter by remember { mutableStateOf("ALL") }
+    val allEvents = state.events
+    val events = if (filter == "ALL") allEvents else allEvents.filter { it.tag == filter }
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
         StatusBarRow()
-        PageHeader("Console")
+        PageHeader("Console", state.glassesStatus["connected"] == true)
 
         // Filter chips
         Row(
@@ -46,18 +52,18 @@ fun ConsoleScreen(controller: MentraExampleController) {
             Row(
                 modifier = Modifier.clip(RoundedCornerShape(999.dp))
                     .background(Brush.verticalGradient(listOf(Color(0xFF28473A), Color(0xFF1F3A2A))))
-                    .clickable { }
+                    .clickable { filter = "ALL" }
                     .padding(horizontal = 12.dp, vertical = 7.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Text("ALL", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
-                Text(events.size.toString(), color = Color.White.copy(alpha = 0.5f), fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                Text(allEvents.size.toString(), color = Color.White.copy(alpha = 0.5f), fontSize = 10.sp, fontWeight = FontWeight.Medium)
             }
-            FilterChip(Color(0xFF00C7BE), Color(0xFF00807B), "LIVE", events.count { it.tag == "LIVE" }.toString())
-            FilterChip(Color(0xFF84B5E8), Color(0xFF3478B8), "BLE", events.count { it.tag == "BLE" }.toString())
-            FilterChip(AppColor.amber, Color(0xFFB86A00), "TX", events.count { it.tag == "TX" }.toString())
-            FilterChip(AppColor.gold, Color(0xFF8C7400), "STORE", events.count { it.tag == "STORE" }.toString())
+            FilterChip(Color(0xFF00C7BE), Color(0xFF00807B), "LIVE", allEvents.count { it.tag == "LIVE" }.toString(), filter == "LIVE") { filter = "LIVE" }
+            FilterChip(Color(0xFF84B5E8), Color(0xFF3478B8), "BLE", allEvents.count { it.tag == "BLE" }.toString(), filter == "BLE") { filter = "BLE" }
+            FilterChip(AppColor.amber, Color(0xFFB86A00), "TX", allEvents.count { it.tag == "TX" }.toString(), filter == "TX") { filter = "TX" }
+            FilterChip(AppColor.gold, Color(0xFF8C7400), "STORE", allEvents.count { it.tag == "STORE" }.toString(), filter == "STORE") { filter = "STORE" }
         }
 
         // Console card
@@ -159,12 +165,12 @@ private fun tagColor(event: ExampleEvent): Color =
     }
 
 @Composable
-private fun FilterChip(dot: Color, labelColor: Color, label: String, count: String) {
+private fun FilterChip(dot: Color, labelColor: Color, label: String, count: String, active: Boolean, onClick: () -> Unit) {
     Row(
         modifier = Modifier.clip(RoundedCornerShape(999.dp))
-            .background(Color.White.copy(alpha = 0.6f))
-            .border(1.dp, AppColor.border, RoundedCornerShape(999.dp))
-            .clickable { }
+            .background(if (active) dot.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.6f))
+            .border(1.dp, if (active) dot.copy(alpha = 0.35f) else AppColor.border, RoundedCornerShape(999.dp))
+            .clickable { onClick() }
             .padding(horizontal = 12.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)

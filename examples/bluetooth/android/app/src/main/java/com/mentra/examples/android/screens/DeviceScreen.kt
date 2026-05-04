@@ -55,7 +55,7 @@ fun DeviceScreen(controller: MentraExampleController) {
         modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())
     ) {
         StatusBarRow()
-        PageHeader("Device")
+        PageHeader("Device", glasses["connected"] == true)
 
         // Hero card
         GlassCard(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
@@ -194,7 +194,7 @@ fun DeviceScreen(controller: MentraExampleController) {
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(AppColor.greenPrimary))
-                                Text("LIVE", color = AppColor.greenPrimary, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp)
+                                Text(latestEvent?.tag ?: "NONE", color = AppColor.greenPrimary, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp)
                             }
                             Text(latestEvent?.time ?: "--:--:--", color = AppColor.inkAlt.copy(alpha = 0.65f), fontSize = 11.sp)
                         }
