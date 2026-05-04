@@ -20,6 +20,7 @@
 #include "mos_brightness.h"
 #include "mos_lvgl_display.h"
 #include "protobuf_handler.h"
+#include "ui/main_scene.h"
 #if defined(CONFIG_LVGL)
 #include "mos_binfont_lvgl.h"
 #include "mos_font_storage.h"
@@ -51,6 +52,7 @@ static volatile bool display_onoff = false;
  * 须在 CONFIG_LVGL 内 apply_font_update_in_lvgl_thread 之前声明（C 可见性）。 */
 static lv_obj_t *welcome_container = NULL;
 static lv_obj_t *welcome_label = NULL;
+static mos_ui_main_scene_t g_main_scene;
 static lv_obj_t *protobuf_container = NULL;
 static lv_obj_t *protobuf_label = NULL;
 static lv_obj_t *protobuf_gbk_container = NULL;
@@ -350,36 +352,6 @@ static void protobuf_text_prepare_for_render(const char *text_content, char *out
     out_text[out_size - 1U] = '\0';
 }
 
-void lv_example_scroll_text(void)
-{
-    /* Create a label.
-     * 创建一个标签。 */
-    lv_obj_t *label = lv_label_create(lv_screen_active());
-
-    /* Set scroll mode (automatic horizontal scrolling).
-     * 设置滚动模式（自动横向滚动）。 */
-    /* lv_label_set_long_mode(label, LV_LABEL_LONG_SCROLL); */
-    lv_label_set_long_mode(label, LV_LABEL_LONG_SCROLL_CIRCULAR);
-
-    /* Set label width for SSD1306 visible area (128x64).
-     * 设置标签区域宽度（SSD1306 可视区域 128x64）。 */
-    lv_obj_set_width(label, 128); /* SSD1306 display width (was 640) / SSD1306 显示宽度（原640） */
-
-    /* Set label position for SSD1306 128x64.
-     * 设置标签位置（SSD1306 128x64）。 */
-    lv_obj_set_pos(label, 0, 50); /* x/y position (was 0,410 on large displays) / x/y 位置（大屏曾用 0,410） */
-
-    /* Set long text (triggers scrolling).
-     * 设置长文本（会触发滚动）。 */
-    lv_label_set_text(label, "!!!!!nRF5340 + NCS 3.0.0 + LVGL!!!!");
-
-    lv_obj_set_style_text_color(label, display_get_text_color(), 0); /* Adaptive text color / 自适应文字颜色 */
-#if defined(CONFIG_LVGL)
-    lv_obj_set_style_text_font(label, mos_font_storage_get_lvgl_font(), 0); /* Use dynamic font / 使用动态字体 */
-    add_dynamic_font_label(label);
-#endif
-    lv_obj_set_style_bg_color(lv_screen_active(), display_get_background_color(), 0);
-}
 
 /* Display on/off state management.
  * 显示开关状态管理。 */
@@ -733,72 +705,11 @@ void display_send_frame(void *data_ptr)
     // display_cmd_t cmd = {.type = LCD_CMD_DATA, .param = data_ptr};
     // mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
 }
-void lvgl_display_text(void)
-{
-    lv_obj_t *hello_world_label = lv_label_create(lv_screen_active());
-    lv_label_set_text(hello_world_label, "Hello LVGL World");
-    lv_obj_align(hello_world_label, LV_ALIGN_CENTER, 0, 0); /* Center align / 居中对齐 */
-    /* lv_obj_align(hello_world_label, LV_TEXT_ALIGN_RIGHT, 0, 0); Right align / 右对齐 */
-    /* lv_obj_align(hello_world_label, LV_TEXT_ALIGN_LEFT, 0, 0); Left align / 左对齐 */
-    /* lv_obj_align(hello_world_label, LV_ALIGN_BOTTOM_MID, 0, 0); Bottom center / 底部居中对齐 */
-    lv_obj_set_style_text_color(hello_world_label, display_get_text_color(),
-                                0); /* Adaptive text color / 自适应文字颜色 */
-#if defined(CONFIG_LVGL)
-    lv_obj_set_style_text_font(hello_world_label, mos_font_storage_get_lvgl_font(),
-                               0); /* Use dynamic font / 使用动态字体 */
-    add_dynamic_font_label(hello_world_label);
-#endif
-    lv_obj_set_style_bg_color(lv_screen_active(), display_get_background_color(), 0);
-}
+
 static lv_timer_t *counter_timer; /* Pointer only / 指针即可 */
 static lv_obj_t *acc_label;
 static lv_obj_t *gyr_label;
-static void counter_timer_cb(lv_timer_t *timer)
-{
-    // int *count = (int *)lv_timer_get_user_data(timer);
-    // // lv_label_set_text_fmt(counter_label, "Count: %d", (*count)++);
-    // char buf[64];
-    // sprintf(buf, "ACC X=%.3f m/s Y=%.3f m/s Z=%.3f m/s",
-    //         icm42688p_data.acc_ms2[0],
-    //         icm42688p_data.acc_ms2[1],
-    //         icm42688p_data.acc_ms2[2]);
-    // lv_label_set_text(acc_label, buf);
-    // memset(buf, 0, sizeof(buf));
-    /* Update gyro label.
-     * 更新陀螺仪标签。 */
-    // sprintf(buf, "GYR X=%.4f dps Y=%.4f dps Z=%.4f dps",
-    //         icm42688p_data.gyr_dps[0],
-    //         icm42688p_data.gyr_dps[1],
-    //         icm42688p_data.gyr_dps[2]);
-    // lv_label_set_text(gyr_label, buf);
-}
 
-void ui_create(void)
-{
-    // counter_label = lv_label_create(lv_screen_active());
-    acc_label = lv_label_create(lv_screen_active());
-    lv_obj_align(acc_label, LV_TEXT_ALIGN_LEFT, 0, 320);
-    gyr_label = lv_label_create(lv_screen_active());
-    lv_obj_align(gyr_label, LV_TEXT_ALIGN_LEFT, 0, 380);
-
-    /* lv_obj_align(counter_label, LV_TEXT_ALIGN_LEFT, 50, 320); Left align / 左对齐 */
-    lv_obj_set_style_text_color(acc_label, display_get_text_color(), 0); /* Adaptive text color / 自适应文字颜色 */
-#if defined(CONFIG_LVGL)
-    lv_obj_set_style_text_font(acc_label, mos_font_storage_get_lvgl_font(), 0); /* Use dynamic font / 使用动态字体 */
-    add_dynamic_font_label(acc_label);
-#endif
-    lv_obj_set_style_text_color(gyr_label, display_get_text_color(), 0); /* Adaptive text color / 自适应文字颜色 */
-#if defined(CONFIG_LVGL)
-    lv_obj_set_style_text_font(gyr_label, mos_font_storage_get_lvgl_font(), 0); /* Use dynamic font / 使用动态字体 */
-    add_dynamic_font_label(gyr_label);
-#endif
-    lv_obj_set_style_bg_color(lv_screen_active(), display_get_background_color(), 0);
-    /* Create periodic timer; pass count pointer via user_data.
-     * 创建周期定时器，count 指针经 user_data 传入。 */
-    static int count = 0;
-    counter_timer = lv_timer_create(counter_timer_cb, 300, &count);
-    /* 300 ms period, callback triggers each cycle / 300 为毫秒，回调每次触发 */
-}
 
 /****************************************************/
 /* 前向声明 / Forward declarations */
@@ -1122,7 +1033,7 @@ static void restore_welcome_screen_state(void)
 /* 欢迎屏：使用当前外置字库（与全局一致）。上电默认值见 prj.conf 的 MOS_WELCOME_LANG_* / PT_SIZE，
  * 对应 mos_binfont_lvgl.c 里 s_current_*；用户调用 mos_font_switch_language 后不再被欢迎刷新覆盖。
  * 未就绪时回退 secondary。须在 LVGL 线程调用。 */
-static void f(lv_obj_t *label)
+static void welcome_apply_preferred_font(lv_obj_t *label)
 {
     if (label == NULL)
     {
@@ -1149,239 +1060,272 @@ static void f(lv_obj_t *label)
 
 #endif
 
+static const lv_font_t *font_to_be_used(void)
+{
+#if defined(CONFIG_LVGL)
+    const lv_font_t *font = mos_binfont_get_lvgl_font();
+    if (font != NULL && mos_binfont_is_initialized())
+    {
+        return font;
+    }
+#endif
+    return display_get_font("secondary");
+}
+
 static void create_scrolling_text_container(lv_obj_t *screen)
 {
-    /* 获取模块化显示配置 / Get modular display configuration */
     const display_config_t *config = display_get_config();
 
-    /* Pattern 4 默认只创建常驻欢迎容器；BLE 文本容器按需懒创建。 */
-    lv_obj_t *container = lv_obj_create(screen);
-    display_apply_container_config(container, screen, config);
-    welcome_container = container;
+    mos_ui_main_scene_cfg_t cfg = {
+        .x = config->layout.margin_left,
+        .y = config->layout.margin_top,
+        .width = config->layout.usable_width,
+        .height = config->layout.usable_height,
+        .padding = config->layout.padding,
+        .bg_color = display_get_background_color(),
+        .text_color = display_get_text_color(),
+        .font = font_to_be_used(),
+        .line_spacing = config->fonts.line_spacing,
+        .label_y_offset = PROTOBUF_BLE_LABEL_YOFF,
+        .dfu_font = display_get_font("secondary"),
+        .dfu_bar_bg_color = display_get_background_color(),
+        .dfu_bar_fill_color = display_get_text_color(),
+    };
 
-    /* 欢迎容器默认不滚动。 */
-    lv_obj_set_scroll_dir(container, LV_DIR_NONE);
-    lv_obj_set_scrollbar_mode(container, LV_SCROLLBAR_MODE_OFF);
-
-    lv_obj_set_style_bg_color(container, display_get_background_color(), 0);
-    lv_obj_set_style_bg_opa(container, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(container, 0, 0);
-    lv_obj_set_style_border_opa(container, LV_OPA_TRANSP, 0);
-    // lv_obj_set_style_border_width(container, 2, 0);
-    // lv_obj_set_style_border_color(container, display_get_text_color(), 0);
-    // lv_obj_set_style_border_opa(container, LV_OPA_COVER, 0);
-
-    /* 欢迎界面主文案标签。 */
-    lv_obj_t *label = lv_label_create(container);
-    LOG_INF("Welcome: label created @%p, container @%p, screen @%p", (void *)label, (void *)container, (void *)screen);
-
-    lv_coord_t label_width = config->layout.usable_width - (config->layout.padding * 2);
-    lv_obj_set_width(label, label_width);
-    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
-
-    LOG_INF("Welcome: label width set to %d (usable_width=%d, padding=%d)", (int)label_width,
-            (int)config->layout.usable_width, (int)config->layout.padding);
-
-    welcome_label = label;
-
-    welcome_screen_initializing = true;
+    g_main_scene = mos_ui_main_scene_create(screen, &cfg);
 
 #if defined(CONFIG_LVGL)
-    welcome_apply_preferred_font(label);
-#else
-    lv_obj_set_style_text_font(label, display_get_font("secondary"), 0);
+    add_dynamic_font_label(g_main_scene.welcome.welcome_text);
+    add_dynamic_font_label(g_main_scene.caption.default_scrolling);
 #endif
-
-    const char *initial_text;
-    char display_text[160];
-
-#if defined(CONFIG_LVGL)
-    build_welcome_screen_text(display_text, sizeof(display_text), config);
-    initial_text = display_text;
-#else
-    const char *device_name = get_ble_device_name();
-    uint32_t battery_pct = protobuf_get_battery_level();
-    bool charging = protobuf_get_charging_state();
-    if (config->width >= 500)
-    {
-        snprintf(display_text, sizeof(display_text),
-                 "Welcome to MentraOS\n"
-                 "Build V1.2.3 %s %s\n"
-                 "Waiting for connection\n"
-                 "Device Name: %s %s\n"
-                 "Battery: %s %u%%",
-                 __DATE__, __TIME__, get_ble_icon(), device_name, get_battery_icon(battery_pct, charging),
-                 (unsigned int)battery_pct);
-    }
-    else
-    {
-        snprintf(display_text, sizeof(display_text),
-                 "Welcome to MentraOS\n"
-                 "Build V1.2.3 %s %s\n"
-                 "Waiting for connection\n"
-                 "Device: %s %s\n"
-                 "Battery: %s %u%%",
-                 __DATE__, __TIME__, get_ble_icon(), device_name, get_battery_icon(battery_pct, charging),
-                 (unsigned int)battery_pct);
-    }
-    initial_text = display_text;
-#endif
-
-    lv_obj_set_style_text_color(label, display_get_text_color(), 0);
-    lv_obj_set_style_text_line_space(label, config->fonts.line_spacing, 0);
-
-    LOG_INF("Welcome: text color and bg color styles set");
-
-    lv_label_set_text(label, initial_text);
-    lv_obj_update_layout(label);
-
-    LOG_INF("Welcome text set: '%.50s...' (truncated)", initial_text);
 
     welcome_screen_active = true;
-    display_scene_set_mode(DISPLAY_SCENE_MODE_WELCOME);
     welcome_screen_initializing = false;
-
-    LOG_INF("Welcome screen initialized: label_ptr=%p, state=%d", (void *)label, welcome_screen_active);
+    display_scene_set_mode(DISPLAY_SCENE_MODE_WELCOME);
 
     k_work_init_delayable(&welcome_battery_work, welcome_battery_work_handler);
     k_work_schedule(&welcome_battery_work, K_MSEC(WELCOME_BATTERY_REFRESH_MS));
-#if defined(CONFIG_LVGL)
-    add_dynamic_font_label(label);
-#endif
 
-    lv_obj_align(label, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_update_layout(label);
-    lv_obj_clear_flag(label, LV_OBJ_FLAG_HIDDEN);
-    LOG_INF("Welcome: label visibility set to visible");
-
-    /* 检查 label 的 bounding box */
-    lv_area_t label_area;
-    lv_obj_get_coords(label, &label_area);
-    LOG_INF("Welcome: label bounding box: (%d,%d) to (%d,%d), size=%dx%d", label_area.x1, label_area.y1, label_area.x2,
-            label_area.y2, lv_area_get_width(&label_area), lv_area_get_height(&label_area));
-
-    /* 检查 label 的内容尺寸 */
-    lv_coord_t content_width = lv_obj_get_content_width(label);
-    lv_coord_t content_height = lv_obj_get_content_height(label);
-    LOG_INF("Welcome: label content size: %dx%d", (int)content_width, (int)content_height);
-
-    /* 检查 label 的实际宽度和高度 */
-    lv_coord_t label_w = lv_obj_get_width(label);
-    lv_coord_t label_h = lv_obj_get_height(label);
-    LOG_INF("Welcome: label actual size: %dx%d", (int)label_w, (int)label_h);
-
-    lv_obj_invalidate(container);
-    LOG_INF("Welcome: container invalidated to trigger rendering");
-
-    dfu_status_label = lv_label_create(container);
-    lv_label_set_text(dfu_status_label, "");
-    lv_obj_set_width(dfu_status_label, config->layout.usable_width - (config->layout.padding * 2));
-    lv_obj_set_style_text_font(dfu_status_label, display_get_font("secondary"), 0);
-    lv_obj_set_style_text_color(dfu_status_label, display_get_text_color(), 0);
-    lv_obj_set_style_text_align(dfu_status_label, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_align_to(dfu_status_label, label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
-    lv_obj_add_flag(dfu_status_label, LV_OBJ_FLAG_HIDDEN);
-#if defined(CONFIG_LVGL)
-    add_dynamic_font_label(dfu_status_label);
-#endif
-
-    dfu_progress_bar_w = (lv_coord_t)(config->layout.usable_width / 2);
-    dfu_progress_bar = lv_obj_create(container);
-    lv_obj_set_size(dfu_progress_bar, dfu_progress_bar_w, 12);
-    lv_obj_align_to(dfu_progress_bar, dfu_status_label, LV_ALIGN_OUT_BOTTOM_MID, 0, 4);
-    lv_obj_set_style_bg_color(dfu_progress_bar, display_get_background_color(), 0);
-    lv_obj_set_style_bg_opa(dfu_progress_bar, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(dfu_progress_bar, 0, 0);
-    lv_obj_set_style_radius(dfu_progress_bar, 4, 0);
-    lv_obj_set_style_pad_all(dfu_progress_bar, 0, 0);
-    dfu_progress_fill = lv_obj_create(dfu_progress_bar);
-    lv_obj_set_size(dfu_progress_fill, 0, 12);
-    lv_obj_align(dfu_progress_fill, LV_ALIGN_LEFT_MID, 0, 0);
-    lv_obj_set_style_bg_color(dfu_progress_fill, display_get_text_color(), 0);
-    lv_obj_set_style_bg_opa(dfu_progress_fill, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(dfu_progress_fill, 0, 0);
-    lv_obj_set_style_radius(dfu_progress_fill, 4, 0);
-    lv_obj_set_style_pad_all(dfu_progress_fill, 0, 0);
-    lv_obj_add_flag(dfu_progress_bar, LV_OBJ_FLAG_HIDDEN);
-
-    lv_obj_update_layout(container);
-    LOG_INF("Welcome container ready: %dx%d with %s font", config->layout.usable_width, config->layout.usable_height,
-            config->name);
+    LOG_INF("main_scene created: %dx%d", config->layout.usable_width, config->layout.usable_height);
 }
+
+// static void create_scrolling_text_container_old(lv_obj_t *screen)
+// {
+//     /* 获取模块化显示配置 / Get modular display configuration */
+//     const display_config_t *config = display_get_config();
+
+//     /* Pattern 4 默认只创建常驻欢迎容器；BLE 文本容器按需懒创建。 */
+//     lv_obj_t *container = lv_obj_create(screen);
+//     display_apply_container_config(container, screen, config);
+//     welcome_container = container;
+
+//     /* 欢迎容器默认不滚动。 */
+//     lv_obj_set_scroll_dir(container, LV_DIR_NONE);
+//     lv_obj_set_scrollbar_mode(container, LV_SCROLLBAR_MODE_OFF);
+
+//     lv_obj_set_style_bg_color(container, display_get_background_color(), 0);
+//     lv_obj_set_style_bg_opa(container, LV_OPA_COVER, 0);
+//     lv_obj_set_style_border_width(container, 0, 0);
+//     lv_obj_set_style_border_opa(container, LV_OPA_TRANSP, 0);
+//     // lv_obj_set_style_border_width(container, 2, 0);
+//     // lv_obj_set_style_border_color(container, display_get_text_color(), 0);
+//     // lv_obj_set_style_border_opa(container, LV_OPA_COVER, 0);
+
+//     /* 欢迎界面主文案标签。 */
+//     lv_obj_t *label = lv_label_create(container);
+//     LOG_INF("Welcome: label created @%p, container @%p, screen @%p", (void *)label, (void *)container, (void *)screen);
+
+//     lv_coord_t label_width = config->layout.usable_width - (config->layout.padding * 2);
+//     lv_obj_set_width(label, label_width);
+//     lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+//     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
+
+//     LOG_INF("Welcome: label width set to %d (usable_width=%d, padding=%d)", (int)label_width,
+//             (int)config->layout.usable_width, (int)config->layout.padding);
+
+//     welcome_label = label;
+
+//     welcome_screen_initializing = true;
+
+// #if defined(CONFIG_LVGL)
+//     welcome_apply_preferred_font(label);
+// #else
+//     lv_obj_set_style_text_font(label, display_get_font("secondary"), 0);
+// #endif
+
+//     const char *initial_text;
+//     char display_text[160];
+
+// #if defined(CONFIG_LVGL)
+//     build_welcome_screen_text(display_text, sizeof(display_text), config);
+//     initial_text = display_text;
+// #else
+//     const char *device_name = get_ble_device_name();
+//     uint32_t battery_pct = protobuf_get_battery_level();
+//     bool charging = protobuf_get_charging_state();
+//     if (config->width >= 500)
+//     {
+//         snprintf(display_text, sizeof(display_text),
+//                  "Welcome to MentraOS\n"
+//                  "Build V1.2.3 %s %s\n"
+//                  "Waiting for connection\n"
+//                  "Device Name: %s %s\n"
+//                  "Battery: %s %u%%",
+//                  __DATE__, __TIME__, get_ble_icon(), device_name, get_battery_icon(battery_pct, charging),
+//                  (unsigned int)battery_pct);
+//     }
+//     else
+//     {
+//         snprintf(display_text, sizeof(display_text),
+//                  "Welcome to MentraOS\n"
+//                  "Build V1.2.3 %s %s\n"
+//                  "Waiting for connection\n"
+//                  "Device: %s %s\n"
+//                  "Battery: %s %u%%",
+//                  __DATE__, __TIME__, get_ble_icon(), device_name, get_battery_icon(battery_pct, charging),
+//                  (unsigned int)battery_pct);
+//     }
+//     initial_text = display_text;
+// #endif
+
+//     lv_obj_set_style_text_color(label, display_get_text_color(), 0);
+//     lv_obj_set_style_text_line_space(label, config->fonts.line_spacing, 0);
+
+//     LOG_INF("Welcome: text color and bg color styles set");
+
+//     lv_label_set_text(label, initial_text);
+//     lv_obj_update_layout(label);
+
+//     LOG_INF("Welcome text set: '%.50s...' (truncated)", initial_text);
+
+//     welcome_screen_active = true;
+//     display_scene_set_mode(DISPLAY_SCENE_MODE_WELCOME);
+//     welcome_screen_initializing = false;
+
+//     LOG_INF("Welcome screen initialized: label_ptr=%p, state=%d", (void *)label, welcome_screen_active);
+
+//     k_work_init_delayable(&welcome_battery_work, welcome_battery_work_handler);
+//     k_work_schedule(&welcome_battery_work, K_MSEC(WELCOME_BATTERY_REFRESH_MS));
+// #if defined(CONFIG_LVGL)
+//     add_dynamic_font_label(label);
+// #endif
+
+//     lv_obj_align(label, LV_ALIGN_TOP_LEFT, 0, 0);
+//     lv_obj_update_layout(label);
+//     lv_obj_clear_flag(label, LV_OBJ_FLAG_HIDDEN);
+//     LOG_INF("Welcome: label visibility set to visible");
+
+//     lv_obj_invalidate(container);
+//     LOG_INF("Welcome: container invalidated to trigger rendering");
+
+//     dfu_status_label = lv_label_create(container);
+//     lv_label_set_text(dfu_status_label, "");
+//     lv_obj_set_width(dfu_status_label, config->layout.usable_width - (config->layout.padding * 2));
+//     lv_obj_set_style_text_font(dfu_status_label, display_get_font("secondary"), 0);
+//     lv_obj_set_style_text_color(dfu_status_label, display_get_text_color(), 0);
+//     lv_obj_set_style_text_align(dfu_status_label, LV_TEXT_ALIGN_LEFT, 0);
+//     lv_obj_align_to(dfu_status_label, label, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
+//     lv_obj_add_flag(dfu_status_label, LV_OBJ_FLAG_HIDDEN);
+// #if defined(CONFIG_LVGL)
+//     add_dynamic_font_label(dfu_status_label);
+// #endif
+
+//     dfu_progress_bar_w = (lv_coord_t)(config->layout.usable_width / 2);
+//     dfu_progress_bar = lv_obj_create(container);
+//     lv_obj_set_size(dfu_progress_bar, dfu_progress_bar_w, 12);
+//     lv_obj_align_to(dfu_progress_bar, dfu_status_label, LV_ALIGN_OUT_BOTTOM_MID, 0, 4);
+//     lv_obj_set_style_bg_color(dfu_progress_bar, display_get_background_color(), 0);
+//     lv_obj_set_style_bg_opa(dfu_progress_bar, LV_OPA_COVER, 0);
+//     lv_obj_set_style_border_width(dfu_progress_bar, 0, 0);
+//     lv_obj_set_style_radius(dfu_progress_bar, 4, 0);
+//     lv_obj_set_style_pad_all(dfu_progress_bar, 0, 0);
+//     dfu_progress_fill = lv_obj_create(dfu_progress_bar);
+//     lv_obj_set_size(dfu_progress_fill, 0, 12);
+//     lv_obj_align(dfu_progress_fill, LV_ALIGN_LEFT_MID, 0, 0);
+//     lv_obj_set_style_bg_color(dfu_progress_fill, display_get_text_color(), 0);
+//     lv_obj_set_style_bg_opa(dfu_progress_fill, LV_OPA_COVER, 0);
+//     lv_obj_set_style_border_width(dfu_progress_fill, 0, 0);
+//     lv_obj_set_style_radius(dfu_progress_fill, 4, 0);
+//     lv_obj_set_style_pad_all(dfu_progress_fill, 0, 0);
+//     lv_obj_add_flag(dfu_progress_bar, LV_OBJ_FLAG_HIDDEN);
+
+//     lv_obj_update_layout(container);
+//     LOG_INF("Welcome container ready: %dx%d with %s font", config->layout.usable_width, config->layout.usable_height,
+//             config->name);
+// }
 /**
  * 确保 protobuf 场景就绪：如果尚未创建，则创建 BLE 文本容器和标签，并隐藏欢迎容器。
  * Ensure protobuf scene is ready: if not already created, create BLE text container and label, and hide welcome container.
  */
-static void ensure_protobuf_scene_ready(void)
-{
-    if (protobuf_container != NULL && protobuf_label != NULL)
-    {
-        return;
-    }
+// static void ensure_protobuf_scene_ready(void)
+// {
+//     if (protobuf_container != NULL && protobuf_label != NULL)
+//     {
+//         return;
+//     }
 
-    ensure_pattern4_scene_ready();
+//     ensure_pattern4_scene_ready();
 
-    lv_obj_t *screen = lv_screen_active();
-    const display_config_t *config = display_get_config();
+//     lv_obj_t *screen = lv_screen_active();
+//     const display_config_t *config = display_get_config();
 
-    protobuf_container = lv_obj_create(screen);
-    display_apply_container_config(protobuf_container, screen, config);
-    lv_obj_set_scroll_dir(protobuf_container, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(protobuf_container, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_style_bg_color(protobuf_container, display_get_background_color(), 0);
-    lv_obj_set_style_bg_opa(protobuf_container, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(protobuf_container, 0, 0);
-    lv_obj_set_style_border_opa(protobuf_container, LV_OPA_TRANSP, 0);
-    // lv_obj_set_style_border_width(protobuf_container, 2, 0);
-    // lv_obj_set_style_border_color(protobuf_container, display_get_text_color(), 0);
-    // lv_obj_set_style_border_opa(protobuf_container, LV_OPA_COVER, 0);
+//     protobuf_container = lv_obj_create(screen);
+//     display_apply_container_config(protobuf_container, screen, config);
+//     lv_obj_set_scroll_dir(protobuf_container, LV_DIR_VER);
+//     lv_obj_set_scrollbar_mode(protobuf_container, LV_SCROLLBAR_MODE_OFF);
+//     lv_obj_set_style_bg_color(protobuf_container, display_get_background_color(), 0);
+//     lv_obj_set_style_bg_opa(protobuf_container, LV_OPA_COVER, 0);
+//     lv_obj_set_style_border_width(protobuf_container, 0, 0);
+//     lv_obj_set_style_border_opa(protobuf_container, LV_OPA_TRANSP, 0);
+//     // lv_obj_set_style_border_width(protobuf_container, 2, 0);
+//     // lv_obj_set_style_border_color(protobuf_container, display_get_text_color(), 0);
+//     // lv_obj_set_style_border_opa(protobuf_container, LV_OPA_COVER, 0);
 
-    protobuf_label = lv_label_create(protobuf_container);
-    lv_obj_set_width(protobuf_label, config->layout.usable_width - (config->layout.padding * 2));
-    lv_label_set_long_mode(protobuf_label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_align(protobuf_label, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_set_style_text_color(protobuf_label, display_get_text_color(), 0);
-    lv_obj_set_style_text_line_space(protobuf_label, config->fonts.line_spacing, 0);
-    lv_obj_set_style_text_font(protobuf_label, display_get_font("secondary"), 0);
-    lv_obj_align(protobuf_label, LV_ALIGN_TOP_LEFT, 0, PROTOBUF_BLE_LABEL_YOFF);
-#if defined(CONFIG_LVGL)
-    add_dynamic_font_label(protobuf_label);
-#endif
+//     protobuf_label = lv_label_create(protobuf_container);
+//     lv_obj_set_width(protobuf_label, config->layout.usable_width - (config->layout.padding * 2));
+//     lv_label_set_long_mode(protobuf_label, LV_LABEL_LONG_WRAP);
+//     lv_obj_set_style_text_align(protobuf_label, LV_TEXT_ALIGN_LEFT, 0);
+//     lv_obj_set_style_text_color(protobuf_label, display_get_text_color(), 0);
+//     lv_obj_set_style_text_line_space(protobuf_label, config->fonts.line_spacing, 0);
+//     lv_obj_set_style_text_font(protobuf_label, display_get_font("secondary"), 0);
+//     lv_obj_align(protobuf_label, LV_ALIGN_TOP_LEFT, 0, PROTOBUF_BLE_LABEL_YOFF);
+// #if defined(CONFIG_LVGL)
+//     add_dynamic_font_label(protobuf_label);
+// #endif
 
-    protobuf_gbk_container = lv_obj_create(protobuf_container);
-    lv_obj_set_size(protobuf_gbk_container, config->layout.usable_width - (config->layout.padding * 2),
-                    config->layout.usable_height - (config->layout.padding * 2));
-    lv_obj_set_style_bg_opa(protobuf_gbk_container, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(protobuf_gbk_container, 0, 0);
-    lv_obj_set_style_border_opa(protobuf_gbk_container, LV_OPA_TRANSP, 0);
-    lv_obj_set_scroll_dir(protobuf_gbk_container, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(protobuf_gbk_container, LV_SCROLLBAR_MODE_AUTO);
-    lv_obj_align(protobuf_gbk_container, LV_ALIGN_TOP_LEFT, 0, PROTOBUF_BLE_LABEL_YOFF);
-    lv_obj_add_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN);
-    memset(s_protobuf_gbk_label_pool, 0, sizeof(s_protobuf_gbk_label_pool));
-    s_protobuf_gbk_label_pool_used = 0;
+//     protobuf_gbk_container = lv_obj_create(protobuf_container);
+//     lv_obj_set_size(protobuf_gbk_container, config->layout.usable_width - (config->layout.padding * 2),
+//                     config->layout.usable_height - (config->layout.padding * 2));
+//     lv_obj_set_style_bg_opa(protobuf_gbk_container, LV_OPA_TRANSP, 0);
+//     lv_obj_set_style_border_width(protobuf_gbk_container, 0, 0);
+//     lv_obj_set_style_border_opa(protobuf_gbk_container, LV_OPA_TRANSP, 0);
+//     lv_obj_set_scroll_dir(protobuf_gbk_container, LV_DIR_VER);
+//     lv_obj_set_scrollbar_mode(protobuf_gbk_container, LV_SCROLLBAR_MODE_AUTO);
+//     lv_obj_align(protobuf_gbk_container, LV_ALIGN_TOP_LEFT, 0, PROTOBUF_BLE_LABEL_YOFF);
+//     lv_obj_add_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN);
+//     memset(s_protobuf_gbk_label_pool, 0, sizeof(s_protobuf_gbk_label_pool));
+//     s_protobuf_gbk_label_pool_used = 0;
 
-    protobuf_xy_overlay_container = lv_obj_create(protobuf_container);
-    lv_obj_set_size(protobuf_xy_overlay_container, config->layout.usable_width - (config->layout.padding * 2),
-                    config->layout.usable_height - (config->layout.padding * 2));
-    lv_obj_set_style_bg_opa(protobuf_xy_overlay_container, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(protobuf_xy_overlay_container, 0, 0);
-    lv_obj_set_style_border_opa(protobuf_xy_overlay_container, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_pad_all(protobuf_xy_overlay_container, 0, 0);
-    lv_obj_set_scroll_dir(protobuf_xy_overlay_container, LV_DIR_NONE);
-    lv_obj_set_scrollbar_mode(protobuf_xy_overlay_container, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_align(protobuf_xy_overlay_container, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_add_flag(protobuf_xy_overlay_container, LV_OBJ_FLAG_HIDDEN);
+//     protobuf_xy_overlay_container = lv_obj_create(protobuf_container);
+//     lv_obj_set_size(protobuf_xy_overlay_container, config->layout.usable_width - (config->layout.padding * 2),
+//                     config->layout.usable_height - (config->layout.padding * 2));
+//     lv_obj_set_style_bg_opa(protobuf_xy_overlay_container, LV_OPA_TRANSP, 0);
+//     lv_obj_set_style_border_width(protobuf_xy_overlay_container, 0, 0);
+//     lv_obj_set_style_border_opa(protobuf_xy_overlay_container, LV_OPA_TRANSP, 0);
+//     lv_obj_set_style_pad_all(protobuf_xy_overlay_container, 0, 0);
+//     lv_obj_set_scroll_dir(protobuf_xy_overlay_container, LV_DIR_NONE);
+//     lv_obj_set_scrollbar_mode(protobuf_xy_overlay_container, LV_SCROLLBAR_MODE_OFF);
+//     lv_obj_align(protobuf_xy_overlay_container, LV_ALIGN_TOP_LEFT, 0, 0);
+//     lv_obj_add_flag(protobuf_xy_overlay_container, LV_OBJ_FLAG_HIDDEN);
 
-    if (welcome_container != NULL)
-    {
-        lv_obj_add_flag(welcome_container, LV_OBJ_FLAG_HIDDEN);
-    }
+//     if (welcome_container != NULL)
+//     {
+//         lv_obj_add_flag(welcome_container, LV_OBJ_FLAG_HIDDEN);
+//     }
 
-    lv_obj_update_layout(protobuf_container);
-    LOG_INF("Text container ready: %dx%d", config->layout.usable_width, config->layout.usable_height);
-}
+//     lv_obj_update_layout(protobuf_container);
+//     LOG_INF("Text container ready: %dx%d", config->layout.usable_width, config->layout.usable_height);
+// }
 
 static void destroy_protobuf_scene(void)
 {
@@ -2363,7 +2307,6 @@ static void protobuf_scroll_ascii_label_bottom_visible(void)
     lv_obj_scroll_to_y(protobuf_container, target, LV_ANIM_OFF);
 }
 
-/* 在自动滚动容器中更新 protobuf 文本内容 / Update protobuf text content in the auto-scroll container */
 static void update_protobuf_text_content(const char *text_content, uint32_t committed_seq)
 {
     char render_text[PROTOBUF_TEXT_MAX_CHARS] = {0};
@@ -2376,37 +2319,15 @@ static void update_protobuf_text_content(const char *text_content, uint32_t comm
 
     protobuf_text_prepare_for_render(text_content, render_text, sizeof(render_text));
 
-    /* 内容与上次完全一致则跳过 */
     if (last_protobuf_text_valid && strcmp(render_text, last_protobuf_text) == 0)
     {
         return;
     }
 
-    ensure_protobuf_scene_ready();
-
-    if (!protobuf_container || !protobuf_label)
-    {
-        LOG_ERR("Protobuf container not initialized");
-        return;
-    }
-
     welcome_screen_active = false;
     display_scene_set_mode(DISPLAY_SCENE_MODE_CAPTION);
-    if (welcome_container != NULL)
-    {
-        lv_obj_add_flag(welcome_container, LV_OBJ_FLAG_HIDDEN);
-    }
-#if defined(CONFIG_LVGL)
-    protobuf_container_set_welcome_scroll(false);
-#endif
-
-    hide_and_clear_protobuf_xy_overlay();
-
-    bool ascii_only = utf8_is_ascii_only(render_text);
-    bool has_cjk = utf8_contains_cjk(render_text);
 
 #if defined(CONFIG_LVGL)
-    /* 临时屏蔽双语/中文逐字渲染：业务仅使用英文显示 */
     if (mos_binfont_get_current_language() != MOS_FONT_LANG_EN_US)
     {
         mos_font_size_t target_size = mos_font_get_current_size();
@@ -2417,186 +2338,270 @@ static void update_protobuf_text_content(const char *text_content, uint32_t comm
         int switch_ret = mos_font_switch_language(MOS_FONT_LANG_EN_US, target_size);
         if (switch_ret != 0)
         {
-            LOG_WRN("Force binfont to EN failed (lang=%u size=%u): %d", (unsigned int)MOS_FONT_LANG_EN_US,
-                    (unsigned int)target_size, switch_ret);
+            LOG_WRN("Force binfont to EN failed (lang=%u size=%u): %d",
+                    (unsigned int)MOS_FONT_LANG_EN_US, (unsigned int)target_size, switch_ret);
         }
     }
 #endif
 
-    /* 按当前语言优先渲染：双语/中文逐字渲染暂时屏蔽（只走 label 路径）。 */
+    bool has_cjk = utf8_contains_cjk(render_text);
+
     if (0 && has_cjk)
     {
-        mos_font_language_t preferred_lang = MOS_FONT_LANG_EN_US;
-        if (s_biz_src_lang == DISPLAY_BIZ_LANG_ZH || s_biz_dst_lang == DISPLAY_BIZ_LANG_ZH || has_cjk)
-        {
-            preferred_lang = MOS_FONT_LANG_ZH_CN;
-        }
-        if (mos_binfont_get_current_language() != preferred_lang)
-        {
-            mos_font_size_t target_size =
-                (preferred_lang == MOS_FONT_LANG_ZH_CN) ? MOS_FONT_SIZE_18 : mos_font_get_current_size();
-            int switch_ret = mos_font_switch_language(preferred_lang, target_size);
-            if (switch_ret == 0)
-            {
-                LOG_INF("Auto-switch binfont to lang=%u size=%u for multilingual text", (unsigned int)preferred_lang,
-                        (unsigned int)target_size);
-            }
-            else
-            {
-                LOG_WRN("Auto-switch binfont failed (lang=%u size=%u): %d", (unsigned int)preferred_lang,
-                        (unsigned int)target_size, switch_ret);
-            }
-        }
-
-        const lv_font_t *gbk_font = display_get_font("gbk");
-        const display_config_t *display_cfg = display_get_config();
-        const lv_font_t *font_primary = NULL;
-        if (display_cfg != NULL)
-        {
-            /* 辅助字库使用内置 secondary，避免与动态字库重复。 */
-            font_primary = display_cfg->fonts.secondary;
-        }
-
-        /* Debug: 确认当前 binfont(通常是 zh_cn) 是否覆盖英文 ASCII。
-         * 若缺失，则英文只能走 LVGL 18px secondary 兜底（除非未来支持同时保留中/英两套 binfont 实例）。 */
-        if (gbk_font != NULL)
-        {
-            lv_font_glyph_dsc_t probe_dsc;
-            bool has_ascii_A = lv_font_get_glyph_dsc(gbk_font, &probe_dsc, (uint32_t)'A', 0);
-            bool has_ascii_q = lv_font_get_glyph_dsc(gbk_font, &probe_dsc, (uint32_t)'?', 0);
-            LOG_DBG("CJK render: binfont lang=%u size=%u has_ascii_A=%d has_ascii_?=%d @%p",
-                    (unsigned int)mos_binfont_get_current_language(), (unsigned int)mos_binfont_get_current_size(),
-                    (int)has_ascii_A, (int)has_ascii_q, (void *)gbk_font);
-        }
-
-        if (gbk_font && has_cjk)
-        {
-            uint32_t probe_code = 0;
-            lv_font_glyph_dsc_t probe_dsc;
-            if (utf8_first_non_ascii_codepoint(render_text, &probe_code)
-                && !lv_font_get_glyph_dsc(gbk_font, &probe_dsc, probe_code, 0))
-            {
-#if defined(CONFIG_LV_FONT_SIMSUN_16_CJK)
-                LOG_WRN("CJK probe miss U+%04X on gbk font @%p, skip reload (simsun fallback enabled)",
-                        (unsigned int)probe_code, (void *)gbk_font);
-#else
-                uint32_t now_ms = k_uptime_get_32();
-                if ((now_ms - s_last_cjk_probe_reload_ms) >= CJK_PROBE_RELOAD_COOLDOWN_MS)
-                {
-                    s_last_cjk_probe_reload_ms = now_ms;
-                    LOG_WRN("CJK probe miss U+%04X on current gbk font @%p, reloading binfont (cooldown %u ms)",
-                            (unsigned int)probe_code, (void *)gbk_font, (unsigned int)CJK_PROBE_RELOAD_COOLDOWN_MS);
-                    mos_binfont_lvgl_deinit();
-                    gbk_font = mos_binfont_get_lvgl_font();
-                    if (gbk_font != NULL)
-                    {
-                        if (lv_font_get_glyph_dsc(gbk_font, &probe_dsc, probe_code, 0))
-                        {
-                            LOG_INF("CJK probe recovered after binfont reload, U+%04X", (unsigned int)probe_code);
-                        }
-                        else
-                        {
-                            LOG_WRN("CJK probe still missing after reload, U+%04X", (unsigned int)probe_code);
-                        }
-                    }
-                }
-                else
-                {
-                    LOG_WRN("CJK probe miss U+%04X, skip reload due to cooldown", (unsigned int)probe_code);
-                }
-#endif
-            }
-        }
-
-        if (protobuf_gbk_container && gbk_font && has_cjk)
-        {
-            lv_obj_align(protobuf_gbk_container, LV_ALIGN_TOP_LEFT, 0, PROTOBUF_BLE_LABEL_YOFF);
-            /* Use per-character GBK rendering for UTF-8 CJK text in protobuf path. */
-            render_gbk_per_char(protobuf_gbk_container, 0, 0, lv_obj_get_content_width(protobuf_gbk_container),
-                                render_text, gbk_font, font_primary, display_get_text_color(), NULL, NULL, NULL);
-
-            lv_obj_clear_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(protobuf_label, LV_OBJ_FLAG_HIDDEN);
-
-            lv_obj_update_layout(protobuf_gbk_container);
-            lv_obj_scroll_to_y(protobuf_gbk_container, lv_obj_get_scroll_bottom(protobuf_gbk_container), LV_ANIM_OFF);
-
-            strncpy(last_protobuf_text, render_text, sizeof(last_protobuf_text) - 1U);
-            last_protobuf_text[sizeof(last_protobuf_text) - 1U] = '\0';
-            last_protobuf_text_valid = true;
-            LOG_INF("[RENDER][CAPTION] commit seq=%u raw_len=%u render_len=%u scene=%d pattern=%d hidden=%d",
-                    committed_seq, (unsigned int)strlen(text_content), (unsigned int)strlen(render_text),
-                    (int)display_scene_get_mode(), display_scene_get_pattern(),
-                    (int)lv_obj_has_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN));
-            return;
-        }
+        const lv_font_t *font_cjk = display_get_font("gbk");
+        const lv_font_t *font_fallback = display_get_font("secondary");
+        mos_ui_main_scene_show_caption_custom(&g_main_scene, render_text,
+                                               font_cjk, font_fallback,
+                                               display_get_text_color());
     }
-
-    if (protobuf_gbk_container)
+    else
     {
-        lv_obj_add_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN);
+        mos_ui_main_scene_show_caption_default(&g_main_scene, font_to_be_used(), render_text);
     }
-    lv_obj_clear_flag(protobuf_label, LV_OBJ_FLAG_HIDDEN);
-
-    /* 清空并更新：用新 protobuf 内容替换现有文本 / CLEAR AND UPDATE: Replace existing text with new protobuf content */
-#if defined(CONFIG_LVGL)
-    /* 对纯英文/ASCII：不要依赖当前 binfont（可能切到 zh_cn 后 ASCII 字形缺失），
-     * 直接用内置 secondary（通常包含基础拉丁字符）。 */
-    if (ascii_only)
-    {
-        bool need_builtin_fallback = true;
-        const lv_font_t *active_binfont = mos_binfont_get_lvgl_font();
-        if (active_binfont != NULL && mos_binfont_is_initialized())
-        {
-            lv_font_glyph_dsc_t probe_dsc;
-            if (lv_font_get_glyph_dsc(active_binfont, &probe_dsc, (uint32_t)'?', 0)
-                || lv_font_get_glyph_dsc(active_binfont, &probe_dsc, (uint32_t)'A', 0))
-            {
-                need_builtin_fallback = false;
-            }
-        }
-
-        if (need_builtin_fallback)
-        {
-            const display_config_t *display_cfg = display_get_config();
-            if (display_cfg != NULL && display_cfg->fonts.secondary != NULL)
-            {
-                lv_obj_set_style_text_font(protobuf_label, display_cfg->fonts.secondary, 0);
-            }
-        }
-    }
-#endif
-#if defined(CONFIG_LV_FONT_SIMSUN_16_CJK)
-    /* label 路径需要额外兜底：当 binfont/g bk 字库不可用或探测失败时，至少保证 CJK 字形可显示 */
-    if (has_cjk)
-    {
-        lv_obj_set_style_text_font(protobuf_label, &lv_font_simsun_16_cjk, 0);
-    }
-#endif
-    lv_label_set_text(protobuf_label, render_text);
-
-    /* 与欢迎屏一致：容器内容区顶左 + y；字号/行距由 apply_font 写入 style */
-    lv_obj_align(protobuf_label, LV_ALIGN_TOP_LEFT, 0, PROTOBUF_BLE_LABEL_YOFF);
-
-    protobuf_scroll_ascii_label_bottom_visible();
-
-    /* Normal protobuf text updates need an explicit visible redraw hint as well.
-     * Otherwise the LVGL object tree may have the latest text while the panel stays
-     * on an older frame until another command forces a refresh. */
-    lv_obj_invalidate(protobuf_label);
-    if (protobuf_container != NULL)
-    {
-        lv_obj_invalidate(protobuf_container);
-    }
-    lvgl_force_one_refresh = true;
 
     strncpy(last_protobuf_text, render_text, sizeof(last_protobuf_text) - 1U);
     last_protobuf_text[sizeof(last_protobuf_text) - 1U] = '\0';
     last_protobuf_text_valid = true;
-    LOG_INF("[RENDER][CAPTION] commit seq=%u raw_len=%u render_len=%u scene=%d pattern=%d hidden=%d", committed_seq,
-            (unsigned int)strlen(text_content), (unsigned int)strlen(render_text), (int)display_scene_get_mode(),
-            display_scene_get_pattern(), (int)lv_obj_has_flag(protobuf_label, LV_OBJ_FLAG_HIDDEN));
+
+    LOG_INF("[RENDER][CAPTION] commit seq=%u raw_len=%u render_len=%u scene=%d has_cjk=%d",
+            committed_seq, (unsigned int)strlen(text_content), (unsigned int)strlen(render_text),
+            (int)display_scene_get_mode(), (int)has_cjk);
 }
+
+/* 在自动滚动容器中更新 protobuf 文本内容 / Update protobuf text content in the auto-scroll container */
+// static void update_protobuf_text_content_old(const char *text_content, uint32_t committed_seq)
+// {
+//     char render_text[PROTOBUF_TEXT_MAX_CHARS] = {0};
+
+//     if (!text_content)
+//     {
+//         LOG_ERR("Invalid text content pointer");
+//         return;
+//     }
+
+//     protobuf_text_prepare_for_render(text_content, render_text, sizeof(render_text));
+
+//     /* 内容与上次完全一致则跳过 */
+//     if (last_protobuf_text_valid && strcmp(render_text, last_protobuf_text) == 0)
+//     {
+//         return;
+//     }
+
+//     ensure_protobuf_scene_ready();
+
+//     if (!protobuf_container || !protobuf_label)
+//     {
+//         LOG_ERR("Protobuf container not initialized");
+//         return;
+//     }
+
+//     welcome_screen_active = false;
+//     display_scene_set_mode(DISPLAY_SCENE_MODE_CAPTION);
+//     if (welcome_container != NULL)
+//     {
+//         lv_obj_add_flag(welcome_container, LV_OBJ_FLAG_HIDDEN);
+//     }
+// #if defined(CONFIG_LVGL)
+//     protobuf_container_set_welcome_scroll(false);
+// #endif
+
+//     hide_and_clear_protobuf_xy_overlay();
+
+//     bool ascii_only = utf8_is_ascii_only(render_text);
+//     bool has_cjk = utf8_contains_cjk(render_text);
+
+// #if defined(CONFIG_LVGL)
+//     /* 临时屏蔽双语/中文逐字渲染：业务仅使用英文显示 */
+//     if (mos_binfont_get_current_language() != MOS_FONT_LANG_EN_US)
+//     {
+//         mos_font_size_t target_size = mos_font_get_current_size();
+//         if (target_size == 0U)
+//         {
+//             target_size = MOS_FONT_SIZE_18;
+//         }
+//         int switch_ret = mos_font_switch_language(MOS_FONT_LANG_EN_US, target_size);
+//         if (switch_ret != 0)
+//         {
+//             LOG_WRN("Force binfont to EN failed (lang=%u size=%u): %d", (unsigned int)MOS_FONT_LANG_EN_US,
+//                     (unsigned int)target_size, switch_ret);
+//         }
+//     }
+// #endif
+
+//     /* 按当前语言优先渲染：双语/中文逐字渲染暂时屏蔽（只走 label 路径）。 */
+//     if (0 && has_cjk)
+//     {
+//         mos_font_language_t preferred_lang = MOS_FONT_LANG_EN_US;
+//         if (s_biz_src_lang == DISPLAY_BIZ_LANG_ZH || s_biz_dst_lang == DISPLAY_BIZ_LANG_ZH || has_cjk)
+//         {
+//             preferred_lang = MOS_FONT_LANG_ZH_CN;
+//         }
+//         if (mos_binfont_get_current_language() != preferred_lang)
+//         {
+//             mos_font_size_t target_size =
+//                 (preferred_lang == MOS_FONT_LANG_ZH_CN) ? MOS_FONT_SIZE_18 : mos_font_get_current_size();
+//             int switch_ret = mos_font_switch_language(preferred_lang, target_size);
+//             if (switch_ret == 0)
+//             {
+//                 LOG_INF("Auto-switch binfont to lang=%u size=%u for multilingual text", (unsigned int)preferred_lang,
+//                         (unsigned int)target_size);
+//             }
+//             else
+//             {
+//                 LOG_WRN("Auto-switch binfont failed (lang=%u size=%u): %d", (unsigned int)preferred_lang,
+//                         (unsigned int)target_size, switch_ret);
+//             }
+//         }
+
+//         const lv_font_t *gbk_font = display_get_font("gbk");
+//         const display_config_t *display_cfg = display_get_config();
+//         const lv_font_t *font_primary = NULL;
+//         if (display_cfg != NULL)
+//         {
+//             /* 辅助字库使用内置 secondary，避免与动态字库重复。 */
+//             font_primary = display_cfg->fonts.secondary;
+//         }
+
+//         /* Debug: 确认当前 binfont(通常是 zh_cn) 是否覆盖英文 ASCII。
+//          * 若缺失，则英文只能走 LVGL 18px secondary 兜底（除非未来支持同时保留中/英两套 binfont 实例）。 */
+//         if (gbk_font != NULL)
+//         {
+//             lv_font_glyph_dsc_t probe_dsc;
+//             bool has_ascii_A = lv_font_get_glyph_dsc(gbk_font, &probe_dsc, (uint32_t)'A', 0);
+//             bool has_ascii_q = lv_font_get_glyph_dsc(gbk_font, &probe_dsc, (uint32_t)'?', 0);
+//             LOG_DBG("CJK render: binfont lang=%u size=%u has_ascii_A=%d has_ascii_?=%d @%p",
+//                     (unsigned int)mos_binfont_get_current_language(), (unsigned int)mos_binfont_get_current_size(),
+//                     (int)has_ascii_A, (int)has_ascii_q, (void *)gbk_font);
+//         }
+
+//         if (gbk_font && has_cjk)
+//         {
+//             uint32_t probe_code = 0;
+//             lv_font_glyph_dsc_t probe_dsc;
+//             if (utf8_first_non_ascii_codepoint(render_text, &probe_code)
+//                 && !lv_font_get_glyph_dsc(gbk_font, &probe_dsc, probe_code, 0))
+//             {
+// #if defined(CONFIG_LV_FONT_SIMSUN_16_CJK)
+//                 LOG_WRN("CJK probe miss U+%04X on gbk font @%p, skip reload (simsun fallback enabled)",
+//                         (unsigned int)probe_code, (void *)gbk_font);
+// #else
+//                 uint32_t now_ms = k_uptime_get_32();
+//                 if ((now_ms - s_last_cjk_probe_reload_ms) >= CJK_PROBE_RELOAD_COOLDOWN_MS)
+//                 {
+//                     s_last_cjk_probe_reload_ms = now_ms;
+//                     LOG_WRN("CJK probe miss U+%04X on current gbk font @%p, reloading binfont (cooldown %u ms)",
+//                             (unsigned int)probe_code, (void *)gbk_font, (unsigned int)CJK_PROBE_RELOAD_COOLDOWN_MS);
+//                     mos_binfont_lvgl_deinit();
+//                     gbk_font = mos_binfont_get_lvgl_font();
+//                     if (gbk_font != NULL)
+//                     {
+//                         if (lv_font_get_glyph_dsc(gbk_font, &probe_dsc, probe_code, 0))
+//                         {
+//                             LOG_INF("CJK probe recovered after binfont reload, U+%04X", (unsigned int)probe_code);
+//                         }
+//                         else
+//                         {
+//                             LOG_WRN("CJK probe still missing after reload, U+%04X", (unsigned int)probe_code);
+//                         }
+//                     }
+//                 }
+//                 else
+//                 {
+//                     LOG_WRN("CJK probe miss U+%04X, skip reload due to cooldown", (unsigned int)probe_code);
+//                 }
+// #endif
+//             }
+//         }
+
+//         if (protobuf_gbk_container && gbk_font && has_cjk)
+//         {
+//             lv_obj_align(protobuf_gbk_container, LV_ALIGN_TOP_LEFT, 0, PROTOBUF_BLE_LABEL_YOFF);
+//             /* Use per-character GBK rendering for UTF-8 CJK text in protobuf path. */
+//             render_gbk_per_char(protobuf_gbk_container, 0, 0, lv_obj_get_content_width(protobuf_gbk_container),
+//                                 render_text, gbk_font, font_primary, display_get_text_color(), NULL, NULL, NULL);
+
+//             lv_obj_clear_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN);
+//             lv_obj_add_flag(protobuf_label, LV_OBJ_FLAG_HIDDEN);
+
+//             lv_obj_update_layout(protobuf_gbk_container);
+//             lv_obj_scroll_to_y(protobuf_gbk_container, lv_obj_get_scroll_bottom(protobuf_gbk_container), LV_ANIM_OFF);
+
+//             strncpy(last_protobuf_text, render_text, sizeof(last_protobuf_text) - 1U);
+//             last_protobuf_text[sizeof(last_protobuf_text) - 1U] = '\0';
+//             last_protobuf_text_valid = true;
+//             LOG_INF("[RENDER][CAPTION] commit seq=%u raw_len=%u render_len=%u scene=%d pattern=%d hidden=%d",
+//                     committed_seq, (unsigned int)strlen(text_content), (unsigned int)strlen(render_text),
+//                     (int)display_scene_get_mode(), display_scene_get_pattern(),
+//                     (int)lv_obj_has_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN));
+//             return;
+//         }
+//     }
+
+//     if (protobuf_gbk_container)
+//     {
+//         lv_obj_add_flag(protobuf_gbk_container, LV_OBJ_FLAG_HIDDEN);
+//     }
+//     lv_obj_clear_flag(protobuf_label, LV_OBJ_FLAG_HIDDEN);
+
+//     /* 清空并更新：用新 protobuf 内容替换现有文本 / CLEAR AND UPDATE: Replace existing text with new protobuf content */
+// #if defined(CONFIG_LVGL)
+//     /* 对纯英文/ASCII：不要依赖当前 binfont（可能切到 zh_cn 后 ASCII 字形缺失），
+//      * 直接用内置 secondary（通常包含基础拉丁字符）。 */
+//     if (ascii_only)
+//     {
+//         bool need_builtin_fallback = true;
+//         const lv_font_t *active_binfont = mos_binfont_get_lvgl_font();
+//         if (active_binfont != NULL && mos_binfont_is_initialized())
+//         {
+//             lv_font_glyph_dsc_t probe_dsc;
+//             if (lv_font_get_glyph_dsc(active_binfont, &probe_dsc, (uint32_t)'?', 0)
+//                 || lv_font_get_glyph_dsc(active_binfont, &probe_dsc, (uint32_t)'A', 0))
+//             {
+//                 need_builtin_fallback = false;
+//             }
+//         }
+
+//         if (need_builtin_fallback)
+//         {
+//             const display_config_t *display_cfg = display_get_config();
+//             if (display_cfg != NULL && display_cfg->fonts.secondary != NULL)
+//             {
+//                 lv_obj_set_style_text_font(protobuf_label, display_cfg->fonts.secondary, 0);
+//             }
+//         }
+//     }
+// #endif
+// #if defined(CONFIG_LV_FONT_SIMSUN_16_CJK)
+//     /* label 路径需要额外兜底：当 binfont/g bk 字库不可用或探测失败时，至少保证 CJK 字形可显示 */
+//     if (has_cjk)
+//     {
+//         lv_obj_set_style_text_font(protobuf_label, &lv_font_simsun_16_cjk, 0);
+//     }
+// #endif
+//     lv_label_set_text(protobuf_label, render_text);
+
+//     /* 与欢迎屏一致：容器内容区顶左 + y；字号/行距由 apply_font 写入 style */
+//     lv_obj_align(protobuf_label, LV_ALIGN_TOP_LEFT, 0, PROTOBUF_BLE_LABEL_YOFF);
+
+//     protobuf_scroll_ascii_label_bottom_visible();
+
+//     /* Normal protobuf text updates need an explicit visible redraw hint as well.
+//      * Otherwise the LVGL object tree may have the latest text while the panel stays
+//      * on an older frame until another command forces a refresh. */
+//     lv_obj_invalidate(protobuf_label);
+//     if (protobuf_container != NULL)
+//     {
+//         lv_obj_invalidate(protobuf_container);
+//     }
+//     lvgl_force_one_refresh = true;
+
+//     strncpy(last_protobuf_text, render_text, sizeof(last_protobuf_text) - 1U);
+//     last_protobuf_text[sizeof(last_protobuf_text) - 1U] = '\0';
+//     last_protobuf_text_valid = true;
+//     LOG_INF("[RENDER][CAPTION] commit seq=%u raw_len=%u render_len=%u scene=%d pattern=%d hidden=%d", committed_seq,
+//             (unsigned int)strlen(text_content), (unsigned int)strlen(render_text), (int)display_scene_get_mode(),
+//             display_scene_get_pattern(), (int)lv_obj_has_flag(protobuf_label, LV_OBJ_FLAG_HIDDEN));
+// }
 
 /* 用当前电量重建欢迎标签文案（60s 刷新）；仅由 LVGL 线程调用 / Rebuild welcome label text with current battery (60s
  * refresh); call from LVGL thread only */

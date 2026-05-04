@@ -29,3 +29,18 @@ lv_obj_t *mos_ui_default_scrolling_create(lv_obj_t *container, const mos_ui_defa
     LOG_DBG("default_scrolling created @%p", (void *)label);
     return label;
 }
+
+void mos_ui_default_scrolling_update_text(lv_obj_t *default_scrolling, const lv_font_t *font, const char *text)
+{
+    if (!default_scrolling || !text)
+    {
+        return;
+    }
+
+    if (font)
+    {
+        lv_obj_set_style_text_font(default_scrolling, font, 0);
+    }
+
+    lv_label_set_text(default_scrolling, text);
+}
