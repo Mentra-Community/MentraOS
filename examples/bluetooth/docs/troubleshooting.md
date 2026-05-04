@@ -52,6 +52,15 @@ If your app also uses Firebase with static frameworks, Firebase modular header c
 - Confirm the hardware feature is available on the connected model.
 - Watch SDK log callbacks for native diagnostics.
 
+## Local WebRTC Preview Does Not Show Video
+
+- Confirm the local MediaMTX helper is still running.
+- Use the printed LAN URL, not `localhost`, in the example app's WebRTC field.
+- Confirm the glasses, phone, and computer are on a network where local device-to-device traffic is allowed.
+- Confirm Mentra Live is connected to Wi-Fi before starting the stream.
+- If Docker is running in bridge mode, confirm UDP ports `8890` and `8189` are published.
+- If the helper picked the wrong network interface, restart it with `MENTRA_WEBRTC_HOST_IP=<computer-lan-ip>`.
+
 ## React Native Or Expo Apps
 
 React Native and Expo integrations are available only for partners who have explicit access to that integration path. If you are integrating the SDK into React Native, use the React Native package and development builds. For native apps, start with the Android and iOS examples in this repo.

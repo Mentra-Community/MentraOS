@@ -47,6 +47,16 @@ paste the printed LAN `/upload` URL into the Camera screen:
 python3 examples/photo-webhook-server/server.py
 ```
 
+For local WebRTC streaming, run the MediaMTX helper from the repo root and
+paste the printed WHIP URL into the Stream screen's WebRTC field:
+
+```bash
+examples/local-webrtc-server/run-mediamtx.sh
+```
+
+Open the printed browser preview URL on your computer to watch the stream. See
+[`examples/local-webrtc-server`](../local-webrtc-server/README.md) for details.
+
 ## Files
 
 - `MentraExample/BluetoothViewModel.swift` — SDK integration and screen state.

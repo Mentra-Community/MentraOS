@@ -33,6 +33,16 @@ You can also prefill the field when starting the Expo development build:
 EXPO_PUBLIC_MENTRA_PHOTO_WEBHOOK_URL=http://<computer-ip>:8787/upload npx expo run:ios
 ```
 
+For local WebRTC streaming, run the MediaMTX helper from the repo root and
+paste the printed WHIP URL into the Stream screen's WebRTC field:
+
+```sh
+examples/local-webrtc-server/run-mediamtx.sh
+```
+
+Open the printed browser preview URL on your computer to watch the stream. See
+[`examples/local-webrtc-server`](../local-webrtc-server/README.md) for details.
+
 When testing from a local SDK package before the npm package is published,
 install that package path and let Metro know where it lives:
 

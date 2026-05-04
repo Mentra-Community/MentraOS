@@ -22,7 +22,7 @@ enum ExampleStreamProtocol: String, CaseIterable {
         case .srt:
             return "srt://srt.example.com:4201?streamid=YOUR_STREAM_ID&passphrase=YOUR_PASSPHRASE"
         case .webrtc:
-            return "https://whip.example.com/live/YOUR_STREAM_ID"
+            return "http://<computer-ip>:8889/mentra-live/whip"
         }
     }
 

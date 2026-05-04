@@ -41,7 +41,7 @@ import java.util.Locale
 val streamDefaultUrls = mapOf(
     "rtmp" to "rtmps://a.rtmps.youtube.com/live2/YOUR_STREAM_KEY",
     "srt" to "srt://srt.example.com:4201?streamid=YOUR_STREAM_ID&passphrase=YOUR_PASSPHRASE",
-    "webrtc" to "https://whip.example.com/live/YOUR_STREAM_ID",
+    "webrtc" to "http://<computer-ip>:8889/mentra-live/whip",
 )
 
 fun defaultStreamUrl(protocol: String): String = streamDefaultUrls[protocol] ?: streamDefaultUrls.getValue("rtmp")

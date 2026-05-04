@@ -288,6 +288,62 @@ If you include `authToken`, the uploader adds it as `Authorization: Bearer <toke
 
 For local development, run the companion server in `examples/photo-webhook-server` and use the printed LAN URL, such as `http://192.168.1.42:8787/upload`. Do not use `localhost`: keep the glasses, phone, and computer on a network where the uploader can reach the computer. The Android, iOS, and React Native examples demonstrate this by polling `GET /uploads/<requestId>.json` and displaying the returned `photoUrl`.
 
+## Streaming
+
+Use `startStream` when your app needs Mentra Live to stream camera video to an RTMP, SRT, or WHIP endpoint. The SDK selects the protocol from the URL prefix.
+
+| URL prefix | Protocol |
+| --- | --- |
+| `rtmp://` or `rtmps://` | RTMP |
+| `srt://` | SRT |
+| `http://` or `https://` | WHIP / WebRTC ingest |
+
+Android:
+
+```kotlin
+val streamUrl = "http://192.168.1.42:8889/mentra-live/whip"
+
+sdk.startStream(
+    MentraStreamRequest(
+        values = mapOf(
+            "streamUrl" to streamUrl,
+            "protocol" to "webrtc",
+            "keepAlive" to true,
+            "keepAliveIntervalSeconds" to 15,
+        )
+    )
+)
+
+// Call while streaming if you manage the lifecycle yourself.
+sdk.keepStreamAlive(MentraStreamKeepAliveRequest(values = mapOf("streamUrl" to streamUrl)))
+
+sdk.stopStream()
+```
+
+iOS:
+
+```swift
+let streamUrl = "http://192.168.1.42:8889/mentra-live/whip"
+
+sdk.startStream(
+    MentraStreamRequest(
+        values: [
+            "streamUrl": streamUrl,
+            "protocol": "webrtc",
+            "keepAlive": true,
+            "keepAliveIntervalSeconds": 15
+        ]
+    )
+)
+
+// Call while streaming if you manage the lifecycle yourself.
+sdk.keepStreamAlive(MentraStreamKeepAliveRequest(values: ["streamUrl": streamUrl]))
+
+sdk.stopStream()
+```
+
+For local WebRTC development, run the companion MediaMTX helper in `examples/local-webrtc-server` and use the printed WHIP URL, such as `http://192.168.1.42:8889/mentra-live/whip`, in the example app. Open the printed browser preview URL, such as `http://192.168.1.42:8889/mentra-live`, to watch the stream. Do not use `localhost`: keep the glasses, phone, and computer on a network where the glasses and phone can reach the computer.
+
 ## Wi-Fi And Hotspot
 
 Android:

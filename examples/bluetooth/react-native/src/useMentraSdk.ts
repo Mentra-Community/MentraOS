@@ -23,7 +23,7 @@ export type LedMode = 'Off' | 'Solid' | 'Pulse' | 'Blink';
 export const STREAM_DEFAULT_URLS: Record<StreamProtocol, string> = {
   rtmp: 'rtmps://a.rtmps.youtube.com/live2/YOUR_STREAM_KEY',
   srt: 'srt://srt.example.com:4201?streamid=YOUR_STREAM_ID&passphrase=YOUR_PASSPHRASE',
-  webrtc: 'https://whip.example.com/live/YOUR_STREAM_ID',
+  webrtc: 'http://<computer-ip>:8889/mentra-live/whip',
 };
 
 const STREAM_DEFAULT_URL_VALUES = new Set(Object.values(STREAM_DEFAULT_URLS));
