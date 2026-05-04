@@ -1,4 +1,4 @@
-package com.mentra.crust
+package com.mentra.crust.navigation
 
 import android.app.Service
 import android.content.Intent

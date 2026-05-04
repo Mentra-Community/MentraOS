@@ -4,6 +4,9 @@ import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.net.URL
 
+import com.mentra.crust.navigation.NavigationManager
+import com.mentra.crust.heading.HeadingManager
+
 class CrustModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("Crust")

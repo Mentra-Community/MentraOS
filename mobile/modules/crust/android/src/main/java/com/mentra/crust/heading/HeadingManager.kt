@@ -1,4 +1,4 @@
-package com.mentra.crust
+package com.mentra.crust.heading
 
 import android.content.Context
 import android.hardware.Sensor

@@ -1,4 +1,4 @@
-package com.mentra.crust
+package com.mentra.crust.navigation
 
 import android.app.Activity
 import android.content.Context
@@ -440,24 +440,27 @@ object NavigationManager {
   }
 
   /**
-   * Map the SDK-agnostic mode string to a Google Nav SDK TravelMode. Falls
-   * back to DRIVING when the SDK build doesn't expose a value (e.g. older
-   * SDKs lack TWO_WHEELER) so we never crash on a missing constant.
+   * Map the SDK-agnostic mode string to a Google Nav SDK TravelMode int
+   * constant. The SDK's `TravelMode` is a holder class of `int` constants,
+   * not an enum, so we read fields by name with reflection to stay
+   * tolerant of SDK versions that don't ship every mode (e.g. CYCLING /
+   * TWO_WHEELER). Falls back to DRIVING when the named constant is
+   * missing so we never crash on a missing field.
    */
-  private fun translateMode(mode: String): RoutingOptions.TravelMode {
+  private fun translateMode(mode: String): Int {
+    val driving = readTravelModeConst("DRIVING") ?: 0
     return when (mode.lowercase()) {
-      "walking" -> RoutingOptions.TravelMode.WALKING
-      "cycling" -> tryTravelMode("CYCLING") ?: RoutingOptions.TravelMode.WALKING
-      "two_wheeler" -> tryTravelMode("TWO_WHEELER") ?: RoutingOptions.TravelMode.DRIVING
-      else -> RoutingOptions.TravelMode.DRIVING
+      "walking" -> readTravelModeConst("WALKING") ?: driving
+      "cycling" -> readTravelModeConst("CYCLING") ?: readTravelModeConst("WALKING") ?: driving
+      "two_wheeler" -> readTravelModeConst("TWO_WHEELER") ?: driving
+      else -> driving
     }
   }
 
-  private fun tryTravelMode(name: String): RoutingOptions.TravelMode? {
+  private fun readTravelModeConst(name: String): Int? {
     return try {
-      RoutingOptions.TravelMode::class.java
-        .enumConstants
-        ?.firstOrNull { it.name == name }
+      val field = RoutingOptions.TravelMode::class.java.getField(name)
+      (field.get(null) as? Number)?.toInt()
     } catch (_: Throwable) {
       null
     }
