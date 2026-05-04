@@ -24,7 +24,7 @@ The example asks for Bluetooth/location/microphone permissions, scans for Mentra
 
 The app is split into native Android tabs:
 
-- **Status** shows connection/data-channel state, battery, Wi-Fi, firmware/version details, and recent hardware events.
+- **Status** shows a glasses preview card with the model image, battery, Bluetooth/search state, Wi-Fi state, plus connection/data-channel state, firmware/version details, and recent hardware events.
 - **Audio** exercises microphone input callbacks (`onMicPcm`, `onMicLc3`, and local transcription) and plays a short Android output tone while notifying the SDK that the app is producing audio.
 - **Camera** exercises photo requests, gallery status, saved video recording, camera settings, and hardware-button capture behavior. The photo preview flow sends a new SDK photo request with a webhook URL, then polls the local webhook server by `requestId` and displays the uploaded image.
 - **Display** keeps display text/settings controls for glasses models that support display output.

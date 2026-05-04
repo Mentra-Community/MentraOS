@@ -2,7 +2,7 @@
 
 This example is a minimal native iOS SwiftUI app that calls the `MentraBluetoothSDK` API directly.
 
-It is intentionally not a React Native or Expo app. It demonstrates scanning, connecting, receiving delegate events, displaying text, applying a simple setting, requesting photo webhook uploads, previewing uploaded photos, and invalidating the SDK.
+It is intentionally not a React Native or Expo app. It demonstrates scanning, connecting, receiving delegate events, showing a glasses preview card with model image, battery, Bluetooth/search state, and Wi-Fi state, displaying text, applying a simple setting, requesting photo webhook uploads, previewing uploaded photos, and invalidating the SDK.
 
 ## Configure SDK Version
 

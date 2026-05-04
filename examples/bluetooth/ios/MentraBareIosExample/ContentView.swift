@@ -8,6 +8,8 @@ struct ContentView: View {
         NavigationView {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    GlassesPreviewCard(preview: model.glassesPreview)
+
                     Text(model.statusSummary)
                         .font(.headline)
 
@@ -106,5 +108,111 @@ struct ContentView: View {
             }
         }
         .navigationViewStyle(.stack)
+    }
+}
+
+private struct GlassesPreviewCard: View {
+    let preview: GlassesPreviewState
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(preview.imageName)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: 150, maxHeight: 112)
+
+            VStack(alignment: .leading, spacing: 9) {
+                Text("Glasses")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(Color(red: 0.72, green: 0.79, blue: 0.75))
+                    .textCase(.uppercase)
+
+                Text(preview.modelName)
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(Color(red: 1.0, green: 0.98, blue: 0.94))
+                    .lineLimit(1)
+
+                HStack(spacing: 8) {
+                    PreviewPill(
+                        label: preview.connectionText,
+                        tint: preview.isConnected ? .green : .white.opacity(0.22)
+                    )
+                    PreviewPill(
+                        label: preview.bluetoothText,
+                        tint: preview.isSearching ? .orange : .white.opacity(0.22)
+                    )
+                }
+
+                MetricRow(label: "Battery", value: preview.batteryText)
+
+                GeometryReader { proxy in
+                    let percent = preview.batteryLevel ?? 100
+                    let fillWidth = max(0, min(proxy.size.width, proxy.size.width * percent / 100))
+
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(.white.opacity(0.16))
+                        Capsule()
+                            .fill(preview.batteryLevel == nil ? .white.opacity(0.24) : Color(red: 0.49, green: 0.88, blue: 0.65))
+                            .frame(width: fillWidth)
+                    }
+                }
+                .frame(height: 8)
+
+                MetricRow(label: "Wi-Fi", value: preview.wifiText)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(18)
+        .background(
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(Color(red: 0.09, green: 0.15, blue: 0.12))
+
+                Circle()
+                    .fill(Color(red: 0.85, green: 0.95, blue: 0.87).opacity(0.22))
+                    .frame(width: 180, height: 180)
+                    .offset(x: -74, y: -74)
+            }
+        )
+    }
+}
+
+private struct PreviewPill: View {
+    let label: String
+    let tint: Color
+
+    var body: some View {
+        Text(label)
+            .font(.caption.weight(.bold))
+            .foregroundStyle(Color(red: 1.0, green: 0.98, blue: 0.94))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule()
+                    .fill(tint.opacity(0.24))
+            )
+            .overlay(
+                Capsule()
+                    .stroke(tint.opacity(0.45), lineWidth: 1)
+            )
+    }
+}
+
+private struct MetricRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            Text(label)
+                .foregroundStyle(Color(red: 0.72, green: 0.79, blue: 0.75))
+            Spacer()
+            Text(value)
+                .fontWeight(.bold)
+                .foregroundStyle(Color(red: 1.0, green: 0.98, blue: 0.94))
+                .lineLimit(1)
+        }
+        .font(.caption)
     }
 }

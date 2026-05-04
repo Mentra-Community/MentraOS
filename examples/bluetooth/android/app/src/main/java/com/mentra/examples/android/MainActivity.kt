@@ -2,14 +2,17 @@ package com.mentra.examples.android
 
 import android.Manifest
 import android.app.Activity
+import android.graphics.Color
 import android.graphics.BitmapFactory
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
 import android.os.Build
 import android.os.Bundle
 import android.text.InputType
+import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
@@ -68,6 +71,14 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
     private lateinit var deviceText: TextView
     private lateinit var batteryText: TextView
     private lateinit var wifiText: TextView
+    private lateinit var previewImage: ImageView
+    private lateinit var previewModelText: TextView
+    private lateinit var previewConnectionText: TextView
+    private lateinit var previewBluetoothText: TextView
+    private lateinit var previewBatteryText: TextView
+    private lateinit var previewWifiText: TextView
+    private lateinit var previewBatteryFill: ViewGroup
+    private lateinit var previewBatteryRemainder: ViewGroup
     private lateinit var versionText: TextView
     private lateinit var micText: TextView
     private lateinit var audioOutputText: TextView
@@ -190,6 +201,7 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
             )
         }
 
+        content.addView(buildGlassesPreviewCard())
         content.addView(sectionTitle("Mentra Live status"))
         content.addView(connectionText)
         content.addView(deviceText)
@@ -230,6 +242,105 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
             appendAppLog("Requested version, Wi-Fi scan, and gallery status.")
         })
         return content
+    }
+
+    private fun buildGlassesPreviewCard(): LinearLayout {
+        previewImage =
+            ImageView(this).apply {
+                setImageResource(R.drawable.mentra_live)
+                adjustViewBounds = true
+                scaleType = ImageView.ScaleType.FIT_CENTER
+            }
+        previewModelText =
+            TextView(this).apply {
+                text = "Mentra Live"
+                textSize = 22f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.rgb(255, 250, 240))
+                maxLines = 1
+            }
+        previewConnectionText = previewPill("Waiting for status", good = false)
+        previewBluetoothText = previewPill("Bluetooth idle", good = false)
+        previewBatteryText = previewMetricValue("Waiting for status")
+        previewWifiText = previewMetricValue("Unknown")
+
+        val batteryTrack =
+            LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                weightSum = 100f
+                background = roundedBackground(Color.argb(40, 255, 250, 240), radius = 999f)
+                layoutParams =
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        dp(8),
+                    )
+            }
+        previewBatteryFill =
+            FrameLayout(this).apply {
+                background = roundedBackground(Color.rgb(126, 224, 165), radius = 999f)
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 0f)
+            }
+        previewBatteryRemainder =
+            FrameLayout(this).apply {
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 100f)
+            }
+        batteryTrack.addView(previewBatteryFill)
+        batteryTrack.addView(previewBatteryRemainder)
+
+        val details =
+            LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(12), 0, 0, 0)
+                layoutParams =
+                    LinearLayout.LayoutParams(
+                        0,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                        1f,
+                    )
+
+                addView(
+                    TextView(context).apply {
+                        text = "Glasses"
+                        textSize = 11f
+                        typeface = Typeface.DEFAULT_BOLD
+                        letterSpacing = 0.08f
+                        setTextColor(Color.rgb(183, 202, 191))
+                    }
+                )
+                addView(previewModelText)
+                addView(
+                    LinearLayout(context).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        setPadding(0, dp(8), 0, dp(8))
+                        addView(previewConnectionText)
+                        addView(previewBluetoothText)
+                    }
+                )
+                addView(previewMetricRow("Battery", previewBatteryText))
+                addView(batteryTrack)
+                addView(previewMetricRow("Wi-Fi", previewWifiText))
+            }
+
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(18), dp(18), dp(18), dp(18))
+            background = roundedBackground(Color.rgb(23, 37, 31), radius = 24f)
+            minimumHeight = dp(170)
+            layoutParams =
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    bottomMargin = dp(8)
+                }
+            addView(
+                previewImage,
+                LinearLayout.LayoutParams(0, dp(126), 0.45f),
+            )
+            addView(details)
+        }
     }
 
     private fun buildAudioTab(): LinearLayout {
@@ -398,6 +509,63 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
             typeface = Typeface.DEFAULT_BOLD
             setPadding(0, 28, 0, 8)
         }
+
+    private fun previewPill(label: String, good: Boolean): TextView =
+        TextView(this).apply {
+            text = label
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.rgb(255, 250, 240))
+            setPadding(dp(10), dp(5), dp(10), dp(5))
+            background =
+                roundedBackground(
+                    if (good) Color.argb(56, 111, 211, 154) else Color.argb(32, 255, 250, 240),
+                    radius = 999f,
+                    strokeColor = if (good) Color.argb(115, 111, 211, 154) else Color.argb(36, 255, 250, 240),
+                )
+            layoutParams =
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    rightMargin = dp(8)
+                }
+        }
+
+    private fun previewMetricRow(label: String, valueView: TextView): LinearLayout =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, dp(2))
+            addView(
+                TextView(context).apply {
+                    text = label
+                    textSize = 13f
+                    setTextColor(Color.rgb(183, 202, 191))
+                },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+            )
+            addView(valueView)
+        }
+
+    private fun previewMetricValue(initialText: String): TextView =
+        TextView(this).apply {
+            text = initialText
+            textSize = 13f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.END
+            setTextColor(Color.rgb(255, 250, 240))
+        }
+
+    private fun roundedBackground(color: Int, radius: Float, strokeColor: Int? = null): GradientDrawable =
+        GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = dp(radius.toInt()).toFloat()
+            setColor(color)
+            strokeColor?.let { setStroke(dp(1), it) }
+        }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private fun statusLine(initialText: String): TextView =
         TextView(this).apply {
@@ -687,6 +855,8 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
 
     override fun onBatteryStatus(event: MentraBatteryStatusEvent) {
         dataChannelActive = true
+        event.level?.let { glassesValues["batteryLevel"] = it }
+        event.charging?.let { glassesValues["charging"] = it }
         latestBatteryLine = formatBatteryLine(event.level, event.charging)
         latestEventLine = "Events: battery update"
         updateStatusPanel()
@@ -698,6 +868,9 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
         val connected = event.values["connected"] ?: "unknown"
         val ssid = event.values["ssid"] ?: "unknown"
         val ip = event.values["local_ip"] ?: "unknown"
+        glassesValues["wifiConnected"] = connected
+        glassesValues["wifiSsid"] = ssid
+        glassesValues["wifiLocalIp"] = ip
         latestWifiLine = "Wi-Fi: connected=$connected ssid=$ssid ip=$ip"
         latestEventLine = "Events: Wi-Fi status update"
         updateStatusPanel()
@@ -873,30 +1046,133 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
 
     private fun updateStatusPanel() {
         runOnUiThread {
-            val connected = glassesValues["connected"] ?: "unknown"
-            val searching = bluetoothValues["searching"] ?: "unknown"
+            val connected = boolValue(glassesValues["connected"])
+            val fullyBooted = boolValue(glassesValues["fullyBooted"])
+            val searching = boolValue(bluetoothValues["searching"])
             val pending = bluetoothValues["pending_wearable"] ?: "none"
             val deviceName =
-                glassesValues["bluetoothName"]
-                    ?: bluetoothValues["device_name"]
+                stringValue(glassesValues, "bluetoothName")
+                    ?: stringValue(bluetoothValues, "device_name")
                     ?: latestDevice?.name
                     ?: "none"
             val model =
-                glassesValues["deviceModel"]
-                    ?: bluetoothValues["default_wearable"]
-                    ?: latestDevice?.model
-                    ?: "unknown"
+                stringValue(glassesValues, "deviceModel")
+                    ?: stringValue(bluetoothValues, "default_wearable")
+                    ?: latestDevice?.model?.deviceType
+                    ?: "Mentra Live"
 
             connectionText.text =
-                "Connection: sdkConnected=$connected dataChannel=${if (dataChannelActive) "active" else "idle"} scanning=$searching pending=$pending"
+                "Connection: sdkConnected=${connected ?: "unknown"} dataChannel=${if (dataChannelActive) "active" else "idle"} scanning=${searching ?: "unknown"} pending=$pending"
             deviceText.text = "Device: $deviceName model=$model"
             batteryText.text = latestBatteryLine
             wifiText.text = latestWifiLine
             versionText.text = "Version: ${summarizeVersion()}"
             eventText.text = latestEventLine
+            previewModelText.text = model
+            previewImage.setImageResource(previewImageResource(model))
+            previewConnectionText.text =
+                when {
+                    connected == true && fullyBooted == false -> "Booting"
+                    connected == true -> "Connected"
+                    else -> "Not connected"
+                }
+            previewConnectionText.background =
+                roundedBackground(
+                    if (connected == true && fullyBooted != false) {
+                        Color.argb(56, 111, 211, 154)
+                    } else {
+                        Color.argb(32, 255, 250, 240)
+                    },
+                    radius = 999f,
+                    strokeColor =
+                        if (connected == true && fullyBooted != false) {
+                            Color.argb(115, 111, 211, 154)
+                        } else {
+                            Color.argb(36, 255, 250, 240)
+                        },
+                )
+            previewBluetoothText.text =
+                when {
+                    searching == true -> "Scanning"
+                    connected == true -> "Bluetooth linked"
+                    latestDevice != null -> "1 found"
+                    else -> "Bluetooth idle"
+                }
+            previewBluetoothText.background =
+                roundedBackground(
+                    if (searching == true) Color.argb(56, 244, 183, 85) else Color.argb(32, 255, 250, 240),
+                    radius = 999f,
+                    strokeColor =
+                        if (searching == true) Color.argb(115, 244, 183, 85) else Color.argb(36, 255, 250, 240),
+                )
+            val batteryLevel =
+                if (connected == true) {
+                    intValue(glassesValues["batteryLevel"])?.takeIf { it >= 0 }?.coerceAtMost(100)
+                } else {
+                    null
+                }
+            val charging = boolValue(glassesValues["charging"])
+            previewBatteryText.text = formatPreviewBattery(batteryLevel, charging, connected == true)
+            setPreviewBatteryProgress(batteryLevel)
+            previewWifiText.text = formatPreviewWifi()
             updateMicStatus()
         }
     }
+
+    private fun previewImageResource(model: String): Int =
+        when (model.lowercase()) {
+            "mentra live", "mentra_live" -> R.drawable.mentra_live
+            "mentra display" -> R.drawable.mentra_display
+            "even realities g1", "evenrealities_g1", "g1" -> R.drawable.even_realities_g1
+            "even realities g2", "evenrealities_g2", "g2" -> R.drawable.even_realities_g2
+            "vuzix z100", "vuzix-z100", "vuzix ultralite", "mentra mach1", "mach1" -> R.drawable.vuzix_z100
+            else -> R.drawable.unknown_wearable
+        }
+
+    private fun formatPreviewBattery(level: Int?, charging: Boolean?, connected: Boolean): String {
+        if (!connected) return "Not connected"
+        if (level == null) return "Waiting for status"
+        return "$level%${if (charging == true) " charging" else ""}"
+    }
+
+    private fun setPreviewBatteryProgress(level: Int?) {
+        val fillWeight = (level ?: 100).coerceIn(0, 100).toFloat()
+        (previewBatteryFill.layoutParams as LinearLayout.LayoutParams).weight = fillWeight
+        (previewBatteryRemainder.layoutParams as LinearLayout.LayoutParams).weight = 100f - fillWeight
+        previewBatteryFill.background =
+            roundedBackground(
+                if (level == null) Color.argb(62, 255, 250, 240) else Color.rgb(126, 224, 165),
+                radius = 999f,
+            )
+        previewBatteryFill.requestLayout()
+        previewBatteryRemainder.requestLayout()
+    }
+
+    private fun formatPreviewWifi(): String {
+        val connected = boolValue(glassesValues["wifiConnected"]) ?: return "Unknown"
+        if (!connected) return "Disconnected"
+        return stringValue(glassesValues, "wifiSsid") ?: "Connected"
+    }
+
+    private fun boolValue(value: Any?): Boolean? =
+        when (value) {
+            is Boolean -> value
+            is String ->
+                when {
+                    value.equals("true", ignoreCase = true) -> true
+                    value.equals("false", ignoreCase = true) -> false
+                    else -> null
+                }
+            else -> null
+        }
+
+    private fun intValue(value: Any?): Int? =
+        when (value) {
+            is Int -> value
+            is Number -> value.toInt()
+            is String -> value.toIntOrNull()
+            else -> null
+        }
 
     private fun updateMicStatus() {
         runOnUiThread {
