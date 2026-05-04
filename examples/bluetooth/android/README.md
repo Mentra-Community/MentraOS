@@ -2,7 +2,7 @@
 
 This example is a minimal native Android app that calls the Mentra Bluetooth SDK Kotlin API directly.
 
-It is intentionally not a React Native or Expo app. It demonstrates scanning, connecting, receiving hardware events, refreshing device status, capturing microphone frames, routing app audio output, requesting photos, starting/stopping video recording, setting the glasses button mode, and cleaning up the SDK.
+It is intentionally not a React Native or Expo app. It demonstrates scanning, connecting, receiving hardware events, refreshing device status, capturing microphone frames, routing app audio output, requesting photos, starting/stopping video recording, configuring hardware-button capture behavior, and cleaning up the SDK.
 
 ## Configure SDK Version
 
@@ -26,7 +26,7 @@ The app is split into native Android tabs:
 
 - **Status** shows connection/data-channel state, battery, Wi-Fi, firmware/version details, and recent hardware events.
 - **Audio** exercises microphone input callbacks (`onMicPcm`, `onMicLc3`, and local transcription) and plays a short Android output tone while notifying the SDK that the app is producing audio.
-- **Camera** exercises photo requests, gallery status, saved video recording, camera settings, and hardware button modes. The photo preview flow sends a new SDK photo request with a webhook URL, then polls the local webhook server by `requestId` and displays the uploaded image.
+- **Camera** exercises photo requests, gallery status, saved video recording, camera settings, and hardware-button capture behavior. The photo preview flow sends a new SDK photo request with a webhook URL, then polls the local webhook server by `requestId` and displays the uploaded image.
 - **Display** keeps display text/settings controls for glasses models that support display output.
 - **Logs** keeps SDK debug logs hidden by default; use **Show SDK debug logs** when collecting support details.
 

@@ -24,7 +24,6 @@ import com.mentra.bluetoothsdk.MentraBluetoothError
 import com.mentra.bluetoothsdk.MentraBluetoothSdk
 import com.mentra.bluetoothsdk.MentraBluetoothSdkListener
 import com.mentra.bluetoothsdk.MentraBluetoothStatusUpdate
-import com.mentra.bluetoothsdk.MentraButtonMode
 import com.mentra.bluetoothsdk.MentraButtonPhotoSettings
 import com.mentra.bluetoothsdk.MentraButtonPressEvent
 import com.mentra.bluetoothsdk.MentraButtonVideoRecordingSettings
@@ -33,6 +32,7 @@ import com.mentra.bluetoothsdk.MentraDashboardPositionRequest
 import com.mentra.bluetoothsdk.MentraDeviceModel
 import com.mentra.bluetoothsdk.MentraDiscoveredDevice
 import com.mentra.bluetoothsdk.MentraDisplayTextRequest
+import com.mentra.bluetoothsdk.MentraGalleryMode
 import com.mentra.bluetoothsdk.MentraGalleryStatusEvent
 import com.mentra.bluetoothsdk.MentraGlassesStatusUpdate
 import com.mentra.bluetoothsdk.MentraLocalTranscriptionEvent
@@ -302,15 +302,25 @@ class MainActivity : Activity(), MentraBluetoothSdkListener {
             stopSavedVideoRecording()
         })
 
-        content.addView(sectionTitle("Hardware button"))
-        content.addView(button("Set button to photo") {
-            sdk.setButtonMode(MentraButtonMode.PHOTO)
-            sdk.setButtonPhotoSettings(MentraButtonPhotoSettings(MentraPhotoSize.MEDIUM))
-            appendAppLog("Set hardware button mode to photo.")
+        content.addView(sectionTitle("Hardware button capture"))
+        content.addView(
+            statusLine(
+                "Hardware button presses are always reported as events. When local capture is enabled, short press takes a photo and long press starts or stops video recording."
+            )
+        )
+        content.addView(button("Enable local button capture") {
+            sdk.setGalleryMode(MentraGalleryMode.AUTO)
+            updateCameraStatus("Camera: hardware button local capture enabled")
+            appendAppLog("Enabled local capture for hardware button presses.")
         })
-        content.addView(button("Set button to video") {
-            sdk.setButtonMode(MentraButtonMode.VIDEO)
-            appendAppLog("Set hardware button mode to video.")
+        content.addView(button("Forward button events only") {
+            sdk.setGalleryMode(MentraGalleryMode.MANUAL)
+            updateCameraStatus("Camera: hardware button local capture disabled while connected")
+            appendAppLog("Disabled local capture while connected; button events are still forwarded.")
+        })
+        content.addView(button("Set short-press photo size") {
+            sdk.setButtonPhotoSettings(MentraButtonPhotoSettings(MentraPhotoSize.MEDIUM))
+            appendAppLog("Set short-press photo size to medium.")
         })
         return content
     }
