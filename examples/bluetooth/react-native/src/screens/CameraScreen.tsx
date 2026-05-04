@@ -3,6 +3,7 @@ import { View, Text, ScrollView, Pressable, StyleSheet, Image, TextInput, Clipbo
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Path, Polyline, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
+import { OfflineNotice } from '../components/OfflineNotice';
 import { StatusBarBar } from '../components/StatusBarBar';
 import { colors } from '../components/theme';
 import type { MentraSdkModel } from '../useMentraSdk';
@@ -19,6 +20,7 @@ const cameraSdkCall = `await BluetoothSdk.photoRequest(
 )`;
 
 export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
+  const connected = sdk.glassesStatus.connected === true;
   const cameraStatusFailed = isCameraStatusFailure(sdk.cameraStatus);
   const setupHint = localCameraSetupHint(sdk.webhookUrl, sdk.cameraStatus);
 
@@ -26,6 +28,7 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
       <StatusBarBar />
       <Header connected={sdk.glassesStatus.connected === true} title="Camera" />
+      {!connected && <OfflineNotice />}
 
       {/* Preview card */}
       <LinearGradient colors={['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.55)']} style={styles.card}>
@@ -42,13 +45,19 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
           </LinearGradient>
         </View>
 
-        <Pressable onPress={sdk.captureAndUpload}>
-          <LinearGradient colors={['#26473A', '#1F3A2A']} style={styles.captureBtn}>
+        <Pressable disabled={!connected} onPress={sdk.captureAndUpload}>
+          <LinearGradient colors={['#26473A', '#1F3A2A']} style={[styles.captureBtn, !connected && styles.disabled]}>
             <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
               <Path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
               <Circle cx={12} cy={13} r={4} />
             </Svg>
-            <Text style={styles.captureText}>{sdk.activeAction === 'Capture & upload' ? 'Capturing…' : 'Capture & upload'}</Text>
+            <Text style={styles.captureText}>
+              {!connected
+                ? 'Connect glasses first'
+                : sdk.activeAction === 'Capture & upload'
+                  ? 'Capturing…'
+                  : 'Capture & upload'}
+            </Text>
           </LinearGradient>
         </Pressable>
       </LinearGradient>
@@ -125,7 +134,8 @@ function isCameraStatusFailure(status: string) {
     normalized.includes('timed out') ||
     normalized.includes('reported') ||
     normalized.includes('invalid') ||
-    normalized.includes('enter a webhook url like')
+    normalized.includes('enter a webhook url like') ||
+    normalized.includes('connect glasses first')
   );
 }
 
@@ -164,6 +174,7 @@ const styles = StyleSheet.create({
   previewMeta: { position: 'absolute', bottom: 14, right: 14, color: 'rgba(255,255,255,0.85)', fontSize: 10, fontWeight: '500' },
   captureBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 18, paddingVertical: 16, marginTop: 14, marginHorizontal: 6, gap: 10 },
   captureText: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  disabled: { opacity: 0.45 },
 
   sdkCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 22, overflow: 'hidden', borderWidth: 1, borderColor: colors.borderSoft },
   sdkBlock: { backgroundColor: '#0E1A14', paddingVertical: 14, paddingHorizontal: 16, gap: 8 },

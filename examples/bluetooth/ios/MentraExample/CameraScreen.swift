@@ -29,6 +29,11 @@ struct CameraScreen: View {
             VStack(spacing: 0) {
                 StatusBarRow()
                 PageHeader(title: "Camera", connected: boolValue(model.glassesValues, "connected") == true)
+                if !model.glassesConnected {
+                    OfflineNotice()
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 8)
+                }
 
                 previewCard.padding(.horizontal, 16).padding(.top, 8)
                 sdkCard.padding(.horizontal, 16).padding(.top, 12)
@@ -78,12 +83,14 @@ struct CameraScreen: View {
             } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "camera").foregroundColor(.white).font(.system(size: 15, weight: .bold))
-                    Text(model.activeAction == "Capture & upload" ? "Capturing…" : "Capture & upload").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
+                    Text(!model.glassesConnected ? "Connect glasses first" : model.activeAction == "Capture & upload" ? "Capturing…" : "Capture & upload").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity).padding(.vertical, 16)
                 .background(LinearGradient(colors: [Color(hex: 0x26473A), Color(hex: 0x1F3A2A)], startPoint: .top, endPoint: .bottom))
                 .clipShape(RoundedRectangle(cornerRadius: 18))
             }
+            .disabled(!model.glassesConnected)
+            .opacity(model.glassesConnected ? 1 : 0.55)
             .padding(.horizontal, 6).padding(.top, 14)
         }
     }
@@ -193,6 +200,7 @@ private func isCameraStatusFailure(_ status: String) -> Bool {
         normalized.contains("returned http") ||
         normalized.contains("timed out") ||
         normalized.contains("reported") ||
+        normalized.contains("connect glasses first") ||
         normalized.contains("invalid") ||
         normalized.contains("enter a webhook url like")
 }

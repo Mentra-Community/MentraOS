@@ -86,6 +86,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private val controllerJob = Job()
     private val scope = CoroutineScope(Dispatchers.Main + controllerJob)
     private var activePhotoRequestId: String? = null
+    private var activeStreamId: String? = null
     private var pollGeneration = 0
     private var keepAliveJob: Job? = null
 
@@ -112,22 +113,21 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     fun disconnect() = runAction("Disconnect") {
         stopKeepAlive()
         sdk.disconnect()
-        state = state.copy(
-            glassesStatus = disconnectedGlassesStatus(),
-            streamStartedAt = null,
-            streamStatus = "Disconnected",
-        )
+        applyDisconnectedState("Disconnected")
     }
 
     fun displayHello() = runAction("Display Hello") {
+        requireConnected("display text")
         sdk.displayText(com.mentra.core.MentraDisplayTextRequest("Hello from Mentra Bluetooth SDK"))
     }
 
     fun clearDisplay() = runAction("Clear Display") {
+        requireConnected("clear the display")
         sdk.clearDisplay()
     }
 
     fun applySettings() = runAction("Apply Settings") {
+        requireConnected("apply settings")
         sdk.setBrightness(72)
         sdk.setDashboardPosition(MentraDashboardPositionRequest(height = 4, depth = 6))
         sdk.setGalleryMode(MentraGalleryMode.AUTO)
@@ -143,6 +143,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     fun captureAndUpload() = runAction("Capture & upload") {
+        requireConnected("capture photos")
         val uploadUrl = state.webhookUrl.trim()
         val requestId = "photo-${System.currentTimeMillis()}"
         val statusUrl = try {
@@ -226,10 +227,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     fun toggleStream() = runAction(if (state.streamStartedAt == null) "Start stream" else "Stop stream") {
         if (state.streamStartedAt != null) {
             stopKeepAlive()
-            sdk.stopStream()
+            if (isGlassesConnected()) {
+                sdk.stopStream()
+            }
             state = state.copy(streamStartedAt = null, streamStatus = "Stopped")
             return@runAction
         }
+        requireConnected("start streaming")
         val streamUrl = state.streamUrl.trim()
         streamUrlValidationMessage(streamUrl)?.let { message ->
             state = state.copy(streamStatus = message)
@@ -269,34 +273,36 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     private fun startStream(params: Map<String, Any>, protocol: String) {
         sdk.startStream(MentraStreamRequest(params))
-        state = state.copy(
-            streamStartedAt = System.currentTimeMillis(),
-            streamStatus = "LIVE · ${protocol.uppercase()}",
-        )
-        startKeepAlive(params["streamId"].toString())
+        activeStreamId = params["streamId"].toString()
+        state = state.copy(streamStatus = "Requested ${protocol.uppercase()} stream; waiting for glasses")
     }
 
     fun requestWifiScan() = runAction("Scan Wi-Fi") {
+        requireConnected("scan Wi-Fi")
         sdk.requestWifiScan()
     }
 
     fun sendWifiCredentials(ssid: String) = runAction("Connect Wi-Fi $ssid") {
+        requireConnected("send Wi-Fi credentials")
         sdk.sendWifiCredentials(ssid, "")
     }
 
     fun toggleHotspot() = runAction(if (state.hotspotEnabled) "Disable hotspot" else "Enable hotspot") {
+        requireConnected("toggle hotspot")
         val next = !state.hotspotEnabled
         sdk.setHotspotState(next)
         state = state.copy(hotspotEnabled = next)
     }
 
     fun toggleMic() = runAction(if (state.micRecording) "Stop microphone" else "Start microphone") {
+        requireConnected("stream microphone audio")
         val next = !state.micRecording
         sdk.setMicState(MentraMicConfig(sendPcmData = next, sendTranscript = false, bypassVad = true))
         state = state.copy(micRecording = next, pcmBytes = if (next) 0 else state.pcmBytes, pcmFrames = if (next) 0 else state.pcmFrames)
     }
 
     fun selectLedMode(mode: String) = runAction("RGB LED $mode") {
+        requireConnected("control the RGB LED")
         state = state.copy(ledMode = mode)
         sdk.rgbLedControl(
             MentraRgbLedRequest(
@@ -317,6 +323,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     override fun onGlassesStatusChanged(status: MentraGlassesStatusUpdate) {
         state = state.copy(glassesStatus = state.glassesStatus + status.values)
+        if (status.values["connected"] == false) {
+            applyDisconnectedState("Disconnected")
+        }
         addEvent("STORE", summarize(status.values))
     }
 
@@ -373,6 +382,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     override fun onStreamStatus(event: com.mentra.core.MentraStreamStatusEvent) {
+        applyStreamStatus(event.values)
         state = state.copy(streamStatus = summarize(event.values))
         addEvent("LIVE", "stream ${summarize(event.values)}")
     }
@@ -419,6 +429,58 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     private fun addEvent(tag: String, text: String) {
         state = state.copy(events = (listOf(exampleEvent(tag, text)) + state.events).take(30))
+    }
+
+    private fun isGlassesConnected(): Boolean = state.glassesStatus["connected"] == true
+
+    private fun requireConnected(feature: String) {
+        if (isGlassesConnected()) {
+            return
+        }
+        val message = "Connect glasses first to $feature."
+        if ("photo" in feature || "capture" in feature) {
+            state = state.copy(cameraStatus = message)
+        }
+        if ("stream" in feature) {
+            state = state.copy(streamStatus = message)
+        }
+        addEvent("TX", message)
+        throw IllegalStateException(message)
+    }
+
+    private fun applyDisconnectedState(status: String) {
+        stopKeepAlive()
+        activeStreamId = null
+        val hadPhotoRequest = activePhotoRequestId != null
+        activePhotoRequestId = null
+        if (hadPhotoRequest) {
+            pollGeneration += 1
+        }
+        state = state.copy(
+            glassesStatus = disconnectedGlassesStatus(),
+            streamStartedAt = null,
+            streamStatus = status,
+            hotspotEnabled = false,
+            micRecording = false,
+            cameraStatus = if (hadPhotoRequest) "Disconnected before photo upload completed" else state.cameraStatus,
+        )
+    }
+
+    private fun applyStreamStatus(values: Map<String, Any>) {
+        when (values["status"] as? String) {
+            "streaming", "initializing", "starting" -> {
+                activeStreamId = values["streamId"] as? String ?: activeStreamId
+                state = state.copy(streamStartedAt = state.streamStartedAt ?: System.currentTimeMillis())
+                if (keepAliveJob == null) {
+                    startKeepAlive(activeStreamId ?: return)
+                }
+            }
+            "stopped", "stopping", "error", "error_not_streaming" -> {
+                stopKeepAlive()
+                activeStreamId = null
+                state = state.copy(streamStartedAt = null)
+            }
+        }
     }
 
     private fun startKeepAlive(streamId: String) {

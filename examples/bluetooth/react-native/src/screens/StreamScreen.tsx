@@ -3,6 +3,7 @@ import { View, Text, ScrollView, Pressable, StyleSheet, TextInput, Clipboard } f
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path, Polyline, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
+import { OfflineNotice } from '../components/OfflineNotice';
 import { StatusBarBar } from '../components/StatusBarBar';
 import { colors } from '../components/theme';
 import { streamUptime } from '../sdkFormat';
@@ -20,6 +21,7 @@ await BluetoothSdk.startStream({
 })`;
 
 export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
+  const connected = sdk.glassesStatus.connected === true;
   const isLive = sdk.streamStartedAt !== null;
   const uptime = streamUptime(sdk.streamStartedAt);
   const setupHint = localStreamSetupHint(sdk.streamProtocol, sdk.streamUrl, sdk.streamStatus);
@@ -28,6 +30,7 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
       <StatusBarBar />
       <Header connected={sdk.glassesStatus.connected === true} title="Stream" />
+      {!connected && <OfflineNotice />}
 
       {/* Live preview */}
       <LinearGradient colors={['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.55)']} style={styles.card}>
@@ -49,10 +52,12 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
           </LinearGradient>
         </View>
 
-        <Pressable onPress={sdk.toggleStream}>
-          <LinearGradient colors={isLive ? ['#FF6B5B', '#FF3B30'] : ['#26473A', '#1F3A2A']} style={styles.endBtn}>
+        <Pressable disabled={!connected && !isLive} onPress={sdk.toggleStream}>
+          <LinearGradient colors={isLive ? ['#FF6B5B', '#FF3B30'] : ['#26473A', '#1F3A2A']} style={[styles.endBtn, !connected && !isLive && styles.disabled]}>
             <View style={styles.stopSquare} />
-            <Text style={styles.endText}>{isLive ? 'End stream' : 'Start stream'}</Text>
+            <Text style={styles.endText}>
+              {!connected && !isLive ? 'Connect glasses first' : isLive ? 'End stream' : 'Start stream'}
+            </Text>
           </LinearGradient>
         </Pressable>
       </LinearGradient>
@@ -160,6 +165,7 @@ const styles = StyleSheet.create({
   endBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 18, paddingVertical: 16, marginTop: 14, marginHorizontal: 6, gap: 10 },
   stopSquare: { width: 12, height: 12, backgroundColor: '#fff', borderRadius: 3 },
   endText: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  disabled: { opacity: 0.45 },
 
   sdkCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 22, overflow: 'hidden', borderWidth: 1, borderColor: colors.borderSoft },
   sdkBlock: { backgroundColor: '#0E1A14', paddingVertical: 14, paddingHorizontal: 16, gap: 8 },

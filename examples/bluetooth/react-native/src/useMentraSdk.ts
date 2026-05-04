@@ -130,6 +130,7 @@ export function useMentraSdk(): MentraSdkModel {
   const [ledMode, setLedMode] = useState<LedMode>('Solid');
   const [rawJsonExpanded, setRawJsonExpanded] = useState(false);
   const activePhotoRequestIdRef = useRef<string | null>(null);
+  const activeStreamIdRef = useRef<string | null>(null);
   const pollGenerationRef = useRef(0);
   const keepAliveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -137,11 +138,11 @@ export function useMentraSdk(): MentraSdkModel {
 
   useEffect(() => {
     const removeGlasses = BluetoothSdk.onGlassesStatus((changed) => {
-      setGlassesStatus((current) =>
-        changed.connected === false
-          ? disconnectedGlassesStatus(changed)
-          : {...current, ...changed},
-      );
+      if (changed.connected === false) {
+        applyDisconnectedState('Disconnected');
+      } else {
+        setGlassesStatus((current) => ({...current, ...changed}));
+      }
       addEvent('STORE', summarizeMap(changed));
     });
 
@@ -178,6 +179,7 @@ export function useMentraSdk(): MentraSdkModel {
       }),
       BluetoothSdk.addListener('photo_response', handlePhotoResponse),
       BluetoothSdk.addListener('stream_status', (payload: StreamStatusEvent) => {
+        applyStreamStatus(payload);
         setStreamStatus(JSON.stringify(payload));
         addEvent('LIVE', `stream status ${summarizeMap(payload)}`);
       }),
@@ -216,6 +218,7 @@ export function useMentraSdk(): MentraSdkModel {
       removeBluetooth();
       subscriptions.forEach((subscription) => subscription.remove());
       stopKeepAlive();
+      activeStreamIdRef.current = null;
       activePhotoRequestIdRef.current = null;
       pollGenerationRef.current += 1;
     };
@@ -299,30 +302,33 @@ export function useMentraSdk(): MentraSdkModel {
     await runAction('Disconnect', async () => {
       stopKeepAlive();
       await BluetoothSdk.disconnect();
-      setGlassesStatus(disconnectedGlassesStatus({connected: false}));
-      setStreamStartedAt(null);
-      setStreamStatus('Disconnected');
+      applyDisconnectedState('Disconnected');
     });
   }
 
   async function displayHello() {
-    await runAction('Display Hello', () =>
-      BluetoothSdk.displayText({
+    await runAction('Display Hello', async () => {
+      requireConnected('display text');
+      await BluetoothSdk.displayText({
         size: 24,
         text: 'Hello from Mentra Bluetooth SDK',
         x: 0,
         y: 0,
-      }),
-    );
+      });
+    });
   }
 
   async function clearDisplay() {
-    await runAction('Clear Display', () => BluetoothSdk.clearDisplay());
+    await runAction('Clear Display', async () => {
+      requireConnected('clear the display');
+      await BluetoothSdk.clearDisplay();
+    });
   }
 
   async function applySettings() {
-    await runAction('Apply Settings', () =>
-      BluetoothSdk.updateCore({
+    await runAction('Apply Settings', async () => {
+      requireConnected('apply settings');
+      await BluetoothSdk.updateCore({
         brightness: 72,
         button_camera_led: true,
         button_max_recording_time: 5,
@@ -333,12 +339,13 @@ export function useMentraSdk(): MentraSdkModel {
         dashboard_depth: 6,
         dashboard_height: 4,
         gallery_mode: galleryModeAuto,
-      }),
-    );
+      });
+    });
   }
 
   async function captureAndUpload() {
     await runAction('Capture & upload', async () => {
+      requireConnected('capture photos');
       if (!(await ensureAndroidPermissions('photo'))) {
         throw new Error('Camera and Bluetooth permissions are required for photos.');
       }
@@ -478,7 +485,10 @@ export function useMentraSdk(): MentraSdkModel {
     if (streamStartedAt) {
       await runAction('Stop stream', async () => {
         stopKeepAlive();
-        await BluetoothSdk.stopStream();
+        activeStreamIdRef.current = null;
+        if (glassesStatus.connected === true) {
+          await BluetoothSdk.stopStream();
+        }
         setStreamStartedAt(null);
         setStreamStatus('Stopped');
       });
@@ -486,6 +496,7 @@ export function useMentraSdk(): MentraSdkModel {
     }
 
     await runAction('Start stream', async () => {
+      requireConnected('start streaming');
       const url = streamUrl.trim();
       const validationMessage = streamUrlValidationMessage(url);
       if (validationMessage) {
@@ -513,9 +524,8 @@ export function useMentraSdk(): MentraSdkModel {
         type: 'start_stream',
       };
       await BluetoothSdk.startStream(params);
-      setStreamStartedAt(Date.now());
-      setStreamStatus(`LIVE · ${streamProtocol.toUpperCase()}`);
-      startKeepAlive(streamId);
+      activeStreamIdRef.current = streamId;
+      setStreamStatus(`Requested ${streamProtocol.toUpperCase()} stream; waiting for glasses`);
     });
   }
 
@@ -539,17 +549,22 @@ export function useMentraSdk(): MentraSdkModel {
   }
 
   async function requestWifiScan() {
-    await runAction('Scan Wi-Fi', () => BluetoothSdk.requestWifiScan());
+    await runAction('Scan Wi-Fi', async () => {
+      requireConnected('scan Wi-Fi');
+      await BluetoothSdk.requestWifiScan();
+    });
   }
 
   async function sendWifiCredentials(ssid: string) {
-    await runAction(`Connect Wi-Fi ${ssid}`, () =>
-      BluetoothSdk.sendWifiCredentials(ssid, ''),
-    );
+    await runAction(`Connect Wi-Fi ${ssid}`, async () => {
+      requireConnected('send Wi-Fi credentials');
+      await BluetoothSdk.sendWifiCredentials(ssid, '');
+    });
   }
 
   async function toggleHotspot() {
     await runAction(hotspotEnabled ? 'Disable hotspot' : 'Enable hotspot', async () => {
+      requireConnected('toggle hotspot');
       const next = !hotspotEnabled;
       await BluetoothSdk.setHotspotState(next);
       setHotspotEnabled(next);
@@ -558,6 +573,7 @@ export function useMentraSdk(): MentraSdkModel {
 
   async function toggleMic() {
     await runAction(micRecording ? 'Stop microphone' : 'Start microphone', async () => {
+      requireConnected('stream microphone audio');
       const next = !micRecording;
       await BluetoothSdk.setMicState(next, false, true);
       setMicRecording(next);
@@ -570,6 +586,7 @@ export function useMentraSdk(): MentraSdkModel {
 
   async function selectLedMode(mode: LedMode) {
     await runAction(`RGB LED ${mode}`, async () => {
+      requireConnected('control the RGB LED');
       setLedMode(mode);
       const requestId = `rgb-${Date.now()}`;
       const action = mode === 'Off' ? 'off' : mode.toLowerCase();
@@ -583,6 +600,61 @@ export function useMentraSdk(): MentraSdkModel {
         mode === 'Blink' ? 5 : 1,
       );
     });
+  }
+
+  function requireConnected(feature: string) {
+    if (glassesStatus.connected === true) {
+      return;
+    }
+    const message = `Connect glasses first to ${feature}.`;
+    if (feature.includes('photo') || feature.includes('capture')) {
+      setCameraStatus(message);
+    }
+    if (feature.includes('stream')) {
+      setStreamStatus(message);
+    }
+    addEvent('TX', message);
+    throw new Error(message);
+  }
+
+  function applyDisconnectedState(status: string) {
+    stopKeepAlive();
+    activeStreamIdRef.current = null;
+    const hadPhotoRequest = activePhotoRequestIdRef.current !== null;
+    activePhotoRequestIdRef.current = null;
+    if (hadPhotoRequest) {
+      pollGenerationRef.current += 1;
+      setCameraStatus('Disconnected before photo upload completed');
+    }
+    setGlassesStatus(disconnectedGlassesStatus({connected: false}));
+    setStreamStartedAt(null);
+    setStreamStatus(status);
+    setHotspotEnabled(false);
+    setMicRecording(false);
+  }
+
+  function applyStreamStatus(payload: StreamStatusEvent) {
+    const status = typeof payload.status === 'string' ? payload.status : '';
+    if (status === 'streaming' || status === 'initializing' || status === 'starting') {
+      if (typeof payload.streamId === 'string') {
+        activeStreamIdRef.current = payload.streamId;
+      }
+      setStreamStartedAt((current) => current ?? Date.now());
+      if (keepAliveTimerRef.current === null && activeStreamIdRef.current) {
+        startKeepAlive(activeStreamIdRef.current);
+      }
+      return;
+    }
+    if (
+      status === 'stopped' ||
+      status === 'stopping' ||
+      status === 'error' ||
+      status === 'error_not_streaming'
+    ) {
+      stopKeepAlive();
+      activeStreamIdRef.current = null;
+      setStreamStartedAt(null);
+    }
   }
 
   return {

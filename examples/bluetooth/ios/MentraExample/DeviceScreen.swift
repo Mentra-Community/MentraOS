@@ -96,7 +96,8 @@ struct DeviceScreen: View {
     }
 
     private var quickActions: some View {
-        GlassCard {
+        let connected = model.glassesConnected
+        return GlassCard {
             HStack {
                 Text("Quick actions")
                     .font(.system(size: 16, weight: .bold))
@@ -115,11 +116,11 @@ struct DeviceScreen: View {
                     DarkActionButton(icon: "link", title: "Connect", bg: AppColor.greenPrimary, action: model.connect)
                 }
                 HStack(spacing: 8) {
-                    LightActionButton(icon: "display", title: "Display Hello", action: model.displayHello)
-                    LightActionButton(icon: "display.slash", title: "Clear Display", action: model.clearDisplay)
+                    LightActionButton(icon: "display", title: "Display Hello", enabled: connected, action: model.displayHello)
+                    LightActionButton(icon: "display.slash", title: "Clear Display", enabled: connected, action: model.clearDisplay)
                 }
                 HStack(spacing: 8) {
-                    LightActionButton(icon: "checkmark", title: "Apply Settings", action: model.applySettings)
+                    LightActionButton(icon: "checkmark", title: "Apply Settings", enabled: connected, action: model.applySettings)
                     Button {
                         model.disconnect()
                     } label: {
@@ -131,6 +132,8 @@ struct DeviceScreen: View {
                         .background(LinearGradient(colors: [Color(hex: 0xFF6B5B), AppColor.red], startPoint: .top, endPoint: .bottom))
                         .clipShape(RoundedRectangle(cornerRadius: 18))
                     }
+                    .disabled(!connected)
+                    .opacity(connected ? 1 : 0.45)
                 }
             }
         }
@@ -264,6 +267,7 @@ struct DarkActionButton: View {
 
 struct LightActionButton: View {
     let icon: String; let title: String
+    var enabled: Bool = true
     let action: () -> Void
     var body: some View {
         Button {
@@ -278,6 +282,8 @@ struct LightActionButton: View {
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(hex: 0xDBDBDB), lineWidth: 1))
             .clipShape(RoundedRectangle(cornerRadius: 14))
         }
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
     }
 }
 

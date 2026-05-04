@@ -8,6 +8,11 @@ struct SystemScreen: View {
             VStack(spacing: 0) {
                 StatusBarRow()
                 PageHeader(title: "System", connected: boolValue(model.glassesValues, "connected") == true)
+                if !model.glassesConnected {
+                    OfflineNotice()
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 8)
+                }
 
                 wifiCard.padding(.horizontal, 16).padding(.top, 8)
                 tilesRow.padding(.horizontal, 16).padding(.top, 12)
@@ -40,6 +45,8 @@ struct SystemScreen: View {
                     .padding(.horizontal, 12).padding(.vertical, 7)
                     .background(AppColor.ink.opacity(0.05)).clipShape(Capsule())
                 }
+                .disabled(!model.glassesConnected)
+                .opacity(model.glassesConnected ? 1 : 0.5)
             }
             .padding(.bottom, 4)
 
@@ -55,7 +62,7 @@ struct SystemScreen: View {
                     faint: true,
                     locked: requiresPassword,
                     last: index == (rows.isEmpty ? 0 : rows.count - 1),
-                    action: ssid == "Scan for nearby networks" ? nil : { model.sendWifiCredentials(ssid: ssid) }
+                    action: ssid == "Scan for nearby networks" || !model.glassesConnected ? nil : { model.sendWifiCredentials(ssid: ssid) }
                 )
             }
         }
@@ -89,6 +96,8 @@ struct SystemScreen: View {
                 }
             }
             }
+            .disabled(!model.glassesConnected)
+            .opacity(model.glassesConnected ? 1 : 0.55)
             Button(action: model.toggleMic) {
             GlassCard(corner: 22, padding: EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16)) {
                 HStack {
@@ -107,6 +116,8 @@ struct SystemScreen: View {
                 }
             }
             }
+            .disabled(!model.glassesConnected)
+            .opacity(model.glassesConnected ? 1 : 0.55)
         }
     }
 
@@ -168,10 +179,10 @@ struct SystemScreen: View {
             .padding(.bottom, 14)
 
             HStack(spacing: 4) {
-                LedTab(systemImage: "circle.slash", label: "Off", active: model.ledMode == "Off") { model.selectLedMode("Off") }
-                LedTab(systemImage: "circle.fill", label: "Solid", active: model.ledMode == "Solid") { model.selectLedMode("Solid") }
-                LedTab(systemImage: "circle.dotted", label: "Pulse", active: model.ledMode == "Pulse") { model.selectLedMode("Pulse") }
-                LedTab(systemImage: "circle.dashed", label: "Blink", active: model.ledMode == "Blink") { model.selectLedMode("Blink") }
+                LedTab(systemImage: "circle.slash", label: "Off", active: model.ledMode == "Off", enabled: model.glassesConnected) { model.selectLedMode("Off") }
+                LedTab(systemImage: "circle.fill", label: "Solid", active: model.ledMode == "Solid", enabled: model.glassesConnected) { model.selectLedMode("Solid") }
+                LedTab(systemImage: "circle.dotted", label: "Pulse", active: model.ledMode == "Pulse", enabled: model.glassesConnected) { model.selectLedMode("Pulse") }
+                LedTab(systemImage: "circle.dashed", label: "Blink", active: model.ledMode == "Blink", enabled: model.glassesConnected) { model.selectLedMode("Blink") }
             }
             .padding(4)
             .background(AppColor.ink.opacity(0.05))
@@ -261,6 +272,7 @@ struct InputChip: View {
 
 struct LedTab: View {
     let systemImage: String; let label: String; let active: Bool
+    var enabled: Bool = true
     let action: () -> Void
     var body: some View {
         Button {
@@ -274,5 +286,7 @@ struct LedTab: View {
             .background(active ? Color.white : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
     }
 }

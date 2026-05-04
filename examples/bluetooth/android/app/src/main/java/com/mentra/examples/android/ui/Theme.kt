@@ -92,6 +92,26 @@ fun Eyebrow(text: String, color: Color = AppColor.muted, mono: Boolean = false) 
 }
 
 @Composable
+fun OfflineNotice(
+    modifier: Modifier = Modifier,
+    message: String = "Connect glasses on the Device tab to use camera, streaming, Wi-Fi, microphone, LED, and display controls."
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(AppColor.amber.copy(alpha = 0.12f))
+            .border(1.dp, AppColor.amber.copy(alpha = 0.28f), RoundedCornerShape(16.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Text("!", color = AppColor.amber, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Text(message, color = AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+    }
+}
+
+@Composable
 fun StatusBarRow(modifier: Modifier = Modifier) {
     var time by remember { mutableStateOf(currentStatusTime()) }
 

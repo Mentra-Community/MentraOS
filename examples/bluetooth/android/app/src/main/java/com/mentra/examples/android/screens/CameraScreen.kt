@@ -35,18 +35,23 @@ import com.mentra.examples.android.MentraExampleController
 import com.mentra.examples.android.ui.AppColor
 import com.mentra.examples.android.ui.Eyebrow
 import com.mentra.examples.android.ui.GlassCard
+import com.mentra.examples.android.ui.OfflineNotice
 import com.mentra.examples.android.ui.PageHeader
 import com.mentra.examples.android.ui.StatusBarRow
 
 @Composable
 fun CameraScreen(controller: MentraExampleController) {
     val state = controller.state
+    val connected = state.glassesStatus["connected"] == true
     val cameraStatusFailed = isCameraStatusFailure(state.cameraStatus)
     val setupHint = localCameraSetupHint(state.webhookUrl, state.cameraStatus)
     val clipboardManager = LocalClipboardManager.current
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
         StatusBarRow()
-        PageHeader("Camera", state.glassesStatus["connected"] == true)
+        PageHeader("Camera", connected)
+        if (!connected) {
+            OfflineNotice(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+        }
 
         // Preview card
         GlassCard(
@@ -84,13 +89,13 @@ fun CameraScreen(controller: MentraExampleController) {
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp)
                     .clip(RoundedCornerShape(18.dp))
                     .background(Brush.verticalGradient(listOf(Color(0xFF26473A), Color(0xFF1F3A2A))))
-                    .clickable { controller.captureAndUpload() }
+                    .clickable(enabled = connected) { controller.captureAndUpload() }
                     .padding(vertical = 16.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Icon(Icons.Outlined.Camera, null, tint = Color.White, modifier = Modifier.size(16.dp))
-                    Text(if (state.activeAction == "Capture & upload") "Capturing…" else "Capture & upload", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text(if (!connected) "Connect glasses first" else if (state.activeAction == "Capture & upload") "Capturing…" else "Capture & upload", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }

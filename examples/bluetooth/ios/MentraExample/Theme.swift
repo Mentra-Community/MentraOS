@@ -125,6 +125,29 @@ struct PageHeader: View {
     }
 }
 
+struct OfflineNotice: View {
+    var message = "Connect glasses on the Device tab to use camera, streaming, Wi-Fi, microphone, LED, and display controls."
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(AppColor.amber)
+                .padding(.top, 1)
+            Text(message)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(AppColor.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(AppColor.amber.opacity(0.12))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(AppColor.amber.opacity(0.28), lineWidth: 1))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+}
+
 private let statusTimeFormatter: DateFormatter = {
     let formatter = DateFormatter()
     formatter.dateFormat = "h:mm"

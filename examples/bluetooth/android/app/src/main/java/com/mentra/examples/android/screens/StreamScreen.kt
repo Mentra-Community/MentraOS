@@ -32,6 +32,7 @@ import com.mentra.examples.android.streamProtocolLabel
 import com.mentra.examples.android.elapsedText
 import com.mentra.examples.android.ui.AppColor
 import com.mentra.examples.android.ui.GlassCard
+import com.mentra.examples.android.ui.OfflineNotice
 import com.mentra.examples.android.ui.PageHeader
 import com.mentra.examples.android.ui.StatusBarRow
 
@@ -55,13 +56,17 @@ sdk.startStream(
 @Composable
 fun StreamScreen(controller: MentraExampleController) {
     val state = controller.state
+    val connected = state.glassesStatus["connected"] == true
     val isLive = state.streamStartedAt != null
     val uptime = elapsedText(state.streamStartedAt)
     val setupHint = localStreamSetupHint(state.streamProtocol, state.streamUrl, state.streamStatus)
     val clipboardManager = LocalClipboardManager.current
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
         StatusBarRow()
-        PageHeader("Stream", state.glassesStatus["connected"] == true)
+        PageHeader("Stream", connected)
+        if (!connected) {
+            OfflineNotice(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+        }
 
         // Live preview card
         GlassCard(
@@ -110,13 +115,13 @@ fun StreamScreen(controller: MentraExampleController) {
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp)
                     .clip(RoundedCornerShape(18.dp))
                     .background(Brush.verticalGradient(if (isLive) listOf(Color(0xFFFF6B5B), AppColor.red) else listOf(Color(0xFF26473A), Color(0xFF1F3A2A))))
-                    .clickable { controller.toggleStream() }
+                    .clickable(enabled = connected || isLive) { controller.toggleStream() }
                     .padding(vertical = 16.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Box(modifier = Modifier.size(12.dp).clip(RoundedCornerShape(3.dp)).background(Color.White))
-                    Text(if (isLive) "End stream" else "Start stream", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text(if (!connected && !isLive) "Connect glasses first" else if (isLive) "End stream" else "Start stream", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }

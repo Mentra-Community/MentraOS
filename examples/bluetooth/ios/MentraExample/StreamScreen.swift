@@ -41,6 +41,11 @@ struct StreamScreen: View {
             VStack(spacing: 0) {
                 StatusBarRow()
                 PageHeader(title: "Stream", connected: boolValue(model.glassesValues, "connected") == true)
+                if !model.glassesConnected {
+                    OfflineNotice()
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 8)
+                }
 
                 previewCard.padding(.horizontal, 16).padding(.top, 8)
                 sdkCard.padding(.horizontal, 16).padding(.top, 12)
@@ -60,12 +65,14 @@ struct StreamScreen: View {
             } label: {
                 HStack(spacing: 10) {
                     RoundedRectangle(cornerRadius: 3).fill(Color.white).frame(width: 12, height: 12)
-                    Text(model.streamStartedAt == nil ? "Start stream" : "End stream").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
+                    Text(!model.glassesConnected && model.streamStartedAt == nil ? "Connect glasses first" : model.streamStartedAt == nil ? "Start stream" : "End stream").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity).padding(.vertical, 16)
                 .background(LinearGradient(colors: model.streamStartedAt == nil ? [Color(hex: 0x26473A), Color(hex: 0x1F3A2A)] : [Color(hex: 0xFF6B5B), AppColor.red], startPoint: .top, endPoint: .bottom))
                 .clipShape(RoundedRectangle(cornerRadius: 18))
             }
+            .disabled(!model.glassesConnected && model.streamStartedAt == nil)
+            .opacity(!model.glassesConnected && model.streamStartedAt == nil ? 0.55 : 1)
             .padding(.horizontal, 6).padding(.top, 14)
         }
     }

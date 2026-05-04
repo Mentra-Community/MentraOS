@@ -30,6 +30,7 @@ import com.mentra.examples.android.wifiScanResults
 import com.mentra.examples.android.ui.AppColor
 import com.mentra.examples.android.ui.Eyebrow
 import com.mentra.examples.android.ui.GlassCard
+import com.mentra.examples.android.ui.OfflineNotice
 import com.mentra.examples.android.ui.PageHeader
 import com.mentra.examples.android.ui.StatusBarRow
 
@@ -42,6 +43,9 @@ fun SystemScreen(controller: MentraExampleController) {
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
         StatusBarRow()
         PageHeader("System", connected)
+        if (!connected) {
+            OfflineNotice(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+        }
 
         // Wi-Fi card
         GlassCard(
@@ -58,7 +62,7 @@ fun SystemScreen(controller: MentraExampleController) {
                 }
                 Row(
                     modifier = Modifier.clip(RoundedCornerShape(999.dp)).background(AppColor.ink.copy(alpha = 0.05f))
-                        .clickable { controller.requestWifiScan() }
+                        .clickable(enabled = connected) { controller.requestWifiScan() }
                         .padding(horizontal = 12.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -87,7 +91,7 @@ fun SystemScreen(controller: MentraExampleController) {
 
         // Hotspot + Mic
         Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(modifier = Modifier.weight(1f).clickable { controller.toggleHotspot() }) {
+            Box(modifier = Modifier.weight(1f).clickable(enabled = connected) { controller.toggleHotspot() }) {
             GlassCard(
                 modifier = Modifier.fillMaxWidth(),
                 corner = 22,
@@ -107,7 +111,7 @@ fun SystemScreen(controller: MentraExampleController) {
                 Text(if (state.hotspotEnabled) "enabled" else "disabled", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
             }
             }
-            Box(modifier = Modifier.weight(1f).clickable { controller.toggleMic() }) {
+            Box(modifier = Modifier.weight(1f).clickable(enabled = connected) { controller.toggleMic() }) {
             GlassCard(
                 modifier = Modifier.fillMaxWidth(),
                 corner = 22,
@@ -186,10 +190,10 @@ fun SystemScreen(controller: MentraExampleController) {
                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(AppColor.ink.copy(alpha = 0.05f)).padding(4.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                LedTab(Icons.Outlined.DoNotDisturb, "Off", state.ledMode == "Off", Modifier.weight(1f)) { controller.selectLedMode("Off") }
-                LedTab(Icons.Filled.Circle, "Solid", state.ledMode == "Solid", Modifier.weight(1f)) { controller.selectLedMode("Solid") }
-                LedTab(Icons.Outlined.GpsFixed, "Pulse", state.ledMode == "Pulse", Modifier.weight(1f)) { controller.selectLedMode("Pulse") }
-                LedTab(Icons.Outlined.RadioButtonUnchecked, "Blink", state.ledMode == "Blink", Modifier.weight(1f)) { controller.selectLedMode("Blink") }
+                LedTab(Icons.Outlined.DoNotDisturb, "Off", state.ledMode == "Off", Modifier.weight(1f), enabled = connected) { controller.selectLedMode("Off") }
+                LedTab(Icons.Filled.Circle, "Solid", state.ledMode == "Solid", Modifier.weight(1f), enabled = connected) { controller.selectLedMode("Solid") }
+                LedTab(Icons.Outlined.GpsFixed, "Pulse", state.ledMode == "Pulse", Modifier.weight(1f), enabled = connected) { controller.selectLedMode("Pulse") }
+                LedTab(Icons.Outlined.RadioButtonUnchecked, "Blink", state.ledMode == "Blink", Modifier.weight(1f), enabled = connected) { controller.selectLedMode("Blink") }
             }
             Spacer(Modifier.height(14.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -262,12 +266,12 @@ private fun InputChip(prefix: String, label: String) {
 }
 
 @Composable
-private fun LedTab(icon: ImageVector, label: String, active: Boolean, modifier: Modifier, onClick: () -> Unit) {
+private fun LedTab(icon: ImageVector, label: String, active: Boolean, modifier: Modifier, enabled: Boolean = true, onClick: () -> Unit) {
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(10.dp))
             .background(if (active) Color.White else Color.Transparent)
-            .clickable { onClick() }
+            .clickable(enabled = enabled) { onClick() }
             .padding(vertical = 10.dp, horizontal = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp)

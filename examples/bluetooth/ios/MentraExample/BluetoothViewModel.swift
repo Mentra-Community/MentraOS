@@ -64,6 +64,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var pollGeneration = 0
     private var keepAliveTask: Task<Void, Never>?
 
+    var glassesConnected: Bool {
+        boolValue(glassesValues, "connected") == true
+    }
+
     override init() {
         super.init()
         sdk.delegate = self
@@ -106,14 +110,13 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             stopKeepAlive()
             sdk.disconnect()
             activeStreamId = nil
-            glassesValues = disconnectedGlassesValues()
-            streamStartedAt = nil
-            streamStatus = "Disconnected"
+            applyDisconnectedState(status: "Disconnected")
         }
     }
 
     func displayHello() {
         runAction("Display Hello") {
+            try requireConnected("display text")
             Task {
                 try? await sdk.displayText(MentraDisplayTextRequest(text: "Hello from Mentra Bluetooth SDK"))
             }
@@ -122,12 +125,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func clearDisplay() {
         runAction("Clear Display") {
+            try requireConnected("clear the display")
             Task { try? await sdk.clearDisplay() }
         }
     }
 
     func applySettings() {
         runAction("Apply Settings") {
+            try requireConnected("apply settings")
             Task {
                 try? await sdk.setBrightness(72)
                 try? await sdk.setDashboardPosition(MentraDashboardPositionRequest(height: 4, depth: 6))
@@ -143,6 +148,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func captureAndUpload() {
         runAction("Capture & upload") {
+            try requireConnected("capture photos")
             let uploadUrl = webhookUrl.trimmingCharacters(in: .whitespacesAndNewlines)
             guard let statusUrl = photoStatusUrl(uploadUrl, requestId: "") else {
                 cameraStatus = "Camera: enter a webhook URL like http://<computer-ip>:8787/upload"
@@ -209,7 +215,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         if streamStartedAt != nil {
             runAction("Stop stream") {
                 stopKeepAlive()
-                sdk.stopStream()
+                if glassesConnected {
+                    sdk.stopStream()
+                }
                 activeStreamId = nil
                 streamStartedAt = nil
                 streamStatus = "Stopped"
@@ -218,6 +226,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
 
         runAction("Start stream") {
+            try requireConnected("start streaming")
             let url = streamUrl.trimmingCharacters(in: .whitespacesAndNewlines)
             if let validationMessage = streamUrlValidationMessage(url) {
                 streamStatus = validationMessage
@@ -259,11 +268,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private func startStream(_ params: [String: Any], protocol selectedProtocol: ExampleStreamProtocol) {
         sdk.startStream(MentraStreamRequest(values: params))
         activeStreamId = stringValue(params, "streamId")
-        streamStartedAt = Date()
-        streamStatus = "LIVE · \(selectedProtocol.rawValue.uppercased())"
-        if let activeStreamId {
-            startKeepAlive(streamId: activeStreamId)
-        }
+        streamStatus = "Requested \(selectedProtocol.rawValue.uppercased()) stream; waiting for glasses"
     }
 
     func selectStreamProtocol(_ nextProtocol: ExampleStreamProtocol) {
@@ -276,17 +281,22 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func requestWifiScan() {
-        runAction("Scan Wi-Fi") { sdk.requestWifiScan() }
+        runAction("Scan Wi-Fi") {
+            try requireConnected("scan Wi-Fi")
+            sdk.requestWifiScan()
+        }
     }
 
     func sendWifiCredentials(ssid: String) {
         runAction("Connect Wi-Fi \(ssid)") {
+            try requireConnected("send Wi-Fi credentials")
             sdk.sendWifiCredentials(ssid: ssid, password: "")
         }
     }
 
     func toggleHotspot() {
         runAction(hotspotEnabled ? "Disable hotspot" : "Enable hotspot") {
+            try requireConnected("toggle hotspot")
             let next = !hotspotEnabled
             sdk.setHotspotState(enabled: next)
             hotspotEnabled = next
@@ -295,6 +305,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func toggleMic() {
         runAction(micRecording ? "Stop microphone" : "Start microphone") {
+            try requireConnected("stream microphone audio")
             let next = !micRecording
             sdk.setMicState(MentraMicConfiguration(sendPcmData: next, sendTranscript: false, bypassVad: true))
             micRecording = next
@@ -307,6 +318,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func selectLedMode(_ mode: String) {
         runAction("RGB LED \(mode)") {
+            try requireConnected("control the RGB LED")
             ledMode = mode
             sdk.rgbLedControl(
                 MentraRgbLedRequest(
@@ -324,6 +336,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateGlassesStatus status: MentraGlassesStatusUpdate) {
         glassesValues.merge(status.values) { _, new in new }
+        if boolValue(status.values, "connected") == false {
+            applyDisconnectedState(status: "Disconnected")
+        }
         append(tag: "STORE", text: summarize(status.values))
     }
 
@@ -379,6 +394,35 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         activeAction = nil
     }
 
+    private func requireConnected(_ feature: String) throws {
+        guard glassesConnected else {
+            let message = "Connect glasses first to \(feature)."
+            if feature.contains("photo") || feature.contains("capture") {
+                cameraStatus = message
+            }
+            if feature.contains("stream") {
+                streamStatus = message
+            }
+            append(tag: "TX", text: message)
+            throw ExampleActionError(message: message)
+        }
+    }
+
+    private func applyDisconnectedState(status: String) {
+        glassesValues = disconnectedGlassesValues()
+        stopKeepAlive()
+        activeStreamId = nil
+        streamStartedAt = nil
+        streamStatus = status
+        micRecording = false
+        hotspotEnabled = false
+        if activePhotoRequestId != nil {
+            activePhotoRequestId = nil
+            pollGeneration += 1
+            cameraStatus = "Disconnected before photo upload completed"
+        }
+    }
+
     private func append(tag: String, text: String) {
         events = [ExampleEvent.make(tag: tag, text: text)] + events
         events = Array(events.prefix(30))
@@ -416,6 +460,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             }
             if let streamId = stringValue(values, "streamId") {
                 activeStreamId = streamId
+            }
+            if let activeStreamId, keepAliveTask == nil {
+                startKeepAlive(streamId: activeStreamId)
             }
         case "stopped", "stopping", "error", "error_not_streaming":
             streamStartedAt = nil

@@ -3,6 +3,7 @@ import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Line, Path, Polyline, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
+import { OfflineNotice } from '../components/OfflineNotice';
 import { StatusBarBar } from '../components/StatusBarBar';
 import { colors } from '../components/theme';
 import { wifiLabel, wifiSubLabel } from '../sdkFormat';
@@ -17,6 +18,7 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
       <StatusBarBar />
       <Header connected={sdk.glassesStatus.connected === true} title="System" />
+      {!connected && <OfflineNotice />}
 
       {/* Wi-Fi card */}
       <LinearGradient colors={['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.55)']} style={styles.bigCard}>
@@ -35,7 +37,10 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
               <Text style={styles.wifiSub}>{networks.length} networks nearby</Text>
             </View>
           </View>
-          <Pressable style={styles.scanBtn} onPress={sdk.requestWifiScan}>
+          <Pressable
+            disabled={!connected}
+            style={[styles.scanBtn, !connected && styles.disabled]}
+            onPress={sdk.requestWifiScan}>
             <Svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke={colors.ink} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
               <Polyline points="23 4 23 10 17 10" />
               <Path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
@@ -55,14 +60,15 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
             faint
             locked={network.requiresPassword}
             last={index === Math.max(networks.length - 1, 0)}
-            onPress={() => network.ssid !== 'Scan for nearby networks' && sdk.sendWifiCredentials(network.ssid)}
+            disabled={!connected || network.ssid === 'Scan for nearby networks'}
+            onPress={() => sdk.sendWifiCredentials(network.ssid)}
           />
         ))}
       </LinearGradient>
 
       {/* Hotspot + Microphone row */}
       <View style={styles.row2}>
-        <Pressable style={{ flex: 1 }} onPress={sdk.toggleHotspot}>
+        <Pressable disabled={!connected} style={[{ flex: 1 }, !connected && styles.disabled]} onPress={sdk.toggleHotspot}>
         <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={styles.tileCard}>
           <View style={styles.tileHead}>
             <View style={styles.iconTileSm}>
@@ -81,7 +87,7 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
           </View>
         </LinearGradient>
         </Pressable>
-        <Pressable style={{ flex: 1 }} onPress={sdk.toggleMic}>
+        <Pressable disabled={!connected} style={[{ flex: 1 }, !connected && styles.disabled]} onPress={sdk.toggleMic}>
         <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={styles.tileCard}>
           <View style={styles.tileHead}>
             <View style={styles.iconTileSm}>
@@ -146,10 +152,10 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
           </View>
         </View>
         <View style={styles.ledTabs}>
-          <LedTab active={sdk.ledMode === 'Off'} onPress={() => sdk.selectLedMode('Off')} icon={<Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={colors.muted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><Circle cx={12} cy={12} r={9} /><Line x1={6.5} y1={17.5} x2={17.5} y2={6.5} /></Svg>} label="Off" />
-          <LedTab active={sdk.ledMode === 'Solid'} onPress={() => sdk.selectLedMode('Solid')} icon={<Svg width={18} height={18} viewBox="0 0 24 24"><Circle cx={12} cy={12} r={6} fill={colors.greenInk} /></Svg>} label="Solid" />
-          <LedTab active={sdk.ledMode === 'Pulse'} onPress={() => sdk.selectLedMode('Pulse')} icon={<Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={colors.muted} strokeWidth={2}><Circle cx={12} cy={12} r={3} fill={colors.muted} /><Circle cx={12} cy={12} r={6.5} opacity={0.55} /><Circle cx={12} cy={12} r={10} opacity={0.25} /></Svg>} label="Pulse" />
-          <LedTab active={sdk.ledMode === 'Blink'} onPress={() => sdk.selectLedMode('Blink')} icon={<Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={colors.muted} strokeWidth={2} strokeDasharray="3 3"><Circle cx={12} cy={12} r={9} /></Svg>} label="Blink" />
+          <LedTab active={sdk.ledMode === 'Off'} disabled={!connected} onPress={() => sdk.selectLedMode('Off')} icon={<Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={colors.muted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><Circle cx={12} cy={12} r={9} /><Line x1={6.5} y1={17.5} x2={17.5} y2={6.5} /></Svg>} label="Off" />
+          <LedTab active={sdk.ledMode === 'Solid'} disabled={!connected} onPress={() => sdk.selectLedMode('Solid')} icon={<Svg width={18} height={18} viewBox="0 0 24 24"><Circle cx={12} cy={12} r={6} fill={colors.greenInk} /></Svg>} label="Solid" />
+          <LedTab active={sdk.ledMode === 'Pulse'} disabled={!connected} onPress={() => sdk.selectLedMode('Pulse')} icon={<Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={colors.muted} strokeWidth={2}><Circle cx={12} cy={12} r={3} fill={colors.muted} /><Circle cx={12} cy={12} r={6.5} opacity={0.55} /><Circle cx={12} cy={12} r={10} opacity={0.25} /></Svg>} label="Pulse" />
+          <LedTab active={sdk.ledMode === 'Blink'} disabled={!connected} onPress={() => sdk.selectLedMode('Blink')} icon={<Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={colors.muted} strokeWidth={2} strokeDasharray="3 3"><Circle cx={12} cy={12} r={9} /></Svg>} label="Blink" />
         </View>
         <View style={{ gap: 8 }}>
           <View style={styles.brightnessHead}>
@@ -166,9 +172,9 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
   );
 }
 
-function NetworkRow({ name, sub, subColor, rssi, check, faint, locked, last, onPress }: { name: string; sub: string; subColor: string; rssi?: string; check?: boolean; faint?: boolean; locked?: boolean; last?: boolean; onPress?: () => void }) {
+function NetworkRow({ name, sub, subColor, rssi, check, faint, locked, last, disabled, onPress }: { name: string; sub: string; subColor: string; rssi?: string; check?: boolean; faint?: boolean; locked?: boolean; last?: boolean; disabled?: boolean; onPress?: () => void }) {
   return (
-    <Pressable style={[styles.networkRow, !last && styles.networkBorder]} onPress={onPress}>
+    <Pressable disabled={disabled || !onPress} style={[styles.networkRow, !last && styles.networkBorder, disabled && styles.disabled]} onPress={onPress}>
       <View style={styles.networkIcon}>
         <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={faint ? colors.mutedSoft : colors.greenInk} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
           <Path d="M5 12.55a11 11 0 0 1 14.08 0" />
@@ -205,9 +211,9 @@ function InputChip({ prefix, label }: { prefix: string; label: string }) {
   );
 }
 
-function LedTab({ icon, label, active, onPress }: { icon: React.ReactNode; label: LedMode; active?: boolean; onPress: () => void }) {
+function LedTab({ icon, label, active, disabled, onPress }: { icon: React.ReactNode; label: LedMode; active?: boolean; disabled?: boolean; onPress: () => void }) {
   return (
-    <Pressable style={[styles.ledTab, active && styles.ledTabActive]} onPress={onPress}>
+    <Pressable disabled={disabled} style={[styles.ledTab, active && styles.ledTabActive, disabled && styles.disabled]} onPress={onPress}>
       {icon}
       <Text style={[styles.ledTabText, active && styles.ledTabTextActive]}>{label}</Text>
     </Pressable>
@@ -222,6 +228,7 @@ const styles = StyleSheet.create({
   wifiTitle: { color: colors.ink, fontSize: 17, fontWeight: '700', letterSpacing: -0.17 },
   wifiSub: { color: colors.muted, fontSize: 10, fontWeight: '500' },
   scanBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(15,42,29,0.06)', paddingVertical: 7, paddingHorizontal: 12, borderRadius: 999 },
+  disabled: { opacity: 0.45 },
   scanText: { color: colors.ink, fontSize: 12, fontWeight: '600' },
   networkRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, gap: 12 },
   networkBorder: { borderBottomWidth: 1, borderColor: 'rgba(15,42,29,0.06)' },
