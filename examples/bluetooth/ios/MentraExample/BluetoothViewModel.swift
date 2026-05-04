@@ -224,20 +224,25 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 throw ExampleActionError(message: validationMessage)
             }
             let streamId = "ios-\(Int(Date().timeIntervalSince1970 * 1000))"
+            let selectedProtocol = streamProtocol
             let params: [String: Any] = [
                 "type": "start_stream",
                 "streamUrl": url,
                 "streamId": streamId,
-                "protocol": streamProtocol.rawValue,
+                "protocol": selectedProtocol.rawValue,
                 "keepAlive": true,
                 "keepAliveIntervalSeconds": 15,
             ]
-            if streamProtocol == .webrtc {
-                streamStatus = "Checking local WebRTC server"
+            if selectedProtocol == .rtmp || selectedProtocol == .webrtc {
+                streamStatus = "Checking local \(selectedProtocol.rawValue.uppercased()) server"
                 Task {
                     do {
-                        try await checkLocalWebrtcServer(whipUrl: url)
-                        startStream(params)
+                        if selectedProtocol == .rtmp {
+                            try await checkLocalRtmpServer(rtmpUrl: url)
+                        } else {
+                            try await checkLocalWebrtcServer(whipUrl: url)
+                        }
+                        startStream(params, protocol: selectedProtocol)
                     } catch {
                         let message = error.localizedDescription
                         streamStatus = message
@@ -247,15 +252,15 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 }
                 return
             }
-            startStream(params)
+            startStream(params, protocol: selectedProtocol)
         }
     }
 
-    private func startStream(_ params: [String: Any]) {
+    private func startStream(_ params: [String: Any], protocol selectedProtocol: ExampleStreamProtocol) {
         sdk.startStream(MentraStreamRequest(values: params))
         activeStreamId = stringValue(params, "streamId")
         streamStartedAt = Date()
-        streamStatus = "LIVE · \(streamProtocol.rawValue.uppercased())"
+        streamStatus = "LIVE · \(selectedProtocol.rawValue.uppercased())"
         if let activeStreamId {
             startKeepAlive(streamId: activeStreamId)
         }
@@ -629,25 +634,66 @@ func webhookHealthUrl(_ uploadUrlText: String) -> URL? {
     return components.url
 }
 
+func checkLocalRtmpServer(rtmpUrl: String) async throws {
+    guard isValidRtmpUrl(rtmpUrl) else {
+        throw ExampleActionError(message: "Enter a valid rtmp:// or rtmps:// publish URL.")
+    }
+    guard let previewUrl = rtmpHlsPreviewUrl(rtmpUrl) else { return }
+    try await checkHttpPreviewServer(url: previewUrl, setupMessage: localRtmpSetupMessage)
+}
+
 func checkLocalWebrtcServer(whipUrl: String) async throws {
     guard let previewUrl = webrtcPreviewUrl(whipUrl) else {
         throw ExampleActionError(message: "Enter a valid http:// or https:// WHIP URL.")
     }
-    var request = URLRequest(url: previewUrl)
+    try await checkHttpPreviewServer(url: previewUrl, setupMessage: localWebrtcSetupMessage)
+}
+
+func checkHttpPreviewServer(url: URL, setupMessage: (String) -> String) async throws {
+    var request = URLRequest(url: url)
     request.cachePolicy = .reloadIgnoringLocalCacheData
     request.timeoutInterval = 3
     do {
         let (_, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else {
-            throw ExampleActionError(message: localWebrtcSetupMessage("invalid response"))
+            throw ExampleActionError(message: setupMessage("invalid response"))
         }
-        // MediaMTX returns 404 before a stream exists; any HTTP response means it is reachable.
+        // MediaMTX may return 404 before a stream exists; any HTTP response means it is reachable.
         _ = http.statusCode
     } catch let error as ExampleActionError {
         throw error
     } catch {
-        throw ExampleActionError(message: localWebrtcSetupMessage(error.localizedDescription))
+        throw ExampleActionError(message: setupMessage(error.localizedDescription))
     }
+}
+
+func rtmpHlsPreviewUrl(_ rtmpUrlText: String) -> URL? {
+    guard var components = URLComponents(string: rtmpUrlText),
+          components.scheme == "rtmp" || components.scheme == "rtmps",
+          let host = components.host,
+          isLocalPreviewHost(host)
+    else { return nil }
+    components.scheme = components.scheme == "rtmps" ? "https" : "http"
+    components.port = 8888
+    if components.path.isEmpty {
+        components.path = "/"
+    }
+    components.query = nil
+    return components.url
+}
+
+func isValidRtmpUrl(_ rtmpUrlText: String) -> Bool {
+    guard let components = URLComponents(string: rtmpUrlText) else { return false }
+    return (components.scheme == "rtmp" || components.scheme == "rtmps") && components.host != nil
+}
+
+func isLocalPreviewHost(_ host: String) -> Bool {
+    let normalized = host.lowercased()
+    if normalized == "localhost" || normalized.hasSuffix(".local") || normalized.hasPrefix("192.168.") || normalized.hasPrefix("10.") || normalized.hasPrefix("169.254.") {
+        return true
+    }
+    let parts = normalized.split(separator: ".").compactMap { Int($0) }
+    return parts.count == 4 && parts[0] == 172 && (16...31).contains(parts[1])
 }
 
 func webrtcPreviewUrl(_ whipUrlText: String) -> URL? {
@@ -663,6 +709,10 @@ func webrtcPreviewUrl(_ whipUrlText: String) -> URL? {
     }
     components.query = nil
     return components.url
+}
+
+func localRtmpSetupMessage(_ detail: String) -> String {
+    "Local RTMP/HLS server not reachable (\(detail)). Run python3 examples/local-demo-cloud/server.py and paste the printed RTMP publish URL."
 }
 
 func localWebrtcSetupMessage(_ detail: String) -> String {

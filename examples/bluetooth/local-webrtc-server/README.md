@@ -44,7 +44,7 @@ WHEP playback URL:
 
 Paste the printed **RTMP publish URL** into the Stream tab's RTMP field, or paste the printed **WHIP publish URL** into the WebRTC field, then tap **Start stream**.
 
-For RTMP, open the printed **RTMP browser preview (HLS)** URL on your computer. You can also use the printed `ffplay` command when debugging locally. For WebRTC, open the printed **WebRTC browser preview** URL or use the printed **WHEP playback URL** if you are building your own player.
+For RTMP, the native iOS example derives the HLS preview URL from the publish URL and embeds it in the preview card after the stream starts. You can also open the printed **RTMP browser preview (HLS)** URL on your computer, or use the printed `ffplay` command when debugging locally. For WebRTC, open the printed **WebRTC browser preview** URL or use the printed **WHEP playback URL** if you are building your own player.
 
 ## Network Notes
 
@@ -53,7 +53,7 @@ Use the LAN URL printed by the script, not `localhost`, from the example app. Th
 If the script picks the wrong interface, set the IP explicitly:
 
 ```bash
-MENTRA_WEBRTC_HOST_IP=192.168.1.42 examples/local-webrtc-server/run-mediamtx.sh
+MENTRA_STREAM_HOST_IP=192.168.1.42 examples/local-webrtc-server/run-mediamtx.sh
 ```
 
 You can also change the stream path:

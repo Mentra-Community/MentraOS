@@ -4,6 +4,11 @@ set -euo pipefail
 STREAM_PATH="${MENTRA_STREAM_PATH:-${MENTRA_WEBRTC_STREAM_PATH:-mentra-live}}"
 
 detect_host_ip() {
+  if [ -n "${MENTRA_STREAM_HOST_IP:-}" ]; then
+    printf '%s\n' "$MENTRA_STREAM_HOST_IP"
+    return
+  fi
+
   if [ -n "${MENTRA_WEBRTC_HOST_IP:-}" ]; then
     printf '%s\n' "$MENTRA_WEBRTC_HOST_IP"
     return
@@ -33,7 +38,7 @@ detect_host_ip() {
 Could not detect a LAN IP address.
 
 Set it explicitly, for example:
-  MENTRA_WEBRTC_HOST_IP=192.168.1.42 examples/local-webrtc-server/run-mediamtx.sh
+  MENTRA_STREAM_HOST_IP=192.168.1.42 examples/local-webrtc-server/run-mediamtx.sh
 EOF
   exit 1
 }

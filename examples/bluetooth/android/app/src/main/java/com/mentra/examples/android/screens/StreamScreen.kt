@@ -232,7 +232,7 @@ private fun localStreamSetupHint(protocol: String, streamUrl: String, status: St
         return null
     }
     if (protocol == "rtmp") {
-        return "Local RTMP setup: run python3 examples/local-demo-cloud/server.py, paste the printed RTMP publish URL here, then open the HLS preview URL on your computer. The printed ffplay command is optional for debugging."
+        return "Local RTMP setup: run python3 examples/local-demo-cloud/server.py, paste the printed RTMP publish URL here, then open the printed HLS preview URL on your computer. The printed ffplay command is optional for debugging."
     }
     return "Local WebRTC setup: run python3 examples/local-demo-cloud/server.py, paste the printed WHIP publish URL here, then open the WebRTC preview URL on your computer."
 }

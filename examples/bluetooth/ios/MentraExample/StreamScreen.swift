@@ -25,8 +25,15 @@ struct StreamScreen: View {
         localStreamSetupHint(protocol: model.streamProtocol, streamUrl: model.streamUrl, status: model.streamStatus)
     }
     private var livePreviewUrl: URL? {
-        guard model.streamStartedAt != nil, model.streamProtocol == .webrtc else { return nil }
-        return webrtcPreviewUrl(model.streamUrl)
+        guard model.streamStartedAt != nil else { return nil }
+        switch model.streamProtocol {
+        case .rtmp:
+            return rtmpHlsPreviewUrl(model.streamUrl)
+        case .webrtc:
+            return webrtcPreviewUrl(model.streamUrl)
+        case .srt:
+            return nil
+        }
     }
 
     var body: some View {
@@ -67,7 +74,7 @@ struct StreamScreen: View {
     private var previewSurface: some View {
         if let livePreviewUrl {
             ZStack {
-                WebRtcPreviewView(url: livePreviewUrl)
+                WebStreamPreviewView(url: livePreviewUrl)
                     .frame(height: 160)
                     .background(Color.black)
                     .clipShape(RoundedRectangle(cornerRadius: 22))
@@ -231,7 +238,7 @@ struct ProtocolTab: View {
     }
 }
 
-struct WebRtcPreviewView: UIViewRepresentable {
+struct WebStreamPreviewView: UIViewRepresentable {
     let url: URL
 
     func makeUIView(context _: Context) -> WKWebView {
@@ -270,7 +277,7 @@ private func localStreamSetupHint(protocol streamProtocol: ExampleStreamProtocol
         return nil
     }
     if streamProtocol == .rtmp {
-        return "Local RTMP setup: run python3 examples/local-demo-cloud/server.py, paste the printed RTMP publish URL here, then open the HLS preview URL on your computer. The printed ffplay command is optional for debugging."
+        return "Local RTMP setup: run python3 examples/local-demo-cloud/server.py, paste the printed RTMP publish URL here, then start streaming. The app previews the HLS URL; the printed ffplay command is optional for debugging."
     }
     return "Local WebRTC setup: run python3 examples/local-demo-cloud/server.py, paste the printed WHIP publish URL here, then open the WebRTC preview URL on your computer."
 }

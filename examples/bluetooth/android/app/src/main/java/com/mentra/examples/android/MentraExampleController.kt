@@ -33,6 +33,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.net.HttpURLConnection
+import java.net.URI
 import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -243,29 +244,34 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             "keepAlive" to true,
             "keepAliveIntervalSeconds" to 15,
         )
-        if (state.streamProtocol == "webrtc") {
-            state = state.copy(streamStatus = "Checking local WebRTC server")
+        val selectedProtocol = state.streamProtocol
+        if (selectedProtocol == "rtmp" || selectedProtocol == "webrtc") {
+            state = state.copy(streamStatus = "Checking local ${selectedProtocol.uppercase()} server")
             scope.launch(Dispatchers.IO) {
-                val reachabilityMessage = localWebrtcReachabilityMessage(streamUrl)
+                val reachabilityMessage = if (selectedProtocol == "rtmp") {
+                    localRtmpReachabilityMessage(streamUrl)
+                } else {
+                    localWebrtcReachabilityMessage(streamUrl)
+                }
                 scope.launch {
                     if (reachabilityMessage != null) {
                         state = state.copy(streamStatus = reachabilityMessage)
                         addEvent("TX", "stream failed: $reachabilityMessage")
                         return@launch
                     }
-                    startStream(params)
+                    startStream(params, selectedProtocol)
                 }
             }
             return@runAction
         }
-        startStream(params)
+        startStream(params, selectedProtocol)
     }
 
-    private fun startStream(params: Map<String, Any>) {
+    private fun startStream(params: Map<String, Any>, protocol: String) {
         sdk.startStream(MentraStreamRequest(params))
         state = state.copy(
             streamStartedAt = System.currentTimeMillis(),
-            streamStatus = "LIVE · ${state.streamProtocol.uppercase()}",
+            streamStatus = "LIVE · ${protocol.uppercase()}",
         )
         startKeepAlive(params["streamId"].toString())
     }
@@ -512,6 +518,19 @@ fun webhookHealthUrl(uploadUrlText: String): String {
     return "${url.protocol}://${url.host}$port/"
 }
 
+fun localRtmpReachabilityMessage(rtmpUrlText: String): String? {
+    val previewUrl = try {
+        rtmpHlsPreviewUrl(rtmpUrlText)
+    } catch (_: Exception) {
+        return "Enter a valid rtmp:// or rtmps:// publish URL."
+    }
+    if (previewUrl == null) {
+        return null
+    }
+
+    return localHttpPreviewReachabilityMessage(previewUrl, ::localRtmpSetupMessage)
+}
+
 fun localWebrtcReachabilityMessage(whipUrlText: String): String? {
     val previewUrl = try {
         webrtcPreviewUrl(whipUrlText)
@@ -519,17 +538,51 @@ fun localWebrtcReachabilityMessage(whipUrlText: String): String? {
         return "Enter a valid http:// or https:// WHIP URL."
     }
 
+    return localHttpPreviewReachabilityMessage(previewUrl, ::localWebrtcSetupMessage)
+}
+
+fun localHttpPreviewReachabilityMessage(previewUrl: String, setupMessage: (String) -> String): String? {
     return try {
         val connection = URL(previewUrl).openConnection() as HttpURLConnection
         connection.connectTimeout = 1500
         connection.readTimeout = 1500
-        // MediaMTX returns 404 before a stream exists; any HTTP response means it is reachable.
+        // MediaMTX may return 404 before a stream exists; any HTTP response means it is reachable.
         connection.responseCode
         connection.disconnect()
         null
     } catch (error: Exception) {
-        localWebrtcSetupMessage(error.message ?: error.javaClass.simpleName)
+        setupMessage(error.message ?: error.javaClass.simpleName)
     }
+}
+
+fun rtmpHlsPreviewUrl(rtmpUrlText: String): String? {
+    val uri = URI(rtmpUrlText)
+    val scheme = uri.scheme ?: throw IllegalArgumentException("Missing RTMP URL scheme.")
+    if (scheme != "rtmp" && scheme != "rtmps") {
+        throw IllegalArgumentException("Only rtmp and rtmps URLs are supported.")
+    }
+    val host = uri.host ?: throw IllegalArgumentException("Missing RTMP host.")
+    if (!isLocalPreviewHost(host)) {
+        return null
+    }
+    val path = uri.rawPath?.ifBlank { "/" } ?: "/"
+    val previewScheme = if (scheme == "rtmps") "https" else "http"
+    return "$previewScheme://$host:8888$path"
+}
+
+fun isLocalPreviewHost(host: String): Boolean {
+    val normalized = host.lowercase()
+    if (
+        normalized == "localhost" ||
+        normalized.endsWith(".local") ||
+        normalized.startsWith("192.168.") ||
+        normalized.startsWith("10.") ||
+        normalized.startsWith("169.254.")
+    ) {
+        return true
+    }
+    val parts = normalized.split(".").mapNotNull { it.toIntOrNull() }
+    return parts.size == 4 && parts[0] == 172 && parts[1] in 16..31
 }
 
 fun webrtcPreviewUrl(whipUrlText: String): String {
@@ -541,6 +594,9 @@ fun webrtcPreviewUrl(whipUrlText: String): String {
     val path = url.path.removeSuffix("/whip").ifBlank { "/" }
     return "${url.protocol}://${url.host}$port$path"
 }
+
+fun localRtmpSetupMessage(detail: String): String =
+    "Local RTMP/HLS server not reachable ($detail). Run python3 examples/local-demo-cloud/server.py and paste the printed RTMP publish URL."
 
 fun localWebrtcSetupMessage(detail: String): String =
     "Local WebRTC server not reachable ($detail). Run python3 examples/local-demo-cloud/server.py and paste the printed WHIP publish URL."

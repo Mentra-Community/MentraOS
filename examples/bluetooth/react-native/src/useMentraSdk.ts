@@ -492,9 +492,12 @@ export function useMentraSdk(): MentraSdkModel {
         setStreamStatus(validationMessage);
         throw new Error(validationMessage);
       }
-      if (streamProtocol === 'webrtc') {
-        setStreamStatus('Checking local WebRTC server');
-        const reachabilityMessage = await localWebrtcReachabilityMessage(url);
+      if (streamProtocol === 'rtmp' || streamProtocol === 'webrtc') {
+        setStreamStatus(`Checking local ${streamProtocol.toUpperCase()} server`);
+        const reachabilityMessage =
+          streamProtocol === 'rtmp'
+            ? await localRtmpReachabilityMessage(url)
+            : await localWebrtcReachabilityMessage(url);
         if (reachabilityMessage) {
           setStreamStatus(reachabilityMessage);
           throw new Error(reachabilityMessage);
@@ -681,17 +684,73 @@ async function localWebrtcReachabilityMessage(whipUrlText: string) {
     return 'Enter a valid http:// or https:// WHIP URL.';
   }
 
+  return localHttpPreviewReachabilityMessage(previewUrl, localWebrtcSetupMessage);
+}
+
+async function localRtmpReachabilityMessage(rtmpUrlText: string) {
+  let previewUrl = '';
+  try {
+    previewUrl = rtmpHlsPreviewUrl(rtmpUrlText) ?? '';
+  } catch {
+    return 'Enter a valid rtmp:// or rtmps:// publish URL.';
+  }
+  if (!previewUrl) {
+    return null;
+  }
+
+  return localHttpPreviewReachabilityMessage(previewUrl, localRtmpSetupMessage);
+}
+
+async function localHttpPreviewReachabilityMessage(
+  previewUrl: string,
+  setupMessage: (detail: string) => string,
+) {
   try {
     const response = await fetch(cacheBustedUrl(previewUrl), {
       cache: 'no-store',
       headers: {'Cache-Control': 'no-cache', Pragma: 'no-cache'},
     });
-    // MediaMTX returns 404 before a stream exists; any HTTP response means it is reachable.
+    // MediaMTX may return 404 before a stream exists; any HTTP response means it is reachable.
     void response.status;
     return null;
   } catch (error) {
-    return localWebrtcSetupMessage(formatError(error));
+    return setupMessage(formatError(error));
   }
+}
+
+function rtmpHlsPreviewUrl(rtmpUrlText: string) {
+  const rtmpUrl = new URL(rtmpUrlText);
+  if (rtmpUrl.protocol !== 'rtmp:' && rtmpUrl.protocol !== 'rtmps:') {
+    throw new Error('Only rtmp and rtmps URLs are supported.');
+  }
+  if (!isLocalPreviewHost(rtmpUrl.hostname)) {
+    return null;
+  }
+  rtmpUrl.protocol = rtmpUrl.protocol === 'rtmps:' ? 'https:' : 'http:';
+  rtmpUrl.port = '8888';
+  rtmpUrl.search = '';
+  return rtmpUrl.toString();
+}
+
+function isLocalPreviewHost(host: string) {
+  const normalized = host.toLowerCase();
+  if (
+    normalized === 'localhost' ||
+    normalized.endsWith('.local') ||
+    normalized.startsWith('192.168.') ||
+    normalized.startsWith('10.') ||
+    normalized.startsWith('169.254.')
+  ) {
+    return true;
+  }
+  const parts = normalized.split('.').map((part) => Number(part));
+  return (
+    parts.length === 4 &&
+    parts.every(Number.isInteger) &&
+    parts[0] === 172 &&
+    parts[1] >= 16 &&
+    parts[1] <= 31
+  );
 }
 
 function webrtcPreviewUrl(whipUrlText: string) {
@@ -708,6 +767,10 @@ function webrtcPreviewUrl(whipUrlText: string) {
 
 function localWebrtcSetupMessage(detail: string) {
   return `Local WebRTC server not reachable (${detail}). Run python3 examples/local-demo-cloud/server.py and paste the printed WHIP publish URL.`;
+}
+
+function localRtmpSetupMessage(detail: string) {
+  return `Local RTMP/HLS server not reachable (${detail}). Run python3 examples/local-demo-cloud/server.py and paste the printed RTMP publish URL.`;
 }
 
 function streamUrlValidationMessage(streamUrl: string) {

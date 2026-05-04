@@ -57,9 +57,11 @@ WHEP playback URL:
 ```
 
 Paste the photo URL into the Camera screen. For RTMP, paste the RTMP publish URL
-into the Stream screen's RTMP field and open the HLS preview URL on your
-computer. For WebRTC, paste the WHIP URL into the Stream screen's WebRTC field
-and open the WebRTC preview URL on your computer.
+into the Stream screen's RTMP field. The native iOS example derives the HLS
+preview URL and shows it in the preview card after the stream starts; you can
+also open the HLS preview URL on your computer. For WebRTC, paste the WHIP URL
+into the Stream screen's WebRTC field and open the WebRTC preview URL on your
+computer.
 
 The HLS preview URL becomes useful after the RTMP stream starts. If you open it
 before tapping **Start stream**, refresh the page after the glasses begin

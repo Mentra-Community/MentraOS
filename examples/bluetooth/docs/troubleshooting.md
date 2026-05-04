@@ -58,7 +58,7 @@ If your app also uses Firebase with static frameworks, Firebase modular header c
 - Use the printed LAN URL, not `localhost`, in the example app's RTMP or WebRTC field.
 - Confirm the glasses, phone, and computer are on a network where local device-to-device traffic is allowed.
 - Confirm Mentra Live is connected to Wi-Fi before starting the stream.
-- For RTMP, open or refresh the printed HLS preview URL after tapping **Start stream**.
+- For RTMP, the native iOS example embeds the derived HLS preview URL while live. You can also open or refresh the printed HLS preview URL on your computer after tapping **Start stream**.
 - If Docker is running in bridge mode, confirm UDP ports `8890` and `8189` are published.
 - If the helper picked the wrong network interface, restart it with `python3 examples/local-demo-cloud/server.py --host-ip <computer-lan-ip>`.
 

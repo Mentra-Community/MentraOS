@@ -53,7 +53,9 @@ into the WebRTC field. If Docker is not installed or not running, the command
 still starts the photo webhook and skips streaming with a
 warning.
 
-Open the printed HLS or WebRTC browser preview URL on your computer to watch a stream.
+The Stream screen embeds the derived RTMP/HLS preview and WebRTC preview while
+the stream is live. You can also open the printed HLS or WebRTC browser preview
+URL on your computer.
 See [`examples/local-demo-cloud`](../local-demo-cloud/README.md) for details.
 
 ## Files
