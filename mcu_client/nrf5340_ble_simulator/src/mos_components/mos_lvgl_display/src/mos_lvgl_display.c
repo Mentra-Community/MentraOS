@@ -801,103 +801,6 @@ void ui_create(void)
 }
 
 /****************************************************/
-static lv_obj_t *cont = NULL;
-static lv_anim_t anim;
-
-/* Animation callback: scroll container vertically to v pixels.
- * 动画回调：将容器纵向滚动到 v 像素。 */
-static void scroll_cb(void *var, int32_t v)
-{
-    LV_UNUSED(var);
-    lv_obj_scroll_to_y(cont, v, LV_ANIM_OFF);
-}
-
-void scroll_text_create(lv_obj_t *parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h, const char *txt,
-                        const lv_font_t *font, uint32_t time_ms)
-{
-    /* Remove old area.
-     * 移除旧区域。 */
-    scroll_text_stop();
-
-    /* Create scrollable container.
-     * 创建可滚动容器。 */
-    cont = lv_obj_create(parent);
-    lv_obj_set_size(cont, w, h);
-    lv_obj_set_pos(cont, x, y);
-    lv_obj_set_scroll_dir(cont, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(cont, LV_SCROLLBAR_MODE_OFF);
-    /* Set adaptive background color for container.
-     * 设置容器背景为自适应背景色。 */
-    lv_obj_set_style_bg_color(cont, display_get_background_color(), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(cont, LV_OPA_COVER, LV_PART_MAIN);
-
-    /* Create label inside container.
-     * 在容器中创建标签。 */
-    lv_obj_t *label = lv_label_create(cont);
-    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(label, w);
-    lv_label_set_text(label, txt);
-
-    /* Set adaptive text color and specified font.
-     * 设置文字为自适应颜色和指定字体。 */
-    lv_obj_set_style_text_color(label, display_get_text_color(), LV_PART_MAIN);
-    lv_obj_set_style_text_font(label, font, LV_PART_MAIN);
-
-    /* Force label relayout to obtain accurate content height.
-     * 强制标签布局更新，获取正确内容高度。 */
-    lv_obj_update_layout(label);
-    int32_t label_h = lv_obj_get_height(label);
-    /* Scroll range = label height - container height.
-     * 滚动范围 = 标签高度 - 容器高度。 */
-    int32_t range = label_h - h;
-    if (range <= 0)
-        return;
-
-    /* Initialize and start round-trip scroll animation.
-     * 初始化并启动往返滚动动画。 */
-    lv_anim_init(&anim);
-    lv_anim_set_var(&anim, cont);
-    lv_anim_set_exec_cb(&anim, scroll_cb);
-    lv_anim_set_time(&anim, time_ms);
-    lv_anim_set_values(&anim, 0, range);
-    /* lv_anim_set_playback_duration(&anim, time_ms); Playback duration / 反向动画时间 */
-    lv_anim_set_repeat_count(&anim, LV_ANIM_REPEAT_INFINITE);
-    lv_anim_start(&anim);
-}
-
-void scroll_text_stop(void)
-{
-    if (cont)
-    {
-        lv_anim_del(cont, scroll_cb);
-        lv_obj_del(cont);
-        cont = NULL;
-    }
-}
-// void handle_display_text(const mentraos_ble_DisplayText *txt)
-// {
-//     display_cmd_t cmd;
-
-//     cmd.type = LCD_CMD_TEXT;
-//     LOG_INF("show text: %s", (char *)txt->text.arg);
-//     // /* txt->text.arg 已由 decode_string 填入 NUL 结尾字符串 */
-//     // // strncpy(cmd.p.text.text, (char *)txt->text.arg, MAX_TEXT_LEN);
-//     memcpy(cmd.p.text.text, (char *)txt->text.arg, MAX_TEXT_LEN);
-//     cmd.p.text.text[MAX_TEXT_LEN] = '\0';
-
-//     cmd.p.text.x = txt->x;
-//     cmd.p.text.y = 260; // test  // txt->y;
-//     cmd.p.text.font_code = txt->font_code;
-//     cmd.p.text.font_color = txt->color;
-//     cmd.p.text.size = txt->size;
-//     // 非阻塞入队，队满则丢弃并打印警告
-//     if (mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_ON) != 0)
-//     {
-//         LOG_ERR("UI queue full, drop text");
-//     }
-// }
-
-/****************************************************/
 /* 前向声明 / Forward declarations */
 static void show_test_pattern(int pattern_id);
 
@@ -1004,36 +907,6 @@ static void create_vertical_zebra_pattern(lv_obj_t *screen)
     }
 }
 
-/* 平滑滚动动画用全局变量 / Global variables for smooth scrolling animation */
-static lv_obj_t *scrolling_welcome_label = NULL;
-static lv_anim_t welcome_scroll_anim;
-
-/* 平滑横向滚动动画回调 / Animation callback for smooth horizontal scrolling */
-static void welcome_scroll_anim_cb(void *var, int32_t v)
-{
-    lv_obj_set_x((lv_obj_t *)var, v);
-}
-
-/* 动画结束回调，用于重新开始滚动 / Animation ready callback to restart the scroll */
-static void welcome_scroll_ready_cb(lv_anim_t *a)
-{
-    if (scrolling_welcome_label == NULL)
-        return;
-
-    /* 重启动画以实现无限循环 / Restart the animation for infinite loop */
-    lv_anim_init(&welcome_scroll_anim);
-    lv_anim_set_var(&welcome_scroll_anim, scrolling_welcome_label);
-    lv_anim_set_exec_cb(&welcome_scroll_anim, welcome_scroll_anim_cb);
-    lv_anim_set_time(&welcome_scroll_anim, 8000); /* 全程 8 秒 / 8 seconds for full traverse */
-    lv_anim_set_repeat_count(&welcome_scroll_anim, LV_ANIM_REPEAT_INFINITE);
-    lv_anim_set_path_cb(&welcome_scroll_anim, lv_anim_path_linear);
-    lv_anim_set_ready_cb(&welcome_scroll_anim, welcome_scroll_ready_cb);
-
-    /* 从右边缘滚到左边缘 / Start from right edge, move to left edge */
-    lv_anim_set_values(&welcome_scroll_anim, 640, -600); /* 起点 640px，终点 -600px / Start at 640px, end at -600px */
-
-    lv_anim_start(&welcome_scroll_anim);
-}
 
 static void anim_set_x_cb(void *obj, int32_t v)
 {
@@ -1249,7 +1122,7 @@ static void restore_welcome_screen_state(void)
 /* 欢迎屏：使用当前外置字库（与全局一致）。上电默认值见 prj.conf 的 MOS_WELCOME_LANG_* / PT_SIZE，
  * 对应 mos_binfont_lvgl.c 里 s_current_*；用户调用 mos_font_switch_language 后不再被欢迎刷新覆盖。
  * 未就绪时回退 secondary。须在 LVGL 线程调用。 */
-static void welcome_apply_preferred_font(lv_obj_t *label)
+static void f(lv_obj_t *label)
 {
     if (label == NULL)
     {
@@ -1583,12 +1456,6 @@ bool display_is_welcome_screen_active(void)
 static void tear_down_screen_child_global_refs(void)
 {
     k_work_cancel_delayable(&welcome_battery_work);
-
-    if (scrolling_welcome_label != NULL)
-    {
-        lv_anim_del(scrolling_welcome_label, NULL);
-        scrolling_welcome_label = NULL;
-    }
 
     welcome_container = NULL;
     welcome_label = NULL;
@@ -3031,11 +2898,6 @@ static void show_gbk_chars_test(void)
     display_scene_set_mode(DISPLAY_SCENE_MODE_TEST);
     k_work_cancel_delayable(&welcome_battery_work);
 
-    if (scrolling_welcome_label != NULL)
-    {
-        lv_anim_del(scrolling_welcome_label, NULL);
-    }
-
     if (!gbk_chars_screen)
     {
         printk("GBK_TEST: create screen\r\n");
@@ -3143,11 +3005,6 @@ static void show_gbk_test_text(void)
     welcome_screen_active = false;
     display_scene_set_mode(DISPLAY_SCENE_MODE_TEST);
     k_work_cancel_delayable(&welcome_battery_work);
-
-    if (scrolling_welcome_label != NULL)
-    {
-        lv_anim_del(scrolling_welcome_label, NULL);
-    }
 
     if (!gbk_screen)
     {

@@ -122,15 +122,6 @@ typedef struct
     display_param_u p;
 } display_cmd_t;
 
-void scroll_text_create(lv_obj_t *parent,
-                        lv_coord_t x, lv_coord_t y,
-                        lv_coord_t w, lv_coord_t h,
-                        const char *txt,
-                        const lv_font_t *font,
-                        uint32_t time_ms);
-
-
-void scroll_text_stop(void);
 
 void display_open(void);
 
