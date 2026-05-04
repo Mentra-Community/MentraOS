@@ -2,22 +2,26 @@
   "name": "mentra-bluetooth-sdk-example",
   "version": "0.1.0",
   "private": true,
-  "main": "expo/AppEntry.js",
+  "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "expo start --dev-client",
     "ios": "expo run:ios",
-    "android": "expo run:android"
+    "android": "expo run:android",
+    "web": "expo start --web"
   },
   "dependencies": {
-    "@mentra/bluetooth-sdk": "^0.1.0",
-    "expo": "^55.0.0",
+    "@mentra/bluetooth-sdk": "file:/Users/philippe/dev/MentraOS-philippe-os-1178-mentra-bluetooth-sdk/mobile/modules/bluetooth-sdk",
+    "expo": "~55.0.19",
     "expo-build-properties": "~55.0.13",
-    "expo-dev-client": "^55.0.0",
-    "react": "^19.1.0",
-    "react-native": "^0.83.0"
+    "expo-dev-client": "~55.0.16",
+    "expo-linear-gradient": "~55.0.13",
+    "react": "19.2.0",
+    "react-native": "0.83.6",
+    "react-native-safe-area-context": "~5.6.2",
+    "react-native-svg": "15.15.3"
   },
   "devDependencies": {
     "@types/react": "^19.1.0",
-    "typescript": "^6.0.0"
+    "typescript": "~5.9.2"
   }
 }

@@ -6,7 +6,7 @@ The Mentra Bluetooth SDK exposes typed native APIs for Android and iOS. Use thes
 
 | Platform | Package |
 | --- | --- |
-| Android | `com.mentra.bluetoothsdk` |
+| Android | `com.mentra.core` |
 | iOS | `MentraBluetoothSDK` |
 
 ## Base Lifecycle
@@ -149,6 +149,17 @@ sdk.setButtonVideoRecordingSettings(
 sdk.setButtonCameraLed(enabled = true)
 sdk.setButtonMaxRecordingTime(minutes = 3)
 sdk.setCameraFov(MentraCameraFov.WIDE)
+sdk.rgbLedControl(
+    MentraRgbLedRequest(
+        requestId = "led-${System.currentTimeMillis()}",
+        packageName = "com.example.assistant",
+        action = "solid",
+        color = "#34C759",
+        ontime = 1000,
+        offtime = 0,
+        count = 1,
+    )
+)
 ```
 
 iOS:
@@ -172,6 +183,17 @@ try await sdk.setButtonVideoRecordingSettings(
 try await sdk.setButtonCameraLed(enabled: true)
 try await sdk.setButtonMaxRecordingTime(minutes: 3)
 try await sdk.setCameraFov(.wide)
+sdk.rgbLedControl(
+    MentraRgbLedRequest(
+        requestId: "led-\(Date().timeIntervalSince1970)",
+        packageName: "com.example.assistant",
+        action: "solid",
+        color: "#34C759",
+        ontime: 1000,
+        offtime: 0,
+        count: 1
+    )
+)
 ```
 
 Unsupported settings should fail through a typed error or capability status, not silently succeed.

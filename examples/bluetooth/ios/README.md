@@ -1,62 +1,57 @@
-# Bare iOS Example
+# Mentra Example — iOS (SwiftUI)
 
-This example is a minimal native iOS SwiftUI app that calls the `MentraBluetoothSDK` API directly.
-
-It is intentionally not a React Native or Expo app. It demonstrates scanning, connecting, receiving delegate events, showing a glasses preview card with model image, battery, Bluetooth/search state, and Wi-Fi state, displaying text, applying a simple setting, requesting photo webhook uploads, previewing uploaded photos, and invalidating the SDK.
-
-## Configure SDK Version
-
-Set the SDK version when installing pods:
-
-```sh
-MENTRA_BLUETOOTH_SDK_VERSION=<version supplied by Mentra> pod install
-```
-
-If your partner release uses a private CocoaPods spec repo, add the source supplied by Mentra at the top of `Podfile`.
-
-For local validation before a release, point the example at a checked-out SDK podspec:
-
-```sh
-MENTRA_BLUETOOTH_SDK_LOCAL_PATH=/path/to/bluetooth-sdk/ios pod install
-```
+Native iOS reference app for the Mentra Bluetooth SDK. It uses the same Device,
+Camera, Stream, System, and Console design as the other examples, with each
+visible control wired to the SDK where the current public Swift API supports it.
 
 ## Run
 
-```sh
+Install pods, then open the workspace:
+
+```bash
 cd examples/ios
 pod install
-open MentraBareIosExample.xcworkspace
+open MentraExample.xcworkspace
 ```
 
-Run on a physical iPhone with Bluetooth enabled. The iOS simulator is useful for UI work, but Bluetooth glasses pairing requires hardware.
+In Xcode, select the `MentraExample` scheme and run on a physical iPhone. The
+example needs Bluetooth access for real glasses; simulators are useful only for
+UI and compile checks.
 
-Before running on a physical iPhone, select your Apple development team in Xcode and change the bundle identifier if needed. The checked-in project keeps `DEVELOPMENT_TEAM` empty so this customer-facing example is not tied to Mentra's or any developer's Apple account.
+For local SDK development, the `Podfile` reads
+`MENTRA_BLUETOOTH_SDK_LOCAL_PATH` when present. If it is unset, it uses the
+local MentraOS checkout path used by this repo while the SDK is under active
+development.
 
-## Local Photo Preview
+```bash
+export MENTRA_BLUETOOTH_SDK_LOCAL_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk/ios
+pod install
+```
 
-For a local end-to-end photo upload demo, start the companion webhook server on your computer:
+## What It Demonstrates
 
-```sh
+- Scanning for Mentra Live glasses, connecting, and disconnecting.
+- Displaying connection, battery, firmware, Wi-Fi, RSSI, discovered-device, and event status.
+- Sending display text, clearing the display, and applying basic hardware settings.
+- Requesting photo capture plus webhook upload, then polling the local webhook server for preview.
+- Starting and stopping RTMP/SRT/WebRTC stream requests with 15-second keep-alive calls.
+- Requesting Wi-Fi scans, sending selected SSIDs with an empty password, and toggling hotspot state.
+- Enabling microphone PCM delivery and showing received frame and byte counts.
+- Sending RGB LED mode requests.
+- Showing button, touch, BLE, TX, STORE, and raw status events in the console.
+
+For local photo preview testing, run the webhook server from the repo root and
+paste the printed LAN `/upload` URL into the Camera screen:
+
+```bash
 python3 examples/photo-webhook-server/server.py
-```
-
-Paste the printed LAN URL, for example `http://192.168.1.42:8787/upload`, into the iOS example's **Webhook Photo Preview** field. The URL shown in the empty field is only a placeholder; you must enter the URL printed by your local server. Do not use `localhost`; the Mentra Live glasses upload the photo directly to the computer.
-
-When you tap **Take Photo + Upload**, the iOS app calls `sdk.requestPhoto(...)` with that URL. The glasses capture the photo, upload it to the server, and the iOS app polls `GET /uploads/<requestId>.json` until it can load the returned `photoUrl`.
-
-For automated device checks, you can prefill the field at launch:
-
-```sh
-xcrun devicectl device process launch \
-  --device <device-id> \
-  --environment-variables '{"MENTRA_PHOTO_WEBHOOK_URL":"http://192.168.1.42:8787/upload"}' \
-  com.mentra.examples.ios
 ```
 
 ## Files
 
-- `MentraBareIosExample/BluetoothViewModel.swift`: native SDK usage
-- `MentraBareIosExample/ContentView.swift`: minimal SwiftUI controls
-- `MentraBareIosExample/Info.plist`: Bluetooth, microphone, and local-network permission copy
-- `Podfile`: dependency on `MentraBluetoothSDK`
-- `../photo-webhook-server/server.py`: local webhook receiver for photo upload previews
+- `MentraExample/BluetoothViewModel.swift` — SDK integration and screen state.
+- `MentraExample/RootView.swift` — tab container.
+- `MentraExample/DeviceScreen.swift`, `CameraScreen.swift`, `StreamScreen.swift`, `SystemScreen.swift`, `ConsoleScreen.swift` — one SwiftUI screen per tab.
+- `MentraExample/Theme.swift` — shared colors, glass cards, status/header pieces.
+- `Podfile` — local SDK pod integration.
+- `project.yml` — optional XcodeGen spec for regenerating the project.

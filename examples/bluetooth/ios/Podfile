@@ -1,16 +1,12 @@
-platform :ios, '15.1'
+platform :ios, '16.0'
 
-# Add the private Mentra spec source supplied for your partner program if needed.
-# source 'https://github.com/<mentra-private-spec-repo>.git'
 source 'https://cdn.cocoapods.org/'
 
-target 'MentraBareIosExample' do
+target 'MentraExample' do
   use_frameworks!
 
-  local_sdk_path = ENV['MENTRA_BLUETOOTH_SDK_LOCAL_PATH']
-  if local_sdk_path && !local_sdk_path.empty?
-    pod 'MentraBluetoothSDK', :path => local_sdk_path
-  else
-    pod 'MentraBluetoothSDK', ENV.fetch('MENTRA_BLUETOOTH_SDK_VERSION', '0.1.0')
-  end
+  local_sdk_path = ENV['MENTRA_BLUETOOTH_SDK_LOCAL_PATH'] ||
+    '/Users/philippe/dev/MentraOS-philippe-os-1178-mentra-bluetooth-sdk/mobile/modules/bluetooth-sdk/ios'
+
+  pod 'MentraBluetoothSDK', :path => local_sdk_path
 end

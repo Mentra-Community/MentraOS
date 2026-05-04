@@ -1,0 +1,32 @@
+name: MentraExample
+options:
+  bundleIdPrefix: com.mentra
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    DEVELOPMENT_TEAM: ""
+    TARGETED_DEVICE_FAMILY: "1"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+        GENERATE_INFOPLIST_FILE: "YES"
+        INFOPLIST_KEY_UILaunchScreen_Generation: "YES"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
+        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: "This example app uses Bluetooth to connect to smart glasses."
+        INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription: "This example app uses Bluetooth to connect to smart glasses."
+        INFOPLIST_KEY_NSCameraUsageDescription: "This example app can trigger camera capture on connected smart glasses."
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "This example app can talk to a local photo webhook server."
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "This example app can stream microphone audio from connected smart glasses."
+
+targets:
+  MentraExample:
+    type: application
+    platform: iOS
+    sources:
+      - path: MentraExample
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mentra.examples.ios
+        PRODUCT_NAME: MentraExample

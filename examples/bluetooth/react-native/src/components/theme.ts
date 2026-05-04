@@ -1,0 +1,33 @@
+export const colors = {
+  bg: '#FFFFFF',
+  ink: '#0E1A14',
+  inkAlt: '#0E0E10',
+  muted: '#6B7268',
+  mutedSoft: '#9DA29A',
+  hairline: '#0F2A1D14',
+  surfaceTint: 'rgba(255,255,255,0.6)',
+  surfaceTintStrong: 'rgba(255,255,255,0.78)',
+  border: '#FFFFFFBF',
+  borderSoft: '#FFFFFFB3',
+  greenPrimary: '#16A34A',
+  greenAccent: '#34C759',
+  greenInk: '#0E2C1A',
+  greenSoft: '#7DD89E',
+  greenDeep: '#248A3D',
+  red: '#FF3B30',
+  redLive: '#FF5252',
+  amber: '#FF9500',
+  gold: '#FFCC00',
+  ble: '#84B5E8',
+  store: '#E8C66B',
+  tx: '#E89C7D',
+  consoleBg: 'rgba(20, 22, 21, 0.88)',
+  consoleText: '#E8E2CE',
+  consoleMuted: '#FFFFFF80',
+  consoleFaint: '#FFFFFF66',
+};
+
+export const fonts = {
+  display: 'System',
+  mono: 'Courier',
+};

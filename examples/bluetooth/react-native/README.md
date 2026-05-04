@@ -58,14 +58,15 @@ granted for the app and that device Location services are enabled.
 
 ## What It Demonstrates
 
-- Showing a compact glasses preview card with local device images, battery level, Bluetooth state, and Wi-Fi state
+- Showing the same Device, Camera, Stream, System, and Console design as the native examples
 - Subscribing to glasses and Bluetooth status
 - Scanning for compatible glasses
 - Connecting to discovered or saved/default glasses
-- Connecting to simulated glasses
-- Displaying text
-- Applying display settings
-- Clearing the display
-- Listening for button and battery events
+- Displaying text, applying basic hardware settings, and clearing the display
 - Requesting a Mentra Live photo upload to a local webhook server
 - Polling the local server with cache-busted status requests and displaying the uploaded photo preview
+- Starting and stopping RTMP/SRT/WebRTC stream requests with 15-second keep-alive calls
+- Requesting Wi-Fi scans, sending selected SSIDs with an empty password, and toggling hotspot state
+- Enabling microphone PCM delivery and showing received frame and byte counts
+- Sending RGB LED mode requests
+- Showing button, touch, BLE, TX, STORE, and raw status events in the console

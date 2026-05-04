@@ -1,0 +1,284 @@
+package com.mentra.examples.android.screens
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.mentra.examples.android.MentraExampleController
+import com.mentra.examples.android.batteryLabel
+import com.mentra.examples.android.batteryLevel
+import com.mentra.examples.android.bluetoothSearchLabel
+import com.mentra.examples.android.connectionLabel
+import com.mentra.examples.android.deviceLabel
+import com.mentra.examples.android.firmwareLabel
+import com.mentra.examples.android.modelLabel
+import com.mentra.examples.android.rssiLabel
+import com.mentra.examples.android.wifiLabel
+import com.mentra.examples.android.ui.AppColor
+import com.mentra.examples.android.ui.Eyebrow
+import com.mentra.examples.android.ui.GlassCard
+import com.mentra.examples.android.ui.PageHeader
+import com.mentra.examples.android.ui.StatusBarRow
+
+@Composable
+fun DeviceScreen(controller: MentraExampleController) {
+    val state = controller.state
+    val glasses = state.glassesStatus
+    val level = batteryLevel(glasses)
+    val latestEvent = state.events.firstOrNull()
+    Column(
+        modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())
+    ) {
+        StatusBarRow()
+        PageHeader("Device")
+
+        // Hero card
+        GlassCard(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Eyebrow(connectionLabel(glasses), color = AppColor.greenAccent)
+                    Text(modelLabel(glasses), color = AppColor.ink, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.7).sp)
+                    Text(deviceLabel(glasses), color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                }
+                Box(modifier = Modifier.size(width = 145.dp, height = 46.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF1A1A1A)))
+            }
+            Spacer(Modifier.height(14.dp))
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(AppColor.hairline))
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.Bottom) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Eyebrow("BATTERY")
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text(level?.toString() ?: "--", color = AppColor.ink, fontSize = 56.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-2.2).sp)
+                        Spacer(Modifier.width(6.dp))
+                        Text("%", color = AppColor.muted, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Icon(Icons.Filled.Bolt, contentDescription = null, tint = AppColor.greenAccent, modifier = Modifier.size(11.dp))
+                        Text(if (glasses["charging"] == true) "Charging" else "Waiting", color = AppColor.greenAccent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.Bottom) {
+                    val heights = listOf(14, 22, 30, 38, 46, 54, 62)
+                    heights.forEachIndexed { i, h ->
+                        Box(modifier = Modifier.size(width = 6.dp, height = h.dp).clip(RoundedCornerShape(3.dp)).background(if (level != null && i < kotlin.math.ceil(level / 100f * 7).toInt()) AppColor.greenAccent else Color(0x0F000000)))
+                    }
+                }
+            }
+        }
+
+        // Stat row
+        Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            StatTile("FIRMWARE", firmwareLabel(glasses), "reported", AppColor.greenAccent, Modifier.weight(1f))
+            StatTile("WI-FI", wifiLabel(glasses), (glasses["wifiLocalIp"] as? String) ?: "unknown", AppColor.muted, Modifier.weight(1f), bold = true)
+            StatTile("RSSI", rssiLabel(glasses), "signal", AppColor.greenAccent, Modifier.weight(1f), bold = true)
+        }
+
+        // Quick actions
+        GlassCard(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Quick actions", color = AppColor.inkAlt, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Eyebrow("SDK", color = AppColor.inkAlt.copy(alpha = 0.4f), mono = true)
+            }
+            Spacer(Modifier.height(16.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DarkBtn("Scan", Icons.Outlined.Search, AppColor.greenInk, Modifier.weight(1f), controller::startScan)
+                    DarkBtn("Connect", Icons.Outlined.Link, AppColor.greenPrimary, Modifier.weight(1f), controller::connect)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LightBtn("Display Hello", Icons.Outlined.Tv, Modifier.weight(1f), controller::displayHello)
+                    LightBtn("Clear Display", Icons.Outlined.Tv, Modifier.weight(1f), controller::clearDisplay)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LightBtn("Apply Settings", Icons.Outlined.Check, Modifier.weight(1f), controller::applySettings)
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(Brush.verticalGradient(listOf(Color(0xFFFF6B5B), AppColor.red)))
+                            .clickable { controller.disconnect() }
+                            .padding(vertical = 14.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Outlined.LinkOff, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                            Text("Disconnect", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Live status
+        GlassCard(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            padding = PaddingValues(top = 22.dp, bottom = 22.dp, start = 0.dp, end = 0.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(AppColor.greenPrimary))
+                    Text("Live status", color = AppColor.inkAlt, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
+                Box(modifier = Modifier.clip(RoundedCornerShape(999.dp)).background(AppColor.greenInk.copy(alpha = 0.06f)).padding(horizontal = 10.dp, vertical = 4.dp)) {
+                    Eyebrow("REC", color = AppColor.greenInk, mono = true)
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            Column(modifier = Modifier.padding(horizontal = 18.dp)) {
+                StatusKVRow("LAST ACTION", value = state.lastAction, first = true)
+                StatusKVRow("CONNECTION") {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(AppColor.greenPrimary))
+                        Text(connectionLabel(glasses), color = AppColor.greenInk, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                StatusKVRow("DEVICE", value = deviceLabel(glasses), mono = true)
+                StatusKVRow("BATTERY") {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(batteryLabel(glasses), color = AppColor.inkAlt, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Row(
+                            modifier = Modifier.clip(RoundedCornerShape(999.dp)).background(AppColor.greenPrimary.copy(alpha = 0.08f)).padding(horizontal = 8.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(Icons.Filled.Bolt, null, tint = AppColor.greenPrimary, modifier = Modifier.size(10.dp))
+                            Text("charging", color = AppColor.greenPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+                StatusKVRow("BLUETOOTH", value = bluetoothSearchLabel(state.bluetoothStatus))
+                StatusKVRow("DISCOVERED", value = state.discoveredDevices.joinToString { it.name }.ifBlank { "None yet" }, mono = true)
+                StatusKVRow("PERMISSIONS", value = "Android runtime")
+                StatusKVRow("CAMERA", value = state.cameraStatus)
+                StatusKVRow("LATEST EVENT") {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(
+                                modifier = Modifier.clip(RoundedCornerShape(5.dp)).background(AppColor.greenPrimary.copy(alpha = 0.08f)).padding(horizontal = 7.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(AppColor.greenPrimary))
+                                Text("LIVE", color = AppColor.greenPrimary, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp)
+                            }
+                            Text(latestEvent?.time ?: "--:--:--", color = AppColor.inkAlt.copy(alpha = 0.65f), fontSize = 11.sp)
+                        }
+                        Text(latestEvent?.text ?: "No events yet", color = AppColor.inkAlt, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(140.dp))
+    }
+}
+
+@Composable
+private fun StatTile(label: String, value: String, sub: String, subColor: Color, modifier: Modifier, bold: Boolean = false) {
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color.White)
+            .border(1.dp, AppColor.borderSoft, RoundedCornerShape(18.dp))
+            .padding(horizontal = 14.dp, vertical = 13.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Eyebrow(label)
+        Text(value, color = AppColor.ink, fontSize = 14.sp, fontWeight = if (bold) FontWeight.Bold else FontWeight.SemiBold)
+        Text(sub, color = subColor, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun DarkBtn(title: String, icon: ImageVector, bg: Color, modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(bg)
+            .clickable { onClick() }
+            .padding(vertical = 14.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(icon, null, tint = Color.White, modifier = Modifier.size(14.dp))
+            Text(title, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+@Composable
+private fun LightBtn(title: String, icon: ImageVector, modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.White)
+            .border(1.dp, Color(0xFFDBDBDB), RoundedCornerShape(14.dp))
+            .clickable { onClick() }
+            .padding(vertical = 14.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(icon, null, tint = AppColor.inkAlt, modifier = Modifier.size(14.dp))
+            Text(title, color = AppColor.inkAlt, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+@Composable
+private fun StatusKVRow(label: String, value: String? = null, mono: Boolean = false, first: Boolean = false, content: (@Composable () -> Unit)? = null) {
+    Column {
+        if (!first) {
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(Color(0xFFF2EDE0)))
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 11.dp),
+            verticalAlignment = Alignment.Top,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text(
+                label,
+                color = AppColor.inkAlt.copy(alpha = 0.5f),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 1.4.sp,
+                modifier = Modifier.width(90.dp)
+            )
+            Box(modifier = Modifier.weight(1f)) {
+                if (content != null) content()
+                else if (value != null) {
+                    Text(
+                        value,
+                        color = AppColor.inkAlt,
+                        fontSize = if (mono) 12.sp else 13.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+    }
+}

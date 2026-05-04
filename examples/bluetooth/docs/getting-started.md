@@ -69,6 +69,8 @@ See [Android example](../examples/android/README.md) for a complete app skeleton
 ## Android Basic Flow
 
 ```kotlin
+import com.mentra.core.*
+
 class GlassesController(
     private val context: Context,
 ) : MentraBluetoothSdkListener {
