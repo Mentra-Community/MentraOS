@@ -8,6 +8,7 @@
 #include "protobuf_handler.h"
 #if defined(CONFIG_LVGL)
 #include "mos_binfont_lvgl.h"
+#include "mos_font_storage.h"  /* MOS_FONT_LANG_ZH_CN */
 #endif
 
 LOG_MODULE_REGISTER(welcome_text, LOG_LEVEL_DBG);

@@ -8,6 +8,7 @@
 #include "welcome/welcome_view.h"
 #include "caption/caption_view.h"
 #include "display_config.h"
+#include "mos_lvgl_display.h"  /* for display_biz_lang_t */
 
 /* Active sub-view of the main scene. NONE means the scene hasn't been created (or has been
  * destroyed). The mode is mutated by the activate_* helpers and the positioned-text path,
@@ -114,6 +115,16 @@ void mos_ui_main_scene_render_positioned_text(mos_ui_main_scene_t *scene,
  * ------------------------------------------------------------------------- */
 void mos_ui_main_scene_render_caption_text(mos_ui_main_scene_t *scene,
                                             const char *text, uint32_t committed_seq);
+
+/* Lower-level activation hooks the caption renderer dispatches into after picking the
+ * appropriate font. Not for direct use from the control plane — call _render_caption_text
+ * to go through the throttler/renderer pipeline. */
+void mos_ui_main_scene_show_caption_default(mos_ui_main_scene_t *scene,
+                                             const lv_font_t *font, const char *text);
+void mos_ui_main_scene_show_caption_custom(mos_ui_main_scene_t *scene, const char *text,
+                                            const lv_font_t *font_primary,
+                                            const lv_font_t *font_fallback,
+                                            lv_color_t text_color);
 
 int  mos_ui_main_scene_set_translation_pair(display_biz_lang_t src, display_biz_lang_t dst);
 void mos_ui_main_scene_get_translation_pair(display_biz_lang_t *src, display_biz_lang_t *dst);

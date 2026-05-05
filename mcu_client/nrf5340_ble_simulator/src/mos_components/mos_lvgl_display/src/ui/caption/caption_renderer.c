@@ -12,6 +12,7 @@
 
 #if defined(CONFIG_LVGL)
 #include "mos_binfont_lvgl.h"
+#include "mos_font_storage.h"  /* mos_font_language_t, mos_font_size_t, mos_font_switch_language */
 #endif
 #if defined(CONFIG_LV_FONT_SIMSUN_16_CJK)
 LV_FONT_DECLARE(lv_font_simsun_16_cjk);

@@ -4,7 +4,7 @@
 #include <zephyr/logging/log.h>
 #include <lvgl.h>
 
-#include "main.h"
+#include "mos_lvgl_display.h"  /* MAX_TEXT_LEN */
 
 LOG_MODULE_REGISTER(dynamic_font_labels, LOG_LEVEL_DBG);
 

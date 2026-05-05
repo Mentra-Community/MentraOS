@@ -47,9 +47,7 @@ static volatile bool display_onoff = false;
 static mos_ui_main_scene_t g_main_scene;
 
 #if defined(CONFIG_LVGL)
-static void restore_welcome_screen_state(void);
 static void update_welcome_label_with_battery(void);
-static void ensure_pattern4_scene_ready(void);
 static void reset_display_text_caches(void);
 static void clear_current_display_text(void);
 
@@ -272,16 +270,6 @@ static void show_default_ui(void)
     LOG_INF("🖼️ Scrolling welcome message complete - should see animated text");
 }
 
-#if defined(CONFIG_LVGL)
-/* Welcome-screen state reset: hide caption content, show the shared welcome container,
- * restore scene mode. Separate from text refresh on purpose. */
-static void restore_welcome_screen_state(void)
-{
-    ensure_pattern4_scene_ready();
-    mos_ui_main_scene_show_welcome(&g_main_scene);
-}
-#endif
-
 static const lv_font_t *font_to_be_used(void)
 {
 #if defined(CONFIG_LVGL)
@@ -336,17 +324,6 @@ static void tear_down_screen_child_global_refs(void)
     k_work_cancel_delayable(&welcome_battery_work);
     mos_ui_main_scene_destroy(&g_main_scene);
     memset(&g_main_scene, 0, sizeof(g_main_scene));
-}
-
-static void ensure_pattern4_scene_ready(void)
-{
-    if (mos_ui_main_scene_welcome_is_ready(&g_main_scene))
-    {
-        return;
-    }
-
-    LOG_INF("Recreating Pattern 4 scene after clear/reset");
-    show_test_pattern(4);
 }
 
 static void reset_display_text_caches(void)
@@ -603,7 +580,7 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     /* Discard any pending caption ingest, swap back to the welcome scene, and
                      * refresh the battery line so the user sees current state on reconnect. */
                     reset_display_text_caches();
-                    restore_welcome_screen_state();
+                    mos_ui_main_scene_show_welcome(&g_main_scene);
                     update_welcome_label_with_battery();
                     LOG_INF("BT disconnected → welcome scene restored");
                     break;
