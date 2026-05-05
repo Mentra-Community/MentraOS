@@ -18,9 +18,12 @@ In Xcode, select the `MentraExample` scheme and run on a physical iPhone. The
 example needs Bluetooth access for real glasses; simulators are useful only for
 UI and compile checks.
 
-For local SDK development, the `Podfile` reads
-`MENTRA_BLUETOOTH_SDK_LOCAL_PATH` when present. If it is unset, it uses the
-default sibling checkout path `../MentraOS/mobile/modules/bluetooth-sdk/ios`.
+The example installs `MentraBluetoothSDK` from CocoaPods. By default it uses SDK
+version `0.1.0`; set `MENTRA_BLUETOOTH_SDK_VERSION` if your release notes
+specify a different version.
+
+For local SDK development before a release is published, point CocoaPods at a
+local SDK checkout:
 
 ```bash
 export MENTRA_BLUETOOTH_SDK_LOCAL_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk/ios
@@ -63,5 +66,5 @@ See [`examples/local-demo-cloud`](../local-demo-cloud/README.md) for details.
 - `MentraExample/RootView.swift` — tab container.
 - `MentraExample/DeviceScreen.swift`, `CameraScreen.swift`, `StreamScreen.swift`, `SystemScreen.swift`, `ConsoleScreen.swift` — one SwiftUI screen per tab.
 - `MentraExample/Theme.swift` — shared colors, glass cards, status/header pieces.
-- `Podfile` — local SDK pod integration.
+- `Podfile` — CocoaPods SDK integration.
 - `project.yml` — optional XcodeGen spec for regenerating the project.
