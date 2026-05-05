@@ -133,3 +133,18 @@ void mos_ui_welcome_text_update(lv_obj_t *label, const lv_font_t *font, const ch
 
     lv_label_set_text(label, text);
 }
+
+void mos_ui_welcome_text_refresh(lv_obj_t *label, const lv_font_t *font)
+{
+    if (!label)
+    {
+        return;
+    }
+    if (font)
+    {
+        lv_obj_set_style_text_font(label, font, 0);
+    }
+    char text[WELCOME_TEXT_BUF_SIZE];
+    build_welcome_text(text, sizeof(text));
+    lv_label_set_text(label, text);
+}

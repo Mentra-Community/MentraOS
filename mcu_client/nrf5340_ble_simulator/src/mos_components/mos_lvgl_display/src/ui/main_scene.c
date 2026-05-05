@@ -122,6 +122,36 @@ void mos_ui_main_scene_show_welcome(mos_ui_main_scene_t *scene)
     activate_welcome(scene);
 }
 
+void mos_ui_main_scene_clear_welcome(mos_ui_main_scene_t *scene)
+{
+    if (!scene) return;
+    mos_ui_welcome_view_clear(&scene->welcome);
+}
+
+void mos_ui_main_scene_clear_caption(mos_ui_main_scene_t *scene)
+{
+    if (!scene) return;
+    mos_ui_caption_view_clear(&scene->caption);
+}
+
+void mos_ui_main_scene_clear_positioned(mos_ui_main_scene_t *scene)
+{
+    if (!scene) return;
+    mos_ui_caption_view_clear_positioned(&scene->caption);
+}
+
+void mos_ui_main_scene_scroll_caption_to_bottom(mos_ui_main_scene_t *scene)
+{
+    if (!scene) return;
+    mos_ui_caption_view_scroll_to_bottom(&scene->caption);
+}
+
+void mos_ui_main_scene_set_caption_scroll_enabled(mos_ui_main_scene_t *scene, bool enabled)
+{
+    if (!scene) return;
+    mos_ui_caption_view_set_scroll_enabled(&scene->caption, enabled);
+}
+
 void mos_ui_main_scene_destroy(mos_ui_main_scene_t *scene)
 {
     if (!scene)

@@ -1,6 +1,7 @@
 #ifndef CAPTION_VIEW_H_
 #define CAPTION_VIEW_H_
 
+#include <stdbool.h>
 #include <lvgl.h>
 #include "components/default_scrolling.h"
 #include "components/custom_scrolling.h"
@@ -43,6 +44,10 @@ void mos_ui_caption_view_update_custom_text(mos_ui_caption_view_t *view, const c
 void mos_ui_caption_view_update_positioned_text(mos_ui_caption_view_t *view, const char *text,
                                                  const lv_font_t *font, lv_color_t text_color,
                                                  lv_coord_t x, lv_coord_t y);
+void mos_ui_caption_view_clear(mos_ui_caption_view_t *view);
+void mos_ui_caption_view_clear_positioned(mos_ui_caption_view_t *view);
+void mos_ui_caption_view_scroll_to_bottom(mos_ui_caption_view_t *view);
+void mos_ui_caption_view_set_scroll_enabled(mos_ui_caption_view_t *view, bool enabled);
 void mos_ui_caption_view_destroy(mos_ui_caption_view_t *view);
 
 #endif /* CAPTION_VIEW_H_ */

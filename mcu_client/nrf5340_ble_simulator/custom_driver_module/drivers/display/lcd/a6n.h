@@ -209,6 +209,12 @@ int a6n_enable_selftest(bool enable, uint8_t pattern);
 
 void a6n_power_on(void);
 
+/* Apply Hongshi vendor-recommended bring-up sequence on Bank0/Bank1:
+ * Demura disable, FAE config, vendor probes, GRAY16 mode, horizontal mirror,
+ * vendor magic + 90 Hz OSC config. Call once after a6n_power_on(),
+ * before a6n_clear_screen() / a6n_open_display(). */
+int a6n_apply_vendor_init_sequence(void);
+
 void a6n_power_off(void);
 
 void a6n_io_off(void);

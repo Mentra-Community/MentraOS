@@ -102,6 +102,89 @@ void mos_ui_caption_view_update_positioned_text(mos_ui_caption_view_t *view, con
     mos_ui_caption_view_set_mode(view, MOS_UI_CAPTION_MODE_POSITIONED);
 }
 
+void mos_ui_caption_view_clear(mos_ui_caption_view_t *view)
+{
+    if (!view)
+    {
+        return;
+    }
+
+    if (view->default_scrolling)
+    {
+        lv_label_set_text(view->default_scrolling, "");
+        lv_obj_clear_flag(view->default_scrolling, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (view->custom_scrolling.container)
+    {
+        lv_obj_add_flag(view->custom_scrolling.container, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clean(view->custom_scrolling.container);
+        view->custom_scrolling.pool_used = 0;
+    }
+    mos_ui_caption_view_clear_positioned(view);
+    if (view->container)
+    {
+        lv_obj_scroll_to_y(view->container, 0, LV_ANIM_OFF);
+        lv_obj_invalidate(view->container);
+    }
+}
+
+void mos_ui_caption_view_clear_positioned(mos_ui_caption_view_t *view)
+{
+    if (!view || !view->positioned)
+    {
+        return;
+    }
+
+    if (lv_obj_get_child_cnt(view->positioned) > 0)
+    {
+        lv_obj_clean(view->positioned);
+    }
+    lv_obj_add_flag(view->positioned, LV_OBJ_FLAG_HIDDEN);
+}
+
+void mos_ui_caption_view_scroll_to_bottom(mos_ui_caption_view_t *view)
+{
+    if (!view || !view->container || !view->default_scrolling)
+    {
+        return;
+    }
+    if (lv_obj_has_flag(view->default_scrolling, LV_OBJ_FLAG_HIDDEN))
+    {
+        return;
+    }
+
+    lv_obj_update_layout(view->default_scrolling);
+    lv_obj_update_layout(view->container);
+
+    const lv_coord_t view_h = lv_obj_get_content_height(view->container);
+    const lv_coord_t ly = lv_obj_get_y(view->default_scrolling);
+    const lv_coord_t lh = lv_obj_get_height(view->default_scrolling);
+    lv_coord_t target = ly + lh - view_h;
+    if (target < 0)
+    {
+        target = 0;
+    }
+    lv_obj_scroll_to_y(view->container, target, LV_ANIM_OFF);
+}
+
+void mos_ui_caption_view_set_scroll_enabled(mos_ui_caption_view_t *view, bool enabled)
+{
+    if (!view || !view->container)
+    {
+        return;
+    }
+
+    if (enabled)
+    {
+        lv_obj_set_scroll_dir(view->container, LV_DIR_VER);
+    }
+    else
+    {
+        lv_obj_set_scroll_dir(view->container, LV_DIR_NONE);
+        lv_obj_scroll_to_y(view->container, 0, LV_ANIM_OFF);
+    }
+}
+
 void mos_ui_caption_view_destroy(mos_ui_caption_view_t *view)
 {
     if (!view)

@@ -42,6 +42,88 @@ mos_ui_welcome_view_t mos_ui_welcome_view_create(lv_obj_t *parent, const mos_ui_
     return view;
 }
 
+void mos_ui_welcome_view_clear(mos_ui_welcome_view_t *view)
+{
+    if (!view)
+    {
+        return;
+    }
+
+    if (view->welcome_text)
+    {
+        lv_label_set_text(view->welcome_text, "");
+        lv_obj_clear_flag(view->welcome_text, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (view->dfu_status)
+    {
+        lv_label_set_text(view->dfu_status, "");
+        lv_obj_add_flag(view->dfu_status, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (view->dfu_progress.fill)
+    {
+        lv_obj_set_width(view->dfu_progress.fill, 0);
+    }
+    if (view->dfu_progress.bar)
+    {
+        lv_obj_add_flag(view->dfu_progress.bar, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (view->container)
+    {
+        lv_obj_invalidate(view->container);
+    }
+}
+
+void mos_ui_welcome_view_refresh_text(mos_ui_welcome_view_t *view, const lv_font_t *font)
+{
+    if (!view)
+    {
+        return;
+    }
+    mos_ui_welcome_text_refresh(view->welcome_text, font);
+}
+
+void mos_ui_welcome_view_update_dfu_progress(mos_ui_welcome_view_t *view, bool show, uint8_t percent)
+{
+    if (!view || !view->dfu_progress.bar || !view->dfu_progress.fill)
+    {
+        return;
+    }
+
+    if (show)
+    {
+        lv_obj_clear_flag(view->dfu_progress.bar, LV_OBJ_FLAG_HIDDEN);
+        lv_coord_t fill_w = (view->dfu_progress.bar_width * (lv_coord_t)percent) / 100;
+        if (fill_w < 0)
+        {
+            fill_w = 0;
+        }
+        lv_obj_set_width(view->dfu_progress.fill, fill_w);
+        lv_obj_invalidate(view->dfu_progress.bar);
+    }
+    else
+    {
+        lv_obj_add_flag(view->dfu_progress.bar, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void mos_ui_welcome_view_update_dfu_status(mos_ui_welcome_view_t *view, const char *text)
+{
+    if (!view || !view->dfu_status)
+    {
+        return;
+    }
+
+    if (text == NULL || text[0] == '\0')
+    {
+        lv_obj_add_flag(view->dfu_status, LV_OBJ_FLAG_HIDDEN);
+    }
+    else
+    {
+        lv_label_set_text(view->dfu_status, text);
+        lv_obj_clear_flag(view->dfu_status, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 void mos_ui_welcome_view_destroy(mos_ui_welcome_view_t *view)
 {
     if (!view)

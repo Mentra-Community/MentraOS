@@ -36,9 +36,6 @@ typedef enum
     LCD_CMD_SHOW_WELCOME_SCREEN,      // **NEW: Return to welcome screen (e.g. after BLE disconnect)**
     LCD_CMD_UPDATE_DFU_PROGRESS,      // **NEW: Show/update DFU progress bar below battery on welcome screen**
     LCD_CMD_UPDATE_DFU_STATUS_TEXT,   // **NEW: Show/hide DFU status line (e.g. "DFU Updating... 45%") below battery**
-    LCD_CMD_GRAYSCALE_HORIZONTAL,  // **NEW: Direct A6N horizontal grayscale**
-    LCD_CMD_GRAYSCALE_VERTICAL,    // **NEW: Direct A6N vertical grayscale**
-    LCD_CMD_CHESS_PATTERN,         // **NEW: Direct A6N chess pattern**
     LCD_CMD_SHOW_PATTERN,          // **NEW: Show specific pattern by ID**
     LCD_CMD_CLEAR_DISPLAY,         // **NEW: Clear display**
     LCD_CMD_INVALIDATE_FULL_SCREEN, /* Mark full screen dirty + request one LVGL refresh (thread-safe via msgq) */
@@ -150,11 +147,6 @@ void display_submit_text_payload(uint16_t x, uint16_t y, const char *text_conten
 
 /* Route scrolling text payload to the caption scene. */
 void display_submit_scrolling_text_payload(const char *text_content);
-
-// **NEW: Direct A6N pattern functions**
-void display_draw_horizontal_grayscale(void);
-void display_draw_vertical_grayscale(void);
-void display_draw_chess_pattern(void);
 
 // **NEW: Pattern 5 XY Text Positioning function**
 void display_update_xy_text(uint16_t x, uint16_t y, const char *text_content, uint16_t font_size, uint32_t color);

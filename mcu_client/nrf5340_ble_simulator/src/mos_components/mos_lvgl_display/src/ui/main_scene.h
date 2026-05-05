@@ -35,6 +35,11 @@ void mos_ui_main_scene_show_caption_custom(mos_ui_main_scene_t *scene, const cha
                                             lv_color_t text_color);
 void mos_ui_main_scene_show_positioned(mos_ui_main_scene_t *scene);
 void mos_ui_main_scene_show_welcome(mos_ui_main_scene_t *scene);
+void mos_ui_main_scene_clear_welcome(mos_ui_main_scene_t *scene);
+void mos_ui_main_scene_clear_caption(mos_ui_main_scene_t *scene);
+void mos_ui_main_scene_clear_positioned(mos_ui_main_scene_t *scene);
+void mos_ui_main_scene_scroll_caption_to_bottom(mos_ui_main_scene_t *scene);
+void mos_ui_main_scene_set_caption_scroll_enabled(mos_ui_main_scene_t *scene, bool enabled);
 void mos_ui_main_scene_destroy(mos_ui_main_scene_t *scene);
 
 #endif /* MAIN_SCENE_H_ */
