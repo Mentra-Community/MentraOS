@@ -11,7 +11,9 @@ struct ExampleEvent: Identifiable {
 
 struct ExampleActionError: LocalizedError {
     let message: String
-    var errorDescription: String? { message }
+    var errorDescription: String? {
+        message
+    }
 }
 
 enum ExampleStreamProtocol: String, CaseIterable {
@@ -66,7 +68,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var ledMode = "Solid"
     @Published var rawJsonExpanded = false
 
-    private let micSampleRate = 16_000
+    private let micSampleRate = 16000
     private let micChannelCount = 1
     private let micBitsPerSample = 16
     private let sdk = MentraBluetoothSDK()
@@ -193,9 +195,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 MentraPhotoRequest(
                     requestId: requestId,
                     appId: "com.mentra.examples.ios",
-                    size: "medium",
+                    size: .medium,
                     webhookUrl: uploadUrl,
-                    compress: "medium",
+                    compress: .medium,
                     flash: false,
                     sound: true
                 )
@@ -225,7 +227,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                         append(tag: "LIVE", text: "webhook test failed: invalid response")
                         return
                     }
-                    guard (200..<300).contains(http.statusCode) else {
+                    guard (200 ..< 300).contains(http.statusCode) else {
                         cameraStatus = "Camera: webhook returned HTTP \(http.statusCode)"
                         append(tag: "LIVE", text: "webhook returned HTTP \(http.statusCode)")
                         return
@@ -263,16 +265,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             }
             let streamId = "ios-\(Int(Date().timeIntervalSince1970 * 1000))"
             let selectedProtocol = streamProtocol
-            let params: [String: Any] = [
-                "type": "start_stream",
-                "streamUrl": url,
-                "streamId": streamId,
-                "protocol": selectedProtocol.rawValue,
-                "keepAlive": true,
-                "keepAliveIntervalSeconds": 15,
-            ]
             if selectedProtocol == .rtmp || selectedProtocol == .webrtc {
-                startStream(params, protocol: selectedProtocol)
+                startStream(streamUrl: url, streamId: streamId, protocol: selectedProtocol)
                 Task {
                     do {
                         if selectedProtocol == .rtmp {
@@ -283,20 +277,27 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                     } catch {
                         let message = error.localizedDescription
                         append(tag: "TX", text: "Preview check warning: \(message)")
-                        if activeStreamId == stringValue(params, "streamId") {
+                        if activeStreamId == streamId {
                             streamStatus = "Stream requested; preview unavailable: \(message)"
                         }
                     }
                 }
                 return
             }
-            startStream(params, protocol: selectedProtocol)
+            startStream(streamUrl: url, streamId: streamId, protocol: selectedProtocol)
         }
     }
 
-    private func startStream(_ params: [String: Any], protocol selectedProtocol: ExampleStreamProtocol) {
-        sdk.startStream(MentraStreamRequest(values: params))
-        activeStreamId = stringValue(params, "streamId")
+    private func startStream(streamUrl: String, streamId: String, protocol selectedProtocol: ExampleStreamProtocol) {
+        sdk.startStream(
+            MentraStreamRequest(
+                streamUrl: streamUrl,
+                streamId: streamId,
+                keepAlive: true,
+                keepAliveIntervalSeconds: 15
+            )
+        )
+        activeStreamId = streamId
         streamStatus = "Requested \(selectedProtocol.rawValue.uppercased()) stream; waiting for glasses"
     }
 
@@ -319,7 +320,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func sendWifiCredentials(ssid: String, password: String, requiresPassword: Bool) {
         runAction("Connect Wi-Fi \(ssid)") {
             try requireConnected("send Wi-Fi credentials")
-            if requiresPassword && password.isEmpty {
+            if requiresPassword, password.isEmpty {
                 throw ExampleActionError(message: "Enter the Wi-Fi password before connecting to \(ssid).")
             }
             sdk.sendWifiCredentials(ssid: ssid, password: requiresPassword ? password : "")
@@ -418,15 +419,16 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         )
     }
 
-    private func rgbLedRequest(for mode: String, color: String, brightnessPercent: Int) -> (action: MentraRgbLedAction, color: String?, ontime: Int, offtime: Int, count: Int, brightness: Int?) {
+    private func rgbLedRequest(for mode: String, color: String, brightnessPercent: Int) -> (action: MentraRgbLedAction, color: MentraRgbLedColor?, ontime: Int, offtime: Int, count: Int, brightness: Int?) {
         let brightness = rgbBrightnessValue(brightnessPercent)
+        let ledColor = MentraRgbLedColor(rawValue: color) ?? .red
         switch mode {
         case "Solid":
-            return (.on, color, 30_000, 0, 1, brightness)
+            return (.on, ledColor, 30000, 0, 1, brightness)
         case "Pulse":
-            return (.on, color, 900, 900, 6, brightness)
+            return (.on, ledColor, 900, 900, 6, brightness)
         case "Blink":
-            return (.on, color, 250, 250, 12, brightness)
+            return (.on, ledColor, 250, 250, 12, brightness)
         default:
             return (.off, nil, 0, 0, 0, nil)
         }
@@ -755,7 +757,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func pollPhotoPreview(requestId: String, statusUrl: URL, generation: Int) {
         Task {
-            for attempt in 0..<45 {
+            for attempt in 0 ..< 45 {
                 guard activePhotoRequestId == requestId, pollGeneration == generation else { return }
                 do {
                     let cacheBusted = URL(string: "\(statusUrl.absoluteString)?poll=\(Int(Date().timeIntervalSince1970 * 1000))")!
@@ -795,11 +797,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 guard let self else { return }
                 self.sdk.keepStreamAlive(
                     MentraStreamKeepAliveRequest(
-                        values: [
-                            "type": "keep_stream_alive",
-                            "streamId": streamId,
-                            "ackId": "ack-\(Int(Date().timeIntervalSince1970 * 1000))",
-                        ]
+                        streamId: streamId,
+                        ackId: "ack-\(Int(Date().timeIntervalSince1970 * 1000))"
                     )
                 )
                 self.append(tag: "TX", text: "stream keep alive")
@@ -1081,7 +1080,7 @@ func isLocalPreviewHost(_ host: String) -> Bool {
         return true
     }
     let parts = normalized.split(separator: ".").compactMap { Int($0) }
-    return parts.count == 4 && parts[0] == 172 && (16...31).contains(parts[1])
+    return parts.count == 4 && parts[0] == 172 && (16 ... 31).contains(parts[1])
 }
 
 func webrtcPreviewUrl(_ whipUrlText: String) -> URL? {
@@ -1123,7 +1122,8 @@ func streamUrlValidationMessage(_ streamUrl: String) -> String? {
     }
     if let components = URLComponents(string: streamUrl),
        let scheme = components.scheme?.lowercased(),
-       scheme == "rtmp" || scheme == "rtmps" {
+       scheme == "rtmp" || scheme == "rtmps"
+    {
         let pathSegments = components.path.split(separator: "/").filter { !$0.isEmpty }
         if pathSegments.count < 2 {
             return "RTMP URL must include an app and stream key, for example rtmp://<computer-ip>:1935/live/mentra-live."

@@ -12,7 +12,6 @@ const bars = [18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40];
 const streamSdkCall = `const streamId = \`rn-\${Date.now()}\`;
 await BluetoothSdk.startStream({
   type: 'start_stream',
-  protocol: streamProtocol,
   streamId,
   streamUrl,
   keepAlive: true,

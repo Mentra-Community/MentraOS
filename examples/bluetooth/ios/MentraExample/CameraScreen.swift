@@ -3,15 +3,15 @@ import UIKit
 
 private let cameraSdkCall = """
 sdk.requestPhoto(
-  MentraPhotoRequest(
-    requestId: requestId,
-    appId: "com.mentra.examples.ios",
-    size: "medium",
-    webhookUrl: uploadUrl,
-    compress: "medium",
-    flash: false,
-    sound: true
-  )
+    MentraPhotoRequest(
+      requestId: requestId,
+      appId: "com.mentra.examples.ios",
+      size: .medium,
+      webhookUrl: uploadUrl,
+      compress: .medium,
+      flash: false,
+      sound: true
+    )
 )
 """
 
@@ -20,6 +20,7 @@ struct CameraScreen: View {
     private var cameraStatusFailed: Bool {
         isCameraStatusFailure(model.cameraStatus)
     }
+
     private var setupHint: String? {
         localCameraSetupHint(webhookUrl: model.webhookUrl, status: model.cameraStatus)
     }

@@ -11,6 +11,7 @@ import com.mentra.core.MentraBluetoothSdk
 import com.mentra.core.MentraBluetoothSdkCallback
 import com.mentra.core.MentraBluetoothStatusUpdate
 import com.mentra.core.MentraButtonPhotoSettings
+import com.mentra.core.MentraButtonPhotoSize
 import com.mentra.core.MentraButtonPressEvent
 import com.mentra.core.MentraButtonVideoRecordingSettings
 import com.mentra.core.MentraCameraFov
@@ -20,9 +21,11 @@ import com.mentra.core.MentraDiscoveredDevice
 import com.mentra.core.MentraGalleryMode
 import com.mentra.core.MentraGlassesStatusUpdate
 import com.mentra.core.MentraMicConfig
+import com.mentra.core.MentraPhotoCompression
 import com.mentra.core.MentraPhotoRequest
 import com.mentra.core.MentraPhotoSize
 import com.mentra.core.MentraRgbLedAction
+import com.mentra.core.MentraRgbLedColor
 import com.mentra.core.MentraRgbLedRequest
 import com.mentra.core.MentraStreamKeepAliveRequest
 import com.mentra.core.MentraStreamRequest
@@ -62,14 +65,14 @@ data class ExampleEvent(
 
 private data class RgbLedPattern(
     val action: MentraRgbLedAction,
-    val color: String?,
+    val color: MentraRgbLedColor?,
     val ontime: Int,
     val offtime: Int,
     val count: Int,
     val brightness: Int?,
 )
 
-val rgbLedColorOptions = listOf("red", "green", "blue", "orange", "white")
+val rgbLedColorOptions = MentraRgbLedColor.values().map { it.value }
 
 data class MentraExampleState(
     val activeAction: String? = null,
@@ -162,7 +165,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         sdk.setBrightness(72)
         sdk.setDashboardPosition(MentraDashboardPositionRequest(height = 4, depth = 6))
         sdk.setGalleryMode(MentraGalleryMode.AUTO)
-        sdk.setButtonPhotoSettings(MentraButtonPhotoSettings(MentraPhotoSize.MEDIUM))
+        sdk.setButtonPhotoSettings(MentraButtonPhotoSettings(MentraButtonPhotoSize.MEDIUM))
         sdk.setButtonVideoRecordingSettings(MentraButtonVideoRecordingSettings(width = 1920, height = 1080, fps = 30))
         sdk.setButtonCameraLed(true)
         sdk.setButtonMaxRecordingTime(5)
@@ -194,9 +197,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             MentraPhotoRequest(
                 requestId = requestId,
                 appId = "com.mentra.examples.android",
-                size = "medium",
+                size = MentraPhotoSize.MEDIUM,
                 webhookUrl = uploadUrl,
-                compress = "medium",
+                compress = MentraPhotoCompression.MEDIUM,
                 flash = false,
                 sound = true,
             )
@@ -271,14 +274,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             throw IllegalArgumentException(message)
         }
         val streamId = "android-${System.currentTimeMillis()}"
-        val params = mapOf(
-            "type" to "start_stream",
-            "streamUrl" to streamUrl,
-            "streamId" to streamId,
-            "protocol" to state.streamProtocol,
-            "keepAlive" to true,
-            "keepAliveIntervalSeconds" to 15,
-        )
         val selectedProtocol = state.streamProtocol
         if (selectedProtocol == "rtmp" || selectedProtocol == "webrtc") {
             state = state.copy(streamStatus = "Checking local ${selectedProtocol.uppercase()} server")
@@ -294,17 +289,24 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                         addEvent("TX", "stream failed: $reachabilityMessage")
                         return@launch
                     }
-                    startStream(params, selectedProtocol)
+                    startStream(streamUrl, streamId, selectedProtocol)
                 }
             }
             return@runAction
         }
-        startStream(params, selectedProtocol)
+        startStream(streamUrl, streamId, selectedProtocol)
     }
 
-    private fun startStream(params: Map<String, Any>, protocol: String) {
-        sdk.startStream(MentraStreamRequest(params))
-        activeStreamId = params["streamId"].toString()
+    private fun startStream(streamUrl: String, streamId: String, protocol: String) {
+        sdk.startStream(
+            MentraStreamRequest(
+                streamUrl = streamUrl,
+                streamId = streamId,
+                keepAlive = true,
+                keepAliveIntervalSeconds = 15,
+            )
+        )
+        activeStreamId = streamId
         state = state.copy(streamStatus = "Requested ${protocol.uppercase()} stream; waiting for glasses")
     }
 
@@ -388,9 +390,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private fun rgbLedRequestFor(mode: String, color: String, brightnessPercent: Int): RgbLedPattern {
         val brightness = rgbBrightnessValue(brightnessPercent)
         return when (mode) {
-            "Solid" -> RgbLedPattern(MentraRgbLedAction.ON, color, 30_000, 0, 1, brightness)
-            "Pulse" -> RgbLedPattern(MentraRgbLedAction.ON, color, 900, 900, 6, brightness)
-            "Blink" -> RgbLedPattern(MentraRgbLedAction.ON, color, 250, 250, 12, brightness)
+            "Solid" -> RgbLedPattern(MentraRgbLedAction.ON, rgbLedColorFor(color), 30_000, 0, 1, brightness)
+            "Pulse" -> RgbLedPattern(MentraRgbLedAction.ON, rgbLedColorFor(color), 900, 900, 6, brightness)
+            "Blink" -> RgbLedPattern(MentraRgbLedAction.ON, rgbLedColorFor(color), 250, 250, 12, brightness)
             else -> RgbLedPattern(MentraRgbLedAction.OFF, null, 0, 0, 0, null)
         }
     }
@@ -575,11 +577,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 delay(15_000)
                 sdk.keepStreamAlive(
                     MentraStreamKeepAliveRequest(
-                        mapOf(
-                            "type" to "keep_stream_alive",
-                            "streamId" to streamId,
-                            "ackId" to "ack-${System.currentTimeMillis()}",
-                        ),
+                        streamId = streamId,
+                        ackId = "ack-${System.currentTimeMillis()}",
                     ),
                 )
                 addEvent("TX", "stream keep alive")
@@ -771,6 +770,9 @@ fun exampleEvent(tag: String, text: String): ExampleEvent =
     )
 
 fun rgbBrightnessValue(percent: Int): Int = ((percent.coerceIn(0, 100) * 255) / 100.0).roundToInt()
+
+fun rgbLedColorFor(color: String): MentraRgbLedColor =
+    MentraRgbLedColor.fromValue(color) ?: MentraRgbLedColor.RED
 
 fun disconnectedGlassesStatus(): Map<String, Any> =
     mapOf(

@@ -14,7 +14,9 @@ import BluetoothSdk, {
   type MicPcmEvent,
   type PhotoResponseEvent,
   type RgbLedAction,
+  type RgbLedColor,
   type RgbLedControlResponseEvent,
+  type StreamStartRequest,
   type StreamStatusEvent,
   type TouchEvent,
   type WifiStatusChangeEvent,
@@ -23,7 +25,7 @@ import {isDisconnectedStatus, isGlassesConnected} from './sdkFormat';
 
 export type StreamProtocol = 'rtmp' | 'srt' | 'webrtc';
 export type LedMode = 'Off' | 'Solid' | 'Pulse' | 'Blink';
-export type LedColor = 'red' | 'green' | 'blue' | 'orange' | 'white';
+export type LedColor = RgbLedColor;
 
 export const RGB_LED_COLORS: LedColor[] = ['red', 'green', 'blue', 'orange', 'white'];
 
@@ -562,11 +564,10 @@ export function useMentraSdk(): MentraSdkModel {
       const params = {
         keepAlive: true,
         keepAliveIntervalSeconds: 15,
-        protocol: streamProtocol,
         streamId,
         streamUrl: url,
         type: 'start_stream',
-      };
+      } satisfies StreamStartRequest;
       await BluetoothSdk.startStream(params);
       activeStreamIdRef.current = streamId;
       setStreamStatus(`Requested ${streamProtocol.toUpperCase()} stream; waiting for glasses`);

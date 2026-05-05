@@ -41,14 +41,10 @@ private val streamSdkCall = """
 val streamId = "android-${'$'}{System.currentTimeMillis()}"
 sdk.startStream(
   MentraStreamRequest(
-    mapOf(
-      "type" to "start_stream",
-      "streamUrl" to streamUrl,
-      "streamId" to streamId,
-      "protocol" to streamProtocol,
-      "keepAlive" to true,
-      "keepAliveIntervalSeconds" to 15,
-    )
+    streamUrl = streamUrl,
+    streamId = streamId,
+    keepAlive = true,
+    keepAliveIntervalSeconds = 15,
   )
 )
 """.trimIndent()

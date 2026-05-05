@@ -220,15 +220,15 @@ fun CameraScreen(controller: MentraExampleController) {
 
 private val cameraSdkCall = """
 sdk.requestPhoto(
-  MentraPhotoRequest(
-    requestId = requestId,
-    appId = "com.mentra.examples.android",
-    size = "medium",
-    webhookUrl = uploadUrl,
-    compress = "medium",
-    flash = false,
-    sound = true,
-  )
+    MentraPhotoRequest(
+      requestId = requestId,
+      appId = "com.mentra.examples.android",
+      size = MentraPhotoSize.MEDIUM,
+      webhookUrl = uploadUrl,
+      compress = MentraPhotoCompression.MEDIUM,
+      flash = false,
+      sound = true,
+    )
 )
 """.trimIndent()
 

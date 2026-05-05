@@ -7,14 +7,10 @@ private let streamSdkCall = """
 let streamId = "ios-..."
 sdk.startStream(
   MentraStreamRequest(
-    values: [
-      "type": "start_stream",
-      "streamUrl": streamUrl,
-      "streamId": streamId,
-      "protocol": streamProtocol.rawValue,
-      "keepAlive": true,
-      "keepAliveIntervalSeconds": 15
-    ]
+    streamUrl: streamUrl,
+    streamId: streamId,
+    keepAlive: true,
+    keepAliveIntervalSeconds: 15
   )
 )
 """
@@ -25,6 +21,7 @@ struct StreamScreen: View {
     private var setupHint: String? {
         localStreamSetupHint(protocol: model.streamProtocol, streamUrl: model.streamUrl, status: model.streamStatus)
     }
+
     private var livePreviewUrl: URL? {
         guard model.streamStartedAt != nil else { return nil }
         switch model.streamProtocol {
@@ -107,7 +104,7 @@ struct StreamScreen: View {
                     Spacer()
 
                     HStack(alignment: .bottom, spacing: 5) {
-                        ForEach(0..<bars.count, id: \.self) { i in
+                        ForEach(0 ..< bars.count, id: \.self) { i in
                             RoundedRectangle(cornerRadius: 3)
                                 .fill(i % 3 == 2 ? Color.white : Color.white.opacity(0.85))
                                 .frame(width: 5, height: bars[i])

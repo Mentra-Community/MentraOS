@@ -106,9 +106,14 @@ When an SDK API exposes an optional argument, do not rely on absence meaning "be
 | `MentraMicConfig` / `MentraMicConfiguration` | `sendLc3Data` | Defaults to `false`; LC3 audio callbacks are not requested. |
 | `MentraPhotoRequest` | `webhookUrl` | iOS and React Native allow `nil` / `null`; no webhook upload is requested. Android requires a URL. |
 | `MentraPhotoRequest` | `authToken` | No bearer token is added to the webhook upload request. |
-| `MentraPhotoRequest` | `compress` | Android defaults to `"medium"`. iOS `nil` requests the device default, which is currently no extra compression on Mentra Live. React Native requires an explicit value. Pass an explicit value for cross-platform consistency. |
+| `MentraPhotoRequest` | `compress` | Android defaults to `MentraPhotoCompression.MEDIUM`. iOS `nil` requests the device default, which is currently no extra compression on Mentra Live. React Native requires an explicit `"none"`, `"medium"`, or `"heavy"` value. Pass an explicit value for cross-platform consistency. |
 | `MentraPhotoRequest` | `flash` | Android defaults to `false`. iOS and React Native require an explicit value. |
 | `MentraPhotoRequest` | `sound` | Android defaults to `true`. iOS and React Native require an explicit value. |
+| `MentraStreamRequest` | `streamId` | Sends an empty stream id. Provide your own id if you plan to manage keep-alives or correlate stream status. |
+| `MentraStreamRequest` | `keepAlive` | Defaults to `true`. You still need to call `keepStreamAlive` every ~15 seconds while the stream is active. |
+| `MentraStreamRequest` | `keepAliveIntervalSeconds` | Defaults to `15`, matching the recommended heartbeat cadence. |
+| `MentraStreamRequest` | `flash`, `sound` | Default to `true`, enabling the camera indicator and start/stop sounds where supported. |
+| `MentraStreamRequest` | `video`, `audio` | Omitted means the glasses use their streaming defaults. |
 | `MentraRgbLedRequest` | `packageName` | Sends the LED command without app/package attribution. |
 | `MentraRgbLedRequest` | `color` | Ignored for `OFF`. For `ON`, pass one of the valid colors; Mentra Live falls back to red if the color is omitted. |
 | `MentraRgbLedRequest` | `brightness` | Sends no brightness field; the glasses use their current or firmware-default LED brightness. |
@@ -166,7 +171,7 @@ sdk.setDashboardPosition(
 sdk.setHeadUpAngle(angleDegrees = 20)
 sdk.setScreenDisabled(false)
 sdk.setGalleryMode(MentraGalleryMode.AUTO)
-sdk.setButtonPhotoSettings(MentraButtonPhotoSettings(size = MentraPhotoSize.MEDIUM))
+sdk.setButtonPhotoSettings(MentraButtonPhotoSettings(size = MentraButtonPhotoSize.MEDIUM))
 sdk.setButtonVideoRecordingSettings(
     MentraButtonVideoRecordingSettings(width = 1280, height = 720, fps = 30)
 )
@@ -178,7 +183,7 @@ sdk.rgbLedControl(
         requestId = "led-${System.currentTimeMillis()}",
         packageName = "com.example.assistant",
         action = MentraRgbLedAction.ON,
-        color = "green",
+        color = MentraRgbLedColor.GREEN,
         ontime = 500,
         offtime = 500,
         count = 3,
@@ -213,7 +218,7 @@ sdk.rgbLedControl(
         requestId: "led-\(Date().timeIntervalSince1970)",
         packageName: "com.example.assistant",
         action: .on,
-        color: "green",
+        color: .green,
         ontime: 500,
         offtime: 500,
         count: 3,
@@ -227,7 +232,7 @@ RGB LED parameters:
 | Parameter | Valid values | Meaning |
 | --- | --- | --- |
 | `action` | Android: `MentraRgbLedAction.ON` / `MentraRgbLedAction.OFF`; iOS: `.on` / `.off`; React Native: `"on"` / `"off"` | Turns the LED command on or off. When the action is off, `color`, `ontime`, `offtime`, `count`, and `brightness` are ignored. |
-| `color` | `"red"`, `"green"`, `"blue"`, `"orange"`, `"white"` | Named LED color. This is not a hex color. Required for `ON`; use `null` / `nil` for `OFF`. |
+| `color` | Android: `MentraRgbLedColor.RED` / `GREEN` / `BLUE` / `ORANGE` / `WHITE`; iOS: `.red` / `.green` / `.blue` / `.orange` / `.white`; React Native: `"red"` / `"green"` / `"blue"` / `"orange"` / `"white"` | Named LED color. This is not a hex color. Required for `ON`; use `null` / `nil` for `OFF`. |
 | `ontime` | Non-negative integer milliseconds | How long the LED stays on during each cycle. For a solid light, use a long `ontime`, `offtime = 0`, and `count = 1`. |
 | `offtime` | Non-negative integer milliseconds | How long the LED stays off between cycles. Use `0` for a solid light; use a positive value for blink or pulse patterns. |
 | `count` | Positive integer for `ON`; `0` for `OFF` | Number of on/off cycles to run. For example, `count = 3`, `ontime = 500`, `offtime = 500` blinks three times. |
@@ -284,10 +289,10 @@ sdk.requestPhoto(
     MentraPhotoRequest(
         requestId = requestId,
         appId = "com.example.assistant",
-        size = "medium",
+        size = MentraPhotoSize.MEDIUM,
         webhookUrl = "https://api.example.com/mentra/photo",
         authToken = "optional-token",
-        compress = "medium",
+        compress = MentraPhotoCompression.MEDIUM,
         flash = false,
         sound = true,
     )
@@ -299,14 +304,14 @@ iOS:
 ```swift
 let requestId = "assistant-\(Date().timeIntervalSince1970)"
 
-try await sdk.requestPhoto(
+sdk.requestPhoto(
     MentraPhotoRequest(
         requestId: requestId,
         appId: "com.example.assistant",
-        size: "medium",
+        size: .medium,
         webhookUrl: "https://api.example.com/mentra/photo",
         authToken: "optional-token",
-        compress: "medium",
+        compress: .medium,
         flash: false,
         sound: true
     )
@@ -324,6 +329,8 @@ Your webhook should accept multipart form data. Mentra Live sends:
 | `success` | Optional success marker |
 
 If you include `authToken`, the uploader adds it as `Authorization: Bearer <token>` on the webhook request. If you omit it, no `Authorization` header is added.
+
+Photo size values are typed because app-requested photos and button-gallery photos do not expose exactly the same tiers on Mentra Live. `MentraPhotoSize` supports `SMALL`, `MEDIUM`, `LARGE`, and `FULL` for app-requested uploads. `MentraButtonPhotoSize` supports `SMALL`, `MEDIUM`, and `LARGE` for hardware-button captures saved to gallery. Compression is also typed: `NONE` uploads the captured JPEG as-is, `MEDIUM` applies the balanced compression path, and `HEAVY` applies stronger downscaling/compression.
 
 For local development, run the companion server in `examples/photo-webhook-server` and use the printed LAN URL, such as `http://192.168.1.42:8787/upload`. Do not use `localhost`: keep the glasses, phone, and computer on a network where the uploader can reach the computer. The Android, iOS, and React Native examples demonstrate this by polling `GET /uploads/<requestId>.json` and displaying the returned `photoUrl`.
 
@@ -345,25 +352,18 @@ val streamId = "stream-${System.currentTimeMillis()}"
 
 sdk.startStream(
     MentraStreamRequest(
-        values = mapOf(
-            "type" to "start_stream",
-            "streamUrl" to streamUrl,
-            "streamId" to streamId,
-            "protocol" to "webrtc",
-            "keepAlive" to true,
-            "keepAliveIntervalSeconds" to 15,
-        )
+        streamUrl = streamUrl,
+        streamId = streamId,
+        keepAlive = true,
+        keepAliveIntervalSeconds = 15,
     )
 )
 
 // Call while streaming if you manage the lifecycle yourself.
 sdk.keepStreamAlive(
     MentraStreamKeepAliveRequest(
-        values = mapOf(
-            "type" to "keep_stream_alive",
-            "streamId" to streamId,
-            "ackId" to "ack-${System.currentTimeMillis()}",
-        )
+        streamId = streamId,
+        ackId = "ack-${System.currentTimeMillis()}",
     )
 )
 
@@ -378,25 +378,18 @@ let streamId = "stream-\(Int(Date().timeIntervalSince1970 * 1000))"
 
 sdk.startStream(
     MentraStreamRequest(
-        values: [
-            "type": "start_stream",
-            "streamUrl": streamUrl,
-            "streamId": streamId,
-            "protocol": "webrtc",
-            "keepAlive": true,
-            "keepAliveIntervalSeconds": 15
-        ]
+        streamUrl: streamUrl,
+        streamId: streamId,
+        keepAlive: true,
+        keepAliveIntervalSeconds: 15
     )
 )
 
 // Call while streaming if you manage the lifecycle yourself.
 sdk.keepStreamAlive(
     MentraStreamKeepAliveRequest(
-        values: [
-            "type": "keep_stream_alive",
-            "streamId": streamId,
-            "ackId": "ack-\(Int(Date().timeIntervalSince1970 * 1000))"
-        ]
+        streamId: streamId,
+        ackId: "ack-\(Int(Date().timeIntervalSince1970 * 1000))"
     )
 )
 
