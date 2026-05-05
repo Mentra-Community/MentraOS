@@ -13,9 +13,8 @@
 #include <zephyr/logging/log.h>
 
 #include "bal_os.h"
-#include "caption_state.h"
+#include "caption_throttler.h"
 #include "display_config.h"
-#include "display_scene.h"
 #include "main.h"
 #include "mos_brightness.h"
 #include "mos_lvgl_display.h"
@@ -37,8 +36,6 @@ LOG_MODULE_REGISTER(mos_lvgl_display, LOG_LEVEL_DBG);
 K_THREAD_STACK_DEFINE(lvgl_stack_area, LVGL_THREAD_STACK_SIZE);
 static struct k_thread lvgl_thread_data;
 k_tid_t lvgl_thread_handle;
-
-static K_SEM_DEFINE(lvgl_display_sem, 0, 1);
 
 #define DISPLAY_CMD_QSZ 16
 K_MSGQ_DEFINE(lvgl_display_msgq, sizeof(display_cmd_t), DISPLAY_CMD_QSZ, 4);
@@ -73,22 +70,12 @@ static volatile bool lvgl_force_one_refresh = false;
 static uint32_t lvgl_min_refresh_ms = 10;
 static volatile bool lvgl_freeze_refresh = false;
 
-#define PROTOBUF_TEXT_MAX_CHARS CAPTION_TEXT_MAX_CHARS
-#define PROTOBUF_TEXT_THROTTLE_MS 250U
-
-/* Throttle validation counters (printed once per second during traffic). */
-static uint32_t s_pt_stats_window_start_ms = 0U;
-static uint32_t s_pt_rx_count = 0U;
-static uint32_t s_pt_commit_count = 0U;
-static uint32_t s_pt_throttle_skip_count = 0U;
-static uint32_t s_pt_dedup_skip_count = 0U;
-static uint32_t s_caption_render_last_skip_log_ms = 0U;
-static uint32_t s_caption_last_apply_ms = 0U;
+/* Suppress repeated "blocked" logs when the scene is gating caption render. */
+static uint32_t s_caption_blocked_log_ms = 0U;
 
 #define WELCOME_BATTERY_REFRESH_MS (60 * 1000)
 static struct k_work_delayable welcome_battery_work;
 static void welcome_battery_work_handler(struct k_work *work);
-static void protobuf_text_log_throttle_stats_if_due(void);
 
 /* Display on/off state management. */
 void set_display_onoff(bool state)
@@ -108,15 +95,6 @@ int display_set_translation_pair(display_biz_lang_t src_lang, display_biz_lang_t
 void display_get_translation_pair(display_biz_lang_t *src_lang, display_biz_lang_t *dst_lang)
 {
     mos_ui_main_scene_get_translation_pair(src_lang, dst_lang);
-}
-void lvgl_display_sem_give(void)
-{
-    mos_sem_give(&lvgl_display_sem);
-}
-
-int lvgl_display_sem_take(int64_t time)
-{
-    return mos_sem_take(&lvgl_display_sem, time);
 }
 
 void display_open(void)
@@ -152,9 +130,8 @@ void display_show_welcome_screen(void)
 
 void display_reset_protobuf_text_state(void)
 {
-    caption_state_reset();
-    s_caption_last_apply_ms = 0U;
-    mos_ui_main_scene_reset_caption_cache();
+    mos_caption_throttler_reset();
+    s_caption_blocked_log_ms = 0U;
     LOG_INF("Reset protobuf text state (pending + de-dup cache cleared)");
 }
 
@@ -200,16 +177,13 @@ void display_update_protobuf_text(const char *text_content)
         return;
     }
 
-    s_pt_rx_count++;
-    protobuf_text_log_throttle_stats_if_due();
     mos_text_diag_log_payload(text_content);
-
-    caption_state_ingest(text_content);
+    mos_caption_throttler_ingest(text_content);
 }
 
 void display_submit_text_payload(uint16_t x, uint16_t y, const char *text_content, uint16_t font_size, uint32_t color)
 {
-    if (display_scene_get_mode() == DISPLAY_SCENE_MODE_POSITIONED)
+    if (mos_ui_main_scene_get_mode() == MOS_UI_MAIN_SCENE_MODE_POSITIONED)
     {
         uint32_t y_offset = (uint32_t)y + 80U;
         uint16_t y_clamped = (y_offset > 65535U) ? 65535U : (uint16_t)y_offset;
@@ -302,7 +276,6 @@ static void restore_welcome_screen_state(void)
 {
     ensure_pattern4_scene_ready();
     mos_ui_main_scene_show_welcome(&g_main_scene);
-    display_scene_set_mode(DISPLAY_SCENE_MODE_WELCOME);
 }
 #endif
 
@@ -339,7 +312,6 @@ static void create_scrolling_text_container(lv_obj_t *screen)
     };
 
     g_main_scene = mos_ui_main_scene_create(screen, &cfg);
-    display_scene_set_mode(DISPLAY_SCENE_MODE_WELCOME);
 
     k_work_init_delayable(&welcome_battery_work, welcome_battery_work_handler);
     k_work_schedule(&welcome_battery_work, K_MSEC(WELCOME_BATTERY_REFRESH_MS));
@@ -351,7 +323,7 @@ static void create_scrolling_text_container(lv_obj_t *screen)
 
 bool display_is_welcome_screen_active(void)
 {
-    return display_scene_is_welcome_active();
+    return mos_ui_main_scene_is_welcome_mode();
 }
 
 /* lv_obj_del-ing children dangles every cached lv_obj_t* in this file; main_scene_destroy
@@ -361,7 +333,6 @@ static void tear_down_screen_child_global_refs(void)
     k_work_cancel_delayable(&welcome_battery_work);
     mos_ui_main_scene_destroy(&g_main_scene);
     memset(&g_main_scene, 0, sizeof(g_main_scene));
-    display_scene_set_mode(DISPLAY_SCENE_MODE_TEST);
 }
 
 static void ensure_pattern4_scene_ready(void)
@@ -377,9 +348,8 @@ static void ensure_pattern4_scene_ready(void)
 
 static void reset_display_text_caches(void)
 {
-    caption_state_reset();
-    s_caption_last_apply_ms = 0U;
-    mos_ui_main_scene_reset_caption_cache();
+    mos_caption_throttler_reset();
+    s_caption_blocked_log_ms = 0U;
 }
 
 static void clear_current_display_text(void)
@@ -430,24 +400,13 @@ static void show_test_pattern(int pattern_id)
             LOG_ERR("❌ Unknown pattern ID: %d", pattern_id);
             return;
     }
-
-    display_scene_set_pattern(pattern_id);
-    switch (pattern_id)
-    {
-        case 4:
-            display_scene_set_mode(DISPLAY_SCENE_MODE_WELCOME);
-            break;
-        default:
-            display_scene_set_mode(DISPLAY_SCENE_MODE_TEST);
-            break;
-    }
 }
 
 /** Mark only the active pattern's root container(s) dirty — used after driver-only param
  * changes (e.g. software depth) to refresh the current frame without a full screen flush. */
 static void invalidate_current_visible_ui(void)
 {
-    if (display_scene_get_pattern() == 4)
+    if (mos_ui_main_scene_get_mode() != MOS_UI_MAIN_SCENE_MODE_NONE)
     {
         if (mos_ui_main_scene_welcome_is_visible(&g_main_scene))
         {
@@ -502,101 +461,32 @@ static void update_display_height(uint16_t height)
 }
 
 
-/* Try to commit the latest pending protobuf text. Returns true if a commit was performed
- * (committed != necessarily rendered). When throttled, drops the commit; the caller will retry. */
-static bool protobuf_text_try_commit_pending(char *latest_text, size_t latest_text_size,
-                                             bool schedule_retry_if_throttled)
+/* Throttler render hook: invoked once when a pending text passes the throttle/dedup gate. */
+static void caption_render_callback(const char *text, uint32_t seq, void *user_data)
 {
-    uint32_t pending_arrival_ms = 0U;
-    uint32_t pending_seq = 0U;
-    bool has_pending = caption_state_peek_latest(latest_text, latest_text_size, &pending_arrival_ms, &pending_seq);
-    if (!has_pending)
-    {
-        return false;
-    }
-
-    uint32_t now_ms = k_uptime_get_32();
-    uint32_t elapsed_ms = now_ms - s_caption_last_apply_ms;
-    uint32_t age_ms = now_ms - pending_arrival_ms;
-    bool throttle_ready = !s_caption_last_apply_ms
-                          || (elapsed_ms >= PROTOBUF_TEXT_THROTTLE_MS && age_ms >= PROTOBUF_TEXT_THROTTLE_MS);
-
-    if (throttle_ready)
-    {
-        if (!caption_state_take_latest(latest_text, latest_text_size, &pending_seq))
-        {
-            return false;
-        }
-
-        if (mos_ui_main_scene_caption_dedup_match(latest_text))
-        {
-            s_pt_dedup_skip_count++;
-            return false;
-        }
-
-        mos_ui_main_scene_render_caption_text(&g_main_scene, latest_text, pending_seq);
-        s_pt_commit_count++;
-        s_caption_last_apply_ms = k_uptime_get_32();
-        return true;
-    }
-
-    s_pt_throttle_skip_count++;
-    if ((now_ms - s_caption_render_last_skip_log_ms) >= 500U)
-    {
-        s_caption_render_last_skip_log_ms = now_ms;
-        LOG_INF("[RENDER][CAPTION] throttle seq=%u elapsed=%u age=%u", pending_seq, elapsed_ms, age_ms);
-    }
-    ARG_UNUSED(schedule_retry_if_throttled);
-    return false;
+    mos_ui_main_scene_render_caption_text((mos_ui_main_scene_t *)user_data, text, seq);
 }
 
-static void protobuf_text_log_throttle_stats_if_due(void)
-{
-    uint32_t now_ms = k_uptime_get_32();
-    if (s_pt_stats_window_start_ms == 0U)
-    {
-        s_pt_stats_window_start_ms = now_ms;
-        return;
-    }
-
-    uint32_t elapsed_ms = now_ms - s_pt_stats_window_start_ms;
-    if (elapsed_ms < 1000U)
-    {
-        return;
-    }
-
-    // LOG_INF("[PT150] rx/s=%u commit/s=%u throttle_skip/s=%u dedup_skip/s=%u window=%ums", s_pt_rx_count,
-    //         s_pt_commit_count, s_pt_throttle_skip_count, s_pt_dedup_skip_count, elapsed_ms);
-
-    s_pt_stats_window_start_ms = now_ms;
-    s_pt_rx_count = 0U;
-    s_pt_commit_count = 0U;
-    s_pt_throttle_skip_count = 0U;
-    s_pt_dedup_skip_count = 0U;
-}
-
+/* LVGL-thread tick: respect the scene-level gate (test patterns, etc.), then ask the
+ * throttler to commit any pending text. Returns true if a render actually happened. */
 static bool protobuf_text_service_pending(void)
 {
-    static char latest_text[PROTOBUF_TEXT_MAX_CHARS];
-    bool committed;
-    uint32_t now_ms = k_uptime_get_32();
-    uint32_t pending_arrival_ms = 0U;
-    uint32_t pending_seq = 0U;
-
-    if (!display_scene_allows_caption_render())
+    if (!mos_ui_main_scene_can_render_caption())
     {
-        if (caption_state_peek_latest(latest_text, sizeof(latest_text), &pending_arrival_ms, &pending_seq)
-            && ((now_ms - s_caption_render_last_skip_log_ms) >= 1000U))
+        uint32_t pending_seq = 0U;
+        uint32_t now_ms = k_uptime_get_32();
+        if (mos_caption_throttler_has_pending(NULL, 0, &pending_seq)
+            && ((now_ms - s_caption_blocked_log_ms) >= 1000U))
         {
-            s_caption_render_last_skip_log_ms = now_ms;
-            LOG_INF("[RENDER][CAPTION] blocked seq=%u scene=%d pattern=%d", pending_seq,
-                    (int)display_scene_get_mode(), display_scene_get_pattern());
+            s_caption_blocked_log_ms = now_ms;
+            LOG_INF("[RENDER][CAPTION] blocked seq=%u mode=%d",
+                    pending_seq, (int)mos_ui_main_scene_get_mode());
         }
         return false;
     }
 
-    committed = protobuf_text_try_commit_pending(latest_text, sizeof(latest_text), false);
-    protobuf_text_log_throttle_stats_if_due();
+    bool committed = mos_caption_throttler_service(caption_render_callback, &g_main_scene);
+    mos_caption_throttler_log_stats_if_due();
     return committed;
 }
 
@@ -604,7 +494,7 @@ static bool protobuf_text_service_pending(void)
  * Skips when the scene isn't in welcome mode so we don't overwrite BLE/transcription content. */
 static void update_welcome_label_with_battery(void)
 {
-    if (!mos_ui_main_scene_is_welcome_mode(&g_main_scene) || !display_scene_is_welcome_active())
+    if (!mos_ui_main_scene_is_welcome_mode())
     {
         return;
     }
@@ -666,8 +556,7 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
     /* 注册字体切换回调 / Register font change callback */
     mos_font_register_change_callback(on_font_changed);
 #endif
-    display_scene_reset();
-    caption_state_reset();
+    mos_caption_throttler_reset();
 
     const display_config_t *config = display_get_config();
     LOG_INF("🖼️ Display configuration loaded: %s (%dx%d)", config->name, config->width, config->height);
@@ -706,15 +595,7 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     LOG_INF("LCD_CMD_UPDATE_HEIGHT - Thread-safe height update: %u", cmd.p.height.height);
                     update_display_height(cmd.p.height.height);
                     break;
-                case LCD_CMD_UPDATE_PROTOBUF_TEXT:
-                {
-                    /* Compatibility wake-up: real caption servicing now happens in the main LVGL loop. */
-                    protobuf_text_service_pending();
-                    protobuf_text_log_throttle_stats_if_due();
-                    break;
-                }
                 case LCD_CMD_UPDATE_POSITIONED_TEXT:
-                    display_scene_set_mode(DISPLAY_SCENE_MODE_POSITIONED);
                     mos_ui_main_scene_render_positioned_text(&g_main_scene,
                                                               cmd.p.positioned_text.x,
                                                               cmd.p.positioned_text.y,
@@ -730,9 +611,8 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     break;
                 case LCD_CMD_SHOW_WELCOME_SCREEN:
                     /* Re-enter the welcome view (e.g. after BLE disconnect). restore_welcome_screen_state
-                     * calls show_welcome which flips the scene's welcome_mode flag, so the subsequent
-                     * battery refresh will run. */
-                    display_scene_set_mode(DISPLAY_SCENE_MODE_WELCOME);
+                     * calls show_welcome which flips the scene mode, so the subsequent battery
+                     * refresh will run. */
                     reset_display_text_caches();
                     restore_welcome_screen_state();
                     update_welcome_label_with_battery();

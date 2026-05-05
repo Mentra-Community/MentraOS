@@ -7,19 +7,12 @@
 #include "../main_scene.h"
 #include "display_config.h"
 
+/* Stateless caption render: pick the appropriate font (CJK probe / ASCII fallback /
+ * simsun override), then dispatch into scene->caption via show_caption_default or
+ * show_caption_custom. The throttler owns dedup and last-rendered state. */
 void mos_ui_caption_renderer_render(mos_ui_main_scene_t *scene,
                                      const char *text,
                                      uint32_t committed_seq);
-
-/* Re-render whatever is currently cached (or empty if none), bypassing dedup.
- * Used after a font change so the caption picks up the new glyph metrics. */
-void mos_ui_caption_renderer_rerender(mos_ui_main_scene_t *scene);
-
-/* Last-rendered text cache (used for dedup + font-change re-render). */
-void mos_ui_caption_renderer_invalidate_cache(void);
-void mos_ui_caption_renderer_reset_cache(void);
-bool mos_ui_caption_renderer_has_cache(void);
-const char *mos_ui_caption_renderer_get_cache(void);
 
 /* Business translation language pair (drives auto font-language switching). */
 int  mos_ui_caption_renderer_set_translation_pair(display_biz_lang_t src, display_biz_lang_t dst);

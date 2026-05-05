@@ -6,9 +6,8 @@
 #include <zephyr/logging/log.h>
 #include <lvgl.h>
 
-#include "caption_state.h"
+#include "caption_throttler.h"
 #include "display_config.h"
-#include "display_scene.h"
 #include "utils/utf8.h"
 
 #if defined(CONFIG_LVGL)
@@ -28,30 +27,6 @@ static uint32_t s_last_cjk_probe_reload_ms = 0U;
 
 static display_biz_lang_t s_biz_src_lang = DISPLAY_BIZ_LANG_ZH;
 static display_biz_lang_t s_biz_dst_lang = DISPLAY_BIZ_LANG_EN;
-
-static char s_last_text[CAPTION_RENDER_MAX_CHARS];
-static bool s_last_text_valid = false;
-
-void mos_ui_caption_renderer_invalidate_cache(void)
-{
-    s_last_text_valid = false;
-}
-
-void mos_ui_caption_renderer_reset_cache(void)
-{
-    s_last_text_valid = false;
-    s_last_text[0] = '\0';
-}
-
-bool mos_ui_caption_renderer_has_cache(void)
-{
-    return s_last_text_valid;
-}
-
-const char *mos_ui_caption_renderer_get_cache(void)
-{
-    return s_last_text;
-}
 
 int mos_ui_caption_renderer_set_translation_pair(display_biz_lang_t src, display_biz_lang_t dst)
 {
@@ -245,27 +220,6 @@ static void render_default_path(mos_ui_main_scene_t *scene, const char *render_t
     mos_ui_main_scene_show_caption_default(scene, font, render_text);
 }
 
-void mos_ui_caption_renderer_rerender(mos_ui_main_scene_t *scene)
-{
-    if (scene == NULL)
-    {
-        return;
-    }
-
-    char snapshot[CAPTION_RENDER_MAX_CHARS];
-    if (s_last_text_valid)
-    {
-        strncpy(snapshot, s_last_text, sizeof(snapshot) - 1U);
-        snapshot[sizeof(snapshot) - 1U] = '\0';
-    }
-    else
-    {
-        snapshot[0] = '\0';
-    }
-    s_last_text_valid = false;
-    mos_ui_caption_renderer_render(scene, snapshot, 0);
-}
-
 void mos_ui_caption_renderer_render(mos_ui_main_scene_t *scene,
                                      const char *text,
                                      uint32_t committed_seq)
@@ -279,13 +233,6 @@ void mos_ui_caption_renderer_render(mos_ui_main_scene_t *scene,
     }
 
     prepare_for_render(text, render_text, sizeof(render_text));
-
-    if (s_last_text_valid && strcmp(render_text, s_last_text) == 0)
-    {
-        return;
-    }
-
-    display_scene_set_mode(DISPLAY_SCENE_MODE_CAPTION);
 
 #if defined(CONFIG_LVGL)
     force_binfont_to_english();
@@ -302,11 +249,7 @@ void mos_ui_caption_renderer_render(mos_ui_main_scene_t *scene,
         render_default_path(scene, render_text, has_cjk);
     }
 
-    strncpy(s_last_text, render_text, sizeof(s_last_text) - 1U);
-    s_last_text[sizeof(s_last_text) - 1U] = '\0';
-    s_last_text_valid = true;
-
-    LOG_INF("[RENDER][CAPTION] commit seq=%u raw_len=%u render_len=%u scene=%d has_cjk=%d",
+    LOG_INF("[RENDER][CAPTION] commit seq=%u raw_len=%u render_len=%u mode=%d has_cjk=%d",
             committed_seq, (unsigned int)strlen(text), (unsigned int)strlen(render_text),
-            (int)display_scene_get_mode(), (int)has_cjk);
+            (int)mos_ui_main_scene_get_mode(), (int)has_cjk);
 }

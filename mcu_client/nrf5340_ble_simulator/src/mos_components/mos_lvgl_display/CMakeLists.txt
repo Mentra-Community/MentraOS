@@ -7,8 +7,7 @@ target_sources(app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mos_lvgl_display.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/screen.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/display_config.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/caption_state.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/display_scene.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/caption_throttler.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/utf8.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/custom_rendering.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/color_utils.c

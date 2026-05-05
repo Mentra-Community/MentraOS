@@ -1,14 +1,49 @@
 #include "main_scene.h"
 
 #include <string.h>
+#include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <lvgl.h>
 
 #include "caption/caption_renderer.h"
+#include "caption_throttler.h"
 #include "display_config.h"
 #include "utils/dynamic_font_labels.h"
 
 LOG_MODULE_REGISTER(main_scene, LOG_LEVEL_DBG);
+
+/* Cross-thread-readable mode mirror. The LVGL thread is the only writer (always via the
+ * activate_* / set_mode helpers below); BLE/protobuf threads read this to decide whether
+ * to enqueue caption text or route to the positioned overlay. */
+static K_MUTEX_DEFINE(s_mode_lock);
+static mos_ui_main_scene_mode_t s_mode = MOS_UI_MAIN_SCENE_MODE_NONE;
+
+static void set_mode(mos_ui_main_scene_mode_t mode)
+{
+    k_mutex_lock(&s_mode_lock, K_FOREVER);
+    s_mode = mode;
+    k_mutex_unlock(&s_mode_lock);
+}
+
+mos_ui_main_scene_mode_t mos_ui_main_scene_get_mode(void)
+{
+    mos_ui_main_scene_mode_t mode;
+    k_mutex_lock(&s_mode_lock, K_FOREVER);
+    mode = s_mode;
+    k_mutex_unlock(&s_mode_lock);
+    return mode;
+}
+
+bool mos_ui_main_scene_is_welcome_mode(void)
+{
+    return mos_ui_main_scene_get_mode() == MOS_UI_MAIN_SCENE_MODE_WELCOME;
+}
+
+bool mos_ui_main_scene_can_render_caption(void)
+{
+    mos_ui_main_scene_mode_t mode = mos_ui_main_scene_get_mode();
+    return mode == MOS_UI_MAIN_SCENE_MODE_WELCOME || mode == MOS_UI_MAIN_SCENE_MODE_CAPTION;
+}
 
 /* ------------------------------------------------------------------------- *
  * Lifecycle
@@ -74,7 +109,6 @@ mos_ui_main_scene_t mos_ui_main_scene_create(lv_obj_t *parent, const mos_ui_main
 
     scene.welcome = mos_ui_welcome_view_create(parent, &welcome_cfg);
     scene.caption = mos_ui_caption_view_create(parent, &caption_cfg);
-    scene.welcome_mode = true;
 
     if (scene.caption.container)
     {
@@ -86,6 +120,8 @@ mos_ui_main_scene_t mos_ui_main_scene_create(lv_obj_t *parent, const mos_ui_main
     mos_dynamic_font_labels_add(scene.caption.default_scrolling);
 
     lv_obj_update_layout(parent);
+
+    set_mode(MOS_UI_MAIN_SCENE_MODE_WELCOME);
 
     LOG_DBG("main_scene created");
     return scene;
@@ -103,6 +139,7 @@ void mos_ui_main_scene_destroy(mos_ui_main_scene_t *scene)
 
     mos_ui_welcome_view_destroy(&scene->welcome);
     mos_ui_caption_view_destroy(&scene->caption);
+    set_mode(MOS_UI_MAIN_SCENE_MODE_NONE);
 }
 
 /* ------------------------------------------------------------------------- *
@@ -111,7 +148,7 @@ void mos_ui_main_scene_destroy(mos_ui_main_scene_t *scene)
 
 static void activate_caption(mos_ui_main_scene_t *scene)
 {
-    scene->welcome_mode = false;
+    set_mode(MOS_UI_MAIN_SCENE_MODE_CAPTION);
     if (scene->welcome.container)
         lv_obj_add_flag(scene->welcome.container, LV_OBJ_FLAG_HIDDEN);
     if (scene->caption.container)
@@ -120,7 +157,7 @@ static void activate_caption(mos_ui_main_scene_t *scene)
 
 static void activate_welcome(mos_ui_main_scene_t *scene)
 {
-    scene->welcome_mode = true;
+    set_mode(MOS_UI_MAIN_SCENE_MODE_WELCOME);
     if (scene->caption.container)
         lv_obj_add_flag(scene->caption.container, LV_OBJ_FLAG_HIDDEN);
     if (scene->welcome.container)
@@ -137,6 +174,7 @@ void mos_ui_main_scene_show_positioned(mos_ui_main_scene_t *scene)
 {
     if (!scene) return;
     activate_caption(scene);
+    set_mode(MOS_UI_MAIN_SCENE_MODE_POSITIONED);
     mos_ui_caption_view_set_mode(&scene->caption, MOS_UI_CAPTION_MODE_POSITIONED);
 }
 
@@ -161,11 +199,6 @@ bool mos_ui_main_scene_welcome_is_visible(const mos_ui_main_scene_t *scene)
         return false;
     }
     return !lv_obj_has_flag(scene->welcome.container, LV_OBJ_FLAG_HIDDEN);
-}
-
-bool mos_ui_main_scene_is_welcome_mode(const mos_ui_main_scene_t *scene)
-{
-    return scene && scene->welcome_mode;
 }
 
 /* ------------------------------------------------------------------------- *
@@ -235,7 +268,7 @@ void mos_ui_main_scene_clear_welcome(mos_ui_main_scene_t *scene)
 void mos_ui_main_scene_clear_active(mos_ui_main_scene_t *scene)
 {
     if (!scene) return;
-    if (scene->welcome_mode)
+    if (mos_ui_main_scene_is_welcome_mode())
     {
         mos_ui_welcome_view_clear(&scene->welcome);
     }
@@ -297,6 +330,7 @@ void mos_ui_main_scene_render_positioned_text(mos_ui_main_scene_t *scene,
 {
     if (!scene) return;
     activate_caption(scene);
+    set_mode(MOS_UI_MAIN_SCENE_MODE_POSITIONED);
     mos_ui_caption_view_set_scroll_enabled(&scene->caption, true);
     mos_ui_caption_view_render_positioned_text(&scene->caption, x, y, text, raw_color);
 }
@@ -309,34 +343,8 @@ void mos_ui_main_scene_render_caption_text(mos_ui_main_scene_t *scene,
                                             const char *text, uint32_t committed_seq)
 {
     if (!scene) return;
-    /* The renderer dispatches into show_caption_default/custom which handles activation. */
     activate_caption(scene);
     mos_ui_caption_renderer_render(scene, text, committed_seq);
-}
-
-void mos_ui_main_scene_rerender_caption(mos_ui_main_scene_t *scene)
-{
-    if (!scene) return;
-    mos_ui_caption_renderer_rerender(scene);
-}
-
-void mos_ui_main_scene_invalidate_caption_cache(void)
-{
-    mos_ui_caption_renderer_invalidate_cache();
-}
-
-void mos_ui_main_scene_reset_caption_cache(void)
-{
-    mos_ui_caption_renderer_reset_cache();
-}
-
-bool mos_ui_main_scene_caption_dedup_match(const char *text)
-{
-    if (!text || !mos_ui_caption_renderer_has_cache())
-    {
-        return false;
-    }
-    return strcmp(text, mos_ui_caption_renderer_get_cache()) == 0;
 }
 
 int mos_ui_main_scene_set_translation_pair(display_biz_lang_t src, display_biz_lang_t dst)
@@ -377,13 +385,21 @@ static bool font_skip_predicate(lv_obj_t *label, void *user_data)
     const mos_ui_main_scene_t *scene = (const mos_ui_main_scene_t *)user_data;
     if (!scene) return false;
     /* welcome_text on welcome screen is refreshed later via the battery refresh path. */
-    return scene->welcome_mode && label == scene->welcome.welcome_text;
+    return mos_ui_main_scene_is_welcome_mode() && label == scene->welcome.welcome_text;
 }
 
 void mos_ui_main_scene_apply_dynamic_font(mos_ui_main_scene_t *scene, const lv_font_t *new_font)
 {
     if (!scene || !new_font) return;
     mos_dynamic_font_labels_apply(new_font, font_skip_predicate, scene);
+}
+
+/* Render-callback used by the throttler when re-running the last caption text. */
+static void font_change_caption_rerender(const char *text, uint32_t seq, void *user_data)
+{
+    mos_ui_main_scene_t *scene = (mos_ui_main_scene_t *)user_data;
+    activate_caption(scene);
+    mos_ui_caption_renderer_render(scene, text, seq);
 }
 
 void mos_ui_main_scene_handle_font_changed(mos_ui_main_scene_t *scene, const lv_font_t *new_font)
@@ -394,12 +410,10 @@ void mos_ui_main_scene_handle_font_changed(mos_ui_main_scene_t *scene, const lv_
      *    that label gets a content rebuild below). */
     mos_ui_main_scene_apply_dynamic_font(scene, new_font);
 
-    /* 2. CJK per-character pool uses old glyph height for coordinates;
-     *    invalidate the cache so the next caption render re-runs layout. */
-    mos_ui_caption_renderer_invalidate_cache();
+    bool welcome_mode = mos_ui_main_scene_is_welcome_mode();
 
-    /* 3. Refresh the active view's content with the new font. */
-    if (scene->welcome_mode)
+    /* 2. Refresh the active view's content with the new font. */
+    if (welcome_mode)
     {
         mos_ui_welcome_view_refresh_text(&scene->welcome, new_font);
         activate_welcome(scene);
@@ -411,16 +425,18 @@ void mos_ui_main_scene_handle_font_changed(mos_ui_main_scene_t *scene, const lv_
     }
     else if (scene->caption.container)
     {
-        mos_ui_caption_renderer_rerender(scene);
+        /* Re-render whatever caption was last committed; the throttler holds the text and
+         * bypasses dedup so the new glyph metrics are picked up. */
+        mos_caption_throttler_force_rerender(font_change_caption_rerender, scene);
     }
 
-    /* 4. Caption container always needs a relayout pass after a font swap (its scrollable
+    /* 3. Caption container always needs a relayout pass after a font swap (its scrollable
      *    inner-content metrics depend on glyph height even when caption is hidden). */
     if (scene->caption.container)
     {
         lv_obj_update_layout(scene->caption.container);
-        mos_ui_caption_view_set_scroll_enabled(&scene->caption, !scene->welcome_mode);
-        if (!scene->welcome_mode)
+        mos_ui_caption_view_set_scroll_enabled(&scene->caption, !welcome_mode);
+        if (!welcome_mode)
         {
             mos_ui_caption_view_scroll_to_bottom(&scene->caption);
         }

@@ -9,14 +9,22 @@
 #include "caption/caption_view.h"
 #include "display_config.h"
 
+/* Active sub-view of the main scene. NONE means the scene hasn't been created (or has been
+ * destroyed). The mode is mutated by the activate_* helpers and the positioned-text path,
+ * read from any thread (BLE/protobuf), and is the single source of truth for the
+ * "what is main_scene currently showing" question that other modules used to mirror. */
+typedef enum
+{
+    MOS_UI_MAIN_SCENE_MODE_NONE = 0,
+    MOS_UI_MAIN_SCENE_MODE_WELCOME,
+    MOS_UI_MAIN_SCENE_MODE_CAPTION,
+    MOS_UI_MAIN_SCENE_MODE_POSITIONED,
+} mos_ui_main_scene_mode_t;
+
 typedef struct
 {
     mos_ui_welcome_view_t welcome;
     mos_ui_caption_view_t caption;
-    /* Which sub-view is currently the active mode of this scene.
-     * True after create / show_welcome; flipped to false the moment caption-side rendering
-     * (default scrolling, custom scrolling, or positioned text) takes over. */
-    bool welcome_mode;
 } mos_ui_main_scene_t;
 
 typedef struct
@@ -54,7 +62,12 @@ void mos_ui_main_scene_show_positioned(mos_ui_main_scene_t *scene);
 bool mos_ui_main_scene_caption_is_ready(const mos_ui_main_scene_t *scene);
 bool mos_ui_main_scene_welcome_is_ready(const mos_ui_main_scene_t *scene);
 bool mos_ui_main_scene_welcome_is_visible(const mos_ui_main_scene_t *scene);
-bool mos_ui_main_scene_is_welcome_mode(const mos_ui_main_scene_t *scene);
+
+/* Mode queries — thread-safe; the answer is mirrored to a mutex-protected slot inside
+ * main_scene so non-LVGL threads (BLE/protobuf) can route on it. */
+mos_ui_main_scene_mode_t mos_ui_main_scene_get_mode(void);
+bool mos_ui_main_scene_is_welcome_mode(void);
+bool mos_ui_main_scene_can_render_caption(void);
 
 /* ------------------------------------------------------------------------- *
  * Layout / invalidation
@@ -91,18 +104,11 @@ void mos_ui_main_scene_render_positioned_text(mos_ui_main_scene_t *scene,
                                                 const char *text, uint32_t raw_color);
 
 /* ------------------------------------------------------------------------- *
- * Caption text rendering — wraps the internal renderer (font selection, dedup,
- * CJK probing). Control plane never talks to the renderer directly.
+ * Caption text rendering — wraps the internal renderer (font selection, CJK probing).
+ * Throttling/dedup/last-rendered are owned by caption_throttler, not the scene.
  * ------------------------------------------------------------------------- */
 void mos_ui_main_scene_render_caption_text(mos_ui_main_scene_t *scene,
                                             const char *text, uint32_t committed_seq);
-void mos_ui_main_scene_rerender_caption(mos_ui_main_scene_t *scene);
-void mos_ui_main_scene_invalidate_caption_cache(void);
-void mos_ui_main_scene_reset_caption_cache(void);
-
-/* True when the renderer's last-committed text exactly equals `text`.
- * Use this for upstream throttling/dedup decisions before calling _render_caption_text. */
-bool mos_ui_main_scene_caption_dedup_match(const char *text);
 
 int  mos_ui_main_scene_set_translation_pair(display_biz_lang_t src, display_biz_lang_t dst);
 void mos_ui_main_scene_get_translation_pair(display_biz_lang_t *src, display_biz_lang_t *dst);
