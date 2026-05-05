@@ -6,7 +6,7 @@ target 'MentraExample' do
   use_frameworks!
 
   local_sdk_path = ENV['MENTRA_BLUETOOTH_SDK_LOCAL_PATH'] ||
-    '/Users/philippe/dev/MentraOS-philippe-os-1178-mentra-bluetooth-sdk/mobile/modules/bluetooth-sdk/ios'
+    File.expand_path('../../../MentraOS/mobile/modules/bluetooth-sdk/ios', __dir__)
 
   pod 'MentraBluetoothSDK', :path => local_sdk_path
 end

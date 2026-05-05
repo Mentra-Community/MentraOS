@@ -10,7 +10,7 @@
     "web": "expo start --web"
   },
   "dependencies": {
-    "@mentra/bluetooth-sdk": "file:/Users/philippe/dev/MentraOS-philippe-os-1178-mentra-bluetooth-sdk/mobile/modules/bluetooth-sdk",
+    "@mentra/bluetooth-sdk": "file:../../../MentraOS/mobile/modules/bluetooth-sdk",
     "expo": "~55.0.19",
     "expo-audio": "~55.0.14",
     "expo-build-properties": "~55.0.13",

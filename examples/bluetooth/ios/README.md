@@ -20,8 +20,7 @@ UI and compile checks.
 
 For local SDK development, the `Podfile` reads
 `MENTRA_BLUETOOTH_SDK_LOCAL_PATH` when present. If it is unset, it uses the
-local MentraOS checkout path used by this repo while the SDK is under active
-development.
+default sibling checkout path `../MentraOS/mobile/modules/bluetooth-sdk/ios`.
 
 ```bash
 export MENTRA_BLUETOOTH_SDK_LOCAL_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk/ios
