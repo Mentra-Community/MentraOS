@@ -1,10 +1,7 @@
 /**
  * @fileoverview HeadingModule — phone compass heading events.
  *
- * Android only on the phone side. iOS subscribers receive no events; the
- * native layer reports back ok=false at the bridge boundary.
- *
- * LOCATION permission must be declared in miniapp.json.
+ * Works on both Android and iOS. LOCATION permission must be declared in miniapp.json.
  */
 
 import {MiniappStreamType} from "../protocol"

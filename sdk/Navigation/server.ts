@@ -3,4 +3,4 @@
  * file just re-exports the real implementation from `src/backend/`. Keep
  * it thin — all dev-server logic lives in src/backend/server.ts.
  */
-import "./src/backend/server"
+import "./src/client/server"

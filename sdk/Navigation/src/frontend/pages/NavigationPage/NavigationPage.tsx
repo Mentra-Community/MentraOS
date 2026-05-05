@@ -47,6 +47,7 @@ export function NavigationPage() {
   // Fetch a preview route whenever destination changes and we're not navigating
   const previewAbortRef = useRef<AbortController | null>(null)
   useEffect(() => {
+    console.log("[PREVIEW] effect fired — running:", running, "destination:", destination?.name, "coords:", coords?.lat, coords?.lng)
     if (running || !destination || !coords) {
       setPreviewRoutePoints(null)
       return
@@ -55,6 +56,7 @@ export function NavigationPage() {
     const ctrl = new AbortController()
     previewAbortRef.current = ctrl
     const origin = {lat: coords.lat, lng: coords.lng}
+    console.log("[PREVIEW] calling computeRoute origin:", origin, "dest:", destination.lat, destination.lng)
     navigation
       .computeRoute({
         origin,
@@ -62,14 +64,18 @@ export function NavigationPage() {
         mode: travelMode,
       })
       .then((result) => {
+        console.log("[PREVIEW] computeRoute result:", JSON.stringify(result).slice(0, 200))
         if (ctrl.signal.aborted) return
         const pts = result.routes?.[0]?.points ?? null
+        console.log("[PREVIEW] setting previewRoutePoints, count:", pts?.length ?? 0)
         setPreviewRoutePoints(pts)
       })
+      .catch((err) => {
+        console.warn("[PREVIEW] computeRoute failed:", err)
+      })
     return () => ctrl.abort()
-    // coords intentionally omitted — only re-fetch when destination changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running, destination?.lat, destination?.lng])
+  }, [running, destination?.lat, destination?.lng, coords?.lat, coords?.lng])
 
   const navUpdateUnsubRef = useRef<(() => void) | null>(null)
   const navRouteUnsubRef = useRef<(() => void) | null>(null)
@@ -145,6 +151,8 @@ export function NavigationPage() {
           setRoutePoints(route.points)
         })
       }
+    }).catch(() => {
+      // No active trip or host not reachable — stay in idle state
     })
     return () => {
       cancelled = true
