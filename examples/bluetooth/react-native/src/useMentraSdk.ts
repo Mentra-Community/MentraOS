@@ -13,6 +13,7 @@ import BluetoothSdk, {
   type MicLc3Event,
   type MicPcmEvent,
   type PhotoResponseEvent,
+  type RgbLedAction,
   type RgbLedControlResponseEvent,
   type StreamStatusEvent,
   type TouchEvent,
@@ -22,6 +23,9 @@ import {isDisconnectedStatus, isGlassesConnected} from './sdkFormat';
 
 export type StreamProtocol = 'rtmp' | 'srt' | 'webrtc';
 export type LedMode = 'Off' | 'Solid' | 'Pulse' | 'Blink';
+export type LedColor = 'red' | 'green' | 'blue' | 'orange' | 'white';
+
+export const RGB_LED_COLORS: LedColor[] = ['red', 'green', 'blue', 'orange', 'white'];
 
 export const STREAM_DEFAULT_URLS: Record<StreamProtocol, string> = {
   rtmp: 'rtmp://<computer-ip>:1935/live/mentra-live',
@@ -49,6 +53,8 @@ export type MentraSdkState = {
   lastAction: string;
   lastMicBytes: number;
   lastMicDurationSeconds: number | null;
+  ledBrightnessPercent: number;
+  ledColor: LedColor;
   ledMode: LedMode;
   micElapsedSeconds: number;
   micPlaying: boolean;
@@ -69,13 +75,16 @@ export type MentraSdkActions = {
   applySettings: () => Promise<void>;
   captureAndUpload: () => Promise<void>;
   clearDisplay: () => Promise<void>;
+  commitLedBrightness: (percent?: number) => Promise<void>;
   connect: () => Promise<void>;
   connectDevice: (device: DeviceSearchResult) => Promise<void>;
   disconnect: () => Promise<void>;
   displayHello: () => Promise<void>;
   requestWifiScan: () => Promise<void>;
   playMicRecording: () => Promise<void>;
+  selectLedColor: (color: LedColor) => Promise<void>;
   selectLedMode: (mode: LedMode) => Promise<void>;
+  setLedBrightnessPercent: (percent: number) => void;
   selectProtocol: (protocol: StreamProtocol) => void;
   sendWifiCredentials: (ssid: string) => Promise<void>;
   setRawJsonExpanded: (expanded: boolean) => void;
@@ -142,6 +151,8 @@ export function useMentraSdk(): MentraSdkModel {
   const [lastMicBytes, setLastMicBytes] = useState(0);
   const [lastMicDurationSeconds, setLastMicDurationSeconds] = useState<number | null>(null);
   const [galleryModeAuto, setGalleryModeAuto] = useState(true);
+  const [ledBrightnessPercent, setLedBrightnessPercentState] = useState(72);
+  const [ledColor, setLedColor] = useState<LedColor>('green');
   const [ledMode, setLedMode] = useState<LedMode>('Solid');
   const [rawJsonExpanded, setRawJsonExpanded] = useState(false);
   const activePhotoRequestIdRef = useRef<string | null>(null);
@@ -761,18 +772,65 @@ export function useMentraSdk(): MentraSdkModel {
     await runAction(`RGB LED ${mode}`, async () => {
       requireConnected('control the RGB LED');
       setLedMode(mode);
-      const requestId = `rgb-${Date.now()}`;
-      const action = mode === 'Off' ? 'off' : mode.toLowerCase();
-      await BluetoothSdk.rgbLedControl(
-        requestId,
-        PHOTO_APP_ID,
-        action,
-        mode === 'Off' ? null : '#34C759',
-        mode === 'Pulse' ? 600 : 1000,
-        mode === 'Blink' ? 400 : 0,
-        mode === 'Blink' ? 5 : 1,
-      );
+      await sendRgbLedRequest(mode, ledColor, ledBrightnessPercent);
     });
+  }
+
+  async function selectLedColor(color: LedColor) {
+    await runAction(`RGB LED color ${color.toUpperCase()}`, async () => {
+      requireConnected('control the RGB LED');
+      if (!RGB_LED_COLORS.includes(color)) {
+        throw new Error(`Unsupported RGB LED color: ${color}`);
+      }
+      setLedColor(color);
+      if (ledMode !== 'Off') {
+        await sendRgbLedRequest(ledMode, color, ledBrightnessPercent);
+      }
+    });
+  }
+
+  function setLedBrightnessPercent(percent: number) {
+    setLedBrightnessPercentState(clamp(Math.round(percent), 0, 100));
+  }
+
+  async function commitLedBrightness(percent?: number) {
+    const brightnessPercent = percent == null ? ledBrightnessPercent : clamp(Math.round(percent), 0, 100);
+    setLedBrightnessPercentState(brightnessPercent);
+    await runAction(`RGB LED brightness ${brightnessPercent}%`, async () => {
+      requireConnected('control the RGB LED');
+      if (ledMode !== 'Off') {
+        await sendRgbLedRequest(ledMode, ledColor, brightnessPercent);
+      }
+    });
+  }
+
+  async function sendRgbLedRequest(mode: LedMode, color: LedColor, brightnessPercent: number) {
+    const requestId = `rgb-${Date.now()}`;
+    const request = rgbLedRequestFor(mode, color, brightnessPercent);
+    await BluetoothSdk.rgbLedControl(
+      requestId,
+      PHOTO_APP_ID,
+      request.action,
+      request.color,
+      request.ontime,
+      request.offtime,
+      request.count,
+      request.brightness,
+    );
+  }
+
+  function rgbLedRequestFor(mode: LedMode, color: LedColor, brightnessPercent: number): { action: RgbLedAction; color: LedColor | null; ontime: number; offtime: number; count: number; brightness: number | null } {
+    const brightness = rgbBrightnessValue(brightnessPercent);
+    switch (mode) {
+      case 'Solid':
+        return { action: 'on', color, ontime: 30_000, offtime: 0, count: 1, brightness };
+      case 'Pulse':
+        return { action: 'on', color, ontime: 900, offtime: 900, count: 6, brightness };
+      case 'Blink':
+        return { action: 'on', color, ontime: 250, offtime: 250, count: 12, brightness };
+      default:
+        return { action: 'off', color: null, ontime: 0, offtime: 0, count: 0, brightness: null };
+    }
   }
 
   function requireConnected(feature: string) {
@@ -840,6 +898,7 @@ export function useMentraSdk(): MentraSdkModel {
     cameraStatus,
     captureAndUpload,
     clearDisplay,
+    commitLedBrightness,
     connect,
     connectDevice,
     disconnect,
@@ -852,6 +911,8 @@ export function useMentraSdk(): MentraSdkModel {
     lastAction,
     lastMicBytes,
     lastMicDurationSeconds,
+    ledBrightnessPercent,
+    ledColor,
     ledMode,
     micElapsedSeconds,
     micPlaying,
@@ -863,7 +924,9 @@ export function useMentraSdk(): MentraSdkModel {
     playMicRecording,
     rawJsonExpanded,
     requestWifiScan,
+    selectLedColor,
     selectLedMode,
+    setLedBrightnessPercent,
     selectProtocol,
     sendWifiCredentials,
     setRawJsonExpanded,
@@ -902,6 +965,14 @@ export function durationText(seconds: number) {
   return [hours, minutes, remainder]
     .map((value) => String(value).padStart(2, '0'))
     .join(':');
+}
+
+export function rgbBrightnessValue(percent: number) {
+  return Math.round((clamp(Math.round(percent), 0, 100) * 255) / 100);
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function concatChunks(chunks: Uint8Array[]) {

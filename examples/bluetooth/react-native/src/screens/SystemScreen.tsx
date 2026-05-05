@@ -1,12 +1,21 @@
-import React from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
+import React, {useRef, useState} from 'react';
+import {
+  View,
+  Text,
+  ScrollView,
+  Pressable,
+  StyleSheet,
+  PanResponder,
+  type GestureResponderEvent,
+  type LayoutChangeEvent,
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Line, Path, Polyline, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { colors } from '../components/theme';
 import { isGlassesConnected, wifiLabel, wifiSubLabel } from '../sdkFormat';
-import { durationText, type LedMode, type MentraSdkModel } from '../useMentraSdk';
+import { RGB_LED_COLORS, durationText, type LedColor, type LedMode, type MentraSdkModel } from '../useMentraSdk';
 
 export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
   const networks = sdk.bluetoothStatus.wifiScanResults ?? [];
@@ -154,10 +163,12 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
         <View style={styles.tileHead}>
           <View>
             <Text style={styles.ledTitle}>RGB LED</Text>
-            <Text style={styles.tileSub}>intensity & pattern</Text>
+            <Text style={styles.tileSub}>color & pattern</Text>
           </View>
           <View style={styles.onPill}>
-            <View style={{ width: 8, height: 8, borderRadius: 999, backgroundColor: colors.greenAccent }} />
+            {sdk.ledMode !== 'Off' && (
+              <View style={{ width: 8, height: 8, borderRadius: 999, backgroundColor: ledSwatchColor(sdk.ledColor) }} />
+            )}
             <Text style={styles.onText}>{sdk.ledMode === 'Off' ? 'off' : 'on'}</Text>
           </View>
         </View>
@@ -167,15 +178,28 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
           <LedTab active={sdk.ledMode === 'Pulse'} disabled={!connected} onPress={() => sdk.selectLedMode('Pulse')} icon={<Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={colors.muted} strokeWidth={2}><Circle cx={12} cy={12} r={3} fill={colors.muted} /><Circle cx={12} cy={12} r={6.5} opacity={0.55} /><Circle cx={12} cy={12} r={10} opacity={0.25} /></Svg>} label="Pulse" />
           <LedTab active={sdk.ledMode === 'Blink'} disabled={!connected} onPress={() => sdk.selectLedMode('Blink')} icon={<Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={colors.muted} strokeWidth={2} strokeDasharray="3 3"><Circle cx={12} cy={12} r={9} /></Svg>} label="Blink" />
         </View>
+        <View style={styles.ledColorRow}>
+          {RGB_LED_COLORS.map((color) => (
+            <LedColorChip
+              key={color}
+              active={sdk.ledColor === color}
+              color={color}
+              disabled={!connected}
+              onPress={() => sdk.selectLedColor(color)}
+            />
+          ))}
+        </View>
         <View style={{ gap: 8 }}>
           <View style={styles.brightnessHead}>
             <Text style={styles.brightnessLabel}>BRIGHTNESS</Text>
-            <Text style={styles.brightnessValue}>72%</Text>
+            <Text style={styles.brightnessValue}>{sdk.ledBrightnessPercent}%</Text>
           </View>
-          <View style={styles.sliderTrack}>
-            <LinearGradient colors={['#3FB76A', '#7DD89E']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={[styles.sliderFill, { width: '72%' }]} />
-            <View style={[styles.sliderThumb, { left: '72%' }]} />
-          </View>
+          <BrightnessSlider
+            disabled={!connected}
+            value={sdk.ledBrightnessPercent}
+            onChange={sdk.setLedBrightnessPercent}
+            onCommit={sdk.commitLedBrightness}
+          />
         </View>
       </LinearGradient>
     </ScrollView>
@@ -230,6 +254,56 @@ function LedTab({ icon, label, active, disabled, onPress }: { icon: React.ReactN
   );
 }
 
+function LedColorChip({ active, color, disabled, onPress }: { active: boolean; color: LedColor; disabled: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      disabled={disabled}
+      style={[styles.ledColorChip, active && styles.ledColorChipActive, disabled && styles.disabled, active && { borderColor: ledChipBorderColor(color) }]}
+      onPress={onPress}>
+      <View style={[styles.ledColorDot, { backgroundColor: ledSwatchColor(color) }, color === 'white' && styles.ledColorDotWhite]} />
+      <Text style={[styles.ledColorText, active && styles.ledColorTextActive]}>{capitalize(color)}</Text>
+    </Pressable>
+  );
+}
+
+function BrightnessSlider({ disabled, value, onChange, onCommit }: { disabled: boolean; value: number; onChange: (value: number) => void; onCommit: (value: number) => void }) {
+  const [width, setWidth] = useState(0);
+  const valueRef = useRef(value);
+  valueRef.current = value;
+
+  const updateFromEvent = (event: GestureResponderEvent) => {
+    if (disabled || width <= 0) {
+      return;
+    }
+    const next = clamp(Math.round((event.nativeEvent.locationX / width) * 100), 0, 100);
+    valueRef.current = next;
+    onChange(next);
+  };
+
+  const panResponder = PanResponder.create({
+    onMoveShouldSetPanResponder: () => !disabled,
+    onStartShouldSetPanResponder: () => !disabled,
+    onPanResponderGrant: updateFromEvent,
+    onPanResponderMove: updateFromEvent,
+    onPanResponderRelease: () => onCommit(valueRef.current),
+    onPanResponderTerminate: () => onCommit(valueRef.current),
+  });
+
+  const onLayout = (event: LayoutChangeEvent) => {
+    setWidth(event.nativeEvent.layout.width);
+  };
+
+  return (
+    <View
+      onLayout={onLayout}
+      style={[styles.sliderTrack, disabled && styles.disabled]}
+      {...panResponder.panHandlers}>
+      <LinearGradient colors={['#3FB76A', '#7DD89E']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={[styles.sliderFill, { width: `${value}%` }]} />
+      <View style={[styles.sliderThumb, { left: `${value}%` }]} />
+    </View>
+  );
+}
+
 function MicControlButton({ active, children, disabled, onPress }: { active: boolean; children: React.ReactNode; disabled: boolean; onPress: () => void }) {
   return (
     <Pressable
@@ -263,6 +337,33 @@ function PlayIcon() {
       <Path d="M8 5v14l11-7z" fill={colors.greenInk} />
     </Svg>
   );
+}
+
+function ledSwatchColor(color: LedColor) {
+  switch (color) {
+    case 'red':
+      return colors.red;
+    case 'blue':
+      return colors.ble;
+    case 'orange':
+      return colors.amber;
+    case 'white':
+      return '#FFFFFF';
+    default:
+      return colors.greenAccent;
+  }
+}
+
+function ledChipBorderColor(color: LedColor) {
+  return color === 'white' ? 'rgba(15,42,29,0.16)' : `${ledSwatchColor(color)}6B`;
+}
+
+function capitalize(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }
 
 const styles = StyleSheet.create({
@@ -304,6 +405,13 @@ const styles = StyleSheet.create({
   ledTabActive: { backgroundColor: '#fff' },
   ledTabText: { color: colors.muted, fontSize: 12, fontWeight: '500' },
   ledTabTextActive: { color: colors.ink, fontWeight: '600' },
+  ledColorRow: { flexDirection: 'row', gap: 6 },
+  ledColorChip: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 7, paddingHorizontal: 8, borderRadius: 999, backgroundColor: 'rgba(15,42,29,0.04)', borderWidth: 1, borderColor: 'rgba(15,42,29,0.05)' },
+  ledColorChipActive: { backgroundColor: '#fff' },
+  ledColorDot: { width: 9, height: 9, borderRadius: 999 },
+  ledColorDotWhite: { borderWidth: 1, borderColor: 'rgba(15,42,29,0.16)' },
+  ledColorText: { color: colors.muted, fontSize: 10, fontWeight: '500' },
+  ledColorTextActive: { color: colors.ink, fontWeight: '600' },
   brightnessHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   brightnessLabel: { color: colors.muted, fontSize: 10, fontWeight: '600', letterSpacing: 1.6 },
   brightnessValue: { color: colors.ink, fontSize: 12, fontWeight: '600' },

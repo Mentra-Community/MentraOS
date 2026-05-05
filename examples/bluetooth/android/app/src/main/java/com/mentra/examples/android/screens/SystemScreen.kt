@@ -13,12 +13,13 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
@@ -27,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import com.mentra.examples.android.MentraExampleController
 import com.mentra.examples.android.durationText
 import com.mentra.examples.android.isGlassesConnected
+import com.mentra.examples.android.rgbLedColorOptions
 import com.mentra.examples.android.wifiLabel
 import com.mentra.examples.android.wifiScanResults
 import com.mentra.examples.android.ui.AppColor
@@ -188,14 +190,16 @@ fun SystemScreen(controller: MentraExampleController) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
                     Text("RGB LED", color = AppColor.ink, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text("intensity & pattern", color = AppColor.muted, fontSize = 11.sp)
+                    Text("color & pattern", color = AppColor.muted, fontSize = 11.sp)
                 }
                 Row(
                     modifier = Modifier.clip(RoundedCornerShape(999.dp)).background(AppColor.ink.copy(alpha = 0.06f)).padding(horizontal = 11.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(AppColor.greenAccent))
+                    if (state.ledMode != "Off") {
+                        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(ledSwatchColor(state.ledColor)))
+                    }
                     Text(if (state.ledMode == "Off") "off" else "on", color = AppColor.ink, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
@@ -209,16 +213,37 @@ fun SystemScreen(controller: MentraExampleController) {
                 LedTab(Icons.Outlined.GpsFixed, "Pulse", state.ledMode == "Pulse", Modifier.weight(1f), enabled = connected) { controller.selectLedMode("Pulse") }
                 LedTab(Icons.Outlined.RadioButtonUnchecked, "Blink", state.ledMode == "Blink", Modifier.weight(1f), enabled = connected) { controller.selectLedMode("Blink") }
             }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                rgbLedColorOptions.forEach { color ->
+                    LedColorChip(
+                        colorName = color,
+                        active = state.ledColor == color,
+                        enabled = connected,
+                        modifier = Modifier.weight(1f),
+                    ) { controller.selectLedColor(color) }
+                }
+            }
             Spacer(Modifier.height(14.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Eyebrow("BRIGHTNESS", mono = true)
-                Text("72%", color = AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text("${state.ledBrightnessPercent}%", color = AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             }
-            Spacer(Modifier.height(8.dp))
-            Box(modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(999.dp)).background(AppColor.ink.copy(alpha = 0.08f))) {
-                Box(modifier = Modifier.fillMaxWidth(0.72f).height(8.dp).clip(RoundedCornerShape(999.dp))
-                    .background(Brush.horizontalGradient(listOf(Color(0xFF3FB76A), AppColor.greenSoft))))
-            }
+            Slider(
+                value = state.ledBrightnessPercent.toFloat(),
+                onValueChange = { controller.setLedBrightnessPercent(it.toInt()) },
+                onValueChangeFinished = { controller.commitLedBrightness() },
+                enabled = connected,
+                valueRange = 0f..100f,
+                steps = 99,
+                colors = SliderDefaults.colors(
+                    thumbColor = Color.White,
+                    activeTrackColor = AppColor.greenAccent,
+                    inactiveTrackColor = AppColor.ink.copy(alpha = 0.08f),
+                    activeTickColor = Color.Transparent,
+                    inactiveTickColor = Color.Transparent,
+                ),
+            )
         }
 
         Spacer(Modifier.height(140.dp))
@@ -310,5 +335,53 @@ private fun LedTab(icon: ImageVector, label: String, active: Boolean, modifier: 
     ) {
         Icon(icon, null, tint = if (active) AppColor.ink else AppColor.muted, modifier = Modifier.size(16.dp))
         Text(label, color = if (active) AppColor.ink else AppColor.muted, fontSize = 12.sp, fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun LedColorChip(colorName: String, active: Boolean, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(if (active) Color.White else AppColor.ink.copy(alpha = 0.04f))
+            .border(1.dp, ledChipBorderColor(colorName, active), RoundedCornerShape(999.dp))
+            .clickable(enabled = enabled) { onClick() }
+            .padding(horizontal = 8.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        Box(
+            modifier = Modifier.size(9.dp)
+                .clip(CircleShape)
+                .background(ledSwatchColor(colorName))
+                .border(1.dp, AppColor.ink.copy(alpha = if (colorName == "white") 0.16f else 0f), CircleShape)
+        )
+        Text(
+            colorName.replaceFirstChar { it.uppercase() },
+            color = if (active) AppColor.ink else AppColor.muted,
+            fontSize = 10.sp,
+            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
+            maxLines = 1,
+        )
+    }
+}
+
+private fun ledChipBorderColor(colorName: String, active: Boolean): Color {
+    if (!active) {
+        return AppColor.ink.copy(alpha = 0.05f)
+    }
+    if (colorName == "white") {
+        return AppColor.ink.copy(alpha = 0.16f)
+    }
+    return ledSwatchColor(colorName).copy(alpha = 0.42f)
+}
+
+private fun ledSwatchColor(colorName: String): Color {
+    return when (colorName) {
+        "red" -> AppColor.red
+        "blue" -> AppColor.ble
+        "orange" -> AppColor.amber
+        "white" -> Color.White
+        else -> AppColor.greenAccent
     }
 }

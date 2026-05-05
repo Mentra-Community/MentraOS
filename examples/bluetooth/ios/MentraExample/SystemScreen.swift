@@ -7,6 +7,8 @@ private struct WifiNetworkSelection: Identifiable {
     var id: String { ssid }
 }
 
+private let ledColorOptions = ["red", "green", "blue", "orange", "white"]
+
 struct SystemScreen: View {
     @ObservedObject var model: BluetoothViewModel
     @State private var pendingWifiNetwork: WifiNetworkSelection?
@@ -306,11 +308,13 @@ struct SystemScreen: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("RGB LED").font(.system(size: 18, weight: .bold)).tracking(-0.18).foregroundColor(AppColor.ink)
-                    Text("intensity & pattern").font(.system(size: 11)).foregroundColor(AppColor.muted)
+                    Text("color & pattern").font(.system(size: 11)).foregroundColor(AppColor.muted)
                 }
                 Spacer()
                 HStack(spacing: 6) {
-                    Circle().fill(AppColor.greenAccent).frame(width: 8, height: 8)
+                    if model.ledMode != "Off" {
+                        Circle().fill(ledSwatchColor(model.ledColor)).frame(width: 8, height: 8)
+                    }
                     Text(model.ledMode == "Off" ? "off" : "on").font(.system(size: 11, weight: .semibold)).foregroundColor(AppColor.ink)
                 }
                 .padding(.horizontal, 11).padding(.vertical, 6)
@@ -327,34 +331,40 @@ struct SystemScreen: View {
             .padding(4)
             .background(AppColor.ink.opacity(0.05))
             .clipShape(RoundedRectangle(cornerRadius: 14))
+            .padding(.bottom, 12)
+
+            HStack(spacing: 6) {
+                ForEach(ledColorOptions, id: \.self) { color in
+                    LedColorChip(colorName: color, active: model.ledColor == color, enabled: model.glassesConnected) {
+                        model.selectLedColor(color)
+                    }
+                }
+            }
             .padding(.bottom, 14)
 
             HStack {
                 Text("BRIGHTNESS").font(.system(size: 10, weight: .semibold)).tracking(1.6).foregroundColor(AppColor.muted)
                 Spacer()
-                Text("72%").font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.ink)
+                Text("\(model.ledBrightnessPercent)%").font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.ink)
             }
-            .padding(.bottom, 8)
+            .padding(.bottom, 2)
 
-            ZStack(alignment: .leading) {
-                Capsule().fill(AppColor.ink.opacity(0.08)).frame(height: 8)
-                GeometryReader { geo in
-                    ZStack(alignment: .trailing) {
-                        Capsule()
-                            .fill(LinearGradient(colors: [Color(hex: 0x3FB76A), AppColor.greenSoft], startPoint: .leading, endPoint: .trailing))
-                            .frame(width: geo.size.width * 0.72, height: 8)
+            Slider(
+                value: Binding(
+                    get: { Double(model.ledBrightnessPercent) },
+                    set: { model.setLedBrightnessPercent(Int($0.rounded())) }
+                ),
+                in: 0...100,
+                step: 1,
+                onEditingChanged: { editing in
+                    if !editing {
+                        model.commitLedBrightness()
                     }
-                    .frame(height: 8)
                 }
-                .frame(height: 8)
-                GeometryReader { geo in
-                    Circle().fill(Color.white)
-                        .frame(width: 20, height: 20)
-                        .position(x: geo.size.width * 0.72 - 10, y: 4)
-                        .shadow(color: Color(hex: 0x0F2A1D).opacity(0.18), radius: 6, x: 0, y: 2)
-                }
-                .frame(height: 8)
-            }
+            )
+            .tint(AppColor.greenAccent)
+            .disabled(!model.glassesConnected)
+            .opacity(model.glassesConnected ? 1 : 0.45)
         }
     }
 }
@@ -443,5 +453,60 @@ struct LedTab: View {
         }
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.45)
+    }
+}
+
+struct LedColorChip: View {
+    let colorName: String
+    let active: Bool
+    var enabled = true
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(ledSwatchColor(colorName))
+                    .frame(width: 9, height: 9)
+                    .overlay(Circle().stroke(AppColor.ink.opacity(colorName == "white" ? 0.16 : 0), lineWidth: 1))
+                Text(colorName.capitalized)
+                    .font(.system(size: 10, weight: active ? .semibold : .medium))
+                    .foregroundColor(active ? AppColor.ink : AppColor.muted)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .background(active ? Color.white : AppColor.ink.opacity(0.04))
+            .overlay(Capsule().stroke(ledChipBorderColor(colorName, active: active), lineWidth: 1))
+            .clipShape(Capsule())
+        }
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
+    }
+}
+
+private func ledChipBorderColor(_ colorName: String, active: Bool) -> Color {
+    if !active {
+        return AppColor.ink.opacity(0.05)
+    }
+    if colorName == "white" {
+        return AppColor.ink.opacity(0.16)
+    }
+    return ledSwatchColor(colorName).opacity(0.42)
+}
+
+private func ledSwatchColor(_ colorName: String) -> Color {
+    switch colorName {
+    case "red":
+        return AppColor.red
+    case "blue":
+        return AppColor.ble
+    case "orange":
+        return AppColor.amber
+    case "white":
+        return .white
+    default:
+        return AppColor.greenAccent
     }
 }

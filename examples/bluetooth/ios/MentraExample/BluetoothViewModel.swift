@@ -61,6 +61,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var pcmBytes = 0
     @Published private(set) var lastMicDurationSeconds: Int?
     @Published private(set) var lastMicBytes = 0
+    @Published private(set) var ledBrightnessPercent = 72
+    @Published private(set) var ledColor = "green"
     @Published private(set) var ledMode = "Solid"
     @Published var rawJsonExpanded = false
 
@@ -77,6 +79,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var micPcmData = Data()
     private var micRecordingUrl: URL?
     private var micPlayer: AVAudioPlayer?
+    private let validLedColors = Set(["red", "green", "blue", "orange", "white"])
 
     var glassesConnected: Bool {
         isGlassesConnected(glassesValues)
@@ -369,17 +372,63 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         runAction("RGB LED \(mode)") {
             try requireConnected("control the RGB LED")
             ledMode = mode
-            sdk.rgbLedControl(
-                MentraRgbLedRequest(
-                    requestId: "rgb-\(Int(Date().timeIntervalSince1970 * 1000))",
-                    packageName: "com.mentra.examples.ios",
-                    action: mode == "Off" ? "off" : mode.lowercased(),
-                    color: mode == "Off" ? nil : "#34C759",
-                    ontime: mode == "Pulse" ? 600 : 1000,
-                    offtime: mode == "Blink" ? 400 : 0,
-                    count: mode == "Blink" ? 5 : 1
-                )
+            sendRgbLedRequest(mode: mode, color: ledColor, brightnessPercent: ledBrightnessPercent)
+        }
+    }
+
+    func selectLedColor(_ color: String) {
+        runAction("RGB LED color \(color.uppercased())") {
+            try requireConnected("control the RGB LED")
+            guard validLedColors.contains(color) else {
+                throw ExampleActionError(message: "Unsupported RGB LED color: \(color)")
+            }
+            ledColor = color
+            if ledMode != "Off" {
+                sendRgbLedRequest(mode: ledMode, color: color, brightnessPercent: ledBrightnessPercent)
+            }
+        }
+    }
+
+    func setLedBrightnessPercent(_ percent: Int) {
+        ledBrightnessPercent = min(100, max(0, percent))
+    }
+
+    func commitLedBrightness() {
+        runAction("RGB LED brightness \(ledBrightnessPercent)%") {
+            try requireConnected("control the RGB LED")
+            if ledMode != "Off" {
+                sendRgbLedRequest(mode: ledMode, color: ledColor, brightnessPercent: ledBrightnessPercent)
+            }
+        }
+    }
+
+    private func sendRgbLedRequest(mode: String, color: String, brightnessPercent: Int) {
+        let request = rgbLedRequest(for: mode, color: color, brightnessPercent: brightnessPercent)
+        sdk.rgbLedControl(
+            MentraRgbLedRequest(
+                requestId: "rgb-\(Int(Date().timeIntervalSince1970 * 1000))",
+                packageName: "com.mentra.examples.ios",
+                action: request.action,
+                color: request.color,
+                ontime: request.ontime,
+                offtime: request.offtime,
+                count: request.count,
+                brightness: request.brightness
             )
+        )
+    }
+
+    private func rgbLedRequest(for mode: String, color: String, brightnessPercent: Int) -> (action: MentraRgbLedAction, color: String?, ontime: Int, offtime: Int, count: Int, brightness: Int?) {
+        let brightness = rgbBrightnessValue(brightnessPercent)
+        switch mode {
+        case "Solid":
+            return (.on, color, 30_000, 0, 1, brightness)
+        case "Pulse":
+            return (.on, color, 900, 900, 6, brightness)
+        case "Blink":
+            return (.on, color, 250, 250, 12, brightness)
+        default:
+            return (.off, nil, 0, 0, 0, nil)
         }
     }
 
@@ -1056,6 +1105,10 @@ func localRtmpSetupMessage(_ detail: String) -> String {
 
 func localWebrtcSetupMessage(_ detail: String) -> String {
     "Local WebRTC server not reachable (\(detail)). Run python3 examples/local-demo-cloud/server.py and paste the printed WHIP publish URL."
+}
+
+func rgbBrightnessValue(_ percent: Int) -> Int {
+    Int((Double(min(100, max(0, percent))) * 255.0 / 100.0).rounded())
 }
 
 func streamUrlValidationMessage(_ streamUrl: String) -> String? {

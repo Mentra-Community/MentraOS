@@ -90,6 +90,30 @@ let bluetooth = sdk.bluetoothStatus
 
 Status snapshots are safe to read at any time. Treat command success as "command accepted"; keep UI state derived from status callbacks.
 
+## Optional Arguments And Defaults
+
+When an SDK API exposes an optional argument, do not rely on absence meaning "best effort" or "auto" unless it is documented that way. The behavior is:
+
+| API | Optional argument | If omitted |
+| --- | --- | --- |
+| Android `MentraBluetoothSdk.create` | `config` | Uses `MentraBluetoothSdkConfig()` with callbacks delivered on the Android main thread. |
+| Android `MentraBluetoothSdkConfig` | `deliverCallbacksOnMainThread` | Defaults to `true`. Set `false` only if your app is prepared to receive listener callbacks on the SDK/event thread. |
+| iOS `MentraBluetoothSDK` | `configuration` | Uses `.default`. |
+| `MentraDisplayTextRequest` | `x`, `y` | Places the text at `0, 0`. |
+| `MentraDisplayTextRequest` | `size` | Uses text size `24`. |
+| `MentraDashboardMenuItem` | `values` | Sends only `title` and `packageName`. |
+| `setBrightness` | `autoMode` | Leaves the current auto-brightness setting unchanged and applies only the brightness level. |
+| `MentraMicConfig` / `MentraMicConfiguration` | `sendLc3Data` | Defaults to `false`; LC3 audio callbacks are not requested. |
+| `MentraPhotoRequest` | `webhookUrl` | iOS and React Native allow `nil` / `null`; no webhook upload is requested. Android requires a URL. |
+| `MentraPhotoRequest` | `authToken` | No bearer token is added to the webhook upload request. |
+| `MentraPhotoRequest` | `compress` | Android defaults to `"medium"`. iOS `nil` requests the device default, which is currently no extra compression on Mentra Live. React Native requires an explicit value. Pass an explicit value for cross-platform consistency. |
+| `MentraPhotoRequest` | `flash` | Android defaults to `false`. iOS and React Native require an explicit value. |
+| `MentraPhotoRequest` | `sound` | Android defaults to `true`. iOS and React Native require an explicit value. |
+| `MentraRgbLedRequest` | `packageName` | Sends the LED command without app/package attribution. |
+| `MentraRgbLedRequest` | `color` | Ignored for `OFF`. For `ON`, pass one of the valid colors; Mentra Live falls back to red if the color is omitted. |
+| `MentraRgbLedRequest` | `brightness` | Sends no brightness field; the glasses use their current or firmware-default LED brightness. |
+| `sendIncidentId` | `apiBaseUrl` | Uses `https://api.mentra.glass`. |
+
 ## Display
 
 Android:
@@ -153,11 +177,12 @@ sdk.rgbLedControl(
     MentraRgbLedRequest(
         requestId = "led-${System.currentTimeMillis()}",
         packageName = "com.example.assistant",
-        action = "solid",
-        color = "#34C759",
-        ontime = 1000,
-        offtime = 0,
-        count = 1,
+        action = MentraRgbLedAction.ON,
+        color = "green",
+        ontime = 500,
+        offtime = 500,
+        count = 3,
+        brightness = 184, // optional, 0-255
     )
 )
 ```
@@ -187,14 +212,28 @@ sdk.rgbLedControl(
     MentraRgbLedRequest(
         requestId: "led-\(Date().timeIntervalSince1970)",
         packageName: "com.example.assistant",
-        action: "solid",
-        color: "#34C759",
-        ontime: 1000,
-        offtime: 0,
-        count: 1
+        action: .on,
+        color: "green",
+        ontime: 500,
+        offtime: 500,
+        count: 3,
+        brightness: 184 // optional, 0-255
     )
 )
 ```
+
+RGB LED parameters:
+
+| Parameter | Valid values | Meaning |
+| --- | --- | --- |
+| `action` | Android: `MentraRgbLedAction.ON` / `MentraRgbLedAction.OFF`; iOS: `.on` / `.off`; React Native: `"on"` / `"off"` | Turns the LED command on or off. When the action is off, `color`, `ontime`, `offtime`, `count`, and `brightness` are ignored. |
+| `color` | `"red"`, `"green"`, `"blue"`, `"orange"`, `"white"` | Named LED color. This is not a hex color. Required for `ON`; use `null` / `nil` for `OFF`. |
+| `ontime` | Non-negative integer milliseconds | How long the LED stays on during each cycle. For a solid light, use a long `ontime`, `offtime = 0`, and `count = 1`. |
+| `offtime` | Non-negative integer milliseconds | How long the LED stays off between cycles. Use `0` for a solid light; use a positive value for blink or pulse patterns. |
+| `count` | Positive integer for `ON`; `0` for `OFF` | Number of on/off cycles to run. For example, `count = 3`, `ontime = 500`, `offtime = 500` blinks three times. |
+| `brightness` | Optional integer `0-255` | Raw device brightness. If omitted, no brightness field is sent and the glasses use their current or firmware-default LED brightness. The example apps expose this as a `0-100%` slider and round it to the raw device value. |
+
+RGB LEDs are hardware-dependent; unsupported glasses should report an SDK error or capability status.
 
 Unsupported settings should fail through a typed error or capability status, not silently succeed.
 
@@ -284,7 +323,7 @@ Your webhook should accept multipart form data. Mentra Live sends:
 | `type` | Optional upload type, such as `photo_upload` |
 | `success` | Optional success marker |
 
-If you include `authToken`, the uploader adds it as `Authorization: Bearer <token>` on the webhook request.
+If you include `authToken`, the uploader adds it as `Authorization: Bearer <token>` on the webhook request. If you omit it, no `Authorization` header is added.
 
 For local development, run the companion server in `examples/photo-webhook-server` and use the printed LAN URL, such as `http://192.168.1.42:8787/upload`. Do not use `localhost`: keep the glasses, phone, and computer on a network where the uploader can reach the computer. The Android, iOS, and React Native examples demonstrate this by polling `GET /uploads/<requestId>.json` and displaying the returned `photoUrl`.
 

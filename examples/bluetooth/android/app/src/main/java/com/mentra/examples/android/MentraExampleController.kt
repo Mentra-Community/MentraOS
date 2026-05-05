@@ -22,6 +22,7 @@ import com.mentra.core.MentraGlassesStatusUpdate
 import com.mentra.core.MentraMicConfig
 import com.mentra.core.MentraPhotoRequest
 import com.mentra.core.MentraPhotoSize
+import com.mentra.core.MentraRgbLedAction
 import com.mentra.core.MentraRgbLedRequest
 import com.mentra.core.MentraStreamKeepAliveRequest
 import com.mentra.core.MentraStreamRequest
@@ -41,6 +42,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 val streamDefaultUrls = mapOf(
     "rtmp" to "rtmp://<computer-ip>:1935/live/mentra-live",
@@ -58,6 +60,17 @@ data class ExampleEvent(
     val text: String,
 )
 
+private data class RgbLedPattern(
+    val action: MentraRgbLedAction,
+    val color: String?,
+    val ontime: Int,
+    val offtime: Int,
+    val count: Int,
+    val brightness: Int?,
+)
+
+val rgbLedColorOptions = listOf("red", "green", "blue", "orange", "white")
+
 data class MentraExampleState(
     val activeAction: String? = null,
     val bluetoothStatus: Map<String, Any> = emptyMap(),
@@ -67,6 +80,8 @@ data class MentraExampleState(
     val glassesStatus: Map<String, Any> = emptyMap(),
     val hotspotEnabled: Boolean = false,
     val lastAction: String = "No actions yet.",
+    val ledBrightnessPercent: Int = 72,
+    val ledColor: String = "green",
     val ledMode: String = "Solid",
     val lastMicBytes: Int = 0,
     val lastMicDurationSeconds: Int? = null,
@@ -329,17 +344,55 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     fun selectLedMode(mode: String) = runAction("RGB LED $mode") {
         requireConnected("control the RGB LED")
         state = state.copy(ledMode = mode)
+        sendRgbLedRequest(mode, state.ledColor, state.ledBrightnessPercent)
+    }
+
+    fun selectLedColor(color: String) = runAction("RGB LED color ${color.uppercase(Locale.US)}") {
+        requireConnected("control the RGB LED")
+        if (color !in rgbLedColorOptions) {
+            throw IllegalArgumentException("Unsupported RGB LED color: $color")
+        }
+        state = state.copy(ledColor = color)
+        if (state.ledMode != "Off") {
+            sendRgbLedRequest(state.ledMode, color, state.ledBrightnessPercent)
+        }
+    }
+
+    fun setLedBrightnessPercent(percent: Int) {
+        state = state.copy(ledBrightnessPercent = percent.coerceIn(0, 100))
+    }
+
+    fun commitLedBrightness() = runAction("RGB LED brightness ${state.ledBrightnessPercent}%") {
+        requireConnected("control the RGB LED")
+        if (state.ledMode != "Off") {
+            sendRgbLedRequest(state.ledMode, state.ledColor, state.ledBrightnessPercent)
+        }
+    }
+
+    private fun sendRgbLedRequest(mode: String, color: String, brightnessPercent: Int) {
+        val request = rgbLedRequestFor(mode, color, brightnessPercent)
         sdk.rgbLedControl(
             MentraRgbLedRequest(
                 requestId = "rgb-${System.currentTimeMillis()}",
                 packageName = "com.mentra.examples.android",
-                action = if (mode == "Off") "off" else mode.lowercase(),
-                color = if (mode == "Off") null else "#34C759",
-                ontime = if (mode == "Pulse") 600 else 1000,
-                offtime = if (mode == "Blink") 400 else 0,
-                count = if (mode == "Blink") 5 else 1,
+                action = request.action,
+                color = request.color,
+                ontime = request.ontime,
+                offtime = request.offtime,
+                count = request.count,
+                brightness = request.brightness,
             )
         )
+    }
+
+    private fun rgbLedRequestFor(mode: String, color: String, brightnessPercent: Int): RgbLedPattern {
+        val brightness = rgbBrightnessValue(brightnessPercent)
+        return when (mode) {
+            "Solid" -> RgbLedPattern(MentraRgbLedAction.ON, color, 30_000, 0, 1, brightness)
+            "Pulse" -> RgbLedPattern(MentraRgbLedAction.ON, color, 900, 900, 6, brightness)
+            "Blink" -> RgbLedPattern(MentraRgbLedAction.ON, color, 250, 250, 12, brightness)
+            else -> RgbLedPattern(MentraRgbLedAction.OFF, null, 0, 0, 0, null)
+        }
     }
 
     fun toggleRawJson() {
@@ -716,6 +769,8 @@ fun exampleEvent(tag: String, text: String): ExampleEvent =
         tag = tag,
         text = text,
     )
+
+fun rgbBrightnessValue(percent: Int): Int = ((percent.coerceIn(0, 100) * 255) / 100.0).roundToInt()
 
 fun disconnectedGlassesStatus(): Map<String, Any> =
     mapOf(
