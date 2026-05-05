@@ -231,13 +231,15 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
     //   emptySlots = 0
     // }
 
-    // Fill gaps in orderMap with dummy apps
+    const order: OrderMap = {...orderMap}
+
+    // Fill gaps with dummy apps (use a local map; never mutate orderMap during render)
     if (!showAllApps) {
       const orderedPackages = new Set(
-        filteredApps.filter((app) => orderMap[app.packageName] !== undefined).map((app) => app.packageName),
+        filteredApps.filter((app) => order[app.packageName] !== undefined).map((app) => app.packageName),
       )
       const usedIndices = new Set<number>()
-      orderedPackages.forEach((pkg) => usedIndices.add(orderMap[pkg]))
+      orderedPackages.forEach((pkg) => usedIndices.add(order[pkg]))
 
       if (usedIndices.size > 0) {
         const highestRealIndex = Math.max(...usedIndices)
@@ -247,7 +249,7 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
           if (!usedIndices.has(i)) {
             // console.log(`adding dummy app @empty${i}`)
             filteredApps.push({...DUMMY_APPLET, packageName: `@empty${i}`})
-            orderMap[`@empty${i}`] = i
+            order[`@empty${i}`] = i
             emptySlots -= 1
             maxIndex = filteredApps.length + emptySlots
           }
@@ -257,8 +259,7 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
         for (let i = highestRealIndex + 1; i <= maxIndex - 1; i++) {
           // console.log(`adding dummy app @empty${i}`)
           filteredApps.push({...DUMMY_APPLET, packageName: `@empty${i}`})
-          // Add the gap dummy to the orderMap so it sorts correctly
-          orderMap[`@empty${i}`] = i
+          order[`@empty${i}`] = i
           emptySlots -= 1
         }
       }
@@ -270,24 +271,24 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
       for (let i = 0; i < emptySlots; i++) {
         let index = filteredApps.length + i + 100
         filteredApps.push({...DUMMY_APPLET, packageName: `@empty${index}`})
-        orderMap[`@empty${index}`] = index
+        order[`@empty${index}`] = index
       }
     }
 
     // Assign unpositioned real apps to the first available empty slots
     const unpositioned = filteredApps.filter(
-      (app) => !app.packageName.startsWith("@empty") && orderMap[app.packageName] === undefined,
+      (app) => !app.packageName.startsWith("@empty") && order[app.packageName] === undefined,
     )
     if (unpositioned.length > 0) {
       const dummySlots = filteredApps
-        .filter((app) => app.packageName.startsWith("@empty") && orderMap[app.packageName] !== undefined)
-        .sort((a, b) => orderMap[a.packageName] - orderMap[b.packageName])
+        .filter((app) => app.packageName.startsWith("@empty") && order[app.packageName] !== undefined)
+        .sort((a, b) => order[a.packageName] - order[b.packageName])
 
       for (const app of unpositioned) {
         const dummy = dummySlots.shift()
         if (dummy) {
-          orderMap[app.packageName] = orderMap[dummy.packageName]
-          delete orderMap[dummy.packageName]
+          order[app.packageName] = order[dummy.packageName]
+          delete order[dummy.packageName]
           const idx = filteredApps.indexOf(dummy)
           if (idx !== -1) filteredApps.splice(idx, 1)
         }
@@ -295,8 +296,8 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
     }
 
     filteredApps.sort((a, b) => {
-      const aIndex = orderMap[a.packageName]
-      const bIndex = orderMap[b.packageName]
+      const aIndex = order[a.packageName]
+      const bIndex = order[b.packageName]
       if (aIndex === undefined && bIndex === undefined) {
         return sortAppsByPackageNamePriority(a, b)
       }
@@ -490,6 +491,7 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
           ref={(ref) => {
             itemRefs.current[item.packageName] = ref
           }}
+          activeOpacity={1}
           className="flex-1 items-center justify-center pt-3"
           onPress={() => {
             // if (showAllApps) {
@@ -503,8 +505,7 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
               showPopover(item.packageName)
               return
             }
-          }}
-          activeOpacity={0.7}>
+          }}>
           <AppIcon app={item} className="w-16 h-16" />
           <View className="w-full h-9 my-1 items-center justify-start">
             <Text
@@ -541,6 +542,7 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
           showDropIndicator={false}
           sortEnabled={!showAllApps}
           swapMode={true}
+          virtualizationEnabled={false}
           dropIndicatorStyle={{backgroundColor: theme.colors.primary_foreground, borderWidth: 0}}
         />
       </View>
