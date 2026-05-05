@@ -75,7 +75,7 @@ export class WeatherService {
   // -------------------------------------------------------------------------
 
   private readonly logger: ReturnType<typeof rootLogger.child>;
-  private readonly apiKey: string | undefined = process.env.OPEN_WEATHER_API_KEY;
+  private readonly apiKey: string | undefined;
 
   /** Single-entry per-user cache: userId → CacheEntry */
   private perUserCache = new Map<string, CacheEntry>();
@@ -92,7 +92,24 @@ export class WeatherService {
 
   private constructor() {
     this.logger = rootLogger.child({ service: "WeatherService" });
-    this.logger.info("WeatherService initialized.");
+
+    // Normalize: trim and strip accidental wrapping quotes that .env files
+    // sometimes carry (e.g. `OPEN_WEATHER_API_KEY="abc"`).
+    const raw = process.env.OPEN_WEATHER_API_KEY;
+    const cleaned = raw?.trim().replace(/^['"]|['"]$/g, "") || undefined;
+    this.apiKey = cleaned && cleaned.length > 0 ? cleaned : undefined;
+
+    if (!this.apiKey) {
+      // Log once at startup so operators know weather is disabled. After
+      // this, getWeather() returns null silently — the caller already
+      // handles null and there's no point spamming the log on every fix.
+      this.logger.warn(
+        "OPEN_WEATHER_API_KEY is not set — weather lookups are disabled. " +
+          "Add a key from https://openweathermap.org/api to cloud .env to enable.",
+      );
+    } else {
+      this.logger.info("WeatherService initialized.");
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -105,6 +122,13 @@ export class WeatherService {
    * (< 10 min) and within PROXIMITY_KM of the requested coordinate.
    */
   public async getWeather(userId: string, lat: number, lng: number): Promise<WeatherSummary | null> {
+    // Service is disabled when no API key is configured. We logged once at
+    // startup; bail out before doing cache work that can never be filled,
+    // and stay silent so the log isn't flooded on every location fix.
+    if (!this.apiKey) {
+      return null;
+    }
+
     const currentTime = Date.now();
 
     // ------------------------------------------------------------------
@@ -137,14 +161,6 @@ export class WeatherService {
     // is not available. The haversine proximity guard (PROXIMITY_KM = 5 km)
     // is generous enough relative to the ~1.1 km bucket size that stale
     // boundary misses fall through to a cheap re-fetch within the TTL window.
-
-    // ------------------------------------------------------------------
-    // 3) Network fetch
-    // ------------------------------------------------------------------
-    if (!this.apiKey) {
-      this.logger.error({ userId }, "OPEN_WEATHER_API_KEY is not set — cannot fetch weather.");
-      return null;
-    }
 
     const url =
       `https://api.openweathermap.org/data/3.0/onecall` +

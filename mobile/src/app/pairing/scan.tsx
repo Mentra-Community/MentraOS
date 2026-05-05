@@ -51,7 +51,17 @@ export default function SelectGlassesBluetoothScreen() {
 
   useEffect(() => {
     const initializeAndSearchForDevices = async () => {
+      console.log("[SCAN DEBUG] Starting device search for model:", deviceModel)
+      console.log("[SCAN DEBUG] CoreModule exists:", !!CoreModule)
+      console.log("[SCAN DEBUG] findCompatibleDevices exists:", !!CoreModule?.findCompatibleDevices)
+
+      if (!deviceModel) {
+        console.error("[SCAN DEBUG] deviceModel is undefined!")
+        return
+      }
+
       CoreModule.findCompatibleDevices(deviceModel)
+      console.log("[SCAN DEBUG] findCompatibleDevices called")
     }
 
     initializeAndSearchForDevices()

@@ -1,0 +1,23 @@
+diff --git a/node_modules/react-native-svg/RNSVG.podspec b/node_modules/react-native-svg/RNSVG.podspec
+index 1234567..abcdefg 100644
+--- a/node_modules/react-native-svg/RNSVG.podspec
++++ b/node_modules/react-native-svg/RNSVG.podspec
+@@ -17,14 +17,14 @@ Pod::Spec.new do |s|
+   s.source_files      = 'apple/**/*.{h,m,mm}'
+   s.ios.exclude_files = '**/*.macos.{h,m,mm}'
+   s.tvos.exclude_files = '**/*.macos.{h,m,mm}'
+-  s.visionos.exclude_files = '**/*.macos.{h,m,mm}' if s.respond_to?(:visionos)
++  # s.visionos.exclude_files = '**/*.macos.{h,m,mm}' if s.respond_to?(:visionos) # Commented for CocoaPods < 1.13
+   s.osx.exclude_files = '**/*.ios.{h,m,mm}'
+   s.requires_arc      = true
+-  s.platforms         = { :osx => "10.14", :ios => "12.4", :tvos => "12.4", :visionos => "1.0" }
++  s.platforms         = { :osx => "10.14", :ios => "12.4", :tvos => "12.4" } # Removed visionos
+
+   s.osx.resource_bundles  = {'RNSVGFilters' => ['apple/**/*.macosx.metallib']}
+   s.ios.resource_bundles  = {'RNSVGFilters' => ['apple/**/*.iphoneos.metallib']}
+   s.tvos.resource_bundles  = {'RNSVGFilters' => ['apple/**/*.appletvos.metallib']}
+-  s.visionos.resource_bundles  = {'RNSVGFilters' => ['apple/**/*.xros.metallib']}
++  # s.visionos.resource_bundles  = {'RNSVGFilters' => ['apple/**/*.xros.metallib']} # Commented for CocoaPods < 1.13
+
+   s.xcconfig = {
+     "OTHER_CFLAGS" => "$(inherited) -DREACT_NATIVE_MINOR_VERSION=#{svgConfig[:react_native_minor_version]}",

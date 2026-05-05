@@ -67,23 +67,6 @@ class LogRingBuffer {
 
     LogBox.ignoreLogs(IGNORED_LOGS)
 
-    if (__DEV__) {
-      const withoutIgnored =
-        (logger: any) =>
-        (...args: any[]) => {
-          const output = args.join(" ")
-
-          if (!IGNORED_LOGS.some((log) => log.test(output))) {
-            logger(...args)
-          }
-        }
-
-      console.log = withoutIgnored(console.log)
-      console.info = withoutIgnored(console.info)
-      console.warn = withoutIgnored(console.warn)
-      console.error = withoutIgnored(console.error)
-    }
-
     configureReanimatedLogger({
       level: ReanimatedLogLevel.warn,
       strict: false, // Reanimated runs in strict mode by default
@@ -99,29 +82,36 @@ class LogRingBuffer {
 
     const appendToBuffer = this.append.bind(this)
 
+    const stringifyArg = (a: unknown): string => {
+      if (a === null) return "null"
+      if (a === undefined) return "undefined"
+      if (typeof a === "object") {
+        try {
+          return JSON.stringify(a)
+        } catch {
+          return String(a)
+        }
+      }
+      return String(a)
+    }
+
+    // Single interceptor that does both jobs (filter + ring-buffer) so error stacks show
+    // the real call site instead of always landing on this file's wrapper line.
     const createInterceptor =
       (level: "debug" | "info" | "warn" | "error", originalFn: (...args: unknown[]) => void) =>
       (...args: unknown[]) => {
-        // Call original first
+        const output = args.map(stringifyArg).join(" ")
+
+        // Skip ignored patterns entirely in dev (no console output, no buffer entry).
+        if (__DEV__ && IGNORED_LOGS.some((re) => re.test(output))) {
+          return
+        }
+
         originalFn.apply(console, args)
 
-        // Append to ring buffer
         appendToBuffer({
           level,
-          message: args
-            .map((a) => {
-              if (a === null) return "null"
-              if (a === undefined) return "undefined"
-              if (typeof a === "object") {
-                try {
-                  return JSON.stringify(a)
-                } catch {
-                  return String(a)
-                }
-              }
-              return String(a)
-            })
-            .join(" "),
+          message: output,
           source: "console",
         })
       }

@@ -1,0 +1,13 @@
+diff --git a/node_modules/react-native-safe-area-context/react-native-safe-area-context.podspec b/node_modules/react-native-safe-area-context/react-native-safe-area-context.podspec
+index 1234567..abcdefg 100644
+--- a/node_modules/react-native-safe-area-context/react-native-safe-area-context.podspec
++++ b/node_modules/react-native-safe-area-context/react-native-safe-area-context.podspec
+@@ -15,7 +15,7 @@ Pod::Spec.new do |s|
+   s.ios.deployment_target = "12.4"
+   s.osx.deployment_target = "10.15"
+   s.tvos.deployment_target = "12.4"
+-  s.visionos.deployment_target = "1.0"
++  # s.visionos.deployment_target = "1.0" # Commented out for CocoaPods < 1.13
+
+   s.source       = { :git => "https://github.com/AppAndFlow/react-native-safe-area-context.git", :tag => "v#{s.version}" }
+   s.source_files  = "ios/**/*.{h,m,mm}"
