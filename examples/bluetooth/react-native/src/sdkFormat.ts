@@ -4,10 +4,33 @@ export function connectionLabel(status: Partial<GlassesStatus>) {
   if (status.connectionState) {
     return status.connectionState;
   }
-  if (typeof status.connected === 'boolean') {
-    return status.connected ? 'CONNECTED' : 'DISCONNECTED';
+  return isGlassesConnected(status) ? 'CONNECTED' : 'WAITING';
+}
+
+export function isGlassesConnected(status: Partial<GlassesStatus>) {
+  if (typeof status.connectionState === 'string') {
+    const state = status.connectionState.toLowerCase();
+    if (state === 'connected') {
+      return true;
+    }
+    if (state === 'disconnected') {
+      return false;
+    }
   }
-  return 'WAITING';
+  return status.connected === true;
+}
+
+export function isDisconnectedStatus(status: Partial<GlassesStatus>) {
+  if (typeof status.connectionState === 'string') {
+    const state = status.connectionState.toLowerCase();
+    if (state === 'disconnected') {
+      return true;
+    }
+    if (state === 'connected') {
+      return false;
+    }
+  }
+  return status.connected === false;
 }
 
 export function deviceLabel(status: Partial<GlassesStatus>) {
@@ -20,7 +43,7 @@ export function modelLabel(status: Partial<GlassesStatus>) {
 
 export function batteryLevel(status: Partial<GlassesStatus>) {
   if (
-    status.connected === false ||
+    !isGlassesConnected(status) ||
     typeof status.batteryLevel !== 'number' ||
     status.batteryLevel < 0
   ) {
@@ -32,7 +55,7 @@ export function batteryLevel(status: Partial<GlassesStatus>) {
 export function batteryLabel(status: Partial<GlassesStatus>) {
   const level = batteryLevel(status);
   if (level === null) {
-    return status.connected === false ? 'Not connected' : 'Waiting for status';
+    return isDisconnectedStatus(status) ? 'Not connected' : 'Waiting for status';
   }
   return `${level}%${status.charging ? ' charging' : ''}`;
 }
@@ -41,7 +64,7 @@ export function wifiLabel(status: Partial<GlassesStatus>) {
   if (status.wifiConnected) {
     return status.wifiSsid || 'Connected';
   }
-  return status.connected ? 'Disconnected' : 'Unknown';
+  return isGlassesConnected(status) ? 'Disconnected' : 'Unknown';
 }
 
 export function wifiSubLabel(status: Partial<GlassesStatus>) {

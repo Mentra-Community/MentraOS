@@ -27,10 +27,13 @@ The script prints URLs like:
 
 ```text
 RTMP publish URL:
-  rtmp://192.168.1.42:1935/mentra-live
+  rtmp://192.168.1.42:1935/live/mentra-live
 
 RTMP browser preview (HLS):
-  http://192.168.1.42:8888/mentra-live
+  http://192.168.1.42:8888/live/mentra-live
+
+Optional RTMP ffplay preview:
+  ffplay -fflags nobuffer -flags low_delay -framedrop rtmp://192.168.1.42:1935/live/mentra-live
 
 WHIP publish URL:
   http://192.168.1.42:8889/mentra-live/whip
@@ -46,6 +49,10 @@ Paste the printed **RTMP publish URL** into the Stream tab's RTMP field, or past
 
 For RTMP, the native iOS example derives the HLS preview URL from the publish URL and embeds it in the preview card after the stream starts. You can also open the printed **RTMP browser preview (HLS)** URL on your computer, or use the printed `ffplay` command when debugging locally. For WebRTC, open the printed **WebRTC browser preview** URL or use the printed **WHEP playback URL** if you are building your own player.
 
+RTMP URLs need both an application segment and a stream key segment. The default `/live/mentra-live` path is intentional; a one-segment RTMP path such as `/mentra-live` is rejected by the Mentra Live RTMP client.
+
+The helper starts MediaMTX with MPEG-TS HLS segments for broad iOS player compatibility. If an older `mentra-webrtc` container is already running, stop it with `docker stop mentra-webrtc` and rerun the helper before testing the iOS RTMP preview.
+
 ## Network Notes
 
 Use the LAN URL printed by the script, not `localhost`, from the example app. The stream is produced by the glasses and controlled by the phone, so both the phone and glasses must be able to reach the computer's LAN IP.
@@ -56,21 +63,23 @@ If the script picks the wrong interface, set the IP explicitly:
 MENTRA_STREAM_HOST_IP=192.168.1.42 examples/local-webrtc-server/run-mediamtx.sh
 ```
 
-You can also change the stream path:
+You can also change the stream paths:
 
 ```bash
-MENTRA_STREAM_PATH=my-stream examples/local-webrtc-server/run-mediamtx.sh
+MENTRA_RTMP_STREAM_PATH=live/my-stream MENTRA_WEBRTC_STREAM_PATH=my-stream examples/local-webrtc-server/run-mediamtx.sh
 ```
 
 That changes the URLs to:
 
 ```text
-rtmp://<computer-ip>:1935/my-stream
-http://<computer-ip>:8888/my-stream
+rtmp://<computer-ip>:1935/live/my-stream
+http://<computer-ip>:8888/live/my-stream
 http://<computer-ip>:8889/my-stream/whip
 http://<computer-ip>:8889/my-stream
 http://<computer-ip>:8889/my-stream/whep
 ```
+
+For backwards compatibility, `MENTRA_STREAM_PATH=my-stream` still sets both RTMP and WebRTC to the same path.
 
 ## Troubleshooting
 

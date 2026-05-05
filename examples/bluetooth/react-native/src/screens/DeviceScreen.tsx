@@ -3,7 +3,6 @@ import { View, Text, ScrollView, Pressable, StyleSheet, Image } from 'react-nati
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Line, Path, Polyline, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
-import { StatusBarBar } from '../components/StatusBarBar';
 import { colors } from '../components/theme';
 import {
   batteryLabel,
@@ -13,6 +12,7 @@ import {
   deviceLabel,
   discoveredLabel,
   firmwareLabel,
+  isGlassesConnected,
   latestEventLabel,
   modelLabel,
   rssiLabel,
@@ -33,13 +33,12 @@ const glassesImages = {
 
 export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
   const level = batteryLevel(sdk.glassesStatus);
-  const connected = sdk.glassesStatus.connected === true;
+  const connected = isGlassesConnected(sdk.glassesStatus);
   const connection = connectionLabel(sdk.glassesStatus);
   const latestEvent = sdk.events[0];
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
-      <StatusBarBar />
       <Header connected={connected} title="Device" />
 
       {/* Hero card */}

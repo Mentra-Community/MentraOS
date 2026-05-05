@@ -5,7 +5,7 @@ struct RootView: View {
     @StateObject private var bluetooth = BluetoothViewModel()
 
     var body: some View {
-        ZStack(alignment: .bottom) {
+        ZStack {
             Color.white.ignoresSafeArea()
             Group {
                 switch tab {
@@ -16,9 +16,15 @@ struct RootView: View {
                 case .console: ConsoleScreen(model: bluetooth)
                 }
             }
-            TabBarView(active: $tab)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 24)
+            VStack {
+                Spacer(minLength: 0)
+                TabBarView(active: $tab)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .ignoresSafeArea(.container, edges: .bottom)
+            .ignoresSafeArea(.keyboard, edges: .bottom)
         }
     }
 }
@@ -59,10 +65,10 @@ struct TabBarView: View {
         .padding(8)
         .background(Color.white.opacity(0.85))
         .overlay(
-            RoundedRectangle(cornerRadius: 28)
+            RoundedRectangle(cornerRadius: 30)
                 .stroke(Color.white.opacity(0.8), lineWidth: 1)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 28))
+        .clipShape(RoundedRectangle(cornerRadius: 30))
         .shadow(color: Color(hex: 0x0F2A1D).opacity(0.16), radius: 44, x: 0, y: 14)
     }
 

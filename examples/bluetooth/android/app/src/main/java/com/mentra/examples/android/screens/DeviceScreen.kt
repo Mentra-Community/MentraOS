@@ -35,6 +35,7 @@ import com.mentra.examples.android.bluetoothSearchLabel
 import com.mentra.examples.android.connectionLabel
 import com.mentra.examples.android.deviceLabel
 import com.mentra.examples.android.firmwareLabel
+import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.modelLabel
 import com.mentra.examples.android.rssiLabel
 import com.mentra.examples.android.stringValue
@@ -43,19 +44,18 @@ import com.mentra.examples.android.ui.AppColor
 import com.mentra.examples.android.ui.Eyebrow
 import com.mentra.examples.android.ui.GlassCard
 import com.mentra.examples.android.ui.PageHeader
-import com.mentra.examples.android.ui.StatusBarRow
 
 @Composable
 fun DeviceScreen(controller: MentraExampleController) {
     val state = controller.state
     val glasses = state.glassesStatus
+    val connected = isGlassesConnected(glasses)
     val level = batteryLevel(glasses)
     val latestEvent = state.events.firstOrNull()
     Column(
         modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())
     ) {
-        StatusBarRow()
-        PageHeader("Device", glasses["connected"] == true)
+        PageHeader("Device", connected)
 
         // Hero card
         GlassCard(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {

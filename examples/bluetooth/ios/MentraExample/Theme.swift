@@ -70,27 +70,6 @@ struct GlassCard<Content: View>: View {
     }
 }
 
-struct StatusBarRow: View {
-    var body: some View {
-        HStack {
-            TimelineView(.periodic(from: .now, by: 30)) { timeline in
-                Text(statusTimeFormatter.string(from: timeline.date))
-                    .font(.system(size: 17, weight: .semibold))
-                    .frame(maxWidth: .infinity)
-            }
-            HStack(spacing: 6) {
-                Image(systemName: "chart.bar.fill").font(.system(size: 13))
-                Image(systemName: "wifi").font(.system(size: 13))
-                Image(systemName: "battery.100").font(.system(size: 15))
-            }
-            .frame(maxWidth: .infinity)
-        }
-        .padding(.top, 21)
-        .padding(.bottom, 19)
-        .padding(.horizontal, 24)
-    }
-}
-
 struct PageHeader: View {
     let title: String
     var connected = false
@@ -147,9 +126,3 @@ struct OfflineNotice: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 }
-
-private let statusTimeFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateFormat = "h:mm"
-    return formatter
-}()

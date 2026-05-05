@@ -23,7 +23,7 @@ enum ExampleStreamProtocol: String, CaseIterable {
     var defaultUrl: String {
         switch self {
         case .rtmp:
-            return "rtmp://<computer-ip>:1935/mentra-live"
+            return "rtmp://<computer-ip>:1935/live/mentra-live"
         case .srt:
             return "srt://srt.example.com:4201?streamid=YOUR_STREAM_ID&passphrase=YOUR_PASSPHRASE"
         case .webrtc:
@@ -41,6 +41,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var glassesValues: [String: Any] = [:]
     @Published private(set) var bluetoothValues: [String: Any] = [:]
     @Published private(set) var discoveredDevices: [MentraDiscoveredDevice] = []
+    @Published private(set) var selectedDiscoveredDevice: MentraDiscoveredDevice?
     @Published private(set) var events: [ExampleEvent] = [ExampleEvent.make(tag: "LIVE", text: "SDK ready. Scan to discover glasses.")]
     @Published private(set) var activeAction: String?
     @Published private(set) var lastAction = "No actions yet."
@@ -65,7 +66,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var keepAliveTask: Task<Void, Never>?
 
     var glassesConnected: Bool {
-        boolValue(glassesValues, "connected") == true
+        isGlassesConnected(glassesValues)
     }
 
     override init() {
@@ -85,13 +86,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func startScan() {
         runAction("Scan") {
             discoveredDevices.removeAll()
+            selectedDiscoveredDevice = nil
             sdk.startScan(model: .mentraLive)
         }
     }
 
     func connect() {
         runAction("Connect") {
-            if let device = discoveredDevices.first {
+            if let device = selectedDiscoveredDevice ?? discoveredDevices.first {
                 sdk.connect(to: device)
             } else {
                 sdk.connectDefault()
@@ -99,7 +101,13 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
+    func selectDiscoveredDevice(_ device: MentraDiscoveredDevice) {
+        selectedDiscoveredDevice = device
+        lastAction = "Selected: \(device.name)"
+    }
+
     func connect(_ device: MentraDiscoveredDevice) {
+        selectedDiscoveredDevice = device
         runAction("Connect \(device.name)") {
             sdk.connect(to: device)
         }
@@ -116,7 +124,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func displayHello() {
         runAction("Display Hello") {
-            try requireConnected("display text")
+            try requireDisplaySupport("display text")
             Task {
                 try? await sdk.displayText(MentraDisplayTextRequest(text: "Hello from Mentra Bluetooth SDK"))
             }
@@ -125,7 +133,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func clearDisplay() {
         runAction("Clear Display") {
-            try requireConnected("clear the display")
+            try requireDisplaySupport("clear the display")
             Task { try? await sdk.clearDisplay() }
         }
     }
@@ -243,7 +251,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 "keepAliveIntervalSeconds": 15,
             ]
             if selectedProtocol == .rtmp || selectedProtocol == .webrtc {
-                streamStatus = "Checking local \(selectedProtocol.rawValue.uppercased()) server"
+                startStream(params, protocol: selectedProtocol)
                 Task {
                     do {
                         if selectedProtocol == .rtmp {
@@ -251,12 +259,12 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                         } else {
                             try await checkLocalWebrtcServer(whipUrl: url)
                         }
-                        startStream(params, protocol: selectedProtocol)
                     } catch {
                         let message = error.localizedDescription
-                        streamStatus = message
-                        lastAction = "Failed: Start stream - \(message)"
-                        append(tag: "TX", text: "Start stream failed: \(message)")
+                        append(tag: "TX", text: "Preview check warning: \(message)")
+                        if activeStreamId == stringValue(params, "streamId") {
+                            streamStatus = "Stream requested; preview unavailable: \(message)"
+                        }
                     }
                 }
                 return
@@ -287,10 +295,26 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    func sendWifiCredentials(ssid: String) {
+    func sendWifiCredentials(ssid: String, password: String, requiresPassword: Bool) {
         runAction("Connect Wi-Fi \(ssid)") {
             try requireConnected("send Wi-Fi credentials")
-            sdk.sendWifiCredentials(ssid: ssid, password: "")
+            if requiresPassword && password.isEmpty {
+                throw ExampleActionError(message: "Enter the Wi-Fi password before connecting to \(ssid).")
+            }
+            sdk.sendWifiCredentials(ssid: ssid, password: requiresPassword ? password : "")
+        }
+    }
+
+    func forgetCurrentWifiNetwork() {
+        runAction("Forget current Wi-Fi") {
+            try requireConnected("forget Wi-Fi network")
+            guard boolValue(glassesValues, "wifiConnected") == true,
+                  let ssid = stringValue(glassesValues, "wifiSsid"),
+                  !ssid.isEmpty
+            else {
+                throw ExampleActionError(message: "No connected Wi-Fi network to forget.")
+            }
+            sdk.forgetWifiNetwork(ssid: ssid)
         }
     }
 
@@ -336,7 +360,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateGlassesStatus status: MentraGlassesStatusUpdate) {
         glassesValues.merge(status.values) { _, new in new }
-        if boolValue(status.values, "connected") == false {
+        if isDisconnectedStatus(status.values) {
             applyDisconnectedState(status: "Disconnected")
         }
         append(tag: "STORE", text: summarize(status.values))
@@ -348,8 +372,11 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didDiscover device: MentraDiscoveredDevice) {
-        if !discoveredDevices.contains(where: { $0.name == device.name }) {
+        if !discoveredDevices.contains(where: { discoveredDeviceKey($0) == discoveredDeviceKey(device) }) {
             discoveredDevices.append(device)
+        }
+        if selectedDiscoveredDevice == nil {
+            selectedDiscoveredDevice = device
         }
         append(tag: "BLE", text: "discovered \(device.name)")
     }
@@ -408,6 +435,13 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
+    private func requireDisplaySupport(_ feature: String) throws {
+        try requireConnected(feature)
+        guard supportsDisplay(glassesValues) else {
+            throw ExampleActionError(message: "This glasses model has no display, so \(feature) is unavailable.")
+        }
+    }
+
     private func applyDisconnectedState(status: String) {
         glassesValues = disconnectedGlassesValues()
         stopKeepAlive()
@@ -441,6 +475,18 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         case "wifi_status_change":
             glassesValues.merge(values) { _, new in new }
             append(tag: "STORE", text: "Wi-Fi \(summarize(values))")
+        case "hotspot_status_change":
+            let enabled = boolValue(values, "enabled") ?? false
+            hotspotEnabled = enabled
+            glassesValues["hotspotEnabled"] = enabled
+            glassesValues["hotspotSsid"] = stringValue(values, "ssid") ?? ""
+            glassesValues["hotspotPassword"] = stringValue(values, "password") ?? ""
+            glassesValues["hotspotGatewayIp"] = stringValue(values, "local_ip") ?? ""
+            append(tag: "STORE", text: "hotspot \(summarize(values))")
+        case "hotspot_error":
+            hotspotEnabled = false
+            glassesValues["hotspotEnabled"] = false
+            append(tag: "TX", text: "hotspot error \(summarize(values))")
         case "photo_response":
             handlePhotoResponse(values)
         case "stream_status":
@@ -588,7 +634,22 @@ func boolValue(_ values: [String: Any], _ key: String) -> Bool? {
 }
 
 func connectionLabel(_ values: [String: Any]) -> String {
-    stringValue(values, "connectionState") ?? (boolValue(values, "connected") == true ? "CONNECTED" : "WAITING")
+    stringValue(values, "connectionState") ?? (isGlassesConnected(values) ? "CONNECTED" : "WAITING")
+}
+
+func isGlassesConnected(_ values: [String: Any]) -> Bool {
+    if let state = stringValue(values, "connectionState")?.lowercased() {
+        if state == "connected" { return true }
+        if state == "disconnected" { return false }
+    }
+    return boolValue(values, "connected") == true
+}
+
+func isDisconnectedStatus(_ values: [String: Any]) -> Bool {
+    if let state = stringValue(values, "connectionState")?.lowercased() {
+        return state == "disconnected"
+    }
+    return boolValue(values, "connected") == false
 }
 
 func modelLabel(_ values: [String: Any]) -> String {
@@ -599,20 +660,75 @@ func deviceLabel(_ values: [String: Any]) -> String {
     stringValue(values, "bluetoothName") ?? stringValue(values, "serialNumber") ?? stringValue(values, "deviceModel") ?? "Mentra Live"
 }
 
+func supportsDisplay(_ values: [String: Any]) -> Bool {
+    for key in ["supportsDisplay", "hasDisplay", "displaySupported", "display"] {
+        if let value = boolValue(values, key) {
+            return value
+        }
+    }
+    for key in ["features", "deviceFeatures", "capabilities"] {
+        if let nested = values[key] as? [String: Any],
+           let value = boolValue(nested, "display")
+        {
+            return value
+        }
+    }
+
+    let model = [
+        stringValue(values, "deviceModel"),
+        stringValue(values, "bluetoothName"),
+        stringValue(values, "defaultWearable"),
+    ]
+    .compactMap { $0 }
+    .joined(separator: " ")
+    .lowercased()
+
+    if model.contains("g1") || model.contains("g2") || model.contains("nex") || model.contains("mach")
+        || model.contains("z100") || model.contains("vuzix") || model.contains("display") || model.contains("frame")
+    {
+        return true
+    }
+    if model.contains("live") || model.contains("r1") || model.contains("ring") {
+        return false
+    }
+    return false
+}
+
+func discoveredDeviceKey(_ device: MentraDiscoveredDevice) -> String {
+    device.identifier ?? device.name
+}
+
 func batteryLevel(_ values: [String: Any]) -> Int? {
-    guard boolValue(values, "connected") != false, let level = intValue(values, "batteryLevel"), level >= 0 else { return nil }
+    guard isGlassesConnected(values), let level = intValue(values, "batteryLevel"), level >= 0 else { return nil }
     return min(level, 100)
 }
 
 func batteryLabel(_ values: [String: Any]) -> String {
     guard let level = batteryLevel(values) else {
-        return boolValue(values, "connected") == false ? "Not connected" : "Waiting for status"
+        return isDisconnectedStatus(values) ? "Not connected" : "Waiting for status"
     }
     return "\(level)%\(boolValue(values, "charging") == true ? " charging" : "")"
 }
 
 func wifiLabel(_ values: [String: Any]) -> String {
-    boolValue(values, "wifiConnected") == true ? (stringValue(values, "wifiSsid") ?? "Connected") : "Unknown"
+    if boolValue(values, "wifiConnected") == true {
+        return stringValue(values, "wifiSsid") ?? "Connected"
+    }
+    return isGlassesConnected(values) ? "Not connected" : "Unknown"
+}
+
+func hotspotLabel(_ values: [String: Any], fallbackEnabled: Bool) -> String {
+    let enabled = boolValue(values, "hotspotEnabled") ?? fallbackEnabled
+    guard enabled else { return "disabled" }
+
+    guard let ssid = stringValue(values, "hotspotSsid"), !ssid.isEmpty else {
+        return "waiting for SSID"
+    }
+
+    if let ip = stringValue(values, "hotspotGatewayIp"), !ip.isEmpty {
+        return "\(ssid) · \(ip)"
+    }
+    return ssid
 }
 
 func firmwareLabel(_ values: [String: Any]) -> String {
@@ -641,6 +757,7 @@ func elapsedText(_ date: Date?) -> String {
 func disconnectedGlassesValues() -> [String: Any] {
     [
         "connected": false,
+        "connectionState": "DISCONNECTED",
         "fullyBooted": false,
         "batteryLevel": -1,
         "charging": false,
@@ -722,9 +839,8 @@ func rtmpHlsPreviewUrl(_ rtmpUrlText: String) -> URL? {
     else { return nil }
     components.scheme = components.scheme == "rtmps" ? "https" : "http"
     components.port = 8888
-    if components.path.isEmpty {
-        components.path = "/"
-    }
+    let streamPath = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    components.path = streamPath.isEmpty ? "/index.m3u8" : "/\(streamPath)/index.m3u8"
     components.query = nil
     return components.url
 }
@@ -775,6 +891,14 @@ func streamUrlValidationMessage(_ streamUrl: String) -> String? {
     }
     if streamUrl.contains("<") || streamUrl.contains(">") || streamUrl.contains("YOUR_") {
         return "Replace the placeholder stream URL before starting."
+    }
+    if let components = URLComponents(string: streamUrl),
+       let scheme = components.scheme?.lowercased(),
+       scheme == "rtmp" || scheme == "rtmps" {
+        let pathSegments = components.path.split(separator: "/").filter { !$0.isEmpty }
+        if pathSegments.count < 2 {
+            return "RTMP URL must include an app and stream key, for example rtmp://<computer-ip>:1935/live/mentra-live."
+        }
     }
     return nil
 }

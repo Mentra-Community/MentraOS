@@ -32,22 +32,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.mentra.examples.android.MentraExampleController
+import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.ui.AppColor
 import com.mentra.examples.android.ui.Eyebrow
 import com.mentra.examples.android.ui.GlassCard
 import com.mentra.examples.android.ui.OfflineNotice
 import com.mentra.examples.android.ui.PageHeader
-import com.mentra.examples.android.ui.StatusBarRow
 
 @Composable
 fun CameraScreen(controller: MentraExampleController) {
     val state = controller.state
-    val connected = state.glassesStatus["connected"] == true
+    val connected = isGlassesConnected(state.glassesStatus)
     val cameraStatusFailed = isCameraStatusFailure(state.cameraStatus)
     val setupHint = localCameraSetupHint(state.webhookUrl, state.cameraStatus)
     val clipboardManager = LocalClipboardManager.current
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
-        StatusBarRow()
         PageHeader("Camera", connected)
         if (!connected) {
             OfflineNotice(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))

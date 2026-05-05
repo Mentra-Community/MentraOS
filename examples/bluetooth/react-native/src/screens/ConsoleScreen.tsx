@@ -3,8 +3,8 @@ import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Polyline } from 'react-native-svg';
 import { Header } from '../components/Header';
-import { StatusBarBar } from '../components/StatusBarBar';
 import { colors } from '../components/theme';
+import { isGlassesConnected } from '../sdkFormat';
 import type { MentraSdkModel, SdkConsoleEvent } from '../useMentraSdk';
 
 export function ConsoleScreen({ sdk }: { sdk: MentraSdkModel }) {
@@ -20,8 +20,7 @@ export function ConsoleScreen({ sdk }: { sdk: MentraSdkModel }) {
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
-      <StatusBarBar />
-      <Header connected={sdk.glassesStatus.connected === true} title="Console" />
+      <Header connected={isGlassesConnected(sdk.glassesStatus)} title="Console" />
 
       {/* Filter chips */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 6 }} style={{ marginTop: 8 }}>

@@ -2,7 +2,6 @@ import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Line, Path, Polyline, Rect } from 'react-native-svg';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors } from './theme';
 
 export type TabKey = 'device' | 'camera' | 'stream' | 'system' | 'console';
@@ -62,9 +61,8 @@ const tabs: { key: TabKey; label: string; icon: (active: boolean) => React.React
 ];
 
 export function TabBar({ active, onChange }: { active: TabKey; onChange: (k: TabKey) => void }) {
-  const insets = useSafeAreaInsets();
   return (
-    <View style={[styles.outer, { bottom: Math.max(insets.bottom, 16) + 8 }]}>
+    <View style={styles.outer}>
       {tabs.map((t) => {
         const isActive = t.key === active;
         const inner = (
@@ -93,12 +91,13 @@ export function TabBar({ active, onChange }: { active: TabKey; onChange: (k: Tab
 const styles = StyleSheet.create({
   outer: {
     position: 'absolute',
-    left: 16,
-    right: 16,
+    left: 12,
+    right: 12,
+    bottom: 12,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(255,255,255,0.85)',
-    borderRadius: 28,
+    borderRadius: 30,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.8)',
     padding: 8,

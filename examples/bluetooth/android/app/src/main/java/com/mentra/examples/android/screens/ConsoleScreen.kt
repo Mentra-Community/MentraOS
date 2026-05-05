@@ -30,9 +30,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mentra.examples.android.ExampleEvent
 import com.mentra.examples.android.MentraExampleController
+import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.ui.AppColor
 import com.mentra.examples.android.ui.PageHeader
-import com.mentra.examples.android.ui.StatusBarRow
 
 @Composable
 fun ConsoleScreen(controller: MentraExampleController) {
@@ -41,8 +41,7 @@ fun ConsoleScreen(controller: MentraExampleController) {
     val allEvents = state.events
     val events = if (filter == "ALL") allEvents else allEvents.filter { it.tag == filter }
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
-        StatusBarRow()
-        PageHeader("Console", state.glassesStatus["connected"] == true)
+        PageHeader("Console", isGlassesConnected(state.glassesStatus))
 
         // Filter chips
         Row(

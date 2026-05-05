@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mentra.examples.android.MentraExampleController
+import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.wifiLabel
 import com.mentra.examples.android.wifiScanResults
 import com.mentra.examples.android.ui.AppColor
@@ -32,16 +33,14 @@ import com.mentra.examples.android.ui.Eyebrow
 import com.mentra.examples.android.ui.GlassCard
 import com.mentra.examples.android.ui.OfflineNotice
 import com.mentra.examples.android.ui.PageHeader
-import com.mentra.examples.android.ui.StatusBarRow
 
 @Composable
 fun SystemScreen(controller: MentraExampleController) {
     val state = controller.state
-    val connected = state.glassesStatus["connected"] == true
+    val connected = isGlassesConnected(state.glassesStatus)
     val networks = wifiScanResults(state.bluetoothStatus)
     val inputEvents = state.events.filter { it.text.contains("button") || it.text.contains("touch") }.take(3)
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
-        StatusBarRow()
         PageHeader("System", connected)
         if (!connected) {
             OfflineNotice(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))

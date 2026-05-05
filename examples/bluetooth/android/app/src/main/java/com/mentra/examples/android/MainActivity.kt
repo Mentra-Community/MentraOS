@@ -3,6 +3,7 @@ package com.mentra.examples.android
 import android.Manifest
 import android.os.Bundle
 import android.os.Build
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.core.app.ActivityCompat
@@ -31,6 +32,7 @@ import com.mentra.examples.android.ui.TabBar
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
         requestRuntimePermissions()
         setContent {
             MaterialTheme {
@@ -52,7 +54,7 @@ class MainActivity : ComponentActivity() {
                         onChange = { tab = it },
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
-                            .padding(horizontal = 16.dp, vertical = 24.dp)
+                            .padding(start = 12.dp, end = 12.dp, bottom = 10.dp)
                     )
                 }
             }

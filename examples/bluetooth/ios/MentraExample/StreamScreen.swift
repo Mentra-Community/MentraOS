@@ -1,3 +1,4 @@
+import AVKit
 import SwiftUI
 import UIKit
 import WebKit
@@ -39,8 +40,7 @@ struct StreamScreen: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                StatusBarRow()
-                PageHeader(title: "Stream", connected: boolValue(model.glassesValues, "connected") == true)
+                PageHeader(title: "Stream", connected: model.glassesConnected)
                 if !model.glassesConnected {
                     OfflineNotice()
                         .padding(.horizontal, 16)
@@ -81,10 +81,17 @@ struct StreamScreen: View {
     private var previewSurface: some View {
         if let livePreviewUrl {
             ZStack {
-                WebStreamPreviewView(url: livePreviewUrl)
-                    .frame(height: 160)
-                    .background(Color.black)
-                    .clipShape(RoundedRectangle(cornerRadius: 22))
+                if model.streamProtocol == .rtmp {
+                    HlsStreamPreviewView(url: livePreviewUrl)
+                        .frame(height: 160)
+                        .background(Color.black)
+                        .clipShape(RoundedRectangle(cornerRadius: 22))
+                } else {
+                    WebStreamPreviewView(url: livePreviewUrl)
+                        .frame(height: 160)
+                        .background(Color.black)
+                        .clipShape(RoundedRectangle(cornerRadius: 22))
+                }
                 previewChrome(label: "LIVE", detail: "\(model.streamProtocol.rawValue.uppercased()) · keep-alive 15s")
             }
         } else {
@@ -242,6 +249,27 @@ struct ProtocolTab: View {
                 .background(active ? Color.white : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
         }
+    }
+}
+
+struct HlsStreamPreviewView: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context _: Context) -> AVPlayerViewController {
+        let controller = AVPlayerViewController()
+        controller.showsPlaybackControls = false
+        controller.videoGravity = .resizeAspectFill
+        controller.player = AVPlayer(url: url)
+        controller.player?.play()
+        return controller
+    }
+
+    func updateUIViewController(_ controller: AVPlayerViewController, context _: Context) {
+        let currentUrl = (controller.player?.currentItem?.asset as? AVURLAsset)?.url
+        if currentUrl != url {
+            controller.player = AVPlayer(url: url)
+        }
+        controller.player?.play()
     }
 }
 

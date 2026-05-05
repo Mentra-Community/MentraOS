@@ -4,9 +4,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path, Polyline, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
 import { OfflineNotice } from '../components/OfflineNotice';
-import { StatusBarBar } from '../components/StatusBarBar';
 import { colors } from '../components/theme';
-import { streamUptime } from '../sdkFormat';
+import { isGlassesConnected, streamUptime } from '../sdkFormat';
 import { STREAM_DEFAULT_URLS, type MentraSdkModel, type StreamProtocol } from '../useMentraSdk';
 
 const bars = [18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40];
@@ -21,15 +20,14 @@ await BluetoothSdk.startStream({
 })`;
 
 export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
-  const connected = sdk.glassesStatus.connected === true;
+  const connected = isGlassesConnected(sdk.glassesStatus);
   const isLive = sdk.streamStartedAt !== null;
   const uptime = streamUptime(sdk.streamStartedAt);
   const setupHint = localStreamSetupHint(sdk.streamProtocol, sdk.streamUrl, sdk.streamStatus);
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
-      <StatusBarBar />
-      <Header connected={sdk.glassesStatus.connected === true} title="Stream" />
+      <Header connected={connected} title="Stream" />
       {!connected && <OfflineNotice />}
 
       {/* Live preview */}

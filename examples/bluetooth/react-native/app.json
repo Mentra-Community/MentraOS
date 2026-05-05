@@ -22,6 +22,7 @@
     },
     "android": {
       "package": "com.mentra.bluetoothsdk.example",
+      "softwareKeyboardLayoutMode": "pan",
       "permissions": [
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_ADMIN",

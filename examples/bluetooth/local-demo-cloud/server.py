@@ -17,9 +17,11 @@ DEFAULT_PHOTO_PORT = 8787
 DEFAULT_RTMP_PORT = 1935
 DEFAULT_HLS_PORT = 8888
 DEFAULT_WEBRTC_PORT = 8889
-DEFAULT_STREAM_PATH = "mentra-live"
+DEFAULT_RTMP_STREAM_PATH = "live/mentra-live"
+DEFAULT_WEBRTC_STREAM_PATH = "mentra-live"
 MEDIA_MTX_CONTAINER = "mentra-webrtc"
 MEDIA_MTX_IMAGE = "bluenviron/mediamtx:1"
+MEDIA_MTX_HLS_VARIANT = "mpegts"
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
@@ -36,8 +38,13 @@ def parse_options() -> argparse.Namespace:
     parser.add_argument("--rtmp-port", type=int, default=DEFAULT_RTMP_PORT, help="MediaMTX RTMP ingest port.")
     parser.add_argument("--hls-port", type=int, default=DEFAULT_HLS_PORT, help="MediaMTX HLS preview port.")
     parser.add_argument("--webrtc-port", type=int, default=DEFAULT_WEBRTC_PORT, help="MediaMTX WebRTC HTTP port.")
-    parser.add_argument("--stream-path", default=DEFAULT_STREAM_PATH, help="MediaMTX stream path.")
-    parser.add_argument("--webrtc-path", dest="stream_path", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--stream-path",
+        default=None,
+        help="MediaMTX stream path for both RTMP and WebRTC. Prefer --rtmp-path and --webrtc-path for new scripts.",
+    )
+    parser.add_argument("--rtmp-path", default=DEFAULT_RTMP_STREAM_PATH, help="MediaMTX RTMP/HLS stream path.")
+    parser.add_argument("--webrtc-path", default=DEFAULT_WEBRTC_STREAM_PATH, help="MediaMTX WHIP/WHEP stream path.")
     parser.add_argument("--photo-only", action="store_true", help="Start only the photo webhook.")
     parser.add_argument("--streaming-only", action="store_true", help="Start only the MediaMTX streaming server.")
     parser.add_argument("--webrtc-only", dest="streaming_only", action="store_true", help=argparse.SUPPRESS)
@@ -52,6 +59,9 @@ def parse_options() -> argparse.Namespace:
     )
     parser.add_argument("--require-webrtc", dest="require_streaming", action="store_true", help=argparse.SUPPRESS)
     options = parser.parse_args()
+    if options.stream_path:
+        options.rtmp_path = options.stream_path
+        options.webrtc_path = options.stream_path
     if options.photo_only:
         options.skip_streaming = True
     if options.streaming_only:
@@ -135,6 +145,21 @@ def missing_mediamtx_ports(options: argparse.Namespace) -> list[str]:
     return missing
 
 
+def mediamtx_hls_variant() -> str | None:
+    result = subprocess.run(
+        ["docker", "inspect", MEDIA_MTX_CONTAINER, "--format", "{{range .Config.Env}}{{println .}}{{end}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    for line in result.stdout.splitlines():
+        if line.startswith("MTX_HLSVARIANT="):
+            return line.split("=", 1)[1]
+    return None
+
+
 def ensure_docker_ready() -> None:
     if not shutil.which("docker"):
         raise RuntimeError("Docker is not installed or is not on PATH.")
@@ -172,6 +197,13 @@ def start_mediamtx(options: argparse.Namespace, host_ip: str) -> tuple[subproces
                 f"Existing {MEDIA_MTX_CONTAINER} container is missing port mappings: {missing}. "
                 f"Stop it with `docker stop {MEDIA_MTX_CONTAINER}` and rerun this command."
             )
+        hls_variant = mediamtx_hls_variant()
+        if hls_variant != MEDIA_MTX_HLS_VARIANT:
+            raise RuntimeError(
+                f"Existing {MEDIA_MTX_CONTAINER} container uses MTX_HLSVARIANT={hls_variant or 'default'}. "
+                f"Stop it with `docker stop {MEDIA_MTX_CONTAINER}` and rerun this command so local iOS RTMP preview uses "
+                f"{MEDIA_MTX_HLS_VARIANT} HLS."
+            )
         return None, False
 
     ensure_docker_ready()
@@ -184,6 +216,8 @@ def start_mediamtx(options: argparse.Namespace, host_ip: str) -> tuple[subproces
             MEDIA_MTX_CONTAINER,
             "-e",
             f"MTX_WEBRTCADDITIONALHOSTS={host_ip}",
+            "-e",
+            f"MTX_HLSVARIANT={MEDIA_MTX_HLS_VARIANT}",
             "-p",
             f"{options.rtmp_port}:1935",
             "-p",
@@ -207,7 +241,8 @@ def print_urls(
     reused_mediamtx: bool,
     streaming_warning: str | None,
 ) -> None:
-    stream_path = options.stream_path.strip("/")
+    rtmp_path = options.rtmp_path.strip("/")
+    webrtc_path = options.webrtc_path.strip("/")
     print("\nLocal Mentra demo cloud")
     print("=======================")
 
@@ -226,17 +261,17 @@ def print_urls(
         print("  Photo upload is still available. Install/start Docker later to try RTMP/WebRTC streaming.")
     elif not options.skip_streaming:
         print("\nRTMP publish URL:")
-        print(f"  rtmp://{host_ip}:{options.rtmp_port}/{stream_path}")
+        print(f"  rtmp://{host_ip}:{options.rtmp_port}/{rtmp_path}")
         print("\nRTMP browser preview (HLS):")
-        print(f"  http://{host_ip}:{options.hls_port}/{stream_path}")
+        print(f"  http://{host_ip}:{options.hls_port}/{rtmp_path}")
         print("\nOptional RTMP ffplay preview:")
-        print(f"  ffplay -fflags nobuffer -flags low_delay -framedrop rtmp://{host_ip}:{options.rtmp_port}/{stream_path}")
+        print(f"  ffplay -fflags nobuffer -flags low_delay -framedrop rtmp://{host_ip}:{options.rtmp_port}/{rtmp_path}")
         print("\nWHIP publish URL:")
-        print(f"  http://{host_ip}:{options.webrtc_port}/{stream_path}/whip")
+        print(f"  http://{host_ip}:{options.webrtc_port}/{webrtc_path}/whip")
         print("\nWebRTC browser preview:")
-        print(f"  http://{host_ip}:{options.webrtc_port}/{stream_path}")
+        print(f"  http://{host_ip}:{options.webrtc_port}/{webrtc_path}")
         print("\nWHEP playback URL:")
-        print(f"  http://{host_ip}:{options.webrtc_port}/{stream_path}/whep")
+        print(f"  http://{host_ip}:{options.webrtc_port}/{webrtc_path}/whep")
         if reused_mediamtx:
             print(f"\nReusing existing Docker container: {MEDIA_MTX_CONTAINER}")
 

@@ -364,7 +364,7 @@ sdk.keepStreamAlive(
 sdk.stopStream()
 ```
 
-For local streaming development, run the companion local demo cloud in `examples/local-demo-cloud`. For RTMP, use the printed RTMP publish URL, such as `rtmp://192.168.1.42:1935/mentra-live`, in the example app. The native iOS example derives the HLS preview URL, such as `http://192.168.1.42:8888/mentra-live`, and embeds it while RTMP is live; you can also open the printed HLS URL on your computer. For WebRTC, use the printed WHIP URL, such as `http://192.168.1.42:8889/mentra-live/whip`, in the example app and open the printed WebRTC preview URL, such as `http://192.168.1.42:8889/mentra-live`. Do not use `localhost`: keep the glasses, phone, and computer on a network where the glasses and phone can reach the computer.
+For local streaming development, run the companion local demo cloud in `examples/local-demo-cloud`. For RTMP, use the printed RTMP publish URL, such as `rtmp://192.168.1.42:1935/live/mentra-live`, in the example app. The RTMP path must include both the application and stream key segments, for example `/live/mentra-live`; a single path segment such as `/mentra-live` is rejected by the Mentra Live RTMP client. The native iOS example derives the HLS preview URL, such as `http://192.168.1.42:8888/live/mentra-live`, and embeds it while RTMP is live; you can also open the printed HLS URL on your computer. For WebRTC, use the printed WHIP URL, such as `http://192.168.1.42:8889/mentra-live/whip`, in the example app and open the printed WebRTC preview URL, such as `http://192.168.1.42:8889/mentra-live`. Do not use `localhost`: keep the glasses, phone, and computer on a network where the glasses and phone can reach the computer.
 
 ## Wi-Fi And Hotspot
 

@@ -1,3 +1,4 @@
+import MentraBluetoothSDK
 import SwiftUI
 
 struct DeviceScreen: View {
@@ -6,8 +7,7 @@ struct DeviceScreen: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                StatusBarRow()
-                PageHeader(title: "Device", connected: boolValue(model.glassesValues, "connected") == true)
+                PageHeader(title: "Device", connected: model.glassesConnected)
 
                 heroCard
                     .padding(.horizontal, 16)
@@ -97,6 +97,7 @@ struct DeviceScreen: View {
 
     private var quickActions: some View {
         let connected = model.glassesConnected
+        let displaySupported = connected && supportsDisplay(model.glassesValues)
         return GlassCard {
             HStack {
                 Text("Quick actions")
@@ -110,14 +111,17 @@ struct DeviceScreen: View {
             }
             .padding(.bottom, 16)
 
+            targetPicker
+                .padding(.bottom, 12)
+
             VStack(spacing: 8) {
                 HStack(spacing: 8) {
-                    DarkActionButton(icon: "magnifyingglass", title: "Scan", bg: Color(hex: 0x0E2C1A), action: model.startScan)
-                    DarkActionButton(icon: "link", title: "Connect", bg: AppColor.greenPrimary, action: model.connect)
+                    DarkActionButton(icon: "magnifyingglass", title: "Scan", bg: Color(hex: 0x0E2C1A), enabled: !connected, action: model.startScan)
+                    DarkActionButton(icon: "link", title: connected ? "Connected" : "Connect", bg: AppColor.greenPrimary, enabled: !connected, action: model.connect)
                 }
                 HStack(spacing: 8) {
-                    LightActionButton(icon: "display", title: "Display Hello", enabled: connected, action: model.displayHello)
-                    LightActionButton(icon: "display.slash", title: "Clear Display", enabled: connected, action: model.clearDisplay)
+                    LightActionButton(icon: "display", title: "Display Hello", enabled: displaySupported, action: model.displayHello)
+                    LightActionButton(icon: "display.slash", title: "Clear Display", enabled: displaySupported, action: model.clearDisplay)
                 }
                 HStack(spacing: 8) {
                     LightActionButton(icon: "checkmark", title: "Apply Settings", enabled: connected, action: model.applySettings)
@@ -135,8 +139,60 @@ struct DeviceScreen: View {
                     .disabled(!connected)
                     .opacity(connected ? 1 : 0.45)
                 }
+                if connected && !supportsDisplay(model.glassesValues) {
+                    DisplayCapabilityNotice(text: "\(modelLabel(model.glassesValues)) has no display, so display commands are disabled.")
+                }
             }
         }
+    }
+
+    private var targetPicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(model.glassesConnected ? "Connected device" : "Connection target")
+                    .font(.system(size: 10, weight: .semibold).monospaced())
+                    .tracking(1.4)
+                    .foregroundColor(AppColor.inkAlt.opacity(0.45))
+                Spacer()
+                if !model.glassesConnected, !model.discoveredDevices.isEmpty {
+                    Text("\(model.discoveredDevices.count) found")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(AppColor.greenDeep)
+                }
+            }
+
+            if model.glassesConnected {
+                TargetDeviceRow(
+                    name: deviceLabel(model.glassesValues),
+                    detail: "Active BLE connection",
+                    selected: true,
+                    enabled: false,
+                    action: {}
+                )
+            } else if model.discoveredDevices.isEmpty {
+                TargetDeviceRow(
+                    name: "Default paired Mentra Live",
+                    detail: "Scan to choose a specific nearby device",
+                    selected: true,
+                    enabled: false,
+                    action: {}
+                )
+            } else {
+                ForEach(Array(model.discoveredDevices.enumerated()), id: \.offset) { _, device in
+                    TargetDeviceRow(
+                        name: device.name,
+                        detail: targetDeviceDetail(device),
+                        selected: (model.selectedDiscoveredDevice.map { discoveredDeviceKey($0) } ?? "") == discoveredDeviceKey(device),
+                        enabled: true
+                    ) {
+                        model.selectDiscoveredDevice(device)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(AppColor.ink.opacity(0.035))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
     }
 
     private var liveStatus: some View {
@@ -176,6 +232,7 @@ struct DeviceScreen: View {
                     }
                 ))
                 StatusKVRow(label: "BLUETOOTH", value: bluetoothSearchLabel(model.bluetoothValues))
+                StatusKVRow(label: "TARGET", value: connectionTargetLabel(model: model), mono: true)
                 StatusKVRow(label: "DISCOVERED", value: model.discoveredDevices.map(\.name).joined(separator: ", ").isEmpty ? "None yet" : model.discoveredDevices.map(\.name).joined(separator: ", "), mono: true)
                 StatusKVRow(label: "PERMISSIONS", value: "iOS prompts as needed")
                 StatusKVRow(label: "CAMERA", value: model.cameraStatus)
@@ -226,6 +283,87 @@ private func glassesAssetName(_ values: [String: Any]) -> String {
     return "mentra_live"
 }
 
+private func targetDeviceDetail(_ device: MentraDiscoveredDevice) -> String {
+    if let rssi = device.rssi {
+        return "\(device.model.rawValue) · \(rssi) dBm"
+    }
+    return device.model.rawValue
+}
+
+@MainActor
+private func connectionTargetLabel(model: BluetoothViewModel) -> String {
+    if model.glassesConnected {
+        return deviceLabel(model.glassesValues)
+    }
+    if let device = model.selectedDiscoveredDevice {
+        return device.name
+    }
+    return "Default paired Mentra Live"
+}
+
+struct TargetDeviceRow: View {
+    let name: String
+    let detail: String
+    let selected: Bool
+    let enabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(selected ? AppColor.greenPrimary : Color.white)
+                        .frame(width: 18, height: 18)
+                    if selected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .heavy))
+                            .foregroundColor(.white)
+                    }
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(AppColor.inkAlt)
+                    Text(detail)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(AppColor.muted)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .background(selected ? AppColor.greenPrimary.opacity(0.08) : Color.white.opacity(0.7))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(selected ? AppColor.greenPrimary.opacity(0.18) : Color.white.opacity(0.7), lineWidth: 1))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+}
+
+struct DisplayCapabilityNotice: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "info.circle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(AppColor.greenPrimary)
+                .padding(.top, 1)
+            Text(text)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(AppColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(AppColor.greenSoft.opacity(0.18))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+}
+
 struct StatTile: View {
     let label: String
     let value: String
@@ -250,6 +388,7 @@ struct StatTile: View {
 
 struct DarkActionButton: View {
     let icon: String; let title: String; let bg: Color
+    var enabled: Bool = true
     let action: () -> Void
     var body: some View {
         Button {
@@ -262,6 +401,8 @@ struct DarkActionButton: View {
             .frame(maxWidth: .infinity).padding(.vertical, 14)
             .background(bg).clipShape(RoundedRectangle(cornerRadius: 14))
         }
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
     }
 }
 

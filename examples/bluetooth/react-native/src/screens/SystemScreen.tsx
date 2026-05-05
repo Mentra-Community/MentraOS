@@ -4,20 +4,18 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Line, Path, Polyline, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
 import { OfflineNotice } from '../components/OfflineNotice';
-import { StatusBarBar } from '../components/StatusBarBar';
 import { colors } from '../components/theme';
-import { wifiLabel, wifiSubLabel } from '../sdkFormat';
+import { isGlassesConnected, wifiLabel, wifiSubLabel } from '../sdkFormat';
 import type { LedMode, MentraSdkModel } from '../useMentraSdk';
 
 export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
   const networks = sdk.bluetoothStatus.wifiScanResults ?? [];
-  const connected = sdk.glassesStatus.connected === true;
+  const connected = isGlassesConnected(sdk.glassesStatus);
   const inputEvents = sdk.events.filter((item) => item.text.includes('button') || item.text.includes('touch')).slice(0, 3);
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
-      <StatusBarBar />
-      <Header connected={sdk.glassesStatus.connected === true} title="System" />
+      <Header connected={connected} title="System" />
       {!connected && <OfflineNotice />}
 
       {/* Wi-Fi card */}

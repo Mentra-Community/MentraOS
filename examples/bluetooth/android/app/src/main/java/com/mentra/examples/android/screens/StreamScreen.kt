@@ -28,13 +28,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mentra.examples.android.MentraExampleController
+import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.streamProtocolLabel
 import com.mentra.examples.android.elapsedText
 import com.mentra.examples.android.ui.AppColor
 import com.mentra.examples.android.ui.GlassCard
 import com.mentra.examples.android.ui.OfflineNotice
 import com.mentra.examples.android.ui.PageHeader
-import com.mentra.examples.android.ui.StatusBarRow
 
 private val barHeights = listOf(18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40)
 private val streamSdkCall = """
@@ -56,13 +56,12 @@ sdk.startStream(
 @Composable
 fun StreamScreen(controller: MentraExampleController) {
     val state = controller.state
-    val connected = state.glassesStatus["connected"] == true
+    val connected = isGlassesConnected(state.glassesStatus)
     val isLive = state.streamStartedAt != null
     val uptime = elapsedText(state.streamStartedAt)
     val setupHint = localStreamSetupHint(state.streamProtocol, state.streamUrl, state.streamStatus)
     val clipboardManager = LocalClipboardManager.current
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
-        StatusBarRow()
         PageHeader("Stream", connected)
         if (!connected) {
             OfflineNotice(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))

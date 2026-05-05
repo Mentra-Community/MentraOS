@@ -40,7 +40,7 @@ import java.util.Date
 import java.util.Locale
 
 val streamDefaultUrls = mapOf(
-    "rtmp" to "rtmp://<computer-ip>:1935/mentra-live",
+    "rtmp" to "rtmp://<computer-ip>:1935/live/mentra-live",
     "srt" to "srt://srt.example.com:4201?streamid=YOUR_STREAM_ID&passphrase=YOUR_PASSPHRASE",
     "webrtc" to "http://<computer-ip>:8889/mentra-live/whip",
 )
@@ -323,7 +323,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     override fun onGlassesStatusChanged(status: MentraGlassesStatusUpdate) {
         state = state.copy(glassesStatus = state.glassesStatus + status.values)
-        if (status.values["connected"] == false) {
+        if (isDisconnectedStatus(status.values)) {
             applyDisconnectedState("Disconnected")
         }
         addEvent("STORE", summarize(status.values))
@@ -431,7 +431,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         state = state.copy(events = (listOf(exampleEvent(tag, text)) + state.events).take(30))
     }
 
-    private fun isGlassesConnected(): Boolean = state.glassesStatus["connected"] == true
+    private fun isGlassesConnected(): Boolean = isGlassesConnected(state.glassesStatus)
 
     private fun requireConnected(feature: String) {
         if (isGlassesConnected()) {
@@ -555,6 +555,7 @@ fun exampleEvent(tag: String, text: String): ExampleEvent =
 fun disconnectedGlassesStatus(): Map<String, Any> =
     mapOf(
         "connected" to false,
+        "connectionState" to "DISCONNECTED",
         "fullyBooted" to false,
         "batteryLevel" to -1,
         "charging" to false,
@@ -669,7 +670,21 @@ fun streamUrlValidationMessage(streamUrl: String): String? = when {
         "Replace <computer-ip> with the matching publish URL printed by local demo cloud."
     streamUrl.contains("<") || streamUrl.contains(">") || streamUrl.contains("YOUR_") ->
         "Replace the placeholder stream URL before starting."
+    rtmpPathSegmentCount(streamUrl)?.let { it < 2 } == true ->
+        "RTMP URL must include an app and stream key, for example rtmp://<computer-ip>:1935/live/mentra-live."
     else -> null
+}
+
+fun rtmpPathSegmentCount(streamUrl: String): Int? {
+    val uri = runCatching { URI(streamUrl) }.getOrNull() ?: return null
+    val scheme = uri.scheme?.lowercase() ?: return null
+    if (scheme != "rtmp" && scheme != "rtmps") {
+        return null
+    }
+    return uri.rawPath
+        ?.split("/")
+        ?.count { it.isNotBlank() }
+        ?: 0
 }
 
 fun summarize(values: Map<String, Any>): String =
@@ -688,7 +703,23 @@ fun boolValue(values: Map<String, Any>, key: String): Boolean? = values[key] as?
 
 fun connectionLabel(values: Map<String, Any>): String =
     stringValue(values, "connectionState")
-        ?: if (boolValue(values, "connected") == true) "CONNECTED" else "WAITING"
+        ?: if (isGlassesConnected(values)) "CONNECTED" else "WAITING"
+
+fun isGlassesConnected(values: Map<String, Any>): Boolean {
+    return when (stringValue(values, "connectionState")?.lowercase()) {
+        "connected" -> true
+        "disconnected" -> false
+        else -> boolValue(values, "connected") == true
+    }
+}
+
+fun isDisconnectedStatus(values: Map<String, Any>): Boolean {
+    return when (stringValue(values, "connectionState")?.lowercase()) {
+        "disconnected" -> true
+        "connected" -> false
+        else -> boolValue(values, "connected") == false
+    }
+}
 
 fun deviceLabel(values: Map<String, Any>): String =
     stringValue(values, "bluetoothName")
@@ -701,12 +732,12 @@ fun modelLabel(values: Map<String, Any>): String =
 
 fun batteryLevel(values: Map<String, Any>): Int? {
     val level = intValue(values, "batteryLevel") ?: return null
-    return if (level < 0 || boolValue(values, "connected") == false) null else level.coerceAtMost(100)
+    return if (level < 0 || !isGlassesConnected(values)) null else level.coerceAtMost(100)
 }
 
 fun batteryLabel(values: Map<String, Any>): String =
     batteryLevel(values)?.let { "$it%${if (boolValue(values, "charging") == true) " charging" else ""}" }
-        ?: if (boolValue(values, "connected") == false) "Not connected" else "Waiting for status"
+        ?: if (isDisconnectedStatus(values)) "Not connected" else "Waiting for status"
 
 fun wifiLabel(values: Map<String, Any>): String =
     if (boolValue(values, "wifiConnected") == true) {

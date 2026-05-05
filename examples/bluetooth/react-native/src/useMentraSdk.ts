@@ -16,12 +16,13 @@ import BluetoothSdk, {
   type TouchEvent,
   type WifiStatusChangeEvent,
 } from '@mentra/bluetooth-sdk';
+import {isDisconnectedStatus, isGlassesConnected} from './sdkFormat';
 
 export type StreamProtocol = 'rtmp' | 'srt' | 'webrtc';
 export type LedMode = 'Off' | 'Solid' | 'Pulse' | 'Blink';
 
 export const STREAM_DEFAULT_URLS: Record<StreamProtocol, string> = {
-  rtmp: 'rtmp://<computer-ip>:1935/mentra-live',
+  rtmp: 'rtmp://<computer-ip>:1935/live/mentra-live',
   srt: 'srt://srt.example.com:4201?streamid=YOUR_STREAM_ID&passphrase=YOUR_PASSPHRASE',
   webrtc: 'http://<computer-ip>:8889/mentra-live/whip',
 };
@@ -138,7 +139,7 @@ export function useMentraSdk(): MentraSdkModel {
 
   useEffect(() => {
     const removeGlasses = BluetoothSdk.onGlassesStatus((changed) => {
-      if (changed.connected === false) {
+      if (isDisconnectedStatus(changed)) {
         applyDisconnectedState('Disconnected');
       } else {
         setGlassesStatus((current) => ({...current, ...changed}));
@@ -486,7 +487,7 @@ export function useMentraSdk(): MentraSdkModel {
       await runAction('Stop stream', async () => {
         stopKeepAlive();
         activeStreamIdRef.current = null;
-        if (glassesStatus.connected === true) {
+        if (isGlassesConnected(glassesStatus)) {
           await BluetoothSdk.stopStream();
         }
         setStreamStartedAt(null);
@@ -603,7 +604,7 @@ export function useMentraSdk(): MentraSdkModel {
   }
 
   function requireConnected(feature: string) {
-    if (glassesStatus.connected === true) {
+    if (isGlassesConnected(glassesStatus)) {
       return;
     }
     const message = `Connect glasses first to ${feature}.`;
@@ -725,6 +726,7 @@ function disconnectedGlassesStatus(
     caseRemoved: true,
     charging: false,
     connected: false,
+    connectionState: 'DISCONNECTED',
     fullyBooted: false,
     wifiConnected: false,
     wifiLocalIp: '',
@@ -855,7 +857,23 @@ function streamUrlValidationMessage(streamUrl: string) {
   if (streamUrl.includes('<') || streamUrl.includes('>') || streamUrl.includes('YOUR_')) {
     return 'Replace the placeholder stream URL before starting.';
   }
+  const rtmpSegmentCount = rtmpPathSegmentCount(streamUrl);
+  if (rtmpSegmentCount !== null && rtmpSegmentCount < 2) {
+    return 'RTMP URL must include an app and stream key, for example rtmp://<computer-ip>:1935/live/mentra-live.';
+  }
   return null;
+}
+
+function rtmpPathSegmentCount(streamUrl: string) {
+  try {
+    const url = new URL(streamUrl);
+    if (url.protocol !== 'rtmp:' && url.protocol !== 'rtmps:') {
+      return null;
+    }
+    return url.pathname.split('/').filter(Boolean).length;
+  } catch {
+    return null;
+  }
 }
 
 function cacheBustedUrl(url: string) {

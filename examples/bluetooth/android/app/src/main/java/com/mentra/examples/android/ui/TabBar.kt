@@ -42,9 +42,9 @@ fun TabBar(active: Tab, onChange: (Tab) -> Unit, modifier: Modifier = Modifier) 
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(28.dp))
+            .clip(RoundedCornerShape(30.dp))
             .background(Color.White.copy(alpha = 0.85f))
-            .border(1.dp, Color.White.copy(alpha = 0.8f), RoundedCornerShape(28.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.8f), RoundedCornerShape(30.dp))
             .padding(8.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically

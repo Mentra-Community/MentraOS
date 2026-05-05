@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-STREAM_PATH="${MENTRA_STREAM_PATH:-${MENTRA_WEBRTC_STREAM_PATH:-mentra-live}}"
+if [ -n "${MENTRA_STREAM_PATH:-}" ]; then
+  RTMP_STREAM_PATH="$MENTRA_STREAM_PATH"
+  WEBRTC_STREAM_PATH="$MENTRA_STREAM_PATH"
+else
+  RTMP_STREAM_PATH="${MENTRA_RTMP_STREAM_PATH:-live/mentra-live}"
+  WEBRTC_STREAM_PATH="${MENTRA_WEBRTC_STREAM_PATH:-mentra-live}"
+fi
 
 detect_host_ip() {
   if [ -n "${MENTRA_STREAM_HOST_IP:-}" ]; then
@@ -50,22 +56,22 @@ Starting local MediaMTX streaming server.
 
 Use these URLs while the container is running:
   RTMP publish URL for the example app:
-    rtmp://$HOST_IP:1935/$STREAM_PATH
+    rtmp://$HOST_IP:1935/$RTMP_STREAM_PATH
 
   RTMP browser preview (HLS):
-    http://$HOST_IP:8888/$STREAM_PATH
+    http://$HOST_IP:8888/$RTMP_STREAM_PATH
 
   Optional RTMP ffplay preview:
-    ffplay -fflags nobuffer -flags low_delay -framedrop rtmp://$HOST_IP:1935/$STREAM_PATH
+    ffplay -fflags nobuffer -flags low_delay -framedrop rtmp://$HOST_IP:1935/$RTMP_STREAM_PATH
 
   WHIP publish URL for the example app:
-    http://$HOST_IP:8889/$STREAM_PATH/whip
+    http://$HOST_IP:8889/$WEBRTC_STREAM_PATH/whip
 
   WebRTC browser preview:
-    http://$HOST_IP:8889/$STREAM_PATH
+    http://$HOST_IP:8889/$WEBRTC_STREAM_PATH
 
   WHEP playback URL:
-    http://$HOST_IP:8889/$STREAM_PATH/whep
+    http://$HOST_IP:8889/$WEBRTC_STREAM_PATH/whep
 
 Keep the glasses, phone, and computer on a network where the phone and glasses can reach $HOST_IP.
 Press Ctrl-C to stop the server.
@@ -74,6 +80,7 @@ EOF
 
 exec docker run --rm -it --name mentra-webrtc \
   -e MTX_WEBRTCADDITIONALHOSTS="$HOST_IP" \
+  -e MTX_HLSVARIANT=mpegts \
   -p 1935:1935 \
   -p 8888:8888 \
   -p 8889:8889 \

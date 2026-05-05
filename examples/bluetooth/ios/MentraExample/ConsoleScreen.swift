@@ -11,8 +11,7 @@ struct ConsoleScreen: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                StatusBarRow()
-                PageHeader(title: "Console", connected: boolValue(model.glassesValues, "connected") == true)
+                PageHeader(title: "Console", connected: model.glassesConnected)
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {

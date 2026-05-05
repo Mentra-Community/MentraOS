@@ -38,13 +38,13 @@ Photo upload URL:
   http://192.168.1.42:8787/upload
 
 RTMP publish URL:
-  rtmp://192.168.1.42:1935/mentra-live
+  rtmp://192.168.1.42:1935/live/mentra-live
 
 RTMP browser preview (HLS):
-  http://192.168.1.42:8888/mentra-live
+  http://192.168.1.42:8888/live/mentra-live
 
 Optional RTMP ffplay preview:
-  ffplay -fflags nobuffer -flags low_delay -framedrop rtmp://192.168.1.42:1935/mentra-live
+  ffplay -fflags nobuffer -flags low_delay -framedrop rtmp://192.168.1.42:1935/live/mentra-live
 
 WHIP publish URL:
   http://192.168.1.42:8889/mentra-live/whip
@@ -62,6 +62,15 @@ preview URL and shows it in the preview card after the stream starts; you can
 also open the HLS preview URL on your computer. For WebRTC, paste the WHIP URL
 into the Stream screen's WebRTC field and open the WebRTC preview URL on your
 computer.
+
+RTMP URLs need both an application segment and a stream key segment. The default
+`/live/mentra-live` path is intentional; a one-segment RTMP path such as
+`/mentra-live` is rejected by the Mentra Live RTMP client.
+
+The helper starts MediaMTX with MPEG-TS HLS segments for broad iOS player
+compatibility. If an older `mentra-webrtc` container is already running, stop it
+with `docker stop mentra-webrtc` and rerun the helper before testing the iOS
+RTMP preview.
 
 The HLS preview URL becomes useful after the RTMP stream starts. If you open it
 before tapping **Start stream**, refresh the page after the glasses begin
@@ -85,7 +94,7 @@ python3 examples/local-demo-cloud/server.py --host-ip 192.168.1.42
 You can also change ports or the stream path:
 
 ```bash
-python3 examples/local-demo-cloud/server.py --photo-port 8788 --rtmp-port 1936 --hls-port 8887 --stream-path my-stream
+python3 examples/local-demo-cloud/server.py --photo-port 8788 --rtmp-port 1936 --hls-port 8887 --rtmp-path live/my-stream --webrtc-path my-stream
 ```
 
 Run only the photo webhook:
