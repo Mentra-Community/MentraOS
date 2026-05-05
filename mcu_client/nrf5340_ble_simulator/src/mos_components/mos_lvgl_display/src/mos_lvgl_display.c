@@ -20,16 +20,13 @@
 #include "mos_brightness.h"
 #include "mos_lvgl_display.h"
 #include "protobuf_handler.h"
+#include "screen.h"
 #include "ui/main_scene.h"
-#include "ui/caption/caption_renderer.h"
-#include "ui/xy_text_view.h"
 #include "others/test_patterns.h"
 #include "others/gbk_test_view.h"
-#include "utils/dynamic_font_labels.h"
 #include "utils/text_diag.h"
 #if defined(CONFIG_LVGL)
 #include "mos_binfont_lvgl.h"
-#include "mos_font_storage.h"
 #endif
 
 LOG_MODULE_REGISTER(mos_lvgl_display, LOG_LEVEL_DBG);
@@ -52,8 +49,6 @@ K_MSGQ_DEFINE(lvgl_display_msgq, sizeof(display_cmd_t), DISPLAY_CMD_QSZ, 4);
 static volatile bool display_onoff = false;
 
 static mos_ui_main_scene_t g_main_scene;
-static bool welcome_screen_active = true;
-static bool welcome_screen_initializing = false;
 
 #if defined(CONFIG_LVGL)
 static void restore_welcome_screen_state(void);
@@ -74,13 +69,6 @@ static void on_font_changed(const lv_font_t *new_font)
     mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
 }
 
-/* Skip welcome_text relayout while welcome screen is active — refreshed below by update_welcome_label_with_battery. */
-static bool font_skip_welcome_text(lv_obj_t *label, void *user_data)
-{
-    (void)user_data;
-    return welcome_screen_active && label == g_main_scene.welcome.welcome_text;
-}
-
 static void apply_font_update_in_lvgl_thread(const lv_font_t *new_font)
 {
     if (new_font == NULL)
@@ -89,38 +77,40 @@ static void apply_font_update_in_lvgl_thread(const lv_font_t *new_font)
         return;
     }
 
-    mos_dynamic_font_labels_apply(new_font, font_skip_welcome_text, NULL);
+    mos_ui_main_scene_apply_dynamic_font(&g_main_scene, new_font);
 
     /* CJK per-character pool uses old glyph height for coordinates;
      * full-text relayout with the new font is required to avoid overlap artifacts. */
-    mos_ui_caption_renderer_invalidate_cache();
+    mos_ui_main_scene_invalidate_caption_cache();
 
-    if (welcome_screen_active && !welcome_screen_initializing)
+    bool welcome_mode = mos_ui_main_scene_is_welcome_mode(&g_main_scene);
+
+    if (welcome_mode)
     {
         update_welcome_label_with_battery();
         mos_ui_main_scene_show_welcome(&g_main_scene);
     }
-    else if (g_main_scene.caption.container != NULL)
+    else if (mos_ui_main_scene_caption_is_ready(&g_main_scene))
     {
-        mos_ui_caption_renderer_rerender(&g_main_scene);
+        mos_ui_main_scene_rerender_caption(&g_main_scene);
     }
 
-    if (g_main_scene.welcome.container != NULL && welcome_screen_active)
+    if (welcome_mode)
     {
-        lv_obj_update_layout(g_main_scene.welcome.container);
+        mos_ui_main_scene_relayout_welcome(&g_main_scene);
     }
 
-    if (g_main_scene.caption.container != NULL)
+    if (mos_ui_main_scene_caption_is_ready(&g_main_scene))
     {
-        lv_obj_update_layout(g_main_scene.caption.container);
-        mos_ui_main_scene_set_caption_scroll_enabled(&g_main_scene, !welcome_screen_active);
-        if (!welcome_screen_active)
+        mos_ui_main_scene_relayout_caption(&g_main_scene);
+        mos_ui_main_scene_set_caption_scroll_enabled(&g_main_scene, !welcome_mode);
+        if (!welcome_mode)
         {
             mos_ui_main_scene_scroll_caption_to_bottom(&g_main_scene);
         }
     }
 
-    lv_obj_invalidate(lv_screen_active());
+    mos_screen_invalidate_full();
     LOG_INF("Font update complete");
 }
 #endif
@@ -158,12 +148,12 @@ bool get_display_onoff(void)
 
 int display_set_translation_pair(display_biz_lang_t src_lang, display_biz_lang_t dst_lang)
 {
-    return mos_ui_caption_renderer_set_translation_pair(src_lang, dst_lang);
+    return mos_ui_main_scene_set_translation_pair(src_lang, dst_lang);
 }
 
 void display_get_translation_pair(display_biz_lang_t *src_lang, display_biz_lang_t *dst_lang)
 {
-    mos_ui_caption_renderer_get_translation_pair(src_lang, dst_lang);
+    mos_ui_main_scene_get_translation_pair(src_lang, dst_lang);
 }
 void lvgl_display_sem_give(void)
 {
@@ -210,7 +200,7 @@ void display_reset_protobuf_text_state(void)
 {
     caption_state_reset();
     s_caption_last_apply_ms = 0U;
-    mos_ui_caption_renderer_reset_cache();
+    mos_ui_main_scene_reset_caption_cache();
     LOG_INF("Reset protobuf text state (pending + de-dup cache cleared)");
 }
 
@@ -275,13 +265,13 @@ void display_update_protobuf_text(const char *text_content)
 
 void display_submit_text_payload(uint16_t x, uint16_t y, const char *text_content, uint16_t font_size, uint32_t color)
 {
-    if (display_scene_get_pattern() == 5 || display_scene_get_mode() == DISPLAY_SCENE_MODE_XY)
+    if (display_scene_get_mode() == DISPLAY_SCENE_MODE_POSITIONED)
     {
         uint32_t y_offset = (uint32_t)y + 80U;
         uint16_t y_clamped = (y_offset > 65535U) ? 65535U : (uint16_t)y_offset;
         uint16_t effective_font_size = (font_size > 0U) ? font_size : 12U;
 
-        display_update_xy_text(x, y_clamped, text_content, effective_font_size, color);
+        display_update_positioned_text(x, y_clamped, text_content, effective_font_size, color);
         return;
     }
 
@@ -293,41 +283,37 @@ void display_submit_scrolling_text_payload(const char *text_content)
     display_update_protobuf_text(text_content);
 }
 
-/* Pattern 5 XY text positioning, thread-safe.
- * Pattern 5 XY 文本定位，线程安全。 */
-void display_update_xy_text(uint16_t x, uint16_t y, const char *text_content, uint16_t font_size, uint32_t color)
+/* Thread-safe positioned text rendering: enqueue for the LVGL thread to draw on the caption overlay. */
+void display_update_positioned_text(uint16_t x, uint16_t y, const char *text_content, uint16_t font_size, uint32_t color)
 {
     if (!text_content)
     {
-        LOG_ERR("Invalid text content pointer for XY text");
+        LOG_ERR("Invalid text content pointer for positioned text");
         return;
     }
 
-    LOG_INF("Buffer: Filling XY text pos=(%u,%u) size=%u: %s", x, y, font_size, text_content);
+    LOG_INF("Enqueue positioned text pos=(%u,%u) size=%u: %s", x, y, font_size, text_content);
 
-    display_cmd_t cmd = {.type = LCD_CMD_UPDATE_XY_TEXT,
-                         .p.xy_text = {
+    display_cmd_t cmd = {.type = LCD_CMD_UPDATE_POSITIONED_TEXT,
+                         .p.positioned_text = {
                              .x = x, .y = y, .font_size = font_size, .color = color, .text = {0}
-                             /* Initialize text array / 初始化文本数组 */
                          }};
 
-    /* Safely copy text with bounds checking.
-     * 安全拷贝文本并做边界检查。 */
     size_t text_len = strlen(text_content);
     if (text_len > MAX_TEXT_LEN)
     {
         text_len = MAX_TEXT_LEN;
-        LOG_WRN("XY text truncated to %d chars", MAX_TEXT_LEN);
+        LOG_WRN("Positioned text truncated to %d chars", MAX_TEXT_LEN);
     }
 
-    strncpy(cmd.p.xy_text.text, text_content, text_len);
-    cmd.p.xy_text.text[text_len] = '\0'; /* Ensure NUL termination / 保证 NUL 结尾 */
+    strncpy(cmd.p.positioned_text.text, text_content, text_len);
+    cmd.p.positioned_text.text[text_len] = '\0';
 
-    /* Use 0 (no wait) timeout to avoid blocking shell threads - LVGL will process asynchronously */
+    /* 0 timeout — non-blocking, LVGL processes asynchronously. */
     int ret = mos_msgq_send(&lvgl_display_msgq, &cmd, 0);
     if (ret != 0)
     {
-        LOG_WRN("Failed to send XY text message to display queue (error: %d)", ret);
+        LOG_WRN("Failed to send positioned text message to display queue (error: %d)", ret);
     }
 }
 
@@ -389,7 +375,6 @@ static void show_default_ui(void)
     show_test_pattern(4);
 
     LOG_INF("🖼️ Scrolling welcome message complete - should see animated text");
-    LOG_INF("🖼️ welcome_text after init: %p", (void *)g_main_scene.welcome.welcome_text);
 }
 
 #if defined(CONFIG_LVGL)
@@ -436,14 +421,6 @@ static void create_scrolling_text_container(lv_obj_t *screen)
     };
 
     g_main_scene = mos_ui_main_scene_create(screen, &cfg);
-
-#if defined(CONFIG_LVGL)
-    mos_dynamic_font_labels_add(g_main_scene.welcome.welcome_text);
-    mos_dynamic_font_labels_add(g_main_scene.caption.default_scrolling);
-#endif
-
-    welcome_screen_active = true;
-    welcome_screen_initializing = false;
     display_scene_set_mode(DISPLAY_SCENE_MODE_WELCOME);
 
     k_work_init_delayable(&welcome_battery_work, welcome_battery_work_handler);
@@ -454,9 +431,8 @@ static void create_scrolling_text_container(lv_obj_t *screen)
 
 
 
-static int current_pattern = 4; /* 默认自动滚动容器（图案 4）/ Default to auto-scroll container (pattern 4) */
-static const int num_patterns = 6; /* 从 5 增至 6（新增 Pattern 5 XY 文本定位）/ Increased from 5 to 6 (added Pattern 5:
-                                      XY Text Positioning) */
+static int current_pattern = 4; /* Pattern 4 is the live welcome/caption scene. */
+static const int num_patterns = 5;
 
 /* 获取当前图案 ID 供条件逻辑使用 / Get current pattern ID for conditional logic */
 int display_get_current_pattern(void)
@@ -469,28 +445,20 @@ bool display_is_welcome_screen_active(void)
     return display_scene_is_welcome_active();
 }
 
-/* lv_obj_del-ing children dangles every cached lv_obj_t* in this file;
- * the BLE/protobuf and DFU paths will UAF unless we zero them. */
+/* lv_obj_del-ing children dangles every cached lv_obj_t* in this file; main_scene_destroy
+ * tears its views and clears the dynamic-font registry it owns. */
 static void tear_down_screen_child_global_refs(void)
 {
     k_work_cancel_delayable(&welcome_battery_work);
     mos_ui_main_scene_destroy(&g_main_scene);
     memset(&g_main_scene, 0, sizeof(g_main_scene));
-    mos_ui_xy_text_view_destroy();
     mos_ui_gbk_test_destroy();
-
-#if defined(CONFIG_LVGL)
-    mos_dynamic_font_labels_clear();
-#endif
-
-    welcome_screen_active = false;
-    welcome_screen_initializing = false;
     display_scene_set_mode(DISPLAY_SCENE_MODE_TEST);
 }
 
 static void ensure_pattern4_scene_ready(void)
 {
-    if (g_main_scene.welcome.container != NULL)
+    if (mos_ui_main_scene_welcome_is_ready(&g_main_scene))
     {
         return;
     }
@@ -503,58 +471,29 @@ static void reset_display_text_caches(void)
 {
     caption_state_reset();
     s_caption_last_apply_ms = 0U;
-    mos_ui_caption_renderer_reset_cache();
+    mos_ui_main_scene_reset_caption_cache();
 }
 
 static void clear_current_display_text(void)
 {
     /* ClearDisplay only wipes content from the currently-active container;
      * the container itself is preserved. */
-    bool clearing_welcome = welcome_screen_active;
-
     reset_display_text_caches();
-    welcome_screen_active = clearing_welcome;
-    welcome_screen_initializing = false;
-
-    if (clearing_welcome)
-    {
-        mos_ui_main_scene_clear_welcome(&g_main_scene);
-    }
-    else
-    {
-        mos_ui_main_scene_clear_caption(&g_main_scene);
-    }
-
-    mos_ui_xy_text_view_clear();
+    mos_ui_main_scene_clear_active(&g_main_scene);
     mos_ui_gbk_test_clear();
 
-    lv_obj_invalidate(lv_screen_active());
+    mos_screen_invalidate_full();
     lvgl_force_one_refresh = true;
 }
 
 static void show_test_pattern(int pattern_id)
 {
-    /* 仅由 LVGL 线程调用，无需加锁 / SAFE: Now called only from LVGL thread - no locking needed */
-    /* 获取屏幕并设黑色背景 / Get screen and set black background */
-    lv_obj_t *screen = lv_screen_active();
-
-    /* 先快速删除屏幕上的所有子对象，避免长时间阻塞 / Quickly clear all children */
-    lv_obj_t *child;
-    while ((child = lv_obj_get_child(screen, 0)) != NULL)
-    {
-        lv_obj_del(child);
-        /* 定期让出 CPU 防止完全阻塞 / Yield CPU periodically to prevent blocking */
-        k_yield();
-    }
-
+    /* LVGL-thread only — no locking needed. */
+    mos_screen_clear_children();
     tear_down_screen_child_global_refs();
+    mos_screen_set_background(display_get_background_color());
 
-    lv_obj_set_style_bg_color(screen, display_get_background_color(), 0);
-    lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, 0);
-    // lv_obj_set_style_border_width(screen, 2, 0);
-    // lv_obj_set_style_border_color(screen, display_get_text_color(), 0);
-    // lv_obj_set_style_border_opa(screen, LV_OPA_COVER, 0);
-
+    lv_obj_t *screen = mos_screen_get_root();
     switch (pattern_id)
     {
         case 0:
@@ -581,9 +520,6 @@ static void show_test_pattern(int pattern_id)
         case 4:
             create_scrolling_text_container(screen);
             break;
-        case 5:
-            mos_ui_xy_text_view_create(screen);
-            break;
         default:
             LOG_ERR("❌ Unknown pattern ID: %d", pattern_id);
             return;
@@ -596,49 +532,29 @@ static void show_test_pattern(int pattern_id)
         case 4:
             display_scene_set_mode(DISPLAY_SCENE_MODE_WELCOME);
             break;
-        case 5:
-            display_scene_set_mode(DISPLAY_SCENE_MODE_XY);
-            break;
         default:
             display_scene_set_mode(DISPLAY_SCENE_MODE_TEST);
             break;
     }
 }
 
-/** 仅标脏当前 pattern 下的根容器，用于软件视差等驱动参数变更后“刷新当前画面”而尽量不整屏刷 */
+/** Mark only the active pattern's root container(s) dirty — used after driver-only param
+ * changes (e.g. software depth) to refresh the current frame without a full screen flush. */
 static void invalidate_current_visible_ui(void)
 {
-    lv_obj_t *screen = lv_screen_active();
-
     switch (current_pattern)
     {
         case 4:
-            if (g_main_scene.welcome.container != NULL && !lv_obj_has_flag(g_main_scene.welcome.container, LV_OBJ_FLAG_HIDDEN))
+            if (mos_ui_main_scene_welcome_is_visible(&g_main_scene))
             {
-                lv_obj_invalidate(g_main_scene.welcome.container);
+                mos_ui_main_scene_invalidate_welcome(&g_main_scene);
             }
-            if (g_main_scene.caption.container != NULL)
-            {
-                lv_obj_invalidate(g_main_scene.caption.container);
-            }
-            break;
-        case 5:
-            mos_ui_xy_text_view_invalidate();
+            mos_ui_main_scene_invalidate_caption(&g_main_scene);
             break;
         default:
-        {
-            /* 图案 0–3：动态子控件挂在 screen 下，逐个标脏 */
-            uint32_t n = lv_obj_get_child_cnt(screen);
-            for (uint32_t i = 0; i < n; i++)
-            {
-                lv_obj_t *ch = lv_obj_get_child(screen, i);
-                if (ch != NULL)
-                {
-                    lv_obj_invalidate(ch);
-                }
-            }
+            /* Patterns 0–3: dynamic children sit directly on screen; mark each dirty. */
+            mos_screen_invalidate_children();
             break;
-        }
     }
 }
 
@@ -666,16 +582,14 @@ static void update_display_height(uint16_t height)
 
     LOG_INF("update_display_height - Thread-safe height update: %u", height);
 
-    if (g_main_scene.welcome.container == NULL && g_main_scene.caption.container == NULL)
+    if (!mos_ui_main_scene_welcome_is_ready(&g_main_scene)
+        && !mos_ui_main_scene_caption_is_ready(&g_main_scene))
     {
         LOG_WRN("Pattern 4 containers not initialized");
         return;
     }
 
-    lv_obj_t *screen = lv_screen_active();
     const display_config_t *config = display_get_config();
-
-    /* Make a mutable copy of the current config */
     display_config_t tmp = *config;
 
     uint32_t total_available_margin = config->height - config->layout.usable_height;
@@ -684,7 +598,6 @@ static void update_display_height(uint16_t height)
     float mt_f = (float)total_available_margin * ((float)(height - 1) / 7.0f);
     uint32_t mt = (uint32_t)(mt_f + 0.5f);
 
-    /* Clamp to uint16_t and screen bounds so it never goes off-screen */
     if (mt > UINT16_MAX)
         mt = UINT16_MAX;
     tmp.layout.margin_top = (uint16_t)mt;
@@ -696,18 +609,7 @@ static void update_display_height(uint16_t height)
     }
 
     display_set_margin_top(tmp.layout.margin_top);
-
-    if (g_main_scene.welcome.container != NULL)
-    {
-        (void)display_apply_container_config(g_main_scene.welcome.container, screen, &tmp);
-        lv_obj_update_layout(g_main_scene.welcome.container);
-    }
-
-    if (g_main_scene.caption.container != NULL)
-    {
-        (void)display_apply_container_config(g_main_scene.caption.container, screen, &tmp);
-        lv_obj_update_layout(g_main_scene.caption.container);
-    }
+    mos_ui_main_scene_apply_height_config(&g_main_scene, mos_screen_get_root(), &tmp);
 
     LOG_INF("Applied margin_top=%u (height=%u)", tmp.layout.margin_top, height);
 }
@@ -739,15 +641,13 @@ static bool protobuf_text_try_commit_pending(char *latest_text, size_t latest_te
             return false;
         }
 
-        if (mos_ui_caption_renderer_has_cache()
-            && strcmp(latest_text, mos_ui_caption_renderer_get_cache()) == 0)
+        if (mos_ui_main_scene_caption_dedup_match(latest_text))
         {
             s_pt_dedup_skip_count++;
             return false;
         }
 
-        welcome_screen_active = false;
-        mos_ui_caption_renderer_render(&g_main_scene, latest_text, pending_seq);
+        mos_ui_main_scene_render_caption_text(&g_main_scene, latest_text, pending_seq);
         s_pt_commit_count++;
         s_caption_last_apply_ms = k_uptime_get_32();
         return true;
@@ -814,23 +714,23 @@ static bool protobuf_text_service_pending(void)
 }
 
 /* Refresh welcome label text with the current battery (60s cadence). LVGL thread only.
- * Skips when welcome screen isn't active so we don't overwrite BLE/transcription content. */
+ * Skips when the scene isn't in welcome mode so we don't overwrite BLE/transcription content. */
 static void update_welcome_label_with_battery(void)
 {
-    if (!welcome_screen_active || !display_scene_is_welcome_active() || welcome_screen_initializing)
+    if (!mos_ui_main_scene_is_welcome_mode(&g_main_scene) || !display_scene_is_welcome_active())
     {
         return;
     }
 
     ensure_pattern4_scene_ready();
 
-    if (!g_main_scene.welcome.welcome_text)
+    if (!mos_ui_main_scene_welcome_is_ready(&g_main_scene))
     {
         return;
     }
 
     mos_ui_main_scene_clear_positioned(&g_main_scene);
-    mos_ui_welcome_view_refresh_text(&g_main_scene.welcome, font_to_be_used());
+    mos_ui_main_scene_refresh_welcome_text(&g_main_scene, font_to_be_used());
 }
 
 static void welcome_battery_work_handler(struct k_work *work)
@@ -860,7 +760,6 @@ static void display_open_panel(uint8_t brightness_pct)
 /* Test paths set heavier refresh + thread priority to keep the shell responsive while rendering. */
 static void apply_gbk_test_loop_settings(void)
 {
-    welcome_screen_active = false;
     display_scene_set_mode(DISPLAY_SCENE_MODE_TEST);
     k_work_cancel_delayable(&welcome_battery_work);
 
@@ -953,12 +852,13 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     protobuf_text_log_throttle_stats_if_due();
                     break;
                 }
-                case LCD_CMD_UPDATE_XY_TEXT:
-                    welcome_screen_active = false;
-                    mos_ui_xy_text_view_render(&g_main_scene,
-                                                cmd.p.xy_text.x, cmd.p.xy_text.y,
-                                                cmd.p.xy_text.text,
-                                                cmd.p.xy_text.font_size, cmd.p.xy_text.color);
+                case LCD_CMD_UPDATE_POSITIONED_TEXT:
+                    display_scene_set_mode(DISPLAY_SCENE_MODE_POSITIONED);
+                    mos_ui_main_scene_render_positioned_text(&g_main_scene,
+                                                              cmd.p.positioned_text.x,
+                                                              cmd.p.positioned_text.y,
+                                                              cmd.p.positioned_text.text,
+                                                              cmd.p.positioned_text.color);
                     lvgl_freeze_refresh = false;
                     lvgl_force_one_refresh = true;
                     lvgl_min_refresh_ms = 100;
@@ -976,8 +876,9 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     update_welcome_label_with_battery();
                     break;
                 case LCD_CMD_SHOW_WELCOME_SCREEN:
-                    /* 蓝牙断开后重新进入欢迎界面：隐藏 BLE 文案区，显示欢迎标签并刷新电量 */
-                    welcome_screen_active = true;
+                    /* Re-enter the welcome view (e.g. after BLE disconnect). restore_welcome_screen_state
+                     * calls show_welcome which flips the scene's welcome_mode flag, so the subsequent
+                     * battery refresh will run. */
                     display_scene_set_mode(DISPLAY_SCENE_MODE_WELCOME);
                     reset_display_text_caches();
                     restore_welcome_screen_state();
@@ -985,41 +886,24 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     LOG_INF("📱 Welcome screen shown (BLE disconnected)");
                     break;
                 case LCD_CMD_UPDATE_DFU_PROGRESS:
-                    mos_ui_welcome_view_update_dfu_progress(&g_main_scene.welcome,
-                                                            cmd.p.dfu_progress.show,
-                                                            cmd.p.dfu_progress.percent);
+                    mos_ui_main_scene_update_dfu_progress(&g_main_scene,
+                                                           cmd.p.dfu_progress.show,
+                                                           cmd.p.dfu_progress.percent);
                     break;
                 case LCD_CMD_UPDATE_DFU_STATUS_TEXT:
-                    mos_ui_welcome_view_update_dfu_status(&g_main_scene.welcome,
-                                                          cmd.p.protobuf_text.text);
+                    mos_ui_main_scene_update_dfu_status(&g_main_scene, cmd.p.protobuf_text.text);
                     break;
                 case LCD_CMD_CLEAR_DISPLAY:
-                {
                     clear_current_display_text();
                     break;
-                }
                 case LCD_CMD_CLOSE:
                     if (get_display_onoff())
                     {
-                        /* a6n_clear_screen(false); 清屏 / Clear screen */
-                        /* lv_timer_handler(); scroll_text_stop(); set_display_onoff(false); a6n_power_off(); */
+                        /* a6n_clear_screen(false); / lv_timer_handler();
+                         * scroll_text_stop(); set_display_onoff(false); a6n_power_off(); */
                     }
                     state_type = LCD_STATE_OFF;
                     break;
-                case LCD_CMD_TEXT:
-                {
-                    // lv_obj_t *scr = lv_disp_get_scr_act(lv_disp_get_default());
-                    lv_obj_t *lbl = lv_label_create(lv_screen_active());
-                    lv_label_set_text(lbl, cmd.p.text.text);
-                    // lv_label_set_text(lbl, "Hello, world lvgl!"); //test
-                    lv_obj_set_style_text_color(lbl, lv_color_white(), LV_PART_MAIN);
-#if defined(CONFIG_LVGL)
-                    lv_obj_set_style_text_font(lbl, mos_font_storage_get_lvgl_font(), LV_PART_MAIN);
-                    mos_dynamic_font_labels_add(lbl);
-#endif
-                    lv_obj_set_pos(lbl, cmd.p.text.x, cmd.p.text.y);
-                }
-                break;
                 case LCD_CMD_SHOW_PATTERN:
                     LOG_INF("LCD_CMD_SHOW_PATTERN - Showing pattern %d", cmd.p.pattern.pattern_id);
                     show_test_pattern(cmd.p.pattern.pattern_id);
@@ -1030,7 +914,7 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     break;
                 case LCD_CMD_INVALIDATE_FULL_SCREEN:
                     lvgl_force_one_refresh = true;
-                    lv_obj_invalidate(lv_screen_active());
+                    mos_screen_invalidate_full();
                     break;
                 case LCD_CMD_INVALIDATE_VISIBLE_UI:
                     lvgl_force_one_refresh = true;

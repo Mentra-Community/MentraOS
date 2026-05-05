@@ -5,6 +5,7 @@ target_include_directories(app PRIVATE
 )
 target_sources(app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mos_lvgl_display.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/screen.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/display_config.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/caption_state.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/display_scene.c
@@ -14,10 +15,8 @@ target_sources(app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/dynamic_font_labels.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/text_diag.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/others/test_patterns.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/others/positioned_text_view.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/others/gbk_test_view.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/main_scene.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/xy_text_view.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/caption/caption_view.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/caption/caption_renderer.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/caption/components/custom_scrolling.c

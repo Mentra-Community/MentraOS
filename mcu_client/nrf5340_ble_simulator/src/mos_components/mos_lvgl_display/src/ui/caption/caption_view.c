@@ -1,9 +1,19 @@
 #include "caption_view.h"
 
+#include <string.h>
 #include <zephyr/logging/log.h>
 #include <lvgl.h>
 
+#include "display_config.h"
+#include "utils/utf8.h"
+#include "utils/custom_rendering.h"
+#include "utils/color_utils.h"
+
 LOG_MODULE_REGISTER(caption_view, LOG_LEVEL_DBG);
+
+/* Caption overlay usable area is 580x420 (600x440 outer minus 10px padding each side). */
+#define CAPTION_POSITIONED_MAX_X 580U
+#define CAPTION_POSITIONED_MAX_Y 420U
 
 mos_ui_caption_view_t mos_ui_caption_view_create(lv_obj_t *parent, const mos_ui_caption_view_cfg_t *cfg)
 {
@@ -89,17 +99,99 @@ void mos_ui_caption_view_update_custom_text(mos_ui_caption_view_t *view, const c
     mos_ui_custom_scrolling_update_text(&view->custom_scrolling, text, font_primary, font_fallback, text_color);
 }
 
-void mos_ui_caption_view_update_positioned_text(mos_ui_caption_view_t *view, const char *text,
-                                                 const lv_font_t *font, lv_color_t text_color,
-                                                 lv_coord_t x, lv_coord_t y)
+void mos_ui_caption_view_render_positioned_text(mos_ui_caption_view_t *view,
+                                                 uint16_t x, uint16_t y,
+                                                 const char *text,
+                                                 uint32_t raw_color)
 {
     if (!view || !view->positioned || !text)
     {
         return;
     }
 
-    // TODO: Add implementation later.
     mos_ui_caption_view_set_mode(view, MOS_UI_CAPTION_MODE_POSITIONED);
+
+    /* Reset the overlay to a known state. */
+    lv_obj_set_style_bg_color(view->positioned, display_get_background_color(), 0);
+    lv_obj_set_style_bg_opa(view->positioned, LV_OPA_COVER, 0);
+    if (lv_obj_get_child_cnt(view->positioned) > 0)
+    {
+        lv_obj_clean(view->positioned);
+    }
+    lv_obj_clear_flag(view->positioned, LV_OBJ_FLAG_HIDDEN);
+
+    /* Phone-side protocol: [cjk] / [cjkchars] prefixes route to GBK font. */
+    bool force_cjk = false;
+    bool use_per_char = true;
+    const char *render_text = text;
+
+    if (strncmp(text, "[cjkchars]", 10) == 0)
+    {
+        force_cjk = true;
+        render_text = text + 10;
+        while (*render_text == ' ') render_text++;
+    }
+    else if (strncmp(text, "[cjk]", 5) == 0)
+    {
+        force_cjk = true;
+        render_text = text + 5;
+        while (*render_text == ' ') render_text++;
+    }
+
+    bool needs_cjk = force_cjk || utf8_contains_cjk(render_text);
+    if (!needs_cjk)
+    {
+        use_per_char = false;
+    }
+
+    const lv_font_t *font = needs_cjk ? display_get_font("gbk") : display_get_font("secondary");
+    if (font == NULL)
+    {
+        font = display_get_font("primary");
+    }
+
+    /* Color: 0xFFFF is the wire sentinel for "auto pick contrast against background". */
+    lv_color_t text_color = mos_color_from_rgb565(raw_color);
+    if (raw_color == 0xFFFFu)
+    {
+        lv_color_t bg = display_get_background_color();
+        uint16_t avg = (uint16_t)bg.red + (uint16_t)bg.green + (uint16_t)bg.blue;
+        text_color = (avg > (3u * 128u)) ? lv_color_black() : lv_color_white();
+    }
+
+    /* Clamp coordinates to the overlay's usable area. */
+    if (x >= CAPTION_POSITIONED_MAX_X)
+    {
+        x = CAPTION_POSITIONED_MAX_X - 50U;
+    }
+    if (y >= CAPTION_POSITIONED_MAX_Y)
+    {
+        y = CAPTION_POSITIONED_MAX_Y - 30U;
+    }
+
+    if (use_per_char && font != NULL)
+    {
+        /* No auto-wrap: max_width=0; only \n / \r break lines, matching the phone app. */
+        mos_ui_custom_render(view->positioned, x, y, 0, render_text, font, NULL, text_color,
+                             NULL, 0, NULL, NULL, NULL, NULL);
+        lv_obj_invalidate(view->positioned);
+    }
+    else
+    {
+        lv_obj_t *label = lv_label_create(view->positioned);
+        lv_label_set_text(label, render_text);
+        lv_obj_set_style_text_font(label, font, 0);
+        lv_obj_set_style_text_color(label, text_color, 0);
+        lv_obj_set_style_bg_opa(label, LV_OPA_TRANSP, 0);
+        lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(label, CAPTION_POSITIONED_MAX_X - x);
+        lv_obj_set_pos(label, x, y);
+        lv_obj_invalidate(label);
+    }
+
+    LOG_INF("Positioned render at (%u,%u) font=%s color=0x%06X: %.30s%s",
+            x, y, needs_cjk ? "gbk" : "secondary", (unsigned int)raw_color,
+            render_text, strlen(render_text) > 30 ? "..." : "");
 }
 
 void mos_ui_caption_view_clear(mos_ui_caption_view_t *view)

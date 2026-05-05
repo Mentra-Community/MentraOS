@@ -25,11 +25,10 @@ typedef enum
     LCD_CMD_INIT,
     LCD_CMD_OPEN,
     LCD_CMD_CLOSE,
-    LCD_CMD_TEXT,
     LCD_CMD_DATA,
     LCD_CMD_CYCLE_PATTERN,           // **NEW: Pattern cycling command**
     LCD_CMD_UPDATE_PROTOBUF_TEXT,    // **NEW: Update container with protobuf text**
-    LCD_CMD_UPDATE_XY_TEXT,          // **NEW: Pattern 5 XY positioned text**
+    LCD_CMD_UPDATE_POSITIONED_TEXT,  // Render text at an absolute (x,y) position on the caption overlay
     LCD_CMD_GBK_TEST,                // **NEW: Simple GBK test text**
     LCD_CMD_GBK_CHARS_TEST,          // 中文字库/GBK per-character test
     LCD_CMD_UPDATE_WELCOME_BATTERY,  // **NEW: Refresh welcome label with current battery (60s period)**
@@ -49,15 +48,6 @@ void set_display_onoff(bool state);
 bool get_display_onoff(void);
 
 #define MAX_TEXT_LEN 247
-typedef struct
-{
-    char text[MAX_TEXT_LEN + 1];
-    int16_t x;
-    int16_t y;
-    uint16_t font_code;
-    uint32_t font_color;
-    uint8_t size;
-} lcd_text_param_t;
 
 typedef struct
 {
@@ -83,12 +73,12 @@ typedef struct
 
 typedef struct
 {
-    uint16_t x;                   // **NEW: X coordinate (0-580)**
-    uint16_t y;                   // **NEW: Y coordinate (0-420)**
-    uint16_t font_size;           // **NEW: Font size (12,14,16,18,24,30,48)**
-    uint32_t color;               // **NEW: Text color (RGB hex)**
-    char text[MAX_TEXT_LEN + 1];  // **NEW: XY positioned text content**
-} lcd_xy_text_param_t;
+    uint16_t x;                   // X coordinate (0-580)
+    uint16_t y;                   // Y coordinate (0-420)
+    uint16_t font_size;           // Font size (12,14,16,18,24,30,48)
+    uint32_t color;               // Text color (RGB hex)
+    char text[MAX_TEXT_LEN + 1];  // Positioned text content
+} lcd_positioned_text_param_t;
 
 typedef struct
 {
@@ -102,11 +92,10 @@ typedef struct
 
 typedef union
 {
-    lcd_text_param_t text;
     lcd_open_param_t open;
     lcd_pattern_param_t pattern;  // **NEW: Pattern parameter**
     lcd_protobuf_text_param_t protobuf_text;  // **NEW: Protobuf text parameter**
-    lcd_xy_text_param_t xy_text;              // **NEW: XY positioned text parameter**
+    lcd_positioned_text_param_t positioned_text;  // Positioned text (x/y/font/color/text)
     lcd_dfu_progress_param_t dfu_progress;    // **NEW: DFU progress bar (show + percent)**
     lcd_height_param_t height;
     lcd_font_update_param_t font_update;
@@ -142,14 +131,14 @@ void display_update_protobuf_text(const char *text_content);
 
 /* Route a text payload to the active display scene.
  * In caption/welcome scene it updates the scrolling caption state.
- * In XY scene it renders positioned text. */
+ * In positioned scene it renders the text at the given coordinates. */
 void display_submit_text_payload(uint16_t x, uint16_t y, const char *text_content, uint16_t font_size, uint32_t color);
 
 /* Route scrolling text payload to the caption scene. */
 void display_submit_scrolling_text_payload(const char *text_content);
 
-// **NEW: Pattern 5 XY Text Positioning function**
-void display_update_xy_text(uint16_t x, uint16_t y, const char *text_content, uint16_t font_size, uint32_t color);
+/* Render text at an absolute (x, y) position on the caption overlay. Thread-safe. */
+void display_update_positioned_text(uint16_t x, uint16_t y, const char *text_content, uint16_t font_size, uint32_t color);
 
 // **NEW: Clear display function**
 void display_clear_screen(void);

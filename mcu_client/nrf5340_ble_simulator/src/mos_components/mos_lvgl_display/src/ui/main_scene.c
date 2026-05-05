@@ -1,8 +1,18 @@
 #include "main_scene.h"
 
+#include <string.h>
 #include <zephyr/logging/log.h>
+#include <lvgl.h>
+
+#include "caption/caption_renderer.h"
+#include "display_config.h"
+#include "utils/dynamic_font_labels.h"
 
 LOG_MODULE_REGISTER(main_scene, LOG_LEVEL_DBG);
+
+/* ------------------------------------------------------------------------- *
+ * Lifecycle
+ * ------------------------------------------------------------------------- */
 
 mos_ui_main_scene_t mos_ui_main_scene_create(lv_obj_t *parent, const mos_ui_main_scene_cfg_t *cfg)
 {
@@ -64,11 +74,16 @@ mos_ui_main_scene_t mos_ui_main_scene_create(lv_obj_t *parent, const mos_ui_main
 
     scene.welcome = mos_ui_welcome_view_create(parent, &welcome_cfg);
     scene.caption = mos_ui_caption_view_create(parent, &caption_cfg);
+    scene.welcome_mode = true;
 
     if (scene.caption.container)
     {
         lv_obj_add_flag(scene.caption.container, LV_OBJ_FLAG_HIDDEN);
     }
+
+    /* Register the labels that need hot-swapping on QSPI font change. */
+    mos_dynamic_font_labels_add(scene.welcome.welcome_text);
+    mos_dynamic_font_labels_add(scene.caption.default_scrolling);
 
     lv_obj_update_layout(parent);
 
@@ -76,9 +91,27 @@ mos_ui_main_scene_t mos_ui_main_scene_create(lv_obj_t *parent, const mos_ui_main
     return scene;
 }
 
+void mos_ui_main_scene_destroy(mos_ui_main_scene_t *scene)
+{
+    if (!scene)
+    {
+        return;
+    }
+
+    /* Labels live inside the views; clear the registry before tearing the views down. */
+    mos_dynamic_font_labels_clear();
+
+    mos_ui_welcome_view_destroy(&scene->welcome);
+    mos_ui_caption_view_destroy(&scene->caption);
+}
+
+/* ------------------------------------------------------------------------- *
+ * Mode / view activation
+ * ------------------------------------------------------------------------- */
 
 static void activate_caption(mos_ui_main_scene_t *scene)
 {
+    scene->welcome_mode = false;
     if (scene->welcome.container)
         lv_obj_add_flag(scene->welcome.container, LV_OBJ_FLAG_HIDDEN);
     if (scene->caption.container)
@@ -87,26 +120,17 @@ static void activate_caption(mos_ui_main_scene_t *scene)
 
 static void activate_welcome(mos_ui_main_scene_t *scene)
 {
+    scene->welcome_mode = true;
     if (scene->caption.container)
         lv_obj_add_flag(scene->caption.container, LV_OBJ_FLAG_HIDDEN);
     if (scene->welcome.container)
         lv_obj_clear_flag(scene->welcome.container, LV_OBJ_FLAG_HIDDEN);
 }
 
-void mos_ui_main_scene_show_caption_default(mos_ui_main_scene_t *scene, const lv_font_t *font, const char *text)
+void mos_ui_main_scene_show_welcome(mos_ui_main_scene_t *scene)
 {
     if (!scene) return;
-    activate_caption(scene);
-    mos_ui_caption_view_update_default_text(&scene->caption, font, text);
-}
-
-void mos_ui_main_scene_show_caption_custom(mos_ui_main_scene_t *scene, const char *text,
-                                            const lv_font_t *font_primary, const lv_font_t *font_fallback,
-                                            lv_color_t text_color)
-{
-    if (!scene) return;
-    activate_caption(scene);
-    mos_ui_caption_view_update_custom_text(&scene->caption, text, font_primary, font_fallback, text_color);
+    activate_welcome(scene);
 }
 
 void mos_ui_main_scene_show_positioned(mos_ui_main_scene_t *scene)
@@ -116,17 +140,132 @@ void mos_ui_main_scene_show_positioned(mos_ui_main_scene_t *scene)
     mos_ui_caption_view_set_mode(&scene->caption, MOS_UI_CAPTION_MODE_POSITIONED);
 }
 
-void mos_ui_main_scene_show_welcome(mos_ui_main_scene_t *scene)
+/* ------------------------------------------------------------------------- *
+ * Readiness / visibility
+ * ------------------------------------------------------------------------- */
+
+bool mos_ui_main_scene_caption_is_ready(const mos_ui_main_scene_t *scene)
 {
-    if (!scene) return;
-    activate_welcome(scene);
+    return scene && scene->caption.container != NULL;
 }
+
+bool mos_ui_main_scene_welcome_is_ready(const mos_ui_main_scene_t *scene)
+{
+    return scene && scene->welcome.container != NULL;
+}
+
+bool mos_ui_main_scene_welcome_is_visible(const mos_ui_main_scene_t *scene)
+{
+    if (!mos_ui_main_scene_welcome_is_ready(scene))
+    {
+        return false;
+    }
+    return !lv_obj_has_flag(scene->welcome.container, LV_OBJ_FLAG_HIDDEN);
+}
+
+bool mos_ui_main_scene_is_welcome_mode(const mos_ui_main_scene_t *scene)
+{
+    return scene && scene->welcome_mode;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Layout / invalidation
+ * ------------------------------------------------------------------------- */
+
+void mos_ui_main_scene_relayout_welcome(mos_ui_main_scene_t *scene)
+{
+    if (mos_ui_main_scene_welcome_is_ready(scene))
+    {
+        lv_obj_update_layout(scene->welcome.container);
+    }
+}
+
+void mos_ui_main_scene_relayout_caption(mos_ui_main_scene_t *scene)
+{
+    if (mos_ui_main_scene_caption_is_ready(scene))
+    {
+        lv_obj_update_layout(scene->caption.container);
+    }
+}
+
+void mos_ui_main_scene_invalidate_welcome(mos_ui_main_scene_t *scene)
+{
+    if (mos_ui_main_scene_welcome_is_ready(scene))
+    {
+        lv_obj_invalidate(scene->welcome.container);
+    }
+}
+
+void mos_ui_main_scene_invalidate_caption(mos_ui_main_scene_t *scene)
+{
+    if (mos_ui_main_scene_caption_is_ready(scene))
+    {
+        lv_obj_invalidate(scene->caption.container);
+    }
+}
+
+void mos_ui_main_scene_apply_height_config(mos_ui_main_scene_t *scene,
+                                            lv_obj_t *screen,
+                                            const display_config_t *cfg)
+{
+    if (!scene || !screen || !cfg) return;
+
+    if (mos_ui_main_scene_welcome_is_ready(scene))
+    {
+        (void)display_apply_container_config(scene->welcome.container, screen, cfg);
+        lv_obj_update_layout(scene->welcome.container);
+    }
+    if (mos_ui_main_scene_caption_is_ready(scene))
+    {
+        (void)display_apply_container_config(scene->caption.container, screen, cfg);
+        lv_obj_update_layout(scene->caption.container);
+    }
+}
+
+/* ------------------------------------------------------------------------- *
+ * Welcome view
+ * ------------------------------------------------------------------------- */
 
 void mos_ui_main_scene_clear_welcome(mos_ui_main_scene_t *scene)
 {
     if (!scene) return;
     mos_ui_welcome_view_clear(&scene->welcome);
 }
+
+void mos_ui_main_scene_clear_active(mos_ui_main_scene_t *scene)
+{
+    if (!scene) return;
+    if (scene->welcome_mode)
+    {
+        mos_ui_welcome_view_clear(&scene->welcome);
+    }
+    else
+    {
+        mos_ui_caption_view_clear(&scene->caption);
+    }
+}
+
+void mos_ui_main_scene_refresh_welcome_text(mos_ui_main_scene_t *scene, const lv_font_t *font)
+{
+    if (!scene) return;
+    mos_ui_welcome_view_refresh_text(&scene->welcome, font);
+}
+
+void mos_ui_main_scene_update_dfu_progress(mos_ui_main_scene_t *scene, bool show, uint8_t percent)
+{
+    if (!scene) return;
+    mos_ui_welcome_view_update_dfu_progress(&scene->welcome, show, percent);
+}
+
+void mos_ui_main_scene_update_dfu_status(mos_ui_main_scene_t *scene, const char *text)
+{
+    if (!scene) return;
+    mos_ui_welcome_view_update_dfu_status(&scene->welcome, text);
+}
+
+/* ------------------------------------------------------------------------- *
+ * Caption view
+ * ------------------------------------------------------------------------- */
 
 void mos_ui_main_scene_clear_caption(mos_ui_main_scene_t *scene)
 {
@@ -152,13 +291,97 @@ void mos_ui_main_scene_set_caption_scroll_enabled(mos_ui_main_scene_t *scene, bo
     mos_ui_caption_view_set_scroll_enabled(&scene->caption, enabled);
 }
 
-void mos_ui_main_scene_destroy(mos_ui_main_scene_t *scene)
+void mos_ui_main_scene_render_positioned_text(mos_ui_main_scene_t *scene,
+                                                uint16_t x, uint16_t y,
+                                                const char *text, uint32_t raw_color)
 {
-    if (!scene)
-    {
-        return;
-    }
+    if (!scene) return;
+    activate_caption(scene);
+    mos_ui_caption_view_set_scroll_enabled(&scene->caption, true);
+    mos_ui_caption_view_render_positioned_text(&scene->caption, x, y, text, raw_color);
+}
 
-    mos_ui_welcome_view_destroy(&scene->welcome);
-    mos_ui_caption_view_destroy(&scene->caption);
+/* ------------------------------------------------------------------------- *
+ * Caption text rendering — wraps caption_renderer
+ * ------------------------------------------------------------------------- */
+
+void mos_ui_main_scene_render_caption_text(mos_ui_main_scene_t *scene,
+                                            const char *text, uint32_t committed_seq)
+{
+    if (!scene) return;
+    /* The renderer dispatches into show_caption_default/custom which handles activation. */
+    activate_caption(scene);
+    mos_ui_caption_renderer_render(scene, text, committed_seq);
+}
+
+void mos_ui_main_scene_rerender_caption(mos_ui_main_scene_t *scene)
+{
+    if (!scene) return;
+    mos_ui_caption_renderer_rerender(scene);
+}
+
+void mos_ui_main_scene_invalidate_caption_cache(void)
+{
+    mos_ui_caption_renderer_invalidate_cache();
+}
+
+void mos_ui_main_scene_reset_caption_cache(void)
+{
+    mos_ui_caption_renderer_reset_cache();
+}
+
+bool mos_ui_main_scene_caption_dedup_match(const char *text)
+{
+    if (!text || !mos_ui_caption_renderer_has_cache())
+    {
+        return false;
+    }
+    return strcmp(text, mos_ui_caption_renderer_get_cache()) == 0;
+}
+
+int mos_ui_main_scene_set_translation_pair(display_biz_lang_t src, display_biz_lang_t dst)
+{
+    return mos_ui_caption_renderer_set_translation_pair(src, dst);
+}
+
+void mos_ui_main_scene_get_translation_pair(display_biz_lang_t *src, display_biz_lang_t *dst)
+{
+    mos_ui_caption_renderer_get_translation_pair(src, dst);
+}
+
+/* These are used by the renderer internally; kept as public shims for now since the renderer
+ * lives in a sibling file. They funnel through the same activate_caption path so the caption
+ * view is visible before its content updates. */
+void mos_ui_main_scene_show_caption_default(mos_ui_main_scene_t *scene, const lv_font_t *font, const char *text)
+{
+    if (!scene) return;
+    activate_caption(scene);
+    mos_ui_caption_view_update_default_text(&scene->caption, font, text);
+}
+
+void mos_ui_main_scene_show_caption_custom(mos_ui_main_scene_t *scene, const char *text,
+                                            const lv_font_t *font_primary, const lv_font_t *font_fallback,
+                                            lv_color_t text_color)
+{
+    if (!scene) return;
+    activate_caption(scene);
+    mos_ui_caption_view_update_custom_text(&scene->caption, text, font_primary, font_fallback, text_color);
+}
+
+/* ------------------------------------------------------------------------- *
+ * Dynamic font integration
+ * ------------------------------------------------------------------------- */
+
+static bool font_skip_predicate(lv_obj_t *label, void *user_data)
+{
+    const mos_ui_main_scene_t *scene = (const mos_ui_main_scene_t *)user_data;
+    if (!scene) return false;
+    /* welcome_text on welcome screen is refreshed later via the battery refresh path. */
+    return scene->welcome_mode && label == scene->welcome.welcome_text;
+}
+
+void mos_ui_main_scene_apply_dynamic_font(mos_ui_main_scene_t *scene, const lv_font_t *new_font)
+{
+    if (!scene || !new_font) return;
+    mos_dynamic_font_labels_apply(new_font, font_skip_predicate, scene);
 }

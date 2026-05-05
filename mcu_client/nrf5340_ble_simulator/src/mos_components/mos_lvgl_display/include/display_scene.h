@@ -7,7 +7,7 @@ typedef enum
 {
     DISPLAY_SCENE_MODE_WELCOME = 0,
     DISPLAY_SCENE_MODE_CAPTION = 1,
-    DISPLAY_SCENE_MODE_XY = 2,
+    DISPLAY_SCENE_MODE_POSITIONED = 2,
     DISPLAY_SCENE_MODE_TEST = 3,
 } display_scene_mode_t;
 

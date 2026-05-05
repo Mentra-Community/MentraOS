@@ -41,9 +41,14 @@ void mos_ui_caption_view_update_default_text(mos_ui_caption_view_t *view, const 
 void mos_ui_caption_view_update_custom_text(mos_ui_caption_view_t *view, const char *text,
                                              const lv_font_t *font_primary, const lv_font_t *font_fallback,
                                              lv_color_t text_color);
-void mos_ui_caption_view_update_positioned_text(mos_ui_caption_view_t *view, const char *text,
-                                                 const lv_font_t *font, lv_color_t text_color,
-                                                 lv_coord_t x, lv_coord_t y);
+/* Render text at an absolute (x, y) position on the caption's `positioned` overlay.
+ * Handles the [cjk]/[cjkchars] phone-protocol prefix, GBK vs default font selection,
+ * color auto-pick when raw_color == 0xFFFF, and coordinate clamping.
+ * raw_color is RGB565 packed in the low 16 bits (matches the wire format). */
+void mos_ui_caption_view_render_positioned_text(mos_ui_caption_view_t *view,
+                                                 uint16_t x, uint16_t y,
+                                                 const char *text,
+                                                 uint32_t raw_color);
 void mos_ui_caption_view_clear(mos_ui_caption_view_t *view);
 void mos_ui_caption_view_clear_positioned(mos_ui_caption_view_t *view);
 void mos_ui_caption_view_scroll_to_bottom(mos_ui_caption_view_t *view);
