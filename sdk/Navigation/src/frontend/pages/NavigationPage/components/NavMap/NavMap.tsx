@@ -228,13 +228,23 @@ export function NavMap({
       lastConeRotationRef.current = null
     }
 
+    const meDotSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
+      <circle cx="20" cy="20" r="20" fill="#00000029"/>
+      <circle cx="20" cy="20" r="9"
+        fill="#1A1A1A"
+        stroke="white" stroke-width="3"
+        filter="url(#glow)"/>
+      <defs>
+        <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
+          <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0A84FF" flood-opacity="0.4"/>
+        </filter>
+      </defs>
+    </svg>`
+    const meDotUrl = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(meDotSvg)}`
     const dotIcon = {
-      path: g.maps.SymbolPath.CIRCLE,
-      scale: 8,
-      fillColor: "#1a73e8",
-      fillOpacity: 1,
-      strokeColor: "white",
-      strokeWeight: 3,
+      url: meDotUrl,
+      scaledSize: new g.maps.Size(40, 40),
+      anchor: new g.maps.Point(20, 20),
     }
     if (!meDotRef.current) {
       meDotRef.current = new g.maps.Marker({
@@ -386,60 +396,55 @@ export function NavMap({
               mapRef.current?.setHeading?.(0)
               setMapHeading(0)
             }}
-            className="w-11 h-11 rounded-full bg-white shadow-md border border-neutral-200 flex items-center justify-center active:bg-neutral-100">
-            <svg
-              width="22"
-              height="22"
-              viewBox="0 0 24 24"
-              style={{transform: `rotate(${-mapHeading}deg)`}}>
-              <polygon points="12,3 15,13 12,11 9,13" fill="#d93025" />
-              <polygon points="12,21 9,11 12,13 15,11" fill="#5f6368" />
-              <text x="12" y="8" textAnchor="middle" fontSize="5" fontWeight="700" fill="#d93025" fontFamily="system-ui, -apple-system, sans-serif">N</text>
+            className="flex items-center justify-center rounded-[22px] bg-white [box-shadow:#0000001F_0px_4px_14px] w-11 h-11 shrink-0 active:opacity-70">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0, transform: `rotate(${-mapHeading}deg)`}}>
+              <path d="M12 3 L14.5 12 L12 11 L9.5 12 Z" fill="#E8302E" />
+              <path d="M12 13 L9.5 21 L12 20 L14.5 21 Z" fill="#000000D9" />
             </svg>
           </button>
 
           <button
             type="button"
             aria-label="Zoom in"
-            className="w-11 h-11 rounded-full bg-white shadow-md border border-neutral-200 text-neutral-800 text-xl font-semibold active:bg-neutral-100"
+            className="flex items-center justify-center rounded-[22px] bg-white [box-shadow:#0000001F_0px_4px_14px] w-11 h-11 shrink-0 active:opacity-70"
             onClick={() => {
               const m = mapRef.current
               if (!m) return
               m.setZoom(Math.min((m.getZoom() ?? 17) + 1, 21))
             }}>
-            +
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
+              <path d="M12 5V19M5 12H19" stroke="#000000D9" strokeWidth="2.4" strokeLinecap="round" />
+            </svg>
           </button>
 
           <button
             type="button"
             aria-label="Zoom out"
-            className="w-11 h-11 rounded-full bg-white shadow-md border border-neutral-200 text-neutral-800 text-xl font-semibold active:bg-neutral-100"
+            className="flex items-center justify-center rounded-[22px] bg-white [box-shadow:#0000001F_0px_4px_14px] w-11 h-11 shrink-0 active:opacity-70"
             onClick={() => {
               const m = mapRef.current
               if (!m) return
               m.setZoom(Math.max((m.getZoom() ?? 17) - 1, 3))
             }}>
-            −
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
+              <path d="M5 12H19" stroke="#000000D9" strokeWidth="2.4" strokeLinecap="round" />
+            </svg>
           </button>
 
           <button
             type="button"
             aria-label="Recenter on me"
-            className={
-              "w-11 h-11 rounded-full shadow-md border flex items-center justify-center active:opacity-80 " +
-              (followUser
-                ? "bg-blue-600 border-blue-600 text-white"
-                : "bg-white border-neutral-200 text-neutral-800")
-            }
+            className="flex items-center justify-center rounded-[22px] bg-white [box-shadow:#0000001F_0px_4px_14px] w-11 h-11 shrink-0 active:opacity-70"
             onClick={() => {
               const m = mapRef.current
               if (!m || !me) return
               m.panTo(new window.google.maps.LatLng(me.lat, me.lng))
               setFollowUser(true)
             }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
+              <circle cx="12" cy="12" r="3" fill={followUser ? "#0A84FF" : "#1a1a1a"} />
+              <circle cx="12" cy="12" r="7" stroke="#000000D9" strokeWidth="1.6" />
+              <path d="M12 1V4M12 20V23M1 12H4M20 12H23" stroke="#000000D9" strokeWidth="2" strokeLinecap="round" />
             </svg>
           </button>
         </div>
