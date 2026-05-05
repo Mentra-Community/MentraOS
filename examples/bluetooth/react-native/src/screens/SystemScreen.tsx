@@ -6,12 +6,21 @@ import { Header } from '../components/Header';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { colors } from '../components/theme';
 import { isGlassesConnected, wifiLabel, wifiSubLabel } from '../sdkFormat';
-import type { LedMode, MentraSdkModel } from '../useMentraSdk';
+import { durationText, type LedMode, type MentraSdkModel } from '../useMentraSdk';
 
 export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
   const networks = sdk.bluetoothStatus.wifiScanResults ?? [];
   const connected = isGlassesConnected(sdk.glassesStatus);
   const inputEvents = sdk.events.filter((item) => item.text.includes('button') || item.text.includes('touch')).slice(0, 3);
+  const micStatus = sdk.micRecording
+    ? `recording ${durationText(sdk.micElapsedSeconds)} · ${sdk.pcmFrames} PCM frames`
+    : sdk.micPlaying
+      ? 'playing last recording'
+      : sdk.lastMicDurationSeconds !== null && sdk.lastMicBytes > 0
+        ? `last ${durationText(sdk.lastMicDurationSeconds)} · ${sdk.lastMicBytes} PCM bytes`
+        : connected
+          ? 'record PCM from glasses'
+          : 'connect glasses to record';
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
@@ -85,7 +94,7 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
           </View>
         </LinearGradient>
         </Pressable>
-        <Pressable disabled={!connected} style={[{ flex: 1 }, !connected && styles.disabled]} onPress={sdk.toggleMic}>
+        <View style={[{ flex: 1 }, !connected && styles.disabled]}>
         <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={styles.tileCard}>
           <View style={styles.tileHead}>
             <View style={styles.iconTileSm}>
@@ -94,18 +103,21 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
                 <Path d="M19 10v2a7 7 0 0 1-14 0v-2" />
               </Svg>
             </View>
-            <View style={styles.miniBars}>
-              {[6, 14, 8, 16, 10].map((h, i) => (
-                <View key={i} style={[styles.miniBar, { height: h }]} />
-              ))}
+            <View style={styles.micControls}>
+              <MicControlButton disabled={!connected} active={sdk.micRecording} onPress={sdk.toggleMic}>
+                {sdk.micRecording ? <StopIcon active /> : <RecordIcon />}
+              </MicControlButton>
+              <MicControlButton disabled={sdk.lastMicBytes <= 0} active={sdk.micPlaying} onPress={sdk.playMicRecording}>
+                {sdk.micPlaying ? <StopIcon active /> : <PlayIcon />}
+              </MicControlButton>
             </View>
           </View>
           <View>
             <Text style={styles.tileTitle}>Microphone</Text>
-            <Text style={[styles.tileSub, { color: sdk.micRecording ? colors.greenAccent : colors.muted }]}>{sdk.micRecording ? `${sdk.pcmFrames} PCM frames · ${sdk.pcmBytes} bytes` : 'tap to start PCM'}</Text>
+            <Text style={[styles.tileSub, { color: sdk.micRecording || sdk.micPlaying ? colors.greenAccent : colors.muted }]}>{micStatus}</Text>
           </View>
         </LinearGradient>
-        </Pressable>
+        </View>
       </View>
 
       {/* Inputs */}
@@ -218,6 +230,41 @@ function LedTab({ icon, label, active, disabled, onPress }: { icon: React.ReactN
   );
 }
 
+function MicControlButton({ active, children, disabled, onPress }: { active: boolean; children: React.ReactNode; disabled: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      disabled={disabled}
+      style={[styles.micControlButton, active && styles.micControlButtonActive, disabled && styles.disabled]}
+      onPress={onPress}>
+      {children}
+    </Pressable>
+  );
+}
+
+function RecordIcon() {
+  return (
+    <Svg width={13} height={13} viewBox="0 0 24 24">
+      <Circle cx={12} cy={12} r={7} fill={colors.greenInk} />
+    </Svg>
+  );
+}
+
+function StopIcon({ active }: { active?: boolean }) {
+  return (
+    <Svg width={13} height={13} viewBox="0 0 24 24">
+      <Rect x={7} y={7} width={10} height={10} rx={2} fill={active ? '#fff' : colors.greenInk} />
+    </Svg>
+  );
+}
+
+function PlayIcon() {
+  return (
+    <Svg width={13} height={13} viewBox="0 0 24 24">
+      <Path d="M8 5v14l11-7z" fill={colors.greenInk} />
+    </Svg>
+  );
+}
+
 const styles = StyleSheet.create({
   bigCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 28, paddingVertical: 18, paddingHorizontal: 18, borderWidth: 1, borderColor: colors.border, gap: 12 },
   wifiHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
@@ -238,8 +285,9 @@ const styles = StyleSheet.create({
   tileHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   toggleOn: { width: 38, height: 22, borderRadius: 999, backgroundColor: '#fff', padding: 2, alignItems: 'flex-end' },
   toggleKnob: { width: 18, height: 18, borderRadius: 999, backgroundColor: colors.greenAccent },
-  miniBars: { flexDirection: 'row', alignItems: 'flex-end', gap: 2, height: 16 },
-  miniBar: { width: 3, borderRadius: 1.5, backgroundColor: colors.greenAccent },
+  micControls: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  micControlButton: { width: 28, height: 28, borderRadius: 999, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', shadowColor: '#0F2A1D', shadowOpacity: 0.05, shadowOffset: { width: 0, height: 4 }, shadowRadius: 8, elevation: 1 },
+  micControlButtonActive: { backgroundColor: colors.greenInk },
   tileTitle: { color: colors.ink, fontSize: 16, fontWeight: '700', letterSpacing: -0.16 },
   tileSub: { color: colors.muted, fontSize: 10, fontWeight: '500' },
   livePill2: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(52,199,89,0.16)', borderWidth: 1, borderColor: 'rgba(52,199,89,0.3)', paddingVertical: 4, paddingHorizontal: 9, borderRadius: 999 },

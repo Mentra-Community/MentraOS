@@ -1,6 +1,7 @@
 package com.mentra.examples.android
 
 import android.content.Context
+import android.media.MediaPlayer
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -35,6 +36,8 @@ import kotlinx.coroutines.launch
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
+import java.io.ByteArrayOutputStream
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -65,6 +68,10 @@ data class MentraExampleState(
     val hotspotEnabled: Boolean = false,
     val lastAction: String = "No actions yet.",
     val ledMode: String = "Solid",
+    val lastMicBytes: Int = 0,
+    val lastMicDurationSeconds: Int? = null,
+    val micElapsedSeconds: Int = 0,
+    val micPlaying: Boolean = false,
     val micRecording: Boolean = false,
     val pcmBytes: Int = 0,
     val pcmFrames: Int = 0,
@@ -89,6 +96,15 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private var activeStreamId: String? = null
     private var pollGeneration = 0
     private var keepAliveJob: Job? = null
+    private var lastMicFile: File? = null
+    private var micElapsedJob: Job? = null
+    private var micPlayer: MediaPlayer? = null
+    private var micPcmBuffer = ByteArrayOutputStream()
+    private var micStartedAt: Long? = null
+
+    private val micSampleRate = 16_000
+    private val micChannelCount = 1
+    private val micBitsPerSample = 16
 
     init {
         state = state.copy(
@@ -295,10 +311,19 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     fun toggleMic() = runAction(if (state.micRecording) "Stop microphone" else "Start microphone") {
-        requireConnected("stream microphone audio")
-        val next = !state.micRecording
-        sdk.setMicState(MentraMicConfig(sendPcmData = next, sendTranscript = false, bypassVad = true))
-        state = state.copy(micRecording = next, pcmBytes = if (next) 0 else state.pcmBytes, pcmFrames = if (next) 0 else state.pcmFrames)
+        if (state.micRecording) {
+            stopMicRecording()
+        } else {
+            startMicRecording()
+        }
+    }
+
+    fun playMicRecording() = runAction(if (state.micPlaying) "Stop mic playback" else "Play mic recording") {
+        if (state.micPlaying) {
+            stopMicPlayback()
+            return@runAction
+        }
+        startMicPlayback()
     }
 
     fun selectLedMode(mode: String) = runAction("RGB LED $mode") {
@@ -388,11 +413,14 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     override fun onMicPcm(frame: ByteArray) {
+        if (!state.micRecording) return
+        micPcmBuffer.write(frame)
         state = state.copy(pcmFrames = state.pcmFrames + 1, pcmBytes = state.pcmBytes + frame.size)
     }
 
     override fun onMicLc3(frame: ByteArray) {
-        state = state.copy(pcmFrames = state.pcmFrames + 1, pcmBytes = state.pcmBytes + frame.size)
+        if (!state.micRecording) return
+        addEvent("LIVE", "received LC3 mic frame while PCM recording is enabled")
     }
 
     override fun onRawEvent(eventName: String, values: Map<String, Any>) {
@@ -409,6 +437,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     override fun close() {
         stopKeepAlive()
+        stopMicElapsedTimer()
+        stopMicPlayback()
         controllerJob.cancel()
         sdk.close()
     }
@@ -464,6 +494,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             micRecording = false,
             cameraStatus = if (hadPhotoRequest) "Disconnected before photo upload completed" else state.cameraStatus,
         )
+        stopMicElapsedTimer()
+        stopMicPlayback()
     }
 
     private fun applyStreamStatus(values: Map<String, Any>) {
@@ -505,6 +537,139 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private fun stopKeepAlive() {
         keepAliveJob?.cancel()
         keepAliveJob = null
+    }
+
+    private fun startMicRecording() {
+        requireConnected("stream microphone audio")
+        stopMicPlayback()
+        micPcmBuffer.reset()
+        lastMicFile = null
+        micStartedAt = System.currentTimeMillis()
+        state = state.copy(
+            micRecording = true,
+            micElapsedSeconds = 0,
+            pcmBytes = 0,
+            pcmFrames = 0,
+            lastMicBytes = 0,
+            lastMicDurationSeconds = null,
+        )
+        sdk.setMicState(MentraMicConfig(sendPcmData = true, sendTranscript = false, bypassVad = true))
+        startMicElapsedTimer()
+    }
+
+    private fun stopMicRecording() {
+        if (isGlassesConnected()) {
+            sdk.setMicState(MentraMicConfig(sendPcmData = false, sendTranscript = false, bypassVad = true))
+        }
+        stopMicElapsedTimer()
+        val pcm = micPcmBuffer.toByteArray()
+        val durationSeconds = maxOf(state.micElapsedSeconds, estimatedMicDurationSeconds(pcm.size))
+        state = state.copy(
+            micRecording = false,
+            lastMicBytes = pcm.size,
+            lastMicDurationSeconds = durationSeconds.takeIf { pcm.isNotEmpty() },
+        )
+
+        if (pcm.isEmpty()) {
+            lastMicFile = null
+            addEvent("LIVE", "microphone stopped with no PCM frames")
+            return
+        }
+
+        val file = File(appContext.cacheDir, "mentra-mic-last.wav")
+        file.writeBytes(wavBytes(pcm))
+        lastMicFile = file
+        addEvent("LIVE", "saved microphone WAV ${pcm.size} bytes")
+    }
+
+    private fun startMicPlayback(restart: Boolean = false) {
+        val file = lastMicFile ?: throw IllegalStateException("Record microphone audio before playback.")
+        if (!file.exists() || state.lastMicBytes <= 0) {
+            throw IllegalStateException("Record microphone audio before playback.")
+        }
+
+        stopMicPlayback()
+        try {
+            val player = MediaPlayer().apply {
+                setDataSource(file.absolutePath)
+                setOnCompletionListener {
+                    scope.launch { stopMicPlayback() }
+                }
+                setOnErrorListener { _, what, extra ->
+                    scope.launch {
+                        addEvent("TX", "mic playback failed: $what/$extra")
+                        stopMicPlayback()
+                    }
+                    true
+                }
+                prepare()
+                if (restart) seekTo(0)
+                start()
+            }
+            micPlayer = player
+            sdk.setOwnAppAudioPlaying(true)
+            state = state.copy(micPlaying = true)
+        } catch (error: Throwable) {
+            stopMicPlayback()
+            throw error
+        }
+    }
+
+    private fun stopMicPlayback() {
+        micPlayer?.let { player ->
+            runCatching {
+                player.setOnCompletionListener(null)
+                player.setOnErrorListener(null)
+                if (player.isPlaying) player.stop()
+            }
+            player.release()
+        }
+        micPlayer = null
+        if (state.micPlaying) {
+            sdk.setOwnAppAudioPlaying(false)
+        }
+        state = state.copy(micPlaying = false)
+    }
+
+    private fun startMicElapsedTimer() {
+        stopMicElapsedTimer()
+        micElapsedJob = scope.launch {
+            while (isActive) {
+                val startedAt = micStartedAt ?: return@launch
+                state = state.copy(micElapsedSeconds = ((System.currentTimeMillis() - startedAt) / 1000).toInt().coerceAtLeast(0))
+                delay(250)
+            }
+        }
+    }
+
+    private fun stopMicElapsedTimer() {
+        micElapsedJob?.cancel()
+        micElapsedJob = null
+        micStartedAt = null
+    }
+
+    private fun estimatedMicDurationSeconds(byteCount: Int): Int {
+        val bytesPerSecond = micSampleRate * micChannelCount * micBitsPerSample / 8
+        return if (byteCount <= 0) 0 else ((byteCount + bytesPerSecond - 1) / bytesPerSecond)
+    }
+
+    private fun wavBytes(pcm: ByteArray): ByteArray {
+        val out = ByteArrayOutputStream()
+        out.writeAscii("RIFF")
+        out.writeUInt32Le(36 + pcm.size)
+        out.writeAscii("WAVE")
+        out.writeAscii("fmt ")
+        out.writeUInt32Le(16)
+        out.writeUInt16Le(1)
+        out.writeUInt16Le(micChannelCount)
+        out.writeUInt32Le(micSampleRate)
+        out.writeUInt32Le(micSampleRate * micChannelCount * micBitsPerSample / 8)
+        out.writeUInt16Le(micChannelCount * micBitsPerSample / 8)
+        out.writeUInt16Le(micBitsPerSample)
+        out.writeAscii("data")
+        out.writeUInt32Le(pcm.size)
+        out.write(pcm)
+        return out.toByteArray()
     }
 
     private fun pollPhotoPreview(requestId: String, statusUrl: String, generation: Int) {
@@ -772,8 +937,29 @@ fun wifiScanResults(values: Map<String, Any>): List<Map<String, Any>> =
 
 fun elapsedText(startedAt: Long?): String {
     val elapsed = if (startedAt == null) 0 else ((System.currentTimeMillis() - startedAt) / 1000).coerceAtLeast(0)
+    return durationText(elapsed.toInt())
+}
+
+fun durationText(seconds: Int): String {
+    val elapsed = seconds.coerceAtLeast(0)
     val h = elapsed / 3600
     val m = (elapsed % 3600) / 60
     val s = elapsed % 60
     return "%02d:%02d:%02d".format(h, m, s)
+}
+
+private fun ByteArrayOutputStream.writeAscii(value: String) {
+    write(value.toByteArray(Charsets.US_ASCII))
+}
+
+private fun ByteArrayOutputStream.writeUInt16Le(value: Int) {
+    write(value and 0xff)
+    write((value shr 8) and 0xff)
+}
+
+private fun ByteArrayOutputStream.writeUInt32Le(value: Int) {
+    write(value and 0xff)
+    write((value shr 8) and 0xff)
+    write((value shr 16) and 0xff)
+    write((value shr 24) and 0xff)
 }

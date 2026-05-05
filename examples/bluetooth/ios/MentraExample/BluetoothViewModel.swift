@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import MentraBluetoothSDK
 
@@ -37,7 +38,7 @@ enum ExampleStreamProtocol: String, CaseIterable {
 }
 
 @MainActor
-final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDelegate {
+final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDelegate, AVAudioPlayerDelegate {
     @Published private(set) var glassesValues: [String: Any] = [:]
     @Published private(set) var bluetoothValues: [String: Any] = [:]
     @Published private(set) var discoveredDevices: [MentraDiscoveredDevice] = []
@@ -54,19 +55,35 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var streamStatus = "Ready to start stream"
     @Published private(set) var hotspotEnabled = false
     @Published private(set) var micRecording = false
+    @Published private(set) var micPlaying = false
+    @Published private(set) var micElapsedSeconds = 0
     @Published private(set) var pcmFrames = 0
     @Published private(set) var pcmBytes = 0
+    @Published private(set) var lastMicDurationSeconds: Int?
+    @Published private(set) var lastMicBytes = 0
     @Published private(set) var ledMode = "Solid"
     @Published var rawJsonExpanded = false
 
+    private let micSampleRate = 16_000
+    private let micChannelCount = 1
+    private let micBitsPerSample = 16
     private let sdk = MentraBluetoothSDK()
     private var activePhotoRequestId: String?
     private var activeStreamId: String?
     private var pollGeneration = 0
     private var keepAliveTask: Task<Void, Never>?
+    private var micStartedAt: Date?
+    private var micElapsedTask: Task<Void, Never>?
+    private var micPcmData = Data()
+    private var micRecordingUrl: URL?
+    private var micPlayer: AVAudioPlayer?
 
     var glassesConnected: Bool {
         isGlassesConnected(glassesValues)
+    }
+
+    var hasMicRecording: Bool {
+        micRecordingUrl != nil && lastMicBytes > 0
     }
 
     override init() {
@@ -80,6 +97,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     deinit {
+        micElapsedTask?.cancel()
         Task { @MainActor [sdk] in sdk.invalidate() }
     }
 
@@ -329,14 +347,21 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func toggleMic() {
         runAction(micRecording ? "Stop microphone" : "Start microphone") {
-            try requireConnected("stream microphone audio")
-            let next = !micRecording
-            sdk.setMicState(MentraMicConfiguration(sendPcmData: next, sendTranscript: false, bypassVad: true))
-            micRecording = next
-            if next {
-                pcmFrames = 0
-                pcmBytes = 0
+            if micRecording {
+                stopMicRecording()
+            } else {
+                try startMicRecording()
             }
+        }
+    }
+
+    func playMicRecording() {
+        runAction(micPlaying ? "Stop mic playback" : "Play mic recording") {
+            if micPlaying {
+                stopMicPlayback()
+                return
+            }
+            try startMicPlayback()
         }
     }
 
@@ -390,11 +415,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceiveMicPcm frame: Data) {
+        guard micRecording else { return }
+        micPcmData.append(frame)
         pcmFrames += 1
         pcmBytes += frame.count
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceiveMicLc3 frame: Data) {
+        guard micRecording else { return }
         pcmFrames += 1
         pcmBytes += frame.count
     }
@@ -449,12 +477,155 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         streamStartedAt = nil
         streamStatus = status
         micRecording = false
+        stopMicElapsedTimer()
+        stopMicPlayback()
         hotspotEnabled = false
         if activePhotoRequestId != nil {
             activePhotoRequestId = nil
             pollGeneration += 1
             cameraStatus = "Disconnected before photo upload completed"
         }
+    }
+
+    private func startMicRecording() throws {
+        try requireConnected("stream microphone audio")
+        stopMicPlayback()
+        micPcmData.removeAll(keepingCapacity: true)
+        micRecordingUrl = nil
+        lastMicDurationSeconds = nil
+        lastMicBytes = 0
+        pcmFrames = 0
+        pcmBytes = 0
+        micElapsedSeconds = 0
+        micStartedAt = Date()
+        sdk.setMicState(MentraMicConfiguration(sendPcmData: true, sendTranscript: false, bypassVad: true))
+        micRecording = true
+        startMicElapsedTimer()
+    }
+
+    private func stopMicRecording() {
+        if glassesConnected {
+            sdk.setMicState(MentraMicConfiguration(sendPcmData: false, sendTranscript: false, bypassVad: true))
+        }
+        micRecording = false
+        stopMicElapsedTimer()
+        lastMicDurationSeconds = max(micElapsedSeconds, Int((Double(pcmBytes) / Double(micSampleRate * micChannelCount * micBitsPerSample / 8)).rounded(.up)))
+        lastMicBytes = pcmBytes
+
+        guard !micPcmData.isEmpty else {
+            micRecordingUrl = nil
+            lastMicDurationSeconds = nil
+            lastMicBytes = 0
+            append(tag: "LIVE", text: "microphone stopped with no PCM frames")
+            return
+        }
+
+        do {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("mentra-mic-last.wav")
+            try wavData(from: micPcmData).write(to: url, options: [.atomic])
+            micRecordingUrl = url
+            append(tag: "LIVE", text: "saved microphone WAV \(pcmBytes) bytes")
+        } catch {
+            micRecordingUrl = nil
+            append(tag: "TX", text: "failed to save microphone WAV: \(error.localizedDescription)")
+        }
+    }
+
+    private func startMicPlayback(restart: Bool = false) throws {
+        guard let url = micRecordingUrl, lastMicBytes > 0 else {
+            throw ExampleActionError(message: "Record microphone audio before playback.")
+        }
+        stopMicPlayback()
+
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.duckOthers])
+            try AVAudioSession.sharedInstance().setActive(true)
+            let player = try AVAudioPlayer(contentsOf: url)
+            player.delegate = self
+            player.prepareToPlay()
+            if restart {
+                player.currentTime = 0
+            }
+            micPlayer = player
+            micPlaying = true
+            sdk.setOwnAppAudioPlaying(true)
+            if !player.play() {
+                stopMicPlayback()
+                throw ExampleActionError(message: "Could not start mic playback.")
+            }
+        } catch {
+            stopMicPlayback()
+            throw error
+        }
+    }
+
+    private func stopMicPlayback() {
+        micPlayer?.stop()
+        micPlayer = nil
+        if micPlaying {
+            sdk.setOwnAppAudioPlaying(false)
+        }
+        micPlaying = false
+        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+    }
+
+    func audioPlayerDidFinishPlaying(_: AVAudioPlayer, successfully _: Bool) {
+        stopMicPlayback()
+    }
+
+    func audioPlayerDecodeErrorDidOccur(_: AVAudioPlayer, error: Error?) {
+        append(tag: "TX", text: "mic playback failed: \(error?.localizedDescription ?? "decode error")")
+        stopMicPlayback()
+    }
+
+    private func startMicElapsedTimer() {
+        stopMicElapsedTimer()
+        micElapsedTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                guard let self, let micStartedAt = self.micStartedAt else { return }
+                self.micElapsedSeconds = max(0, Int(Date().timeIntervalSince(micStartedAt)))
+            }
+        }
+    }
+
+    private func stopMicElapsedTimer() {
+        micElapsedTask?.cancel()
+        micElapsedTask = nil
+        micStartedAt = nil
+    }
+
+    private func wavData(from pcmData: Data) -> Data {
+        var data = Data()
+        appendAscii("RIFF", to: &data)
+        appendUInt32(UInt32(36 + pcmData.count), to: &data)
+        appendAscii("WAVE", to: &data)
+        appendAscii("fmt ", to: &data)
+        appendUInt32(16, to: &data)
+        appendUInt16(1, to: &data)
+        appendUInt16(UInt16(micChannelCount), to: &data)
+        appendUInt32(UInt32(micSampleRate), to: &data)
+        appendUInt32(UInt32(micSampleRate * micChannelCount * micBitsPerSample / 8), to: &data)
+        appendUInt16(UInt16(micChannelCount * micBitsPerSample / 8), to: &data)
+        appendUInt16(UInt16(micBitsPerSample), to: &data)
+        appendAscii("data", to: &data)
+        appendUInt32(UInt32(pcmData.count), to: &data)
+        data.append(pcmData)
+        return data
+    }
+
+    private func appendAscii(_ text: String, to data: inout Data) {
+        data.append(text.data(using: .ascii) ?? Data())
+    }
+
+    private func appendUInt16(_ value: UInt16, to data: inout Data) {
+        var littleEndian = value.littleEndian
+        withUnsafeBytes(of: &littleEndian) { data.append(contentsOf: $0) }
+    }
+
+    private func appendUInt32(_ value: UInt32, to data: inout Data) {
+        var littleEndian = value.littleEndian
+        withUnsafeBytes(of: &littleEndian) { data.append(contentsOf: $0) }
     }
 
     private func append(tag: String, text: String) {
@@ -751,6 +922,11 @@ func wifiScanResults(_ values: [String: Any]) -> [[String: Any]] {
 func elapsedText(_ date: Date?) -> String {
     guard let date else { return "00:00:00" }
     let seconds = max(0, Int(Date().timeIntervalSince(date)))
+    return durationLabel(seconds)
+}
+
+func durationLabel(_ seconds: Int) -> String {
+    let seconds = max(0, seconds)
     return String(format: "%02d:%02d:%02d", seconds / 3600, (seconds % 3600) / 60, seconds % 60)
 }
 

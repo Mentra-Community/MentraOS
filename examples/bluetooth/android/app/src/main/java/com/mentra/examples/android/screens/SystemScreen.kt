@@ -25,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mentra.examples.android.MentraExampleController
+import com.mentra.examples.android.durationText
 import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.wifiLabel
 import com.mentra.examples.android.wifiScanResults
@@ -40,6 +41,13 @@ fun SystemScreen(controller: MentraExampleController) {
     val connected = isGlassesConnected(state.glassesStatus)
     val networks = wifiScanResults(state.bluetoothStatus)
     val inputEvents = state.events.filter { it.text.contains("button") || it.text.contains("touch") }.take(3)
+    val micStatus = when {
+        state.micRecording -> "recording ${durationText(state.micElapsedSeconds)} · ${state.pcmFrames} PCM frames"
+        state.micPlaying -> "playing last recording"
+        state.lastMicDurationSeconds != null && state.lastMicBytes > 0 -> "last ${durationText(state.lastMicDurationSeconds)} · ${state.lastMicBytes} PCM bytes"
+        connected -> "record PCM from glasses"
+        else -> "connect glasses to record"
+    }
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
         PageHeader("System", connected)
         if (!connected) {
@@ -110,7 +118,7 @@ fun SystemScreen(controller: MentraExampleController) {
                 Text(if (state.hotspotEnabled) "enabled" else "disabled", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
             }
             }
-            Box(modifier = Modifier.weight(1f).clickable(enabled = connected) { controller.toggleMic() }) {
+            Box(modifier = Modifier.weight(1f)) {
             GlassCard(
                 modifier = Modifier.fillMaxWidth(),
                 corner = 22,
@@ -118,15 +126,22 @@ fun SystemScreen(controller: MentraExampleController) {
             ) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     IconTile(Icons.Outlined.Mic)
-                    Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                        listOf(6, 14, 8, 16, 10).forEach {
-                            Box(modifier = Modifier.size(width = 3.dp, height = it.dp).clip(RoundedCornerShape(1.5.dp)).background(AppColor.greenAccent))
-                        }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        MicControlButton(
+                            icon = if (state.micRecording) Icons.Outlined.Stop else Icons.Filled.Circle,
+                            enabled = connected,
+                            active = state.micRecording,
+                        ) { controller.toggleMic() }
+                        MicControlButton(
+                            icon = if (state.micPlaying) Icons.Outlined.Stop else Icons.Outlined.PlayArrow,
+                            enabled = state.lastMicBytes > 0,
+                            active = state.micPlaying,
+                        ) { controller.playMicRecording() }
                     }
                 }
                 Spacer(Modifier.height(10.dp))
                 Text("Microphone", color = AppColor.ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                Text(if (state.micRecording) "${state.pcmFrames} PCM frames · ${state.pcmBytes} bytes" else "tap to start PCM", color = if (state.micRecording) AppColor.greenAccent else AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                Text(micStatus, color = if (state.micRecording || state.micPlaying) AppColor.greenAccent else AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
             }
             }
         }
@@ -222,6 +237,24 @@ private fun IconTile(icon: ImageVector, big: Boolean = false) {
         contentAlignment = Alignment.Center
     ) {
         Icon(icon, null, tint = AppColor.greenInk, modifier = Modifier.size(if (big) 18.dp else 16.dp))
+    }
+}
+
+@Composable
+private fun MicControlButton(icon: ImageVector, enabled: Boolean, active: Boolean, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier.size(28.dp)
+            .clip(CircleShape)
+            .background(if (active) AppColor.greenInk else Color.White)
+            .clickable(enabled = enabled) { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            icon,
+            null,
+            tint = if (active) Color.White else AppColor.greenInk.copy(alpha = if (enabled) 1f else 0.38f),
+            modifier = Modifier.size(13.dp)
+        )
     }
 }
 

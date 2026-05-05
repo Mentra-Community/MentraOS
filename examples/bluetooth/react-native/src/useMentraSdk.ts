@@ -1,3 +1,5 @@
+import {createAudioPlayer, setAudioModeAsync, type AudioPlayer} from 'expo-audio';
+import {File, Paths} from 'expo-file-system';
 import {useEffect, useRef, useState} from 'react';
 import {PermissionsAndroid, Platform} from 'react-native';
 import BluetoothSdk, {
@@ -45,7 +47,11 @@ export type MentraSdkState = {
   glassesStatus: Partial<GlassesStatus>;
   hotspotEnabled: boolean;
   lastAction: string;
+  lastMicBytes: number;
+  lastMicDurationSeconds: number | null;
   ledMode: LedMode;
+  micElapsedSeconds: number;
+  micPlaying: boolean;
   micRecording: boolean;
   pcmBytes: number;
   pcmFrames: number;
@@ -68,6 +74,7 @@ export type MentraSdkActions = {
   disconnect: () => Promise<void>;
   displayHello: () => Promise<void>;
   requestWifiScan: () => Promise<void>;
+  playMicRecording: () => Promise<void>;
   selectLedMode: (mode: LedMode) => Promise<void>;
   selectProtocol: (protocol: StreamProtocol) => void;
   sendWifiCredentials: (ssid: string) => Promise<void>;
@@ -86,6 +93,9 @@ export type MentraSdkModel = MentraSdkState & MentraSdkActions;
 const PHOTO_APP_ID = 'com.mentra.examples.reactnative';
 const PHOTO_POLL_ATTEMPTS = 45;
 const ANDROID_12_API_LEVEL = 31;
+const MIC_SAMPLE_RATE = 16000;
+const MIC_CHANNEL_COUNT = 1;
+const MIC_BITS_PER_SAMPLE = 16;
 
 declare const process: {
   env?: {
@@ -125,8 +135,12 @@ export function useMentraSdk(): MentraSdkModel {
   const [streamStatus, setStreamStatus] = useState('Ready to start stream');
   const [hotspotEnabled, setHotspotEnabled] = useState(false);
   const [micRecording, setMicRecording] = useState(false);
+  const [micPlaying, setMicPlaying] = useState(false);
+  const [micElapsedSeconds, setMicElapsedSeconds] = useState(0);
   const [pcmFrames, setPcmFrames] = useState(0);
   const [pcmBytes, setPcmBytes] = useState(0);
+  const [lastMicBytes, setLastMicBytes] = useState(0);
+  const [lastMicDurationSeconds, setLastMicDurationSeconds] = useState<number | null>(null);
   const [galleryModeAuto, setGalleryModeAuto] = useState(true);
   const [ledMode, setLedMode] = useState<LedMode>('Solid');
   const [rawJsonExpanded, setRawJsonExpanded] = useState(false);
@@ -134,6 +148,15 @@ export function useMentraSdk(): MentraSdkModel {
   const activeStreamIdRef = useRef<string | null>(null);
   const pollGenerationRef = useRef(0);
   const keepAliveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastMicFileUriRef = useRef<string | null>(null);
+  const micElapsedSecondsRef = useRef(0);
+  const micElapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const micPcmChunksRef = useRef<Uint8Array[]>([]);
+  const micPlayerRef = useRef<AudioPlayer | null>(null);
+  const micPlayerSubscriptionRef = useRef<{remove: () => void} | null>(null);
+  const micPlayingRef = useRef(false);
+  const micRecordingRef = useRef(false);
+  const micStartedAtRef = useRef<number | null>(null);
 
   const discoveredDevices = bluetoothStatus.searchResults ?? [];
 
@@ -185,14 +208,21 @@ export function useMentraSdk(): MentraSdkModel {
         addEvent('LIVE', `stream status ${summarizeMap(payload)}`);
       }),
       BluetoothSdk.addListener('mic_pcm', (payload: MicPcmEvent) => {
+        if (!micRecordingRef.current) {
+          return;
+        }
+        const pcm = new Uint8Array(payload.pcm);
+        const frame = new Uint8Array(pcm.byteLength);
+        frame.set(pcm);
+        micPcmChunksRef.current.push(frame);
         const size = payload.pcm.byteLength;
         setPcmFrames((current) => current + 1);
         setPcmBytes((current) => current + size);
       }),
       BluetoothSdk.addListener('mic_lc3', (payload: MicLc3Event) => {
-        const size = payload.lc3.byteLength;
-        setPcmFrames((current) => current + 1);
-        setPcmBytes((current) => current + size);
+        if (micRecordingRef.current) {
+          addEvent('LIVE', `received LC3 mic frame while PCM recording is enabled (${payload.lc3.byteLength} bytes)`);
+        }
       }),
       BluetoothSdk.addListener(
         'compatible_glasses_search_stop',
@@ -222,6 +252,8 @@ export function useMentraSdk(): MentraSdkModel {
       activeStreamIdRef.current = null;
       activePhotoRequestIdRef.current = null;
       pollGenerationRef.current += 1;
+      stopMicElapsedTimer();
+      stopMicPlaybackSync();
     };
   }, []);
 
@@ -574,15 +606,155 @@ export function useMentraSdk(): MentraSdkModel {
 
   async function toggleMic() {
     await runAction(micRecording ? 'Stop microphone' : 'Start microphone', async () => {
-      requireConnected('stream microphone audio');
-      const next = !micRecording;
-      await BluetoothSdk.setMicState(next, false, true);
-      setMicRecording(next);
-      if (next) {
-        setPcmBytes(0);
-        setPcmFrames(0);
+      if (micRecordingRef.current) {
+        await stopMicRecording();
+      } else {
+        await startMicRecording();
       }
     });
+  }
+
+  async function playMicRecording() {
+    await runAction(micPlaying ? 'Stop mic playback' : 'Play mic recording', async () => {
+      if (micPlayingRef.current) {
+        await stopMicPlayback();
+        return;
+      }
+      await startMicPlayback();
+    });
+  }
+
+  async function startMicRecording() {
+    requireConnected('stream microphone audio');
+    await stopMicPlayback();
+    micPcmChunksRef.current = [];
+    lastMicFileUriRef.current = null;
+    micElapsedSecondsRef.current = 0;
+    micStartedAtRef.current = Date.now();
+    setLastMicBytes(0);
+    setLastMicDurationSeconds(null);
+    setMicElapsedSeconds(0);
+    setPcmBytes(0);
+    setPcmFrames(0);
+    await BluetoothSdk.setMicState(true, false, true);
+    micRecordingRef.current = true;
+    setMicRecording(true);
+    startMicElapsedTimer();
+  }
+
+  async function stopMicRecording() {
+    if (isGlassesConnected(glassesStatus)) {
+      await BluetoothSdk.setMicState(false, false, true);
+    }
+    micRecordingRef.current = false;
+    setMicRecording(false);
+    stopMicElapsedTimer();
+
+    const pcm = concatChunks(micPcmChunksRef.current);
+    micPcmChunksRef.current = [];
+    if (pcm.byteLength === 0) {
+      lastMicFileUriRef.current = null;
+      setLastMicBytes(0);
+      setLastMicDurationSeconds(null);
+      addEvent('LIVE', 'microphone stopped with no PCM frames');
+      return;
+    }
+
+    const file = new File(Paths.cache, 'mentra-mic-last.wav');
+    file.create({intermediates: true, overwrite: true});
+    file.write(wavBytes(pcm));
+    lastMicFileUriRef.current = file.uri;
+    setLastMicBytes(pcm.byteLength);
+    setLastMicDurationSeconds(
+      Math.max(micElapsedSecondsRef.current, estimatedMicDurationSeconds(pcm.byteLength)),
+    );
+    addEvent('LIVE', `saved microphone WAV ${pcm.byteLength} bytes`);
+  }
+
+  async function startMicPlayback(restart = false) {
+    const uri = lastMicFileUriRef.current;
+    if (!uri || lastMicBytes <= 0) {
+      throw new Error('Record microphone audio before playback.');
+    }
+
+    await stopMicPlayback();
+    await setAudioModeAsync({interruptionMode: 'duckOthers', playsInSilentMode: true});
+
+    try {
+      const player = createAudioPlayer({uri}, {updateInterval: 250});
+      micPlayerRef.current = player;
+      micPlayerSubscriptionRef.current = player.addListener(
+        'playbackStatusUpdate',
+        (status) => {
+          if (status.didJustFinish) {
+            void stopMicPlayback();
+          }
+        },
+      );
+      if (restart) {
+        await player.seekTo(0);
+      }
+      await BluetoothSdk.setOwnAppAudioPlaying(true);
+      micPlayingRef.current = true;
+      setMicPlaying(true);
+      player.play();
+    } catch (error) {
+      await stopMicPlayback();
+      throw error;
+    }
+  }
+
+  async function stopMicPlayback() {
+    const wasPlaying = releaseMicPlayer();
+    if (wasPlaying) {
+      await BluetoothSdk.setOwnAppAudioPlaying(false);
+    }
+  }
+
+  function stopMicPlaybackSync() {
+    const wasPlaying = releaseMicPlayer();
+    if (wasPlaying) {
+      void BluetoothSdk.setOwnAppAudioPlaying(false).catch(() => undefined);
+    }
+  }
+
+  function releaseMicPlayer() {
+    micPlayerSubscriptionRef.current?.remove();
+    micPlayerSubscriptionRef.current = null;
+    if (micPlayerRef.current) {
+      try {
+        micPlayerRef.current.pause();
+        micPlayerRef.current.remove();
+      } catch {
+        // The player may already be torn down after a native completion callback.
+      }
+    }
+    micPlayerRef.current = null;
+    const wasPlaying = micPlayingRef.current;
+    micPlayingRef.current = false;
+    setMicPlaying(false);
+    return wasPlaying;
+  }
+
+  function startMicElapsedTimer() {
+    stopMicElapsedTimer();
+    micElapsedTimerRef.current = setInterval(() => {
+      const startedAt = micStartedAtRef.current;
+      if (!startedAt) {
+        return;
+      }
+      const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+      micElapsedSecondsRef.current = elapsed;
+      setMicElapsedSeconds(elapsed);
+    }, 250);
+  }
+
+  function stopMicElapsedTimer() {
+    if (micElapsedTimerRef.current) {
+      clearInterval(micElapsedTimerRef.current);
+      micElapsedTimerRef.current = null;
+    }
+    micStartedAtRef.current = null;
   }
 
   async function selectLedMode(mode: LedMode) {
@@ -632,6 +804,9 @@ export function useMentraSdk(): MentraSdkModel {
     setStreamStatus(status);
     setHotspotEnabled(false);
     setMicRecording(false);
+    micRecordingRef.current = false;
+    stopMicElapsedTimer();
+    void stopMicPlayback();
   }
 
   function applyStreamStatus(payload: StreamStatusEvent) {
@@ -675,12 +850,17 @@ export function useMentraSdk(): MentraSdkModel {
     glassesStatus,
     hotspotEnabled,
     lastAction,
+    lastMicBytes,
+    lastMicDurationSeconds,
     ledMode,
+    micElapsedSeconds,
+    micPlaying,
     micRecording,
     pcmBytes,
     pcmFrames,
     permissionStatus,
     photoPreviewUrl,
+    playMicRecording,
     rawJsonExpanded,
     requestWifiScan,
     selectLedMode,
@@ -712,6 +892,72 @@ function event(tag: SdkConsoleEvent['tag'], text: string): SdkConsoleEvent {
       second: '2-digit',
     }),
   };
+}
+
+export function durationText(seconds: number) {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const remainder = safeSeconds % 60;
+  return [hours, minutes, remainder]
+    .map((value) => String(value).padStart(2, '0'))
+    .join(':');
+}
+
+function concatChunks(chunks: Uint8Array[]) {
+  const totalBytes = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+  const merged = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return merged;
+}
+
+function estimatedMicDurationSeconds(byteCount: number) {
+  const bytesPerSecond = (MIC_SAMPLE_RATE * MIC_CHANNEL_COUNT * MIC_BITS_PER_SAMPLE) / 8;
+  return byteCount <= 0 ? 0 : Math.ceil(byteCount / bytesPerSecond);
+}
+
+function wavBytes(pcm: Uint8Array) {
+  const buffer = new ArrayBuffer(44 + pcm.byteLength);
+  const view = new DataView(buffer);
+  const bytes = new Uint8Array(buffer);
+  let offset = 0;
+
+  function writeAscii(value: string) {
+    for (let index = 0; index < value.length; index += 1) {
+      bytes[offset + index] = value.charCodeAt(index);
+    }
+    offset += value.length;
+  }
+
+  function writeUInt16(value: number) {
+    view.setUint16(offset, value, true);
+    offset += 2;
+  }
+
+  function writeUInt32(value: number) {
+    view.setUint32(offset, value, true);
+    offset += 4;
+  }
+
+  writeAscii('RIFF');
+  writeUInt32(36 + pcm.byteLength);
+  writeAscii('WAVE');
+  writeAscii('fmt ');
+  writeUInt32(16);
+  writeUInt16(1);
+  writeUInt16(MIC_CHANNEL_COUNT);
+  writeUInt32(MIC_SAMPLE_RATE);
+  writeUInt32((MIC_SAMPLE_RATE * MIC_CHANNEL_COUNT * MIC_BITS_PER_SAMPLE) / 8);
+  writeUInt16((MIC_CHANNEL_COUNT * MIC_BITS_PER_SAMPLE) / 8);
+  writeUInt16(MIC_BITS_PER_SAMPLE);
+  writeAscii('data');
+  writeUInt32(pcm.byteLength);
+  bytes.set(pcm, offset);
+  return bytes;
 }
 
 function disconnectedGlassesStatus(

@@ -199,27 +199,66 @@ struct SystemScreen: View {
             }
             .disabled(!model.glassesConnected)
             .opacity(model.glassesConnected ? 1 : 0.55)
-            Button(action: model.toggleMic) {
             GlassCard(corner: 22, padding: EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16)) {
                 HStack {
                     iconTileSm(systemName: "mic")
                     Spacer()
-                    HStack(alignment: .bottom, spacing: 2) {
-                        ForEach([6, 14, 8, 16, 10], id: \.self) { h in
-                            RoundedRectangle(cornerRadius: 1.5).fill(AppColor.greenAccent).frame(width: 3, height: CGFloat(h))
-                        }
+                    HStack(spacing: 6) {
+                        micControlButton(
+                            systemName: model.micRecording ? "stop.fill" : "record.circle.fill",
+                            enabled: model.glassesConnected,
+                            active: model.micRecording,
+                            action: model.toggleMic
+                        )
+                        micControlButton(
+                            systemName: model.micPlaying ? "stop.fill" : "play.fill",
+                            enabled: model.hasMicRecording,
+                            active: model.micPlaying,
+                            action: model.playMicRecording
+                        )
                     }
                 }
                 .padding(.bottom, 10)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Microphone").font(.system(size: 16, weight: .bold)).foregroundColor(AppColor.ink)
-                    Text(model.micRecording ? "\(model.pcmFrames) PCM frames · \(model.pcmBytes) bytes" : "tap to start PCM").font(.system(size: 10, weight: .medium)).foregroundColor(model.micRecording ? AppColor.greenAccent : AppColor.muted)
+                    Text(microphoneStatusText)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(model.micRecording || model.micPlaying ? AppColor.greenAccent : AppColor.muted)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
                 }
             }
-            }
-            .disabled(!model.glassesConnected)
             .opacity(model.glassesConnected ? 1 : 0.55)
         }
+    }
+
+    private var microphoneStatusText: String {
+        if model.micRecording {
+            return "recording \(durationLabel(model.micElapsedSeconds)) · \(model.pcmFrames) PCM frames"
+        }
+        if model.micPlaying {
+            return "playing last recording"
+        }
+        if let duration = model.lastMicDurationSeconds, model.lastMicBytes > 0 {
+            return "last \(durationLabel(duration)) · \(model.lastMicBytes) PCM bytes"
+        }
+        return model.glassesConnected ? "record PCM from glasses" : "connect glasses to record"
+    }
+
+    private func micControlButton(systemName: String, enabled: Bool, active: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .fill(active ? AppColor.greenInk : Color.white)
+                    .frame(width: 28, height: 28)
+                    .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
+                Image(systemName: systemName)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundColor(active ? .white : AppColor.greenInk)
+            }
+        }
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.42)
     }
 
     private func iconTileSm(systemName: String) -> some View {
