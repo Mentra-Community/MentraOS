@@ -89,6 +89,11 @@ void mos_ui_main_scene_clear_welcome(mos_ui_main_scene_t *scene);
 /* Wipe the content of whichever view (welcome or caption) is the active mode. */
 void mos_ui_main_scene_clear_active(mos_ui_main_scene_t *scene);
 void mos_ui_main_scene_refresh_welcome_text(mos_ui_main_scene_t *scene, const lv_font_t *font);
+
+/* Re-render the welcome label with the supplied font (e.g. after a battery tick). No-op
+ * unless the scene is in welcome mode and the welcome view is ready. Also clears any
+ * stale positioned overlay so the welcome content owns the screen. */
+void mos_ui_main_scene_refresh_welcome_active(mos_ui_main_scene_t *scene, const lv_font_t *font);
 void mos_ui_main_scene_update_dfu_progress(mos_ui_main_scene_t *scene, bool show, uint8_t percent);
 void mos_ui_main_scene_update_dfu_status(mos_ui_main_scene_t *scene, const char *text);
 

@@ -142,7 +142,7 @@ static void connected(struct bt_conn *conn, uint8_t err)
     bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
     LOG_INF("Connected %s", addr);
     set_ble_connected_status(true);
-    display_reset_protobuf_text_state();
+    display_handle_bt_connected();
     current_conn = bt_conn_ref(conn);
 }
 
@@ -158,7 +158,7 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
     set_ble_connected_status(false);
     if (was_connected)
     {
-        display_show_welcome_screen(); /* 断开后自动回到欢迎界面 | Return to welcome screen on disconnect */
+        display_handle_bt_disconnected();
     }
     if (auth_conn)
     {

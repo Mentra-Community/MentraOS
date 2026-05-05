@@ -284,6 +284,16 @@ void mos_ui_main_scene_refresh_welcome_text(mos_ui_main_scene_t *scene, const lv
     mos_ui_welcome_view_refresh_text(&scene->welcome, font);
 }
 
+void mos_ui_main_scene_refresh_welcome_active(mos_ui_main_scene_t *scene, const lv_font_t *font)
+{
+    if (!scene) return;
+    if (!mos_ui_main_scene_is_welcome_mode()) return;
+    if (!mos_ui_main_scene_welcome_is_ready(scene)) return;
+
+    mos_ui_caption_view_clear_positioned(&scene->caption);
+    mos_ui_welcome_view_refresh_text(&scene->welcome, font);
+}
+
 void mos_ui_main_scene_update_dfu_progress(mos_ui_main_scene_t *scene, bool show, uint8_t percent)
 {
     if (!scene) return;

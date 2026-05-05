@@ -116,23 +116,26 @@ void display_request_welcome_battery_refresh(void)
     (void)mos_msgq_send(&lvgl_display_msgq, &cmd, (int64_t)50); /* 50 ms non-blocking / 50 ms 非阻塞 */
 }
 
-/* Thread-safe: return to welcome screen (e.g. after BLE disconnect).
- * 线程安全：回到欢迎界面（如 BLE 断开后）。 */
-void display_show_welcome_screen(void)
-{
-    display_cmd_t cmd = {.type = LCD_CMD_SHOW_WELCOME_SCREEN};
-    int ret = mos_msgq_send(&lvgl_display_msgq, &cmd, 100);
-    if (ret != 0)
-    {
-        LOG_WRN("Failed to enqueue welcome screen command (error: %d)", ret);
-    }
-}
-
-void display_reset_protobuf_text_state(void)
+/* On BT connect: clear any stale caption ingest/dedup state so the next phone-side update
+ * paints unconditionally, even if it matches whatever was last shown before the previous
+ * disconnect. Thread-safe; runs synchronously on the calling thread. */
+void display_handle_bt_connected(void)
 {
     mos_caption_throttler_reset();
     s_caption_blocked_log_ms = 0U;
-    LOG_INF("Reset protobuf text state (pending + de-dup cache cleared)");
+    LOG_INF("BT connected — caption ingest state reset");
+}
+
+/* On BT disconnect: emit the event for the LVGL thread; the dispatch handler decides
+ * what UI follows (currently: reset caption ingest, return to welcome, refresh battery). */
+void display_handle_bt_disconnected(void)
+{
+    display_cmd_t cmd = {.type = LCD_CMD_BT_DISCONNECTED};
+    int ret = mos_msgq_send(&lvgl_display_msgq, &cmd, 100);
+    if (ret != 0)
+    {
+        LOG_WRN("Failed to enqueue BT_DISCONNECTED event (error: %d)", ret);
+    }
 }
 
 /* Thread-safe: update DFU progress bar on welcome screen (below battery).
@@ -490,24 +493,11 @@ static bool protobuf_text_service_pending(void)
     return committed;
 }
 
-/* Refresh welcome label text with the current battery (60s cadence). LVGL thread only.
- * Skips when the scene isn't in welcome mode so we don't overwrite BLE/transcription content. */
+/* Battery-tick refresh of the welcome label. LVGL thread only.
+ * The scene method skips itself when not in welcome mode, so no overwrite of caption/BLE text. */
 static void update_welcome_label_with_battery(void)
 {
-    if (!mos_ui_main_scene_is_welcome_mode())
-    {
-        return;
-    }
-
-    ensure_pattern4_scene_ready();
-
-    if (!mos_ui_main_scene_welcome_is_ready(&g_main_scene))
-    {
-        return;
-    }
-
-    mos_ui_main_scene_clear_positioned(&g_main_scene);
-    mos_ui_main_scene_refresh_welcome_text(&g_main_scene, font_to_be_used());
+    mos_ui_main_scene_refresh_welcome_active(&g_main_scene, font_to_be_used());
 }
 
 static void welcome_battery_work_handler(struct k_work *work)
@@ -609,14 +599,13 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     /* 用当前电量刷新欢迎标签（60s 周期）/ Refresh welcome label with current battery (60s period) */
                     update_welcome_label_with_battery();
                     break;
-                case LCD_CMD_SHOW_WELCOME_SCREEN:
-                    /* Re-enter the welcome view (e.g. after BLE disconnect). restore_welcome_screen_state
-                     * calls show_welcome which flips the scene mode, so the subsequent battery
-                     * refresh will run. */
+                case LCD_CMD_BT_DISCONNECTED:
+                    /* Discard any pending caption ingest, swap back to the welcome scene, and
+                     * refresh the battery line so the user sees current state on reconnect. */
                     reset_display_text_caches();
                     restore_welcome_screen_state();
                     update_welcome_label_with_battery();
-                    LOG_INF("📱 Welcome screen shown (BLE disconnected)");
+                    LOG_INF("BT disconnected → welcome scene restored");
                     break;
                 case LCD_CMD_UPDATE_DFU_PROGRESS:
                     mos_ui_main_scene_update_dfu_progress(&g_main_scene,

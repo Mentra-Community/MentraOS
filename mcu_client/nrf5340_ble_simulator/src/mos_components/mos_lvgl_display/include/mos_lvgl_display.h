@@ -27,7 +27,7 @@ typedef enum
     LCD_CMD_UPDATE_PROTOBUF_TEXT,    // **NEW: Update container with protobuf text**
     LCD_CMD_UPDATE_POSITIONED_TEXT,  // Render text at an absolute (x,y) position on the caption overlay
     LCD_CMD_UPDATE_WELCOME_BATTERY,  // **NEW: Refresh welcome label with current battery (60s period)**
-    LCD_CMD_SHOW_WELCOME_SCREEN,      // **NEW: Return to welcome screen (e.g. after BLE disconnect)**
+    LCD_CMD_BT_DISCONNECTED,          // BLE disconnect event — handler decides the UI response
     LCD_CMD_UPDATE_DFU_PROGRESS,      // **NEW: Show/update DFU progress bar below battery on welcome screen**
     LCD_CMD_UPDATE_DFU_STATUS_TEXT,   // **NEW: Show/hide DFU status line (e.g. "DFU Updating... 45%") below battery**
     LCD_CMD_SHOW_PATTERN,          // **NEW: Show specific pattern by ID**
@@ -145,11 +145,11 @@ void display_close(void);
 /** Request welcome screen to refresh battery line (no-op if welcome not active). Call after battery update. */
 void display_request_welcome_battery_refresh(void);
 
-/** Return to welcome screen (e.g. after BLE disconnect). Thread-safe, sends command to LVGL. */
-void display_show_welcome_screen(void);
-
-/** Reset protobuf text de-dup/pending state so the next identical BLE text can redraw. Thread-safe. */
-void display_reset_protobuf_text_state(void);
+/** BLE connection lifecycle events. The display module decides what UI changes (e.g. reset
+ * caption ingest state on connect, return to welcome screen on disconnect) follow each one;
+ * callers just signal what happened. Thread-safe. */
+void display_handle_bt_connected(void);
+void display_handle_bt_disconnected(void);
 
 /** Update DFU progress bar on welcome screen (below battery). show=1 to show and set percent (0..100), show=0 to hide. Thread-safe. */
 void display_update_dfu_progress(uint8_t show, uint8_t percent);
