@@ -1,5 +1,7 @@
 import AVKit
+import CoreLocation
 import ExpoModulesCore
+import GoogleNavigation
 import Photos
 
 /// User-visible album in Apple Photos for glasses sync (matches dedicated-folder behavior on Android).
@@ -21,6 +23,9 @@ public class CrustModule: Module {
             "onNavRerouting",
             "onNavArrived",
             "onNavError",
+            "onNavOffRoute",
+            "onNavLocation",
+            "onNavRoute",
             "onHeading"
         )
 
@@ -34,23 +39,80 @@ public class CrustModule: Module {
             ])
         }
 
-        // Navigation — Android only. iOS stubs return an error so the JS
-        // surface compiles cross-platform.
-        AsyncFunction("startNavigation") { (_: Double, _: Double, _: [String: Any]?) -> [String: Any] in
-            return ["ok": false, "error": "navigation is android-only in v1"]
+        AsyncFunction("requestNavigationPermission") { () -> [String: Any] in
+            await withCheckedContinuation { continuation in
+                NavigationManager.shared.requestPermission { accepted in
+                    continuation.resume(returning: ["ok": true, "accepted": accepted])
+                }
+            }
         }
+
+        AsyncFunction("startNavigation") { (lat: Double, lng: Double, options: [String: Any]?) -> [String: Any] in
+            let simulate = options?["simulate"] as? Bool ?? false
+            let speedMultiplier = options?["speedMultiplier"] as? Double ?? 1.0
+            let mode = options?["mode"] as? String ?? "driving"
+
+            var stops: [(lat: Double, lng: Double)] = []
+            if let stopsArr = options?["stops"] as? [[String: Double]] {
+                stops = stopsArr.compactMap { s in
+                    guard let slat = s["lat"], let slng = s["lng"] else { return nil }
+                    return (lat: slat, lng: slng)
+                }
+            }
+            if stops.isEmpty { stops = [(lat: lat, lng: lng)] }
+
+            return await withCheckedContinuation { continuation in
+                NavigationManager.shared.start(
+                    stops: stops,
+                    mode: mode,
+                    simulate: simulate,
+                    speedMultiplier: speedMultiplier,
+                    onEvent: { [weak self] payload in
+                        guard let self else { return }
+                        let kind = payload["kind"] as? String ?? ""
+                        switch kind {
+                        case "maneuver": self.sendEvent("onNavManeuver", payload)
+                        case "rerouting": self.sendEvent("onNavRerouting", payload)
+                        case "arrived": self.sendEvent("onNavArrived", payload)
+                        case "off_route": self.sendEvent("onNavOffRoute", payload)
+                        case "error": self.sendEvent("onNavError", payload)
+                        default: break
+                        }
+                    },
+                    onLocation: { [weak self] payload in
+                        self?.sendEvent("onNavLocation", payload)
+                    },
+                    onRoute: { [weak self] payload in
+                        self?.sendEvent("onNavRoute", payload)
+                    }
+                ) { ok, error in
+                    var result: [String: Any] = ["ok": ok]
+                    if let error { result["error"] = error }
+                    continuation.resume(returning: result)
+                }
+            }
+        }
+
         AsyncFunction("stopNavigation") { () -> [String: Any] in
-            return ["ok": false, "error": "navigation is android-only in v1"]
+            NavigationManager.shared.stop()
+            return ["ok": true]
         }
-        AsyncFunction("simulateDeviation") { (_: Double?) -> [String: Any] in
-            return ["ok": false, "error": "navigation is android-only in v1"]
+
+        AsyncFunction("simulateDeviation") { (offsetMeters: Double?) -> [String: Any] in
+            NavigationManager.shared.simulateDeviation(offsetMeters: offsetMeters ?? 50)
+            return ["ok": true]
         }
 
         AsyncFunction("startHeading") { () -> [String: Any] in
-            return ["ok": false, "error": "heading is android-only in v1"]
+            HeadingManager.shared.start { [weak self] degrees in
+                self?.sendEvent("onHeading", ["degrees": degrees])
+            }
+            return ["ok": true]
         }
+
         AsyncFunction("stopHeading") { () -> [String: Any] in
-            return ["ok": false, "error": "heading is android-only in v1"]
+            HeadingManager.shared.stop()
+            return ["ok": true]
         }
 
         Function("showAVRoutePicker") { (tintColor: String?) in

@@ -8,7 +8,7 @@
  * routes via LocalMiniappRuntime and ultimately calls into here. For now,
  * this is also called directly by the developer-settings test button.
  *
- * Android only. iOS calls return ok=false at the native layer.
+ * Works on both Android and iOS via the native GoogleNavigation SDK.
  */
 
 import CrustModule from "crust"
@@ -405,7 +405,7 @@ async function computeRouteViaRoutesApi(payload: Record<string, unknown>): Promi
     return {ok: false, error: "computeRoute: at least one stop required"}
   }
 
-  const apiKey = process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY ?? ""
+  const apiKey = process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY ?? ""
   if (!apiKey) return {ok: false, error: "computeRoute: missing API key"}
 
   const finalDest = stops[stops.length - 1]

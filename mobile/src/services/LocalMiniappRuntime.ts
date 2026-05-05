@@ -481,15 +481,19 @@ class LocalMiniappRuntime {
     // Stop audio for this app
     audioPlaybackService.stopForApp(packageName)
 
-    // Stop navigation if this app started one
+    // Detach the per-app nav event forwarder but leave the native nav session
+    // running. The user may have just closed the mini-app UI and will reopen
+    // it; stopping the session here would kill an active trip mid-route.
+    // Navigation is only stopped when the mini-app explicitly calls
+    // navigation.stop() or when the trip arrives/errors naturally.
     const navUnsub = this.navListeners.get(packageName)
     if (navUnsub) {
       navUnsub()
       this.navListeners.delete(packageName)
-      navigationService.stop().catch((err) => {
-        console.error(`${LOG_TAG}: navigation stop on unregister failed:`, err)
-      })
     }
+    // Keep activeNavApps entry intact so that if the app reconnects it can
+    // reattach listeners and resume. Entry is cleared by handleNavigationStop
+    // or naturally on arrived/error events.
 
     // Recompute heading subscription — if this app was the last subscriber,
     // the sensor will stop.
@@ -1076,8 +1080,10 @@ class LocalMiniappRuntime {
   // Navigation
   // ---------------------------------------------------------------------------
 
-  /** packageName → unsubscribe fn for that app's nav listener. */
+  /** packageName → unsubscribe fn for that app's nav event forwarder. */
   private navListeners = new Map<string, () => void>()
+  /** Set of packageNames that have called navigation.start() and not yet stop(). */
+  private activeNavApps = new Set<string>()
 
   /**
    * Heading is a sensor stream — start the native compass when any mini
@@ -1140,7 +1146,8 @@ class LocalMiniappRuntime {
         }
       : undefined
 
-    // Attach a per-app listener that forwards nav updates as a stream event.
+    // Reattach the per-app event forwarder (it may have been detached when the
+    // mini-app closed its UI without stopping the trip).
     if (!this.navListeners.has(packageName)) {
       console.log(`${LOG_TAG}: attaching nav forwarder for ${packageName}`)
       const unsubNav = navigationService.addListener((update: NavUpdate) => {
@@ -1150,6 +1157,12 @@ class LocalMiniappRuntime {
           streamType: MiniappStreamType.NAVIGATION_UPDATE,
           data: update,
         })
+        // Trip ended naturally — keep the forwarder alive (miniapp may
+        // restart nav) but remove from active set so stop() accounting
+        // stays accurate.
+        if (update.kind === "arrived" || update.kind === "error") {
+          this.activeNavApps.delete(packageName)
+        }
       })
       // Forward the nav-SDK's road-snapped GPS fixes as a location_update
       // stream, so the miniapp's existing session.events.onLocation(...) just
@@ -1183,11 +1196,24 @@ class LocalMiniappRuntime {
       console.log(`${LOG_TAG}: forwarder already exists for ${packageName}`)
     }
 
+    // If a trip is already active for this app (user closed the UI and came
+    // back), reuse the running session — replay current snapshot and return
+    // ok without restarting the native navigator.
+    if (this.activeNavApps.has(packageName) && navigationService.getState() !== "idle") {
+      console.log(`${LOG_TAG}: resuming existing nav session for ${packageName}`)
+      const snapshot = navigationService.getSnapshot()
+      this.sendResult(packageName, requestId, true, {ok: true, resumed: true, snapshot})
+      return
+    }
+
     try {
       const result = await navigationService.start(
         {lat, lng},
         {simulate, speedMultiplier, stops, mode, avoid},
       )
+      if (result.ok) {
+        this.activeNavApps.add(packageName)
+      }
       this.sendResult(packageName, requestId, result.ok, result, undefined)
     } catch (err) {
       console.error(`${LOG_TAG}: navigation start error:`, err)
@@ -1200,13 +1226,19 @@ class LocalMiniappRuntime {
 
   private async handleNavigationStop(packageName: string, requestId?: string): Promise<void> {
     try {
-      const result = await navigationService.stop()
       const unsub = this.navListeners.get(packageName)
       if (unsub) {
         unsub()
         this.navListeners.delete(packageName)
       }
-      this.sendResult(packageName, requestId, result.ok, result, undefined)
+      this.activeNavApps.delete(packageName)
+      // Only stop the native trip when no other miniapp is still navigating.
+      if (this.activeNavApps.size === 0) {
+        const result = await navigationService.stop()
+        this.sendResult(packageName, requestId, result.ok, result, undefined)
+      } else {
+        this.sendResult(packageName, requestId, true, {ok: true}, undefined)
+      }
     } catch (err) {
       console.error(`${LOG_TAG}: navigation stop error:`, err)
       this.sendResult(packageName, requestId, false, undefined, {
@@ -1260,7 +1292,14 @@ class LocalMiniappRuntime {
   ): Promise<void> {
     try {
       const result = await navigationService.computeRoute(payload)
-      this.sendResult(packageName, requestId, result.ok !== false, result)
+      if (result.ok === false) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INTERNAL,
+          message: result.error ?? "computeRoute failed",
+        })
+      } else {
+        this.sendResult(packageName, requestId, true, result)
+      }
     } catch (err) {
       console.error(`${LOG_TAG}: navigation computeRoute error:`, err)
       this.sendResult(packageName, requestId, false, undefined, {

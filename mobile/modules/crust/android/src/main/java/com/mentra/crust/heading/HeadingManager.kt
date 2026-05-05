@@ -48,12 +48,21 @@ object HeadingManager {
     }
 
     val rotationMatrix = FloatArray(9)
+    val remappedMatrix = FloatArray(9)
     val orientation = FloatArray(3)
 
     val sl = object : SensorEventListener {
       override fun onSensorChanged(event: SensorEvent) {
         SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-        SensorManager.getOrientation(rotationMatrix, orientation)
+        // Remap axes for a phone held upright in portrait (screen facing user):
+        // device X→world X, device Z→world Y so the top of the phone points north.
+        SensorManager.remapCoordinateSystem(
+          rotationMatrix,
+          SensorManager.AXIS_X,
+          SensorManager.AXIS_Z,
+          remappedMatrix,
+        )
+        SensorManager.getOrientation(remappedMatrix, orientation)
         // orientation[0] = azimuth, in radians, [-π, π], 0 = north,
         // clockwise positive (per the Android docs).
         val azimuthRad = orientation[0]

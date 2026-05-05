@@ -2,7 +2,7 @@
  * HeadingService
  *
  * Thin singleton over the native compass stream exposed by `crust`.
- * Android only — iOS calls return ok=false at the native layer.
+ * Works on both Android and iOS via CLLocationManager (iOS) / SensorManager (Android).
  *
  * Reference-counted: the underlying SensorManager subscription starts on
  * the first listener and stops when the last one unsubscribes. Late
