@@ -35,6 +35,7 @@ import com.mentra.examples.android.bluetoothSearchLabel
 import com.mentra.examples.android.connectionLabel
 import com.mentra.examples.android.deviceLabel
 import com.mentra.examples.android.firmwareLabel
+import com.mentra.examples.android.firmwareSubLabel
 import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.modelLabel
 import com.mentra.examples.android.rssiLabel
@@ -99,7 +100,7 @@ fun DeviceScreen(controller: MentraExampleController) {
 
         // Stat row
         Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatTile("FIRMWARE", firmwareLabel(glasses), "reported", AppColor.greenAccent, Modifier.weight(1f))
+            StatTile("FIRMWARE", firmwareLabel(glasses), firmwareSubLabel(glasses), AppColor.greenAccent, Modifier.weight(1f))
             StatTile("WI-FI", wifiLabel(glasses), (glasses["wifiLocalIp"] as? String) ?: "unknown", AppColor.muted, Modifier.weight(1f), bold = true)
             StatTile("RSSI", rssiLabel(glasses), "signal", AppColor.greenAccent, Modifier.weight(1f), bold = true)
         }

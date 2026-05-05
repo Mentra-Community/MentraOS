@@ -75,7 +75,47 @@ export function wifiSubLabel(status: Partial<GlassesStatus>) {
 }
 
 export function firmwareLabel(status: Partial<GlassesStatus>) {
-  return status.appVersion || status.fwVersion || status.mtkFwVersion || status.besFwVersion || 'Unknown';
+  return (
+    statusString(status, 'fwVersion') ||
+    statusString(status, 'firmwareVersion') ||
+    statusString(status, 'deviceFirmwareVersion') ||
+    statusString(status, 'rightFirmwareVersion') ||
+    statusString(status, 'leftFirmwareVersion') ||
+    statusString(status, 'besFwVersion') ||
+    statusString(status, 'mtkFwVersion') ||
+    'Unknown'
+  );
+}
+
+export function firmwareSubLabel(status: Partial<GlassesStatus>) {
+  if (statusString(status, 'fwVersion') || statusString(status, 'firmwareVersion')) {
+    return 'reported by glasses';
+  }
+  if (statusString(status, 'deviceFirmwareVersion')) {
+    return 'device firmware';
+  }
+  if (statusString(status, 'rightFirmwareVersion')) {
+    return 'right firmware';
+  }
+  if (statusString(status, 'leftFirmwareVersion')) {
+    return 'left firmware';
+  }
+  if (statusString(status, 'besFwVersion')) {
+    return 'BES firmware';
+  }
+  if (statusString(status, 'mtkFwVersion')) {
+    return 'MTK firmware';
+  }
+  const appVersion = statusString(status, 'appVersion');
+  if (appVersion) {
+    return `ASG app ${appVersion}`;
+  }
+  return 'not reported';
+}
+
+function statusString(status: Partial<GlassesStatus>, key: string) {
+  const value = (status as Record<string, unknown>)[key];
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
 export function rssiLabel(status: Partial<GlassesStatus>) {

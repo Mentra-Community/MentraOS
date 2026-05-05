@@ -342,29 +342,11 @@ struct SystemScreen: View {
             }
             .padding(.bottom, 14)
 
-            HStack {
-                Text("BRIGHTNESS").font(.system(size: 10, weight: .semibold)).tracking(1.6).foregroundColor(AppColor.muted)
-                Spacer()
-                Text("\(model.ledBrightnessPercent)%").font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.ink)
-            }
-            .padding(.bottom, 2)
-
-            Slider(
-                value: Binding(
-                    get: { Double(model.ledBrightnessPercent) },
-                    set: { model.setLedBrightnessPercent(Int($0.rounded())) }
-                ),
-                in: 0...100,
-                step: 1,
-                onEditingChanged: { editing in
-                    if !editing {
-                        model.commitLedBrightness()
-                    }
-                }
-            )
-            .tint(AppColor.greenAccent)
-            .disabled(!model.glassesConnected)
-            .opacity(model.glassesConnected ? 1 : 0.45)
+            Text("Mentra Live currently applies RGB color and pattern; visible brightness is firmware-controlled.")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(AppColor.muted)
+                .lineSpacing(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

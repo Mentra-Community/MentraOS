@@ -45,7 +45,6 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.roundToInt
 
 val streamDefaultUrls = mapOf(
     "rtmp" to "rtmp://<computer-ip>:1935/live/mentra-live",
@@ -69,7 +68,6 @@ private data class RgbLedPattern(
     val ontime: Int,
     val offtime: Int,
     val count: Int,
-    val brightness: Int?,
 )
 
 val rgbLedColorOptions = MentraRgbLedColor.values().map { it.value }
@@ -83,9 +81,8 @@ data class MentraExampleState(
     val glassesStatus: Map<String, Any> = emptyMap(),
     val hotspotEnabled: Boolean = false,
     val lastAction: String = "No actions yet.",
-    val ledBrightnessPercent: Int = 72,
     val ledColor: String = "green",
-    val ledMode: String = "Solid",
+    val ledMode: String = "Off",
     val lastMicBytes: Int = 0,
     val lastMicDurationSeconds: Int? = null,
     val micElapsedSeconds: Int = 0,
@@ -346,7 +343,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     fun selectLedMode(mode: String) = runAction("RGB LED $mode") {
         requireConnected("control the RGB LED")
         state = state.copy(ledMode = mode)
-        sendRgbLedRequest(mode, state.ledColor, state.ledBrightnessPercent)
+        sendRgbLedRequest(mode, state.ledColor)
     }
 
     fun selectLedColor(color: String) = runAction("RGB LED color ${color.uppercase(Locale.US)}") {
@@ -356,23 +353,12 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
         state = state.copy(ledColor = color)
         if (state.ledMode != "Off") {
-            sendRgbLedRequest(state.ledMode, color, state.ledBrightnessPercent)
+            sendRgbLedRequest(state.ledMode, color)
         }
     }
 
-    fun setLedBrightnessPercent(percent: Int) {
-        state = state.copy(ledBrightnessPercent = percent.coerceIn(0, 100))
-    }
-
-    fun commitLedBrightness() = runAction("RGB LED brightness ${state.ledBrightnessPercent}%") {
-        requireConnected("control the RGB LED")
-        if (state.ledMode != "Off") {
-            sendRgbLedRequest(state.ledMode, state.ledColor, state.ledBrightnessPercent)
-        }
-    }
-
-    private fun sendRgbLedRequest(mode: String, color: String, brightnessPercent: Int) {
-        val request = rgbLedRequestFor(mode, color, brightnessPercent)
+    private fun sendRgbLedRequest(mode: String, color: String) {
+        val request = rgbLedRequestFor(mode, color)
         sdk.rgbLedControl(
             MentraRgbLedRequest(
                 requestId = "rgb-${System.currentTimeMillis()}",
@@ -382,18 +368,16 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 ontime = request.ontime,
                 offtime = request.offtime,
                 count = request.count,
-                brightness = request.brightness,
             )
         )
     }
 
-    private fun rgbLedRequestFor(mode: String, color: String, brightnessPercent: Int): RgbLedPattern {
-        val brightness = rgbBrightnessValue(brightnessPercent)
+    private fun rgbLedRequestFor(mode: String, color: String): RgbLedPattern {
         return when (mode) {
-            "Solid" -> RgbLedPattern(MentraRgbLedAction.ON, rgbLedColorFor(color), 30_000, 0, 1, brightness)
-            "Pulse" -> RgbLedPattern(MentraRgbLedAction.ON, rgbLedColorFor(color), 900, 900, 6, brightness)
-            "Blink" -> RgbLedPattern(MentraRgbLedAction.ON, rgbLedColorFor(color), 250, 250, 12, brightness)
-            else -> RgbLedPattern(MentraRgbLedAction.OFF, null, 0, 0, 0, null)
+            "Solid" -> RgbLedPattern(MentraRgbLedAction.ON, rgbLedColorFor(color), 30_000, 0, 1)
+            "Pulse" -> RgbLedPattern(MentraRgbLedAction.ON, rgbLedColorFor(color), 900, 900, 6)
+            "Blink" -> RgbLedPattern(MentraRgbLedAction.ON, rgbLedColorFor(color), 250, 250, 12)
+            else -> RgbLedPattern(MentraRgbLedAction.OFF, null, 0, 0, 0)
         }
     }
 
@@ -769,8 +753,6 @@ fun exampleEvent(tag: String, text: String): ExampleEvent =
         text = text,
     )
 
-fun rgbBrightnessValue(percent: Int): Int = ((percent.coerceIn(0, 100) * 255) / 100.0).roundToInt()
-
 fun rgbLedColorFor(color: String): MentraRgbLedColor =
     MentraRgbLedColor.fromValue(color) ?: MentraRgbLedColor.RED
 
@@ -969,11 +951,28 @@ fun wifiLabel(values: Map<String, Any>): String =
     }
 
 fun firmwareLabel(values: Map<String, Any>): String =
-    stringValue(values, "appVersion")
-        ?: stringValue(values, "fwVersion")
-        ?: stringValue(values, "mtkFwVersion")
+    stringValue(values, "fwVersion")
+        ?: stringValue(values, "firmwareVersion")
+        ?: stringValue(values, "deviceFirmwareVersion")
+        ?: stringValue(values, "rightFirmwareVersion")
+        ?: stringValue(values, "leftFirmwareVersion")
         ?: stringValue(values, "besFwVersion")
+        ?: stringValue(values, "mtkFwVersion")
         ?: "Unknown"
+
+fun firmwareSubLabel(values: Map<String, Any>): String {
+    val appVersion = stringValue(values, "appVersion")
+    return when {
+        stringValue(values, "fwVersion") != null || stringValue(values, "firmwareVersion") != null -> "reported"
+        stringValue(values, "deviceFirmwareVersion") != null -> "device firmware"
+        stringValue(values, "rightFirmwareVersion") != null -> "right firmware"
+        stringValue(values, "leftFirmwareVersion") != null -> "left firmware"
+        stringValue(values, "besFwVersion") != null -> "BES firmware"
+        stringValue(values, "mtkFwVersion") != null -> "MTK firmware"
+        appVersion != null -> "ASG app $appVersion"
+        else -> "not reported"
+    }
+}
 
 fun rssiLabel(values: Map<String, Any>): String =
     intValue(values, "signalStrength")?.let { "$it dBm" } ?: "Unknown"

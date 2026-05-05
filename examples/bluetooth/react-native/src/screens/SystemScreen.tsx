@@ -1,13 +1,10 @@
-import React, {useRef, useState} from 'react';
+import React from 'react';
 import {
   View,
   Text,
   ScrollView,
   Pressable,
   StyleSheet,
-  PanResponder,
-  type GestureResponderEvent,
-  type LayoutChangeEvent,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Line, Path, Polyline, Rect } from 'react-native-svg';
@@ -189,18 +186,9 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
             />
           ))}
         </View>
-        <View style={{ gap: 8 }}>
-          <View style={styles.brightnessHead}>
-            <Text style={styles.brightnessLabel}>BRIGHTNESS</Text>
-            <Text style={styles.brightnessValue}>{sdk.ledBrightnessPercent}%</Text>
-          </View>
-          <BrightnessSlider
-            disabled={!connected}
-            value={sdk.ledBrightnessPercent}
-            onChange={sdk.setLedBrightnessPercent}
-            onCommit={sdk.commitLedBrightness}
-          />
-        </View>
+        <Text style={styles.ledNote}>
+          Mentra Live currently applies RGB color and pattern; visible brightness is firmware-controlled.
+        </Text>
       </LinearGradient>
     </ScrollView>
   );
@@ -266,44 +254,6 @@ function LedColorChip({ active, color, disabled, onPress }: { active: boolean; c
   );
 }
 
-function BrightnessSlider({ disabled, value, onChange, onCommit }: { disabled: boolean; value: number; onChange: (value: number) => void; onCommit: (value: number) => void }) {
-  const [width, setWidth] = useState(0);
-  const valueRef = useRef(value);
-  valueRef.current = value;
-
-  const updateFromEvent = (event: GestureResponderEvent) => {
-    if (disabled || width <= 0) {
-      return;
-    }
-    const next = clamp(Math.round((event.nativeEvent.locationX / width) * 100), 0, 100);
-    valueRef.current = next;
-    onChange(next);
-  };
-
-  const panResponder = PanResponder.create({
-    onMoveShouldSetPanResponder: () => !disabled,
-    onStartShouldSetPanResponder: () => !disabled,
-    onPanResponderGrant: updateFromEvent,
-    onPanResponderMove: updateFromEvent,
-    onPanResponderRelease: () => onCommit(valueRef.current),
-    onPanResponderTerminate: () => onCommit(valueRef.current),
-  });
-
-  const onLayout = (event: LayoutChangeEvent) => {
-    setWidth(event.nativeEvent.layout.width);
-  };
-
-  return (
-    <View
-      onLayout={onLayout}
-      style={[styles.sliderTrack, disabled && styles.disabled]}
-      {...panResponder.panHandlers}>
-      <LinearGradient colors={['#3FB76A', '#7DD89E']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={[styles.sliderFill, { width: `${value}%` }]} />
-      <View style={[styles.sliderThumb, { left: `${value}%` }]} />
-    </View>
-  );
-}
-
 function MicControlButton({ active, children, disabled, onPress }: { active: boolean; children: React.ReactNode; disabled: boolean; onPress: () => void }) {
   return (
     <Pressable
@@ -362,10 +312,6 @@ function capitalize(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
 const styles = StyleSheet.create({
   bigCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 28, paddingVertical: 18, paddingHorizontal: 18, borderWidth: 1, borderColor: colors.border, gap: 12 },
   wifiHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
@@ -412,10 +358,5 @@ const styles = StyleSheet.create({
   ledColorDotWhite: { borderWidth: 1, borderColor: 'rgba(15,42,29,0.16)' },
   ledColorText: { color: colors.muted, fontSize: 10, fontWeight: '500' },
   ledColorTextActive: { color: colors.ink, fontWeight: '600' },
-  brightnessHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  brightnessLabel: { color: colors.muted, fontSize: 10, fontWeight: '600', letterSpacing: 1.6 },
-  brightnessValue: { color: colors.ink, fontSize: 12, fontWeight: '600' },
-  sliderTrack: { height: 8, borderRadius: 999, backgroundColor: 'rgba(15,42,29,0.08)', position: 'relative' },
-  sliderFill: { position: 'absolute', left: 0, top: 0, bottom: 0, borderRadius: 999 },
-  sliderThumb: { position: 'absolute', top: -6, marginLeft: -10, width: 20, height: 20, borderRadius: 999, backgroundColor: '#fff', shadowColor: '#0F2A1D', shadowOpacity: 0.18, shadowOffset: { width: 0, height: 2 }, shadowRadius: 6, elevation: 4 },
+  ledNote: { color: colors.muted, fontSize: 11, lineHeight: 16, fontWeight: '500' },
 });

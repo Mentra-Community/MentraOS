@@ -90,6 +90,24 @@ let bluetooth = sdk.bluetoothStatus
 
 Status snapshots are safe to read at any time. Treat command success as "command accepted"; keep UI state derived from status callbacks.
 
+### Version Fields
+
+Call `requestVersionInfo()` after connection when your app wants the glasses to refresh version metadata. Updated values arrive through the normal glasses-status callback and are also available in the next status snapshot.
+
+Common glasses-status version fields:
+
+| Field | Meaning |
+| --- | --- |
+| `fwVersion` / `firmwareVersion` | Generic glasses firmware version when the connected model reports one. |
+| `deviceFirmwareVersion` | Device firmware version for models that report device info as a structured payload. |
+| `leftFirmwareVersion` / `rightFirmwareVersion` | Per-side firmware versions for glasses that report left/right firmware separately. |
+| `besFwVersion` | Mentra Live BES firmware version. This is the version shown as the primary firmware value in the example apps when available. |
+| `mtkFwVersion` | Mentra Live MTK/system OTA firmware version. |
+| `appVersion` | Version of the glasses-side companion app. On Mentra Live this is the ASG client APK version, not firmware. |
+| `androidVersion` | Android OS version on Android-based glasses. This is not firmware. |
+
+Different glasses models expose different version fields, so partner apps should prefer the generic firmware field when present, then fall back to model-specific firmware fields, and keep app/OS versions visibly labeled as app/OS versions.
+
 ## Optional Arguments And Defaults
 
 When an SDK API exposes an optional argument, do not rely on absence meaning "best effort" or "auto" unless it is documented that way. The behavior is:
@@ -116,7 +134,7 @@ When an SDK API exposes an optional argument, do not rely on absence meaning "be
 | `MentraStreamRequest` | `video`, `audio` | Omitted means the glasses use their streaming defaults. |
 | `MentraRgbLedRequest` | `packageName` | Sends the LED command without app/package attribution. |
 | `MentraRgbLedRequest` | `color` | Ignored for `OFF`. For `ON`, pass one of the valid colors; Mentra Live falls back to red if the color is omitted. |
-| `MentraRgbLedRequest` | `brightness` | Sends no brightness field; the glasses use their current or firmware-default LED brightness. |
+| `MentraRgbLedRequest` | `brightness` | Sends no brightness field; the glasses use their current or firmware-default LED brightness. Current Mentra Live firmware applies RGB color and pattern but does not visibly apply this value. |
 | `sendIncidentId` | `apiBaseUrl` | Uses `https://api.mentra.glass`. |
 
 ## Display
@@ -187,7 +205,6 @@ sdk.rgbLedControl(
         ontime = 500,
         offtime = 500,
         count = 3,
-        brightness = 184, // optional, 0-255
     )
 )
 ```
@@ -221,8 +238,7 @@ sdk.rgbLedControl(
         color: .green,
         ontime: 500,
         offtime: 500,
-        count: 3,
-        brightness: 184 // optional, 0-255
+        count: 3
     )
 )
 ```
@@ -231,12 +247,12 @@ RGB LED parameters:
 
 | Parameter | Valid values | Meaning |
 | --- | --- | --- |
-| `action` | Android: `MentraRgbLedAction.ON` / `MentraRgbLedAction.OFF`; iOS: `.on` / `.off`; React Native: `"on"` / `"off"` | Turns the LED command on or off. When the action is off, `color`, `ontime`, `offtime`, `count`, and `brightness` are ignored. |
+| `action` | Android: `MentraRgbLedAction.ON` / `MentraRgbLedAction.OFF`; iOS: `.on` / `.off`; React Native: `"on"` / `"off"` | Turns the LED command on or off. When the action is off, `color`, `ontime`, `offtime`, and `count` are ignored. |
 | `color` | Android: `MentraRgbLedColor.RED` / `GREEN` / `BLUE` / `ORANGE` / `WHITE`; iOS: `.red` / `.green` / `.blue` / `.orange` / `.white`; React Native: `"red"` / `"green"` / `"blue"` / `"orange"` / `"white"` | Named LED color. This is not a hex color. Required for `ON`; use `null` / `nil` for `OFF`. |
 | `ontime` | Non-negative integer milliseconds | How long the LED stays on during each cycle. For a solid light, use a long `ontime`, `offtime = 0`, and `count = 1`. |
 | `offtime` | Non-negative integer milliseconds | How long the LED stays off between cycles. Use `0` for a solid light; use a positive value for blink or pulse patterns. |
 | `count` | Positive integer for `ON`; `0` for `OFF` | Number of on/off cycles to run. For example, `count = 3`, `ontime = 500`, `offtime = 500` blinks three times. |
-| `brightness` | Optional integer `0-255` | Raw device brightness. If omitted, no brightness field is sent and the glasses use their current or firmware-default LED brightness. The example apps expose this as a `0-100%` slider and round it to the raw device value. |
+| `brightness` | Optional integer `0-255` | Raw device brightness for devices that support it. If omitted, no brightness field is sent. Current Mentra Live firmware does not visibly apply RGB brightness changes, so the example apps omit this field and demonstrate color/pattern only. |
 
 RGB LEDs are hardware-dependent; unsupported glasses should report an SDK error or capability status.
 

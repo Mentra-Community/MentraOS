@@ -63,9 +63,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var pcmBytes = 0
     @Published private(set) var lastMicDurationSeconds: Int?
     @Published private(set) var lastMicBytes = 0
-    @Published private(set) var ledBrightnessPercent = 72
     @Published private(set) var ledColor = "green"
-    @Published private(set) var ledMode = "Solid"
+    @Published private(set) var ledMode = "Off"
     @Published var rawJsonExpanded = false
 
     private let micSampleRate = 16000
@@ -373,7 +372,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         runAction("RGB LED \(mode)") {
             try requireConnected("control the RGB LED")
             ledMode = mode
-            sendRgbLedRequest(mode: mode, color: ledColor, brightnessPercent: ledBrightnessPercent)
+            sendRgbLedRequest(mode: mode, color: ledColor)
         }
     }
 
@@ -385,26 +384,13 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             }
             ledColor = color
             if ledMode != "Off" {
-                sendRgbLedRequest(mode: ledMode, color: color, brightnessPercent: ledBrightnessPercent)
+                sendRgbLedRequest(mode: ledMode, color: color)
             }
         }
     }
 
-    func setLedBrightnessPercent(_ percent: Int) {
-        ledBrightnessPercent = min(100, max(0, percent))
-    }
-
-    func commitLedBrightness() {
-        runAction("RGB LED brightness \(ledBrightnessPercent)%") {
-            try requireConnected("control the RGB LED")
-            if ledMode != "Off" {
-                sendRgbLedRequest(mode: ledMode, color: ledColor, brightnessPercent: ledBrightnessPercent)
-            }
-        }
-    }
-
-    private func sendRgbLedRequest(mode: String, color: String, brightnessPercent: Int) {
-        let request = rgbLedRequest(for: mode, color: color, brightnessPercent: brightnessPercent)
+    private func sendRgbLedRequest(mode: String, color: String) {
+        let request = rgbLedRequest(for: mode, color: color)
         sdk.rgbLedControl(
             MentraRgbLedRequest(
                 requestId: "rgb-\(Int(Date().timeIntervalSince1970 * 1000))",
@@ -413,24 +399,22 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 color: request.color,
                 ontime: request.ontime,
                 offtime: request.offtime,
-                count: request.count,
-                brightness: request.brightness
+                count: request.count
             )
         )
     }
 
-    private func rgbLedRequest(for mode: String, color: String, brightnessPercent: Int) -> (action: MentraRgbLedAction, color: MentraRgbLedColor?, ontime: Int, offtime: Int, count: Int, brightness: Int?) {
-        let brightness = rgbBrightnessValue(brightnessPercent)
+    private func rgbLedRequest(for mode: String, color: String) -> (action: MentraRgbLedAction, color: MentraRgbLedColor?, ontime: Int, offtime: Int, count: Int) {
         let ledColor = MentraRgbLedColor(rawValue: color) ?? .red
         switch mode {
         case "Solid":
-            return (.on, ledColor, 30000, 0, 1, brightness)
+            return (.on, ledColor, 30000, 0, 1)
         case "Pulse":
-            return (.on, ledColor, 900, 900, 6, brightness)
+            return (.on, ledColor, 900, 900, 6)
         case "Blink":
-            return (.on, ledColor, 250, 250, 12, brightness)
+            return (.on, ledColor, 250, 250, 12)
         default:
-            return (.off, nil, 0, 0, 0, nil)
+            return (.off, nil, 0, 0, 0)
         }
     }
 
@@ -951,7 +935,39 @@ func hotspotLabel(_ values: [String: Any], fallbackEnabled: Bool) -> String {
 }
 
 func firmwareLabel(_ values: [String: Any]) -> String {
-    stringValue(values, "appVersion") ?? stringValue(values, "fwVersion") ?? stringValue(values, "mtkFwVersion") ?? stringValue(values, "besFwVersion") ?? "Unknown"
+    stringValue(values, "fwVersion")
+        ?? stringValue(values, "firmwareVersion")
+        ?? stringValue(values, "deviceFirmwareVersion")
+        ?? stringValue(values, "rightFirmwareVersion")
+        ?? stringValue(values, "leftFirmwareVersion")
+        ?? stringValue(values, "besFwVersion")
+        ?? stringValue(values, "mtkFwVersion")
+        ?? "Unknown"
+}
+
+func firmwareSubLabel(_ values: [String: Any]) -> String {
+    if stringValue(values, "fwVersion") != nil || stringValue(values, "firmwareVersion") != nil {
+        return "reported"
+    }
+    if stringValue(values, "deviceFirmwareVersion") != nil {
+        return "device firmware"
+    }
+    if stringValue(values, "rightFirmwareVersion") != nil {
+        return "right firmware"
+    }
+    if stringValue(values, "leftFirmwareVersion") != nil {
+        return "left firmware"
+    }
+    if stringValue(values, "besFwVersion") != nil {
+        return "BES firmware"
+    }
+    if stringValue(values, "mtkFwVersion") != nil {
+        return "MTK firmware"
+    }
+    if let appVersion = stringValue(values, "appVersion") {
+        return "ASG app \(appVersion)"
+    }
+    return "not reported"
 }
 
 func rssiLabel(_ values: [String: Any]) -> String {
@@ -1104,10 +1120,6 @@ func localRtmpSetupMessage(_ detail: String) -> String {
 
 func localWebrtcSetupMessage(_ detail: String) -> String {
     "Local WebRTC server not reachable (\(detail)). Run python3 examples/local-demo-cloud/server.py and paste the printed WHIP publish URL."
-}
-
-func rgbBrightnessValue(_ percent: Int) -> Int {
-    Int((Double(min(100, max(0, percent))) * 255.0 / 100.0).rounded())
 }
 
 func streamUrlValidationMessage(_ streamUrl: String) -> String? {

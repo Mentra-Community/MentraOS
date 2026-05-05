@@ -12,6 +12,7 @@ import {
   deviceLabel,
   discoveredLabel,
   firmwareLabel,
+  firmwareSubLabel,
   isGlassesConnected,
   latestEventLabel,
   modelLabel,
@@ -74,7 +75,7 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
 
       {/* Stat row */}
       <View style={styles.statRow}>
-        <StatCard label="FIRMWARE" value={firmwareLabel(sdk.glassesStatus)} sub="reported by glasses" subColor={colors.greenAccent} />
+        <StatCard label="FIRMWARE" value={firmwareLabel(sdk.glassesStatus)} sub={firmwareSubLabel(sdk.glassesStatus)} subColor={colors.greenAccent} />
         <StatCard label="WI-FI" value={wifiLabel(sdk.glassesStatus)} sub={wifiSubLabel(sdk.glassesStatus)} subColor={colors.muted} bold />
         <StatCard label="RSSI" value={rssiLabel(sdk.glassesStatus)} sub={rssiQuality(sdk.glassesStatus)} subColor={colors.greenAccent} bold />
       </View>

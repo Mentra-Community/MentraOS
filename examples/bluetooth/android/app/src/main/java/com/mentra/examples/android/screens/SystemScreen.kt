@@ -13,8 +13,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -32,7 +30,6 @@ import com.mentra.examples.android.rgbLedColorOptions
 import com.mentra.examples.android.wifiLabel
 import com.mentra.examples.android.wifiScanResults
 import com.mentra.examples.android.ui.AppColor
-import com.mentra.examples.android.ui.Eyebrow
 import com.mentra.examples.android.ui.GlassCard
 import com.mentra.examples.android.ui.OfflineNotice
 import com.mentra.examples.android.ui.PageHeader
@@ -225,24 +222,12 @@ fun SystemScreen(controller: MentraExampleController) {
                 }
             }
             Spacer(Modifier.height(14.dp))
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Eyebrow("BRIGHTNESS", mono = true)
-                Text("${state.ledBrightnessPercent}%", color = AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-            }
-            Slider(
-                value = state.ledBrightnessPercent.toFloat(),
-                onValueChange = { controller.setLedBrightnessPercent(it.toInt()) },
-                onValueChangeFinished = { controller.commitLedBrightness() },
-                enabled = connected,
-                valueRange = 0f..100f,
-                steps = 99,
-                colors = SliderDefaults.colors(
-                    thumbColor = Color.White,
-                    activeTrackColor = AppColor.greenAccent,
-                    inactiveTrackColor = AppColor.ink.copy(alpha = 0.08f),
-                    activeTickColor = Color.Transparent,
-                    inactiveTickColor = Color.Transparent,
-                ),
+            Text(
+                "Mentra Live currently applies RGB color and pattern; visible brightness is firmware-controlled.",
+                color = AppColor.muted,
+                fontSize = 11.sp,
+                lineHeight = 16.sp,
+                fontWeight = FontWeight.Medium,
             )
         }
 
