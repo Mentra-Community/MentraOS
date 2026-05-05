@@ -385,3 +385,45 @@ void mos_ui_main_scene_apply_dynamic_font(mos_ui_main_scene_t *scene, const lv_f
     if (!scene || !new_font) return;
     mos_dynamic_font_labels_apply(new_font, font_skip_predicate, scene);
 }
+
+void mos_ui_main_scene_handle_font_changed(mos_ui_main_scene_t *scene, const lv_font_t *new_font)
+{
+    if (!scene || !new_font) return;
+
+    /* 1. Push the font onto every dynamic-font label (skips welcome_text in welcome mode;
+     *    that label gets a content rebuild below). */
+    mos_ui_main_scene_apply_dynamic_font(scene, new_font);
+
+    /* 2. CJK per-character pool uses old glyph height for coordinates;
+     *    invalidate the cache so the next caption render re-runs layout. */
+    mos_ui_caption_renderer_invalidate_cache();
+
+    /* 3. Refresh the active view's content with the new font. */
+    if (scene->welcome_mode)
+    {
+        mos_ui_welcome_view_refresh_text(&scene->welcome, new_font);
+        activate_welcome(scene);
+        if (scene->welcome.container)
+        {
+            lv_obj_update_layout(scene->welcome.container);
+            lv_obj_invalidate(scene->welcome.container);
+        }
+    }
+    else if (scene->caption.container)
+    {
+        mos_ui_caption_renderer_rerender(scene);
+    }
+
+    /* 4. Caption container always needs a relayout pass after a font swap (its scrollable
+     *    inner-content metrics depend on glyph height even when caption is hidden). */
+    if (scene->caption.container)
+    {
+        lv_obj_update_layout(scene->caption.container);
+        mos_ui_caption_view_set_scroll_enabled(&scene->caption, !scene->welcome_mode);
+        if (!scene->welcome_mode)
+        {
+            mos_ui_caption_view_scroll_to_bottom(&scene->caption);
+        }
+        lv_obj_invalidate(scene->caption.container);
+    }
+}

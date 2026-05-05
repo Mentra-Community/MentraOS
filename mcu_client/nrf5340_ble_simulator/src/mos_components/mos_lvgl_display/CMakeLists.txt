@@ -15,7 +15,6 @@ target_sources(app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/dynamic_font_labels.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/text_diag.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/others/test_patterns.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/others/gbk_test_view.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/main_scene.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/caption/caption_view.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui/caption/caption_renderer.c

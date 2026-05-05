@@ -114,4 +114,10 @@ void mos_ui_main_scene_get_translation_pair(display_biz_lang_t *src, display_biz
  * mode, welcome_text is left for the caller to refresh separately (battery-aware text). */
 void mos_ui_main_scene_apply_dynamic_font(mos_ui_main_scene_t *scene, const lv_font_t *new_font);
 
+/* React to a system-wide font change: re-apply the font to every tracked label, refresh
+ * the active view's content (welcome rebuilds with battery; caption re-renders cached text),
+ * relayout containers, and invalidate so the next frame paints with the new glyph metrics.
+ * Caller just signals "the font changed"; the scene owns all post-swap UI work. */
+void mos_ui_main_scene_handle_font_changed(mos_ui_main_scene_t *scene, const lv_font_t *new_font);
+
 #endif /* MAIN_SCENE_H_ */

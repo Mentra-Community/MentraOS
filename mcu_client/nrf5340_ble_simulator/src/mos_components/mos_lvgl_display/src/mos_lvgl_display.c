@@ -23,7 +23,6 @@
 #include "screen.h"
 #include "ui/main_scene.h"
 #include "others/test_patterns.h"
-#include "others/gbk_test_view.h"
 #include "utils/text_diag.h"
 #if defined(CONFIG_LVGL)
 #include "mos_binfont_lvgl.h"
@@ -67,51 +66,6 @@ static void on_font_changed(const lv_font_t *new_font)
     LOG_INF("Font changed callback called, sending update to LVGL thread");
     display_cmd_t cmd = {.type = LCD_CMD_UPDATE_DYNAMIC_FONT, .p.font_update = {.font_ptr = new_font}};
     mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
-}
-
-static void apply_font_update_in_lvgl_thread(const lv_font_t *new_font)
-{
-    if (new_font == NULL)
-    {
-        LOG_WRN("new_font is NULL, skipping font update");
-        return;
-    }
-
-    mos_ui_main_scene_apply_dynamic_font(&g_main_scene, new_font);
-
-    /* CJK per-character pool uses old glyph height for coordinates;
-     * full-text relayout with the new font is required to avoid overlap artifacts. */
-    mos_ui_main_scene_invalidate_caption_cache();
-
-    bool welcome_mode = mos_ui_main_scene_is_welcome_mode(&g_main_scene);
-
-    if (welcome_mode)
-    {
-        update_welcome_label_with_battery();
-        mos_ui_main_scene_show_welcome(&g_main_scene);
-    }
-    else if (mos_ui_main_scene_caption_is_ready(&g_main_scene))
-    {
-        mos_ui_main_scene_rerender_caption(&g_main_scene);
-    }
-
-    if (welcome_mode)
-    {
-        mos_ui_main_scene_relayout_welcome(&g_main_scene);
-    }
-
-    if (mos_ui_main_scene_caption_is_ready(&g_main_scene))
-    {
-        mos_ui_main_scene_relayout_caption(&g_main_scene);
-        mos_ui_main_scene_set_caption_scroll_enabled(&g_main_scene, !welcome_mode);
-        if (!welcome_mode)
-        {
-            mos_ui_main_scene_scroll_caption_to_bottom(&g_main_scene);
-        }
-    }
-
-    mos_screen_invalidate_full();
-    LOG_INF("Font update complete");
 }
 #endif
 
@@ -229,16 +183,6 @@ void display_update_dfu_status_text(const char *text)
     (void)mos_msgq_send(&lvgl_display_msgq, &cmd, (int64_t)50);
 }
 
-/* Thread-safe pattern cycling: send message to LVGL thread.
- * 线程安全图案切换：发消息到 LVGL 线程。 */
-void display_cycle_pattern(void)
-{
-    display_cmd_t cmd = {
-        .type = LCD_CMD_CYCLE_PATTERN, .p.pattern = {.pattern_id = 0} /* Determined by LVGL thread / 由 LVGL 线程决定 */
-    };
-    mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
-}
-
 void display_update_height(uint16_t height)
 {
     display_cmd_t cmd = {.type = LCD_CMD_UPDATE_HEIGHT, .p.height = {.height = height}};
@@ -317,26 +261,6 @@ void display_update_positioned_text(uint16_t x, uint16_t y, const char *text_con
     }
 }
 
-void display_show_gbk_test(void)
-{
-    display_cmd_t cmd = {.type = LCD_CMD_GBK_TEST};
-    int ret = mos_msgq_send(&lvgl_display_msgq, &cmd, 0);
-    if (ret != 0)
-    {
-        LOG_WRN("Failed to send GBK test message to display queue (error: %d)", ret);
-    }
-}
-
-void display_show_gbk_chars_test(void)
-{
-    display_cmd_t cmd = {.type = LCD_CMD_GBK_CHARS_TEST};
-    int ret = mos_msgq_send(&lvgl_display_msgq, &cmd, 0);
-    if (ret != 0)
-    {
-        LOG_WRN("Failed to send GBK chars test message to display queue (error: %d)", ret);
-    }
-}
-
 void display_clear_screen(void)
 {
     display_cmd_t cmd = {.type = LCD_CMD_CLEAR_DISPLAY};
@@ -353,12 +277,6 @@ void display_request_visible_redraw(void)
 {
     display_cmd_t cmd = {.type = LCD_CMD_INVALIDATE_VISIBLE_UI};
     (void)mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
-}
-
-void display_send_frame(void *data_ptr)
-{
-    // display_cmd_t cmd = {.type = LCD_CMD_DATA, .param = data_ptr};
-    // mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
 }
 
 /****************************************************/
@@ -431,15 +349,6 @@ static void create_scrolling_text_container(lv_obj_t *screen)
 
 
 
-static int current_pattern = 4; /* Pattern 4 is the live welcome/caption scene. */
-static const int num_patterns = 5;
-
-/* 获取当前图案 ID 供条件逻辑使用 / Get current pattern ID for conditional logic */
-int display_get_current_pattern(void)
-{
-    return display_scene_get_pattern();
-}
-
 bool display_is_welcome_screen_active(void)
 {
     return display_scene_is_welcome_active();
@@ -452,7 +361,6 @@ static void tear_down_screen_child_global_refs(void)
     k_work_cancel_delayable(&welcome_battery_work);
     mos_ui_main_scene_destroy(&g_main_scene);
     memset(&g_main_scene, 0, sizeof(g_main_scene));
-    mos_ui_gbk_test_destroy();
     display_scene_set_mode(DISPLAY_SCENE_MODE_TEST);
 }
 
@@ -480,8 +388,6 @@ static void clear_current_display_text(void)
      * the container itself is preserved. */
     reset_display_text_caches();
     mos_ui_main_scene_clear_active(&g_main_scene);
-    mos_ui_gbk_test_clear();
-
     mos_screen_invalidate_full();
     lvgl_force_one_refresh = true;
 }
@@ -525,7 +431,6 @@ static void show_test_pattern(int pattern_id)
             return;
     }
 
-    current_pattern = pattern_id;
     display_scene_set_pattern(pattern_id);
     switch (pattern_id)
     {
@@ -542,37 +447,19 @@ static void show_test_pattern(int pattern_id)
  * changes (e.g. software depth) to refresh the current frame without a full screen flush. */
 static void invalidate_current_visible_ui(void)
 {
-    switch (current_pattern)
+    if (display_scene_get_pattern() == 4)
     {
-        case 4:
-            if (mos_ui_main_scene_welcome_is_visible(&g_main_scene))
-            {
-                mos_ui_main_scene_invalidate_welcome(&g_main_scene);
-            }
-            mos_ui_main_scene_invalidate_caption(&g_main_scene);
-            break;
-        default:
-            /* Patterns 0–3: dynamic children sit directly on screen; mark each dirty. */
-            mos_screen_invalidate_children();
-            break;
+        if (mos_ui_main_scene_welcome_is_visible(&g_main_scene))
+        {
+            mos_ui_main_scene_invalidate_welcome(&g_main_scene);
+        }
+        mos_ui_main_scene_invalidate_caption(&g_main_scene);
     }
-}
-
-void cycle_test_pattern(void)
-{
-    /* 防抖：避免快速切换导致冲突 / SAFETY: Prevent rapid cycling that could cause conflicts */
-    static int64_t last_cycle_time = 0;
-    int64_t current_time = k_uptime_get();
-
-    if (current_time - last_cycle_time < 1000)
-    { /* 1 秒防抖 / 1 second debounce */
-        return;
+    else
+    {
+        /* Test patterns 0–3: dynamic children sit directly on screen; mark each dirty. */
+        mos_screen_invalidate_children();
     }
-    last_cycle_time = current_time;
-
-    current_pattern = (current_pattern + 1) % num_patterns;
-    LOG_INF("Pattern #%d", current_pattern); /* 简要日志 / Minimal log */
-    show_test_pattern(current_pattern);
 }
 
 static void update_display_height(uint16_t height)
@@ -757,22 +644,6 @@ static void display_open_panel(uint8_t brightness_pct)
     show_default_ui();
 }
 
-/* Test paths set heavier refresh + thread priority to keep the shell responsive while rendering. */
-static void apply_gbk_test_loop_settings(void)
-{
-    display_scene_set_mode(DISPLAY_SCENE_MODE_TEST);
-    k_work_cancel_delayable(&welcome_battery_work);
-
-    lvgl_min_refresh_ms = 200;
-    lvgl_force_one_refresh = true;
-    lvgl_freeze_refresh = true;
-
-    if (lvgl_thread_handle != NULL)
-    {
-        k_thread_priority_set(lvgl_thread_handle, LVGL_THREAD_PRIORITY + 4);
-    }
-}
-
 void lvgl_dispaly_init(void *p1, void *p2, void *p3)
 {
     const struct device *display_dev;
@@ -826,19 +697,9 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
         reenter_switch:
             switch (cmd.type)
             {
-                case LCD_CMD_INIT:
-                    // state_type = LCD_STATE_OFF;
-                    break;
                 case LCD_CMD_OPEN:
                     display_open_panel(30);
                     state_type = LCD_STATE_ON;
-                    break;
-                case LCD_CMD_DATA:
-                    break;
-                case LCD_CMD_CYCLE_PATTERN:
-                    /* 在 LVGL 线程内安全处理图案切换 / Handle pattern cycling safely in LVGL thread */
-                    LOG_INF("LCD_CMD_CYCLE_PATTERN - Thread-safe pattern cycling");
-                    cycle_test_pattern(); /* 现由 LVGL 线程上下文调用 / Now called from LVGL thread context */
                     break;
                 case LCD_CMD_UPDATE_HEIGHT:
                     /* 在 LVGL 线程内安全处理高度更新 / Handle height updates safely in LVGL thread */
@@ -862,14 +723,6 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     lvgl_freeze_refresh = false;
                     lvgl_force_one_refresh = true;
                     lvgl_min_refresh_ms = 100;
-                    break;
-                case LCD_CMD_GBK_TEST:
-                    apply_gbk_test_loop_settings();
-                    mos_ui_gbk_test_show_text();
-                    break;
-                case LCD_CMD_GBK_CHARS_TEST:
-                    apply_gbk_test_loop_settings();
-                    mos_ui_gbk_test_show_chars();
                     break;
                 case LCD_CMD_UPDATE_WELCOME_BATTERY:
                     /* 用当前电量刷新欢迎标签（60s 周期）/ Refresh welcome label with current battery (60s period) */
@@ -909,8 +762,7 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                     show_test_pattern(cmd.p.pattern.pattern_id);
                     break;
                 case LCD_CMD_UPDATE_DYNAMIC_FONT:
-                    LOG_INF("LCD_CMD_UPDATE_DYNAMIC_FONT - Applying font update in LVGL thread");
-                    apply_font_update_in_lvgl_thread(cmd.p.font_update.font_ptr);
+                    mos_ui_main_scene_handle_font_changed(&g_main_scene, cmd.p.font_update.font_ptr);
                     break;
                 case LCD_CMD_INVALIDATE_FULL_SCREEN:
                     lvgl_force_one_refresh = true;
