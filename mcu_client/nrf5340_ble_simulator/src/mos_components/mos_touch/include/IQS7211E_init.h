@@ -132,7 +132,7 @@
 #define GESTURE_ENABLE_1                         0x0F
 #define TAP_TOUCH_TIME_0                         0x2C
 #define TAP_TOUCH_TIME_1                         0x01
-#define TAP_WAIT_TIME_0                          0x2C
+#define TAP_WAIT_TIME_0                          0xF4
 #define TAP_WAIT_TIME_1                          0x01
 #define TAP_DISTANCE_0                           0x78
 #define TAP_DISTANCE_1                           0x00
@@ -140,9 +140,9 @@
 #define HOLD_TIME_1                              0x0B
 #define SWIPE_TIME_0                             0xF4
 #define SWIPE_TIME_1                             0x01
-#define SWIPE_X_DISTANCE_0                       0x40
+#define SWIPE_X_DISTANCE_0                       0x20
 #define SWIPE_X_DISTANCE_1                       0x01
-#define SWIPE_Y_DISTANCE_0                       0x40
+#define SWIPE_Y_DISTANCE_0                       0x20
 #define SWIPE_Y_DISTANCE_1                       0x01
 #define SWIPE_X_CONS_DIST_0                      0xE8
 #define SWIPE_X_CONS_DIST_1                      0x03

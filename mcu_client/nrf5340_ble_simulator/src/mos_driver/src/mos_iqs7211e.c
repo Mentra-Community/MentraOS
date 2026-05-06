@@ -31,6 +31,8 @@ LOG_MODULE_REGISTER(mos_iqs7211e, LOG_LEVEL_INF);
 #define IQS_VERSION_WORDS 	10U
 #define IQS_MAX_BLOCK_WORDS 64U
 #define IQS_MAX_BLOCK_BYTES 128U
+#define IQS_RDY_WORKQ_STACK_SIZE 1024
+#define IQS_RDY_WORKQ_PRIORITY K_PRIO_PREEMPT(6)
 
 #if IQS7211E_DT_READY
 
@@ -49,10 +51,14 @@ static int iqs_stop_comm_window(void);
 static void iqs_prepare_polled_access(void);
 static void iqs_try_fill_version_cache(void);
 static int iqs_setup_rdy_interrupt(void);
+static void iqs_start_rdy_work_queue(void);
 
 static const struct gpio_dt_spec s_iqs_rdy_gpio = GPIO_DT_SPEC_GET(IQS_RDY_NODE, iqs7211e_rdy_gpios);
 static struct gpio_callback s_iqs_rdy_cb;
 static struct k_work s_iqs_rdy_work;
+static struct k_work_q s_iqs_rdy_work_q;
+static K_THREAD_STACK_DEFINE(s_iqs_rdy_work_q_stack, IQS_RDY_WORKQ_STACK_SIZE);
+static atomic_t s_iqs_rdy_work_q_started = ATOMIC_INIT(0);
 typedef struct
 {
     uint16_t rel_x;
@@ -235,7 +241,7 @@ static void iqs_rdy_gpio_callback(const struct device *dev, struct gpio_callback
     }
 
     (void)gpio_pin_interrupt_configure_dt(&s_iqs_rdy_gpio, GPIO_INT_DISABLE);
-    int ret = k_work_submit(&s_iqs_rdy_work);
+    int ret = k_work_submit_to_queue(&s_iqs_rdy_work_q, &s_iqs_rdy_work);
     if (ret < 0)
     {
         atomic_set(&s_rdy_state.work_active, 0);
@@ -435,6 +441,23 @@ static void iqs_try_fill_version_cache(void)
     }
 }
 
+static void iqs_start_rdy_work_queue(void)
+{
+    if (!atomic_cas(&s_iqs_rdy_work_q_started, 0, 1))
+    {
+        return;
+    }
+
+    static const struct k_work_queue_config config = {
+        .name = "iqs7211e_rdy",
+    };
+
+    k_work_queue_start(&s_iqs_rdy_work_q,
+                       s_iqs_rdy_work_q_stack,
+                       K_THREAD_STACK_SIZEOF(s_iqs_rdy_work_q_stack),
+                       IQS_RDY_WORKQ_PRIORITY, &config);
+}
+
 static int iqs_setup_rdy_interrupt(void)
 {
     if (!gpio_is_ready_dt(&s_iqs_rdy_gpio))
@@ -450,6 +473,7 @@ static int iqs_setup_rdy_interrupt(void)
             return ret;
         }
 
+        iqs_start_rdy_work_queue();
         k_work_init(&s_iqs_rdy_work, iqs_rdy_work_handler);
 
         gpio_init_callback(&s_iqs_rdy_cb, iqs_rdy_gpio_callback, BIT(s_iqs_rdy_gpio.pin));

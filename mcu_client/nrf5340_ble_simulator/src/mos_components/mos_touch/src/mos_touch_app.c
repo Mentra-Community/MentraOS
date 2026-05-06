@@ -15,13 +15,20 @@ LOG_MODULE_REGISTER(mos_touch_app, LOG_LEVEL_INF);
 #define MOS_TOUCH_IQS_SYSTEM_RE_ATI_MASK        0x0020u
 #define MOS_TOUCH_ATI_WAIT_POLL_MS              20
 #define MOS_TOUCH_ATI_WAIT_TIMEOUT_MS           300
+#define MOS_TOUCH_DUPLICATE_GESTURE_SUPPRESS_MS 200
+#define MOS_TOUCH_LATCHED_GESTURE_MASK                                                                           \
+    (IQS7211E_GESTURE_PRESS_AND_HOLD | IQS7211E_GESTURE_PALM | IQS7211E_GESTURE_SWIPE_HOLD_X_POSITIVE |          \
+     IQS7211E_GESTURE_SWIPE_HOLD_X_NEGATIVE | IQS7211E_GESTURE_SWIPE_HOLD_Y_POSITIVE |                           \
+     IQS7211E_GESTURE_SWIPE_HOLD_Y_NEGATIVE)
 /* Frame validity guardrails only; gesture recognition comes from the IQS7211E gesture bits.
  * 仅用于帧有效性判断；手势识别只使用 IQS7211E gesture bits。*/
-#define MOS_TOUCH_EDGE_Y_MAX 0x03F0u
-#define MOS_TOUCH_EDGE_REL_Y_GLITCH 0x0201u
+#define MOS_TOUCH_EDGE_Y_MAX                    0x03F0u
+#define MOS_TOUCH_EDGE_REL_Y_GLITCH             0x0201u
 
-static struct k_spinlock s_touch_app_lock;
 static uint16_t s_touch_prev_reported_gesture_bits = 0;
+/* Short duplicate guard only; identical chip gesture bits must still be allowed as separate later events.
+ * 仅短时间抑制重复；相同 chip gesture bits 后续仍应作为独立事件上报。*/
+static int64_t s_touch_prev_reported_gesture_ms = 0;
 static bool s_touch_debug_frame_logging = false;
 
 static void mos_touch_app_reset_runtime_state(void);
@@ -350,8 +357,7 @@ static void mos_touch_app_runtime_handler(uint16_t gestures, uint16_t info_flags
     const bool reset_frame = ((info_flags & MOS_TOUCH_IQS_INFO_SHOW_RESET_BIT) != 0u);
     const bool edge_saturated = (finger1_y >= MOS_TOUCH_EDGE_Y_MAX) || (rel_y == MOS_TOUCH_EDGE_REL_Y_GLITCH);// 检查Y轴边缘饱和 / Check for Y edge saturation
     const uint16_t chip_gesture_bits = gestures & mos_touch_app_chip_gesture_mask();
-    const bool finger_sample_valid =
-        (num_fingers > 0U) && !too_many_fingers && !edge_saturated && (finger1_x != 0xFFFFu) && (finger1_y != 0xFFFFu);
+    const bool finger_sample_valid = (num_fingers > 0U) && !too_many_fingers && !edge_saturated && (finger1_x != 0xFFFFu) && (finger1_y != 0xFFFFu);
 
     if (reset_frame)
     {
@@ -373,9 +379,7 @@ static void mos_touch_app_runtime_handler(uint16_t gestures, uint16_t info_flags
 
     if (s_touch_debug_frame_logging)
     {
-        LOG_INF(
-            "[TOUCH][FRAME] g=0x%04x info=0x%04x nf=%u tmf=%u reati=%u f1=(0x%04x,0x%04x) rel=(%d,%d) edge=%u "
-            "sample_ok=%u",
+        LOG_INF("[TOUCH][FRAME] g=0x%04x info=0x%04x nf=%u tmf=%u reati=%u f1=(0x%04x,0x%04x) rel=(%d,%d) edge=%u " "sample_ok=%u",
             gestures, info_flags, (unsigned int)num_fingers, (unsigned int)too_many_fingers, (unsigned int)reati_frame,
             finger1_x, finger1_y, (int16_t)rel_x, (int16_t)rel_y, (unsigned int)edge_saturated,
             (unsigned int)finger_sample_valid);
@@ -383,23 +387,39 @@ static void mos_touch_app_runtime_handler(uint16_t gestures, uint16_t info_flags
 
     uint16_t new_gesture_bits = 0;
     {
-        k_spinlock_key_t key = k_spin_lock(&s_touch_app_lock);
-        new_gesture_bits = chip_gesture_bits & (uint16_t)(~s_touch_prev_reported_gesture_bits);
+        const int64_t now_ms = k_uptime_get();
+        const uint16_t latched_bits = chip_gesture_bits & MOS_TOUCH_LATCHED_GESTURE_MASK;
+        const uint16_t pulse_bits = chip_gesture_bits & (uint16_t)(~MOS_TOUCH_LATCHED_GESTURE_MASK);
+
+        const uint16_t new_latched_bits = latched_bits & (uint16_t)(~s_touch_prev_reported_gesture_bits);
+        uint16_t new_pulse_bits = pulse_bits;
+        /* Pulse gestures may repeat later, but adjacent duplicate frames are suppressed briefly. 
+        脉冲手势可能会在稍后重复，但相邻的重复帧会被短暂抑制*/
+        if ((pulse_bits != 0U)
+            && (pulse_bits == (s_touch_prev_reported_gesture_bits & (uint16_t)(~MOS_TOUCH_LATCHED_GESTURE_MASK)))
+            && ((now_ms - s_touch_prev_reported_gesture_ms) < MOS_TOUCH_DUPLICATE_GESTURE_SUPPRESS_MS))
+        {
+            new_pulse_bits = 0;
+        }
+
+        new_gesture_bits = new_latched_bits | new_pulse_bits;
         s_touch_prev_reported_gesture_bits = chip_gesture_bits;
-        k_spin_unlock(&s_touch_app_lock, key);
+        if (new_gesture_bits != 0U)
+        {
+            s_touch_prev_reported_gesture_ms = now_ms;
+        }
     }
 
     if (new_gesture_bits == 0U)
     {
         return;
     }
+    const uint16_t new_discrete_bits = new_gesture_bits & (IQS7211E_GESTURE_SINGLE_TAP | IQS7211E_GESTURE_DOUBLE_TAP
+                                                           | IQS7211E_GESTURE_TRIPLE_TAP | IQS7211E_GESTURE_PRESS_AND_HOLD);
 
-    const uint16_t new_discrete_bits =
-        new_gesture_bits & (IQS7211E_GESTURE_SINGLE_TAP | IQS7211E_GESTURE_DOUBLE_TAP | IQS7211E_GESTURE_TRIPLE_TAP |
-                            IQS7211E_GESTURE_PRESS_AND_HOLD);
-    const uint16_t new_swipe_bits =
-        new_gesture_bits & (IQS7211E_GESTURE_SWIPE_X_POSITIVE | IQS7211E_GESTURE_SWIPE_X_NEGATIVE |
-                            IQS7211E_GESTURE_SWIPE_Y_POSITIVE | IQS7211E_GESTURE_SWIPE_Y_NEGATIVE);
+    const uint16_t new_swipe_bits = new_gesture_bits & (IQS7211E_GESTURE_SWIPE_X_POSITIVE | IQS7211E_GESTURE_SWIPE_X_NEGATIVE |
+                                                        IQS7211E_GESTURE_SWIPE_Y_POSITIVE | IQS7211E_GESTURE_SWIPE_Y_NEGATIVE);
+
     const uint16_t raw_remaining_bits = new_gesture_bits & (uint16_t)(~(new_discrete_bits | new_swipe_bits));
     const mos_touch_logical_event_t chip_discrete_event = mos_touch_app_chip_discrete_event(new_discrete_bits);
     mos_iqs7211e_slide_direction_t chip_swipe_dir = MOS_IQS7211E_SLIDE_NONE;
@@ -477,11 +497,8 @@ int mos_touch_app_apply_profile(void)
 
 static void mos_touch_app_reset_runtime_state(void)
 {
-    k_spinlock_key_t key = k_spin_lock(&s_touch_app_lock);
-
     s_touch_prev_reported_gesture_bits = 0;
-
-    k_spin_unlock(&s_touch_app_lock, key);
+    s_touch_prev_reported_gesture_ms = 0;
 }
 
 int mos_touch_app_init(void)
