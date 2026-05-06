@@ -75,7 +75,7 @@ data class MentraExampleState(
     val cameraStatus: String = "Camera: enter the local webhook /upload URL",
     val discoveredDevices: List<MentraDiscoveredDevice> = emptyList(),
     val events: List<ExampleEvent> = listOf(exampleEvent("LIVE", "SDK ready. Scan to discover glasses.")),
-    val galleryModeAuto: Boolean = true,
+    val galleryModeAuto: Boolean = false,
     val glassesStatus: Map<String, Any> = emptyMap(),
     val hotspotEnabled: Boolean = false,
     val lastAction: String = "No actions yet.",
@@ -124,9 +124,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private val micBitsPerSample = 16
 
     init {
+        val initialGlassesStatus = sdk.getGlassesStatus().values
+        val initialBluetoothStatus = sdk.getBluetoothStatus().values
         state = state.copy(
-            glassesStatus = sdk.getGlassesStatus().values,
-            bluetoothStatus = sdk.getBluetoothStatus().values,
+            glassesStatus = initialGlassesStatus,
+            bluetoothStatus = initialBluetoothStatus,
+            galleryModeAuto = galleryModeAuto(initialBluetoothStatus),
+            hotspotEnabled = boolValue(initialGlassesStatus, "hotspotEnabled") ?: false,
         )
     }
 
@@ -340,9 +344,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     fun toggleHotspot() = runAction(if (state.hotspotEnabled) "Disable hotspot" else "Enable hotspot") {
         requireConnected("toggle hotspot")
-        val next = !state.hotspotEnabled
+        val current = boolValue(state.glassesStatus, "hotspotEnabled") ?: state.hotspotEnabled
+        val next = !current
         sdk.setHotspotState(next)
-        state = state.copy(hotspotEnabled = next)
     }
 
     fun toggleMic() = runAction(if (state.micRecording) "Stop microphone" else "Start microphone") {
@@ -408,6 +412,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     override fun onGlassesStatusChanged(status: MentraGlassesStatusUpdate) {
         state = state.copy(glassesStatus = state.glassesStatus + status.values)
+        boolValue(status.values, "hotspotEnabled")?.let { enabled ->
+            state = state.copy(hotspotEnabled = enabled)
+        }
         if (isDisconnectedStatus(status.values)) {
             applyDisconnectedState("Disconnected")
         }
@@ -415,7 +422,10 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     override fun onBluetoothStatusChanged(status: MentraBluetoothStatusUpdate) {
-        state = state.copy(bluetoothStatus = state.bluetoothStatus + status.values)
+        state = state.copy(
+            bluetoothStatus = state.bluetoothStatus + status.values,
+            galleryModeAuto = boolValue(status.values, "gallery_mode") ?: state.galleryModeAuto,
+        )
         addEvent("BLE", summarize(status.values))
     }
 
@@ -977,6 +987,8 @@ fun intValue(values: Map<String, Any>, key: String): Int? =
     }
 
 fun boolValue(values: Map<String, Any>, key: String): Boolean? = values[key] as? Boolean
+
+fun galleryModeAuto(values: Map<String, Any>): Boolean = boolValue(values, "gallery_mode") ?: false
 
 fun connectionLabel(values: Map<String, Any>): String =
     stringValue(values, "connectionState")

@@ -132,10 +132,12 @@ declare const process: {
 };
 
 export function useMentraSdk(): MentraSdkModel {
-  const [glassesStatus, setGlassesStatus] = useState<Partial<GlassesStatus>>({});
+  const [glassesStatus, setGlassesStatus] = useState<Partial<GlassesStatus>>(
+    () => BluetoothSdk.getGlassesStatus(),
+  );
   const [bluetoothStatus, setBluetoothStatus] = useState<
     Partial<CoreStatus> & Record<string, unknown>
-  >({});
+  >(() => BluetoothSdk.getCoreStatus() as Partial<CoreStatus> & Record<string, unknown>);
   const [events, setEvents] = useState<SdkConsoleEvent[]>([
     event('LIVE', 'SDK ready. Scan to discover glasses.'),
   ]);
@@ -163,7 +165,9 @@ export function useMentraSdk(): MentraSdkModel {
   );
   const [streamStartedAt, setStreamStartedAt] = useState<number | null>(null);
   const [streamStatus, setStreamStatus] = useState('Ready to start stream');
-  const [hotspotEnabled, setHotspotEnabled] = useState(false);
+  const [hotspotEnabled, setHotspotEnabled] = useState(
+    () => Boolean(BluetoothSdk.getGlassesStatus().hotspotEnabled),
+  );
   const [micRecording, setMicRecording] = useState(false);
   const [micPlaying, setMicPlaying] = useState(false);
   const [micElapsedSeconds, setMicElapsedSeconds] = useState(0);
@@ -171,7 +175,9 @@ export function useMentraSdk(): MentraSdkModel {
   const [pcmBytes, setPcmBytes] = useState(0);
   const [lastMicBytes, setLastMicBytes] = useState(0);
   const [lastMicDurationSeconds, setLastMicDurationSeconds] = useState<number | null>(null);
-  const [galleryModeAuto, setGalleryModeAuto] = useState(true);
+  const [galleryModeAuto, setGalleryModeAuto] = useState(
+    () => galleryModeAutoFrom(BluetoothSdk.getCoreStatus()),
+  );
   const [ledColor, setLedColor] = useState<LedColor>('green');
   const [ledMode, setLedMode] = useState<LedMode>('Off');
   const [rawJsonExpanded, setRawJsonExpanded] = useState(false);
@@ -193,6 +199,9 @@ export function useMentraSdk(): MentraSdkModel {
 
   useEffect(() => {
     const removeGlasses = BluetoothSdk.onGlassesStatus((changed) => {
+      if (typeof changed.hotspotEnabled === 'boolean') {
+        setHotspotEnabled(changed.hotspotEnabled);
+      }
       if (isDisconnectedStatus(changed)) {
         applyDisconnectedState('Disconnected');
       } else {
@@ -203,6 +212,9 @@ export function useMentraSdk(): MentraSdkModel {
 
     const removeBluetooth = BluetoothSdk.onCoreStatus((changed) => {
       setBluetoothStatus((current) => ({...current, ...changed}));
+      if ('gallery_mode' in changed) {
+        setGalleryModeAuto(galleryModeAutoFrom(changed));
+      }
       addEvent('BLE', summarizeMap(changed));
     });
 
@@ -648,9 +660,12 @@ export function useMentraSdk(): MentraSdkModel {
   async function toggleHotspot() {
     await runAction(hotspotEnabled ? 'Disable hotspot' : 'Enable hotspot', async () => {
       requireConnected('toggle hotspot');
-      const next = !hotspotEnabled;
+      const current =
+        typeof glassesStatus.hotspotEnabled === 'boolean'
+          ? glassesStatus.hotspotEnabled
+          : hotspotEnabled;
+      const next = !current;
       await BluetoothSdk.setHotspotState(next);
-      setHotspotEnabled(next);
     });
   }
 
@@ -890,7 +905,6 @@ export function useMentraSdk(): MentraSdkModel {
     setStreamStartedAt(null);
     setStreamStatus(status);
     setHotspotEnabled(false);
-    setGalleryModeAuto(true);
     setMicRecording(false);
     micRecordingRef.current = false;
     stopMicElapsedTimer();
@@ -1310,6 +1324,23 @@ function delay(ms: number) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function galleryModeAutoFrom(values: unknown) {
+  const galleryMode =
+    values && typeof values === 'object'
+      ? (values as {gallery_mode?: unknown}).gallery_mode
+      : undefined;
+  if (typeof galleryMode === 'boolean') {
+    return galleryMode;
+  }
+  if (galleryMode === 'auto') {
+    return true;
+  }
+  if (galleryMode === 'manual') {
+    return false;
+  }
+  return false;
 }
 
 function formatError(error: unknown) {

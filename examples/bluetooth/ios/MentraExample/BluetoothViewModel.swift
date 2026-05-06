@@ -58,7 +58,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published var streamUrl = ExampleStreamProtocol.rtmp.defaultUrl
     @Published private(set) var streamStartedAt: Date?
     @Published private(set) var streamStatus = "Ready to start stream"
-    @Published private(set) var galleryModeAuto = true
+    @Published private(set) var galleryModeAuto = false
     @Published private(set) var hotspotEnabled = false
     @Published private(set) var micRecording = false
     @Published private(set) var micPlaying = false
@@ -98,7 +98,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         super.init()
         sdk.delegate = self
         glassesValues = sdk.glassesStatus.values
-        bluetoothValues = sdk.bluetoothStatus.values
+        hotspotEnabled = boolValue(glassesValues, "hotspotEnabled") ?? false
+        applyBluetoothStatus(sdk.bluetoothStatus.values)
         if let value = ProcessInfo.processInfo.environment["MENTRA_PHOTO_WEBHOOK_URL"] {
             webhookUrl = value
         }
@@ -359,9 +360,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func toggleHotspot() {
         runAction(hotspotEnabled ? "Disable hotspot" : "Enable hotspot") {
             try requireConnected("toggle hotspot")
-            let next = !hotspotEnabled
+            let current = boolValue(glassesValues, "hotspotEnabled") ?? hotspotEnabled
+            let next = !current
             sdk.setHotspotState(enabled: next)
-            hotspotEnabled = next
         }
     }
 
@@ -437,6 +438,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateGlassesStatus status: MentraGlassesStatusUpdate) {
         glassesValues.merge(status.values) { _, new in new }
+        if let enabled = boolValue(status.values, "hotspotEnabled") {
+            hotspotEnabled = enabled
+        }
         if isDisconnectedStatus(status.values) {
             applyDisconnectedState(status: "Disconnected")
         }
@@ -444,7 +448,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateBluetoothStatus status: MentraBluetoothStatusUpdate) {
-        bluetoothValues.merge(status.values) { _, new in new }
+        applyBluetoothStatus(status.values)
         append(tag: "BLE", text: summarize(status.values))
     }
 
@@ -534,6 +538,13 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         try requireConnected(feature)
         guard supportsDisplay(glassesValues) else {
             throw ExampleActionError(message: "This glasses model has no display, so \(feature) is unavailable.")
+        }
+    }
+
+    private func applyBluetoothStatus(_ values: [String: Any]) {
+        bluetoothValues.merge(values) { _, new in new }
+        if let galleryMode = boolValue(values, "gallery_mode") {
+            galleryModeAuto = galleryMode
         }
     }
 
