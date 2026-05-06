@@ -154,7 +154,7 @@ export function FloatingDevPanel({
           –
         </button>
       </div>
-      <div className="overflow-y-auto p-3">{children}</div>
+      <div className="overflow-y-auto p-3 max-h-75">{children}</div>
     </div>
   )
 }

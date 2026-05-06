@@ -135,22 +135,6 @@ export function Drawer({
     }
   }
 
-  // When peek is enabled we punch a 48px circular hole in the top-right of
-  // the cream surface (so the map shows through) and float a chevron
-  // toggle inside it. Mask geometry: opaque everywhere EXCEPT a circle
-  // centered at (right - HOLE_INSET, HOLE_INSET) of radius HOLE_RADIUS.
-  // The hole/chevron must sit fully inside the cream surface, so
-  // `HOLE_TOP_INSET >= HOLE_RADIUS`. Otherwise the cut and button extend
-  // past the drawer's rounded top edge and look like detached chrome.
-  const HOLE_RADIUS = 22 // px (44px diameter)
-  const HOLE_TOP_INSET = 6 // 4px gap between top of cream and top of hole
-  const HOLE_RIGHT_INSET = 32 // distance from right edge to circle center
-  const surfaceMaskStyle = hasPeek
-    ? ({
-        WebkitMaskImage: `radial-gradient(circle ${HOLE_RADIUS}px at calc(100% - ${HOLE_RIGHT_INSET}px) ${HOLE_TOP_INSET}px, transparent 99%, black 100%)`,
-        maskImage: `radial-gradient(circle ${HOLE_RADIUS}px at calc(100% - ${HOLE_RIGHT_INSET}px) ${HOLE_TOP_INSET}px, transparent 99%, black 100%)`,
-      } as const)
-    : undefined
 
   return (
     <AnimatePresence>
@@ -172,7 +156,6 @@ export function Drawer({
             style={{y}}
             className="relative">
             <div
-              style={surfaceMaskStyle}
               className={
                 className ??
                 "pointer-events-auto mx-auto max-w-md flex flex-col rounded-tl-[22px] rounded-tr-[22px] bg-[#F5F1E8] [box-shadow:#1F1F1B0F_0px_-2px_16px] antialiased"
@@ -182,69 +165,10 @@ export function Drawer({
                 {children}
               </div>
             </div>
-            {hasPeek ? (
-              <div className="pointer-events-none absolute inset-0 mx-auto max-w-md">
-                <ChevronToggle
-                  expanded={expanded}
-                  onClick={() => onExpandedChange?.(!expanded)}
-                  top={HOLE_TOP_INSET}
-                  right={HOLE_RIGHT_INSET}
-                  radius={HOLE_RADIUS}
-                />
-              </div>
-            ) : null}
           </motion.div>
         </motion.div>
       ) : null}
     </AnimatePresence>
-  )
-}
-
-function ChevronToggle({
-  expanded,
-  onClick,
-  top,
-  right,
-  radius,
-}: {
-  expanded: boolean
-  onClick: () => void
-  top: number
-  right: number
-  radius: number
-}) {
-  const size = radius * 2 - 4 // slight inset so the button sits inside the hole
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      onPointerDown={(e) => e.stopPropagation()}
-      style={{
-        position: "absolute",
-        top: top - size / 2,
-        right: right - size / 2,
-        width: size,
-        height: size,
-      }}
-      className="pointer-events-auto rounded-full bg-[#F5F1E8] border border-[#E4DECD] shadow-sm flex items-center justify-center text-[#1F1F1B] z-10"
-      aria-label={expanded ? "Collapse drawer" : "Expand drawer"}>
-      <motion.svg
-        width="18"
-        height="18"
-        viewBox="0 0 24 24"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        animate={{rotate: expanded ? 180 : 0}}
-        transition={{type: "spring", stiffness: 340, damping: 28}}>
-        <path
-          d="M6 14l6-6 6 6"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </motion.svg>
-    </button>
   )
 }
 
@@ -253,8 +177,9 @@ function DrawerHandleInternal({onTap}: {onTap: () => void}) {
     <button
       type="button"
       onClick={onTap}
-      className=""
+      className="w-full flex justify-center pt-3 pb-5"
       aria-label="Drawer handle">
+      <div className="w-9 h-1 rounded-full bg-[#00000033]" />
     </button>
   )
 }

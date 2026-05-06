@@ -19,11 +19,11 @@ type Props = {
   maneuver?: NavManeuver | null
   routePoints?: LatLng[] | null
   devFrozen?: boolean
+  autoFocus?: boolean
+  onSearchingChange?: (searching: boolean) => void
 }
 
 const DEBOUNCE_MS = 200
-const HISTORY_KEY = "recentDestinations"
-const HISTORY_MAX = 5
 
 // ---- icons ------------------------------------------------------------------
 
@@ -46,32 +46,29 @@ function PinIconOutline() {
 
 // ---- component --------------------------------------------------------------
 
-export function LocationSearch({selected, onSelect, onClear, disabled, running, me, maneuver, routePoints, devFrozen = false}: Props) {
+export function LocationSearch({selected, onSelect, onClear, disabled, running, me, maneuver, routePoints, devFrozen = false, autoFocus = false, onSearchingChange}: Props) {
   const user = useUser()
   const heading = user.heading
   const session = useMemo(() => new PlacesSession(), [])
   const [query, setQuery] = useState("")
   const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([])
+  const [recentSearches, setRecentSearches] = useState<PlaceDetails[]>([])
   const [open, setOpen] = useState(false)
   const [focused, setFocused] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [history, setHistory] = useState<PlaceDetails[]>([])
   const abortRef = useRef<AbortController | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
 
-  // Load history from storage on mount
   useEffect(() => {
-    user.storage.getJSON<PlaceDetails[]>(HISTORY_KEY).then((saved) => {
-      if (saved) setHistory(saved)
-    })
-  }, [user.storage])
+    if (autoFocus) {
+      setTimeout(() => inputRef.current?.focus(), 50)
+    }
+  }, [autoFocus])
 
-  async function saveToHistory(place: PlaceDetails) {
-    const next = [place, ...history.filter((h) => h.placeId !== place.placeId)].slice(0, HISTORY_MAX)
-    setHistory(next)
-    await user.storage.setJSON(HISTORY_KEY, next)
-  }
+  useEffect(() => {
+    onSearchingChange?.(focused && !selected)
+  }, [focused, selected, onSearchingChange])
 
   // When something is selected, the input shows the chosen place and the
   // dropdown stays closed. Typing again clears the selection.
@@ -81,6 +78,12 @@ export function LocationSearch({selected, onSelect, onClear, disabled, running, 
       setOpen(false)
     }
   }, [selected])
+
+  // Fetch recent searches whenever the user focuses the empty input
+  useEffect(() => {
+    if (!focused || query.trim() || selected) return
+    user.storage.getRecentSearches().then(setRecentSearches)
+  }, [focused, query, selected, user.storage])
 
   useEffect(() => {
     if (selected || disabled || !focused) return
@@ -121,7 +124,7 @@ export function LocationSearch({selected, onSelect, onClear, disabled, running, 
     try {
       const details = await session.details(s.placeId)
       session.reset()
-      await saveToHistory(details)
+      await user.storage.addRecentSearch(details)
       onSelect(details)
     } catch (err) {
       setError((err as Error).message)
@@ -130,11 +133,11 @@ export function LocationSearch({selected, onSelect, onClear, disabled, running, 
     }
   }
 
-  async function pickFromHistory(place: PlaceDetails) {
+  async function pickRecent(place: PlaceDetails) {
     setOpen(false)
     setFocused(false)
     inputRef.current?.blur()
-    await saveToHistory(place)
+    await user.storage.addRecentSearch(place)
     onSelect(place)
   }
 
@@ -150,8 +153,7 @@ export function LocationSearch({selected, onSelect, onClear, disabled, running, 
     onClear()
   }
 
-  // Show history panel when focused + query empty + no selection + history exists
-  const showHistory = (focused || devFrozen) && !query.trim() && !selected && history.length > 0
+  const isQueryEmpty = !query.trim()
 
   // Show suggestions overlay whenever focused and no selection
   const showSuggestions = (focused || devFrozen) && !selected
@@ -228,7 +230,54 @@ export function LocationSearch({selected, onSelect, onClear, disabled, running, 
                   <Loader2 size={16} className="animate-spin" />
                   <span className="text-[13px]">Searching…</span>
                 </div>
+              ) : isQueryEmpty ? (
+                // Empty input — show recent searches
+                recentSearches.length > 0 ? (
+                  <ul>
+                    {recentSearches.map((place, i) => {
+                      const isFirst = i === 0
+                      return (
+                        <li key={place.placeId}>
+                          <button
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => pickRecent(place)}
+                            className="w-full text-left flex items-center gap-3 px-4 hover:bg-[#0000000A] active:bg-[#0000001A] transition-colors border-b border-[#0000000A] last:border-b-0"
+                            style={{paddingTop: isFirst ? 14 : 12, paddingBottom: isFirst ? 14 : 12}}>
+                            {isFirst ? (
+                              <div className="flex items-center justify-center shrink-0 rounded-[18px] bg-[#1A1A1A] size-9">
+                                <PinIconFilled />
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-center shrink-0 size-8">
+                                <PinIconOutline />
+                              </div>
+                            )}
+                            <div className="grow shrink basis-0 min-w-0">
+                              <div
+                                className="truncate font-sans text-[#000000E6]"
+                                style={{
+                                  fontSize: isFirst ? 16 : 15,
+                                  fontWeight: isFirst ? 600 : 500,
+                                  lineHeight: isFirst ? "20px" : "18px",
+                                  letterSpacing: "-0.012em",
+                                }}>
+                                {place.name || place.address}
+                              </div>
+                              <div className="text-[#0000008C] font-sans text-xs leading-4 truncate">{place.address}</div>
+                            </div>
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                ) : (
+                  <div className="flex items-center justify-center px-3 py-8 text-neutral-400">
+                    <span className="text-[13px]">No recent searches</span>
+                  </div>
+                )
               ) : (
+                // Active query — show autocomplete results
                 <ul>
                   {suggestions.map((s, i) => (
                     <motion.li
