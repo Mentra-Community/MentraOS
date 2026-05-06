@@ -131,18 +131,19 @@ struct DeviceScreen: View {
                     ) {
                         model.setGalleryModeAuto(!model.galleryModeAuto)
                     }
+                    let disconnecting = model.activeAction == "Disconnect"
                     Button {
                         model.disconnect()
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: "wifi.slash").foregroundColor(.white).font(.system(size: 14, weight: .bold))
-                            Text("Disconnect").foregroundColor(.white).font(.system(size: 13, weight: .semibold))
+                            Text(disconnecting ? "Disconnecting" : "Disconnect").foregroundColor(.white).font(.system(size: 13, weight: .semibold))
                         }
                         .frame(maxWidth: .infinity).padding(.vertical, 14)
                         .background(LinearGradient(colors: [Color(hex: 0xFF6B5B), AppColor.red], startPoint: .top, endPoint: .bottom))
                         .clipShape(RoundedRectangle(cornerRadius: 18))
                     }
-                    .disabled(!connected)
+                    .disabled(!connected || disconnecting)
                     .opacity(connected ? 1 : 0.45)
                 }
                 if connected && !supportsDisplay(model.glassesValues) {

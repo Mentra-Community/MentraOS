@@ -140,11 +140,20 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func disconnect() {
-        runAction("Disconnect") {
-            stopKeepAlive()
-            sdk.disconnect()
-            activeStreamId = nil
-            applyDisconnectedState(status: "Disconnected")
+        let label = "Disconnect"
+        guard activeAction != label else { return }
+        activeAction = label
+        lastAction = "Running: \(label)"
+        append(tag: "TX", text: label)
+        stopKeepAlive()
+        activeStreamId = nil
+        applyDisconnectedState(status: "Disconnecting")
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let self else { return }
+            self.sdk.disconnect()
+            self.lastAction = "Requested: \(label)"
+            self.activeAction = nil
         }
     }
 
