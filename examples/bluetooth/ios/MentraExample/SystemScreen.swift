@@ -26,45 +26,44 @@ private func recentInputChips(from events: [ExampleEvent]) -> [InputChipModel] {
 }
 
 private func inputLabel(from text: String) -> String? {
-    let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    if normalized.hasPrefix("button ") {
-        let detail = normalized.dropFirst("button ".count).replacingOccurrences(of: ":", with: " ")
-        if detail.contains("long") {
-            return "long"
-        }
-        if detail.contains("short") || detail.contains("tap") {
-            return "tap"
-        }
-        return detail.isEmpty ? "button" : String(detail.split(separator: " ").last ?? "button")
+    let normalized = normalizeInputText(text)
+    let pieces = normalized.split(separator: " ", maxSplits: 1).map(String.init)
+    guard let prefix = pieces.first, inputEventPrefixes.contains(prefix) else {
+        return nil
     }
-    if normalized.hasPrefix("swipe ") {
-        if normalized.contains("left") {
-            return "swipe ←"
-        }
-        if normalized.contains("right") || normalized.contains("->") {
-            return "swipe →"
-        }
-        if normalized.contains("up") {
-            return "swipe ↑"
-        }
-        if normalized.contains("down") {
-            return "swipe ↓"
-        }
-        return "swipe"
+    let payload = pieces.count > 1 ? pieces[1] : ""
+    let label = beautifyInputPayload(payload)
+    return label.isEmpty ? prefix : label
+}
+
+private let inputEventPrefixes: Set<String> = ["button", "touch", "swipe"]
+
+private let inputLabelReplacements: [(String, String)] = [
+    ("forward swipe", "swipe →"),
+    ("right swipe", "swipe →"),
+    ("backward swipe", "swipe ←"),
+    ("backwards swipe", "swipe ←"),
+    ("left swipe", "swipe ←"),
+    ("up swipe", "swipe ↑"),
+    ("down swipe", "swipe ↓"),
+    ("single tap", "tap"),
+    ("long press", "long"),
+]
+
+private func normalizeInputText(_ text: String) -> String {
+    text.trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+        .replacingOccurrences(of: "->", with: " forward swipe ")
+        .replacingOccurrences(of: "_", with: " ")
+        .replacingOccurrences(of: ":", with: " ")
+        .split(separator: " ")
+        .joined(separator: " ")
+}
+
+private func beautifyInputPayload(_ payload: String) -> String {
+    inputLabelReplacements.reduce(payload) { label, replacement in
+        label.replacingOccurrences(of: replacement.0, with: replacement.1)
     }
-    if normalized.hasPrefix("touch ") {
-        if normalized.contains("long") {
-            return "long"
-        }
-        if normalized.contains("double") {
-            return "double"
-        }
-        if normalized.contains("tap") || normalized.contains("short") {
-            return "tap"
-        }
-        return "touch"
-    }
-    return nil
 }
 
 struct SystemScreen: View {

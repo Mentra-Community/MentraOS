@@ -671,32 +671,44 @@ private fun recentInputChips(events: List<ExampleEvent>): List<InputChipModel> {
 }
 
 private fun inputLabel(text: String): String? {
-    val normalized = text.trim().lowercase()
-    return when {
-        normalized.startsWith("button ") -> {
-            val detail = normalized.removePrefix("button ").replace(":", " ")
-            when {
-                "long" in detail -> "long"
-                "short" in detail || "tap" in detail -> "tap"
-                detail.isNotBlank() -> detail.split(Regex("\\s+")).last()
-                else -> "button"
-            }
-        }
-        normalized.startsWith("swipe ") -> when {
-            "left" in normalized -> "swipe ←"
-            "right" in normalized || "->" in normalized -> "swipe →"
-            "up" in normalized -> "swipe ↑"
-            "down" in normalized -> "swipe ↓"
-            else -> "swipe"
-        }
-        normalized.startsWith("touch ") -> when {
-            "long" in normalized -> "long"
-            "double" in normalized -> "double"
-            "tap" in normalized || "short" in normalized -> "tap"
-            else -> "touch"
-        }
-        else -> null
+    val normalized = normalizeInputText(text)
+    val prefix = normalized.substringBefore(" ")
+    if (prefix !in inputEventPrefixes) {
+        return null
     }
+    val payload = normalized.removePrefix(prefix).trim()
+    return beautifyInputPayload(payload).ifBlank { prefix }
+}
+
+private val inputEventPrefixes = setOf("button", "touch", "swipe")
+
+private val inputLabelReplacements = listOf(
+    "forward swipe" to "swipe →",
+    "right swipe" to "swipe →",
+    "backward swipe" to "swipe ←",
+    "backwards swipe" to "swipe ←",
+    "left swipe" to "swipe ←",
+    "up swipe" to "swipe ↑",
+    "down swipe" to "swipe ↓",
+    "single tap" to "tap",
+    "long press" to "long",
+)
+
+private fun normalizeInputText(text: String): String =
+    text
+        .trim()
+        .lowercase()
+        .replace("->", " forward swipe ")
+        .replace(Regex("[_:]+"), " ")
+        .replace(Regex("\\s+"), " ")
+        .trim()
+
+private fun beautifyInputPayload(payload: String): String {
+    var label = payload
+    inputLabelReplacements.forEach { (source, replacement) ->
+        label = label.replace(source, replacement)
+    }
+    return label
 }
 
 @Composable

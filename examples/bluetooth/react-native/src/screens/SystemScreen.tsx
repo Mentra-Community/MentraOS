@@ -378,49 +378,44 @@ function recentInputChips(events: SdkConsoleEvent[]) {
 }
 
 function inputLabel(text: string) {
-  const normalized = text.trim().toLowerCase();
-  if (normalized.startsWith('button ')) {
-    const detail = normalized.replace(/^button /, '').replace(/:/g, ' ');
-    if (detail.includes('long')) {
-      return 'long';
-    }
-    if (detail.includes('short') || detail.includes('tap')) {
-      return 'tap';
-    }
-    if (!detail) {
-      return 'button';
-    }
-    const parts = detail.split(/\s+/);
-    return parts[parts.length - 1];
+  const normalized = normalizeInputText(text);
+  const [prefix, ...payloadParts] = normalized.split(' ');
+  if (!inputEventPrefixes.has(prefix)) {
+    return null;
   }
-  if (normalized.startsWith('swipe ')) {
-    if (normalized.includes('left')) {
-      return 'swipe ←';
-    }
-    if (normalized.includes('right') || normalized.includes('->')) {
-      return 'swipe →';
-    }
-    if (normalized.includes('up')) {
-      return 'swipe ↑';
-    }
-    if (normalized.includes('down')) {
-      return 'swipe ↓';
-    }
-    return 'swipe';
-  }
-  if (normalized.startsWith('touch ')) {
-    if (normalized.includes('long')) {
-      return 'long';
-    }
-    if (normalized.includes('double')) {
-      return 'double';
-    }
-    if (normalized.includes('tap') || normalized.includes('short')) {
-      return 'tap';
-    }
-    return 'touch';
-  }
-  return null;
+  const label = beautifyInputPayload(payloadParts.join(' '));
+  return label || prefix;
+}
+
+const inputEventPrefixes = new Set(['button', 'touch', 'swipe']);
+
+const inputLabelReplacements: Array<[string, string]> = [
+  ['forward swipe', 'swipe →'],
+  ['right swipe', 'swipe →'],
+  ['backward swipe', 'swipe ←'],
+  ['backwards swipe', 'swipe ←'],
+  ['left swipe', 'swipe ←'],
+  ['up swipe', 'swipe ↑'],
+  ['down swipe', 'swipe ↓'],
+  ['single tap', 'tap'],
+  ['long press', 'long'],
+];
+
+function normalizeInputText(text: string) {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/->/g, ' forward swipe ')
+    .replace(/[_:]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function beautifyInputPayload(payload: string) {
+  return inputLabelReplacements.reduce(
+    (label, [source, replacement]) => label.replaceAll(source, replacement),
+    payload,
+  );
 }
 
 function LedTab({ icon, label, active, disabled, onPress }: { icon: React.ReactNode; label: LedMode; active?: boolean; disabled?: boolean; onPress: () => void }) {
