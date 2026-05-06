@@ -7,6 +7,7 @@ import BluetoothSdk, {
   type ButtonPressEvent,
   type CompatibleGlassesSearchStopEvent,
   type CoreStatus,
+  type DefaultDevice,
   type DeviceSearchResult,
   type GlassesStatus,
   type LogEvent,
@@ -37,6 +38,11 @@ type StreamStartRequest = {
   type: 'start_stream';
 };
 
+type PersistedDefaultDevice = DefaultDevice & {
+  savedAt: number;
+  version: 1;
+};
+
 export const RGB_LED_COLORS: LedColor[] = ['red', 'green', 'blue', 'orange', 'white'];
 export const PHOTO_SIZES: PhotoSize[] = ['small', 'medium', 'large', 'full'];
 export const PHOTO_COMPRESSIONS: PhotoCompression[] = ['none', 'medium', 'heavy'];
@@ -59,6 +65,7 @@ export type MentraSdkState = {
   activeAction: string | null;
   bluetoothStatus: Partial<CoreStatus> & Record<string, unknown>;
   cameraStatus: string;
+  defaultDevice: DefaultDevice | null;
   discoveredDevices: DeviceSearchResult[];
   events: SdkConsoleEvent[];
   galleryModeAuto: boolean;
@@ -123,6 +130,7 @@ const ANDROID_12_API_LEVEL = 31;
 const MIC_SAMPLE_RATE = 16000;
 const MIC_CHANNEL_COUNT = 1;
 const MIC_BITS_PER_SAMPLE = 16;
+const DEFAULT_DEVICE_FILE = 'mentra-default-device.json';
 
 declare const process: {
   env?: {
@@ -138,6 +146,9 @@ export function useMentraSdk(): MentraSdkModel {
   const [bluetoothStatus, setBluetoothStatus] = useState<
     Partial<CoreStatus> & Record<string, unknown>
   >(() => BluetoothSdk.getCoreStatus() as Partial<CoreStatus> & Record<string, unknown>);
+  const [defaultDevice, setDefaultDevice] = useState<DefaultDevice | null>(
+    () => defaultDeviceFromStatus(BluetoothSdk.getCoreStatus() as unknown as Record<string, unknown>),
+  );
   const [events, setEvents] = useState<SdkConsoleEvent[]>([
     event('LIVE', 'SDK ready. Scan to discover glasses.'),
   ]);
@@ -196,6 +207,42 @@ export function useMentraSdk(): MentraSdkModel {
   const micStartedAtRef = useRef<number | null>(null);
 
   const discoveredDevices = bluetoothStatus.searchResults ?? [];
+  const defaultWearable = stringValue(bluetoothStatus, 'default_wearable');
+  const defaultDeviceName = stringValue(bluetoothStatus, 'device_name');
+  const defaultDeviceAddress = stringValue(bluetoothStatus, 'device_address');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void loadPersistedDefaultDevice()
+      .then(async (device) => {
+        if (cancelled || !device) {
+          return;
+        }
+        await BluetoothSdk.setDefaultDevice(device);
+        setDefaultDevice(device);
+        setBluetoothStatus((current) => ({...current, ...defaultDeviceStatus(device)}));
+        addEvent('BLE', `restored default ${device.name}`);
+      })
+      .catch((error) => {
+        addEvent('TX', `default device restore failed: ${formatError(error)}`);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hasDefaultDeviceStatus(bluetoothStatus)) {
+      return;
+    }
+    const device = defaultDeviceFromStatus(bluetoothStatus);
+    setDefaultDevice(device);
+    void savePersistedDefaultDevice(device).catch((error) => {
+      addEvent('TX', `default device save failed: ${formatError(error)}`);
+    });
+  }, [defaultDeviceAddress, defaultDeviceName, defaultWearable]);
 
   useEffect(() => {
     const removeGlasses = BluetoothSdk.onGlassesStatus((changed) => {
@@ -378,7 +425,11 @@ export function useMentraSdk(): MentraSdkModel {
         await BluetoothSdk.connectDiscoveredDevice(firstDevice);
         return;
       }
-      await BluetoothSdk.connectDefault();
+      if (defaultDevice || hasSavedConnectionTarget(bluetoothStatus)) {
+        await BluetoothSdk.connectDefault();
+        return;
+      }
+      throw new Error('Scan first to choose nearby glasses.');
     });
   }
 
@@ -944,6 +995,7 @@ export function useMentraSdk(): MentraSdkModel {
     connect,
     connectDevice,
     disconnect,
+    defaultDevice,
     discoveredDevices,
     displayHello,
     events,
@@ -1003,6 +1055,83 @@ function event(tag: SdkConsoleEvent['tag'], text: string): SdkConsoleEvent {
       second: '2-digit',
     }),
   };
+}
+
+async function loadPersistedDefaultDevice() {
+  const file = new File(Paths.document, DEFAULT_DEVICE_FILE);
+  if (!file.exists) {
+    return null;
+  }
+  return parseDefaultDevice(JSON.parse(await file.text()));
+}
+
+async function savePersistedDefaultDevice(device: DefaultDevice | null) {
+  const file = new File(Paths.document, DEFAULT_DEVICE_FILE);
+  if (!device) {
+    if (file.exists) {
+      file.delete();
+    }
+    return;
+  }
+  const persisted: PersistedDefaultDevice = {
+    ...device,
+    savedAt: Date.now(),
+    version: 1,
+  };
+  file.create({intermediates: true, overwrite: true});
+  file.write(JSON.stringify(persisted, null, 2));
+}
+
+function parseDefaultDevice(value: unknown): DefaultDevice | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const values = value as Record<string, unknown>;
+  const model = stringValue(values, 'model');
+  const name = stringValue(values, 'name');
+  if (!model || !name) {
+    return null;
+  }
+  const address = stringValue(values, 'address');
+  return address ? {address, model, name} : {model, name};
+}
+
+function defaultDeviceStatus(device: DefaultDevice | null): Record<string, string> {
+  if (!device) {
+    return {};
+  }
+  return {
+    default_wearable: device.model,
+    device_address: device.address ?? '',
+    device_name: device.name,
+  };
+}
+
+function defaultDeviceFromStatus(values: Record<string, unknown>): DefaultDevice | null {
+  const model = stringValue(values, 'default_wearable');
+  const name = stringValue(values, 'device_name');
+  if (!model || !name) {
+    return null;
+  }
+  const address = stringValue(values, 'device_address');
+  return address ? {address, model, name} : {model, name};
+}
+
+function hasDefaultDeviceStatus(values: Record<string, unknown>) {
+  return (
+    Object.prototype.hasOwnProperty.call(values, 'default_wearable') ||
+    Object.prototype.hasOwnProperty.call(values, 'device_name') ||
+    Object.prototype.hasOwnProperty.call(values, 'device_address')
+  );
+}
+
+function hasSavedConnectionTarget(values: Record<string, unknown>) {
+  return Boolean(stringValue(values, 'default_wearable') && stringValue(values, 'device_name'));
+}
+
+function stringValue(values: Record<string, unknown>, key: string) {
+  const value = values[key];
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
 export function durationText(seconds: number) {

@@ -36,6 +36,7 @@ const glassesImages = {
 export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
   const level = batteryLevel(sdk.glassesStatus);
   const connected = isGlassesConnected(sdk.glassesStatus);
+  const canConnect = !connected && hasConnectionTarget(sdk);
   const displaySupported = connected && supportsDisplay(sdk.glassesStatus);
   const connection = connectionLabel(sdk.glassesStatus);
   const latestEvent = sdk.events[0];
@@ -96,11 +97,11 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
               </Svg>
               <Text style={styles.btnTextLight}>Scan</Text>
             </Pressable>
-            <Pressable disabled={connected} style={({ pressed }) => [styles.btn, pressed && styles.btnPressed, connected && styles.disabled, { backgroundColor: colors.greenPrimary }]} onPress={sdk.connect}>
+            <Pressable disabled={!canConnect} style={({ pressed }) => [styles.btn, pressed && styles.btnPressed, !canConnect && styles.disabled, { backgroundColor: colors.greenPrimary }]} onPress={sdk.connect}>
               <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
                 <Path d="M9 17H5a3 3 0 0 1 0-6h4" /><Path d="M15 7h4a3 3 0 0 1 0 6h-4" /><Line x1={8} y1={14} x2={16} y2={14} />
               </Svg>
-              <Text style={styles.btnTextLight}>{connected ? 'Connected' : 'Connect'}</Text>
+              <Text style={styles.btnTextLight}>{connected ? 'Connected' : canConnect ? 'Connect' : 'Scan first'}</Text>
             </Pressable>
           </View>
           <View style={styles.btnRow}>
@@ -148,6 +149,7 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
             <View style={{ width: 6, height: 6, borderRadius: 999, backgroundColor: colors.greenPrimary }} />
             <Text style={[styles.statusValue, { color: colors.greenInk, fontWeight: '600' }]}>{connection}</Text>
           </View>} />
+          <StatusRow label="TARGET" value={connectionTargetLabel(sdk)} mono />
           <StatusRow label="DEVICE" value={deviceLabel(sdk.glassesStatus)} mono />
           <StatusRow label="BATTERY" custom={<View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Text style={[styles.statusValue, { fontWeight: '600' }]}>{batteryLabel(sdk.glassesStatus)}</Text>
@@ -171,6 +173,30 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
       </LinearGradient>
     </ScrollView>
   );
+}
+
+function hasConnectionTarget(sdk: MentraSdkModel) {
+  return Boolean(
+    sdk.discoveredDevices.length > 0 ||
+    sdk.defaultDevice ||
+    savedConnectionTargetName(sdk.bluetoothStatus),
+  );
+}
+
+function connectionTargetLabel(sdk: MentraSdkModel) {
+  if (isGlassesConnected(sdk.glassesStatus)) {
+    return deviceLabel(sdk.glassesStatus);
+  }
+  const scannedDevice = sdk.discoveredDevices[0];
+  if (scannedDevice) {
+    return scannedDevice.deviceName;
+  }
+  return savedConnectionTargetName(sdk.bluetoothStatus) ?? sdk.defaultDevice?.name ?? 'Scan required';
+}
+
+function savedConnectionTargetName(values: Record<string, unknown>) {
+  const name = values.device_name;
+  return typeof name === 'string' && name.length > 0 ? name : null;
 }
 
 function glassesImageFor(status: MentraSdkModel['glassesStatus']) {

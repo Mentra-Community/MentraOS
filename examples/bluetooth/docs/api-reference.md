@@ -32,7 +32,7 @@ sdk.delegate = delegate
 sdk.invalidate()
 ```
 
-Keep one SDK instance per app session. The SDK owns Bluetooth connection state, remembered/default device state, hardware event delivery, foreground-service coordination on Android, and cleanup.
+Keep one SDK instance per app session. The SDK owns Bluetooth connection state, the current in-memory default device target, hardware event delivery, foreground-service coordination on Android, and cleanup. Your app owns whether that default device target is persisted across app restarts.
 
 ## Permissions
 
@@ -51,7 +51,10 @@ sdk.startScan(MentraDeviceModel.MENTRA_LIVE)
 sdk.stopScan()
 sdk.connect(device)
 sdk.connectByName(MentraDeviceModel.MENTRA_LIVE, "Mentra Live 1234")
+sdk.setDefaultDevice(MentraPairedDevice(MentraDeviceModel.MENTRA_LIVE, "Mentra_Live_E7FA"))
+val defaultDevice = sdk.getDefaultDevice()
 sdk.connectDefault()
+sdk.clearDefaultDevice()
 sdk.connectSimulated()
 sdk.disconnect()
 sdk.forget()
@@ -64,13 +67,25 @@ sdk.startScan(model: .mentraLive)
 sdk.stopScan()
 sdk.connect(to: device)
 sdk.connect(model: .mentraLive, name: "Mentra Live 1234")
+sdk.setDefaultDevice(MentraPairedDevice(model: .mentraLive, name: "Mentra_Live_E7FA"))
+let defaultDevice = sdk.getDefaultDevice()
 sdk.connectDefault()
+sdk.clearDefaultDevice()
 sdk.connectSimulated()
 sdk.disconnect()
 sdk.forget()
 ```
 
-Prefer connecting to a `MentraDiscoveredDevice` returned by the SDK. Use name/default connection helpers for simple pairing UIs.
+React Native:
+
+```ts
+await BluetoothSdk.setDefaultDevice({model: "Mentra Live", name: "Mentra_Live_E7FA"})
+const defaultDevice = BluetoothSdk.getDefaultDevice()
+await BluetoothSdk.connectDefault()
+await BluetoothSdk.clearDefaultDevice()
+```
+
+Prefer connecting to a `MentraDiscoveredDevice` returned by the SDK. Use name/default connection helpers for simple pairing UIs. If your app wants `connectDefault()` to work after an app restart, persist a small default-device record in app storage and restore it with `setDefaultDevice()` during startup before calling `connectDefault()`.
 
 ## Status
 

@@ -52,4 +52,4 @@ Treat unsupported operations as recoverable SDK errors and keep UI state aligned
 - Retry scans manually from the UI instead of scanning forever in the background.
 - On mobile OS background transitions, expect Bluetooth behavior to vary by platform.
 - Reconcile command failures with the latest status snapshot before showing destructive UI.
-- Provide a visible "forget device" path that clears the SDK default device.
+- Provide a visible "forget device" path that clears both the SDK default device and any app-persisted default-device record.

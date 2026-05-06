@@ -18,6 +18,7 @@ import com.mentra.core.MentraGlassesStatusUpdate
 import com.mentra.core.MentraHotspotErrorEvent
 import com.mentra.core.MentraHotspotStatusEvent
 import com.mentra.core.MentraMicConfig
+import com.mentra.core.MentraPairedDevice
 import com.mentra.core.MentraPhotoCompression
 import com.mentra.core.MentraPhotoRequest
 import com.mentra.core.MentraPhotoSize
@@ -107,6 +108,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         private set
 
     private val appContext = context.applicationContext
+    private val defaultDevicePrefs =
+        appContext.getSharedPreferences("mentra_example_default_device", Context.MODE_PRIVATE)
     private val sdk = MentraBluetoothSdk.create(appContext, this)
     private val controllerJob = Job()
     private val scope = CoroutineScope(Dispatchers.Main + controllerJob)
@@ -124,7 +127,16 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private val micChannelCount = 1
     private val micBitsPerSample = 16
 
+    companion object {
+        private const val DEFAULT_DEVICE_SCHEMA_KEY = "version"
+        private const val DEFAULT_DEVICE_MODEL_KEY = "model"
+        private const val DEFAULT_DEVICE_NAME_KEY = "name"
+        private const val DEFAULT_DEVICE_ADDRESS_KEY = "address"
+        private const val DEFAULT_DEVICE_SAVED_AT_KEY = "saved_at"
+    }
+
     init {
+        loadPersistedDefaultDevice()?.let { sdk.setDefaultDevice(it) }
         val initialGlassesStatus = sdk.getGlassesStatus().values
         val initialBluetoothStatus = sdk.getBluetoothStatus().values
         state = state.copy(
@@ -453,6 +465,14 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         addEvent("BLE", "discovered ${device.name}")
     }
 
+    override fun onDefaultDeviceChanged(device: MentraPairedDevice?) {
+        savePersistedDefaultDevice(device)
+        state = state.copy(bluetoothStatus = state.bluetoothStatus + defaultDeviceStatus(device))
+        if (device != null) {
+            addEvent("BLE", "saved default ${device.name}")
+        }
+    }
+
     override fun onButtonPress(event: MentraButtonPressEvent) {
         addEvent("LIVE", "button ${event.buttonId}: ${event.pressType}")
     }
@@ -572,6 +592,33 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     private fun addEvent(tag: String, text: String) {
         state = state.copy(events = (listOf(exampleEvent(tag, text)) + state.events).take(30))
+    }
+
+    private fun loadPersistedDefaultDevice(): MentraPairedDevice? {
+        val model = defaultDevicePrefs.getString(DEFAULT_DEVICE_MODEL_KEY, null)?.takeIf { it.isNotBlank() }
+            ?: return null
+        val name = defaultDevicePrefs.getString(DEFAULT_DEVICE_NAME_KEY, null)?.takeIf { it.isNotBlank() }
+            ?: return null
+        val address = defaultDevicePrefs.getString(DEFAULT_DEVICE_ADDRESS_KEY, null)?.takeIf { it.isNotBlank() }
+        return MentraPairedDevice(
+            model = MentraDeviceModel.fromDeviceType(model),
+            name = name,
+            address = address,
+        )
+    }
+
+    private fun savePersistedDefaultDevice(device: MentraPairedDevice?) {
+        defaultDevicePrefs.edit().apply {
+            if (device == null || device.name.isBlank()) {
+                clear()
+            } else {
+                putInt(DEFAULT_DEVICE_SCHEMA_KEY, 1)
+                putString(DEFAULT_DEVICE_MODEL_KEY, device.model.deviceType)
+                putString(DEFAULT_DEVICE_NAME_KEY, device.name)
+                putString(DEFAULT_DEVICE_ADDRESS_KEY, device.address.orEmpty())
+                putLong(DEFAULT_DEVICE_SAVED_AT_KEY, System.currentTimeMillis())
+            }
+        }.apply()
     }
 
     private fun isGlassesConnected(): Boolean = isGlassesConnected(state.glassesStatus)
@@ -1153,6 +1200,13 @@ fun canConnectTarget(state: MentraExampleState): Boolean =
 
 fun hasSavedConnectionTarget(values: Map<String, Any>): Boolean =
     !stringValue(values, "default_wearable").isNullOrBlank() && !stringValue(values, "device_name").isNullOrBlank()
+
+fun defaultDeviceStatus(device: MentraPairedDevice?): Map<String, Any> =
+    mapOf(
+        "default_wearable" to (device?.model?.deviceType ?: ""),
+        "device_name" to (device?.name ?: ""),
+        "device_address" to (device?.address ?: ""),
+    )
 
 fun savedConnectionTargetName(values: Map<String, Any>): String =
     stringValue(values, "device_name") ?: "Saved glasses"

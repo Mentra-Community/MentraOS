@@ -190,7 +190,7 @@ final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
 2. Create one SDK instance for the signed-in user/session.
 3. Subscribe to typed status and hardware events.
 4. Scan for the selected glasses model.
-5. Connect by discovered device or default device.
+5. Connect by discovered device, or restore your app-persisted default device and call `connectDefault()`.
 6. Drive your UI from SDK status snapshots and callbacks.
 7. Send display, settings, audio, camera, or maintenance commands only when the connected device supports them.
 8. Stop scans, remove listeners/delegates, and call `close()` / `invalidate()` when the user signs out or disables glasses features.

@@ -85,6 +85,15 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var micRecordingUrl: URL?
     private var micPlayer: AVAudioPlayer?
     private let validLedColors = Set(["red", "green", "blue", "orange", "white"])
+    private let defaultDeviceDefaults = UserDefaults.standard
+
+    private enum DefaultDeviceStorage {
+        static let version = "mentra.example.defaultDevice.version"
+        static let model = "mentra.example.defaultDevice.model"
+        static let name = "mentra.example.defaultDevice.name"
+        static let identifier = "mentra.example.defaultDevice.identifier"
+        static let savedAt = "mentra.example.defaultDevice.savedAt"
+    }
 
     var glassesConnected: Bool {
         isGlassesConnected(glassesValues)
@@ -97,6 +106,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     override init() {
         super.init()
         sdk.delegate = self
+        if let savedDevice = loadPersistedDefaultDevice() {
+            sdk.setDefaultDevice(savedDevice)
+        }
         glassesValues = sdk.glassesStatus.values
         hotspotEnabled = boolValue(glassesValues, "hotspotEnabled") ?? false
         applyBluetoothStatus(sdk.bluetoothStatus.values)
@@ -464,6 +476,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         append(tag: "BLE", text: "discovered \(device.name)")
     }
 
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didChangeDefaultDevice device: MentraPairedDevice?) {
+        savePersistedDefaultDevice(device)
+        bluetoothValues.merge(defaultDeviceStatus(device)) { _, new in new }
+        if let device {
+            append(tag: "BLE", text: "saved default \(device.name)")
+        }
+    }
+
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceive event: MentraBluetoothEvent) {
         switch event {
         case let .buttonPress(button):
@@ -548,6 +568,40 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         if let galleryMode = boolValue(values, "gallery_mode") {
             galleryModeAuto = galleryMode
         }
+    }
+
+    private func loadPersistedDefaultDevice() -> MentraPairedDevice? {
+        guard let model = defaultDeviceDefaults.string(forKey: DefaultDeviceStorage.model), !model.isEmpty else {
+            return nil
+        }
+        guard let name = defaultDeviceDefaults.string(forKey: DefaultDeviceStorage.name), !name.isEmpty else {
+            return nil
+        }
+        let identifier = defaultDeviceDefaults.string(forKey: DefaultDeviceStorage.identifier).flatMap {
+            $0.isEmpty ? nil : $0
+        }
+        return MentraPairedDevice(
+            model: MentraDeviceModel.fromDeviceType(model),
+            name: name,
+            identifier: identifier
+        )
+    }
+
+    private func savePersistedDefaultDevice(_ device: MentraPairedDevice?) {
+        guard let device, !device.name.isEmpty else {
+            defaultDeviceDefaults.removeObject(forKey: DefaultDeviceStorage.version)
+            defaultDeviceDefaults.removeObject(forKey: DefaultDeviceStorage.model)
+            defaultDeviceDefaults.removeObject(forKey: DefaultDeviceStorage.name)
+            defaultDeviceDefaults.removeObject(forKey: DefaultDeviceStorage.identifier)
+            defaultDeviceDefaults.removeObject(forKey: DefaultDeviceStorage.savedAt)
+            return
+        }
+
+        defaultDeviceDefaults.set(1, forKey: DefaultDeviceStorage.version)
+        defaultDeviceDefaults.set(device.model.deviceType, forKey: DefaultDeviceStorage.model)
+        defaultDeviceDefaults.set(device.name, forKey: DefaultDeviceStorage.name)
+        defaultDeviceDefaults.set(device.identifier ?? "", forKey: DefaultDeviceStorage.identifier)
+        defaultDeviceDefaults.set(Date().timeIntervalSince1970, forKey: DefaultDeviceStorage.savedAt)
     }
 
     private func applyDisconnectedState(status: String) {
@@ -1028,6 +1082,14 @@ func hasSavedConnectionTarget(_ values: [String: Any]) -> Bool {
     guard let model = stringValue(values, "default_wearable"), !model.isEmpty else { return false }
     guard let name = stringValue(values, "device_name"), !name.isEmpty else { return false }
     return true
+}
+
+func defaultDeviceStatus(_ device: MentraPairedDevice?) -> [String: Any] {
+    [
+        "default_wearable": device?.model.deviceType ?? "",
+        "device_name": device?.name ?? "",
+        "device_address": device?.identifier ?? "",
+    ]
 }
 
 func savedConnectionTargetName(_ values: [String: Any]) -> String {
