@@ -34,6 +34,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mentra.examples.android.MentraExampleController
 import com.mentra.examples.android.durationText
+import com.mentra.examples.android.galleryHotspotPasswordLabel
+import com.mentra.examples.android.galleryHotspotSsidLabel
+import com.mentra.examples.android.galleryServerUrl
 import com.mentra.examples.android.hotspotLabel
 import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.rgbLedColorOptions
@@ -50,6 +53,8 @@ fun SystemScreen(controller: MentraExampleController) {
     val connected = isGlassesConnected(state.glassesStatus)
     val networks = wifiScanResults(state.bluetoothStatus)
     val inputEvents = state.events.filter { it.text.contains("button") || it.text.contains("touch") || it.text.contains("swipe") }.take(3)
+    val galleryUrl = galleryServerUrl(state.glassesStatus, state.hotspotEnabled)
+    val galleryHotspotPassword = galleryUrl?.let { galleryHotspotPasswordLabel(state.glassesStatus) }
     var pendingWifiSsid by remember { mutableStateOf<String?>(null) }
     var pendingWifiPassword by remember { mutableStateOf("") }
     val micStatus = when {
@@ -142,7 +147,7 @@ fun SystemScreen(controller: MentraExampleController) {
         }
 
         // Hotspot card
-        Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp).clickable(enabled = connected) { controller.toggleHotspot() }) {
+        Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
             GlassCard(
                 modifier = Modifier.fillMaxWidth(),
                 corner = 22,
@@ -162,12 +167,61 @@ fun SystemScreen(controller: MentraExampleController) {
                         }
                     }
                     Box(
-                        modifier = Modifier.size(width = 38.dp, height = 22.dp).clip(RoundedCornerShape(999.dp)).background(Color.White).padding(2.dp),
+                        modifier = Modifier.size(width = 38.dp, height = 22.dp)
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(Color.White)
+                            .clickable(enabled = connected) { controller.toggleHotspot() }
+                            .padding(2.dp),
                         contentAlignment = if (state.hotspotEnabled) Alignment.CenterEnd else Alignment.CenterStart
                     ) {
                         Box(modifier = Modifier.size(18.dp).clip(CircleShape).background(if (state.hotspotEnabled) AppColor.greenAccent else AppColor.mutedSoft))
                     }
                 }
+                Spacer(Modifier.height(12.dp))
+                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(AppColor.ink.copy(alpha = 0.05f)))
+                Spacer(Modifier.height(10.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Top) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Gallery server", color = AppColor.ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            galleryUrl ?: "Enable hotspot to expose local gallery access",
+                            color = if (galleryUrl != null) AppColor.greenAccent else AppColor.muted,
+                            fontSize = 10.sp,
+                            lineHeight = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        if (galleryHotspotPassword != null) {
+                            Text(
+                                "Join ${galleryHotspotSsidLabel(state.glassesStatus)} · password $galleryHotspotPassword",
+                                color = AppColor.muted,
+                                fontSize = 10.sp,
+                                lineHeight = 13.sp,
+                            )
+                        }
+                    }
+                    Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            HotspotActionChip("Open", enabled = galleryUrl != null, onClick = controller::openGalleryServer)
+                            HotspotActionChip("Wi-Fi", enabled = galleryUrl != null, onClick = controller::openWifiSettings)
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            HotspotActionChip("Copy URL", enabled = galleryUrl != null, onClick = controller::copyGalleryServerUrl)
+                            HotspotActionChip("Copy pwd", enabled = galleryHotspotPassword != null, onClick = controller::copyGalleryHotspotPassword)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    state.galleryServerStatus,
+                    color = when (state.galleryServerReachable) {
+                        true -> AppColor.greenAccent
+                        false -> AppColor.red
+                        null -> AppColor.muted
+                    },
+                    fontSize = 10.sp,
+                    lineHeight = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                )
             }
         }
 
@@ -487,6 +541,21 @@ private fun DisabledHint(message: String) {
             .clip(RoundedCornerShape(10.dp))
             .background(AppColor.red.copy(alpha = 0.08f))
             .padding(horizontal = 10.dp, vertical = 8.dp),
+    )
+}
+
+@Composable
+private fun HotspotActionChip(label: String, enabled: Boolean, onClick: () -> Unit) {
+    Text(
+        label,
+        color = if (enabled) AppColor.greenInk else AppColor.muted,
+        fontSize = 10.sp,
+        fontWeight = FontWeight.Bold,
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(if (enabled) AppColor.greenAccent.copy(alpha = 0.14f) else AppColor.ink.copy(alpha = 0.04f))
+            .clickable(enabled = enabled) { onClick() }
+            .padding(horizontal = 9.dp, vertical = 6.dp),
     )
 }
 

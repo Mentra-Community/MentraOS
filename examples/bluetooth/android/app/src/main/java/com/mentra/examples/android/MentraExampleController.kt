@@ -5,6 +5,8 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothProfile
 import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -13,6 +15,7 @@ import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.MediaPlayer
+import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.compose.runtime.getValue
@@ -87,7 +90,15 @@ private data class AudioProfileStatus(
     val connected: Boolean,
 )
 
+private data class GalleryServerCheck(
+    val reachable: Boolean,
+    val status: String,
+    val eventTag: String,
+    val eventText: String,
+)
+
 val rgbLedColorOptions = MentraRgbLedColor.values().map { it.value }
+const val MENTRA_LIVE_DEFAULT_HOTSPOT_PASSWORD = "00001111"
 
 data class MentraExampleState(
     val activeAction: String? = null,
@@ -97,6 +108,8 @@ data class MentraExampleState(
     val selectedDiscoveredDevice: MentraDiscoveredDevice? = null,
     val events: List<ExampleEvent> = listOf(exampleEvent("LIVE", "SDK ready. Scan to discover glasses.")),
     val galleryModeAuto: Boolean = false,
+    val galleryServerReachable: Boolean? = null,
+    val galleryServerStatus: String = "Gallery server: enable hotspot to check",
     val glassesStatus: Map<String, Any> = emptyMap(),
     val glassesMediaVolume: Int? = null,
     val glassesVolumeStatus: String = "Glasses volume: not checked",
@@ -463,6 +476,41 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         sdk.setHotspotState(next)
     }
 
+    fun openGalleryServer() = runAction("Open gallery server") {
+        val baseUrl = requireGalleryServerUrl()
+        state = state.copy(
+            galleryServerReachable = null,
+            galleryServerStatus = "Gallery server: checking $baseUrl",
+        )
+        scope.launch {
+            val result = checkGalleryServerReachability(baseUrl)
+            state = state.copy(
+                galleryServerReachable = result.reachable,
+                galleryServerStatus = result.status,
+            )
+            addEvent(result.eventTag, result.eventText)
+            if (result.reachable) {
+                appContext.startActivity(
+                    Intent(Intent.ACTION_VIEW, Uri.parse(baseUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }
+        }
+    }
+
+    fun copyGalleryServerUrl() = runAction("Copy gallery URL") {
+        val baseUrl = requireGalleryServerUrl()
+        val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Mentra Live gallery server", baseUrl))
+        state = state.copy(galleryServerStatus = "Gallery server: copied $baseUrl")
+    }
+
+    fun copyGalleryHotspotPassword() = runAction("Copy hotspot password") {
+        val password = galleryHotspotPasswordLabel(state.glassesStatus)
+        val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Mentra Live hotspot password", password))
+        state = state.copy(galleryServerStatus = "Hotspot password copied: $password")
+    }
+
     fun toggleMic() = runAction(if (state.micRecording) "Stop microphone" else "Start microphone") {
         if (state.micRecording) {
             stopMicRecording()
@@ -592,14 +640,21 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     override fun onHotspotStatusChanged(event: MentraHotspotStatusEvent) {
         val enabled = event.enabled ?: false
+        val nextGlassesStatus = state.glassesStatus + mapOf(
+            "hotspotEnabled" to enabled,
+            "hotspotSsid" to (event.ssid ?: ""),
+            "hotspotPassword" to (event.password ?: ""),
+            "hotspotGatewayIp" to (event.localIp ?: ""),
+        )
         state = state.copy(
             hotspotEnabled = enabled,
-            glassesStatus = state.glassesStatus + mapOf(
-                "hotspotEnabled" to enabled,
-                "hotspotSsid" to (event.ssid ?: ""),
-                "hotspotPassword" to (event.password ?: ""),
-                "hotspotGatewayIp" to (event.localIp ?: ""),
-            )
+            galleryServerReachable = null,
+            galleryServerStatus = if (enabled) {
+                "Gallery server: ${galleryServerUrl(nextGlassesStatus, enabled)}"
+            } else {
+                "Gallery server: hotspot off"
+            },
+            glassesStatus = nextGlassesStatus,
         )
         addEvent("STORE", "hotspot ${summarize(event.values)}")
     }
@@ -607,6 +662,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     override fun onHotspotError(event: MentraHotspotErrorEvent) {
         state = state.copy(
             hotspotEnabled = false,
+            galleryServerReachable = false,
+            galleryServerStatus = "Gallery server: hotspot error",
             glassesStatus = state.glassesStatus + mapOf("hotspotEnabled" to false),
         )
         addEvent("TX", "hotspot error ${event.message ?: summarize(event.values)}")
@@ -666,6 +723,12 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     fun openBluetoothSettings() = runAction("Open Bluetooth settings") {
         appContext.startActivity(
             Intent(Settings.ACTION_BLUETOOTH_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    }
+
+    fun openWifiSettings() = runAction("Open Wi-Fi settings") {
+        appContext.startActivity(
+            Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         )
     }
 
@@ -874,6 +937,55 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         throw IllegalStateException(message)
     }
 
+    private fun requireGalleryServerUrl(): String {
+        return galleryServerUrl(state.glassesStatus, state.hotspotEnabled)
+            ?: throw IllegalStateException("Enable the glasses hotspot first.")
+    }
+
+    private suspend fun checkGalleryServerReachability(baseUrl: String): GalleryServerCheck =
+        withContext(Dispatchers.IO) {
+            try {
+                val connection = URL("$baseUrl/api/status").openConnection() as HttpURLConnection
+                connection.connectTimeout = 1500
+                connection.readTimeout = 1500
+                val code = connection.responseCode
+                val body = if (code in 200..299) {
+                    connection.inputStream.bufferedReader().use { it.readText() }
+                } else {
+                    connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                }
+                connection.disconnect()
+                val totalPhotos = Regex("\"total_photos\"\\s*:\\s*(\\d+)").find(body)?.groupValues?.get(1)
+                if (code in 200..299) {
+                    GalleryServerCheck(
+                        reachable = true,
+                        status = if (totalPhotos != null) {
+                            "Gallery server: reachable · $totalPhotos items"
+                        } else {
+                            "Gallery server: reachable"
+                        },
+                        eventTag = "LIVE",
+                        eventText = "gallery server reachable $baseUrl",
+                    )
+                } else {
+                    GalleryServerCheck(
+                        reachable = false,
+                        status = "Gallery server: HTTP $code",
+                        eventTag = "TX",
+                        eventText = "gallery server HTTP $code",
+                    )
+                }
+            } catch (error: Exception) {
+                val message = error.message ?: error.javaClass.simpleName
+                GalleryServerCheck(
+                    reachable = false,
+                    status = "Gallery server: not reachable. Join ${galleryHotspotSsidLabel(state.glassesStatus)} and retry.",
+                    eventTag = "TX",
+                    eventText = "gallery server unreachable: $message",
+                )
+            }
+        }
+
     private fun applyDisconnectedState(status: String) {
         stopKeepAlive()
         activeStreamId = null
@@ -886,6 +998,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             glassesStatus = disconnectedGlassesStatus(),
             glassesMediaVolume = null,
             glassesVolumeStatus = "Glasses volume: not connected",
+            galleryServerReachable = null,
+            galleryServerStatus = "Gallery server: connect glasses first",
             streamStartedAt = null,
             streamStatus = status,
             hotspotEnabled = false,
@@ -1536,6 +1650,26 @@ fun hotspotLabel(values: Map<String, Any>, fallbackEnabled: Boolean): String {
     val ip = stringValue(values, "hotspotGatewayIp")
     return if (ip.isNullOrBlank()) ssid else "$ssid · $ip"
 }
+
+fun galleryServerUrl(values: Map<String, Any>, fallbackEnabled: Boolean): String? {
+    val enabled = boolValue(values, "hotspotEnabled") ?: fallbackEnabled
+    if (!enabled) {
+        return null
+    }
+    val gateway = stringValue(values, "hotspotGatewayIp")
+        ?.takeIf { it.isNotBlank() }
+        ?: "192.168.43.1"
+    return "http://$gateway:8089"
+}
+
+fun galleryHotspotSsidLabel(values: Map<String, Any>): String {
+    val ssid = stringValue(values, "hotspotSsid")?.takeIf { it.isNotBlank() }
+    return if (ssid == null) "the glasses hotspot" else "Wi-Fi $ssid"
+}
+
+fun galleryHotspotPasswordLabel(values: Map<String, Any>): String =
+    stringValue(values, "hotspotPassword")?.takeIf { it.isNotBlank() }
+        ?: MENTRA_LIVE_DEFAULT_HOTSPOT_PASSWORD
 
 fun firmwareLabel(values: Map<String, Any>): String =
     stringValue(values, "fwVersion")
