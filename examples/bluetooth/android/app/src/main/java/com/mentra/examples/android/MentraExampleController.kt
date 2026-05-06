@@ -74,6 +74,7 @@ data class MentraExampleState(
     val bluetoothStatus: Map<String, Any> = emptyMap(),
     val cameraStatus: String = "Camera: enter the local webhook /upload URL",
     val discoveredDevices: List<MentraDiscoveredDevice> = emptyList(),
+    val selectedDiscoveredDevice: MentraDiscoveredDevice? = null,
     val events: List<ExampleEvent> = listOf(exampleEvent("LIVE", "SDK ready. Scan to discover glasses.")),
     val galleryModeAuto: Boolean = false,
     val glassesStatus: Map<String, Any> = emptyMap(),
@@ -135,16 +136,29 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     fun startScan() = runAction("Scan") {
-        state = state.copy(discoveredDevices = emptyList())
+        state = state.copy(discoveredDevices = emptyList(), selectedDiscoveredDevice = null)
         sdk.startScan(MentraDeviceModel.MENTRA_LIVE)
     }
 
     fun connect() = runAction("Connect") {
-        state.discoveredDevices.firstOrNull()?.let { sdk.connect(it) } ?: sdk.connectDefault()
+        val target = state.selectedDiscoveredDevice ?: state.discoveredDevices.firstOrNull()
+        when {
+            target != null -> sdk.connect(target)
+            hasSavedConnectionTarget(state.bluetoothStatus) -> sdk.connectDefault()
+            else -> throw IllegalStateException("Scan first to choose nearby glasses.")
+        }
     }
 
     fun connect(device: MentraDiscoveredDevice) = runAction("Connect ${device.name}") {
+        state = state.copy(selectedDiscoveredDevice = device)
         sdk.connect(device)
+    }
+
+    fun selectDiscoveredDevice(device: MentraDiscoveredDevice) {
+        state = state.copy(
+            selectedDiscoveredDevice = device,
+            lastAction = "Selected: ${device.name}",
+        )
     }
 
     fun disconnect() = runAction("Disconnect") {
@@ -430,8 +444,11 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     override fun onDeviceDiscovered(device: MentraDiscoveredDevice) {
-        if (state.discoveredDevices.none { it.name == device.name }) {
-            state = state.copy(discoveredDevices = state.discoveredDevices + device)
+        if (state.discoveredDevices.none { discoveredDeviceKey(it) == discoveredDeviceKey(device) }) {
+            state = state.copy(
+                discoveredDevices = state.discoveredDevices + device,
+                selectedDiscoveredDevice = state.selectedDiscoveredDevice ?: device,
+            )
         }
         addEvent("BLE", "discovered ${device.name}")
     }
@@ -1115,6 +1132,34 @@ fun bluetoothSearchLabel(values: Map<String, Any>): String {
     val searching = boolValue(values, "searching") == true
     val count = (values["searchResults"] as? List<*>)?.size ?: 0
     return "${if (searching) "Scanning" else "Idle"} · $count result${if (count == 1) "" else "s"}"
+}
+
+fun discoveredDeviceKey(device: MentraDiscoveredDevice): String =
+    device.address ?: "${device.model.deviceType}:${device.name}"
+
+fun targetDeviceDetail(device: MentraDiscoveredDevice): String =
+    device.rssi?.let { "${device.model.deviceType} · $it dBm" } ?: device.model.deviceType
+
+fun connectionTargetLabel(state: MentraExampleState, values: Map<String, Any>): String =
+    when {
+        isGlassesConnected(values) -> deviceLabel(values)
+        state.selectedDiscoveredDevice != null -> state.selectedDiscoveredDevice.name
+        hasSavedConnectionTarget(state.bluetoothStatus) -> savedConnectionTargetName(state.bluetoothStatus)
+        else -> "Scan required"
+    }
+
+fun canConnectTarget(state: MentraExampleState): Boolean =
+    state.selectedDiscoveredDevice != null || state.discoveredDevices.isNotEmpty() || hasSavedConnectionTarget(state.bluetoothStatus)
+
+fun hasSavedConnectionTarget(values: Map<String, Any>): Boolean =
+    !stringValue(values, "default_wearable").isNullOrBlank() && !stringValue(values, "device_name").isNullOrBlank()
+
+fun savedConnectionTargetName(values: Map<String, Any>): String =
+    stringValue(values, "device_name") ?: "Saved glasses"
+
+fun savedConnectionTargetDetail(values: Map<String, Any>): String {
+    val model = stringValue(values, "default_wearable") ?: "Saved model"
+    return "$model · BluetoothSdk.connectDefault()"
 }
 
 fun wifiScanResults(values: Map<String, Any>): List<Map<String, Any>> =

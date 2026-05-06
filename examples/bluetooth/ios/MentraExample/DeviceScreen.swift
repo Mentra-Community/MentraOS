@@ -97,6 +97,7 @@ struct DeviceScreen: View {
 
     private var quickActions: some View {
         let connected = model.glassesConnected
+        let canConnect = !connected && canConnectTarget(model: model)
         let displaySupported = connected && supportsDisplay(model.glassesValues)
         return GlassCard {
             HStack {
@@ -117,7 +118,7 @@ struct DeviceScreen: View {
             VStack(spacing: 8) {
                 HStack(spacing: 8) {
                     DarkActionButton(icon: "magnifyingglass", title: "Scan", bg: Color(hex: 0x0E2C1A), enabled: !connected, action: model.startScan)
-                    DarkActionButton(icon: "link", title: connected ? "Connected" : "Connect", bg: AppColor.greenPrimary, enabled: !connected, action: model.connect)
+                    DarkActionButton(icon: "link", title: connected ? "Connected" : canConnect ? "Connect" : "Scan first", bg: AppColor.greenPrimary, enabled: canConnect, action: model.connect)
                 }
                 HStack(spacing: 8) {
                     LightActionButton(icon: "display", title: "Display Hello", enabled: displaySupported, action: model.displayHello)
@@ -167,11 +168,19 @@ struct DeviceScreen: View {
                     enabled: false,
                     action: {}
                 )
+            } else if model.discoveredDevices.isEmpty, hasSavedConnectionTarget(model.bluetoothValues) {
+                TargetDeviceRow(
+                    name: savedConnectionTargetName(model.bluetoothValues),
+                    detail: savedConnectionTargetDetail(model.bluetoothValues),
+                    selected: true,
+                    enabled: false,
+                    action: {}
+                )
             } else if model.discoveredDevices.isEmpty {
                 TargetDeviceRow(
-                    name: "Default paired Mentra Live",
-                    detail: "Scan to choose a specific nearby device",
-                    selected: true,
+                    name: "Scan required",
+                    detail: "No saved default target yet. Scan to choose nearby glasses.",
+                    selected: false,
                     enabled: false,
                     action: {}
                 )
@@ -296,7 +305,15 @@ private func connectionTargetLabel(model: BluetoothViewModel) -> String {
     if let device = model.selectedDiscoveredDevice {
         return device.name
     }
-    return "Default paired Mentra Live"
+    if hasSavedConnectionTarget(model.bluetoothValues) {
+        return savedConnectionTargetName(model.bluetoothValues)
+    }
+    return "Scan required"
+}
+
+@MainActor
+private func canConnectTarget(model: BluetoothViewModel) -> Bool {
+    model.selectedDiscoveredDevice != nil || !model.discoveredDevices.isEmpty || hasSavedConnectionTarget(model.bluetoothValues)
 }
 
 struct TargetDeviceRow: View {

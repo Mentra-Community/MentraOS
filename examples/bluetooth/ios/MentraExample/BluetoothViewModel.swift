@@ -122,8 +122,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         runAction("Connect") {
             if let device = selectedDiscoveredDevice ?? discoveredDevices.first {
                 sdk.connect(to: device)
-            } else {
+            } else if hasSavedConnectionTarget(bluetoothValues) {
                 sdk.connectDefault()
+            } else {
+                throw ExampleActionError(message: "Scan first to choose nearby glasses.")
             }
         }
     }
@@ -1020,6 +1022,21 @@ func rssiLabel(_ values: [String: Any]) -> String {
 func bluetoothSearchLabel(_ values: [String: Any]) -> String {
     let count = (values["searchResults"] as? [[String: Any]])?.count ?? 0
     return "\(boolValue(values, "searching") == true ? "Scanning" : "Idle") · \(count) result\(count == 1 ? "" : "s")"
+}
+
+func hasSavedConnectionTarget(_ values: [String: Any]) -> Bool {
+    guard let model = stringValue(values, "default_wearable"), !model.isEmpty else { return false }
+    guard let name = stringValue(values, "device_name"), !name.isEmpty else { return false }
+    return true
+}
+
+func savedConnectionTargetName(_ values: [String: Any]) -> String {
+    stringValue(values, "device_name") ?? "Saved glasses"
+}
+
+func savedConnectionTargetDetail(_ values: [String: Any]) -> String {
+    let model = stringValue(values, "default_wearable") ?? "Saved model"
+    return "\(model) · BluetoothSdk.connectDefault()"
 }
 
 func wifiScanResults(_ values: [String: Any]) -> [[String: Any]] {

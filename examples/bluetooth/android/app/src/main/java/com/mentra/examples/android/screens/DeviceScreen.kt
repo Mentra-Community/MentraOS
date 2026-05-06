@@ -26,20 +26,28 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mentra.core.MentraDiscoveredDevice
 import com.mentra.examples.android.MentraExampleController
 import com.mentra.examples.android.R
 import com.mentra.examples.android.batteryLabel
 import com.mentra.examples.android.batteryLevel
 import com.mentra.examples.android.bluetoothSearchLabel
+import com.mentra.examples.android.canConnectTarget
 import com.mentra.examples.android.connectionLabel
+import com.mentra.examples.android.connectionTargetLabel
 import com.mentra.examples.android.deviceLabel
+import com.mentra.examples.android.discoveredDeviceKey
 import com.mentra.examples.android.firmwareLabel
 import com.mentra.examples.android.firmwareSubLabel
+import com.mentra.examples.android.hasSavedConnectionTarget
 import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.modelLabel
 import com.mentra.examples.android.rssiLabel
+import com.mentra.examples.android.savedConnectionTargetDetail
+import com.mentra.examples.android.savedConnectionTargetName
 import com.mentra.examples.android.stringValue
 import com.mentra.examples.android.supportsDisplay
+import com.mentra.examples.android.targetDeviceDetail
 import com.mentra.examples.android.wifiLabel
 import com.mentra.examples.android.ui.AppColor
 import com.mentra.examples.android.ui.Eyebrow
@@ -51,6 +59,7 @@ fun DeviceScreen(controller: MentraExampleController) {
     val state = controller.state
     val glasses = state.glassesStatus
     val connected = isGlassesConnected(glasses)
+    val canConnect = !connected && canConnectTarget(state)
     val displaySupported = connected && supportsDisplay(glasses)
     val level = batteryLevel(glasses)
     val latestEvent = state.events.firstOrNull()
@@ -113,10 +122,12 @@ fun DeviceScreen(controller: MentraExampleController) {
                 Eyebrow("SDK", color = AppColor.inkAlt.copy(alpha = 0.4f), mono = true)
             }
             Spacer(Modifier.height(16.dp))
+            TargetPicker(controller, connected, glasses)
+            Spacer(Modifier.height(12.dp))
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     DarkBtn("Scan", Icons.Outlined.Search, AppColor.greenInk, Modifier.weight(1f), enabled = !connected, onClick = controller::startScan)
-                    DarkBtn(if (connected) "Connected" else "Connect", Icons.Outlined.Link, AppColor.greenPrimary, Modifier.weight(1f), enabled = !connected, onClick = controller::connect)
+                    DarkBtn(if (connected) "Connected" else if (canConnect) "Connect" else "Scan first", Icons.Outlined.Link, AppColor.greenPrimary, Modifier.weight(1f), enabled = canConnect, onClick = controller::connect)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     LightBtn("Display Hello", Icons.Outlined.Tv, Modifier.weight(1f), enabled = displaySupported, onClick = controller::displayHello)
@@ -197,6 +208,7 @@ fun DeviceScreen(controller: MentraExampleController) {
                     }
                 }
                 StatusKVRow("BLUETOOTH", value = bluetoothSearchLabel(state.bluetoothStatus))
+                StatusKVRow("TARGET", value = connectionTargetLabel(state, glasses), mono = true)
                 StatusKVRow("DISCOVERED", value = state.discoveredDevices.joinToString { it.name }.ifBlank { "None yet" }, mono = true)
                 StatusKVRow("PERMISSIONS", value = "Android runtime")
                 StatusKVRow("CAMERA", value = state.cameraStatus)
@@ -237,6 +249,106 @@ private fun glassesImageRes(values: Map<String, Any>): Int {
         "vuzix" in model || "z100" in model -> R.drawable.vuzix_z100
         "unknown" in model -> R.drawable.unknown_wearable
         else -> R.drawable.mentra_live
+    }
+}
+
+@Composable
+private fun TargetPicker(controller: MentraExampleController, connected: Boolean, glasses: Map<String, Any>) {
+    val state = controller.state
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(AppColor.ink.copy(alpha = 0.035f))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Eyebrow(if (connected) "CONNECTED DEVICE" else "CONNECTION TARGET", color = AppColor.inkAlt.copy(alpha = 0.45f), mono = true)
+            if (!connected && state.discoveredDevices.isNotEmpty()) {
+                Text(
+                    "${state.discoveredDevices.size} found",
+                    color = AppColor.greenInk,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+
+        when {
+            connected -> TargetDeviceRow(
+                name = deviceLabel(glasses),
+                detail = "Active BLE connection",
+                selected = true,
+                enabled = false,
+                onClick = {},
+            )
+            state.discoveredDevices.isEmpty() && hasSavedConnectionTarget(state.bluetoothStatus) -> TargetDeviceRow(
+                name = savedConnectionTargetName(state.bluetoothStatus),
+                detail = savedConnectionTargetDetail(state.bluetoothStatus),
+                selected = true,
+                enabled = false,
+                onClick = {},
+            )
+            state.discoveredDevices.isEmpty() -> TargetDeviceRow(
+                name = "Scan required",
+                detail = "No saved default target yet. Scan to choose nearby glasses.",
+                selected = false,
+                enabled = false,
+                onClick = {},
+            )
+            else -> state.discoveredDevices.forEach { device ->
+                TargetDeviceRow(
+                    name = device.name,
+                    detail = targetDeviceDetail(device),
+                    selected = state.selectedDiscoveredDevice?.let { discoveredDeviceKey(it) == discoveredDeviceKey(device) } == true,
+                    enabled = true,
+                    onClick = { controller.selectDiscoveredDevice(device) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TargetDeviceRow(
+    name: String,
+    detail: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (selected) AppColor.greenPrimary.copy(alpha = 0.08f) else Color.White.copy(alpha = 0.7f))
+            .border(
+                1.dp,
+                if (selected) AppColor.greenPrimary.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.7f),
+                RoundedCornerShape(14.dp),
+            )
+            .clickable(enabled = enabled) { onClick() }
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(18.dp)
+                .clip(CircleShape)
+                .background(if (selected) AppColor.greenPrimary else Color.White)
+                .border(1.dp, AppColor.borderSoft, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (selected) {
+                Icon(Icons.Outlined.Check, null, tint = Color.White, modifier = Modifier.size(12.dp))
+            }
+        }
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(name, color = AppColor.inkAlt, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Text(detail, color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+        }
     }
 }
 
