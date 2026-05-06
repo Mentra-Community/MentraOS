@@ -33,7 +33,7 @@
 #include "mos_dfu_progress.h"
 #include "mos_fuel_gauge.h"
 #include "mos_hinge_fold.h"
-#include "mos_iqs7211a.h"
+#include "mos_iqs7211e.h"
 #include "mos_jlink_usb_switch_app.h"  // J-Link/USB switch application logic
 #include "mos_lsm6dsv16x.h"  // LSM6DSV16X 6-axis IMU sensor
 #include "mos_npm1300_ldsw.h"  // NPM1300 LDSW (load switch) control
@@ -542,6 +542,16 @@ int main(void)
         LOG_ERR("Failed to initialize user GPIOs: %d", err);
     }
 
+    mos_npm1300_ldsw1_init();
+    mos_npm1300_ldsw1_enable();
+
+    /* Bring touch online before slower display/VAD/sensor init so the first user touch after power-on is handled. */
+    err = mos_touch_app_init();
+    if (err != 0)
+    {
+        LOG_ERR("mos_touch_app_init failed: %d", err);
+    }
+
     if (IS_ENABLED(CONFIG_BT_NUS_SECURITY_ENABLED))
     {
         err = bt_conn_auth_cb_register(&conn_auth_callbacks);
@@ -591,8 +601,6 @@ int main(void)
     mos_gx8002_init();  // GX8002 VAD path enabled
     // pdm_audio_stream_init();  // PDM path disabled - using GX8002 VAD
     mos_jlink_usb_switch_app_init();
-    mos_npm1300_ldsw1_init();
-    mos_npm1300_ldsw1_enable();
 
     /* woke_from_sleep is already set by mos_button_app_check_wakeup_state() called at the start of main() |
      * woke_from_sleep已由main()开始时调用的mos_button_app_check_wakeup_state()设置 */
@@ -623,8 +631,6 @@ int main(void)
     protobuf_init_ping_monitoring();
 
     opt3006_initialize();
-
-    mos_touch_app_init();
 
     lsm6dsv16x_init();
 
