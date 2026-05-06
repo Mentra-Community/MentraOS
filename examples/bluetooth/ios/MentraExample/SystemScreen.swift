@@ -401,7 +401,7 @@ struct SystemScreen: View {
             }
             .padding(.bottom, 14)
 
-            Text("Mentra Live currently applies RGB color and pattern; visible brightness is firmware-controlled.")
+            Text("Mentra Live RGB controls demonstrate LED color and timing patterns.")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(AppColor.muted)
                 .lineSpacing(2)

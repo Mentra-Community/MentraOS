@@ -430,7 +430,7 @@ fun SystemScreen(controller: MentraExampleController) {
             }
             Spacer(Modifier.height(14.dp))
             Text(
-                "Mentra Live currently applies RGB color and pattern; visible brightness is firmware-controlled.",
+                "Mentra Live RGB controls demonstrate LED color and timing patterns.",
                 color = AppColor.muted,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,

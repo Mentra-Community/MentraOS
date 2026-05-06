@@ -244,7 +244,7 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
           ))}
         </View>
         <Text style={styles.ledNote}>
-          Mentra Live currently applies RGB color and pattern; visible brightness is firmware-controlled.
+          Mentra Live RGB controls demonstrate LED color and timing patterns.
         </Text>
       </LinearGradient>
 

@@ -149,7 +149,6 @@ When an SDK API exposes an optional argument, do not rely on absence meaning "be
 | `MentraStreamRequest` | `video`, `audio` | Omitted means the glasses use their streaming defaults. |
 | `MentraRgbLedRequest` | `packageName` | Sends the LED command without app/package attribution. |
 | `MentraRgbLedRequest` | `color` | Ignored for `OFF`. For `ON`, pass one of the valid colors; Mentra Live falls back to red if the color is omitted. |
-| `MentraRgbLedRequest` | `brightness` | Sends no brightness field; the glasses use their current or firmware-default LED brightness. Current Mentra Live firmware applies RGB color and pattern but does not visibly apply this value. |
 | `sendIncidentId` | `apiBaseUrl` | Uses `https://api.mentra.glass`. |
 
 ## Display
@@ -274,7 +273,6 @@ RGB LED parameters:
 | `ontime` | Non-negative integer milliseconds | How long the LED stays on during each cycle. For a solid light, use a long `ontime`, `offtime = 0`, and `count = 1`. |
 | `offtime` | Non-negative integer milliseconds | How long the LED stays off between cycles. Use `0` for a solid light; use a positive value for blink or pulse patterns. |
 | `count` | Positive integer for `ON`; `0` for `OFF` | Number of on/off cycles to run. For example, `count = 3`, `ontime = 500`, `offtime = 500` blinks three times. |
-| `brightness` | Optional integer `0-255` | Raw device brightness for devices that support it. If omitted, no brightness field is sent. Current Mentra Live firmware does not visibly apply RGB brightness changes, so the example apps omit this field and demonstrate color/pattern only. |
 
 RGB LEDs are hardware-dependent; unsupported glasses should report an SDK error or capability status.
 
