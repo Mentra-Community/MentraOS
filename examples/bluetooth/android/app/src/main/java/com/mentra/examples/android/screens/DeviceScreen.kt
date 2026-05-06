@@ -129,7 +129,7 @@ fun DeviceScreen(controller: MentraExampleController) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     DarkBtn("Scan", Icons.Outlined.Search, AppColor.greenInk, Modifier.weight(1f), enabled = !connected, onClick = controller::startScan)
-                    DarkBtn(if (connected) "Connected" else if (canConnect) "Connect" else "Scan first", Icons.Outlined.Link, AppColor.greenPrimary, Modifier.weight(1f), enabled = canConnect, onClick = controller::connect)
+                    DarkBtn(if (connected) "Connected" else "Connect", Icons.Outlined.Link, AppColor.greenPrimary, Modifier.weight(1f), enabled = canConnect, onClick = controller::connect)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     LightBtn("Display Hello", Icons.Outlined.Tv, Modifier.weight(1f), enabled = displaySupported, onClick = controller::displayHello)

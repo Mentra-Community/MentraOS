@@ -119,7 +119,7 @@ struct DeviceScreen: View {
             VStack(spacing: 8) {
                 HStack(spacing: 8) {
                     DarkActionButton(icon: "magnifyingglass", title: "Scan", bg: Color(hex: 0x0E2C1A), enabled: !connected, action: model.startScan)
-                    DarkActionButton(icon: "link", title: connected ? "Connected" : canConnect ? "Connect" : "Scan first", bg: AppColor.greenPrimary, enabled: canConnect, action: model.connect)
+                    DarkActionButton(icon: "link", title: connected ? "Connected" : "Connect", bg: AppColor.greenPrimary, enabled: canConnect, action: model.connect)
                 }
                 HStack(spacing: 8) {
                     LightActionButton(icon: "display", title: "Display Hello", enabled: displaySupported, action: model.displayHello)

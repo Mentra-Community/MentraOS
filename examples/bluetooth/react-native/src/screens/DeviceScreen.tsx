@@ -102,7 +102,7 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
               <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
                 <Path d="M9 17H5a3 3 0 0 1 0-6h4" /><Path d="M15 7h4a3 3 0 0 1 0 6h-4" /><Line x1={8} y1={14} x2={16} y2={14} />
               </Svg>
-              <Text style={styles.btnTextLight}>{connected ? 'Connected' : canConnect ? 'Connect' : 'Scan first'}</Text>
+              <Text style={styles.btnTextLight}>{connected ? 'Connected' : 'Connect'}</Text>
             </Pressable>
           </View>
           <View style={styles.btnRow}>
