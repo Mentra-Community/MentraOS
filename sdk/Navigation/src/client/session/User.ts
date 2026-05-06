@@ -28,6 +28,7 @@ import {GoogleMapsManager} from "@/backend/session/managers/GoogleMapsManager"
 import {LocationManager} from "@/backend/session/managers/LocationManager"
 import type {Coords} from "@/backend/session/managers/LocationManager"
 import {NavigationManager} from "@/backend/session/managers/navigation/NavigationManager"
+import {SimpleStorageManager} from "@/backend/session/managers/SimpleStorageManager"
 
 export class User {
   private static instance: User | null = null
@@ -38,6 +39,7 @@ export class User {
   readonly maps: GoogleMapsManager
   readonly display: DisplayManager
   readonly navigation: NavigationManager
+  readonly storage: SimpleStorageManager
 
   // ---- reactive snapshot --------------------------------------------------
 
@@ -73,6 +75,7 @@ export class User {
     this.maps = new GoogleMapsManager()
     this.display = new DisplayManager(this.session)
     this.navigation = new NavigationManager(this.session)
+    this.storage = new SimpleStorageManager(this.session)
 
     // Last-chance teardown. Fires on phone-initiated WILL_DISCONNECT and
     // also when this.session.disconnect() runs locally — the SDK emits

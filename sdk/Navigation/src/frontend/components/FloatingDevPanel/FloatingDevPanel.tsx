@@ -23,7 +23,14 @@ type Props = {
 
 type Persisted = {x: number; y: number; collapsed: boolean}
 
-const DEFAULT_STATE: Persisted = {x: 16, y: 16, collapsed: true}
+function defaultState(): Persisted {
+  return {
+    x: typeof window !== "undefined" ? Math.max(0, (window.innerWidth - 352) / 2) : 16,
+    y: typeof window !== "undefined" ? Math.max(0, (window.innerHeight - 400) / 2) : 16,
+    collapsed: true,
+  }
+}
+
 
 export function FloatingDevPanel({
   title = "Dev",
@@ -35,6 +42,7 @@ export function FloatingDevPanel({
     return {x: s.x, y: s.y}
   })
   const [collapsed, setCollapsed] = useState<boolean>(() => loadState(storageKey).collapsed)
+  const hasDragged = useRef(false)
 
   // Persist on change.
   useEffect(() => {
@@ -43,6 +51,7 @@ export function FloatingDevPanel({
 
   // Clamp into viewport on mount + resize so a saved position from a
   // larger window doesn't strand the panel offscreen.
+  // If the user hasn't dragged yet, re-center whenever collapsed state changes.
   const rootRef = useRef<HTMLElement | null>(null)
   useEffect(() => {
     function clamp() {
@@ -50,10 +59,17 @@ export function FloatingDevPanel({
       if (!el) return
       const w = el.offsetWidth
       const h = el.offsetHeight
-      setPos((p) => ({
-        x: Math.max(0, Math.min(window.innerWidth - w, p.x)),
-        y: Math.max(0, Math.min(window.innerHeight - h, p.y)),
-      }))
+      if (!hasDragged.current) {
+        setPos({
+          x: Math.max(0, (window.innerWidth - w) / 2),
+          y: Math.max(0, (window.innerHeight - h) / 2),
+        })
+      } else {
+        setPos((p) => ({
+          x: Math.max(0, Math.min(window.innerWidth - w, p.x)),
+          y: Math.max(0, Math.min(window.innerHeight - h, p.y)),
+        }))
+      }
     }
     clamp()
     window.addEventListener("resize", clamp)
@@ -87,6 +103,8 @@ export function FloatingDevPanel({
     const drag = dragRef.current
     if (!drag) return
     ;(e.currentTarget as HTMLElement).releasePointerCapture(drag.pointerId)
+    const moved = Math.abs(e.clientX - (pos.x + drag.dx)) > 4 || Math.abs(e.clientY - (pos.y + drag.dy)) > 4
+    if (moved) hasDragged.current = true
     dragRef.current = null
   }
 
@@ -146,15 +164,16 @@ export function FloatingDevPanel({
 function loadState(key: string): Persisted {
   try {
     const raw = localStorage.getItem(key)
-    if (!raw) return DEFAULT_STATE
+    const def = defaultState()
+    if (!raw) return def
     const parsed = JSON.parse(raw) as Partial<Persisted>
     return {
-      x: typeof parsed.x === "number" ? parsed.x : DEFAULT_STATE.x,
-      y: typeof parsed.y === "number" ? parsed.y : DEFAULT_STATE.y,
-      collapsed: typeof parsed.collapsed === "boolean" ? parsed.collapsed : DEFAULT_STATE.collapsed,
+      x: typeof parsed.x === "number" ? parsed.x : def.x,
+      y: typeof parsed.y === "number" ? parsed.y : def.y,
+      collapsed: typeof parsed.collapsed === "boolean" ? parsed.collapsed : def.collapsed,
     }
   } catch {
-    return DEFAULT_STATE
+    return defaultState()
   }
 }
 

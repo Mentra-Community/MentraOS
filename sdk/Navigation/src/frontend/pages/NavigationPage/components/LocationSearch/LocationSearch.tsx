@@ -1,7 +1,6 @@
 import {useEffect, useMemo, useRef, useState} from "react"
 import {AnimatePresence, motion} from "motion/react"
 import {Loader2, MapPin} from "lucide-react"
-import LiquidGlass from "liquid-glass-react"
 
 import {useUser} from "@/backend/hooks/useUser"
 import type {LatLng} from "@/backend/lib/geometry/geometry"
@@ -19,20 +18,60 @@ type Props = {
   me?: LatLng | null
   maneuver?: NavManeuver | null
   routePoints?: LatLng[] | null
+  devFrozen?: boolean
 }
 
 const DEBOUNCE_MS = 200
+const HISTORY_KEY = "recentDestinations"
+const HISTORY_MAX = 5
 
-export function LocationSearch({selected, onSelect, onClear, disabled, running, me, maneuver, routePoints}: Props) {
-  const heading = useUser().heading
+// ---- icons ------------------------------------------------------------------
+
+function PinIconFilled() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
+      <path d="M12 2C7.58 2 4 5.58 4 10c0 6 8 12 8 12s8-6 8-12C20 5.58 16.42 2 12 2z" fill="#FFFFFF" />
+      <circle cx="12" cy="10" r="3" fill="#1A1A1A" />
+    </svg>
+  )
+}
+
+function PinIconOutline() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
+      <path d="M12 2C7.58 2 4 5.58 4 10c0 6 8 12 8 12s8-6 8-12C20 5.58 16.42 2 12 2z" stroke="#000000A6" strokeWidth="1.8" fill="none" />
+    </svg>
+  )
+}
+
+// ---- component --------------------------------------------------------------
+
+export function LocationSearch({selected, onSelect, onClear, disabled, running, me, maneuver, routePoints, devFrozen = false}: Props) {
+  const user = useUser()
+  const heading = user.heading
   const session = useMemo(() => new PlacesSession(), [])
   const [query, setQuery] = useState("")
   const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([])
   const [open, setOpen] = useState(false)
+  const [focused, setFocused] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [history, setHistory] = useState<PlaceDetails[]>([])
   const abortRef = useRef<AbortController | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
+
+  // Load history from storage on mount
+  useEffect(() => {
+    user.storage.getJSON<PlaceDetails[]>(HISTORY_KEY).then((saved) => {
+      if (saved) setHistory(saved)
+    })
+  }, [user.storage])
+
+  async function saveToHistory(place: PlaceDetails) {
+    const next = [place, ...history.filter((h) => h.placeId !== place.placeId)].slice(0, HISTORY_MAX)
+    setHistory(next)
+    await user.storage.setJSON(HISTORY_KEY, next)
+  }
 
   // When something is selected, the input shows the chosen place and the
   // dropdown stays closed. Typing again clears the selection.
@@ -44,18 +83,19 @@ export function LocationSearch({selected, onSelect, onClear, disabled, running, 
   }, [selected])
 
   useEffect(() => {
-    if (selected || disabled) return
+    if (selected || disabled || !focused) return
     const trimmed = query.trim()
     if (!trimmed) {
       setSuggestions([])
       setOpen(false)
+      setLoading(false)
       return
     }
+    setLoading(true)
     const t = setTimeout(async () => {
       abortRef.current?.abort()
       const ctrl = new AbortController()
       abortRef.current = ctrl
-      setLoading(true)
       setError(null)
       try {
         const results = await session.autocomplete(trimmed, ctrl.signal)
@@ -71,23 +111,31 @@ export function LocationSearch({selected, onSelect, onClear, disabled, running, 
       }
     }, DEBOUNCE_MS)
     return () => clearTimeout(t)
-  }, [query, selected, disabled, session])
+  }, [query, selected, disabled, focused, session])
 
   async function pick(s: PlaceSuggestion) {
     setOpen(false)
     setLoading(true)
     setError(null)
-    // Dismiss the on-screen keyboard.
     inputRef.current?.blur()
     try {
       const details = await session.details(s.placeId)
       session.reset()
+      await saveToHistory(details)
       onSelect(details)
     } catch (err) {
       setError((err as Error).message)
     } finally {
       setLoading(false)
     }
+  }
+
+  async function pickFromHistory(place: PlaceDetails) {
+    setOpen(false)
+    setFocused(false)
+    inputRef.current?.blur()
+    await saveToHistory(place)
+    onSelect(place)
   }
 
   function handleChange(value: string) {
@@ -102,12 +150,17 @@ export function LocationSearch({selected, onSelect, onClear, disabled, running, 
     onClear()
   }
 
+  // Show history panel when focused + query empty + no selection + history exists
+  const showHistory = (focused || devFrozen) && !query.trim() && !selected && history.length > 0
+
+  // Show suggestions overlay whenever focused and no selection
+  const showSuggestions = (focused || devFrozen) && !selected
+
   return (
     <div className="relative mt-4 mx-3 flex flex-col">
       <div className="relative flex flex-col">
         {/* Search pill */}
-        
-        <div className=" flex items-center h-10 rounded-[20px] px-3.5 gap-2.5 bg-[#FFFFFFA6] border border-[#FFFFFF99] [backdrop-filter:blur(30px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#0000001A_0px_6px_22px] mr-21 mt-9.5">
+        <div className=" absolute z-90 flex items-center h-10 rounded-[20px] px-3.5 gap-2.5 bg-[#FFFFFFA6] border border-[#FFFFFF99] [backdrop-filter:blur(30px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#0000001A_0px_6px_22px] mr-21 mt-9.5">
           {/* Search icon */}
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
             <circle cx="11" cy="11" r="7" stroke="#0000008C" strokeWidth="2" />
@@ -119,8 +172,17 @@ export function LocationSearch({selected, onSelect, onClear, disabled, running, 
             className="grow shrink basis-0 bg-transparent tracking-[-0.012em] text-[#0000008C] font-sans text-[15px] leading-[18px] placeholder-[#0000008C] focus:outline-none focus:ring-0 border-none"
             value={query}
             onChange={(e) => handleChange(e.target.value)}
-            onFocus={() => suggestions.length > 0 && setOpen(true)}
-            onBlur={() => setTimeout(() => setOpen(false), 150)}
+            onFocus={() => {
+              setFocused(true)
+              if (suggestions.length > 0) setOpen(true)
+            }}
+            onBlur={() =>
+              setTimeout(() => {
+                if (devFrozen) return
+                setOpen(false)
+                setFocused(false)
+              }, 150)
+            }
             placeholder={running ? (selected?.name || selected?.address || "Navigating…") : "Where to?"}
             disabled={disabled}
             autoComplete="off"
@@ -151,18 +213,18 @@ export function LocationSearch({selected, onSelect, onClear, disabled, running, 
           )}
         </div>
 
-        {/* Suggestions dropdown */}
+        {/* Full-screen results panel — sits below the search pill */}
         <AnimatePresence>
-          {loading || (open && suggestions.length > 0) ? (
+          {showSuggestions ? (
             <motion.div
               key="suggestions"
               initial={{opacity: 0, y: -8}}
               animate={{opacity: 1, y: 0}}
               exit={{opacity: 0, y: -8}}
-              transition={{duration: 0.18, ease: "easeOut"}}
-              className="absolute z-10 left-0 right-0 top-12 bg-white/90 [backdrop-filter:blur(20px)] border border-neutral-200 rounded-2xl shadow-lg max-h-72 overflow-auto">
+              transition={{duration: 0.15, ease: "easeOut"}}
+              className="fixed z-40 inset-x-0 bottom-0 top-0 bg-white overflow-auto pt-30">
               {loading ? (
-                <div className="flex items-center justify-center gap-2 px-3 py-4 text-neutral-500">
+                <div className="flex items-center justify-center gap-2 px-3 py-8 text-neutral-500">
                   <Loader2 size={16} className="animate-spin" />
                   <span className="text-[13px]">Searching…</span>
                 </div>
@@ -178,11 +240,16 @@ export function LocationSearch({selected, onSelect, onClear, disabled, running, 
                         type="button"
                         onMouseDown={(e) => e.preventDefault()}
                         onClick={() => pick(s)}
-                        className="w-full text-left px-4 py-2.5 hover:bg-neutral-100 border-b border-neutral-100 last:border-b-0">
-                        <div className="text-[14px] text-neutral-900">{s.mainText}</div>
-                        {s.secondaryText ? (
-                          <div className="text-[12px] text-neutral-500">{s.secondaryText}</div>
-                        ) : null}
+                        className="w-full text-left flex items-center gap-3 px-4 py-3 hover:bg-[#0000000A] border-b border-[#0000000A] last:border-b-0">
+                        <div className="flex items-center justify-center shrink-0 size-8">
+                          <PinIconOutline />
+                        </div>
+                        <div className="grow shrink basis-0 min-w-0">
+                          <div className="text-[15px] font-medium text-[#000000E6] truncate">{s.mainText}</div>
+                          {s.secondaryText ? (
+                            <div className="text-xs text-[#0000008C] truncate">{s.secondaryText}</div>
+                          ) : null}
+                        </div>
                       </button>
                     </motion.li>
                   ))}
@@ -192,6 +259,7 @@ export function LocationSearch({selected, onSelect, onClear, disabled, running, 
           ) : null}
         </AnimatePresence>
       </div>
+
       <AnimatePresence>
         {running ? (
           <motion.div

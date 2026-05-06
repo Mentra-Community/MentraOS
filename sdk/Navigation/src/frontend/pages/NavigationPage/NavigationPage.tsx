@@ -29,6 +29,7 @@ export function NavigationPage() {
   // Destination chosen via Places search. `null` until the user picks one;
   // setting it shows the pin on the map immediately, before Start.
   const [destination, setDestination] = useState<PlaceDetails | null>(null)
+  const [searchFrozen, setSearchFrozen] = useState(false)
   const [simulate, setSimulate] = useState(true)
   const [speedMultiplier, setSpeedMultiplier] = useState(5)
   const [travelMode, setTravelMode] = useState<TravelMode>("walking")
@@ -306,6 +307,7 @@ export function NavigationPage() {
             me={me}
             maneuver={maneuver}
             routePoints={routePoints}
+            devFrozen={searchFrozen}
           />
         </div>
         {offRouteAt != null && status !== "rerouting" ? (
@@ -331,6 +333,15 @@ export function NavigationPage() {
       />
 
       <FloatingDevPanel title="Navigation Dev" storageKey="NavigationPage:dev">
+        <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+          <span className="text-[13px] font-medium text-neutral-700">Freeze location search panel</span>
+          <button
+            type="button"
+            onClick={() => setSearchFrozen((f) => !f)}
+            className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold ${searchFrozen ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"}`}>
+            {searchFrozen ? "Frozen" : "Freeze"}
+          </button>
+        </div>
         <MyLocationCard coords={coords} />
         <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3">
           <div className="text-[11px] font-bold tracking-wider text-neutral-500 uppercase">🎯 Selected destination</div>
