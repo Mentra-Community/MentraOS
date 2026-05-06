@@ -37,6 +37,7 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
   const level = batteryLevel(sdk.glassesStatus);
   const connected = isGlassesConnected(sdk.glassesStatus);
   const canConnect = !connected && hasConnectionTarget(sdk);
+  const hasDefaultTarget = Boolean(sdk.defaultDevice || savedConnectionTargetName(sdk.bluetoothStatus));
   const displaySupported = connected && supportsDisplay(sdk.glassesStatus);
   const connection = connectionLabel(sdk.glassesStatus);
   const latestEvent = sdk.events[0];
@@ -118,14 +119,22 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
               <Text style={styles.btnTextDark}>Clear Display</Text>
             </Pressable>
           </View>
-          <Pressable disabled={!connected} onPress={sdk.disconnect} style={[!connected && styles.disabled]}>
-            <LinearGradient colors={['#FF6B5B', '#FF3B30']} style={[styles.btn, styles.btnFull, { borderRadius: 18 }]}>
-              <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                <Path d="M9 17H5a3 3 0 0 1 0-6h2" /><Path d="M17 7h2a3 3 0 0 1 3 3" /><Line x1={2} y1={2} x2={22} y2={22} />
+          <View style={styles.btnRow}>
+            <Pressable disabled={!hasDefaultTarget} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, !hasDefaultTarget && styles.disabled]} onPress={sdk.clearDefaultDevice}>
+              <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                <Path d="M3 6h18" /><Path d="M8 6V4h8v2" /><Path d="M19 6l-1 14H6L5 6" />
               </Svg>
-              <Text style={styles.btnTextLight}>Disconnect</Text>
-            </LinearGradient>
-          </Pressable>
+              <Text style={styles.btnTextDark}>Clear Default</Text>
+            </Pressable>
+            <Pressable disabled={!connected} onPress={sdk.disconnect} style={[styles.btnHalf, !connected && styles.disabled]}>
+              <LinearGradient colors={['#FF6B5B', '#FF3B30']} style={[styles.btn, { borderRadius: 18 }]}>
+                <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                  <Path d="M9 17H5a3 3 0 0 1 0-6h2" /><Path d="M17 7h2a3 3 0 0 1 3 3" /><Line x1={2} y1={2} x2={22} y2={22} />
+                </Svg>
+                <Text style={styles.btnTextLight}>Disconnect</Text>
+              </LinearGradient>
+            </Pressable>
+          </View>
           {connected && !displaySupported ? (
             <Text style={styles.quickNote}>
               {modelLabel(sdk.glassesStatus)} has no display, so display commands are disabled.
@@ -303,6 +312,7 @@ const styles = StyleSheet.create({
   btnRow: { flexDirection: 'row', gap: 8 },
   quickNote: { color: colors.muted, fontSize: 11, fontWeight: '500', lineHeight: 15 },
   btn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 14, paddingVertical: 12, paddingHorizontal: 14, gap: 8 },
+  btnHalf: { flex: 1 },
   btnFull: { flex: 0, alignSelf: 'stretch' },
   btnPressed: { opacity: 0.72, transform: [{ scale: 0.98 }] },
   disabled: { opacity: 0.45 },

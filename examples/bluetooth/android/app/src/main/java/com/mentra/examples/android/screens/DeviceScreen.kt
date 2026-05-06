@@ -60,7 +60,9 @@ fun DeviceScreen(controller: MentraExampleController) {
     val glasses = state.glassesStatus
     val connected = isGlassesConnected(glasses)
     val canConnect = !connected && canConnectTarget(state)
+    val hasDefaultTarget = hasSavedConnectionTarget(state.bluetoothStatus)
     val displaySupported = connected && supportsDisplay(glasses)
+    val currentDeviceName = if (connected) connectionTargetLabel(state, glasses) else deviceLabel(glasses)
     val level = batteryLevel(glasses)
     val latestEvent = state.events.firstOrNull()
     Column(
@@ -74,7 +76,7 @@ fun DeviceScreen(controller: MentraExampleController) {
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Eyebrow(connectionLabel(glasses), color = AppColor.greenAccent)
                     Text(modelLabel(glasses), color = AppColor.ink, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.7).sp)
-                    Text(deviceLabel(glasses), color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                    Text(currentDeviceName, color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                 }
                 Image(
                     painter = painterResource(id = glassesImageRes(glasses)),
@@ -133,25 +135,28 @@ fun DeviceScreen(controller: MentraExampleController) {
                     LightBtn("Display Hello", Icons.Outlined.Tv, Modifier.weight(1f), enabled = displaySupported, onClick = controller::displayHello)
                     LightBtn("Clear Display", Icons.Outlined.Tv, Modifier.weight(1f), enabled = displaySupported, onClick = controller::clearDisplay)
                 }
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(
-                                    Color(0xFFFF6B5B).copy(alpha = if (connected) 1f else 0.45f),
-                                    AppColor.red.copy(alpha = if (connected) 1f else 0.45f),
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LightBtn("Clear Default", Icons.Outlined.DeleteOutline, Modifier.weight(1f), enabled = hasDefaultTarget, onClick = controller::clearDefaultDevice)
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(
+                                        Color(0xFFFF6B5B).copy(alpha = if (connected) 1f else 0.45f),
+                                        AppColor.red.copy(alpha = if (connected) 1f else 0.45f),
+                                    )
                                 )
                             )
-                        )
-                        .clickable(enabled = connected) { controller.disconnect() }
-                        .padding(vertical = 14.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Icon(Icons.Outlined.LinkOff, null, tint = Color.White, modifier = Modifier.size(14.dp))
-                        Text("Disconnect", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            .clickable(enabled = connected) { controller.disconnect() }
+                            .padding(vertical = 14.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Outlined.LinkOff, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                            Text("Disconnect", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        }
                     }
                 }
                 if (connected && !displaySupported) {
@@ -193,7 +198,7 @@ fun DeviceScreen(controller: MentraExampleController) {
                         Text(connectionLabel(glasses), color = AppColor.greenInk, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
-                StatusKVRow("DEVICE", value = deviceLabel(glasses), mono = true)
+                StatusKVRow("DEVICE", value = currentDeviceName, mono = true)
                 StatusKVRow("BATTERY") {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(batteryLabel(glasses), color = AppColor.inkAlt, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
@@ -267,7 +272,7 @@ private fun TargetPicker(controller: MentraExampleController, connected: Boolean
             Eyebrow(if (connected) "CONNECTED DEVICE" else "CONNECTION TARGET", color = AppColor.inkAlt.copy(alpha = 0.45f), mono = true)
             if (!connected && state.discoveredDevices.isNotEmpty()) {
                 Text(
-                    "${state.discoveredDevices.size} found",
+                    if (state.selectedDiscoveredDevice == null) "choose one" else "${state.discoveredDevices.size} found",
                     color = AppColor.greenInk,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.SemiBold,

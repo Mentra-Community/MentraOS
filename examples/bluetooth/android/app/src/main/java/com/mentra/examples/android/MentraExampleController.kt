@@ -153,10 +153,11 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     fun connect() = runAction("Connect") {
-        val target = state.selectedDiscoveredDevice ?: state.discoveredDevices.firstOrNull()
+        val target = state.selectedDiscoveredDevice
         when {
             target != null -> sdk.connect(target)
-            hasSavedConnectionTarget(state.bluetoothStatus) -> sdk.connectDefault()
+            state.discoveredDevices.isEmpty() && hasSavedConnectionTarget(state.bluetoothStatus) -> sdk.connectDefault()
+            state.discoveredDevices.isNotEmpty() -> throw IllegalStateException("Choose one of the discovered glasses first.")
             else -> throw IllegalStateException("Scan first to choose nearby glasses.")
         }
     }
@@ -177,6 +178,14 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         stopKeepAlive()
         sdk.disconnect()
         applyDisconnectedState("Disconnected")
+    }
+
+    fun clearDefaultDevice() = runAction("Clear default") {
+        sdk.clearDefaultDevice()
+        state = state.copy(
+            bluetoothStatus = state.bluetoothStatus + defaultDeviceStatus(null),
+            selectedDiscoveredDevice = null,
+        )
     }
 
     fun displayHello() = runAction("Display Hello") {
@@ -459,7 +468,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (state.discoveredDevices.none { discoveredDeviceKey(it) == discoveredDeviceKey(device) }) {
             state = state.copy(
                 discoveredDevices = state.discoveredDevices + device,
-                selectedDiscoveredDevice = state.selectedDiscoveredDevice ?: device,
             )
         }
         addEvent("BLE", "discovered ${device.name}")
@@ -1189,14 +1197,16 @@ fun targetDeviceDetail(device: MentraDiscoveredDevice): String =
 
 fun connectionTargetLabel(state: MentraExampleState, values: Map<String, Any>): String =
     when {
-        isGlassesConnected(values) -> deviceLabel(values)
+        isGlassesConnected(values) -> stringValue(state.bluetoothStatus, "device_name") ?: deviceLabel(values)
         state.selectedDiscoveredDevice != null -> state.selectedDiscoveredDevice.name
-        hasSavedConnectionTarget(state.bluetoothStatus) -> savedConnectionTargetName(state.bluetoothStatus)
+        state.discoveredDevices.isEmpty() && hasSavedConnectionTarget(state.bluetoothStatus) -> savedConnectionTargetName(state.bluetoothStatus)
+        state.discoveredDevices.isNotEmpty() -> "Choose a discovered device"
         else -> "Scan required"
     }
 
 fun canConnectTarget(state: MentraExampleState): Boolean =
-    state.selectedDiscoveredDevice != null || state.discoveredDevices.isNotEmpty() || hasSavedConnectionTarget(state.bluetoothStatus)
+    state.selectedDiscoveredDevice != null ||
+        (state.discoveredDevices.isEmpty() && hasSavedConnectionTarget(state.bluetoothStatus))
 
 fun hasSavedConnectionTarget(values: Map<String, Any>): Boolean =
     !stringValue(values, "default_wearable").isNullOrBlank() && !stringValue(values, "device_name").isNullOrBlank()

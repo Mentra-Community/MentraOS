@@ -172,6 +172,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
+    func clearDefaultDevice() {
+        runAction("Clear default") {
+            sdk.clearDefaultDevice()
+            bluetoothValues.merge(defaultDeviceStatus(nil)) { _, new in new }
+            selectedDiscoveredDevice = nil
+        }
+    }
+
     func displayHello() {
         runAction("Display Hello") {
             try requireDisplaySupport("display text")

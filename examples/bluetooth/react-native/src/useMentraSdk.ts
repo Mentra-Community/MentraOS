@@ -96,6 +96,7 @@ export type MentraSdkState = {
 
 export type MentraSdkActions = {
   captureAndUpload: () => Promise<void>;
+  clearDefaultDevice: () => Promise<void>;
   clearDisplay: () => Promise<void>;
   connect: () => Promise<void>;
   connectDevice: (device: DeviceSearchResult) => Promise<void>;
@@ -447,6 +448,15 @@ export function useMentraSdk(): MentraSdkModel {
       stopKeepAlive();
       await BluetoothSdk.disconnect();
       applyDisconnectedState('Disconnected');
+    });
+  }
+
+  async function clearDefaultDevice() {
+    await runAction('Clear default', async () => {
+      await BluetoothSdk.clearDefaultDevice();
+      setDefaultDevice(null);
+      setBluetoothStatus((current) => ({...current, ...clearedDefaultDeviceStatus()}));
+      await savePersistedDefaultDevice(null);
     });
   }
 
@@ -991,6 +1001,7 @@ export function useMentraSdk(): MentraSdkModel {
     bluetoothStatus,
     cameraStatus,
     captureAndUpload,
+    clearDefaultDevice,
     clearDisplay,
     connect,
     connectDevice,
@@ -1098,12 +1109,20 @@ function parseDefaultDevice(value: unknown): DefaultDevice | null {
 
 function defaultDeviceStatus(device: DefaultDevice | null): Record<string, string> {
   if (!device) {
-    return {};
+    return clearedDefaultDeviceStatus();
   }
   return {
     default_wearable: device.model,
     device_address: device.address ?? '',
     device_name: device.name,
+  };
+}
+
+function clearedDefaultDeviceStatus(): Record<string, string> {
+  return {
+    default_wearable: '',
+    device_address: '',
+    device_name: '',
   };
 }
 
