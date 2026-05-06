@@ -2,6 +2,31 @@
 
 The SDK can emit microphone events and local transcription results on supported devices. Treat audio as an advanced feature: request permission only when the user enables it, and provide clear privacy copy.
 
+## Playback Route
+
+The BLE connection is used for SDK commands and microphone data. Phone-originated playback uses the platform Bluetooth audio route instead.
+
+On Android, Mentra Live starts Bluetooth Classic bonding after the BLE connection is established. The user must accept the Android pairing dialog. Once the glasses are bonded and connected as a media audio device, normal Android media playback routes to the glasses.
+
+On iOS, apps cannot trigger Bluetooth Classic audio pairing. Ask the user to open iOS Settings > Bluetooth, pair/connect the glasses, and select them as the audio output before playing audio. If the glasses are not the active system audio route, playback can come from the phone speaker.
+
+For production apps, fail closed for audible playback when you can verify that the glasses are not the active audio route. The native example apps demonstrate this by refusing to play the recorded microphone sample unless the platform reports an active Bluetooth audio route.
+
+## Glasses Media Volume
+
+On Mentra Live, the SDK can read and set the glasses media step volume over BLE. This is separate from the phone OS audio route. If Android shows a music-note volume icon instead of a Bluetooth icon, the phone is probably controlling local media output even if the BLE glasses volume command succeeds. Phone hardware volume buttons change the active Android media stream; they do not automatically change this BLE-reported glasses volume.
+
+Android:
+
+```kotlin
+val result = sdk.getGlassesMediaVolume()
+println("Glasses media volume: ${result.volume} / 15")
+
+sdk.setGlassesMediaVolume(8)
+```
+
+`getGlassesMediaVolume()` returns `volume = null` if the device responded without a readable `vol` field. Unsupported devices throw an SDK error. `setGlassesMediaVolume(level)` requires `0..15`; unsupported devices or disconnected glasses throw an SDK error.
+
 ## Enable Microphone Events
 
 Android:

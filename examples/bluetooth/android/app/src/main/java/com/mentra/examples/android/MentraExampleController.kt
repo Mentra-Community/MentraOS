@@ -1,7 +1,20 @@
 package com.mentra.examples.android
 
+import android.bluetooth.BluetoothA2dp
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothProfile
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioAttributes
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.media.MediaPlayer
+import android.os.Build
+import android.provider.Settings
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -35,6 +48,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
@@ -68,6 +82,11 @@ private data class RgbLedPattern(
     val count: Int,
 )
 
+private data class AudioProfileStatus(
+    val label: String,
+    val connected: Boolean,
+)
+
 val rgbLedColorOptions = MentraRgbLedColor.values().map { it.value }
 
 data class MentraExampleState(
@@ -79,6 +98,8 @@ data class MentraExampleState(
     val events: List<ExampleEvent> = listOf(exampleEvent("LIVE", "SDK ready. Scan to discover glasses.")),
     val galleryModeAuto: Boolean = false,
     val glassesStatus: Map<String, Any> = emptyMap(),
+    val glassesMediaVolume: Int? = null,
+    val glassesVolumeStatus: String = "Glasses volume: not checked",
     val hotspotEnabled: Boolean = false,
     val lastAction: String = "No actions yet.",
     val ledColor: String = "green",
@@ -94,6 +115,12 @@ data class MentraExampleState(
     val photoCompression: String = "medium",
     val photoFlash: Boolean = false,
     val photoSize: String = "medium",
+    val audioBondStatus: String = "Bond: checking",
+    val audioMediaStatus: String = "Media: checking A2DP",
+    val audioMediaConnected: Boolean = false,
+    val phoneAudioRoute: String = "Phone media output",
+    val phoneMediaVolume: Int? = null,
+    val phoneMediaVolumeMax: Int? = null,
     val rawJsonExpanded: Boolean = false,
     val streamProtocol: String = "rtmp",
     val streamStartedAt: Long? = null,
@@ -108,6 +135,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         private set
 
     private val appContext = context.applicationContext
+    private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
     private val defaultDevicePrefs =
         appContext.getSharedPreferences("mentra_example_default_device", Context.MODE_PRIVATE)
     private val sdk = MentraBluetoothSdk.create(appContext, this)
@@ -122,17 +151,64 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private var micPlayer: MediaPlayer? = null
     private var micPcmBuffer = ByteArrayOutputStream()
     private var micStartedAt: Long? = null
+    private var bluetoothA2dp: BluetoothA2dp? = null
+    private var audioObserversRegistered = false
+    private var volumeRefreshJob: Job? = null
 
     private val micSampleRate = 16_000
     private val micChannelCount = 1
     private val micBitsPerSample = 16
 
     companion object {
+        private const val ACTION_VOLUME_CHANGED = "android.media.VOLUME_CHANGED_ACTION"
+        private const val EXTRA_VOLUME_STREAM_TYPE = "android.media.EXTRA_VOLUME_STREAM_TYPE"
         private const val DEFAULT_DEVICE_SCHEMA_KEY = "version"
         private const val DEFAULT_DEVICE_MODEL_KEY = "model"
         private const val DEFAULT_DEVICE_NAME_KEY = "name"
         private const val DEFAULT_DEVICE_ADDRESS_KEY = "address"
         private const val DEFAULT_DEVICE_SAVED_AT_KEY = "saved_at"
+    }
+
+    private val audioDeviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>) {
+            scope.launch { refreshAudioSystemState() }
+        }
+
+        override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>) {
+            scope.launch { refreshAudioSystemState() }
+        }
+    }
+
+    private val audioStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                BluetoothDevice.ACTION_BOND_STATE_CHANGED,
+                BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED -> refreshAudioSystemState()
+                ACTION_VOLUME_CHANGED -> {
+                    val streamType = intent.getIntExtra(EXTRA_VOLUME_STREAM_TYPE, -1)
+                    if (streamType == AudioManager.STREAM_MUSIC) {
+                        refreshAudioSystemState()
+                        scheduleGlassesVolumeRefresh()
+                    }
+                }
+            }
+        }
+    }
+
+    private val a2dpServiceListener = object : BluetoothProfile.ServiceListener {
+        override fun onServiceConnected(profile: Int, proxy: BluetoothProfile?) {
+            if (profile == BluetoothProfile.A2DP) {
+                bluetoothA2dp = proxy as? BluetoothA2dp
+                scope.launch { refreshAudioSystemState() }
+            }
+        }
+
+        override fun onServiceDisconnected(profile: Int) {
+            if (profile == BluetoothProfile.A2DP) {
+                bluetoothA2dp = null
+                scope.launch { refreshAudioSystemState() }
+            }
+        }
     }
 
     init {
@@ -144,7 +220,10 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             bluetoothStatus = initialBluetoothStatus,
             galleryModeAuto = galleryModeAuto(initialBluetoothStatus),
             hotspotEnabled = boolValue(initialGlassesStatus, "hotspotEnabled") ?: false,
+            phoneAudioRoute = currentAudioOutputRouteLabel(),
         )
+        registerAudioStateObservers()
+        refreshAudioSystemState()
     }
 
     fun startScan() = runAction("Scan") {
@@ -446,12 +525,15 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     override fun onGlassesStatusChanged(status: MentraGlassesStatusUpdate) {
+        val wasConnected = isGlassesConnected()
         state = state.copy(glassesStatus = state.glassesStatus + status.values)
         boolValue(status.values, "hotspotEnabled")?.let { enabled ->
             state = state.copy(hotspotEnabled = enabled)
         }
         if (isDisconnectedStatus(status.values)) {
             applyDisconnectedState("Disconnected")
+        } else if (!wasConnected && isGlassesConnected()) {
+            refreshGlassesMediaVolume()
         }
         addEvent("STORE", summarize(status.values))
     }
@@ -576,12 +658,158 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         addEvent("TX", "${error.code}: ${error.message}")
     }
 
+    fun refreshAudioRoute() {
+        refreshAudioSystemState()
+        addEvent("LIVE", "audio output ${state.phoneAudioRoute}; ${state.audioMediaStatus}")
+    }
+
+    fun openBluetoothSettings() = runAction("Open Bluetooth settings") {
+        appContext.startActivity(
+            Intent(Settings.ACTION_BLUETOOTH_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    }
+
+    fun refreshGlassesMediaVolume() {
+        refreshGlassesMediaVolume(showLoading = true)
+    }
+
+    fun decreaseGlassesMediaVolume() {
+        adjustGlassesMediaVolume(-1)
+    }
+
+    fun increaseGlassesMediaVolume() {
+        adjustGlassesMediaVolume(1)
+    }
+
+    fun setGlassesMediaVolume(level: Int) = runAction("Set glasses volume $level") {
+        requireConnected("change glasses media volume")
+        val nextLevel = level.coerceIn(0, 15)
+        state = state.copy(glassesVolumeStatus = "Glasses volume: setting $nextLevel...")
+        scope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) { sdk.setGlassesMediaVolume(nextLevel) }
+                state = state.copy(
+                    glassesMediaVolume = nextLevel,
+                    glassesVolumeStatus = "Glasses volume: $nextLevel / 15",
+                )
+                refreshAudioSystemState()
+                addEvent("LIVE", "set glasses volume $nextLevel (${result.statusCode ?: "ok"})")
+            } catch (error: Throwable) {
+                state = state.copy(glassesVolumeStatus = "Glasses volume: ${error.message ?: "set failed"}")
+                addEvent("TX", "set glasses volume failed: ${error.message ?: error::class.java.simpleName}")
+            }
+        }
+    }
+
+    private fun refreshGlassesMediaVolume(showLoading: Boolean) {
+        refreshAudioSystemState()
+        if (!isGlassesConnected()) {
+            state = state.copy(
+                glassesMediaVolume = null,
+                glassesVolumeStatus = "Glasses volume: connect first",
+            )
+            return
+        }
+
+        if (showLoading) {
+            state = state.copy(glassesVolumeStatus = "Glasses volume: reading...")
+        }
+        scope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) { sdk.getGlassesMediaVolume() }
+                val volume = result.volume
+                state = state.copy(
+                    glassesMediaVolume = volume,
+                    glassesVolumeStatus = if (volume != null) {
+                        "Glasses volume: $volume / 15"
+                    } else {
+                        "Glasses volume: response ${summarize(result.values)}"
+                    },
+                )
+                refreshAudioSystemState()
+                addEvent("LIVE", "glasses volume ${volume ?: summarize(result.values)}")
+            } catch (error: Throwable) {
+                state = state.copy(
+                    glassesMediaVolume = null,
+                    glassesVolumeStatus = "Glasses volume: ${error.message ?: "unavailable"}",
+                )
+                refreshAudioSystemState()
+                addEvent("TX", "glasses volume failed: ${error.message ?: error::class.java.simpleName}")
+            }
+        }
+    }
+
     override fun close() {
         stopKeepAlive()
         stopMicElapsedTimer()
         stopMicPlayback()
+        unregisterAudioStateObservers()
+        volumeRefreshJob?.cancel()
         controllerJob.cancel()
         sdk.close()
+    }
+
+    private fun adjustGlassesMediaVolume(delta: Int) {
+        val current = state.glassesMediaVolume ?: return
+        val next = (current + delta).coerceIn(0, 15)
+        if (next != current) {
+            setGlassesMediaVolume(next)
+        }
+    }
+
+    private fun registerAudioStateObservers() {
+        if (audioObserversRegistered) {
+            return
+        }
+        audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
+        val filter = IntentFilter().apply {
+            addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
+            addAction(BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED)
+            addAction(ACTION_VOLUME_CHANGED)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            appContext.registerReceiver(audioStateReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            appContext.registerReceiver(audioStateReceiver, filter)
+        }
+        bluetoothAdapter?.getProfileProxy(appContext, a2dpServiceListener, BluetoothProfile.A2DP)
+        audioObserversRegistered = true
+    }
+
+    private fun unregisterAudioStateObservers() {
+        if (!audioObserversRegistered) {
+            return
+        }
+        runCatching { audioManager.unregisterAudioDeviceCallback(audioDeviceCallback) }
+        runCatching { appContext.unregisterReceiver(audioStateReceiver) }
+        bluetoothA2dp?.let { proxy ->
+            runCatching { bluetoothAdapter?.closeProfileProxy(BluetoothProfile.A2DP, proxy) }
+        }
+        bluetoothA2dp = null
+        audioObserversRegistered = false
+    }
+
+    private fun scheduleGlassesVolumeRefresh() {
+        if (!isGlassesConnected()) {
+            return
+        }
+        volumeRefreshJob?.cancel()
+        volumeRefreshJob = scope.launch {
+            delay(300)
+            refreshGlassesMediaVolume(showLoading = false)
+        }
+    }
+
+    private fun refreshAudioSystemState() {
+        val mediaStatus = currentA2dpStatus()
+        state = state.copy(
+            audioBondStatus = currentBondStatusLabel(),
+            audioMediaStatus = mediaStatus.label,
+            audioMediaConnected = mediaStatus.connected,
+            phoneAudioRoute = currentAudioOutputRouteLabel(),
+            phoneMediaVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC),
+            phoneMediaVolumeMax = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC),
+        )
     }
 
     private fun runAction(label: String, action: () -> Unit) {
@@ -656,10 +884,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
         state = state.copy(
             glassesStatus = disconnectedGlassesStatus(),
+            glassesMediaVolume = null,
+            glassesVolumeStatus = "Glasses volume: not connected",
             streamStartedAt = null,
             streamStatus = status,
             hotspotEnabled = false,
             micRecording = false,
+            phoneAudioRoute = currentAudioOutputRouteLabel(),
             cameraStatus = if (hadPhotoRequest) "Disconnected before photo upload completed" else state.cameraStatus,
             wifiPendingSsid = null,
         )
@@ -754,9 +985,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             throw IllegalStateException("Record microphone audio before playback.")
         }
 
+        val audioRoute = requireGlassesAudioRoute()
         stopMicPlayback()
         try {
             val player = MediaPlayer().apply {
+                setAudioAttributes(
+                    mediaAudioAttributes()
+                )
                 setDataSource(file.absolutePath)
                 setOnCompletionListener {
                     scope.launch { stopMicPlayback() }
@@ -774,7 +1009,15 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             }
             micPlayer = player
             sdk.setOwnAppAudioPlaying(true)
-            state = state.copy(micPlaying = true)
+            val routedDevice = player.routedDevice
+            val actualRoute = routedDevice?.let(::audioOutputLabel) ?: audioRoute
+            if (routedDevice != null && !isBluetoothAudioOutput(routedDevice)) {
+                stopMicPlayback()
+                throw IllegalStateException("Playback routed to $actualRoute instead of Bluetooth audio.")
+            }
+            state = state.copy(micPlaying = true, phoneAudioRoute = actualRoute)
+            addEvent("LIVE", "playing through $actualRoute")
+            refreshGlassesMediaVolume()
         } catch (error: Throwable) {
             stopMicPlayback()
             throw error
@@ -796,6 +1039,144 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
         state = state.copy(micPlaying = false)
     }
+
+    private fun requireGlassesAudioRoute(): String {
+        val bluetoothOutputs = bluetoothAudioOutputs()
+        val routeName = bluetoothOutputs.firstOrNull()?.productName?.toString()?.takeIf { it.isNotBlank() }
+            ?: "Bluetooth audio"
+
+        if (bluetoothOutputs.isEmpty()) {
+            val currentRoute = currentAudioOutputRouteLabel()
+            state = state.copy(phoneAudioRoute = currentRoute)
+            throw IllegalStateException(
+                "Pair/connect the glasses as a Bluetooth audio device before playback. " +
+                    "On Android, accept the system pairing dialog after BLE connects. " +
+                    "Current output: $currentRoute."
+            )
+        }
+
+        return routeName
+    }
+
+    private fun currentBondStatusLabel(): String {
+        val bondedDevice = candidateBondedDevices().firstOrNull()
+            ?: return if (currentTargetName() == null) "Bond: no selected glasses" else "Bond: not paired"
+        val label = bluetoothDeviceLabel(bondedDevice)
+        return when (bondedDevice.bondState) {
+            BluetoothDevice.BOND_BONDED -> "Bond: paired with $label"
+            BluetoothDevice.BOND_BONDING -> "Bond: pairing with $label"
+            else -> "Bond: not paired with $label"
+        }
+    }
+
+    private fun currentA2dpStatus(): AudioProfileStatus {
+        val route = bluetoothAudioOutputs().firstOrNull()
+        val proxy = bluetoothA2dp ?: return if (route != null) {
+            AudioProfileStatus("Media: routed to ${audioOutputLabel(route)}", true)
+        } else {
+            AudioProfileStatus("Media: checking A2DP", false)
+        }
+
+        val connectedDevices = runCatching { proxy.connectedDevices }.getOrDefault(emptyList())
+        val connectedDevice = connectedDevices.firstOrNull(::matchesCurrentTarget)
+            ?: connectedDevices.firstOrNull(::isMentraLikeDevice)
+            ?: connectedDevices.firstOrNull()
+        if (connectedDevice != null) {
+            return AudioProfileStatus("Media: connected to ${bluetoothDeviceLabel(connectedDevice)}", true)
+        }
+
+        val bondedDevice = candidateBondedDevices().firstOrNull()
+        return if (bondedDevice != null) {
+            AudioProfileStatus("Media: paired, not connected", false)
+        } else {
+            AudioProfileStatus("Media: not paired", false)
+        }
+    }
+
+    private fun mediaAudioAttributes(): AudioAttributes =
+        AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+            .build()
+
+    private fun bluetoothAudioOutputs(): List<AudioDeviceInfo> =
+        audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).filter(::isBluetoothAudioOutput)
+
+    private fun currentAudioOutputRouteLabel(): String {
+        val outputs = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).toList()
+        val preferred = bluetoothAudioOutputs().firstOrNull()
+            ?: outputs.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+            ?: outputs.firstOrNull()
+            ?: return "No media output"
+        return audioOutputLabel(preferred)
+    }
+
+    private fun candidateBondedDevices(): List<BluetoothDevice> {
+        val bondedDevices = runCatching { bluetoothAdapter?.bondedDevices ?: emptySet() }.getOrDefault(emptySet())
+        val targetMatches = bondedDevices.filter(::matchesCurrentTarget)
+        return targetMatches.ifEmpty { bondedDevices.filter(::isMentraLikeDevice) }
+    }
+
+    private fun matchesCurrentTarget(device: BluetoothDevice): Boolean {
+        val targetAddress = currentTargetAddress()
+        if (!targetAddress.isNullOrBlank()) {
+            val deviceAddress = runCatching { device.address }.getOrNull()
+            if (deviceAddress.equals(targetAddress, ignoreCase = true)) {
+                return true
+            }
+        }
+
+        val targetName = currentTargetName()
+        val deviceName = bluetoothDeviceName(device)
+        return !targetName.isNullOrBlank() && deviceName == targetName
+    }
+
+    private fun isMentraLikeDevice(device: BluetoothDevice): Boolean =
+        bluetoothDeviceName(device)?.contains("Mentra", ignoreCase = true) == true
+
+    private fun currentTargetAddress(): String? =
+        state.selectedDiscoveredDevice?.address
+            ?: stringValue(state.bluetoothStatus, "device_address")
+
+    private fun currentTargetName(): String? =
+        state.selectedDiscoveredDevice?.name
+            ?: stringValue(state.bluetoothStatus, "device_name")
+            ?: stringValue(state.glassesStatus, "bluetoothName")
+            ?: stringValue(state.glassesStatus, "serialNumber")
+
+    private fun bluetoothDeviceLabel(device: BluetoothDevice): String =
+        bluetoothDeviceName(device)
+            ?: runCatching { device.address }.getOrNull()?.takeLast(5)
+            ?: "Bluetooth device"
+
+    private fun bluetoothDeviceName(device: BluetoothDevice): String? =
+        runCatching { device.name?.takeIf { it.isNotBlank() } }.getOrNull()
+
+    private fun audioOutputLabel(device: AudioDeviceInfo): String {
+        val name = device.productName?.toString()?.takeIf { it.isNotBlank() }
+        return listOfNotNull(audioOutputKind(device.type), name).joinToString(": ")
+    }
+
+    private fun isBluetoothAudioOutput(device: AudioDeviceInfo): Boolean =
+        when (device.type) {
+            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+            AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+            AudioDeviceInfo.TYPE_BLE_HEADSET,
+            AudioDeviceInfo.TYPE_BLE_SPEAKER -> true
+            else -> false
+        }
+
+    private fun audioOutputKind(type: Int): String =
+        when (type) {
+            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "Bluetooth A2DP"
+            AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "Bluetooth SCO"
+            AudioDeviceInfo.TYPE_BLE_HEADSET -> "Bluetooth LE headset"
+            AudioDeviceInfo.TYPE_BLE_SPEAKER -> "Bluetooth LE speaker"
+            AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "Phone speaker"
+            AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> "Wired headphones"
+            AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Wired headset"
+            else -> "Audio output"
+        }
 
     private fun startMicElapsedTimer() {
         stopMicElapsedTimer()

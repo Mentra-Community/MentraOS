@@ -680,8 +680,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         stopMicPlayback()
 
         do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.duckOthers])
-            try AVAudioSession.sharedInstance().setActive(true)
+            let routeName = try requireGlassesAudioRoute()
             let player = try AVAudioPlayer(contentsOf: url)
             player.delegate = self
             player.prepareToPlay()
@@ -695,6 +694,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 stopMicPlayback()
                 throw ExampleActionError(message: "Could not start mic playback.")
             }
+            append(tag: "LIVE", text: "playing through \(routeName)")
         } catch {
             stopMicPlayback()
             throw error
@@ -709,6 +709,24 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
         micPlaying = false
         try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+    }
+
+    private func requireGlassesAudioRoute() throws -> String {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playback, mode: .default, options: [.duckOthers])
+        try session.setActive(true)
+
+        if let bluetoothOutput = session.currentRoute.outputs.first(where: { output in
+            output.portType == .bluetoothA2DP ||
+                output.portType == .bluetoothHFP ||
+                output.portType == .bluetoothLE
+        }) {
+            return bluetoothOutput.portName
+        }
+
+        throw ExampleActionError(
+            message: "Pair/select the glasses in iOS Settings > Bluetooth before playback. iOS apps cannot trigger classic Bluetooth audio pairing."
+        )
     }
 
     func audioPlayerDidFinishPlaying(_: AVAudioPlayer, successfully _: Bool) {

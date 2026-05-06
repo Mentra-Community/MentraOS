@@ -805,6 +805,11 @@ export function useMentraSdk(): MentraSdkModel {
 
     await stopMicPlayback();
     await setAudioModeAsync({interruptionMode: 'duckOthers', playsInSilentMode: true});
+    if (Platform.OS === 'ios') {
+      addEvent('LIVE', 'iOS playback uses the selected system audio output. Pair/select the glasses in Settings > Bluetooth first.');
+    } else if (Platform.OS === 'android') {
+      addEvent('LIVE', 'Android playback uses the bonded Bluetooth audio route. Accept the pairing dialog after BLE connects.');
+    }
 
     try {
       const player = createAudioPlayer({uri}, {updateInterval: 250});

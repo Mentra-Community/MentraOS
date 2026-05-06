@@ -29,6 +29,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mentra.examples.android.MentraExampleController
@@ -58,6 +59,12 @@ fun SystemScreen(controller: MentraExampleController) {
         connected -> "record PCM from glasses"
         else -> "connect glasses to record"
     }
+    val canRecordMic = connected && !state.micPlaying
+    val canPlayMic = state.lastMicBytes > 0 && !state.micRecording
+    val phoneVolumeLabel = state.phoneMediaVolume?.let { volume ->
+        state.phoneMediaVolumeMax?.let { max -> "$volume / $max" } ?: volume.toString()
+    } ?: "unknown"
+    val glassesVolumeLabel = state.glassesMediaVolume?.let { "$it / 15" } ?: "unknown"
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
         PageHeader("System", connected)
         if (!connected) {
@@ -78,17 +85,22 @@ fun SystemScreen(controller: MentraExampleController) {
                     }
                 }
                 Row(
-                    modifier = Modifier.clip(RoundedCornerShape(999.dp)).background(AppColor.ink.copy(alpha = 0.05f))
+                    modifier = Modifier.clip(RoundedCornerShape(999.dp))
+                        .background(if (connected) AppColor.ink.copy(alpha = 0.05f) else AppColor.red.copy(alpha = 0.08f))
                         .clickable(enabled = connected) { controller.requestWifiScan() }
                         .padding(horizontal = 12.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Icon(Icons.Outlined.Refresh, null, tint = AppColor.ink, modifier = Modifier.size(11.dp))
-                    Text("Scan", color = AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Icon(Icons.Outlined.Refresh, null, tint = if (connected) AppColor.ink else AppColor.red, modifier = Modifier.size(11.dp))
+                    Text(if (connected) "Scan" else "Connect first", color = if (connected) AppColor.ink else AppColor.red, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
             Spacer(Modifier.height(4.dp))
+            if (!connected) {
+                DisabledHint("Connect glasses first to scan or join Wi-Fi networks.")
+                Spacer(Modifier.height(4.dp))
+            }
             val currentWifiConnected = state.glassesStatus["wifiConnected"] == true
             NetworkRow(
                 wifiLabel(state.glassesStatus),
@@ -129,53 +141,120 @@ fun SystemScreen(controller: MentraExampleController) {
             }
         }
 
-        // Hotspot + Mic
-        Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(modifier = Modifier.weight(1f).clickable(enabled = connected) { controller.toggleHotspot() }) {
+        // Hotspot card
+        Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp).clickable(enabled = connected) { controller.toggleHotspot() }) {
             GlassCard(
                 modifier = Modifier.fillMaxWidth(),
                 corner = 22,
-                padding = PaddingValues(horizontal = 16.dp, vertical = 16.dp)
+                padding = PaddingValues(horizontal = 16.dp, vertical = 14.dp)
             ) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    IconTile(Icons.Outlined.WifiTethering)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        IconTile(Icons.Outlined.WifiTethering)
+                        Column {
+                            Text("Hotspot", color = AppColor.ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                if (connected) hotspotLabel(state.glassesStatus, state.hotspotEnabled) else "connect glasses to toggle",
+                                color = if (state.hotspotEnabled) AppColor.greenAccent else AppColor.muted,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                    }
                     Box(
                         modifier = Modifier.size(width = 38.dp, height = 22.dp).clip(RoundedCornerShape(999.dp)).background(Color.White).padding(2.dp),
-                        contentAlignment = Alignment.CenterEnd
+                        contentAlignment = if (state.hotspotEnabled) Alignment.CenterEnd else Alignment.CenterStart
                     ) {
                         Box(modifier = Modifier.size(18.dp).clip(CircleShape).background(if (state.hotspotEnabled) AppColor.greenAccent else AppColor.mutedSoft))
                     }
                 }
-                Spacer(Modifier.height(10.dp))
-                Text("Hotspot", color = AppColor.ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                Text(hotspotLabel(state.glassesStatus, state.hotspotEnabled), color = if (state.hotspotEnabled) AppColor.greenAccent else AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
             }
-            }
-            Box(modifier = Modifier.weight(1f)) {
-            GlassCard(
-                modifier = Modifier.fillMaxWidth(),
-                corner = 22,
-                padding = PaddingValues(horizontal = 16.dp, vertical = 16.dp)
-            ) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        }
+
+        // Microphone card
+        GlassCard(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            corner = 22,
+            padding = PaddingValues(horizontal = 16.dp, vertical = 16.dp)
+        ) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     IconTile(Icons.Outlined.Mic)
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        MicControlButton(
-                            icon = if (state.micRecording) Icons.Outlined.Stop else Icons.Filled.Circle,
-                            enabled = connected,
-                            active = state.micRecording,
-                        ) { controller.toggleMic() }
-                        MicControlButton(
-                            icon = if (state.micPlaying) Icons.Outlined.Stop else Icons.Outlined.PlayArrow,
-                            enabled = state.lastMicBytes > 0,
-                            active = state.micPlaying,
-                        ) { controller.playMicRecording() }
+                    Column {
+                        Text("Microphone", color = AppColor.ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Text(micStatus, color = if (state.micRecording || state.micPlaying) AppColor.greenAccent else AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
                     }
                 }
-                Spacer(Modifier.height(10.dp))
-                Text("Microphone", color = AppColor.ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                Text(micStatus, color = if (state.micRecording || state.micPlaying) AppColor.greenAccent else AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    MicControlButton(
+                        icon = if (state.micRecording) Icons.Outlined.Stop else Icons.Filled.Circle,
+                        enabled = canRecordMic,
+                        active = state.micRecording,
+                    ) { controller.toggleMic() }
+                    MicControlButton(
+                        icon = if (state.micPlaying) Icons.Outlined.Stop else Icons.Outlined.PlayArrow,
+                        enabled = canPlayMic || state.micPlaying,
+                        active = state.micPlaying,
+                    ) { controller.playMicRecording() }
+                }
             }
+            Spacer(Modifier.height(12.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                Column(modifier = Modifier.weight(1f)) {
+                    AudioStatusLine("Bond", state.audioBondStatus.removePrefix("Bond: "))
+                    AudioStatusLine("A2DP", state.audioMediaStatus.removePrefix("Media: "), good = state.audioMediaConnected)
+                    AudioStatusLine("Route", state.phoneAudioRoute)
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    AudioStatusLine("Android vol", phoneVolumeLabel)
+                    AudioStatusLine("SDK vol", glassesVolumeLabel, good = state.glassesMediaVolume != null)
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
+                        MicControlButton(
+                            icon = Icons.Outlined.Remove,
+                            enabled = connected && state.glassesMediaVolume != null && state.glassesMediaVolume > 0,
+                            active = false,
+                        ) { controller.decreaseGlassesMediaVolume() }
+                        MicControlButton(
+                            icon = Icons.Outlined.Add,
+                            enabled = connected && state.glassesMediaVolume != null && state.glassesMediaVolume < 15,
+                            active = false,
+                        ) { controller.increaseGlassesMediaVolume() }
+                        TextButton(
+                            onClick = controller::refreshGlassesMediaVolume,
+                            enabled = connected,
+                            modifier = Modifier.padding(top = 2.dp)
+                        ) {
+                            Text("Read")
+                        }
+                    }
+                }
+            }
+            if (!connected) {
+                Spacer(Modifier.height(10.dp))
+                DisabledHint("Connect glasses before recording or playing microphone audio.")
+            } else if (!state.audioMediaConnected) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Playback needs Bluetooth media connected. Android usually asks to pair after BLE connects; use Settings if it is not connected.",
+                    color = AppColor.red,
+                    fontSize = 10.sp,
+                    lineHeight = 13.sp,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(
+                    onClick = controller::openBluetoothSettings,
+                    modifier = Modifier.padding(top = 2.dp)
+                ) {
+                    Text("Bluetooth settings")
+                }
+                TextButton(
+                    onClick = controller::refreshAudioRoute,
+                    modifier = Modifier.padding(top = 2.dp)
+                ) {
+                    Text("Refresh route")
+                }
             }
         }
 
@@ -210,6 +289,10 @@ fun SystemScreen(controller: MentraExampleController) {
                 chips.forEachIndexed { index, text ->
                     InputChip("${index + 1}s", text)
                 }
+            }
+            if (!connected) {
+                Spacer(Modifier.height(10.dp))
+                DisabledHint("Connect glasses to receive button/touch events and change gallery mode.")
             }
             Spacer(Modifier.height(12.dp))
             Text("Save in gallery mode", color = AppColor.ink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
@@ -280,6 +363,10 @@ fun SystemScreen(controller: MentraExampleController) {
                 lineHeight = 16.sp,
                 fontWeight = FontWeight.Medium,
             )
+            if (!connected) {
+                Spacer(Modifier.height(10.dp))
+                DisabledHint("Connect glasses to send RGB LED commands.")
+            }
         }
 
         Spacer(Modifier.height(140.dp))
@@ -361,6 +448,46 @@ private fun MicControlButton(icon: ImageVector, enabled: Boolean, active: Boolea
             modifier = Modifier.size(13.dp)
         )
     }
+}
+
+@Composable
+private fun AudioStatusLine(label: String, value: String, good: Boolean? = null) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label.uppercase(), color = AppColor.muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp)
+        Text(
+            value,
+            modifier = Modifier.weight(1f).padding(start = 8.dp),
+            color = when (good) {
+                true -> AppColor.greenAccent
+                false -> AppColor.red
+                null -> AppColor.ink
+            },
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 2,
+            textAlign = TextAlign.End,
+        )
+    }
+}
+
+@Composable
+private fun DisabledHint(message: String) {
+    Text(
+        message,
+        color = AppColor.red,
+        fontSize = 10.sp,
+        lineHeight = 13.sp,
+        fontWeight = FontWeight.Medium,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(AppColor.red.copy(alpha = 0.08f))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+    )
 }
 
 @Composable

@@ -314,6 +314,17 @@ sdk.setMicState(
 
 Raw audio and local transcription are advanced capabilities. Gate them behind explicit user permission and in-app controls.
 
+Phone-originated playback is routed by the OS, not by the BLE command channel. On Android, Mentra Live initiates Bluetooth Classic bonding after BLE connects; accept the system pairing dialog so media audio can route to the glasses. On iOS, users must pair/connect the glasses from Settings > Bluetooth and select them as the audio output because apps cannot initiate Bluetooth Classic audio pairing.
+
+Mentra Live also supports a BLE-controlled media step volume. This controls the glasses volume, not the phone output route. Phone hardware volume buttons change the active Android/iOS media stream; they do not automatically change this BLE-reported glasses volume:
+
+```kotlin
+val volume = sdk.getGlassesMediaVolume()
+sdk.setGlassesMediaVolume(8)
+```
+
+`getGlassesMediaVolume()` returns a `volume` in the `0..15` range when the glasses report one, or `null` if the response did not include a readable volume field. `setGlassesMediaVolume(level)` requires `0..15`. Both calls throw SDK errors when the connected device does not support the command, the glasses are disconnected, or the glasses do not respond before the command timeout.
+
 ## Camera Photo Upload
 
 Use `requestPhoto` when your app needs the glasses to capture a photo and upload it to your backend. The phone sends the command to the glasses over Bluetooth, then the photo is delivered to the `webhookUrl` you provide. Depending on device connectivity and firmware, delivery may happen directly from the glasses or through a supported SDK relay path.
