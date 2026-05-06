@@ -14,14 +14,14 @@ import { Header } from '../components/Header';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { colors } from '../components/theme';
 import { hotspotLabel, isGlassesConnected, wifiLabel, wifiSubLabel } from '../sdkFormat';
-import { RGB_LED_COLORS, durationText, type LedColor, type LedMode, type MentraSdkModel } from '../useMentraSdk';
+import { RGB_LED_COLORS, durationText, type LedColor, type LedMode, type MentraSdkModel, type SdkConsoleEvent } from '../useMentraSdk';
 
 export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
   const connected = isGlassesConnected(sdk.glassesStatus);
   const networks = (sdk.bluetoothStatus.wifiScanResults ?? []).filter(
     (network) => !connected || !sdk.glassesStatus.wifiConnected || network.ssid !== sdk.glassesStatus.wifiSsid,
   );
-  const inputEvents = sdk.events.filter((item) => item.text.includes('button') || item.text.includes('touch') || item.text.includes('swipe')).slice(0, 3);
+  const inputChips = recentInputChips(sdk.events);
   const [pendingWifi, setPendingWifi] = useState<{ssid: string; requiresPassword: boolean} | null>(null);
   const [pendingWifiPassword, setPendingWifiPassword] = useState('');
   const didAutoScanWifi = useRef(false);
@@ -192,10 +192,8 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
           </View>
         </View>
         <View style={styles.inputChips}>
-          {(inputEvents.length > 0 ? inputEvents : [
-            { time: '--', text: 'waiting for input' },
-          ]).map((item, index) => (
-            <InputChip key={`${item.time}-${index}`} prefix={item.time.slice(-8, -6) || '--'} label={item.text.replace(/^button /, '')} />
+          {inputChips.map((item) => (
+            <InputChip key={`${item.age}-${item.label}`} prefix={item.age} label={item.label} />
           ))}
         </View>
         <View style={styles.galleryModeBlock}>
@@ -366,9 +364,63 @@ function InputChip({ prefix, label }: { prefix: string; label: string }) {
   return (
     <View style={styles.inputChip}>
       <Text style={styles.inputChipPrefix}>{prefix}</Text>
-      <Text style={styles.inputChipLabel}>{label}</Text>
+      <Text numberOfLines={1} style={styles.inputChipLabel}>{label}</Text>
     </View>
   );
+}
+
+function recentInputChips(events: SdkConsoleEvent[]) {
+  const labels = events.map((item) => inputLabel(item.text)).filter((label): label is string => Boolean(label)).slice(0, 3);
+  if (labels.length === 0) {
+    return [{ age: '--', label: 'waiting' }];
+  }
+  return labels.map((label, index) => ({ age: `${index + 1}s`, label }));
+}
+
+function inputLabel(text: string) {
+  const normalized = text.trim().toLowerCase();
+  if (normalized.startsWith('button ')) {
+    const detail = normalized.replace(/^button /, '').replace(/:/g, ' ');
+    if (detail.includes('long')) {
+      return 'long';
+    }
+    if (detail.includes('short') || detail.includes('tap')) {
+      return 'tap';
+    }
+    if (!detail) {
+      return 'button';
+    }
+    const parts = detail.split(/\s+/);
+    return parts[parts.length - 1];
+  }
+  if (normalized.startsWith('swipe ')) {
+    if (normalized.includes('left')) {
+      return 'swipe ←';
+    }
+    if (normalized.includes('right') || normalized.includes('->')) {
+      return 'swipe →';
+    }
+    if (normalized.includes('up')) {
+      return 'swipe ↑';
+    }
+    if (normalized.includes('down')) {
+      return 'swipe ↓';
+    }
+    return 'swipe';
+  }
+  if (normalized.startsWith('touch ')) {
+    if (normalized.includes('long')) {
+      return 'long';
+    }
+    if (normalized.includes('double')) {
+      return 'double';
+    }
+    if (normalized.includes('tap') || normalized.includes('short')) {
+      return 'tap';
+    }
+    return 'touch';
+  }
+  return null;
 }
 
 function LedTab({ icon, label, active, disabled, onPress }: { icon: React.ReactNode; label: LedMode; active?: boolean; disabled?: boolean; onPress: () => void }) {
@@ -482,10 +534,10 @@ const styles = StyleSheet.create({
   tileSub: { color: colors.muted, fontSize: 10, fontWeight: '500' },
   livePill2: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(52,199,89,0.16)', borderWidth: 1, borderColor: 'rgba(52,199,89,0.3)', paddingVertical: 4, paddingHorizontal: 9, borderRadius: 999 },
   livePill2Text: { color: colors.greenDeep, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
-  inputChips: { flexDirection: 'row', gap: 6 },
-  inputChip: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(15,42,29,0.04)', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10 },
+  inputChips: { flexDirection: 'row', gap: 8 },
+  inputChip: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(15,42,29,0.04)', paddingVertical: 7, paddingHorizontal: 10, borderRadius: 12 },
   inputChipPrefix: { color: colors.muted, fontSize: 10, fontWeight: '600' },
-  inputChipLabel: { color: colors.ink, fontSize: 11, fontWeight: '600' },
+  inputChipLabel: { flex: 1, color: colors.ink, fontSize: 11, fontWeight: '700' },
   galleryModeBlock: { gap: 6, marginTop: 12 },
   galleryModeTitle: { color: colors.ink, fontSize: 14, fontWeight: '700' },
   galleryModeBody: { color: colors.muted, fontSize: 11, fontWeight: '500', lineHeight: 15 },

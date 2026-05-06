@@ -9,6 +9,64 @@ private struct WifiNetworkSelection: Identifiable {
 
 private let ledColorOptions = ["red", "green", "blue", "orange", "white"]
 
+private struct InputChipModel: Identifiable {
+    let id: String
+    let age: String
+    let label: String
+}
+
+private func recentInputChips(from events: [ExampleEvent]) -> [InputChipModel] {
+    let labels = Array(events.compactMap { inputLabel(from: $0.text) }.prefix(3))
+    if labels.isEmpty {
+        return [InputChipModel(id: "waiting", age: "--", label: "waiting")]
+    }
+    return labels.enumerated().map { index, label in
+        InputChipModel(id: "\(index)-\(label)", age: "\(index + 1)s", label: label)
+    }
+}
+
+private func inputLabel(from text: String) -> String? {
+    let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    if normalized.hasPrefix("button ") {
+        let detail = normalized.dropFirst("button ".count).replacingOccurrences(of: ":", with: " ")
+        if detail.contains("long") {
+            return "long"
+        }
+        if detail.contains("short") || detail.contains("tap") {
+            return "tap"
+        }
+        return detail.isEmpty ? "button" : String(detail.split(separator: " ").last ?? "button")
+    }
+    if normalized.hasPrefix("swipe ") {
+        if normalized.contains("left") {
+            return "swipe ←"
+        }
+        if normalized.contains("right") || normalized.contains("->") {
+            return "swipe →"
+        }
+        if normalized.contains("up") {
+            return "swipe ↑"
+        }
+        if normalized.contains("down") {
+            return "swipe ↓"
+        }
+        return "swipe"
+    }
+    if normalized.hasPrefix("touch ") {
+        if normalized.contains("long") {
+            return "long"
+        }
+        if normalized.contains("double") {
+            return "double"
+        }
+        if normalized.contains("tap") || normalized.contains("short") {
+            return "tap"
+        }
+        return "touch"
+    }
+    return nil
+}
+
 struct SystemScreen: View {
     @ObservedObject var model: BluetoothViewModel
     @State private var pendingWifiNetwork: WifiNetworkSelection?
@@ -335,11 +393,10 @@ struct SystemScreen: View {
             }
             .padding(.bottom, 10)
 
-            HStack(spacing: 6) {
-                ForEach(Array((model.events.filter { $0.text.contains("button") || $0.text.contains("touch") || $0.text.contains("swipe") }.prefix(3).map(\.text).ifEmpty(["waiting for input"])).enumerated()), id: \.offset) { index, text in
-                    InputChip(prefix: "\(index + 1)s", label: text)
+            HStack(spacing: 8) {
+                ForEach(recentInputChips(from: model.events)) { chip in
+                    InputChip(prefix: chip.age, label: chip.label)
                 }
-                Spacer()
             }
             .padding(.bottom, 12)
 
@@ -466,13 +523,18 @@ struct NetworkRowV: View {
 struct InputChip: View {
     let prefix: String; let label: String
     var body: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 6) {
             Text(prefix).font(.system(size: 10, weight: .semibold)).foregroundColor(AppColor.muted)
-            Text(label).font(.system(size: 11, weight: .semibold)).foregroundColor(AppColor.ink)
+            Text(label)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(AppColor.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.86)
         }
-        .padding(.horizontal, 10).padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10).padding(.vertical, 7)
         .background(AppColor.ink.opacity(0.04))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
 

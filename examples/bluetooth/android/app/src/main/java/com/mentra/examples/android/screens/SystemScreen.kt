@@ -31,8 +31,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mentra.examples.android.ExampleEvent
 import com.mentra.examples.android.MentraExampleController
 import com.mentra.examples.android.durationText
 import com.mentra.examples.android.galleryHotspotPasswordLabel
@@ -59,7 +61,7 @@ fun SystemScreen(controller: MentraExampleController) {
             state.glassesStatus["wifiConnected"] != true ||
             stringValue(network, "ssid") != currentWifiSsid
     }
-    val inputEvents = state.events.filter { it.text.contains("button") || it.text.contains("touch") || it.text.contains("swipe") }.take(3)
+    val inputChips = remember(state.events) { recentInputChips(state.events) }
     val galleryUrl = galleryServerUrl(state.glassesStatus, state.hotspotEnabled)
     val galleryHotspotPassword = galleryUrl?.let { galleryHotspotPasswordLabel(state.glassesStatus) }
     var pendingWifiSsid by remember { mutableStateOf<String?>(null) }
@@ -357,10 +359,12 @@ fun SystemScreen(controller: MentraExampleController) {
                 }
             }
             Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                val chips = if (inputEvents.isEmpty()) listOf("waiting for input") else inputEvents.map { it.text }
-                chips.forEachIndexed { index, text ->
-                    InputChip("${index + 1}s", text)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                inputChips.forEach { chip ->
+                    InputChip(chip.age, chip.label, modifier = Modifier.weight(1f))
                 }
             }
             if (!connected) {
@@ -651,15 +655,69 @@ private fun GalleryModeChip(label: String, active: Boolean, enabled: Boolean, on
     )
 }
 
+private data class InputChipModel(
+    val age: String,
+    val label: String,
+)
+
+private fun recentInputChips(events: List<ExampleEvent>): List<InputChipModel> {
+    val labels = events.mapNotNull { inputLabel(it.text) }.take(3)
+    if (labels.isEmpty()) {
+        return listOf(InputChipModel("--", "waiting"))
+    }
+    return labels.mapIndexed { index, label ->
+        InputChipModel("${index + 1}s", label)
+    }
+}
+
+private fun inputLabel(text: String): String? {
+    val normalized = text.trim().lowercase()
+    return when {
+        normalized.startsWith("button ") -> {
+            val detail = normalized.removePrefix("button ").replace(":", " ")
+            when {
+                "long" in detail -> "long"
+                "short" in detail || "tap" in detail -> "tap"
+                detail.isNotBlank() -> detail.split(Regex("\\s+")).last()
+                else -> "button"
+            }
+        }
+        normalized.startsWith("swipe ") -> when {
+            "left" in normalized -> "swipe ←"
+            "right" in normalized || "->" in normalized -> "swipe →"
+            "up" in normalized -> "swipe ↑"
+            "down" in normalized -> "swipe ↓"
+            else -> "swipe"
+        }
+        normalized.startsWith("touch ") -> when {
+            "long" in normalized -> "long"
+            "double" in normalized -> "double"
+            "tap" in normalized || "short" in normalized -> "tap"
+            else -> "touch"
+        }
+        else -> null
+    }
+}
+
 @Composable
-private fun InputChip(prefix: String, label: String) {
+private fun InputChip(prefix: String, label: String, modifier: Modifier = Modifier) {
     Row(
-        modifier = Modifier.clip(RoundedCornerShape(10.dp)).background(AppColor.ink.copy(alpha = 0.04f)).padding(horizontal = 10.dp, vertical = 6.dp),
+        modifier = modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(AppColor.ink.copy(alpha = 0.04f))
+            .padding(horizontal = 10.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp)
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Text(prefix, color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
-        Text(label, color = AppColor.ink, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            label,
+            color = AppColor.ink,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
