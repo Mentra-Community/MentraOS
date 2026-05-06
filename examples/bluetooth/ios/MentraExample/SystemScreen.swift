@@ -36,6 +36,14 @@ struct SystemScreen: View {
             wifiConnectionSheet(network)
                 .presentationDetents([.height(300)])
         }
+        .onAppear {
+            scanWifiIfConnected()
+        }
+        .onChange(of: model.glassesConnected) { connected in
+            if connected {
+                scanWifiIfConnected()
+            }
+        }
     }
 
     private var wifiCard: some View {
@@ -66,7 +74,7 @@ struct SystemScreen: View {
 
             currentWifiRow
             let rows = wifiScanResults(model.bluetoothValues)
-            ForEach(Array((rows.isEmpty ? [["ssid": "Scan for nearby networks", "requiresPassword": false, "signalStrength": 0]] : rows).enumerated()), id: \.offset) { index, network in
+            ForEach(Array(rows.enumerated()), id: \.offset) { index, network in
                 let ssid = stringValue(network, "ssid") ?? "Unknown"
                 let requiresPassword = boolValue(network, "requiresPassword") ?? false
                 NetworkRowV(
@@ -75,12 +83,18 @@ struct SystemScreen: View {
                     subColor: AppColor.muted,
                     faint: true,
                     locked: requiresPassword,
-                    last: index == (rows.isEmpty ? 0 : rows.count - 1),
-                    trailingTitle: ssid == "Scan for nearby networks" ? nil : "Join",
+                    last: index == rows.count - 1,
+                    trailingTitle: "Join",
                     trailingColor: AppColor.greenDeep,
-                    action: ssid == "Scan for nearby networks" || !model.glassesConnected ? nil : { handleWifiNetworkTap(ssid: ssid, requiresPassword: requiresPassword) }
+                    action: model.glassesConnected ? { handleWifiNetworkTap(ssid: ssid, requiresPassword: requiresPassword) } : nil
                 )
             }
+        }
+    }
+
+    private func scanWifiIfConnected() {
+        if model.glassesConnected {
+            model.requestWifiScan()
         }
     }
 

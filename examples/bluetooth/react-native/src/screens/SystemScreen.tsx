@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -22,6 +22,7 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
   const inputEvents = sdk.events.filter((item) => item.text.includes('button') || item.text.includes('touch') || item.text.includes('swipe')).slice(0, 3);
   const [pendingWifi, setPendingWifi] = useState<{ssid: string; requiresPassword: boolean} | null>(null);
   const [pendingWifiPassword, setPendingWifiPassword] = useState('');
+  const didAutoScanWifi = useRef(false);
   const micStatus = sdk.micRecording
     ? `recording ${durationText(sdk.micElapsedSeconds)} · ${sdk.pcmFrames} PCM frames`
     : sdk.micPlaying
@@ -31,6 +32,18 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
         : connected
           ? 'record PCM from glasses'
           : 'connect glasses to record';
+
+  useEffect(() => {
+    if (!connected) {
+      didAutoScanWifi.current = false;
+      return;
+    }
+    if (didAutoScanWifi.current) {
+      return;
+    }
+    didAutoScanWifi.current = true;
+    void sdk.requestWifiScan();
+  }, [connected, sdk]);
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
@@ -74,9 +87,7 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
           sub={wifiSubLabel(sdk.glassesStatus)}
           subColor={sdk.glassesStatus.wifiConnected ? colors.greenAccent : colors.muted}
         />
-        {(networks.length > 0 ? networks : [
-          { ssid: 'Scan for nearby networks', signalStrength: 0, requiresPassword: false },
-        ]).map((network, index) => {
+        {networks.map((network, index) => {
           const joinNetwork = () => {
             if (network.requiresPassword) {
               setPendingWifi({ssid: network.ssid, requiresPassword: true});
@@ -90,14 +101,14 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
             <NetworkRow
               key={`${network.ssid}-${index}`}
               actionColor={colors.greenDeep}
-              actionLabel={network.ssid === 'Scan for nearby networks' ? undefined : 'Join'}
+              actionLabel="Join"
               name={network.ssid}
               sub={`${network.requiresPassword ? 'secured' : 'open'} · ${network.signalStrength ?? 0}`}
               subColor={colors.muted}
               faint
               locked={network.requiresPassword}
-              last={index === Math.max(networks.length - 1, 0)}
-              disabled={!connected || network.ssid === 'Scan for nearby networks'}
+              last={index === networks.length - 1}
+              disabled={!connected}
               onActionPress={joinNetwork}
               onPress={joinNetwork}
             />

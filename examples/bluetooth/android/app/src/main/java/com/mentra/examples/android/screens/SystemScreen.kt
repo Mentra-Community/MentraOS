@@ -19,6 +19,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -70,6 +71,13 @@ fun SystemScreen(controller: MentraExampleController) {
         state.phoneMediaVolumeMax?.let { max -> "$volume / $max" } ?: volume.toString()
     } ?: "unknown"
     val glassesVolumeLabel = state.glassesMediaVolume?.let { "$it / 15" } ?: "unknown"
+
+    LaunchedEffect(connected) {
+        if (connected) {
+            controller.requestWifiScan()
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
         PageHeader("System", connected)
         if (!connected) {
@@ -116,19 +124,16 @@ fun SystemScreen(controller: MentraExampleController) {
                 actionColor = AppColor.red,
                 onActionClick = if (currentWifiConnected) controller::forgetCurrentWifiNetwork else null,
             )
-            val rows = if (networks.isEmpty()) listOf(mapOf("ssid" to "Scan for nearby networks", "requiresPassword" to false, "signalStrength" to 0)) else networks
-            rows.forEachIndexed { index, network ->
+            networks.forEachIndexed { index, network ->
                 val ssid = network["ssid"] as? String ?: "Unknown"
                 val requiresPassword = network["requiresPassword"] as? Boolean ?: false
                 val pending = state.wifiPendingSsid == ssid
                 val joinNetwork: () -> Unit = {
-                    if (ssid != "Scan for nearby networks") {
-                        if (requiresPassword) {
-                            pendingWifiPassword = ""
-                            pendingWifiSsid = ssid
-                        } else {
-                            controller.sendWifiCredentials(ssid, "", requiresPassword = false)
-                        }
+                    if (requiresPassword) {
+                        pendingWifiPassword = ""
+                        pendingWifiSsid = ssid
+                    } else {
+                        controller.sendWifiCredentials(ssid, "", requiresPassword = false)
                     }
                 }
                 NetworkRow(
@@ -137,10 +142,10 @@ fun SystemScreen(controller: MentraExampleController) {
                     AppColor.muted,
                     faint = true,
                     locked = requiresPassword,
-                    last = index == rows.lastIndex,
-                    actionLabel = if (ssid == "Scan for nearby networks") null else "Join",
+                    last = index == networks.lastIndex,
+                    actionLabel = "Join",
                     actionColor = AppColor.greenDeep,
-                    onActionClick = if (ssid == "Scan for nearby networks") null else joinNetwork,
+                    onActionClick = joinNetwork,
                     onClick = joinNetwork,
                 )
             }
