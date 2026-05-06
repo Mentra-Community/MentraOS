@@ -13,8 +13,16 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Circle
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.Icon
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mentra.examples.android.MentraExampleController
 import com.mentra.examples.android.durationText
+import com.mentra.examples.android.hotspotLabel
 import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.rgbLedColorOptions
 import com.mentra.examples.android.wifiLabel
@@ -39,7 +48,9 @@ fun SystemScreen(controller: MentraExampleController) {
     val state = controller.state
     val connected = isGlassesConnected(state.glassesStatus)
     val networks = wifiScanResults(state.bluetoothStatus)
-    val inputEvents = state.events.filter { it.text.contains("button") || it.text.contains("touch") }.take(3)
+    val inputEvents = state.events.filter { it.text.contains("button") || it.text.contains("touch") || it.text.contains("swipe") }.take(3)
+    var pendingWifiSsid by remember { mutableStateOf<String?>(null) }
+    var pendingWifiPassword by remember { mutableStateOf("") }
     val micStatus = when {
         state.micRecording -> "recording ${durationText(state.micElapsedSeconds)} · ${state.pcmFrames} PCM frames"
         state.micPlaying -> "playing last recording"
@@ -78,19 +89,42 @@ fun SystemScreen(controller: MentraExampleController) {
                 }
             }
             Spacer(Modifier.height(4.dp))
-            NetworkRow(wifiLabel(state.glassesStatus), (state.glassesStatus["wifiLocalIp"] as? String) ?: "not connected", AppColor.greenAccent, check = true)
+            val currentWifiConnected = state.glassesStatus["wifiConnected"] == true
+            NetworkRow(
+                wifiLabel(state.glassesStatus),
+                (state.glassesStatus["wifiLocalIp"] as? String) ?: "not connected",
+                if (currentWifiConnected) AppColor.greenAccent else AppColor.muted,
+                check = currentWifiConnected,
+                actionLabel = if (currentWifiConnected) "Forget" else null,
+                actionColor = AppColor.red,
+                onActionClick = if (currentWifiConnected) controller::forgetCurrentWifiNetwork else null,
+            )
             val rows = if (networks.isEmpty()) listOf(mapOf("ssid" to "Scan for nearby networks", "requiresPassword" to false, "signalStrength" to 0)) else networks
             rows.forEachIndexed { index, network ->
                 val ssid = network["ssid"] as? String ?: "Unknown"
                 val requiresPassword = network["requiresPassword"] as? Boolean ?: false
+                val pending = state.wifiPendingSsid == ssid
+                val joinNetwork: () -> Unit = {
+                    if (ssid != "Scan for nearby networks") {
+                        if (requiresPassword) {
+                            pendingWifiPassword = ""
+                            pendingWifiSsid = ssid
+                        } else {
+                            controller.sendWifiCredentials(ssid, "", requiresPassword = false)
+                        }
+                    }
+                }
                 NetworkRow(
                     ssid,
-                    "${if (requiresPassword) "secured" else "open"} · ${network["signalStrength"] ?: 0}",
+                    if (pending) "connecting..." else "${if (requiresPassword) "secured" else "open"} · ${network["signalStrength"] ?: 0}",
                     AppColor.muted,
                     faint = true,
                     locked = requiresPassword,
                     last = index == rows.lastIndex,
-                    onClick = { if (ssid != "Scan for nearby networks") controller.sendWifiCredentials(ssid) }
+                    actionLabel = if (ssid == "Scan for nearby networks") null else "Join",
+                    actionColor = AppColor.greenDeep,
+                    onActionClick = if (ssid == "Scan for nearby networks") null else joinNetwork,
+                    onClick = joinNetwork,
                 )
             }
         }
@@ -114,7 +148,7 @@ fun SystemScreen(controller: MentraExampleController) {
                 }
                 Spacer(Modifier.height(10.dp))
                 Text("Hotspot", color = AppColor.ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                Text(if (state.hotspotEnabled) "enabled" else "disabled", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                Text(hotspotLabel(state.glassesStatus, state.hotspotEnabled), color = if (state.hotspotEnabled) AppColor.greenAccent else AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
             }
             }
             Box(modifier = Modifier.weight(1f)) {
@@ -177,6 +211,23 @@ fun SystemScreen(controller: MentraExampleController) {
                     InputChip("${index + 1}s", text)
                 }
             }
+            Spacer(Modifier.height(12.dp))
+            Text("Save in gallery mode", color = AppColor.ink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text(
+                if (state.galleryModeAuto) {
+                    "On: the glasses button saves photos/videos locally."
+                } else {
+                    "Off: button and touch events are reported to the phone."
+                },
+                color = AppColor.muted,
+                fontSize = 11.sp,
+                lineHeight = 15.sp,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                GalleryModeChip("Save media", state.galleryModeAuto, connected) { controller.setGalleryModeAuto(true) }
+                GalleryModeChip("Report events", !state.galleryModeAuto, connected) { controller.setGalleryModeAuto(false) }
+            }
         }
 
         // RGB LED card
@@ -233,6 +284,50 @@ fun SystemScreen(controller: MentraExampleController) {
 
         Spacer(Modifier.height(140.dp))
     }
+
+    val pendingSsid = pendingWifiSsid
+    if (pendingSsid != null) {
+        AlertDialog(
+            onDismissRequest = {
+                pendingWifiSsid = null
+                pendingWifiPassword = ""
+            },
+            title = { Text("Join Wi-Fi") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(pendingSsid, color = AppColor.muted)
+                    OutlinedTextField(
+                        value = pendingWifiPassword,
+                        onValueChange = { pendingWifiPassword = it },
+                        label = { Text("Password") },
+                        singleLine = true,
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = pendingWifiPassword.isNotBlank(),
+                    onClick = {
+                        controller.sendWifiCredentials(pendingSsid, pendingWifiPassword, requiresPassword = true)
+                        pendingWifiSsid = null
+                        pendingWifiPassword = ""
+                    }
+                ) {
+                    Text("Connect")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        pendingWifiSsid = null
+                        pendingWifiPassword = ""
+                    }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -269,7 +364,20 @@ private fun MicControlButton(icon: ImageVector, enabled: Boolean, active: Boolea
 }
 
 @Composable
-private fun NetworkRow(name: String, sub: String, subColor: Color, rssi: String? = null, check: Boolean = false, faint: Boolean = false, locked: Boolean = false, last: Boolean = false, onClick: (() -> Unit)? = null) {
+private fun NetworkRow(
+    name: String,
+    sub: String,
+    subColor: Color,
+    rssi: String? = null,
+    check: Boolean = false,
+    faint: Boolean = false,
+    locked: Boolean = false,
+    last: Boolean = false,
+    actionLabel: String? = null,
+    actionColor: Color = AppColor.ink,
+    onActionClick: (() -> Unit)? = null,
+    onClick: (() -> Unit)? = null,
+) {
     Column {
         Row(
             modifier = Modifier.fillMaxWidth().clickable(enabled = onClick != null) { onClick?.invoke() }.padding(vertical = 14.dp),
@@ -289,10 +397,43 @@ private fun NetworkRow(name: String, sub: String, subColor: Color, rssi: String?
                     if (check) Icon(Icons.Filled.Check, null, tint = AppColor.ink, modifier = Modifier.size(14.dp))
                 }
             }
+            if (actionLabel != null) {
+                Text(
+                    actionLabel,
+                    color = actionColor,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(actionColor.copy(alpha = 0.10f))
+                        .clickable(enabled = onActionClick != null) { onActionClick?.invoke() }
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                )
+            }
             if (locked) Icon(Icons.Outlined.Lock, null, tint = AppColor.ink, modifier = Modifier.size(14.dp))
         }
         if (!last) Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(AppColor.ink.copy(alpha = 0.04f)))
     }
+}
+
+@Composable
+private fun GalleryModeChip(label: String, active: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    Text(
+        label,
+        color = if (active) AppColor.greenInk else AppColor.muted,
+        fontSize = 12.sp,
+        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(if (active) AppColor.greenAccent.copy(alpha = 0.16f) else AppColor.ink.copy(alpha = 0.04f))
+            .border(
+                1.dp,
+                if (active) AppColor.greenAccent.copy(alpha = 0.32f) else AppColor.ink.copy(alpha = 0.05f),
+                RoundedCornerShape(999.dp)
+            )
+            .clickable(enabled = enabled) { onClick() }
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    )
 }
 
 @Composable

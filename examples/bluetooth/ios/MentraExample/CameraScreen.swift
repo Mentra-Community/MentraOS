@@ -1,19 +1,25 @@
+import MentraBluetoothSDK
 import SwiftUI
 import UIKit
 
-private let cameraSdkCall = """
+private let photoSizeOptions: [MentraPhotoSize] = [.small, .medium, .large, .full]
+private let photoCompressionOptions: [MentraPhotoCompression] = [.none, .medium, .heavy]
+
+private func cameraSdkCall(size: String, compression: String, flash: Bool) -> String {
+    """
 sdk.requestPhoto(
     MentraPhotoRequest(
       requestId: requestId,
       appId: "com.mentra.examples.ios",
-      size: .medium,
+      size: .\(size),
       webhookUrl: uploadUrl,
-      compress: .medium,
-      flash: false,
+      compress: .\(compression),
+      flash: \(flash),
       sound: true
     )
 )
 """
+}
 
 struct CameraScreen: View {
     @ObservedObject var model: BluetoothViewModel
@@ -96,13 +102,14 @@ struct CameraScreen: View {
     }
 
     private var sdkCard: some View {
-        VStack(spacing: 0) {
+        let sdkCall = cameraSdkCall(size: model.photoSize.rawValue, compression: model.photoCompression.rawValue, flash: model.photoFlash)
+        return VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("SDK CALL").font(.system(size: 9, weight: .bold)).tracking(1.1).foregroundColor(AppColor.greenAccent)
                     Spacer()
                     Button {
-                        UIPasteboard.general.string = cameraSdkCall
+                        UIPasteboard.general.string = sdkCall
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "doc.on.doc").font(.system(size: 9)).foregroundColor(AppColor.consoleText)
@@ -113,7 +120,7 @@ struct CameraScreen: View {
                     }
                     .buttonStyle(.plain)
                 }
-                Text(cameraSdkCall)
+                Text(sdkCall)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(AppColor.consoleText)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -185,10 +192,26 @@ struct CameraScreen: View {
             }
 
             HStack(spacing: 8) {
-                Chip(label: "size", value: "medium")
-                Chip(label: "compress", value: "medium")
-                Chip(label: "flash", value: "off")
-                Spacer()
+                ForEach(photoSizeOptions, id: \.rawValue) { size in
+                    Chip(label: "size", value: size.rawValue, highlight: model.photoSize == size)
+                        .onTapGesture { model.setPhotoSize(size) }
+                }
+            }
+            .padding(.bottom, 8)
+
+            HStack(spacing: 8) {
+                ForEach(photoCompressionOptions, id: \.rawValue) { compression in
+                    Chip(label: "compress", value: compression.rawValue, highlight: model.photoCompression == compression)
+                        .onTapGesture { model.setPhotoCompression(compression) }
+                }
+            }
+            .padding(.bottom, 8)
+
+            HStack(spacing: 8) {
+                Chip(label: "flash", value: "off", highlight: !model.photoFlash)
+                    .onTapGesture { model.setPhotoFlash(false) }
+                Chip(label: "flash", value: "on", highlight: model.photoFlash)
+                    .onTapGesture { model.setPhotoFlash(true) }
             }
         }
     }

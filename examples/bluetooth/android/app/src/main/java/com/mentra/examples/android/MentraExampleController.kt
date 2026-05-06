@@ -10,16 +10,13 @@ import com.mentra.core.MentraBluetoothError
 import com.mentra.core.MentraBluetoothSdk
 import com.mentra.core.MentraBluetoothSdkCallback
 import com.mentra.core.MentraBluetoothStatusUpdate
-import com.mentra.core.MentraButtonPhotoSettings
-import com.mentra.core.MentraButtonPhotoSize
 import com.mentra.core.MentraButtonPressEvent
-import com.mentra.core.MentraButtonVideoRecordingSettings
-import com.mentra.core.MentraCameraFov
-import com.mentra.core.MentraDashboardPositionRequest
 import com.mentra.core.MentraDeviceModel
 import com.mentra.core.MentraDiscoveredDevice
 import com.mentra.core.MentraGalleryMode
 import com.mentra.core.MentraGlassesStatusUpdate
+import com.mentra.core.MentraHotspotErrorEvent
+import com.mentra.core.MentraHotspotStatusEvent
 import com.mentra.core.MentraMicConfig
 import com.mentra.core.MentraPhotoCompression
 import com.mentra.core.MentraPhotoRequest
@@ -78,6 +75,7 @@ data class MentraExampleState(
     val cameraStatus: String = "Camera: enter the local webhook /upload URL",
     val discoveredDevices: List<MentraDiscoveredDevice> = emptyList(),
     val events: List<ExampleEvent> = listOf(exampleEvent("LIVE", "SDK ready. Scan to discover glasses.")),
+    val galleryModeAuto: Boolean = true,
     val glassesStatus: Map<String, Any> = emptyMap(),
     val hotspotEnabled: Boolean = false,
     val lastAction: String = "No actions yet.",
@@ -91,12 +89,16 @@ data class MentraExampleState(
     val pcmBytes: Int = 0,
     val pcmFrames: Int = 0,
     val photoPreviewUrl: String? = null,
+    val photoCompression: String = "medium",
+    val photoFlash: Boolean = false,
+    val photoSize: String = "medium",
     val rawJsonExpanded: Boolean = false,
     val streamProtocol: String = "rtmp",
     val streamStartedAt: Long? = null,
     val streamStatus: String = "Ready to start stream",
     val streamUrl: String = defaultStreamUrl("rtmp"),
     val webhookUrl: String = "",
+    val wifiPendingSsid: String? = null,
 )
 
 class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), AutoCloseable {
@@ -157,20 +159,26 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         sdk.clearDisplay()
     }
 
-    fun applySettings() = runAction("Apply Settings") {
-        requireConnected("apply settings")
-        sdk.setBrightness(72)
-        sdk.setDashboardPosition(MentraDashboardPositionRequest(height = 4, depth = 6))
-        sdk.setGalleryMode(MentraGalleryMode.AUTO)
-        sdk.setButtonPhotoSettings(MentraButtonPhotoSettings(MentraButtonPhotoSize.MEDIUM))
-        sdk.setButtonVideoRecordingSettings(MentraButtonVideoRecordingSettings(width = 1920, height = 1080, fps = 30))
-        sdk.setButtonCameraLed(true)
-        sdk.setButtonMaxRecordingTime(5)
-        sdk.setCameraFov(MentraCameraFov.STANDARD)
+    fun setGalleryModeAuto(enabled: Boolean) = runAction(if (enabled) "Save in gallery mode" else "Report button events") {
+        requireConnected("change gallery mode")
+        sdk.setGalleryMode(if (enabled) MentraGalleryMode.AUTO else MentraGalleryMode.MANUAL)
+        state = state.copy(galleryModeAuto = enabled)
     }
 
     fun setWebhookUrl(url: String) {
         state = state.copy(webhookUrl = url)
+    }
+
+    fun setPhotoSize(size: String) {
+        state = state.copy(photoSize = size)
+    }
+
+    fun setPhotoCompression(compression: String) {
+        state = state.copy(photoCompression = compression)
+    }
+
+    fun setPhotoFlash(enabled: Boolean) {
+        state = state.copy(photoFlash = enabled)
     }
 
     fun captureAndUpload() = runAction("Capture & upload") {
@@ -194,10 +202,10 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             MentraPhotoRequest(
                 requestId = requestId,
                 appId = "com.mentra.examples.android",
-                size = MentraPhotoSize.MEDIUM,
+                size = MentraPhotoSize.fromValue(state.photoSize),
                 webhookUrl = uploadUrl,
-                compress = MentraPhotoCompression.MEDIUM,
-                flash = false,
+                compress = MentraPhotoCompression.fromValue(state.photoCompression),
+                flash = state.photoFlash,
                 sound = true,
             )
         )
@@ -312,9 +320,22 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         sdk.requestWifiScan()
     }
 
-    fun sendWifiCredentials(ssid: String) = runAction("Connect Wi-Fi $ssid") {
+    fun sendWifiCredentials(ssid: String, password: String, requiresPassword: Boolean) = runAction("Connect Wi-Fi $ssid") {
         requireConnected("send Wi-Fi credentials")
-        sdk.sendWifiCredentials(ssid, "")
+        if (requiresPassword && password.isBlank()) {
+            throw IllegalArgumentException("Enter the Wi-Fi password before connecting to $ssid.")
+        }
+        sdk.sendWifiCredentials(ssid, if (requiresPassword) password else "")
+        state = state.copy(wifiPendingSsid = ssid)
+    }
+
+    fun forgetCurrentWifiNetwork() = runAction("Forget current Wi-Fi") {
+        requireConnected("forget Wi-Fi network")
+        val ssid = stringValue(state.glassesStatus, "wifiSsid")
+        if (ssid.isNullOrBlank() || boolValue(state.glassesStatus, "wifiConnected") != true) {
+            throw IllegalStateException("No connected Wi-Fi network to forget.")
+        }
+        sdk.forgetWifiNetwork(ssid)
     }
 
     fun toggleHotspot() = runAction(if (state.hotspotEnabled) "Disable hotspot" else "Enable hotspot") {
@@ -410,7 +431,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     override fun onTouch(event: MentraTouchEvent) {
-        addEvent("LIVE", "touch ${summarize(event.values)}")
+        val gesture = event.gestureName ?: summarize(event.values)
+        addEvent("LIVE", "${if (event.isSwipe) "swipe" else "touch"} $gesture")
     }
 
     override fun onBatteryStatus(event: MentraBatteryStatusEvent) {
@@ -424,8 +446,33 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     override fun onWifiStatusChanged(event: MentraWifiStatusEvent) {
-        state = state.copy(glassesStatus = state.glassesStatus + event.values)
+        state = state.copy(
+            glassesStatus = state.glassesStatus + event.values,
+            wifiPendingSsid = null,
+        )
         addEvent("STORE", "Wi-Fi ${summarize(event.values)}")
+    }
+
+    override fun onHotspotStatusChanged(event: MentraHotspotStatusEvent) {
+        val enabled = event.enabled ?: false
+        state = state.copy(
+            hotspotEnabled = enabled,
+            glassesStatus = state.glassesStatus + mapOf(
+                "hotspotEnabled" to enabled,
+                "hotspotSsid" to (event.ssid ?: ""),
+                "hotspotPassword" to (event.password ?: ""),
+                "hotspotGatewayIp" to (event.localIp ?: ""),
+            )
+        )
+        addEvent("STORE", "hotspot ${summarize(event.values)}")
+    }
+
+    override fun onHotspotError(event: MentraHotspotErrorEvent) {
+        state = state.copy(
+            hotspotEnabled = false,
+            glassesStatus = state.glassesStatus + mapOf("hotspotEnabled" to false),
+        )
+        addEvent("TX", "hotspot error ${event.message ?: summarize(event.values)}")
     }
 
     override fun onPhotoResponse(event: com.mentra.core.MentraPhotoResponseEvent) {
@@ -532,6 +579,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             hotspotEnabled = false,
             micRecording = false,
             cameraStatus = if (hadPhotoRequest) "Disconnected before photo upload completed" else state.cameraStatus,
+            wifiPendingSsid = null,
         )
         stopMicElapsedTimer()
         stopMicPlayback()
@@ -763,10 +811,35 @@ fun disconnectedGlassesStatus(): Map<String, Any> =
         "fullyBooted" to false,
         "batteryLevel" to -1,
         "charging" to false,
+        "hotspotEnabled" to false,
+        "hotspotGatewayIp" to "",
+        "hotspotPassword" to "",
+        "hotspotSsid" to "",
         "wifiConnected" to false,
         "wifiSsid" to "",
         "wifiLocalIp" to "",
     )
+
+val photoSizeOptions = listOf("small", "medium", "large", "full")
+val photoCompressionOptions = listOf("none", "medium", "heavy")
+
+fun cameraSdkCall(
+    size: String,
+    compression: String,
+    flash: Boolean,
+): String = """
+sdk.requestPhoto(
+    MentraPhotoRequest(
+      requestId = requestId,
+      appId = "com.mentra.examples.android",
+      size = MentraPhotoSize.${size.uppercase(Locale.US)},
+      webhookUrl = uploadUrl,
+      compress = MentraPhotoCompression.${compression.uppercase(Locale.US)},
+      flash = $flash,
+      sound = true,
+    )
+)
+""".trimIndent()
 
 fun photoStatusUrl(uploadUrlText: String, requestId: String): String {
     val url = URL(uploadUrlText)
@@ -931,6 +1004,42 @@ fun deviceLabel(values: Map<String, Any>): String =
         ?: stringValue(values, "deviceModel")
         ?: "Mentra Live"
 
+fun supportsDisplay(values: Map<String, Any>): Boolean {
+    listOf("supportsDisplay", "hasDisplay", "displaySupported", "display").forEach { key ->
+        boolValue(values, key)?.let { return it }
+    }
+    listOf("features", "deviceFeatures", "capabilities").forEach { key ->
+        val nested = values[key] as? Map<*, *> ?: return@forEach
+        val display = nested["display"] as? Boolean
+        if (display != null) {
+            return display
+        }
+    }
+
+    val model = listOfNotNull(
+        stringValue(values, "deviceModel"),
+        stringValue(values, "bluetoothName"),
+        stringValue(values, "defaultWearable"),
+    ).joinToString(" ").lowercase()
+
+    if (
+        "g1" in model ||
+        "g2" in model ||
+        "nex" in model ||
+        "mach" in model ||
+        "z100" in model ||
+        "vuzix" in model ||
+        "display" in model ||
+        "frame" in model
+    ) {
+        return true
+    }
+    if ("live" in model || "r1" in model || "ring" in model) {
+        return false
+    }
+    return false
+}
+
 fun modelLabel(values: Map<String, Any>): String =
     stringValue(values, "deviceModel") ?: "Mentra Live"
 
@@ -949,6 +1058,19 @@ fun wifiLabel(values: Map<String, Any>): String =
     } else {
         "Unknown"
     }
+
+fun hotspotLabel(values: Map<String, Any>, fallbackEnabled: Boolean): String {
+    val enabled = boolValue(values, "hotspotEnabled") ?: fallbackEnabled
+    if (!enabled) {
+        return "disabled"
+    }
+    val ssid = stringValue(values, "hotspotSsid")
+    if (ssid.isNullOrBlank()) {
+        return "waiting for SSID"
+    }
+    val ip = stringValue(values, "hotspotGatewayIp")
+    return if (ip.isNullOrBlank()) ssid else "$ssid · $ip"
+}
 
 fun firmwareLabel(values: Map<String, Any>): String =
     stringValue(values, "fwVersion")

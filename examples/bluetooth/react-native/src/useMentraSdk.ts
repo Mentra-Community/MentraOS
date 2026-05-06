@@ -24,6 +24,11 @@ export type StreamProtocol = 'rtmp' | 'srt' | 'webrtc';
 export type LedMode = 'Off' | 'Solid' | 'Pulse' | 'Blink';
 type RgbLedAction = 'on' | 'off';
 export type LedColor = 'red' | 'green' | 'blue' | 'orange' | 'white';
+export type PhotoSize = 'small' | 'medium' | 'large' | 'full';
+export type PhotoCompression = 'none' | 'medium' | 'heavy';
+type BluetoothSdkWithGalleryMode = typeof BluetoothSdk & {
+  setGalleryMode(mode: 'auto' | 'manual'): Promise<void>;
+};
 type StreamStartRequest = {
   keepAlive: boolean;
   keepAliveIntervalSeconds: number;
@@ -33,6 +38,8 @@ type StreamStartRequest = {
 };
 
 export const RGB_LED_COLORS: LedColor[] = ['red', 'green', 'blue', 'orange', 'white'];
+export const PHOTO_SIZES: PhotoSize[] = ['small', 'medium', 'large', 'full'];
+export const PHOTO_COMPRESSIONS: PhotoCompression[] = ['none', 'medium', 'heavy'];
 
 export const STREAM_DEFAULT_URLS: Record<StreamProtocol, string> = {
   rtmp: 'rtmp://<computer-ip>:1935/live/mentra-live',
@@ -68,7 +75,10 @@ export type MentraSdkState = {
   pcmBytes: number;
   pcmFrames: number;
   permissionStatus: string;
+  photoCompression: PhotoCompression;
+  photoFlash: boolean;
   photoPreviewUrl: string | null;
+  photoSize: PhotoSize;
   rawJsonExpanded: boolean;
   streamProtocol: StreamProtocol;
   streamStartedAt: number | null;
@@ -78,19 +88,23 @@ export type MentraSdkState = {
 };
 
 export type MentraSdkActions = {
-  applySettings: () => Promise<void>;
   captureAndUpload: () => Promise<void>;
   clearDisplay: () => Promise<void>;
   connect: () => Promise<void>;
   connectDevice: (device: DeviceSearchResult) => Promise<void>;
   disconnect: () => Promise<void>;
   displayHello: () => Promise<void>;
+  forgetCurrentWifiNetwork: () => Promise<void>;
   requestWifiScan: () => Promise<void>;
   playMicRecording: () => Promise<void>;
   selectLedColor: (color: LedColor) => Promise<void>;
   selectLedMode: (mode: LedMode) => Promise<void>;
   selectProtocol: (protocol: StreamProtocol) => void;
-  sendWifiCredentials: (ssid: string) => Promise<void>;
+  sendWifiCredentials: (ssid: string, password: string, requiresPassword: boolean) => Promise<void>;
+  setGalleryModeAuto: (enabled: boolean) => Promise<void>;
+  setPhotoCompression: (compression: PhotoCompression) => void;
+  setPhotoFlash: (enabled: boolean) => void;
+  setPhotoSize: (size: PhotoSize) => void;
   setRawJsonExpanded: (expanded: boolean) => void;
   setStreamUrl: (url: string) => void;
   setWebhookUrl: (url: string) => void;
@@ -139,6 +153,9 @@ export function useMentraSdk(): MentraSdkModel {
     'Camera: enter the local webhook /upload URL',
   );
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
+  const [photoSize, setPhotoSize] = useState<PhotoSize>('medium');
+  const [photoCompression, setPhotoCompression] = useState<PhotoCompression>('medium');
+  const [photoFlash, setPhotoFlash] = useState(false);
   const [streamProtocol, setStreamProtocol] =
     useState<StreamProtocol>('rtmp');
   const [streamUrl, setStreamUrl] = useState(
@@ -194,9 +211,10 @@ export function useMentraSdk(): MentraSdkModel {
         addEvent('LIVE', `button ${payload.buttonId}: ${payload.pressType}`);
       }),
       BluetoothSdk.addListener('touch_event', (payload: TouchEvent) => {
+        const gesture = payload.gesture_name ?? payload.device_model ?? 'event';
         addEvent(
           'LIVE',
-          `touch ${payload.gesture_name ?? payload.device_model ?? 'event'}`,
+          `${gesture.toLowerCase().includes('swipe') ? 'swipe' : 'touch'} ${gesture}`,
         );
       }),
       BluetoothSdk.addListener('battery_status', (payload: BatteryStatusEvent) => {
@@ -214,6 +232,22 @@ export function useMentraSdk(): MentraSdkModel {
           wifiSsid: payload.ssid,
         }));
         addEvent('STORE', `Wi-Fi ${payload.connected ? 'connected' : 'disconnected'} ${payload.ssid}`);
+      }),
+      BluetoothSdk.addListener('hotspot_status_change', (payload) => {
+        setHotspotEnabled(Boolean(payload.enabled));
+        setGlassesStatus((current) => ({
+          ...current,
+          hotspotEnabled: Boolean(payload.enabled),
+          hotspotGatewayIp: payload.local_ip ?? '',
+          hotspotPassword: payload.password ?? '',
+          hotspotSsid: payload.ssid ?? '',
+        }));
+        addEvent('STORE', `hotspot ${summarizeMap(payload)}`);
+      }),
+      BluetoothSdk.addListener('hotspot_error', (payload) => {
+        setHotspotEnabled(false);
+        setGlassesStatus((current) => ({...current, hotspotEnabled: false}));
+        addEvent('TX', `hotspot error ${summarizeMap(payload)}`);
       }),
       BluetoothSdk.addListener('photo_response', handlePhotoResponse),
       BluetoothSdk.addListener('stream_status', (payload: StreamStatusEvent) => {
@@ -355,7 +389,7 @@ export function useMentraSdk(): MentraSdkModel {
 
   async function displayHello() {
     await runAction('Display Hello', async () => {
-      requireConnected('display text');
+      requireDisplaySupport('display text');
       await BluetoothSdk.displayText({
         size: 24,
         text: 'Hello from Mentra Bluetooth SDK',
@@ -367,26 +401,16 @@ export function useMentraSdk(): MentraSdkModel {
 
   async function clearDisplay() {
     await runAction('Clear Display', async () => {
-      requireConnected('clear the display');
+      requireDisplaySupport('clear the display');
       await BluetoothSdk.clearDisplay();
     });
   }
 
-  async function applySettings() {
-    await runAction('Apply Settings', async () => {
-      requireConnected('apply settings');
-      await BluetoothSdk.updateCore({
-        brightness: 72,
-        button_camera_led: true,
-        button_max_recording_time: 5,
-        button_photo_size: 'medium',
-        button_video_fps: 30,
-        button_video_height: 1080,
-        button_video_width: 1920,
-        dashboard_depth: 6,
-        dashboard_height: 4,
-        gallery_mode: galleryModeAuto,
-      });
+  async function setGalleryModeAutoAction(enabled: boolean) {
+    await runAction(enabled ? 'Save in gallery mode' : 'Report button events', async () => {
+      requireConnected('change gallery mode');
+      await (BluetoothSdk as BluetoothSdkWithGalleryMode).setGalleryMode(enabled ? 'auto' : 'manual');
+      setGalleryModeAuto(enabled);
     });
   }
 
@@ -416,11 +440,11 @@ export function useMentraSdk(): MentraSdkModel {
       await BluetoothSdk.photoRequest(
         requestId,
         PHOTO_APP_ID,
-        'medium',
+        photoSize,
         uploadUrlText,
         null,
-        'medium',
-        false,
+        photoCompression,
+        photoFlash,
         true,
       );
       void pollPhotoPreview(requestId, statusUrl, pollGeneration);
@@ -601,10 +625,23 @@ export function useMentraSdk(): MentraSdkModel {
     });
   }
 
-  async function sendWifiCredentials(ssid: string) {
+  async function sendWifiCredentials(ssid: string, password: string, requiresPassword: boolean) {
     await runAction(`Connect Wi-Fi ${ssid}`, async () => {
       requireConnected('send Wi-Fi credentials');
-      await BluetoothSdk.sendWifiCredentials(ssid, '');
+      if (requiresPassword && !password) {
+        throw new Error(`Enter the Wi-Fi password before connecting to ${ssid}.`);
+      }
+      await BluetoothSdk.sendWifiCredentials(ssid, requiresPassword ? password : '');
+    });
+  }
+
+  async function forgetCurrentWifiNetwork() {
+    await runAction('Forget current Wi-Fi', async () => {
+      requireConnected('forget Wi-Fi network');
+      if (!glassesStatus.wifiConnected || !glassesStatus.wifiSsid) {
+        throw new Error('No connected Wi-Fi network to forget.');
+      }
+      await BluetoothSdk.forgetWifiNetwork(glassesStatus.wifiSsid);
     });
   }
 
@@ -833,6 +870,13 @@ export function useMentraSdk(): MentraSdkModel {
     throw new Error(message);
   }
 
+  function requireDisplaySupport(feature: string) {
+    requireConnected(feature);
+    if (!supportsDisplay(glassesStatus)) {
+      throw new Error('This glasses model has no display, so display commands are unavailable.');
+    }
+  }
+
   function applyDisconnectedState(status: string) {
     stopKeepAlive();
     activeStreamIdRef.current = null;
@@ -846,6 +890,7 @@ export function useMentraSdk(): MentraSdkModel {
     setStreamStartedAt(null);
     setStreamStatus(status);
     setHotspotEnabled(false);
+    setGalleryModeAuto(true);
     setMicRecording(false);
     micRecordingRef.current = false;
     stopMicElapsedTimer();
@@ -878,7 +923,6 @@ export function useMentraSdk(): MentraSdkModel {
 
   return {
     activeAction,
-    applySettings,
     bluetoothStatus,
     cameraStatus,
     captureAndUpload,
@@ -889,6 +933,7 @@ export function useMentraSdk(): MentraSdkModel {
     discoveredDevices,
     displayHello,
     events,
+    forgetCurrentWifiNetwork,
     galleryModeAuto,
     glassesStatus,
     hotspotEnabled,
@@ -903,7 +948,10 @@ export function useMentraSdk(): MentraSdkModel {
     pcmBytes,
     pcmFrames,
     permissionStatus,
+    photoCompression,
+    photoFlash,
     photoPreviewUrl,
+    photoSize,
     playMicRecording,
     rawJsonExpanded,
     requestWifiScan,
@@ -911,6 +959,10 @@ export function useMentraSdk(): MentraSdkModel {
     selectLedMode,
     selectProtocol,
     sendWifiCredentials,
+    setGalleryModeAuto: setGalleryModeAutoAction,
+    setPhotoCompression,
+    setPhotoFlash,
+    setPhotoSize,
     setRawJsonExpanded,
     setStreamUrl,
     setWebhookUrl,
@@ -1023,10 +1075,55 @@ function disconnectedGlassesStatus(
     connected: false,
     connectionState: 'DISCONNECTED',
     fullyBooted: false,
+    hotspotEnabled: false,
+    hotspotGatewayIp: '',
+    hotspotPassword: '',
+    hotspotSsid: '',
     wifiConnected: false,
     wifiLocalIp: '',
     wifiSsid: '',
-  };
+  } as Partial<GlassesStatus>;
+}
+
+function supportsDisplay(status: Partial<GlassesStatus>) {
+  const values = status as Record<string, unknown>;
+  for (const key of ['supportsDisplay', 'hasDisplay', 'displaySupported', 'display']) {
+    if (typeof values[key] === 'boolean') {
+      return values[key] as boolean;
+    }
+  }
+  for (const key of ['features', 'deviceFeatures', 'capabilities']) {
+    const nested = values[key];
+    if (nested && typeof nested === 'object' && typeof (nested as Record<string, unknown>).display === 'boolean') {
+      return (nested as Record<string, boolean>).display;
+    }
+  }
+
+  const model = [
+    status.deviceModel,
+    status.bluetoothName,
+    values.defaultWearable,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  if (
+    model.includes('g1') ||
+    model.includes('g2') ||
+    model.includes('nex') ||
+    model.includes('mach') ||
+    model.includes('z100') ||
+    model.includes('vuzix') ||
+    model.includes('display') ||
+    model.includes('frame')
+  ) {
+    return true;
+  }
+  if (model.includes('live') || model.includes('r1') || model.includes('ring')) {
+    return false;
+  }
+  return false;
 }
 
 function photoStatusUrl(uploadUrlText: string, requestId: string) {

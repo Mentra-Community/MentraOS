@@ -18,6 +18,7 @@ import {
   modelLabel,
   rssiLabel,
   rssiQuality,
+  supportsDisplay,
   wifiLabel,
   wifiSubLabel,
 } from '../sdkFormat';
@@ -35,6 +36,7 @@ const glassesImages = {
 export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
   const level = batteryLevel(sdk.glassesStatus);
   const connected = isGlassesConnected(sdk.glassesStatus);
+  const displaySupported = connected && supportsDisplay(sdk.glassesStatus);
   const connection = connectionLabel(sdk.glassesStatus);
   const latestEvent = sdk.events[0];
 
@@ -88,27 +90,27 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
         </View>
         <View style={{ gap: 8 }}>
           <View style={styles.btnRow}>
-            <Pressable style={({ pressed }) => [styles.btn, pressed && styles.btnPressed, { backgroundColor: '#0E2C1A' }]} onPress={sdk.startScan}>
+            <Pressable disabled={connected} style={({ pressed }) => [styles.btn, pressed && styles.btnPressed, connected && styles.disabled, { backgroundColor: '#0E2C1A' }]} onPress={sdk.startScan}>
               <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
                 <Circle cx={11} cy={11} r={7} /><Path d="m21 21-3.5-3.5" />
               </Svg>
               <Text style={styles.btnTextLight}>Scan</Text>
             </Pressable>
-            <Pressable style={({ pressed }) => [styles.btn, pressed && styles.btnPressed, { backgroundColor: colors.greenPrimary }]} onPress={sdk.connect}>
+            <Pressable disabled={connected} style={({ pressed }) => [styles.btn, pressed && styles.btnPressed, connected && styles.disabled, { backgroundColor: colors.greenPrimary }]} onPress={sdk.connect}>
               <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
                 <Path d="M9 17H5a3 3 0 0 1 0-6h4" /><Path d="M15 7h4a3 3 0 0 1 0 6h-4" /><Line x1={8} y1={14} x2={16} y2={14} />
               </Svg>
-              <Text style={styles.btnTextLight}>Connect</Text>
+              <Text style={styles.btnTextLight}>{connected ? 'Connected' : 'Connect'}</Text>
             </Pressable>
           </View>
           <View style={styles.btnRow}>
-            <Pressable disabled={!connected} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, !connected && styles.disabled]} onPress={sdk.displayHello}>
+            <Pressable disabled={!displaySupported} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, !displaySupported && styles.disabled]} onPress={sdk.displayHello}>
               <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
                 <Rect x={2} y={4} width={20} height={14} rx={2} /><Path d="M8 22h8" /><Path d="M12 18v4" />
               </Svg>
               <Text style={styles.btnTextDark}>Display Hello</Text>
             </Pressable>
-            <Pressable disabled={!connected} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, !connected && styles.disabled]} onPress={sdk.clearDisplay}>
+            <Pressable disabled={!displaySupported} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, !displaySupported && styles.disabled]} onPress={sdk.clearDisplay}>
               <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
                 <Rect x={2} y={4} width={20} height={14} rx={2} /><Line x1={2} y1={11} x2={22} y2={11} />
               </Svg>
@@ -116,11 +118,11 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
             </Pressable>
           </View>
           <View style={styles.btnRow}>
-            <Pressable disabled={!connected} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, !connected && styles.disabled]} onPress={sdk.applySettings}>
+            <Pressable disabled={!connected} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, !connected && styles.disabled]} onPress={() => sdk.setGalleryModeAuto(!sdk.galleryModeAuto)}>
               <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
                 <Polyline points="20 6 9 17 4 12" />
               </Svg>
-              <Text style={styles.btnTextDark}>Apply Settings</Text>
+              <Text style={styles.btnTextDark}>{sdk.galleryModeAuto ? 'Save Gallery' : 'Button Events'}</Text>
             </Pressable>
             <Pressable disabled={!connected} onPress={sdk.disconnect} style={[{ flex: 1 }, !connected && styles.disabled]}>
               <LinearGradient colors={['#FF6B5B', '#FF3B30']} style={[styles.btn, { borderRadius: 18 }]}>
@@ -131,6 +133,16 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
               </LinearGradient>
             </Pressable>
           </View>
+          <Text style={styles.quickNote}>
+            {sdk.galleryModeAuto
+              ? 'Gallery mode is on: the glasses button saves photos/videos locally.'
+              : 'Gallery mode is off: button and touch events are reported to the phone.'}
+          </Text>
+          {connected && !displaySupported ? (
+            <Text style={styles.quickNote}>
+              {modelLabel(sdk.glassesStatus)} has no display, so display commands are disabled.
+            </Text>
+          ) : null}
         </View>
       </LinearGradient>
 
@@ -276,6 +288,7 @@ const styles = StyleSheet.create({
   cardTitle: { color: colors.inkAlt, fontSize: 16, fontWeight: '700', letterSpacing: -0.16 },
   cardEyebrow: { color: 'rgba(14,14,16,0.4)', fontSize: 10, fontWeight: '600', letterSpacing: 1.6, fontFamily: 'Courier' },
   btnRow: { flexDirection: 'row', gap: 8 },
+  quickNote: { color: colors.muted, fontSize: 11, fontWeight: '500', lineHeight: 15 },
   btn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 14, paddingVertical: 12, paddingHorizontal: 14, gap: 8 },
   btnPressed: { opacity: 0.72, transform: [{ scale: 0.98 }] },
   disabled: { opacity: 0.45 },

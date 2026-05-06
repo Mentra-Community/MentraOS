@@ -124,7 +124,13 @@ struct DeviceScreen: View {
                     LightActionButton(icon: "display.slash", title: "Clear Display", enabled: displaySupported, action: model.clearDisplay)
                 }
                 HStack(spacing: 8) {
-                    LightActionButton(icon: "checkmark", title: "Apply Settings", enabled: connected, action: model.applySettings)
+                    LightActionButton(
+                        icon: "photo.on.rectangle",
+                        title: model.galleryModeAuto ? "Save Gallery" : "Button Events",
+                        enabled: connected
+                    ) {
+                        model.setGalleryModeAuto(!model.galleryModeAuto)
+                    }
                     Button {
                         model.disconnect()
                     } label: {
@@ -142,6 +148,10 @@ struct DeviceScreen: View {
                 if connected && !supportsDisplay(model.glassesValues) {
                     DisplayCapabilityNotice(text: "\(modelLabel(model.glassesValues)) has no display, so display commands are disabled.")
                 }
+                Text(model.galleryModeAuto ? "Gallery mode is on: the glasses button saves photos/videos locally." : "Gallery mode is off: button and touch events are reported to the phone.")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(AppColor.muted)
+                    .lineSpacing(2)
             }
         }
     }

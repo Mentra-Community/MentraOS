@@ -37,6 +37,43 @@ export function deviceLabel(status: Partial<GlassesStatus>) {
   return status.bluetoothName || status.serialNumber || status.deviceModel || 'Mentra Live';
 }
 
+export function supportsDisplay(status: Partial<GlassesStatus>) {
+  const values = status as Record<string, unknown>;
+  for (const key of ['supportsDisplay', 'hasDisplay', 'displaySupported', 'display']) {
+    if (typeof values[key] === 'boolean') {
+      return values[key] as boolean;
+    }
+  }
+  for (const key of ['features', 'deviceFeatures', 'capabilities']) {
+    const nested = values[key];
+    if (nested && typeof nested === 'object' && typeof (nested as Record<string, unknown>).display === 'boolean') {
+      return (nested as Record<string, boolean>).display;
+    }
+  }
+
+  const model = [status.deviceModel, status.bluetoothName, values.defaultWearable]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+  if (
+    model.includes('g1') ||
+    model.includes('g2') ||
+    model.includes('nex') ||
+    model.includes('mach') ||
+    model.includes('z100') ||
+    model.includes('vuzix') ||
+    model.includes('display') ||
+    model.includes('frame')
+  ) {
+    return true;
+  }
+  if (model.includes('live') || model.includes('r1') || model.includes('ring')) {
+    return false;
+  }
+  return false;
+}
+
 export function modelLabel(status: Partial<GlassesStatus>) {
   return status.deviceModel || 'Mentra Live';
 }
@@ -72,6 +109,20 @@ export function wifiSubLabel(status: Partial<GlassesStatus>) {
     return status.wifiLocalIp || 'connected';
   }
   return 'not connected';
+}
+
+export function hotspotLabel(status: Partial<GlassesStatus>, fallbackEnabled: boolean) {
+  const values = status as Record<string, unknown>;
+  const enabled = typeof values.hotspotEnabled === 'boolean' ? values.hotspotEnabled : fallbackEnabled;
+  if (!enabled) {
+    return 'disabled';
+  }
+  const ssid = typeof values.hotspotSsid === 'string' ? values.hotspotSsid : '';
+  if (!ssid) {
+    return 'waiting for SSID';
+  }
+  const ip = typeof values.hotspotGatewayIp === 'string' ? values.hotspotGatewayIp : '';
+  return ip ? `${ssid} · ${ip}` : ssid;
 }
 
 export function firmwareLabel(status: Partial<GlassesStatus>) {

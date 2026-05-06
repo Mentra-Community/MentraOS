@@ -1,23 +1,27 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
   ScrollView,
   Pressable,
   StyleSheet,
+  Modal,
+  TextInput,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Line, Path, Polyline, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { colors } from '../components/theme';
-import { isGlassesConnected, wifiLabel, wifiSubLabel } from '../sdkFormat';
+import { hotspotLabel, isGlassesConnected, wifiLabel, wifiSubLabel } from '../sdkFormat';
 import { RGB_LED_COLORS, durationText, type LedColor, type LedMode, type MentraSdkModel } from '../useMentraSdk';
 
 export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
   const networks = sdk.bluetoothStatus.wifiScanResults ?? [];
   const connected = isGlassesConnected(sdk.glassesStatus);
-  const inputEvents = sdk.events.filter((item) => item.text.includes('button') || item.text.includes('touch')).slice(0, 3);
+  const inputEvents = sdk.events.filter((item) => item.text.includes('button') || item.text.includes('touch') || item.text.includes('swipe')).slice(0, 3);
+  const [pendingWifi, setPendingWifi] = useState<{ssid: string; requiresPassword: boolean} | null>(null);
+  const [pendingWifiPassword, setPendingWifiPassword] = useState('');
   const micStatus = sdk.micRecording
     ? `recording ${durationText(sdk.micElapsedSeconds)} · ${sdk.pcmFrames} PCM frames`
     : sdk.micPlaying
@@ -61,22 +65,44 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
             <Text style={styles.scanText}>Scan</Text>
           </Pressable>
         </View>
-        <NetworkRow name={wifiLabel(sdk.glassesStatus)} sub={wifiSubLabel(sdk.glassesStatus)} subColor={colors.greenAccent} check />
+        <NetworkRow
+          actionLabel={sdk.glassesStatus.wifiConnected ? 'Forget' : undefined}
+          actionColor={colors.red}
+          check={sdk.glassesStatus.wifiConnected}
+          name={wifiLabel(sdk.glassesStatus)}
+          onActionPress={sdk.glassesStatus.wifiConnected ? sdk.forgetCurrentWifiNetwork : undefined}
+          sub={wifiSubLabel(sdk.glassesStatus)}
+          subColor={sdk.glassesStatus.wifiConnected ? colors.greenAccent : colors.muted}
+        />
         {(networks.length > 0 ? networks : [
           { ssid: 'Scan for nearby networks', signalStrength: 0, requiresPassword: false },
-        ]).map((network, index) => (
-          <NetworkRow
-            key={`${network.ssid}-${index}`}
-            name={network.ssid}
-            sub={`${network.requiresPassword ? 'secured' : 'open'} · ${network.signalStrength ?? 0}`}
-            subColor={colors.muted}
-            faint
-            locked={network.requiresPassword}
-            last={index === Math.max(networks.length - 1, 0)}
-            disabled={!connected || network.ssid === 'Scan for nearby networks'}
-            onPress={() => sdk.sendWifiCredentials(network.ssid)}
-          />
-        ))}
+        ]).map((network, index) => {
+          const joinNetwork = () => {
+            if (network.requiresPassword) {
+              setPendingWifi({ssid: network.ssid, requiresPassword: true});
+              setPendingWifiPassword('');
+            } else {
+              void sdk.sendWifiCredentials(network.ssid, '', false);
+            }
+          };
+
+          return (
+            <NetworkRow
+              key={`${network.ssid}-${index}`}
+              actionColor={colors.greenDeep}
+              actionLabel={network.ssid === 'Scan for nearby networks' ? undefined : 'Join'}
+              name={network.ssid}
+              sub={`${network.requiresPassword ? 'secured' : 'open'} · ${network.signalStrength ?? 0}`}
+              subColor={colors.muted}
+              faint
+              locked={network.requiresPassword}
+              last={index === Math.max(networks.length - 1, 0)}
+              disabled={!connected || network.ssid === 'Scan for nearby networks'}
+              onActionPress={joinNetwork}
+              onPress={joinNetwork}
+            />
+          );
+        })}
       </LinearGradient>
 
       {/* Hotspot + Microphone row */}
@@ -96,7 +122,9 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
           </View>
           <View>
             <Text style={styles.tileTitle}>Hotspot</Text>
-            <Text style={styles.tileSub}>{sdk.hotspotEnabled ? 'enabled' : 'disabled'}</Text>
+            <Text style={[styles.tileSub, { color: sdk.hotspotEnabled ? colors.greenAccent : colors.muted }]}>
+              {hotspotLabel(sdk.glassesStatus, sdk.hotspotEnabled)}
+            </Text>
           </View>
         </LinearGradient>
         </Pressable>
@@ -153,6 +181,18 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
             <InputChip key={`${item.time}-${index}`} prefix={item.time.slice(-8, -6) || '--'} label={item.text.replace(/^button /, '')} />
           ))}
         </View>
+        <View style={styles.galleryModeBlock}>
+          <Text style={styles.galleryModeTitle}>Save in gallery mode</Text>
+          <Text style={styles.galleryModeBody}>
+            {sdk.galleryModeAuto
+              ? 'On: the glasses button saves photos/videos locally.'
+              : 'Off: button and touch events are reported to the phone.'}
+          </Text>
+          <View style={styles.galleryModeChips}>
+            <GalleryModeChip active={sdk.galleryModeAuto} disabled={!connected} label="Save media" onPress={() => sdk.setGalleryModeAuto(true)} />
+            <GalleryModeChip active={!sdk.galleryModeAuto} disabled={!connected} label="Report events" onPress={() => sdk.setGalleryModeAuto(false)} />
+          </View>
+        </View>
       </LinearGradient>
 
       {/* RGB LED */}
@@ -190,13 +230,81 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
           Mentra Live currently applies RGB color and pattern; visible brightness is firmware-controlled.
         </Text>
       </LinearGradient>
+
+      <Modal
+        animationType="fade"
+        onRequestClose={() => setPendingWifi(null)}
+        transparent
+        visible={pendingWifi !== null}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Join Wi-Fi</Text>
+            <Text style={styles.modalSub}>{pendingWifi?.ssid}</Text>
+            <TextInput
+              autoCapitalize="none"
+              autoCorrect={false}
+              onChangeText={setPendingWifiPassword}
+              placeholder="Password"
+              placeholderTextColor={colors.muted}
+              secureTextEntry
+              style={styles.modalInput}
+              value={pendingWifiPassword}
+            />
+            <View style={styles.modalActions}>
+              <Pressable style={styles.modalCancel} onPress={() => setPendingWifi(null)}>
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                disabled={!pendingWifiPassword}
+                style={[styles.modalConfirm, !pendingWifiPassword && styles.disabled]}
+                onPress={() => {
+                  if (pendingWifi) {
+                    void sdk.sendWifiCredentials(pendingWifi.ssid, pendingWifiPassword, pendingWifi.requiresPassword);
+                  }
+                  setPendingWifi(null);
+                  setPendingWifiPassword('');
+                }}>
+                <Text style={styles.modalConfirmText}>Connect</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
 
-function NetworkRow({ name, sub, subColor, rssi, check, faint, locked, last, disabled, onPress }: { name: string; sub: string; subColor: string; rssi?: string; check?: boolean; faint?: boolean; locked?: boolean; last?: boolean; disabled?: boolean; onPress?: () => void }) {
+function NetworkRow({
+  actionColor = colors.ink,
+  actionLabel,
+  check,
+  disabled,
+  faint,
+  last,
+  locked,
+  name,
+  onActionPress,
+  onPress,
+  rssi,
+  sub,
+  subColor,
+}: {
+  actionColor?: string;
+  actionLabel?: string;
+  check?: boolean;
+  disabled?: boolean;
+  faint?: boolean;
+  last?: boolean;
+  locked?: boolean;
+  name: string;
+  onActionPress?: () => void;
+  onPress?: () => void;
+  rssi?: string;
+  sub: string;
+  subColor: string;
+}) {
   return (
-    <Pressable disabled={disabled || !onPress} style={[styles.networkRow, !last && styles.networkBorder, disabled && styles.disabled]} onPress={onPress}>
+    <Pressable disabled={disabled || (!onPress && !onActionPress)} style={[styles.networkRow, !last && styles.networkBorder, disabled && styles.disabled]} onPress={onPress}>
       <View style={styles.networkIcon}>
         <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={faint ? colors.mutedSoft : colors.greenInk} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
           <Path d="M5 12.55a11 11 0 0 1 14.08 0" />
@@ -220,6 +328,19 @@ function NetworkRow({ name, sub, subColor, rssi, check, faint, locked, last, dis
           <Path d="M7 11V7a5 5 0 0 1 10 0v4" />
         </Svg>
       )}
+      {actionLabel ? (
+        <Pressable disabled={!onActionPress} onPress={onActionPress} style={[styles.networkAction, { backgroundColor: `${actionColor}1A` }]}>
+          <Text style={[styles.networkActionText, { color: actionColor }]}>{actionLabel}</Text>
+        </Pressable>
+      ) : null}
+    </Pressable>
+  );
+}
+
+function GalleryModeChip({ active, disabled, label, onPress }: { active: boolean; disabled: boolean; label: string; onPress: () => void }) {
+  return (
+    <Pressable disabled={disabled} onPress={onPress} style={[styles.galleryModeChip, active && styles.galleryModeChipActive, disabled && styles.disabled]}>
+      <Text style={[styles.galleryModeChipText, active && styles.galleryModeChipTextActive]}>{label}</Text>
     </Pressable>
   );
 }
@@ -327,6 +448,8 @@ const styles = StyleSheet.create({
   networkIcon: { width: 28, alignItems: 'center', justifyContent: 'center' },
   networkName: { color: colors.ink, fontSize: 15, fontWeight: '700' },
   networkSub: { fontSize: 11, fontWeight: '500' },
+  networkAction: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999 },
+  networkActionText: { fontSize: 11, fontWeight: '700' },
   row2: { flexDirection: 'row', gap: 10, marginHorizontal: 16, marginTop: 12 },
   tileCard: { flex: 1, borderRadius: 22, paddingVertical: 16, paddingHorizontal: 16, gap: 10, borderWidth: 1, borderColor: colors.borderSoft },
   tileHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
@@ -343,6 +466,24 @@ const styles = StyleSheet.create({
   inputChip: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(15,42,29,0.04)', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 10 },
   inputChipPrefix: { color: colors.muted, fontSize: 10, fontWeight: '600' },
   inputChipLabel: { color: colors.ink, fontSize: 11, fontWeight: '600' },
+  galleryModeBlock: { gap: 6, marginTop: 12 },
+  galleryModeTitle: { color: colors.ink, fontSize: 14, fontWeight: '700' },
+  galleryModeBody: { color: colors.muted, fontSize: 11, fontWeight: '500', lineHeight: 15 },
+  galleryModeChips: { flexDirection: 'row', gap: 8, marginTop: 2 },
+  galleryModeChip: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(15,42,29,0.04)', borderWidth: 1, borderColor: 'rgba(15,42,29,0.05)' },
+  galleryModeChipActive: { backgroundColor: 'rgba(52,199,89,0.16)', borderColor: 'rgba(52,199,89,0.32)' },
+  galleryModeChipText: { color: colors.muted, fontSize: 12, fontWeight: '500' },
+  galleryModeChipTextActive: { color: colors.greenInk, fontWeight: '700' },
+  modalBackdrop: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.34)', padding: 24 },
+  modalCard: { width: '100%', borderRadius: 24, backgroundColor: colors.bg, padding: 20, gap: 12 },
+  modalTitle: { color: colors.ink, fontSize: 22, fontWeight: '800' },
+  modalSub: { color: colors.muted, fontSize: 15, fontWeight: '600' },
+  modalInput: { color: colors.ink, fontSize: 16, fontWeight: '500', backgroundColor: 'rgba(15,42,29,0.04)', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 14 },
+  modalActions: { flexDirection: 'row', gap: 10, marginTop: 4 },
+  modalCancel: { flex: 1, alignItems: 'center', backgroundColor: 'rgba(15,42,29,0.06)', borderRadius: 16, paddingVertical: 14 },
+  modalCancelText: { color: colors.ink, fontSize: 15, fontWeight: '700' },
+  modalConfirm: { flex: 1, alignItems: 'center', backgroundColor: colors.greenPrimary, borderRadius: 16, paddingVertical: 14 },
+  modalConfirmText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   ledTitle: { color: colors.ink, fontSize: 18, fontWeight: '700', letterSpacing: -0.18 },
   onPill: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(15,42,29,0.06)', paddingVertical: 6, paddingHorizontal: 11, borderRadius: 999 },
   onText: { color: colors.ink, fontSize: 11, fontWeight: '600' },

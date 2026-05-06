@@ -40,6 +40,7 @@ import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.modelLabel
 import com.mentra.examples.android.rssiLabel
 import com.mentra.examples.android.stringValue
+import com.mentra.examples.android.supportsDisplay
 import com.mentra.examples.android.wifiLabel
 import com.mentra.examples.android.ui.AppColor
 import com.mentra.examples.android.ui.Eyebrow
@@ -51,6 +52,7 @@ fun DeviceScreen(controller: MentraExampleController) {
     val state = controller.state
     val glasses = state.glassesStatus
     val connected = isGlassesConnected(glasses)
+    val displaySupported = connected && supportsDisplay(glasses)
     val level = batteryLevel(glasses)
     val latestEvent = state.events.firstOrNull()
     Column(
@@ -114,21 +116,26 @@ fun DeviceScreen(controller: MentraExampleController) {
             Spacer(Modifier.height(16.dp))
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DarkBtn("Scan", Icons.Outlined.Search, AppColor.greenInk, Modifier.weight(1f), controller::startScan)
-                    DarkBtn("Connect", Icons.Outlined.Link, AppColor.greenPrimary, Modifier.weight(1f), controller::connect)
+                    DarkBtn("Scan", Icons.Outlined.Search, AppColor.greenInk, Modifier.weight(1f), enabled = !connected, onClick = controller::startScan)
+                    DarkBtn(if (connected) "Connected" else "Connect", Icons.Outlined.Link, AppColor.greenPrimary, Modifier.weight(1f), enabled = !connected, onClick = controller::connect)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    LightBtn("Display Hello", Icons.Outlined.Tv, Modifier.weight(1f), controller::displayHello)
-                    LightBtn("Clear Display", Icons.Outlined.Tv, Modifier.weight(1f), controller::clearDisplay)
+                    LightBtn("Display Hello", Icons.Outlined.Tv, Modifier.weight(1f), enabled = displaySupported, onClick = controller::displayHello)
+                    LightBtn("Clear Display", Icons.Outlined.Tv, Modifier.weight(1f), enabled = displaySupported, onClick = controller::clearDisplay)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    LightBtn("Apply Settings", Icons.Outlined.Check, Modifier.weight(1f), controller::applySettings)
+                    LightBtn(
+                        if (state.galleryModeAuto) "Save Gallery" else "Button Events",
+                        Icons.Outlined.Check,
+                        Modifier.weight(1f),
+                        enabled = connected,
+                    ) { controller.setGalleryModeAuto(!state.galleryModeAuto) }
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .clip(RoundedCornerShape(18.dp))
                             .background(Brush.verticalGradient(listOf(Color(0xFFFF6B5B), AppColor.red)))
-                            .clickable { controller.disconnect() }
+                            .clickable(enabled = connected) { controller.disconnect() }
                             .padding(vertical = 14.dp),
                         contentAlignment = Alignment.Center
                     ) {
@@ -137,6 +144,26 @@ fun DeviceScreen(controller: MentraExampleController) {
                             Text("Disconnect", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
+                }
+                Text(
+                    if (state.galleryModeAuto) {
+                        "Gallery mode is on: the glasses button saves photos/videos locally."
+                    } else {
+                        "Gallery mode is off: button and touch events are reported to the phone."
+                    },
+                    color = AppColor.muted,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                if (connected && !displaySupported) {
+                    Text(
+                        "${modelLabel(glasses)} has no display, so display commands are disabled.",
+                        color = AppColor.muted,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
                 }
             }
         }
@@ -243,12 +270,12 @@ private fun StatTile(label: String, value: String, sub: String, subColor: Color,
 }
 
 @Composable
-private fun DarkBtn(title: String, icon: ImageVector, bg: Color, modifier: Modifier, onClick: () -> Unit) {
+private fun DarkBtn(title: String, icon: ImageVector, bg: Color, modifier: Modifier, enabled: Boolean = true, onClick: () -> Unit) {
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(14.dp))
-            .background(bg)
-            .clickable { onClick() }
+            .background(bg.copy(alpha = if (enabled) 1f else 0.45f))
+            .clickable(enabled = enabled) { onClick() }
             .padding(vertical = 14.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -260,19 +287,19 @@ private fun DarkBtn(title: String, icon: ImageVector, bg: Color, modifier: Modif
 }
 
 @Composable
-private fun LightBtn(title: String, icon: ImageVector, modifier: Modifier, onClick: () -> Unit) {
+private fun LightBtn(title: String, icon: ImageVector, modifier: Modifier, enabled: Boolean = true, onClick: () -> Unit) {
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(14.dp))
-            .background(Color.White)
+            .background(Color.White.copy(alpha = if (enabled) 1f else 0.45f))
             .border(1.dp, Color(0xFFDBDBDB), RoundedCornerShape(14.dp))
-            .clickable { onClick() }
+            .clickable(enabled = enabled) { onClick() }
             .padding(vertical = 14.dp),
         contentAlignment = Alignment.Center
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Icon(icon, null, tint = AppColor.inkAlt, modifier = Modifier.size(14.dp))
-            Text(title, color = AppColor.inkAlt, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Icon(icon, null, tint = AppColor.inkAlt.copy(alpha = if (enabled) 1f else 0.45f), modifier = Modifier.size(14.dp))
+            Text(title, color = AppColor.inkAlt.copy(alpha = if (enabled) 1f else 0.45f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }

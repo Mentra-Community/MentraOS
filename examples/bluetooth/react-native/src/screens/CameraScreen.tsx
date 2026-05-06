@@ -6,23 +6,26 @@ import { Header } from '../components/Header';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { colors } from '../components/theme';
 import { isGlassesConnected } from '../sdkFormat';
-import type { MentraSdkModel } from '../useMentraSdk';
+import { PHOTO_COMPRESSIONS, PHOTO_SIZES, type MentraSdkModel, type PhotoCompression, type PhotoSize } from '../useMentraSdk';
 
-const cameraSdkCall = `await BluetoothSdk.photoRequest(
+function cameraSdkCall(size: PhotoSize, compression: PhotoCompression, flash: boolean) {
+  return `await BluetoothSdk.photoRequest(
   requestId,
   PHOTO_APP_ID,
-  "medium",
+  "${size}",
   webhookUrl,
   null,
-  "medium",
-  false,
+  "${compression}",
+  ${flash},
   true,
 )`;
+}
 
 export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
   const connected = isGlassesConnected(sdk.glassesStatus);
   const cameraStatusFailed = isCameraStatusFailure(sdk.cameraStatus);
   const setupHint = localCameraSetupHint(sdk.webhookUrl, sdk.cameraStatus);
+  const sdkCall = cameraSdkCall(sdk.photoSize, sdk.photoCompression, sdk.photoFlash);
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
@@ -66,7 +69,7 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
         <View style={styles.sdkBlock}>
           <View style={styles.cardHead}>
             <Text style={styles.sdkEyebrow}>SDK CALL</Text>
-            <Pressable style={({pressed}) => [styles.copyChip, pressed && styles.copyChipPressed]} onPress={() => Clipboard.setString(cameraSdkCall)}>
+            <Pressable style={({pressed}) => [styles.copyChip, pressed && styles.copyChipPressed]} onPress={() => Clipboard.setString(sdkCall)}>
               <Svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke={colors.consoleText} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
                 <Rect x={9} y={9} width={13} height={13} rx={2} />
                 <Path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
@@ -74,7 +77,7 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
               <Text style={styles.copyText}>Copy</Text>
             </Pressable>
           </View>
-          <Text style={styles.sdkCode}>{cameraSdkCall}</Text>
+          <Text style={styles.sdkCode}>{sdkCall}</Text>
         </View>
         <View style={styles.statusBar}>
           <View style={[styles.statusIconCircle, cameraStatusFailed && styles.statusIconCircleError]}>
@@ -116,9 +119,24 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
         </View>
         {setupHint ? <Text style={styles.setupHint}>{setupHint}</Text> : null}
         <View style={styles.chipRow}>
-          <Chip label="size" value="medium" />
-          <Chip label="compress" value="medium" />
-          <Chip label="flash" value="off" />
+          {PHOTO_SIZES.map((size) => (
+            <Chip key={size} active={sdk.photoSize === size} label="size" value={size} onPress={() => sdk.setPhotoSize(size)} />
+          ))}
+        </View>
+        <View style={styles.chipRow}>
+          {PHOTO_COMPRESSIONS.map((compression) => (
+            <Chip
+              key={compression}
+              active={sdk.photoCompression === compression}
+              label="compress"
+              value={compression}
+              onPress={() => sdk.setPhotoCompression(compression)}
+            />
+          ))}
+        </View>
+        <View style={styles.chipRow}>
+          <Chip active={!sdk.photoFlash} label="flash" value="off" onPress={() => sdk.setPhotoFlash(false)} />
+          <Chip active={sdk.photoFlash} label="flash" value="on" onPress={() => sdk.setPhotoFlash(true)} />
         </View>
       </LinearGradient>
     </ScrollView>
@@ -152,12 +170,12 @@ function localCameraSetupHint(webhookUrl: string, status: string) {
   return 'Local setup: run python3 examples/local-demo-cloud/server.py from the Partner Kit repo root, then paste the printed Photo upload URL here.';
 }
 
-function Chip({ label, value }: { label: string; value: string }) {
+function Chip({ active, label, onPress, value }: { active: boolean; label: string; onPress: () => void; value: string }) {
   return (
-    <View style={styles.chip}>
+    <Pressable onPress={onPress} style={[styles.chip, active && styles.chipActive]}>
       <Text style={styles.chipLabel}>{label}</Text>
-      <Text style={styles.chipValue}>{value}</Text>
-    </View>
+      <Text style={[styles.chipValue, active && styles.chipValueActive]}>{value}</Text>
+    </Pressable>
   );
 }
 
@@ -200,6 +218,8 @@ const styles = StyleSheet.create({
   url: { flex: 1, color: colors.ink, fontSize: 13, fontWeight: '500' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.6)', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(15,42,29,0.06)' },
+  chipActive: { backgroundColor: 'rgba(52,199,89,0.16)', borderColor: 'rgba(52,199,89,0.32)' },
   chipLabel: { color: colors.muted, fontSize: 11, fontWeight: '500', letterSpacing: 0.5, textTransform: 'uppercase' },
   chipValue: { color: colors.ink, fontSize: 12, fontWeight: '700' },
+  chipValueActive: { color: colors.greenAccent },
 });

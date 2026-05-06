@@ -25,7 +25,7 @@ The public SDK API exposes typed native commands and typed native events. Partne
 - Scanning for compatible glasses
 - Connecting, disconnecting, and tracking connection state
 - Displaying text and clearing the display
-- Applying core hardware settings such as brightness, dashboard position, button behavior, and microphone routing
+- Applying typed hardware controls such as display settings, microphone routing, RGB LED color/pattern, Wi-Fi, streaming, and gallery-button behavior
 - Handling hardware events such as button presses, touch gestures, head-up state, battery, Wi-Fi, and audio events
 - Using microphone, PCM, LC3, local transcription, camera, gallery, streaming, OTA, and diagnostic features where supported
 - Production validation and troubleshooting

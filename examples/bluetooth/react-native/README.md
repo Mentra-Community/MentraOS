@@ -71,11 +71,12 @@ granted for the app and that device Location services are enabled.
 - Subscribing to glasses and Bluetooth status
 - Scanning for compatible glasses
 - Connecting to discovered or saved/default glasses
-- Displaying text, applying basic hardware settings, and clearing the display
-- Requesting a Mentra Live photo upload to a local webhook server
+- Displaying text and clearing the display when the connected glasses support a display
+- Requesting a Mentra Live photo upload to a local webhook server with size, compression, and flash controls
 - Polling the local server with cache-busted status requests and displaying the uploaded photo preview
 - Starting and stopping RTMP/SRT/WebRTC stream requests with 15-second keep-alive calls
-- Requesting Wi-Fi scans, sending selected SSIDs with an empty password, and toggling hotspot state
+- Requesting Wi-Fi scans, opening a password modal for secured networks, connecting to open networks directly, forgetting the current network, and toggling hotspot state
 - Enabling microphone PCM delivery and showing received frame and byte counts
-- Sending RGB LED mode requests
-- Showing button, touch, BLE, TX, STORE, and raw status events in the console
+- Sending RGB LED color and pattern requests
+- Showing button, touch, swipe, BLE, TX, STORE, hotspot, and raw status events in the console
+- Changing save-in-gallery mode, which controls whether the glasses button saves photos/videos locally or only reports button/touch events to the host app

@@ -295,10 +295,28 @@ struct SystemScreen: View {
             .padding(.bottom, 10)
 
             HStack(spacing: 6) {
-                ForEach(Array((model.events.filter { $0.text.contains("button") || $0.text.contains("touch") }.prefix(3).map(\.text).ifEmpty(["waiting for input"])).enumerated()), id: \.offset) { index, text in
+                ForEach(Array((model.events.filter { $0.text.contains("button") || $0.text.contains("touch") || $0.text.contains("swipe") }.prefix(3).map(\.text).ifEmpty(["waiting for input"])).enumerated()), id: \.offset) { index, text in
                     InputChip(prefix: "\(index + 1)s", label: text)
                 }
                 Spacer()
+            }
+            .padding(.bottom, 12)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Save in gallery mode").font(.system(size: 14, weight: .bold)).foregroundColor(AppColor.ink)
+                Text(model.galleryModeAuto ? "On: the glasses button saves photos/videos locally." : "Off: button and touch events are reported to the phone.")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(AppColor.muted)
+                    .lineSpacing(2)
+                HStack(spacing: 8) {
+                    GalleryModeChip(title: "Save media", active: model.galleryModeAuto, enabled: model.glassesConnected) {
+                        model.setGalleryModeAuto(true)
+                    }
+                    GalleryModeChip(title: "Report events", active: !model.galleryModeAuto, enabled: model.glassesConnected) {
+                        model.setGalleryModeAuto(false)
+                    }
+                }
+                .padding(.top, 2)
             }
         }
     }
@@ -414,6 +432,29 @@ struct InputChip: View {
         .padding(.horizontal, 10).padding(.vertical, 6)
         .background(AppColor.ink.opacity(0.04))
         .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+struct GalleryModeChip: View {
+    let title: String
+    let active: Bool
+    let enabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12, weight: active ? .bold : .medium))
+                .foregroundColor(active ? AppColor.greenInk : AppColor.muted)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(active ? AppColor.greenAccent.opacity(0.16) : AppColor.ink.opacity(0.04))
+                .overlay(Capsule().stroke(active ? AppColor.greenAccent.opacity(0.32) : AppColor.ink.opacity(0.05), lineWidth: 1))
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
     }
 }
 

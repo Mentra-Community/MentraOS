@@ -33,13 +33,14 @@ cd /path/to/MentraOS/mobile/android
 
 - Scanning for Mentra Live glasses, connecting, and disconnecting.
 - Displaying connection, battery, firmware, Wi-Fi, RSSI, discovered-device, and event status.
-- Sending display text, clearing the display, and applying basic hardware settings.
-- Requesting photo capture plus webhook upload, then polling the local webhook server for preview.
+- Sending display text and clearing the display when the connected glasses support a display.
+- Requesting photo capture plus webhook upload with size, compression, and flash controls, then polling the local webhook server for preview.
 - Starting and stopping RTMP/SRT/WebRTC stream requests with 15-second keep-alive calls.
-- Requesting Wi-Fi scans, sending selected SSIDs with an empty password, and toggling hotspot state.
+- Requesting Wi-Fi scans, opening a password prompt for secured networks, connecting to open networks directly, forgetting the current network, and toggling hotspot state.
 - Enabling microphone PCM delivery and showing received frame and byte counts.
-- Sending RGB LED mode requests.
-- Showing button, touch, BLE, TX, STORE, and raw status events in the console.
+- Sending RGB LED color and pattern requests.
+- Showing button, touch, swipe, BLE, TX, STORE, hotspot, and raw status events in the console.
+- Changing save-in-gallery mode, which controls whether the glasses button saves photos/videos locally or only reports button/touch events to the host app.
 
 For local photo preview and RTMP/WebRTC testing, run the local demo cloud from the
 repo root:

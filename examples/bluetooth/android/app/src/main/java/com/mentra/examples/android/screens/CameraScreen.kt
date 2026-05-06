@@ -32,7 +32,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.mentra.examples.android.MentraExampleController
+import com.mentra.examples.android.cameraSdkCall
 import com.mentra.examples.android.isGlassesConnected
+import com.mentra.examples.android.photoCompressionOptions
+import com.mentra.examples.android.photoSizeOptions
 import com.mentra.examples.android.ui.AppColor
 import com.mentra.examples.android.ui.Eyebrow
 import com.mentra.examples.android.ui.GlassCard
@@ -45,6 +48,7 @@ fun CameraScreen(controller: MentraExampleController) {
     val connected = isGlassesConnected(state.glassesStatus)
     val cameraStatusFailed = isCameraStatusFailure(state.cameraStatus)
     val setupHint = localCameraSetupHint(state.webhookUrl, state.cameraStatus)
+    val sdkCall = cameraSdkCall(state.photoSize, state.photoCompression, state.photoFlash)
     val clipboardManager = LocalClipboardManager.current
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
         PageHeader("Camera", connected)
@@ -112,7 +116,7 @@ fun CameraScreen(controller: MentraExampleController) {
                         modifier = Modifier
                             .clip(RoundedCornerShape(6.dp))
                             .background(Color.White.copy(alpha = 0.06f))
-                            .clickable { clipboardManager.setText(AnnotatedString(cameraSdkCall)) }
+                            .clickable { clipboardManager.setText(AnnotatedString(sdkCall)) }
                             .padding(horizontal = 8.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -123,7 +127,7 @@ fun CameraScreen(controller: MentraExampleController) {
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    cameraSdkCall,
+                    sdkCall,
                     color = AppColor.consoleText, fontSize = 11.sp, fontFamily = FontFamily.Monospace
                 )
             }
@@ -207,30 +211,29 @@ fun CameraScreen(controller: MentraExampleController) {
                 )
                 Spacer(Modifier.height(12.dp))
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Chip("size", "medium")
-                Chip("compress", "medium")
-                Chip("flash", "off")
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    photoSizeOptions.forEach { size ->
+                        OptionChip("size", size, state.photoSize == size) { controller.setPhotoSize(size) }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    photoCompressionOptions.forEach { compression ->
+                        OptionChip("compress", compression, state.photoCompression == compression) {
+                            controller.setPhotoCompression(compression)
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OptionChip("flash", "off", !state.photoFlash) { controller.setPhotoFlash(false) }
+                    OptionChip("flash", "on", state.photoFlash) { controller.setPhotoFlash(true) }
+                }
             }
         }
 
         Spacer(Modifier.height(140.dp))
     }
 }
-
-private val cameraSdkCall = """
-sdk.requestPhoto(
-    MentraPhotoRequest(
-      requestId = requestId,
-      appId = "com.mentra.examples.android",
-      size = MentraPhotoSize.MEDIUM,
-      webhookUrl = uploadUrl,
-      compress = MentraPhotoCompression.MEDIUM,
-      flash = false,
-      sound = true,
-    )
-)
-""".trimIndent()
 
 private fun isCameraStatusFailure(status: String): Boolean {
     val normalized = status.lowercase()
@@ -256,17 +259,22 @@ private fun localCameraSetupHint(webhookUrl: String, status: String): String? {
 }
 
 @Composable
-private fun Chip(label: String, value: String) {
+private fun OptionChip(label: String, value: String, active: Boolean, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(999.dp))
-            .background(Color.White.copy(alpha = 0.6f))
-            .border(1.dp, AppColor.ink.copy(alpha = 0.06f), RoundedCornerShape(999.dp))
+            .background(if (active) AppColor.greenAccent.copy(alpha = 0.16f) else Color.White.copy(alpha = 0.6f))
+            .border(
+                1.dp,
+                if (active) AppColor.greenAccent.copy(alpha = 0.32f) else AppColor.ink.copy(alpha = 0.06f),
+                RoundedCornerShape(999.dp)
+            )
+            .clickable { onClick() }
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Text(label.uppercase(), color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.5.sp)
-        Text(value, color = AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Text(value, color = if (active) AppColor.greenAccent else AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
     }
 }

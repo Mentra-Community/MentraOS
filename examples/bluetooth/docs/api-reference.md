@@ -243,6 +243,13 @@ sdk.rgbLedControl(
 )
 ```
 
+React Native / Expo partners with access to that integration path can use the same gallery-mode control through the package API:
+
+```ts
+await BluetoothSdk.setGalleryMode("auto")
+await BluetoothSdk.setGalleryMode("manual")
+```
+
 RGB LED parameters:
 
 | Parameter | Valid values | Meaning |
@@ -258,7 +265,7 @@ RGB LEDs are hardware-dependent; unsupported glasses should report an SDK error 
 
 Unsupported settings should fail through a typed error or capability status, not silently succeed.
 
-`setGalleryMode` controls whether hardware-button presses also capture locally on Mentra Live. Button presses are always reported as SDK events; when local capture is enabled, a short press captures a photo and a long press starts or stops video recording. Use `setButtonPhotoSettings` and `setButtonVideoRecordingSettings` to configure those captures.
+`setGalleryMode` maps to the Mentra Live `save_in_gallery_mode` command. Use `.auto` / `MentraGalleryMode.AUTO` / `"auto"` to let the glasses button save photos/videos locally. Use `.manual` / `MentraGalleryMode.MANUAL` / `"manual"` when you want button and touch events reported to the host app without triggering local gallery capture. Button presses are always reported as SDK events; when local capture is enabled, a short press captures a photo and a long press starts or stops video recording. Use `setButtonPhotoSettings` and `setButtonVideoRecordingSettings` to configure those captures.
 
 ## Microphone And Audio
 
@@ -459,9 +466,12 @@ interface MentraBluetoothSdkListener {
     fun onScanStopped(reason: MentraScanStopReason) {}
     fun onButtonPress(event: MentraButtonPressEvent) {}
     fun onTouch(event: MentraTouchEvent) {}
+    fun onSwipe(event: MentraSwipeEvent) {}
     fun onHeadUpChanged(headUp: Boolean) {}
     fun onBatteryStatus(event: MentraBatteryStatusEvent) {}
     fun onWifiStatusChanged(event: MentraWifiStatusEvent) {}
+    fun onHotspotStatusChanged(event: MentraHotspotStatusEvent) {}
+    fun onHotspotError(event: MentraHotspotErrorEvent) {}
     fun onGalleryStatus(event: MentraGalleryStatusEvent) {}
     fun onPhotoResponse(event: MentraPhotoResponseEvent) {}
     fun onStreamStatus(event: MentraStreamStatusEvent) {}

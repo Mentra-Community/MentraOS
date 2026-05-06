@@ -20,7 +20,7 @@ Use this checklist before shipping a partner app with the Mentra Bluetooth SDK.
 - App does not assume every model supports every feature.
 - App cleans up SDK listeners/delegates and calls `close()` / `invalidate()` when sessions end.
 - App avoids sending rapid display updates without debouncing.
-- App uses typed settings APIs for brightness, dashboard, button, camera, and microphone settings.
+- App uses typed settings APIs for brightness, dashboard, gallery-button behavior, camera, LED, Wi-Fi, streaming, and microphone settings.
 - Advanced controls are gated behind SDK capability/status checks.
 
 ## Privacy And Compliance
@@ -43,7 +43,7 @@ Use this checklist before shipping a partner app with the Mentra Bluetooth SDK.
 - Reconnect test after app restart.
 - Reconnect test after Bluetooth toggle.
 - Display command test.
-- Core settings test for brightness, dashboard, and button behavior.
+- Hardware settings test for brightness/dashboard where supported, save-in-gallery mode, camera options, LED color/pattern, Wi-Fi, and hotspot behavior.
 - Button/touch event test.
 - Audio/transcription test if enabled.
 - Camera/gallery/streaming test if enabled.

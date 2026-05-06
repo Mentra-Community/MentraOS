@@ -51,10 +51,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var cameraStatus = "Camera: enter the local webhook /upload URL"
     @Published var webhookUrl = ""
     @Published private(set) var photoPreviewUrl: URL?
+    @Published private(set) var photoSize: MentraPhotoSize = .medium
+    @Published private(set) var photoCompression: MentraPhotoCompression = .medium
+    @Published private(set) var photoFlash = false
     @Published var streamProtocol: ExampleStreamProtocol = .rtmp
     @Published var streamUrl = ExampleStreamProtocol.rtmp.defaultUrl
     @Published private(set) var streamStartedAt: Date?
     @Published private(set) var streamStatus = "Ready to start stream"
+    @Published private(set) var galleryModeAuto = true
     @Published private(set) var hotspotEnabled = false
     @Published private(set) var micRecording = false
     @Published private(set) var micPlaying = false
@@ -160,20 +164,24 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    func applySettings() {
-        runAction("Apply Settings") {
-            try requireConnected("apply settings")
-            Task {
-                try? await sdk.setBrightness(72)
-                try? await sdk.setDashboardPosition(MentraDashboardPositionRequest(height: 4, depth: 6))
-                try? await sdk.setGalleryMode(.auto)
-                try? await sdk.setButtonPhotoSettings(MentraButtonPhotoSettings(size: .medium))
-                try? await sdk.setButtonVideoRecordingSettings(MentraButtonVideoRecordingSettings(width: 1920, height: 1080, fps: 30))
-                try? await sdk.setButtonCameraLed(enabled: true)
-                try? await sdk.setButtonMaxRecordingTime(minutes: 5)
-                try? await sdk.setCameraFov(.standard)
-            }
+    func setGalleryModeAuto(_ enabled: Bool) {
+        runAction(enabled ? "Save in gallery mode" : "Report button events") {
+            try requireConnected("change gallery mode")
+            galleryModeAuto = enabled
+            Task { try? await sdk.setGalleryMode(enabled ? .auto : .manual) }
         }
+    }
+
+    func setPhotoSize(_ size: MentraPhotoSize) {
+        photoSize = size
+    }
+
+    func setPhotoCompression(_ compression: MentraPhotoCompression) {
+        photoCompression = compression
+    }
+
+    func setPhotoFlash(_ enabled: Bool) {
+        photoFlash = enabled
     }
 
     func captureAndUpload() {
@@ -194,10 +202,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 MentraPhotoRequest(
                     requestId: requestId,
                     appId: "com.mentra.examples.ios",
-                    size: .medium,
+                    size: photoSize,
                     webhookUrl: uploadUrl,
-                    compress: .medium,
-                    flash: false,
+                    compress: photoCompression,
+                    flash: photoFlash,
                     sound: true
                 )
             )
@@ -442,9 +450,24 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceive event: MentraBluetoothEvent) {
-        if case let .raw(name, values) = event {
+        switch event {
+        case let .buttonPress(button):
+            append(tag: "LIVE", text: "button \(button.buttonId): \(button.pressType)")
+        case let .touch(touch):
+            append(tag: "LIVE", text: "\(touch.isSwipe ? "swipe" : "touch") \(touch.gestureName ?? summarize(touch.values))")
+        case let .hotspotStatus(status):
+            handleRawEvent(name: "hotspot_status_change", values: status.values)
+        case let .hotspotError(error):
+            handleRawEvent(name: "hotspot_error", values: error.values)
+        case let .photoResponse(response):
+            handlePhotoResponse(response.values)
+        case let .streamStatus(status):
+            applyStreamStatus(status.values)
+            streamStatus = summarize(status.values)
+            append(tag: "LIVE", text: "stream \(summarize(status.values))")
+        case let .raw(name, values):
             handleRawEvent(name: name, values: values)
-        } else {
+        default:
             append(tag: "LIVE", text: event.description)
         }
     }
@@ -995,15 +1018,19 @@ func durationLabel(_ seconds: Int) -> String {
 }
 
 func disconnectedGlassesValues() -> [String: Any] {
-    [
-        "connected": false,
-        "connectionState": "DISCONNECTED",
-        "fullyBooted": false,
-        "batteryLevel": -1,
-        "charging": false,
-        "wifiConnected": false,
-        "wifiSsid": "",
-        "wifiLocalIp": "",
+        [
+            "connected": false,
+            "connectionState": "DISCONNECTED",
+            "fullyBooted": false,
+            "batteryLevel": -1,
+            "charging": false,
+            "hotspotEnabled": false,
+            "hotspotGatewayIp": "",
+            "hotspotPassword": "",
+            "hotspotSsid": "",
+            "wifiConnected": false,
+            "wifiSsid": "",
+            "wifiLocalIp": "",
     ]
 }
 
