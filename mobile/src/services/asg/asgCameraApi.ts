@@ -1065,7 +1065,8 @@ export class AsgCameraApiClient {
       // Use Content-Length from the HTTP response if available, otherwise fall back
       // to expectedSize from the sync response metadata. This catches truncated
       // downloads even when the server uses chunked transfer encoding (no Content-Length).
-      const sizeToCheck = expectedContentLength > 0 ? expectedContentLength : (expectedSize && expectedSize > 0 ? expectedSize : 0)
+      const sizeToCheck =
+        expectedContentLength > 0 ? expectedContentLength : expectedSize && expectedSize > 0 ? expectedSize : 0
       if (sizeToCheck > 0) {
         try {
           const stat = await RNFS.stat(localFilePath)

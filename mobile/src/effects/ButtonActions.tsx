@@ -1,8 +1,9 @@
 import {useEffect} from "react"
 
+import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useApplets, useStartApplet} from "@/stores/applets"
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
+import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
 import CoreModule, {ButtonPressEvent} from "core"
 
@@ -10,9 +11,14 @@ export function ButtonActions() {
   const applets = useApplets()
   const startApplet = useStartApplet()
   const {theme} = useAppTheme()
+  const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
 
   // Validate and update default button action app when device or applets change
   useEffect(() => {
+    // Default Button Action is Mentra Live only — G2's "button" is a touchpad and the
+    // auto-launcher clobbers the glasses' native menu UI when it fires.
+    if (defaultWearable !== DeviceTypes.LIVE) return
+
     const validateAndSetDefaultApp = async () => {
       const currentDefaultApp = await useSettingsStore.getState().getSetting(SETTINGS.default_button_action_app.key)
 
@@ -53,10 +59,12 @@ export function ButtonActions() {
     }
 
     validateAndSetDefaultApp()
-  }, [applets]) // Run when applets change (which includes compatibility info)
+  }, [applets, defaultWearable]) // Run when applets change (which includes compatibility info)
 
   // Listen for button press events from glasses
   useEffect(() => {
+    if (defaultWearable !== DeviceTypes.LIVE) return
+
     const onButtonPress = async (event: ButtonPressEvent) => {
       console.log("BUTTON_ACTION: BUTTON_PRESS event in ButtonActionProvider:", event)
 
@@ -124,7 +132,7 @@ export function ButtonActions() {
     return () => {
       sub.remove()
     }
-  }, [applets, startApplet, theme])
+  }, [applets, startApplet, theme, defaultWearable])
 
   return null
 }

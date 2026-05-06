@@ -36,7 +36,11 @@ export default function SelectGlassesBluetoothScreen() {
   //   }, [setSearchResults]),
   // )
 
-  focusEffectPreventBack(() => {
+  focusEffectPreventBack((event) => {
+    // Skip cleanup when navigating forward — only run on actual back navigation.
+    if (event && event.actionType !== "GO_BACK" && event.actionType !== "POP") {
+      return
+    }
     CoreModule.disconnectController()
     CoreModule.forgetController()
     goBack()

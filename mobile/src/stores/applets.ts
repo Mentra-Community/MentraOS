@@ -18,7 +18,7 @@ import {submitMiniappStartFailedBugReport} from "@/services/bugReport/miniappSta
 import restComms from "@/services/RestComms"
 import STTModelManager from "@/services/STTModelManager"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
-import {showAlert} from "@/contexts/ModalContext"
+import {AlertButton, showAlert} from "@/contexts/ModalContext"
 import {CompatibilityResult, HardwareCompatibility} from "@/utils/hardware"
 import {BgTimer} from "@/utils/timers"
 import {storage} from "@/utils/storage"
@@ -26,6 +26,29 @@ import {useShallow} from "zustand/react/shallow"
 import composer from "@/services/Composer"
 import {getDefaultMenuApps, GlassesMenuItem} from "@/utils/glassesMenu"
 import {subscribeWithSelector} from "zustand/middleware"
+
+const hardwareTypeLabel = (type: HardwareType): string => {
+  switch (type) {
+    case HardwareType.CAMERA:
+      return translate("hardwareTypes:camera")
+    case HardwareType.DISPLAY:
+      return translate("hardwareTypes:display")
+    case HardwareType.MICROPHONE:
+      return translate("hardwareTypes:microphone")
+    case HardwareType.SPEAKER:
+      return translate("hardwareTypes:speaker")
+    case HardwareType.IMU:
+      return translate("hardwareTypes:imu")
+    case HardwareType.BUTTON:
+      return translate("hardwareTypes:button")
+    case HardwareType.LIGHT:
+      return translate("hardwareTypes:light")
+    case HardwareType.WIFI:
+      return translate("hardwareTypes:wifi")
+    default:
+      return type.toLowerCase()
+  }
+}
 
 export interface ClientAppletInterface extends AppletInterface {
   offline: boolean
@@ -813,8 +836,9 @@ export const useAppletStatusStore = create<AppStatusState>()(
 
       // show incompatible alert if the applet is incompatible:
       if (!applet.compatibility?.isCompatible) {
-        // if one of the missing types is EXIST, show a specific message:
         const missingTypes = applet.compatibility?.missingRequired?.map((req) => req.type) || []
+
+        // if one of the missing types is EXIST, show a specific message:
         if (missingTypes.includes(HardwareType.EXIST)) {
           await showAlert({
             title: translate("home:glassesRequired"),
@@ -823,20 +847,48 @@ export const useAppletStatusStore = create<AppStatusState>()(
           })
           return
         }
-        const missingHardware =
-          missingTypes
-            .filter((t) => t !== HardwareType.EXIST)
-            .map((t) => t.toLowerCase())
-            .join(", ") || "required features"
 
-        await showAlert({
-          title: translate("home:hardwareIncompatible"),
-          buttons: [{text: translate("common:ok")}],
-          message: translate("home:hardwareIncompatibleMessage", {
+        // Read hidden status from storage rather than the (possibly stale) applet
+        // argument so the "Remove from Home" button doesn't appear when the app
+        // is already hidden (e.g. tapping it again from the app drawer).
+        const isHidden = get().getHiddenStatus(applet.packageName)
+        const showRemove = !isHidden
+        const buttons: AlertButton[] = showRemove
+          ? [{text: translate("appInfo:removeFromHome"), style: "cancel"}, {text: translate("common:ok")}]
+          : [{text: translate("common:ok")}]
+        const removeIndex = showRemove ? 0 : -1
+
+        const nonExistMissing = missingTypes.filter((t) => t !== HardwareType.EXIST)
+        const defaultWearable =
+          (useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key) as string) ||
+          translate("home:yourGlasses")
+
+        let message: string
+        if (nonExistMissing.length === 1) {
+          message = translate("home:hardwareIncompatibleSingleMessage", {
+            wearable: defaultWearable,
+            missing: hardwareTypeLabel(nonExistMissing[0]),
+          })
+        } else {
+          const missingHardware =
+            nonExistMissing.length > 0
+              ? nonExistMissing.map(hardwareTypeLabel).join(", ")
+              : translate("home:requiredFeatures")
+          message = translate("home:hardwareIncompatibleMessage", {
             app: applet.name,
             missing: missingHardware,
-          }),
+          })
+        }
+
+        const result = await showAlert({
+          title: translate("home:hardwareIncompatible"),
+          buttons,
+          message,
+          options: {allowDismiss: false},
         })
+        if (result === removeIndex) {
+          get().setHiddenStatus(applet.packageName, true)
+        }
 
         return
       }
@@ -1019,7 +1071,11 @@ useSettingsStore.subscribe(
 
 // Refresh menu_apps running flags whenever the running set changes
 useAppletStatusStore.subscribe(
-  (state) => state.apps.filter((app) => app.running).map((a) => a.packageName).join("|"),
+  (state) =>
+    state.apps
+      .filter((app) => app.running)
+      .map((a) => a.packageName)
+      .join("|"),
   () => {
     syncMenuAppsRunningState()
   },
@@ -1095,58 +1151,9 @@ export const useActiveBackgroundAppsCount = () => {
   return useMemo(() => apps.filter((app) => app.type === "background" && app.running).length, [apps])
 }
 
-export const useIncompatibleApps = () => {
-  const apps = useApplets()
-  const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-
-  return useMemo(() => {
-    // if no default wearable, return all apps:
-    if (!defaultWearable) {
-      return apps
-    }
-    // otherwise, return only incompatible apps:
-    return apps.filter((app) => !app.compatibility?.isCompatible)
-  }, [apps, defaultWearable])
-}
-
 export const useLocalMiniApps = () => {
   return useAppletStatusStore.getState().apps.filter((app) => app.local)
 }
 
 export const useActiveAppPackageNames = () =>
   useAppletStatusStore(useShallow((state) => state.apps.filter((app) => app.running).map((a) => a.packageName)))
-
-// export const useIncompatibleApps = async () => {
-//   const apps = useApplets()
-//   const defaultWearable = await useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key)
-
-//   const capabilities: Capabilities | null = await getCapabilitiesForModel(defaultWearable)
-//   if (!capabilities) {
-//     console.error("Failed to fetch capabilities")
-//     return []
-//   }
-
-//   return useMemo(() => {
-//     return apps.filter((app) => {
-//       let result = HardwareCompatibility.checkCompatibility(app.hardwareRequirements, capabilities)
-//       return !result.isCompatible
-//     })
-//   }, [apps])
-// }
-
-// export const useFilteredApps = async () => {
-//   const apps = useApplets()
-//   const defaultWearable = await useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key)
-
-//   const capabilities: Capabilities | null = getCapabilitiesForModel(defaultWearable)
-//   if (!capabilities) {
-//     console.error("Failed to fetch capabilities")
-//     throw new Error("Failed to fetch capabilities")
-//   }
-
-//   return useMemo(() => {
-//     return {
-
-//     })
-//   }, [apps])
-// }

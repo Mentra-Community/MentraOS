@@ -262,6 +262,9 @@ const en = {
     btClassicStep4: 'Return to the app once it says "Connected"',
     btClassicTitle: "Pair Audio",
     btClassicSubtitle: "Connect {{name}} as a Bluetooth audio device",
+    unpairEvenTitle: "Unpair Glasses from Even App",
+    unpairEvenSubtitle: "To use Mentra, forget your glasses in Bluetooth settings. Unpair them, then try again.",
+    unpairEvenTryAgain: "Try Again",
     showDevicePicker: "Show device picker",
     openSettings: "Open settings",
     stepCounter: "Step {{index}} / {{total}}",
@@ -364,14 +367,13 @@ const en = {
     hardwareIncompatible: "Hardware Incompatible",
     hardwareIncompatibleMessage:
       "{{app}} requires hardware that is not available on your connected glasses: {{missing}}",
+    hardwareIncompatibleSingleMessage:
+      "This mini app is incompatible with your {{wearable}} because it requires a {{missing}}.",
+    requiredFeatures: "required features",
+    yourGlasses: "your glasses",
     glassesRequired: "Glasses Required",
     glassesRequiredMessage: "Connect your glasses to use {{app}}.",
-    incompatibleApps: "Incompatible Apps",
-    incompatibleAppsCount: "{{count}} Incompatible Apps",
     activeAppsCount: "{{count}} Apps active",
-    incompatibleAppsDescription:
-      "The following apps require specific hardware that is currently not available on your connected glasses.",
-    incompatible: "Incompatible",
     noAppsInstalled: "No apps installed",
     swipeToView: "Swipe to view {{target}}",
     backgroundApps: "Background Apps",
@@ -780,7 +782,8 @@ const en = {
     pairingBatteryTooLow:
       "The battery on your {{glassesModel}} is too low to pair. Please charge your {{glassesModel}} to at least 25% and try again.",
     invalidEmail: "Invalid email address.",
-    pairNeedDisconnect: "Pairing failed. Please make sure to disconnect your glasses in your phone's Bluetooth settings before trying again.",
+    pairNeedDisconnect:
+      "Pairing failed. Please make sure to disconnect your glasses in your phone's Bluetooth settings before trying again.",
   },
   common: {
     ok: "OK",
@@ -955,8 +958,8 @@ const en = {
   },
   appInfo: {
     share: "Share",
-    addToHome: "Add to home",
-    removeFromHome: "Remove from home",
+    addToHome: "Add to Home",
+    removeFromHome: "Remove from Home",
     open: "Open",
     start: "Start miniapp",
     stop: "Stop miniapp",
@@ -988,6 +991,16 @@ const en = {
     superModeDeactivated: "Super mode deactivated",
     versionInfo: "Version info",
     versionInfoCopied: "Version info copied to clipboard",
+  },
+  hardwareTypes: {
+    camera: "camera",
+    display: "display",
+    microphone: "microphone",
+    speaker: "speaker",
+    imu: "motion sensor",
+    button: "button",
+    light: "light",
+    wifi: "Wi-Fi",
   },
 }
 

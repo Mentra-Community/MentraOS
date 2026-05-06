@@ -3,9 +3,8 @@ import {useLocalSearchParams} from "expo-router"
 import {useEffect} from "react"
 import {View} from "react-native"
 import Animated, {useAnimatedStyle, useSharedValue, withTiming} from "react-native-reanimated"
-import Icon from "react-native-vector-icons/FontAwesome"
 
-import {Screen, Header, Text, Button} from "@/components/ignite"
+import {Screen, Header, Text, Button, Icon} from "@/components/ignite"
 import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {TxKeyPath} from "@/i18n"
@@ -13,7 +12,7 @@ import {translate} from "@/i18n/translate"
 
 export default function PairingFailureScreen() {
   const {theme} = useAppTheme()
-  const {clearHistory, replace, clearHistoryAndGoHome} = useNavigationHistory()
+  const {clearHistoryAndGoHome, push} = useNavigationHistory()
 
   const {error, deviceModel}: {error: string; deviceModel?: string} = useLocalSearchParams()
 
@@ -32,8 +31,8 @@ export default function PairingFailureScreen() {
 
   const handleRetry = () => {
     CoreModule.forget()
-    clearHistory()
-    replace("/pairing/select-glasses-model")
+    clearHistoryAndGoHome()
+    push("/pairing/select-glasses-model")
   }
 
   const handleGoHome = () => {
@@ -47,12 +46,15 @@ export default function PairingFailureScreen() {
       <Animated.View style={animatedContainerStyle} className="flex-1 items-center justify-center px-4">
         <View
           className="p-6 rounded-[130px] mb-8 w-[130px] h-[130px] items-center justify-center"
-          style={{backgroundColor: theme.colors.errorBackground || theme.colors.palette.angry100}}
-        >
+          style={{backgroundColor: theme.colors.errorBackground || theme.colors.palette.angry100}}>
           <Icon name="exclamation-circle" size={80} color={theme.colors.chart_5} />
         </View>
 
-        <Text tx="pairing:pairingFailed" preset="heading" className="text-[28px] font-bold mb-4 text-center text-text" />
+        <Text
+          tx="pairing:pairingFailed"
+          preset="heading"
+          className="text-[28px] font-bold mb-4 text-center text-text"
+        />
 
         <Text
           text={translate(error as TxKeyPath, {glassesModel: deviceModel || "glasses"})}

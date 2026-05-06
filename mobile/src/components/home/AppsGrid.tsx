@@ -142,6 +142,7 @@ const AppPopover: React.FC<{
           <GlassView className="rounded-2xl overflow-hidden bg-primary-foreground/95">{popoverContent}</GlassView>
         </View>
         <GlassView
+          disableOnAndroid={true}
           className="absolute bg-primary-foreground/95 w-8 h-8 transform rotate-45 -z-1"
           style={{left: arrowLeft, top: arrowTop}}
         />
@@ -187,15 +188,9 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
   const gridData: MasonryAppItem[] = useMemo(() => {
     let filteredApps = apps.filter((app) => {
       if (showAllApps) {
-        // if (!app.compatibility?.isCompatible) {
-        // return false
-        // }
         return true
       }
       if (app.hidden) {
-        return false
-      }
-      if (!app.compatibility?.isCompatible) {
         return false
       }
       return true
@@ -312,6 +307,7 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
 
     return filteredApps.map((app) => ({
       ...app,
+      // id: `${app.packageName}-${app.compatibility?.isCompatible}`,
       id: app.packageName,
       height: 110,
     }))

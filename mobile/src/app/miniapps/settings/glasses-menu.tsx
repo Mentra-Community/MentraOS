@@ -12,12 +12,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n/translate"
 import {sortAppsByLastOpenTime, SYSTEM_APPS, useApplets, type ClientAppletInterface} from "@/stores/applets"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {
-  buildMenuItems,
-  filterCompatibleMenuItems,
-  getDefaultMenuApps,
-  type GlassesMenuItem,
-} from "@/utils/glassesMenu"
+import {buildMenuItems, filterCompatibleMenuItems, getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
 
 const MAX_MENU_ITEMS = 10
 
@@ -55,8 +50,8 @@ export default function GlassesMenuScreen() {
 
   const removeItem = useCallback(
     (packageName: string) => {
-      setMenuItems(current => {
-        const updated = current.filter(item => item.packageName !== packageName)
+      setMenuItems((current) => {
+        const updated = current.filter((item) => item.packageName !== packageName)
         setSavedMenuApps(updated)
         return updated
       })

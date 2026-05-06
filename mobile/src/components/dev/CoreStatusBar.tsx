@@ -90,7 +90,7 @@ export default function CoreStatusBar() {
             {systemMicUnavailable && <Tag icon="unplug" label="SMIC unavailable!" bg="bg-destructive" />}
           </View>
           <View className="flex-row flex-wrap items-center justify-center justify-end">
-            <Tag icon="pointer" label={touchEvent ? touchEvent.gesture_name ?? "None" : "None"} bg="bg-primary" />
+            <Tag icon="pointer" label={touchEvent ? (touchEvent.gesture_name ?? "None") : "None"} bg="bg-primary" />
             <Tag icon="bluetooth" label={glassesFullyBooted ? "Booted" : "Not booted"} bg="bg-primary" />
             <Tag
               icon="bluetooth"
@@ -111,17 +111,17 @@ export default function CoreStatusBar() {
                 cloudStatus === "connected"
                   ? "Cloud"
                   : cloudStatus === "connecting"
-                  ? "Connecting"
-                  : cloudStatus === "error"
-                  ? "Cloud Err"
-                  : "Cloud Off"
+                    ? "Connecting"
+                    : cloudStatus === "error"
+                      ? "Cloud Err"
+                      : "Cloud Off"
               }
               bg={
                 cloudStatus === "connected"
                   ? "bg-primary"
                   : cloudStatus === "connecting"
-                  ? "bg-chart-3"
-                  : "bg-destructive"
+                    ? "bg-chart-3"
+                    : "bg-destructive"
               }
             />
           </View>

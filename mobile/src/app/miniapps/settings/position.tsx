@@ -13,12 +13,11 @@ export default function ScreenSettingsScreen() {
   const [dashboardDepth, setDashboardDepth] = useSetting(SETTINGS.dashboard_depth.key)
   const [dashboardHeight, setDashboardHeight] = useSetting(SETTINGS.dashboard_height.key)
   const [_screenDisabled, setScreenDisabled] = useSetting(SETTINGS.screen_disabled.key)
-  const deviceModel = useGlassesStore(state => state.deviceModel)
+  const deviceModel = useGlassesStore((state) => state.deviceModel)
 
   const depthClamped = Math.min(3, Math.max(1, Number(dashboardDepth ?? 2)))
 
-  const isG1 =
-    deviceModel === "Even Realities G1" || deviceModel === "evenrealities_g1" || deviceModel === "g1"
+  const isG1 = deviceModel === "Even Realities G1" || deviceModel === "evenrealities_g1" || deviceModel === "g1"
 
   useFocusEffect(
     useCallback(() => {

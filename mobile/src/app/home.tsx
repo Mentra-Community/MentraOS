@@ -5,31 +5,23 @@ import {useSharedValue} from "react-native-reanimated"
 import {LinearGradient} from "expo-linear-gradient"
 import MaskedView from "@react-native-masked-view/masked-view"
 
-import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {CustomBackground} from "@/components/home/CustomBackground"
-import {ActiveForegroundApp} from "@/components/home/ActiveForegroundApp"
-import {BackgroundAppsLink} from "@/components/home/BackgroundAppsLink"
-import {CompactDeviceStatus} from "@/components/home/CompactDeviceStatus"
 import {AppsGrid} from "@/components/home/AppsGrid"
-import {IncompatibleApps} from "@/components/home/IncompatibleApps"
 import {PairGlassesCard} from "@/components/home/PairGlassesCard"
-import {Header, Screen} from "@/components/ignite"
-import NonProdWarning from "@/components/home/NonProdWarning"
+import {Screen} from "@/components/ignite"
 import {Group} from "@/components/ui"
 import {useRefreshApplets} from "@/stores/applets"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {useGlassesStore} from "@/stores/glasses"
 import {useCoreStore} from "@/stores/core"
-import WebsocketStatus from "@/components/error/WebsocketStatus"
 import AppSwitcherButton from "@/components/home/AppSwitcherButtton"
 import AppSwitcher from "@/components/home/AppSwitcher"
-import {DeviceStatus} from "@/components/home/DeviceStatus"
+import {GlassesStatus, ControllerStatus} from "@/components/home/DeviceStatus"
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import AllAppsGridSheet from "@/components/home/AllAppsGridSheet"
 import BottomSheet from "@gorhom/bottom-sheet"
 import {BlurTargetView, BlurView} from "expo-blur"
-import {ControllerStatus} from "@/components/home/ControllerStatus"
 
 export default function Homepage() {
   const refreshApplets = useRefreshApplets()
@@ -82,7 +74,7 @@ export default function Homepage() {
     return (
       <>
         <Group>
-          <DeviceStatus />
+          <GlassesStatus />
         </Group>
         <Group>
           <ControllerStatus />

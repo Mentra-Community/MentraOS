@@ -30,7 +30,7 @@ import {SETTINGS, useSetting} from "@/stores/settings"
 import {BlurView} from "expo-blur"
 import GlassView from "@/components/ui/GlassView"
 import {hapticBuzz} from "@/utils/utils"
-import { storage } from "@/utils/storage"
+import {storage} from "@/utils/storage"
 
 const {width: SCREEN_WIDTH, height: SCREEN_HEIGHT} = Dimensions.get("window")
 const CARD_SCALE = 0.67
@@ -746,13 +746,15 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
 
         {apps.length > 0 && (
           <GestureDetector gesture={dotsPanGesture}>
-            <GlassView
-              transparent={false}
-              className="mb-5 px-4 py-2 rounded-full mx-auto bg-black/30 items-center justify-center gap-1.5 flex-row">
-              {apps.map((_, index) => (
-                <PageDot key={index} index={index} activeIndex={activeIndex} />
-              ))}
-            </GlassView>
+            <View collapsable={false}>
+              <GlassView
+                transparent={false}
+                className="mb-5 px-4 py-2 h-8 rounded-full mx-auto bg-black/30 items-center justify-center gap-1.5 flex-row">
+                {apps.map((_, index) => (
+                  <PageDot key={index} index={index} activeIndex={activeIndex} />
+                ))}
+              </GlassView>
+            </View>
           </GestureDetector>
         )}
 

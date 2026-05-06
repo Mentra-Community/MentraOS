@@ -184,7 +184,6 @@ class Composer {
     // update the applets store with the installed mini apps:
     // useAppletStatusStore.getState().setInstalledLmas(this.installedLmas)
     // useAppletStatusStore.getState().refreshApplets()
-
   }
 
   public async fanOutPcm(bytes: Uint8Array) {

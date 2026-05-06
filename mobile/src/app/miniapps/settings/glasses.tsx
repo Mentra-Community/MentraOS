@@ -150,8 +150,8 @@ function DeviceSettings() {
 
       {/* Camera Settings button moved to Gallery Settings page */}
 
-      {/* Button Settings - Only show for glasses with configurable buttons */}
-      {glassesConnected && defaultWearable && features?.hasButton && (
+      {/* Button Settings - Mentra Live only (G2's button is a touchpad and conflicts with the native menu) */}
+      {glassesConnected && defaultWearable === DeviceTypes.LIVE && (
         <ButtonSettings
           enabled={defaultButtonActionEnabled}
           selectedApp={defaultButtonActionApp}
@@ -256,7 +256,7 @@ export default function Glasses() {
   }
 
   return (
-    <Screen preset="fixed" extraAndroidInsets>
+    <Screen preset="fixed">
       <Header
         title={translate("deviceSettings:title")}
         subtitle={pageSubtitle}
@@ -273,6 +273,7 @@ export default function Glasses() {
         {!glassesConnected && defaultWearable && <NotConnectedInfo />}
         <Spacer height={theme.spacing.s6} />
         <DeviceSettings />
+        <Spacer height={theme.spacing.s8} />
       </ScrollView>
     </Screen>
   )

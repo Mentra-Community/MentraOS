@@ -52,6 +52,10 @@ export default function GlassesPairingLoadingScreen() {
     (error: string) => {
       clearPairingTimeout()
       CoreModule.forget()
+      if (error === "errors:pairNeedDisconnect") {
+        replace("/pairing/unpair-even", {deviceModel: deviceModel})
+        return
+      }
       replace("/pairing/failure", {error: error, deviceModel: deviceModel})
     },
     [clearPairingTimeout, replace, deviceModel],

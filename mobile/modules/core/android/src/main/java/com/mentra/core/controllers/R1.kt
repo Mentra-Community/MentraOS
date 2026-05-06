@@ -46,6 +46,12 @@ private object R1BLE {
     val CONFIG_FC = byteArrayOf(0xFC.toByte())
     val CONFIG_11 = byteArrayOf(0x11.toByte())
 
+    // BleRing1 command header (cmd, module, subCmd) for advStart.
+    // From RE: BleRing1Cmd_system=0, BleRing1Module_system=0, BleRing1SubCmd_advStart=9
+    const val CMD_SYSTEM: Byte = 0x00
+    const val MODULE_SYSTEM: Byte = 0x00
+    const val SUBCMD_ADV_START: Byte = 0x09
+
     const val GESTURE_MARKER: Byte = 0xFF.toByte()
 }
 
@@ -175,7 +181,16 @@ class R1 : ControllerManager() {
             return false
         }
 
+        // Already connected — don't start a new scan
+        if (ringGatt != null) {
+            Bridge.log("R1: Already connected, skipping scan")
+            return true
+        }
+
         isDisconnecting = false
+
+        // Stop any prior scan before starting a new one (avoids leaking ScanCallback)
+        stopScan()
 
         // Try MAC-based reconnection first
         if (connectByMac()) {
@@ -220,6 +235,7 @@ class R1 : ControllerManager() {
         } catch (e: SecurityException) {
             Bridge.log("R1: stopScan SecurityException: ${e.message}")
         }
+        scanCallback = null
     }
 
     private fun connectByMac(): Boolean {
@@ -229,6 +245,10 @@ class R1 : ControllerManager() {
         }
         val mac = ringMacAddress ?: return false
         val adapter = bluetoothAdapter ?: return false
+        if (ringGatt != null) {
+            Bridge.log("R1: connectByMac skipped — already connected")
+            return true
+        }
         val device = try {
             adapter.getRemoteDevice(mac)
         } catch (e: IllegalArgumentException) {
@@ -267,6 +287,11 @@ class R1 : ControllerManager() {
             advertisedName
         }
         mainHandler.post {
+            // Already connected — ignore further scan results
+            if (ringGatt != null) {
+                stopScan()
+                return@post
+            }
             if (!matchesNameFilter(deviceName)) return@post
 
             val mfgMap = result.scanRecord?.manufacturerSpecificData
@@ -358,6 +383,9 @@ class R1 : ControllerManager() {
         GlassesStore.apply("glasses", "controllerConnected", true)
         // GlassesStore.apply("glasses", "controllerFullyBooted", true)
 
+        // tell the ring to connect to the glasses if we have its mac address:
+        connectToGlasses()
+
         // after a second, connect the glasses to the controller if needed:
         CoroutineScope(Dispatchers.Main).launch {
             delay(1000)
@@ -365,6 +393,61 @@ class R1 : ControllerManager() {
         }
 
         startHeartbeat()
+    }
+
+    /**
+     * Tells the ring to start advertising / connect to the glasses.
+     * Sends BleRing1 advStart (cmd=0, module=0, subCmd=9) with the 6-byte glasses MAC as payload
+     * to WRITE_CHAR_2 (BAE80012-…). Reverse-engineered from the Even Realities mobile app
+     * (BleRing1CmdProto::advStart -> BleRing1CmdPublicExt.sendCmd).
+     *
+     * TODO: BleRing1CmdPublicExt.sendCmd may add additional outer framing (length/seq/CRC) around
+     * the 3-byte header + MAC. If the ring rejects this raw payload, decode the wrapper.
+     */
+    private fun connectToGlasses() {
+        // Try GlassesStore first; fall back to cached value in SharedPreferences.
+        val glassesMac = (GlassesStore.get("glasses", "btMacAddress") as? String)
+            ?: prefs.getString("glasses_btMacAddress", null)
+        if (glassesMac == null) {
+            Bridge.log("R1: connectToGlasses: no glasses MAC")
+            return
+        }
+        // Cache so we can reconnect even before the glasses are scanned.
+        prefs.edit().putString("glasses_btMacAddress", glassesMac).apply()
+
+        val macBytes = parseMac(glassesMac)
+        if (macBytes == null) {
+            Bridge.log("R1: connectToGlasses: could not parse glasses MAC")
+            return
+        }
+        val wc = writeChar2 ?: writeChar1
+        if (wc == null) {
+            Bridge.log("R1: connectToGlasses: no write characteristic")
+            return
+        }
+
+        val payload = byteArrayOf(R1BLE.CMD_SYSTEM, R1BLE.MODULE_SYSTEM, R1BLE.SUBCMD_ADV_START) + macBytes
+        Bridge.log("R1: advStart sent")
+
+        wc.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        wc.value = payload
+        try {
+            ringGatt?.writeCharacteristic(wc)
+        } catch (e: SecurityException) {
+            Bridge.log("R1: connectToGlasses writeCharacteristic SecurityException: ${e.message}")
+        }
+    }
+
+    /** Parse "AA:BB:CC:DD:EE:FF" or "AABBCCDDEEFF" into 6 raw bytes. */
+    private fun parseMac(s: String): ByteArray? {
+        val cleaned = s.replace(":", "").replace("-", "")
+        if (cleaned.length != 12) return null
+        val out = ByteArray(6)
+        for (i in 0 until 6) {
+            val byte = cleaned.substring(i * 2, i * 2 + 2).toIntOrNull(16) ?: return null
+            out[i] = byte.toByte()
+        }
+        return out
     }
 
     // MARK: - Heartbeat

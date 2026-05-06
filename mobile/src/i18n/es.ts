@@ -49,10 +49,6 @@ const es: Translations = {
     hardwareIncompatible: "Hardware Incompatible",
     hardwareIncompatibleMessage:
       "{{app}} requiere hardware que no está disponible en tus lentes conectados: {{missing}}",
-    incompatibleApps: "Apps Incompatibles",
-    incompatibleAppsDescription:
-      "Estas apps requieren características de hardware no disponibles en tus lentes conectados",
-    incompatible: "Incompatible",
   },
   demoNavigator: {
     componentsTab: "Componentes",

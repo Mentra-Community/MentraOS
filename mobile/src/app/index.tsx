@@ -122,16 +122,7 @@ export default function InitScreen() {
     await new Promise((resolve) => setTimeout(resolve, NAVIGATION_DELAY))
     setAnimationDelayed()
     clearHistoryAndGoHome({transition: "fade"})
-  }, [
-    user,
-    getPendingRoute,
-    processUrl,
-    clearHistoryAndGoHome,
-    replace,
-    replaceAll,
-    setPendingRoute,
-    setAnimation,
-  ])
+  }, [user, getPendingRoute, processUrl, clearHistoryAndGoHome, replace, replaceAll, setPendingRoute, setAnimation])
 
   const checkLoggedIn = async (): Promise<void> => {
     if (!user) {
@@ -293,7 +284,6 @@ export default function InitScreen() {
 
   // Effects
   useEffect(() => {
-
     console.log("INDEX: USE EFFECT: authLoading, isNavigationReady:", authLoading, isNavigationReady)
     if (authLoading || !isNavigationReady) return
     if (initStartedRef.current) return

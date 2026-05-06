@@ -37,7 +37,7 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
   }
 
   return (
-    <View className={`items-center ${app.compatibility?.isCompatible ? "" : "opacity-50"}`}>
+    <View className={`items-center ${app.compatibility?.isCompatible ? "" : "opacity-30"}`}>
       <WrapperComponent
         onPress={onClick}
         activeOpacity={onClick ? 0.7 : undefined}

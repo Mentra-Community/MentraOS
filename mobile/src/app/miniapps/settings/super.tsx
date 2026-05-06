@@ -55,7 +55,7 @@ export default function SuperSettingsScreen() {
             <RouteButton label="LMA Installer" onPress={() => push("/miniapps/dev/mini-app-installer")} />
           </Group>
         </View>
-        <View className="flex h-16"/>
+        <View className="flex h-16" />
       </ScrollView>
     </Screen>
   )

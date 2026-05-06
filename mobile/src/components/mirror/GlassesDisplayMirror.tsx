@@ -239,7 +239,7 @@ const $glassesScreen: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   width: "100%",
   minHeight: 170,
   maxHeight: 170,
-  backgroundColor: colors.primary,
+  backgroundColor: colors.primary_foreground,
   borderRadius: spacing.s4,
   paddingHorizontal: spacing.s2,
   paddingVertical: spacing.s3,

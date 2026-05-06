@@ -56,6 +56,8 @@ const initialState: GlassesStore = {
   androidVersion: "",
   fwVersion: "",
   btMacAddress: "",
+  leftMacAddress: "",
+  rightMacAddress: "",
   buildNumber: "",
   otaVersionUrl: "",
   appVersion: "",

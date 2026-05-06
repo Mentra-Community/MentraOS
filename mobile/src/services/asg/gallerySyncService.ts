@@ -1681,9 +1681,7 @@ class GallerySyncService {
       // captures succeeded. If any failed, set it just before the oldest failure
       // so those captures are retried on the next sync.
       const syncWatermark =
-        failedCount > 0 && oldestFailedTimestamp < Infinity
-          ? Math.max(0, oldestFailedTimestamp - 1)
-          : serverTime
+        failedCount > 0 && oldestFailedTimestamp < Infinity ? Math.max(0, oldestFailedTimestamp - 1) : serverTime
       const currentSyncState = await localStorageService.getSyncState()
       await localStorageService.updateSyncState({
         last_sync_time: syncWatermark,

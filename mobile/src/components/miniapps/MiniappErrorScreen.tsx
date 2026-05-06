@@ -108,12 +108,7 @@ export default function MiniappErrorScreen({packageName, appName, message, onRet
         </Text>
       )}
 
-      <Button
-        text="Retry"
-        preset="primary"
-        onPress={onRetry}
-        style={{marginTop: theme.spacing.s6, minWidth: 120}}
-      />
+      <Button text="Retry" preset="primary" onPress={onRetry} style={{marginTop: theme.spacing.s6, minWidth: 120}} />
     </View>
   )
 }

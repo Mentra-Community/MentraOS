@@ -36,6 +36,12 @@ private enum R1BLE {
     static let CONFIG_FC = Data([0xFC])
     static let CONFIG_11 = Data([0x11])
 
+    // BleRing1 command header (cmd, module, subCmd) for advStart
+    // From RE: BleRing1Cmd_system=0, BleRing1Module_system=0, BleRing1SubCmd_advStart=9
+    static let CMD_SYSTEM: UInt8 = 0x00
+    static let MODULE_SYSTEM: UInt8 = 0x00
+    static let SUBCMD_ADV_START: UInt8 = 0x09
+
     /// Gesture protocol marker
     static let GESTURE_MARKER: UInt8 = 0xFF
 
@@ -249,6 +255,54 @@ class R1: NSObject, ControllerManager {
         }
     }
 
+    /// Tells the ring to start advertising / connect to the glasses.
+    /// Sends BleRing1 advStart (cmd=0, module=0, subCmd=9) with the 6-byte glasses MAC as payload
+    /// to WRITE_CHAR_2 (BAE80012-…). Reverse-engineered from the Even Realities mobile app
+    /// (BleRing1CmdProto::advStart -> BleRing1CmdPublicExt.sendCmd).
+    private func connectToGlasses() {
+        let glassesMac = (GlassesStore.shared.get("glasses", "btMacAddress") as? String)
+            ?? UserDefaults.standard.string(forKey: "glasses_btMacAddress")
+
+        guard let glassesMac else {
+            Bridge.log("R1: connectToGlasses: no glasses MAC")
+            return
+        }
+
+        guard let macBytes = parseMac(glassesMac) else {
+            Bridge.log("R1: connectToGlasses: could not parse glasses MAC")
+            return
+        }
+
+        // Cache so we can reconnect even before the glasses are scanned.
+        UserDefaults.standard.set(glassesMac, forKey: "glasses_btMacAddress")
+
+        guard let wc = writeChar2 ?? writeChar1 else {
+            Bridge.log("R1: connectToGlasses: no write characteristic")
+            return
+        }
+
+        var payload = Data([R1BLE.CMD_SYSTEM, R1BLE.MODULE_SYSTEM, R1BLE.SUBCMD_ADV_START])
+        payload.append(macBytes)
+        Bridge.log("R1: advStart sent")
+        ringPeripheral?.writeValue(payload, for: wc, type: .withoutResponse)
+    }
+
+    /// Parse a MAC string like "AA:BB:CC:DD:EE:FF" or "AABBCCDDEEFF" into 6 raw bytes.
+    private func parseMac(_ s: String) -> Data? {
+        let cleaned = s.replacingOccurrences(of: ":", with: "")
+            .replacingOccurrences(of: "-", with: "")
+        guard cleaned.count == 12 else { return nil }
+        var out = Data(); out.reserveCapacity(6)
+        var idx = cleaned.startIndex
+        for _ in 0 ..< 6 {
+            let next = cleaned.index(idx, offsetBy: 2)
+            guard let byte = UInt8(cleaned[idx ..< next], radix: 16) else { return nil }
+            out.append(byte)
+            idx = next
+        }
+        return out
+    }
+
     private func markConnected() {
         Task { await reconnectionManager.stop() }
         Bridge.log("R1: Ring connected")
@@ -257,7 +311,6 @@ class R1: NSObject, ControllerManager {
             GlassesStore.shared.apply("core", "controller_device_name", id)
         }
 
-        // TODO: uncomment
         guard let mac = ringMacAddress else {
             Bridge.log("R1: No ring MAC address found")
             return
@@ -266,6 +319,9 @@ class R1: NSObject, ControllerManager {
 
         GlassesStore.shared.apply("glasses", "controllerConnected", true)
         // GlassesStore.shared.apply("glasses", "controllerFullyBooted", true)
+
+        // tell the ring to connect to the glasses if we have it's mac address:
+        connectToGlasses()
 
         // after a second, connect the glasses to the controller if needed:
         Task {

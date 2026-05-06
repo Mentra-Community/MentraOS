@@ -345,6 +345,8 @@ export interface GlassesStatus {
   besFwVersion: string
   mtkFwVersion: string
   btMacAddress: string
+  leftMacAddress: string
+  rightMacAddress: string
   buildNumber: string
   otaVersionUrl: string
   appVersion: string

@@ -219,7 +219,6 @@ class SherpaOnnxTranscriber {
      */
     func acceptAudio(pcm16le: Data) {
         guard isRunning else {
-            Bridge.log("⚠️ Ignoring audio - transcriber not running")
             return
         }
 
