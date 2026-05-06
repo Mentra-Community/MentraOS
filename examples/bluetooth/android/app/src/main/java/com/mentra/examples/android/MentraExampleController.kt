@@ -225,7 +225,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     init {
-        loadPersistedDefaultDevice()?.let { sdk.setDefaultDevice(it) }
+        val savedDefaultDevice = loadPersistedDefaultDevice()
+        savedDefaultDevice?.let { sdk.setDefaultDevice(it) }
         val initialGlassesStatus = sdk.getGlassesStatus().values
         val initialBluetoothStatus = sdk.getBluetoothStatus().values
         state = state.copy(
@@ -237,6 +238,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         )
         registerAudioStateObservers()
         refreshAudioSystemState()
+        if (savedDefaultDevice != null) {
+            autoConnectDefaultOnStartup()
+        }
     }
 
     fun startScan() = runAction("Scan") {
@@ -887,6 +891,18 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             return
         }
         state = state.copy(activeAction = null)
+    }
+
+    private fun autoConnectDefaultOnStartup() {
+        scope.launch {
+            delay(500)
+            if (isGlassesConnected() || !hasSavedConnectionTarget(state.bluetoothStatus)) {
+                return@launch
+            }
+            runAction("Auto-connect default") {
+                sdk.connectDefault()
+            }
+        }
     }
 
     private fun addEvent(tag: String, text: String) {

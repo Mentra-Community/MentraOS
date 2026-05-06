@@ -206,11 +206,13 @@ export function useMentraSdk(): MentraSdkModel {
   const micPlayingRef = useRef(false);
   const micRecordingRef = useRef(false);
   const micStartedAtRef = useRef<number | null>(null);
+  const didAutoConnectDefaultRef = useRef(false);
 
   const discoveredDevices = bluetoothStatus.searchResults ?? [];
   const defaultWearable = stringValue(bluetoothStatus, 'default_wearable');
   const defaultDeviceName = stringValue(bluetoothStatus, 'device_name');
   const defaultDeviceAddress = stringValue(bluetoothStatus, 'device_address');
+  const glassesConnected = isGlassesConnected(glassesStatus);
 
   useEffect(() => {
     let cancelled = false;
@@ -244,6 +246,22 @@ export function useMentraSdk(): MentraSdkModel {
       addEvent('TX', `default device save failed: ${formatError(error)}`);
     });
   }, [defaultDeviceAddress, defaultDeviceName, defaultWearable]);
+
+  useEffect(() => {
+    if (didAutoConnectDefaultRef.current || glassesConnected) {
+      return;
+    }
+    if (!defaultDevice && !hasSavedConnectionTarget(bluetoothStatus)) {
+      return;
+    }
+    didAutoConnectDefaultRef.current = true;
+    void runAction('Auto-connect default', async () => {
+      if (!(await ensureAndroidPermissions('connect'))) {
+        throw new Error('Bluetooth permissions are required to connect.');
+      }
+      await BluetoothSdk.connectDefault();
+    });
+  }, [defaultDevice, defaultDeviceAddress, defaultDeviceName, defaultWearable, glassesConnected]);
 
   useEffect(() => {
     const removeGlasses = BluetoothSdk.onGlassesStatus((changed) => {
