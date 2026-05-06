@@ -53,7 +53,7 @@ struct SystemScreen: View {
                     iconTile
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Wi-Fi").font(.system(size: 17, weight: .bold)).tracking(-0.17).foregroundColor(AppColor.ink)
-                        Text("\(wifiScanResults(model.bluetoothValues).count) networks nearby").font(.system(size: 10, weight: .medium)).foregroundColor(AppColor.muted)
+                        Text("\(visibleWifiScanResults.count) networks nearby").font(.system(size: 10, weight: .medium)).foregroundColor(AppColor.muted)
                     }
                 }
                 Spacer()
@@ -73,7 +73,7 @@ struct SystemScreen: View {
             .padding(.bottom, 4)
 
             currentWifiRow
-            let rows = wifiScanResults(model.bluetoothValues)
+            let rows = visibleWifiScanResults
             ForEach(Array(rows.enumerated()), id: \.offset) { index, network in
                 let ssid = stringValue(network, "ssid") ?? "Unknown"
                 let requiresPassword = boolValue(network, "requiresPassword") ?? false
@@ -228,7 +228,7 @@ struct SystemScreen: View {
                         )
                         micControlButton(
                             systemName: model.micPlaying ? "stop.fill" : "play.fill",
-                            enabled: model.hasMicRecording,
+                            enabled: model.hasMicRecording && !model.micRecording,
                             active: model.micPlaying,
                             action: model.playMicRecording
                         )
@@ -242,9 +242,36 @@ struct SystemScreen: View {
                         .foregroundColor(model.micRecording || model.micPlaying ? AppColor.greenAccent : AppColor.muted)
                         .lineLimit(2)
                         .minimumScaleFactor(0.8)
+                    Button(action: model.openBluetoothSettings) {
+                        Text("Bluetooth settings")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(AppColor.greenDeep)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(AppColor.greenAccent.opacity(0.14))
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 4)
+                    if let hint = model.micPlaybackHint {
+                        Text(hint)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(AppColor.red)
+                            .lineLimit(3)
+                            .minimumScaleFactor(0.8)
+                            .padding(.top, 3)
+                    }
                 }
             }
             .opacity(model.glassesConnected ? 1 : 0.55)
+        }
+    }
+
+    private var visibleWifiScanResults: [[String: Any]] {
+        let connectedSsid = stringValue(model.glassesValues, "wifiSsid")
+        return wifiScanResults(model.bluetoothValues).filter { network in
+            guard let connectedSsid, boolValue(model.glassesValues, "wifiConnected") == true else { return true }
+            return stringValue(network, "ssid") != connectedSsid
         }
     }
 

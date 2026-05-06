@@ -17,8 +17,10 @@ import { hotspotLabel, isGlassesConnected, wifiLabel, wifiSubLabel } from '../sd
 import { RGB_LED_COLORS, durationText, type LedColor, type LedMode, type MentraSdkModel } from '../useMentraSdk';
 
 export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
-  const networks = sdk.bluetoothStatus.wifiScanResults ?? [];
   const connected = isGlassesConnected(sdk.glassesStatus);
+  const networks = (sdk.bluetoothStatus.wifiScanResults ?? []).filter(
+    (network) => !connected || !sdk.glassesStatus.wifiConnected || network.ssid !== sdk.glassesStatus.wifiSsid,
+  );
   const inputEvents = sdk.events.filter((item) => item.text.includes('button') || item.text.includes('touch') || item.text.includes('swipe')).slice(0, 3);
   const [pendingWifi, setPendingWifi] = useState<{ssid: string; requiresPassword: boolean} | null>(null);
   const [pendingWifiPassword, setPendingWifiPassword] = useState('');
@@ -152,7 +154,7 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
               <MicControlButton disabled={!connected} active={sdk.micRecording} onPress={sdk.toggleMic}>
                 {sdk.micRecording ? <StopIcon active /> : <RecordIcon />}
               </MicControlButton>
-              <MicControlButton disabled={sdk.lastMicBytes <= 0} active={sdk.micPlaying} onPress={sdk.playMicRecording}>
+              <MicControlButton disabled={sdk.lastMicBytes <= 0 || sdk.micRecording} active={sdk.micPlaying} onPress={sdk.playMicRecording}>
                 {sdk.micPlaying ? <StopIcon active /> : <PlayIcon />}
               </MicControlButton>
             </View>
@@ -160,6 +162,10 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
           <View>
             <Text style={styles.tileTitle}>Microphone</Text>
             <Text style={[styles.tileSub, { color: sdk.micRecording || sdk.micPlaying ? colors.greenAccent : colors.muted }]}>{micStatus}</Text>
+            <Pressable style={styles.micSettingsButton} onPress={sdk.openBluetoothSettings}>
+              <Text style={styles.micSettingsText}>Bluetooth settings</Text>
+            </Pressable>
+            {sdk.micPlaybackHint ? <Text style={styles.micWarning}>{sdk.micPlaybackHint}</Text> : null}
           </View>
         </LinearGradient>
         </View>
@@ -469,6 +475,9 @@ const styles = StyleSheet.create({
   micControls: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   micControlButton: { width: 28, height: 28, borderRadius: 999, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', shadowColor: '#0F2A1D', shadowOpacity: 0.05, shadowOffset: { width: 0, height: 4 }, shadowRadius: 8, elevation: 1 },
   micControlButtonActive: { backgroundColor: colors.greenInk },
+  micSettingsButton: { alignSelf: 'flex-start', marginTop: 6, backgroundColor: 'rgba(52,199,89,0.14)', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 5 },
+  micSettingsText: { color: colors.greenDeep, fontSize: 10, fontWeight: '700' },
+  micWarning: { color: colors.red, fontSize: 10, fontWeight: '500', lineHeight: 13, marginTop: 4 },
   tileTitle: { color: colors.ink, fontSize: 16, fontWeight: '700', letterSpacing: -0.16 },
   tileSub: { color: colors.muted, fontSize: 10, fontWeight: '500' },
   livePill2: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(52,199,89,0.16)', borderWidth: 1, borderColor: 'rgba(52,199,89,0.3)', paddingVertical: 4, paddingHorizontal: 9, borderRadius: 999 },

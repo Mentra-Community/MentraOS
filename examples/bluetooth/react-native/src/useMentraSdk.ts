@@ -1,7 +1,7 @@
 import {createAudioPlayer, setAudioModeAsync, type AudioPlayer} from 'expo-audio';
 import {File, Paths} from 'expo-file-system';
 import {useEffect, useRef, useState} from 'react';
-import {PermissionsAndroid, Platform} from 'react-native';
+import {Linking, PermissionsAndroid, Platform} from 'react-native';
 import BluetoothSdk, {
   type BatteryStatusEvent,
   type ButtonPressEvent,
@@ -77,6 +77,7 @@ export type MentraSdkState = {
   ledColor: LedColor;
   ledMode: LedMode;
   micElapsedSeconds: number;
+  micPlaybackHint: string | null;
   micPlaying: boolean;
   micRecording: boolean;
   pcmBytes: number;
@@ -103,6 +104,7 @@ export type MentraSdkActions = {
   disconnect: () => Promise<void>;
   displayHello: () => Promise<void>;
   forgetCurrentWifiNetwork: () => Promise<void>;
+  openBluetoothSettings: () => Promise<void>;
   requestWifiScan: () => Promise<void>;
   playMicRecording: () => Promise<void>;
   selectLedColor: (color: LedColor) => Promise<void>;
@@ -187,6 +189,7 @@ export function useMentraSdk(): MentraSdkModel {
   const [pcmBytes, setPcmBytes] = useState(0);
   const [lastMicBytes, setLastMicBytes] = useState(0);
   const [lastMicDurationSeconds, setLastMicDurationSeconds] = useState<number | null>(null);
+  const [micPlaybackHint, setMicPlaybackHint] = useState<string | null>(null);
   const [galleryModeAuto, setGalleryModeAuto] = useState(
     () => galleryModeAutoFrom(BluetoothSdk.getCoreStatus()),
   );
@@ -768,6 +771,31 @@ export function useMentraSdk(): MentraSdkModel {
     });
   }
 
+  async function openBluetoothSettings() {
+    await runAction('Open Bluetooth settings', async () => {
+      if (Platform.OS === 'android') {
+        const androidLinking = Linking as typeof Linking & {
+          sendIntent?: (action: string) => Promise<void>;
+        };
+        if (androidLinking.sendIntent) {
+          await androidLinking.sendIntent('android.settings.BLUETOOTH_SETTINGS');
+          return;
+        }
+      }
+
+      if (Platform.OS === 'ios') {
+        try {
+          await Linking.openURL('App-Prefs:root=Bluetooth');
+          return;
+        } catch {
+          // Fall back to the app settings page if iOS blocks the Bluetooth deep link.
+        }
+      }
+
+      await Linking.openSettings();
+    });
+  }
+
   async function startMicRecording() {
     requireConnected('stream microphone audio');
     await stopMicPlayback();
@@ -777,6 +805,7 @@ export function useMentraSdk(): MentraSdkModel {
     micStartedAtRef.current = Date.now();
     setLastMicBytes(0);
     setLastMicDurationSeconds(null);
+    setMicPlaybackHint(null);
     setMicElapsedSeconds(0);
     setPcmBytes(0);
     setPcmFrames(0);
@@ -800,6 +829,7 @@ export function useMentraSdk(): MentraSdkModel {
       lastMicFileUriRef.current = null;
       setLastMicBytes(0);
       setLastMicDurationSeconds(null);
+      setMicPlaybackHint('No PCM frames captured. Replay is empty; keep the glasses connected and record again.');
       addEvent('LIVE', 'microphone stopped with no PCM frames');
       return;
     }
@@ -812,6 +842,7 @@ export function useMentraSdk(): MentraSdkModel {
     setLastMicDurationSeconds(
       Math.max(micElapsedSecondsRef.current, estimatedMicDurationSeconds(pcm.byteLength)),
     );
+    setMicPlaybackHint(null);
     addEvent('LIVE', `saved microphone WAV ${pcm.byteLength} bytes`);
   }
 
@@ -845,10 +876,12 @@ export function useMentraSdk(): MentraSdkModel {
       }
       await BluetoothSdk.setOwnAppAudioPlaying(true);
       micPlayingRef.current = true;
+      setMicPlaybackHint(null);
       setMicPlaying(true);
       player.play();
     } catch (error) {
       await stopMicPlayback();
+      setMicPlaybackHint(formatError(error));
       throw error;
     }
   }
@@ -1043,8 +1076,10 @@ export function useMentraSdk(): MentraSdkModel {
     ledColor,
     ledMode,
     micElapsedSeconds,
+    micPlaybackHint,
     micPlaying,
     micRecording,
+    openBluetoothSettings,
     pcmBytes,
     pcmFrames,
     permissionStatus,

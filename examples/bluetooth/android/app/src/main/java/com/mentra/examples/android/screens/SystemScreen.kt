@@ -41,6 +41,7 @@ import com.mentra.examples.android.galleryServerUrl
 import com.mentra.examples.android.hotspotLabel
 import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.rgbLedColorOptions
+import com.mentra.examples.android.stringValue
 import com.mentra.examples.android.wifiLabel
 import com.mentra.examples.android.wifiScanResults
 import com.mentra.examples.android.ui.AppColor
@@ -52,7 +53,12 @@ import com.mentra.examples.android.ui.PageHeader
 fun SystemScreen(controller: MentraExampleController) {
     val state = controller.state
     val connected = isGlassesConnected(state.glassesStatus)
-    val networks = wifiScanResults(state.bluetoothStatus)
+    val currentWifiSsid = stringValue(state.glassesStatus, "wifiSsid")
+    val networks = wifiScanResults(state.bluetoothStatus).filter { network ->
+        !connected ||
+            state.glassesStatus["wifiConnected"] != true ||
+            stringValue(network, "ssid") != currentWifiSsid
+    }
     val inputEvents = state.events.filter { it.text.contains("button") || it.text.contains("touch") || it.text.contains("swipe") }.take(3)
     val galleryUrl = galleryServerUrl(state.glassesStatus, state.hotspotEnabled)
     val galleryHotspotPassword = galleryUrl?.let { galleryHotspotPasswordLabel(state.glassesStatus) }
@@ -292,6 +298,14 @@ fun SystemScreen(controller: MentraExampleController) {
             if (!connected) {
                 Spacer(Modifier.height(10.dp))
                 DisabledHint("Connect glasses before recording or playing microphone audio.")
+            } else if (state.micPlaybackHint != null) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    state.micPlaybackHint,
+                    color = AppColor.red,
+                    fontSize = 10.sp,
+                    lineHeight = 13.sp,
+                )
             } else if (!state.audioMediaConnected) {
                 Spacer(Modifier.height(10.dp))
                 Text(

@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import MentraBluetoothSDK
+import UIKit
 
 struct ExampleEvent: Identifiable {
     let id = UUID()
@@ -67,6 +68,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var pcmBytes = 0
     @Published private(set) var lastMicDurationSeconds: Int?
     @Published private(set) var lastMicBytes = 0
+    @Published private(set) var micPlaybackHint: String?
     @Published private(set) var ledColor = "green"
     @Published private(set) var ledMode = "Off"
     @Published var rawJsonExpanded = false
@@ -414,6 +416,17 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
+    func openBluetoothSettings() {
+        append(tag: "LIVE", text: "Open iOS Settings > Bluetooth and select the glasses as the audio output.")
+        micPlaybackHint = "Select the glasses in iOS Bluetooth settings, then return here and press Play."
+        guard let bluetoothSettingsUrl = URL(string: "App-Prefs:root=Bluetooth") else { return }
+        UIApplication.shared.open(bluetoothSettingsUrl) { success in
+            if !success, let appSettingsUrl = URL(string: UIApplication.openSettingsURLString) {
+                UIApplication.shared.open(appSettingsUrl)
+            }
+        }
+    }
+
     func selectLedMode(_ mode: String) {
         runAction("RGB LED \(mode)") {
             try requireConnected("control the RGB LED")
@@ -530,8 +543,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceiveMicLc3 frame: Data) {
         guard micRecording else { return }
-        pcmFrames += 1
-        pcmBytes += frame.count
+        append(tag: "LIVE", text: "received LC3 mic frame while PCM recording is enabled (\(frame.count) bytes)")
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didLog message: String) {
@@ -647,6 +659,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         stopMicPlayback()
         micPcmData.removeAll(keepingCapacity: true)
         micRecordingUrl = nil
+        micPlaybackHint = nil
         lastMicDurationSeconds = nil
         lastMicBytes = 0
         pcmFrames = 0
@@ -664,24 +677,31 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
         micRecording = false
         stopMicElapsedTimer()
-        lastMicDurationSeconds = max(micElapsedSeconds, Int((Double(pcmBytes) / Double(micSampleRate * micChannelCount * micBitsPerSample / 8)).rounded(.up)))
-        lastMicBytes = pcmBytes
+        let capturedPcm = micPcmData
+        let capturedBytes = capturedPcm.count
 
-        guard !micPcmData.isEmpty else {
+        guard !capturedPcm.isEmpty else {
             micRecordingUrl = nil
             lastMicDurationSeconds = nil
             lastMicBytes = 0
+            micPlaybackHint = "No PCM frames captured. Replay is empty; keep the glasses connected and record again."
             append(tag: "LIVE", text: "microphone stopped with no PCM frames")
             return
         }
 
         do {
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("mentra-mic-last.wav")
-            try wavData(from: micPcmData).write(to: url, options: [.atomic])
+            try wavData(from: capturedPcm).write(to: url, options: [.atomic])
             micRecordingUrl = url
-            append(tag: "LIVE", text: "saved microphone WAV \(pcmBytes) bytes")
+            lastMicDurationSeconds = max(micElapsedSeconds, Int((Double(capturedBytes) / Double(micSampleRate * micChannelCount * micBitsPerSample / 8)).rounded(.up)))
+            lastMicBytes = capturedBytes
+            micPlaybackHint = nil
+            append(tag: "LIVE", text: "saved microphone WAV \(capturedBytes) bytes")
         } catch {
             micRecordingUrl = nil
+            lastMicDurationSeconds = nil
+            lastMicBytes = 0
+            micPlaybackHint = "Failed to save microphone WAV: \(error.localizedDescription)"
             append(tag: "TX", text: "failed to save microphone WAV: \(error.localizedDescription)")
         }
     }
@@ -702,6 +722,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             }
             micPlayer = player
             micPlaying = true
+            micPlaybackHint = nil
             sdk.setOwnAppAudioPlaying(true)
             if !player.play() {
                 stopMicPlayback()
@@ -710,17 +731,22 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             append(tag: "LIVE", text: "playing through \(routeName)")
         } catch {
             stopMicPlayback()
+            micPlaybackHint = error.localizedDescription
             throw error
         }
     }
 
     private func stopMicPlayback() {
+        let wasPlaying = micPlaying
         micPlayer?.stop()
         micPlayer = nil
         if micPlaying {
             sdk.setOwnAppAudioPlaying(false)
         }
         micPlaying = false
+        if wasPlaying {
+            micPlaybackHint = nil
+        }
         try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
     }
 
@@ -729,11 +755,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         try session.setCategory(.playback, mode: .default, options: [.duckOthers])
         try session.setActive(true)
 
-        if let bluetoothOutput = session.currentRoute.outputs.first(where: { output in
-            output.portType == .bluetoothA2DP ||
-                output.portType == .bluetoothHFP ||
-                output.portType == .bluetoothLE
-        }) {
+        if let bluetoothOutput = session.currentRoute.outputs.first(where: isBluetoothAudioOutput) {
             return bluetoothOutput.portName
         }
 
@@ -742,13 +764,24 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         )
     }
 
-    func audioPlayerDidFinishPlaying(_: AVAudioPlayer, successfully _: Bool) {
-        stopMicPlayback()
+    nonisolated func audioPlayerDidFinishPlaying(_: AVAudioPlayer, successfully _: Bool) {
+        Task { @MainActor [weak self] in
+            self?.stopMicPlayback()
+        }
     }
 
-    func audioPlayerDecodeErrorDidOccur(_: AVAudioPlayer, error: Error?) {
-        append(tag: "TX", text: "mic playback failed: \(error?.localizedDescription ?? "decode error")")
-        stopMicPlayback()
+    nonisolated func audioPlayerDecodeErrorDidOccur(_: AVAudioPlayer, error: Error?) {
+        let message = error?.localizedDescription ?? "decode error"
+        Task { @MainActor [weak self] in
+            self?.append(tag: "TX", text: "mic playback failed: \(message)")
+            self?.stopMicPlayback()
+        }
+    }
+
+    private func isBluetoothAudioOutput(_ output: AVAudioSessionPortDescription) -> Bool {
+        output.portType == .bluetoothA2DP ||
+            output.portType == .bluetoothHFP ||
+            output.portType == .bluetoothLE
     }
 
     private func startMicElapsedTimer() {
@@ -959,7 +992,8 @@ extension Array {
 }
 
 func stringValue(_ values: [String: Any], _ key: String) -> String? {
-    values[key] as? String
+    guard let value = values[key] as? String else { return nil }
+    return value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : value
 }
 
 func intValue(_ values: [String: Any], _ key: String) -> Int? {

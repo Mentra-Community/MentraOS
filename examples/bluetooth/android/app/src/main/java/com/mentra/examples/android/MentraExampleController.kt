@@ -120,6 +120,7 @@ data class MentraExampleState(
     val lastMicBytes: Int = 0,
     val lastMicDurationSeconds: Int? = null,
     val micElapsedSeconds: Int = 0,
+    val micPlaybackHint: String? = null,
     val micPlaying: Boolean = false,
     val micRecording: Boolean = false,
     val pcmBytes: Int = 0,
@@ -1079,6 +1080,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             pcmFrames = 0,
             lastMicBytes = 0,
             lastMicDurationSeconds = null,
+            micPlaybackHint = null,
         )
         sdk.setMicState(MentraMicConfig(sendPcmData = true, sendTranscript = false, bypassVad = true))
         startMicElapsedTimer()
@@ -1095,10 +1097,16 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             micRecording = false,
             lastMicBytes = pcm.size,
             lastMicDurationSeconds = durationSeconds.takeIf { pcm.isNotEmpty() },
+            micPlaybackHint = null,
         )
 
         if (pcm.isEmpty()) {
             lastMicFile = null
+            state = state.copy(
+                lastMicBytes = 0,
+                lastMicDurationSeconds = null,
+                micPlaybackHint = "No PCM frames captured. Replay is empty; keep the glasses connected and record again.",
+            )
             addEvent("LIVE", "microphone stopped with no PCM frames")
             return
         }
@@ -1145,7 +1153,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 stopMicPlayback()
                 throw IllegalStateException("Playback routed to $actualRoute instead of Bluetooth audio.")
             }
-            state = state.copy(micPlaying = true, phoneAudioRoute = actualRoute)
+            state = state.copy(micPlaying = true, phoneAudioRoute = actualRoute, micPlaybackHint = null)
             addEvent("LIVE", "playing through $actualRoute")
             refreshGlassesMediaVolume()
         } catch (error: Throwable) {
@@ -1560,7 +1568,8 @@ fun rtmpPathSegmentCount(streamUrl: String): Int? {
 fun summarize(values: Map<String, Any>): String =
     values.entries.take(3).joinToString(", ") { "${it.key}: ${it.value}" }.ifBlank { "empty update" }
 
-fun stringValue(values: Map<String, Any>, key: String): String? = values[key] as? String
+fun stringValue(values: Map<String, Any>, key: String): String? =
+    (values[key] as? String)?.takeIf { it.isNotBlank() }
 
 fun intValue(values: Map<String, Any>, key: String): Int? =
     when (val value = values[key]) {
