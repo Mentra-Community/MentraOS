@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import Svg, { Circle, Line, Path, Polyline, Rect } from 'react-native-svg';
+import Svg, { Circle, Line, Path, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
 import { colors } from '../components/theme';
 import {
@@ -117,27 +117,14 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
               <Text style={styles.btnTextDark}>Clear Display</Text>
             </Pressable>
           </View>
-          <View style={styles.btnRow}>
-            <Pressable disabled={!connected} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, !connected && styles.disabled]} onPress={() => sdk.setGalleryModeAuto(!sdk.galleryModeAuto)}>
-              <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                <Polyline points="20 6 9 17 4 12" />
+          <Pressable disabled={!connected} onPress={sdk.disconnect} style={[!connected && styles.disabled]}>
+            <LinearGradient colors={['#FF6B5B', '#FF3B30']} style={[styles.btn, styles.btnFull, { borderRadius: 18 }]}>
+              <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                <Path d="M9 17H5a3 3 0 0 1 0-6h2" /><Path d="M17 7h2a3 3 0 0 1 3 3" /><Line x1={2} y1={2} x2={22} y2={22} />
               </Svg>
-              <Text style={styles.btnTextDark}>{sdk.galleryModeAuto ? 'Save Gallery' : 'Button Events'}</Text>
-            </Pressable>
-            <Pressable disabled={!connected} onPress={sdk.disconnect} style={[{ flex: 1 }, !connected && styles.disabled]}>
-              <LinearGradient colors={['#FF6B5B', '#FF3B30']} style={[styles.btn, { borderRadius: 18 }]}>
-                <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-                  <Path d="M9 17H5a3 3 0 0 1 0-6h2" /><Path d="M17 7h2a3 3 0 0 1 3 3" /><Line x1={2} y1={2} x2={22} y2={22} />
-                </Svg>
-                <Text style={styles.btnTextLight}>Disconnect</Text>
-              </LinearGradient>
-            </Pressable>
-          </View>
-          <Text style={styles.quickNote}>
-            {sdk.galleryModeAuto
-              ? 'Gallery mode is on: the glasses button saves photos/videos locally.'
-              : 'Gallery mode is off: button and touch events are reported to the phone.'}
-          </Text>
+              <Text style={styles.btnTextLight}>Disconnect</Text>
+            </LinearGradient>
+          </Pressable>
           {connected && !displaySupported ? (
             <Text style={styles.quickNote}>
               {modelLabel(sdk.glassesStatus)} has no display, so display commands are disabled.
@@ -290,6 +277,7 @@ const styles = StyleSheet.create({
   btnRow: { flexDirection: 'row', gap: 8 },
   quickNote: { color: colors.muted, fontSize: 11, fontWeight: '500', lineHeight: 15 },
   btn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 14, paddingVertical: 12, paddingHorizontal: 14, gap: 8 },
+  btnFull: { flex: 0, alignSelf: 'stretch' },
   btnPressed: { opacity: 0.72, transform: [{ scale: 0.98 }] },
   disabled: { opacity: 0.45 },
   btnLight: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 14, paddingVertical: 12, paddingHorizontal: 14, gap: 8, backgroundColor: '#fff', borderWidth: 1, borderColor: '#DBDBDB' },

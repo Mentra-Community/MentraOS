@@ -123,36 +123,23 @@ struct DeviceScreen: View {
                     LightActionButton(icon: "display", title: "Display Hello", enabled: displaySupported, action: model.displayHello)
                     LightActionButton(icon: "display.slash", title: "Clear Display", enabled: displaySupported, action: model.clearDisplay)
                 }
-                HStack(spacing: 8) {
-                    LightActionButton(
-                        icon: "photo.on.rectangle",
-                        title: model.galleryModeAuto ? "Save Gallery" : "Button Events",
-                        enabled: connected
-                    ) {
-                        model.setGalleryModeAuto(!model.galleryModeAuto)
+                let disconnecting = model.activeAction == "Disconnect"
+                Button {
+                    model.disconnect()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "wifi.slash").foregroundColor(.white).font(.system(size: 14, weight: .bold))
+                        Text(disconnecting ? "Disconnecting" : "Disconnect").foregroundColor(.white).font(.system(size: 13, weight: .semibold))
                     }
-                    let disconnecting = model.activeAction == "Disconnect"
-                    Button {
-                        model.disconnect()
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "wifi.slash").foregroundColor(.white).font(.system(size: 14, weight: .bold))
-                            Text(disconnecting ? "Disconnecting" : "Disconnect").foregroundColor(.white).font(.system(size: 13, weight: .semibold))
-                        }
-                        .frame(maxWidth: .infinity).padding(.vertical, 14)
-                        .background(LinearGradient(colors: [Color(hex: 0xFF6B5B), AppColor.red], startPoint: .top, endPoint: .bottom))
-                        .clipShape(RoundedRectangle(cornerRadius: 18))
-                    }
-                    .disabled(!connected || disconnecting)
-                    .opacity(connected ? 1 : 0.45)
+                    .frame(maxWidth: .infinity).padding(.vertical, 14)
+                    .background(LinearGradient(colors: [Color(hex: 0xFF6B5B), AppColor.red], startPoint: .top, endPoint: .bottom))
+                    .clipShape(RoundedRectangle(cornerRadius: 18))
                 }
+                .disabled(!connected || disconnecting)
+                .opacity(connected ? 1 : 0.45)
                 if connected && !supportsDisplay(model.glassesValues) {
                     DisplayCapabilityNotice(text: "\(modelLabel(model.glassesValues)) has no display, so display commands are disabled.")
                 }
-                Text(model.galleryModeAuto ? "Gallery mode is on: the glasses button saves photos/videos locally." : "Gallery mode is off: button and touch events are reported to the phone.")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(AppColor.muted)
-                    .lineSpacing(2)
             }
         }
     }

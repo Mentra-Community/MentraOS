@@ -11,7 +11,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -123,39 +122,27 @@ fun DeviceScreen(controller: MentraExampleController) {
                     LightBtn("Display Hello", Icons.Outlined.Tv, Modifier.weight(1f), enabled = displaySupported, onClick = controller::displayHello)
                     LightBtn("Clear Display", Icons.Outlined.Tv, Modifier.weight(1f), enabled = displaySupported, onClick = controller::clearDisplay)
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    LightBtn(
-                        if (state.galleryModeAuto) "Save Gallery" else "Button Events",
-                        Icons.Outlined.Check,
-                        Modifier.weight(1f),
-                        enabled = connected,
-                    ) { controller.setGalleryModeAuto(!state.galleryModeAuto) }
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(Brush.verticalGradient(listOf(Color(0xFFFF6B5B), AppColor.red)))
-                            .clickable(enabled = connected) { controller.disconnect() }
-                            .padding(vertical = 14.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Icon(Icons.Outlined.LinkOff, null, tint = Color.White, modifier = Modifier.size(14.dp))
-                            Text("Disconnect", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    Color(0xFFFF6B5B).copy(alpha = if (connected) 1f else 0.45f),
+                                    AppColor.red.copy(alpha = if (connected) 1f else 0.45f),
+                                )
+                            )
+                        )
+                        .clickable(enabled = connected) { controller.disconnect() }
+                        .padding(vertical = 14.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Outlined.LinkOff, null, tint = Color.White, modifier = Modifier.size(14.dp))
+                        Text("Disconnect", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
-                Text(
-                    if (state.galleryModeAuto) {
-                        "Gallery mode is on: the glasses button saves photos/videos locally."
-                    } else {
-                        "Gallery mode is off: button and touch events are reported to the phone."
-                    },
-                    color = AppColor.muted,
-                    fontSize = 11.sp,
-                    lineHeight = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                )
                 if (connected && !displaySupported) {
                     Text(
                         "${modelLabel(glasses)} has no display, so display commands are disabled.",
