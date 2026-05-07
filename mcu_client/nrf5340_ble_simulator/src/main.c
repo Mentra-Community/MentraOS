@@ -12,7 +12,7 @@
 #include <zephyr/types.h>
 
 #include "mos_ble_service.h"
-#include "mos_lvgl_display.h"  // Working LVGL display integration
+#include "mos_display.h"  // Working LVGL display integration
 #include "protobuf_handler.h"
 // #include "display/lcd/a6n.h"  // Working A6N driver
 #include <hal/nrf_gpio.h>  // For direct GPIO access

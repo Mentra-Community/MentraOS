@@ -19,7 +19,7 @@
 #include <pm_config.h>
 
 #include "mos_binfont_lvgl.h"
-#include "mos_lvgl_display.h"
+#include "mos_display.h"
 
 // Include protobuf handler for battery functions
 #include "protobuf_handler.h"
@@ -1438,7 +1438,7 @@ static int cmd_display_layout_margin(const struct shell *shell, size_t argc, cha
 
     shell_print(shell, "⚠️  Dynamic margin changes not yet implemented.");
     shell_print(shell, "To change margin from default 10px to %dpx:", margin);
-    shell_print(shell, "  1. Edit src/mos_components/mos_lvgl_display/src/display_config.c");
+    shell_print(shell, "  1. Edit src/mos_components/mos_display/src/mos_display_config.c");
     shell_print(shell, "  2. Find DISPLAY_TYPE_A6N_640x480 section");
     shell_print(shell, "  3. Change .margin_left / .margin_top in display_config.c to %d", margin);
     shell_print(shell, "  4. Rebuild and flash firmware");
@@ -1467,7 +1467,7 @@ static int cmd_display_layout_padding(const struct shell *shell, size_t argc, ch
 
     shell_print(shell, "⚠️  Dynamic padding changes not yet implemented.");
     shell_print(shell, "To change padding from default 10px to %dpx:", padding);
-    shell_print(shell, "  1. Edit src/mos_components/mos_lvgl_display/src/display_config.c");
+    shell_print(shell, "  1. Edit src/mos_components/mos_display/src/mos_display_config.c");
     shell_print(shell, "  2. Find DISPLAY_TYPE_A6N_640x480 section");
     shell_print(shell, "  3. Change .padding = 10 to .padding = %d", padding);
     shell_print(shell, "  4. Rebuild and flash firmware");
