@@ -1,6 +1,7 @@
 import {useEffect, useRef, useState} from "react"
 import type {NavManeuver, NavRoute, NavUpdate, TravelMode} from "@mentra/miniapp"
 
+import {useRouter} from "@/frontend/router"
 import {FloatingDevPanel} from "@/frontend/components/FloatingDevPanel/FloatingDevPanel"
 import {SimulationControls} from "@/frontend/pages/NavigationPage/components/Controls/Controls"
 import {ArrivalDrawer} from "@/frontend/pages/NavigationPage/components/ArrivalDrawer/ArrivalDrawer"
@@ -10,12 +11,14 @@ import {NavigationRunningDrawer} from "@/frontend/pages/NavigationPage/component
 import {DeviateButton} from "@/frontend/pages/NavigationPage/components/DeviateButton/DeviateButton"
 import {LiveLog} from "@/frontend/pages/NavigationPage/components/LiveLog/LiveLog"
 import {LocationSearch} from "@/frontend/pages/NavigationPage/components/LocationSearch/LocationSearch"
+import {OrientationCard} from "@/frontend/pages/NavigationPage/components/OrientationCard/OrientationCard"
 import {MyLocationCard} from "@/frontend/pages/NavigationPage/components/MyLocationCard/MyLocationCard"
 import {NavMap} from "@/frontend/pages/NavigationPage/components/NavMap/NavMap"
 import {useUser} from "@/backend/hooks/useUser"
 import {formatDistance} from "@/backend/lib/formatDistance/formatDistance"
 import type {LatLng} from "@/backend/lib/geometry/geometry"
 import type {PlaceDetails} from "@/backend/lib/places/places"
+import { safeHeadingManuverCard } from "@/frontend/components/SafeHeading/SafeHeading"
 
 export type NavStatus = "idle" | "navigating" | "rerouting" | "arrived"
 export type LogEntry = {id: number; ts: number; line: string}
@@ -24,7 +27,11 @@ const DEV_DESTINATION = {placeId: "dev", name: "Ferry Building", address: "1 Fer
 
 let logIdSeq = 0
 
-export function NavigationPage() {
+type Props = {
+  savedPlacesVersion?: number
+}
+
+export function NavigationPage({savedPlacesVersion = 0}: Props) {
   // Single React entry point — User holds reactive sensor state and the
   // imperative managers, all behind one hook. Reads of `user.coords` /
   // `user.heading` / `user.mapsReady` re-render automatically.
@@ -33,12 +40,13 @@ export function NavigationPage() {
 
   // Destination chosen via Places search. `null` until the user picks one;
   // setting it shows the pin on the map immediately, before Start.
+  const {push} = useRouter()
   const [destination, setDestination] = useState<PlaceDetails | null>(null)
-  const [addingPlace, setAddingPlace] = useState<"home" | "work" | null>(null)
+  const [simulatorMode, setSimulatorMode] = useState(false)
   const [searchFrozen, setSearchFrozen] = useState(false)
   const [isSearching, setIsSearching] = useState(false)
   const [devDrawer, setDevDrawer] = useState<"auto" | "idle" | "preview" | "running" | "arrived">("auto")
-  const [simulate, setSimulate] = useState(true)
+  const [simulate, setSimulate] = useState(false)
   const [speedMultiplier, setSpeedMultiplier] = useState(5)
   const [travelMode, setTravelMode] = useState<TravelMode>("walking")
 
@@ -49,7 +57,6 @@ export function NavigationPage() {
   const [offRouteAt, setOffRouteAt] = useState<number | null>(null)
   const [activeDestination, setActiveDestination] = useState<LatLng | null>(null)
   const [routePoints, setRoutePoints] = useState<NavRoute["points"] | null>(null)
-  const [breadcrumbs, setBreadcrumbs] = useState<LatLng[]>([])
   const [previewRoutePoints, setPreviewRoutePoints] = useState<LatLng[] | null>(null)
   const [log, setLog] = useState<LogEntry[]>([])
 
@@ -93,23 +100,6 @@ export function NavigationPage() {
     setLog((prev) => [{id: ++logIdSeq, ts: Date.now(), line}, ...prev].slice(0, 100))
   }
 
-  // ---- breadcrumb sampling -----------------------------------------------
-
-  useEffect(() => {
-    if (!running || !coords) return
-    setBreadcrumbs((prev) => {
-      const last = prev[prev.length - 1]
-      if (last) {
-        const dLat = (coords.lat - last.lat) * 111_320
-        const dLng = (coords.lng - last.lng) * 111_320 * Math.cos((coords.lat * Math.PI) / 180)
-        const meters = Math.sqrt(dLat * dLat + dLng * dLng)
-        if (meters < 3) return prev
-      }
-      const next = [...prev, {lat: coords.lat, lng: coords.lng}]
-      return next.length > 500 ? next.slice(-500) : next
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running, coords?.lat, coords?.lng])
 
   // ---- glasses HUD mirror ------------------------------------------------
 
@@ -204,8 +194,7 @@ export function NavigationPage() {
         setRunning(false)
         setActiveDestination(null)
         setRoutePoints(null)
-        setBreadcrumbs([])
-        setOffRouteAt(null)
+            setOffRouteAt(null)
         navUpdateUnsubRef.current?.()
         navUpdateUnsubRef.current = null
         navRouteUnsubRef.current?.()
@@ -230,7 +219,6 @@ export function NavigationPage() {
     setActiveDestination({lat: latNum, lng: lngNum})
     setRoutePoints(null)
     setPreviewRoutePoints(null)
-    setBreadcrumbs([])
     append(`start → ${destination.name || `${latNum}, ${lngNum}`}${simulate ? ` (sim ${speedMultiplier}x)` : ""}`)
 
     if (!navUpdateUnsubRef.current) {
@@ -256,8 +244,7 @@ export function NavigationPage() {
       setStatus("idle")
       setActiveDestination(null)
       setRoutePoints(null)
-      setBreadcrumbs([])
-      navUpdateUnsubRef.current?.()
+        navUpdateUnsubRef.current?.()
       navUpdateUnsubRef.current = null
       navRouteUnsubRef.current?.()
       navRouteUnsubRef.current = null
@@ -276,7 +263,6 @@ export function NavigationPage() {
     setManeuver(null)
     setActiveDestination(null)
     setRoutePoints(null)
-    setBreadcrumbs([])
     setOffRouteAt(null)
   }
 
@@ -293,42 +279,40 @@ export function NavigationPage() {
         me={me}
         destination={activeDestination}
         routePoints={running ? routePoints : previewRoutePoints}
-        breadcrumbs={breadcrumbs}
         autoFollow={running}
       />
 
       {/* Top floating stack — search bar, then orientation card while running. */}
       <div className="absolute top-0 left-0 right-0  pt-3 flex flex-col gap-2 pointer-events-none bg-r">
+        {!running && devDrawer !== "running" && devDrawer !== "arrived" && (
         <div className="pointer-events-auto">
           <LocationSearch
             selected={destination}
-            onSelect={async (place) => {
-              if (addingPlace === "home") {
-                await user.storage.setHome(place)
-                setAddingPlace(null)
-              } else if (addingPlace === "work") {
-                await user.storage.setWork(place)
-                setAddingPlace(null)
-              } else {
-                setDestination(place)
-                if (!running) setActiveDestination({lat: place.lat, lng: place.lng})
-              }
+            onSelect={(place) => {
+              setDestination(place)
+              if (!running) setActiveDestination({lat: place.lat, lng: place.lng})
             }}
             onClear={() => {
               setDestination(null)
               if (!running) setActiveDestination(null)
-              setAddingPlace(null)
             }}
-            autoFocus={addingPlace !== null}
             disabled={running}
-            running={running}
-            me={me}
-            maneuver={maneuver}
-            routePoints={routePoints}
-            devFrozen={searchFrozen}
+            devFrozen={simulatorMode && searchFrozen}
             onSearchingChange={setIsSearching}
+            refreshKey={savedPlacesVersion}
           />
         </div>
+        )}
+        {(running || devDrawer === "running") && (
+          <div className={`"pointer-events-auto ${safeHeadingManuverCard}`}>
+            <OrientationCard
+              me={me}
+              heading={user.heading}
+              maneuver={maneuver}
+              routePoints={routePoints}
+            />
+          </div>
+        )}
         {offRouteAt != null && status !== "rerouting" ? (
           <div className="pointer-events-none mx-3 px-3 py-2 rounded-lg bg-amber-500/95 text-white text-sm font-semibold shadow">
             Off route — recalculating…
@@ -343,7 +327,8 @@ export function NavigationPage() {
           <IdleDrawer
             me={me}
             onSelect={(place) => { setDestination(place); setActiveDestination({lat: place.lat, lng: place.lng}) }}
-            onAddPlace={(type) => setAddingPlace(type)}
+            onAddPlace={(type) => push({name: "add-place", initial: type})}
+            refreshKey={savedPlacesVersion}
           />
         )
         if (mode === "preview") return (
@@ -373,28 +358,52 @@ export function NavigationPage() {
 
       <FloatingDevPanel title="Navigation Dev" storageKey="NavigationPage:dev">
         <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-          <span className="text-[13px] font-medium text-neutral-700">Freeze location search panel</span>
+          <span className="text-[13px] font-medium text-neutral-700">Simulator Mode</span>
           <button
             type="button"
-            onClick={() => setSearchFrozen((f) => !f)}
-            className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold ${searchFrozen ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"}`}>
-            {searchFrozen ? "Frozen" : "Freeze"}
+            onClick={() => {
+              setSimulatorMode((v) => {
+                if (v) {
+                  setDevDrawer("auto")
+                  setSearchFrozen(false)
+                  setSimulate(false)
+                } else {
+                  setSimulate(true)
+                }
+                return !v
+              })
+            }}
+            className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold ${simulatorMode ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"}`}>
+            {simulatorMode ? "On" : "Off"}
           </button>
         </div>
-        <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3">
-          <div className="text-[11px] font-bold tracking-wider text-neutral-500 uppercase mb-2">Drawer</div>
-          <div className="flex gap-1.5 flex-wrap">
-            {(["auto", "idle", "preview", "running", "arrived"] as const).map((mode) => (
+        {simulatorMode && (
+          <>
+            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-neutral-700">Freeze location search panel</span>
               <button
-                key={mode}
                 type="button"
-                onClick={() => setDevDrawer(mode)}
-                className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold capitalize ${devDrawer === mode ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"}`}>
-                {mode}
+                onClick={() => setSearchFrozen((f) => !f)}
+                className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold ${searchFrozen ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"}`}>
+                {searchFrozen ? "Frozen" : "Freeze"}
               </button>
-            ))}
-          </div>
-        </div>
+            </div>
+            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3">
+              <div className="text-[11px] font-bold tracking-wider text-neutral-500 uppercase mb-2">Drawer</div>
+              <div className="flex gap-1.5 flex-wrap">
+                {(["auto", "idle", "preview", "running", "arrived"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setDevDrawer(mode)}
+                    className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold capitalize ${devDrawer === mode ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"}`}>
+                    {mode}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
         <MyLocationCard coords={coords} />
         <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3">
           <div className="text-[11px] font-bold tracking-wider text-neutral-500 uppercase">🎯 Selected destination</div>
@@ -411,13 +420,15 @@ export function NavigationPage() {
             <div className="text-[13px] text-neutral-500 italic mt-1">(none picked)</div>
           )}
         </div>
-        <SimulationControls
-          simulate={simulate}
-          setSimulate={setSimulate}
-          speedMultiplier={speedMultiplier}
-          setSpeedMultiplier={setSpeedMultiplier}
-          running={running}
-        />
+        {simulatorMode && (
+          <SimulationControls
+            simulate={simulate}
+            setSimulate={setSimulate}
+            speedMultiplier={speedMultiplier}
+            setSpeedMultiplier={setSpeedMultiplier}
+            running={running}
+          />
+        )}
         <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3">
           <div className="text-[11px] font-bold tracking-wider text-neutral-500 uppercase mb-2">
             🚶 Travel mode

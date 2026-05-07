@@ -11,7 +11,7 @@
  */
 
 import type {MiniappSession} from "@mentra/miniapp"
-import type {PlaceDetails} from "@/client/lib/places/places"
+import type {PlaceDetails, SavedPlace, SavedPlaceType} from "@/client/lib/places/places"
 
 export class SimpleStorageManager {
   constructor(private readonly session: MiniappSession) {}
@@ -98,5 +98,49 @@ export class SimpleStorageManager {
   /** Clears the saved work address. */
   clearWork(): Promise<void> {
     return this.delete(SimpleStorageManager.WORK_KEY)
+  }
+
+  private static readonly FAVORITES_KEY = "savedPlaces:favorites"
+  private static readonly CUSTOM_KEY = "savedPlaces:custom"
+  private static readonly SAVED_MAX = 20
+
+  /** Returns all saved favorite places, most recently added first. */
+  async getFavorites(): Promise<PlaceDetails[]> {
+    return (await this.getJSON<PlaceDetails[]>(SimpleStorageManager.FAVORITES_KEY)) ?? []
+  }
+
+  /** Adds or replaces a favorite (deduplicates by placeId, caps at 20). */
+  async addFavorite(place: PlaceDetails): Promise<void> {
+    const current = await this.getFavorites()
+    const next = [place, ...current.filter((p) => p.placeId !== place.placeId)].slice(0, SimpleStorageManager.SAVED_MAX)
+    await this.setJSON(SimpleStorageManager.FAVORITES_KEY, next)
+  }
+
+  /** Returns all saved custom places, most recently added first. */
+  async getCustomPlaces(): Promise<PlaceDetails[]> {
+    return (await this.getJSON<PlaceDetails[]>(SimpleStorageManager.CUSTOM_KEY)) ?? []
+  }
+
+  /** Adds or replaces a custom place (deduplicates by placeId, caps at 20). */
+  async addCustomPlace(place: PlaceDetails): Promise<void> {
+    const current = await this.getCustomPlaces()
+    const next = [place, ...current.filter((p) => p.placeId !== place.placeId)].slice(0, SimpleStorageManager.SAVED_MAX)
+    await this.setJSON(SimpleStorageManager.CUSTOM_KEY, next)
+  }
+
+  /** Returns all non-recent saved places (home, work, favorites, custom) as a flat list with type info. */
+  async getAllSavedPlaces(): Promise<SavedPlace[]> {
+    const [home, work, favorites, customs] = await Promise.all([
+      this.getHome(),
+      this.getWork(),
+      this.getFavorites(),
+      this.getCustomPlaces(),
+    ])
+    const result: SavedPlace[] = []
+    if (home) result.push({type: "home" as SavedPlaceType, place: home})
+    if (work) result.push({type: "work" as SavedPlaceType, place: work})
+    for (const p of favorites) result.push({type: "favorite" as SavedPlaceType, place: p})
+    for (const p of customs) result.push({type: "custom" as SavedPlaceType, place: p})
+    return result
   }
 }

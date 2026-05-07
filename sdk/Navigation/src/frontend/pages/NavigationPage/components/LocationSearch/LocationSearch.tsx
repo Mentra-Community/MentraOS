@@ -1,26 +1,21 @@
 import {useEffect, useMemo, useRef, useState} from "react"
 import {AnimatePresence, motion} from "motion/react"
-import {Loader2, MapPin} from "lucide-react"
+import {Loader2} from "lucide-react"
 
 import {useUser} from "@/backend/hooks/useUser"
-import type {LatLng} from "@/backend/lib/geometry/geometry"
 import {PlacesSession} from "@/backend/lib/places/places"
 import type {PlaceDetails, PlaceSuggestion} from "@/backend/lib/places/places"
-import {OrientationCard} from "@/frontend/pages/NavigationPage/components/OrientationCard/OrientationCard"
-import type {NavManeuver} from "@mentra/miniapp"
+import { SafeHeading, safeHeadingSearchPill, safeHeadingSearchResults } from "@/frontend/components/SafeHeading/SafeHeading"
 
 type Props = {
   selected: PlaceDetails | null
   onSelect: (place: PlaceDetails) => void
   onClear: () => void
   disabled?: boolean
-  running?: boolean
-  me?: LatLng | null
-  maneuver?: NavManeuver | null
-  routePoints?: LatLng[] | null
   devFrozen?: boolean
   autoFocus?: boolean
   onSearchingChange?: (searching: boolean) => void
+  refreshKey?: number
 }
 
 const DEBOUNCE_MS = 200
@@ -46,13 +41,13 @@ function PinIconOutline() {
 
 // ---- component --------------------------------------------------------------
 
-export function LocationSearch({selected, onSelect, onClear, disabled, running, me, maneuver, routePoints, devFrozen = false, autoFocus = false, onSearchingChange}: Props) {
+export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen = false, autoFocus = false, onSearchingChange, refreshKey}: Props) {
   const user = useUser()
-  const heading = user.heading
   const session = useMemo(() => new PlacesSession(), [])
   const [query, setQuery] = useState("")
   const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([])
   const [recentSearches, setRecentSearches] = useState<PlaceDetails[]>([])
+  const [savedPlaces, setSavedPlaces] = useState<{label: string; icon: "home" | "work" | "favorite" | "custom"; place: PlaceDetails}[]>([])
   const [open, setOpen] = useState(false)
   const [focused, setFocused] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -79,11 +74,20 @@ export function LocationSearch({selected, onSelect, onClear, disabled, running, 
     }
   }, [selected])
 
-  // Fetch recent searches whenever the user focuses the empty input
+  // Fetch recent searches + saved places whenever the user focuses the empty input
   useEffect(() => {
     if (!focused || query.trim() || selected) return
     user.storage.getRecentSearches().then(setRecentSearches)
-  }, [focused, query, selected, user.storage])
+    user.storage.getAllSavedPlaces().then((all) => {
+      setSavedPlaces(
+        all.map(({type, place}) => ({
+          label: place.savedName || (type.charAt(0).toUpperCase() + type.slice(1)),
+          icon: type,
+          place,
+        }))
+      )
+    })
+  }, [focused, query, selected, user.storage, refreshKey])
 
   useEffect(() => {
     if (selected || disabled || !focused) return
@@ -162,7 +166,7 @@ export function LocationSearch({selected, onSelect, onClear, disabled, running, 
     <div className="relative mt-4 mx-3 flex flex-col">
       <div className="relative flex flex-col">
         {/* Search pill */}
-        <div className=" absolute z-90 flex items-center h-10 rounded-[20px] px-3.5 gap-2.5 bg-[#FFFFFFA6] border border-[#FFFFFF99] [backdrop-filter:blur(30px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#0000001A_0px_6px_22px] mr-21 mt-9.5">
+        <div className={`absolute z-90 flex items-center h-10 rounded-[20px] px-3.5 gap-2.5 bg-[#FFFFFFA6] border border-[#FFFFFF99] [backdrop-filter:blur(30px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#0000001A_0px_6px_22px] left-0 right-22 ${safeHeadingSearchPill}`}>
           {/* Search icon */}
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
             <circle cx="11" cy="11" r="7" stroke="#0000008C" strokeWidth="2" />
@@ -185,33 +189,26 @@ export function LocationSearch({selected, onSelect, onClear, disabled, running, 
                 setFocused(false)
               }, 150)
             }
-            placeholder={running ? (selected?.name || selected?.address || "Navigating…") : "Where to?"}
+            placeholder="Where to?"
             disabled={disabled}
             autoComplete="off"
           />
 
           {/* Right button: clear (when text entered) or mic */}
-          {query && !running ? (
+          {query ? (
             <button
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={handleClear}
               disabled={disabled}
-              className="w-6.5 h-6.5 flex items-center justify-center shrink-0 rounded-[13px] bg-[#00000014] text-neutral-500 text-base leading-none"
+              className="w-6.5 h-6.5 flex items-center justify-center shrink-0 rounded-[13px] bg-[#00000014]"
               aria-label="Clear">
-              ×
+              <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <path d="M1 1L9 9M9 1L1 9" stroke="#737373" strokeWidth="1.75" strokeLinecap="round"/>
+              </svg>
             </button>
           ) : (
-            <div className="w-6.5 h-6.5 flex items-center justify-center shrink-0 rounded-[13px] bg-[#00000014]">
-              {running ? (
-                <MapPin size={14} strokeWidth={2.25} className="text-neutral-800" />
-              ) : (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
-                  <rect x="9" y="3" width="6" height="12" rx="3" fill="#1a1a1a" />
-                  <path d="M5 11C5 14.866 8.134 18 12 18M12 18C15.866 18 19 14.866 19 11M12 18V21" stroke="#1a1a1a" strokeWidth="2" strokeLinecap="round" />
-                </svg>
-              )}
-            </div>
+            null
           )}
         </div>
 
@@ -224,15 +221,39 @@ export function LocationSearch({selected, onSelect, onClear, disabled, running, 
               animate={{opacity: 1, y: 0}}
               exit={{opacity: 0, y: -8}}
               transition={{duration: 0.15, ease: "easeOut"}}
-              className="fixed z-40 inset-x-0 bottom-0 top-0 bg-white overflow-auto pt-30">
+              className={`fixed z-40 inset-x-0 bottom-0 top-0 bg-white overflow-auto ${safeHeadingSearchResults}`}>
               {loading ? (
                 <div className="flex items-center justify-center gap-2 px-3 py-8 text-neutral-500">
                   <Loader2 size={16} className="animate-spin" />
                   <span className="text-[13px]">Searching…</span>
                 </div>
               ) : isQueryEmpty ? (
-                // Empty input — show recent searches
-                recentSearches.length > 0 ? (
+                // Empty input — saved places chips + recent searches
+                <>
+                  {/* Saved places grid */}
+                  {savedPlaces.length > 0 && (
+                    <div className="grid grid-cols-4 gap-3 px-4 py-4 border-b border-[#0000000A]">
+                      {savedPlaces.map(({label, icon, place}) => (
+                        <button
+                          key={place.placeId + label}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => pickRecent(place)}
+                          className="flex flex-col items-center gap-2 rounded-2xl bg-[#F5F5F5] border border-[#0000000A] p-3">
+                          <div className="flex items-center justify-center size-10 rounded-xl bg-[#1A1A1A] shrink-0">
+                            <SavedPlaceIcon type={icon} />
+                          </div>
+                          <div className="w-full text-center">
+                            <div className="text-[#000000E6] font-sans font-semibold text-[13px] leading-4 truncate">{label}</div>
+                            <div className="text-[#0000008C] font-sans text-[11px] leading-3.5 truncate">{place.name || place.address}</div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Recent searches */}
+                  {recentSearches.length > 0 ? (
                   <ul>
                     {recentSearches.map((place, i) => {
                       const isFirst = i === 0
@@ -271,11 +292,12 @@ export function LocationSearch({selected, onSelect, onClear, disabled, running, 
                       )
                     })}
                   </ul>
-                ) : (
+                  ) : savedPlaces.length === 0 ? (
                   <div className="flex items-center justify-center px-3 py-8 text-neutral-400">
                     <span className="text-[13px]">No recent searches</span>
                   </div>
-                )
+                  ) : null}
+                </>
               ) : (
                 // Active query — show autocomplete results
                 <ul>
@@ -309,19 +331,31 @@ export function LocationSearch({selected, onSelect, onClear, disabled, running, 
         </AnimatePresence>
       </div>
 
-      <AnimatePresence>
-        {running ? (
-          <motion.div
-            key="orientation"
-            initial={{opacity: 0, height: 0}}
-            animate={{opacity: 1, height: "auto"}}
-            exit={{opacity: 0, height: 0}}
-            transition={{duration: 0.22, ease: [0.22, 1, 0.36, 1]}}
-            style={{overflow: "hidden"}}>
-            <OrientationCard me={me ?? null} heading={heading} maneuver={maneuver ?? null} routePoints={routePoints ?? null} />
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
     </div>
+  )
+}
+
+function SavedPlaceIcon({type}: {type: "home" | "work" | "favorite" | "custom"}) {
+  if (type === "home") return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M3 12 L12 4 L21 12 L21 20 H14 V14 H10 V20 H3 Z" fill="#FFFFFF" />
+    </svg>
+  )
+  if (type === "work") return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="3" y="8" width="18" height="13" rx="1.5" fill="#FFFFFF" />
+      <path d="M9 8 V5 H15 V8" stroke="#FFFFFF" strokeWidth="2" fill="none" />
+    </svg>
+  )
+  if (type === "favorite") return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" fill="#FFFFFF" />
+    </svg>
+  )
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 2C7.58 2 4 5.58 4 10c0 6 8 12 8 12s8-6 8-12C20 5.58 16.42 2 12 2z" fill="#FFFFFF" />
+      <circle cx="12" cy="10" r="3" fill="#1A1A1A" />
+    </svg>
   )
 }

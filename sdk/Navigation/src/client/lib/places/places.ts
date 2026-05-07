@@ -26,6 +26,15 @@ export type PlaceDetails = {
   lng: number
   name: string
   address: string
+  /** User-defined label when saved as a favorite or custom place */
+  savedName?: string
+}
+
+export type SavedPlaceType = "home" | "work" | "favorite" | "custom"
+
+export type SavedPlace = {
+  type: SavedPlaceType
+  place: PlaceDetails
 }
 
 let cachedKeyPromise: Promise<string> | null = null

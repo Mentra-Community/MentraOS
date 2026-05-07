@@ -95,6 +95,7 @@ final class NavigationManager: NSObject {
           return
         }
         nav.isGuidanceActive = true
+        nav.isVoiceInstructionsMuted = true
 
         if simulate {
           mapView.locationSimulator?.simulateLocationsAlongExistingRoute()

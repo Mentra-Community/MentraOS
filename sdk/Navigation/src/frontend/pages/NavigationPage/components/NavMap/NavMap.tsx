@@ -1,14 +1,13 @@
 import {useEffect, useRef, useState} from "react"
 
 import {useUser} from "@/backend/hooks/useUser"
-import {bearingDeg, cardinal, haversineMeters} from "@/backend/lib/geometry/geometry"
+import {bearingDeg, haversineMeters} from "@/backend/lib/geometry/geometry"
 import type {LatLng} from "@/backend/lib/geometry/geometry"
 
 export function NavMap({
   me,
   destination,
   routePoints,
-  breadcrumbs,
   autoFollow = true,
 }: {
   me: LatLng | null
@@ -16,9 +15,6 @@ export function NavMap({
   /** Full walking-route polyline emitted by Nav SDK. If null, falls back
    *  to a straight me→destination line so the map has *something*. */
   routePoints?: Array<LatLng> | null
-  /** Where the user has actually been since the trip started. Drawn as
-   *  small dots behind the position marker. */
-  breadcrumbs?: Array<LatLng>
   autoFollow?: boolean
 }) {
   const user = useUser()
@@ -41,21 +37,17 @@ export function NavMap({
   }, [me?.lat, me?.lng])
 
   const effectiveHeading = compassHeading != null ? compassHeading : gpsBearing
-  const headingSource: "compass" | "gps" | null =
-    compassHeading != null ? "compass" : gpsBearing != null ? "gps" : null
 
   const containerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<any | null>(null)
-  const meDotRef = useRef<any | null>(null)
+  const meDotRef = useRef<any | null>(null)        // OverlayView instance
+  const meArrowElRef = useRef<HTMLElement | null>(null) // inner arrow div for CSS rotation
+  const meArrowAngleRef = useRef<number>(0)             // unwrapped angle to avoid 360° spins
   const meConeRef = useRef<any | null>(null)
   const destMarkerRef = useRef<any | null>(null)
   const routeRef = useRef<any | null>(null)
-  const crumbMarkersRef = useRef<any[]>([])
+  const pastRouteRef = useRef<any | null>(null)
   const isTouchingRef = useRef(false)
-  // Last rotation we pushed to the cone marker. Used to skip setIcon calls
-  // when the heading hasn't moved meaningfully (≥1°), since setIcon on a
-  // vector map re-tessellates the SVG path each call.
-  const lastConeRotationRef = useRef<number | null>(null)
 
   // Follow-user mode: starts from the `autoFollow` prop, breaks when the
   // user pans, and is re-engaged by the recenter button. Once broken, it
@@ -177,91 +169,64 @@ export function NavMap({
     mapRef.current.panTo(new window.google.maps.LatLng(me.lat, me.lng))
   }, [ready, me?.lat, me?.lng, destination])
 
-  // "Me" cone (rotates with heading) + dot (always upright, drawn on top).
+  // "Me" marker — OverlayView so the arrow rotation is a CSS transition
+  // (smooth) instead of a full SVG-swap on every heading tick.
   useEffect(() => {
     if (!ready || !mapRef.current || !me) return
     const g = window.google
-    const pos = new g.maps.LatLng(me.lat, me.lng)
 
-    if (effectiveHeading != null) {
-      const last = lastConeRotationRef.current
-      const rotationChanged = last == null || Math.abs(effectiveHeading - last) >= 1
-      if (!meConeRef.current) {
-        meConeRef.current = new g.maps.Marker({
-          map: mapRef.current,
-          position: pos,
-          zIndex: 998,
-          icon: {
-            path: "M 0,-32 L 18,4 L 0,-2 L -18,4 Z",
-            fillColor: "#1a73e8",
-            fillOpacity: 0.55,
-            strokeColor: "#1a73e8",
-            strokeOpacity: 0.95,
-            strokeWeight: 2,
-            scale: 1,
-            rotation: effectiveHeading,
-            anchor: new g.maps.Point(0, 0),
-          },
-          clickable: false,
-        })
-        lastConeRotationRef.current = effectiveHeading
-      } else {
-        meConeRef.current.setPosition(pos)
-        if (rotationChanged) {
-          meConeRef.current.setIcon({
-            path: "M 0,-32 L 18,4 L 0,-2 L -18,4 Z",
-            fillColor: "#1a73e8",
-            fillOpacity: 0.55,
-            strokeColor: "#1a73e8",
-            strokeOpacity: 0.95,
-            strokeWeight: 2,
-            scale: 1,
-            rotation: effectiveHeading,
-            anchor: new g.maps.Point(0, 0),
-          })
-          lastConeRotationRef.current = effectiveHeading
-        }
-      }
-    } else if (meConeRef.current) {
-      meConeRef.current.setMap(null)
-      meConeRef.current = null
-      lastConeRotationRef.current = null
-    }
+    if (meConeRef.current) { meConeRef.current.setMap(null); meConeRef.current = null }
 
-    const meDotSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40">
-      <circle cx="20" cy="20" r="20" fill="#00000029"/>
-      <circle cx="20" cy="20" r="9"
-        fill="#1A1A1A"
-        stroke="white" stroke-width="3"
-        filter="url(#glow)"/>
-      <defs>
-        <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
-          <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0A84FF" flood-opacity="0.4"/>
-        </filter>
-      </defs>
-    </svg>`
-    const meDotUrl = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(meDotSvg)}`
-    const dotIcon = {
-      url: meDotUrl,
-      scaledSize: new g.maps.Size(40, 40),
-      anchor: new g.maps.Point(20, 20),
-    }
     if (!meDotRef.current) {
-      meDotRef.current = new g.maps.Marker({
-        map: mapRef.current,
-        position: pos,
-        zIndex: 999,
-        icon: dotIcon,
-        clickable: false,
-      })
+      class MeOverlay extends g.maps.OverlayView {
+        private pos: any
+        private div: HTMLDivElement | null = null
+        constructor(pos: any) { super(); this.pos = pos }
+        onAdd() {
+          const div = document.createElement("div")
+          div.style.cssText = "position:absolute;width:48px;height:48px;transform:translate(-50%,-50%);pointer-events:none"
+          div.innerHTML = `
+            <div style="position:absolute;inset:0;border-radius:50%;background:#00000029"></div>
+            <div style="position:absolute;inset:6px;border-radius:50%;background:#1A1A1A;box-shadow:0 4px 14px #00000066;display:flex;align-items:center;justify-content:center">
+              <div data-arrow style="display:flex;align-items:center;justify-content:center;transition:transform 0.15s linear">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 4L19 20L12 16L5 20L12 4Z" fill="#FFFFFF"/>
+                </svg>
+              </div>
+            </div>`
+          this.div = div
+          meArrowElRef.current = div.querySelector("[data-arrow]") as HTMLElement
+          this.getPanes()!.overlayMouseTarget.appendChild(div)
+        }
+        draw() {
+          if (!this.div) return
+          const proj = this.getProjection()
+          const pt = proj.fromLatLngToDivPixel(this.pos)!
+          this.div.style.left = `${pt.x}px`
+          this.div.style.top = `${pt.y}px`
+        }
+        setPosition(pos: any) { this.pos = pos; this.draw() }
+        onRemove() { this.div?.parentNode?.removeChild(this.div); this.div = null; meArrowElRef.current = null }
+      }
+      const overlay = new MeOverlay(new g.maps.LatLng(me.lat, me.lng))
+      overlay.setMap(mapRef.current)
+      meDotRef.current = overlay
     } else {
-      meDotRef.current.setPosition(pos)
+      meDotRef.current.setPosition(new g.maps.LatLng(me.lat, me.lng))
     }
 
-    // Don't fight the user — skip GPS-driven panTo while a finger is on
-    // the map. The next GPS update after they lift will catch us up.
+    // Unwrap the angle so we always take the shortest arc (no 360° spins)
+    if (meArrowElRef.current && effectiveHeading != null) {
+      const prev = meArrowAngleRef.current
+      let delta = (effectiveHeading - ((prev % 360) + 360) % 360)
+      if (delta > 180) delta -= 360
+      else if (delta < -180) delta += 360
+      meArrowAngleRef.current = prev + delta
+      meArrowElRef.current.style.transform = `rotate(${meArrowAngleRef.current}deg)`
+    }
+
     if (followUser && !isTouchingRef.current) {
-      mapRef.current.panTo(pos)
+      mapRef.current.panTo(new g.maps.LatLng(me.lat, me.lng))
     }
   }, [ready, me?.lat, me?.lng, effectiveHeading, followUser])
 
@@ -279,22 +244,22 @@ export function NavMap({
       return
     }
     const pos = new g.maps.LatLng(destination.lat, destination.lng)
+    const destIconSvg = `<svg width="32" height="40" viewBox="0 0 32 40" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M16 0C7.16 0 0 7.16 0 16c0 12 16 24 16 24s16-12 16-24C32 7.16 24.84 0 16 0z" fill="#1A1A1A"/><circle cx="16" cy="15" r="5" fill="#FFFFFF"/></svg>`
+    const destIcon = {
+      url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(destIconSvg)}`,
+      scaledSize: new g.maps.Size(32, 40),
+      anchor: new g.maps.Point(16, 40),
+    }
     if (!destMarkerRef.current) {
       destMarkerRef.current = new g.maps.Marker({
         map: mapRef.current,
         position: pos,
         zIndex: 997,
-        icon: {
-          path: g.maps.SymbolPath.CIRCLE,
-          scale: 9,
-          fillColor: "#ff3b30",
-          fillOpacity: 1,
-          strokeColor: "white",
-          strokeWeight: 3,
-        },
+        icon: destIcon,
       })
     } else {
       destMarkerRef.current.setPosition(pos)
+      destMarkerRef.current.setIcon(destIcon)
     }
 
     const key = `${destination.lat.toFixed(6)},${destination.lng.toFixed(6)}`
@@ -305,69 +270,98 @@ export function NavMap({
     }
   }, [ready, destination?.lat, destination?.lng])
 
-  // Breadcrumb dots — diff vs previous render so we only ADD markers
-  // (cheap), and clear everything when the array shrinks (start/stop).
-  useEffect(() => {
-    if (!ready || !mapRef.current) return
-    const g = window.google
-    const trail = breadcrumbs ?? []
-
-    if (trail.length < crumbMarkersRef.current.length) {
-      crumbMarkersRef.current.forEach((m) => m.setMap(null))
-      crumbMarkersRef.current = []
-    }
-
-    const dotIcon = {
-      path: g.maps.SymbolPath.CIRCLE,
-      scale: 4,
-      fillColor: "#1a73e8",
-      fillOpacity: 0.55,
-      strokeColor: "white",
-      strokeWeight: 1,
-    }
-
-    for (let i = crumbMarkersRef.current.length; i < trail.length; i++) {
-      const p = trail[i]
-      const m = new g.maps.Marker({
-        map: mapRef.current,
-        position: new g.maps.LatLng(p.lat, p.lng),
-        icon: dotIcon,
-        clickable: false,
-        zIndex: 50,
-      })
-      crumbMarkersRef.current.push(m)
-    }
-  }, [ready, breadcrumbs])
-
-  // Polyline: prefer the real walking route from Nav SDK. Fall back to a
-  // straight me → destination line so the map shows *something* while
-  // the route is still being computed.
+  // Route polyline: grey for the traveled portion, black for the remaining.
+  // Finds the closest route point to `me` to determine the split index.
   useEffect(() => {
     if (!ready || !mapRef.current) return
     const g = window.google
 
-    const path: LatLng[] =
-      routePoints && routePoints.length > 1
-        ? routePoints
-        : []
+    const path: LatLng[] = routePoints && routePoints.length > 1 ? routePoints : []
 
     if (path.length < 2) {
       routeRef.current?.setMap(null)
       routeRef.current = null
+      pastRouteRef.current?.setMap(null)
+      pastRouteRef.current = null
       return
     }
 
-    const gPath = path.map((p) => new g.maps.LatLng(p.lat, p.lng))
-    if (!routeRef.current) {
-      routeRef.current = new g.maps.Polyline({
-        map: mapRef.current,
-        path: gPath,
-        strokeColor: "#2e7d5b",
-        strokeOpacity: 0.85,
-        strokeWeight: 6,
-      })
+    // Project `me` onto the nearest segment of the route to get a precise
+    // split point. This gives metre-accurate grey/black boundary.
+    let pastPath: any[]
+    let aheadPath: any[]
+
+    if (!me) {
+      pastPath = []
+      aheadPath = path.map((p) => new g.maps.LatLng(p.lat, p.lng))
     } else {
-      routeRef.current.setPath(gPath)
+      let bestSegment = 0
+      let bestT = 0
+      let minDist = Infinity
+
+      for (let i = 0; i < path.length - 1; i++) {
+        const ax = path[i].lng, ay = path[i].lat
+        const bx = path[i + 1].lng, by = path[i + 1].lat
+        const px = me.lng, py = me.lat
+        const dx = bx - ax, dy = by - ay
+        const lenSq = dx * dx + dy * dy
+        const t = lenSq === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq))
+        const cx = ax + t * dx, cy = ay + t * dy
+        const dist = Math.hypot(px - cx, py - cy)
+        if (dist < minDist) { minDist = dist; bestSegment = i; bestT = t }
+      }
+
+      const projected = {
+        lat: path[bestSegment].lat + bestT * (path[bestSegment + 1].lat - path[bestSegment].lat),
+        lng: path[bestSegment].lng + bestT * (path[bestSegment + 1].lng - path[bestSegment].lng),
+      }
+
+      pastPath = [
+        ...path.slice(0, bestSegment + 1).map((p) => new g.maps.LatLng(p.lat, p.lng)),
+        new g.maps.LatLng(projected.lat, projected.lng),
+      ]
+      aheadPath = [
+        new g.maps.LatLng(projected.lat, projected.lng),
+        ...path.slice(bestSegment + 1).map((p) => new g.maps.LatLng(p.lat, p.lng)),
+      ]
+    }
+
+    // Past segment — grey
+    if (pastPath.length >= 2) {
+      if (!pastRouteRef.current) {
+        pastRouteRef.current = new g.maps.Polyline({
+          map: mapRef.current,
+          path: pastPath,
+          strokeColor: "#999999",
+          strokeOpacity: 0.7,
+          strokeWeight: 6,
+          zIndex: 1,
+        })
+      } else {
+        pastRouteRef.current.setPath(pastPath)
+        pastRouteRef.current.setMap(mapRef.current)
+      }
+    } else {
+      pastRouteRef.current?.setMap(null)
+    }
+
+    // Ahead segment — black
+    if (aheadPath.length >= 2) {
+      if (!routeRef.current) {
+        routeRef.current = new g.maps.Polyline({
+          map: mapRef.current,
+          path: aheadPath,
+          strokeColor: "#000000",
+          strokeOpacity: 0.85,
+          strokeWeight: 6,
+          zIndex: 2,
+        })
+      } else {
+        routeRef.current.setPath(aheadPath)
+        routeRef.current.setMap(mapRef.current)
+      }
+    } else {
+      routeRef.current?.setMap(null)
     }
   }, [ready, me?.lat, me?.lng, destination?.lat, destination?.lng, routePoints])
 
