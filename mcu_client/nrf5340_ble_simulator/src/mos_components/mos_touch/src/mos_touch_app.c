@@ -15,7 +15,7 @@ LOG_MODULE_REGISTER(mos_touch_app, LOG_LEVEL_INF);
 #define MOS_TOUCH_IQS_SYSTEM_RE_ATI_MASK        0x0020u
 #define MOS_TOUCH_ATI_WAIT_POLL_MS              20
 #define MOS_TOUCH_ATI_WAIT_TIMEOUT_MS           300
-#define MOS_TOUCH_DUPLICATE_GESTURE_SUPPRESS_MS 200
+#define MOS_TOUCH_DUPLICATE_GESTURE_SUPPRESS_MS 120 // 设置重复手势抑制时间为120ms，防止连续帧中同一脉冲手势被多次上报；set the duplicate gesture suppression time to 120ms to prevent the same pulse gesture from being reported multiple times in consecutive frames
 #define MOS_TOUCH_LATCHED_GESTURE_MASK                                                                           \
     (IQS7211E_GESTURE_PRESS_AND_HOLD | IQS7211E_GESTURE_PALM | IQS7211E_GESTURE_SWIPE_HOLD_X_POSITIVE |          \
      IQS7211E_GESTURE_SWIPE_HOLD_X_NEGATIVE | IQS7211E_GESTURE_SWIPE_HOLD_Y_POSITIVE |                           \
