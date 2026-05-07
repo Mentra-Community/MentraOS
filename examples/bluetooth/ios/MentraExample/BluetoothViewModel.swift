@@ -17,6 +17,13 @@ struct ExampleActionError: LocalizedError {
     }
 }
 
+private struct GalleryServerCheck {
+    let reachable: Bool
+    let status: String
+    let eventTag: String
+    let eventText: String
+}
+
 enum ExampleStreamProtocol: String, CaseIterable {
     case rtmp
     case srt
@@ -61,6 +68,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var streamStatus = "Ready to start stream"
     @Published private(set) var galleryModeAuto = false
     @Published private(set) var hotspotEnabled = false
+    @Published private(set) var galleryServerReachable: Bool?
+    @Published private(set) var galleryServerStatus = "Gallery server: enable hotspot to check"
     @Published private(set) var micRecording = false
     @Published private(set) var micPlaying = false
     @Published private(set) var micElapsedSeconds = 0
@@ -113,6 +122,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
         glassesValues = sdk.glassesStatus.values
         hotspotEnabled = boolValue(glassesValues, "hotspotEnabled") ?? false
+        refreshGalleryServerStatusForCurrentHotspot(defaultStatus: "Gallery server: enable hotspot to check")
         applyBluetoothStatus(sdk.bluetoothStatus.values)
         if let value = ProcessInfo.processInfo.environment["MENTRA_PHOTO_WEBHOOK_URL"] {
             webhookUrl = value
@@ -396,6 +406,49 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
+    func openGalleryServer() {
+        runAction("Open gallery server") {
+            let baseUrl = try requireGalleryServerUrl()
+            galleryServerReachable = nil
+            galleryServerStatus = "Gallery server: checking \(baseUrl)"
+            Task { [weak self] in
+                guard let self else { return }
+                let result = await self.checkGalleryServerReachability(baseUrl)
+                self.galleryServerReachable = result.reachable
+                self.galleryServerStatus = result.status
+                self.append(tag: result.eventTag, text: result.eventText)
+                if result.reachable, let url = URL(string: baseUrl) {
+                    await UIApplication.shared.open(url)
+                }
+            }
+        }
+    }
+
+    func copyGalleryServerUrl() {
+        runAction("Copy gallery URL") {
+            let baseUrl = try requireGalleryServerUrl()
+            UIPasteboard.general.string = baseUrl
+            galleryServerStatus = "Gallery server: copied \(baseUrl)"
+        }
+    }
+
+    func copyGalleryHotspotPassword() {
+        runAction("Copy hotspot password") {
+            let password = galleryHotspotPasswordLabel(glassesValues)
+            UIPasteboard.general.string = password
+            galleryServerStatus = "Hotspot password copied: \(password)"
+        }
+    }
+
+    func openWifiSettings() {
+        runAction("Open Wi-Fi settings") {
+            let ssid = galleryHotspotSsidLabel(glassesValues)
+            let message = "Join \(ssid) from system Wi-Fi settings, then tap Open."
+            galleryServerStatus = message
+            append(tag: "LIVE", text: message)
+        }
+    }
+
     func toggleMic() {
         runAction(micRecording ? "Stop microphone" : "Start microphone") {
             if micRecording {
@@ -481,6 +534,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         glassesValues.merge(status.values) { _, new in new }
         if let enabled = boolValue(status.values, "hotspotEnabled") {
             hotspotEnabled = enabled
+            refreshGalleryServerStatusForCurrentHotspot(defaultStatus: "Gallery server: hotspot off")
         }
         if isDisconnectedStatus(status.values) {
             applyDisconnectedState(status: "Disconnected")
@@ -589,6 +643,65 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
+    private func requireGalleryServerUrl() throws -> String {
+        guard let baseUrl = galleryServerUrl(glassesValues, fallbackEnabled: hotspotEnabled) else {
+            throw ExampleActionError(message: "Enable the glasses hotspot first.")
+        }
+        return baseUrl
+    }
+
+    private func refreshGalleryServerStatusForCurrentHotspot(defaultStatus: String) {
+        galleryServerReachable = nil
+        if let baseUrl = galleryServerUrl(glassesValues, fallbackEnabled: hotspotEnabled) {
+            galleryServerStatus = "Gallery server: \(baseUrl)"
+        } else {
+            galleryServerStatus = defaultStatus
+        }
+    }
+
+    private func checkGalleryServerReachability(_ baseUrl: String) async -> GalleryServerCheck {
+        guard let statusUrl = URL(string: "\(baseUrl)/api/status?poll=\(Int(Date().timeIntervalSince1970 * 1000))") else {
+            return GalleryServerCheck(
+                reachable: false,
+                status: "Gallery server: invalid URL",
+                eventTag: "TX",
+                eventText: "gallery server invalid URL \(baseUrl)"
+            )
+        }
+
+        do {
+            var request = URLRequest(url: statusUrl, timeoutInterval: 1.5)
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+            request.setValue("no-cache", forHTTPHeaderField: "Pragma")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if (200 ... 299).contains(code) {
+                let totalPhotos = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])
+                    .flatMap { intValue($0, "total_photos") }
+                return GalleryServerCheck(
+                    reachable: true,
+                    status: totalPhotos.map { "Gallery server: reachable · \($0) items" } ?? "Gallery server: reachable",
+                    eventTag: "LIVE",
+                    eventText: "gallery server reachable \(baseUrl)"
+                )
+            }
+            return GalleryServerCheck(
+                reachable: false,
+                status: "Gallery server: HTTP \(code)",
+                eventTag: "TX",
+                eventText: "gallery server HTTP \(code)"
+            )
+        } catch {
+            return GalleryServerCheck(
+                reachable: false,
+                status: "Gallery server: not reachable. Join \(galleryHotspotSsidLabel(glassesValues)) and retry.",
+                eventTag: "TX",
+                eventText: "gallery server unreachable: \(error.localizedDescription)"
+            )
+        }
+    }
+
     private func requireDisplaySupport(_ feature: String) throws {
         try requireConnected(feature)
         guard supportsDisplay(glassesValues) else {
@@ -647,6 +760,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         stopMicElapsedTimer()
         stopMicPlayback()
         hotspotEnabled = false
+        galleryServerReachable = nil
+        galleryServerStatus = "Gallery server: connect glasses first"
         if activePhotoRequestId != nil {
             activePhotoRequestId = nil
             pollGeneration += 1
@@ -859,9 +974,12 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             glassesValues["hotspotSsid"] = stringValue(values, "ssid") ?? ""
             glassesValues["hotspotPassword"] = stringValue(values, "password") ?? ""
             glassesValues["hotspotGatewayIp"] = stringValue(values, "local_ip") ?? ""
+            refreshGalleryServerStatusForCurrentHotspot(defaultStatus: "Gallery server: hotspot off")
             append(tag: "STORE", text: "hotspot \(summarize(values))")
         case "hotspot_error":
             hotspotEnabled = false
+            galleryServerReachable = false
+            galleryServerStatus = "Gallery server: hotspot error"
             glassesValues["hotspotEnabled"] = false
             append(tag: "TX", text: "hotspot error \(summarize(values))")
         case "photo_response":
@@ -1104,6 +1222,27 @@ func hotspotLabel(_ values: [String: Any], fallbackEnabled: Bool) -> String {
         return "\(ssid) · \(ip)"
     }
     return ssid
+}
+
+private let mentraLiveDefaultHotspotPassword = "00001111"
+
+func galleryServerUrl(_ values: [String: Any], fallbackEnabled: Bool) -> String? {
+    let enabled = boolValue(values, "hotspotEnabled") ?? fallbackEnabled
+    guard enabled else { return nil }
+
+    let gateway = stringValue(values, "hotspotGatewayIp").flatMap { $0.isEmpty ? nil : $0 } ?? "192.168.43.1"
+    return "http://\(gateway):8089"
+}
+
+func galleryHotspotSsidLabel(_ values: [String: Any]) -> String {
+    guard let ssid = stringValue(values, "hotspotSsid"), !ssid.isEmpty else {
+        return "the glasses hotspot"
+    }
+    return "Wi-Fi \(ssid)"
+}
+
+func galleryHotspotPasswordLabel(_ values: [String: Any]) -> String {
+    stringValue(values, "hotspotPassword").flatMap { $0.isEmpty ? nil : $0 } ?? mentraLiveDefaultHotspotPassword
 }
 
 func firmwareLabel(_ values: [String: Any]) -> String {

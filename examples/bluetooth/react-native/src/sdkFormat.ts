@@ -125,6 +125,35 @@ export function hotspotLabel(status: Partial<GlassesStatus>, fallbackEnabled: bo
   return ip ? `${ssid} · ${ip}` : ssid;
 }
 
+const MENTRA_LIVE_DEFAULT_HOTSPOT_PASSWORD = '00001111';
+
+export function galleryServerUrl(status: Partial<GlassesStatus>, fallbackEnabled: boolean) {
+  const values = status as Record<string, unknown>;
+  const enabled = typeof values.hotspotEnabled === 'boolean' ? values.hotspotEnabled : fallbackEnabled;
+  if (!enabled) {
+    return null;
+  }
+  const gateway = typeof values.hotspotGatewayIp === 'string' && values.hotspotGatewayIp
+    ? values.hotspotGatewayIp
+    : '192.168.43.1';
+  return `http://${gateway}:8089`;
+}
+
+export function galleryHotspotSsidLabel(status: Partial<GlassesStatus>) {
+  const values = status as Record<string, unknown>;
+  const ssid = typeof values.hotspotSsid === 'string' && values.hotspotSsid
+    ? values.hotspotSsid
+    : '';
+  return ssid ? `Wi-Fi ${ssid}` : 'the glasses hotspot';
+}
+
+export function galleryHotspotPasswordLabel(status: Partial<GlassesStatus>) {
+  const values = status as Record<string, unknown>;
+  return typeof values.hotspotPassword === 'string' && values.hotspotPassword
+    ? values.hotspotPassword
+    : MENTRA_LIVE_DEFAULT_HOTSPOT_PASSWORD;
+}
+
 export function firmwareLabel(status: Partial<GlassesStatus>) {
   return (
     statusString(status, 'fwVersion') ||

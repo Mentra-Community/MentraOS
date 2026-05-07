@@ -82,7 +82,8 @@ struct SystemScreen: View {
                 }
 
                 wifiCard.padding(.horizontal, 16).padding(.top, 8)
-                tilesRow.padding(.horizontal, 16).padding(.top, 12)
+                hotspotCard.padding(.horizontal, 16).padding(.top, 12)
+                microphoneCard.padding(.horizontal, 16).padding(.top, 8)
                 inputsCard.padding(.horizontal, 16).padding(.top, 12)
                 ledCard.padding(.horizontal, 16).padding(.top, 12)
             }
@@ -247,81 +248,127 @@ struct SystemScreen: View {
         }
     }
 
-    private var tilesRow: some View {
-        HStack(spacing: 10) {
-            Button(action: model.toggleHotspot) {
-            GlassCard(corner: 22, padding: EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16)) {
-                HStack {
+    private var hotspotCard: some View {
+        let galleryUrl = galleryServerUrl(model.glassesValues, fallbackEnabled: model.hotspotEnabled)
+        let galleryHotspotPassword = galleryUrl == nil ? nil : galleryHotspotPasswordLabel(model.glassesValues)
+
+        return GlassCard(corner: 22, padding: EdgeInsets(top: 14, leading: 16, bottom: 14, trailing: 16)) {
+            HStack {
+                HStack(spacing: 10) {
                     iconTileSm(systemName: "personalhotspot")
-                    Spacer()
-                    ZStack(alignment: .trailing) {
-                        Capsule().fill(Color.white).frame(width: 38, height: 22)
-                        Circle().fill(model.hotspotEnabled ? AppColor.greenAccent : AppColor.mutedSoft).frame(width: 18, height: 18).padding(.trailing, 2)
-                    }
-                }
-                .padding(.bottom, 10)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Hotspot").font(.system(size: 16, weight: .bold)).foregroundColor(AppColor.ink)
-                    Text(hotspotLabel(model.glassesValues, fallbackEnabled: model.hotspotEnabled))
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(model.hotspotEnabled ? AppColor.greenAccent : AppColor.muted)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.8)
-                }
-            }
-            }
-            .disabled(!model.glassesConnected)
-            .opacity(model.glassesConnected ? 1 : 0.55)
-            GlassCard(corner: 22, padding: EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16)) {
-                HStack {
-                    iconTileSm(systemName: "mic")
-                    Spacer()
-                    HStack(spacing: 6) {
-                        micControlButton(
-                            systemName: model.micRecording ? "stop.fill" : "record.circle.fill",
-                            enabled: model.glassesConnected,
-                            active: model.micRecording,
-                            action: model.toggleMic
-                        )
-                        micControlButton(
-                            systemName: model.micPlaying ? "stop.fill" : "play.fill",
-                            enabled: model.hasMicRecording && !model.micRecording,
-                            active: model.micPlaying,
-                            action: model.playMicRecording
-                        )
-                    }
-                }
-                .padding(.bottom, 10)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Microphone").font(.system(size: 16, weight: .bold)).foregroundColor(AppColor.ink)
-                    Text(microphoneStatusText)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(model.micRecording || model.micPlaying ? AppColor.greenAccent : AppColor.muted)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.8)
-                    Button(action: model.openBluetoothSettings) {
-                        Text("Bluetooth settings")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundColor(AppColor.greenDeep)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .background(AppColor.greenAccent.opacity(0.14))
-                            .clipShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.top, 4)
-                    if let hint = model.micPlaybackHint {
-                        Text(hint)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Hotspot").font(.system(size: 16, weight: .bold)).foregroundColor(AppColor.ink)
+                        Text(model.glassesConnected ? hotspotLabel(model.glassesValues, fallbackEnabled: model.hotspotEnabled) : "connect glasses to toggle")
                             .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(AppColor.red)
-                            .lineLimit(3)
+                            .foregroundColor(model.hotspotEnabled ? AppColor.greenAccent : AppColor.muted)
+                            .lineLimit(2)
                             .minimumScaleFactor(0.8)
-                            .padding(.top, 3)
+                    }
+                }
+                Spacer()
+                Button(action: model.toggleHotspot) {
+                    ZStack(alignment: model.hotspotEnabled ? .trailing : .leading) {
+                        Capsule().fill(Color.white).frame(width: 38, height: 22)
+                        Circle().fill(model.hotspotEnabled ? AppColor.greenAccent : AppColor.mutedSoft).frame(width: 18, height: 18).padding(2)
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(!model.glassesConnected)
+                .opacity(model.glassesConnected ? 1 : 0.45)
+            }
+
+            Rectangle().fill(AppColor.ink.opacity(0.05)).frame(height: 1).padding(.vertical, 10)
+
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Gallery server").font(.system(size: 13, weight: .bold)).foregroundColor(AppColor.ink)
+                    Text(galleryUrl ?? "Enable hotspot to expose local gallery access")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(galleryUrl == nil ? AppColor.muted : AppColor.greenAccent)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
+                    if let galleryHotspotPassword {
+                        Text("Join \(galleryHotspotSsidLabel(model.glassesValues)) · password \(galleryHotspotPassword)")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(AppColor.muted)
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.8)
+                            .padding(.top, 1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                VStack(alignment: .trailing, spacing: 6) {
+                    HStack(spacing: 6) {
+                        HotspotActionChip(title: "Open", enabled: galleryUrl != nil, action: model.openGalleryServer)
+                        HotspotActionChip(title: "Wi-Fi", enabled: galleryUrl != nil, action: model.openWifiSettings)
+                    }
+                    HStack(spacing: 6) {
+                        HotspotActionChip(title: "Copy URL", enabled: galleryUrl != nil, action: model.copyGalleryServerUrl)
+                        HotspotActionChip(title: "Copy pwd", enabled: galleryHotspotPassword != nil, action: model.copyGalleryHotspotPassword)
                     }
                 }
             }
-            .opacity(model.glassesConnected ? 1 : 0.55)
+
+            Text(model.galleryServerStatus)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(model.galleryServerReachable == true ? AppColor.greenAccent : model.galleryServerReachable == false ? AppColor.red : AppColor.muted)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
+                .padding(.top, 8)
         }
+    }
+
+    private var microphoneCard: some View {
+        GlassCard(corner: 22, padding: EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16)) {
+            HStack {
+                iconTileSm(systemName: "mic")
+                Spacer()
+                HStack(spacing: 6) {
+                    micControlButton(
+                        systemName: model.micRecording ? "stop.fill" : "record.circle.fill",
+                        enabled: model.glassesConnected,
+                        active: model.micRecording,
+                        action: model.toggleMic
+                    )
+                    micControlButton(
+                        systemName: model.micPlaying ? "stop.fill" : "play.fill",
+                        enabled: model.hasMicRecording && !model.micRecording,
+                        active: model.micPlaying,
+                        action: model.playMicRecording
+                    )
+                }
+            }
+            .padding(.bottom, 10)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Microphone").font(.system(size: 16, weight: .bold)).foregroundColor(AppColor.ink)
+                Text(microphoneStatusText)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(model.micRecording || model.micPlaying ? AppColor.greenAccent : AppColor.muted)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+                Button(action: model.openBluetoothSettings) {
+                    Text("Bluetooth settings")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(AppColor.greenDeep)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(AppColor.greenAccent.opacity(0.14))
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 4)
+                if let hint = model.micPlaybackHint {
+                    Text(hint)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(AppColor.red)
+                        .lineLimit(3)
+                        .minimumScaleFactor(0.8)
+                        .padding(.top, 3)
+                }
+            }
+        }
+        .opacity(model.glassesConnected ? 1 : 0.55)
     }
 
     private var visibleWifiScanResults: [[String: Any]] {
@@ -557,6 +604,26 @@ struct GalleryModeChip: View {
         .buttonStyle(.plain)
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.45)
+    }
+}
+
+struct HotspotActionChip: View {
+    let title: String
+    let enabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(enabled ? AppColor.greenDeep : AppColor.muted)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .background(enabled ? AppColor.greenAccent.opacity(0.14) : AppColor.ink.opacity(0.04))
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
     }
 }
 

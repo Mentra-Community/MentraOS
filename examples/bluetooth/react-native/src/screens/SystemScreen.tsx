@@ -13,7 +13,15 @@ import Svg, { Circle, Line, Path, Polyline, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { colors } from '../components/theme';
-import { hotspotLabel, isGlassesConnected, wifiLabel, wifiSubLabel } from '../sdkFormat';
+import {
+  galleryHotspotPasswordLabel,
+  galleryHotspotSsidLabel,
+  galleryServerUrl,
+  hotspotLabel,
+  isGlassesConnected,
+  wifiLabel,
+  wifiSubLabel,
+} from '../sdkFormat';
 import { RGB_LED_COLORS, durationText, type LedColor, type LedMode, type MentraSdkModel, type SdkConsoleEvent } from '../useMentraSdk';
 
 export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
@@ -21,6 +29,8 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
   const networks = (sdk.bluetoothStatus.wifiScanResults ?? []).filter(
     (network) => !connected || !sdk.glassesStatus.wifiConnected || network.ssid !== sdk.glassesStatus.wifiSsid,
   );
+  const galleryUrl = galleryServerUrl(sdk.glassesStatus, sdk.hotspotEnabled);
+  const galleryHotspotPassword = galleryUrl ? galleryHotspotPasswordLabel(sdk.glassesStatus) : null;
   const inputChips = recentInputChips(sdk.events);
   const [pendingWifi, setPendingWifi] = useState<{ssid: string; requiresPassword: boolean} | null>(null);
   const [pendingWifiPassword, setPendingWifiPassword] = useState('');
@@ -118,59 +128,98 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
         })}
       </LinearGradient>
 
-      {/* Hotspot + Microphone row */}
-      <View style={styles.row2}>
-        <Pressable disabled={!connected} style={[{ flex: 1 }, !connected && styles.disabled]} onPress={sdk.toggleHotspot}>
-        <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={styles.tileCard}>
-          <View style={styles.tileHead}>
+      {/* Hotspot */}
+      <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={styles.hotspotCard}>
+        <View style={styles.tileHead}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <View style={styles.iconTileSm}>
               <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={colors.greenInk} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                 <Circle cx={12} cy={12} r={2} />
                 <Path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.48" />
               </Svg>
             </View>
-            <View style={styles.toggleOn}>
-              <View style={[styles.toggleKnob, !sdk.hotspotEnabled && { backgroundColor: colors.mutedSoft, alignSelf: 'flex-start' }]} />
+            <View>
+              <Text style={styles.tileTitle}>Hotspot</Text>
+              <Text style={[styles.tileSub, { color: sdk.hotspotEnabled ? colors.greenAccent : colors.muted }]}>
+                {connected ? hotspotLabel(sdk.glassesStatus, sdk.hotspotEnabled) : 'connect glasses to toggle'}
+              </Text>
             </View>
           </View>
-          <View>
-            <Text style={styles.tileTitle}>Hotspot</Text>
-            <Text style={[styles.tileSub, { color: sdk.hotspotEnabled ? colors.greenAccent : colors.muted }]}>
-              {hotspotLabel(sdk.glassesStatus, sdk.hotspotEnabled)}
-            </Text>
-          </View>
-        </LinearGradient>
-        </Pressable>
-        <View style={[{ flex: 1 }, !connected && styles.disabled]}>
-        <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={styles.tileCard}>
-          <View style={styles.tileHead}>
-            <View style={styles.iconTileSm}>
-              <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={colors.greenInk} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                <Path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
-                <Path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-              </Svg>
-            </View>
-            <View style={styles.micControls}>
-              <MicControlButton disabled={!connected} active={sdk.micRecording} onPress={sdk.toggleMic}>
-                {sdk.micRecording ? <StopIcon active /> : <RecordIcon />}
-              </MicControlButton>
-              <MicControlButton disabled={sdk.lastMicBytes <= 0 || sdk.micRecording} active={sdk.micPlaying} onPress={sdk.playMicRecording}>
-                {sdk.micPlaying ? <StopIcon active /> : <PlayIcon />}
-              </MicControlButton>
-            </View>
-          </View>
-          <View>
-            <Text style={styles.tileTitle}>Microphone</Text>
-            <Text style={[styles.tileSub, { color: sdk.micRecording || sdk.micPlaying ? colors.greenAccent : colors.muted }]}>{micStatus}</Text>
-            <Text style={styles.micRouteText}>{sdk.micAudioRouteStatus}</Text>
-            <Pressable style={styles.micSettingsButton} onPress={sdk.openBluetoothSettings}>
-              <Text style={styles.micSettingsText}>Audio setup</Text>
-            </Pressable>
-            {sdk.micPlaybackHint ? <Text style={styles.micWarning}>{sdk.micPlaybackHint}</Text> : null}
-          </View>
-        </LinearGradient>
+          <Pressable
+            disabled={!connected}
+            onPress={sdk.toggleHotspot}
+            style={[styles.toggleOn, !connected && styles.disabled]}>
+            <View style={[styles.toggleKnob, !sdk.hotspotEnabled && { backgroundColor: colors.mutedSoft, alignSelf: 'flex-start' }]} />
+          </Pressable>
         </View>
-      </View>
+        <View style={styles.hotspotDivider} />
+        <View style={styles.hotspotGalleryRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.hotspotGalleryTitle}>Gallery server</Text>
+            <Text style={[styles.hotspotGalleryUrl, { color: galleryUrl ? colors.greenAccent : colors.muted }]}>
+              {galleryUrl ?? 'Enable hotspot to expose local gallery access'}
+            </Text>
+            {galleryHotspotPassword ? (
+              <Text style={styles.hotspotGalleryHint}>
+                Join {galleryHotspotSsidLabel(sdk.glassesStatus)} · password {galleryHotspotPassword}
+              </Text>
+            ) : null}
+          </View>
+          <View style={styles.hotspotActions}>
+            <View style={styles.hotspotActionRow}>
+              <HotspotActionChip enabled={galleryUrl !== null} label="Open" onPress={sdk.openGalleryServer} />
+              <HotspotActionChip enabled={galleryUrl !== null} label="Wi-Fi" onPress={sdk.openWifiSettings} />
+            </View>
+            <View style={styles.hotspotActionRow}>
+              <HotspotActionChip enabled={galleryUrl !== null} label="Copy URL" onPress={sdk.copyGalleryServerUrl} />
+              <HotspotActionChip enabled={galleryHotspotPassword !== null} label="Copy pwd" onPress={sdk.copyGalleryHotspotPassword} />
+            </View>
+          </View>
+        </View>
+        <Text
+          style={[
+            styles.hotspotStatus,
+            {
+              color:
+                sdk.galleryServerReachable === true
+                  ? colors.greenAccent
+                  : sdk.galleryServerReachable === false
+                    ? colors.red
+                    : colors.muted,
+            },
+          ]}>
+          {sdk.galleryServerStatus}
+        </Text>
+      </LinearGradient>
+
+      {/* Microphone */}
+      <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={[styles.micCard, !connected && styles.disabled]}>
+        <View style={styles.tileHead}>
+          <View style={styles.iconTileSm}>
+            <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={colors.greenInk} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+              <Path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+              <Path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+            </Svg>
+          </View>
+          <View style={styles.micControls}>
+            <MicControlButton disabled={!connected} active={sdk.micRecording} onPress={sdk.toggleMic}>
+              {sdk.micRecording ? <StopIcon active /> : <RecordIcon />}
+            </MicControlButton>
+            <MicControlButton disabled={sdk.lastMicBytes <= 0 || sdk.micRecording} active={sdk.micPlaying} onPress={sdk.playMicRecording}>
+              {sdk.micPlaying ? <StopIcon active /> : <PlayIcon />}
+            </MicControlButton>
+          </View>
+        </View>
+        <View>
+          <Text style={styles.tileTitle}>Microphone</Text>
+          <Text style={[styles.tileSub, { color: sdk.micRecording || sdk.micPlaying ? colors.greenAccent : colors.muted }]}>{micStatus}</Text>
+          <Text style={styles.micRouteText}>{sdk.micAudioRouteStatus}</Text>
+          <Pressable style={styles.micSettingsButton} onPress={sdk.openBluetoothSettings}>
+            <Text style={styles.micSettingsText}>Audio setup</Text>
+          </Pressable>
+          {sdk.micPlaybackHint ? <Text style={styles.micWarning}>{sdk.micPlaybackHint}</Text> : null}
+        </View>
+      </LinearGradient>
 
       {/* Inputs */}
       <LinearGradient colors={['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.55)']} style={styles.bigCard}>
@@ -361,6 +410,14 @@ function GalleryModeChip({ active, disabled, label, onPress }: { active: boolean
   );
 }
 
+function HotspotActionChip({ enabled, label, onPress }: { enabled: boolean; label: string; onPress: () => void }) {
+  return (
+    <Pressable disabled={!enabled} onPress={onPress} style={[styles.hotspotActionChip, !enabled && styles.hotspotActionChipDisabled]}>
+      <Text style={[styles.hotspotActionText, !enabled && styles.hotspotActionTextDisabled]}>{label}</Text>
+    </Pressable>
+  );
+}
+
 function InputChip({ prefix, label }: { prefix: string; label: string }) {
   return (
     <View style={styles.inputChip}>
@@ -515,8 +572,21 @@ const styles = StyleSheet.create({
   networkSub: { fontSize: 11, fontWeight: '500' },
   networkAction: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999 },
   networkActionText: { fontSize: 11, fontWeight: '700' },
-  row2: { flexDirection: 'row', gap: 10, marginHorizontal: 16, marginTop: 12 },
   tileCard: { flex: 1, borderRadius: 22, paddingVertical: 16, paddingHorizontal: 16, gap: 10, borderWidth: 1, borderColor: colors.borderSoft },
+  hotspotCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 22, paddingVertical: 14, paddingHorizontal: 16, gap: 10, borderWidth: 1, borderColor: colors.borderSoft },
+  hotspotDivider: { height: 1, backgroundColor: 'rgba(15,42,29,0.05)' },
+  hotspotGalleryRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
+  hotspotGalleryTitle: { color: colors.ink, fontSize: 13, fontWeight: '700' },
+  hotspotGalleryUrl: { fontSize: 10, fontWeight: '600', lineHeight: 13 },
+  hotspotGalleryHint: { color: colors.muted, fontSize: 10, fontWeight: '500', lineHeight: 13, marginTop: 2 },
+  hotspotActions: { alignItems: 'flex-end', gap: 6 },
+  hotspotActionRow: { flexDirection: 'row', gap: 6 },
+  hotspotActionChip: { paddingVertical: 6, paddingHorizontal: 9, borderRadius: 999, backgroundColor: 'rgba(52,199,89,0.14)' },
+  hotspotActionChipDisabled: { backgroundColor: 'rgba(15,42,29,0.04)' },
+  hotspotActionText: { color: colors.greenDeep, fontSize: 10, fontWeight: '700' },
+  hotspotActionTextDisabled: { color: colors.muted },
+  hotspotStatus: { fontSize: 10, lineHeight: 13, fontWeight: '600' },
+  micCard: { marginHorizontal: 16, marginTop: 8, borderRadius: 22, paddingVertical: 16, paddingHorizontal: 16, gap: 10, borderWidth: 1, borderColor: colors.borderSoft },
   tileHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   toggleOn: { width: 38, height: 22, borderRadius: 999, backgroundColor: '#fff', padding: 2, alignItems: 'flex-end' },
   toggleKnob: { width: 18, height: 18, borderRadius: 999, backgroundColor: colors.greenAccent },

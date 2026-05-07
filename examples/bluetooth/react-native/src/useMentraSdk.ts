@@ -1,7 +1,7 @@
 import {createAudioPlayer, setAudioModeAsync, type AudioPlayer} from 'expo-audio';
 import {File, Paths} from 'expo-file-system';
 import {useEffect, useRef, useState} from 'react';
-import {Linking, PermissionsAndroid, Platform} from 'react-native';
+import {Clipboard, Linking, PermissionsAndroid, Platform} from 'react-native';
 import BluetoothSdk, {
   type AudioConnectedEvent,
   type BatteryStatusEvent,
@@ -20,7 +20,13 @@ import BluetoothSdk, {
   type TouchEvent,
   type WifiStatusChangeEvent,
 } from '@mentra/bluetooth-sdk';
-import {isDisconnectedStatus, isGlassesConnected} from './sdkFormat';
+import {
+  galleryHotspotPasswordLabel,
+  galleryHotspotSsidLabel,
+  galleryServerUrl,
+  isDisconnectedStatus,
+  isGlassesConnected,
+} from './sdkFormat';
 
 export type StreamProtocol = 'rtmp' | 'srt' | 'webrtc';
 export type LedMode = 'Off' | 'Solid' | 'Pulse' | 'Blink';
@@ -70,6 +76,8 @@ export type MentraSdkState = {
   discoveredDevices: DeviceSearchResult[];
   events: SdkConsoleEvent[];
   galleryModeAuto: boolean;
+  galleryServerReachable: boolean | null;
+  galleryServerStatus: string;
   glassesStatus: Partial<GlassesStatus>;
   hotspotEnabled: boolean;
   lastAction: string;
@@ -106,7 +114,11 @@ export type MentraSdkActions = {
   disconnect: () => Promise<void>;
   displayHello: () => Promise<void>;
   forgetCurrentWifiNetwork: () => Promise<void>;
+  copyGalleryHotspotPassword: () => Promise<void>;
+  copyGalleryServerUrl: () => Promise<void>;
   openBluetoothSettings: () => Promise<void>;
+  openGalleryServer: () => Promise<void>;
+  openWifiSettings: () => Promise<void>;
   requestWifiScan: () => Promise<void>;
   playMicRecording: () => Promise<void>;
   selectLedColor: (color: LedColor) => Promise<void>;
@@ -198,6 +210,10 @@ export function useMentraSdk(): MentraSdkModel {
     Platform.OS === 'ios'
       ? IOS_AUDIO_ROUTE_HINT
       : 'Audio output: waiting for Bluetooth audio status',
+  );
+  const [galleryServerReachable, setGalleryServerReachable] = useState<boolean | null>(null);
+  const [galleryServerStatus, setGalleryServerStatus] = useState(
+    'Gallery server: enable hotspot to check',
   );
   const [galleryModeAuto, setGalleryModeAuto] = useState(
     () => galleryModeAutoFrom(BluetoothSdk.getCoreStatus()),
@@ -324,10 +340,24 @@ export function useMentraSdk(): MentraSdkModel {
         addEvent('STORE', `Wi-Fi ${payload.connected ? 'connected' : 'disconnected'} ${payload.ssid}`);
       }),
       BluetoothSdk.addListener('hotspot_status_change', (payload) => {
-        setHotspotEnabled(Boolean(payload.enabled));
+        const enabled = Boolean(payload.enabled);
+        const nextStatus = {
+          ...BluetoothSdk.getGlassesStatus(),
+          hotspotEnabled: enabled,
+          hotspotGatewayIp: payload.local_ip ?? '',
+          hotspotPassword: payload.password ?? '',
+          hotspotSsid: payload.ssid ?? '',
+        };
+        setHotspotEnabled(enabled);
+        setGalleryServerReachable(null);
+        setGalleryServerStatus(
+          enabled
+            ? `Gallery server: ${galleryServerUrl(nextStatus, enabled)}`
+            : 'Gallery server: hotspot off',
+        );
         setGlassesStatus((current) => ({
           ...current,
-          hotspotEnabled: Boolean(payload.enabled),
+          hotspotEnabled: enabled,
           hotspotGatewayIp: payload.local_ip ?? '',
           hotspotPassword: payload.password ?? '',
           hotspotSsid: payload.ssid ?? '',
@@ -336,6 +366,8 @@ export function useMentraSdk(): MentraSdkModel {
       }),
       BluetoothSdk.addListener('hotspot_error', (payload) => {
         setHotspotEnabled(false);
+        setGalleryServerReachable(false);
+        setGalleryServerStatus('Gallery server: hotspot error');
         setGlassesStatus((current) => ({...current, hotspotEnabled: false}));
         addEvent('TX', `hotspot error ${summarizeMap(payload)}`);
       }),
@@ -774,6 +806,54 @@ export function useMentraSdk(): MentraSdkModel {
     });
   }
 
+  async function openGalleryServer() {
+    await runAction('Open gallery server', async () => {
+      const baseUrl = requireGalleryServerUrl(glassesStatus, hotspotEnabled);
+      setGalleryServerReachable(null);
+      setGalleryServerStatus(`Gallery server: checking ${baseUrl}`);
+      const result = await checkGalleryServerReachability(baseUrl, glassesStatus);
+      setGalleryServerReachable(result.reachable);
+      setGalleryServerStatus(result.status);
+      addEvent(result.eventTag, result.eventText);
+      if (result.reachable) {
+        await Linking.openURL(baseUrl);
+      }
+    });
+  }
+
+  async function copyGalleryServerUrl() {
+    await runAction('Copy gallery URL', async () => {
+      const baseUrl = requireGalleryServerUrl(glassesStatus, hotspotEnabled);
+      Clipboard.setString(baseUrl);
+      setGalleryServerStatus(`Gallery server: copied ${baseUrl}`);
+    });
+  }
+
+  async function copyGalleryHotspotPassword() {
+    await runAction('Copy hotspot password', async () => {
+      const password = galleryHotspotPasswordLabel(glassesStatus);
+      Clipboard.setString(password);
+      setGalleryServerStatus(`Hotspot password copied: ${password}`);
+    });
+  }
+
+  async function openWifiSettings() {
+    await runAction('Open Wi-Fi settings', async () => {
+      if (Platform.OS === 'android') {
+        const androidLinking = Linking as typeof Linking & {
+          sendIntent?: (action: string) => Promise<void>;
+        };
+        if (androidLinking.sendIntent) {
+          await androidLinking.sendIntent('android.settings.WIFI_SETTINGS');
+          return;
+        }
+      }
+      const ssid = galleryHotspotSsidLabel(glassesStatus);
+      setGalleryServerStatus(`Join ${ssid} from system Wi-Fi settings, then tap Open.`);
+      addEvent('LIVE', `Join ${ssid} from system Wi-Fi settings, then tap Open.`);
+    });
+  }
+
   async function toggleMic() {
     await runAction(micRecording ? 'Stop microphone' : 'Start microphone', async () => {
       if (micRecordingRef.current) {
@@ -1043,6 +1123,8 @@ export function useMentraSdk(): MentraSdkModel {
     setStreamStartedAt(null);
     setStreamStatus(status);
     setHotspotEnabled(false);
+    setGalleryServerReachable(null);
+    setGalleryServerStatus('Gallery server: connect glasses first');
     setMicRecording(false);
     micRecordingRef.current = false;
     stopMicElapsedTimer();
@@ -1082,6 +1164,8 @@ export function useMentraSdk(): MentraSdkModel {
     clearDisplay,
     connect,
     connectDevice,
+    copyGalleryHotspotPassword,
+    copyGalleryServerUrl,
     disconnect,
     defaultDevice,
     discoveredDevices,
@@ -1089,6 +1173,8 @@ export function useMentraSdk(): MentraSdkModel {
     events,
     forgetCurrentWifiNetwork,
     galleryModeAuto,
+    galleryServerReachable,
+    galleryServerStatus,
     glassesStatus,
     hotspotEnabled,
     lastAction,
@@ -1102,6 +1188,8 @@ export function useMentraSdk(): MentraSdkModel {
     micPlaying,
     micRecording,
     openBluetoothSettings,
+    openGalleryServer,
+    openWifiSettings,
     pcmBytes,
     pcmFrames,
     permissionStatus,
@@ -1512,6 +1600,51 @@ function rtmpPathSegmentCount(streamUrl: string) {
 
 function cacheBustedUrl(url: string) {
   return `${url}${url.includes('?') ? '&' : '?'}poll=${Date.now()}`;
+}
+
+function requireGalleryServerUrl(status: Partial<GlassesStatus>, fallbackEnabled: boolean) {
+  const baseUrl = galleryServerUrl(status, fallbackEnabled);
+  if (!baseUrl) {
+    throw new Error('Enable the glasses hotspot first.');
+  }
+  return baseUrl;
+}
+
+async function checkGalleryServerReachability(
+  baseUrl: string,
+  status: Partial<GlassesStatus>,
+) {
+  try {
+    const response = await fetch(cacheBustedUrl(`${baseUrl}/api/status`), {
+      cache: 'no-store',
+      headers: {'Cache-Control': 'no-cache', Pragma: 'no-cache'},
+    });
+    const body = await response.text();
+    if (response.ok) {
+      const totalPhotos = /"total_photos"\s*:\s*(\d+)/.exec(body)?.[1];
+      return {
+        reachable: true,
+        status: totalPhotos
+          ? `Gallery server: reachable · ${totalPhotos} items`
+          : 'Gallery server: reachable',
+        eventTag: 'LIVE' as const,
+        eventText: `gallery server reachable ${baseUrl}`,
+      };
+    }
+    return {
+      reachable: false,
+      status: `Gallery server: HTTP ${response.status}`,
+      eventTag: 'TX' as const,
+      eventText: `gallery server HTTP ${response.status}`,
+    };
+  } catch (error) {
+    return {
+      reachable: false,
+      status: `Gallery server: not reachable. Join ${galleryHotspotSsidLabel(status)} and retry.`,
+      eventTag: 'TX' as const,
+      eventText: `gallery server unreachable: ${formatError(error)}`,
+    };
+  }
 }
 
 function androidRuntimePermissions() {
