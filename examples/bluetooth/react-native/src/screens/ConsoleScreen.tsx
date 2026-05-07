@@ -3,11 +3,13 @@ import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Polyline } from 'react-native-svg';
 import { Header } from '../components/Header';
+import { useScrollBottomPadding } from '../components/keyboardLayout';
 import { colors } from '../components/theme';
 import { isGlassesConnected } from '../sdkFormat';
 import type { MentraSdkModel, SdkConsoleEvent } from '../useMentraSdk';
 
 export function ConsoleScreen({ sdk }: { sdk: MentraSdkModel }) {
+  const scrollBottomPadding = useScrollBottomPadding();
   const [filter, setFilter] = useState<'ALL' | SdkConsoleEvent['tag']>('ALL');
   const events = filter === 'ALL' ? sdk.events : sdk.events.filter((item) => item.tag === filter);
   const counts = {
@@ -19,7 +21,11 @@ export function ConsoleScreen({ sdk }: { sdk: MentraSdkModel }) {
   };
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
+    <ScrollView
+      keyboardDismissMode="interactive"
+      keyboardShouldPersistTaps="handled"
+      style={{ flex: 1, backgroundColor: colors.bg }}
+      contentContainerStyle={{ paddingBottom: scrollBottomPadding }}>
       <Header connected={isGlassesConnected(sdk.glassesStatus)} title="Console" />
 
       {/* Filter chips */}

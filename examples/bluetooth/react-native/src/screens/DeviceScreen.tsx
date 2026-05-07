@@ -3,6 +3,7 @@ import { View, Text, ScrollView, Pressable, StyleSheet, Image } from 'react-nati
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Line, Path, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
+import { useScrollBottomPadding } from '../components/keyboardLayout';
 import { colors } from '../components/theme';
 import {
   batteryLabel,
@@ -34,6 +35,7 @@ const glassesImages = {
 };
 
 export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
+  const scrollBottomPadding = useScrollBottomPadding();
   const level = batteryLevel(sdk.glassesStatus);
   const connected = isGlassesConnected(sdk.glassesStatus);
   const canConnect = !connected && hasConnectionTarget(sdk);
@@ -43,7 +45,11 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
   const latestEvent = sdk.events[0];
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
+    <ScrollView
+      keyboardDismissMode="interactive"
+      keyboardShouldPersistTaps="handled"
+      style={{ flex: 1, backgroundColor: colors.bg }}
+      contentContainerStyle={{ paddingBottom: scrollBottomPadding }}>
       <Header connected={connected} title="Device" />
 
       {/* Hero card */}

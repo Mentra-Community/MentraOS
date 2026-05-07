@@ -3,6 +3,7 @@ import { View, Text, ScrollView, Pressable, StyleSheet, TextInput, Clipboard } f
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path, Polyline, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
+import { useScrollBottomPadding } from '../components/keyboardLayout';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { colors } from '../components/theme';
 import { isGlassesConnected, streamUptime } from '../sdkFormat';
@@ -19,13 +20,18 @@ await BluetoothSdk.startStream({
 })`;
 
 export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
+  const scrollBottomPadding = useScrollBottomPadding();
   const connected = isGlassesConnected(sdk.glassesStatus);
   const isLive = sdk.streamStartedAt !== null;
   const uptime = streamUptime(sdk.streamStartedAt);
   const setupHint = localStreamSetupHint(sdk.streamProtocol, sdk.streamUrl, sdk.streamStatus);
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
+    <ScrollView
+      keyboardDismissMode="interactive"
+      keyboardShouldPersistTaps="handled"
+      style={{ flex: 1, backgroundColor: colors.bg }}
+      contentContainerStyle={{ paddingBottom: scrollBottomPadding }}>
       <Header connected={connected} title="Stream" />
       {!connected && <OfflineNotice />}
 
@@ -105,6 +111,7 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
             onChangeText={sdk.setStreamUrl}
             placeholder={STREAM_DEFAULT_URLS[sdk.streamProtocol]}
             placeholderTextColor={colors.muted}
+            returnKeyType="done"
             style={styles.url}
             value={sdk.streamUrl}
           />

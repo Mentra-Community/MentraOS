@@ -50,6 +50,7 @@ import com.mentra.examples.android.ui.AppColor
 import com.mentra.examples.android.ui.GlassCard
 import com.mentra.examples.android.ui.OfflineNotice
 import com.mentra.examples.android.ui.PageHeader
+import com.mentra.examples.android.ui.scrollBottomPadding
 
 @Composable
 fun SystemScreen(controller: MentraExampleController) {
@@ -446,7 +447,7 @@ fun SystemScreen(controller: MentraExampleController) {
             }
         }
 
-        Spacer(Modifier.height(140.dp))
+        Spacer(Modifier.height(scrollBottomPadding()))
     }
 
     val pendingSsid = pendingWifiSsid

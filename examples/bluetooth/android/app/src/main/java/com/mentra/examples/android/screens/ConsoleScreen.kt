@@ -33,6 +33,7 @@ import com.mentra.examples.android.MentraExampleController
 import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.ui.AppColor
 import com.mentra.examples.android.ui.PageHeader
+import com.mentra.examples.android.ui.scrollBottomPadding
 
 @Composable
 fun ConsoleScreen(controller: MentraExampleController) {
@@ -151,7 +152,7 @@ fun ConsoleScreen(controller: MentraExampleController) {
             )
         }
 
-        Spacer(Modifier.height(140.dp))
+        Spacer(Modifier.height(scrollBottomPadding()))
     }
 }
 

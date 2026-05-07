@@ -41,6 +41,7 @@ import com.mentra.examples.android.ui.Eyebrow
 import com.mentra.examples.android.ui.GlassCard
 import com.mentra.examples.android.ui.OfflineNotice
 import com.mentra.examples.android.ui.PageHeader
+import com.mentra.examples.android.ui.scrollBottomPadding
 
 @Composable
 fun CameraScreen(controller: MentraExampleController) {
@@ -231,7 +232,7 @@ fun CameraScreen(controller: MentraExampleController) {
             }
         }
 
-        Spacer(Modifier.height(140.dp))
+        Spacer(Modifier.height(scrollBottomPadding()))
     }
 }
 

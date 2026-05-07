@@ -53,6 +53,7 @@ import com.mentra.examples.android.ui.AppColor
 import com.mentra.examples.android.ui.Eyebrow
 import com.mentra.examples.android.ui.GlassCard
 import com.mentra.examples.android.ui.PageHeader
+import com.mentra.examples.android.ui.scrollBottomPadding
 
 @Composable
 fun DeviceScreen(controller: MentraExampleController) {
@@ -236,7 +237,7 @@ fun DeviceScreen(controller: MentraExampleController) {
             }
         }
 
-        Spacer(Modifier.height(140.dp))
+        Spacer(Modifier.height(scrollBottomPadding()))
     }
 }
 

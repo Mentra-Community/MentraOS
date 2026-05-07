@@ -3,6 +3,7 @@ import { View, Text, ScrollView, Pressable, StyleSheet, Image, TextInput, Clipbo
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Path, Polyline, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
+import { useScrollBottomPadding } from '../components/keyboardLayout';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { colors } from '../components/theme';
 import { isGlassesConnected } from '../sdkFormat';
@@ -22,13 +23,18 @@ function cameraSdkCall(size: PhotoSize, compression: PhotoCompression, flash: bo
 }
 
 export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
+  const scrollBottomPadding = useScrollBottomPadding();
   const connected = isGlassesConnected(sdk.glassesStatus);
   const cameraStatusFailed = isCameraStatusFailure(sdk.cameraStatus);
   const setupHint = localCameraSetupHint(sdk.webhookUrl, sdk.cameraStatus);
   const sdkCall = cameraSdkCall(sdk.photoSize, sdk.photoCompression, sdk.photoFlash);
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
+    <ScrollView
+      keyboardDismissMode="interactive"
+      keyboardShouldPersistTaps="handled"
+      style={{ flex: 1, backgroundColor: colors.bg }}
+      contentContainerStyle={{ paddingBottom: scrollBottomPadding }}>
       <Header connected={connected} title="Camera" />
       {!connected && <OfflineNotice />}
 
@@ -113,6 +119,7 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
             onChangeText={sdk.setWebhookUrl}
             placeholder="http://192.168.1.42:8787/upload"
             placeholderTextColor={colors.muted}
+            returnKeyType="done"
             style={styles.url}
             value={sdk.webhookUrl}
           />

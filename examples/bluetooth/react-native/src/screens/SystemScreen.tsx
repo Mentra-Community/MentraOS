@@ -11,6 +11,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Line, Path, Polyline, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
+import { useScrollBottomPadding } from '../components/keyboardLayout';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { colors } from '../components/theme';
 import {
@@ -25,6 +26,7 @@ import {
 import { RGB_LED_COLORS, durationText, type LedColor, type LedMode, type MentraSdkModel, type SdkConsoleEvent } from '../useMentraSdk';
 
 export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
+  const scrollBottomPadding = useScrollBottomPadding();
   const connected = isGlassesConnected(sdk.glassesStatus);
   const networks = (sdk.bluetoothStatus.wifiScanResults ?? []).filter(
     (network) => !connected || !sdk.glassesStatus.wifiConnected || network.ssid !== sdk.glassesStatus.wifiSsid,
@@ -58,7 +60,11 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
   }, [connected, sdk]);
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: colors.bg }} contentContainerStyle={{ paddingBottom: 140 }}>
+    <ScrollView
+      keyboardDismissMode="interactive"
+      keyboardShouldPersistTaps="handled"
+      style={{ flex: 1, backgroundColor: colors.bg }}
+      contentContainerStyle={{ paddingBottom: scrollBottomPadding }}>
       <Header connected={connected} title="System" />
       {!connected && <OfflineNotice />}
 
@@ -311,6 +317,7 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
               onChangeText={setPendingWifiPassword}
               placeholder="Password"
               placeholderTextColor={colors.muted}
+              returnKeyType="done"
               secureTextEntry
               style={styles.modalInput}
               value={pendingWifiPassword}

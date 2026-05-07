@@ -35,6 +35,7 @@ import com.mentra.examples.android.ui.AppColor
 import com.mentra.examples.android.ui.GlassCard
 import com.mentra.examples.android.ui.OfflineNotice
 import com.mentra.examples.android.ui.PageHeader
+import com.mentra.examples.android.ui.scrollBottomPadding
 
 private val barHeights = listOf(18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40)
 private val streamSdkCall = """
@@ -212,7 +213,7 @@ fun StreamScreen(controller: MentraExampleController) {
             }
         }
 
-        Spacer(Modifier.height(140.dp))
+        Spacer(Modifier.height(scrollBottomPadding()))
     }
 }
 

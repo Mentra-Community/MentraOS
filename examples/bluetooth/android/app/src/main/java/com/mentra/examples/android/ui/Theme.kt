@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -18,6 +19,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -45,6 +47,11 @@ object AppColor {
     val borderSoft = Color(0xB3FFFFFF)
     val hairline = Color(0x140F2A1D)
 }
+
+val LocalKeyboardVisible = staticCompositionLocalOf { false }
+
+@Composable
+fun scrollBottomPadding(): Dp = if (LocalKeyboardVisible.current) 24.dp else 140.dp
 
 @Composable
 fun GlassCard(
