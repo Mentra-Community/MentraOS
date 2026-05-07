@@ -11,10 +11,6 @@
 
 LOG_MODULE_REGISTER(caption_view, LOG_LEVEL_DBG);
 
-/* Caption overlay usable area is 580x420 (600x440 outer minus 10px padding each side). */
-#define CAPTION_POSITIONED_MAX_X 580U
-#define CAPTION_POSITIONED_MAX_Y 420U
-
 mos_ui_caption_view_t mos_ui_caption_view_create(lv_obj_t *parent, const mos_ui_caption_view_cfg_t *cfg)
 {
     mos_ui_caption_view_t view = {0};
@@ -160,13 +156,15 @@ void mos_ui_caption_view_render_positioned_text(mos_ui_caption_view_t *view,
     }
 
     /* Clamp coordinates to the overlay's usable area. */
-    if (x >= CAPTION_POSITIONED_MAX_X)
+    lv_coord_t max_x = lv_obj_get_width(view->positioned);
+    lv_coord_t max_y = lv_obj_get_height(view->positioned);
+    if (max_x > 0 && x >= (uint16_t)max_x)
     {
-        x = CAPTION_POSITIONED_MAX_X - 50U;
+        x = (uint16_t)(max_x - 1);
     }
-    if (y >= CAPTION_POSITIONED_MAX_Y)
+    if (max_y > 0 && y >= (uint16_t)max_y)
     {
-        y = CAPTION_POSITIONED_MAX_Y - 30U;
+        y = (uint16_t)(max_y - 1);
     }
 
     if (use_per_char && font != NULL)
@@ -184,7 +182,7 @@ void mos_ui_caption_view_render_positioned_text(mos_ui_caption_view_t *view,
         lv_obj_set_style_text_color(label, text_color, 0);
         lv_obj_set_style_bg_opa(label, LV_OPA_TRANSP, 0);
         lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
-        lv_obj_set_width(label, CAPTION_POSITIONED_MAX_X - x);
+        lv_obj_set_width(label, max_x - x);
         lv_obj_set_pos(label, x, y);
         lv_obj_invalidate(label);
     }
