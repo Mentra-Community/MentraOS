@@ -15,7 +15,6 @@ import {OrientationCard} from "@/frontend/pages/NavigationPage/components/Orient
 import {MyLocationCard} from "@/frontend/pages/NavigationPage/components/MyLocationCard/MyLocationCard"
 import {NavMap} from "@/frontend/pages/NavigationPage/components/NavMap/NavMap"
 import {useUser} from "@/backend/hooks/useUser"
-import {formatDistance} from "@/backend/lib/formatDistance/formatDistance"
 import type {LatLng} from "@/backend/lib/geometry/geometry"
 import type {PlaceDetails} from "@/backend/lib/places/places"
 import { safeHeadingManuverCard } from "@/frontend/components/SafeHeading/SafeHeading"
@@ -102,32 +101,36 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
 
 
   // ---- glasses HUD mirror ------------------------------------------------
-
+  //
+  // Drive the glasses display straight off the PivotTracker snapshot — same
+  // source of truth as the OrientationCard. We do NOT use the SDK's
+  // maneuverType for the glasses output; only "Continue" / "Turn left" /
+  // "Turn right" / "Arrived", computed locally from polyline geometry +
+  // 7m radius checks.
+  const pivotSnap = user.pivots.getSnapshot()
   useEffect(() => {
     if (!running) {
-      console.log("[NAV-MINI] display.showText:", "hello world ")
       display.showText("hello world ")
       return
     }
-    if (status === "rerouting" || !maneuver) {
-      const msg = status === "rerouting" ? "Rebuilding route…" : "Starting navigation…"
-      console.log("[NAV-MINI] display.showText:", msg)
-      display.showText(msg)
+    if (status === "rerouting") {
+      display.showText("Rebuilding route…")
       return
     }
-    if (status === "arrived" || maneuver.maneuverType === "ARRIVE") {
-      const dist = maneuver.distanceMeters
-      const body = dist > 0 ? `In ${formatDistance(dist)}` : "You have arrived"
-      console.log("[NAV-MINI] display.showCard:", "Arriving", body)
-      display.showText(`Arriving ${body}` )
+    if (pivotSnap.arrived || status === "arrived") {
+      display.showText("Arrived")
       return
     }
-    const {now, next} = navigation.format.glassesLines(maneuver)
-    const total = navigation.format.glassesProgressLine(maneuver)
-    const lines = [now, next, total].filter((l): l is string => !!l)
-    console.log("[NAV-MINI] display.showLines:", lines)
-    display.showText(lines.join("\n"))
-  }, [display, navigation, running, status, maneuver])
+    if (pivotSnap.direction === "right") {
+      display.showText("Turn right")
+      return
+    }
+    if (pivotSnap.direction === "left") {
+      display.showText("Turn left")
+      return
+    }
+    display.showText("Continue")
+  }, [display, running, status, pivotSnap.direction, pivotSnap.arrived])
 
   // ---- mid-trip hydration ------------------------------------------------
 
