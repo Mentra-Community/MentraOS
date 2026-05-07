@@ -301,7 +301,7 @@ struct SystemScreen: View {
                 VStack(alignment: .trailing, spacing: 6) {
                     HStack(spacing: 6) {
                         HotspotActionChip(title: "Open", enabled: galleryUrl != nil, action: model.openGalleryServer)
-                        HotspotActionChip(title: "Wi-Fi", enabled: galleryUrl != nil, action: model.openWifiSettings)
+                        HotspotActionChip(title: "Join help", enabled: galleryUrl != nil, action: model.openWifiSettings)
                     }
                     HStack(spacing: 6) {
                         HotspotActionChip(title: "Copy URL", enabled: galleryUrl != nil, action: model.copyGalleryServerUrl)

@@ -441,9 +441,11 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func openWifiSettings() {
-        runAction("Open Wi-Fi settings") {
+        runAction("Show hotspot join help") {
             let ssid = galleryHotspotSsidLabel(glassesValues)
-            let message = "Join \(ssid) from system Wi-Fi settings, then tap Open."
+            let password = galleryHotspotPasswordLabel(glassesValues)
+            UIPasteboard.general.string = password
+            let message = "Password copied. Open iOS Settings > Wi-Fi, join \(ssid) with password \(password), then return and tap Open."
             galleryServerStatus = message
             append(tag: "LIVE", text: message)
         }
