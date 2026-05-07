@@ -3,6 +3,7 @@ import {File, Paths} from 'expo-file-system';
 import {useEffect, useRef, useState} from 'react';
 import {Linking, PermissionsAndroid, Platform} from 'react-native';
 import BluetoothSdk, {
+  type AudioConnectedEvent,
   type BatteryStatusEvent,
   type ButtonPressEvent,
   type CompatibleGlassesSearchStopEvent,
@@ -74,6 +75,7 @@ export type MentraSdkState = {
   lastAction: string;
   lastMicBytes: number;
   lastMicDurationSeconds: number | null;
+  micAudioRouteStatus: string;
   ledColor: LedColor;
   ledMode: LedMode;
   micElapsedSeconds: number;
@@ -134,6 +136,8 @@ const MIC_SAMPLE_RATE = 16000;
 const MIC_CHANNEL_COUNT = 1;
 const MIC_BITS_PER_SAMPLE = 16;
 const DEFAULT_DEVICE_FILE = 'mentra-default-device.json';
+const IOS_AUDIO_ROUTE_HINT =
+  'Audio output: iOS cannot pair audio from the app. Open Settings > Bluetooth and connect/select the glasses before playback.';
 
 declare const process: {
   env?: {
@@ -190,6 +194,11 @@ export function useMentraSdk(): MentraSdkModel {
   const [lastMicBytes, setLastMicBytes] = useState(0);
   const [lastMicDurationSeconds, setLastMicDurationSeconds] = useState<number | null>(null);
   const [micPlaybackHint, setMicPlaybackHint] = useState<string | null>(null);
+  const [micAudioRouteStatus, setMicAudioRouteStatus] = useState(
+    Platform.OS === 'ios'
+      ? IOS_AUDIO_ROUTE_HINT
+      : 'Audio output: waiting for Bluetooth audio status',
+  );
   const [galleryModeAuto, setGalleryModeAuto] = useState(
     () => galleryModeAutoFrom(BluetoothSdk.getCoreStatus()),
   );
@@ -352,6 +361,20 @@ export function useMentraSdk(): MentraSdkModel {
         if (micRecordingRef.current) {
           addEvent('LIVE', `received LC3 mic frame while PCM recording is enabled (${payload.lc3.byteLength} bytes)`);
         }
+      }),
+      BluetoothSdk.addListener('audio_connected', (payload: AudioConnectedEvent) => {
+        const deviceName = payload.device_name || 'Bluetooth audio';
+        setMicAudioRouteStatus(`Audio output: connected to ${deviceName}`);
+        setMicPlaybackHint(null);
+        addEvent('LIVE', `audio connected ${deviceName}`);
+      }),
+      BluetoothSdk.addListener('audio_disconnected', () => {
+        setMicAudioRouteStatus(
+          Platform.OS === 'ios'
+            ? IOS_AUDIO_ROUTE_HINT
+            : 'Audio output: Bluetooth audio is not connected',
+        );
+        addEvent('LIVE', 'audio disconnected');
       }),
       BluetoothSdk.addListener(
         'compatible_glasses_search_stop',
@@ -784,12 +807,9 @@ export function useMentraSdk(): MentraSdkModel {
       }
 
       if (Platform.OS === 'ios') {
-        try {
-          await Linking.openURL('App-Prefs:root=Bluetooth');
-          return;
-        } catch {
-          // Fall back to the app settings page if iOS blocks the Bluetooth deep link.
-        }
+        setMicPlaybackHint('Open iOS Settings > Bluetooth and connect/select the glasses for audio playback.');
+        addEvent('LIVE', 'iOS blocks reliable Bluetooth Settings deep links. Open Settings > Bluetooth manually.');
+        return;
       }
 
       await Linking.openSettings();
@@ -855,6 +875,7 @@ export function useMentraSdk(): MentraSdkModel {
     await stopMicPlayback();
     await setAudioModeAsync({interruptionMode: 'duckOthers', playsInSilentMode: true});
     if (Platform.OS === 'ios') {
+      setMicPlaybackHint('If playback is silent, open iOS Settings > Bluetooth and connect/select the glasses.');
       addEvent('LIVE', 'iOS playback uses the selected system audio output. Pair/select the glasses in Settings > Bluetooth first.');
     } else if (Platform.OS === 'android') {
       addEvent('LIVE', 'Android playback uses the bonded Bluetooth audio route. Accept the pairing dialog after BLE connects.');
@@ -1075,6 +1096,7 @@ export function useMentraSdk(): MentraSdkModel {
     lastMicDurationSeconds,
     ledColor,
     ledMode,
+    micAudioRouteStatus,
     micElapsedSeconds,
     micPlaybackHint,
     micPlaying,

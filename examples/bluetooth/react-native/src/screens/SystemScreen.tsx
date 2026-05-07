@@ -162,8 +162,9 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
           <View>
             <Text style={styles.tileTitle}>Microphone</Text>
             <Text style={[styles.tileSub, { color: sdk.micRecording || sdk.micPlaying ? colors.greenAccent : colors.muted }]}>{micStatus}</Text>
+            <Text style={styles.micRouteText}>{sdk.micAudioRouteStatus}</Text>
             <Pressable style={styles.micSettingsButton} onPress={sdk.openBluetoothSettings}>
-              <Text style={styles.micSettingsText}>Bluetooth settings</Text>
+              <Text style={styles.micSettingsText}>Audio setup</Text>
             </Pressable>
             {sdk.micPlaybackHint ? <Text style={styles.micWarning}>{sdk.micPlaybackHint}</Text> : null}
           </View>
@@ -524,6 +525,7 @@ const styles = StyleSheet.create({
   micControlButtonActive: { backgroundColor: colors.greenInk },
   micSettingsButton: { alignSelf: 'flex-start', marginTop: 6, backgroundColor: 'rgba(52,199,89,0.14)', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 5 },
   micSettingsText: { color: colors.greenDeep, fontSize: 10, fontWeight: '700' },
+  micRouteText: { color: colors.muted, fontSize: 10, fontWeight: '600', lineHeight: 13, marginTop: 4 },
   micWarning: { color: colors.red, fontSize: 10, fontWeight: '500', lineHeight: 13, marginTop: 4 },
   tileTitle: { color: colors.ink, fontSize: 16, fontWeight: '700', letterSpacing: -0.16 },
   tileSub: { color: colors.muted, fontSize: 10, fontWeight: '500' },
