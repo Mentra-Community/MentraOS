@@ -42,6 +42,26 @@ enum AppColor {
     static let hairline = Color(hex: 0x0F2A1D).opacity(0.08)
 }
 
+enum LayoutMetric {
+    static let tabBarScrollPadding: CGFloat = 140
+    static let keyboardScrollPadding: CGFloat = 24
+
+    static func scrollBottomPadding(keyboardVisible: Bool) -> CGFloat {
+        keyboardVisible ? keyboardScrollPadding : tabBarScrollPadding
+    }
+}
+
+private struct KeyboardVisibleKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var keyboardVisible: Bool {
+        get { self[KeyboardVisibleKey.self] }
+        set { self[KeyboardVisibleKey.self] = newValue }
+    }
+}
+
 extension Color {
     init(hex: UInt32, opacity: Double = 1) {
         let r = Double((hex >> 16) & 0xFF) / 255

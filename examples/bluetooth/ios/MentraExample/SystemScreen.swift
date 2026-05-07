@@ -68,6 +68,7 @@ private func beautifyInputPayload(_ payload: String) -> String {
 
 struct SystemScreen: View {
     @ObservedObject var model: BluetoothViewModel
+    @Environment(\.keyboardVisible) private var keyboardVisible
     @State private var pendingWifiNetwork: WifiNetworkSelection?
     @State private var pendingWifiPassword = ""
 
@@ -87,9 +88,10 @@ struct SystemScreen: View {
                 inputsCard.padding(.horizontal, 16).padding(.top, 12)
                 ledCard.padding(.horizontal, 16).padding(.top, 12)
             }
-            .padding(.bottom, 140)
+            .padding(.bottom, LayoutMetric.scrollBottomPadding(keyboardVisible: keyboardVisible))
         }
         .background(AppColor.bg)
+        .scrollDismissesKeyboard(.interactively)
         .sheet(item: $pendingWifiNetwork, onDismiss: { pendingWifiPassword = "" }) { network in
             wifiConnectionSheet(network)
                 .presentationDetents([.height(300)])

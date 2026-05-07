@@ -23,6 +23,8 @@ sdk.requestPhoto(
 
 struct CameraScreen: View {
     @ObservedObject var model: BluetoothViewModel
+    @Environment(\.keyboardVisible) private var keyboardVisible
+    @FocusState private var webhookUrlFocused: Bool
     private var cameraStatusFailed: Bool {
         isCameraStatusFailure(model.cameraStatus)
     }
@@ -45,9 +47,10 @@ struct CameraScreen: View {
                 sdkCard.padding(.horizontal, 16).padding(.top, 12)
                 uploadCard.padding(.horizontal, 16).padding(.top, 12)
             }
-            .padding(.bottom, 140)
+            .padding(.bottom, LayoutMetric.scrollBottomPadding(keyboardVisible: keyboardVisible))
         }
         .background(AppColor.bg)
+        .scrollDismissesKeyboard(.interactively)
     }
 
     private var previewCard: some View {
@@ -169,8 +172,11 @@ struct CameraScreen: View {
                 Text("POST").font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundColor(AppColor.greenAccent)
                 Rectangle().fill(AppColor.ink.opacity(0.12)).frame(width: 1, height: 14)
                 TextField("http://192.168.1.42:8787/upload", text: $model.webhookUrl)
+                    .focused($webhookUrlFocused)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                    .submitLabel(.done)
+                    .onSubmit { webhookUrlFocused = false }
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(AppColor.ink)
                 Spacer()

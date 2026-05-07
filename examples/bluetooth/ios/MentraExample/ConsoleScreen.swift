@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ConsoleScreen: View {
     @ObservedObject var model: BluetoothViewModel
+    @Environment(\.keyboardVisible) private var keyboardVisible
     @State private var filter = "ALL"
 
     private var filteredEvents: [ExampleEvent] {
@@ -36,9 +37,10 @@ struct ConsoleScreen: View {
                 consoleCard.padding(.horizontal, 16).padding(.top, 12)
                 jsonCard.padding(.horizontal, 16).padding(.top, 12)
             }
-            .padding(.bottom, 140)
+            .padding(.bottom, LayoutMetric.scrollBottomPadding(keyboardVisible: keyboardVisible))
         }
         .background(AppColor.bg)
+        .scrollDismissesKeyboard(.interactively)
     }
 
     private var consoleCard: some View {

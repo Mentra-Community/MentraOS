@@ -17,6 +17,8 @@ sdk.startStream(
 
 struct StreamScreen: View {
     @ObservedObject var model: BluetoothViewModel
+    @Environment(\.keyboardVisible) private var keyboardVisible
+    @FocusState private var streamUrlFocused: Bool
     private let bars: [CGFloat] = [18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40]
     private var setupHint: String? {
         localStreamSetupHint(protocol: model.streamProtocol, streamUrl: model.streamUrl, status: model.streamStatus)
@@ -48,9 +50,10 @@ struct StreamScreen: View {
                 sdkCard.padding(.horizontal, 16).padding(.top, 12)
                 protocolCard.padding(.horizontal, 16).padding(.top, 12)
             }
-            .padding(.bottom, 140)
+            .padding(.bottom, LayoutMetric.scrollBottomPadding(keyboardVisible: keyboardVisible))
         }
         .background(AppColor.bg)
+        .scrollDismissesKeyboard(.interactively)
     }
 
     private var previewCard: some View {
@@ -217,8 +220,11 @@ struct StreamScreen: View {
                 Text(model.streamProtocol.inputLabel).font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundColor(AppColor.greenAccent)
                 Rectangle().fill(AppColor.ink.opacity(0.12)).frame(width: 1, height: 14)
                 TextField(model.streamProtocol.defaultUrl, text: $model.streamUrl)
+                    .focused($streamUrlFocused)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
+                    .submitLabel(.done)
+                    .onSubmit { streamUrlFocused = false }
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(AppColor.ink)
                     .lineLimit(1)

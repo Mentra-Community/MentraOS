@@ -1,8 +1,10 @@
 import SwiftUI
+import UIKit
 
 struct RootView: View {
     @State private var tab: Tab = .device
     @StateObject private var bluetooth = BluetoothViewModel()
+    @StateObject private var keyboard = KeyboardState()
 
     var body: some View {
         ZStack {
@@ -16,16 +18,39 @@ struct RootView: View {
                 case .console: ConsoleScreen(model: bluetooth)
                 }
             }
+            .environment(\.keyboardVisible, keyboard.isVisible)
             VStack {
                 Spacer(minLength: 0)
-                TabBarView(active: $tab)
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 12)
+                if !keyboard.isVisible {
+                    TabBarView(active: $tab)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 12)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .ignoresSafeArea(.container, edges: .bottom)
-            .ignoresSafeArea(.keyboard, edges: .bottom)
         }
+        .animation(.easeOut(duration: 0.18), value: keyboard.isVisible)
+    }
+}
+
+final class KeyboardState: ObservableObject {
+    @Published var isVisible = false
+    private var observers: [NSObjectProtocol] = []
+
+    init() {
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: UIResponder.keyboardWillShowNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.isVisible = true
+        })
+        observers.append(center.addObserver(forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.isVisible = false
+        })
+    }
+
+    deinit {
+        observers.forEach(NotificationCenter.default.removeObserver)
     }
 }
 

@@ -3,6 +3,7 @@ import SwiftUI
 
 struct DeviceScreen: View {
     @ObservedObject var model: BluetoothViewModel
+    @Environment(\.keyboardVisible) private var keyboardVisible
 
     var body: some View {
         ScrollView {
@@ -25,9 +26,10 @@ struct DeviceScreen: View {
                     .padding(.horizontal, 16)
                     .padding(.top, 16)
             }
-            .padding(.bottom, 140)
+            .padding(.bottom, LayoutMetric.scrollBottomPadding(keyboardVisible: keyboardVisible))
         }
         .background(AppColor.bg)
+        .scrollDismissesKeyboard(.interactively)
     }
 
     private var heroCard: some View {
