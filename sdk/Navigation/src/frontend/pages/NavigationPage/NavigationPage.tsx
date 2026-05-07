@@ -77,7 +77,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
       .computeRoute({
         origin,
         stops: [{lat: destination.lat, lng: destination.lng}],
-        mode: travelMode,
+        mode: "walking",
       })
       .then((result) => {
         console.log("[PREVIEW] computeRoute result:", JSON.stringify(result).slice(0, 200))
@@ -233,7 +233,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
 
     const result = await navigation.start({
       stops: [{lat: latNum, lng: lngNum}],
-      mode: travelMode,
+      mode: "walking",
       simulate,
       speedMultiplier,
     })

@@ -73,6 +73,8 @@ final class NavigationManager: NSObject {
       }
       nav.add(self)
       nav.sendsBackgroundNotifications = false
+      // Enable full voice guidance (turn-by-turn announcements + alerts).
+      nav.voiceGuidance = .alertsAndGuidance
       self.navigator = nav
 
       let provider = mapView.roadSnappedLocationProvider

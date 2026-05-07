@@ -28,6 +28,7 @@ import {GoogleMapsManager} from "@/backend/session/managers/GoogleMapsManager"
 import {LocationManager} from "@/backend/session/managers/LocationManager"
 import type {Coords} from "@/backend/session/managers/LocationManager"
 import {NavigationManager} from "@/backend/session/managers/navigation/NavigationManager"
+import {PivotTracker} from "@/backend/session/managers/navigation/PivotTracker"
 import {SimpleStorageManager} from "@/backend/session/managers/SimpleStorageManager"
 
 export class User {
@@ -40,6 +41,12 @@ export class User {
   readonly display: DisplayManager
   readonly navigation: NavigationManager
   readonly storage: SimpleStorageManager
+  /**
+   * Geometry-derived turn tracker. Owns the pivot list extracted from the
+   * SDK route polyline + radius checks on every GPS fix. Drives the
+   * OrientationCard — we no longer trust the SDK's noisy maneuverType stream.
+   */
+  readonly pivots: PivotTracker
 
   // ---- reactive snapshot --------------------------------------------------
 
@@ -76,6 +83,7 @@ export class User {
     this.display = new DisplayManager(this.session)
     this.navigation = new NavigationManager(this.session)
     this.storage = new SimpleStorageManager(this.session)
+    this.pivots = new PivotTracker()
 
     // Last-chance teardown. Fires on phone-initiated WILL_DISCONNECT and
     // also when this.session.disconnect() runs locally — the SDK emits
@@ -175,15 +183,33 @@ export class User {
   private wireSensorsToState(): void {
     this.sensorUnsubs.push(
       this.location.onUpdate((d) => {
+        console.log(`[NAV:LOCATION] lat=${d.lat.toFixed(6)} lng=${d.lng.toFixed(6)} acc=${d.accuracy?.toFixed(1)}m`)
         this.coords = {
           lat: d.lat,
           lng: d.lng,
           accuracy: d.accuracy,
           ts: d.timestamp ?? Date.now(),
         }
+        // Feed the geometry-based maneuver tracker. It checks the 4m radius
+        // against the next pivot and emits "Turn left/right" / "Continue" /
+        // "Arrived" snapshots without trusting the SDK's per-step maneuver.
+        this.pivots.onLocationUpdate({lat: d.lat, lng: d.lng}, d.accuracy)
         this.notify()
       }),
     )
+
+    // Route polyline → pivot extraction. Fires on trip start AND every reroute.
+    this.sensorUnsubs.push(
+      this.navigation.onRoute((route) => {
+        const here = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
+        this.pivots.setRoute(route.points, here)
+        this.notify()
+      }),
+    )
+
+    // PivotTracker → React. Whenever the tracker's snapshot flips (turn entered,
+    // pivot advanced, arrived) bump version so consumers re-render.
+    this.sensorUnsubs.push(this.pivots.subscribe(() => this.notify()))
 
     // Throttle compass updates to ~10Hz. The IMU pushes far more
     // frequently than the UI can use, and every notify re-renders every
@@ -277,6 +303,13 @@ export class User {
       this.display.clear()
     } catch (err) {
       console.warn("[User] display.clear during dispose failed:", err)
+    }
+
+    // Reset the pivot tracker.
+    try {
+      this.pivots.clear()
+    } catch (err) {
+      console.warn("[User] pivots.clear threw:", err)
     }
 
     // Release sensor subscriptions.

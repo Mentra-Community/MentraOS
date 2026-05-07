@@ -35,6 +35,7 @@ import headingService from "@/services/HeadingService"
 import localDisplayManager from "@/services/LocalDisplayManager"
 import type {DisplayPayload} from "@/services/LocalDisplayManager"
 import localSttFallbackCoordinator from "@/services/LocalSttFallbackCoordinator"
+import mantle from "@/services/MantleManager"
 import micStateCoordinator from "@/services/MicStateCoordinator"
 import navigationService, {NavUpdate} from "@/services/NavigationService"
 import socketComms from "@/services/SocketComms"
@@ -723,7 +724,20 @@ class LocalMiniappRuntime {
     const app = this.connectedApps.get(packageName)
     if (!app) return
 
-    const streams = (payload.subscriptions ?? payload.streams) as string[] | undefined
+    const rawStreams = (payload.subscriptions ?? payload.streams) as (string | {stream: string; rate?: string})[] | undefined
+    // Normalize: objects like {stream: "location_stream", rate: "realtime"} → extract stream name
+    // "location_stream" is the rate-bearing alias for "location_update"
+    let requestedLocationRate: string | null = null
+    const streams = rawStreams?.map((s) => {
+      if (typeof s === "object" && s !== null) {
+        if (s.stream === "location_stream") {
+          if (s.rate) requestedLocationRate = s.rate
+          return "location_update"
+        }
+        return s.stream
+      }
+      return s
+    }) as string[] | undefined
     if (!Array.isArray(streams)) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
@@ -795,6 +809,10 @@ class LocalMiniappRuntime {
     this.recomputeMicRequirements()
     this.updateCloudSubscriptions()
     this.recomputeHeadingSubscription()
+    if (requestedLocationRate) {
+      console.log(`[LOCATION] miniapp ${packageName} requested rate: ${requestedLocationRate}`)
+      mantle.setLocationTier(requestedLocationRate)
+    }
     this.sendResult(packageName, requestId, true)
 
     // Fire initial snapshot values for stateful streams so miniapps don't have
@@ -1809,6 +1827,14 @@ class LocalMiniappRuntime {
     if (matchedSubs.size === 0 && !perGestureStream) return
 
     for (const packageName of matchedSubs) {
+      // While a nav trip is active the Nav SDK's road-snapped fixes are
+      // already being forwarded via addLocationListener (see NAV_START handler).
+      // Suppress the raw background-GPS forward for that miniapp so the two
+      // streams don't interleave and cause the position to jump back to the
+      // real-phone location during simulation.
+      if (normalizedStream === MiniappStreamType.LOCATION_UPDATE && this.activeNavApps.has(packageName)) {
+        continue
+      }
       this.sendToMiniapp(packageName, {
         type: MiniappResponseType.EVENT,
         streamType: normalizedStream,

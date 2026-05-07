@@ -30,7 +30,7 @@
 
 import {EventEmitter} from "eventemitter3"
 
-import {MiniappRequestType} from "../protocol"
+import {MiniappRequestType, MiniappStreamType} from "../protocol"
 import {MiniappSession} from "../session"
 
 export type UnsubscribeFn = () => void
@@ -205,9 +205,14 @@ export class EventManager {
   }
 
   private sendSubscriptionUpdate(): void {
+    const subscriptions = Array.from(this.refCounts.keys()).map((stream) =>
+      stream === MiniappStreamType.LOCATION_UPDATE
+        ? {stream: "location_stream", rate: "realtime"}
+        : stream,
+    )
     this.session.sendOneShot({
       type: MiniappRequestType.SUBSCRIBE,
-      subscriptions: Array.from(this.refCounts.keys()),
+      subscriptions,
     })
   }
 }

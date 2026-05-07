@@ -51,6 +51,7 @@ TaskManager.defineTask(LOCATION_TASK_NAME, ({data: {locations}, error}) => {
 
   // Direct forward to local miniapps. Cloud path (relayMessageToApps) never
   // reaches __phone__, so local miniapps rely on this direct push.
+  console.log(`[LOCATION] lat=${first.coords.latitude.toFixed(6)} lng=${first.coords.longitude.toFixed(6)} acc=${first.coords.accuracy?.toFixed(1)}m`)
   localMiniappRuntime.forwardEvent("location_update", {
     lat: first.coords.latitude,
     lng: first.coords.longitude,
@@ -891,14 +892,17 @@ class MantleManager {
 
   public async setLocationTier(tier: string) {
     console.log("MANTLE: setLocationTier()", tier)
-    // restComms.sendLocationData({tier})
     try {
       const accuracy = this.getLocationAccuracy(tier)
-      await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME)
+      const isRegistered = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false)
+      if (isRegistered) {
+        await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME)
+      }
       await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-        accuracy: accuracy,
+        accuracy,
         pausesUpdatesAutomatically: false,
       })
+      console.log("MANTLE: setLocationTier() success —", tier)
     } catch (error) {
       console.log("MANTLE: Error setting location tier", error)
     }

@@ -6,7 +6,8 @@
     "dev": "mentra-miniapp dev",
     "build": "bun run build.ts",
     "release": "mentra-miniapp release",
-    "pack": "mentra-miniapp pack"
+    "pack": "mentra-miniapp pack",
+    "test": "bun test"
   },
   "dependencies": {
     "@mentra/miniapp": "workspace:*",

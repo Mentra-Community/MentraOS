@@ -216,11 +216,11 @@ object NavigationManager {
         override fun onNavigatorReady(nav: Navigator) {
           Log.d(TAG, "navigator ready")
           navigator = nav
-          // Silence the SDK's voice guidance — we render our own UI/HUD.
+          // Enable full SDK voice guidance (turn-by-turn announcements + alerts).
           try {
-            nav.setAudioGuidance(Navigator.AudioGuidance.SILENT)
+            nav.setAudioGuidance(Navigator.AudioGuidance.VOICE_ALERTS_AND_GUIDANCE)
           } catch (e: Throwable) {
-            Log.w(TAG, "setAudioGuidance(SILENT) failed", e)
+            Log.w(TAG, "setAudioGuidance(VOICE_ALERTS_AND_GUIDANCE) failed", e)
           }
           attachListeners(nav, callbacks)
           attachLocationListener(activity, callbacks)

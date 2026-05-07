@@ -3,6 +3,7 @@ import {useEffect, useRef, useState} from "react"
 import {useUser} from "@/backend/hooks/useUser"
 import {bearingDeg, haversineMeters} from "@/backend/lib/geometry/geometry"
 import type {LatLng} from "@/backend/lib/geometry/geometry"
+import {rdpSmooth} from "@/backend/lib/geometry/pivots"
 
 export function NavMap({
   me,
@@ -47,6 +48,8 @@ export function NavMap({
   const destMarkerRef = useRef<any | null>(null)
   const routeRef = useRef<any | null>(null)
   const pastRouteRef = useRef<any | null>(null)
+  /** Debug: red dots at each detected pivot (turn point). */
+  const pivotDotsRef = useRef<any[]>([])
   const isTouchingRef = useRef(false)
 
   // Follow-user mode: starts from the `autoFollow` prop, breaks when the
@@ -276,7 +279,11 @@ export function NavMap({
     if (!ready || !mapRef.current) return
     const g = window.google
 
-    const path: LatLng[] = routePoints && routePoints.length > 1 ? routePoints : []
+    // Smooth out the squiggly raw polyline before rendering. The SDK returns
+    // points every 1-3m which produces visible jitter on screen; RDP at 6m
+    // collapses that into clean straight runs without losing real corners.
+    const rawPath: LatLng[] = routePoints && routePoints.length > 1 ? routePoints : []
+    const path: LatLng[] = rawPath.length > 1 ? rdpSmooth(rawPath, 6) : rawPath
 
     if (path.length < 2) {
       routeRef.current?.setMap(null)
@@ -364,6 +371,40 @@ export function NavMap({
       routeRef.current?.setMap(null)
     }
   }, [ready, me?.lat, me?.lng, destination?.lat, destination?.lng, routePoints])
+
+  // Debug overlay: render a red dot at each detected pivot. Lets us visually
+  // verify that the geometry pipeline placed turn points where they belong.
+  // The pivot list comes from `user.pivots` (PivotTracker), which extracts
+  // pivots from the raw SDK polyline once per route.
+  useEffect(() => {
+    if (!ready || !mapRef.current) return
+    const g = window.google
+    const pivots = user.pivots.getPivots()
+
+    // Tear down previous markers
+    for (const dot of pivotDotsRef.current) dot.setMap(null)
+    pivotDotsRef.current = []
+
+    for (const p of pivots) {
+      const dot = new g.maps.Circle({
+        map: mapRef.current,
+        center: {lat: p.lat, lng: p.lng},
+        radius: 3, // 3m visual marker
+        fillColor: "#FF3030",
+        fillOpacity: 1,
+        strokeColor: "#FFFFFF",
+        strokeOpacity: 1,
+        strokeWeight: 1.5,
+        clickable: false,
+        zIndex: 5,
+      })
+      pivotDotsRef.current.push(dot)
+    }
+    return () => {
+      for (const dot of pivotDotsRef.current) dot.setMap(null)
+      pivotDotsRef.current = []
+    }
+  }, [ready, routePoints, user.pivots])
 
   if (error) {
     return <div className="p-3 text-red-700 text-[13px]">Map failed to load: {error}</div>
