@@ -78,7 +78,12 @@ struct StreamScreen: View {
     private var previewSurface: some View {
         if let livePreviewUrl {
             ZStack {
-                if model.streamProtocol == .rtmp || model.streamProtocol == .srt {
+                if model.streamProtocol == .srt {
+                    RetryingHlsWebPreviewView(url: livePreviewUrl)
+                        .frame(height: 160)
+                        .background(Color.black)
+                        .clipShape(RoundedRectangle(cornerRadius: 22))
+                } else if model.streamProtocol == .rtmp {
                     HlsStreamPreviewView(url: livePreviewUrl)
                         .frame(height: 160)
                         .background(Color.black)
@@ -89,7 +94,7 @@ struct StreamScreen: View {
                         .background(Color.black)
                         .clipShape(RoundedRectangle(cornerRadius: 22))
                 }
-                previewChrome(label: "LIVE", detail: "\(model.streamProtocol.rawValue.uppercased()) · keep-alive 15s")
+                previewChrome(label: "LIVE", detail: previewDetail)
             }
         } else {
             ZStack {
@@ -99,7 +104,7 @@ struct StreamScreen: View {
                 Circle().fill(AppColor.greenSoft.opacity(0.3)).frame(width: 240, height: 240).blur(radius: 10).offset(x: 100, y: 110)
 
                 VStack {
-                    previewChrome(label: model.streamStartedAt == nil ? "READY" : "LIVE", detail: model.streamStartedAt == nil ? "Ready · enter stream URL" : "\(model.streamProtocol.rawValue.uppercased()) · keep-alive 15s")
+                    previewChrome(label: model.streamStartedAt == nil ? "READY" : "LIVE", detail: model.streamStartedAt == nil ? "Ready · enter stream URL" : previewDetail)
 
                     Spacer()
 
@@ -115,6 +120,13 @@ struct StreamScreen: View {
                 .frame(height: 160)
             }
         }
+    }
+
+    private var previewDetail: String {
+        if model.streamProtocol == .srt {
+            return "SRT · web preview · keep-alive 15s"
+        }
+        return "\(model.streamProtocol.rawValue.uppercased()) · keep-alive 15s"
     }
 
     private func previewChrome(label: String, detail: String) -> some View {
@@ -270,6 +282,41 @@ struct HlsStreamPreviewView: UIViewControllerRepresentable {
     }
 }
 
+struct RetryingHlsWebPreviewView: UIViewRepresentable {
+    let url: URL
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.allowsInlineMediaPlayback = true
+        configuration.mediaTypesRequiringUserActionForPlayback = []
+
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.isOpaque = false
+        webView.backgroundColor = .black
+        webView.scrollView.isScrollEnabled = false
+        loadPreview(in: webView, context: context)
+        return webView
+    }
+
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        loadPreview(in: webView, context: context)
+    }
+
+    private func loadPreview(in webView: WKWebView, context: Context) {
+        guard context.coordinator.loadedUrl != url else { return }
+        context.coordinator.loadedUrl = url
+        webView.loadHTMLString(retryingHlsHtml(url: url), baseURL: url.deletingLastPathComponent())
+    }
+
+    final class Coordinator {
+        var loadedUrl: URL?
+    }
+}
+
 struct WebStreamPreviewView: UIViewRepresentable {
     let url: URL
 
@@ -291,6 +338,71 @@ struct WebStreamPreviewView: UIViewRepresentable {
             webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
         }
     }
+}
+
+private func retryingHlsHtml(url: URL) -> String {
+    let playlistLiteral = javascriptStringLiteral(url.absoluteString)
+    return """
+    <!doctype html>
+    <html>
+    <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+    html,body,#video{margin:0;width:100%;height:100%;background:#000;overflow:hidden}
+    #video{object-fit:cover}
+    #message{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;color:white;font:600 13px -apple-system;padding:16px;text-shadow:0 1px 6px #000}
+    </style>
+    </head>
+    <body>
+    <video id="video" autoplay muted playsinline controls></video>
+    <div id="message">Waiting for stream...</div>
+    <script>
+    const playlist = \(playlistLiteral);
+    const video = document.getElementById('video');
+    const message = document.getElementById('message');
+    let retryTimer = null;
+
+    function withCacheBust(url) {
+      return url + (url.includes('?') ? '&' : '?') + 'preview=' + Date.now();
+    }
+
+    function scheduleRetry(reason) {
+      if (retryTimer) return;
+      message.textContent = reason || 'Waiting for stream...';
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        start();
+      }, 2000);
+    }
+
+    function start() {
+      fetch(withCacheBust(playlist), { cache: 'no-store' })
+        .then((response) => {
+          if (!response.ok) throw new Error('Stream not ready');
+          message.textContent = '';
+          video.src = withCacheBust(playlist);
+          video.load();
+          return video.play();
+        })
+        .catch(() => scheduleRetry('Waiting for stream...'));
+    }
+
+    video.addEventListener('error', () => scheduleRetry('Preview reconnecting...'));
+    video.addEventListener('stalled', () => scheduleRetry('Preview reconnecting...'));
+    window.addEventListener('load', start);
+    </script>
+    </body>
+    </html>
+    """
+}
+
+private func javascriptStringLiteral(_ value: String) -> String {
+    guard let data = try? JSONEncoder().encode(value),
+          let literal = String(data: data, encoding: .utf8)
+    else {
+        return "\"\""
+    }
+    return literal
 }
 
 private func localStreamSetupHint(protocol streamProtocol: ExampleStreamProtocol, streamUrl: String, status: String) -> String? {
