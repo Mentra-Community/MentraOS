@@ -30,7 +30,7 @@ struct StreamScreen: View {
         case .webrtc:
             return webrtcPreviewUrl(model.streamUrl)
         case .srt:
-            return nil
+            return srtHlsPreviewUrl(model.streamUrl)
         }
     }
 
@@ -78,7 +78,7 @@ struct StreamScreen: View {
     private var previewSurface: some View {
         if let livePreviewUrl {
             ZStack {
-                if model.streamProtocol == .rtmp {
+                if model.streamProtocol == .rtmp || model.streamProtocol == .srt {
                     HlsStreamPreviewView(url: livePreviewUrl)
                         .frame(height: 160)
                         .background(Color.black)
@@ -294,7 +294,7 @@ struct WebStreamPreviewView: UIViewRepresentable {
 }
 
 private func localStreamSetupHint(protocol streamProtocol: ExampleStreamProtocol, streamUrl: String, status: String) -> String? {
-    guard streamProtocol == .rtmp || streamProtocol == .webrtc else {
+    guard streamProtocol == .rtmp || streamProtocol == .srt || streamProtocol == .webrtc else {
         return nil
     }
     let normalized = status.lowercased()
@@ -310,6 +310,9 @@ private func localStreamSetupHint(protocol streamProtocol: ExampleStreamProtocol
     }
     if streamProtocol == .rtmp {
         return "Local RTMP setup: run python3 examples/local-demo-cloud/server.py, paste the printed RTMP publish URL here, then start streaming. The app previews the HLS URL; the printed ffplay command is optional for debugging."
+    }
+    if streamProtocol == .srt {
+        return "Local SRT setup: run python3 examples/local-demo-cloud/server.py, paste the printed SRT publish URL here, then start streaming. The app previews the HLS URL; the printed SRT ffplay command is optional for debugging."
     }
     return "Local WebRTC setup: run python3 examples/local-demo-cloud/server.py, paste the printed WHIP publish URL here, then open the WebRTC preview URL on your computer."
 }

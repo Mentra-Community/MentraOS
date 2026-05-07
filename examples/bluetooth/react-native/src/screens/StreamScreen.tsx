@@ -124,7 +124,7 @@ function streamProtocolLabel(protocol: StreamProtocol) {
 }
 
 function localStreamSetupHint(protocol: StreamProtocol, streamUrl: string, status: string) {
-  if (protocol !== 'rtmp' && protocol !== 'webrtc') {
+  if (protocol !== 'rtmp' && protocol !== 'srt' && protocol !== 'webrtc') {
     return null;
   }
   const normalized = status.toLowerCase();
@@ -141,6 +141,9 @@ function localStreamSetupHint(protocol: StreamProtocol, streamUrl: string, statu
   }
   if (protocol === 'rtmp') {
     return 'Local RTMP setup: run python3 examples/local-demo-cloud/server.py, paste the printed RTMP publish URL here, then open the printed HLS preview URL on your computer. The printed ffplay command is optional for debugging.';
+  }
+  if (protocol === 'srt') {
+    return 'Local SRT setup: run python3 examples/local-demo-cloud/server.py, paste the printed SRT publish URL here, then open the printed HLS preview URL on your computer. The printed SRT ffplay command is optional for debugging.';
   }
   return 'Local WebRTC setup: run python3 examples/local-demo-cloud/server.py, paste the printed WHIP publish URL here, then open the WebRTC preview URL on your computer.';
 }

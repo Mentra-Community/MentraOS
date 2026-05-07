@@ -42,7 +42,7 @@ cd /path/to/MentraOS/mobile/android
 - Showing button, touch, swipe, BLE, TX, STORE, hotspot, and raw status events in the console.
 - Changing save-in-gallery mode, which controls whether the glasses button saves photos/videos locally or only reports button/touch events to the host app.
 
-For local photo preview and RTMP/WebRTC testing, run the local demo cloud from the
+For local photo preview and RTMP/SRT/WebRTC testing, run the local demo cloud from the
 repo root:
 
 ```bash
@@ -50,8 +50,9 @@ python3 examples/local-demo-cloud/server.py
 ```
 
 Paste the printed LAN `/upload` URL into the Camera screen. Paste the printed
-RTMP publish URL into the Stream screen's RTMP field, or the printed WHIP URL
-into the WebRTC field. If Docker is not installed or not running, the command
+RTMP publish URL into the Stream screen's RTMP field, the printed SRT publish
+URL into the SRT field, or the printed WHIP URL into the WebRTC field. If Docker
+is not installed or not running, the command
 still starts the photo webhook and skips streaming with a
 warning.
 

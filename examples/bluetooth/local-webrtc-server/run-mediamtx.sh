@@ -4,9 +4,11 @@ set -euo pipefail
 if [ -n "${MENTRA_STREAM_PATH:-}" ]; then
   RTMP_STREAM_PATH="$MENTRA_STREAM_PATH"
   WEBRTC_STREAM_PATH="$MENTRA_STREAM_PATH"
+  SRT_STREAM_PATH="$MENTRA_STREAM_PATH"
 else
   RTMP_STREAM_PATH="${MENTRA_RTMP_STREAM_PATH:-live/mentra-live}"
   WEBRTC_STREAM_PATH="${MENTRA_WEBRTC_STREAM_PATH:-mentra-live}"
+  SRT_STREAM_PATH="${MENTRA_SRT_STREAM_PATH:-mentra-live}"
 fi
 
 detect_host_ip() {
@@ -63,6 +65,15 @@ Use these URLs while the container is running:
 
   Optional RTMP ffplay preview:
     ffplay -fflags nobuffer -flags low_delay -framedrop rtmp://$HOST_IP:1935/$RTMP_STREAM_PATH
+
+  SRT publish URL for the example app:
+    srt://$HOST_IP:8890?streamid=publish:$SRT_STREAM_PATH&pkt_size=1316
+
+  SRT browser preview (HLS):
+    http://$HOST_IP:8888/$SRT_STREAM_PATH
+
+  Optional SRT ffplay preview:
+    ffplay -fflags nobuffer -flags low_delay -framedrop "srt://$HOST_IP:8890?streamid=read:$SRT_STREAM_PATH"
 
   WHIP publish URL for the example app:
     http://$HOST_IP:8889/$WEBRTC_STREAM_PATH/whip

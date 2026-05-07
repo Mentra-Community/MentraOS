@@ -56,7 +56,7 @@ export const PHOTO_COMPRESSIONS: PhotoCompression[] = ['none', 'medium', 'heavy'
 
 export const STREAM_DEFAULT_URLS: Record<StreamProtocol, string> = {
   rtmp: 'rtmp://<computer-ip>:1935/live/mentra-live',
-  srt: 'srt://srt.example.com:4201?streamid=YOUR_STREAM_ID&passphrase=YOUR_PASSPHRASE',
+  srt: 'srt://<computer-ip>:8890?streamid=publish:mentra-live&pkt_size=1316',
   webrtc: 'http://<computer-ip>:8889/mentra-live/whip',
 };
 
@@ -723,12 +723,14 @@ export function useMentraSdk(): MentraSdkModel {
         setStreamStatus(validationMessage);
         throw new Error(validationMessage);
       }
-      if (streamProtocol === 'rtmp' || streamProtocol === 'webrtc') {
+      if (streamProtocol === 'rtmp' || streamProtocol === 'srt' || streamProtocol === 'webrtc') {
         setStreamStatus(`Checking local ${streamProtocol.toUpperCase()} server`);
         const reachabilityMessage =
           streamProtocol === 'rtmp'
             ? await localRtmpReachabilityMessage(url)
-            : await localWebrtcReachabilityMessage(url);
+            : streamProtocol === 'srt'
+              ? await localSrtReachabilityMessage(url)
+              : await localWebrtcReachabilityMessage(url);
         if (reachabilityMessage) {
           setStreamStatus(reachabilityMessage);
           throw new Error(reachabilityMessage);
@@ -1497,6 +1499,20 @@ async function localRtmpReachabilityMessage(rtmpUrlText: string) {
   return localHttpPreviewReachabilityMessage(previewUrl, localRtmpSetupMessage);
 }
 
+async function localSrtReachabilityMessage(srtUrlText: string) {
+  let previewUrl = '';
+  try {
+    previewUrl = srtHlsPreviewUrl(srtUrlText) ?? '';
+  } catch {
+    return 'Enter a valid srt:// publish URL.';
+  }
+  if (!previewUrl) {
+    return null;
+  }
+
+  return localHttpPreviewReachabilityMessage(previewUrl, localSrtSetupMessage);
+}
+
 async function localHttpPreviewReachabilityMessage(
   previewUrl: string,
   setupMessage: (detail: string) => string,
@@ -1526,6 +1542,30 @@ function rtmpHlsPreviewUrl(rtmpUrlText: string) {
   rtmpUrl.port = '8888';
   rtmpUrl.search = '';
   return rtmpUrl.toString();
+}
+
+function srtHlsPreviewUrl(srtUrlText: string) {
+  const srtUrl = new URL(srtUrlText);
+  if (srtUrl.protocol !== 'srt:') {
+    throw new Error('Only srt URLs are supported.');
+  }
+  if (!isLocalPreviewHost(srtUrl.hostname)) {
+    return null;
+  }
+  const path = srtStreamPath(srtUrl.searchParams.get('streamid'));
+  if (!path) {
+    return null;
+  }
+  return `http://${srtUrl.hostname}:8888/${path}`;
+}
+
+function srtStreamPath(streamId: string | null) {
+  if (!streamId) {
+    return null;
+  }
+  const parts = streamId.split(':');
+  const path = parts[0] === 'publish' || parts[0] === 'read' ? parts[1] : streamId;
+  return path?.replace(/^\/+|\/+$/g, '') || null;
 }
 
 function isLocalPreviewHost(host: string) {
@@ -1567,6 +1607,10 @@ function localWebrtcSetupMessage(detail: string) {
 
 function localRtmpSetupMessage(detail: string) {
   return `Local RTMP/HLS server not reachable (${detail}). Run python3 examples/local-demo-cloud/server.py and paste the printed RTMP publish URL.`;
+}
+
+function localSrtSetupMessage(detail: string) {
+  return `Local SRT/HLS server not reachable (${detail}). Run python3 examples/local-demo-cloud/server.py and paste the printed SRT publish URL.`;
 }
 
 function streamUrlValidationMessage(streamUrl: string) {

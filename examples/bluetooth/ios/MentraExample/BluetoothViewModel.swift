@@ -36,7 +36,7 @@ enum ExampleStreamProtocol: String, CaseIterable {
         case .rtmp:
             return "rtmp://<computer-ip>:1935/live/mentra-live"
         case .srt:
-            return "srt://srt.example.com:4201?streamid=YOUR_STREAM_ID&passphrase=YOUR_PASSPHRASE"
+            return "srt://<computer-ip>:8890?streamid=publish:mentra-live&pkt_size=1316"
         case .webrtc:
             return "http://<computer-ip>:8889/mentra-live/whip"
         }
@@ -322,12 +322,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             }
             let streamId = "ios-\(Int(Date().timeIntervalSince1970 * 1000))"
             let selectedProtocol = streamProtocol
-            if selectedProtocol == .rtmp || selectedProtocol == .webrtc {
+            if selectedProtocol == .rtmp || selectedProtocol == .srt || selectedProtocol == .webrtc {
                 startStream(streamUrl: url, streamId: streamId, protocol: selectedProtocol)
                 Task {
                     do {
                         if selectedProtocol == .rtmp {
                             try await checkLocalRtmpServer(rtmpUrl: url)
+                        } else if selectedProtocol == .srt {
+                            try await checkLocalSrtServer(srtUrl: url)
                         } else {
                             try await checkLocalWebrtcServer(whipUrl: url)
                         }
@@ -1386,6 +1388,14 @@ func checkLocalRtmpServer(rtmpUrl: String) async throws {
     try await checkHttpPreviewServer(url: previewUrl, setupMessage: localRtmpSetupMessage)
 }
 
+func checkLocalSrtServer(srtUrl: String) async throws {
+    guard isValidSrtUrl(srtUrl) else {
+        throw ExampleActionError(message: "Enter a valid srt:// publish URL.")
+    }
+    guard let previewUrl = srtHlsPreviewUrl(srtUrl) else { return }
+    try await checkHttpPreviewServer(url: previewUrl, setupMessage: localSrtSetupMessage)
+}
+
 func checkLocalWebrtcServer(whipUrl: String) async throws {
     guard let previewUrl = webrtcPreviewUrl(whipUrl) else {
         throw ExampleActionError(message: "Enter a valid http:// or https:// WHIP URL.")
@@ -1425,9 +1435,42 @@ func rtmpHlsPreviewUrl(_ rtmpUrlText: String) -> URL? {
     return components.url
 }
 
+func srtHlsPreviewUrl(_ srtUrlText: String) -> URL? {
+    guard let components = URLComponents(string: srtUrlText),
+          components.scheme == "srt",
+          let host = components.host,
+          isLocalPreviewHost(host),
+          let streamPath = srtStreamPath(components)
+    else { return nil }
+
+    var previewComponents = URLComponents()
+    previewComponents.scheme = "http"
+    previewComponents.host = host
+    previewComponents.port = 8888
+    previewComponents.path = "/\(streamPath)/index.m3u8"
+    return previewComponents.url
+}
+
+private func srtStreamPath(_ components: URLComponents) -> String? {
+    guard let streamId = components.queryItems?.first(where: { $0.name.lowercased() == "streamid" })?.value else {
+        return nil
+    }
+    let pieces = streamId.split(separator: ":", omittingEmptySubsequences: false)
+    let path = ["publish", "read"].contains(pieces.first?.lowercased() ?? "") && pieces.count > 1
+        ? String(pieces[1])
+        : streamId
+    let trimmedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    return trimmedPath.isEmpty ? nil : trimmedPath
+}
+
 func isValidRtmpUrl(_ rtmpUrlText: String) -> Bool {
     guard let components = URLComponents(string: rtmpUrlText) else { return false }
     return (components.scheme == "rtmp" || components.scheme == "rtmps") && components.host != nil
+}
+
+func isValidSrtUrl(_ srtUrlText: String) -> Bool {
+    guard let components = URLComponents(string: srtUrlText) else { return false }
+    return components.scheme == "srt" && components.host != nil
 }
 
 func isLocalPreviewHost(_ host: String) -> Bool {
@@ -1456,6 +1499,10 @@ func webrtcPreviewUrl(_ whipUrlText: String) -> URL? {
 
 func localRtmpSetupMessage(_ detail: String) -> String {
     "Local RTMP/HLS server not reachable (\(detail)). Run python3 examples/local-demo-cloud/server.py and paste the printed RTMP publish URL."
+}
+
+func localSrtSetupMessage(_ detail: String) -> String {
+    "Local SRT/HLS server not reachable (\(detail)). Run python3 examples/local-demo-cloud/server.py and paste the printed SRT publish URL."
 }
 
 func localWebrtcSetupMessage(_ detail: String) -> String {

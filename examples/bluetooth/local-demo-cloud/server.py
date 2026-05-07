@@ -17,8 +17,10 @@ DEFAULT_PHOTO_PORT = 8787
 DEFAULT_RTMP_PORT = 1935
 DEFAULT_HLS_PORT = 8888
 DEFAULT_WEBRTC_PORT = 8889
+DEFAULT_SRT_PORT = 8890
 DEFAULT_RTMP_STREAM_PATH = "live/mentra-live"
 DEFAULT_WEBRTC_STREAM_PATH = "mentra-live"
+DEFAULT_SRT_STREAM_PATH = "mentra-live"
 MEDIA_MTX_CONTAINER = "mentra-webrtc"
 MEDIA_MTX_IMAGE = "bluenviron/mediamtx:1"
 MEDIA_MTX_HLS_VARIANT = "mpegts"
@@ -38,13 +40,15 @@ def parse_options() -> argparse.Namespace:
     parser.add_argument("--rtmp-port", type=int, default=DEFAULT_RTMP_PORT, help="MediaMTX RTMP ingest port.")
     parser.add_argument("--hls-port", type=int, default=DEFAULT_HLS_PORT, help="MediaMTX HLS preview port.")
     parser.add_argument("--webrtc-port", type=int, default=DEFAULT_WEBRTC_PORT, help="MediaMTX WebRTC HTTP port.")
+    parser.add_argument("--srt-port", type=int, default=DEFAULT_SRT_PORT, help="MediaMTX SRT ingest port.")
     parser.add_argument(
         "--stream-path",
         default=None,
-        help="MediaMTX stream path for both RTMP and WebRTC. Prefer --rtmp-path and --webrtc-path for new scripts.",
+        help="MediaMTX stream path for RTMP, SRT, and WebRTC. Prefer protocol-specific path options for new scripts.",
     )
     parser.add_argument("--rtmp-path", default=DEFAULT_RTMP_STREAM_PATH, help="MediaMTX RTMP/HLS stream path.")
     parser.add_argument("--webrtc-path", default=DEFAULT_WEBRTC_STREAM_PATH, help="MediaMTX WHIP/WHEP stream path.")
+    parser.add_argument("--srt-path", default=DEFAULT_SRT_STREAM_PATH, help="MediaMTX SRT/HLS stream path.")
     parser.add_argument("--photo-only", action="store_true", help="Start only the photo webhook.")
     parser.add_argument("--streaming-only", action="store_true", help="Start only the MediaMTX streaming server.")
     parser.add_argument("--webrtc-only", dest="streaming_only", action="store_true", help=argparse.SUPPRESS)
@@ -62,6 +66,7 @@ def parse_options() -> argparse.Namespace:
     if options.stream_path:
         options.rtmp_path = options.stream_path
         options.webrtc_path = options.stream_path
+        options.srt_path = options.stream_path
     if options.photo_only:
         options.skip_streaming = True
     if options.streaming_only:
@@ -129,7 +134,7 @@ def missing_mediamtx_ports(options: argparse.Namespace) -> list[str]:
         (f"{options.rtmp_port}:1935/tcp", "1935/tcp"),
         (f"{options.hls_port}:8888/tcp", "8888/tcp"),
         (f"{options.webrtc_port}:8889/tcp", "8889/tcp"),
-        ("8890:8890/udp", "8890/udp"),
+        (f"{options.srt_port}:8890/udp", "8890/udp"),
         ("8189:8189/udp", "8189/udp"),
     ]
     missing: list[str] = []
@@ -225,7 +230,7 @@ def start_mediamtx(options: argparse.Namespace, host_ip: str) -> tuple[subproces
             "-p",
             f"{options.webrtc_port}:8889",
             "-p",
-            "8890:8890/udp",
+            f"{options.srt_port}:8890/udp",
             "-p",
             "8189:8189/udp",
             MEDIA_MTX_IMAGE,
@@ -243,6 +248,7 @@ def print_urls(
 ) -> None:
     rtmp_path = options.rtmp_path.strip("/")
     webrtc_path = options.webrtc_path.strip("/")
+    srt_path = options.srt_path.strip("/")
     print("\nLocal Mentra demo cloud")
     print("=======================")
 
@@ -258,7 +264,7 @@ def print_urls(
     if streaming_warning:
         print("\nStreaming server is not running:")
         print(f"  {streaming_warning}")
-        print("  Photo upload is still available. Install/start Docker later to try RTMP/WebRTC streaming.")
+        print("  Photo upload is still available. Install/start Docker later to try RTMP/SRT/WebRTC streaming.")
     elif not options.skip_streaming:
         print("\nRTMP publish URL:")
         print(f"  rtmp://{host_ip}:{options.rtmp_port}/{rtmp_path}")
@@ -266,6 +272,12 @@ def print_urls(
         print(f"  http://{host_ip}:{options.hls_port}/{rtmp_path}")
         print("\nOptional RTMP ffplay preview:")
         print(f"  ffplay -fflags nobuffer -flags low_delay -framedrop rtmp://{host_ip}:{options.rtmp_port}/{rtmp_path}")
+        print("\nSRT publish URL:")
+        print(f"  srt://{host_ip}:{options.srt_port}?streamid=publish:{srt_path}&pkt_size=1316")
+        print("\nSRT browser preview (HLS):")
+        print(f"  http://{host_ip}:{options.hls_port}/{srt_path}")
+        print("\nOptional SRT ffplay preview:")
+        print(f"  ffplay -fflags nobuffer -flags low_delay -framedrop \"srt://{host_ip}:{options.srt_port}?streamid=read:{srt_path}\"")
         print("\nWHIP publish URL:")
         print(f"  http://{host_ip}:{options.webrtc_port}/{webrtc_path}/whip")
         print("\nWebRTC browser preview:")

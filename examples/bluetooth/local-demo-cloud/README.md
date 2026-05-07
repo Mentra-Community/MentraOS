@@ -5,14 +5,14 @@ It starts the photo upload webhook and a local MediaMTX streaming server from
 one command, then prints the URLs to paste into the Android, iOS, or React
 Native examples.
 
-The Python process owns the simple HTTP photo webhook. RTMP, HLS, and WebRTC
+The Python process owns the simple HTTP photo webhook. RTMP, SRT, HLS, and WebRTC
 media are delegated to MediaMTX because live media ingest and playback require a
 real media server, not just extra HTTP routes.
 
 ## Requirements
 
 - Python 3
-- Docker Desktop or Docker Engine for RTMP/WebRTC streaming only
+- Docker Desktop or Docker Engine for RTMP/SRT/WebRTC streaming only
 - Optional: FFmpeg if you want to use the printed `ffplay` debug command
 - A phone, glasses, and computer on the same reachable network
 - Mentra Live connected to Wi-Fi for streaming
@@ -46,6 +46,15 @@ RTMP browser preview (HLS):
 Optional RTMP ffplay preview:
   ffplay -fflags nobuffer -flags low_delay -framedrop rtmp://192.168.1.42:1935/live/mentra-live
 
+SRT publish URL:
+  srt://192.168.1.42:8890?streamid=publish:mentra-live&pkt_size=1316
+
+SRT browser preview (HLS):
+  http://192.168.1.42:8888/mentra-live
+
+Optional SRT ffplay preview:
+  ffplay -fflags nobuffer -flags low_delay -framedrop "srt://192.168.1.42:8890?streamid=read:mentra-live"
+
 WHIP publish URL:
   http://192.168.1.42:8889/mentra-live/whip
 
@@ -57,11 +66,11 @@ WHEP playback URL:
 ```
 
 Paste the photo URL into the Camera screen. For RTMP, paste the RTMP publish URL
-into the Stream screen's RTMP field. The native iOS example derives the HLS
-preview URL and shows it in the preview card after the stream starts; you can
-also open the HLS preview URL on your computer. For WebRTC, paste the WHIP URL
-into the Stream screen's WebRTC field and open the WebRTC preview URL on your
-computer.
+into the Stream screen's RTMP field, or paste the SRT publish URL into the SRT
+field. The native iOS example derives the HLS preview URL for RTMP and SRT and
+shows it in the preview card after the stream starts; you can also open the HLS
+preview URL on your computer. For WebRTC, paste the WHIP URL into the Stream
+screen's WebRTC field and open the WebRTC preview URL on your computer.
 
 RTMP URLs need both an application segment and a stream key segment. The default
 `/live/mentra-live` path is intentional; a one-segment RTMP path such as
@@ -72,9 +81,9 @@ compatibility. If an older `mentra-webrtc` container is already running, stop it
 with `docker stop mentra-webrtc` and rerun the helper before testing the iOS
 RTMP preview.
 
-The HLS preview URL becomes useful after the RTMP stream starts. If you open it
-before tapping **Start stream**, refresh the page after the glasses begin
-publishing.
+The HLS preview URL becomes useful after the RTMP or SRT stream starts. If you
+open it before tapping **Start stream**, refresh the page after the glasses
+begin publishing.
 
 Use the LAN URL printed by the script, not `localhost`, from the example app.
 The phone and glasses must be able to reach your computer's LAN IP.
@@ -94,7 +103,7 @@ python3 examples/local-demo-cloud/server.py --host-ip 192.168.1.42
 You can also change ports or the stream path:
 
 ```bash
-python3 examples/local-demo-cloud/server.py --photo-port 8788 --rtmp-port 1936 --hls-port 8887 --rtmp-path live/my-stream --webrtc-path my-stream
+python3 examples/local-demo-cloud/server.py --photo-port 8788 --rtmp-port 1936 --srt-port 8891 --hls-port 8887 --rtmp-path live/my-stream --srt-path my-stream --webrtc-path my-stream
 ```
 
 Run only the photo webhook:

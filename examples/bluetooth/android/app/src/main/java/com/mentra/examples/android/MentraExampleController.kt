@@ -52,18 +52,20 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
-import java.io.ByteArrayOutputStream
-import java.io.File
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 val streamDefaultUrls = mapOf(
     "rtmp" to "rtmp://<computer-ip>:1935/live/mentra-live",
-    "srt" to "srt://srt.example.com:4201?streamid=YOUR_STREAM_ID&passphrase=YOUR_PASSPHRASE",
+    "srt" to "srt://<computer-ip>:8890?streamid=publish:mentra-live&pkt_size=1316",
     "webrtc" to "http://<computer-ip>:8889/mentra-live/whip",
 )
 
@@ -416,13 +418,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
         val streamId = "android-${System.currentTimeMillis()}"
         val selectedProtocol = state.streamProtocol
-        if (selectedProtocol == "rtmp" || selectedProtocol == "webrtc") {
+        if (selectedProtocol == "rtmp" || selectedProtocol == "srt" || selectedProtocol == "webrtc") {
             state = state.copy(streamStatus = "Checking local ${selectedProtocol.uppercase()} server")
             scope.launch(Dispatchers.IO) {
-                val reachabilityMessage = if (selectedProtocol == "rtmp") {
-                    localRtmpReachabilityMessage(streamUrl)
-                } else {
-                    localWebrtcReachabilityMessage(streamUrl)
+                val reachabilityMessage = when (selectedProtocol) {
+                    "rtmp" -> localRtmpReachabilityMessage(streamUrl)
+                    "srt" -> localSrtReachabilityMessage(streamUrl)
+                    else -> localWebrtcReachabilityMessage(streamUrl)
                 }
                 scope.launch {
                     if (reachabilityMessage != null) {
@@ -1472,6 +1474,19 @@ fun localRtmpReachabilityMessage(rtmpUrlText: String): String? {
     return localHttpPreviewReachabilityMessage(previewUrl, ::localRtmpSetupMessage)
 }
 
+fun localSrtReachabilityMessage(srtUrlText: String): String? {
+    val previewUrl = try {
+        srtHlsPreviewUrl(srtUrlText)
+    } catch (_: Exception) {
+        return "Enter a valid srt:// publish URL."
+    }
+    if (previewUrl == null) {
+        return null
+    }
+
+    return localHttpPreviewReachabilityMessage(previewUrl, ::localSrtSetupMessage)
+}
+
 fun localWebrtcReachabilityMessage(whipUrlText: String): String? {
     val previewUrl = try {
         webrtcPreviewUrl(whipUrlText)
@@ -1511,6 +1526,41 @@ fun rtmpHlsPreviewUrl(rtmpUrlText: String): String? {
     return "$previewScheme://$host:8888$path"
 }
 
+fun srtHlsPreviewUrl(srtUrlText: String): String? {
+    val uri = URI(srtUrlText)
+    val scheme = uri.scheme ?: throw IllegalArgumentException("Missing SRT URL scheme.")
+    if (scheme != "srt") {
+        throw IllegalArgumentException("Only srt URLs are supported.")
+    }
+    val host = uri.host ?: throw IllegalArgumentException("Missing SRT host.")
+    if (!isLocalPreviewHost(host)) {
+        return null
+    }
+    val path = srtStreamPath(uri) ?: return null
+    return "http://$host:8888/$path"
+}
+
+private fun srtStreamPath(uri: URI): String? {
+    val streamId = uri.rawQuery
+        ?.split("&")
+        ?.firstNotNullOfOrNull { part ->
+            val separator = part.indexOf("=")
+            if (separator < 0) return@firstNotNullOfOrNull null
+            val name = URLDecoder.decode(part.substring(0, separator), StandardCharsets.UTF_8.name())
+            if (!name.equals("streamid", ignoreCase = true)) return@firstNotNullOfOrNull null
+            URLDecoder.decode(part.substring(separator + 1), StandardCharsets.UTF_8.name())
+        }
+        ?: return null
+
+    val pieces = streamId.split(":")
+    val path = if (pieces.firstOrNull()?.lowercase() in setOf("publish", "read")) {
+        pieces.getOrNull(1)
+    } else {
+        streamId
+    }
+    return path?.trim('/')?.takeIf { it.isNotBlank() }
+}
+
 fun isLocalPreviewHost(host: String): Boolean {
     val normalized = host.lowercase()
     if (
@@ -1538,6 +1588,9 @@ fun webrtcPreviewUrl(whipUrlText: String): String {
 
 fun localRtmpSetupMessage(detail: String): String =
     "Local RTMP/HLS server not reachable ($detail). Run python3 examples/local-demo-cloud/server.py and paste the printed RTMP publish URL."
+
+fun localSrtSetupMessage(detail: String): String =
+    "Local SRT/HLS server not reachable ($detail). Run python3 examples/local-demo-cloud/server.py and paste the printed SRT publish URL."
 
 fun localWebrtcSetupMessage(detail: String): String =
     "Local WebRTC server not reachable ($detail). Run python3 examples/local-demo-cloud/server.py and paste the printed WHIP publish URL."

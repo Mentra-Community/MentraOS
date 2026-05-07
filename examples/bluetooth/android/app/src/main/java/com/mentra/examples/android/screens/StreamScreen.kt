@@ -217,7 +217,7 @@ fun StreamScreen(controller: MentraExampleController) {
 }
 
 private fun localStreamSetupHint(protocol: String, streamUrl: String, status: String): String? {
-    if (protocol != "rtmp" && protocol != "webrtc") {
+    if (protocol != "rtmp" && protocol != "srt" && protocol != "webrtc") {
         return null
     }
     val normalized = status.lowercase()
@@ -233,6 +233,9 @@ private fun localStreamSetupHint(protocol: String, streamUrl: String, status: St
     }
     if (protocol == "rtmp") {
         return "Local RTMP setup: run python3 examples/local-demo-cloud/server.py, paste the printed RTMP publish URL here, then open the printed HLS preview URL on your computer. The printed ffplay command is optional for debugging."
+    }
+    if (protocol == "srt") {
+        return "Local SRT setup: run python3 examples/local-demo-cloud/server.py, paste the printed SRT publish URL here, then open the printed HLS preview URL on your computer. The printed SRT ffplay command is optional for debugging."
     }
     return "Local WebRTC setup: run python3 examples/local-demo-cloud/server.py, paste the printed WHIP publish URL here, then open the WebRTC preview URL on your computer."
 }
