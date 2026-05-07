@@ -47,7 +47,7 @@ Optional RTMP ffplay preview:
   ffplay -fflags nobuffer -flags low_delay -framedrop rtmp://192.168.1.42:1935/live/mentra-live
 
 SRT publish URL:
-  srt://192.168.1.42:8890?streamid=publish:mentra-live&pkt_size=1316
+  srt://192.168.1.42:8890?streamid=publish:mentra-live
 
 SRT browser preview (HLS):
   http://192.168.1.42:8888/mentra-live

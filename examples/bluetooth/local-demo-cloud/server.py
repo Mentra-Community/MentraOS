@@ -273,7 +273,7 @@ def print_urls(
         print("\nOptional RTMP ffplay preview:")
         print(f"  ffplay -fflags nobuffer -flags low_delay -framedrop rtmp://{host_ip}:{options.rtmp_port}/{rtmp_path}")
         print("\nSRT publish URL:")
-        print(f"  srt://{host_ip}:{options.srt_port}?streamid=publish:{srt_path}&pkt_size=1316")
+        print(f"  srt://{host_ip}:{options.srt_port}?streamid=publish:{srt_path}")
         print("\nSRT browser preview (HLS):")
         print(f"  http://{host_ip}:{options.hls_port}/{srt_path}")
         print("\nOptional SRT ffplay preview:")

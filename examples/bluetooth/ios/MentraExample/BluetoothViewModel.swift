@@ -36,7 +36,7 @@ enum ExampleStreamProtocol: String, CaseIterable {
         case .rtmp:
             return "rtmp://<computer-ip>:1935/live/mentra-live"
         case .srt:
-            return "srt://<computer-ip>:8890?streamid=publish:mentra-live&pkt_size=1316"
+            return "srt://<computer-ip>:8890?streamid=publish:mentra-live"
         case .webrtc:
             return "http://<computer-ip>:8889/mentra-live/whip"
         }

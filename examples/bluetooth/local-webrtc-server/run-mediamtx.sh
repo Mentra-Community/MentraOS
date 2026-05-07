@@ -67,7 +67,7 @@ Use these URLs while the container is running:
     ffplay -fflags nobuffer -flags low_delay -framedrop rtmp://$HOST_IP:1935/$RTMP_STREAM_PATH
 
   SRT publish URL for the example app:
-    srt://$HOST_IP:8890?streamid=publish:$SRT_STREAM_PATH&pkt_size=1316
+    srt://$HOST_IP:8890?streamid=publish:$SRT_STREAM_PATH
 
   SRT browser preview (HLS):
     http://$HOST_IP:8888/$SRT_STREAM_PATH

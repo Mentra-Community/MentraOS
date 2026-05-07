@@ -56,7 +56,7 @@ export const PHOTO_COMPRESSIONS: PhotoCompression[] = ['none', 'medium', 'heavy'
 
 export const STREAM_DEFAULT_URLS: Record<StreamProtocol, string> = {
   rtmp: 'rtmp://<computer-ip>:1935/live/mentra-live',
-  srt: 'srt://<computer-ip>:8890?streamid=publish:mentra-live&pkt_size=1316',
+  srt: 'srt://<computer-ip>:8890?streamid=publish:mentra-live',
   webrtc: 'http://<computer-ip>:8889/mentra-live/whip',
 };
 

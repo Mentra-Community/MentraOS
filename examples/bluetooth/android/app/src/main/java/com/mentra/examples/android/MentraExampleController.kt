@@ -65,7 +65,7 @@ import java.util.Locale
 
 val streamDefaultUrls = mapOf(
     "rtmp" to "rtmp://<computer-ip>:1935/live/mentra-live",
-    "srt" to "srt://<computer-ip>:8890?streamid=publish:mentra-live&pkt_size=1316",
+    "srt" to "srt://<computer-ip>:8890?streamid=publish:mentra-live",
     "webrtc" to "http://<computer-ip>:8889/mentra-live/whip",
 )
 
