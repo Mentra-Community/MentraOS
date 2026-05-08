@@ -12,14 +12,12 @@
     /delete-node/ aliases;
     aliases {
         opt3006 = &opt3006; // OPT3006 device node
-        iqs7211a = &iqs7211a; // IQS7211A node 
+        iqs7211e = &iqs7211e; // IQS7211E node
         lsm6dsv16x = &lsm6dsv16x;  // LSM6DSV16X IMU sensor node
     };
 
     zephyr_user: zephyr,user {
         jlink_usb_switch-gpios  = <&gpio1 11 GPIO_ACTIVE_HIGH>;  // P1.11 for J-Link/USB switch control
-        button-gpios            = <&gpio0 23 GPIO_ACTIVE_HIGH>;  // P0.23 for button input
-
         // GX8002 / VAD path disabled - microphone uses PDM (see &pdm0)
         vad_power-gpios         = <&gpio1 0 GPIO_ACTIVE_HIGH>;
         gx8002_vad_int-gpios    = <&gpio0 22 GPIO_ACTIVE_HIGH>;
@@ -27,7 +25,7 @@
         imu_en-gpios            = <&gpio0 19 GPIO_ACTIVE_HIGH>;   // P0.19 for IMU Enable
         watchdog_int-gpios      = <&gpio0 4 GPIO_ACTIVE_HIGH>;  // P0.04 for watchdog interrupt
         /* RDY: low asserted (per IQS / ProxFusion datasheet); idle high, falling edge = window start */
-        iqs7211a_rdy-gpios      = <&gpio1 14 GPIO_ACTIVE_LOW>;
+        iqs7211e_rdy-gpios      = <&gpio1 14 GPIO_ACTIVE_LOW>;
     };
 };
 
@@ -191,7 +189,7 @@
         status = "okay";
     };
 
-    iqs7211a: iqs7211a@56 {
+    iqs7211e: iqs7211e@56 {
         compatible = "i2c-device";
         reg = <0x56>;
         status = "okay";
@@ -267,11 +265,13 @@ zephyr_udc0: &usbd {
     status = "disabled";
 };
 
-/* Configure GPIO0 sense-edge-mask for low-power button wakeup | 配置GPIO0 sense-edge-mask用于低功耗按键唤醒 */
-/* P0.23 is bit 23, so mask = (1 << 23) = 0x800000 | P0.23是第23位，所以掩码 = (1 << 23) = 0x800000 */
+/* Low-power GPIO wake masks:
+ * P0.23 button wake: bit 23 -> 0x800000
+ * P1.14 IQS7211E RDY touch wake: bit 14 -> 0x4000
+ * These masks are per GPIO port, so keep both while both wake sources exist. */
 &gpio0 {
     sense-edge-mask = <0x800000>;
 };
 &gpio1 {
-    sense-edge-mask = <0x0>;
+    sense-edge-mask = <0x4000>;
 };

@@ -1,304 +1,348 @@
 #include "mos_touch_app.h"
+#include "mos_touch_iqs7211e_profile.h"
 
-#include <errno.h>
+#include <display/lcd/a6n.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/spinlock.h>
+#include <zephyr/sys/atomic.h>
+#include <zephyr/sys/poweroff.h>
+#include <zephyr/sys/reboot.h>
 #include <zephyr/sys/util.h>
+
+#include "mos_gx8002.h"
+#include "mos_lsm6dsv16x.h"
+#include "mos_display.h"
+#include "mos_npm1300_ldsw.h"
+#include "mos_opt3006.h"
 
 LOG_MODULE_REGISTER(mos_touch_app, LOG_LEVEL_INF);
 
-#define MOS_TOUCH_IQS_INFO_ATI_ERROR_BIT BIT(3)
-#define MOS_TOUCH_IQS_INFO_RE_ATI_OCCURRED_BIT BIT(4)
-#define MOS_TOUCH_IQS_INFO_SHOW_RESET_BIT BIT(7)
-#define MOS_TOUCH_IQS_SYSTEM_ACK_RESET_MASK 0x0080u
-#define MOS_TOUCH_IQS_SYSTEM_RE_ATI_MASK 0x0020u
-#define MOS_TOUCH_IQS_CONFIG_EVENT_MODE_MASK 0x0100u
-#define MOS_TOUCH_ATI_WAIT_POLL_MS 20
-#define MOS_TOUCH_ATI_WAIT_TIMEOUT_MS 2000
+#define MOS_TOUCH_IQS_INFO_ATI_ERROR_BIT        BIT(3)
+#define MOS_TOUCH_IQS_INFO_RE_ATI_OCCURRED_BIT  BIT(4)
+#define MOS_TOUCH_IQS_INFO_SHOW_RESET_BIT       BIT(7)
+#define MOS_TOUCH_IQS_SYSTEM_ACK_RESET_MASK     0x0080u
+#define MOS_TOUCH_IQS_SYSTEM_RE_ATI_MASK        0x0020u
+#define MOS_TOUCH_ATI_WAIT_POLL_MS              20
+#define MOS_TOUCH_ATI_WAIT_TIMEOUT_MS           300
+/* Deferred logging can sleep up to CONFIG_LOG_PROCESS_THREAD_SLEEP_MS=1000ms.
+ * Keep this delay so the reboot log reaches RTT/UART before sys_reboot();
+ * this intentionally makes the observed long-press reboot about 1.2s later than the chip event. */
+#define MOS_TOUCH_REBOOT_DELAY_MS               1200
+#define MOS_TOUCH_DUPLICATE_GESTURE_SUPPRESS_MS 120 // 设置重复手势抑制时间为120ms，防止连续帧中同一脉冲手势被多次上报；set the duplicate gesture suppression time to 120ms to prevent the same pulse gesture from being reported multiple times in consecutive frames
+#define MOS_TOUCH_LATCHED_GESTURE_MASK                                                                           \
+    (IQS7211E_GESTURE_PRESS_AND_HOLD | IQS7211E_GESTURE_PALM | IQS7211E_GESTURE_SWIPE_HOLD_X_POSITIVE |          \
+     IQS7211E_GESTURE_SWIPE_HOLD_X_NEGATIVE | IQS7211E_GESTURE_SWIPE_HOLD_Y_POSITIVE |                           \
+     IQS7211E_GESTURE_SWIPE_HOLD_Y_NEGATIVE)
+/* Frame validity guardrails only; gesture recognition comes from the IQS7211E gesture bits.
+ * 仅用于帧有效性判断；手势识别只使用 IQS7211E gesture bits。*/
+#define MOS_TOUCH_EDGE_Y_MAX                    0x03F0u
+#define MOS_TOUCH_EDGE_REL_Y_GLITCH             0x0201u
 
-// 主轴累计距离最小阈值
-#define MOS_TOUCH_RESOLVE_MIN_TRAVEL 50
+static uint16_t s_touch_prev_reported_gesture_bits = 0;
+/* Short duplicate guard only; identical chip gesture bits must still be allowed as separate later events.
+ * 仅短时间抑制重复；相同 chip gesture bits 后续仍应作为独立事件上报。*/
+static int64_t s_touch_prev_reported_gesture_ms = 0;
+static bool s_touch_debug_frame_logging = false;
 
-/*
- * Resolve slide direction with configurable dominance ratio thresholds (e.g. 3:2) to reduce ambiguous classifications.
- * 使用可配置的主导比率阈值（例如3:2）来判定滑动方向，减少模糊分类*/
-#define MOS_TOUCH_RESOLVE_X_DOM_RATIO_NUM 3
-#define MOS_TOUCH_RESOLVE_X_DOM_RATIO_DEN 2
-#define MOS_TOUCH_RESOLVE_Y_DOM_RATIO_NUM 3
-#define MOS_TOUCH_RESOLVE_Y_DOM_RATIO_DEN 2
+static struct k_work s_touch_sleep_work;
+static struct k_work_delayable s_touch_reboot_work;
+static atomic_t s_touch_sleep_pending = ATOMIC_INIT(0);
+static atomic_t s_touch_reboot_pending = ATOMIC_INIT(0);
 
-/* If chip swipe axis conflicts with stroke dominant axis by >=2x, trust stroke axis.
- * 如果芯片滑动轴与笔画主导轴冲突 >=2x，则信任笔画轴*/
-#define MOS_TOUCH_CHIP_AXIS_OVERRIDE_RATIO_NUM 2
-#define MOS_TOUCH_CHIP_AXIS_OVERRIDE_RATIO_DEN 1
+static void mos_touch_app_reset_runtime_state(void);
+static void mos_touch_app_sleep_work_handler(struct k_work *work);
+static void mos_touch_app_reboot_work_handler(struct k_work *work);
 
-/* Guardrail for glitch frames: reject sudden teleport-like finger jumps in one sample.
- * 防止故障帧：拒绝单个样本中突然的瞬移式手指跳跃*/
-#define MOS_TOUCH_MAX_STEP_DELTA 220
-/* Ignore saturated/boundary samples that frequently appear around lift/window edges.
-忽略在抬起/窗口边缘频繁出现的饱和/边界样本*/
-#define MOS_TOUCH_EDGE_Y_MAX 0x03F0u
-#define MOS_TOUCH_EDGE_REL_Y_GLITCH 0x0201u
-/* Require a few consecutive invalid frames before closing a touch stroke.
-要求在关闭触摸笔画之前，需要几个连续的无效帧*/
-#define MOS_TOUCH_RELEASE_INVALID_FRAMES 3u
+extern void configure_default_low_pins(void);
+extern void imu_en_control(bool enable);
+extern void mic_power_control(bool enable);
 
-static struct k_spinlock s_touch_app_lock;
-static bool s_touch_prev_finger_valid = false;
-static uint16_t s_touch_prev_f1x = 0xFFFFu;
-static uint16_t s_touch_prev_f1y = 0xFFFFu;
-static int32_t s_touch_stroke_dx = 0;
-static int32_t s_touch_stroke_dy = 0;
-static bool s_touch_has_final = false;
-static mos_iqs7211a_slide_direction_t s_touch_final_best_dir = MOS_IQS7211A_SLIDE_NONE;
-static uint8_t s_touch_final_best_conf = 0;
-static uint8_t s_touch_invalid_streak = 0;
-static mos_iqs7211a_slide_direction_t s_touch_current_dir = MOS_IQS7211A_SLIDE_NONE;
-static bool s_touch_current_valid = false;
-static uint8_t s_touch_current_conf = 0;
-static mos_iqs7211a_slide_direction_t s_touch_last_event_dir = MOS_IQS7211A_SLIDE_NONE;
-static bool s_touch_last_event_valid = false;
-static uint8_t s_touch_last_event_conf = 0;
-static uint32_t s_touch_last_event_seq = 0;
-
-static int mos_touch_app_apply_balanced_profile(void)
+typedef enum
 {
-    static const uint8_t blk_0x40[] = {
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG40_WORD0),  MOS_TOUCH_U16_HI(MOS_TOUCH_CFG40_WORD0),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG40_WORD1),  MOS_TOUCH_U16_HI(MOS_TOUCH_CFG40_WORD1),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG40_WORD2),  MOS_TOUCH_U16_HI(MOS_TOUCH_CFG40_WORD2),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG40_WORD3),  MOS_TOUCH_U16_HI(MOS_TOUCH_CFG40_WORD3),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG40_WORD4),  MOS_TOUCH_U16_HI(MOS_TOUCH_CFG40_WORD4),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG40_WORD5),  MOS_TOUCH_U16_HI(MOS_TOUCH_CFG40_WORD5),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG40_WORD6),  MOS_TOUCH_U16_HI(MOS_TOUCH_CFG40_WORD6),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG40_WORD7),  MOS_TOUCH_U16_HI(MOS_TOUCH_CFG40_WORD7),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG40_WORD8),  MOS_TOUCH_U16_HI(MOS_TOUCH_CFG40_WORD8),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG40_WORD9),  MOS_TOUCH_U16_HI(MOS_TOUCH_CFG40_WORD9),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG40_WORD10), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG40_WORD10),
-    };
-    static const uint8_t blk_0x50[] = {
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG50_WORD0),  MOS_TOUCH_U16_HI(MOS_TOUCH_CFG50_WORD0),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG50_WORD1),  MOS_TOUCH_U16_HI(MOS_TOUCH_CFG50_WORD1),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG50_WORD2),  MOS_TOUCH_U16_HI(MOS_TOUCH_CFG50_WORD2),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG50_WORD3),  MOS_TOUCH_U16_HI(MOS_TOUCH_CFG50_WORD3),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG50_WORD4),  MOS_TOUCH_U16_HI(MOS_TOUCH_CFG50_WORD4),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG50_WORD5),  MOS_TOUCH_U16_HI(MOS_TOUCH_CFG50_WORD5),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG50_WORD6),  MOS_TOUCH_U16_HI(MOS_TOUCH_CFG50_WORD6),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG50_WORD7),  MOS_TOUCH_U16_HI(MOS_TOUCH_CFG50_WORD7),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG50_WORD8),  MOS_TOUCH_U16_HI(MOS_TOUCH_CFG50_WORD8),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG50_WORD9),  MOS_TOUCH_U16_HI(MOS_TOUCH_CFG50_WORD9),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG50_WORD10), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG50_WORD10),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG50_WORD11), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG50_WORD11),
-    };
-    static const uint8_t blk_0x30[] = {
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG30_WORD0), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG30_WORD0),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG30_WORD1), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG30_WORD1),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG30_WORD2), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG30_WORD2),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG30_WORD3), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG30_WORD3),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG30_WORD4), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG30_WORD4),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG30_WORD5), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG30_WORD5),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG30_WORD6), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG30_WORD6),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG30_WORD7), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG30_WORD7),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG30_WORD8), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG30_WORD8),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG30_WORD9), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG30_WORD9),
-    };
-    static const uint8_t blk_0x3A[] = {
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG3A_WORD0),
-        MOS_TOUCH_U16_HI(MOS_TOUCH_CFG3A_WORD0),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG3A_WORD1),
-        MOS_TOUCH_U16_HI(MOS_TOUCH_CFG3A_WORD1),
-    };
+    MOS_TOUCH_LOGICAL_NONE = 0,
+    MOS_TOUCH_LOGICAL_SINGLE_TAP,
+    MOS_TOUCH_LOGICAL_DOUBLE_TAP,
+    MOS_TOUCH_LOGICAL_TRIPLE_TAP,
+    MOS_TOUCH_LOGICAL_PRESS_AND_HOLD,
+} mos_touch_logical_event_t;
 
-    static const uint8_t blk_0x60[] = {
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG60_WORD0), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG60_WORD0),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG60_WORD1), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG60_WORD1),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG60_WORD2), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG60_WORD2),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG60_WORD3), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG60_WORD3),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG60_WORD4), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG60_WORD4),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG60_WORD5), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG60_WORD5),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG60_WORD6), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG60_WORD6),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG60_WORD7), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG60_WORD7),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG60_WORD8), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG60_WORD8),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG60_WORD9), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG60_WORD9),
-    };
-    static const uint8_t blk_0x70[] = {
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG70_WORD0), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG70_WORD0),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG70_WORD1), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG70_WORD1),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG70_WORD2), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG70_WORD2),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG70_WORD3), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG70_WORD3),
-        MOS_TOUCH_U16_LO(MOS_TOUCH_CFG70_WORD4), MOS_TOUCH_U16_HI(MOS_TOUCH_CFG70_WORD4),
-    };
-    static const uint8_t blk_0x80[] = {
-        /* 0x80 GESTURE_ENABLE */
-        MOS_TOUCH_U16_LO(MOS_TOUCH_GESTURE_ENABLE_WORD),
-        MOS_TOUCH_U16_HI(MOS_TOUCH_GESTURE_ENABLE_WORD),
-        /* 0x82 TAP_TIME */
-        MOS_TOUCH_U16_LO(MOS_TOUCH_TAP_TIME_MS),
-        MOS_TOUCH_U16_HI(MOS_TOUCH_TAP_TIME_MS),
-        /* 0x84 TAP_DISTANCE */
-        MOS_TOUCH_U16_LO(MOS_TOUCH_TAP_DISTANCE),
-        MOS_TOUCH_U16_HI(MOS_TOUCH_TAP_DISTANCE),
-        /* 0x86 HOLD_TIME */
-        MOS_TOUCH_U16_LO(MOS_TOUCH_HOLD_TIME_MS),
-        MOS_TOUCH_U16_HI(MOS_TOUCH_HOLD_TIME_MS),
-        /* 0x88 SWIPE_TIME */
-        MOS_TOUCH_U16_LO(MOS_TOUCH_SWIPE_TIME_MS),
-        MOS_TOUCH_U16_HI(MOS_TOUCH_SWIPE_TIME_MS),
-        /* 0x8A SWIPE_X_DISTANCE */
-        MOS_TOUCH_U16_LO(MOS_TOUCH_SWIPE_INITIAL_X_DISTANCE),
-        MOS_TOUCH_U16_HI(MOS_TOUCH_SWIPE_INITIAL_X_DISTANCE),
-        /* 0x8C SWIPE_Y_DISTANCE */
-        MOS_TOUCH_U16_LO(MOS_TOUCH_SWIPE_INITIAL_Y_DISTANCE),
-        MOS_TOUCH_U16_HI(MOS_TOUCH_SWIPE_INITIAL_Y_DISTANCE),
-        /* 0x8E SWIPE_ANGLE + 0x8F GESTURE_OPEN */
-        MOS_TOUCH_U16_LO(MOS_TOUCH_SWIPE_ANGLE),
-        0x00u,
-    };
-    static const uint8_t blk_0x90[] = {
-        MOS_TOUCH_CFG90_B0,  MOS_TOUCH_CFG90_B1,  MOS_TOUCH_CFG90_B2,  MOS_TOUCH_CFG90_B3, MOS_TOUCH_CFG90_B4,
-        MOS_TOUCH_CFG90_B5,  MOS_TOUCH_CFG90_B6,  MOS_TOUCH_CFG90_B7,  MOS_TOUCH_CFG90_B8, MOS_TOUCH_CFG90_B9,
-        MOS_TOUCH_CFG90_B10, MOS_TOUCH_CFG90_B11, MOS_TOUCH_CFG90_B12,
-    };
-    static const uint8_t blk_0xA0[] = {
-        MOS_TOUCH_CFGA0_B0,  MOS_TOUCH_CFGA0_B1,  MOS_TOUCH_CFGA0_B2,  MOS_TOUCH_CFGA0_B3,  MOS_TOUCH_CFGA0_B4,
-        MOS_TOUCH_CFGA0_B5,  MOS_TOUCH_CFGA0_B6,  MOS_TOUCH_CFGA0_B7,  MOS_TOUCH_CFGA0_B8,  MOS_TOUCH_CFGA0_B9,
-        MOS_TOUCH_CFGA0_B10, MOS_TOUCH_CFGA0_B11, MOS_TOUCH_CFGA0_B12, MOS_TOUCH_CFGA0_B13, MOS_TOUCH_CFGA0_B14,
-        MOS_TOUCH_CFGA0_B15, MOS_TOUCH_CFGA0_B16, MOS_TOUCH_CFGA0_B17, MOS_TOUCH_CFGA0_B18, MOS_TOUCH_CFGA0_B19,
-        MOS_TOUCH_CFGA0_B20, MOS_TOUCH_CFGA0_B21, MOS_TOUCH_CFGA0_B22, MOS_TOUCH_CFGA0_B23, MOS_TOUCH_CFGA0_B24,
-        MOS_TOUCH_CFGA0_B25, MOS_TOUCH_CFGA0_B26, MOS_TOUCH_CFGA0_B27, MOS_TOUCH_CFGA0_B28, MOS_TOUCH_CFGA0_B29,
-    };
-    static const uint8_t blk_0xB0[] = {
-        MOS_TOUCH_CFGB0_B0,  MOS_TOUCH_CFGB0_B1,  MOS_TOUCH_CFGB0_B2,  MOS_TOUCH_CFGB0_B3,  MOS_TOUCH_CFGB0_B4,
-        MOS_TOUCH_CFGB0_B5,  MOS_TOUCH_CFGB0_B6,  MOS_TOUCH_CFGB0_B7,  MOS_TOUCH_CFGB0_B8,  MOS_TOUCH_CFGB0_B9,
-        MOS_TOUCH_CFGB0_B10, MOS_TOUCH_CFGB0_B11, MOS_TOUCH_CFGB0_B12, MOS_TOUCH_CFGB0_B13, MOS_TOUCH_CFGB0_B14,
-        MOS_TOUCH_CFGB0_B15, MOS_TOUCH_CFGB0_B16, MOS_TOUCH_CFGB0_B17, MOS_TOUCH_CFGB0_B18, MOS_TOUCH_CFGB0_B19,
-        MOS_TOUCH_CFGB0_B20, MOS_TOUCH_CFGB0_B21, MOS_TOUCH_CFGB0_B22, MOS_TOUCH_CFGB0_B23,
-    };
-
-    struct block
+static int mos_touch_app_write_profile_blocks(void)
+{
+    for (size_t i = 0; i < mos_touch_iqs7211e_profile_block_count(); i++)
     {
-        uint8_t start;
-        const uint8_t *data;
-        size_t len;
-    };
-    static const struct block blocks[] = {
-        {0x40, blk_0x40, sizeof(blk_0x40)}, {0x50, blk_0x50, sizeof(blk_0x50)}, {0x30, blk_0x30, sizeof(blk_0x30)},
-        {0x3A, blk_0x3A, sizeof(blk_0x3A)}, {0x60, blk_0x60, sizeof(blk_0x60)}, {0x70, blk_0x70, sizeof(blk_0x70)},
-        {0x80, blk_0x80, sizeof(blk_0x80)}, {0x90, blk_0x90, sizeof(blk_0x90)}, {0xA0, blk_0xA0, sizeof(blk_0xA0)},
-        {0xB0, blk_0xB0, sizeof(blk_0xB0)},
-    };
-
-    for (size_t i = 0; i < ARRAY_SIZE(blocks); i++)
-    {
-        int ret = mos_iqs7211a_write_block8(blocks[i].start, blocks[i].data, blocks[i].len);
+        const mos_touch_iqs7211e_profile_block_t *block = mos_touch_iqs7211e_profile_block_at(i);
+        int ret = mos_iqs7211e_write_block8(block->start_reg, block->data, block->len);
         if (ret != 0)
         {
-            LOG_ERR("Touch profile block 0x%02x write failed: %d", blocks[i].start, ret);
+            LOG_ERR("Touch profile block 0x%02x write failed: %d", block->start_reg, ret);
             return ret;
         }
     }
 
-    LOG_INF("Touch profile applied (0x30/0x3A/0x40/0x50/0x60/0x70/0x80/0x90/0xA0/0xB0)");
+    LOG_INF("Touch profile applied from IQS7211E_init.h (0x1F~0x7C)");
     return 0;
 }
 
-static int mos_touch_app_finalize_profile_load(void)
+static int mos_touch_app_activate_profile(void)
 {
-    int ret = mos_iqs7211a_update_reg16(IQS7211A_REG_SYSTEM_CONTROL, MOS_TOUCH_IQS_SYSTEM_ACK_RESET_MASK,
-                                        MOS_TOUCH_IQS_SYSTEM_ACK_RESET_MASK);
+    const uint8_t fae_system_settings[] = {
+        SYSTEM_CONTROL_0 | (uint8_t)MOS_TOUCH_IQS_SYSTEM_ACK_RESET_MASK | (uint8_t)MOS_TOUCH_IQS_SYSTEM_RE_ATI_MASK,
+        SYSTEM_CONTROL_1,
+        /* Keep host-controlled active mode so the first tap after idle is not consumed as a wake-up touch. 
+         保持主机控制的活跃模式，以便空闲后第一次点击不会被用作唤醒触摸。*/
+        CONFIG_SETTINGS0 | (uint8_t)(IQS7211E_CONFIG_COMMS_END_CMD | IQS7211E_CONFIG_MANUAL_CONTROL),
+        CONFIG_SETTINGS1 | (uint8_t)(IQS7211E_CONFIG_EVENT_MODE >> 8),
+        OTHER_SETTINGS_0,
+        OTHER_SETTINGS_1,
+    };
+
+    int ret = mos_iqs7211e_write_block8(IQS7211E_REG_SYSTEM_CONTROL, fae_system_settings, sizeof(fae_system_settings));
     if (ret != 0)
     {
-        LOG_ERR("IQS ack reset failed: %d", ret);
+        LOG_ERR("IQS FAE final system settings failed: %d", ret);
         return ret;
     }
 
-    ret = mos_iqs7211a_update_reg16(IQS7211A_REG_SYSTEM_CONTROL, MOS_TOUCH_IQS_SYSTEM_RE_ATI_MASK,
-                                    MOS_TOUCH_IQS_SYSTEM_RE_ATI_MASK);
-    if (ret != 0)
-    {
-        LOG_ERR("IQS ReATI request failed: %d", ret);
-        return ret;
-    }
+    bool reati_seen = false;
+    uint16_t last_info_flags = 0;
+    k_sleep(K_MSEC(80));
 
-    for (int elapsed = 0; elapsed < MOS_TOUCH_ATI_WAIT_TIMEOUT_MS; elapsed += MOS_TOUCH_ATI_WAIT_POLL_MS)
+    const int64_t reati_wait_deadline = k_uptime_get() + MOS_TOUCH_ATI_WAIT_TIMEOUT_MS;
+    while (k_uptime_get() < reati_wait_deadline)
     {
         uint16_t info_flags = 0;
 
-        ret = mos_iqs7211a_read_event_states(&info_flags, NULL);
-        if ((ret == 0) && ((info_flags & MOS_TOUCH_IQS_INFO_RE_ATI_OCCURRED_BIT) == 0U))
+        ret = mos_iqs7211e_read_event_states(&info_flags, NULL);
+        if (ret == 0)
         {
-            if ((info_flags & MOS_TOUCH_IQS_INFO_ATI_ERROR_BIT) != 0U)
+            last_info_flags = info_flags;
+            if ((info_flags & MOS_TOUCH_IQS_INFO_RE_ATI_OCCURRED_BIT) != 0U)
             {
-                LOG_WRN("IQS ATI completed with ATI_ERROR still set (INFO=0x%04x)", info_flags);
+                reati_seen = true;
             }
 
-            ret = mos_iqs7211a_update_reg16(IQS7211A_REG_CONFIG_SETTINGS, MOS_TOUCH_IQS_CONFIG_EVENT_MODE_MASK,
-                                            MOS_TOUCH_IQS_CONFIG_EVENT_MODE_MASK);
-            if (ret != 0)
+            if (reati_seen)
             {
-                LOG_ERR("IQS event mode enable failed: %d", ret);
-                return ret;
+                if ((info_flags & MOS_TOUCH_IQS_INFO_ATI_ERROR_BIT) != 0U)
+                {
+                    LOG_WRN("IQS ATI completed with ATI_ERROR still set (INFO=0x%04x)", info_flags);
+                }
+                break;
             }
-
-            return 0;
         }
 
-        k_sleep(K_MSEC(MOS_TOUCH_ATI_WAIT_POLL_MS));
+        const int64_t remaining_ms = reati_wait_deadline - k_uptime_get();
+        if (remaining_ms > 0)
+        {
+            k_sleep(K_MSEC(MIN((int64_t)MOS_TOUCH_ATI_WAIT_POLL_MS, remaining_ms)));
+        }
     }
 
-    LOG_ERR("IQS ReATI wait timed out");
-    return -ETIMEDOUT;
+    if (!reati_seen)
+    {
+        LOG_WRN("IQS ReATI completion flag not observed before timeout (last INFO=0x%04x)", last_info_flags);
+    }
+
+    /* Force one runtime read after profile activation so the first user touch is not used as the sync frame.
+        首次运行时读取，以确保第一次用户触摸不会被用作同步帧。*/
+    ret = mos_iqs7211e_refresh_runtime_cache();
+    if (ret != 0)
+    {
+        LOG_ERR("IQS runtime cache sync after profile activation failed: %d", ret);
+        return ret;
+    }
+
+    LOG_INF("IQS runtime cache synchronized after profile activation");
+    return 0;
 }
 
-static int32_t mos_touch_app_abs32(int32_t value)
+static const char *mos_touch_app_logical_event_str(mos_touch_logical_event_t event)
 {
-    return (value < 0) ? -value : value;
+    switch (event)
+    {
+        case MOS_TOUCH_LOGICAL_SINGLE_TAP:
+            return "SINGLE_TAP";
+        case MOS_TOUCH_LOGICAL_DOUBLE_TAP:
+            return "DOUBLE_TAP";
+        case MOS_TOUCH_LOGICAL_TRIPLE_TAP:
+            return "TRIPLE_TAP";
+        case MOS_TOUCH_LOGICAL_PRESS_AND_HOLD:
+            return "PRESS_AND_HOLD";
+        case MOS_TOUCH_LOGICAL_NONE:
+        default:
+            return "NONE";
+    }
+}
+
+static mos_touch_logical_event_t mos_touch_app_chip_discrete_event(uint16_t gestures)
+{
+    if ((gestures & IQS7211E_GESTURE_TRIPLE_TAP) != 0U)
+    {
+        return MOS_TOUCH_LOGICAL_TRIPLE_TAP;
+    }
+    if ((gestures & IQS7211E_GESTURE_DOUBLE_TAP) != 0U)
+    {
+        return MOS_TOUCH_LOGICAL_DOUBLE_TAP;
+    }
+    if ((gestures & IQS7211E_GESTURE_SINGLE_TAP) != 0U)
+    {
+        return MOS_TOUCH_LOGICAL_SINGLE_TAP;
+    }
+    if ((gestures & IQS7211E_GESTURE_PRESS_AND_HOLD) != 0U)
+    {
+        return MOS_TOUCH_LOGICAL_PRESS_AND_HOLD;
+    }
+    return MOS_TOUCH_LOGICAL_NONE;
+}
+
+static void mos_touch_app_emit_logical_event(mos_touch_logical_event_t event, const char *source)
+{
+    if (event == MOS_TOUCH_LOGICAL_NONE)
+    {
+        return;
+    }
+
+    LOG_INF("[TOUCH] Logical event: %s (%s)", mos_touch_app_logical_event_str(event), source);
+}
+
+static void mos_touch_app_request_sleep(void)
+{
+    if (!atomic_cas(&s_touch_sleep_pending, 0, 1))
+    {
+        return;
+    }
+
+    int ret = k_work_submit(&s_touch_sleep_work);
+    if (ret < 0)
+    {
+        atomic_set(&s_touch_sleep_pending, 0);
+        LOG_ERR("Failed to schedule touch sleep work: %d", ret);
+    }
+}
+
+static void mos_touch_app_request_reboot(void)
+{
+    if (!atomic_cas(&s_touch_reboot_pending, 0, 1))
+    {
+        return;
+    }
+
+    LOG_INF("PRESS_AND_HOLD detected - rebooting device");
+
+    /* The delay is for log flush visibility only; sys_reboot() itself runs in the delayed work handler. */
+    int ret = k_work_schedule(&s_touch_reboot_work, K_MSEC(MOS_TOUCH_REBOOT_DELAY_MS));
+    if (ret < 0)
+    {
+        atomic_set(&s_touch_reboot_pending, 0);
+        LOG_ERR("Failed to schedule touch reboot work: %d", ret);
+    }
+}
+
+static uint16_t mos_touch_app_chip_gesture_mask(void)
+{
+    return IQS7211E_GESTURE_SINGLE_TAP | IQS7211E_GESTURE_DOUBLE_TAP | IQS7211E_GESTURE_TRIPLE_TAP |
+           IQS7211E_GESTURE_PRESS_AND_HOLD | IQS7211E_GESTURE_PALM | IQS7211E_GESTURE_SWIPE_X_POSITIVE |
+           IQS7211E_GESTURE_SWIPE_X_NEGATIVE | IQS7211E_GESTURE_SWIPE_Y_POSITIVE | IQS7211E_GESTURE_SWIPE_Y_NEGATIVE |
+           IQS7211E_GESTURE_SWIPE_HOLD_X_POSITIVE | IQS7211E_GESTURE_SWIPE_HOLD_X_NEGATIVE |
+           IQS7211E_GESTURE_SWIPE_HOLD_Y_POSITIVE | IQS7211E_GESTURE_SWIPE_HOLD_Y_NEGATIVE;
+}
+
+static const char *mos_touch_app_raw_gesture_str(uint16_t gestures)
+{
+    if (gestures == IQS7211E_GESTURE_SINGLE_TAP)
+    {
+        return "SINGLE_TAP";
+    }
+    if (gestures == IQS7211E_GESTURE_DOUBLE_TAP)
+    {
+        return "DOUBLE_TAP";
+    }
+    if (gestures == IQS7211E_GESTURE_TRIPLE_TAP)
+    {
+        return "TRIPLE_TAP";
+    }
+    if (gestures == IQS7211E_GESTURE_PRESS_AND_HOLD)
+    {
+        return "PRESS_AND_HOLD";
+    }
+    if (gestures == IQS7211E_GESTURE_PALM)
+    {
+        return "PALM";
+    }
+    if (gestures == IQS7211E_GESTURE_SWIPE_X_POSITIVE)
+    {
+        return "SWIPE_X_POSITIVE";
+    }
+    if (gestures == IQS7211E_GESTURE_SWIPE_X_NEGATIVE)
+    {
+        return "SWIPE_X_NEGATIVE";
+    }
+    if (gestures == IQS7211E_GESTURE_SWIPE_Y_POSITIVE)
+    {
+        return "SWIPE_Y_POSITIVE";
+    }
+    if (gestures == IQS7211E_GESTURE_SWIPE_Y_NEGATIVE)
+    {
+        return "SWIPE_Y_NEGATIVE";
+    }
+    if (gestures == IQS7211E_GESTURE_SWIPE_HOLD_X_POSITIVE)
+    {
+        return "SWIPE_HOLD_X_POSITIVE";
+    }
+    if (gestures == IQS7211E_GESTURE_SWIPE_HOLD_X_NEGATIVE)
+    {
+        return "SWIPE_HOLD_X_NEGATIVE";
+    }
+    if (gestures == IQS7211E_GESTURE_SWIPE_HOLD_Y_POSITIVE)
+    {
+        return "SWIPE_HOLD_Y_POSITIVE";
+    }
+    if (gestures == IQS7211E_GESTURE_SWIPE_HOLD_Y_NEGATIVE)
+    {
+        return "SWIPE_HOLD_Y_NEGATIVE";
+    }
+
+    return "MULTI_OR_UNKNOWN";
 }
 /**
  * @description: 解析滑动方向
  * @note:
- *   - 如果存在单一明确的滑动事件，则直接使用该事件作为结果，置信度为100；
- *   -
- * 否则根据移动距离和主轴占优条件计算结果，置信度根据主轴与次轴距离差占主轴距离的比例计算，范围0~90，差值越大置信度越高。
+ *   - 只接受 IQS7211E 手势寄存器中的单一明确滑动事件；
+ *   - 不再根据轨迹距离做软件方向推断。
  *
  *   Resolve slide direction from state:
- *   - If there is a single clear swipe event, use it directly with confidence=100.
- *   - Otherwise, determine direction by comparing X/Y travel and dominance ratio; confidence is proportional to the
- * difference between major/minor axis (0~90).
+ *   - Use only a single clear swipe bit from the IQS7211E gesture register.
+ *   - Do not infer direction from software trajectory.
  *
  * @param gestures: 来自硬件的手势位 / Gesture bits from hardware
- * @param stroke_dx: X轴累计移动距离 / X-axis travel since last valid position
- * @param stroke_dy: Y轴累计移动距离 / Y-axis travel since last valid position
  * @param out_dir: 输出解析得到的滑动方向 / Output resolved direction
- * @param out_valid: 输出解析结果是否有效 / Output: is result valid
- * @param out_confidence: 输出解析结果的置信度 / Output: result confidence
  * @return 无 / None
  */
-static bool mos_touch_app_decode_single_swipe_gesture(uint16_t gestures, mos_iqs7211a_slide_direction_t *out_dir)
+static bool mos_touch_app_decode_single_swipe_gesture(uint16_t gestures, mos_iqs7211e_slide_direction_t *out_dir)
 {
     uint8_t count = 0;
-    mos_iqs7211a_slide_direction_t direction = MOS_IQS7211A_SLIDE_NONE;
+    mos_iqs7211e_slide_direction_t direction = MOS_IQS7211E_SLIDE_NONE;
 
-    if ((gestures & 0x0004u) != 0U)
+    if ((gestures & IQS7211E_GESTURE_SWIPE_X_NEGATIVE) != 0U)
     {
         count++;
-        direction = MOS_IQS7211A_SLIDE_X_DECREASE;
+        direction = MOS_IQS7211E_SLIDE_X_DECREASE;
     }
-    if ((gestures & 0x0008u) != 0U)
+    if ((gestures & IQS7211E_GESTURE_SWIPE_X_POSITIVE) != 0U)
     {
         count++;
-        direction = MOS_IQS7211A_SLIDE_X_INCREASE;
+        direction = MOS_IQS7211E_SLIDE_X_INCREASE;
     }
-    if ((gestures & 0x0010u) != 0U)
+    if ((gestures & IQS7211E_GESTURE_SWIPE_Y_POSITIVE) != 0U)
     {
         count++;
-        direction = MOS_IQS7211A_SLIDE_Y_INCREASE;
+        direction = MOS_IQS7211E_SLIDE_Y_INCREASE;
     }
-    if ((gestures & 0x0020u) != 0U)
+    if ((gestures & IQS7211E_GESTURE_SWIPE_Y_NEGATIVE) != 0U)
     {
         count++;
-        direction = MOS_IQS7211A_SLIDE_Y_DECREASE;
+        direction = MOS_IQS7211E_SLIDE_Y_DECREASE;
     }
 
     if (count == 1U)
@@ -309,121 +353,42 @@ static bool mos_touch_app_decode_single_swipe_gesture(uint16_t gestures, mos_iqs
 
     return false;
 }
-/**
- * @description: 解析滑动方向
- * @note:
- *   - 如果存在单一明确的滑动事件，则直接使用该事件作为结果，置信度为100；
- *   -
- * 否则根据移动距离和主轴占优条件计算结果，置信度根据主轴与次轴距离差占主轴距离的比例计算，范围0~90，差值越大置信度越高。
- *
- *   Resolve slide direction from state:
- *   - If there is a single clear swipe event, use it directly with confidence=100.
- *   - Otherwise, determine direction by comparing X/Y travel and dominance ratio; confidence is proportional to the
- * difference between major/minor axis (0~90).
- *
- * @param gestures: 来自硬件的手势位 / Gesture bits from hardware
- * @param stroke_dx: X轴累计移动距离 / X-axis travel since last valid position
- * @param stroke_dy: Y轴累计移动距离 / Y-axis travel since last valid position
- * @param out_dir: 输出解析得到的滑动方向 / Output resolved direction
- * @param out_valid: 输出解析结果是否有效 / Output: is result valid
- * @param out_confidence: 输出解析结果的置信度 / Output: result confidence
- * @return 无 / None
- */
-static void mos_touch_app_resolve_from_state(uint16_t gestures, int32_t stroke_dx, int32_t stroke_dy,
-                                             mos_iqs7211a_slide_direction_t *out_dir, bool *out_valid,
-                                             uint8_t *out_confidence)
-{
-    const int32_t abs_x = mos_touch_app_abs32(stroke_dx);
-    const int32_t abs_y = mos_touch_app_abs32(stroke_dy);
-    const int32_t max_axis = (abs_x > abs_y) ? abs_x : abs_y;
-    mos_iqs7211a_slide_direction_t chip_dir = MOS_IQS7211A_SLIDE_NONE;
-
-    *out_dir = MOS_IQS7211A_SLIDE_NONE;
-    *out_valid = false;
-    *out_confidence = 0U;
-
-    if (mos_touch_app_decode_single_swipe_gesture(gestures, &chip_dir))
-    {
-        bool chip_axis_conflict = false;
-        if ((chip_dir == MOS_IQS7211A_SLIDE_X_INCREASE) || (chip_dir == MOS_IQS7211A_SLIDE_X_DECREASE))
-        {
-            chip_axis_conflict =
-                (abs_y * MOS_TOUCH_CHIP_AXIS_OVERRIDE_RATIO_DEN) >= (abs_x * MOS_TOUCH_CHIP_AXIS_OVERRIDE_RATIO_NUM);
-        }
-        else if ((chip_dir == MOS_IQS7211A_SLIDE_Y_INCREASE) || (chip_dir == MOS_IQS7211A_SLIDE_Y_DECREASE))
-        {
-            chip_axis_conflict =
-                (abs_x * MOS_TOUCH_CHIP_AXIS_OVERRIDE_RATIO_DEN) >= (abs_y * MOS_TOUCH_CHIP_AXIS_OVERRIDE_RATIO_NUM);
-        }
-
-        if (!chip_axis_conflict)
-        {
-            *out_dir = chip_dir;
-            *out_valid = true;
-            *out_confidence = 100U;
-            return;
-        }
-    }
-
-    if (max_axis < MOS_TOUCH_RESOLVE_MIN_TRAVEL)
-    {
-        return;
-    }
-    if ((abs_x * MOS_TOUCH_RESOLVE_X_DOM_RATIO_DEN) >= (abs_y * MOS_TOUCH_RESOLVE_X_DOM_RATIO_NUM))
-    {
-        const int32_t score = (100 * (abs_x - abs_y)) / ((abs_x > 0) ? abs_x : 1);
-        *out_dir = (stroke_dx >= 0) ? MOS_IQS7211A_SLIDE_X_INCREASE : MOS_IQS7211A_SLIDE_X_DECREASE;
-        *out_valid = true;
-        *out_confidence = (score < 0) ? 0U : (score > 90 ? 90U : (uint8_t)score);
-        return;
-    }
-
-    if ((abs_y * MOS_TOUCH_RESOLVE_Y_DOM_RATIO_DEN) >= (abs_x * MOS_TOUCH_RESOLVE_Y_DOM_RATIO_NUM))
-    {
-        const int32_t score = (100 * (abs_y - abs_x)) / ((abs_y > 0) ? abs_y : 1);
-        *out_dir = (stroke_dy >= 0) ? MOS_IQS7211A_SLIDE_Y_INCREASE : MOS_IQS7211A_SLIDE_Y_DECREASE;
-        *out_valid = true;
-        *out_confidence = (score < 0) ? 0U : (score > 90 ? 90U : (uint8_t)score);
-    }
-}
-
-static const char *mos_touch_app_dir_str(mos_iqs7211a_slide_direction_t direction)
+static const char *mos_touch_app_dir_str(mos_iqs7211e_slide_direction_t direction)
 {
     switch (direction)
     {
-        case MOS_IQS7211A_SLIDE_X_INCREASE:
+        case MOS_IQS7211E_SLIDE_X_INCREASE:
             return "X+";
-        case MOS_IQS7211A_SLIDE_X_DECREASE:
+        case MOS_IQS7211E_SLIDE_X_DECREASE:
             return "X-";
-        case MOS_IQS7211A_SLIDE_Y_INCREASE:
+        case MOS_IQS7211E_SLIDE_Y_INCREASE:
             return "Y+";
-        case MOS_IQS7211A_SLIDE_Y_DECREASE:
+        case MOS_IQS7211E_SLIDE_Y_DECREASE:
             return "Y-";
-        case MOS_IQS7211A_SLIDE_NONE:
+        case MOS_IQS7211E_SLIDE_NONE:
         default:
             return "NONE";
     }
 }
-
-static const char *mos_touch_app_label_str(mos_iqs7211a_slide_direction_t direction)
+static const char *mos_touch_app_label_str(mos_iqs7211e_slide_direction_t direction)
 {
     switch (direction)
     {
-        case MOS_IQS7211A_SLIDE_X_INCREASE:
+        case MOS_IQS7211E_SLIDE_X_INCREASE:
             return "SWIPE_X_POSITIVE";
-        case MOS_IQS7211A_SLIDE_X_DECREASE:
+        case MOS_IQS7211E_SLIDE_X_DECREASE:
             return "SWIPE_X_NEGATIVE";
-        case MOS_IQS7211A_SLIDE_Y_INCREASE:
+        case MOS_IQS7211E_SLIDE_Y_INCREASE:
             return "SWIPE_Y_POSITIVE";
-        case MOS_IQS7211A_SLIDE_Y_DECREASE:
+        case MOS_IQS7211E_SLIDE_Y_DECREASE:
             return "SWIPE_Y_NEGATIVE";
-        case MOS_IQS7211A_SLIDE_NONE:
+        case MOS_IQS7211E_SLIDE_NONE:
         default:
             return "NONE";
     }
 }
 /**
- * @description: IQS7211A手势事件回调处理函数 / IQS7211A gesture event callback handler
+ * @description: IQS7211E手势事件回调处理函数 / IQS7211E gesture event callback handler
  * @note:
  *   该函数在每次触摸事件发生时被调用，负责解析手势、更新内部状态并输出最终识别结果。
  *   This function is called on every touch event, responsible for gesture parsing, updating internal state, and
@@ -441,162 +406,300 @@ static const char *mos_touch_app_label_str(mos_iqs7211a_slide_direction_t direct
 static void mos_touch_app_runtime_handler(uint16_t gestures, uint16_t info_flags, uint16_t finger1_x,
                                           uint16_t finger1_y, uint16_t rel_x, uint16_t rel_y, void *user_data)
 {
-    ARG_UNUSED(rel_x);
-    ARG_UNUSED(rel_y);
     ARG_UNUSED(user_data);
 
-    bool should_log = false;
-    bool event_valid = false;
-    uint8_t event_conf = 0;
-    mos_iqs7211a_slide_direction_t event_dir = MOS_IQS7211A_SLIDE_NONE;
-    /* Require both coordinate validity and non-zero finger count from INFO[9:8] to avoid window-edge ghost frames. */
     const uint8_t info1 = (uint8_t)((info_flags >> 8) & 0x00FFu);
     const uint8_t num_fingers = (uint8_t)(info1 & 0x03u);
     const bool too_many_fingers = ((info_flags & 0x1000u) != 0u);
-    const bool edge_saturated = (finger1_y >= MOS_TOUCH_EDGE_Y_MAX) || (rel_y == MOS_TOUCH_EDGE_REL_Y_GLITCH);
-    const bool finger_sample_valid =
-        (num_fingers > 0U) && !too_many_fingers && !edge_saturated && (finger1_x != 0xFFFFu) && (finger1_y != 0xFFFFu);
-    bool finger_valid = finger_sample_valid;
+    const bool reati_frame = ((info_flags & MOS_TOUCH_IQS_INFO_RE_ATI_OCCURRED_BIT) != 0u);
+    const bool ati_error_frame = ((info_flags & MOS_TOUCH_IQS_INFO_ATI_ERROR_BIT) != 0u);
+    const bool reset_frame = ((info_flags & MOS_TOUCH_IQS_INFO_SHOW_RESET_BIT) != 0u);
+    const bool edge_saturated = (finger1_y >= MOS_TOUCH_EDGE_Y_MAX) || (rel_y == MOS_TOUCH_EDGE_REL_Y_GLITCH);// 检查Y轴边缘饱和 / Check for Y edge saturation
+    const uint16_t chip_gesture_bits = gestures & mos_touch_app_chip_gesture_mask();
+    const bool finger_sample_valid = (num_fingers > 0U) && !too_many_fingers && !edge_saturated && (finger1_x != 0xFFFFu) && (finger1_y != 0xFFFFu);
 
+    if (reset_frame)
     {
-        k_spinlock_key_t key = k_spin_lock(&s_touch_app_lock);
+        LOG_WRN("IQS7211E reset occurred (INFO=0x%04x), re-applying FAE touch profile", info_flags);
+        mos_touch_app_reset_runtime_state();
+        mos_iqs7211e_clear_runtime_cache();
 
-        if (finger_sample_valid)
+        int ret = mos_touch_app_apply_profile();
+        if (ret != 0)
         {
-            s_touch_invalid_streak = 0;
+            LOG_ERR("IQS7211E profile reload after reset failed: %d", ret);
         }
-        else if (s_touch_prev_finger_valid && (s_touch_invalid_streak < MOS_TOUCH_RELEASE_INVALID_FRAMES))
+        else
         {
-            s_touch_invalid_streak++;
-            finger_valid = true;
+            mos_touch_app_reset_runtime_state();
+            LOG_INF("IQS7211E profile reloaded and runtime state synchronized after reset");
         }
-
-        if (finger_sample_valid)
-        {
-            if (!s_touch_prev_finger_valid)
-            {
-                s_touch_prev_f1x = finger1_x;
-                s_touch_prev_f1y = finger1_y;
-                s_touch_stroke_dx = 0;
-                s_touch_stroke_dy = 0;
-                s_touch_has_final = false;
-                s_touch_final_best_dir = MOS_IQS7211A_SLIDE_NONE;
-                s_touch_final_best_conf = 0;
-            }
-            else
-            {
-                int32_t step_dx = (int32_t)finger1_x - (int32_t)s_touch_prev_f1x;
-                int32_t step_dy = (int32_t)finger1_y - (int32_t)s_touch_prev_f1y;
-
-                /* Drop abnormal one-frame jumps; they are usually invalid boundary/window samples. */
-                if ((mos_touch_app_abs32(step_dx) > MOS_TOUCH_MAX_STEP_DELTA)
-                    || (mos_touch_app_abs32(step_dy) > MOS_TOUCH_MAX_STEP_DELTA))
-                {
-                    s_touch_stroke_dx = 0;
-                    s_touch_stroke_dy = 0;
-                    s_touch_has_final = false;
-                    s_touch_final_best_dir = MOS_IQS7211A_SLIDE_NONE;
-                    s_touch_final_best_conf = 0;
-                }
-                else
-                {
-                    s_touch_stroke_dx += step_dx;
-                    s_touch_stroke_dy += step_dy;
-                }
-                s_touch_prev_f1x = finger1_x;
-                s_touch_prev_f1y = finger1_y;
-            }
-
-            mos_touch_app_resolve_from_state(gestures, s_touch_stroke_dx, s_touch_stroke_dy, &s_touch_current_dir,
-                                             &s_touch_current_valid, &s_touch_current_conf);
-
-            if (s_touch_current_valid && (!s_touch_has_final || (s_touch_current_conf >= s_touch_final_best_conf)))
-            {
-                s_touch_has_final = true;
-                s_touch_final_best_dir = s_touch_current_dir;
-                s_touch_final_best_conf = s_touch_current_conf;
-            }
-        }
-        else if (!finger_valid)
-        {
-            s_touch_current_dir = MOS_IQS7211A_SLIDE_NONE;
-            s_touch_current_valid = false;
-            s_touch_current_conf = 0;
-        }
-
-        if (s_touch_prev_finger_valid && !finger_valid)
-        {
-            if (s_touch_has_final)
-            {
-                event_dir = s_touch_final_best_dir;
-                event_valid = true;
-                event_conf = s_touch_final_best_conf;
-            }
-
-            s_touch_last_event_dir = event_dir;
-            s_touch_last_event_valid = event_valid;
-            s_touch_last_event_conf = event_conf;
-            s_touch_last_event_seq++;
-            should_log = true;
-        }
-
-        if (!finger_valid)
-        {
-            s_touch_invalid_streak = 0;
-            s_touch_prev_f1x = 0xFFFFu;
-            s_touch_prev_f1y = 0xFFFFu;
-            s_touch_stroke_dx = 0;
-            s_touch_stroke_dy = 0;
-            s_touch_has_final = false;
-            s_touch_final_best_dir = MOS_IQS7211A_SLIDE_NONE;
-            s_touch_final_best_conf = 0;
-        }
-
-        s_touch_prev_finger_valid = finger_valid;
-        k_spin_unlock(&s_touch_app_lock, key);
+        return;
     }
 
-    if (!should_log)
+    if (s_touch_debug_frame_logging)
+    {
+        LOG_INF("[TOUCH][FRAME] g=0x%04x info=0x%04x nf=%u tmf=%u reati=%u f1=(0x%04x,0x%04x) rel=(%d,%d) edge=%u " "sample_ok=%u",
+            gestures, info_flags, (unsigned int)num_fingers, (unsigned int)too_many_fingers, (unsigned int)reati_frame,
+            finger1_x, finger1_y, (int16_t)rel_x, (int16_t)rel_y, (unsigned int)edge_saturated,
+            (unsigned int)finger_sample_valid);
+    }
+
+    if (ati_error_frame)
+    {
+        mos_touch_app_reset_runtime_state();
+        LOG_WRN("IQS ATI_ERROR frame suppressed (INFO=0x%04x, gestures=0x%04x)", info_flags, gestures);
+        return;
+    }
+
+    if (reati_frame)
+    {
+        mos_touch_app_reset_runtime_state();
+        LOG_DBG("IQS ATI/ReATI status frame suppressed (INFO=0x%04x, gestures=0x%04x)", info_flags, gestures);
+        return;
+    }
+
+    uint16_t new_gesture_bits = 0;
+    {
+        const int64_t now_ms = k_uptime_get();
+        const uint16_t latched_bits = chip_gesture_bits & MOS_TOUCH_LATCHED_GESTURE_MASK;
+        const uint16_t pulse_bits = chip_gesture_bits & (uint16_t)(~MOS_TOUCH_LATCHED_GESTURE_MASK);
+
+        const uint16_t new_latched_bits = latched_bits & (uint16_t)(~s_touch_prev_reported_gesture_bits);
+        uint16_t new_pulse_bits = pulse_bits;
+        /* Pulse gestures may repeat later, but adjacent duplicate frames are suppressed briefly. 
+        脉冲手势可能会在稍后重复，但相邻的重复帧会被短暂抑制*/
+        if ((pulse_bits != 0U)
+            && (pulse_bits == (s_touch_prev_reported_gesture_bits & (uint16_t)(~MOS_TOUCH_LATCHED_GESTURE_MASK)))
+            && ((now_ms - s_touch_prev_reported_gesture_ms) < MOS_TOUCH_DUPLICATE_GESTURE_SUPPRESS_MS))
+        {
+            new_pulse_bits = 0;
+        }
+
+        new_gesture_bits = new_latched_bits | new_pulse_bits;
+        s_touch_prev_reported_gesture_bits = chip_gesture_bits;
+        if (new_gesture_bits != 0U)
+        {
+            s_touch_prev_reported_gesture_ms = now_ms;
+        }
+    }
+
+    if (new_gesture_bits == 0U)
+    {
+        return;
+    }
+    const uint16_t new_discrete_bits = new_gesture_bits & (IQS7211E_GESTURE_SINGLE_TAP | IQS7211E_GESTURE_DOUBLE_TAP
+                                                           | IQS7211E_GESTURE_TRIPLE_TAP | IQS7211E_GESTURE_PRESS_AND_HOLD);
+
+    const uint16_t new_swipe_bits = new_gesture_bits & (IQS7211E_GESTURE_SWIPE_X_POSITIVE | IQS7211E_GESTURE_SWIPE_X_NEGATIVE |
+                                                        IQS7211E_GESTURE_SWIPE_Y_POSITIVE | IQS7211E_GESTURE_SWIPE_Y_NEGATIVE);
+
+    const uint16_t raw_remaining_bits = new_gesture_bits & (uint16_t)(~(new_discrete_bits | new_swipe_bits));
+    const mos_touch_logical_event_t chip_discrete_event = mos_touch_app_chip_discrete_event(new_discrete_bits);
+    mos_iqs7211e_slide_direction_t chip_swipe_dir = MOS_IQS7211E_SLIDE_NONE;
+    const bool chip_swipe_valid = mos_touch_app_decode_single_swipe_gesture(new_swipe_bits, &chip_swipe_dir);
+
+    bool emitted = false;
+
+    if (chip_discrete_event != MOS_TOUCH_LOGICAL_NONE)
+    {
+        mos_touch_app_emit_logical_event(chip_discrete_event, "chip");
+        if (chip_discrete_event == MOS_TOUCH_LOGICAL_TRIPLE_TAP)
+        {
+            mos_touch_app_request_sleep();
+        }
+        else if (chip_discrete_event == MOS_TOUCH_LOGICAL_PRESS_AND_HOLD)
+        {
+            mos_touch_app_request_reboot();
+        }
+        emitted = true;
+    }
+
+    if (chip_swipe_valid)
+    {
+        LOG_INF("[TOUCH] Gesture: %s (%s, source=chip)", mos_touch_app_dir_str(chip_swipe_dir),
+                mos_touch_app_label_str(chip_swipe_dir));
+        emitted = true;
+    }
+    /* 显示原始手势，未处理的手势位也会显示；
+    show raw gesture if no recognized discrete/swipe event, or if unprocessed bits remain*/
+    if (!emitted || (raw_remaining_bits != 0U))
+    {
+        const uint16_t raw_bits = emitted ? raw_remaining_bits : new_gesture_bits;
+        if (raw_bits != 0U)
+        {
+            LOG_INF("[TOUCH] Raw chip gesture: %s (0x%04x)", mos_touch_app_raw_gesture_str(raw_bits), raw_bits);
+        }
+    }
+}
+
+static void mos_touch_app_emit_cached_startup_gesture(void)
+{
+    uint16_t gestures = 0;
+    uint16_t info_flags = 0;
+    uint16_t finger1_x = 0;
+    uint16_t finger1_y = 0;
+    uint16_t rel_x = 0;
+    uint16_t rel_y = 0;
+
+    int ret = mos_iqs7211e_get_last_runtime_data(&gestures, &info_flags, &finger1_x, &finger1_y, &rel_x, &rel_y);
+    if (ret != 0)
     {
         return;
     }
 
-    if (event_valid)
+    if ((info_flags & MOS_TOUCH_IQS_INFO_SHOW_RESET_BIT) != 0U)
     {
-        LOG_INF("[TOUCH] Final gesture: %s (%s, confidence=%u)", mos_touch_app_dir_str(event_dir),
-                mos_touch_app_label_str(event_dir), (unsigned int)event_conf);
+        return;
+    }
+
+    if ((gestures & mos_touch_app_chip_gesture_mask()) == 0U)
+    {
+        return;
+    }
+
+    /* The profile activation cache sync can catch the user's first touch before RDY is armed.
+     * Emit that cached chip gesture instead of silently consuming it as a startup sync frame. 
+     * 配置文件激活缓存同步可以在 RDY 启动之前捕获用户的第一次触摸。发出缓存的芯片手势，而不是默默地将其用作启动同步帧 */
+    LOG_INF("IQS startup cache contains chip gesture bits; emitting cached first touch");
+    mos_touch_app_runtime_handler(gestures, info_flags, finger1_x, finger1_y, rel_x, rel_y, NULL);
+}
+
+int mos_touch_app_apply_profile(void)
+{
+    int ret = mos_touch_app_write_profile_blocks();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return mos_touch_app_activate_profile();
+}
+
+static void mos_touch_app_reset_runtime_state(void)
+{
+    s_touch_prev_reported_gesture_bits = 0;
+    s_touch_prev_reported_gesture_ms = 0;
+}
+
+static void mos_touch_app_abort_sleep_prepare(const char *step, int err)
+{
+    atomic_set(&s_touch_sleep_pending, 0);
+    LOG_ERR("%s failed: %d; aborting System OFF sleep and keeping device awake", step, err);
+
+    int ret = mos_touch_app_apply_profile();
+    if (ret != 0)
+    {
+        LOG_ERR("Failed to restore IQS7211E runtime profile after sleep abort: %d", ret);
+    }
+
+    ret = mos_iqs7211e_enable_rdy_interrupt();
+    if (ret != 0)
+    {
+        LOG_ERR("Failed to re-arm IQS7211E RDY interrupt after sleep abort: %d", ret);
+    }
+}
+
+static void mos_touch_app_sleep_work_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+
+    LOG_INF("Triple tap detected - preparing System OFF sleep with touch wakeup");
+
+    /* Let the current IQS RDY frame finish and return RDY to idle before configuring wake sense. */
+    k_sleep(K_MSEC(200));
+
+    int ret = mos_npm1300_ldsw1_enable();
+    if (ret != 0)
+    {
+        LOG_WRN("Failed to keep LDSW1 enabled for touch wakeup: %d", ret);
+    }
+
+    ret = mos_iqs7211e_prepare_sleep_wakeup_mode();
+    if (ret != 0)
+    {
+        mos_touch_app_abort_sleep_prepare("IQS7211E sleep wakeup prepare", ret);
+        return;
+    }
+
+    ret = mos_iqs7211e_configure_wakeup();
+    if (ret != 0)
+    {
+        mos_touch_app_abort_sleep_prepare("IQS7211E touch wakeup configure", ret);
+        return;
+    }
+
+    LOG_INF("Touch wakeup configured; powering down peripherals before System OFF");
+
+    (void)mos_gx8002_power_control(false);
+    mic_power_control(false);
+    imu_en_control(false);
+    (void)lsm6dsv16x_sleep();
+
+    set_display_onoff(false);
+    a6n_power_off();
+    a6n_io_off();
+
+    configure_default_low_pins();
+
+    ret = opt3006_set_mode(OPT3006_MODE_SHUTDOWN);
+    if (ret != 0)
+    {
+        LOG_WRN("Failed to put OPT3006 into shutdown mode before System OFF: %d", ret);
     }
     else
     {
-        LOG_INF("[TOUCH] Final gesture: NONE (insufficient stroke or ambiguous direction)");
+        LOG_INF("OPT3006 shutdown; i2c3 pins left released for IQS7211E touch wake");
     }
+
+    LOG_INF("Entering System OFF sleep mode; touch RDY will wake the device");
+    k_sleep(K_MSEC(50));
+    sys_poweroff();
+
+    atomic_set(&s_touch_sleep_pending, 0);
+    LOG_ERR("sys_poweroff returned unexpectedly");
+}
+
+static void mos_touch_app_reboot_work_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+
+    sys_reboot(SYS_REBOOT_COLD);
 }
 
 int mos_touch_app_init(void)
 {
-    int ret = mos_iqs7211a_init();
+    int ret = mos_iqs7211e_init();
     if (ret != 0)
     {
         LOG_ERR("IQS init failed: %d", ret);
         return ret;
     }
 
-    ret = mos_touch_app_apply_balanced_profile();
-    if (ret != 0)
-    {
-        return ret;
-    }
+    k_work_init(&s_touch_sleep_work, mos_touch_app_sleep_work_handler);
+    k_work_init_delayable(&s_touch_reboot_work, mos_touch_app_reboot_work_handler);
 
-    ret = mos_touch_app_finalize_profile_load();
-    if (ret != 0)
-    {
-        return ret;
-    }
-
-    ret = mos_iqs7211a_register_runtime_callback(mos_touch_app_runtime_handler, NULL);
+    ret = mos_iqs7211e_register_runtime_callback(mos_touch_app_runtime_handler, NULL);
     if (ret != 0)
     {
         LOG_ERR("Failed to register touch runtime callback: %d", ret);
+        return ret;
+    }
+
+    ret = mos_touch_app_apply_profile();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    LOG_WRN("IQS7211E profile register values are currently a migration baseline; verify against IQS7211E datasheet");
+
+    mos_touch_app_emit_cached_startup_gesture();
+
+    ret = mos_iqs7211e_enable_rdy_interrupt();
+    if (ret != 0)
+    {
+        LOG_ERR("Failed to enable IQS RDY interrupt: %d", ret);
         return ret;
     }
 
@@ -604,58 +707,8 @@ int mos_touch_app_init(void)
     return 0;
 }
 
-int mos_touch_app_get_resolved_gesture(mos_iqs7211a_slide_direction_t *out_dir, bool *out_valid,
-                                       uint8_t *out_confidence)
+void mos_touch_app_set_debug_frame_logging(bool enabled)
 {
-    if (!out_dir && !out_valid && !out_confidence)
-    {
-        return -EINVAL;
-    }
-
-    k_spinlock_key_t key = k_spin_lock(&s_touch_app_lock);
-    if (out_dir)
-    {
-        *out_dir = s_touch_current_dir;
-    }
-    if (out_valid)
-    {
-        *out_valid = s_touch_current_valid;
-    }
-    if (out_confidence)
-    {
-        *out_confidence = s_touch_current_conf;
-    }
-    k_spin_unlock(&s_touch_app_lock, key);
-
-    return 0;
-}
-
-int mos_touch_app_get_last_final_gesture_event(mos_iqs7211a_slide_direction_t *out_dir, bool *out_valid,
-                                               uint8_t *out_confidence, uint32_t *out_sequence)
-{
-    if (!out_dir && !out_valid && !out_confidence && !out_sequence)
-    {
-        return -EINVAL;
-    }
-
-    k_spinlock_key_t key = k_spin_lock(&s_touch_app_lock);
-    if (out_dir)
-    {
-        *out_dir = s_touch_last_event_dir;
-    }
-    if (out_valid)
-    {
-        *out_valid = s_touch_last_event_valid;
-    }
-    if (out_confidence)
-    {
-        *out_confidence = s_touch_last_event_conf;
-    }
-    if (out_sequence)
-    {
-        *out_sequence = s_touch_last_event_seq;
-    }
-    k_spin_unlock(&s_touch_app_lock, key);
-
-    return 0;
+    s_touch_debug_frame_logging = enabled;
+    LOG_INF("Touch frame debug logging %s", enabled ? "enabled" : "disabled");
 }
