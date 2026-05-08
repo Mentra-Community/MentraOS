@@ -1,4 +1,3 @@
-import AVKit
 import SwiftUI
 import UIKit
 import WebKit
@@ -81,13 +80,8 @@ struct StreamScreen: View {
     private var previewSurface: some View {
         if let livePreviewUrl {
             ZStack {
-                if model.streamProtocol == .srt {
+                if model.streamProtocol == .rtmp || model.streamProtocol == .srt {
                     RetryingHlsWebPreviewView(url: livePreviewUrl)
-                        .frame(height: 160)
-                        .background(Color.black)
-                        .clipShape(RoundedRectangle(cornerRadius: 22))
-                } else if model.streamProtocol == .rtmp {
-                    HlsStreamPreviewView(url: livePreviewUrl)
                         .frame(height: 160)
                         .background(Color.black)
                         .clipShape(RoundedRectangle(cornerRadius: 22))
@@ -264,27 +258,6 @@ struct ProtocolTab: View {
                 .background(active ? Color.white : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
         }
-    }
-}
-
-struct HlsStreamPreviewView: UIViewControllerRepresentable {
-    let url: URL
-
-    func makeUIViewController(context _: Context) -> AVPlayerViewController {
-        let controller = AVPlayerViewController()
-        controller.showsPlaybackControls = false
-        controller.videoGravity = .resizeAspectFill
-        controller.player = AVPlayer(url: url)
-        controller.player?.play()
-        return controller
-    }
-
-    func updateUIViewController(_ controller: AVPlayerViewController, context _: Context) {
-        let currentUrl = (controller.player?.currentItem?.asset as? AVURLAsset)?.url
-        if currentUrl != url {
-            controller.player = AVPlayer(url: url)
-        }
-        controller.player?.play()
     }
 }
 
