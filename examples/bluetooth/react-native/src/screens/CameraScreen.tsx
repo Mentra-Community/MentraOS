@@ -125,26 +125,25 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
           />
         </View>
         {setupHint ? <Text style={styles.setupHint}>{setupHint}</Text> : null}
-        <View style={styles.chipRow}>
+        <OptionGroup label="size">
           {PHOTO_SIZES.map((size) => (
-            <Chip key={size} active={sdk.photoSize === size} label="size" value={size} onPress={() => sdk.setPhotoSize(size)} />
+            <Chip key={size} active={sdk.photoSize === size} value={size} onPress={() => sdk.setPhotoSize(size)} />
           ))}
-        </View>
-        <View style={styles.chipRow}>
+        </OptionGroup>
+        <OptionGroup label="compress">
           {PHOTO_COMPRESSIONS.map((compression) => (
             <Chip
               key={compression}
               active={sdk.photoCompression === compression}
-              label="compress"
               value={compression}
               onPress={() => sdk.setPhotoCompression(compression)}
             />
           ))}
-        </View>
-        <View style={styles.chipRow}>
-          <Chip active={!sdk.photoFlash} label="flash" value="off" onPress={() => sdk.setPhotoFlash(false)} />
-          <Chip active={sdk.photoFlash} label="flash" value="on" onPress={() => sdk.setPhotoFlash(true)} />
-        </View>
+        </OptionGroup>
+        <OptionGroup label="flash">
+          <Chip active={!sdk.photoFlash} value="off" onPress={() => sdk.setPhotoFlash(false)} />
+          <Chip active={sdk.photoFlash} value="on" onPress={() => sdk.setPhotoFlash(true)} />
+        </OptionGroup>
       </LinearGradient>
     </ScrollView>
   );
@@ -177,10 +176,18 @@ function localCameraSetupHint(webhookUrl: string, status: string) {
   return 'Local setup: run python3 examples/local-demo-cloud/server.py from the Partner Kit repo root, then paste the printed Photo upload URL here.';
 }
 
-function Chip({ active, label, onPress, value }: { active: boolean; label: string; onPress: () => void; value: string }) {
+function OptionGroup({ children, label }: { children: React.ReactNode; label: string }) {
+  return (
+    <View style={styles.optionGroup}>
+      <Text style={styles.optionLabel}>{label}</Text>
+      <View style={styles.chipRow}>{children}</View>
+    </View>
+  );
+}
+
+function Chip({ active, onPress, value }: { active: boolean; onPress: () => void; value: string }) {
   return (
     <Pressable onPress={onPress} style={[styles.chip, active && styles.chipActive]}>
-      <Text style={styles.chipLabel}>{label}</Text>
       <Text style={[styles.chipValue, active && styles.chipValueActive]}>{value}</Text>
     </Pressable>
   );
@@ -223,10 +230,11 @@ const styles = StyleSheet.create({
   method: { color: colors.greenAccent, fontSize: 11, fontWeight: '600', letterSpacing: 0.5 },
   divider: { width: 1, height: 14, backgroundColor: 'rgba(15,42,29,0.12)' },
   url: { flex: 1, color: colors.ink, fontSize: 13, fontWeight: '500' },
+  optionGroup: { gap: 6 },
+  optionLabel: { color: colors.muted, fontSize: 10, fontWeight: '600', letterSpacing: 1.1, textTransform: 'uppercase' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.6)', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(15,42,29,0.06)' },
   chipActive: { backgroundColor: 'rgba(52,199,89,0.16)', borderColor: 'rgba(52,199,89,0.32)' },
-  chipLabel: { color: colors.muted, fontSize: 11, fontWeight: '500', letterSpacing: 0.5, textTransform: 'uppercase' },
   chipValue: { color: colors.ink, fontSize: 12, fontWeight: '700' },
   chipValueActive: { color: colors.greenAccent },
 });

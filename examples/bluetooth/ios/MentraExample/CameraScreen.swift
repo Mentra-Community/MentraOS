@@ -197,27 +197,27 @@ struct CameraScreen: View {
                     .padding(.bottom, 12)
             }
 
-            HStack(spacing: 8) {
-                ForEach(photoSizeOptions, id: \.rawValue) { size in
-                    Chip(label: "size", value: size.rawValue, highlight: model.photoSize == size)
-                        .onTapGesture { model.setPhotoSize(size) }
+            VStack(alignment: .leading, spacing: 10) {
+                CameraOptionGroup(label: "size") {
+                    ForEach(photoSizeOptions, id: \.rawValue) { size in
+                        CameraOptionChip(value: size.rawValue, highlight: model.photoSize == size)
+                            .onTapGesture { model.setPhotoSize(size) }
+                    }
                 }
-            }
-            .padding(.bottom, 8)
 
-            HStack(spacing: 8) {
-                ForEach(photoCompressionOptions, id: \.rawValue) { compression in
-                    Chip(label: "compress", value: compression.rawValue, highlight: model.photoCompression == compression)
-                        .onTapGesture { model.setPhotoCompression(compression) }
+                CameraOptionGroup(label: "compress") {
+                    ForEach(photoCompressionOptions, id: \.rawValue) { compression in
+                        CameraOptionChip(value: compression.rawValue, highlight: model.photoCompression == compression)
+                            .onTapGesture { model.setPhotoCompression(compression) }
+                    }
                 }
-            }
-            .padding(.bottom, 8)
 
-            HStack(spacing: 8) {
-                Chip(label: "flash", value: "off", highlight: !model.photoFlash)
-                    .onTapGesture { model.setPhotoFlash(false) }
-                Chip(label: "flash", value: "on", highlight: model.photoFlash)
-                    .onTapGesture { model.setPhotoFlash(true) }
+                CameraOptionGroup(label: "flash") {
+                    CameraOptionChip(value: "off", highlight: !model.photoFlash)
+                        .onTapGesture { model.setPhotoFlash(false) }
+                    CameraOptionChip(value: "on", highlight: model.photoFlash)
+                        .onTapGesture { model.setPhotoFlash(true) }
+                }
             }
         }
     }
@@ -247,14 +247,42 @@ private func localCameraSetupHint(webhookUrl: String, status: String) -> String?
     return "Local setup: run python3 examples/local-demo-cloud/server.py from the Partner Kit repo root, then paste the printed Photo upload URL here."
 }
 
-struct Chip: View {
-    let label: String; let value: String
+struct CameraOptionGroup<Content: View>: View {
+    let label: String
+    let content: Content
+
+    init(label: String, @ViewBuilder content: () -> Content) {
+        self.label = label
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label.uppercased())
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(1.1)
+                .foregroundColor(AppColor.muted)
+                .lineLimit(1)
+
+            HStack(spacing: 8) {
+                content
+            }
+        }
+    }
+}
+
+struct CameraOptionChip: View {
+    let value: String
     var highlight: Bool = false
+
     var body: some View {
         HStack(spacing: 6) {
             if highlight { Image(systemName: "bolt.fill").font(.system(size: 9)).foregroundColor(AppColor.amber) }
-            Text(label.uppercased()).font(.system(size: 11, weight: .medium)).tracking(0.5).foregroundColor(AppColor.muted)
-            Text(value).font(.system(size: 12, weight: .bold)).foregroundColor(highlight ? AppColor.greenAccent : AppColor.ink)
+            Text(value)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(highlight ? AppColor.greenAccent : AppColor.ink)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(highlight ? Color(hex: 0x7DD89E).opacity(0.16) : Color.white.opacity(0.6))

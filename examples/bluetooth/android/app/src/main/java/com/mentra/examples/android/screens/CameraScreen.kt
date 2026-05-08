@@ -212,22 +212,22 @@ fun CameraScreen(controller: MentraExampleController) {
                 )
                 Spacer(Modifier.height(12.dp))
             }
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                CameraOptionGroup("size") {
                     photoSizeOptions.forEach { size ->
-                        OptionChip("size", size, state.photoSize == size) { controller.setPhotoSize(size) }
+                        OptionChip(size, state.photoSize == size) { controller.setPhotoSize(size) }
                     }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                CameraOptionGroup("compress") {
                     photoCompressionOptions.forEach { compression ->
-                        OptionChip("compress", compression, state.photoCompression == compression) {
+                        OptionChip(compression, state.photoCompression == compression) {
                             controller.setPhotoCompression(compression)
                         }
                     }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OptionChip("flash", "off", !state.photoFlash) { controller.setPhotoFlash(false) }
-                    OptionChip("flash", "on", state.photoFlash) { controller.setPhotoFlash(true) }
+                CameraOptionGroup("flash") {
+                    OptionChip("off", !state.photoFlash) { controller.setPhotoFlash(false) }
+                    OptionChip("on", state.photoFlash) { controller.setPhotoFlash(true) }
                 }
             }
         }
@@ -260,7 +260,26 @@ private fun localCameraSetupHint(webhookUrl: String, status: String): String? {
 }
 
 @Composable
-private fun OptionChip(label: String, value: String, active: Boolean, onClick: () -> Unit) {
+private fun CameraOptionGroup(label: String, content: @Composable RowScope.() -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            label.uppercase(),
+            color = AppColor.muted,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 1.1.sp,
+            maxLines = 1
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            content = content
+        )
+    }
+}
+
+@Composable
+private fun OptionChip(value: String, active: Boolean, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(999.dp))
@@ -275,7 +294,6 @@ private fun OptionChip(label: String, value: String, active: Boolean, onClick: (
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Text(label.uppercase(), color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.5.sp)
-        Text(value, color = if (active) AppColor.greenAccent else AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Text(value, color = if (active) AppColor.greenAccent else AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
     }
 }
