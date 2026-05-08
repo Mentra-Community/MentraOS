@@ -17,6 +17,7 @@ export class GoogleMapsManager {
   private loadPromise: Promise<void>
   private _ready = false
   private _error: string | null = null
+  private _apiKey: string = ""
 
   constructor() {
     this.loadPromise = this.start().then(
@@ -43,11 +44,21 @@ export class GoogleMapsManager {
     return this._error
   }
 
+  /**
+   * The resolved Google Maps API key. Empty string until `whenReady()`
+   * resolves. Used by REST endpoints (Geocoding, Places) that aren't
+   * covered by the JS SDK script's auto-auth.
+   */
+  get apiKey(): string {
+    return this._apiKey
+  }
+
   private async start(): Promise<void> {
     const apiKey = await this.resolveApiKey()
     if (!apiKey) {
       throw new Error("missing EXPO_PUBLIC_GOOGLE_NAV_API_KEY")
     }
+    this._apiKey = apiKey
     await this.loadScript(apiKey)
   }
 

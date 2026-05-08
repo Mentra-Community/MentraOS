@@ -55,6 +55,12 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const [maneuver, setManeuver] = useState<NavManeuver | null>(null)
   const [offRouteAt, setOffRouteAt] = useState<number | null>(null)
   const [activeDestination, setActiveDestination] = useState<LatLng | null>(null)
+  /**
+   * Friendly name of the active destination, captured at trip start. Persists
+   * past arrival (when activeDestination is cleared) so the "You have arrived
+   * at X" HUD message can reference it.
+   */
+  const [activeDestinationName, setActiveDestinationName] = useState<string | null>(null)
   const [routePoints, setRoutePoints] = useState<NavRoute["points"] | null>(null)
   const [previewRoutePoints, setPreviewRoutePoints] = useState<LatLng[] | null>(null)
   const [log, setLog] = useState<LogEntry[]>([])
@@ -99,38 +105,69 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     setLog((prev) => [{id: ++logIdSeq, ts: Date.now(), line}, ...prev].slice(0, 100))
   }
 
-
   // ---- glasses HUD mirror ------------------------------------------------
   //
-  // Drive the glasses display straight off the PivotTracker snapshot — same
-  // source of truth as the OrientationCard. We do NOT use the SDK's
-  // maneuverType for the glasses output; only "Continue" / "Turn left" /
-  // "Turn right" / "Arrived", computed locally from polyline geometry +
-  // 7m radius checks.
+  // Drive the glasses display straight off the PivotTracker — same source
+  // of truth as the OrientationCard. The HUD mirrors the phone card's
+  // layout: distance line, verb, and road context joined with newlines.
   const pivotSnap = user.pivots.getSnapshot()
+  const roadSnap = user.road.getSnapshot()
   useEffect(() => {
+    // Arrival takes priority: when the trip ends `running` flips to false,
+    // but we still want to show "You have arrived at <name>" instead of the
+    // welcome idle message.
+    if (pivotSnap.arrived || status === "arrived") {
+      const at = activeDestinationName ? ` at ${activeDestinationName}` : ""
+      display.showText(`You have arrived${at}`, 10000)
+      return
+    }
     if (!running) {
-      display.showText("hello world ")
+      // Idle welcome — auto-clears after 5s so the glasses don't stay
+      // pinned to it forever before navigation starts.
+      display.showText(
+        "Welcome to Mentra Navigation!\nPick a destination to get started.",
+        5000,
+      )
       return
     }
     if (status === "rerouting") {
       display.showText("Rebuilding route…")
       return
     }
-    if (pivotSnap.arrived || status === "arrived") {
-      display.showText("Arrived")
+
+    // Mid-turn — the verb is the headline, no distance countdown.
+    if (pivotSnap.direction === "right" || pivotSnap.direction === "left") {
+      const verb = pivotSnap.direction === "right" ? "Turn right" : "Turn left"
+      const namedRoad = isRealRoadName(maneuver?.toRoad)
+      const onto = namedRoad ? `onto ${namedRoad}` : null
+      display.showText([verb, onto].filter(Boolean).join("\n"))
       return
     }
-    if (pivotSnap.direction === "right") {
-      display.showText("Turn right")
-      return
-    }
-    if (pivotSnap.direction === "left") {
-      display.showText("Turn left")
-      return
-    }
-    display.showText("Continue")
-  }, [display, running, status, pivotSnap.direction, pivotSnap.arrived])
+
+    // Continue — show the upcoming verb without the distance preamble
+    // (the glasses are too small to be useful as a countdown), then the
+    // current road. No "In Xm" line.
+    const upcomingVerb = pivotSnap.nextPivotDirection === "right"
+      ? "Turn right"
+      : pivotSnap.nextPivotDirection === "left"
+      ? "Turn left"
+      : "Continue"
+    const road = isRealRoadName(maneuver?.fromRoad) ?? roadSnap.road
+    display.showText([upcomingVerb, road].filter(Boolean).join("\n"))
+  }, [
+    display,
+    running,
+    status,
+    pivotSnap.direction,
+    pivotSnap.arrived,
+    pivotSnap.distanceToNextPivotMeters,
+    pivotSnap.distanceToDestinationMeters,
+    pivotSnap.nextPivotDirection,
+    pivotSnap.nextPivotIndex,
+    roadSnap.road,
+    maneuver,
+    activeDestinationName,
+  ])
 
   // ---- mid-trip hydration ------------------------------------------------
 
@@ -220,6 +257,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     setManeuver(null)
     setStatus("navigating")
     setActiveDestination({lat: latNum, lng: lngNum})
+    setActiveDestinationName(destination.name || destination.address || null)
     setRoutePoints(null)
     setPreviewRoutePoints(null)
     append(`start → ${destination.name || `${latNum}, ${lngNum}`}${simulate ? ` (sim ${speedMultiplier}x)` : ""}`)
@@ -265,6 +303,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     setStatus("idle")
     setManeuver(null)
     setActiveDestination(null)
+    setActiveDestinationName(null)
     setRoutePoints(null)
     setOffRouteAt(null)
   }
@@ -507,6 +546,22 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
 }
 
 /* -------------------------------------------------------------------------- */
+
+/**
+ * The Nav SDK sometimes returns placeholder road labels like "toward Fell St"
+ * when no confirmed road name is available. Strip those — they read as
+ * "onto toward Fell St" / "Continue toward Fell St", which is gibberish.
+ */
+function isRealRoadName(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const trimmed = raw.trim()
+  if (trimmed.length === 0) return null
+  // See OrientationCard.realRoadName for the rationale. Keep both regexes
+  // in sync — the glasses HUD and the phone card need to filter the same
+  // SDK-instruction-as-road-name leaks.
+  if (/^(toward|turn|continue|destination|head|cross|slight|sharp|keep|merge|fork|exit|take|roundabout|u[\s-]?turn|arrive|arriving|depart|enter|leave|stay)\b/i.test(trimmed)) return null
+  return trimmed
+}
 
 function formatUpdate(u: NavUpdate): string {
   switch (u.kind) {

@@ -11,9 +11,15 @@ import type {MiniappSession} from "@mentra/miniapp"
 export class DisplayManager {
   constructor(private readonly session: MiniappSession) {}
 
-  /** Single line filling the glasses display. */
-  showText(text: string): void {
-    this.safeCall(() => this.session.display.showTextWall(text))
+  /**
+   * Single line filling the glasses display.
+   * `durationMs` is forwarded to the SDK; if set, the message auto-clears
+   * after that long. Omit for a sticky message that persists until replaced.
+   */
+  showText(text: string, durationMs?: number): void {
+    this.safeCall(() =>
+      this.session.display.showTextWall(text, durationMs != null ? {durationMs} : undefined),
+    )
   }
 
   // showTwoLines(top: string, bottom: string): void {

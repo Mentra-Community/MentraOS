@@ -3,26 +3,28 @@ import {AnimatePresence, motion} from "motion/react"
 import type {NavManeuver} from "@mentra/miniapp"
 
 import {useUser} from "@/backend/hooks/useUser"
+import {formatDistance} from "@/backend/lib/formatDistance/formatDistance"
 import type {LatLng} from "@/backend/lib/geometry/geometry"
 import type {PivotSnapshot} from "@/client/session/managers/navigation/PivotTracker"
 
 const SPRING = {type: "spring", stiffness: 400, damping: 32, mass: 0.6} as const
 
 /**
- * Single-maneuver direction card.
+ * Direction card with three lines (matches Apple/Google Maps layout):
  *
- * Driven by `user.pivots` — the geometry-based maneuver tracker that
- * extracts turn pivots from the SDK route polyline once at trip start, then
- * uses a 4m radius check on every GPS fix to decide WHEN to show the turn.
- * The SDK's `maneuverType` stream is intentionally ignored (it's noisy and
- * flips between LEFT/RIGHT on the same turn).
+ *   In 500 ft           ← distance to next pivot (live)
+ *   Turn right          ← direction (or "Continue" / "Arrived")
+ *   onto Market St      ← road name (toRoad on turns, fromRoad on continue)
  *
- * Shows ONE thing at a time:
- *   - "Continue" between pivots
- *   - "Turn left" / "Turn right" inside a pivot's 4m radius
- *   - "Arrived" once within the destination radius
+ * Direction & distance come from `user.pivots` (geometry).
+ * Road names come from the SDK's `NavManeuver` — `fromRoad` is the road
+ * we're currently walking on, `toRoad` is the road we're turning onto.
+ * The SDK updates these atomically when you transition streets, so they
+ * don't flicker the way reverse-geocoding does at intersections.
  */
-export function OrientationCard(_: {
+export function OrientationCard({
+  maneuver,
+}: {
   me: LatLng | null
   heading: number | null
   maneuver: NavManeuver | null
@@ -31,35 +33,46 @@ export function OrientationCard(_: {
 }) {
   const user = useUser()
   const snap = user.pivots.getSnapshot()
-  const {nowLabel, nowIcon} = pickNow(snap)
+  const roadSnap = user.road.getSnapshot()
+  const {label, icon, road, distance} = pickDisplay(snap, maneuver, roadSnap.road)
+
+  // Single source of truth — log exactly what the ManeuverCard is showing
+  // on screen right now. This is the only road/maneuver log in the app.
+  console.log(`[ManeuverCard] ${distance ?? "—"} | ${label} | ${road ?? "—"}`)
 
   return (
     <div className="mx-1 mt-2">
       <div className="[font-synthesis:none] relative flex py-4.5 px-5 gap-4 rounded-bl-sm rounded-[20px] items-center bg-[#FFFFFFC7] border border-solid border-[#FFFFFF99] [backdrop-filter:blur(40px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#00000029_0px_8px_32px] antialiased ">
         <AnimatePresence mode="popLayout" initial={false}>
           <motion.div
-            key={nowIcon}
+            key={icon}
             initial={{opacity: 0, scale: 0.8}}
             animate={{opacity: 1, scale: 1}}
             exit={{opacity: 0, scale: 0.8}}
             transition={SPRING}
             className="flex items-center justify-center shrink-0 rounded-[18px] bg-[#5AC878] size-16">
-            <ManeuverIcon type={nowIcon} />
+            <ManeuverIcon type={icon} />
           </motion.div>
         </AnimatePresence>
 
-        <div className="flex flex-col items-start gap-1.5 min-w-0 flex-1">
+        <div className="flex flex-col items-start gap-0.5 min-w-0 flex-1">
+          {distance ? (
+            <div className="self-stretch text-[#6B6B6B] font-sans text-sm/4.5">{distance}</div>
+          ) : null}
           <AnimatePresence mode="popLayout" initial={false}>
             <motion.div
-              key={nowLabel}
+              key={label}
               initial={{opacity: 0, y: 6}}
               animate={{opacity: 1, y: 0}}
               exit={{opacity: 0, y: -6}}
               transition={SPRING}
               className="tracking-[-0.02em] self-stretch text-[#111111] font-sans font-semibold text-[28px]/8.5 truncate">
-              {nowLabel}
+              {label}
             </motion.div>
           </AnimatePresence>
+          {road ? (
+            <div className="self-stretch text-[#111111] font-sans text-base/5.5 truncate">{road}</div>
+          ) : null}
         </div>
       </div>
     </div>
@@ -67,13 +80,76 @@ export function OrientationCard(_: {
 }
 
 /* -------------------------------------------------------------------------- */
-/* PivotSnapshot -> labels                                                     */
+/* Snapshot + maneuver -> display fields                                       */
 
-function pickNow(snap: PivotSnapshot): {nowLabel: string; nowIcon: string} {
-  if (snap.arrived) return {nowLabel: "Arrived", nowIcon: "ARRIVE"}
-  if (snap.direction === "right") return {nowLabel: "Turn right", nowIcon: "TURN_RIGHT"}
-  if (snap.direction === "left") return {nowLabel: "Turn left", nowIcon: "TURN_LEFT"}
-  return {nowLabel: "Continue", nowIcon: "STRAIGHT"}
+function pickDisplay(
+  snap: PivotSnapshot,
+  maneuver: NavManeuver | null,
+  geocoderRoad: string | null,
+): {label: string; icon: string; road: string | null; distance: string | null} {
+  if (snap.arrived) {
+    return {label: "Arrived", icon: "ARRIVE", road: null, distance: null}
+  }
+
+  // The SDK sometimes returns placeholder road names like "toward Fell St"
+  // when it doesn't have a confirmed name. Treat those as missing.
+  const namedToRoad = realRoadName(maneuver?.toRoad)
+
+  if (snap.direction === "right") {
+    return {
+      label: "Turn right",
+      icon: "TURN_RIGHT",
+      road: namedToRoad ? `onto ${namedToRoad}` : null,
+      distance: null,
+    }
+  }
+  if (snap.direction === "left") {
+    return {
+      label: "Turn left",
+      icon: "TURN_LEFT",
+      road: namedToRoad ? `onto ${namedToRoad}` : null,
+      distance: null,
+    }
+  }
+
+  // Continue — always show a distance. Prefer the next-pivot distance and
+  // label it with the upcoming turn so a value jump (e.g. 162m → 287m as we
+  // pass one pivot and start counting down to the next one) reads as a
+  // state change instead of a glitch. When no pivots are ahead (final
+  // approach), fall back to destination distance with "to destination".
+  let distance: string | null = null
+  if (snap.distanceToNextPivotMeters != null && snap.nextPivotDirection) {
+    const verb = snap.nextPivotDirection === "right" ? "turn right" : "turn left"
+    distance = `In ${formatDistance(snap.distanceToNextPivotMeters)}, ${verb}`
+  } else if (snap.distanceToDestinationMeters != null) {
+    distance = `In ${formatDistance(snap.distanceToDestinationMeters)} to destination`
+  }
+
+  // SDK's fromRoad is authoritative when present; fall back to the
+  // geocoder so we always show *some* street name on Continue.
+  const road = realRoadName(maneuver?.fromRoad) ?? geocoderRoad
+  return {label: "Continue", icon: "STRAIGHT", road, distance}
+}
+
+/**
+ * The SDK sometimes returns placeholder road labels like "toward Fell St"
+ * when it doesn't have a confirmed road name. Those are useless to show
+ * (they read as "onto toward Fell St" / "Continue toward Fell St"). Treat
+ * any name starting with "toward" — or a whitespace-only / empty string —
+ * as missing.
+ */
+function realRoadName(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const trimmed = raw.trim()
+  if (trimmed.length === 0) return null
+  // The Nav SDK leaks its maneuver-instruction text into fromRoad/toRoad when
+  // the underlying road has no name ("Slight left", "Sharp right", "Keep
+  // left", "Merge", "Roundabout", "Toward Fell St", "U-turn", etc.). Rendered
+  // blindly these read as gibberish ("Continue | Slight left"), so we treat
+  // anything starting with one of these verbs as missing — the geocoder
+  // fallback in pickDisplay will fill in a real street name instead.
+  if (/^(toward|turn|continue|destination|head|cross|slight|sharp|keep|merge|fork|exit|take|roundabout|u[\s-]?turn|arrive|arriving|depart|enter|leave|stay)\b/i.test(trimmed)) return null
+  return trimmed
 }
 
 /* -------------------------------------------------------------------------- */

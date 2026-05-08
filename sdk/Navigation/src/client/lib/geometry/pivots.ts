@@ -26,7 +26,14 @@ export type PivotPoint = {
 }
 
 const TURN_THRESHOLD_DEG = 25
-const MIN_PIVOT_SPACING_M = 15
+/**
+ * Same-direction merge threshold. Two consecutive turns in the same
+ * direction within this many meters of each other are treated as ONE
+ * effective maneuver — walking-instruction-wise, "left then left right
+ * after" reads as a single sustained left turn, not two distinct ones.
+ * Opposite-direction pivots within this distance are preserved (chicanes).
+ */
+const SAME_DIR_MERGE_M = 25
 /**
  * RDP epsilon. Tuned for walking navigation in city grids. Larger values
  * collapse smooth highway curves into a sequence of fake corners — but for
@@ -111,7 +118,7 @@ function perpDistMeters(p: LatLng, a: LatLng, b: LatLng): number {
  *   2. At each interior point, compute signed heading delta between incoming
  *      and outgoing segment bearings
  *   3. Keep points with |delta| ≥ TURN_THRESHOLD_DEG
- *   4. Merge pivots within MIN_PIVOT_SPACING_M of each other (keep larger delta)
+ *   4. Merge same-direction pivots within SAME_DIR_MERGE_M of each other (keep larger delta)
  */
 export function extractPivots(rawPoints: LatLng[]): PivotPoint[] {
   if (rawPoints.length < 3) return []
@@ -215,18 +222,23 @@ export function extractPivots(rawPoints: LatLng[]): PivotPoint[] {
   }
   flushRun(deltas.length)
 
-  // Step 4 — merge SAME-DIRECTION pivots that are too close (zigzag noise).
-  // Opposite-direction pivots within the spacing threshold are real chicanes
-  // (e.g. right-then-immediately-left) and must be preserved.
+  // Step 4 — merge SAME-DIRECTION pivots that are close together. Two
+  // same-direction turns back-to-back (e.g. left then immediately left
+  // again) read as one sustained turn from the walker's perspective —
+  // collapse them so we don't say "Turn left, turn left" for a single
+  // doglegged left.
+  // Opposite-direction pivots within the threshold are real chicanes
+  // (right-then-immediately-left) and must be preserved.
   const merged: PivotPoint[] = []
   for (const p of candidates) {
     const last = merged[merged.length - 1]
     if (
       last &&
       last.direction === p.direction &&
-      haversineMeters({lat: last.lat, lng: last.lng}, {lat: p.lat, lng: p.lng}) < MIN_PIVOT_SPACING_M
+      haversineMeters({lat: last.lat, lng: last.lng}, {lat: p.lat, lng: p.lng}) < SAME_DIR_MERGE_M
     ) {
-      // Keep whichever has the larger heading delta
+      // Keep whichever has the larger heading delta — that's the geometric
+      // anchor of the corner.
       if (Math.abs(p.headingDelta) > Math.abs(last.headingDelta)) {
         merged[merged.length - 1] = p
       }

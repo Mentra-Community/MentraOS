@@ -29,6 +29,7 @@ import {LocationManager} from "@/backend/session/managers/LocationManager"
 import type {Coords} from "@/backend/session/managers/LocationManager"
 import {NavigationManager} from "@/backend/session/managers/navigation/NavigationManager"
 import {PivotTracker} from "@/backend/session/managers/navigation/PivotTracker"
+import {RoadTracker} from "@/backend/session/managers/RoadTracker"
 import {SimpleStorageManager} from "@/backend/session/managers/SimpleStorageManager"
 
 export class User {
@@ -47,6 +48,13 @@ export class User {
    * OrientationCard — we no longer trust the SDK's noisy maneuverType stream.
    */
   readonly pivots: PivotTracker
+  /**
+   * Geocoder-backed road-name fallback. The Nav SDK's `fromRoad` is the
+   * source of truth, but it's null at trip start and on streets where the
+   * SDK has no name. This tracker reverse-geocodes the user's GPS so the
+   * UI always has a road name to coalesce onto when the SDK is empty.
+   */
+  readonly road: RoadTracker
 
   // ---- reactive snapshot --------------------------------------------------
 
@@ -84,6 +92,7 @@ export class User {
     this.navigation = new NavigationManager(this.session)
     this.storage = new SimpleStorageManager(this.session)
     this.pivots = new PivotTracker()
+    this.road = new RoadTracker(this.maps)
 
     // Last-chance teardown. Fires on phone-initiated WILL_DISCONNECT and
     // also when this.session.disconnect() runs locally — the SDK emits
@@ -194,6 +203,7 @@ export class User {
         // against the next pivot and emits "Turn left/right" / "Continue" /
         // "Arrived" snapshots without trusting the SDK's per-step maneuver.
         this.pivots.onLocationUpdate({lat: d.lat, lng: d.lng}, d.accuracy)
+        this.road.onLocationUpdate({lat: d.lat, lng: d.lng})
         this.notify()
       }),
     )
@@ -207,9 +217,10 @@ export class User {
       }),
     )
 
-    // PivotTracker → React. Whenever the tracker's snapshot flips (turn entered,
-    // pivot advanced, arrived) bump version so consumers re-render.
+    // PivotTracker → React. Whenever the snapshot changes (turn entered,
+    // pivot cursor advanced) bump version so consumers re-render.
     this.sensorUnsubs.push(this.pivots.subscribe(() => this.notify()))
+    this.sensorUnsubs.push(this.road.subscribe(() => this.notify()))
 
     // Throttle compass updates to ~10Hz. The IMU pushes far more
     // frequently than the UI can use, and every notify re-renders every
@@ -310,6 +321,13 @@ export class User {
       this.pivots.clear()
     } catch (err) {
       console.warn("[User] pivots.clear threw:", err)
+    }
+
+    // Cancel any pending road-name fetch.
+    try {
+      this.road.clear()
+    } catch (err) {
+      console.warn("[User] road.clear threw:", err)
     }
 
     // Release sensor subscriptions.
