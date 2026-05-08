@@ -191,7 +191,7 @@ fun CameraScreen(controller: MentraExampleController) {
                     modifier = Modifier.weight(1f),
                     decorationBox = { inner ->
                         if (state.webhookUrl.isBlank()) {
-                            Text("http://192.168.1.42:8787/upload", color = AppColor.muted, fontSize = 13.sp)
+                            Text("Photo upload URL", color = AppColor.muted, fontSize = 13.sp)
                         }
                         inner()
                     }
@@ -243,20 +243,24 @@ private fun isCameraStatusFailure(status: String): Boolean {
         normalized.contains("timed out") ||
         normalized.contains("reported") ||
         normalized.contains("invalid") ||
+        normalized.contains("replace <computer-ip>") ||
+        normalized.contains("valid http") ||
         normalized.contains("enter a webhook url like")
 }
 
 private fun localCameraSetupHint(webhookUrl: String, status: String): String? {
     val normalized = status.lowercase()
     val needsSetup = webhookUrl.trim().isEmpty() ||
+        webhookUrl.contains("<computer-ip>") ||
         normalized.contains("webhook test failed") ||
         normalized.contains("returned http") ||
         normalized.contains("timed out") ||
+        normalized.contains("valid http") ||
         normalized.contains("enter a webhook url like")
     if (!needsSetup) {
         return null
     }
-    return "Local setup: run python3 examples/local-demo-cloud/server.py from the Partner Kit repo root, then paste the printed Photo upload URL here."
+    return "Local setup: run python3 examples/local-demo-cloud/server.py from the Partner Kit repo root, then paste the printed Photo upload URL here. It looks like http://<computer-ip>:8787/upload."
 }
 
 @Composable

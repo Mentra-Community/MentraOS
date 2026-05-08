@@ -69,6 +69,8 @@ val streamDefaultUrls = mapOf(
     "webrtc" to "http://<computer-ip>:8889/mentra-live/whip",
 )
 
+const val photoUploadDefaultUrl = "http://<computer-ip>:8787/upload"
+
 fun defaultStreamUrl(protocol: String): String = streamDefaultUrls[protocol] ?: streamDefaultUrls.getValue("rtmp")
 
 fun streamProtocolLabel(protocol: String): String = if (protocol == "webrtc") "WHIP" else protocol.uppercase()
@@ -105,7 +107,7 @@ const val MENTRA_LIVE_DEFAULT_HOTSPOT_PASSWORD = "00001111"
 data class MentraExampleState(
     val activeAction: String? = null,
     val bluetoothStatus: Map<String, Any> = emptyMap(),
-    val cameraStatus: String = "Camera: enter the local webhook /upload URL",
+    val cameraStatus: String = "Camera: replace <computer-ip> in the Photo upload URL",
     val discoveredDevices: List<MentraDiscoveredDevice> = emptyList(),
     val selectedDiscoveredDevice: MentraDiscoveredDevice? = null,
     val events: List<ExampleEvent> = listOf(exampleEvent("LIVE", "SDK ready. Scan to discover glasses.")),
@@ -142,7 +144,7 @@ data class MentraExampleState(
     val streamStartedAt: Long? = null,
     val streamStatus: String = "Ready to start stream",
     val streamUrl: String = defaultStreamUrl("rtmp"),
-    val webhookUrl: String = "",
+    val webhookUrl: String = photoUploadDefaultUrl,
     val wifiPendingSsid: String? = null,
 )
 
@@ -322,12 +324,16 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     fun captureAndUpload() = runAction("Capture & upload") {
         requireConnected("capture photos")
         val uploadUrl = state.webhookUrl.trim()
+        photoUploadValidationMessage(uploadUrl)?.let { message ->
+            state = state.copy(cameraStatus = "Camera: $message")
+            throw IllegalArgumentException(message)
+        }
         val requestId = "photo-${System.currentTimeMillis()}"
         val statusUrl = try {
             photoStatusUrl(uploadUrl, requestId)
         } catch (_: Exception) {
-            state = state.copy(cameraStatus = "Camera: enter a webhook URL like http://<computer-ip>:8787/upload")
-            throw IllegalArgumentException("Invalid webhook URL")
+            state = state.copy(cameraStatus = "Camera: enter a valid http:// or https:// Photo upload URL")
+            throw IllegalArgumentException("Enter a valid http:// or https:// Photo upload URL.")
         }
         activePhotoRequestId = requestId
         pollGeneration += 1
@@ -351,11 +357,16 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     fun testWebhook() = runAction("Test webhook") {
+        val uploadUrl = state.webhookUrl.trim()
+        photoUploadValidationMessage(uploadUrl)?.let { message ->
+            state = state.copy(cameraStatus = "Camera: $message")
+            throw IllegalArgumentException(message)
+        }
         val healthUrl = try {
-            webhookHealthUrl(state.webhookUrl.trim())
+            webhookHealthUrl(uploadUrl)
         } catch (_: Exception) {
-            state = state.copy(cameraStatus = "Camera: enter a webhook URL like http://<computer-ip>:8787/upload")
-            throw IllegalArgumentException("Invalid webhook URL")
+            state = state.copy(cameraStatus = "Camera: enter a valid http:// or https:// Photo upload URL")
+            throw IllegalArgumentException("Enter a valid http:// or https:// Photo upload URL.")
         }
 
         state = state.copy(cameraStatus = "Camera: testing local webhook")
@@ -1459,6 +1470,17 @@ fun webhookHealthUrl(uploadUrlText: String): String {
     }
     val port = url.port.takeIf { it >= 0 }?.let { ":$it" } ?: ""
     return "${url.protocol}://${url.host}$port/"
+}
+
+fun photoUploadValidationMessage(uploadUrlText: String): String? {
+    val value = uploadUrlText.trim()
+    if (value.isEmpty()) {
+        return "Paste the Photo upload URL printed by local demo cloud."
+    }
+    if (value.contains("<computer-ip>")) {
+        return "Replace <computer-ip> with the IP printed by local demo cloud."
+    }
+    return null
 }
 
 fun localRtmpReachabilityMessage(rtmpUrlText: String): String? {

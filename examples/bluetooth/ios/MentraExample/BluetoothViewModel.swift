@@ -24,6 +24,8 @@ private struct GalleryServerCheck {
     let eventText: String
 }
 
+private let defaultPhotoUploadUrl = "http://<computer-ip>:8787/upload"
+
 enum ExampleStreamProtocol: String, CaseIterable {
     case rtmp
     case srt
@@ -56,8 +58,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var events: [ExampleEvent] = [ExampleEvent.make(tag: "LIVE", text: "SDK ready. Scan to discover glasses.")]
     @Published private(set) var activeAction: String?
     @Published private(set) var lastAction = "No actions yet."
-    @Published private(set) var cameraStatus = "Camera: enter the local webhook /upload URL"
-    @Published var webhookUrl = ""
+    @Published private(set) var cameraStatus = "Camera: replace <computer-ip> in the Photo upload URL"
+    @Published var webhookUrl = defaultPhotoUploadUrl
     @Published private(set) var photoPreviewUrl: URL?
     @Published private(set) var photoSize: MentraPhotoSize = .medium
     @Published private(set) var photoCompression: MentraPhotoCompression = .medium
@@ -238,9 +240,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         runAction("Capture & upload") {
             try requireConnected("capture photos")
             let uploadUrl = webhookUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let validationMessage = photoUploadValidationMessage(uploadUrl) {
+                cameraStatus = "Camera: \(validationMessage)"
+                throw ExampleActionError(message: validationMessage)
+            }
             guard let statusUrl = photoStatusUrl(uploadUrl, requestId: "") else {
-                cameraStatus = "Camera: enter a webhook URL like http://<computer-ip>:8787/upload"
-                return
+                let message = "Enter a valid http:// or https:// Photo upload URL."
+                cameraStatus = "Camera: \(message)"
+                throw ExampleActionError(message: message)
             }
             let requestId = "photo-\(Int(Date().timeIntervalSince1970 * 1000))"
             activePhotoRequestId = requestId
@@ -266,10 +273,16 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func testWebhook() {
         runAction("Test webhook") {
             let uploadUrl = webhookUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let validationMessage = photoUploadValidationMessage(uploadUrl) {
+                cameraStatus = "Camera: \(validationMessage)"
+                append(tag: "TX", text: "Test webhook failed: \(validationMessage)")
+                throw ExampleActionError(message: validationMessage)
+            }
             guard let healthUrl = webhookHealthUrl(uploadUrl) else {
-                cameraStatus = "Camera: enter a webhook URL like http://<computer-ip>:8787/upload"
+                let message = "Enter a valid http:// or https:// Photo upload URL."
+                cameraStatus = "Camera: \(message)"
                 append(tag: "TX", text: "Test webhook failed: invalid URL")
-                return
+                throw ExampleActionError(message: message)
             }
 
             cameraStatus = "Camera: testing local webhook"
@@ -1378,6 +1391,17 @@ func webhookHealthUrl(_ uploadUrlText: String) -> URL? {
     components.port = uploadUrl.port
     components.path = "/"
     return components.url
+}
+
+func photoUploadValidationMessage(_ uploadUrlText: String) -> String? {
+    let value = uploadUrlText.trimmingCharacters(in: .whitespacesAndNewlines)
+    if value.isEmpty {
+        return "Paste the Photo upload URL printed by local demo cloud."
+    }
+    if value.contains("<computer-ip>") {
+        return "Replace <computer-ip> with the IP printed by local demo cloud."
+    }
+    return nil
 }
 
 func checkLocalRtmpServer(rtmpUrl: String) async throws {

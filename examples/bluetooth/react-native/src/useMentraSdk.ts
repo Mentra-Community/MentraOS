@@ -60,6 +60,8 @@ export const STREAM_DEFAULT_URLS: Record<StreamProtocol, string> = {
   webrtc: 'http://<computer-ip>:8889/mentra-live/whip',
 };
 
+export const PHOTO_UPLOAD_DEFAULT_URL = 'http://<computer-ip>:8787/upload';
+
 const STREAM_DEFAULT_URL_VALUES = new Set(Object.values(STREAM_DEFAULT_URLS));
 
 export type SdkConsoleEvent = {
@@ -179,10 +181,10 @@ export function useMentraSdk(): MentraSdkModel {
       : 'Permissions: iOS prompts as needed',
   );
   const [webhookUrl, setWebhookUrl] = useState(
-    process.env?.EXPO_PUBLIC_MENTRA_PHOTO_WEBHOOK_URL ?? '',
+    process.env?.EXPO_PUBLIC_MENTRA_PHOTO_WEBHOOK_URL ?? PHOTO_UPLOAD_DEFAULT_URL,
   );
   const [cameraStatus, setCameraStatus] = useState(
-    'Camera: enter the local webhook /upload URL',
+    'Camera: replace <computer-ip> in the Photo upload URL',
   );
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [photoSize, setPhotoSize] = useState<PhotoSize>('medium');
@@ -570,12 +572,17 @@ export function useMentraSdk(): MentraSdkModel {
         throw new Error('Camera and Bluetooth permissions are required for photos.');
       }
       const uploadUrlText = webhookUrl.trim();
+      const validationMessage = photoUploadValidationMessage(uploadUrlText);
+      if (validationMessage) {
+        setCameraStatus(`Camera: ${validationMessage}`);
+        throw new Error(validationMessage);
+      }
       let statusUrl = '';
       try {
         statusUrl = photoStatusUrl(uploadUrlText, '');
       } catch {
-        setCameraStatus('Camera: enter a webhook URL like http://<computer-ip>:8787/upload');
-        throw new Error('Invalid webhook URL.');
+        setCameraStatus('Camera: enter a valid http:// or https:// Photo upload URL');
+        throw new Error('Enter a valid http:// or https:// Photo upload URL.');
       }
 
       const requestId = `photo-${Date.now()}`;
@@ -602,12 +609,18 @@ export function useMentraSdk(): MentraSdkModel {
 
   async function testWebhook() {
     await runAction('Test webhook', async () => {
+      const uploadUrlText = webhookUrl.trim();
+      const validationMessage = photoUploadValidationMessage(uploadUrlText);
+      if (validationMessage) {
+        setCameraStatus(`Camera: ${validationMessage}`);
+        throw new Error(validationMessage);
+      }
       let healthUrl = '';
       try {
-        healthUrl = webhookHealthUrl(webhookUrl.trim());
+        healthUrl = webhookHealthUrl(uploadUrlText);
       } catch {
-        setCameraStatus('Camera: enter a webhook URL like http://<computer-ip>:8787/upload');
-        throw new Error('Invalid webhook URL.');
+        setCameraStatus('Camera: enter a valid http:// or https:// Photo upload URL');
+        throw new Error('Enter a valid http:// or https:// Photo upload URL.');
       }
 
       setCameraStatus('Camera: testing local webhook');
@@ -1472,6 +1485,17 @@ function webhookHealthUrl(uploadUrlText: string) {
     throw new Error('Only http and https webhook URLs are supported.');
   }
   return `${uploadUrl.protocol}//${uploadUrl.host}/`;
+}
+
+function photoUploadValidationMessage(uploadUrlText: string) {
+  const value = uploadUrlText.trim();
+  if (value.length === 0) {
+    return 'Paste the Photo upload URL printed by local demo cloud.';
+  }
+  if (value.includes('<computer-ip>')) {
+    return 'Replace <computer-ip> with the IP printed by local demo cloud.';
+  }
+  return null;
 }
 
 async function localWebrtcReachabilityMessage(whipUrlText: string) {

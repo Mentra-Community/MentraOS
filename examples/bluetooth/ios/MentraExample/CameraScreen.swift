@@ -171,7 +171,7 @@ struct CameraScreen: View {
             HStack(spacing: 10) {
                 Text("POST").font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundColor(AppColor.greenAccent)
                 Rectangle().fill(AppColor.ink.opacity(0.12)).frame(width: 1, height: 14)
-                TextField("http://192.168.1.42:8787/upload", text: $model.webhookUrl)
+                TextField("Photo upload URL", text: $model.webhookUrl)
                     .focused($webhookUrlFocused)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -231,20 +231,24 @@ private func isCameraStatusFailure(_ status: String) -> Bool {
         normalized.contains("reported") ||
         normalized.contains("connect glasses first") ||
         normalized.contains("invalid") ||
+        normalized.contains("replace <computer-ip>") ||
+        normalized.contains("valid http") ||
         normalized.contains("enter a webhook url like")
 }
 
 private func localCameraSetupHint(webhookUrl: String, status: String) -> String? {
     let normalized = status.lowercased()
     let needsSetup = webhookUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+        webhookUrl.contains("<computer-ip>") ||
         normalized.contains("webhook test failed") ||
         normalized.contains("returned http") ||
         normalized.contains("timed out") ||
+        normalized.contains("valid http") ||
         normalized.contains("enter a webhook url like")
     if !needsSetup {
         return nil
     }
-    return "Local setup: run python3 examples/local-demo-cloud/server.py from the Partner Kit repo root, then paste the printed Photo upload URL here."
+    return "Local setup: run python3 examples/local-demo-cloud/server.py from the Partner Kit repo root, then paste the printed Photo upload URL here. It looks like http://<computer-ip>:8787/upload."
 }
 
 struct CameraOptionGroup<Content: View>: View {

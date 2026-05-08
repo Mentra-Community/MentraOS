@@ -117,7 +117,7 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
             autoCorrect={false}
             keyboardType="url"
             onChangeText={sdk.setWebhookUrl}
-            placeholder="http://192.168.1.42:8787/upload"
+            placeholder="Photo upload URL"
             placeholderTextColor={colors.muted}
             returnKeyType="done"
             style={styles.url}
@@ -157,6 +157,8 @@ function isCameraStatusFailure(status: string) {
     normalized.includes('timed out') ||
     normalized.includes('reported') ||
     normalized.includes('invalid') ||
+    normalized.includes('replace <computer-ip>') ||
+    normalized.includes('valid http') ||
     normalized.includes('enter a webhook url like') ||
     normalized.includes('connect glasses first')
   );
@@ -166,14 +168,16 @@ function localCameraSetupHint(webhookUrl: string, status: string) {
   const normalized = status.toLowerCase();
   const needsSetup =
     webhookUrl.trim().length === 0 ||
+    webhookUrl.includes('<computer-ip>') ||
     normalized.includes('webhook test failed') ||
     normalized.includes('returned http') ||
     normalized.includes('timed out') ||
+    normalized.includes('valid http') ||
     normalized.includes('enter a webhook url like');
   if (!needsSetup) {
     return null;
   }
-  return 'Local setup: run python3 examples/local-demo-cloud/server.py from the Partner Kit repo root, then paste the printed Photo upload URL here.';
+  return 'Local setup: run python3 examples/local-demo-cloud/server.py from the Partner Kit repo root, then paste the printed Photo upload URL here. It looks like http://<computer-ip>:8787/upload.';
 }
 
 function OptionGroup({ children, label }: { children: React.ReactNode; label: string }) {
