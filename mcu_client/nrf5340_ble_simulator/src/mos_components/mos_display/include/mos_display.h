@@ -35,7 +35,8 @@ typedef enum
     LCD_CMD_INVALIDATE_FULL_SCREEN, /* Mark full screen dirty + request one LVGL refresh (thread-safe via msgq) */
     LCD_CMD_INVALIDATE_VISIBLE_UI, /* Invalidate current pattern roots only (e.g. after software depth) */
     LCD_CMD_UPDATE_HEIGHT,
-    LCD_CMD_UPDATE_DYNAMIC_FONT     // **NEW: Update dynamic font in LVGL thread**
+    LCD_CMD_UPDATE_DYNAMIC_FONT,    // **NEW: Update dynamic font in LVGL thread**
+    LCD_CMD_SET_DEBUG_BORDERS       // Toggle 1px debug borders on screen + welcome/caption containers
 } display_cmd_type_t;
 
 /* Display on/off control functions | 显示开关控制函数 */
@@ -85,6 +86,11 @@ typedef struct
     const lv_font_t *font_ptr;
 } lcd_font_update_param_t;
 
+typedef struct
+{
+    bool enabled;
+} lcd_debug_borders_param_t;
+
 typedef union
 {
     lcd_open_param_t open;
@@ -94,6 +100,7 @@ typedef union
     lcd_dfu_progress_param_t dfu_progress;    // **NEW: DFU progress bar (show + percent)**
     lcd_height_param_t height;
     lcd_font_update_param_t font_update;
+    lcd_debug_borders_param_t debug_borders;
     // 其它命令参数结构体可继续扩展
 } display_param_u;
 
@@ -156,6 +163,11 @@ void display_update_dfu_progress(uint8_t show, uint8_t percent);
 
 /** Update DFU status text line below battery (e.g. "DFU Updating... 45% (120 KB)"). text=NULL or "" to hide. Thread-safe. */
 void display_update_dfu_status_text(const char *text);
+
+/** Toggle 1px debug borders on the screen and welcome/caption containers. Thread-safe; the
+ * actual style mutation runs on the LVGL thread via the display msgq. */
+void display_set_debug_borders(bool enabled);
+bool display_get_debug_borders(void);
 
 void lvgl_display_thread(void);
 #endif // !MOS_DISPLAY_H_

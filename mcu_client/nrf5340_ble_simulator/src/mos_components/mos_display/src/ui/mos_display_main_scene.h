@@ -130,6 +130,18 @@ int  mos_ui_main_scene_set_translation_pair(display_biz_lang_t src, display_biz_
 void mos_ui_main_scene_get_translation_pair(display_biz_lang_t *src, display_biz_lang_t *dst);
 
 /* ------------------------------------------------------------------------- *
+ * Debug borders
+ *
+ * When enabled, the screen plus the welcome and caption containers get a 1px
+ * border drawn in the configured text color so the layout boxes are visible.
+ * The flag is process-wide; the apply function mutates LVGL objects and MUST
+ * be called on the LVGL thread. Set/get are thread-safe.
+ * ------------------------------------------------------------------------- */
+void mos_ui_main_scene_set_debug_borders(bool on);
+bool mos_ui_main_scene_debug_borders_enabled(void);
+void mos_ui_main_scene_apply_debug_borders(mos_ui_main_scene_t *scene, lv_obj_t *screen);
+
+/* ------------------------------------------------------------------------- *
  * Dynamic font integration
  * ------------------------------------------------------------------------- */
 /* Apply a font swap to all scene-owned dynamic-font labels. While welcome is the active

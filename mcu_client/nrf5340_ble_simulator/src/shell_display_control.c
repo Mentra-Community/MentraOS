@@ -89,6 +89,11 @@ static int cmd_display_help(const struct shell *shell, size_t argc, char **argv)
     shell_print(shell, "  display layout position <x> <y>    - Move container position");
     shell_print(shell, "  display layout size <width> <height> - Set container size");
     shell_print(shell, "  display layout info               - Show current layout settings");
+    shell_print(shell, "");
+    shell_print(shell, "🐞 Debug:");
+    shell_print(shell, "  display debug border on            - Show 1px borders around screen + welcome/caption");
+    shell_print(shell, "  display debug border off           - Hide debug borders");
+    shell_print(shell, "  display debug border status        - Show current debug border state");
     shell_print(shell, "  display layout reset              - Reset to default layout");
     shell_print(shell, "");
     shell_print(shell, "🎨 Font Testing:");
@@ -1597,6 +1602,45 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
     SHELL_CMD_ARG(padding, NULL, "Set container padding <pixels>", cmd_display_layout_padding, 2, 0),
     SHELL_SUBCMD_SET_END);
 
+/* Debug border toggle: paints a 1px frame around the screen and the welcome/caption
+ * containers so the layout boxes are visible. Off by default. */
+static int cmd_display_debug_border_on(const struct shell *shell, size_t argc, char **argv)
+{
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
+    display_set_debug_borders(true);
+    shell_print(shell, "Debug borders: ON");
+    return 0;
+}
+
+static int cmd_display_debug_border_off(const struct shell *shell, size_t argc, char **argv)
+{
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
+    display_set_debug_borders(false);
+    shell_print(shell, "Debug borders: OFF");
+    return 0;
+}
+
+static int cmd_display_debug_border_status(const struct shell *shell, size_t argc, char **argv)
+{
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
+    shell_print(shell, "Debug borders: %s", display_get_debug_borders() ? "ON" : "OFF");
+    return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(sub_debug_border,
+                               SHELL_CMD(on, NULL, "Enable debug borders", cmd_display_debug_border_on),
+                               SHELL_CMD(off, NULL, "Disable debug borders", cmd_display_debug_border_off),
+                               SHELL_CMD(status, NULL, "Show debug border state", cmd_display_debug_border_status),
+                               SHELL_SUBCMD_SET_END);
+
+SHELL_STATIC_SUBCMD_SET_CREATE(sub_debug,
+                               SHELL_CMD(border, &sub_debug_border, "Toggle 1px debug borders (on/off/status)",
+                                         cmd_display_debug_border_status),
+                               SHELL_SUBCMD_SET_END);
+
 /* Shell subcommand definitions for min_temp_limit */
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_min_temp_limit,
                                SHELL_CMD_ARG(set, NULL, "Set low temperature recovery threshold <value_in_C>",
@@ -1662,6 +1706,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
     SHELL_CMD_ARG(stereo, NULL, "Set stereo shift: <left_h> <right_h>", cmd_display_stereo, 3, 0),
     SHELL_CMD(fonts, &sub_fonts, "Font size management", NULL),
     SHELL_CMD(layout, &sub_layout, "Layout and positioning control", NULL),
+    SHELL_CMD(debug, &sub_debug, "Debug visualization toggles (border)", NULL),
     SHELL_CMD_ARG(read, NULL, "Read A6N register: <addr> [mode] (hex, e.g. EF, F0, BE)", cmd_display_read, 2, 1),
     SHELL_CMD_ARG(write, NULL, "Write A6N register: <addr> <value> (hex)", cmd_display_write, 3, 0),
     SHELL_CMD(get_temp, NULL, "Read A6N panel temperature", cmd_display_get_temp),

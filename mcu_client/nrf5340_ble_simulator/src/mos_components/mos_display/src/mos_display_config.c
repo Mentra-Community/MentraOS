@@ -108,7 +108,7 @@ static const display_config_t display_configs[DISPLAY_TYPE_MAX] = {
                    .padding = 8,
                    .border_width = 2,
                    .usable_width = 480,
-                   .usable_height = 160},
+                   .usable_height = 120},
         .fonts = {.primary = &lv_font_montserrat_18,
                   .secondary = &lv_font_montserrat_18,
                   .large = &lv_font_montserrat_18,

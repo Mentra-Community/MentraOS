@@ -18,6 +18,11 @@ LOG_MODULE_REGISTER(main_scene, LOG_LEVEL_DBG);
 static K_MUTEX_DEFINE(s_mode_lock);
 static mos_ui_main_scene_mode_t s_mode = MOS_UI_MAIN_SCENE_MODE_NONE;
 
+/* Debug-border flag. Read from any thread; writes are guarded so the shell thread can flip
+ * it independently of the LVGL thread that performs the apply. */
+static K_MUTEX_DEFINE(s_debug_lock);
+static bool s_debug_borders = false;
+
 static void set_mode(mos_ui_main_scene_mode_t mode)
 {
     k_mutex_lock(&s_mode_lock, K_FOREVER);
@@ -43,6 +48,56 @@ bool mos_ui_main_scene_can_render_caption(void)
 {
     mos_ui_main_scene_mode_t mode = mos_ui_main_scene_get_mode();
     return mode == MOS_UI_MAIN_SCENE_MODE_WELCOME || mode == MOS_UI_MAIN_SCENE_MODE_CAPTION;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Debug borders
+ * ------------------------------------------------------------------------- */
+
+void mos_ui_main_scene_set_debug_borders(bool on)
+{
+    k_mutex_lock(&s_debug_lock, K_FOREVER);
+    s_debug_borders = on;
+    k_mutex_unlock(&s_debug_lock);
+}
+
+bool mos_ui_main_scene_debug_borders_enabled(void)
+{
+    bool on;
+    k_mutex_lock(&s_debug_lock, K_FOREVER);
+    on = s_debug_borders;
+    k_mutex_unlock(&s_debug_lock);
+    return on;
+}
+
+static void apply_border_to(lv_obj_t *obj, bool on, lv_color_t color)
+{
+    if (!obj) return;
+    if (on)
+    {
+        lv_obj_set_style_border_width(obj, 1, 0);
+        lv_obj_set_style_border_color(obj, color, 0);
+        lv_obj_set_style_border_opa(obj, LV_OPA_COVER, 0);
+    }
+    else
+    {
+        lv_obj_set_style_border_width(obj, 0, 0);
+        lv_obj_set_style_border_opa(obj, LV_OPA_TRANSP, 0);
+    }
+    lv_obj_invalidate(obj);
+}
+
+void mos_ui_main_scene_apply_debug_borders(mos_ui_main_scene_t *scene, lv_obj_t *screen)
+{
+    bool on = mos_ui_main_scene_debug_borders_enabled();
+    lv_color_t color = display_get_text_color();
+
+    apply_border_to(screen, on, color);
+    if (scene)
+    {
+        apply_border_to(scene->welcome.container, on, color);
+        apply_border_to(scene->caption.container, on, color);
+    }
 }
 
 /* ------------------------------------------------------------------------- *
@@ -122,6 +177,11 @@ mos_ui_main_scene_t mos_ui_main_scene_create(lv_obj_t *parent, const mos_ui_main
     lv_obj_update_layout(parent);
 
     set_mode(MOS_UI_MAIN_SCENE_MODE_WELCOME);
+
+    /* parent is the active screen (passed in from create_scrolling_text_container). Re-apply
+     * the current debug-border flag so re-created containers don't lose the border across a
+     * pattern rebuild. */
+    mos_ui_main_scene_apply_debug_borders(&scene, parent);
 
     LOG_DBG("main_scene created");
     return scene;
