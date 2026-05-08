@@ -265,11 +265,13 @@ zephyr_udc0: &usbd {
     status = "disabled";
 };
 
-/* Configure GPIO0 sense-edge-mask for low-power button wakeup | 配置GPIO0 sense-edge-mask用于低功耗按键唤醒 */
-/* P0.23 is bit 23, so mask = (1 << 23) = 0x800000 | P0.23是第23位，所以掩码 = (1 << 23) = 0x800000 */
+/* Low-power GPIO wake masks:
+ * P0.23 button wake: bit 23 -> 0x800000
+ * P1.14 IQS7211E RDY touch wake: bit 14 -> 0x4000
+ * These masks are per GPIO port, so keep both while both wake sources exist. */
 &gpio0 {
     sense-edge-mask = <0x800000>;
 };
 &gpio1 {
-    sense-edge-mask = <0x0>;
+    sense-edge-mask = <0x4000>;
 };

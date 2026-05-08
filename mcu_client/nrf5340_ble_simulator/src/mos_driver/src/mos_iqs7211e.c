@@ -11,7 +11,6 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/atomic.h>
-#include <hal/nrf_gpio.h>
 
 LOG_MODULE_REGISTER(mos_iqs7211e, LOG_LEVEL_INF);
 
@@ -56,7 +55,6 @@ static void iqs_prepare_polled_access(void);
 static void iqs_try_fill_version_cache(void);
 static int iqs_setup_rdy_interrupt(void);
 static void iqs_start_rdy_work_queue(void);
-static int iqs_rdy_abs_pin(uint32_t *abs_pin);
 
 static const struct gpio_dt_spec s_iqs_rdy_gpio = GPIO_DT_SPEC_GET(IQS_RDY_NODE, iqs7211e_rdy_gpios);
 static struct gpio_callback s_iqs_rdy_cb;
@@ -497,32 +495,6 @@ static int iqs_setup_rdy_interrupt(void)
     return gpio_pin_interrupt_configure_dt(&s_iqs_rdy_gpio, IQS_RDY_GPIO_INT);
 }
 
-static int iqs_rdy_abs_pin(uint32_t *abs_pin)
-{
-    if (abs_pin == NULL)
-    {
-        return -EINVAL;
-    }
-
-#if DT_NODE_EXISTS(DT_NODELABEL(gpio0))
-    if (s_iqs_rdy_gpio.port == DEVICE_DT_GET(DT_NODELABEL(gpio0)))
-    {
-        *abs_pin = NRF_GPIO_PIN_MAP(0, s_iqs_rdy_gpio.pin);
-        return 0;
-    }
-#endif
-
-#if DT_NODE_EXISTS(DT_NODELABEL(gpio1))
-    if (s_iqs_rdy_gpio.port == DEVICE_DT_GET(DT_NODELABEL(gpio1)))
-    {
-        *abs_pin = NRF_GPIO_PIN_MAP(1, s_iqs_rdy_gpio.pin);
-        return 0;
-    }
-#endif
-
-    return -ENODEV;
-}
-
 int mos_iqs7211e_init(void)
 {
     if (atomic_get(&s_iqs_initialized))
@@ -660,14 +632,6 @@ int mos_iqs7211e_configure_wakeup(void)
         return -ENODEV;
     }
 
-    uint32_t abs_pin = 0;
-    ret = iqs_rdy_abs_pin(&abs_pin);
-    if (ret != 0)
-    {
-        LOG_ERR("Failed to resolve IQS7211E RDY GPIO absolute pin: %d", ret);
-        return ret;
-    }
-
     (void)gpio_pin_interrupt_configure_dt(&s_iqs_rdy_gpio, GPIO_INT_DISABLE);
     (void)iqs_stop_comm_window();
 
@@ -716,9 +680,25 @@ int mos_iqs7211e_configure_wakeup(void)
         return ret;
     }
 
-    nrf_gpio_cfg_sense_set(abs_pin, active_low ? NRF_GPIO_PIN_SENSE_LOW : NRF_GPIO_PIN_SENSE_HIGH);
-    LOG_INF("IQS7211E RDY configured for System OFF wakeup (%s, P%u.%u)",
-            active_low ? "SENSE_LOW" : "SENSE_HIGH", abs_pin >> 5, abs_pin & 0x1FU);
+    ret = gpio_pin_interrupt_configure_dt(&s_iqs_rdy_gpio, GPIO_INT_LEVEL_ACTIVE);
+    if (ret != 0)
+    {
+        LOG_ERR("Failed to configure IQS7211E RDY level interrupt for wakeup: %d", ret);
+        return ret;
+    }
+
+    raw_level = gpio_pin_get_raw(s_iqs_rdy_gpio.port, s_iqs_rdy_gpio.pin);
+    if (raw_level < 0)
+    {
+        LOG_WRN("IQS7211E RDY wakeup configured, but final raw level read failed: %d", raw_level);
+    }
+    else
+    {
+        const bool rdy_active = active_low ? (raw_level == 0) : (raw_level != 0);
+        LOG_INF("IQS7211E RDY configured for System OFF wakeup (LEVEL_ACTIVE, %s pin %u, raw=%d, active=%u)",
+                s_iqs_rdy_gpio.port->name, s_iqs_rdy_gpio.pin, raw_level,
+                (unsigned int)rdy_active);
+    }
     return 0;
 }
 

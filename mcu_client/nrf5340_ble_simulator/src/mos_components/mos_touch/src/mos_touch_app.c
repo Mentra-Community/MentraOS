@@ -566,6 +566,24 @@ static void mos_touch_app_reset_runtime_state(void)
     s_touch_prev_reported_gesture_ms = 0;
 }
 
+static void mos_touch_app_abort_sleep_prepare(const char *step, int err)
+{
+    atomic_set(&s_touch_sleep_pending, 0);
+    LOG_ERR("%s failed: %d; aborting System OFF sleep and keeping device awake", step, err);
+
+    int ret = mos_touch_app_apply_profile();
+    if (ret != 0)
+    {
+        LOG_ERR("Failed to restore IQS7211E runtime profile after sleep abort: %d", ret);
+    }
+
+    ret = mos_iqs7211e_enable_rdy_interrupt();
+    if (ret != 0)
+    {
+        LOG_ERR("Failed to re-arm IQS7211E RDY interrupt after sleep abort: %d", ret);
+    }
+}
+
 static void mos_touch_app_sleep_work_handler(struct k_work *work)
 {
     ARG_UNUSED(work);
@@ -574,6 +592,28 @@ static void mos_touch_app_sleep_work_handler(struct k_work *work)
 
     /* Let the current IQS RDY frame finish and return RDY to idle before configuring wake sense. */
     k_sleep(K_MSEC(200));
+
+    int ret = mos_npm1300_ldsw1_enable();
+    if (ret != 0)
+    {
+        LOG_WRN("Failed to keep LDSW1 enabled for touch wakeup: %d", ret);
+    }
+
+    ret = mos_iqs7211e_prepare_sleep_wakeup_mode();
+    if (ret != 0)
+    {
+        mos_touch_app_abort_sleep_prepare("IQS7211E sleep wakeup prepare", ret);
+        return;
+    }
+
+    ret = mos_iqs7211e_configure_wakeup();
+    if (ret != 0)
+    {
+        mos_touch_app_abort_sleep_prepare("IQS7211E touch wakeup configure", ret);
+        return;
+    }
+
+    LOG_INF("Touch wakeup configured; powering down peripherals before System OFF");
 
     (void)mos_gx8002_power_control(false);
     mic_power_control(false);
@@ -585,28 +625,6 @@ static void mos_touch_app_sleep_work_handler(struct k_work *work)
     a6n_io_off();
 
     configure_default_low_pins();
-
-    int ret = mos_npm1300_ldsw1_enable();
-    if (ret != 0)
-    {
-        LOG_WRN("Failed to keep LDSW1 enabled for touch wakeup: %d", ret);
-    }
-
-    ret = mos_iqs7211e_prepare_sleep_wakeup_mode();
-    if (ret != 0)
-    {
-        atomic_set(&s_touch_sleep_pending, 0);
-        LOG_ERR("Failed to prepare IQS7211E sleep wakeup mode: %d", ret);
-        return;
-    }
-
-    ret = mos_iqs7211e_configure_wakeup();
-    if (ret != 0)
-    {
-        atomic_set(&s_touch_sleep_pending, 0);
-        LOG_ERR("Failed to configure IQS7211E touch wakeup: %d", ret);
-        return;
-    }
 
     ret = opt3006_set_mode(OPT3006_MODE_SHUTDOWN);
     if (ret != 0)
