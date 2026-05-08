@@ -36,6 +36,8 @@ LOG_MODULE_REGISTER(mos_iqs7211e, LOG_LEVEL_INF);
 #define IQS_WAKE_RDY_POLL_MS 20
 #define IQS_WAKE_RDY_TIMEOUT_MS 2000
 #define IQS_WAKE_RDY_STABLE_IDLE_MS 200
+#define IQS_INIT_READ_RETRY_COUNT 12
+#define IQS_INIT_READ_RETRY_DELAY_MS 100
 
 #if IQS7211E_DT_READY
 
@@ -171,52 +173,74 @@ static void iqs_rdy_work_handler(struct k_work *work)
 {
     ARG_UNUSED(work);
 
-    (void)iqs_enable_stop_bit();
-    iqs_try_fill_version_cache();
+    int ret = iqs_enable_stop_bit();
+    if (ret != 0)
+    {
+        (void)iqs_request_comm_window();
+        k_sleep(K_MSEC(5));
+        ret = iqs_enable_stop_bit();
+        if (ret != 0)
+        {
+            LOG_WRN("IQS7211E RDY comm setup failed: %d", ret);
+        }
+    }
 
-    uint16_t words[IQS_RUNTIME_WORDS];
+    uint16_t words[IQS_RUNTIME_WORDS] = {0};
     bool cached = false;
     iqs_runtime_frame_t callback_frame = {0};
 
-    for (int attempt = 0; attempt < 6; attempt++)
+    if (ret == 0)
     {
-        for (size_t i = 0U; i < IQS_RUNTIME_WORDS; i++)
+        iqs_try_fill_version_cache();
+
+        for (int attempt = 0; attempt < 6; attempt++)
         {
-            words[i] = 0xEEEEu;
+            for (size_t i = 0U; i < IQS_RUNTIME_WORDS; i++)
+            {
+                words[i] = 0xEEEEu;
+            }
+
+            if (attempt > 0)
+            {
+                ret = iqs_request_comm_window();
+                if (ret != 0)
+                {
+                    continue;
+                }
+                k_sleep(K_MSEC(2U + (uint32_t)(attempt - 1) * 4U));
+                ret = iqs_enable_stop_bit();
+                if (ret != 0)
+                {
+                    continue;
+                }
+            }
+
+            ret = iqs_read_block16(IQS_RUNTIME_START_REG, words, IQS_RUNTIME_WORDS);
+            if (ret != 0)
+            {
+                continue;
+            }
+
+            if (!iqs_runtime_words_valid(words))
+            {
+                continue;
+            }
+
+            iqs_store_runtime_words(words);
+
+            iqs_take_runtime_snapshot(&callback_frame);
+
+            cached = true;
+            break;
         }
 
-        if (attempt > 0)
+        if (!cached && iqs_runtime_words_valid(words))
         {
-            (void)iqs_request_comm_window();
-            k_sleep(K_MSEC(2U + (uint32_t)(attempt - 1) * 4U));
-            (void)iqs_enable_stop_bit();
+            iqs_store_runtime_words(words);
+
+            iqs_take_runtime_snapshot(&callback_frame);
+            cached = true;
         }
-
-        int ret = iqs_read_block16(IQS_RUNTIME_START_REG, words, IQS_RUNTIME_WORDS);
-        if (ret != 0)
-        {
-            continue;
-        }
-
-        if (!iqs_runtime_words_valid(words))
-        {
-            continue;
-        }
-
-        iqs_store_runtime_words(words);
-
-        iqs_take_runtime_snapshot(&callback_frame);
-
-        cached = true;
-        break;
-    }
-
-    if (!cached && iqs_runtime_words_valid(words))
-    {
-        iqs_store_runtime_words(words);
-
-        iqs_take_runtime_snapshot(&callback_frame);
-        cached = true;
     }
 
     (void)iqs_stop_comm_window();
@@ -522,31 +546,46 @@ int mos_iqs7211e_init(void)
         atomic_set(&s_iqs_bus_ready, 1);
     }
 
-    /* After System OFF the MCU resets but IQS7211E may stay in LP2 / manual mode from sleep prep;
-     * direct reads can NACK (-EIO) until a comm window is opened. Cold boot is unaffected. */
-    iqs_prepare_polled_access();
-
     uint16_t product_number = 0;
     uint16_t major_word = 0;
     uint16_t minor_word = 0;
-    int ret = iqs_read_reg16(IQS7211E_REG_PRODUCT_NUMBER, &product_number);
+    int ret = -EIO;
+    for (uint8_t attempt = 1U; attempt <= IQS_INIT_READ_RETRY_COUNT; attempt++)
+    {
+        /* After LDSW1 power cycling or System OFF wake, IQS7211E can NACK until
+         * its internal boot and communication window are ready. */
+        iqs_prepare_polled_access();
+
+        ret = iqs_read_reg16(IQS7211E_REG_PRODUCT_NUMBER, &product_number);
+        if (ret == 0)
+        {
+            ret = iqs_read_reg16(IQS7211E_REG_MAJOR_VERSION, &major_word);
+        }
+        if (ret == 0)
+        {
+            ret = iqs_read_reg16(IQS7211E_REG_MINOR_VERSION, &minor_word);
+        }
+
+        (void)iqs_stop_comm_window();
+        if (ret == 0)
+        {
+            break;
+        }
+
+        if (attempt == IQS_INIT_READ_RETRY_COUNT)
+        {
+            break;
+        }
+        k_sleep(K_MSEC(IQS_INIT_READ_RETRY_DELAY_MS));
+    }
+
     if (ret != 0)
     {
-        LOG_ERR("IQS7211E: failed to read product number: %d", ret);
+        LOG_ERR("IQS7211E: failed to read version registers after %u attempts: %d",
+                (unsigned int)IQS_INIT_READ_RETRY_COUNT, ret);
         return ret;
     }
-    ret = iqs_read_reg16(IQS7211E_REG_MAJOR_VERSION, &major_word);
-    if (ret != 0)
-    {
-        LOG_ERR("IQS7211E: failed to read major version: %d", ret);
-        return ret;
-    }
-    ret = iqs_read_reg16(IQS7211E_REG_MINOR_VERSION, &minor_word);
-    if (ret != 0)
-    {
-        LOG_ERR("IQS7211E: failed to read minor version: %d", ret);
-        return ret;
-    }
+
     LOG_INF("IQS7211E detected: product=0x%04x fw=%u.%u", product_number, (uint8_t)(major_word & 0x00FFu),
             (uint8_t)(minor_word & 0x00FFu));
     if (product_number != IQS7211E_PRODUCT_NUMBER_VALUE)
@@ -555,20 +594,6 @@ int mos_iqs7211e_init(void)
                 IQS7211E_PRODUCT_NUMBER_VALUE);
         return -ENODEV;
     }
-    // SW reset
-    ret = iqs_update_reg16(IQS7211E_REG_SYSTEM_CONTROL, IQS7211E_SYSTEM_SW_RESET, IQS7211E_SYSTEM_SW_RESET);
-    if (ret != 0)
-    {
-        LOG_ERR("IQS7211E startup SW reset failed: %d", ret);
-        return ret;
-    }
-    k_sleep(K_MSEC(120));
-
-    (void)iqs_update_reg16(IQS7211E_REG_SYSTEM_CONTROL, IQS7211E_SYSTEM_ACK_RESET, IQS7211E_SYSTEM_ACK_RESET);
-    (void)iqs_update_reg16(IQS7211E_REG_CONFIG_SETTINGS,
-                           IQS7211E_CONFIG_EVENT_MODE | IQS7211E_CONFIG_GESTURE_EVENT | IQS7211E_CONFIG_TP_EVENT,
-                           IQS7211E_CONFIG_EVENT_MODE | IQS7211E_CONFIG_GESTURE_EVENT | IQS7211E_CONFIG_TP_EVENT);
-
     atomic_set(&s_iqs_initialized, 1);
     LOG_INF("IQS7211E chip registers ready (addr=0x%02x)", IQS7211E_I2C_ADDR);
 

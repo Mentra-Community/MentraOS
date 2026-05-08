@@ -412,6 +412,7 @@ static void mos_touch_app_runtime_handler(uint16_t gestures, uint16_t info_flags
     const uint8_t num_fingers = (uint8_t)(info1 & 0x03u);
     const bool too_many_fingers = ((info_flags & 0x1000u) != 0u);
     const bool reati_frame = ((info_flags & MOS_TOUCH_IQS_INFO_RE_ATI_OCCURRED_BIT) != 0u);
+    const bool ati_error_frame = ((info_flags & MOS_TOUCH_IQS_INFO_ATI_ERROR_BIT) != 0u);
     const bool reset_frame = ((info_flags & MOS_TOUCH_IQS_INFO_SHOW_RESET_BIT) != 0u);
     const bool edge_saturated = (finger1_y >= MOS_TOUCH_EDGE_Y_MAX) || (rel_y == MOS_TOUCH_EDGE_REL_Y_GLITCH);// 检查Y轴边缘饱和 / Check for Y edge saturation
     const uint16_t chip_gesture_bits = gestures & mos_touch_app_chip_gesture_mask();
@@ -430,7 +431,8 @@ static void mos_touch_app_runtime_handler(uint16_t gestures, uint16_t info_flags
         }
         else
         {
-            LOG_INF("IQS7211E profile reloaded after reset");
+            mos_touch_app_reset_runtime_state();
+            LOG_INF("IQS7211E profile reloaded and runtime state synchronized after reset");
         }
         return;
     }
@@ -441,6 +443,20 @@ static void mos_touch_app_runtime_handler(uint16_t gestures, uint16_t info_flags
             gestures, info_flags, (unsigned int)num_fingers, (unsigned int)too_many_fingers, (unsigned int)reati_frame,
             finger1_x, finger1_y, (int16_t)rel_x, (int16_t)rel_y, (unsigned int)edge_saturated,
             (unsigned int)finger_sample_valid);
+    }
+
+    if (ati_error_frame)
+    {
+        mos_touch_app_reset_runtime_state();
+        LOG_WRN("IQS ATI_ERROR frame suppressed (INFO=0x%04x, gestures=0x%04x)", info_flags, gestures);
+        return;
+    }
+
+    if (reati_frame)
+    {
+        mos_touch_app_reset_runtime_state();
+        LOG_DBG("IQS ATI/ReATI status frame suppressed (INFO=0x%04x, gestures=0x%04x)", info_flags, gestures);
+        return;
     }
 
     uint16_t new_gesture_bits = 0;

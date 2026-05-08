@@ -36,6 +36,7 @@ target_sources(app PRIVATE
     src/shell_display_control.c
     src/shell_opt3006.c
     src/shell_iqs7211e_control.c
+    src/shell_mcu_control.c
     src/shell_battery_control.c
     # src/shell_audio_control.c  # PDM audio shell disabled - using GX8002 VAD
     src/shell_gx8002_control.c
