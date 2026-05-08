@@ -9,7 +9,7 @@
 #if defined(CONFIG_LVGL)
 #include "mos_binfont_lvgl.h"
 #include "mos_font_storage.h"
-#include "mos_lvgl_display.h"
+#include "mos_display.h"
 #endif
 
 LOG_MODULE_REGISTER(shell_font_storage, LOG_LEVEL_INF);

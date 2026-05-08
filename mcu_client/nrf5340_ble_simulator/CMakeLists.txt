@@ -21,7 +21,7 @@ add_subdirectory(src/mos_components/mos_hinge_fold)
 add_subdirectory(src/mos_components/mos_interrupt)
 add_subdirectory(src/mos_components/mos_gx8002)  # GX8002 VAD path enabled
 add_subdirectory(src/mos_components/mos_font_storage)
-add_subdirectory(src/mos_components/mos_lvgl_display)
+add_subdirectory(src/mos_components/mos_display)
 add_subdirectory(src/mos_components/mos_jlink_usb_switch)
 add_subdirectory(src/mos_components/mos_dfu_progress)
 add_subdirectory(src/mos_components/mos_touch)

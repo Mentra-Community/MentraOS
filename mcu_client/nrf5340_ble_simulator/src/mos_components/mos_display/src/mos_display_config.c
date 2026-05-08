@@ -1,4 +1,4 @@
-#include "display_config.h"
+#include "mos_display_config.h"
 
 #include <string.h>
 #include <zephyr/device.h>

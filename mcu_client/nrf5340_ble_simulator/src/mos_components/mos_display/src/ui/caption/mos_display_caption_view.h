@@ -1,0 +1,58 @@
+#ifndef MOS_DISPLAY_CAPTION_VIEW_H_
+#define MOS_DISPLAY_CAPTION_VIEW_H_
+
+#include <stdbool.h>
+#include <lvgl.h>
+#include "components/mos_display_caption_default_scrolling.h"
+#include "components/mos_display_caption_custom_scrolling.h"
+#include "components/mos_display_caption_positioned.h"
+
+typedef enum
+{
+    MOS_UI_CAPTION_MODE_DEFAULT,
+    MOS_UI_CAPTION_MODE_CUSTOM,
+    MOS_UI_CAPTION_MODE_POSITIONED,
+} mos_ui_caption_mode_t;
+
+typedef struct
+{
+    lv_obj_t *container;
+    lv_obj_t *default_scrolling;
+    mos_ui_custom_scrolling_t custom_scrolling;
+    lv_obj_t *positioned;
+} mos_ui_caption_view_t;
+
+typedef struct
+{
+    int x;
+    int y;
+    int width;
+    int height;
+    int padding;
+    lv_color_t bg_color;
+    mos_ui_default_scrolling_cfg_t default_scrolling;
+    mos_ui_custom_scrolling_cfg_t custom_scrolling;
+    mos_ui_positioned_cfg_t positioned;
+} mos_ui_caption_view_cfg_t;
+
+mos_ui_caption_view_t mos_ui_caption_view_create(lv_obj_t *parent, const mos_ui_caption_view_cfg_t *cfg);
+void mos_ui_caption_view_set_mode(mos_ui_caption_view_t *view, mos_ui_caption_mode_t mode);
+void mos_ui_caption_view_update_default_text(mos_ui_caption_view_t *view, const lv_font_t *font, const char *text);
+void mos_ui_caption_view_update_custom_text(mos_ui_caption_view_t *view, const char *text,
+                                             const lv_font_t *font_primary, const lv_font_t *font_fallback,
+                                             lv_color_t text_color);
+/* Render text at an absolute (x, y) position on the caption's `positioned` overlay.
+ * Handles the [cjk]/[cjkchars] phone-protocol prefix, GBK vs default font selection,
+ * color auto-pick when raw_color == 0xFFFF, and coordinate clamping.
+ * raw_color is RGB565 packed in the low 16 bits (matches the wire format). */
+void mos_ui_caption_view_render_positioned_text(mos_ui_caption_view_t *view,
+                                                 uint16_t x, uint16_t y,
+                                                 const char *text,
+                                                 uint32_t raw_color);
+void mos_ui_caption_view_clear(mos_ui_caption_view_t *view);
+void mos_ui_caption_view_clear_positioned(mos_ui_caption_view_t *view);
+void mos_ui_caption_view_scroll_to_bottom(mos_ui_caption_view_t *view);
+void mos_ui_caption_view_set_scroll_enabled(mos_ui_caption_view_t *view, bool enabled);
+void mos_ui_caption_view_destroy(mos_ui_caption_view_t *view);
+
+#endif /* MOS_DISPLAY_CAPTION_VIEW_H_ */

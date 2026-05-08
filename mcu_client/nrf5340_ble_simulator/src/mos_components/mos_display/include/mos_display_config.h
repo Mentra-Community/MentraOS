@@ -1,5 +1,5 @@
-#ifndef DISPLAY_CONFIG_H
-#define DISPLAY_CONFIG_H
+#ifndef MOS_DISPLAY_CONFIG_H_
+#define MOS_DISPLAY_CONFIG_H_
 
 #include <lvgl.h>
 #include <zephyr/device.h>
@@ -137,4 +137,4 @@ lv_color_t display_get_background_color(void);
  */
 lv_color_t display_get_adjusted_color(lv_color_t color);
 
-#endif /* DISPLAY_CONFIG_H */
+#endif /* MOS_DISPLAY_CONFIG_H_ */

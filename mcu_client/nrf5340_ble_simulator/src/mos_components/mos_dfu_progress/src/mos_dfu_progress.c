@@ -9,7 +9,7 @@
 #include <zephyr/mgmt/mcumgr/mgmt/mgmt.h>
 #endif
 
-#include "mos_lvgl_display.h"
+#include "mos_display.h"
 
 LOG_MODULE_REGISTER(mos_dfu_progress, LOG_LEVEL_INF);
 

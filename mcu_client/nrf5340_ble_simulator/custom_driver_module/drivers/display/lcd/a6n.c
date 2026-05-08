@@ -1274,6 +1274,63 @@ void a6n_power_on(void)
     k_msleep(300);
 }
 
+int a6n_apply_vendor_init_sequence(void)
+{
+    LOG_INF("A6N: applying vendor init sequence");
+
+    /* Bank1 0x55 = 0x00 — Demura disabled. */
+    a6n_write_reg(1, 0x55, 0x00);
+    k_busy_wait(6);
+    /* Bank0 0xD0 = 0x0A — Hongshi FAE recommended. */
+    a6n_write_reg(0, 0xD0, 0x0a);
+    k_busy_wait(6);
+
+    /* Vendor probe reads (capture in driver logs). */
+    a6n_read_reg(0, 0, 0x62);
+    k_busy_wait(6);
+    a6n_read_reg(0, 1, 0x62);
+    k_busy_wait(6);
+    a6n_read_reg(0, 1, 0xf7);
+    k_busy_wait(6);
+    a6n_read_reg(0, 1, 0xf8);
+    k_busy_wait(6);
+    a6n_read_reg(0, 1, 0xe2);
+    k_busy_wait(6);
+
+    /* Display format: GRAY16 (4-bit/pixel). */
+    int gray_ret = a6n_set_gray16_mode();
+    k_busy_wait(6);
+    if (gray_ret < 0)
+    {
+        LOG_ERR("A6N vendor init: set_gray16_mode failed: %d", gray_ret);
+        return gray_ret;
+    }
+
+    /* Panel orientation. */
+    int mirror_ret = a6n_set_mirror(MIRROR_HORZ);
+    k_busy_wait(6);
+    if (mirror_ret < 0)
+    {
+        LOG_ERR("A6N vendor init: set_mirror failed: %d", mirror_ret);
+        return mirror_ret;
+    }
+
+    /* Bank1 0xBE probe + Bank0 0x60 = 0x80 vendor magic (TBD function). */
+    a6n_read_reg(0, 1, 0xbe);
+    k_busy_wait(6);
+    a6n_write_reg(0, 0x60, 0x80);
+    k_busy_wait(6);
+
+    /* OSC config for ~90 Hz at SPI ≤32 MHz. */
+    a6n_write_reg(0, A6N_LCD_OSC_CLK_REG,  A6N_FRAMERATE_90HZ_0x78);
+    k_busy_wait(6);
+    a6n_write_reg(0, A6N_LCD_OSC_CLK2_REG, A6N_FRAMERATE_90HZ_0x7C);
+    k_busy_wait(6);
+
+    LOG_INF("A6N vendor init done — GRAY16 + 90 Hz");
+    return 0;
+}
+
 void a6n_power_off(void)
 {
     LOG_INF("bsp_lcd_power_off");
