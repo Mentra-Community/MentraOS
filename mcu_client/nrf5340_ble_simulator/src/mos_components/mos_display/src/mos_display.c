@@ -254,6 +254,20 @@ void display_request_visible_redraw(void)
     (void)mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
 }
 
+void display_set_debug_borders(bool enabled)
+{
+    display_cmd_t cmd = {
+        .type = LCD_CMD_SET_DEBUG_BORDERS,
+        .p.debug_borders = {.enabled = enabled},
+    };
+    (void)mos_msgq_send(&lvgl_display_msgq, &cmd, MOS_OS_WAIT_FOREVER);
+}
+
+bool display_get_debug_borders(void)
+{
+    return mos_ui_main_scene_debug_borders_enabled();
+}
+
 /****************************************************/
 /* 前向声明 / Forward declarations */
 static void show_test_pattern(int pattern_id);
@@ -628,6 +642,11 @@ void lvgl_dispaly_init(void *p1, void *p2, void *p3)
                 case LCD_CMD_INVALIDATE_VISIBLE_UI:
                     lvgl_force_one_refresh = true;
                     invalidate_current_visible_ui();
+                    break;
+                case LCD_CMD_SET_DEBUG_BORDERS:
+                    mos_ui_main_scene_set_debug_borders(cmd.p.debug_borders.enabled);
+                    mos_ui_main_scene_apply_debug_borders(&g_main_scene, mos_screen_get_root());
+                    lvgl_force_one_refresh = true;
                     break;
                 default:
                     break;
