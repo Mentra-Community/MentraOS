@@ -2744,14 +2744,16 @@ public class CameraNeo extends LifecycleService {
             if (useManual) {
                 long clampedNs = clampExposureTimeNs(pendingExposureTimeNs);
                 int iso = pickSensitivityForManualCapture();
-                Log.i(TAG, "Manual still: SENSOR_EXPOSURE_TIME=" + clampedNs + "ns, SENSOR_SENSITIVITY=" + iso
-                        + " (requestedNs=" + pendingExposureTimeNs + "; ZSL/MFNR vendor path skipped)");
+                Log.i(TAG, "Using manual exposure time for still capture: SENSOR_EXPOSURE_TIME="
+                        + clampedNs + " ns, SENSOR_SENSITIVITY=" + iso
+                        + " (requestedNs=" + pendingExposureTimeNs + "; AE disabled; ZSL/MFNR vendor path skipped)");
                 stillBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF);
                 stillBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, clampedNs);
                 stillBuilder.set(CaptureRequest.SENSOR_SENSITIVITY, iso);
                 stillBuilder.set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO);
                 stillBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, selectedFpsRange);
             } else {
+                Log.d(TAG, "Using auto exposure / AE lock path");
                 // Copy settings from preview — auto exposure / AE lock path
                 stillBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
                 stillBuilder.set(CaptureRequest.CONTROL_AE_LOCK, true);  // Lock AE for capture (XyCamera2 pattern)

@@ -4118,6 +4118,7 @@ public class MentraLive extends SGCManager {
             json.put("flash", flash);
             json.put("sound", sound);
             if (exposureTimeNs != null && exposureTimeNs > 0L) {
+                Bridge.log("LIVE: Using manual exposure time for photo request " + requestId + ": " + exposureTimeNs + " ns");
                 json.put("exposureTimeNs", exposureTimeNs);
             }
 

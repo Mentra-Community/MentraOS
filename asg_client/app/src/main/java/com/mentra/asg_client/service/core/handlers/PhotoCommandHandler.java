@@ -77,6 +77,10 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             boolean flash = data.optBoolean("flash", true);
             boolean sound = data.optBoolean("sound", true);
             Long exposureTimeNs = PhotoExposureTimeNs.parse(data);
+            if (exposureTimeNs != null) {
+                Log.i(TAG, "Mentra Live using manual exposure time for take_photo request "
+                        + requestId + ": " + exposureTimeNs + " ns");
+            }
 
             // Generate file path with capture directory using base class functionality
             String photoFilePath = generateCaptureFilePath(packageName, "IMG_", ".jpg");

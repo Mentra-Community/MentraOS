@@ -1382,6 +1382,10 @@ public class MediaCaptureService {
             // Use the new enqueuePhotoRequest for thread-safe rapid capture
             // isFromSdk=true because this is an SDK-requested photo (take_photo command)
             recordTiming(requestId, "enqueue_camera");
+            if (exposureTimeNs != null && exposureTimeNs > 0L) {
+                Log.i(TAG, "Using manual exposure time right before picture request - ID: "
+                        + requestId + ", exposureTimeNs=" + exposureTimeNs + " ns");
+            }
             CameraNeo.enqueuePhotoRequest(
                     mContext,
                     photoFilePath,

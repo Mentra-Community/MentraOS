@@ -1361,6 +1361,7 @@ class MentraLive: NSObject, SGCManager {
         json["sound"] = sound
 
         if let e = exposureTimeNs, e.isFinite, e > 0, e <= Double(Int64.max) {
+            Bridge.log("LIVE: Using manual exposure time for photo request \(requestId): \(Int64(e)) ns")
             json["exposureTimeNs"] = Int64(e)
         }
 

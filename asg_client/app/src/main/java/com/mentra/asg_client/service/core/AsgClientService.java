@@ -850,8 +850,9 @@ public class AsgClientService extends Service implements NetworkStateListener, B
         }
 
         Log.i(TAG, "📥 Received " + data.length + " bytes from Bluetooth");
-        Log.d(TAG, "📋 Data preview: " + new String(data, 0, Math.min(data.length, 100)) + 
-                  (data.length > 100 ? "..." : ""));
+        String incomingPayload = new String(data, StandardCharsets.UTF_8);
+        Log.d(TAG, "📋 Data preview: " + incomingPayload.substring(0, Math.min(incomingPayload.length(), 100)) +
+                  (incomingPayload.length() > 100 ? "..." : ""));
 
         // BLE/serial can deliver data before getInterfaceReferences() runs (e.g. right after
         // MY_PACKAGE_REPLACED when the service is still in onCreate). Guard to avoid NPE.
