@@ -7,6 +7,7 @@
 #include <zephyr/spinlock.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/poweroff.h>
+#include <zephyr/sys/reboot.h>
 #include <zephyr/sys/util.h>
 
 #include "mos_gx8002.h"
@@ -24,6 +25,10 @@ LOG_MODULE_REGISTER(mos_touch_app, LOG_LEVEL_INF);
 #define MOS_TOUCH_IQS_SYSTEM_RE_ATI_MASK        0x0020u
 #define MOS_TOUCH_ATI_WAIT_POLL_MS              20
 #define MOS_TOUCH_ATI_WAIT_TIMEOUT_MS           300
+/* Deferred logging can sleep up to CONFIG_LOG_PROCESS_THREAD_SLEEP_MS=1000ms.
+ * Keep this delay so the reboot log reaches RTT/UART before sys_reboot();
+ * this intentionally makes the observed long-press reboot about 1.2s later than the chip event. */
+#define MOS_TOUCH_REBOOT_DELAY_MS               1200
 #define MOS_TOUCH_DUPLICATE_GESTURE_SUPPRESS_MS 120 // 设置重复手势抑制时间为120ms，防止连续帧中同一脉冲手势被多次上报；set the duplicate gesture suppression time to 120ms to prevent the same pulse gesture from being reported multiple times in consecutive frames
 #define MOS_TOUCH_LATCHED_GESTURE_MASK                                                                           \
     (IQS7211E_GESTURE_PRESS_AND_HOLD | IQS7211E_GESTURE_PALM | IQS7211E_GESTURE_SWIPE_HOLD_X_POSITIVE |          \
@@ -41,10 +46,13 @@ static int64_t s_touch_prev_reported_gesture_ms = 0;
 static bool s_touch_debug_frame_logging = false;
 
 static struct k_work s_touch_sleep_work;
+static struct k_work_delayable s_touch_reboot_work;
 static atomic_t s_touch_sleep_pending = ATOMIC_INIT(0);
+static atomic_t s_touch_reboot_pending = ATOMIC_INIT(0);
 
 static void mos_touch_app_reset_runtime_state(void);
 static void mos_touch_app_sleep_work_handler(struct k_work *work);
+static void mos_touch_app_reboot_work_handler(struct k_work *work);
 
 extern void configure_default_low_pins(void);
 extern void imu_en_control(bool enable);
@@ -210,6 +218,24 @@ static void mos_touch_app_request_sleep(void)
     {
         atomic_set(&s_touch_sleep_pending, 0);
         LOG_ERR("Failed to schedule touch sleep work: %d", ret);
+    }
+}
+
+static void mos_touch_app_request_reboot(void)
+{
+    if (!atomic_cas(&s_touch_reboot_pending, 0, 1))
+    {
+        return;
+    }
+
+    LOG_INF("PRESS_AND_HOLD detected - rebooting device");
+
+    /* The delay is for log flush visibility only; sys_reboot() itself runs in the delayed work handler. */
+    int ret = k_work_schedule(&s_touch_reboot_work, K_MSEC(MOS_TOUCH_REBOOT_DELAY_MS));
+    if (ret < 0)
+    {
+        atomic_set(&s_touch_reboot_pending, 0);
+        LOG_ERR("Failed to schedule touch reboot work: %d", ret);
     }
 }
 
@@ -466,6 +492,10 @@ static void mos_touch_app_runtime_handler(uint16_t gestures, uint16_t info_flags
         {
             mos_touch_app_request_sleep();
         }
+        else if (chip_discrete_event == MOS_TOUCH_LOGICAL_PRESS_AND_HOLD)
+        {
+            mos_touch_app_request_reboot();
+        }
         emitted = true;
     }
 
@@ -596,6 +626,13 @@ static void mos_touch_app_sleep_work_handler(struct k_work *work)
     LOG_ERR("sys_poweroff returned unexpectedly");
 }
 
+static void mos_touch_app_reboot_work_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+
+    sys_reboot(SYS_REBOOT_COLD);
+}
+
 int mos_touch_app_init(void)
 {
     int ret = mos_iqs7211e_init();
@@ -606,6 +643,7 @@ int mos_touch_app_init(void)
     }
 
     k_work_init(&s_touch_sleep_work, mos_touch_app_sleep_work_handler);
+    k_work_init_delayable(&s_touch_reboot_work, mos_touch_app_reboot_work_handler);
 
     ret = mos_iqs7211e_register_runtime_callback(mos_touch_app_runtime_handler, NULL);
     if (ret != 0)
