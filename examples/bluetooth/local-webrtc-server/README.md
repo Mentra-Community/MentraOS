@@ -57,11 +57,11 @@ WHEP playback URL:
 
 Paste the printed **RTMP publish URL** into the Stream tab's RTMP field, paste the printed **SRT publish URL** into the SRT field, or paste the printed **WHIP publish URL** into the WebRTC field, then tap **Start stream**.
 
-For RTMP and SRT, the native iOS example derives the HLS preview URL from the publish URL and embeds it in the preview card after the stream starts. You can also open the printed browser preview URL on your computer, or use the printed `ffplay` command when debugging locally. For WebRTC, open the printed **WebRTC browser preview** URL or use the printed **WHEP playback URL** if you are building your own player.
+For RTMP and SRT, the Android, iOS, and React Native examples derive the HLS preview URL from the publish URL and embed it in the preview card after the stream starts. You can also open the printed browser preview URL on your computer, or use the printed `ffplay` command when debugging locally. For WebRTC, the examples embed the printed **WebRTC browser preview** URL; use the printed **WHEP playback URL** if you are building your own player.
 
 RTMP URLs need both an application segment and a stream key segment. The default `/live/mentra-live` path is intentional; a one-segment RTMP path such as `/mentra-live` is rejected by the Mentra Live RTMP client.
 
-The helper starts MediaMTX with MPEG-TS HLS segments for broad iOS player compatibility. If an older `mentra-webrtc` container is already running, stop it with `docker stop mentra-webrtc` and rerun the helper before testing the iOS RTMP preview.
+The helper starts MediaMTX with MPEG-TS HLS segments for broad mobile player compatibility. If an older `mentra-webrtc` container is already running, stop it with `docker stop mentra-webrtc` and rerun the helper before testing in-app RTMP or SRT previews.
 
 ## Network Notes
 

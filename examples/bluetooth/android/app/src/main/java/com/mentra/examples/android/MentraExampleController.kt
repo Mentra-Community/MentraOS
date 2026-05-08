@@ -1543,9 +1543,12 @@ fun rtmpHlsPreviewUrl(rtmpUrlText: String): String? {
     if (!isLocalPreviewHost(host)) {
         return null
     }
-    val path = uri.rawPath?.ifBlank { "/" } ?: "/"
+    val streamPath = uri.rawPath
+        ?.trim('/')
+        .orEmpty()
     val previewScheme = if (scheme == "rtmps") "https" else "http"
-    return "$previewScheme://$host:8888$path"
+    val hlsPath = if (streamPath.isEmpty()) "index.m3u8" else "$streamPath/index.m3u8"
+    return "$previewScheme://$host:8888/$hlsPath"
 }
 
 fun srtHlsPreviewUrl(srtUrlText: String): String? {
@@ -1559,7 +1562,7 @@ fun srtHlsPreviewUrl(srtUrlText: String): String? {
         return null
     }
     val path = srtStreamPath(uri) ?: return null
-    return "http://$host:8888/$path"
+    return "http://$host:8888/$path/index.m3u8"
 }
 
 private fun srtStreamPath(uri: URI): String? {

@@ -432,5 +432,5 @@ private func localStreamSetupHint(protocol streamProtocol: ExampleStreamProtocol
     if streamProtocol == .srt {
         return "Local SRT setup: run python3 examples/local-demo-cloud/server.py, paste the printed SRT publish URL here, then start streaming. The app previews the HLS URL; the printed SRT ffplay command is optional for debugging."
     }
-    return "Local WebRTC setup: run python3 examples/local-demo-cloud/server.py, paste the printed WHIP publish URL here, then open the WebRTC preview URL on your computer."
+    return "Local WebRTC setup: run python3 examples/local-demo-cloud/server.py, paste the printed WHIP publish URL here, then start streaming. The app previews the MediaMTX WebRTC page."
 }

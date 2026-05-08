@@ -1,13 +1,21 @@
 import React from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet, TextInput, Clipboard } from 'react-native';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path, Polyline, Rect } from 'react-native-svg';
+import WebView from 'react-native-webview';
 import { Header } from '../components/Header';
 import { useScrollBottomPadding } from '../components/keyboardLayout';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { colors } from '../components/theme';
 import { isGlassesConnected, streamUptime } from '../sdkFormat';
-import { STREAM_DEFAULT_URLS, type MentraSdkModel, type StreamProtocol } from '../useMentraSdk';
+import {
+  STREAM_DEFAULT_URLS,
+  streamPreviewTarget,
+  type MentraSdkModel,
+  type StreamPreviewTarget,
+  type StreamProtocol,
+} from '../useMentraSdk';
 
 const bars = [18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40];
 const streamSdkCall = `const streamId = \`rn-\${Date.now()}\`;
@@ -25,6 +33,7 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
   const isLive = sdk.streamStartedAt !== null;
   const uptime = streamUptime(sdk.streamStartedAt);
   const setupHint = localStreamSetupHint(sdk.streamProtocol, sdk.streamUrl, sdk.streamStatus);
+  const previewTarget = isLive ? streamPreviewTarget(sdk.streamProtocol, sdk.streamUrl) : null;
 
   return (
     <ScrollView
@@ -38,21 +47,15 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
       {/* Live preview */}
       <LinearGradient colors={['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.55)']} style={styles.card}>
         <View style={styles.previewWrap}>
-          <LinearGradient colors={['#163A26', '#26583E', '#7DD89E', '#3F8F5C']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.preview}>
-            <View style={styles.glow1} />
-            <View style={styles.glow2} />
+          <View style={styles.preview}>
+            {previewTarget ? <LiveStreamPreview target={previewTarget} /> : <PlaceholderStreamPreview />}
             <View style={styles.livePill}>
               <View style={[styles.liveDot, !isLive && styles.readyDot]} />
               <Text style={styles.liveText}>{isLive ? 'LIVE' : 'READY'}</Text>
             </View>
             <Text style={styles.timer}>{uptime}</Text>
-            <View style={styles.eqWrap}>
-              {bars.map((h, i) => (
-                <View key={i} style={[styles.eqBar, { height: h, backgroundColor: i % 3 === 2 ? '#fff' : 'rgba(255,255,255,0.85)' }]} />
-              ))}
-            </View>
             <Text style={styles.previewMeta}>{isLive ? `${sdk.streamProtocol.toUpperCase()} · keep-alive 15s` : 'Ready · enter stream URL'}</Text>
-          </LinearGradient>
+          </View>
         </View>
 
         <Pressable disabled={!connected && !isLive} onPress={sdk.toggleStream}>
@@ -126,6 +129,72 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
   );
 }
 
+function PlaceholderStreamPreview() {
+  return (
+    <LinearGradient colors={['#163A26', '#26583E', '#7DD89E', '#3F8F5C']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.previewFill}>
+      <View style={styles.glow1} />
+      <View style={styles.glow2} />
+      <View style={styles.eqWrap}>
+        {bars.map((height, index) => (
+          <View
+            key={index}
+            style={[
+              styles.eqBar,
+              {
+                height,
+                backgroundColor: index % 3 === 2 ? '#fff' : 'rgba(255,255,255,0.85)',
+              },
+            ]}
+          />
+        ))}
+      </View>
+    </LinearGradient>
+  );
+}
+
+function LiveStreamPreview({target}: {target: StreamPreviewTarget}) {
+  if (target.kind === 'hls') {
+    return <HlsStreamPreview url={target.url} />;
+  }
+  return (
+    <WebView
+      allowsInlineMediaPlayback
+      domStorageEnabled
+      javaScriptEnabled
+      mediaPlaybackRequiresUserAction={false}
+      source={{uri: target.url}}
+      style={styles.previewFill}
+    />
+  );
+}
+
+function HlsStreamPreview({url}: {url: string}) {
+  const source = React.useMemo(() => ({uri: url, contentType: 'hls' as const}), [url]);
+  const player = useVideoPlayer(source, (videoPlayer) => {
+    videoPlayer.muted = true;
+    videoPlayer.play();
+  });
+
+  React.useEffect(() => {
+    void player
+      .replaceAsync(source)
+      .then(() => {
+        player.muted = true;
+        player.play();
+      })
+      .catch(() => {});
+  }, [player, source]);
+
+  return (
+    <VideoView
+      contentFit="cover"
+      nativeControls={false}
+      player={player}
+      style={styles.previewFill}
+    />
+  );
+}
+
 function streamProtocolLabel(protocol: StreamProtocol) {
   return protocol === 'webrtc' ? 'WHIP' : protocol.toUpperCase();
 }
@@ -147,18 +216,19 @@ function localStreamSetupHint(protocol: StreamProtocol, streamUrl: string, statu
     return null;
   }
   if (protocol === 'rtmp') {
-    return 'Local RTMP setup: run python3 examples/local-demo-cloud/server.py, paste the printed RTMP publish URL here, then open the printed HLS preview URL on your computer. The printed ffplay command is optional for debugging.';
+    return 'Local RTMP setup: run python3 examples/local-demo-cloud/server.py, paste the printed RTMP publish URL here, then start streaming. The app previews the derived HLS URL; the printed ffplay command is optional for debugging.';
   }
   if (protocol === 'srt') {
-    return 'Local SRT setup: run python3 examples/local-demo-cloud/server.py, paste the printed SRT publish URL here, then open the printed HLS preview URL on your computer. The printed SRT ffplay command is optional for debugging.';
+    return 'Local SRT setup: run python3 examples/local-demo-cloud/server.py, paste the printed SRT publish URL here, then start streaming. The app previews the derived HLS URL; the printed SRT ffplay command is optional for debugging.';
   }
-  return 'Local WebRTC setup: run python3 examples/local-demo-cloud/server.py, paste the printed WHIP publish URL here, then open the WebRTC preview URL on your computer.';
+  return 'Local WebRTC setup: run python3 examples/local-demo-cloud/server.py, paste the printed WHIP publish URL here, then start streaming. The app previews the MediaMTX WebRTC page.';
 }
 
 const styles = StyleSheet.create({
   card: { marginHorizontal: 16, marginTop: 8, borderRadius: 28, paddingTop: 8, paddingBottom: 14, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 8 },
   previewWrap: { borderRadius: 22, overflow: 'hidden', height: 160 },
-  preview: { flex: 1 },
+  preview: { flex: 1, backgroundColor: '#000' },
+  previewFill: { ...StyleSheet.absoluteFillObject },
   glow1: { position: 'absolute', top: -60, left: -40, width: 220, height: 220, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.18)' },
   glow2: { position: 'absolute', bottom: -80, right: -50, width: 240, height: 240, borderRadius: 999, backgroundColor: 'rgba(125,216,158,0.25)' },
   livePill: { position: 'absolute', top: 14, left: 14, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.45)', paddingVertical: 6, paddingHorizontal: 11, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },

@@ -67,19 +67,20 @@ WHEP playback URL:
 
 Paste the photo URL into the Camera screen. For RTMP, paste the RTMP publish URL
 into the Stream screen's RTMP field, or paste the SRT publish URL into the SRT
-field. The native iOS example derives the HLS preview URL for RTMP and SRT and
-shows it in the preview card after the stream starts; you can also open the HLS
-preview URL on your computer. For WebRTC, paste the WHIP URL into the Stream
-screen's WebRTC field and open the WebRTC preview URL on your computer.
+field. The Android, iOS, and React Native examples derive the HLS playlist URL
+for RTMP/SRT and show it in the preview card after the stream starts; you can
+also open the printed HLS browser preview URL on your computer. For WebRTC,
+paste the WHIP URL into the Stream screen's WebRTC field; the examples embed the
+MediaMTX WebRTC preview page while the stream is live.
 
 RTMP URLs need both an application segment and a stream key segment. The default
 `/live/mentra-live` path is intentional; a one-segment RTMP path such as
 `/mentra-live` is rejected by the Mentra Live RTMP client.
 
-The helper starts MediaMTX with MPEG-TS HLS segments for broad iOS player
+The helper starts MediaMTX with MPEG-TS HLS segments for broad mobile player
 compatibility. If an older `mentra-webrtc` container is already running, stop it
-with `docker stop mentra-webrtc` and rerun the helper before testing the iOS
-RTMP preview.
+with `docker stop mentra-webrtc` and rerun the helper before testing in-app
+RTMP or SRT previews.
 
 The HLS preview URL becomes useful after the RTMP or SRT stream starts. If you
 open it before tapping **Start stream**, refresh the page after the glasses

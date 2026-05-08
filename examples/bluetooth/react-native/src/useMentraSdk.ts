@@ -29,6 +29,10 @@ import {
 } from './sdkFormat';
 
 export type StreamProtocol = 'rtmp' | 'srt' | 'webrtc';
+export type StreamPreviewTarget = {
+  kind: 'hls' | 'web';
+  url: string;
+};
 export type LedMode = 'Off' | 'Solid' | 'Pulse' | 'Blink';
 type RgbLedAction = 'on' | 'off';
 export type LedColor = 'red' | 'green' | 'blue' | 'orange' | 'white';
@@ -1487,6 +1491,22 @@ function webhookHealthUrl(uploadUrlText: string) {
   return `${uploadUrl.protocol}//${uploadUrl.host}/`;
 }
 
+export function streamPreviewTarget(protocol: StreamProtocol, streamUrl: string): StreamPreviewTarget | null {
+  try {
+    if (protocol === 'rtmp') {
+      const url = rtmpHlsPreviewUrl(streamUrl);
+      return url ? {kind: 'hls', url} : null;
+    }
+    if (protocol === 'srt') {
+      const url = srtHlsPreviewUrl(streamUrl);
+      return url ? {kind: 'hls', url} : null;
+    }
+    return {kind: 'web', url: webrtcPreviewUrl(streamUrl)};
+  } catch {
+    return null;
+  }
+}
+
 function photoUploadValidationMessage(uploadUrlText: string) {
   const value = uploadUrlText.trim();
   if (value.length === 0) {
@@ -1562,8 +1582,10 @@ function rtmpHlsPreviewUrl(rtmpUrlText: string) {
   if (!isLocalPreviewHost(rtmpUrl.hostname)) {
     return null;
   }
+  const streamPath = rtmpUrl.pathname.replace(/^\/+|\/+$/g, '');
   rtmpUrl.protocol = rtmpUrl.protocol === 'rtmps:' ? 'https:' : 'http:';
   rtmpUrl.port = '8888';
+  rtmpUrl.pathname = streamPath.length === 0 ? '/index.m3u8' : `/${streamPath}/index.m3u8`;
   rtmpUrl.search = '';
   return rtmpUrl.toString();
 }
@@ -1580,7 +1602,7 @@ function srtHlsPreviewUrl(srtUrlText: string) {
   if (!path) {
     return null;
   }
-  return `http://${srtUrl.hostname}:8888/${path}`;
+  return `http://${srtUrl.hostname}:8888/${path}/index.m3u8`;
 }
 
 function srtStreamPath(streamId: string | null) {

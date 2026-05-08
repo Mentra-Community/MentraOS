@@ -40,7 +40,9 @@ You can also prefill the field when starting the Expo development build:
 EXPO_PUBLIC_MENTRA_PHOTO_WEBHOOK_URL=http://<computer-ip>:8787/upload npx expo run:ios
 ```
 
-Open the printed HLS or WebRTC browser preview URL on your computer to watch a stream.
+The Stream screen embeds the derived RTMP/SRT HLS playlist preview and WebRTC
+preview while the stream is live. You can also open the printed HLS or WebRTC
+browser preview URL on your computer.
 See [`examples/local-demo-cloud`](../local-demo-cloud/README.md) for details.
 
 When testing from a local SDK package before the npm package is published,
@@ -75,7 +77,7 @@ granted for the app and that device Location services are enabled.
 - Displaying text and clearing the display when the connected glasses support a display
 - Requesting a Mentra Live photo upload to a local webhook server with size, compression, and flash controls
 - Polling the local server with cache-busted status requests and displaying the uploaded photo preview
-- Starting and stopping RTMP/SRT/WebRTC stream requests with 15-second keep-alive calls
+- Starting and stopping RTMP/SRT/WebRTC stream requests with 15-second keep-alive calls and embedded previews
 - Requesting Wi-Fi scans, opening a password modal for secured networks, connecting to open networks directly, forgetting the current network, and toggling hotspot state
 - Enabling microphone PCM delivery and showing received frame and byte counts
 - Sending RGB LED color and pattern requests

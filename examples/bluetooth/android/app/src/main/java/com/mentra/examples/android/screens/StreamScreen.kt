@@ -1,5 +1,8 @@
 package com.mentra.examples.android.screens
 
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,26 +19,38 @@ import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mentra.examples.android.MentraExampleController
-import com.mentra.examples.android.isGlassesConnected
-import com.mentra.examples.android.streamProtocolLabel
 import com.mentra.examples.android.elapsedText
+import com.mentra.examples.android.isGlassesConnected
+import com.mentra.examples.android.rtmpHlsPreviewUrl
+import com.mentra.examples.android.srtHlsPreviewUrl
+import com.mentra.examples.android.streamProtocolLabel
+import com.mentra.examples.android.webrtcPreviewUrl
 import com.mentra.examples.android.ui.AppColor
 import com.mentra.examples.android.ui.GlassCard
 import com.mentra.examples.android.ui.OfflineNotice
 import com.mentra.examples.android.ui.PageHeader
 import com.mentra.examples.android.ui.scrollBottomPadding
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 
 private val barHeights = listOf(18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40)
 private val streamSdkCall = """
@@ -57,6 +72,7 @@ fun StreamScreen(controller: MentraExampleController) {
     val isLive = state.streamStartedAt != null
     val uptime = elapsedText(state.streamStartedAt)
     val setupHint = localStreamSetupHint(state.streamProtocol, state.streamUrl, state.streamStatus)
+    val previewTarget = if (isLive) streamPreviewTarget(state.streamProtocol, state.streamUrl) else null
     val clipboardManager = LocalClipboardManager.current
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
         PageHeader("Stream", connected)
@@ -69,10 +85,13 @@ fun StreamScreen(controller: MentraExampleController) {
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             padding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
         ) {
-            Box(
-                modifier = Modifier.fillMaxWidth().height(160.dp).clip(RoundedCornerShape(22.dp))
-                    .background(Brush.linearGradient(listOf(Color(0xFF163A26), Color(0xFF26583E), Color(0xFF7DD89E), Color(0xFF3F8F5C))))
-            ) {
+            Box(modifier = Modifier.fillMaxWidth().height(160.dp).clip(RoundedCornerShape(22.dp))) {
+                if (previewTarget != null) {
+                    LiveStreamPreview(previewTarget, modifier = Modifier.matchParentSize())
+                } else {
+                    PlaceholderStreamPreview(modifier = Modifier.matchParentSize())
+                }
+
                 // LIVE pill
                 Row(
                     modifier = Modifier.align(Alignment.TopStart).padding(14.dp)
@@ -88,15 +107,6 @@ fun StreamScreen(controller: MentraExampleController) {
                 }
                 Text(uptime, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.align(Alignment.TopEnd).padding(14.dp))
 
-                Row(
-                    modifier = Modifier.align(Alignment.Center).padding(top = 0.dp),
-                    horizontalArrangement = Arrangement.spacedBy(5.dp),
-                    verticalAlignment = Alignment.Bottom
-                ) {
-                    barHeights.forEachIndexed { i, h ->
-                        Box(modifier = Modifier.size(width = 5.dp, height = h.dp).clip(RoundedCornerShape(3.dp)).background(if (i % 3 == 2) Color.White else Color.White.copy(alpha = 0.85f)))
-                    }
-                }
                 Text(
                     if (isLive) "${state.streamProtocol.uppercase()} · keep-alive 15s" else "Ready · enter stream URL",
                     color = Color.White.copy(alpha = 0.85f),
@@ -217,6 +227,115 @@ fun StreamScreen(controller: MentraExampleController) {
     }
 }
 
+private data class StreamPreviewTarget(
+    val kind: StreamPreviewKind,
+    val url: String,
+)
+
+private enum class StreamPreviewKind {
+    Hls,
+    Web,
+}
+
+private fun streamPreviewTarget(protocol: String, streamUrl: String): StreamPreviewTarget? {
+    return try {
+        when (protocol) {
+            "rtmp" -> rtmpHlsPreviewUrl(streamUrl)?.let { StreamPreviewTarget(StreamPreviewKind.Hls, it) }
+            "srt" -> srtHlsPreviewUrl(streamUrl)?.let { StreamPreviewTarget(StreamPreviewKind.Hls, it) }
+            "webrtc" -> StreamPreviewTarget(StreamPreviewKind.Web, webrtcPreviewUrl(streamUrl))
+            else -> null
+        }
+    } catch (_: Exception) {
+        null
+    }
+}
+
+@Composable
+private fun PlaceholderStreamPreview(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .background(Brush.linearGradient(listOf(Color(0xFF163A26), Color(0xFF26583E), Color(0xFF7DD89E), Color(0xFF3F8F5C))))
+    ) {
+        Row(
+            modifier = Modifier.align(Alignment.Center),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            verticalAlignment = Alignment.Bottom
+        ) {
+            barHeights.forEachIndexed { i, h ->
+                Box(
+                    modifier = Modifier
+                        .size(width = 5.dp, height = h.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(if (i % 3 == 2) Color.White else Color.White.copy(alpha = 0.85f))
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LiveStreamPreview(target: StreamPreviewTarget, modifier: Modifier = Modifier) {
+    when (target.kind) {
+        StreamPreviewKind.Hls -> HlsStreamPreview(target.url, modifier)
+        StreamPreviewKind.Web -> WebStreamPreview(target.url, modifier)
+    }
+}
+
+@Composable
+private fun HlsStreamPreview(url: String, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val player = remember(url) {
+        ExoPlayer.Builder(context).build().apply {
+            setMediaItem(
+                MediaItem.Builder()
+                    .setUri(url)
+                    .setMimeType(MimeTypes.APPLICATION_M3U8)
+                    .build()
+            )
+            volume = 0f
+            playWhenReady = true
+            prepare()
+        }
+    }
+    DisposableEffect(player) {
+        onDispose { player.release() }
+    }
+    AndroidView(
+        modifier = modifier.background(Color.Black),
+        factory = { viewContext ->
+            PlayerView(viewContext).apply {
+                useController = false
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                this.player = player
+            }
+        },
+        update = { it.player = player }
+    )
+}
+
+@Composable
+private fun WebStreamPreview(url: String, modifier: Modifier = Modifier) {
+    AndroidView(
+        modifier = modifier.background(Color.Black),
+        factory = { context ->
+            WebView(context).apply {
+                setBackgroundColor(android.graphics.Color.BLACK)
+                webViewClient = WebViewClient()
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.mediaPlaybackRequiresUserGesture = false
+                settings.cacheMode = WebSettings.LOAD_NO_CACHE
+                loadUrl(url)
+            }
+        },
+        update = { webView ->
+            if (webView.url != url) {
+                webView.loadUrl(url)
+            }
+        }
+    )
+}
+
 private fun localStreamSetupHint(protocol: String, streamUrl: String, status: String): String? {
     if (protocol != "rtmp" && protocol != "srt" && protocol != "webrtc") {
         return null
@@ -233,12 +352,12 @@ private fun localStreamSetupHint(protocol: String, streamUrl: String, status: St
         return null
     }
     if (protocol == "rtmp") {
-        return "Local RTMP setup: run python3 examples/local-demo-cloud/server.py, paste the printed RTMP publish URL here, then open the printed HLS preview URL on your computer. The printed ffplay command is optional for debugging."
+        return "Local RTMP setup: run python3 examples/local-demo-cloud/server.py, paste the printed RTMP publish URL here, then start streaming. The app previews the derived HLS URL; the printed ffplay command is optional for debugging."
     }
     if (protocol == "srt") {
-        return "Local SRT setup: run python3 examples/local-demo-cloud/server.py, paste the printed SRT publish URL here, then open the printed HLS preview URL on your computer. The printed SRT ffplay command is optional for debugging."
+        return "Local SRT setup: run python3 examples/local-demo-cloud/server.py, paste the printed SRT publish URL here, then start streaming. The app previews the derived HLS URL; the printed SRT ffplay command is optional for debugging."
     }
-    return "Local WebRTC setup: run python3 examples/local-demo-cloud/server.py, paste the printed WHIP publish URL here, then open the WebRTC preview URL on your computer."
+    return "Local WebRTC setup: run python3 examples/local-demo-cloud/server.py, paste the printed WHIP publish URL here, then start streaming. The app previews the MediaMTX WebRTC page."
 }
 
 @Composable

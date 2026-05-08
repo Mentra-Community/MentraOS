@@ -16,13 +16,14 @@
         "NSBluetoothAlwaysUsageDescription": "This example app uses Bluetooth to connect to smart glasses.",
         "NSBluetoothPeripheralUsageDescription": "This example app uses Bluetooth to connect to smart glasses.",
         "NSCameraUsageDescription": "This example app can trigger camera capture on connected smart glasses.",
-        "NSLocalNetworkUsageDescription": "This example app can talk to a local photo webhook server.",
+        "NSLocalNetworkUsageDescription": "This example app can talk to local photo webhook and streaming preview servers.",
         "NSMicrophoneUsageDescription": "This example app can stream microphone audio from connected smart glasses."
       }
     },
     "android": {
       "package": "com.mentra.bluetoothsdk.example",
       "softwareKeyboardLayoutMode": "pan",
+      "usesCleartextTraffic": true,
       "permissions": [
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_ADMIN",
@@ -32,6 +33,7 @@
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
+        "android.permission.INTERNET",
         "android.permission.POST_NOTIFICATIONS"
       ]
     },
@@ -56,7 +58,8 @@
           }
         }
       ],
-      "expo-audio"
+      "expo-audio",
+      "expo-video"
     ]
   }
 }

@@ -17,7 +17,7 @@ settings:
         INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: "This example app uses Bluetooth to connect to smart glasses."
         INFOPLIST_KEY_NSBluetoothPeripheralUsageDescription: "This example app uses Bluetooth to connect to smart glasses."
         INFOPLIST_KEY_NSCameraUsageDescription: "This example app can trigger camera capture on connected smart glasses."
-        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "This example app can talk to a local photo webhook server."
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "This example app can talk to local photo webhook and streaming preview servers."
         INFOPLIST_KEY_NSMicrophoneUsageDescription: "This example app can stream microphone audio from connected smart glasses."
 
 targets:
