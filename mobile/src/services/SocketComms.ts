@@ -564,8 +564,17 @@ class SocketComms {
       console.log("Invalid photo request: missing requestId or appId")
       return
     }
-    // Parameter order: requestId, appId, size, webhookUrl, authToken, compress, flash, sound, exposureTimeNs
-    CoreModule.photoRequest(requestId, appId, size, webhookUrl, authToken, compress, flash, sound, exposureTimeNs)
+    CoreModule.photoRequest({
+      requestId,
+      appId,
+      size,
+      webhookUrl,
+      authToken,
+      compress,
+      flash,
+      sound,
+      exposureTimeNs,
+    })
   }
 
   private handle_start_stream(msg: any) {
