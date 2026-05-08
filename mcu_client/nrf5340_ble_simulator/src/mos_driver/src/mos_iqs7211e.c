@@ -11,6 +11,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/atomic.h>
+#include <hal/nrf_gpio.h>
 
 LOG_MODULE_REGISTER(mos_iqs7211e, LOG_LEVEL_INF);
 
@@ -33,6 +34,9 @@ LOG_MODULE_REGISTER(mos_iqs7211e, LOG_LEVEL_INF);
 #define IQS_MAX_BLOCK_BYTES 128U
 #define IQS_RDY_WORKQ_STACK_SIZE 1024
 #define IQS_RDY_WORKQ_PRIORITY K_PRIO_PREEMPT(6)
+#define IQS_WAKE_RDY_POLL_MS 20
+#define IQS_WAKE_RDY_TIMEOUT_MS 2000
+#define IQS_WAKE_RDY_STABLE_IDLE_MS 200
 
 #if IQS7211E_DT_READY
 
@@ -52,6 +56,7 @@ static void iqs_prepare_polled_access(void);
 static void iqs_try_fill_version_cache(void);
 static int iqs_setup_rdy_interrupt(void);
 static void iqs_start_rdy_work_queue(void);
+static int iqs_rdy_abs_pin(uint32_t *abs_pin);
 
 static const struct gpio_dt_spec s_iqs_rdy_gpio = GPIO_DT_SPEC_GET(IQS_RDY_NODE, iqs7211e_rdy_gpios);
 static struct gpio_callback s_iqs_rdy_cb;
@@ -492,6 +497,32 @@ static int iqs_setup_rdy_interrupt(void)
     return gpio_pin_interrupt_configure_dt(&s_iqs_rdy_gpio, IQS_RDY_GPIO_INT);
 }
 
+static int iqs_rdy_abs_pin(uint32_t *abs_pin)
+{
+    if (abs_pin == NULL)
+    {
+        return -EINVAL;
+    }
+
+#if DT_NODE_EXISTS(DT_NODELABEL(gpio0))
+    if (s_iqs_rdy_gpio.port == DEVICE_DT_GET(DT_NODELABEL(gpio0)))
+    {
+        *abs_pin = NRF_GPIO_PIN_MAP(0, s_iqs_rdy_gpio.pin);
+        return 0;
+    }
+#endif
+
+#if DT_NODE_EXISTS(DT_NODELABEL(gpio1))
+    if (s_iqs_rdy_gpio.port == DEVICE_DT_GET(DT_NODELABEL(gpio1)))
+    {
+        *abs_pin = NRF_GPIO_PIN_MAP(1, s_iqs_rdy_gpio.pin);
+        return 0;
+    }
+#endif
+
+    return -ENODEV;
+}
+
 int mos_iqs7211e_init(void)
 {
     if (atomic_get(&s_iqs_initialized))
@@ -518,6 +549,10 @@ int mos_iqs7211e_init(void)
 
         atomic_set(&s_iqs_bus_ready, 1);
     }
+
+    /* After System OFF the MCU resets but IQS7211E may stay in LP2 / manual mode from sleep prep;
+     * direct reads can NACK (-EIO) until a comm window is opened. Cold boot is unaffected. */
+    iqs_prepare_polled_access();
 
     uint16_t product_number = 0;
     uint16_t major_word = 0;
@@ -548,19 +583,14 @@ int mos_iqs7211e_init(void)
                 IQS7211E_PRODUCT_NUMBER_VALUE);
         return -ENODEV;
     }
-
-    uint16_t info_flags = 0;
-    ret = iqs_read_reg16(IQS7211E_REG_INFO_FLAGS, &info_flags);
-    if (ret == 0)
+    // SW reset
+    ret = iqs_update_reg16(IQS7211E_REG_SYSTEM_CONTROL, IQS7211E_SYSTEM_SW_RESET, IQS7211E_SYSTEM_SW_RESET);
+    if (ret != 0)
     {
-        // If the chip doesn't indicate a recent reset, we can skip the lengthy software reset sequence. This is a
-        // workaround for the fact that the chip doesn't always reset properly after a power cycle.
-        if ((info_flags & IQS7211E_INFO_SHOW_RESET) == 0U)
-        {
-            (void)iqs_update_reg16(IQS7211E_REG_SYSTEM_CONTROL, IQS7211E_SYSTEM_SW_RESET, IQS7211E_SYSTEM_SW_RESET);
-            k_sleep(K_MSEC(100));
-        }
+        LOG_ERR("IQS7211E startup SW reset failed: %d", ret);
+        return ret;
     }
+    k_sleep(K_MSEC(120));
 
     (void)iqs_update_reg16(IQS7211E_REG_SYSTEM_CONTROL, IQS7211E_SYSTEM_ACK_RESET, IQS7211E_SYSTEM_ACK_RESET);
     (void)iqs_update_reg16(IQS7211E_REG_CONFIG_SETTINGS,
@@ -587,6 +617,109 @@ int mos_iqs7211e_enable_rdy_interrupt(void)
         LOG_INF("IQS7211E RDY GPIO armed (active-low, falling edge)");
     }
     return ret;
+}
+
+int mos_iqs7211e_prepare_sleep_wakeup_mode(void)
+{
+    int ret = mos_iqs7211e_init();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    iqs_prepare_polled_access();
+
+    const uint16_t mask = IQS7211E_CONFIG_MANUAL_CONTROL | IQS7211E_CONFIG_EVENT_MODE |
+                          IQS7211E_CONFIG_GESTURE_EVENT | IQS7211E_CONFIG_TP_EVENT |
+                          IQS7211E_CONFIG_TP_TOUCH_EVENT;
+    const uint16_t value = IQS7211E_CONFIG_EVENT_MODE | IQS7211E_CONFIG_GESTURE_EVENT |
+                           IQS7211E_CONFIG_TP_EVENT | IQS7211E_CONFIG_TP_TOUCH_EVENT;
+
+    ret = iqs_update_reg16(IQS7211E_REG_CONFIG_SETTINGS, mask, value);
+    (void)iqs_stop_comm_window();
+    if (ret != 0)
+    {
+        LOG_ERR("Failed to prepare IQS7211E sleep wakeup mode: %d", ret);
+        return ret;
+    }
+
+    LOG_INF("IQS7211E sleep wakeup mode prepared (manual control released)");
+    return 0;
+}
+
+int mos_iqs7211e_configure_wakeup(void)
+{
+    int ret = mos_iqs7211e_init();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    if (!gpio_is_ready_dt(&s_iqs_rdy_gpio))
+    {
+        return -ENODEV;
+    }
+
+    uint32_t abs_pin = 0;
+    ret = iqs_rdy_abs_pin(&abs_pin);
+    if (ret != 0)
+    {
+        LOG_ERR("Failed to resolve IQS7211E RDY GPIO absolute pin: %d", ret);
+        return ret;
+    }
+
+    (void)gpio_pin_interrupt_configure_dt(&s_iqs_rdy_gpio, GPIO_INT_DISABLE);
+    (void)iqs_stop_comm_window();
+
+    const bool active_low = ((s_iqs_rdy_gpio.dt_flags & GPIO_ACTIVE_LOW) != 0);
+    int raw_level = 0;
+    uint32_t stable_idle_ms = 0;
+    for (uint32_t elapsed_ms = 0; elapsed_ms < IQS_WAKE_RDY_TIMEOUT_MS; elapsed_ms += IQS_WAKE_RDY_POLL_MS)
+    {
+        raw_level = gpio_pin_get_raw(s_iqs_rdy_gpio.port, s_iqs_rdy_gpio.pin);
+        if (raw_level < 0)
+        {
+            LOG_ERR("Failed to read IQS7211E RDY GPIO raw level: %d", raw_level);
+            return raw_level;
+        }
+
+        const bool rdy_active = active_low ? (raw_level == 0) : (raw_level != 0);
+        if (!rdy_active)
+        {
+            stable_idle_ms += IQS_WAKE_RDY_POLL_MS;
+            if (stable_idle_ms >= IQS_WAKE_RDY_STABLE_IDLE_MS)
+            {
+                LOG_INF("IQS7211E RDY idle for %u ms before System OFF wake setup", stable_idle_ms);
+                break;
+            }
+        }
+        else
+        {
+            stable_idle_ms = 0;
+            (void)iqs_stop_comm_window();
+        }
+
+        k_sleep(K_MSEC(IQS_WAKE_RDY_POLL_MS));
+    }
+
+    const bool rdy_still_active = active_low ? (raw_level == 0) : (raw_level != 0);
+    if (rdy_still_active || (stable_idle_ms < IQS_WAKE_RDY_STABLE_IDLE_MS))
+    {
+        LOG_WRN("IQS7211E RDY did not stay idle before System OFF; skip sleep to avoid immediate touch wake");
+        return -EBUSY;
+    }
+
+    ret = gpio_pin_configure_dt(&s_iqs_rdy_gpio, GPIO_INPUT | (active_low ? GPIO_PULL_UP : GPIO_PULL_DOWN));
+    if (ret != 0)
+    {
+        LOG_ERR("Failed to configure IQS7211E RDY input for wakeup: %d", ret);
+        return ret;
+    }
+
+    nrf_gpio_cfg_sense_set(abs_pin, active_low ? NRF_GPIO_PIN_SENSE_LOW : NRF_GPIO_PIN_SENSE_HIGH);
+    LOG_INF("IQS7211E RDY configured for System OFF wakeup (%s, P%u.%u)",
+            active_low ? "SENSE_LOW" : "SENSE_HIGH", abs_pin >> 5, abs_pin & 0x1FU);
+    return 0;
 }
 
 int mos_iqs7211e_register_runtime_callback(mos_iqs7211e_runtime_callback_t callback, void *user_data)

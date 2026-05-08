@@ -119,6 +119,10 @@ int mos_iqs7211e_init(void);
 
 int mos_iqs7211e_enable_rdy_interrupt(void);
 
+int mos_iqs7211e_prepare_sleep_wakeup_mode(void);
+
+int mos_iqs7211e_configure_wakeup(void);
+
 int mos_iqs7211e_register_runtime_callback(mos_iqs7211e_runtime_callback_t callback, void *user_data);
 
 int mos_iqs7211e_write_reg16(uint8_t reg, uint16_t value);

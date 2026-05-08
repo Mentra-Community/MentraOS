@@ -18,8 +18,6 @@
 
     zephyr_user: zephyr,user {
         jlink_usb_switch-gpios  = <&gpio1 11 GPIO_ACTIVE_HIGH>;  // P1.11 for J-Link/USB switch control
-        button-gpios            = <&gpio0 23 GPIO_ACTIVE_HIGH>;  // P0.23 for button input
-
         // GX8002 / VAD path disabled - microphone uses PDM (see &pdm0)
         vad_power-gpios         = <&gpio1 0 GPIO_ACTIVE_HIGH>;
         gx8002_vad_int-gpios    = <&gpio0 22 GPIO_ACTIVE_HIGH>;

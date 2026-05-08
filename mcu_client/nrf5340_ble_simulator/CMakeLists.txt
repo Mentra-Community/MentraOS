@@ -16,7 +16,6 @@ add_subdirectory(src/mos_components/mos_ble)
 add_subdirectory(src/mos_components/mos_sysport)
 # add_subdirectory(src/mos_components/mos_pdm)  # PDM mic path disabled - using GX8002 VAD
 add_subdirectory(src/mos_components/mos_battery)
-add_subdirectory(src/mos_components/mos_button)
 add_subdirectory(src/mos_components/mos_hinge_fold)
 add_subdirectory(src/mos_components/mos_interrupt)
 add_subdirectory(src/mos_components/mos_gx8002)  # GX8002 VAD path enabled

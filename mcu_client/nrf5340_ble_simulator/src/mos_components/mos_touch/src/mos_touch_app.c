@@ -1,10 +1,19 @@
 #include "mos_touch_app.h"
 #include "mos_touch_iqs7211e_profile.h"
 
+#include <display/lcd/a6n.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/spinlock.h>
+#include <zephyr/sys/atomic.h>
+#include <zephyr/sys/poweroff.h>
 #include <zephyr/sys/util.h>
+
+#include "mos_gx8002.h"
+#include "mos_lsm6dsv16x.h"
+#include "mos_lvgl_display.h"
+#include "mos_npm1300_ldsw.h"
+#include "mos_opt3006.h"
 
 LOG_MODULE_REGISTER(mos_touch_app, LOG_LEVEL_INF);
 
@@ -31,7 +40,15 @@ static uint16_t s_touch_prev_reported_gesture_bits = 0;
 static int64_t s_touch_prev_reported_gesture_ms = 0;
 static bool s_touch_debug_frame_logging = false;
 
+static struct k_work s_touch_sleep_work;
+static atomic_t s_touch_sleep_pending = ATOMIC_INIT(0);
+
 static void mos_touch_app_reset_runtime_state(void);
+static void mos_touch_app_sleep_work_handler(struct k_work *work);
+
+extern void configure_default_low_pins(void);
+extern void imu_en_control(bool enable);
+extern void mic_power_control(bool enable);
 
 typedef enum
 {
@@ -179,6 +196,21 @@ static void mos_touch_app_emit_logical_event(mos_touch_logical_event_t event, co
     }
 
     LOG_INF("[TOUCH] Logical event: %s (%s)", mos_touch_app_logical_event_str(event), source);
+}
+
+static void mos_touch_app_request_sleep(void)
+{
+    if (!atomic_cas(&s_touch_sleep_pending, 0, 1))
+    {
+        return;
+    }
+
+    int ret = k_work_submit(&s_touch_sleep_work);
+    if (ret < 0)
+    {
+        atomic_set(&s_touch_sleep_pending, 0);
+        LOG_ERR("Failed to schedule touch sleep work: %d", ret);
+    }
 }
 
 static uint16_t mos_touch_app_chip_gesture_mask(void)
@@ -430,6 +462,10 @@ static void mos_touch_app_runtime_handler(uint16_t gestures, uint16_t info_flags
     if (chip_discrete_event != MOS_TOUCH_LOGICAL_NONE)
     {
         mos_touch_app_emit_logical_event(chip_discrete_event, "chip");
+        if (chip_discrete_event == MOS_TOUCH_LOGICAL_TRIPLE_TAP)
+        {
+            mos_touch_app_request_sleep();
+        }
         emitted = true;
     }
 
@@ -478,8 +514,7 @@ static void mos_touch_app_emit_cached_startup_gesture(void)
 
     /* The profile activation cache sync can catch the user's first touch before RDY is armed.
      * Emit that cached chip gesture instead of silently consuming it as a startup sync frame. 
-     配置文件激活缓存同步可以在 RDY 启动之前捕获用户的第一次触摸。发出缓存的芯片手势，而不是默默地将其用作启动同步帧。 
-     配置文件*/
+     * 配置文件激活缓存同步可以在 RDY 启动之前捕获用户的第一次触摸。发出缓存的芯片手势，而不是默默地将其用作启动同步帧 */
     LOG_INF("IQS startup cache contains chip gesture bits; emitting cached first touch");
     mos_touch_app_runtime_handler(gestures, info_flags, finger1_x, finger1_y, rel_x, rel_y, NULL);
 }
@@ -501,6 +536,66 @@ static void mos_touch_app_reset_runtime_state(void)
     s_touch_prev_reported_gesture_ms = 0;
 }
 
+static void mos_touch_app_sleep_work_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+
+    LOG_INF("Triple tap detected - preparing System OFF sleep with touch wakeup");
+
+    /* Let the current IQS RDY frame finish and return RDY to idle before configuring wake sense. */
+    k_sleep(K_MSEC(200));
+
+    (void)mos_gx8002_power_control(false);
+    mic_power_control(false);
+    imu_en_control(false);
+    (void)lsm6dsv16x_sleep();
+
+    set_display_onoff(false);
+    a6n_power_off();
+    a6n_io_off();
+
+    configure_default_low_pins();
+
+    int ret = mos_npm1300_ldsw1_enable();
+    if (ret != 0)
+    {
+        LOG_WRN("Failed to keep LDSW1 enabled for touch wakeup: %d", ret);
+    }
+
+    ret = mos_iqs7211e_prepare_sleep_wakeup_mode();
+    if (ret != 0)
+    {
+        atomic_set(&s_touch_sleep_pending, 0);
+        LOG_ERR("Failed to prepare IQS7211E sleep wakeup mode: %d", ret);
+        return;
+    }
+
+    ret = mos_iqs7211e_configure_wakeup();
+    if (ret != 0)
+    {
+        atomic_set(&s_touch_sleep_pending, 0);
+        LOG_ERR("Failed to configure IQS7211E touch wakeup: %d", ret);
+        return;
+    }
+
+    ret = opt3006_set_mode(OPT3006_MODE_SHUTDOWN);
+    if (ret != 0)
+    {
+        LOG_WRN("Failed to put OPT3006 into shutdown mode before System OFF: %d", ret);
+    }
+    else
+    {
+        LOG_INF("OPT3006 shutdown; i2c3 pins left released for IQS7211E touch wake");
+    }
+
+    LOG_INF("Entering System OFF sleep mode; touch RDY will wake the device");
+    k_sleep(K_MSEC(50));
+    sys_poweroff();
+
+    atomic_set(&s_touch_sleep_pending, 0);
+    LOG_ERR("sys_poweroff returned unexpectedly");
+}
+
 int mos_touch_app_init(void)
 {
     int ret = mos_iqs7211e_init();
@@ -509,6 +604,8 @@ int mos_touch_app_init(void)
         LOG_ERR("IQS init failed: %d", ret);
         return ret;
     }
+
+    k_work_init(&s_touch_sleep_work, mos_touch_app_sleep_work_handler);
 
     ret = mos_iqs7211e_register_runtime_callback(mos_touch_app_runtime_handler, NULL);
     if (ret != 0)

@@ -29,7 +29,6 @@
 #include "mos_gx8002.h"  // GX8002 VAD path enabled
 // #include "pdm_audio_stream.h"  // PDM path disabled - using GX8002 VAD
 #include "interrupt_handler.h"  // Interrupt handler framework
-#include "mos_button_app.h"  // Button application logic
 #include "mos_dfu_progress.h"
 #include "mos_fuel_gauge.h"
 #include "mos_hinge_fold.h"
@@ -458,6 +457,25 @@ void imu_en_control(bool enable)
     LOG_INF("imu_en %s (physical %s)", enable ? "ENABLED" : "DISABLED", enable ? "HIGH" : "LOW");
 }
 
+void mic_power_control(bool enable)
+{
+#if MIC_POWER_GPIO_AVAILABLE
+    if (gpio_is_ready_dt(&mic_power))
+    {
+        int err = gpio_pin_set_dt(&mic_power, enable ? 1 : 0);
+        if (err != 0)
+        {
+            LOG_ERR("mic_power GPIO set %s failed: %d", enable ? "HIGH" : "LOW", err);
+            return;
+        }
+
+        LOG_INF("mic_power %s (physical %s)", enable ? "ENABLED" : "DISABLED", enable ? "HIGH" : "LOW");
+    }
+#else
+    ARG_UNUSED(enable);
+#endif
+}
+
 /**
  * @brief Configure default LOW GPIO pins | 配置默认拉低的GPIO引脚
  * @return void
@@ -534,8 +552,6 @@ int main(void)
     int err = 0;
     LOG_INF("🚀🚀🚀 MAIN FUNCTION STARTED - v2.2.0-DISPLAY_OPEN_FIX 🚀🚀🚀");
 
-    bool woke_from_sleep = mos_button_app_check_wakeup_state();
-
     err = init_user_gpio();
     if (err != 0)
     {
@@ -601,26 +617,6 @@ int main(void)
     mos_gx8002_init();  // GX8002 VAD path enabled
     // pdm_audio_stream_init();  // PDM path disabled - using GX8002 VAD
     mos_jlink_usb_switch_app_init();
-
-    /* woke_from_sleep is already set by mos_button_app_check_wakeup_state() called at the start of main() |
-     * woke_from_sleep已由main()开始时调用的mos_button_app_check_wakeup_state()设置 */
-    if (woke_from_sleep)
-    {
-        LOG_INF("Device woke from System OFF - waiting for power-on long press (2.5s)...");
-
-        int ret = mos_button_app_wait_for_power_on(1500);
-
-        if (ret != 0)
-        {
-            LOG_WRN("Power-on long press not detected - entering sleep again");
-            /* Enter sleep again | 再次进入休眠 */
-            mos_button_app_enter_sleep();
-            /* Should not reach here | 不应该到达这里 */
-        }
-
-        LOG_INF("Power-on long press confirmed - starting device normally");
-    }
-    mos_button_app_init();
 
     pm1300_init();
     battery_monitor_auto_start();
