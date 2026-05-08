@@ -13,7 +13,7 @@
 #include "interrupt_handler.h"
 #include "mos_button.h"
 #include "mos_lsm6dsv16x.h"
-#include "mos_lvgl_display.h"
+#include "mos_display.h"
 #include "mos_npm1300_ldsw.h"
 #include "mos_opt3006.h"
 

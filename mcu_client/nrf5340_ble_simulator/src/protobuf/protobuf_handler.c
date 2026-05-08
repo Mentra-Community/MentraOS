@@ -14,7 +14,7 @@
 #include "main.h"
 #include "mos_ble_service.h"
 #include "mos_brightness.h"
-#include "mos_components/mos_lvgl_display/include/mos_lvgl_display.h"  // **NEW: For protobuf text display**
+#include "mos_components/mos_display/include/mos_display.h"  // **NEW: For protobuf text display**
 #include "mos_gx8002.h"  // GX8002 VAD path enabled
 #include "mos_i2s_slave.h"  // GX8002 I2S slave
 // #include "pdm_audio_stream.h"  // PDM path disabled - using GX8002 VAD

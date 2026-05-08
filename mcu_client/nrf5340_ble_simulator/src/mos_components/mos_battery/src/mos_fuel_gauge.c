@@ -1,6 +1,6 @@
 #include "mos_fuel_gauge.h"
 #include "protobuf_handler.h"  /* sync SoC & charging to display/BLE */
-#include "mos_lvgl_display.h"  /* display_request_welcome_battery_refresh */
+#include "mos_display.h"  /* display_request_welcome_battery_refresh */
 
 #include <nrf_fuel_gauge.h>
 #include <zephyr/device.h>

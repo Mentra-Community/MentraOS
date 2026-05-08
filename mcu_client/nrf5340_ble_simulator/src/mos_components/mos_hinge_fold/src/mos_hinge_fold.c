@@ -7,7 +7,7 @@
 #include <zephyr/logging/log.h>
 
 #include "mos_lsm6dsv16x.h"
-#include "mos_lvgl_display.h"
+#include "mos_display.h"
 
 LOG_MODULE_REGISTER(mos_hinge_fold, LOG_LEVEL_INF);
 #define MOS_HINGE_THREAD_STACK_SIZE 4096

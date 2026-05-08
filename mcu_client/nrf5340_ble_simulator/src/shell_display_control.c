@@ -19,7 +19,7 @@
 #include <pm_config.h>
 
 #include "mos_binfont_lvgl.h"
-#include "mos_lvgl_display.h"
+#include "mos_display.h"
 
 // Include protobuf handler for battery functions
 #include "protobuf_handler.h"
@@ -75,7 +75,7 @@ static int cmd_display_help(const struct shell *shell, size_t argc, char **argv)
     shell_print(shell, "    • 2: Vertical zebra");
     shell_print(shell, "    • 3: Scrolling welcome text");
     shell_print(shell, "    • 4: Protobuf text container (default)");
-    shell_print(shell, "    • 5: XY text positioning area");
+    shell_print(shell, "    • 5: positioned-text rendering");
     shell_print(shell, "");
     shell_print(shell, "✏️  Text Commands:");
     shell_print(shell, "  display text \"Hello\"              - Text overlay (center position, for patterns)");
@@ -89,6 +89,11 @@ static int cmd_display_help(const struct shell *shell, size_t argc, char **argv)
     shell_print(shell, "  display layout position <x> <y>    - Move container position");
     shell_print(shell, "  display layout size <width> <height> - Set container size");
     shell_print(shell, "  display layout info               - Show current layout settings");
+    shell_print(shell, "");
+    shell_print(shell, "🐞 Debug:");
+    shell_print(shell, "  display debug border on            - Show 1px borders around screen + welcome/caption");
+    shell_print(shell, "  display debug border off           - Hide debug borders");
+    shell_print(shell, "  display debug border status        - Show current debug border state");
     shell_print(shell, "  display layout reset              - Reset to default layout");
     shell_print(shell, "");
     shell_print(shell, "🎨 Font Testing:");
@@ -340,9 +345,9 @@ static int cmd_display_text(const struct shell *shell, size_t argc, char **argv)
         size = 14;
     }
 
-    // Use the same API as protobuf handler - display_update_xy_text
+    // Use the same API as protobuf handler - display_update_positioned_text
     // White color (0xFFFF in RGB565 format)
-    display_update_xy_text(x, y, text, size, 0xFFFF);
+    display_update_positioned_text(x, y, text, size, 0xFFFF);
 
     shell_print(shell, "✅ Text \"%s\" written at (%d,%d) with font %dpx", text, x, y, size);
     LOG_INF("Text displayed: \"%s\" at (%d,%d) size %d", text, x, y, size);
@@ -373,7 +378,7 @@ static int cmd_display_binfont_test(const struct shell *shell, size_t argc, char
     /* Binfont size is determined by the font itself, passing 0 means no specific size */
     /* 强制重新加载 binfont，确保使用刚烧录的新字库 */
     mos_binfont_lvgl_deinit();
-    display_update_xy_text((uint16_t)x, (uint16_t)y, text, 0, 0xFFFF);
+    display_update_positioned_text((uint16_t)x, (uint16_t)y, text, 0, 0xFFFF);
     shell_print(shell, "✅ Binfont test text written at (%d,%d)", x, y);
 
     return 0;
@@ -454,7 +459,7 @@ static int cmd_display_cjk_hex(const struct shell *shell, size_t argc, char **ar
     }
 
     mos_binfont_lvgl_deinit();
-    display_update_xy_text((uint16_t)x, (uint16_t)y, (const char *)utf8_buf, 0, 0xFFFF);
+    display_update_positioned_text((uint16_t)x, (uint16_t)y, (const char *)utf8_buf, 0, 0xFFFF);
     shell_print(shell, "OK text at (%d,%d) (%d bytes)", x, y, len);
     return 0;
 }
@@ -473,7 +478,7 @@ static int cmd_display_pattern(const struct shell *shell, size_t argc, char **ar
         shell_print(shell, "  2 - Vertical zebra");
         shell_print(shell, "  3 - Scrolling welcome text");
         shell_print(shell, "  4 - Protobuf text container (default)");
-        shell_print(shell, "  5 - XY text positioning area");
+        shell_print(shell, "  5 - positioned-text rendering");
         return -EINVAL;
     }
 
@@ -1352,8 +1357,8 @@ static int cmd_display_fonts_test(const struct shell *shell, size_t argc, char *
 
     shell_print(shell, "Testing all font sizes with text: \"%s\"", test_text);
 
-    // Switch to Pattern 5 for XY positioning
-    // Switch to Pattern 5 (XY positioning) for testing
+    // Switch to Pattern 5 for positioned text
+    // Switch to Pattern 5 (positioned text) for testing
     display_cmd_t cmd = {.type = LCD_CMD_SHOW_PATTERN, .p.pattern = {.pattern_id = 5}};
 
     if (k_msgq_put(&lvgl_display_msgq, &cmd, K_NO_WAIT) != 0)
@@ -1372,7 +1377,7 @@ static int cmd_display_fonts_test(const struct shell *shell, size_t argc, char *
         snprintf(size_label, sizeof(size_label), "%dpt: %s", size, test_text);
 
         // Display the font size test
-        display_update_xy_text(10, y_pos, size_label, size, 0xFFFF);
+        display_update_positioned_text(10, y_pos, size_label, size, 0xFFFF);
 
         shell_print(shell, "  %dpt font displayed at y=%d", size, y_pos);
 
@@ -1438,7 +1443,7 @@ static int cmd_display_layout_margin(const struct shell *shell, size_t argc, cha
 
     shell_print(shell, "⚠️  Dynamic margin changes not yet implemented.");
     shell_print(shell, "To change margin from default 10px to %dpx:", margin);
-    shell_print(shell, "  1. Edit src/mos_components/mos_lvgl_display/src/display_config.c");
+    shell_print(shell, "  1. Edit src/mos_components/mos_display/src/mos_display_config.c");
     shell_print(shell, "  2. Find DISPLAY_TYPE_A6N_640x480 section");
     shell_print(shell, "  3. Change .margin_left / .margin_top in display_config.c to %d", margin);
     shell_print(shell, "  4. Rebuild and flash firmware");
@@ -1467,7 +1472,7 @@ static int cmd_display_layout_padding(const struct shell *shell, size_t argc, ch
 
     shell_print(shell, "⚠️  Dynamic padding changes not yet implemented.");
     shell_print(shell, "To change padding from default 10px to %dpx:", padding);
-    shell_print(shell, "  1. Edit src/mos_components/mos_lvgl_display/src/display_config.c");
+    shell_print(shell, "  1. Edit src/mos_components/mos_display/src/mos_display_config.c");
     shell_print(shell, "  2. Find DISPLAY_TYPE_A6N_640x480 section");
     shell_print(shell, "  3. Change .padding = 10 to .padding = %d", padding);
     shell_print(shell, "  4. Rebuild and flash firmware");
@@ -1597,6 +1602,45 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
     SHELL_CMD_ARG(padding, NULL, "Set container padding <pixels>", cmd_display_layout_padding, 2, 0),
     SHELL_SUBCMD_SET_END);
 
+/* Debug border toggle: paints a 1px frame around the screen and the welcome/caption
+ * containers so the layout boxes are visible. Off by default. */
+static int cmd_display_debug_border_on(const struct shell *shell, size_t argc, char **argv)
+{
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
+    display_set_debug_borders(true);
+    shell_print(shell, "Debug borders: ON");
+    return 0;
+}
+
+static int cmd_display_debug_border_off(const struct shell *shell, size_t argc, char **argv)
+{
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
+    display_set_debug_borders(false);
+    shell_print(shell, "Debug borders: OFF");
+    return 0;
+}
+
+static int cmd_display_debug_border_status(const struct shell *shell, size_t argc, char **argv)
+{
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
+    shell_print(shell, "Debug borders: %s", display_get_debug_borders() ? "ON" : "OFF");
+    return 0;
+}
+
+SHELL_STATIC_SUBCMD_SET_CREATE(sub_debug_border,
+                               SHELL_CMD(on, NULL, "Enable debug borders", cmd_display_debug_border_on),
+                               SHELL_CMD(off, NULL, "Disable debug borders", cmd_display_debug_border_off),
+                               SHELL_CMD(status, NULL, "Show debug border state", cmd_display_debug_border_status),
+                               SHELL_SUBCMD_SET_END);
+
+SHELL_STATIC_SUBCMD_SET_CREATE(sub_debug,
+                               SHELL_CMD(border, &sub_debug_border, "Toggle 1px debug borders (on/off/status)",
+                                         cmd_display_debug_border_status),
+                               SHELL_SUBCMD_SET_END);
+
 /* Shell subcommand definitions for min_temp_limit */
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_min_temp_limit,
                                SHELL_CMD_ARG(set, NULL, "Set low temperature recovery threshold <value_in_C>",
@@ -1662,6 +1706,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
     SHELL_CMD_ARG(stereo, NULL, "Set stereo shift: <left_h> <right_h>", cmd_display_stereo, 3, 0),
     SHELL_CMD(fonts, &sub_fonts, "Font size management", NULL),
     SHELL_CMD(layout, &sub_layout, "Layout and positioning control", NULL),
+    SHELL_CMD(debug, &sub_debug, "Debug visualization toggles (border)", NULL),
     SHELL_CMD_ARG(read, NULL, "Read A6N register: <addr> [mode] (hex, e.g. EF, F0, BE)", cmd_display_read, 2, 1),
     SHELL_CMD_ARG(write, NULL, "Write A6N register: <addr> <value> (hex)", cmd_display_write, 3, 0),
     SHELL_CMD(get_temp, NULL, "Read A6N panel temperature", cmd_display_get_temp),
