@@ -1,0 +1,85 @@
+diff --git a/drivers/flash/nrf_qspi_nor.c b/drivers/flash/nrf_qspi_nor.c
+index f60ca2d2c0e..2e6bfbda294 100644
+--- a/drivers/flash/nrf_qspi_nor.c
++++ b/drivers/flash/nrf_qspi_nor.c
+@@ -273,26 +273,65 @@ static inline void qspi_unlock(const struct device *dev)
+ #endif
+ }
+ 
+-static inline void qspi_clock_div_change(void)
++
++static volatile bool s_qspi_boosted = false;
++static inline int qspi_clock_div_change(void)
+ {
+ #ifdef CONFIG_SOC_SERIES_NRF53X
+ 	/* Make sure the base clock divider is changed accordingly
+ 	 * before a QSPI transfer is performed.
+ 	 */
+-	nrf_clock_hfclk192m_div_set(NRF_CLOCK, BASE_CLOCK_DIV);
+-	k_busy_wait(BASE_CLOCK_SWITCH_DELAY_US);
++    nrf_clock_hfclk192m_div_set(NRF_CLOCK, NRF_CLOCK_HFCLK_DIV_1);
++    __DSB(); __ISB();
++    k_busy_wait(BASE_CLOCK_SWITCH_DELAY_US);
++
++    if ((!s_qspi_boosted) && (nrf_clock_hfclk192m_div_get(NRF_CLOCK) == NRF_CLOCK_HFCLK_DIV_1))
++	{ 
++		nrfx_clock_divider_set(NRF_CLOCK_DOMAIN_HFCLK, NRF_CLOCK_HFCLK_DIV_2);
++		__DSB(); __ISB();
++		s_qspi_boosted = true;
++	}
+ #endif
++    return 0;
+ }
+-
+ static inline void qspi_clock_div_restore(void)
+ {
+ #ifdef CONFIG_SOC_SERIES_NRF53X
+ 	/* Restore the default base clock divider to reduce power
+ 	 * consumption when the QSPI peripheral is idle.
+ 	 */
+-	nrf_clock_hfclk192m_div_set(NRF_CLOCK, NRF_CLOCK_HFCLK_DIV_4);
++    nrf_clock_hfclk192m_div_set(NRF_CLOCK, NRF_CLOCK_HFCLK_DIV_4);
++    __DSB(); __ISB();
++
++    if ((s_qspi_boosted) && (nrf_clock_hfclk192m_div_get(NRF_CLOCK) == NRF_CLOCK_HFCLK_DIV_4))
++	{ 
++		nrfx_clock_divider_set(NRF_CLOCK_DOMAIN_HFCLK, NRF_CLOCK_HFCLK_DIV_1);
++		__DSB(); __ISB();
++		s_qspi_boosted = false;
++	}
+ #endif
+ }
++// static inline void qspi_clock_div_change(void)
++// {
++// #ifdef CONFIG_SOC_SERIES_NRF53X
++// 	/* Make sure the base clock divider is changed accordingly
++// 	 * before a QSPI transfer is performed.
++// 	 */
++// 	nrf_clock_hfclk192m_div_set(NRF_CLOCK, BASE_CLOCK_DIV);
++// 	k_busy_wait(BASE_CLOCK_SWITCH_DELAY_US);
++// #endif
++// }
++
++// static inline void qspi_clock_div_restore(void)
++// {
++// #ifdef CONFIG_SOC_SERIES_NRF53X
++// 	/* Restore the default base clock divider to reduce power
++// 	 * consumption when the QSPI peripheral is idle.
++// 	 */
++// 	nrf_clock_hfclk192m_div_set(NRF_CLOCK, NRF_CLOCK_HFCLK_DIV_4);
++
++// #endif
++// }
+ 
+ static void qspi_acquire(const struct device *dev)
+ {
+@@ -1091,7 +1130,8 @@ static int qspi_init(const struct device *dev)
+ 		return rc;
+ 	}
+ 
+-	if (memcmp(dev_config->id, id, SPI_NOR_MAX_ID_LEN) != 0) {
++	if (memcmp(dev_config->id, id, SPI_NOR_MAX_ID_LEN) != 0) 
++	{
+ 		LOG_ERR("JEDEC id [%02x %02x %02x] expect [%02x %02x %02x]",
+ 			id[0], id[1], id[2], dev_config->id[0],
+ 			dev_config->id[1], dev_config->id[2]);

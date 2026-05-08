@@ -11,7 +11,12 @@
 # Toolchain
 NCS_VERSION  ?= v3.0.0
 NCS_BASE     ?= /opt/nordic/ncs
-TOOLCHAIN_ID ?= ef4fc6722e
+# Resolve the toolchain bundle hash for our NCS_VERSION from the manifest
+# nrfutil maintains. This is needed because the hash is opaque and a machine
+# may have multiple NCS versions installed (e.g. v3.0.0 and v3.2.0 sit at
+# different bundle_ids). Override with `make build TOOLCHAIN_ID=<hash>` if
+# you need to pin to a specific bundle.
+TOOLCHAIN_ID ?= $(shell python3 -c 'import json; print(next((t["identifier"]["bundle_id"] for c in json.load(open("$(NCS_BASE)/toolchains/toolchains.json")) for t in c["toolchains"] if "$(NCS_VERSION)" in t["ncs_versions"]), ""))' 2>/dev/null)
 WEST         ?= $(NCS_BASE)/toolchains/$(TOOLCHAIN_ID)/bin/west
 IMGTOOL      ?= $(NCS_BASE)/toolchains/$(TOOLCHAIN_ID)/bin/imgtool
 NRFJPROG     ?= nrfjprog
@@ -106,7 +111,11 @@ dist: rebuild ## Build and package firmware for sharing (outputs to dist/)
 	@echo "Package ready in dist/:"
 	@echo "  merged.hex         — app core (MCUboot + app)"
 	@echo "  merged_CPUNET.hex  — network core (radio)"
-	@echo "  flash.sh           — standalone flash script (needs nrfjprog + J-Link)"
+	@echo "  flash.sh           — standalone flash script"
+	@echo ""
+	@echo "Recipient needs (see flash.sh header for details):"
+	@echo "  • nrfutil 8.0.0 + 'device' plugin 2.12.8"
+	@echo "  • SEGGER J-Link V8.42"
 	@echo ""
 	@echo "Share the dist/ folder. Recipient flashes with:"
 	@echo "  bash flash.sh"

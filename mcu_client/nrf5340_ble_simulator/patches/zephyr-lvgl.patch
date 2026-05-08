@@ -1,0 +1,18 @@
+diff --git a/modules/lvgl/lvgl.c b/modules/lvgl/lvgl.c
+index 664f6fdb03a..8bc6269521e 100644
+--- a/modules/lvgl/lvgl.c
++++ b/modules/lvgl/lvgl.c
+@@ -109,10 +109,11 @@ static int lvgl_allocate_rendering_buffers(lv_display_t *display)
+ 	lv_display_set_buffers(display, &buf0, &buf1, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL);
+ #else
+ 	lv_display_set_buffers(display, &buf0, NULL, BUFFER_SIZE, LV_DISPLAY_RENDER_MODE_PARTIAL);
+-#endif /* CONFIG_LV_Z_DOUBLE_VDB  */
++#endif /* CONFIG_LV_Z_DOUBLE_VDB  */
+ 
+ #if ALLOC_MONOCHROME_CONV_BUFFER
+-	lvgl_set_mono_conversion_buffer(mono_vtile_buf, BUFFER_SIZE);
++	// lvgl_set_mono_conversion_buffer(mono_vtile_buf, BUFFER_SIZE);
++	lvgl_set_mono_conversion_buffer(mono_vtile_buf, BUFFER_SIZE - 8);
+ #endif /* ALLOC_MONOCHROME_CONV_BUFFER */
+ 
+ 	return err;
