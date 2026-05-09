@@ -17,9 +17,28 @@ NCS_BASE     ?= /opt/nordic/ncs
 # different bundle_ids). Override with `make build TOOLCHAIN_ID=<hash>` if
 # you need to pin to a specific bundle.
 TOOLCHAIN_ID ?= $(shell python3 -c 'import json; print(next((t["identifier"]["bundle_id"] for c in json.load(open("$(NCS_BASE)/toolchains/toolchains.json")) for t in c["toolchains"] if "$(NCS_VERSION)" in t["ncs_versions"]), ""))' 2>/dev/null)
-WEST         ?= $(NCS_BASE)/toolchains/$(TOOLCHAIN_ID)/bin/west
-IMGTOOL      ?= $(NCS_BASE)/toolchains/$(TOOLCHAIN_ID)/bin/imgtool
+TOOLCHAIN_DIR ?= $(NCS_BASE)/toolchains/$(TOOLCHAIN_ID)
+TOOLCHAIN_BIN ?= $(TOOLCHAIN_DIR)/bin
+WEST         ?= $(TOOLCHAIN_BIN)/west
+IMGTOOL      ?= $(TOOLCHAIN_BIN)/imgtool
 NRFJPROG     ?= nrfjprog
+
+# Tell west which workspace to use when invoked outside it. The .west dir
+# lives at NCS_BASE/NCS_VERSION; without this, west errors with
+# "unknown command build; do you need to run this inside a workspace?".
+ZEPHYR_BASE  ?= $(NCS_BASE)/$(NCS_VERSION)/zephyr
+export ZEPHYR_BASE
+
+# Mirror what `nrfutil toolchain-manager launch` would export — see
+# $(TOOLCHAIN_DIR)/environment.json. Without these, CMake fails with
+# "Could not find a package configuration file provided by Zephyr-sdk".
+ZEPHYR_TOOLCHAIN_VARIANT ?= zephyr
+ZEPHYR_SDK_INSTALL_DIR   ?= $(TOOLCHAIN_DIR)/opt/zephyr-sdk
+export ZEPHYR_TOOLCHAIN_VARIANT ZEPHYR_SDK_INSTALL_DIR
+
+# Prepend toolchain bins so cmake/ninja/python and the cross-compiler all
+# come from the bundle, not Homebrew/system.
+export PATH := $(TOOLCHAIN_BIN):$(TOOLCHAIN_DIR)/usr/bin:$(TOOLCHAIN_DIR)/usr/local/bin:$(TOOLCHAIN_DIR)/opt/bin:$(ZEPHYR_SDK_INSTALL_DIR)/arm-zephyr-eabi/bin:$(ZEPHYR_SDK_INSTALL_DIR)/riscv64-zephyr-elf/bin:$(PATH)
 
 # Build
 BUILD_DIR    ?= build
@@ -73,6 +92,18 @@ check-west:
 		echo ""; \
 		echo "Or override the path if installed elsewhere:"; \
 		echo "  make build NCS_BASE=<path> TOOLCHAIN_ID=<hash>"; \
+		echo ""; \
+		exit 1; \
+	fi
+	@if [ ! -d "$(ZEPHYR_BASE)" ]; then \
+		echo ""; \
+		echo "ERROR: Zephyr workspace not found at $(ZEPHYR_BASE)"; \
+		echo ""; \
+		echo "The west workspace hasn't been initialised. Run:"; \
+		echo "  make install"; \
+		echo ""; \
+		echo "Or override the path:"; \
+		echo "  make build ZEPHYR_BASE=<path/to/zephyr>"; \
 		echo ""; \
 		exit 1; \
 	fi
