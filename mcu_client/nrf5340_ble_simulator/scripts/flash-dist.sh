@@ -50,7 +50,11 @@ nrfutil device --version &>/dev/null || {
 [ -f "${APP_HEX}" ] || { echo "ERROR: ${APP_HEX} not found"; exit 1; }
 [ -f "${NET_HEX}" ] || { echo "ERROR: ${NET_HEX} not found"; exit 1; }
 
-PROG_OPTS="chip_erase_mode=ERASE_ALL,verify=VERIFY_HASH"
+# VERIFY_READ (read-back compare) instead of VERIFY_HASH because the
+# probe-plugin backend (Probe-RS, used when the SEGGER J-Link backend
+# isn't picked up) doesn't support hash verify. Read-back works on every
+# backend and gives the same correctness guarantee, just a touch slower.
+PROG_OPTS="chip_erase_mode=ERASE_ALL,verify=VERIFY_READ"
 
 # ── flash ──────────────────────────────────────────────────────────────────
 
