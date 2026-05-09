@@ -35,7 +35,9 @@ NRFUTIL_URL="https://files.nordicsemi.com/artifactory/swtools/external/nrfutil/e
 
 step "nrfutil (pinned ${NRFUTIL_VERSION})"
 
-INSTALLED_NRFUTIL_VERSION=$(nrfutil --version 2>/dev/null | awk 'NR==1 {print $2; exit}')
+# `|| true` because on a fresh machine nrfutil doesn't exist yet — pipefail
+# would propagate the 127 and errexit would silently kill the script.
+INSTALLED_NRFUTIL_VERSION=$(nrfutil --version 2>/dev/null | awk 'NR==1 {print $2; exit}' || true)
 
 if [ "${INSTALLED_NRFUTIL_VERSION}" = "${NRFUTIL_VERSION}" ]; then
     skip "nrfutil ${INSTALLED_NRFUTIL_VERSION}"
@@ -70,7 +72,7 @@ NRFUTIL_DEVICE_VERSION="2.12.8"
 
 step "nrfutil device plugin (pinned ${NRFUTIL_DEVICE_VERSION})"
 
-INSTALLED_DEVICE_VERSION=$(nrfutil device --version 2>/dev/null | awk '/nrfutil-device/ {print $2; exit}')
+INSTALLED_DEVICE_VERSION=$(nrfutil device --version 2>/dev/null | awk '/nrfutil-device/ {print $2; exit}' || true)
 
 if [ "${INSTALLED_DEVICE_VERSION}" = "${NRFUTIL_DEVICE_VERSION}" ]; then
     skip "nrfutil device ${INSTALLED_DEVICE_VERSION}"
@@ -98,7 +100,7 @@ JLINK_PKG_URL="https://www.segger.com/downloads/jlink/JLink_MacOSX_V842_universa
 step "SEGGER J-Link (pinned V${JLINK_VERSION})"
 
 JLINK_INSTALLED_VERSION=$(JLinkExe -nogui 1 < /dev/null 2>/dev/null \
-    | awk '/SEGGER J-Link Commander/ {sub(/^V/, "", $4); print $4; exit}')
+    | awk '/SEGGER J-Link Commander/ {sub(/^V/, "", $4); print $4; exit}' || true)
 
 if [ "${JLINK_INSTALLED_VERSION}" = "${JLINK_VERSION}" ]; then
     skip "J-Link V${JLINK_INSTALLED_VERSION}"
