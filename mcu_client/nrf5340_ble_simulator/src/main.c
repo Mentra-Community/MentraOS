@@ -45,6 +45,8 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 
 #define STACKSIZE 2048
 #define PRIORITY 7
+#define TOUCH_LDSW_POWER_CYCLE_OFF_MS 20U
+#define TOUCH_LDSW_POWER_STABILIZE_MS 80U
 
 #define DEVICE_NAME CONFIG_BT_DEVICE_NAME
 #define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1)
@@ -547,6 +549,36 @@ int init_user_gpio(void)
     return 0;
 }
 
+static int touch_power_cycle_ldsw1(void)
+{
+    int ret = mos_npm1300_ldsw1_init();
+    if (ret != 0)
+    {
+        LOG_ERR("Failed to initialize LDSW1 for touch power cycle: %d", ret);
+        return ret;
+    }
+
+    ret = mos_npm1300_ldsw1_disable();
+    if (ret != 0)
+    {
+        LOG_ERR("Failed to disable LDSW1 for touch power cycle: %d", ret);
+        return ret;
+    }
+
+    k_sleep(K_MSEC(TOUCH_LDSW_POWER_CYCLE_OFF_MS));
+
+    ret = mos_npm1300_ldsw1_enable();
+    if (ret != 0)
+    {
+        LOG_ERR("Failed to enable LDSW1 after touch power cycle: %d", ret);
+        return ret;
+    }
+
+    k_sleep(K_MSEC(TOUCH_LDSW_POWER_STABILIZE_MS));
+    LOG_INF("Touch LDSW1 power cycled after reset");
+    return 0;
+}
+
 int main(void)
 {
     int err = 0;
@@ -558,8 +590,11 @@ int main(void)
         LOG_ERR("Failed to initialize user GPIOs: %d", err);
     }
 
-    mos_npm1300_ldsw1_init();
-    mos_npm1300_ldsw1_enable();
+    err = touch_power_cycle_ldsw1();
+    if (err != 0)
+    {
+        LOG_ERR("Touch LDSW1 power cycle failed: %d", err);
+    }
 
     /* Bring touch online before slower display/VAD/sensor init so the first user touch after power-on is handled. */
     err = mos_touch_app_init();
