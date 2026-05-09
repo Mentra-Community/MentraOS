@@ -12,7 +12,7 @@ const SPRING = {type: "spring", stiffness: 400, damping: 32, mass: 0.6} as const
 /**
  * Direction card with three lines (matches Apple/Google Maps layout):
  *
- *   In 500 ft           ← distance to next pivot (live)
+ *   In 150 m            ← distance to next pivot (live)
  *   Turn right          ← direction (or "Continue" / "Arrived")
  *   onto Market St      ← road name (toRoad on turns, fromRoad on continue)
  *

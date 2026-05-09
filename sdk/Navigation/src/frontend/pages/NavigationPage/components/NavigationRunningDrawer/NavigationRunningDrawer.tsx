@@ -1,4 +1,8 @@
 import {AnimatePresence, motion} from "motion/react"
+import {useLayoutEffect, useRef} from "react"
+
+import {useDrawerOffset} from "@/frontend/components/Drawer/DrawerOffsetContext"
+import {formatDistance} from "@/backend/lib/formatDistance/formatDistance"
 import {haversineMeters} from "@/backend/lib/geometry/geometry"
 import type {LatLng} from "@/backend/lib/geometry/geometry"
 import type {PlaceDetails} from "@/backend/lib/places/places"
@@ -14,10 +18,32 @@ const WALKING_M_PER_S = 1.4
 
 export function NavigationRunningDrawer({destination, me, onStop}: Props) {
   const distanceMeters = destination && me ? haversineMeters(me, destination) : null
-  const distanceLabel = distanceMeters != null ? formatMiles(distanceMeters) : "—"
+  const distanceLabel = distanceMeters != null ? formatDistance(distanceMeters) : "—"
   const etaMinutes = distanceMeters != null ? Math.round(distanceMeters / WALKING_M_PER_S / 60) : null
   const etaLabel = etaMinutes != null ? formatEta(distanceMeters!) : "—"
   const arrivalLabel = etaMinutes != null ? formatArrival(etaMinutes) : "—"
+
+  // Publish the bar's measured height into the shared drawer-offset
+  // MotionValue so the NavMap right-rail buttons sit just above us
+  // when this drawer is the active one. We're not a `Drawer`, so we
+  // mirror its publishing behavior manually.
+  const drawerOffset = useDrawerOffset()
+  const measureRef = useRef<HTMLDivElement | null>(null)
+  useLayoutEffect(() => {
+    if (!drawerOffset || !destination) return
+    const node = measureRef.current
+    if (!node) return
+    const update = () => drawerOffset.set(node.getBoundingClientRect().height)
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(node)
+    return () => {
+      ro.disconnect()
+      // On unmount, drop our published height so the next drawer (or
+      // empty state) doesn't inherit a stale bar height.
+      drawerOffset.set(0)
+    }
+  }, [drawerOffset, destination])
 
   return (
     <AnimatePresence>
@@ -29,7 +55,7 @@ export function NavigationRunningDrawer({destination, me, onStop}: Props) {
           exit={{y: "100%"}}
           transition={{type: "spring", stiffness: 320, damping: 42}}
           className="fixed left-0 right-0 bottom-0 z-40 pointer-events-none">
-          <div className="[font-synthesis:none] pointer-events-auto mx-auto max-w-md flex items-center pt-4 pb-8.5 gap-2 bg-[#FFFFFFA6] border-t border-t-solid border-t-[#FFFFFF80] [backdrop-filter:blur(40px)_saturate(180%)] antialiased px-4">
+          <div ref={measureRef} className="[font-synthesis:none] pointer-events-auto mx-auto max-w-md flex items-center pt-4 pb-8.5 gap-2 bg-[#FFFFFFA6] border-t border-t-solid border-t-[#FFFFFF80] [backdrop-filter:blur(40px)_saturate(180%)] antialiased px-4">
             <Stat label={arrivalLabel} sub="Arrival" />
             <div className="w-px h-7 bg-[#0000001A] shrink-0" />
             <Stat label={etaLabel} sub="Time" />
@@ -57,13 +83,6 @@ function Stat({label, sub}: {label: string; sub: string}) {
       <div className="text-[#0000008C] font-sans text-[13px]/4">{sub}</div>
     </div>
   )
-}
-
-function formatMiles(meters: number): string {
-  const miles = meters / 1609.344
-  if (miles < 0.1) return `${Math.round(meters * 3.28084)} ft`
-  if (miles < 10) return `${miles.toFixed(1)} mi`
-  return `${Math.round(miles)} mi`
 }
 
 function formatEta(meters: number): string {

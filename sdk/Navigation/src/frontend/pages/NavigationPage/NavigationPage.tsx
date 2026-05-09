@@ -2,6 +2,7 @@ import {useEffect, useRef, useState} from "react"
 import type {NavManeuver, NavRoute, NavUpdate, TravelMode} from "@mentra/miniapp"
 
 import {useRouter} from "@/frontend/router"
+import {DrawerOffsetProvider} from "@/frontend/components/Drawer/DrawerOffsetContext"
 import {FloatingDevPanel} from "@/frontend/components/FloatingDevPanel/FloatingDevPanel"
 import {SimulationControls} from "@/frontend/pages/NavigationPage/components/Controls/Controls"
 import {ArrivalDrawer} from "@/frontend/pages/NavigationPage/components/ArrivalDrawer/ArrivalDrawer"
@@ -316,6 +317,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const me = coords ? {lat: coords.lat, lng: coords.lng} : null
 
   return (
+    <DrawerOffsetProvider>
     <div className="fixed inset-0 overflow-hidden ">
       <NavMap
         me={me}
@@ -542,6 +544,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
         <LiveLog log={log} running={running} status={status} maneuver={maneuver} />
       </FloatingDevPanel>
     </div>
+    </DrawerOffsetProvider>
   )
 }
 

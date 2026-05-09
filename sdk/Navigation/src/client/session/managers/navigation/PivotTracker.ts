@@ -7,7 +7,7 @@
  *   - direction: "left" | "right" | null  (null = walking straight = "Continue")
  *   - arrived:   true once within DESTINATION_RADIUS_M of the final point
  *   - distanceToNextPivotMeters: distance to the next upcoming pivot, used
- *     for the "In 500 ft" countdown above the maneuver text
+ *     for the "In 150 m" countdown above the maneuver text
  *
  * Direction firing rule: if the user is within PIVOT_RADIUS_M of any pivot,
  * use that pivot's direction. No advancement, no hold timer, no polyline-

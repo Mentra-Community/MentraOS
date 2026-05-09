@@ -6,21 +6,55 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.util.Log
+import kotlin.math.abs
+import kotlin.math.atan2
 
 /**
  * HeadingManager
  *
  * Reads the OS's fused rotation vector (magnetometer + accelerometer +
- * gyro) and converts it to a compass heading in degrees (0 = north,
- * clockwise). This is the same fusion Google Maps uses.
+ * gyro) and produces a tilt-robust compass heading in degrees (0 = north,
+ * clockwise). Behaves like Google Maps' compass: stable across the full
+ * range of phone hold angles, including when the user raises the phone
+ * toward their face.
  *
  * Independent of nav — works whenever an Android Activity is around.
+ *
+ * --- Why projection instead of getOrientation + remapCoordinateSystem ---
+ * The previous implementation called `remapCoordinateSystem(AXIS_X, AXIS_Z)`
+ * and read azimuth via `getOrientation`. That assumes the phone is held
+ * near-vertical. As the phone tilts toward horizontal — or up toward the
+ * user — the assumed device→world axis mapping breaks down and azimuth
+ * drifts or jumps.
+ *
+ * Instead we directly project the device's "top edge" (+Y in device
+ * coords) into the world horizontal plane and read the bearing of that
+ * projection. The full 3D rotation matrix R from
+ * `getRotationMatrixFromVector` carries the device→world transform with
+ * world axes (X = east, Y = north, Z = up). The image of device +Y
+ * under R is the second column of R; its (east, north) components are
+ * R[0][1] and R[1][1] (row-major indices 1 and 4). We discard the up
+ * component — that's exactly the tilt we want to ignore — and take
+ * `atan2(east, north)` for the heading.
+ *
+ * --- Smoothing ---
+ * Low-pass on the rotation MATRIX (not the angle) so we never average
+ * across the 0°↔360° wrap. Alpha 0.88 ≈ 0.4 s tau at SENSOR_DELAY_UI,
+ * matching the perceived smoothness of Google Maps' compass without
+ * adding noticeable lag.
  */
 object HeadingManager {
   private const val TAG = "HeadingManager"
 
   /** Minimum delta (degrees) before re-emitting. Avoids flooding JS. */
   private const val MIN_DEGREE_DELTA = 1.0f
+
+  /**
+   * Low-pass coefficient applied per-sample to each entry of the 3×3
+   * rotation matrix. Higher = smoother but laggier. 0.88 at
+   * SENSOR_DELAY_UI (~16 Hz) gives ~0.4 s tau.
+   */
+  private const val ALPHA = 0.88f
 
   private var sensorManager: SensorManager? = null
   private var rotationVectorSensor: Sensor? = null
@@ -47,32 +81,39 @@ object HeadingManager {
       return
     }
 
-    val rotationMatrix = FloatArray(9)
-    val remappedMatrix = FloatArray(9)
-    val orientation = FloatArray(3)
+    val raw = FloatArray(9)
+    val filtered = FloatArray(9)
+    var seeded = false
 
     val sl = object : SensorEventListener {
       override fun onSensorChanged(event: SensorEvent) {
-        SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
-        // Remap axes for a phone held upright in portrait (screen facing user):
-        // device X→world X, device Z→world Y so the top of the phone points north.
-        SensorManager.remapCoordinateSystem(
-          rotationMatrix,
-          SensorManager.AXIS_X,
-          SensorManager.AXIS_Z,
-          remappedMatrix,
-        )
-        SensorManager.getOrientation(remappedMatrix, orientation)
-        // orientation[0] = azimuth, in radians, [-π, π], 0 = north,
-        // clockwise positive (per the Android docs).
-        val azimuthRad = orientation[0]
-        var degrees = Math.toDegrees(azimuthRad.toDouble()).toFloat()
-        // Normalize to [0, 360)
-        degrees = ((degrees % 360f) + 360f) % 360f
+        SensorManager.getRotationMatrixFromVector(raw, event.values)
 
-        if (lastEmitted < -360f || kotlin.math.abs(angleDiff(degrees, lastEmitted)) >= MIN_DEGREE_DELTA) {
-          lastEmitted = degrees
-          cb.onHeading(degrees)
+        if (!seeded) {
+          // Seed the filter from the first sample so we don't slow-pan
+          // from the identity matrix toward the real orientation over
+          // the first ~30 samples after start().
+          System.arraycopy(raw, 0, filtered, 0, 9)
+          seeded = true
+        } else {
+          for (i in 0 until 9) {
+            filtered[i] = ALPHA * filtered[i] + (1f - ALPHA) * raw[i]
+          }
+        }
+
+        // R is row-major device→world. The image of device +Y
+        // (the top edge of the phone in portrait) under R is the
+        // second column, whose east / north components live at
+        // indices 1 and 4. The up component (index 7) is exactly
+        // the tilt we want to ignore — discard it.
+        val east = filtered[1]
+        val north = filtered[4]
+        val deg = ((Math.toDegrees(atan2(east, north).toDouble()).toFloat()) + 360f) % 360f
+        if (!deg.isFinite()) return
+
+        if (lastEmitted < -360f || abs(angleDiff(deg, lastEmitted)) >= MIN_DEGREE_DELTA) {
+          lastEmitted = deg
+          cb.onHeading(deg)
         }
       }
 

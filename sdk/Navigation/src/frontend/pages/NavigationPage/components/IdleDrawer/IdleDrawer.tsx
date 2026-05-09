@@ -27,13 +27,13 @@ export function IdleDrawer({onSelect, onAddPlace, refreshKey}: Props) {
       open
       onClose={() => {}}
       dismissOnSwipeDown={false}
-      peekHeight={90}
+      peekHeight={163}
       expanded={expanded}
       onExpandedChange={setExpanded}
       className="[font-synthesis:none] pointer-events-auto mx-auto max-w-md flex flex-col rounded-tl-[28px] rounded-tr-[28px] bg-[#FFFFFFB3] border-t border-t-solid border-t-[#FFFFFF99] [backdrop-filter:blur(40px)_saturate(180%)] [box-shadow:#0000001A_0px_-8px_28px] antialiased overflow-hidden">
 
       {/* Sticky top: quick-access cards + add button */}
-      <div className="flex gap-2.5 px-5 pt-4 pb-3 shrink-0">
+      <div className="flex gap-2.5 px-5  pb-3 shrink-0">
         {/* Home */}
         {(() => {
           const home = savedPlaces.find((s) => s.type === "home")?.place ?? null
@@ -106,14 +106,15 @@ export function IdleDrawer({onSelect, onAddPlace, refreshKey}: Props) {
         <button
           type="button"
           onClick={() => onAddPlace()}
-          className="w-21 flex flex-col items-center justify-center rounded-[18px] gap-1.5 bg-[#0000000A] [box-shadow:#00000014_0px_0px_0px_1px_inset] shrink-0 p-3.5">
-          <div className="flex items-center justify-center rounded-[14px] bg-[#0000001A] shrink-0 size-7">
+          className="[font-synthesis:none] w-21 flex flex-col items-start gap-2  rounded-[18px]  shrink-0 [box-shadow:#00000014_0px_0px_0px_1px_inset] bg-[#0000000A] antialiased p-[14px]">
+          <div className="flex items-center justify-center rounded-[14px] shrink-0 bg-[#0000001A] size-8 rounded-full">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
-              <path d="M12 5V19M5 12H19" stroke="#0A84FF" strokeWidth="2.4" strokeLinecap="round" />
+              <path d="M12 5V19M5 12H19" stroke="#000000" strokeWidth="2.4" strokeLinecap="round" />
             </svg>
           </div>
-          <div className="tracking-[0.02em] [white-space-collapse:preserve] text-[#1A1A1A] font-sans font-semibold text-[11px]/3.5">
-            Add place
+          <div className=" flex flex-col items-start tracking-[0.02em] [white-space-collapse:preserve] font-sans font-semibold text-[#1A1A1A] text-[11px]/3.5">
+            <span>Add</span> 
+            <span>place</span>
           </div>
         </button>
       </div>
@@ -156,7 +157,7 @@ export function IdleDrawer({onSelect, onAddPlace, refreshKey}: Props) {
         {/* Recent searches */}
         {recents.length > 0 && (
           <>
-            <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center gap-2 mb-3 mt-5">
               <div className="tracking-[0.16em] uppercase text-[#0000008C] font-sans font-semibold text-[11px]/3.5">Recent</div>
               <div className="h-px grow shrink basis-[0%] bg-[#0000001A]" />
             </div>

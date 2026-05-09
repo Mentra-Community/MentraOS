@@ -1,9 +1,15 @@
 import {useEffect, useRef, useState} from "react"
+import {motion, useMotionValue, useTransform} from "motion/react"
 
 import {useUser} from "@/backend/hooks/useUser"
+import {useDrawerOffset} from "@/frontend/components/Drawer/DrawerOffsetContext"
 import {bearingDeg, haversineMeters} from "@/backend/lib/geometry/geometry"
 import type {LatLng} from "@/backend/lib/geometry/geometry"
 import {rdpSmooth} from "@/backend/lib/geometry/pivots"
+
+/** Pixels between the bottom of the right-rail button stack and the top
+ *  of the active drawer. Tweak as the design wants. */
+const DRAWER_GAP_PX = 10
 
 export function NavMap({
   me,
@@ -22,6 +28,20 @@ export function NavMap({
   const ready = user.mapsReady
   const error = user.mapsError
   const compassHeading = user.heading
+
+  // Right-rail buttons follow the active drawer's top edge. Drawer
+  // publishes its current visible-height into a shared MotionValue
+  // (see DrawerOffsetContext); we bind the wrapper's `bottom` directly
+  // to that value via a useTransform — pure GPU transform, no React
+  // re-render per frame, no spring lag. Dropped the previous spring +
+  // snap-on-jump scheme because it was generating a lot of subscriber
+  // work during drawer transitions and visibly lagging behind the
+  // drawer's own animation. When no provider is present we fall back
+  // to a stable zero MotionValue so the buttons sit at the bottom edge.
+  const drawerOffset = useDrawerOffset()
+  const fallbackOffset = useMotionValue(0)
+  const sourceOffset = drawerOffset ?? fallbackOffset
+  const rightRailBottom = useTransform(sourceOffset, (v) => `${v + DRAWER_GAP_PX}px`)
 
   // Fallback: derive heading from successive GPS positions while moving.
   const [gpsBearing, setGpsBearing] = useState<number | null>(null)
@@ -423,20 +443,10 @@ export function NavMap({
 
 
       {ready ? (
-        <div className="absolute right-3 top-1/2 -translate-y-1/2 flex flex-col gap-2">
-          <button
-            type="button"
-            aria-label="Reset bearing to north"
-            onClick={() => {
-              mapRef.current?.setHeading?.(0)
-              setMapHeading(0)
-            }}
-            className="flex items-center justify-center rounded-[22px] bg-white [box-shadow:#0000001F_0px_4px_14px] w-11 h-11 shrink-0 active:opacity-70">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0, transform: `rotate(${-mapHeading}deg)`}}>
-              <path d="M12 3 L14.5 12 L12 11 L9.5 12 Z" fill="#E8302E" />
-              <path d="M12 13 L9.5 21 L12 20 L14.5 21 Z" fill="#000000D9" />
-            </svg>
-          </button>
+        <motion.div
+          style={{bottom: rightRailBottom}}
+          className="absolute right-3 flex flex-col gap-2">
+          
 
           <button
             type="button"
@@ -482,7 +492,7 @@ export function NavMap({
               <path d="M12 1V4M12 20V23M1 12H4M20 12H23" stroke="#000000D9" strokeWidth="2" strokeLinecap="round" />
             </svg>
           </button>
-        </div>
+        </motion.div>
       ) : null}
     </div>
   )

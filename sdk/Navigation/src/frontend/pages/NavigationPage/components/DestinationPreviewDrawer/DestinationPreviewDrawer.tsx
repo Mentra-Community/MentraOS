@@ -1,4 +1,5 @@
 import {Drawer} from "@/frontend/components/Drawer/Drawer"
+import {formatDistance} from "@/backend/lib/formatDistance/formatDistance"
 import {haversineMeters} from "@/backend/lib/geometry/geometry"
 import type {LatLng} from "@/backend/lib/geometry/geometry"
 import type {PlaceDetails} from "@/backend/lib/places/places"
@@ -16,7 +17,7 @@ const WALKING_M_PER_S = 1.4
 
 export function DestinationPreviewDrawer({destination, me, simulate, speedMultiplier, onStart, onClose}: Props) {
   const distanceMeters = destination && me ? haversineMeters(me, destination) : null
-  const distanceLabel = distanceMeters != null ? formatMiles(distanceMeters) : null
+  const distanceLabel = distanceMeters != null ? formatDistance(distanceMeters) : null
   const etaMinutes = distanceMeters != null ? Math.round(distanceMeters / WALKING_M_PER_S / 60) : null
   const etaLabel = etaMinutes != null ? formatEta(distanceMeters!) : null
   const arrivalLabel = etaMinutes != null ? formatArrival(etaMinutes) : null
@@ -51,7 +52,7 @@ export function DestinationPreviewDrawer({destination, me, simulate, speedMultip
           </div>
 
           {/* Actions */}
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-3">
             <button
               type="button"
               onClick={onStart}
@@ -63,8 +64,8 @@ export function DestinationPreviewDrawer({destination, me, simulate, speedMultip
             <button
               type="button"
               onClick={onClose}
-              className="h-11 flex items-center justify-center shrink-0">
-              <div className="[white-space-collapse:preserve] text-[#000000A6] font-sans text-base/5">
+              className="[font-synthesis:none] h-13 flex items-center justify-center rounded-2xl shrink-0 [box-shadow:#FFFFFF99_0px_1px_0px_inset] bg-[#0000000F] border border-solid border-[#00000014] antialiased">
+              <div className="[white-space-collapse:preserve] font-sans font-semibold text-[#1A1A1C] text-base/5">
                 Cancel
               </div>
             </button>
@@ -73,13 +74,6 @@ export function DestinationPreviewDrawer({destination, me, simulate, speedMultip
       ) : null}
     </Drawer>
   )
-}
-
-function formatMiles(meters: number): string {
-  const miles = meters / 1609.344
-  if (miles < 0.1) return `${Math.round(meters * 3.28084)} ft`
-  if (miles < 10) return `${miles.toFixed(1)} mi`
-  return `${Math.round(miles)} mi`
 }
 
 function formatEta(meters: number): string {
