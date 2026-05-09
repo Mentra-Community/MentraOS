@@ -30,10 +30,11 @@ await BluetoothSdk.startStream({
 export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
   const scrollBottomPadding = useScrollBottomPadding();
   const connected = isGlassesConnected(sdk.glassesStatus);
-  const isLive = sdk.streamStartedAt !== null;
+  const streamActive = sdk.streamRequested || sdk.streamStartedAt !== null;
+  const previewReady = streamActive && sdk.streamPreviewReady;
   const uptime = streamUptime(sdk.streamStartedAt);
   const setupHint = localStreamSetupHint(sdk.streamProtocol, sdk.streamUrl, sdk.streamStatus);
-  const previewTarget = isLive ? streamPreviewTarget(sdk.streamProtocol, sdk.streamUrl) : null;
+  const previewTarget = previewReady ? streamPreviewTarget(sdk.streamProtocol, sdk.streamUrl) : null;
 
   return (
     <ScrollView
@@ -48,21 +49,27 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
       <LinearGradient colors={['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.55)']} style={styles.card}>
         <View style={styles.previewWrap}>
           <View style={styles.preview}>
-            {previewTarget ? <LiveStreamPreview target={previewTarget} /> : <PlaceholderStreamPreview />}
+            {previewTarget ? (
+              <LiveStreamPreview target={previewTarget} />
+            ) : (
+              <PlaceholderStreamPreview message={streamActive ? 'Starting stream...\nWaiting for preview' : undefined} />
+            )}
             <View style={styles.livePill}>
-              <View style={[styles.liveDot, !isLive && styles.readyDot]} />
-              <Text style={styles.liveText}>{isLive ? 'LIVE' : 'READY'}</Text>
+              <View style={[styles.liveDot, !streamActive && styles.readyDot]} />
+              <Text style={styles.liveText}>{previewReady ? 'LIVE' : streamActive ? 'STARTING' : 'READY'}</Text>
             </View>
             <Text style={styles.timer}>{uptime}</Text>
-            <Text style={styles.previewMeta}>{isLive ? `${sdk.streamProtocol.toUpperCase()} · keep-alive 15s` : 'Ready · enter stream URL'}</Text>
+            <Text style={styles.previewMeta}>
+              {previewReady ? `${sdk.streamProtocol.toUpperCase()} · keep-alive 15s` : streamActive ? 'Starting stream...' : 'Ready · enter stream URL'}
+            </Text>
           </View>
         </View>
 
-        <Pressable disabled={!connected && !isLive} onPress={sdk.toggleStream}>
-          <LinearGradient colors={isLive ? ['#FF6B5B', '#FF3B30'] : ['#26473A', '#1F3A2A']} style={[styles.endBtn, !connected && !isLive && styles.disabled]}>
+        <Pressable disabled={!connected && !streamActive} onPress={sdk.toggleStream}>
+          <LinearGradient colors={streamActive ? ['#FF6B5B', '#FF3B30'] : ['#26473A', '#1F3A2A']} style={[styles.endBtn, !connected && !streamActive && styles.disabled]}>
             <View style={styles.stopSquare} />
             <Text style={styles.endText}>
-              {!connected && !isLive ? 'Connect glasses first' : isLive ? 'End stream' : 'Start stream'}
+              {!connected && !streamActive ? 'Connect glasses first' : streamActive ? 'End stream' : 'Start stream'}
             </Text>
           </LinearGradient>
         </Pressable>
@@ -129,25 +136,29 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
   );
 }
 
-function PlaceholderStreamPreview() {
+function PlaceholderStreamPreview({message}: {message?: string}) {
   return (
     <LinearGradient colors={['#163A26', '#26583E', '#7DD89E', '#3F8F5C']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.previewFill}>
       <View style={styles.glow1} />
       <View style={styles.glow2} />
-      <View style={styles.eqWrap}>
-        {bars.map((height, index) => (
-          <View
-            key={index}
-            style={[
-              styles.eqBar,
-              {
-                height,
-                backgroundColor: index % 3 === 2 ? '#fff' : 'rgba(255,255,255,0.85)',
-              },
-            ]}
-          />
-        ))}
-      </View>
+      {message ? (
+        <Text style={styles.previewMessage}>{message}</Text>
+      ) : (
+        <View style={styles.eqWrap}>
+          {bars.map((height, index) => (
+            <View
+              key={index}
+              style={[
+                styles.eqBar,
+                {
+                  height,
+                  backgroundColor: index % 3 === 2 ? '#fff' : 'rgba(255,255,255,0.85)',
+                },
+              ]}
+            />
+          ))}
+        </View>
+      )}
     </LinearGradient>
   );
 }
@@ -238,6 +249,7 @@ const styles = StyleSheet.create({
   timer: { position: 'absolute', top: 14, right: 14, color: '#fff', fontSize: 13, fontWeight: '600' },
   eqWrap: { position: 'absolute', bottom: 56, left: 0, right: 0, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center', gap: 5, height: 56 },
   eqBar: { width: 5, borderRadius: 3 },
+  previewMessage: { position: 'absolute', left: 24, right: 24, top: 58, color: '#fff', fontSize: 16, fontWeight: '600', lineHeight: 21, textAlign: 'center' },
   previewMeta: { position: 'absolute', bottom: 14, left: 14, color: 'rgba(255,255,255,0.85)', fontSize: 11, fontWeight: '500' },
   endBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 18, paddingVertical: 16, marginTop: 14, marginHorizontal: 6, gap: 10 },
   stopSquare: { width: 12, height: 12, backgroundColor: '#fff', borderRadius: 3 },

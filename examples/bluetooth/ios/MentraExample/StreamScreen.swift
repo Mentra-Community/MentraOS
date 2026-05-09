@@ -23,8 +23,12 @@ struct StreamScreen: View {
         localStreamSetupHint(protocol: model.streamProtocol, streamUrl: model.streamUrl, status: model.streamStatus)
     }
 
+    private var streamActive: Bool {
+        model.streamRequested || model.streamStartedAt != nil
+    }
+
     private var livePreviewUrl: URL? {
-        guard model.streamStartedAt != nil else { return nil }
+        guard streamActive, model.streamPreviewReady else { return nil }
         switch model.streamProtocol {
         case .rtmp:
             return rtmpHlsPreviewUrl(model.streamUrl)
@@ -64,14 +68,14 @@ struct StreamScreen: View {
             } label: {
                 HStack(spacing: 10) {
                     RoundedRectangle(cornerRadius: 3).fill(Color.white).frame(width: 12, height: 12)
-                    Text(!model.glassesConnected && model.streamStartedAt == nil ? "Connect glasses first" : model.streamStartedAt == nil ? "Start stream" : "End stream").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
+                    Text(!model.glassesConnected && !streamActive ? "Connect glasses first" : streamActive ? "End stream" : "Start stream").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity).padding(.vertical, 16)
-                .background(LinearGradient(colors: model.streamStartedAt == nil ? [Color(hex: 0x26473A), Color(hex: 0x1F3A2A)] : [Color(hex: 0xFF6B5B), AppColor.red], startPoint: .top, endPoint: .bottom))
+                .background(LinearGradient(colors: streamActive ? [Color(hex: 0xFF6B5B), AppColor.red] : [Color(hex: 0x26473A), Color(hex: 0x1F3A2A)], startPoint: .top, endPoint: .bottom))
                 .clipShape(RoundedRectangle(cornerRadius: 18))
             }
-            .disabled(!model.glassesConnected && model.streamStartedAt == nil)
-            .opacity(!model.glassesConnected && model.streamStartedAt == nil ? 0.55 : 1)
+            .disabled(!model.glassesConnected && !streamActive)
+            .opacity(!model.glassesConnected && !streamActive ? 0.55 : 1)
             .padding(.horizontal, 6).padding(.top, 14)
         }
     }
@@ -101,18 +105,26 @@ struct StreamScreen: View {
                 Circle().fill(AppColor.greenSoft.opacity(0.3)).frame(width: 240, height: 240).blur(radius: 10).offset(x: 100, y: 110)
 
                 VStack {
-                    previewChrome(label: model.streamStartedAt == nil ? "READY" : "LIVE", detail: model.streamStartedAt == nil ? "Ready · enter stream URL" : previewDetail)
+                    previewChrome(label: streamActive ? "STARTING" : "READY", detail: streamActive ? "Starting stream..." : "Ready · enter stream URL")
 
                     Spacer()
 
-                    HStack(alignment: .bottom, spacing: 5) {
-                        ForEach(0 ..< bars.count, id: \.self) { i in
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(i % 3 == 2 ? Color.white : Color.white.opacity(0.85))
-                                .frame(width: 5, height: bars[i])
+                    if streamActive {
+                        Text("Starting stream...\nWaiting for preview")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.white)
+                            .multilineTextAlignment(.center)
+                            .padding(.bottom, 42)
+                    } else {
+                        HStack(alignment: .bottom, spacing: 5) {
+                            ForEach(0 ..< bars.count, id: \.self) { i in
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(i % 3 == 2 ? Color.white : Color.white.opacity(0.85))
+                                    .frame(width: 5, height: bars[i])
+                            }
                         }
+                        .padding(.bottom, 56)
                     }
-                    .padding(.bottom, 56)
                 }
                 .frame(height: 160)
             }

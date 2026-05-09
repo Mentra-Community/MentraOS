@@ -141,6 +141,8 @@ data class MentraExampleState(
     val phoneMediaVolumeMax: Int? = null,
     val rawJsonExpanded: Boolean = false,
     val streamProtocol: String = "rtmp",
+    val streamRequested: Boolean = false,
+    val streamPreviewReady: Boolean = false,
     val streamStartedAt: Long? = null,
     val streamStatus: String = "Ready to start stream",
     val streamUrl: String = defaultStreamUrl("rtmp"),
@@ -412,13 +414,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         state = state.copy(streamUrl = url)
     }
 
-    fun toggleStream() = runAction(if (state.streamStartedAt == null) "Start stream" else "Stop stream") {
-        if (state.streamStartedAt != null) {
+    fun toggleStream() = runAction(if (!state.streamRequested && state.streamStartedAt == null) "Start stream" else "Stop stream") {
+        if (state.streamRequested || state.streamStartedAt != null) {
             stopKeepAlive()
             if (isGlassesConnected()) {
                 sdk.stopStream()
             }
-            state = state.copy(streamStartedAt = null, streamStatus = "Stopped")
+            state = state.copy(streamRequested = false, streamPreviewReady = false, streamStartedAt = null, streamStatus = "Stopped")
             return@runAction
         }
         requireConnected("start streaming")
@@ -461,7 +463,39 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             )
         )
         activeStreamId = streamId
-        state = state.copy(streamStatus = "Requested ${protocol.uppercase()} stream; waiting for glasses")
+        state = state.copy(
+            streamRequested = true,
+            streamPreviewReady = false,
+            streamStatus = "Starting ${protocol.uppercase()} stream; waiting for preview",
+        )
+        startPreviewReadinessPoll(streamUrl, protocol, streamId)
+    }
+
+    private fun startPreviewReadinessPoll(streamUrl: String, protocol: String, streamId: String) {
+        scope.launch(Dispatchers.IO) {
+            repeat(30) {
+                delay(1_000)
+                if (activeStreamId != streamId) return@launch
+                if (streamPreviewIsReady(streamUrl, protocol)) {
+                    scope.launch {
+                        if (activeStreamId == streamId) {
+                            state = state.copy(
+                                streamPreviewReady = true,
+                                streamStatus = "${protocol.uppercase()} preview ready",
+                            )
+                            addEvent("LIVE", "${protocol.uppercase()} preview ready")
+                        }
+                    }
+                    return@launch
+                }
+            }
+            scope.launch {
+                if (activeStreamId == streamId) {
+                    state = state.copy(streamStatus = "Stream requested; preview is still starting")
+                    addEvent("TX", "${protocol.uppercase()} preview did not become ready")
+                }
+            }
+        }
     }
 
     fun requestWifiScan() = runAction("Scan Wi-Fi") {
@@ -1030,6 +1064,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             glassesVolumeStatus = "Glasses volume: not connected",
             galleryServerReachable = null,
             galleryServerStatus = "Gallery server: connect glasses first",
+            streamRequested = false,
+            streamPreviewReady = false,
             streamStartedAt = null,
             streamStatus = status,
             hotspotEnabled = false,
@@ -1046,7 +1082,10 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         when (values["status"] as? String) {
             "streaming", "initializing", "starting" -> {
                 activeStreamId = values["streamId"] as? String ?: activeStreamId
-                state = state.copy(streamStartedAt = state.streamStartedAt ?: System.currentTimeMillis())
+                state = state.copy(
+                    streamRequested = true,
+                    streamStartedAt = state.streamStartedAt ?: System.currentTimeMillis(),
+                )
                 if (keepAliveJob == null) {
                     startKeepAlive(activeStreamId ?: return)
                 }
@@ -1054,7 +1093,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             "stopped", "stopping", "error", "error_not_streaming" -> {
                 stopKeepAlive()
                 activeStreamId = null
-                state = state.copy(streamStartedAt = null)
+                state = state.copy(streamRequested = false, streamPreviewReady = false, streamStartedAt = null)
             }
         }
     }
@@ -1533,6 +1572,56 @@ fun localHttpPreviewReachabilityMessage(previewUrl: String, setupMessage: (Strin
     }
 }
 
+fun streamPreviewIsReady(streamUrl: String, protocol: String): Boolean {
+    return try {
+        when (protocol) {
+            "rtmp" -> rtmpHlsPreviewUrl(streamUrl)?.let(::hlsPreviewIsReady) == true
+            "srt" -> srtHlsPreviewUrl(streamUrl)?.let(::hlsPreviewIsReady) == true
+            "webrtc" -> webrtcWhepProbeUrl(streamUrl)?.let(::whepPreviewIsReady) == true
+            else -> false
+        }
+    } catch (_: Exception) {
+        false
+    }
+}
+
+private fun hlsPreviewIsReady(previewUrl: String): Boolean {
+    return try {
+        val connection = URL(previewUrl).openConnection() as HttpURLConnection
+        connection.connectTimeout = 1500
+        connection.readTimeout = 1500
+        val code = connection.responseCode
+        val body = if (code == 200) {
+            connection.inputStream.bufferedReader().use { it.readText() }
+        } else {
+            ""
+        }
+        connection.disconnect()
+        code == 200 && body.contains("#EXTM3U")
+    } catch (_: Exception) {
+        false
+    }
+}
+
+private fun whepPreviewIsReady(whepUrl: String): Boolean {
+    return try {
+        val connection = URL(whepUrl).openConnection() as HttpURLConnection
+        connection.requestMethod = "POST"
+        connection.connectTimeout = 1500
+        connection.readTimeout = 1500
+        connection.doOutput = true
+        connection.setRequestProperty("Content-Type", "application/sdp")
+        connection.outputStream.use { stream ->
+            stream.write("v=0\r\n".toByteArray(StandardCharsets.UTF_8))
+        }
+        val code = connection.responseCode
+        connection.disconnect()
+        code != 404 && code < 500
+    } catch (_: Exception) {
+        false
+    }
+}
+
 fun rtmpHlsPreviewUrl(rtmpUrlText: String): String? {
     val uri = URI(rtmpUrlText)
     val scheme = uri.scheme ?: throw IllegalArgumentException("Missing RTMP URL scheme.")
@@ -1608,6 +1697,21 @@ fun webrtcPreviewUrl(whipUrlText: String): String {
     }
     val port = url.port.takeIf { it >= 0 }?.let { ":$it" } ?: ""
     val path = url.path.removeSuffix("/whip").ifBlank { "/" }
+    return "${url.protocol}://${url.host}$port$path"
+}
+
+fun webrtcWhepProbeUrl(whipUrlText: String): String {
+    val url = URL(whipUrlText)
+    if (url.protocol != "http" && url.protocol != "https") {
+        throw IllegalArgumentException("Only http and https WHIP URLs are supported.")
+    }
+    val port = url.port.takeIf { it >= 0 }?.let { ":$it" } ?: ""
+    val basePath = when {
+        url.path.endsWith("/whep") -> url.path
+        url.path.endsWith("/whip") -> url.path.removeSuffix("/whip")
+        else -> url.path
+    }.trim('/')
+    val path = if (basePath.isBlank()) "/whep" else "/$basePath/whep"
     return "${url.protocol}://${url.host}$port$path"
 }
 

@@ -105,6 +105,8 @@ export type MentraSdkState = {
   photoSize: PhotoSize;
   rawJsonExpanded: boolean;
   streamProtocol: StreamProtocol;
+  streamPreviewReady: boolean;
+  streamRequested: boolean;
   streamStartedAt: number | null;
   streamStatus: string;
   streamUrl: string;
@@ -200,6 +202,8 @@ export function useMentraSdk(): MentraSdkModel {
     process.env?.EXPO_PUBLIC_MENTRA_STREAM_URL ?? STREAM_DEFAULT_URLS.rtmp,
   );
   const [streamStartedAt, setStreamStartedAt] = useState<number | null>(null);
+  const [streamRequested, setStreamRequested] = useState(false);
+  const [streamPreviewReady, setStreamPreviewReady] = useState(false);
   const [streamStatus, setStreamStatus] = useState('Ready to start stream');
   const [hotspotEnabled, setHotspotEnabled] = useState(
     () => Boolean(BluetoothSdk.getGlassesStatus().hotspotEnabled),
@@ -719,13 +723,15 @@ export function useMentraSdk(): MentraSdkModel {
   }
 
   async function toggleStream() {
-    if (streamStartedAt) {
+    if (streamRequested || streamStartedAt) {
       await runAction('Stop stream', async () => {
         stopKeepAlive();
         activeStreamIdRef.current = null;
         if (isGlassesConnected(glassesStatus)) {
           await BluetoothSdk.stopStream();
         }
+        setStreamRequested(false);
+        setStreamPreviewReady(false);
         setStreamStartedAt(null);
         setStreamStatus('Stopped');
       });
@@ -763,8 +769,36 @@ export function useMentraSdk(): MentraSdkModel {
       } satisfies StreamStartRequest;
       await BluetoothSdk.startStream(params);
       activeStreamIdRef.current = streamId;
-      setStreamStatus(`Requested ${streamProtocol.toUpperCase()} stream; waiting for glasses`);
+      setStreamRequested(true);
+      setStreamPreviewReady(false);
+      setStreamStatus(`Starting ${streamProtocol.toUpperCase()} stream; waiting for preview`);
+      void startPreviewReadinessPoll(url, streamProtocol, streamId);
     });
+  }
+
+  async function startPreviewReadinessPoll(
+    url: string,
+    protocol: StreamProtocol,
+    streamId: string,
+  ) {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      await delay(1000);
+      if (activeStreamIdRef.current !== streamId) {
+        return;
+      }
+      if (await streamPreviewIsReady(url, protocol)) {
+        if (activeStreamIdRef.current === streamId) {
+          setStreamPreviewReady(true);
+          setStreamStatus(`${protocol.toUpperCase()} preview ready`);
+          addEvent('LIVE', `${protocol.toUpperCase()} preview ready`);
+        }
+        return;
+      }
+    }
+    if (activeStreamIdRef.current === streamId) {
+      setStreamStatus('Stream requested; preview is still starting');
+      addEvent('TX', `${protocol.toUpperCase()} preview did not become ready`);
+    }
   }
 
   function startKeepAlive(streamId: string) {
@@ -1139,6 +1173,8 @@ export function useMentraSdk(): MentraSdkModel {
       setCameraStatus('Disconnected before photo upload completed');
     }
     setGlassesStatus(disconnectedGlassesStatus({connected: false}));
+    setStreamRequested(false);
+    setStreamPreviewReady(false);
     setStreamStartedAt(null);
     setStreamStatus(status);
     setHotspotEnabled(false);
@@ -1156,6 +1192,7 @@ export function useMentraSdk(): MentraSdkModel {
       if (typeof payload.streamId === 'string') {
         activeStreamIdRef.current = payload.streamId;
       }
+      setStreamRequested(true);
       setStreamStartedAt((current) => current ?? Date.now());
       if (keepAliveTimerRef.current === null && activeStreamIdRef.current) {
         startKeepAlive(activeStreamIdRef.current);
@@ -1170,6 +1207,8 @@ export function useMentraSdk(): MentraSdkModel {
     ) {
       stopKeepAlive();
       activeStreamIdRef.current = null;
+      setStreamRequested(false);
+      setStreamPreviewReady(false);
       setStreamStartedAt(null);
     }
   }
@@ -1232,6 +1271,8 @@ export function useMentraSdk(): MentraSdkModel {
     setWebhookUrl,
     startScan,
     streamProtocol,
+    streamPreviewReady,
+    streamRequested,
     streamStartedAt,
     streamStatus,
     streamUrl,
@@ -1574,6 +1615,52 @@ async function localHttpPreviewReachabilityMessage(
   }
 }
 
+async function streamPreviewIsReady(streamUrl: string, protocol: StreamProtocol) {
+  try {
+    if (protocol === 'rtmp') {
+      const previewUrl = rtmpHlsPreviewUrl(streamUrl);
+      return previewUrl ? hlsPreviewIsReady(previewUrl) : false;
+    }
+    if (protocol === 'srt') {
+      const previewUrl = srtHlsPreviewUrl(streamUrl);
+      return previewUrl ? hlsPreviewIsReady(previewUrl) : false;
+    }
+    const whepUrl = webrtcWhepProbeUrl(streamUrl);
+    return whepUrl ? whepPreviewIsReady(whepUrl) : false;
+  } catch {
+    return false;
+  }
+}
+
+async function hlsPreviewIsReady(previewUrl: string) {
+  try {
+    const response = await fetch(cacheBustedUrl(previewUrl), {
+      cache: 'no-store',
+      headers: {'Cache-Control': 'no-cache', Pragma: 'no-cache'},
+    });
+    if (!response.ok) {
+      return false;
+    }
+    return (await response.text()).includes('#EXTM3U');
+  } catch {
+    return false;
+  }
+}
+
+async function whepPreviewIsReady(whepUrl: string) {
+  try {
+    const response = await fetch(whepUrl, {
+      body: 'v=0\r\n',
+      cache: 'no-store',
+      headers: {'Content-Type': 'application/sdp'},
+      method: 'POST',
+    });
+    return response.status !== 404 && response.status < 500;
+  } catch {
+    return false;
+  }
+}
+
 function rtmpHlsPreviewUrl(rtmpUrlText: string) {
   const rtmpUrl = new URL(rtmpUrlText);
   if (rtmpUrl.protocol !== 'rtmp:' && rtmpUrl.protocol !== 'rtmps:') {
@@ -1643,6 +1730,24 @@ function webrtcPreviewUrl(whipUrlText: string) {
   if (whipUrl.pathname.endsWith('/whip')) {
     whipUrl.pathname = whipUrl.pathname.slice(0, -'/whip'.length) || '/';
   }
+  whipUrl.search = '';
+  return whipUrl.toString();
+}
+
+function webrtcWhepProbeUrl(whipUrlText: string) {
+  const whipUrl = new URL(whipUrlText);
+  if (whipUrl.protocol !== 'http:' && whipUrl.protocol !== 'https:') {
+    throw new Error('Only http and https WHIP URLs are supported.');
+  }
+  let path = whipUrl.pathname;
+  if (!path.endsWith('/whep')) {
+    if (path.endsWith('/whip')) {
+      path = path.slice(0, -'/whip'.length);
+    }
+    const trimmed = path.replace(/^\/+|\/+$/g, '');
+    path = trimmed ? `/${trimmed}/whep` : '/whep';
+  }
+  whipUrl.pathname = path;
   whipUrl.search = '';
   return whipUrl.toString();
 }

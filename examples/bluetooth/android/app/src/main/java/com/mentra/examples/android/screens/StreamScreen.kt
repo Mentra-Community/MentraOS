@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.viewinterop.AndroidView
@@ -69,10 +70,11 @@ sdk.startStream(
 fun StreamScreen(controller: MentraExampleController) {
     val state = controller.state
     val connected = isGlassesConnected(state.glassesStatus)
-    val isLive = state.streamStartedAt != null
+    val streamActive = state.streamRequested || state.streamStartedAt != null
+    val previewReady = streamActive && state.streamPreviewReady
     val uptime = elapsedText(state.streamStartedAt)
     val setupHint = localStreamSetupHint(state.streamProtocol, state.streamUrl, state.streamStatus)
-    val previewTarget = if (isLive) streamPreviewTarget(state.streamProtocol, state.streamUrl) else null
+    val previewTarget = if (previewReady) streamPreviewTarget(state.streamProtocol, state.streamUrl) else null
     val clipboardManager = LocalClipboardManager.current
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
         PageHeader("Stream", connected)
@@ -89,7 +91,10 @@ fun StreamScreen(controller: MentraExampleController) {
                 if (previewTarget != null) {
                     LiveStreamPreview(previewTarget, modifier = Modifier.matchParentSize())
                 } else {
-                    PlaceholderStreamPreview(modifier = Modifier.matchParentSize())
+                    PlaceholderStreamPreview(
+                        message = if (streamActive) "Starting stream...\nWaiting for preview" else null,
+                        modifier = Modifier.matchParentSize()
+                    )
                 }
 
                 // LIVE pill
@@ -102,13 +107,13 @@ fun StreamScreen(controller: MentraExampleController) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(if (isLive) AppColor.redLive else AppColor.greenSoft))
-                    Text(if (isLive) "LIVE" else "READY", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
+                    Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(if (streamActive) AppColor.redLive else AppColor.greenSoft))
+                    Text(if (previewReady) "LIVE" else if (streamActive) "STARTING" else "READY", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp)
                 }
                 Text(uptime, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.align(Alignment.TopEnd).padding(14.dp))
 
                 Text(
-                    if (isLive) "${state.streamProtocol.uppercase()} · keep-alive 15s" else "Ready · enter stream URL",
+                    if (previewReady) "${state.streamProtocol.uppercase()} · keep-alive 15s" else if (streamActive) "Starting stream..." else "Ready · enter stream URL",
                     color = Color.White.copy(alpha = 0.85f),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
@@ -120,14 +125,14 @@ fun StreamScreen(controller: MentraExampleController) {
             Box(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp)
                     .clip(RoundedCornerShape(18.dp))
-                    .background(Brush.verticalGradient(if (isLive) listOf(Color(0xFFFF6B5B), AppColor.red) else listOf(Color(0xFF26473A), Color(0xFF1F3A2A))))
-                    .clickable(enabled = connected || isLive) { controller.toggleStream() }
+                    .background(Brush.verticalGradient(if (streamActive) listOf(Color(0xFFFF6B5B), AppColor.red) else listOf(Color(0xFF26473A), Color(0xFF1F3A2A))))
+                    .clickable(enabled = connected || streamActive) { controller.toggleStream() }
                     .padding(vertical = 16.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Box(modifier = Modifier.size(12.dp).clip(RoundedCornerShape(3.dp)).background(Color.White))
-                    Text(if (!connected && !isLive) "Connect glasses first" else if (isLive) "End stream" else "Start stream", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text(if (!connected && !streamActive) "Connect glasses first" else if (streamActive) "End stream" else "Start stream", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -251,23 +256,35 @@ private fun streamPreviewTarget(protocol: String, streamUrl: String): StreamPrev
 }
 
 @Composable
-private fun PlaceholderStreamPreview(modifier: Modifier = Modifier) {
+private fun PlaceholderStreamPreview(message: String? = null, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .background(Brush.linearGradient(listOf(Color(0xFF163A26), Color(0xFF26583E), Color(0xFF7DD89E), Color(0xFF3F8F5C))))
     ) {
-        Row(
-            modifier = Modifier.align(Alignment.Center),
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-            verticalAlignment = Alignment.Bottom
-        ) {
-            barHeights.forEachIndexed { i, h ->
-                Box(
-                    modifier = Modifier
-                        .size(width = 5.dp, height = h.dp)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(if (i % 3 == 2) Color.White else Color.White.copy(alpha = 0.85f))
-                )
+        if (message != null) {
+            Text(
+                message,
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                lineHeight = 21.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.align(Alignment.Center)
+            )
+        } else {
+            Row(
+                modifier = Modifier.align(Alignment.Center),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment = Alignment.Bottom
+            ) {
+                barHeights.forEachIndexed { i, h ->
+                    Box(
+                        modifier = Modifier
+                            .size(width = 5.dp, height = h.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(if (i % 3 == 2) Color.White else Color.White.copy(alpha = 0.85f))
+                    )
+                }
             }
         }
     }

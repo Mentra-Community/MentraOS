@@ -66,6 +66,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var photoFlash = false
     @Published var streamProtocol: ExampleStreamProtocol = .rtmp
     @Published var streamUrl = ExampleStreamProtocol.rtmp.defaultUrl
+    @Published private(set) var streamRequested = false
+    @Published private(set) var streamPreviewReady = false
     @Published private(set) var streamStartedAt: Date?
     @Published private(set) var streamStatus = "Ready to start stream"
     @Published private(set) var galleryModeAuto = false
@@ -313,13 +315,15 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func toggleStream() {
-        if streamStartedAt != nil {
+        if streamRequested || streamStartedAt != nil {
             runAction("Stop stream") {
                 stopKeepAlive()
                 if glassesConnected {
                     sdk.stopStream()
                 }
                 activeStreamId = nil
+                streamRequested = false
+                streamPreviewReady = false
                 streamStartedAt = nil
                 streamStatus = "Stopped"
             }
@@ -370,7 +374,28 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             )
         )
         activeStreamId = streamId
-        streamStatus = "Requested \(selectedProtocol.rawValue.uppercased()) stream; waiting for glasses"
+        streamRequested = true
+        streamPreviewReady = false
+        streamStatus = "Starting \(selectedProtocol.rawValue.uppercased()) stream; waiting for preview"
+        startPreviewReadinessPoll(streamUrl: streamUrl, protocol: selectedProtocol, streamId: streamId)
+    }
+
+    private func startPreviewReadinessPoll(streamUrl: String, protocol selectedProtocol: ExampleStreamProtocol, streamId: String) {
+        Task {
+            for _ in 0 ..< 30 {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard activeStreamId == streamId else { return }
+                if await streamPreviewIsReady(streamUrl: streamUrl, protocol: selectedProtocol) {
+                    streamPreviewReady = true
+                    streamStatus = "\(selectedProtocol.rawValue.uppercased()) preview ready"
+                    append(tag: "LIVE", text: "\(selectedProtocol.rawValue.uppercased()) preview ready")
+                    return
+                }
+            }
+            guard activeStreamId == streamId else { return }
+            streamStatus = "Stream requested; preview is still starting"
+            append(tag: "TX", text: "\(selectedProtocol.rawValue.uppercased()) preview did not become ready")
+        }
     }
 
     func selectStreamProtocol(_ nextProtocol: ExampleStreamProtocol) {
@@ -771,6 +796,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         glassesValues = disconnectedGlassesValues()
         stopKeepAlive()
         activeStreamId = nil
+        streamRequested = false
+        streamPreviewReady = false
         streamStartedAt = nil
         streamStatus = status
         micRecording = false
@@ -1013,6 +1040,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private func applyStreamStatus(_ values: [String: Any]) {
         switch stringValue(values, "status") {
         case "streaming", "initializing", "starting":
+            streamRequested = true
             if streamStartedAt == nil {
                 streamStartedAt = Date()
             }
@@ -1023,6 +1051,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 startKeepAlive(streamId: activeStreamId)
             }
         case "stopped", "stopping", "error", "error_not_streaming":
+            streamRequested = false
+            streamPreviewReady = false
             streamStartedAt = nil
             activeStreamId = nil
             stopKeepAlive()
@@ -1427,6 +1457,53 @@ func checkLocalWebrtcServer(whipUrl: String) async throws {
     try await checkHttpPreviewServer(url: previewUrl, setupMessage: localWebrtcSetupMessage)
 }
 
+func streamPreviewIsReady(streamUrl: String, protocol selectedProtocol: ExampleStreamProtocol) async -> Bool {
+    switch selectedProtocol {
+    case .rtmp:
+        guard let previewUrl = rtmpHlsPreviewUrl(streamUrl) else { return false }
+        return await hlsPreviewIsReady(previewUrl)
+    case .srt:
+        guard let previewUrl = srtHlsPreviewUrl(streamUrl) else { return false }
+        return await hlsPreviewIsReady(previewUrl)
+    case .webrtc:
+        guard let whepUrl = webrtcWhepProbeUrl(streamUrl) else { return false }
+        return await whepPreviewIsReady(whepUrl)
+    }
+}
+
+private func hlsPreviewIsReady(_ url: URL) async -> Bool {
+    var request = URLRequest(url: url)
+    request.cachePolicy = .reloadIgnoringLocalCacheData
+    request.timeoutInterval = 2
+    do {
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            return false
+        }
+        return String(data: data, encoding: .utf8)?.contains("#EXTM3U") == true
+    } catch {
+        return false
+    }
+}
+
+private func whepPreviewIsReady(_ url: URL) async -> Bool {
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.cachePolicy = .reloadIgnoringLocalCacheData
+    request.timeoutInterval = 2
+    request.setValue("application/sdp", forHTTPHeaderField: "Content-Type")
+    request.httpBody = Data("v=0\r\n".utf8)
+    do {
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            return false
+        }
+        return http.statusCode != 404 && http.statusCode < 500
+    } catch {
+        return false
+    }
+}
+
 func checkHttpPreviewServer(url: URL, setupMessage: (String) -> String) async throws {
     var request = URLRequest(url: url)
     request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -1517,6 +1594,24 @@ func webrtcPreviewUrl(_ whipUrlText: String) -> URL? {
     if components.path.isEmpty {
         components.path = "/"
     }
+    components.query = nil
+    return components.url
+}
+
+func webrtcWhepProbeUrl(_ whipUrlText: String) -> URL? {
+    guard var components = URLComponents(string: whipUrlText),
+          components.scheme == "http" || components.scheme == "https",
+          components.host != nil
+    else { return nil }
+    var path = components.path
+    if !path.hasSuffix("/whep") {
+        if path.hasSuffix("/whip") {
+            path = String(path.dropLast("/whip".count))
+        }
+        path = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        path = path.isEmpty ? "/whep" : "/\(path)/whep"
+    }
+    components.path = path
     components.query = nil
     return components.url
 }
