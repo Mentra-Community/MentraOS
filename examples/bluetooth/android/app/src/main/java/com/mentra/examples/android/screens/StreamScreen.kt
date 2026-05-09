@@ -20,10 +20,15 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -44,6 +49,8 @@ import com.mentra.examples.android.streamProtocolLabel
 import com.mentra.examples.android.webrtcPreviewUrl
 import com.mentra.examples.android.ui.AppColor
 import com.mentra.examples.android.ui.GlassCard
+import com.mentra.examples.android.ui.LocalKeyboardBottomInset
+import com.mentra.examples.android.ui.LocalKeyboardVisible
 import com.mentra.examples.android.ui.OfflineNotice
 import com.mentra.examples.android.ui.PageHeader
 import com.mentra.examples.android.ui.scrollBottomPadding
@@ -52,6 +59,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import kotlinx.coroutines.delay
 
 private val barHeights = listOf(18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40)
 private val streamSdkCall = """
@@ -76,7 +84,19 @@ fun StreamScreen(controller: MentraExampleController) {
     val setupHint = localStreamSetupHint(state.streamProtocol, state.streamUrl, state.streamStatus)
     val previewTarget = if (previewReady) streamPreviewTarget(state.streamProtocol, state.streamUrl) else null
     val clipboardManager = LocalClipboardManager.current
-    Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
+    val scrollState = rememberScrollState()
+    var streamUrlFocused by remember { mutableStateOf(false) }
+
+    LaunchedEffect(streamUrlFocused) {
+        if (streamUrlFocused) {
+            repeat(4) {
+                scrollState.animateScrollTo(scrollState.maxValue)
+                delay(120)
+            }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(scrollState)) {
         PageHeader("Stream", connected)
         if (!connected) {
             OfflineNotice(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
@@ -208,7 +228,11 @@ fun StreamScreen(controller: MentraExampleController) {
                     onValueChange = controller::setStreamUrl,
                     singleLine = true,
                     textStyle = androidx.compose.ui.text.TextStyle(color = AppColor.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium),
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .onFocusChanged { focusState ->
+                            streamUrlFocused = focusState.isFocused
+                        },
                 )
                 Icon(Icons.Outlined.Edit, null, tint = AppColor.muted, modifier = Modifier.size(14.dp))
             }
@@ -228,7 +252,7 @@ fun StreamScreen(controller: MentraExampleController) {
             }
         }
 
-        Spacer(Modifier.height(scrollBottomPadding()))
+        Spacer(Modifier.height(if (streamUrlFocused) maxOf(scrollBottomPadding(), 340.dp) else scrollBottomPadding()))
     }
 }
 

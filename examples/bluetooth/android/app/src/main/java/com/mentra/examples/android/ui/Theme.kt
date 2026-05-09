@@ -49,9 +49,11 @@ object AppColor {
 }
 
 val LocalKeyboardVisible = staticCompositionLocalOf { false }
+val LocalKeyboardBottomInset = staticCompositionLocalOf { 0.dp }
 
 @Composable
-fun scrollBottomPadding(): Dp = if (LocalKeyboardVisible.current) 24.dp else 140.dp
+fun scrollBottomPadding(): Dp =
+    if (LocalKeyboardVisible.current) maxOf(LocalKeyboardBottomInset.current, 380.dp) + 24.dp else 140.dp
 
 @Composable
 fun GlassCard(
