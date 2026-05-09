@@ -235,6 +235,7 @@ export function useMentraSdk(): MentraSdkModel {
   const activeStreamIdRef = useRef<string | null>(null);
   const pollGenerationRef = useRef(0);
   const keepAliveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const previewHealthTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastMicFileUriRef = useRef<string | null>(null);
   const micElapsedSecondsRef = useRef(0);
   const micElapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -443,6 +444,7 @@ export function useMentraSdk(): MentraSdkModel {
       removeBluetooth();
       subscriptions.forEach((subscription) => subscription.remove());
       stopKeepAlive();
+      stopPreviewHealthPoll();
       activeStreamIdRef.current = null;
       activePhotoRequestIdRef.current = null;
       pollGenerationRef.current += 1;
@@ -726,6 +728,7 @@ export function useMentraSdk(): MentraSdkModel {
     if (streamRequested || streamStartedAt) {
       await runAction('Stop stream', async () => {
         stopKeepAlive();
+        stopPreviewHealthPoll();
         activeStreamIdRef.current = null;
         if (isGlassesConnected(glassesStatus)) {
           await BluetoothSdk.stopStream();
@@ -791,6 +794,7 @@ export function useMentraSdk(): MentraSdkModel {
           setStreamPreviewReady(true);
           setStreamStatus(`${protocol.toUpperCase()} preview ready`);
           addEvent('LIVE', `${protocol.toUpperCase()} preview ready`);
+          startPreviewHealthPoll(url, protocol, streamId);
         }
         return;
       }
@@ -798,6 +802,44 @@ export function useMentraSdk(): MentraSdkModel {
     if (activeStreamIdRef.current === streamId) {
       setStreamStatus('Stream requested; preview is still starting');
       addEvent('TX', `${protocol.toUpperCase()} preview did not become ready`);
+    }
+  }
+
+  function startPreviewHealthPoll(
+    url: string,
+    protocol: StreamProtocol,
+    streamId: string,
+  ) {
+    stopPreviewHealthPoll();
+    let lastReady = true;
+    previewHealthTimerRef.current = setInterval(() => {
+      void (async () => {
+        if (activeStreamIdRef.current !== streamId) {
+          stopPreviewHealthPoll();
+          return;
+        }
+        const ready = await streamPreviewIsReady(url, protocol);
+        if (activeStreamIdRef.current !== streamId) {
+          return;
+        }
+        if (ready && !lastReady) {
+          setStreamPreviewReady(true);
+          setStreamStatus(`${protocol.toUpperCase()} preview ready`);
+          addEvent('LIVE', `${protocol.toUpperCase()} preview ready`);
+        } else if (!ready && lastReady) {
+          setStreamPreviewReady(false);
+          setStreamStatus(`${protocol.toUpperCase()} media path lost; waiting for preview`);
+          addEvent('TX', `${protocol.toUpperCase()} media path lost`);
+        }
+        lastReady = ready;
+      })();
+    }, 3000);
+  }
+
+  function stopPreviewHealthPoll() {
+    if (previewHealthTimerRef.current) {
+      clearInterval(previewHealthTimerRef.current);
+      previewHealthTimerRef.current = null;
     }
   }
 
@@ -1165,6 +1207,7 @@ export function useMentraSdk(): MentraSdkModel {
 
   function applyDisconnectedState(status: string) {
     stopKeepAlive();
+    stopPreviewHealthPoll();
     activeStreamIdRef.current = null;
     const hadPhotoRequest = activePhotoRequestIdRef.current !== null;
     activePhotoRequestIdRef.current = null;
@@ -1206,6 +1249,7 @@ export function useMentraSdk(): MentraSdkModel {
       status === 'error_not_streaming'
     ) {
       stopKeepAlive();
+      stopPreviewHealthPoll();
       activeStreamIdRef.current = null;
       setStreamRequested(false);
       setStreamPreviewReady(false);
@@ -1625,8 +1669,8 @@ async function streamPreviewIsReady(streamUrl: string, protocol: StreamProtocol)
       const previewUrl = srtHlsPreviewUrl(streamUrl);
       return previewUrl ? hlsPreviewIsReady(previewUrl) : false;
     }
-    const whepUrl = webrtcWhepProbeUrl(streamUrl);
-    return whepUrl ? whepPreviewIsReady(whepUrl) : false;
+    const previewUrl = webrtcHlsPreviewUrl(streamUrl);
+    return previewUrl ? hlsPreviewIsReady(previewUrl) : false;
   } catch {
     return false;
   }
@@ -1642,20 +1686,6 @@ async function hlsPreviewIsReady(previewUrl: string) {
       return false;
     }
     return (await response.text()).includes('#EXTM3U');
-  } catch {
-    return false;
-  }
-}
-
-async function whepPreviewIsReady(whepUrl: string) {
-  try {
-    const response = await fetch(whepUrl, {
-      body: 'v=0\r\n',
-      cache: 'no-store',
-      headers: {'Content-Type': 'application/sdp'},
-      method: 'POST',
-    });
-    return response.status !== 404 && response.status < 500;
   } catch {
     return false;
   }
@@ -1734,20 +1764,24 @@ function webrtcPreviewUrl(whipUrlText: string) {
   return whipUrl.toString();
 }
 
-function webrtcWhepProbeUrl(whipUrlText: string) {
+function webrtcHlsPreviewUrl(whipUrlText: string) {
   const whipUrl = new URL(whipUrlText);
   if (whipUrl.protocol !== 'http:' && whipUrl.protocol !== 'https:') {
     throw new Error('Only http and https WHIP URLs are supported.');
   }
-  let path = whipUrl.pathname;
-  if (!path.endsWith('/whep')) {
-    if (path.endsWith('/whip')) {
-      path = path.slice(0, -'/whip'.length);
-    }
-    const trimmed = path.replace(/^\/+|\/+$/g, '');
-    path = trimmed ? `/${trimmed}/whep` : '/whep';
+  if (!isLocalPreviewHost(whipUrl.hostname)) {
+    return null;
   }
-  whipUrl.pathname = path;
+  let path = whipUrl.pathname;
+  if (path.endsWith('/whip')) {
+    path = path.slice(0, -'/whip'.length);
+  } else if (path.endsWith('/whep')) {
+    path = path.slice(0, -'/whep'.length);
+  }
+  const trimmed = path.replace(/^\/+|\/+$/g, '');
+  whipUrl.protocol = 'http:';
+  whipUrl.port = '8888';
+  whipUrl.pathname = trimmed ? `/${trimmed}/index.m3u8` : '/index.m3u8';
   whipUrl.search = '';
   return whipUrl.toString();
 }

@@ -166,6 +166,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private var activeStreamId: String? = null
     private var pollGeneration = 0
     private var keepAliveJob: Job? = null
+    private var previewHealthJob: Job? = null
     private var lastMicFile: File? = null
     private var micElapsedJob: Job? = null
     private var micPlayer: MediaPlayer? = null
@@ -279,6 +280,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     fun disconnect() = runAction("Disconnect") {
         stopKeepAlive()
+        stopPreviewHealthPoll()
         sdk.disconnect()
         applyDisconnectedState("Disconnected")
     }
@@ -417,6 +419,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     fun toggleStream() = runAction(if (!state.streamRequested && state.streamStartedAt == null) "Start stream" else "Stop stream") {
         if (state.streamRequested || state.streamStartedAt != null) {
             stopKeepAlive()
+            stopPreviewHealthPoll()
             if (isGlassesConnected()) {
                 sdk.stopStream()
             }
@@ -484,6 +487,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                                 streamStatus = "${protocol.uppercase()} preview ready",
                             )
                             addEvent("LIVE", "${protocol.uppercase()} preview ready")
+                            startPreviewHealthPoll(streamUrl, protocol, streamId)
                         }
                     }
                     return@launch
@@ -496,6 +500,42 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 }
             }
         }
+    }
+
+    private fun startPreviewHealthPoll(streamUrl: String, protocol: String, streamId: String) {
+        stopPreviewHealthPoll()
+        previewHealthJob = scope.launch(Dispatchers.IO) {
+            var lastReady = true
+            while (isActive && activeStreamId == streamId) {
+                delay(3_000)
+                val ready = streamPreviewIsReady(streamUrl, protocol)
+                withContext(Dispatchers.Main) {
+                    if (activeStreamId != streamId) return@withContext
+                    when {
+                        ready && !lastReady -> {
+                            state = state.copy(
+                                streamPreviewReady = true,
+                                streamStatus = "${protocol.uppercase()} preview ready",
+                            )
+                            addEvent("LIVE", "${protocol.uppercase()} preview ready")
+                        }
+                        !ready && lastReady -> {
+                            state = state.copy(
+                                streamPreviewReady = false,
+                                streamStatus = "${protocol.uppercase()} media path lost; waiting for preview",
+                            )
+                            addEvent("TX", "${protocol.uppercase()} media path lost")
+                        }
+                    }
+                    lastReady = ready
+                }
+            }
+        }
+    }
+
+    private fun stopPreviewHealthPoll() {
+        previewHealthJob?.cancel()
+        previewHealthJob = null
     }
 
     fun requestWifiScan() = runAction("Scan Wi-Fi") {
@@ -856,6 +896,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     override fun close() {
         stopKeepAlive()
+        stopPreviewHealthPoll()
         stopMicElapsedTimer()
         stopMicPlayback()
         unregisterAudioStateObservers()
@@ -1052,6 +1093,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     private fun applyDisconnectedState(status: String) {
         stopKeepAlive()
+        stopPreviewHealthPoll()
         activeStreamId = null
         val hadPhotoRequest = activePhotoRequestId != null
         activePhotoRequestId = null
@@ -1092,6 +1134,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             }
             "stopped", "stopping", "error", "error_not_streaming" -> {
                 stopKeepAlive()
+                stopPreviewHealthPoll()
                 activeStreamId = null
                 state = state.copy(streamRequested = false, streamPreviewReady = false, streamStartedAt = null)
             }
@@ -1577,7 +1620,7 @@ fun streamPreviewIsReady(streamUrl: String, protocol: String): Boolean {
         when (protocol) {
             "rtmp" -> rtmpHlsPreviewUrl(streamUrl)?.let(::hlsPreviewIsReady) == true
             "srt" -> srtHlsPreviewUrl(streamUrl)?.let(::hlsPreviewIsReady) == true
-            "webrtc" -> webrtcWhepProbeUrl(streamUrl)?.let(::whepPreviewIsReady) == true
+            "webrtc" -> webrtcHlsPreviewUrl(streamUrl)?.let(::hlsPreviewIsReady) == true
             else -> false
         }
     } catch (_: Exception) {
@@ -1598,25 +1641,6 @@ private fun hlsPreviewIsReady(previewUrl: String): Boolean {
         }
         connection.disconnect()
         code == 200 && body.contains("#EXTM3U")
-    } catch (_: Exception) {
-        false
-    }
-}
-
-private fun whepPreviewIsReady(whepUrl: String): Boolean {
-    return try {
-        val connection = URL(whepUrl).openConnection() as HttpURLConnection
-        connection.requestMethod = "POST"
-        connection.connectTimeout = 1500
-        connection.readTimeout = 1500
-        connection.doOutput = true
-        connection.setRequestProperty("Content-Type", "application/sdp")
-        connection.outputStream.use { stream ->
-            stream.write("v=0\r\n".toByteArray(StandardCharsets.UTF_8))
-        }
-        val code = connection.responseCode
-        connection.disconnect()
-        code != 404 && code < 500
     } catch (_: Exception) {
         false
     }
@@ -1700,19 +1724,19 @@ fun webrtcPreviewUrl(whipUrlText: String): String {
     return "${url.protocol}://${url.host}$port$path"
 }
 
-fun webrtcWhepProbeUrl(whipUrlText: String): String {
+fun webrtcHlsPreviewUrl(whipUrlText: String): String? {
     val url = URL(whipUrlText)
     if (url.protocol != "http" && url.protocol != "https") {
         throw IllegalArgumentException("Only http and https WHIP URLs are supported.")
     }
-    val port = url.port.takeIf { it >= 0 }?.let { ":$it" } ?: ""
-    val basePath = when {
-        url.path.endsWith("/whep") -> url.path
-        url.path.endsWith("/whip") -> url.path.removeSuffix("/whip")
-        else -> url.path
-    }.trim('/')
-    val path = if (basePath.isBlank()) "/whep" else "/$basePath/whep"
-    return "${url.protocol}://${url.host}$port$path"
+    if (!isLocalPreviewHost(url.host)) {
+        return null
+    }
+    val basePath = url.path
+        .removeSuffix("/whip")
+        .removeSuffix("/whep")
+        .trim('/')
+    return "http://${url.host}:8888/${if (basePath.isBlank()) "index.m3u8" else "$basePath/index.m3u8"}"
 }
 
 fun localRtmpSetupMessage(detail: String): String =

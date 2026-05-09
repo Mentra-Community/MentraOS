@@ -94,6 +94,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var activeStreamId: String?
     private var pollGeneration = 0
     private var keepAliveTask: Task<Void, Never>?
+    private var previewHealthTask: Task<Void, Never>?
     private var micStartedAt: Date?
     private var micElapsedTask: Task<Void, Never>?
     private var micPcmData = Data()
@@ -140,6 +141,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     deinit {
+        previewHealthTask?.cancel()
         micElapsedTask?.cancel()
         Task { @MainActor [sdk] in sdk.invalidate() }
     }
@@ -318,6 +320,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         if streamRequested || streamStartedAt != nil {
             runAction("Stop stream") {
                 stopKeepAlive()
+                stopPreviewHealthPoll()
                 if glassesConnected {
                     sdk.stopStream()
                 }
@@ -393,6 +396,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                     streamPreviewReady = true
                     streamStatus = "\(selectedProtocol.rawValue.uppercased()) preview ready"
                     append(tag: "LIVE", text: "\(selectedProtocol.rawValue.uppercased()) preview ready")
+                    startPreviewHealthPoll(streamUrl: streamUrl, protocol: selectedProtocol, streamId: streamId)
                     return
                 }
             }
@@ -400,6 +404,34 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             streamStatus = "Stream requested; preview is still starting"
             append(tag: "TX", text: "\(selectedProtocol.rawValue.uppercased()) preview did not become ready")
         }
+    }
+
+    private func startPreviewHealthPoll(streamUrl: String, protocol selectedProtocol: ExampleStreamProtocol, streamId: String) {
+        stopPreviewHealthPoll()
+        previewHealthTask = Task {
+            var lastReady = true
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                guard activeStreamId == streamId else { return }
+                let ready = await streamPreviewIsReady(streamUrl: streamUrl, protocol: selectedProtocol)
+                guard activeStreamId == streamId else { return }
+                if ready, !lastReady {
+                    streamPreviewReady = true
+                    streamStatus = "\(selectedProtocol.rawValue.uppercased()) preview ready"
+                    append(tag: "LIVE", text: "\(selectedProtocol.rawValue.uppercased()) preview ready")
+                } else if !ready, lastReady {
+                    streamPreviewReady = false
+                    streamStatus = "\(selectedProtocol.rawValue.uppercased()) media path lost; waiting for preview"
+                    append(tag: "TX", text: "\(selectedProtocol.rawValue.uppercased()) media path lost")
+                }
+                lastReady = ready
+            }
+        }
+    }
+
+    private func stopPreviewHealthPoll() {
+        previewHealthTask?.cancel()
+        previewHealthTask = nil
     }
 
     func selectStreamProtocol(_ nextProtocol: ExampleStreamProtocol) {
@@ -799,6 +831,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private func applyDisconnectedState(status: String) {
         glassesValues = disconnectedGlassesValues()
         stopKeepAlive()
+        stopPreviewHealthPoll()
         activeStreamId = nil
         streamRequested = false
         streamPreviewReady = false
@@ -1060,6 +1093,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             streamStartedAt = nil
             activeStreamId = nil
             stopKeepAlive()
+            stopPreviewHealthPoll()
         default:
             break
         }
@@ -1470,8 +1504,8 @@ func streamPreviewIsReady(streamUrl: String, protocol selectedProtocol: ExampleS
         guard let previewUrl = srtHlsPreviewUrl(streamUrl) else { return false }
         return await hlsPreviewIsReady(previewUrl)
     case .webrtc:
-        guard let whepUrl = webrtcWhepProbeUrl(streamUrl) else { return false }
-        return await whepPreviewIsReady(whepUrl)
+        guard let previewUrl = webrtcHlsPreviewUrl(streamUrl) else { return false }
+        return await hlsPreviewIsReady(previewUrl)
     }
 }
 
@@ -1485,24 +1519,6 @@ private func hlsPreviewIsReady(_ url: URL) async -> Bool {
             return false
         }
         return String(data: data, encoding: .utf8)?.contains("#EXTM3U") == true
-    } catch {
-        return false
-    }
-}
-
-private func whepPreviewIsReady(_ url: URL) async -> Bool {
-    var request = URLRequest(url: url)
-    request.httpMethod = "POST"
-    request.cachePolicy = .reloadIgnoringLocalCacheData
-    request.timeoutInterval = 2
-    request.setValue("application/sdp", forHTTPHeaderField: "Content-Type")
-    request.httpBody = Data("v=0\r\n".utf8)
-    do {
-        let (_, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            return false
-        }
-        return http.statusCode != 404 && http.statusCode < 500
     } catch {
         return false
     }
@@ -1602,20 +1618,22 @@ func webrtcPreviewUrl(_ whipUrlText: String) -> URL? {
     return components.url
 }
 
-func webrtcWhepProbeUrl(_ whipUrlText: String) -> URL? {
+func webrtcHlsPreviewUrl(_ whipUrlText: String) -> URL? {
     guard var components = URLComponents(string: whipUrlText),
           components.scheme == "http" || components.scheme == "https",
-          components.host != nil
+          let host = components.host,
+          isLocalPreviewHost(host)
     else { return nil }
     var path = components.path
-    if !path.hasSuffix("/whep") {
-        if path.hasSuffix("/whip") {
-            path = String(path.dropLast("/whip".count))
-        }
-        path = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        path = path.isEmpty ? "/whep" : "/\(path)/whep"
+    if path.hasSuffix("/whip") {
+        path = String(path.dropLast("/whip".count))
+    } else if path.hasSuffix("/whep") {
+        path = String(path.dropLast("/whep".count))
     }
-    components.path = path
+    let trimmedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    components.scheme = "http"
+    components.port = 8888
+    components.path = trimmedPath.isEmpty ? "/index.m3u8" : "/\(trimmedPath)/index.m3u8"
     components.query = nil
     return components.url
 }
