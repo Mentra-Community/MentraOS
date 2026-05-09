@@ -113,7 +113,7 @@ fun StreamScreen(controller: MentraExampleController) {
                 Text(uptime, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.align(Alignment.TopEnd).padding(14.dp))
 
                 Text(
-                    if (previewReady) "${state.streamProtocol.uppercase()} · keep-alive 15s" else if (streamActive) "Starting stream..." else "Ready · enter stream URL",
+                    if (previewReady) "${state.streamProtocol.uppercase()} · keep-alive 15s" else if (streamActive) "Waiting for preview" else "Ready · enter stream URL",
                     color = Color.White.copy(alpha = 0.85f),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,

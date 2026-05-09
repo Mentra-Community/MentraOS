@@ -105,7 +105,7 @@ struct StreamScreen: View {
                 Circle().fill(AppColor.greenSoft.opacity(0.3)).frame(width: 240, height: 240).blur(radius: 10).offset(x: 100, y: 110)
 
                 VStack {
-                    previewChrome(label: streamActive ? "STARTING" : "READY", detail: streamActive ? "Starting stream..." : "Ready · enter stream URL")
+                    previewChrome(label: streamActive ? "STARTING" : "READY", detail: streamActive ? "Waiting for preview" : "Ready · enter stream URL")
 
                     Spacer()
 

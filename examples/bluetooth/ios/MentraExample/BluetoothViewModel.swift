@@ -340,7 +340,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             let streamId = "ios-\(Int(Date().timeIntervalSince1970 * 1000))"
             let selectedProtocol = streamProtocol
             if selectedProtocol == .rtmp || selectedProtocol == .srt || selectedProtocol == .webrtc {
-                startStream(streamUrl: url, streamId: streamId, protocol: selectedProtocol)
+                streamStatus = "Checking local \(selectedProtocol.rawValue.uppercased()) server"
                 Task {
                     do {
                         if selectedProtocol == .rtmp {
@@ -350,12 +350,16 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                         } else {
                             try await checkLocalWebrtcServer(whipUrl: url)
                         }
+                        guard streamUrl.trimmingCharacters(in: .whitespacesAndNewlines) == url,
+                              streamProtocol == selectedProtocol,
+                              !streamRequested,
+                              streamStartedAt == nil
+                        else { return }
+                        startStream(streamUrl: url, streamId: streamId, protocol: selectedProtocol)
                     } catch {
                         let message = error.localizedDescription
-                        append(tag: "TX", text: "Preview check warning: \(message)")
-                        if activeStreamId == streamId {
-                            streamStatus = "Stream requested; preview unavailable: \(message)"
-                        }
+                        streamStatus = message
+                        append(tag: "TX", text: "stream failed: \(message)")
                     }
                 }
                 return

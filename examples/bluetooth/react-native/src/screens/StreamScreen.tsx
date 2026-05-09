@@ -60,7 +60,7 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
             </View>
             <Text style={styles.timer}>{uptime}</Text>
             <Text style={styles.previewMeta}>
-              {previewReady ? `${sdk.streamProtocol.toUpperCase()} · keep-alive 15s` : streamActive ? 'Starting stream...' : 'Ready · enter stream URL'}
+              {previewReady ? `${sdk.streamProtocol.toUpperCase()} · keep-alive 15s` : streamActive ? 'Waiting for preview' : 'Ready · enter stream URL'}
             </Text>
           </View>
         </View>
