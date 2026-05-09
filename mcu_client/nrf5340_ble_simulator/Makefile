@@ -106,18 +106,17 @@ dist: rebuild ## Build and package firmware for sharing (outputs to dist/)
 	@cp $(BUILD_DIR)/merged.hex dist/merged.hex
 	@cp $(BUILD_DIR)/merged_CPUNET.hex dist/merged_CPUNET.hex
 	@cp scripts/flash-dist.sh dist/flash.sh
-	@chmod +x dist/flash.sh
+	@cp scripts/install-flash-deps.sh dist/install-deps.sh
+	@chmod +x dist/flash.sh dist/install-deps.sh
 	@echo ""
 	@echo "Package ready in dist/:"
 	@echo "  merged.hex         — app core (MCUboot + app)"
 	@echo "  merged_CPUNET.hex  — network core (radio)"
+	@echo "  install-deps.sh    — one-time setup (nrfutil + J-Link)"
 	@echo "  flash.sh           — standalone flash script"
 	@echo ""
-	@echo "Recipient needs (see flash.sh header for details):"
-	@echo "  • nrfutil 8.0.0 + 'device' plugin 2.12.8"
-	@echo "  • SEGGER J-Link V8.42"
-	@echo ""
-	@echo "Share the dist/ folder. Recipient flashes with:"
+	@echo "Share the dist/ folder. Recipient runs:"
+	@echo "  bash install-deps.sh            (once, on a new machine)"
 	@echo "  bash flash.sh"
 	@echo "  bash flash.sh --snr 123456789   (if multiple boards connected)"
 

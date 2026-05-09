@@ -1,24 +1,14 @@
 #!/usr/bin/env bash
 # Flash a pre-built nRF5340 BLE Simulator firmware distribution.
 #
-# ── Requirements (macOS) ─────────────────────────────────────────────────
+# ── First-time setup (macOS) ─────────────────────────────────────────────
 #
-# 1. nrfutil — Nordic's command-line tool, with the `device` plugin
+#   bash install-deps.sh
 #
-#      sudo curl -fL https://files.nordicsemi.com/artifactory/swtools/external/nrfutil/executables/universal-apple-darwin/nrfutil \
-#          -o /usr/local/bin/nrfutil
-#      sudo chmod +x /usr/local/bin/nrfutil
-#      sudo chown $(id -un) /usr/local/bin/nrfutil
-#      nrfutil self-upgrade --to-version 8.0.0 --force
-#      nrfutil install device=2.12.8 --force
-#
-#    The 2.12.8 plugin pin matters: 2.17.0+ trips a TrustZone error on
-#    nRF5340 QSPI for this firmware. Do not upgrade it.
-#
-# 2. SEGGER J-Link V8.42 — download universal-mac pkg from segger.com
-#
-#      https://www.segger.com/downloads/jlink/JLink_MacOSX_V842_universal.pkg
-#      (POST with accept_license_agreement=accepted&non_emb_ctr=confirmed&submit=Download+software)
+# Installs nrfutil 8.0.0, the nrfutil device 2.12.8 plugin, and SEGGER
+# J-Link V8.42 — the exact pins this firmware was validated against.
+# (The 2.12.8 device-plugin pin matters: 2.17.0+ trips a TrustZone error on
+# nRF5340 QSPI for this firmware. Do not upgrade it.)
 #
 # ── Usage ────────────────────────────────────────────────────────────────
 #
@@ -45,14 +35,15 @@ done
 
 command -v nrfutil &>/dev/null || {
     echo ""
-    echo "ERROR: nrfutil not found. See the install instructions at the top of this script."
+    echo "ERROR: nrfutil not found. Run the bundled installer first:"
+    echo "  bash install-deps.sh"
     exit 1
 }
 
 nrfutil device --version &>/dev/null || {
     echo ""
-    echo "ERROR: nrfutil 'device' plugin not installed."
-    echo "  nrfutil install device=2.12.8 --force"
+    echo "ERROR: nrfutil 'device' plugin not installed. Run the bundled installer:"
+    echo "  bash install-deps.sh"
     exit 1
 }
 
