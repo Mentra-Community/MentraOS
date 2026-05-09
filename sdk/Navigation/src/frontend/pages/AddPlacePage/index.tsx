@@ -5,26 +5,29 @@ import {useUser} from "@/backend/hooks/useUser"
 import {PlacesSession} from "@/backend/lib/places/places"
 import type {PlaceDetails, PlaceSuggestion} from "@/backend/lib/places/places"
 import {LocationInput} from "./components/LocationInput/LocationInput"
-import {SaveAsGrid} from "./components/SaveAsGrid/SaveAsGrid"
-import type {SaveAs} from "./components/SaveAsGrid/SaveAsGrid"
 import {SuggestionsList} from "./components/SuggestionsList/SuggestionsList"
 import { safeHeadingAddPlaces } from "@/frontend/components/SafeHeading/SafeHeading"
 
 type Props = {
-  initial?: SaveAs
-  onSave: (type: SaveAs, place: PlaceDetails, name: string) => void
+  /**
+   * Optional preset that prefills the name field and tags the saved
+   * place so the IdleDrawer can find it under its Home/Work
+   * quick-access slot. Passed through to `onSave` unchanged.
+   */
+  presetType?: "home" | "work"
+  onSave: (place: PlaceDetails, name: string, type?: "home" | "work") => void
   onClose: () => void
 }
 
 const DEBOUNCE_MS = 200
 
-export function AddPlacePage({initial = "favorite", onSave, onClose}: Props) {
+export function AddPlacePage({presetType, onSave, onClose}: Props) {
   const user = useUser()
   const coords = user.coords
   const session = useMemo(() => new PlacesSession(), [])
 
-  const [saveAs, setSaveAs] = useState<SaveAs>(initial)
-  const [customName, setCustomName] = useState("")
+  const presetName = presetType === "home" ? "Home" : presetType === "work" ? "Work" : ""
+  const [customName, setCustomName] = useState(presetName)
   const [query, setQuery] = useState("")
   const [selectedPlace, setSelectedPlace] = useState<PlaceDetails | null>(null)
   const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([])
@@ -125,10 +128,8 @@ export function AddPlacePage({initial = "favorite", onSave, onClose}: Props) {
           onBlur={() => setTimeout(() => { setSearchOpen(false); setFocused(false) }, 150)}
           onCurrentLocation={useCurrentLocation}
         />
-        <SaveAsGrid value={saveAs} onChange={setSaveAs} />
-
         {/* Name (optional) */}
-        <div>
+        <div className="mt-5">
           <div className="pb-2.5 px-1">
             <div className="tracking-[0.16em] uppercase font-sans font-semibold text-[#0000008C] text-[11px]/3.5">Name (optional)</div>
           </div>
@@ -137,7 +138,7 @@ export function AddPlacePage({initial = "favorite", onSave, onClose}: Props) {
               className="grow shrink basis-0 bg-transparent font-sans text-[#000000E6] text-base/5 placeholder-[#0000008C] focus:outline-none border-none"
               value={customName}
               onChange={(e) => setCustomName(e.target.value)}
-              placeholder={saveAs.charAt(0).toUpperCase() + saveAs.slice(1)}
+              placeholder={presetName || "Place name"}
               autoComplete="off"
             />
           </div>
@@ -150,7 +151,7 @@ export function AddPlacePage({initial = "favorite", onSave, onClose}: Props) {
       <div className="absolute bottom-8 inset-x-4">
         <button
           type="button"
-          onClick={() => selectedPlace && onSave(saveAs, selectedPlace, customName.trim())}
+          onClick={() => selectedPlace && onSave(selectedPlace, customName.trim(), presetType)}
           disabled={!selectedPlace}
           className="h-14 w-full flex items-center justify-center rounded-[28px] px-4 [box-shadow:#00000033_0px_6px_22px] bg-[#1A1A1A] disabled:opacity-40 transition-opacity">
           <div className="tracking-[-0.005em] font-sans font-semibold text-white text-base/5">Save place</div>

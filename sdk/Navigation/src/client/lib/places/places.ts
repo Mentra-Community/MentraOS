@@ -30,11 +30,16 @@ export type PlaceDetails = {
   savedName?: string
 }
 
-export type SavedPlaceType = "home" | "work" | "favorite" | "custom"
+/**
+ * A place saved by the user. Optionally tagged as `"home"` or `"work"`
+ * so the IdleDrawer can surface those two as fixed quick-access slots.
+ * Anything else is just an untagged saved place — there is no
+ * favorite/custom distinction anymore.
+ */
+export type SavedPlaceType = "home" | "work"
 
-export type SavedPlace = {
-  type: SavedPlaceType
-  place: PlaceDetails
+export type SavedPlace = PlaceDetails & {
+  type?: SavedPlaceType
 }
 
 let cachedKeyPromise: Promise<string> | null = null

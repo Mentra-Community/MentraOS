@@ -306,7 +306,12 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     setActiveDestination(null)
     setActiveDestinationName(null)
     setRoutePoints(null)
+    setPreviewRoutePoints(null)
     setOffRouteAt(null)
+    // Also clear the picked destination so the page returns to the
+    // idle (no-destination) state — otherwise tapping Done after
+    // arrival drops back into the destination preview drawer.
+    setDestination(null)
   }
 
   function handleDeviate() {
@@ -364,14 +369,14 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
         ) : null}
       </div>
 
-      {!isSearching && (() => {
+      {!isSearching && status !== "arrived" && devDrawer !== "arrived" && (() => {
         const mode = devDrawer !== "auto" ? devDrawer : !running && !destination ? "idle" : !running && destination ? "preview" : "running"
         const devDestination = destination ?? (devDrawer !== "auto" ? DEV_DESTINATION : null)
         if (mode === "idle") return (
           <IdleDrawer
             me={me}
             onSelect={(place) => { setDestination(place); setActiveDestination({lat: place.lat, lng: place.lng}) }}
-            onAddPlace={(type) => push({name: "add-place", initial: type})}
+            onAddPlace={(type) => push({name: "add-place", presetType: type})}
             refreshKey={savedPlacesVersion}
           />
         )
@@ -397,6 +402,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
 
       <ArrivalDrawer
         open={!isSearching && (status === "arrived" || devDrawer === "arrived")}
+        destinationName={activeDestinationName}
+        destinationAddress={destination?.address ?? null}
         onDone={handleStop}
       />
 

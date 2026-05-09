@@ -18,13 +18,14 @@ function Pages() {
         {route.name === "add-place" ? (
           <AddPlacePage
             key="add-place"
-            initial={route.initial}
-            onSave={async (type, place, name) => {
-              const saved = name ? {...place, savedName: name} : place
-              if (type === "home") await user.storage.setHome(saved)
-              else if (type === "work") await user.storage.setWork(saved)
-              else if (type === "favorite") await user.storage.addFavorite(saved)
-              else if (type === "custom") await user.storage.addCustomPlace(saved)
+            presetType={route.presetType}
+            onSave={async (place, name, type) => {
+              const saved = {
+                ...place,
+                ...(name ? {savedName: name} : {}),
+                ...(type ? {type} : {}),
+              }
+              await user.storage.addSavedPlace(saved)
               setSavedPlacesVersion((v) => v + 1)
               pop()
             }}

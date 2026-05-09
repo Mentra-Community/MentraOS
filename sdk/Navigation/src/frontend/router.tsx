@@ -8,7 +8,7 @@ import {type ReactNode, createContext, useCallback, useContext, useEffect, useRe
 
 export type Route =
   | {name: "navigation"}
-  | {name: "add-place"; initial?: "home" | "work" | "favorite" | "custom"}
+  | {name: "add-place"; presetType?: "home" | "work"}
 
 type RouterContextValue = {
   route: Route

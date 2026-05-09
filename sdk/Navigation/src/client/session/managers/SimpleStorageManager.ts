@@ -11,7 +11,7 @@
  */
 
 import type {MiniappSession} from "@mentra/miniapp"
-import type {PlaceDetails, SavedPlace, SavedPlaceType} from "@/client/lib/places/places"
+import type {PlaceDetails, SavedPlace} from "@/client/lib/places/places"
 
 export class SimpleStorageManager {
   constructor(private readonly session: MiniappSession) {}
@@ -67,80 +67,41 @@ export class SimpleStorageManager {
     await this.setJSON(SimpleStorageManager.RECENT_SEARCHES_KEY, next)
   }
 
-  private static readonly HOME_KEY = "savedPlace:home"
-  private static readonly WORK_KEY = "savedPlace:work"
-
-  /** Returns the saved home address, or null if not set. */
-  getHome(): Promise<PlaceDetails | null> {
-    return this.getJSON<PlaceDetails>(SimpleStorageManager.HOME_KEY)
-  }
-
-  /** Saves the home address. */
-  setHome(place: PlaceDetails): Promise<void> {
-    return this.setJSON(SimpleStorageManager.HOME_KEY, place)
-  }
-
-  /** Clears the saved home address. */
-  clearHome(): Promise<void> {
-    return this.delete(SimpleStorageManager.HOME_KEY)
-  }
-
-  /** Returns the saved work address, or null if not set. */
-  getWork(): Promise<PlaceDetails | null> {
-    return this.getJSON<PlaceDetails>(SimpleStorageManager.WORK_KEY)
-  }
-
-  /** Saves the work address. */
-  setWork(place: PlaceDetails): Promise<void> {
-    return this.setJSON(SimpleStorageManager.WORK_KEY, place)
-  }
-
-  /** Clears the saved work address. */
-  clearWork(): Promise<void> {
-    return this.delete(SimpleStorageManager.WORK_KEY)
-  }
-
-  private static readonly FAVORITES_KEY = "savedPlaces:favorites"
-  private static readonly CUSTOM_KEY = "savedPlaces:custom"
+  private static readonly SAVED_PLACES_KEY = "savedPlaces"
   private static readonly SAVED_MAX = 20
 
-  /** Returns all saved favorite places, most recently added first. */
-  async getFavorites(): Promise<PlaceDetails[]> {
-    return (await this.getJSON<PlaceDetails[]>(SimpleStorageManager.FAVORITES_KEY)) ?? []
-  }
-
-  /** Adds or replaces a favorite (deduplicates by placeId, caps at 20). */
-  async addFavorite(place: PlaceDetails): Promise<void> {
-    const current = await this.getFavorites()
-    const next = [place, ...current.filter((p) => p.placeId !== place.placeId)].slice(0, SimpleStorageManager.SAVED_MAX)
-    await this.setJSON(SimpleStorageManager.FAVORITES_KEY, next)
-  }
-
-  /** Returns all saved custom places, most recently added first. */
-  async getCustomPlaces(): Promise<PlaceDetails[]> {
-    return (await this.getJSON<PlaceDetails[]>(SimpleStorageManager.CUSTOM_KEY)) ?? []
-  }
-
-  /** Adds or replaces a custom place (deduplicates by placeId, caps at 20). */
-  async addCustomPlace(place: PlaceDetails): Promise<void> {
-    const current = await this.getCustomPlaces()
-    const next = [place, ...current.filter((p) => p.placeId !== place.placeId)].slice(0, SimpleStorageManager.SAVED_MAX)
-    await this.setJSON(SimpleStorageManager.CUSTOM_KEY, next)
-  }
-
-  /** Returns all non-recent saved places (home, work, favorites, custom) as a flat list with type info. */
+  /** Returns all saved places, most recently added first. */
   async getAllSavedPlaces(): Promise<SavedPlace[]> {
-    const [home, work, favorites, customs] = await Promise.all([
-      this.getHome(),
-      this.getWork(),
-      this.getFavorites(),
-      this.getCustomPlaces(),
-    ])
-    const result: SavedPlace[] = []
-    if (home) result.push({type: "home" as SavedPlaceType, place: home})
-    if (work) result.push({type: "work" as SavedPlaceType, place: work})
-    for (const p of favorites) result.push({type: "favorite" as SavedPlaceType, place: p})
-    for (const p of customs) result.push({type: "custom" as SavedPlaceType, place: p})
-    return result
+    return (await this.getJSON<SavedPlace[]>(SimpleStorageManager.SAVED_PLACES_KEY)) ?? []
+  }
+
+  /**
+   * Adds or replaces a saved place (caps at 20).
+   *
+   * Dedup rules:
+   *  - If the incoming place has `type: "home"` or `"work"`, any existing
+   *    entry with the same type is replaced (a user only ever has one
+   *    Home and one Work).
+   *  - Otherwise dedup by `placeId` so re-saving the same untagged place
+   *    moves it to the top instead of duplicating it.
+   */
+  async addSavedPlace(place: SavedPlace): Promise<void> {
+    const current = await this.getAllSavedPlaces()
+    const filtered = current.filter((p) => {
+      if (place.type && p.type === place.type) return false
+      if (p.placeId === place.placeId) return false
+      return true
+    })
+    const next = [place, ...filtered].slice(0, SimpleStorageManager.SAVED_MAX)
+    await this.setJSON(SimpleStorageManager.SAVED_PLACES_KEY, next)
+  }
+
+  /** Removes a saved place by placeId. No-op if it isn't saved. */
+  async removeSavedPlace(placeId: string): Promise<void> {
+    const current = await this.getAllSavedPlaces()
+    const next = current.filter((p) => p.placeId !== placeId)
+    if (next.length !== current.length) {
+      await this.setJSON(SimpleStorageManager.SAVED_PLACES_KEY, next)
+    }
   }
 }

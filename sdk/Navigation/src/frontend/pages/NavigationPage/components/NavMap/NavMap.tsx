@@ -31,17 +31,18 @@ export function NavMap({
 
   // Right-rail buttons follow the active drawer's top edge. Drawer
   // publishes its current visible-height into a shared MotionValue
-  // (see DrawerOffsetContext); we bind the wrapper's `bottom` directly
-  // to that value via a useTransform — pure GPU transform, no React
-  // re-render per frame, no spring lag. Dropped the previous spring +
-  // snap-on-jump scheme because it was generating a lot of subscriber
-  // work during drawer transitions and visibly lagging behind the
-  // drawer's own animation. When no provider is present we fall back
-  // to a stable zero MotionValue so the buttons sit at the bottom edge.
+  // (see DrawerOffsetContext). We position the rail with bottom:0 and
+  // ride the drawer height up via a translateY — transforms are
+  // GPU-composited and always re-rasterize the layer, whereas
+  // animating `bottom` directly intermittently failed to repaint
+  // when the map container's GPU layer (it has `will-change:transform`)
+  // captured the rail and didn't invalidate on layout-prop changes.
+  // That manifested as buttons "disappearing" mid-drag and snapping
+  // back on the next interaction.
   const drawerOffset = useDrawerOffset()
   const fallbackOffset = useMotionValue(0)
   const sourceOffset = drawerOffset ?? fallbackOffset
-  const rightRailBottom = useTransform(sourceOffset, (v) => `${v + DRAWER_GAP_PX}px`)
+  const rightRailTranslateY = useTransform(sourceOffset, (v) => `translateY(-${v + DRAWER_GAP_PX}px)`)
 
   // Fallback: derive heading from successive GPS positions while moving.
   const [gpsBearing, setGpsBearing] = useState<number | null>(null)
@@ -444,8 +445,8 @@ export function NavMap({
 
       {ready ? (
         <motion.div
-          style={{bottom: rightRailBottom}}
-          className="absolute right-3 flex flex-col gap-2">
+          style={{transform: rightRailTranslateY}}
+          className="absolute right-3 bottom-0 flex flex-col gap-2">
           
 
           <button
