@@ -7,6 +7,12 @@ build/
 *.bin
 *.elf
 
+# `make dist` output (default name plus the legacy folder + zip)
+MentraDisplayFlasher/
+MentraDisplayFlasher.zip
+dist/
+dist.zip
+
 # IDE and editor files
 .vscode/settings.json
 .idea/

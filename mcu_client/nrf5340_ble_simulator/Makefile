@@ -47,6 +47,9 @@ CONF_FILE    ?= prj.conf
 DTC_OVERLAY  ?= app.overlay
 EXTRA_DTC    ?= npm1300_config.overlay
 
+# Distribution package — override with `make dist DIST_DIR=foo`
+DIST_DIR     ?= MentraDisplayFlasher
+
 # Device selection — set SNR=<serial> to target a specific board
 SNR          ?=
 _SNR_ARG     := $(if $(SNR),--snr $(SNR),)
@@ -132,21 +135,21 @@ flash-only: check-west ## Flash existing build without rebuilding
 clean: ## Remove build directory
 	rm -rf $(BUILD_DIR)
 
-dist: rebuild ## Build and package firmware for sharing (outputs to dist/)
-	@mkdir -p dist
-	@cp $(BUILD_DIR)/merged.hex dist/merged.hex
-	@cp $(BUILD_DIR)/merged_CPUNET.hex dist/merged_CPUNET.hex
-	@cp scripts/flash-dist.sh dist/flash.sh
-	@cp scripts/install-flash-deps.sh dist/install-deps.sh
-	@chmod +x dist/flash.sh dist/install-deps.sh
+dist: rebuild ## Build and package firmware for sharing (outputs $(DIST_DIR)/ + .zip)
+	@rm -rf $(DIST_DIR) $(DIST_DIR).zip
+	@mkdir -p $(DIST_DIR)
+	@cp $(BUILD_DIR)/merged.hex $(DIST_DIR)/merged.hex
+	@cp $(BUILD_DIR)/merged_CPUNET.hex $(DIST_DIR)/merged_CPUNET.hex
+	@cp scripts/flash-dist.sh $(DIST_DIR)/flash.sh
+	@cp scripts/install-flash-deps.sh $(DIST_DIR)/install-deps.sh
+	@chmod +x $(DIST_DIR)/flash.sh $(DIST_DIR)/install-deps.sh
+	@zip -qr $(DIST_DIR).zip $(DIST_DIR)
 	@echo ""
-	@echo "Package ready in dist/:"
-	@echo "  merged.hex         — app core (MCUboot + app)"
-	@echo "  merged_CPUNET.hex  — network core (radio)"
-	@echo "  install-deps.sh    — one-time setup (nrfutil + J-Link)"
-	@echo "  flash.sh           — standalone flash script"
+	@echo "Package ready:"
+	@echo "  $(DIST_DIR)/         — folder (firmware + scripts)"
+	@echo "  $(DIST_DIR).zip      — archive for sharing"
 	@echo ""
-	@echo "Share the dist/ folder. Recipient runs:"
+	@echo "Recipient unzips and runs:"
 	@echo "  bash install-deps.sh            (once, on a new machine)"
 	@echo "  bash flash.sh"
 	@echo "  bash flash.sh --snr 123456789   (if multiple boards connected)"
