@@ -42,30 +42,34 @@ class NavInfoReceiverService : Service() {
         if (navInfo == null) return
         val current: StepInfo? = navInfo.currentStep
 
-        // SDK semantics:
-        //   currentStep         = the UPCOMING step (its road is where you'll
-        //                         be AFTER the next maneuver, its maneuver is
-        //                         HOW you'll get there)
-        //   distanceToCurrentStepMeters = distance to the start of that step
-        //                                 (i.e. distance to the upcoming turn)
+        // SDK semantics (corrected from earlier mis-reading of the docs):
+        //   currentStep             = the segment the user is currently
+        //                             traversing. Its `simpleRoadName` is
+        //                             the road they're on right now. Its
+        //                             `maneuver` is how they'll exit at
+        //                             the end of this segment.
+        //   distanceToCurrentStepMeters = distance to the END of the
+        //                                 current segment (i.e. to the
+        //                                 upcoming turn).
+        //   remainingSteps[0]       = the FIRST step after the current one
+        //                             — i.e. the road the user will be on
+        //                             AFTER the upcoming turn. That's the
+        //                             "next road" the UI wants to show.
         //
-        // So the correct mapping for our payload:
-        //   toRoad   = currentStep.road           (where you're heading)
-        //   fromRoad = the PREVIOUS currentStep.road we saw
-        //              (= the road you're physically on right now)
-        val upcomingRoad = current?.simpleRoadName ?: current?.fullRoadName
-        if (upcomingRoad != null && upcomingRoad != lastSeenStepRoad) {
-          // currentStep just rolled to a new step — what was the upcoming
-          // road is now the road we're on.
-          previousStepRoad = lastSeenStepRoad
-          lastSeenStepRoad = upcomingRoad
-        } else if (lastSeenStepRoad == null && upcomingRoad != null) {
-          lastSeenStepRoad = upcomingRoad
-        }
+        // Mapping into our wire fields:
+        //   currentRoad  = currentStep.simpleRoadName      (road on now)
+        //   nextStepRoad = remainingSteps[0].simpleRoadName (road after turn)
+        //
+        // `nextRoad` is left as the legacy upcoming-road value (same as
+        // currentStep.road) for back-compat with any consumer that hasn't
+        // migrated to nextStepRoad yet.
+        val currentRoad = current?.simpleRoadName ?: current?.fullRoadName
+        val nextStepRoad = readNextStepRoad(navInfo)
 
         NavInfoHolder.update(
-          currentRoad = previousStepRoad,
-          nextRoad = upcomingRoad,
+          currentRoad = currentRoad,
+          nextRoad = currentRoad,
+          nextStepRoad = nextStepRoad,
           sdkManeuverType = current?.maneuver?.let { mapManeuver(it) },
           distanceToCurrentStepMeters = navInfo.distanceToCurrentStepMeters,
           // Trip totals come straight off NavInfo. Treat negative SDK values
@@ -83,15 +87,11 @@ class NavInfoReceiverService : Service() {
   companion object {
     private const val TAG = "NavInfoReceiverSvc"
 
-    // Step tracking — see the comment in incomingHandler. Process-wide
-    // because NavInfoHolder.reset() needs to clear these on trip stop, and
-    // we don't have direct access to a service instance from there.
-    @Volatile private var previousStepRoad: String? = null
-    @Volatile private var lastSeenStepRoad: String? = null
-
+    /** Kept as a public no-op so older callers that invoke this on
+     *  trip teardown don't break. The previous lag-by-one step
+     *  tracking it cleared is gone. */
     fun resetStepTracking() {
-      previousStepRoad = null
-      lastSeenStepRoad = null
+      // intentionally empty
     }
 
     /**
@@ -108,6 +108,36 @@ class NavInfoReceiverService : Service() {
         val v = m?.invoke(navInfo) as? Number ?: return null
         val i = v.toInt()
         if (i >= 0) i else null
+      } catch (_: Throwable) {
+        null
+      }
+    }
+
+    /**
+     * Read the road name of the FIRST step after the current one — i.e.
+     * the road the user will be on AFTER the upcoming maneuver. This is
+     * what the UI shows as the "next road" (e.g. "King St W" while
+     * approaching a turn).
+     *
+     * Defensive reflection: `NavInfo.getRemainingSteps()` is documented
+     * but its presence / shape varies across Nav SDK versions. We try
+     * both `remainingSteps` (List<StepInfo>) and `getRemainingSteps()`
+     * (StepInfo[]) and read whichever returns. Returns null when the
+     * method is missing, the list is empty, or the step has no road
+     * name (Google leaves it blank on unnamed segments).
+     */
+    private fun readNextStepRoad(navInfo: NavInfo): String? {
+      return try {
+        val m = navInfo::class.java.methods.firstOrNull { it.name == "getRemainingSteps" && it.parameterCount == 0 }
+          ?: return null
+        val raw = m.invoke(navInfo) ?: return null
+        val first: StepInfo? = when (raw) {
+          is Array<*> -> raw.firstOrNull() as? StepInfo
+          is List<*> -> raw.firstOrNull() as? StepInfo
+          else -> null
+        }
+        val name = first?.simpleRoadName ?: first?.fullRoadName
+        name?.takeIf { it.isNotBlank() }
       } catch (_: Throwable) {
         null
       }
@@ -209,6 +239,13 @@ class NavInfoReceiverService : Service() {
 object NavInfoHolder {
   @Volatile var currentRoad: String? = null
   @Volatile var nextRoad: String? = null
+  /**
+   * Road the user will be on AFTER the upcoming maneuver. Sourced from
+   * `NavInfo.remainingSteps[0].simpleRoadName`. This is what the
+   * miniapp UI shows as "the road we're turning onto" — distinct from
+   * `nextRoad` (legacy, equals `currentRoad`).
+   */
+  @Volatile var nextStepRoad: String? = null
   /** Mapped string per CrustModule's maneuver vocabulary. Null = use bearing-derived. */
   @Volatile var sdkManeuverType: String? = null
   /**
@@ -228,6 +265,7 @@ object NavInfoHolder {
   fun update(
     currentRoad: String?,
     nextRoad: String?,
+    nextStepRoad: String?,
     sdkManeuverType: String?,
     distanceToCurrentStepMeters: Int?,
     distanceToFinalDestinationMeters: Int? = null,
@@ -235,6 +273,7 @@ object NavInfoHolder {
   ) {
     this.currentRoad = currentRoad?.takeIf { it.isNotBlank() }
     this.nextRoad = nextRoad?.takeIf { it.isNotBlank() }
+    this.nextStepRoad = nextStepRoad?.takeIf { it.isNotBlank() }
     this.sdkManeuverType = sdkManeuverType
     this.distanceToCurrentStepMeters = distanceToCurrentStepMeters
     this.distanceToFinalDestinationMeters = distanceToFinalDestinationMeters
@@ -244,6 +283,7 @@ object NavInfoHolder {
   fun reset() {
     currentRoad = null
     nextRoad = null
+    nextStepRoad = null
     sdkManeuverType = null
     distanceToCurrentStepMeters = null
     distanceToFinalDestinationMeters = null

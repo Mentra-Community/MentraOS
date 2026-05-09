@@ -200,6 +200,21 @@ extension NavigationManager: GMSNavigatorListener {
   func navigator(_ navigator: GMSNavigator, didUpdate navInfo: GMSNavigationNavInfo) {
     guard let step = navInfo.currentStep else { return }
 
+    // remainingSteps[0] is the road the user will be on AFTER the
+    // upcoming maneuver — this is what the miniapp UI shows as the
+    // "next street" headline. simpleRoadName falls back to
+    // fullRoadName when Google leaves the simple variant blank.
+    let nextStep = navInfo.remainingSteps?.first
+    let nextStepRoad: String? = {
+      let candidates: [String?] = [nextStep?.simpleRoadName, nextStep?.fullRoadName]
+      for c in candidates {
+        if let s = c?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty {
+          return s
+        }
+      }
+      return nil
+    }()
+
     var payload: [String: Any] = [
       "kind": "maneuver",
       "maneuverType": maneuverString(step.maneuver),
@@ -209,6 +224,7 @@ extension NavigationManager: GMSNavigatorListener {
       "fromRoad": step.fullRoadName,
     ]
     if let exitNum = step.exitNumber { payload["toRoad"] = exitNum }
+    if let nsr = nextStepRoad { payload["nextStepRoad"] = nsr }
 
     onEvent?(payload)
   }

@@ -65,8 +65,20 @@ object NavigationManager {
     val distanceMeters: Int,
     /** Road the user is currently on, per the Nav SDK. Null if unavailable. */
     val fromRoad: String?,
-    /** Road the user will be on after the maneuver, per the Nav SDK. Null if unavailable. */
+    /**
+     * Legacy "next road" field — historically populated from the same
+     * source as `fromRoad` (see NavInfoReceiverService). Kept for
+     * back-compat; new consumers should read `nextStepRoad` instead,
+     * which is the road of the step AFTER the upcoming maneuver.
+     */
     val toRoad: String?,
+    /**
+     * Road the user will be on AFTER the upcoming maneuver, per the Nav
+     * SDK's `remainingSteps[0]`. This is the value the UI uses for the
+     * "next street" headline. Null when the SDK hasn't surfaced a
+     * remaining step yet (e.g. before first NavInfo, on the final leg).
+     */
+    val nextStepRoad: String?,
     /** Total remaining distance to final destination, meters. -1 if unknown. */
     val distanceToDestinationMeters: Int = -1,
     /** Total remaining travel time, seconds. -1 if unknown. */
@@ -662,6 +674,7 @@ object NavigationManager {
     // the SDK hasn't given us one yet.
     val fromRoad = NavInfoHolder.currentRoad
     val toRoad = NavInfoHolder.nextRoad
+    val nextStepRoad = NavInfoHolder.nextStepRoad
     val sdkManeuver = NavInfoHolder.sdkManeuverType
     val sdkDistance = NavInfoHolder.distanceToCurrentStepMeters
 
@@ -679,6 +692,7 @@ object NavigationManager {
         distanceMeters = sdkDistance,
         fromRoad = fromRoad,
         toRoad = toRoad,
+        nextStepRoad = nextStepRoad,
         distanceToDestinationMeters = distToDest,
         timeToDestinationSeconds = timeToDest,
         currentSpeedMps = speedMps,
@@ -692,6 +706,7 @@ object NavigationManager {
         distanceMeters = -1,
         fromRoad = fromRoad,
         toRoad = toRoad,
+        nextStepRoad = nextStepRoad,
         distanceToDestinationMeters = distToDest,
         timeToDestinationSeconds = timeToDest,
         currentSpeedMps = speedMps,
@@ -742,6 +757,7 @@ object NavigationManager {
               distanceMeters = anchorDistFromUser.toInt(),
               fromRoad = fromRoad,
               toRoad = toRoad,
+              nextStepRoad = nextStepRoad,
               distanceToDestinationMeters = distToDest,
               timeToDestinationSeconds = timeToDest,
               currentSpeedMps = speedMps,
@@ -767,6 +783,7 @@ object NavigationManager {
       distanceMeters = distFromUser.toInt(),
       fromRoad = fromRoad,
       toRoad = toRoad,
+      nextStepRoad = nextStepRoad,
       distanceToDestinationMeters = distToDest,
       timeToDestinationSeconds = timeToDest,
       currentSpeedMps = speedMps,

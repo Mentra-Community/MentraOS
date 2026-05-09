@@ -273,6 +273,7 @@ class CrustModule : Module() {
               "distanceMeters" to payload.distanceMeters,
               "fromRoad" to payload.fromRoad,
               "toRoad" to payload.toRoad,
+              "nextStepRoad" to payload.nextStepRoad,
               "distanceToDestinationMeters" to payload.distanceToDestinationMeters,
               "timeToDestinationSeconds" to payload.timeToDestinationSeconds,
               "currentSpeedMps" to payload.currentSpeedMps,
