@@ -16,6 +16,7 @@ import {OrientationCard} from "@/frontend/pages/NavigationPage/components/Orient
 import {MyLocationCard} from "@/frontend/pages/NavigationPage/components/MyLocationCard/MyLocationCard"
 import {NavMap} from "@/frontend/pages/NavigationPage/components/NavMap/NavMap"
 import {useUser} from "@/backend/hooks/useUser"
+import {formatDistance} from "@/backend/lib/formatDistance/formatDistance"
 import type {LatLng} from "@/backend/lib/geometry/geometry"
 import type {PlaceDetails} from "@/backend/lib/places/places"
 import { safeHeadingManuverCard } from "@/frontend/components/SafeHeading/SafeHeading"
@@ -139,22 +140,29 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     // Mid-turn — the verb is the headline, no distance countdown.
     if (pivotSnap.direction === "right" || pivotSnap.direction === "left") {
       const verb = pivotSnap.direction === "right" ? "Turn right" : "Turn left"
-      const namedRoad = isRealRoadName(maneuver?.toRoad)
+      const namedRoad = isRealRoadName(maneuver?.nextStepRoad ?? maneuver?.toRoad)
       const onto = namedRoad ? `onto ${namedRoad}` : null
       display.showText([verb, onto].filter(Boolean).join("\n"))
       return
     }
 
-    // Continue — show the upcoming verb without the distance preamble
-    // (the glasses are too small to be useful as a countdown), then the
-    // current road. No "In Xm" line.
-    const upcomingVerb = pivotSnap.nextPivotDirection === "right"
-      ? "Turn right"
-      : pivotSnap.nextPivotDirection === "left"
-      ? "Turn left"
-      : "Continue"
-    const road = isRealRoadName(maneuver?.fromRoad) ?? roadSnap.road
-    display.showText([upcomingVerb, road].filter(Boolean).join("\n"))
+    // New "Continue" layout: top line = next road we're turning onto,
+    // bottom line = "Turn right in 500 m" (verb + distance combined).
+    // Mirrors the phone card. If we have no upcoming pivot, fall back
+    // to the destination-distance message.
+    if (pivotSnap.nextPivotDirection && pivotSnap.distanceToNextPivotMeters != null) {
+      const verb = pivotSnap.nextPivotDirection === "right" ? "Turn right" : "Turn left"
+      const distStr = formatDistance(pivotSnap.distanceToNextPivotMeters)
+      const nextRoad = isRealRoadName(maneuver?.nextStepRoad ?? maneuver?.toRoad) ?? roadSnap.road
+      display.showText([nextRoad, `${verb} in ${distStr}`].filter(Boolean).join("\n"))
+      return
+    }
+    if (pivotSnap.distanceToDestinationMeters != null) {
+      const distStr = formatDistance(pivotSnap.distanceToDestinationMeters)
+      display.showText(`Arriving in ${distStr}`)
+      return
+    }
+    display.showText("Arriving")
   }, [
     display,
     running,

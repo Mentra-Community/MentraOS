@@ -45,8 +45,21 @@ export type NavManeuver = {
    * NavInfo arrived.
    */
   fromRoad?: string | null
-  /** Road the user will be on after the maneuver. Null in the same cases as `fromRoad`. */
+  /**
+   * Legacy "next road" field — historically populated from the same
+   * source as `fromRoad` (the current step's road, not the road after
+   * the upcoming turn). Kept for back-compat. Prefer `nextStepRoad` for
+   * new UIs.
+   */
   toRoad?: string | null
+  /**
+   * Road the user will be on AFTER the upcoming maneuver, sourced from
+   * the Nav SDK's `remainingSteps[0]`. Use this as the "next street"
+   * label on a maneuver card. Null when the SDK hasn't surfaced a
+   * remaining step yet (e.g. final leg, pre-first-NavInfo) or the
+   * step has no name.
+   */
+  nextStepRoad?: string | null
 
   /** Total remaining distance to the final destination, in meters. -1 if unknown. */
   distanceToDestinationMeters?: number

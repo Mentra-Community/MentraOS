@@ -93,7 +93,10 @@ function pickDisplay(
 
   // The SDK sometimes returns placeholder road names like "toward Fell St"
   // when it doesn't have a confirmed name. Treat those as missing.
-  const namedToRoad = realRoadName(maneuver?.toRoad)
+  // Prefer `nextStepRoad` (sourced from remainingSteps[0] — the road
+  // AFTER the upcoming turn). Fall back to `toRoad` for back-compat
+  // until every host build is shipping nextStepRoad.
+  const namedToRoad = realRoadName(maneuver?.nextStepRoad ?? maneuver?.toRoad)
 
   if (snap.direction === "right") {
     return {
@@ -112,23 +115,40 @@ function pickDisplay(
     }
   }
 
-  // Continue — always show a distance. Prefer the next-pivot distance and
-  // label it with the upcoming turn so a value jump (e.g. 162m → 287m as we
-  // pass one pivot and start counting down to the next one) reads as a
-  // state change instead of a glitch. When no pivots are ahead (final
-  // approach), fall back to destination distance with "to destination".
-  let distance: string | null = null
+  // New "Continue" layout — instead of a tiny "Continue" row plus the
+  // current street, we show the upcoming TURN as the headline
+  // ("Turn right in 500 m") and the NEXT street name as the small
+  // line above it. The user always sees what's coming, not what
+  // they're on.
   if (snap.distanceToNextPivotMeters != null && snap.nextPivotDirection) {
-    const verb = snap.nextPivotDirection === "right" ? "turn right" : "turn left"
-    distance = `In ${formatDistance(snap.distanceToNextPivotMeters)}, ${verb}`
-  } else if (snap.distanceToDestinationMeters != null) {
-    distance = `In ${formatDistance(snap.distanceToDestinationMeters)} to destination`
+    const verb = snap.nextPivotDirection === "right" ? "Turn right" : "Turn left"
+    const distStr = formatDistance(snap.distanceToNextPivotMeters)
+    const icon = snap.nextPivotDirection === "right" ? "TURN_RIGHT" : "TURN_LEFT"
+    return {
+      label: `${verb} in ${distStr}`,
+      icon,
+      // Top small line: the road we're about to be on. When the SDK
+      // gives no confirmed name, fall back to the live geocoder
+      // (covers Hayes-Valley-style unnamed segments). If both fail,
+      // omit the line entirely — no "Continue" placeholder.
+      distance: namedToRoad ?? geocoderRoad,
+      road: null,
+    }
   }
 
-  // SDK's fromRoad is authoritative when present; fall back to the
-  // geocoder so we always show *some* street name on Continue.
-  const road = realRoadName(maneuver?.fromRoad) ?? geocoderRoad
-  return {label: "Continue", icon: "STRAIGHT", road, distance}
+  // No upcoming pivot — final approach to destination.
+  if (snap.distanceToDestinationMeters != null) {
+    const distStr = formatDistance(snap.distanceToDestinationMeters)
+    return {
+      label: `Arriving in ${distStr}`,
+      icon: "ARRIVE",
+      distance: null,
+      road: null,
+    }
+  }
+
+  // No pivot, no destination distance — nothing actionable to say.
+  return {label: "Arriving", icon: "ARRIVE", road: null, distance: null}
 }
 
 /**
