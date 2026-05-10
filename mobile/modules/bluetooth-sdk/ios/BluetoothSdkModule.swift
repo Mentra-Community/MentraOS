@@ -47,7 +47,8 @@ public class CoreModule: Module {
             "send_command_to_ble",
             "receive_command_from_ble",
             "miniapp_selected",
-            "captions_tester_incident"
+            "captions_tester_incident",
+            "extraction_progress"
         )
 
         OnCreate {
@@ -398,6 +399,35 @@ public class CoreModule: Module {
 
         AsyncFunction("extractTarBz2") { (sourcePath: String, destinationPath: String) -> Bool in
             return STTTools.extractTarBz2(sourcePath: sourcePath, destinationPath: destinationPath)
+        }
+
+        // MARK: - TTS Model Management
+
+        AsyncFunction("setTtsModelDetails") { (path: String, languageCode: String) in
+            TTSTools.setTtsModelDetails(path, languageCode)
+        }
+
+        AsyncFunction("getTtsModelPath") { () -> String in
+            return TTSTools.getTtsModelPath()
+        }
+
+        AsyncFunction("checkTtsModelAvailable") { () -> Bool in
+            return TTSTools.checkTTSModelAvailable()
+        }
+
+        AsyncFunction("validateTtsModel") { (path: String) -> Bool in
+            return TTSTools.validateTTSModel(path)
+        }
+
+        AsyncFunction("generateTtsAudio") {
+            (text: String, modelPath: String, outputPath: String, speakerId: Int, speed: Double) -> Bool in
+            return TTSTools.generateTtsAudio(
+                text: text,
+                modelPath: modelPath,
+                outputPath: outputPath,
+                speakerId: speakerId,
+                speed: speed
+            )
         }
 
         // MARK: - Beta Build Detection

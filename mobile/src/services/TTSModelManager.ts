@@ -1,117 +1,115 @@
 import CoreModule from "@mentra/bluetooth-sdk"
-import {Platform} from "react-native"
 import * as RNFS from "@dr.pogodin/react-native-fs"
 
-export interface LanguageInfo {
+export interface TTSLanguageInfo {
   code: string
   displayName: string
   size: number
   language: string
   downloaded: boolean
   path?: string
-  type: "transducer" | "ctc"
+  type: "vits"
 }
 
-export interface DownloadProgress {
+export interface TTSDownloadProgress {
   jobId: number
   bytesWritten: number
   contentLength: number
   percentage: number
 }
 
-export interface ExtractionProgress {
+export interface TTSExtractionProgress {
   percentage: number
   currentFile?: string
 }
 
-export interface LanguageConfig {
+export interface TTSLanguageConfig {
   code: string
   displayName: string
   fileName: string
   downloadUrl?: string
+  modelFileName: string
   size: number
-  type: "transducer" | "ctc"
+  type: "vits"
   requiredFiles: string[]
   languageCode: string
 }
 
+export interface TTSGenerateOptions {
+  languageCode?: string
+  speakerId?: number
+  speed?: number
+}
+
+export interface TTSGenerateResult {
+  audioUrl: string
+  filePath: string
+  cleanup: () => Promise<void>
+}
+
 const DEFAULT_LANGUAGE = "en"
 
-class STTModelManager {
-  private static instance: STTModelManager
+class TTSModelManager {
+  private static instance: TTSModelManager
   private downloadJobId?: number
   private currentLanguage = DEFAULT_LANGUAGE
-  private modelBaseUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/"
+  private modelBaseUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/"
 
-  private languages: Record<string, LanguageConfig> = {
+  private languages: Record<string, TTSLanguageConfig> = {
     en: {
       code: "en",
       displayName: "English",
-      fileName: "sherpa-onnx-nemotron-speech-streaming-en-0.6b-160ms-int8-2026-04-25",
-      size: 463945198,
-      type: "transducer",
-      requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
+      fileName: "vits-piper-en_US-lessac-low-int8",
+      modelFileName: "en_US-lessac-low.onnx",
+      size: 21070568,
+      type: "vits",
+      requiredFiles: ["en_US-lessac-low.onnx", "tokens.txt", "espeak-ng-data"],
       languageCode: "en-US",
     },
     fr: {
       code: "fr",
       displayName: "Français",
-      fileName: "sherpa-onnx-streaming-zipformer-fr-kroko-2025-08-06",
-      size: 57 * 1024 * 1024,
-      type: "transducer",
-      requiredFiles: ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"],
+      fileName: "vits-piper-fr_FR-siwis-low-int8",
+      modelFileName: "fr_FR-siwis-low.onnx",
+      size: 13317962,
+      type: "vits",
+      requiredFiles: ["fr_FR-siwis-low.onnx", "tokens.txt", "espeak-ng-data"],
       languageCode: "fr-FR",
     },
     de: {
       code: "de",
       displayName: "Deutsch",
-      fileName: "sherpa-onnx-streaming-zipformer-de-kroko-2025-08-06",
-      size: 58 * 1024 * 1024,
-      type: "transducer",
-      requiredFiles: ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"],
+      fileName: "vits-piper-de_DE-thorsten-low-int8",
+      modelFileName: "de_DE-thorsten-low.onnx",
+      size: 21292232,
+      type: "vits",
+      requiredFiles: ["de_DE-thorsten-low.onnx", "tokens.txt", "espeak-ng-data"],
       languageCode: "de-DE",
     },
     es: {
       code: "es",
       displayName: "Español",
-      fileName: "sherpa-onnx-streaming-zipformer-es-kroko-2025-08-06",
-      size: 124 * 1024 * 1024,
-      type: "transducer",
-      requiredFiles: ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"],
+      fileName: "vits-piper-es_ES-davefx-medium-int8",
+      modelFileName: "es_ES-davefx-medium.onnx",
+      size: 21171632,
+      type: "vits",
+      requiredFiles: ["es_ES-davefx-medium.onnx", "tokens.txt", "espeak-ng-data"],
       languageCode: "es-ES",
-    },
-    zh: {
-      code: "zh",
-      displayName: "中文",
-      fileName: "sherpa-onnx-streaming-zipformer-zh-2025-06-30",
-      size: 150 * 1024 * 1024,
-      type: "transducer",
-      requiredFiles: ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"],
-      languageCode: "zh-CN",
-    },
-    ko: {
-      code: "ko",
-      displayName: "한국어",
-      fileName: "sherpa-onnx-streaming-zipformer-korean-2024-06-16",
-      size: 200 * 1024 * 1024,
-      type: "transducer",
-      requiredFiles: ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"],
-      languageCode: "ko-KR",
     },
   }
 
   private constructor() {}
 
-  static getInstance(): STTModelManager {
-    if (!STTModelManager.instance) {
-      STTModelManager.instance = new STTModelManager()
+  static getInstance(): TTSModelManager {
+    if (!TTSModelManager.instance) {
+      TTSModelManager.instance = new TTSModelManager()
     }
-    return STTModelManager.instance
+    return TTSModelManager.instance
   }
 
   async getCurrentLanguageFromPreferences(): Promise<string> {
     try {
-      const path = await CoreModule.getSttModelPath()
+      const path = await CoreModule.getTtsModelPath()
       const code = path && path.length > 0 ? this.getLanguageFromPath(path) : ""
       if (code && this.languages[code]) {
         this.currentLanguage = code
@@ -119,7 +117,7 @@ class STTModelManager {
       }
       return ""
     } catch (error) {
-      console.error("Error getting current STT language from preferences:", error)
+      console.error("Error getting current TTS language from preferences:", error)
       return ""
     }
   }
@@ -134,18 +132,17 @@ class STTModelManager {
     }
   }
 
+  getAvailableLanguages(): TTSLanguageConfig[] {
+    return Object.values(this.languages)
+  }
+
   getBcp47ForLanguage(code?: string): string {
     const id = code || this.currentLanguage
     return this.languages[id]?.languageCode ?? "en-US"
   }
 
-  getAvailableLanguages(): LanguageConfig[] {
-    return Object.values(this.languages)
-  }
-
   getModelDirectory(): string {
-    const baseDir = Platform.OS === "ios" ? RNFS.DocumentDirectoryPath : RNFS.DocumentDirectoryPath
-    return `${baseDir}/stt_models`
+    return `${RNFS.DocumentDirectoryPath}/tts_models`
   }
 
   getModelPath(code?: string): string {
@@ -166,26 +163,25 @@ class STTModelManager {
 
       const modelPath = this.getModelPath(id)
       for (const file of language.requiredFiles) {
-        const filePath = `${modelPath}/${file}`
-        const exists = await RNFS.exists(filePath)
+        const exists = await RNFS.exists(`${modelPath}/${file}`)
         if (!exists) {
-          console.log(`Missing required STT file: ${file} at ${filePath}`)
+          console.log(`Missing required TTS file: ${file} at ${modelPath}`)
           return false
         }
       }
 
-      return await CoreModule.validateSttModel(modelPath)
+      return await CoreModule.validateTtsModel(modelPath)
     } catch (error) {
-      console.error("Error checking STT model availability:", error)
+      console.error("Error checking TTS model availability:", error)
       return false
     }
   }
 
-  async getLanguageInfo(code?: string): Promise<LanguageInfo> {
+  async getLanguageInfo(code?: string): Promise<TTSLanguageInfo> {
     const id = code || this.currentLanguage
     const language = this.languages[id]
     if (!language) {
-      throw new Error(`Language ${id} not found`)
+      throw new Error(`TTS language ${id} not found`)
     }
 
     const downloaded = await this.isModelAvailable(id)
@@ -202,8 +198,8 @@ class STTModelManager {
     }
   }
 
-  async getAllLanguageInfo(): Promise<LanguageInfo[]> {
-    const infos: LanguageInfo[] = []
+  async getAllLanguageInfo(): Promise<TTSLanguageInfo[]> {
+    const infos: TTSLanguageInfo[] = []
     for (const code of Object.keys(this.languages)) {
       infos.push(await this.getLanguageInfo(code))
     }
@@ -212,13 +208,13 @@ class STTModelManager {
 
   async downloadModel(
     code?: string,
-    onProgress?: (progress: DownloadProgress) => void,
-    onExtractionProgress?: (progress: ExtractionProgress) => void,
+    onProgress?: (progress: TTSDownloadProgress) => void,
+    onExtractionProgress?: (progress: TTSExtractionProgress) => void,
   ): Promise<void> {
     const id = code || this.currentLanguage
     const language = this.languages[id]
     if (!language) {
-      throw new Error(`Language ${id} not found`)
+      throw new Error(`TTS language ${id} not found`)
     }
 
     const modelUrl = language.downloadUrl ?? `${this.modelBaseUrl}${language.fileName}.tar.bz2`
@@ -229,7 +225,7 @@ class STTModelManager {
     try {
       await RNFS.mkdir(modelDir, {NSURLIsExcludedFromBackupKey: true})
 
-      const downloadOptions = {
+      const result = RNFS.downloadFile({
         fromUrl: modelUrl,
         toFile: tempPath,
         progress: (res: RNFS.DownloadProgressCallbackResultT) => {
@@ -242,40 +238,30 @@ class STTModelManager {
           })
         },
         progressDivider: 10,
-        begin: (res: RNFS.DownloadBeginCallbackResultT) => {
-          console.log("Download started:", res)
-        },
         connectionTimeout: 30000,
         readTimeout: 30000,
-      }
-
-      const result = await RNFS.downloadFile(downloadOptions)
+      })
       this.downloadJobId = result.jobId
 
       const downloadResult = await result.promise
-
       if (downloadResult.statusCode !== 200) {
-        throw new Error(`Download failed with status code: ${downloadResult.statusCode}`)
+        throw new Error(`TTS model download failed with status code: ${downloadResult.statusCode}`)
       }
-
-      onExtractionProgress?.({percentage: 0})
 
       const unsubscribe = CoreModule.onExtractionProgress((event) => {
         onExtractionProgress?.({percentage: event.percentage})
       })
 
+      let extractionResult = false
       try {
-        const extractionResult = await CoreModule.extractTarBz2(tempPath, finalPath)
-        if (!extractionResult) {
-          throw new Error("Native extraction returned failure status")
-        }
-      } catch (extractError) {
-        console.error("Native extraction failed:", extractError)
-        throw extractError
+        extractionResult = await CoreModule.extractTarBz2(tempPath, finalPath)
       } finally {
         unsubscribe()
       }
 
+      if (!extractionResult) {
+        throw new Error("Native TTS model extraction returned failure status")
+      }
       onExtractionProgress?.({percentage: 100})
 
       await RNFS.unlink(tempPath)
@@ -312,33 +298,60 @@ class STTModelManager {
   async activateLanguage(code: string): Promise<void> {
     const language = this.languages[code]
     if (!language) {
-      throw new Error(`Language ${code} not found`)
+      throw new Error(`TTS language ${code} not found`)
     }
 
     const isAvailable = await this.isModelAvailable(code)
     if (!isAvailable) {
-      throw new Error(`Language ${code} model is not downloaded`)
+      throw new Error(`TTS language ${code} model is not downloaded`)
     }
 
     this.currentLanguage = code
-    const modelPath = this.getModelPath(code)
-    await this.setNativeModelPath(modelPath, language.languageCode)
+    await this.setNativeModelPath(this.getModelPath(code), language.languageCode)
   }
 
-  private async setNativeModelPath(path: string, languageCode: string): Promise<void> {
-    CoreModule.setSttModelDetails(path, languageCode)
-  }
+  async synthesizeToFile(text: string, options: TTSGenerateOptions = {}): Promise<TTSGenerateResult> {
+    const id = options.languageCode || this.currentLanguage
+    const language = this.languages[id]
+    if (!language) {
+      throw new Error(`TTS language ${id} not found`)
+    }
 
-  async getStorageInfo(): Promise<{free: number; total: number}> {
-    const fsInfo = await RNFS.getFSInfo()
+    if (!(await this.isModelAvailable(id))) {
+      throw new Error(`TTS language ${id} model is not downloaded`)
+    }
+
+    const outputDir = RNFS.CachesDirectoryPath || RNFS.TemporaryDirectoryPath
+    const safeId = `${Date.now()}_${Math.random().toString(36).slice(2)}`
+    const outputPath = `${outputDir}/mentra_tts_${safeId}.wav`
+    const ok = await CoreModule.generateTtsAudio(
+      text,
+      this.getModelPath(id),
+      outputPath,
+      options.speakerId ?? 0,
+      options.speed ?? 1.0,
+    )
+    if (!ok) {
+      throw new Error("Offline TTS synthesis failed")
+    }
+
     return {
-      free: fsInfo.freeSpace,
-      total: fsInfo.totalSpace,
+      audioUrl: `file://${outputPath}`,
+      filePath: outputPath,
+      cleanup: async () => {
+        if (await RNFS.exists(outputPath)) {
+          await RNFS.unlink(outputPath)
+        }
+      },
     }
   }
 
+  private async setNativeModelPath(path: string, languageCode: string): Promise<void> {
+    await CoreModule.setTtsModelDetails(path, languageCode)
+  }
+
   formatBytes(bytes: number): string {
-    return STTModelManager.formatBytes(bytes)
+    return TTSModelManager.formatBytes(bytes)
   }
 
   static formatBytes(bytes: number): string {
@@ -350,6 +363,6 @@ class STTModelManager {
   }
 }
 
-const instance = STTModelManager.getInstance()
-export {STTModelManager}
+const instance = TTSModelManager.getInstance()
+export {TTSModelManager}
 export default instance

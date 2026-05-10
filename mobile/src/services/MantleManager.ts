@@ -7,6 +7,9 @@ import {shallow} from "zustand/shallow"
 
 import audioPlaybackService from "@/services/AudioPlaybackService"
 import miniSockets from "@/services/MiniSockets"
+import offlineSpeechModelService from "@/services/OfflineSpeechModelService"
+import STTModelManager from "@/services/STTModelManager"
+import TTSModelManager from "@/services/TTSModelManager"
 import {requestMiniappSdkPhoto} from "@/services/miniapp/MiniappSdkPhotoHandler"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {migrate} from "@/services/Migrations"
@@ -133,6 +136,17 @@ class MantleManager {
         play: (request, onComplete) => audioPlaybackService.play(request, onComplete),
         stopForApp: (packageName) => audioPlaybackService.stopForApp(packageName),
       },
+      tts: {
+        isAvailable: () => TTSModelManager.isModelAvailable(),
+        synthesize: ({text, voiceId, speed}) =>
+          TTSModelManager.synthesizeToFile(text, {
+            languageCode:
+              voiceId && TTSModelManager.getAvailableLanguages().some((lang) => lang.code === voiceId)
+                ? voiceId
+                : undefined,
+            speed,
+          }),
+      },
       glassesStatus: {
         get: () => {
           const s = useGlassesStore.getState()
@@ -158,6 +172,7 @@ class MantleManager {
             (value) => onChange(value as never),
           ),
       },
+      sttModelAvailable: () => STTModelManager.isModelAvailable(),
       setDisplayEvent: (event) => useDisplayStore.getState().setDisplayEvent(event),
       requestMiniappSdkPhoto: (params) => requestMiniappSdkPhoto(params),
     })
@@ -185,6 +200,8 @@ class MantleManager {
 
     // Send device timezone to cloud (used for calendar/time display)
     this.syncTimezone()
+
+    offlineSpeechModelService.startBackgroundDownloads()
 
     // give the core some time to boot before sending all the initial settings:
     BgTimer.setTimeout(() => {

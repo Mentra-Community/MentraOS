@@ -4,33 +4,41 @@ import {useCallback, useEffect, useState} from "react"
 import {ActivityIndicator, BackHandler, Platform, ScrollView, View} from "react-native"
 
 import {Header, Screen, Text} from "@/components/ignite"
-import ModelSelector from "@/components/settings/ModelSelector"
+import LanguageSelector, {LanguageRow} from "@/components/settings/LanguageSelector"
 import ToggleSetting from "@/components/settings/ToggleSetting"
 import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import STTModelManager from "@/services/STTModelManager"
+import TTSModelManager from "@/services/TTSModelManager"
 import {useStopAll} from "@mentra/island"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
+
+const RESTART_TRANSCRIPTION_DEBOUNCE_MS = 8000
 
 export default function TranscriptionSettingsScreen() {
   const {theme} = useAppTheme()
   const {goBack} = useNavigationStore.getState()
 
-  const [selectedModelId, setSelectedModelId] = useState(STTModelManager.getCurrentModelId())
-  const [modelInfo, setModelInfo] = useState<any>(null)
-  const [allModels, setAllModels] = useState<any[]>([])
-  const [isDownloading, setIsDownloading] = useState(false)
-  const [downloadProgress, setDownloadProgress] = useState(0)
-  const [extractionProgress, setExtractionProgress] = useState(0)
-  const [isCheckingModel, setIsCheckingModel] = useState(true)
+  const [sttCurrent, setSttCurrent] = useState(STTModelManager.getCurrentLanguage())
+  const [sttLanguages, setSttLanguages] = useState<LanguageRow[]>([])
+  const [sttDownloading, setSttDownloading] = useState<string | undefined>(undefined)
+  const [sttDownloadPercent, setSttDownloadPercent] = useState(0)
+  const [sttExtractPercent, setSttExtractPercent] = useState(0)
+
+  const [ttsCurrent, setTtsCurrent] = useState(TTSModelManager.getCurrentLanguage())
+  const [ttsLanguages, setTtsLanguages] = useState<LanguageRow[]>([])
+  const [ttsDownloading, setTtsDownloading] = useState<string | undefined>(undefined)
+  const [ttsDownloadPercent, setTtsDownloadPercent] = useState(0)
+  const [ttsExtractPercent, setTtsExtractPercent] = useState(0)
+
+  const [isLoading, setIsLoading] = useState(true)
   const [bypassVadForDebugging, setBypassVadForDebugging] = useSetting(SETTINGS.bypass_vad_for_debugging.key)
-  const [offlineMode, setOfflineMode] = useSetting(SETTINGS.offline_mode.key)
   const [_offlineCaptionsAppRunning, setOfflineCaptionsAppRunning] = useSetting(SETTINGS.offline_captions_running.key)
   const [enforceLocalTranscription, setEnforceLocalTranscription] = useSetting(SETTINGS.enforce_local_transcription.key)
-  const RESTART_TRANSCRIPTION_DEBOUNCE_MS = 8000 // 8 seconds
+  const [offlineMode, setOfflineMode] = useSetting(SETTINGS.offline_mode.key)
   const [lastRestartTime, setLastRestartTime] = useState(0)
 
   const stopAllApps = useStopAll()
@@ -51,10 +59,8 @@ export default function TranscriptionSettingsScreen() {
           text: confirmText,
           onPress: async () => {
             if (!offlineMode) {
-              // If enabling offline mode, stop all running apps
               await stopAllApps()
             } else {
-              // If disabling offline mode, turn off offline captions
               setOfflineCaptionsAppRunning(false)
             }
             setOfflineMode(!offlineMode)
@@ -68,24 +74,72 @@ export default function TranscriptionSettingsScreen() {
     )
   }
 
-  // Cancel download function
+  const refreshLists = useCallback(async () => {
+    const [sttInfos, ttsInfos] = await Promise.all([
+      STTModelManager.getAllLanguageInfo(),
+      TTSModelManager.getAllLanguageInfo(),
+    ])
+    setSttLanguages(
+      sttInfos.map((i) => ({
+        code: i.code,
+        displayName: i.displayName,
+        size: i.size,
+        downloaded: i.downloaded,
+      })),
+    )
+    setTtsLanguages(
+      ttsInfos.map((i) => ({
+        code: i.code,
+        displayName: i.displayName,
+        size: i.size,
+        downloaded: i.downloaded,
+      })),
+    )
+  }, [])
+
+  const initSelected = useCallback(async () => {
+    setIsLoading(true)
+    try {
+      const sttPref = await STTModelManager.getCurrentLanguageFromPreferences()
+      if (sttPref) setSttCurrent(sttPref)
+      const ttsPref = await TTSModelManager.getCurrentLanguageFromPreferences()
+      if (ttsPref) setTtsCurrent(ttsPref)
+      await refreshLists()
+    } catch (error) {
+      console.error("Error initializing transcription settings:", error)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [refreshLists])
+
+  useEffect(() => {
+    initSelected()
+  }, [initSelected])
+
   const handleCancelDownload = async () => {
     try {
-      await STTModelManager.cancelDownload()
-      setIsDownloading(false)
-      setDownloadProgress(0)
-      setExtractionProgress(0)
+      if (sttDownloading) {
+        await STTModelManager.cancelDownload()
+        setSttDownloading(undefined)
+        setSttDownloadPercent(0)
+        setSttExtractPercent(0)
+      }
+      if (ttsDownloading) {
+        await TTSModelManager.cancelDownload()
+        setTtsDownloading(undefined)
+        setTtsDownloadPercent(0)
+        setTtsExtractPercent(0)
+      }
     } catch (error) {
       console.error("Error canceling download:", error)
     }
   }
 
-  // Handle back navigation blocking during downloads
   const handleBackPress = useCallback(() => {
-    if (isDownloading) {
+    if (sttDownloading || ttsDownloading) {
       showAlert(
         "Download in Progress",
-        "A model is currently downloading. Are you sure you want to cancel and go back?",
+        "A language is currently downloading. Are you sure you want to cancel and go back?",
         [
           {text: "Stay", style: "cancel"},
           {
@@ -94,183 +148,139 @@ export default function TranscriptionSettingsScreen() {
             onPress: async () => {
               try {
                 await handleCancelDownload()
+              } finally {
                 goBack()
-              } catch (error) {
-                console.error("Error canceling download:", error)
-                goBack() // Go back anyway if cancel fails
               }
             },
           },
         ],
       )
-      return true // Prevent default back action
+      return true
     }
-    return false // Allow default back action
-  }, [isDownloading, goBack, handleCancelDownload])
+    return false
+  }, [sttDownloading, ttsDownloading, goBack])
 
-  // Block hardware back button on Android during downloads
   useFocusEffect(
     useCallback(() => {
       if (Platform.OS === "android") {
-        const backHandler = BackHandler.addEventListener("hardwareBackPress", handleBackPress)
-        return () => backHandler.remove()
+        const handler = BackHandler.addEventListener("hardwareBackPress", handleBackPress)
+        return () => handler.remove()
       }
+      return undefined
     }, [handleBackPress]),
   )
 
-  // Custom goBack function that respects download state
   const handleGoBack = () => {
-    const shouldBlock = handleBackPress()
-    if (!shouldBlock) {
-      goBack()
-    }
-  }
-
-  const enableEnforceLocalTranscription = async () => {
-    await setEnforceLocalTranscription(true)
+    if (!handleBackPress()) goBack()
   }
 
   const timeRemainingTillRestart = () => {
     const now = Date.now()
-    const timeRemaining = RESTART_TRANSCRIPTION_DEBOUNCE_MS - (now - lastRestartTime)
-    return timeRemaining
+    return RESTART_TRANSCRIPTION_DEBOUNCE_MS - (now - lastRestartTime)
   }
 
-  const activateModelandRestartTranscription = async (modelId: string): Promise<void> => {
-    const now = Date.now()
-    setLastRestartTime(now)
-    await STTModelManager.activateModel(modelId)
+  const activateAndRestartStt = async (code: string) => {
+    setLastRestartTime(Date.now())
+    await STTModelManager.activateLanguage(code)
     await CoreModule.restartTranscriber()
   }
 
-  const handleModelChange = async (modelId: string) => {
-    const timeRemaining = timeRemainingTillRestart()
-
-    if (isDownloading) {
-      // Also add cancel download button
-      showAlert(
-        "Download in Progress",
-        "A model is currently downloading. Please wait before switching to another model",
-        [
-          {text: "Cancel Download", style: "destructive", onPress: handleCancelDownload},
-          {text: "OK", style: "cancel"},
-        ],
-      )
+  const handlePickStt = async (code: string) => {
+    if (sttDownloading) {
+      showAlert("Download in Progress", "Please wait for the current download to finish.", [
+        {text: "Cancel Download", style: "destructive", onPress: handleCancelDownload},
+        {text: "OK", style: "cancel"},
+      ])
       return
     }
 
-    if (timeRemaining > 0) {
+    const remaining = timeRemainingTillRestart()
+    if (remaining > 0 && code !== sttCurrent) {
       showAlert(
-        "Restart already in progress",
-        "A model change is in progress. Please wait " +
-          Math.ceil(timeRemaining / 1000) +
-          " seconds before switching to another model",
+        "Restart in progress",
+        `A language change is in progress. Please wait ${Math.ceil(remaining / 1000)} seconds.`,
         [{text: "OK"}],
       )
       return
     }
-    const info = await STTModelManager.getModelInfo(modelId)
-    setSelectedModelId(modelId)
-    STTModelManager.setCurrentModelId(modelId)
-    setModelInfo(info)
+
+    const info = await STTModelManager.getLanguageInfo(code)
+    setSttCurrent(code)
+    STTModelManager.setCurrentLanguage(code)
 
     if (info.downloaded) {
       try {
-        await activateModelandRestartTranscription(modelId)
-        showAlert("Restarted Transcription", "Switched to new model", [{text: "OK"}])
+        await activateAndRestartStt(code)
       } catch (error: any) {
-        showAlert("Error", error.message || "Failed to activate model", [{text: "OK"}])
+        showAlert("Error", error?.message ?? "Failed to switch language", [{text: "OK"}])
       }
+      return
     }
-  }
 
-  const handleDownloadModel = async (modelId?: string) => {
-    const targetModelId = modelId || selectedModelId
     try {
-      setIsDownloading(true)
-      setDownloadProgress(0)
-      setExtractionProgress(0)
-
+      setSttDownloading(code)
+      setSttDownloadPercent(0)
+      setSttExtractPercent(0)
       await STTModelManager.downloadModel(
-        targetModelId,
-        (progress) => {
-          setDownloadProgress(progress.percentage)
-        },
-        (progress) => {
-          setExtractionProgress(progress.percentage)
-        },
+        code,
+        (p) => setSttDownloadPercent(p.percentage),
+        (p) => setSttExtractPercent(p.percentage),
       )
-
-      // Re-check model status after download
-      await checkModelStatus()
-
-      await activateModelandRestartTranscription(targetModelId)
-
-      await enableEnforceLocalTranscription()
-
-      showAlert("Success", "Speech recognition model downloaded successfully!", [{text: "OK"}])
+      await refreshLists()
+      await activateAndRestartStt(code)
+      await setEnforceLocalTranscription(true)
     } catch (error: any) {
-      showAlert("Download Failed", error.message || "Failed to download the model. Please try again.", [{text: "OK"}])
+      showAlert("Download Failed", error?.message ?? "Failed to download language. Please try again.", [{text: "OK"}])
     } finally {
-      setIsDownloading(false)
-      setDownloadProgress(0)
-      setExtractionProgress(0)
+      setSttDownloading(undefined)
+      setSttDownloadPercent(0)
+      setSttExtractPercent(0)
     }
   }
 
-  const handleDeleteModel = async (modelId?: string) => {
-    const targetModelId = modelId || selectedModelId
-    showAlert(
-      "Delete Model",
-      "Are you sure you want to delete the speech recognition model? You'll need to download it again to use local transcription.",
-      [
-        {text: "Cancel", style: "cancel"},
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await STTModelManager.deleteModel(targetModelId)
-              await checkModelStatus()
-
-              // If local transcription is enabled, disable it
-              if (enforceLocalTranscription) {
-                await setEnforceLocalTranscription(false)
-              }
-            } catch (error: any) {
-              showAlert("Error", error.message || "Failed to delete model", [{text: "OK"}])
-            }
-          },
-        },
-      ],
-    )
-  }
-
-  const initSelectedModel = async () => {
-    const modelId = await STTModelManager.getCurrentModelIdFromPreferences()
-    if (modelId) {
-      setSelectedModelId(modelId)
+  const handlePickTts = async (code: string) => {
+    if (ttsDownloading) {
+      showAlert("Download in Progress", "Please wait for the current download to finish.", [
+        {text: "Cancel Download", style: "destructive", onPress: handleCancelDownload},
+        {text: "OK", style: "cancel"},
+      ])
+      return
     }
-    checkModelStatus(modelId)
-  }
 
-  const checkModelStatus = async (modelId?: string) => {
-    setIsCheckingModel(true)
+    const info = await TTSModelManager.getLanguageInfo(code)
+    setTtsCurrent(code)
+    TTSModelManager.setCurrentLanguage(code)
+
+    if (info.downloaded) {
+      try {
+        await TTSModelManager.activateLanguage(code)
+      } catch (error: any) {
+        showAlert("Error", error?.message ?? "Failed to switch voice language", [{text: "OK"}])
+      }
+      return
+    }
+
     try {
-      const info = await STTModelManager.getModelInfo(modelId || selectedModelId)
-      setModelInfo(info)
-      const models = await STTModelManager.getAllModelsInfo()
-      setAllModels(models)
-    } catch (error) {
-      console.error("Error checking model status:", error)
+      setTtsDownloading(code)
+      setTtsDownloadPercent(0)
+      setTtsExtractPercent(0)
+      await TTSModelManager.downloadModel(
+        code,
+        (p) => setTtsDownloadPercent(p.percentage),
+        (p) => setTtsExtractPercent(p.percentage),
+      )
+      await refreshLists()
+      await TTSModelManager.activateLanguage(code)
+    } catch (error: any) {
+      showAlert("Download Failed", error?.message ?? "Failed to download voice language. Please try again.", [
+        {text: "OK"},
+      ])
     } finally {
-      setIsCheckingModel(false)
+      setTtsDownloading(undefined)
+      setTtsDownloadPercent(0)
+      setTtsExtractPercent(0)
     }
   }
-
-  useEffect(() => {
-    initSelectedModel()
-  }, [])
 
   return (
     <Screen preset="fixed">
@@ -292,25 +302,47 @@ export default function TranscriptionSettingsScreen() {
 
         <Spacer height={theme.spacing.s6} />
 
-        {isCheckingModel ? (
+        {isLoading ? (
           <View style={{alignItems: "center", padding: theme.spacing.s6}}>
             <ActivityIndicator size="large" color={theme.colors.foreground} />
             <Spacer height={theme.spacing.s3} />
-            <Text>Checking model status...</Text>
+            <Text>Checking languages…</Text>
           </View>
         ) : (
           <>
-            {/* Integrated Model Selector */}
-            <ModelSelector
-              selectedModelId={selectedModelId}
-              models={allModels}
-              onModelChange={handleModelChange}
-              onDownload={() => handleDownloadModel()}
-              onDelete={() => handleDeleteModel()}
-              isDownloading={isDownloading}
-              downloadProgress={downloadProgress}
-              extractionProgress={extractionProgress}
-              currentModelInfo={modelInfo}
+            <LanguageSelector
+              title="Captions Language"
+              languages={sttLanguages}
+              currentLanguage={sttCurrent}
+              downloadingLanguage={sttDownloading}
+              downloadPercent={sttDownloadPercent}
+              extractionPercent={sttExtractPercent}
+              onPickLanguage={handlePickStt}
+              formatBytes={(b) => STTModelManager.formatBytes(b)}
+            />
+
+            <Spacer height={theme.spacing.s6} />
+
+            <LanguageSelector
+              title="Voice Language (Text-to-Speech)"
+              languages={ttsLanguages}
+              currentLanguage={ttsCurrent}
+              downloadingLanguage={ttsDownloading}
+              downloadPercent={ttsDownloadPercent}
+              extractionPercent={ttsExtractPercent}
+              onPickLanguage={handlePickTts}
+              formatBytes={(b) => TTSModelManager.formatBytes(b)}
+            />
+
+            <Spacer height={theme.spacing.s10} />
+
+            <Text
+              text={
+                enforceLocalTranscription
+                  ? "Captions are running locally on this device."
+                  : "Captions will run on this device when the language model is downloaded."
+              }
+              style={{color: theme.colors.textDim, fontSize: 13}}
             />
           </>
         )}
