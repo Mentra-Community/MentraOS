@@ -45,8 +45,8 @@ export default function LanguageSelector({
 
         let subtitle: string
         if (isDownloading) {
-          if (extractionPercent && extractionPercent > 0 && extractionPercent < 100) {
-            subtitle = "Extracting…"
+          if (extractionPercent !== undefined && extractionPercent > 0) {
+            subtitle = extractionPercent >= 100 ? "Finishing up…" : `Extracting… ${extractionPercent}%`
           } else if (downloadPercent !== undefined && downloadPercent > 0) {
             subtitle = `Downloading… ${downloadPercent}%`
           } else {

@@ -32,6 +32,7 @@ export default function OfflineModelDownloadBanner() {
   if (status.stage === "failed") return null
 
   const labelKind = status.kind === "stt" ? "Captions" : "Voice"
+  const offlineHint = status.kind === "stt" ? "keeps captions working offline" : "keeps the voice working offline"
   let title: string
   let subtitle: string
   if (status.stage === "complete") {
@@ -42,7 +43,7 @@ export default function OfflineModelDownloadBanner() {
     subtitle = `${status.percent}% · almost done`
   } else {
     title = `Downloading ${labelKind.toLowerCase()}…`
-    subtitle = `${status.percent}% · keeps captions working offline`
+    subtitle = `${status.percent}% · ${offlineHint}`
   }
 
   return (

@@ -284,11 +284,16 @@ class STTModelManager {
         await this.setNativeModelPath(finalPath, language.languageCode)
       }
     } catch (error) {
-      if (await RNFS.exists(tempPath)) {
-        await RNFS.unlink(tempPath)
+      // Best-effort cleanup; never let it mask the original error.
+      try {
+        if (await RNFS.exists(tempPath)) await RNFS.unlink(tempPath)
+      } catch (cleanupError) {
+        console.warn("STTModelManager: temp cleanup failed:", cleanupError)
       }
-      if (await RNFS.exists(finalPath)) {
-        await RNFS.unlink(finalPath)
+      try {
+        if (await RNFS.exists(finalPath)) await RNFS.unlink(finalPath)
+      } catch (cleanupError) {
+        console.warn("STTModelManager: final cleanup failed:", cleanupError)
       }
       throw error
     }

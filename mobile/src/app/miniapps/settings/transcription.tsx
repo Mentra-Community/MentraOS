@@ -205,10 +205,10 @@ export default function TranscriptionSettingsScreen() {
     }
 
     const info = await STTModelManager.getLanguageInfo(code)
-    setSttCurrent(code)
-    STTModelManager.setCurrentLanguage(code)
 
     if (info.downloaded) {
+      setSttCurrent(code)
+      STTModelManager.setCurrentLanguage(code)
       try {
         await activateAndRestartStt(code)
       } catch (error: any) {
@@ -227,6 +227,9 @@ export default function TranscriptionSettingsScreen() {
         (p) => setSttExtractPercent(p.percentage),
       )
       await refreshLists()
+      // Only commit the selection once the model is on disk and active.
+      setSttCurrent(code)
+      STTModelManager.setCurrentLanguage(code)
       await activateAndRestartStt(code)
       await setEnforceLocalTranscription(true)
     } catch (error: any) {
@@ -248,10 +251,10 @@ export default function TranscriptionSettingsScreen() {
     }
 
     const info = await TTSModelManager.getLanguageInfo(code)
-    setTtsCurrent(code)
-    TTSModelManager.setCurrentLanguage(code)
 
     if (info.downloaded) {
+      setTtsCurrent(code)
+      TTSModelManager.setCurrentLanguage(code)
       try {
         await TTSModelManager.activateLanguage(code)
       } catch (error: any) {
@@ -270,6 +273,9 @@ export default function TranscriptionSettingsScreen() {
         (p) => setTtsExtractPercent(p.percentage),
       )
       await refreshLists()
+      // Only commit the selection once the model is on disk and active.
+      setTtsCurrent(code)
+      TTSModelManager.setCurrentLanguage(code)
       await TTSModelManager.activateLanguage(code)
     } catch (error: any) {
       showAlert("Download Failed", error?.message ?? "Failed to download voice language. Please try again.", [

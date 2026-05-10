@@ -79,11 +79,17 @@ class OfflineSpeechModelService {
   }
 
   async ensureDefaultModels(): Promise<void> {
-    const results = await Promise.allSettled([this.ensureSttModel(), this.ensureTtsModel()])
-    for (const result of results) {
-      if (result.status === "rejected") {
-        console.warn("OFFLINE_MODELS: model setup failed:", result.reason)
-      }
+    // Sequence STT then TTS so the home-screen banner shows one coherent
+    // progress at a time. STT first because it's the primary use case.
+    try {
+      await this.ensureSttModel()
+    } catch (error) {
+      console.warn("OFFLINE_MODELS: STT model setup failed:", error)
+    }
+    try {
+      await this.ensureTtsModel()
+    } catch (error) {
+      console.warn("OFFLINE_MODELS: TTS model setup failed:", error)
     }
   }
 
