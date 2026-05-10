@@ -207,10 +207,11 @@ export default function TranscriptionSettingsScreen() {
     const info = await STTModelManager.getLanguageInfo(code)
 
     if (info.downloaded) {
-      setSttCurrent(code)
-      STTModelManager.setCurrentLanguage(code)
       try {
         await activateAndRestartStt(code)
+        // Only commit the selection once the language is actually active.
+        setSttCurrent(code)
+        STTModelManager.setCurrentLanguage(code)
       } catch (error: any) {
         showAlert("Error", error?.message ?? "Failed to switch language", [{text: "OK"}])
       }
@@ -227,10 +228,10 @@ export default function TranscriptionSettingsScreen() {
         (p) => setSttExtractPercent(p.percentage),
       )
       await refreshLists()
+      await activateAndRestartStt(code)
       // Only commit the selection once the model is on disk and active.
       setSttCurrent(code)
       STTModelManager.setCurrentLanguage(code)
-      await activateAndRestartStt(code)
       await setEnforceLocalTranscription(true)
     } catch (error: any) {
       showAlert("Download Failed", error?.message ?? "Failed to download language. Please try again.", [{text: "OK"}])
@@ -253,10 +254,11 @@ export default function TranscriptionSettingsScreen() {
     const info = await TTSModelManager.getLanguageInfo(code)
 
     if (info.downloaded) {
-      setTtsCurrent(code)
-      TTSModelManager.setCurrentLanguage(code)
       try {
         await TTSModelManager.activateLanguage(code)
+        // Only commit the selection once the language is actually active.
+        setTtsCurrent(code)
+        TTSModelManager.setCurrentLanguage(code)
       } catch (error: any) {
         showAlert("Error", error?.message ?? "Failed to switch voice language", [{text: "OK"}])
       }
@@ -273,10 +275,10 @@ export default function TranscriptionSettingsScreen() {
         (p) => setTtsExtractPercent(p.percentage),
       )
       await refreshLists()
+      await TTSModelManager.activateLanguage(code)
       // Only commit the selection once the model is on disk and active.
       setTtsCurrent(code)
       TTSModelManager.setCurrentLanguage(code)
-      await TTSModelManager.activateLanguage(code)
     } catch (error: any) {
       showAlert("Download Failed", error?.message ?? "Failed to download voice language. Please try again.", [
         {text: "OK"},
