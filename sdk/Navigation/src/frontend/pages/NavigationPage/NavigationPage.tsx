@@ -251,14 +251,17 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
       return
     }
 
-    // Continue layout: top line = next road we're turning onto (from
-    // the upcoming pivot, no fallback), bottom line = "Turn right in
-    // 500 m" (verb + distance combined). Mirrors the phone card.
+    // Continue layout: mirrors the phone OrientationCard's two visible lines.
+    //   Onto <nextRoad>          ← upcomingPivot.fromRoad
+    //   Turn right in 500 m      ← verb + distance
+    // Top line is rendered only when the pivot supplied a road name —
+    // no geocoder/maneuver fallback.
     if (upcomingPivot && distanceToUpcomingPivot != null) {
       const verb = upcomingPivot.direction === "right" ? "Turn right" : "Turn left"
       const distStr = formatDistance(distanceToUpcomingPivot)
-      const nextRoad = isRealRoadName(upcomingPivot.toRoad)
-      display.showText([nextRoad, `${verb} in ${distStr}`].filter(Boolean).join("\n"))
+      const nextRoad = isRealRoadName(upcomingPivot.fromRoad)
+      const topLine = nextRoad ? `Onto ${nextRoad}` : null
+      display.showText([topLine, `${verb} in ${distStr}`].filter(Boolean).join("\n"))
       return
     }
     if (distanceToDestination != null) {

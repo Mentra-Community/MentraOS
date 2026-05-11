@@ -72,11 +72,15 @@ export function OrientationCard({
 
         <div className="flex flex-col items-start gap-0.5 min-w-0 flex-1">
           {nextRoad ? (
-            <div className="self-stretch text-[#6B6B6B] font-sans text-sm/4.5">on {nextRoad}</div>
+            <div className="self-stretch text-[#6B6B6B] font-sans text-sm/4.5">Onto {nextRoad}</div>
           ) : null}
+          {/* Animate only when the verb changes (e.g. "Turn right" → "Turn left"),
+              not on every distance tick. Stripping the trailing "in 500 m" off
+              the AnimatePresence key keeps the text from re-entering each
+              second as the countdown updates. */}
           <AnimatePresence mode="popLayout" initial={false}>
             <motion.div
-              key={label}
+              key={label.replace(/\s+in\s+.*$/, "")}
               initial={{opacity: 0, y: 6}}
               animate={{opacity: 1, y: 0}}
               exit={{opacity: 0, y: -6}}
