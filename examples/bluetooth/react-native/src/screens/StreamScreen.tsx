@@ -28,6 +28,8 @@ await BluetoothSdk.startStream({
 })`;
 
 export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
+  const scrollRef = React.useRef<React.ElementRef<typeof ScrollView>>(null);
+  const streamUrlInputRef = React.useRef<React.ElementRef<typeof TextInput>>(null);
   const scrollBottomPadding = useScrollBottomPadding();
   const connected = isGlassesConnected(sdk.glassesStatus);
   const streamActive = sdk.streamRequested || sdk.streamStartedAt !== null;
@@ -35,9 +37,23 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
   const uptime = streamUptime(sdk.streamStartedAt);
   const setupHint = localStreamSetupHint(sdk.streamProtocol, sdk.streamUrl, sdk.streamStatus);
   const previewTarget = previewReady ? streamPreviewTarget(sdk.streamProtocol, sdk.streamUrl) : null;
+  const focusStreamUrlInput = React.useCallback(() => {
+    scrollRef.current?.scrollToEnd({ animated: true });
+    requestAnimationFrame(() => {
+      streamUrlInputRef.current?.focus();
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 250);
+    });
+  }, []);
+  const handleStreamPress = React.useCallback(() => {
+    if (!streamActive && sdk.streamUrl.includes('<computer-ip>')) {
+      focusStreamUrlInput();
+    }
+    void sdk.toggleStream();
+  }, [focusStreamUrlInput, sdk, streamActive]);
 
   return (
     <ScrollView
+      ref={scrollRef}
       keyboardDismissMode="interactive"
       keyboardShouldPersistTaps="handled"
       style={{ flex: 1, backgroundColor: colors.bg }}
@@ -65,7 +81,7 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
           </View>
         </View>
 
-        <Pressable disabled={!connected && !streamActive} onPress={sdk.toggleStream}>
+        <Pressable disabled={!connected && !streamActive} onPress={handleStreamPress}>
           <LinearGradient colors={streamActive ? ['#FF6B5B', '#FF3B30'] : ['#26473A', '#1F3A2A']} style={[styles.endBtn, !connected && !streamActive && styles.disabled]}>
             <View style={styles.stopSquare} />
             <Text style={styles.endText}>
@@ -115,13 +131,16 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
           <Text style={styles.method}>{streamProtocolLabel(sdk.streamProtocol)}</Text>
           <View style={styles.divider} />
           <TextInput
+            ref={streamUrlInputRef}
             autoCapitalize="none"
             autoCorrect={false}
             keyboardType="url"
             onChangeText={sdk.setStreamUrl}
+            onFocus={focusStreamUrlInput}
             placeholder={STREAM_DEFAULT_URLS[sdk.streamProtocol]}
             placeholderTextColor={colors.muted}
             returnKeyType="done"
+            selectTextOnFocus
             style={styles.url}
             value={sdk.streamUrl}
           />

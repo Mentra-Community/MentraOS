@@ -19,6 +19,7 @@ struct StreamScreen: View {
     @Environment(\.keyboardVisible) private var keyboardVisible
     @FocusState private var streamUrlFocused: Bool
     private let bars: [CGFloat] = [18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40]
+    private let streamUrlFieldId = "stream-url-field"
     private var setupHint: String? {
         localStreamSetupHint(protocol: model.streamProtocol, streamUrl: model.streamUrl, status: model.streamStatus)
     }
@@ -40,30 +41,35 @@ struct StreamScreen: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                PageHeader(title: "Stream", connected: model.glassesConnected)
-                if !model.glassesConnected {
-                    OfflineNotice()
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 8)
-                }
+        ScrollViewReader { scrollProxy in
+            ScrollView {
+                VStack(spacing: 0) {
+                    PageHeader(title: "Stream", connected: model.glassesConnected)
+                    if !model.glassesConnected {
+                        OfflineNotice()
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 8)
+                    }
 
-                previewCard.padding(.horizontal, 16).padding(.top, 8)
-                sdkCard.padding(.horizontal, 16).padding(.top, 12)
-                protocolCard.padding(.horizontal, 16).padding(.top, 12)
+                    previewCard(scrollProxy: scrollProxy).padding(.horizontal, 16).padding(.top, 8)
+                    sdkCard.padding(.horizontal, 16).padding(.top, 12)
+                    protocolCard.padding(.horizontal, 16).padding(.top, 12)
+                }
+                .padding(.bottom, LayoutMetric.scrollBottomPadding(keyboardVisible: keyboardVisible))
             }
-            .padding(.bottom, LayoutMetric.scrollBottomPadding(keyboardVisible: keyboardVisible))
+            .background(AppColor.bg)
+            .scrollDismissesKeyboard(.interactively)
         }
-        .background(AppColor.bg)
-        .scrollDismissesKeyboard(.interactively)
     }
 
-    private var previewCard: some View {
+    private func previewCard(scrollProxy: ScrollViewProxy) -> some View {
         GlassCard(padding: EdgeInsets(top: 8, leading: 8, bottom: 14, trailing: 8)) {
             previewSurface
 
             Button {
+                if shouldFocusStreamUrlTemplate(model.streamUrl, streamActive: streamActive) {
+                    focusStreamUrlField(scrollProxy)
+                }
                 model.toggleStream()
             } label: {
                 HStack(spacing: 10) {
@@ -237,6 +243,7 @@ struct StreamScreen: View {
                 Spacer()
                 Image(systemName: "square.and.pencil").font(.system(size: 14)).foregroundColor(AppColor.muted)
             }
+            .id(streamUrlFieldId)
             .padding(.horizontal, 14).padding(.vertical, 12)
             .background(AppColor.ink.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 12))
 
@@ -253,6 +260,22 @@ struct StreamScreen: View {
             }
         }
     }
+
+    private func focusStreamUrlField(_ scrollProxy: ScrollViewProxy) {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            scrollProxy.scrollTo(streamUrlFieldId, anchor: .bottom)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            streamUrlFocused = true
+            withAnimation(.easeInOut(duration: 0.2)) {
+                scrollProxy.scrollTo(streamUrlFieldId, anchor: .bottom)
+            }
+        }
+    }
+}
+
+private func shouldFocusStreamUrlTemplate(_ streamUrl: String, streamActive: Bool) -> Bool {
+    !streamActive && streamUrl.contains("<computer-ip>")
 }
 
 struct ProtocolTab: View {

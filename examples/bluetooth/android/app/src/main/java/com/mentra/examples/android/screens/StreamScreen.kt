@@ -28,11 +28,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontFamily
@@ -84,6 +87,8 @@ fun StreamScreen(controller: MentraExampleController) {
     val setupHint = localStreamSetupHint(state.streamProtocol, state.streamUrl, state.streamStatus)
     val previewTarget = if (previewReady) streamPreviewTarget(state.streamProtocol, state.streamUrl) else null
     val clipboardManager = LocalClipboardManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val streamUrlFocusRequester = remember { FocusRequester() }
     val scrollState = rememberScrollState()
     var streamUrlFocused by remember { mutableStateOf(false) }
 
@@ -146,7 +151,13 @@ fun StreamScreen(controller: MentraExampleController) {
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp)
                     .clip(RoundedCornerShape(18.dp))
                     .background(Brush.verticalGradient(if (streamActive) listOf(Color(0xFFFF6B5B), AppColor.red) else listOf(Color(0xFF26473A), Color(0xFF1F3A2A))))
-                    .clickable(enabled = connected || streamActive) { controller.toggleStream() }
+                    .clickable(enabled = connected || streamActive) {
+                        if (shouldFocusStreamUrlTemplate(state.streamUrl, streamActive)) {
+                            streamUrlFocusRequester.requestFocus()
+                            keyboardController?.show()
+                        }
+                        controller.toggleStream()
+                    }
                     .padding(vertical = 16.dp),
                 contentAlignment = Alignment.Center
             ) {
@@ -230,6 +241,7 @@ fun StreamScreen(controller: MentraExampleController) {
                     textStyle = androidx.compose.ui.text.TextStyle(color = AppColor.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium),
                     modifier = Modifier
                         .weight(1f)
+                        .focusRequester(streamUrlFocusRequester)
                         .onFocusChanged { focusState ->
                             streamUrlFocused = focusState.isFocused
                         },
@@ -255,6 +267,9 @@ fun StreamScreen(controller: MentraExampleController) {
         Spacer(Modifier.height(if (streamUrlFocused) maxOf(scrollBottomPadding(), 340.dp) else scrollBottomPadding()))
     }
 }
+
+private fun shouldFocusStreamUrlTemplate(streamUrl: String, streamActive: Boolean): Boolean =
+    !streamActive && streamUrl.contains("<computer-ip>")
 
 private data class StreamPreviewTarget(
     val kind: StreamPreviewKind,
