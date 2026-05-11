@@ -134,8 +134,8 @@
 #define TAP_TOUCH_TIME_1                         0x01 // 300ms 设置点击手势的触摸时间;set the touch time for tap gestures
 #define TAP_WAIT_TIME_0                          0xF4
 #define TAP_WAIT_TIME_1                          0x01 // 500ms 设置点击手势的等待时间;set the wait time for tap gestures
-#define TAP_DISTANCE_0                           0x8C
-#define TAP_DISTANCE_1                           0x00 // 140 设置点击手势的距离阈值;set the distance threshold for tap gestures
+#define TAP_DISTANCE_0                           0x78
+#define TAP_DISTANCE_1                           0x00 // 120 设置点击手势的距离阈值;set the distance threshold for tap gestures
 #define HOLD_TIME_0                              0xE0
 #define HOLD_TIME_1                              0x2E // 12000ms 设置长按住时间;set the hold time
 #define SWIPE_TIME_0                             0xF4
