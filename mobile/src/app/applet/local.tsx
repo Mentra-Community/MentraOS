@@ -147,7 +147,7 @@ export default function LocalMiniAppPage() {
   // The actual WebView + CapsuleMenu render inside MiniappHost at app root so
   // they survive navigation. This route is just a hook for setForeground /
   // setBackground as the user navigates in/out.
-  return <View style={{flex: 1, backgroundColor: "transparent"}} pointerEvents="box-none" />
+  return <View style={{flex: 1, backgroundColor: "transparent"}} pointerEvents="none" />
 }
 
 /**

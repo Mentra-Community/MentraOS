@@ -21,9 +21,6 @@
 
 import CoreModule from "@mentra/bluetooth-sdk"
 
-import displayProcessor from "@/services/DisplayProcessor"
-import {useDisplayStore} from "@/stores/display"
-import {BgTimer as BackgroundTimer} from "@/utils/timers"
 import displayProcessor from "./DisplayProcessor"
 import {getRuntimeHooks} from "../runtime/config"
 import {BgTimer} from "../utils/timers"

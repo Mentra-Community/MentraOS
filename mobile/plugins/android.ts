@@ -6,7 +6,7 @@ import {
   ConfigPlugin,
   withAppBuildGradle,
   withProjectBuildGradle,
-  // withSettingsGradle,
+  withSettingsGradle,
   withGradleProperties,
   withAndroidManifest,
 } from "@expo/config-plugins"
@@ -22,7 +22,7 @@ const withAndroidWorkingConfig: ConfigPlugin = (config) => {
   config = withAndroidManifestModifications(config)
   config = withXmlResourceFiles(config)
   config = withGradlePropertiesModifications(config)
-  // config = withSettingsGradleModifications(config)
+  config = withSettingsGradleModifications(config)
 
   return config
 }
@@ -550,23 +550,28 @@ function withGradlePropertiesModifications(config: any) {
 }
 
 /**
- * Modify settings.gradle to include lc3Lib module
+ * Modify settings.gradle to include lc3Lib module.
+ *
+ * The native LC3 codec lives inside `modules/bluetooth-sdk/android/lc3Lib`
+ * (it moved from the legacy `core` module during the bluetooth-sdk refactor).
+ * The bluetooth-sdk's build.gradle references `implementation project(':lc3Lib')`,
+ * so we have to register that gradle subproject pointing at the right path —
+ * Expo prebuild doesn't generate this on its own.
  */
-// function withSettingsGradleModifications(config: any) {
-//   return withSettingsGradle(config, config => {
-//     let settingsGradle = config.modResults.contents
+function withSettingsGradleModifications(config: any) {
+  return withSettingsGradle(config, config => {
+    let settingsGradle = config.modResults.contents
 
-//     // Add lc3Lib module if not present
-//     if (!settingsGradle.includes("include ':lc3Lib'")) {
-//       settingsGradle += `
-// include ':lc3Lib'
-// project(':lc3Lib').projectDir = new File(rootDir, '../modules/bluetooth-sdk/android/lc3Lib')
-// `
-//     }
+    if (!settingsGradle.includes("include ':lc3Lib'")) {
+      settingsGradle += `
+include ':lc3Lib'
+project(':lc3Lib').projectDir = new File(rootDir, '../modules/bluetooth-sdk/android/lc3Lib')
+`
+    }
 
-//     config.modResults.contents = settingsGradle
-//     return config
-//   })
-// }
+    config.modResults.contents = settingsGradle
+    return config
+  })
+}
 
 export default withAndroidWorkingConfig

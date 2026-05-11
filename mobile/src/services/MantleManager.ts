@@ -6,7 +6,9 @@ import * as TaskManager from "expo-task-manager"
 import {shallow} from "zustand/shallow"
 
 import audioPlaybackService from "@/services/AudioPlaybackService"
+import headingService from "@/services/HeadingService"
 import miniSockets from "@/services/MiniSockets"
+import navigationService from "@/services/NavigationService"
 import {requestMiniappSdkPhoto} from "@/services/miniapp/MiniappSdkPhotoHandler"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {migrate} from "@/services/Migrations"
@@ -161,6 +163,27 @@ class MantleManager {
       },
       setDisplayEvent: (event) => useDisplayStore.getState().setDisplayEvent(event),
       requestMiniappSdkPhoto: (params) => requestMiniappSdkPhoto(params),
+      // Google Nav SDK adapter — the island runtime fan-outs nav events to
+      // miniapps subscribed to navigation_*. Delegates straight to the host's
+      // singleton NavigationService.
+      navigation: {
+        getState: () => navigationService.getState(),
+        getSnapshot: () => navigationService.getSnapshot(),
+        addListener: (l) => navigationService.addListener(l),
+        addLocationListener: (l) => navigationService.addLocationListener(l),
+        addRouteListener: (l) => navigationService.addRouteListener(l),
+        start: (coords, options) => navigationService.start(coords, options),
+        stop: () => navigationService.stop(),
+        simulateDeviation: (offsetMeters) => navigationService.simulateDeviation(offsetMeters),
+        requestPermission: () => navigationService.requestPermission(),
+        computeRoute: (payload) => navigationService.computeRoute(payload),
+      },
+      heading: {
+        addListener: (l) => headingService.addListener(l),
+      },
+      locationTier: {
+        setLocationTier: (rate) => this.setLocationTier(rate),
+      },
     })
 
     // Register the offline-app catalog with island's AppRegistry before

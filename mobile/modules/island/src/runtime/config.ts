@@ -88,12 +88,134 @@ export const ISLAND_SETTINGS_KEYS = {
   cameraFov: "camera_fov",
 } as const
 
+/**
+ * Navigation event payloads. Mirror the host's `NavigationService` types
+ * but are duplicated here so the island module doesn't import host types.
+ */
+export type NavManeuverEvent = {
+  kind: "maneuver"
+  maneuverType: string
+  distanceMeters: number
+  fromRoad?: string | null
+  toRoad?: string | null
+  nextStepRoad?: string | null
+  distanceToDestinationMeters?: number
+  timeToDestinationSeconds?: number
+  currentSpeedMps?: number | null
+  speedLimitMps?: number | null
+  routeHeadingDeg?: number | null
+}
+export type NavOffRouteEvent = {kind: "off_route"; offRouteDistanceMeters: number}
+export type NavReroutingEvent = {kind: "rerouting"}
+export type NavArrivedEvent = {kind: "arrived"}
+export type NavErrorEvent = {kind: "error"; message: string}
+export type NavUpdate =
+  | NavManeuverEvent
+  | NavOffRouteEvent
+  | NavReroutingEvent
+  | NavArrivedEvent
+  | NavErrorEvent
+
+export type NavLocation = {
+  lat: number
+  lng: number
+  accuracy: number | null
+  timestamp: number
+}
+
+export type NavRouteStep = {
+  lat: number
+  lng: number
+  routeIndex: number
+  road: string | null
+  maneuver: string
+  distanceMeters: number
+}
+export type NavRoute = {
+  points: Array<{lat: number; lng: number}>
+  steps?: NavRouteStep[]
+}
+
+export type NavTripSnapshot = {
+  active: boolean
+  mode?: string
+  stops?: Array<{lat: number; lng: number}>
+  currentStopIndex?: number
+  route?: NavRoute
+  maneuver?: NavManeuverEvent
+  distanceToDestinationMeters?: number
+  timeToDestinationSeconds?: number
+  currentSpeedMps?: number | null
+  speedLimitMps?: number | null
+}
+
+/**
+ * Navigation adapter — surface of the host's NavigationService that the
+ * runtime needs to wire `navigation_*` streams + request handlers for
+ * miniapps.
+ */
+export interface NavigationAdapter {
+  getState: () => "idle" | "navigating" | "rerouting" | "arrived"
+  getSnapshot: () => NavTripSnapshot | null
+  addListener: (l: (u: NavUpdate) => void) => () => void
+  addLocationListener: (l: (loc: NavLocation) => void) => () => void
+  addRouteListener: (l: (route: NavRoute) => void) => () => void
+  start: (
+    coords: {lat: number; lng: number},
+    options?: {
+      simulate?: boolean
+      speedMultiplier?: number
+      stops?: Array<{lat: number; lng: number}>
+      mode?: string
+      avoid?: {highways?: boolean; tolls?: boolean; ferries?: boolean}
+    },
+  ) => Promise<{ok: boolean; error?: string}>
+  stop: () => Promise<{ok: boolean; error?: string}>
+  simulateDeviation: (offsetMeters?: number) => Promise<{ok: boolean; error?: string}>
+  requestPermission: () => Promise<{ok: boolean; accepted: boolean; error?: string}>
+  computeRoute: (payload: Record<string, unknown>) => Promise<{
+    ok: boolean
+    error?: string
+    routes?: Array<{
+      points: Array<{lat: number; lng: number}>
+      totalDistanceMeters: number
+      totalDurationSeconds: number
+      summary?: string
+      steps?: NavRouteStep[]
+    }>
+  }>
+}
+
+/**
+ * Heading adapter — compass / device heading subscription. The host's
+ * HeadingService wraps native sensor output; the runtime only needs the
+ * subscribe-and-unsubscribe surface.
+ */
+export interface HeadingAdapter {
+  addListener: (l: (degrees: number) => void) => () => void
+}
+
+/**
+ * Location-tier control. Used by the runtime to request a higher GPS
+ * sample rate while a miniapp is subscribed to `location_update`.
+ * Implemented by the host's MantleManager (or equivalent).
+ */
+export interface LocationTierAdapter {
+  setLocationTier: (rate: "off" | "passive" | "low" | "high" | "realtime") => void
+}
+
 export interface RuntimeHooks {
   socketComms?: SocketCommsAdapter
   audioPlayback?: AudioPlaybackAdapter
   /** Returns the connected glasses' status snapshot. */
   glassesStatus?: StoreAccessor<GlassesSnapshot>
   settings?: SettingsAccessor
+  /** Google Navigation SDK adapter (turn-by-turn + computeRoute). */
+  navigation?: NavigationAdapter
+  /** Device heading / compass adapter. */
+  heading?: HeadingAdapter
+  /** Location-tier escalation (e.g. realtime GPS when a trip is active). */
+  locationTier?: LocationTierAdapter
   /**
    * STT model availability check used by LocalSttFallbackCoordinator before
    * starting the on-device transcriber.

@@ -3,23 +3,6 @@
   "configVersion": 1,
   "workspaces": {
     "": {},
-    "Navigation": {
-      "name": "navigation-miniapp",
-      "version": "1.0.5",
-      "dependencies": {
-        "@mentra/miniapp": "workspace:*",
-        "liquid-glass-react": "^1.1.1",
-        "lucide-react": "^0.511.0",
-        "motion": "^12.38.0",
-        "react": "^19.0.0",
-        "react-dom": "^19.0.0",
-      },
-      "devDependencies": {
-        "@mentra/miniapp-cli": "workspace:*",
-        "bun-plugin-tailwind": "^0.1.2",
-        "tailwindcss": "^4.2.4",
-      },
-    },
     "../mobile/modules/miniapp": {
       "name": "@mentra/miniapp",
       "version": "0.3.0",
@@ -38,6 +21,23 @@
       "optionalPeers": [
         "react",
       ],
+    },
+    "Navigation": {
+      "name": "navigation-miniapp",
+      "version": "1.0.5",
+      "dependencies": {
+        "@mentra/miniapp": "workspace:*",
+        "liquid-glass-react": "^1.1.1",
+        "lucide-react": "^0.511.0",
+        "motion": "^12.38.0",
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0",
+      },
+      "devDependencies": {
+        "@mentra/miniapp-cli": "workspace:*",
+        "bun-plugin-tailwind": "^0.1.2",
+        "tailwindcss": "^4.2.4",
+      },
     },
     "create-mentra-miniapp": {
       "name": "create-mentra-miniapp",
