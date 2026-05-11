@@ -12,7 +12,7 @@ The Mentra Bluetooth SDK exposes the same core glasses lifecycle across Android,
 
 | Platform | Install package | Import |
 | --- | --- | --- |
-| Android | `com.mentra:bluetooth-sdk` | `import com.mentra.core.*` |
+| Android | `com.mentra:bluetooth-sdk` | `import com.mentra.bluetoothsdk.*` |
 | iOS | `MentraBluetoothSDK` CocoaPod | `import MentraBluetoothSDK` |
 | React Native / Expo | `@mentra/bluetooth-sdk` | `import BluetoothSdk from '@mentra/bluetooth-sdk'` |
 
@@ -56,12 +56,12 @@ const removeGlasses = BluetoothSdk.onGlassesStatus((changed) => {
   setGlassesStatus((current) => ({...current, ...changed}));
 });
 
-const removeCore = BluetoothSdk.onCoreStatus((status) => {
+const removeBluetooth = BluetoothSdk.onBluetoothStatus((status) => {
   console.log(status);
 });
 
 removeGlasses();
-removeCore();
+removeBluetooth();
 ```
 
 Keep one SDK instance per active app session. The SDK owns Bluetooth connection state, native event delivery, and cleanup. Your app owns user identity, UI state, and whether a default device record is persisted across app restarts.
@@ -174,7 +174,7 @@ React Native:
 
 ```ts
 const glasses = await BluetoothSdk.getGlassesStatus();
-const core = await BluetoothSdk.getCoreStatus();
+const bluetooth = await BluetoothSdk.getBluetoothStatus();
 ```
 
 Status snapshots are safe to read at any time. Treat command success as "command accepted"; keep UI state derived from status callbacks.
