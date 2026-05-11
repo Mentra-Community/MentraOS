@@ -133,7 +133,7 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
               <Text style={styles.btnTextDark}>Clear Default</Text>
             </Pressable>
             <Pressable disabled={!connected} onPress={sdk.disconnect} style={[styles.btnHalf, !connected && styles.disabled]}>
-              <LinearGradient colors={['#FF6B5B', '#FF3B30']} style={[styles.btn, { borderRadius: 18 }]}>
+              <LinearGradient colors={['#DE3A30', '#C43B30']} style={[styles.btn, { borderRadius: 18 }]}>
                 <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
                   <Path d="M9 17H5a3 3 0 0 1 0-6h2" /><Path d="M17 7h2a3 3 0 0 1 3 3" /><Line x1={2} y1={2} x2={22} y2={22} />
                 </Svg>

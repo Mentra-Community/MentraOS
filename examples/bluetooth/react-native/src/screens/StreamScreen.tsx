@@ -82,7 +82,7 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
         </View>
 
         <Pressable disabled={!connected && !streamActive} onPress={handleStreamPress}>
-          <LinearGradient colors={streamActive ? ['#FF6B5B', '#FF3B30'] : ['#26473A', '#1F3A2A']} style={[styles.endBtn, !connected && !streamActive && styles.disabled]}>
+          <LinearGradient colors={streamActive ? ['#DE3A30', '#C43B30'] : ['#26473A', '#1F3A2A']} style={[styles.endBtn, !connected && !streamActive && styles.disabled]}>
             <View style={styles.stopSquare} />
             <Text style={styles.endText}>
               {!connected && !streamActive ? 'Connect glasses first' : streamActive ? 'End stream' : 'Start stream'}

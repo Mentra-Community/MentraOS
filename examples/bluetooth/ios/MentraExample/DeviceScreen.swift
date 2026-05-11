@@ -138,7 +138,7 @@ struct DeviceScreen: View {
                             Text(disconnecting ? "Disconnecting" : "Disconnect").foregroundColor(.white).font(.system(size: 13, weight: .semibold))
                         }
                         .frame(maxWidth: .infinity).padding(.vertical, 14)
-                        .background(LinearGradient(colors: [Color(hex: 0xFF6B5B), AppColor.red], startPoint: .top, endPoint: .bottom))
+                        .background(LinearGradient(colors: [Color(hex: 0xDE3A30), Color(hex: 0xC43B30)], startPoint: .top, endPoint: .bottom))
                         .clipShape(RoundedRectangle(cornerRadius: 18))
                     }
                     .disabled(!connected || disconnecting)

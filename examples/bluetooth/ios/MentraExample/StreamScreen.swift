@@ -77,7 +77,7 @@ struct StreamScreen: View {
                     Text(!model.glassesConnected && !streamActive ? "Connect glasses first" : streamActive ? "End stream" : "Start stream").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity).padding(.vertical, 16)
-                .background(LinearGradient(colors: streamActive ? [Color(hex: 0xFF6B5B), AppColor.red] : [Color(hex: 0x26473A), Color(hex: 0x1F3A2A)], startPoint: .top, endPoint: .bottom))
+                .background(LinearGradient(colors: streamActive ? [Color(hex: 0xDE3A30), Color(hex: 0xC43B30)] : [Color(hex: 0x26473A), Color(hex: 0x1F3A2A)], startPoint: .top, endPoint: .bottom))
                 .clipShape(RoundedRectangle(cornerRadius: 18))
             }
             .disabled(!model.glassesConnected && !streamActive)

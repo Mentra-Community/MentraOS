@@ -150,7 +150,7 @@ fun StreamScreen(controller: MentraExampleController) {
             Box(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp)
                     .clip(RoundedCornerShape(18.dp))
-                    .background(Brush.verticalGradient(if (streamActive) listOf(Color(0xFFFF6B5B), AppColor.red) else listOf(Color(0xFF26473A), Color(0xFF1F3A2A))))
+                    .background(Brush.verticalGradient(if (streamActive) listOf(Color(0xFFDE3A30), Color(0xFFC43B30)) else listOf(Color(0xFF26473A), Color(0xFF1F3A2A))))
                     .clickable(enabled = connected || streamActive) {
                         if (shouldFocusStreamUrlTemplate(state.streamUrl, streamActive)) {
                             streamUrlFocusRequester.requestFocus()

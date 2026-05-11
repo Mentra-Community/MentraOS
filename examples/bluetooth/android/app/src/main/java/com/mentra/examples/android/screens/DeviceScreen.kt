@@ -145,8 +145,8 @@ fun DeviceScreen(controller: MentraExampleController) {
                             .background(
                                 Brush.verticalGradient(
                                     listOf(
-                                        Color(0xFFFF6B5B).copy(alpha = if (connected) 1f else 0.45f),
-                                        AppColor.red.copy(alpha = if (connected) 1f else 0.45f),
+                                        Color(0xFFDE3A30).copy(alpha = if (connected) 1f else 0.45f),
+                                        Color(0xFFC43B30).copy(alpha = if (connected) 1f else 0.45f),
                                     )
                                 )
                             )
