@@ -89,7 +89,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private let micSampleRate = 16000
     private let micChannelCount = 1
     private let micBitsPerSample = 16
-    private let sdk = MentraBluetoothSDK()
+    private let mentraBluetoothSdk = MentraBluetoothSDK()
     private var activePhotoRequestId: String?
     private var activeStreamId: String?
     private var pollGeneration = 0
@@ -121,14 +121,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     override init() {
         super.init()
-        sdk.delegate = self
+        mentraBluetoothSdk.delegate = self
         if let savedDevice = loadPersistedDefaultDevice() {
-            sdk.setDefaultDevice(savedDevice)
+            mentraBluetoothSdk.setDefaultDevice(savedDevice)
         }
-        glassesValues = sdk.glassesStatus.values
+        glassesValues = mentraBluetoothSdk.glassesStatus.values
         hotspotEnabled = boolValue(glassesValues, "hotspotEnabled") ?? false
         refreshGalleryServerStatusForCurrentHotspot(defaultStatus: "Gallery server: enable hotspot to check")
-        applyBluetoothStatus(sdk.bluetoothStatus.values)
+        applyBluetoothStatus(mentraBluetoothSdk.bluetoothStatus.values)
         if let value = ProcessInfo.processInfo.environment["MENTRA_PHOTO_WEBHOOK_URL"] {
             webhookUrl = value
         }
@@ -143,23 +143,23 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     deinit {
         previewHealthTask?.cancel()
         micElapsedTask?.cancel()
-        Task { @MainActor [sdk] in sdk.invalidate() }
+        Task { @MainActor [mentraBluetoothSdk] in mentraBluetoothSdk.invalidate() }
     }
 
     func startScan() {
         runAction("Scan") {
             discoveredDevices.removeAll()
             selectedDiscoveredDevice = nil
-            sdk.startScan(model: .mentraLive)
+            mentraBluetoothSdk.startScan(model: .mentraLive)
         }
     }
 
     func connect() {
         runAction("Connect") {
             if let device = selectedDiscoveredDevice ?? discoveredDevices.first {
-                sdk.connect(to: device)
+                mentraBluetoothSdk.connect(to: device)
             } else if hasSavedConnectionTarget(bluetoothValues) {
-                sdk.connectDefault()
+                mentraBluetoothSdk.connectDefault()
             } else {
                 throw ExampleActionError(message: "Scan first to choose nearby glasses.")
             }
@@ -174,7 +174,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func connect(_ device: MentraDiscoveredDevice) {
         selectedDiscoveredDevice = device
         runAction("Connect \(device.name)") {
-            sdk.connect(to: device)
+            mentraBluetoothSdk.connect(to: device)
         }
     }
 
@@ -190,7 +190,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         Task { @MainActor [weak self] in
             await Task.yield()
             guard let self else { return }
-            self.sdk.disconnect()
+            self.mentraBluetoothSdk.disconnect()
             self.lastAction = "Requested: \(label)"
             self.activeAction = nil
         }
@@ -198,7 +198,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func clearDefaultDevice() {
         runAction("Clear default") {
-            sdk.clearDefaultDevice()
+            mentraBluetoothSdk.clearDefaultDevice()
             bluetoothValues.merge(defaultDeviceStatus(nil)) { _, new in new }
             selectedDiscoveredDevice = nil
         }
@@ -208,7 +208,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         runAction("Display Hello") {
             try requireDisplaySupport("display text")
             Task {
-                try? await sdk.displayText(MentraDisplayTextRequest(text: "Hello from Mentra Bluetooth SDK"))
+                try? await mentraBluetoothSdk.displayText(MentraDisplayTextRequest(text: "Hello from Mentra Bluetooth SDK"))
             }
         }
     }
@@ -216,7 +216,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func clearDisplay() {
         runAction("Clear Display") {
             try requireDisplaySupport("clear the display")
-            Task { try? await sdk.clearDisplay() }
+            Task { try? await mentraBluetoothSdk.clearDisplay() }
         }
     }
 
@@ -224,7 +224,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         runAction(enabled ? "Save in gallery mode" : "Report button events") {
             try requireConnected("change gallery mode")
             galleryModeAuto = enabled
-            Task { try? await sdk.setGalleryMode(enabled ? .auto : .manual) }
+            Task { try? await mentraBluetoothSdk.setGalleryMode(enabled ? .auto : .manual) }
         }
     }
 
@@ -259,7 +259,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             let generation = pollGeneration
             photoPreviewUrl = nil
             cameraStatus = "Camera: webhook upload requested (\(requestId))"
-            sdk.requestPhoto(
+            mentraBluetoothSdk.requestPhoto(
                 MentraPhotoRequest(
                     requestId: requestId,
                     appId: "com.mentra.examples.ios",
@@ -322,7 +322,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 stopKeepAlive()
                 stopPreviewHealthPoll()
                 if glassesConnected {
-                    sdk.stopStream()
+                    mentraBluetoothSdk.stopStream()
                 }
                 activeStreamId = nil
                 streamRequested = false
@@ -372,7 +372,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     private func startStream(streamUrl: String, streamId: String, protocol selectedProtocol: ExampleStreamProtocol) {
-        sdk.startStream(
+        mentraBluetoothSdk.startStream(
             MentraStreamRequest(
                 streamUrl: streamUrl,
                 streamId: streamId,
@@ -446,7 +446,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func requestWifiScan() {
         runAction("Scan Wi-Fi") {
             try requireConnected("scan Wi-Fi")
-            sdk.requestWifiScan()
+            mentraBluetoothSdk.requestWifiScan()
         }
     }
 
@@ -456,7 +456,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             if requiresPassword, password.isEmpty {
                 throw ExampleActionError(message: "Enter the Wi-Fi password before connecting to \(ssid).")
             }
-            sdk.sendWifiCredentials(ssid: ssid, password: requiresPassword ? password : "")
+            mentraBluetoothSdk.sendWifiCredentials(ssid: ssid, password: requiresPassword ? password : "")
         }
     }
 
@@ -469,7 +469,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             else {
                 throw ExampleActionError(message: "No connected Wi-Fi network to forget.")
             }
-            sdk.forgetWifiNetwork(ssid: ssid)
+            mentraBluetoothSdk.forgetWifiNetwork(ssid: ssid)
         }
     }
 
@@ -478,7 +478,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             try requireConnected("toggle hotspot")
             let current = boolValue(glassesValues, "hotspotEnabled") ?? hotspotEnabled
             let next = !current
-            sdk.setHotspotState(enabled: next)
+            mentraBluetoothSdk.setHotspotState(enabled: next)
         }
     }
 
@@ -581,7 +581,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func sendRgbLedRequest(mode: String, color: String) {
         let request = rgbLedRequest(for: mode, color: color)
-        sdk.rgbLedControl(
+        mentraBluetoothSdk.rgbLedControl(
             MentraRgbLedRequest(
                 requestId: "rgb-\(Int(Date().timeIntervalSince1970 * 1000))",
                 packageName: "com.mentra.examples.ios",
@@ -703,7 +703,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private func autoConnectDefaultOnStartup() {
         guard !glassesConnected, hasSavedConnectionTarget(bluetoothValues) else { return }
         runAction("Auto-connect default") {
-            sdk.connectDefault()
+            mentraBluetoothSdk.connectDefault()
         }
     }
 
@@ -862,14 +862,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         pcmBytes = 0
         micElapsedSeconds = 0
         micStartedAt = Date()
-        sdk.setMicState(MentraMicConfiguration(sendPcmData: true, sendTranscript: false, bypassVad: true))
+        mentraBluetoothSdk.setMicState(MentraMicConfiguration(sendPcmData: true, sendTranscript: false, bypassVad: true))
         micRecording = true
         startMicElapsedTimer()
     }
 
     private func stopMicRecording() {
         if glassesConnected {
-            sdk.setMicState(MentraMicConfiguration(sendPcmData: false, sendTranscript: false, bypassVad: true))
+            mentraBluetoothSdk.setMicState(MentraMicConfiguration(sendPcmData: false, sendTranscript: false, bypassVad: true))
         }
         micRecording = false
         stopMicElapsedTimer()
@@ -919,7 +919,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             micPlayer = player
             micPlaying = true
             micPlaybackHint = nil
-            sdk.setOwnAppAudioPlaying(true)
+            mentraBluetoothSdk.setOwnAppAudioPlaying(true)
             if !player.play() {
                 stopMicPlayback()
                 throw ExampleActionError(message: "Could not start mic playback.")
@@ -937,7 +937,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         micPlayer?.stop()
         micPlayer = nil
         if micPlaying {
-            sdk.setOwnAppAudioPlaying(false)
+            mentraBluetoothSdk.setOwnAppAudioPlaying(false)
         }
         micPlaying = false
         if wasPlaying {
@@ -1153,7 +1153,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 15_000_000_000)
                 guard let self else { return }
-                self.sdk.keepStreamAlive(
+                self.mentraBluetoothSdk.keepStreamAlive(
                     MentraStreamKeepAliveRequest(
                         streamId: streamId,
                         ackId: "ack-\(Int(Date().timeIntervalSince1970 * 1000))"

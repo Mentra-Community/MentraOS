@@ -155,7 +155,6 @@ fun CameraScreen(controller: MentraExampleController) {
                     Text(state.cameraStatus, color = AppColor.ink, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     Text(if (state.photoPreviewUrl != null) "Preview loaded from local webhook" else "Waiting for capture", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
                 }
-                Text("View →", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
             }
         }
 

@@ -67,7 +67,7 @@ import kotlinx.coroutines.delay
 private val barHeights = listOf(18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40)
 private val streamSdkCall = """
 val streamId = "android-${'$'}{System.currentTimeMillis()}"
-sdk.startStream(
+mentraBluetoothSdk.startStream(
   MentraStreamRequest(
     streamUrl = streamUrl,
     streamId = streamId,
@@ -208,7 +208,6 @@ fun StreamScreen(controller: MentraExampleController) {
                     Text(state.streamStatus, color = AppColor.ink, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     Text("uptime $uptime · keep-alive 15s", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
                 }
-                Text("Stats →", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
             }
         }
 

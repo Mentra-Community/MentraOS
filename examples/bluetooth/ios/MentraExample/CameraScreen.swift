@@ -7,7 +7,7 @@ private let photoCompressionOptions: [MentraPhotoCompression] = [.none, .medium,
 
 private func cameraSdkCall(size: String, compression: String, flash: Bool) -> String {
     """
-sdk.requestPhoto(
+mentraBluetoothSdk.requestPhoto(
     MentraPhotoRequest(
       requestId: requestId,
       appId: "com.mentra.examples.ios",
@@ -144,8 +144,6 @@ struct CameraScreen: View {
                     Text(model.cameraStatus).font(.system(size: 11, weight: .semibold)).foregroundColor(AppColor.ink)
                     Text(model.photoPreviewUrl == nil ? "Waiting for capture" : "Preview loaded from local webhook").font(.system(size: 10, weight: .medium)).foregroundColor(AppColor.muted)
                 }
-                Spacer()
-                Text("View →").font(.system(size: 10, weight: .semibold)).foregroundColor(AppColor.muted)
             }
             .padding(.vertical, 12).padding(.horizontal, 16)
             .background(LinearGradient(colors: [Color.white.opacity(0.7), Color.white.opacity(0.5)], startPoint: .top, endPoint: .bottom))

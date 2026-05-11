@@ -159,7 +159,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()
     private val defaultDevicePrefs =
         appContext.getSharedPreferences("mentra_example_default_device", Context.MODE_PRIVATE)
-    private val sdk = MentraBluetoothSdk.create(appContext, this)
+    private val mentraBluetoothSdk = MentraBluetoothSdk.create(appContext, this)
     private val controllerJob = Job()
     private val scope = CoroutineScope(Dispatchers.Main + controllerJob)
     private var activePhotoRequestId: String? = null
@@ -234,9 +234,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     init {
         val savedDefaultDevice = loadPersistedDefaultDevice()
-        savedDefaultDevice?.let { sdk.setDefaultDevice(it) }
-        val initialGlassesStatus = sdk.getGlassesStatus().values
-        val initialBluetoothStatus = sdk.getBluetoothStatus().values
+        savedDefaultDevice?.let { mentraBluetoothSdk.setDefaultDevice(it) }
+        val initialGlassesStatus = mentraBluetoothSdk.getGlassesStatus().values
+        val initialBluetoothStatus = mentraBluetoothSdk.getBluetoothStatus().values
         state = state.copy(
             glassesStatus = initialGlassesStatus,
             bluetoothStatus = initialBluetoothStatus,
@@ -253,14 +253,14 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     fun startScan() = runAction("Scan") {
         state = state.copy(discoveredDevices = emptyList(), selectedDiscoveredDevice = null)
-        sdk.startScan(MentraDeviceModel.MENTRA_LIVE)
+        mentraBluetoothSdk.startScan(MentraDeviceModel.MENTRA_LIVE)
     }
 
     fun connect() = runAction("Connect") {
         val target = state.selectedDiscoveredDevice
         when {
-            target != null -> sdk.connect(target)
-            state.discoveredDevices.isEmpty() && hasSavedConnectionTarget(state.bluetoothStatus) -> sdk.connectDefault()
+            target != null -> mentraBluetoothSdk.connect(target)
+            state.discoveredDevices.isEmpty() && hasSavedConnectionTarget(state.bluetoothStatus) -> mentraBluetoothSdk.connectDefault()
             state.discoveredDevices.isNotEmpty() -> throw IllegalStateException("Choose one of the discovered glasses first.")
             else -> throw IllegalStateException("Scan first to choose nearby glasses.")
         }
@@ -268,7 +268,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     fun connect(device: MentraDiscoveredDevice) = runAction("Connect ${device.name}") {
         state = state.copy(selectedDiscoveredDevice = device)
-        sdk.connect(device)
+        mentraBluetoothSdk.connect(device)
     }
 
     fun selectDiscoveredDevice(device: MentraDiscoveredDevice) {
@@ -281,12 +281,12 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     fun disconnect() = runAction("Disconnect") {
         stopKeepAlive()
         stopPreviewHealthPoll()
-        sdk.disconnect()
+        mentraBluetoothSdk.disconnect()
         applyDisconnectedState("Disconnected")
     }
 
     fun clearDefaultDevice() = runAction("Clear default") {
-        sdk.clearDefaultDevice()
+        mentraBluetoothSdk.clearDefaultDevice()
         state = state.copy(
             bluetoothStatus = state.bluetoothStatus + defaultDeviceStatus(null),
             selectedDiscoveredDevice = null,
@@ -295,17 +295,17 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     fun displayHello() = runAction("Display Hello") {
         requireConnected("display text")
-        sdk.displayText(com.mentra.core.MentraDisplayTextRequest("Hello from Mentra Bluetooth SDK"))
+        mentraBluetoothSdk.displayText(com.mentra.core.MentraDisplayTextRequest("Hello from Mentra Bluetooth SDK"))
     }
 
     fun clearDisplay() = runAction("Clear Display") {
         requireConnected("clear the display")
-        sdk.clearDisplay()
+        mentraBluetoothSdk.clearDisplay()
     }
 
     fun setGalleryModeAuto(enabled: Boolean) = runAction(if (enabled) "Save in gallery mode" else "Report button events") {
         requireConnected("change gallery mode")
-        sdk.setGalleryMode(if (enabled) MentraGalleryMode.AUTO else MentraGalleryMode.MANUAL)
+        mentraBluetoothSdk.setGalleryMode(if (enabled) MentraGalleryMode.AUTO else MentraGalleryMode.MANUAL)
         state = state.copy(galleryModeAuto = enabled)
     }
 
@@ -346,7 +346,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             cameraStatus = "Camera: webhook upload requested ($requestId)",
             photoPreviewUrl = null,
         )
-        sdk.requestPhoto(
+        mentraBluetoothSdk.requestPhoto(
             MentraPhotoRequest(
                 requestId = requestId,
                 appId = "com.mentra.examples.android",
@@ -421,7 +421,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             stopKeepAlive()
             stopPreviewHealthPoll()
             if (isGlassesConnected()) {
-                sdk.stopStream()
+                mentraBluetoothSdk.stopStream()
             }
             state = state.copy(streamRequested = false, streamPreviewReady = false, streamStartedAt = null, streamStatus = "Stopped")
             return@runAction
@@ -457,7 +457,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     private fun startStream(streamUrl: String, streamId: String, protocol: String) {
-        sdk.startStream(
+        mentraBluetoothSdk.startStream(
             MentraStreamRequest(
                 streamUrl = streamUrl,
                 streamId = streamId,
@@ -540,7 +540,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     fun requestWifiScan() = runAction("Scan Wi-Fi") {
         requireConnected("scan Wi-Fi")
-        sdk.requestWifiScan()
+        mentraBluetoothSdk.requestWifiScan()
     }
 
     fun sendWifiCredentials(ssid: String, password: String, requiresPassword: Boolean) = runAction("Connect Wi-Fi $ssid") {
@@ -548,7 +548,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (requiresPassword && password.isBlank()) {
             throw IllegalArgumentException("Enter the Wi-Fi password before connecting to $ssid.")
         }
-        sdk.sendWifiCredentials(ssid, if (requiresPassword) password else "")
+        mentraBluetoothSdk.sendWifiCredentials(ssid, if (requiresPassword) password else "")
         state = state.copy(wifiPendingSsid = ssid)
     }
 
@@ -558,14 +558,14 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (ssid.isNullOrBlank() || boolValue(state.glassesStatus, "wifiConnected") != true) {
             throw IllegalStateException("No connected Wi-Fi network to forget.")
         }
-        sdk.forgetWifiNetwork(ssid)
+        mentraBluetoothSdk.forgetWifiNetwork(ssid)
     }
 
     fun toggleHotspot() = runAction(if (state.hotspotEnabled) "Disable hotspot" else "Enable hotspot") {
         requireConnected("toggle hotspot")
         val current = boolValue(state.glassesStatus, "hotspotEnabled") ?: state.hotspotEnabled
         val next = !current
-        sdk.setHotspotState(next)
+        mentraBluetoothSdk.setHotspotState(next)
     }
 
     fun openGalleryServer() = runAction("Open gallery server") {
@@ -638,7 +638,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     private fun sendRgbLedRequest(mode: String, color: String) {
         val request = rgbLedRequestFor(mode, color)
-        sdk.rgbLedControl(
+        mentraBluetoothSdk.rgbLedControl(
             MentraRgbLedRequest(
                 requestId = "rgb-${System.currentTimeMillis()}",
                 packageName = "com.mentra.examples.android",
@@ -842,7 +842,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         state = state.copy(glassesVolumeStatus = "Glasses volume: setting $nextLevel...")
         scope.launch {
             try {
-                val result = withContext(Dispatchers.IO) { sdk.setGlassesMediaVolume(nextLevel) }
+                val result = withContext(Dispatchers.IO) { mentraBluetoothSdk.setGlassesMediaVolume(nextLevel) }
                 state = state.copy(
                     glassesMediaVolume = nextLevel,
                     glassesVolumeStatus = "Glasses volume: $nextLevel / 15",
@@ -871,7 +871,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
         scope.launch {
             try {
-                val result = withContext(Dispatchers.IO) { sdk.getGlassesMediaVolume() }
+                val result = withContext(Dispatchers.IO) { mentraBluetoothSdk.getGlassesMediaVolume() }
                 val volume = result.volume
                 state = state.copy(
                     glassesMediaVolume = volume,
@@ -902,7 +902,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         unregisterAudioStateObservers()
         volumeRefreshJob?.cancel()
         controllerJob.cancel()
-        sdk.close()
+        mentraBluetoothSdk.close()
     }
 
     private fun adjustGlassesMediaVolume(delta: Int) {
@@ -989,7 +989,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 return@launch
             }
             runAction("Auto-connect default") {
-                sdk.connectDefault()
+                mentraBluetoothSdk.connectDefault()
             }
         }
     }
@@ -1146,7 +1146,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         keepAliveJob = scope.launch {
             while (isActive) {
                 delay(15_000)
-                sdk.keepStreamAlive(
+                mentraBluetoothSdk.keepStreamAlive(
                     MentraStreamKeepAliveRequest(
                         streamId = streamId,
                         ackId = "ack-${System.currentTimeMillis()}",
@@ -1177,13 +1177,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             lastMicDurationSeconds = null,
             micPlaybackHint = null,
         )
-        sdk.setMicState(MentraMicConfig(sendPcmData = true, sendTranscript = false, bypassVad = true))
+        mentraBluetoothSdk.setMicState(MentraMicConfig(sendPcmData = true, sendTranscript = false, bypassVad = true))
         startMicElapsedTimer()
     }
 
     private fun stopMicRecording() {
         if (isGlassesConnected()) {
-            sdk.setMicState(MentraMicConfig(sendPcmData = false, sendTranscript = false, bypassVad = true))
+            mentraBluetoothSdk.setMicState(MentraMicConfig(sendPcmData = false, sendTranscript = false, bypassVad = true))
         }
         stopMicElapsedTimer()
         val pcm = micPcmBuffer.toByteArray()
@@ -1241,7 +1241,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 start()
             }
             micPlayer = player
-            sdk.setOwnAppAudioPlaying(true)
+            mentraBluetoothSdk.setOwnAppAudioPlaying(true)
             val routedDevice = player.routedDevice
             val actualRoute = routedDevice?.let(::audioOutputLabel) ?: audioRoute
             if (routedDevice != null && !isBluetoothAudioOutput(routedDevice)) {
@@ -1268,7 +1268,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
         micPlayer = null
         if (state.micPlaying) {
-            sdk.setOwnAppAudioPlaying(false)
+            mentraBluetoothSdk.setOwnAppAudioPlaying(false)
         }
         state = state.copy(micPlaying = false)
     }
@@ -1524,7 +1524,7 @@ fun cameraSdkCall(
     compression: String,
     flash: Boolean,
 ): String = """
-sdk.requestPhoto(
+mentraBluetoothSdk.requestPhoto(
     MentraPhotoRequest(
       requestId = requestId,
       appId = "com.mentra.examples.android",
