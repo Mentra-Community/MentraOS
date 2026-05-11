@@ -2,10 +2,10 @@
 
 ASG Client streams the camera feed to a remote server in real time. Three protocols are supported and selected automatically by URL prefix:
 
-| Prefix | Protocol | Service class |
-|--------|----------|---------------|
-| `rtmp://` / `rtmps://` | RTMP | `RtmpStreamingService` |
-| `srt://` | SRT | `SrtStreamingService` |
+| Prefix                 | Protocol      | Service class          |
+| ---------------------- | ------------- | ---------------------- |
+| `rtmp://` / `rtmps://` | RTMP          | `RtmpStreamingService` |
+| `srt://`               | SRT           | `SrtStreamingService`  |
 | `https://` / `http://` | WHIP (WebRTC) | `WhipStreamingService` |
 
 Source: `app/src/main/java/com/mentra/asg_client/io/streaming/services/`. Phone-side dispatch goes through `StreamCommandHandler`.
@@ -77,22 +77,22 @@ If no stream is active, the response is `error_not_streaming`.
 
 ## Network expectations
 
-| | Minimum | Recommended |
-|---|---------|-------------|
-| Upload bandwidth | 1 Mbps | 2-3 Mbps |
-| Latency | < 200 ms RTT | < 100 ms RTT |
-| Stability | reconnects within ~30 s tolerated | sustained connection |
+|                  | Minimum                           | Recommended          |
+| ---------------- | --------------------------------- | -------------------- |
+| Upload bandwidth | 1 Mbps                            | 2-3 Mbps             |
+| Latency          | < 200 ms RTT                      | < 100 ms RTT         |
+| Stability        | reconnects within ~30 s tolerated | sustained connection |
 
 ## Logcat tags
 
-| Tag | What |
-|-----|------|
-| `StreamCommandHandler` | Command dispatch, protocol detection |
-| `RtmpStreamingService` | RTMP lifecycle, reconnect |
-| `SrtStreamingService` | SRT lifecycle |
-| `WhipStreamingService` | WHIP lifecycle |
-| `WhipCameraFormatSelector` | WHIP resolution validation |
-| `MediaManager` | Status callback dispatch over BLE |
+| Tag                        | What                                 |
+| -------------------------- | ------------------------------------ |
+| `StreamCommandHandler`     | Command dispatch, protocol detection |
+| `RtmpStreamingService`     | RTMP lifecycle, reconnect            |
+| `SrtStreamingService`      | SRT lifecycle                        |
+| `WhipStreamingService`     | WHIP lifecycle                       |
+| `WhipCameraFormatSelector` | WHIP resolution validation           |
+| `MediaManager`             | Status callback dispatch over BLE    |
 
 Useful filters:
 

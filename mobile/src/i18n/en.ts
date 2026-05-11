@@ -231,6 +231,7 @@ const en = {
     liveEndOnboardingMessage: "Are you sure you want to skip the onboarding tutorials?",
     g1Connected: "Even Realities G1 connected",
     g2Connected: "Even Realities G2 connected",
+    r1Connected: "Even Realities R1 connected",
     osWelcomeTitle: "Welcome to Mentra",
     osWelcomeSubtitle: "Learn how to use apps on your glasses",
     osEndTitle: "You're all set",
@@ -262,6 +263,9 @@ const en = {
     btClassicStep4: 'Return to the app once it says "Connected"',
     btClassicTitle: "Pair Audio",
     btClassicSubtitle: "Connect {{name}} as a Bluetooth audio device",
+    unpairEvenTitle: "Unpair Glasses from Even App",
+    unpairEvenSubtitle: "To use Mentra, forget your glasses in Bluetooth settings. Unpair them, then try again.",
+    unpairEvenTryAgain: "Try Again",
     showDevicePicker: "Show device picker",
     openSettings: "Open settings",
     stepCounter: "Step {{index}} / {{total}}",
@@ -308,6 +312,8 @@ const en = {
     checkFailed: "Check Failed",
     checkFailedMessage: "Unable to check for updates. You can try again later from Settings.",
     startingUpdate: "Starting Update",
+    /** Legacy multi-step OTA: shown while reconnecting / advancing past the first sequence step (not first launch). */
+    preparingNextUpdate: "Preparing next update…",
     downloading: "Downloading Update",
     installing: "Installing Update",
     doNotDisconnect: "Please keep your glasses connected and do not close the app.",
@@ -364,14 +370,13 @@ const en = {
     hardwareIncompatible: "Hardware Incompatible",
     hardwareIncompatibleMessage:
       "{{app}} requires hardware that is not available on your connected glasses: {{missing}}",
+    hardwareIncompatibleSingleMessage:
+      "This mini app is incompatible with your {{wearable}} because it requires a {{missing}}.",
+    requiredFeatures: "required features",
+    yourGlasses: "your glasses",
     glassesRequired: "Glasses Required",
     glassesRequiredMessage: "Connect your glasses to use {{app}}.",
-    incompatibleApps: "Incompatible Apps",
-    incompatibleAppsCount: "{{count}} Incompatible Apps",
     activeAppsCount: "{{count}} Apps active",
-    incompatibleAppsDescription:
-      "The following apps require specific hardware that is currently not available on your connected glasses.",
-    incompatible: "Incompatible",
     noAppsInstalled: "No apps installed",
     swipeToView: "Swipe to view {{target}}",
     backgroundApps: "Background Apps",
@@ -567,6 +572,7 @@ const en = {
     noBackground: "None",
     chooseFromLibrary: "Choose from Library",
     androidBlur: "Blur effects",
+    androidInnerShadow: "Inner shadow",
   },
   devSettings: {
     debugConsole: "Debug Console",
@@ -814,6 +820,8 @@ const en = {
     pairingBatteryTooLow:
       "The battery on your {{glassesModel}} is too low to pair. Please charge your {{glassesModel}} to at least 25% and try again.",
     invalidEmail: "Invalid email address.",
+    pairNeedDisconnect:
+      "Pairing failed. Please make sure to disconnect your glasses in your phone's Bluetooth settings before trying again.",
   },
   common: {
     ok: "OK",
@@ -988,8 +996,8 @@ const en = {
   },
   appInfo: {
     share: "Share",
-    addToHome: "Add to home",
-    removeFromHome: "Remove from home",
+    addToHome: "Add to Home",
+    removeFromHome: "Remove from Home",
     open: "Open",
     start: "Start miniapp",
     stop: "Stop miniapp",
@@ -1021,6 +1029,16 @@ const en = {
     superModeDeactivated: "Super mode deactivated",
     versionInfo: "Version info",
     versionInfoCopied: "Version info copied to clipboard",
+  },
+  hardwareTypes: {
+    camera: "camera",
+    display: "display",
+    microphone: "microphone",
+    speaker: "speaker",
+    imu: "motion sensor",
+    button: "button",
+    light: "light",
+    wifi: "Wi-Fi",
   },
 }
 

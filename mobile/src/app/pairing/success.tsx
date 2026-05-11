@@ -1,22 +1,23 @@
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {ControllerTypes, DeviceTypes} from "@/../../cloud/packages/types/src"
 import {Platform} from "react-native"
 import {useRoute} from "@react-navigation/native"
 
 import {Screen} from "@/components/ignite"
-import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {waitForGlassesState} from "@/stores/glasses"
+import {useNavigationStore} from "@/stores/navigation"
 import {getGlassesImage} from "@/utils/getGlassesImage"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {translate} from "@/i18n"
 import {useEffect, useState} from "react"
 
 export default function PairingSuccessScreen() {
-  const {clearHistoryAndGoHome, pushUnder} = useNavigationHistory()
+  const {clearHistoryAndGoHome, push} = useNavigationStore.getState()
+  const pushUnder = usePushUnder()
   const route = useRoute()
   const {deviceModel: routeDeviceModel} = (route.params as {deviceModel?: string}) || {}
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const {push} = useNavigationHistory()
   const [onboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
   const [buttonText, setButtonText] = useState<string>(translate("common:continue"))
   const [stack, setStack] = useState<string[]>([])
@@ -166,6 +167,18 @@ export default function PairingSuccessScreen() {
           transition: false,
           title: translate("common:success"),
           subtitle: translate("onboarding:g1Connected"),
+        },
+      ]
+      break
+    case ControllerTypes.R1:
+      steps = [
+        {
+          name: "Start Onboarding",
+          type: "image",
+          source: glassesImage,
+          transition: false,
+          title: translate("common:success"),
+          subtitle: translate("onboarding:r1Connected"),
         },
       ]
       break

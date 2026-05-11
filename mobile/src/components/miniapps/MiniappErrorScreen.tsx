@@ -5,7 +5,7 @@ import AppIcon from "@/components/home/AppIcon"
 import {Button, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import restComms from "@/services/RestComms"
-import {useAppletStatusStore} from "@/stores/applets"
+import {useAppStatusStore} from "@mentra/island"
 
 interface MiniappErrorScreenProps {
   packageName: string
@@ -24,7 +24,7 @@ export default function MiniappErrorScreen({packageName, appName, message, onRet
   const {theme} = useAppTheme()
   const [developerInfo, setDeveloperInfo] = useState<DeveloperInfo | null>(null)
 
-  const app = useAppletStatusStore.getState().apps.find((a) => a.packageName === packageName)
+  const app = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)
 
   useEffect(() => {
     const fetchDeveloperInfo = async () => {

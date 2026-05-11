@@ -31,8 +31,14 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
     private static byte[] sCurrentFirmwareVersion = null; // Store current firmware version bytes
 
     // Wakelock timeout for BES OTA to prevent CPU sleep during firmware transfer
-    private static final long WAKELOCK_TIMEOUT_MS = 120000; // 120 seconds
+    private static final long WAKELOCK_TIMEOUT_MS = 300000; // 5 minutes
+    private static final long BES_TOTAL_TIMEOUT_MS = 300000; // 5 minutes total operation timeout
+    private static final long BES_AUTH_TIMEOUT_MS = 30000; // 30 seconds authorization timeout
     private Context mContext;
+
+    private long operationStartTime = 0;
+    private android.os.Handler authTimeoutHandler;
+    private Runnable authTimeoutRunnable;
 
     private String filePath;
     private boolean bInit = false;
@@ -195,8 +201,8 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
         }
         Log.d(TAG, "✅ File exists, size: " + f.length() + " bytes");
         try {
+            fileLen = (int) f.length();
             FileInputStream inputStream = new FileInputStream(filePath);
-            fileLen = inputStream.available();
             Log.d(TAG, "📥 Loading firmware into memory, size=" + fileLen + " bytes");
             fileData = new byte[fileLen];
             int bytesRead = inputStream.read(fileData, 0, fileLen);
@@ -252,11 +258,23 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
         // Emit started event (for internal state management, not sent to phone)
         EventBus.getDefault().post(BesOtaProgressEvent.createStarted(fileLen));
         
+        operationStartTime = android.os.SystemClock.elapsedRealtime();
+
         // STEP 1: Request authorization from BES chip via K900CommandHandler
         Log.i(TAG, "Requesting BES OTA authorization from BES chip");
         
         if (sK900CommandHandler != null) {
             sK900CommandHandler.sendBesOtaAuthorizationRequest();
+            // Start authorization timeout — if BES chip never responds, fail gracefully
+            authTimeoutHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+            authTimeoutRunnable = () -> {
+                if (isWaitingForAuthorization) {
+                    Log.e(TAG, "BES OTA authorization timeout after " + BES_AUTH_TIMEOUT_MS + "ms");
+                    EventBus.getDefault().post(BesOtaProgressEvent.createFailed("BES chip did not respond to authorization request"));
+                    cleanup();
+                }
+            };
+            authTimeoutHandler.postDelayed(authTimeoutRunnable, BES_AUTH_TIMEOUT_MS);
             return true;
         } else {
             Log.e(TAG, "❌ K900CommandHandler not available - cannot send authorization request");
@@ -270,6 +288,15 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
      * Cleanup and reset state
      */
     private void cleanup() {
+        // Cancel authorization timeout if pending
+        if (authTimeoutHandler != null && authTimeoutRunnable != null) {
+            authTimeoutHandler.removeCallbacks(authTimeoutRunnable);
+            authTimeoutHandler = null;
+            authTimeoutRunnable = null;
+        }
+
+        operationStartTime = 0;
+
         // Release wakelock
         WakeLockManager.releaseCpuWakeLock();
         Log.i(TAG, "BES OTA wakelock released");
@@ -299,6 +326,13 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
         Log.i(TAG, "BES OTA authorization GRANTED - starting protocol");
         isWaitingForAuthorization = false;
         
+        // Cancel authorization timeout
+        if (authTimeoutHandler != null && authTimeoutRunnable != null) {
+            authTimeoutHandler.removeCallbacks(authTimeoutRunnable);
+            authTimeoutHandler = null;
+            authTimeoutRunnable = null;
+        }
+        
         // NOW enable OTA mode (routes UART to OTA listener)
         if (comManager != null) {
             comManager.setOtaUpdating(true);
@@ -322,6 +356,11 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
      */
     public void onAuthorizationDenied() {
         Log.e(TAG, "BES OTA authorization DENIED by BES chip");
+        if (authTimeoutHandler != null && authTimeoutRunnable != null) {
+            authTimeoutHandler.removeCallbacks(authTimeoutRunnable);
+            authTimeoutHandler = null;
+            authTimeoutRunnable = null;
+        }
         EventBus.getDefault().post(BesOtaProgressEvent.createFailed("BES chip denied OTA authorization"));
         cleanup();
     }
@@ -598,6 +637,16 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
     private void dealOtaRecvCmd(BesOtaMessage msg) {
         if (msg == null) return;
 
+        // Total operation timeout guard
+        if (operationStartTime > 0 &&
+            android.os.SystemClock.elapsedRealtime() - operationStartTime > BES_TOTAL_TIMEOUT_MS) {
+            Log.e(TAG, "BES firmware update timeout — chip may be unresponsive (elapsed: " +
+                  (android.os.SystemClock.elapsedRealtime() - operationStartTime) + "ms)");
+            EventBus.getDefault().post(BesOtaProgressEvent.createFailed("BES firmware update timeout — chip may be unresponsive"));
+            cleanup();
+            return;
+        }
+
         // Only log non-data-ack commands to reduce spam (0x8B = data ack, very frequent)
         if (msg.cmd != BesProtocolConstants.RCMD_SEND_DATA) {
             Log.d(TAG, "dealOtaRecvCmd: cmd=0x" + String.format("%02X", msg.cmd & 0xFF) + ", len=" + msg.len);
@@ -688,7 +737,7 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
                 
                 // Note: BES install progress is sent to phone via sr_adota from BES chip directly
                 // We don't post PROGRESS events here because UART is busy and can't send to phone anyway
-                // The phone converts sr_adota messages to ota_progress for display
+                // Phone (MentraLive) maps sr_adota → ota_status for the app UI
                 Log.d(TAG, "BES install progress: " + percent + "% (" + sent + "/" + getTotalLength() + " bytes)");
                 
                 crc32ConfirmSuccess();
@@ -713,6 +762,7 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
             } else {
                 Log.e(TAG, "Segment verify error");
                 EventBus.getDefault().post(BesOtaProgressEvent.createFailed("Segment verification failed"));
+                cleanup();
             }
         }
         else if (msg.cmd == BesProtocolConstants.RCMD_SEND_FINISH) {
@@ -766,6 +816,8 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
             addSentSize(payloadSize);
         } else {
             Log.e(TAG, "❌ Failed to send file data packet at sentPos=" + sentPos);
+            EventBus.getDefault().post(BesOtaProgressEvent.createFailed("Failed to send firmware data"));
+            cleanup();
         }
     }
 

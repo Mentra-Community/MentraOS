@@ -21,6 +21,11 @@ COPY packages/sdk/package.json packages/sdk/tsconfig.json ./packages/sdk/
 COPY packages/utils/package.json packages/utils/tsconfig.json ./packages/utils/
 COPY packages/cloud/package.json packages/cloud/tsconfig.json ./packages/cloud/
 
+# Bun's patchedDependencies (cloud/package.json) requires the patch file to
+# exist at install time — without it, `bun install` errors with
+# "could not find patch file".
+COPY patches ./patches
+
 # Install dependencies only (skip prepare scripts that build SDK)
 # SDK will be built at runtime after volume mount
 RUN bun install --no-link --ignore-scripts

@@ -1,18 +1,16 @@
 import {useEffect, useState, useCallback, useRef} from "react"
-import {View, StyleSheet, Alert, Platform} from "react-native"
+import {View, Alert, Platform} from "react-native"
 import {useSafeAreaInsets} from "react-native-safe-area-context"
 import {WebView, WebViewMessageEvent} from "react-native-webview"
 
 import LeftEdgeBackSwipe from "@/components/miniapp/LeftEdgeBackSwipe"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
-import {MiniAppCapsuleMenu} from "@/components/miniapps/CapsuleMenu"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import devServerBridge from "@/services/DevServerBridge"
-import localDisplayManager from "@/services/LocalDisplayManager"
-import localMiniappRuntime from "@/services/LocalMiniappRuntime"
-import miniComms from "@/services/MiniComms"
-import {miniappRunningRegistry} from "@/services/miniapp/MiniappRunningRegistry"
-import {buildMiniappGlobalsScript} from "@/utils/miniappGlobals"
+import {useStressTestStore} from "@/stores/stressTest"
+import {devServerBridge} from "@mentra/island"
+import {localDisplayManager} from "@mentra/island"
+import {localMiniappRuntime} from "@mentra/island"
+import {webviewBridge as miniComms, miniappRunningRegistry, buildMiniappGlobalsScript} from "@mentra/island"
 
 const BEFORE_EVICT_TIMEOUT_MS = 500
 
@@ -55,7 +53,7 @@ type MiniappMountOptions = {
    * the declared permissions, so we have to register the manifest with
    * the runtime before the bundle does its first SUBSCRIBE. Dev mounts
    * fetch this from the live server inside mountDev; installed mounts
-   * pass it in here (the route loads it via composer.getMiniappManifest).
+   * pass it in here (the route loads it via appRegistry.getMiniappManifest).
    */
   manifest?: MountDevManifest
 }
@@ -455,7 +453,13 @@ export default function MiniappHost() {
 
   const handleTerminate = useCallback(
     async (packageName: string) => {
-      if (__DEV__) {
+      // Always record — stress test reads this even outside __DEV__
+      useStressTestStore.getState().recordEvent({
+        packageName,
+        at: Date.now(),
+        kind: "terminate",
+      })
+      if (__DEV__ && !useStressTestStore.getState().active) {
         Alert.alert(
           "Miniapp Terminated",
           `"${packageName}" was killed by the OS (out of memory). It has been unregistered.`,
@@ -470,7 +474,12 @@ export default function MiniappHost() {
 
   const handleError = useCallback(
     async (packageName: string) => {
-      if (__DEV__) {
+      useStressTestStore.getState().recordEvent({
+        packageName,
+        at: Date.now(),
+        kind: "error",
+      })
+      if (__DEV__ && !useStressTestStore.getState().active) {
         Alert.alert("Miniapp Error", `"${packageName}" encountered a fatal error and has been unregistered.`)
       }
       await sendBeforeEvict(packageName)
@@ -518,7 +527,9 @@ export default function MiniappHost() {
   )
 
   return (
-    <View style={styles.container} pointerEvents="box-none">
+    // MiniappHost sits above the Stack so the foregrounded WebView covers the
+    // current route. z-[9999]/elevation keep us on top of native nav layers.
+    <View className="absolute inset-0 z-10" pointerEvents="box-none">
       {entries.map((app) => {
         const isFg = app.isForeground
 
@@ -553,7 +564,10 @@ export default function MiniappHost() {
         return (
           <View
             key={app.packageName}
-            style={isFg ? [styles.foreground, fgPadding] : styles.background}
+            // Off-screen holder for backgrounded WebViews — keeps them mounted
+            // without affecting layout or receiving touches.
+            className={isFg ? "flex-1 absolute inset-0" : "absolute -left-[10000px] -top-[10000px] w-px h-px opacity-0"}
+            style={isFg ? fgPadding : undefined}
             pointerEvents={isFg ? "auto" : "none"}>
             <WebView
               // Remount on every mount/mountDev (mountKey bumps) so a QR
@@ -609,20 +623,16 @@ export default function MiniappHost() {
               // builds so miniapp authors can debug their bundle. iOS 16.4+
               // and Android changed this to opt-in.
               webviewDebuggingEnabled={__DEV__}
-              style={styles.webview}
+              style={{flex: 1, backgroundColor: theme.colors.background}}
             />
-            {isFg && !app.isLoaded && <MiniappSplash iconUrl={app.iconUrl} bgColor={theme.colors.background} />}
-            {isFg && <LeftEdgeBackSwipe packageName={app.packageName} onBack={app.onBack} />}
             {isFg && (
-              <MiniAppCapsuleMenu
-                packageName={app.packageName}
-                viewShotRef={{current: null} as React.RefObject<View | null>}
-                onMinusPress={app.onClose}
-                onBackPress={app.onBack}
-                appNameOverride={app.appName}
-                iconUrlOverride={app.iconUrl}
+              <MiniappSplash
+                iconUrl={app.iconUrl}
+                bgColor={theme.colors.background}
+                isLoaded={app.isLoaded}
               />
             )}
+            {isFg && <LeftEdgeBackSwipe packageName={app.packageName} onBack={app.onBack} />}
           </View>
         )
       })}
@@ -630,33 +640,3 @@ export default function MiniappHost() {
   )
 }
 
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
-
-const styles = StyleSheet.create({
-  // MiniappHost sits above the Stack so the foregrounded WebView covers the
-  // current route. zIndex/elevation keep us on top of native nav layers.
-  container: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 9999,
-    elevation: 9999,
-  },
-  foreground: {
-    flex: 1,
-    ...StyleSheet.absoluteFillObject,
-  },
-  // Off-screen holder for backgrounded WebViews. 1×1 opaque-invisible rectangle
-  // keeps them mounted without affecting layout or receiving touches.
-  background: {
-    position: "absolute",
-    left: -10000,
-    top: -10000,
-    width: 1,
-    height: 1,
-    opacity: 0,
-  },
-  webview: {
-    flex: 1,
-  },
-})

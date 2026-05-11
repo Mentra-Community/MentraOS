@@ -526,7 +526,7 @@ public class AsgClientServiceManager {
     }
 
     public IBluetoothManager getBluetoothManager() {
-        Log.d(TAG, "📶 getBluetoothManager() called - returning: " + (bluetoothManager != null ? "valid" : "null"));
+        // Log.d(TAG, "📶 getBluetoothManager() called - returning: " + (bluetoothManager != null ? "valid" : "null"));
         return bluetoothManager;
     }
 

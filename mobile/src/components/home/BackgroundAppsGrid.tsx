@@ -3,15 +3,11 @@ import {FlatList, TextStyle, TouchableOpacity, View, ViewStyle} from "react-nati
 
 import {Text} from "@/components/ignite"
 import AppIcon from "@/components/home/AppIcon"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {
-  ClientAppletInterface,
-  DUMMY_APPLET,
-  storePackageName,
-  useBackgroundApps,
-  useStartApplet,
-} from "@/stores/applets"
+import {useNavigationStore} from "@/stores/navigation"
+import {DUMMY_APPLET, useBackgroundApps, useStart, type ClientApp} from "@mentra/island"
+
+import {storePackageName} from "@/constants/miniapps"
 import {ThemedStyle} from "@/theme"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
 
@@ -20,8 +16,8 @@ const GRID_COLUMNS = 4
 export const BackgroundAppsGrid = () => {
   const {themed, theme} = useAppTheme()
   const {inactive} = useBackgroundApps()
-  const startApplet = useStartApplet()
-  const {push} = useNavigationHistory()
+  const startApplet = useStart()
+  const {push} = useNavigationStore.getState()
 
   const gridData = useMemo(() => {
     // Filter out incompatible apps and running apps
@@ -50,7 +46,7 @@ export const BackgroundAppsGrid = () => {
     return inactiveApps
   }, [inactive])
 
-  const handlePress = async (app: ClientAppletInterface) => {
+  const handlePress = async (app: ClientApp) => {
     if (app.packageName === storePackageName) {
       push("/store")
       return
@@ -65,7 +61,7 @@ export const BackgroundAppsGrid = () => {
   }
 
   const renderItem = useCallback(
-    ({item}: {item: ClientAppletInterface}) => {
+    ({item}: {item: ClientApp}) => {
       // Don't render empty placeholders
       if (!item.name) {
         return <View style={themed($gridItem)} />

@@ -1,5 +1,5 @@
 import {useCallback, useEffect, useMemo, useState} from "react"
-import {TextInput, TouchableOpacity, View} from "react-native"
+import {Platform, TextInput, TouchableOpacity, View} from "react-native"
 import {Icon} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import BottomSheet, {BottomSheetBackdrop, BottomSheetScrollView} from "@gorhom/bottom-sheet"
@@ -13,6 +13,7 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
   const {theme} = useAppTheme()
 
   const [searchQuery, setSearchQuery] = useState("")
+  const [isOpen, setIsOpen] = useState(false)
 
   const snapPoints = useMemo(() => ["90%"], [])
 
@@ -40,8 +41,14 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
         ref={bottomSheetRef}
         snapPoints={snapPoints}
         animateOnMount={false}
+        onChange={(idx) => setIsOpen(idx >= 0)}
         backdropComponent={renderBackdrop}
-        backgroundComponent={(props: any) => <GlassView className="rounded-3xl -mx-px" {...props} />}
+        backgroundComponent={(props: any) => {
+          if (Platform.OS === "android") {
+            return <View className="rounded-3xl -mx-px bg-background" {...props} />
+          }
+          return <GlassView className="rounded-3xl -mx-px" {...props} />
+        }}
         enablePanDownToClose
         enableDynamicSizing={false}
         backgroundStyle={{backgroundColor: theme.colors.background}}
@@ -64,7 +71,7 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
         <BottomSheetScrollView>
           <View className="px-6">
             <View className="">
-              <View className="flex-row items-center rounded-2xl px-4 h-12 bg-primary-foreground/40">
+              <View className="flex-row items-center rounded-2xl px-4 h-12 bg-primary-foreground">
                 <Icon name="search" size={20} color={theme.colors.muted_foreground} />
                 <TextInput
                   placeholder={translate("home:search")}
@@ -84,16 +91,18 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
               {/* <View className="h-px bg-border my-4" /> */}
             </View>
             <View className="h-2" />
-            <AppsGrid
-              showAllApps={true}
-              searchQuery={searchQuery}
-              onOpenApp={() => {
-                bottomSheetRef.current?.close()
-              }}
-              onAddToHome={() => {
-                bottomSheetRef.current?.close()
-              }}
-            />
+            {isOpen && (
+              <AppsGrid
+                showAllApps={true}
+                searchQuery={searchQuery}
+                onOpenApp={() => {
+                  bottomSheetRef.current?.close()
+                }}
+                onAddToHome={() => {
+                  bottomSheetRef.current?.close()
+                }}
+              />
+            )}
           </View>
         </BottomSheetScrollView>
       </BottomSheet>

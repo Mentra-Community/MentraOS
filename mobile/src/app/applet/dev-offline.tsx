@@ -1,15 +1,15 @@
 import {Image} from "expo-image"
 import {useLocalSearchParams} from "expo-router"
 import {SquircleView} from "expo-squircle-view"
-import {StyleSheet, TextStyle, View, ViewStyle} from "react-native"
+import {View} from "react-native"
 
 import {Button, Header, Screen, Text} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {useAppTheme} from "@/contexts/ThemeContext"
-import {useApplets} from "@/stores/applets"
-import {ThemedStyle} from "@/theme"
-import {decideDevLaunchRoute} from "@/utils/devMiniappLaunch"
+import {useNavigationStore} from "@/stores/navigation"
+import {useApps} from "@mentra/island"
+import {decideDevLaunchRoute} from "@mentra/island"
 import {storage} from "@/utils/storage/storage"
+import {useRegisterCapsule} from "@/stores/capsule"
+import {useRef} from "react"
 
 /**
  * Shown when a dev miniapp is launched while the dev server is unreachable.
@@ -28,9 +28,15 @@ export default function DevMiniappOfflineScreen() {
     name?: string
     iconUrl?: string
   }>()
-  const {goBack, replace, push} = useNavigationHistory()
-  const {theme, themed} = useAppTheme()
-  const apps = useApplets()
+  const {goBack, replace, push} = useNavigationStore.getState()
+  const apps = useApps()
+  const viewShotRef = useRef<View>(null)
+
+  useRegisterCapsule({
+    packageName,
+    viewShotRef,
+    visibleOnRoutes: ["/applet/dev-offline"],
+  })
 
   // Fall back to the store entry's logoUrl/name if the route didn't carry
   // them. The store entry is populated by Composer.getLocalApplets from the
@@ -41,8 +47,7 @@ export default function DevMiniappOfflineScreen() {
 
   const lastReachable = packageName ? storage.load<number>(`${packageName}_dev_last_reachable`) : null
 
-  const lastReachableLabel =
-    lastReachable && lastReachable.is_ok() ? formatRelative(lastReachable.value) : "never"
+  const lastReachableLabel = lastReachable && lastReachable.is_ok() ? formatRelative(lastReachable.value) : "never"
 
   const onTryAgain = async () => {
     if (!packageName) return
@@ -74,17 +79,16 @@ export default function DevMiniappOfflineScreen() {
   const displayName = resolvedName ?? packageName ?? "Dev mini app"
 
   return (
-    <Screen preset="fixed">
-      <Header title={displayName} leftIcon="chevron-left" onLeftPress={() => goBack()} />
-      <View style={[styles.root, {backgroundColor: theme.colors.background}]}>
+    <Screen preset="fixed" ref={viewShotRef}>
+      <View className="flex-1 items-center justify-center px-8 bg-background">
         {resolvedIconUrl ? (
           <SquircleView
             cornerSmoothing={100}
             preserveSmoothing={true}
-            style={styles.icon}>
+            className="w-32 h-32 rounded-3xl overflow-hidden items-center justify-center mb-6">
             <Image
               source={resolvedIconUrl}
-              style={styles.iconImage}
+              style={{width: "100%", height: "100%"}}
               contentFit="cover"
               transition={200}
               cachePolicy="memory-disk"
@@ -92,11 +96,14 @@ export default function DevMiniappOfflineScreen() {
           </SquircleView>
         ) : null}
 
-        <Text style={themed($title)} text={displayName} />
-        <Text style={themed($subtitle)} text="Dev server offline" />
-        <Text style={themed($detail)} text={`Last reached: ${lastReachableLabel}`} />
+        <Text className="text-xl font-semibold text-foreground text-center" text={displayName} />
+        <Text className="text-base text-foreground text-center mt-2" text="Dev server offline" />
+        <Text
+          className="text-sm text-muted-foreground text-center mt-1 mb-6"
+          text={`Last reached: ${lastReachableLabel}`}
+        />
 
-        <View style={themed($buttonColumn)}>
+        <View className="w-full max-w-[320px] gap-3">
           <Button text="Try again" onPress={onTryAgain} preset="alternate" />
           <Button text="Re-scan QR" onPress={onRescan} preset="default" />
         </View>
@@ -116,55 +123,3 @@ function formatRelative(timestamp: number): string {
   const days = Math.floor(ms / 86_400_000)
   return `${days} day${days === 1 ? "" : "s"} ago`
 }
-
-const ICON_SIZE = 128
-
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 32,
-  },
-  icon: {
-    width: ICON_SIZE,
-    height: ICON_SIZE,
-    borderRadius: 24,
-    overflow: "hidden",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 24,
-  },
-  iconImage: {
-    width: "100%",
-    height: "100%",
-  },
-})
-
-const $title: ThemedStyle<TextStyle> = ({colors}) => ({
-  fontSize: 20,
-  fontWeight: "600",
-  color: colors.text,
-  textAlign: "center",
-})
-
-const $subtitle: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: 15,
-  color: colors.text,
-  textAlign: "center",
-  marginTop: spacing.s2,
-})
-
-const $detail: ThemedStyle<TextStyle> = ({colors, spacing}) => ({
-  fontSize: 13,
-  color: colors.textDim,
-  textAlign: "center",
-  marginTop: spacing.s1,
-  marginBottom: spacing.s6,
-})
-
-const $buttonColumn: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  width: "100%",
-  maxWidth: 320,
-  gap: spacing.s3,
-})

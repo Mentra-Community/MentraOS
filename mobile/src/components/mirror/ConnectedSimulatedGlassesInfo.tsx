@@ -3,8 +3,8 @@ import {Linking, TouchableOpacity, View, ViewStyle} from "react-native"
 
 import {Button, Icon, Text} from "@/components/ignite"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
@@ -14,14 +14,16 @@ export default function ConnectedSimulatedGlassesInfo({
   style,
   mirrorStyle,
   showHeader = true,
+  showConnectButton = true,
 }: {
   style?: ViewStyle
   mirrorStyle?: ViewStyle
   showHeader?: boolean
+  showConnectButton?: boolean
 }) {
   const {theme} = useAppTheme()
   const [permission, requestPermission] = useCameraPermissions()
-  const {push} = useNavigationHistory()
+  const {push} = useNavigationStore.getState()
 
   // Function to navigate to fullscreen mode
   const navigateToFullScreen = async () => {
@@ -71,25 +73,26 @@ export default function ConnectedSimulatedGlassesInfo({
   }
 
   return (
-    <GlassView className="bg-primary-foreground p-5" style={style}>
+    <GlassView className="bg-neutral-50 p-5" style={style}>
       {showHeader && (
         <View className="flex-row justify-between items-center mb-4">
           <Text className="font-semibold text-secondary-foreground text-lg" tx="onboarding:phoneMode" />
         </View>
       )}
-      <View>
-        <GlassesDisplayMirror fallbackMessage="Glasses mirror" style={mirrorStyle} />
-        {/* <TouchableOpacity style={{position: "absolute", bottom: 10, right: 10}} onPress={navigateToFullScreen}>
+      <GlassesDisplayMirror fallbackMessage="Glasses mirror" style={mirrorStyle} />
+      {/* <TouchableOpacity style={{position: "absolute", bottom: 10, right: 10}} onPress={navigateToFullScreen}>
           <Icon name="fullscreen" size={24} color={theme.colors.secondary_foreground} />
         </TouchableOpacity> */}
+      {showConnectButton && (
         <Button
           className="mt-3"
           flex={false}
           flexContainer={false}
           tx="home:connectGlasses"
           preset="primary"
-          onPress={() => push("/pairing/select-glasses-model")}></Button>
-      </View>
+          onPress={() => push("/pairing/select-glasses-model")}
+        />
+      )}
     </GlassView>
   )
 }

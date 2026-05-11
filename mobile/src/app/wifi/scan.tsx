@@ -1,4 +1,4 @@
-import CoreModule, {WifiSearchResult} from "core"
+import CoreModule, {WifiSearchResult} from "@mentra/bluetooth-sdk"
 import {useFocusEffect} from "expo-router"
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {ActivityIndicator, ScrollView, TouchableOpacity, View} from "react-native"
@@ -10,13 +10,14 @@ import {WifiUnlockedIcon} from "@/components/icons/WifiUnlockedIcon"
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import {Badge} from "@/components/ui/Badge"
 import {Group} from "@/components/ui"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {usePushPrevious} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {useGlassesStore} from "@/stores/glasses"
 import showAlert from "@/utils/AlertUtils"
 import WifiCredentialsService from "@/utils/wifi/WifiCredentialsService"
 import {translate} from "@/i18n"
-import {BgTimer} from "@/utils/timers"
+import {BgTimer} from "@mentra/island"
 import {useCoreStore} from "@/stores/core"
 
 export default function WifiScanScreen() {
@@ -30,9 +31,15 @@ export default function WifiScanScreen() {
   const receivedResultsForSessionRef = useRef<boolean>(false)
   const wifiSsid = useGlassesStore((state) => state.wifiSsid)
   const wifiConnected = useGlassesStore((state) => state.wifiConnected)
-  const {push, goBack, pushPrevious, getPreviousRoute, incPreventBack, decPreventBack, setAndroidBackFn} =
-    useNavigationHistory()
+  const {push, goBack, getPreviousRoute, incPreventBack, decPreventBack, setAndroidBackFn} =
+    useNavigationStore.getState()
+  const pushPrevious = usePushPrevious()
   const wifiScanResults: WifiSearchResult[] = useCoreStore((state) => state.wifiScanResults)
+
+  const refreshSavedNetworks = useCallback(() => {
+    const savedCredentials = WifiCredentialsService.getAllCredentials()
+    setSavedNetworks(savedCredentials.map((cred) => cred.ssid))
+  }, [])
 
   // if the previous route is in this list, or the second to last route is in this list
   // show / allow the back button:
@@ -53,6 +60,7 @@ export default function WifiScanScreen() {
   // only prevent back if the showBack flag is false:
   useFocusEffect(
     useCallback(() => {
+      refreshSavedNetworks()
       if (!showBack) {
         incPreventBack()
       }
@@ -65,14 +73,13 @@ export default function WifiScanScreen() {
       return () => {
         decPreventBack()
       }
-    }, [incPreventBack, decPreventBack, showBack]),
+    }, [incPreventBack, decPreventBack, showBack, refreshSavedNetworks]),
   )
 
   useEffect(() => {
-    const savedCredentials = WifiCredentialsService.getAllCredentials()
-    setSavedNetworks(savedCredentials.map((cred) => cred.ssid))
+    refreshSavedNetworks()
     startScan()
-  }, [])
+  }, [refreshSavedNetworks])
 
   useEffect(() => {
     const handleWifiScanResults = (scanResults: WifiSearchResult[]) => {
@@ -159,6 +166,7 @@ export default function WifiScanScreen() {
                 await CoreModule.forgetWifiNetwork(selectedNetwork.ssid)
                 // Also remove from local saved credentials
                 WifiCredentialsService.removeCredentials(selectedNetwork.ssid)
+                setSavedNetworks((prev) => prev.filter((ssid) => ssid !== selectedNetwork.ssid))
                 Toast.show({
                   type: "success",
                   text1: `Forgot "${selectedNetwork.ssid}"`,

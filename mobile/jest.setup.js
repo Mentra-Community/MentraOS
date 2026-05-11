@@ -68,6 +68,55 @@ jest.mock("react-native-nitro-bg-timer", () => ({
   },
 }))
 
+// Mock react-native-zip-archive — pulled in transitively by @mentra/island
+jest.mock("react-native-zip-archive", () => ({
+  unzip: jest.fn(() => Promise.resolve("")),
+  zip: jest.fn(() => Promise.resolve("")),
+  subscribe: jest.fn(() => ({remove: jest.fn()})),
+}))
+
+// Mock @mentra/island — its barrel pulls in many native modules
+// (react-native-share, expo-battery/clipboard/location, etc.). Tests that
+// only need a handful of exports get stubs here; specific tests can override.
+jest.mock("@mentra/island", () => ({
+  __esModule: true,
+  BgTimer: {
+    setInterval: jest.fn((callback, delay) => setInterval(callback, delay)),
+    clearInterval: jest.fn((id) => clearInterval(id)),
+    setTimeout: jest.fn((callback, delay) => setTimeout(callback, delay)),
+    clearTimeout: jest.fn((id) => clearTimeout(id)),
+  },
+  useApps: jest.fn(() => []),
+  useAppStatusStore: jest.fn(() => ({})),
+  useRefresh: jest.fn(() => ({refresh: jest.fn(), isRefreshing: false})),
+  useStopAll: jest.fn(() => jest.fn()),
+  sortAppsByLastOpenTime: jest.fn((apps) => apps),
+  decideDevLaunchRoute: jest.fn(),
+  buildMiniappGlobalsScript: jest.fn(() => ""),
+  appRegistry: {
+    subscribe: jest.fn(() => () => {}),
+    getApps: jest.fn(() => []),
+  },
+  webviewBridge: {
+    handleMessage: jest.fn(),
+  },
+  miniappRunningRegistry: {
+    isRunning: jest.fn(() => false),
+  },
+  devServerBridge: {},
+  displayProcessor: {},
+  localDisplayManager: {},
+  localMiniappRuntime: {},
+  localSttFallbackCoordinator: {},
+  micStateCoordinator: {},
+  configureRuntime: jest.fn(),
+  getRuntimeHooks: jest.fn(() => ({})),
+  ISLAND_SETTINGS_KEYS: {},
+  normalizeManifestPermissions: jest.fn(),
+  buildHardwareRequirements: jest.fn(() => []),
+  saveLocalAppRunningState: jest.fn(),
+}))
+
 // Mock SocketComms to avoid complex dependency chains
 jest.mock("@/services/SocketComms", () => ({
   default: {
@@ -107,11 +156,39 @@ jest.mock("@/services/WebSocketManager", () => {
 })
 
 // Mock core native module to avoid native bridge errors
-jest.mock("core", () => ({
-  default: {
-    getBluetoothStatus: jest.fn(() => Promise.resolve("disabled")),
+jest.mock("@mentra/bluetooth-sdk", () => {
+  const CoreModuleMock = {
+    getCoreStatus: jest.fn(() => Promise.resolve("disabled")),
     requestBluetoothPermissions: jest.fn(() => Promise.resolve(true)),
-    // Add other methods as needed
+    onGlassesStatus: jest.fn(() => () => {}),
+    restartTranscriber: jest.fn(() => Promise.resolve()),
+    displayEvent: jest.fn(),
+    rgbLedControl: jest.fn(),
+    update: jest.fn(),
+    addListener: jest.fn(() => ({remove: jest.fn()})),
+  }
+  return {
+    __esModule: true,
+    default: CoreModuleMock,
+    GlassesStatus: {},
+  }
+})
+
+// Mock crust native module to avoid native bridge errors
+jest.mock("crust", () => ({
+  default: {
+    addListener: jest.fn(() => ({remove: jest.fn()})),
+    showAVRoutePicker: jest.fn(),
+    setNotificationConfig: jest.fn(() => Promise.resolve()),
+    getInstalledApps: jest.fn(() => Promise.resolve([])),
+    getInstalledAppsForNotifications: jest.fn(() => Promise.resolve([])),
+    hasNotificationListenerPermission: jest.fn(() => Promise.resolve(false)),
+    openNotificationListenerSettings: jest.fn(() => Promise.resolve(false)),
+    isBetaBuild: jest.fn(() => Promise.resolve(false)),
+    processGalleryImage: jest.fn(() => Promise.resolve({success: true})),
+    mergeHdrBrackets: jest.fn(() => Promise.resolve({success: true})),
+    stabilizeVideo: jest.fn(() => Promise.resolve({success: true})),
+    saveToGalleryWithDate: jest.fn(() => Promise.resolve({success: true})),
   },
 }))
 

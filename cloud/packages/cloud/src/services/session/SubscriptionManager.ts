@@ -11,6 +11,13 @@ import {
 
 import App from "../../models/app.model";
 import { appCache } from "../core/app-cache.service";
+import {
+  cascadeDiagnostics,
+  createPhaseTimer,
+  hashUserId,
+  logSlowSubscriptionUpdate,
+  PhaseTimer,
+} from "../metrics/cascade-diagnostics";
 import { SimplePermissionChecker } from "../permissions/simple-permission-checker";
 
 import { AppSession, LocationRate } from "./AppSession";
@@ -231,8 +238,11 @@ export class SubscriptionManager {
       return;
     }
 
+    const phaseTimer = createPhaseTimer();
     // Get or create AppSession for this app
-    const appSession = this.userSession.appManager.getOrCreateAppSession(packageName);
+    const appSession = phaseTimer.measureSync("getOrCreateAppSession", () =>
+      this.userSession.appManager.getOrCreateAppSession(packageName),
+    );
 
     // If AppManager is disposed, we can't update subscriptions
     if (!appSession) {
@@ -243,9 +253,24 @@ export class SubscriptionManager {
     // Serialize subscription updates per-app to prevent race conditions.
     // Multiple updates can arrive rapidly during startup and would otherwise
     // process concurrently, causing the wrong final state. See Issue 008.
-    await appSession.enqueue(async () => {
-      await this.processSubscriptionUpdate(appSession, packageName, subscriptions);
-    });
+    try {
+      await phaseTimer.measure("appSessionQueue", () =>
+        appSession.enqueue(async () => {
+          await this.processSubscriptionUpdate(appSession, packageName, subscriptions, phaseTimer);
+        }),
+      );
+    } finally {
+      const durationMs = phaseTimer.durationMs;
+      cascadeDiagnostics.addTimer("subscription_update", durationMs);
+      cascadeDiagnostics.increment("subscription_update_count");
+      logSlowSubscriptionUpdate({
+        packageName,
+        userIdHash: hashUserId(this.userSession.userId),
+        subscriptionCount: subscriptions.length,
+        durationMs,
+        phaseTimings: phaseTimer.timings,
+      });
+    }
   }
 
   /**
@@ -256,68 +281,76 @@ export class SubscriptionManager {
     appSession: AppSession,
     packageName: string,
     subscriptions: SubscriptionRequest[],
+    phaseTimer?: PhaseTimer,
   ): Promise<void> {
+    const timer = phaseTimer ?? createPhaseTimer();
     // Process incoming subscriptions array (strings and special location objects)
     const streamSubscriptions: ExtendedStreamType[] = [];
     let locationRate: LocationRate | null = null;
 
-    for (const sub of subscriptions) {
-      if (
-        typeof sub === "object" &&
-        sub !== null &&
-        "stream" in sub &&
-        (sub as any).stream === StreamType.LOCATION_STREAM
-      ) {
-        locationRate = (sub as any).rate || null;
-        streamSubscriptions.push(StreamType.LOCATION_STREAM);
-      } else if (typeof sub === "string") {
-        streamSubscriptions.push(sub as ExtendedStreamType);
+    timer.measureSync("parseSubscriptions", () => {
+      for (const sub of subscriptions) {
+        if (
+          typeof sub === "object" &&
+          sub !== null &&
+          "stream" in sub &&
+          (sub as any).stream === StreamType.LOCATION_STREAM
+        ) {
+          locationRate = (sub as any).rate || null;
+          streamSubscriptions.push(StreamType.LOCATION_STREAM);
+        } else if (typeof sub === "string") {
+          streamSubscriptions.push(sub as ExtendedStreamType);
+        }
       }
-    }
+    });
 
     // Convert bare TRANSCRIPTION to language-specific stream
-    const processed: ExtendedStreamType[] = streamSubscriptions.map((sub) =>
-      sub === StreamType.TRANSCRIPTION ? createTranscriptionStream("en-US") : sub,
+    const processed: ExtendedStreamType[] = timer.measureSync("normalizeSubscriptions", () =>
+      streamSubscriptions.map((sub) => (sub === StreamType.TRANSCRIPTION ? createTranscriptionStream("en-US") : sub)),
     );
 
     // Validate permissions (best-effort)
     let allowedProcessed: ExtendedStreamType[] = processed;
-    try {
-      const app = appCache.getByPackageName(packageName) || (await App.findOne({ packageName }).lean());
-      if (app) {
-        const { allowed, rejected } = SimplePermissionChecker.filterSubscriptions(app, processed);
-        if (rejected.length > 0) {
-          // Log at error level — a rejected subscription is a data-loss event.
-          // Include the app's actual permissions so we can diagnose *why* it was
-          // rejected without needing to query the DB separately. (Fix 044-1)
-          this.logger.error(
-            {
-              userId: this.userSession.userId,
-              packageName,
-              rejectedCount: rejected.length,
-              rejected,
-              appPermissions: app.permissions?.map((p: { type: string }) => p.type) ?? [],
-              requestedSubscriptions: processed,
-            },
-            "Rejected subscriptions due to missing permissions — app data stream interrupted",
+    await timer.measure("permissionValidation", async () => {
+      try {
+        const app = appCache.getByPackageName(packageName) || (await App.findOne({ packageName }).lean());
+        if (app) {
+          const { allowed, rejected } = SimplePermissionChecker.filterSubscriptions(app, processed);
+          if (rejected.length > 0) {
+            // Log at error level — a rejected subscription is a data-loss event.
+            // Include the app's actual permissions so we can diagnose *why* it was
+            // rejected without needing to query the DB separately. (Fix 044-1)
+            this.logger.error(
+              {
+                userId: this.userSession.userId,
+                packageName,
+                rejectedCount: rejected.length,
+                rejected,
+                appPermissions: app.permissions?.map((p: { type: string }) => p.type) ?? [],
+                requestedSubscriptions: processed,
+              },
+              "Rejected subscriptions due to missing permissions — app data stream interrupted",
+            );
+          }
+          allowedProcessed = allowed;
+        } else {
+          // App document not found in DB — allow all subscriptions but log it.
+          // This can happen if an app connects before its manifest is registered,
+          // or if the App collection is out of sync with the running apps.
+          this.logger.warn(
+            { packageName, userId: this.userSession.userId },
+            "App document not found in DB during permission check — allowing all requested subscriptions",
           );
         }
-        allowedProcessed = allowed;
-      } else {
-        // App document not found in DB — allow all subscriptions but log it.
-        // This can happen if an app connects before its manifest is registered,
-        // or if the App collection is out of sync with the running apps.
-        this.logger.warn(
-          { packageName, userId: this.userSession.userId },
-          "App document not found in DB during permission check — allowing all requested subscriptions",
-        );
+      } catch (error) {
+        this.logger.error({ packageName, error }, "Error validating subscriptions; continuing with all requested");
       }
-    } catch (error) {
-      this.logger.error({ packageName, error }, "Error validating subscriptions; continuing with all requested");
-    }
+    });
 
     // Delegate to AppSession for storage and grace period handling
-    const updateResult = appSession.updateSubscriptions(allowedProcessed, locationRate);
+    const updateResult = timer.measureSync("appSessionUpdateSubscriptions", () =>
+      appSession.updateSubscriptions(allowedProcessed, locationRate),
+    );
 
     if (!updateResult.applied) {
       this.logger.info(
@@ -342,8 +375,8 @@ export class SubscriptionManager {
     );
 
     // Sync downstream managers
-    await this.syncManagers();
-    this.userSession.microphoneManager?.handleSubscriptionChange();
+    await timer.measure("syncManagers", () => this.syncManagers());
+    timer.measureSync("microphoneHandleSubscriptionChange", () => this.userSession.microphoneManager?.handleSubscriptionChange());
   }
 
   /**
@@ -550,30 +583,47 @@ export class SubscriptionManager {
    * Sync all downstream managers with current subscription state
    */
   private async syncManagers(): Promise<void> {
+    const phaseTimer = createPhaseTimer();
     try {
       // Sync transcription
-      const transcriptionSubs = this.getTranscriptionSubscriptions();
-      await this.userSession.transcriptionManager.updateSubscriptions(transcriptionSubs);
+      const transcriptionSubs = phaseTimer.measureSync("getTranscriptionSubscriptions", () =>
+        this.getTranscriptionSubscriptions(),
+      );
+      await phaseTimer.measure("transcriptionUpdateSubscriptions", () =>
+        this.userSession.transcriptionManager.updateSubscriptions(transcriptionSubs),
+      );
 
       // Sync translation
-      const translationSubs = this.getTranslationSubscriptions();
-      await this.userSession.translationManager.updateSubscriptions(translationSubs);
+      const translationSubs = phaseTimer.measureSync("getTranslationSubscriptions", () =>
+        this.getTranslationSubscriptions(),
+      );
+      await phaseTimer.measure("translationUpdateSubscriptions", () =>
+        this.userSession.translationManager.updateSubscriptions(translationSubs),
+      );
 
       // Ensure streams exist
-      await Promise.all([
-        this.userSession.transcriptionManager.ensureStreamsExist(),
-        this.userSession.translationManager.ensureStreamsExist(),
-      ]);
+      await phaseTimer.measure("ensureStreamsExist", () =>
+        Promise.all([
+          this.userSession.transcriptionManager.ensureStreamsExist(),
+          this.userSession.translationManager.ensureStreamsExist(),
+        ]),
+      );
 
       // Sync location
-      const locationSubs = this.getLocationSubscriptions();
-      this.userSession.locationManager.handleSubscriptionUpdate(locationSubs);
+      const locationSubs = phaseTimer.measureSync("getLocationSubscriptions", () => this.getLocationSubscriptions());
+      phaseTimer.measureSync("locationHandleSubscriptionUpdate", () =>
+        this.userSession.locationManager.handleSubscriptionUpdate(locationSubs),
+      );
 
       // Sync calendar
-      const calendarSubs = this.getCalendarSubscriptions();
-      this.userSession.calendarManager.handleSubscriptionUpdate(calendarSubs);
+      const calendarSubs = phaseTimer.measureSync("getCalendarSubscriptions", () => this.getCalendarSubscriptions());
+      phaseTimer.measureSync("calendarHandleSubscriptionUpdate", () =>
+        this.userSession.calendarManager.handleSubscriptionUpdate(calendarSubs),
+      );
     } catch (error) {
       this.logger.error({ userId: this.userSession.userId, error }, "Error syncing managers with subscriptions");
+    } finally {
+      cascadeDiagnostics.addTimer("subscription_syncManagers", phaseTimer.durationMs);
     }
   }
 }

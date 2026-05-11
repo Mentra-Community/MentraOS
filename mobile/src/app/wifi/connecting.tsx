@@ -1,10 +1,11 @@
-import CoreModule from "core"
+import CoreModule from "@mentra/bluetooth-sdk"
 import {useLocalSearchParams} from "expo-router"
 import {useEffect, useRef, useState, useCallback} from "react"
 import {ActivityIndicator, View} from "react-native"
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {usePushPrevious} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {useGlassesStore} from "@/stores/glasses"
 import WifiCredentialsService from "@/utils/wifi/WifiCredentialsService"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
@@ -25,7 +26,8 @@ export default function WifiConnectingScreen() {
   const connectionTimeoutRef = useRef<number | null>(null)
   const failureGracePeriodRef = useRef<number | null>(null)
 
-  const {goBack, getHistory, pushPrevious, push} = useNavigationHistory()
+  const {goBack, push} = useNavigationStore.getState()
+  const pushPrevious = usePushPrevious()
   const wifiConnected = useGlassesStore((state) => state.wifiConnected)
   const wifiSsid = useGlassesStore((state) => state.wifiSsid)
 
@@ -107,7 +109,7 @@ export default function WifiConnectingScreen() {
   }
 
   const handleSuccess = useCallback(() => {
-    const history = getHistory()
+    const history = useNavigationStore.getState().history
     // Check if OTA check-for-updates is already in the stack (initial pairing flow)
     const otaIndex = history.indexOf("/ota/check-for-updates")
 
@@ -125,7 +127,7 @@ export default function WifiConnectingScreen() {
       console.log("WiFi success: OTA not in stack, pushing /ota/check-for-updates")
       push("/ota/check-for-updates")
     }
-  }, [getHistory, pushPrevious, push])
+  }, [pushPrevious, push])
 
   const handleHeaderBack = useCallback(() => {
     goBack()

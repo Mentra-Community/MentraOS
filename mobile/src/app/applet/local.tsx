@@ -3,9 +3,8 @@ import {useLocalSearchParams} from "expo-router"
 import {View} from "react-native"
 import {Text} from "@/components/ignite"
 import {miniappHost} from "@/components/miniapp/MiniappHost"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import composer from "@/services/Composer"
-import devServerBridge from "@/services/DevServerBridge"
+import {useNavigationStore} from "@/stores/navigation"
+import {appRegistry, devServerBridge, useAppStatusStore} from "@mentra/island"
 import {storage} from "@/utils/storage/storage"
 
 /**
@@ -25,10 +24,10 @@ export default function LocalMiniAppPage() {
     devPort?: string
     manifestJson?: string
   }>()
-  const {goBack, setForceGestureEnabled} = useNavigationHistory()
+  const {goBack, setForceGestureEnabled} = useNavigationStore.getState()
 
   // Keep a stable ref to the latest goBack so we don't re-fire the mount effect
-  // every render just because useNavigationHistory returned a new function.
+  // every render just because useNavigationStore.getState() returned a new function.
   const goBackRef = useRef(goBack)
   goBackRef.current = goBack
 
@@ -77,13 +76,13 @@ export default function LocalMiniAppPage() {
           const sidecarBase = buildSidecarBaseUrl(devUrl, portNum)
           if (sidecarBase) {
             const versionOverride = `dev-${Date.now()}`
-            void composer
-              .installMiniApp(`${sidecarBase}/__mentra_dev/bundle.zip`, {versionOverride})
+            void appRegistry
+              .installFromUrl(`${sidecarBase}/__mentra_dev/bundle.zip`, {versionOverride})
               .then((res) => {
                 if (res.is_error()) {
                   console.warn(`Dev miniapp snapshot failed for ${packageName}:`, res.error)
                 } else {
-                  composer.gcDevVersions(packageName, 2)
+                  appRegistry.gcDevVersions(packageName, 2)
                 }
               })
           }
@@ -91,14 +90,18 @@ export default function LocalMiniAppPage() {
         storage.save(`${packageName}_dev_last_reachable`, Date.now())
       })
       miniappHost.setForeground(packageName, {onClose: handleClose, onBack: handleBack})
+      // Mirror to the apps store so Compositor's CapsuleMenu/forceShow + swipe
+      // overlay activate (the press path sets foreground via the store; the
+      // scanner-driven route path needs to do it manually).
+      useAppStatusStore.getState().setForeground(packageName)
     } else if (version) {
-      const bundleDir = composer.getBundleDir(packageName, version)
+      const bundleDir = appRegistry.getBundleDir(packageName, version)
       const bundleUri = `${bundleDir}/index.html`
       // Read the bundle's manifest from disk so the runtime can gate
       // SUBSCRIBE / one-shot calls against declared permissions. The
       // mountDev path fetches this from the live server; the installed
       // path reads from the unzipped bundle.
-      const manifest = composer.getMiniappManifest(packageName, version) as
+      const manifest = appRegistry.getMiniappManifest(packageName, version) as
         | {permissions?: Array<{type: string; required?: boolean; description?: string}>; hardwareRequirements?: Array<{type: string; level: string; description?: string}>}
         | null
       miniappHost.mount(packageName, bundleUri, {
@@ -108,11 +111,13 @@ export default function LocalMiniAppPage() {
         manifest: manifest ?? undefined,
       })
       miniappHost.setForeground(packageName, {onClose: handleClose, onBack: handleBack})
+      useAppStatusStore.getState().setForeground(packageName)
     }
 
     return () => {
       // Background on navigate away, don't unmount — keep it alive
       miniappHost.setBackground(packageName)
+      useAppStatusStore.getState().clearForeground()
     }
   }, [packageName, version, devUrl, devPort, appName, iconUrl, manifestJson])
 

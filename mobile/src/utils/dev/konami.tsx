@@ -2,8 +2,8 @@ import {createContext, useContext, useEffect, useMemo, useRef, useState} from "r
 import {Platform, View} from "react-native"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {BgTimer} from "@/utils/timers"
+import {useNavigationStore} from "@/stores/navigation"
+import {BgTimer} from "@mentra/island"
 
 type Direction = "up" | "down" | "left" | "right"
 
@@ -32,7 +32,7 @@ export function KonamiCodeProvider({children}: {children: React.ReactNode}) {
   const enabledRef = useRef(enabled)
   const sequenceRef = useRef<Direction[]>([])
   const resetTimeoutRef = useRef<number | null>(null)
-  const {goHomeAndPush} = useNavigationHistory()
+  const {goHomeAndPush} = useNavigationStore.getState()
 
   useEffect(() => {
     enabledRef.current = enabled

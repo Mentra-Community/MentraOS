@@ -4,8 +4,8 @@ import {ActivityIndicator, TextStyle, TouchableOpacity, View, ViewStyle} from "r
 
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {spacing, ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
@@ -14,7 +14,7 @@ import mentraAuth from "@/utils/auth/authClient"
 export default function VerificationScreen() {
   const {email} = useLocalSearchParams<{email?: string}>()
   const [isResending, setIsResending] = useState(false)
-  const {replace, goBack} = useNavigationHistory()
+  const {replace, goBack} = useNavigationStore.getState()
   const {theme, themed} = useAppTheme()
 
   const handleContinue = () => {

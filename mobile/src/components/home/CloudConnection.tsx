@@ -7,17 +7,17 @@ import {Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {WebSocketStatus} from "@/services/WebSocketManager"
-import {useRefreshApplets} from "@/stores/applets"
+import {useRefresh} from "@mentra/island"
 import {useConnectionStore} from "@/stores/connection"
 import {ThemedStyle} from "@/theme"
-import {BgTimer} from "@/utils/timers"
+import {BgTimer} from "@mentra/island"
 
 export default function CloudConnection() {
   const connectionStatus = useConnectionStore((state) => state.status)
   const {themed} = useAppTheme()
   const cloudConnectionStatusAnim = useSharedValue(1)
   const [hideCloudConnection, setHideCloudConnection] = useState(true)
-  const refreshApplets = useRefreshApplets()
+  const refreshApplets = useRefresh()
 
   // Add delay logic for disconnection alerts
   const [delayedStatus, setDelayedStatus] = useState<WebSocketStatus>(connectionStatus)

@@ -3,8 +3,8 @@ import {View, TextInput, ActivityIndicator, ScrollView, ViewStyle, TextStyle} fr
 
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {ThemedStyle, spacing} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
@@ -15,7 +15,7 @@ export default function ChangeEmailScreen() {
   const [newEmail, setNewEmail] = useState("")
   const [isLoading, setIsLoading] = useState(false)
 
-  const {goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
   const {theme, themed} = useAppTheme()
 
   const isValidEmail = newEmail.includes("@") && newEmail.includes(".")

@@ -12,7 +12,7 @@ import {useEffect, useState} from "react"
 import {View} from "react-native"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 
-import {miniappHost} from "./MiniappHost"
+import {miniappHost} from "@/components/miniapp/MiniappHost"
 
 const EDGE_HIT_WIDTH = 24
 const SWIPE_THRESHOLD = 60

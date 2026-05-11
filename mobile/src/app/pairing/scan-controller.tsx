@@ -1,4 +1,4 @@
-import CoreModule, {DeviceSearchResult} from "core"
+import CoreModule, {DeviceSearchResult} from "@mentra/bluetooth-sdk"
 import {useLocalSearchParams} from "expo-router"
 import {useEffect, useState} from "react"
 import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
@@ -9,7 +9,7 @@ import {Icon, Button, Header, Screen, Text} from "@/components/ignite"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import Divider from "@/components/ui/Divider"
 import {Group} from "@/components/ui/Group"
-import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
@@ -19,11 +19,13 @@ import {getGlassesOpenImage} from "@/utils/getGlassesImage"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {useCoreStore} from "@/stores/core"
 import GlassView from "@/components/ui/GlassView"
+import { useNavigationStore } from "@/stores/navigation"
 
 export default function SelectGlassesBluetoothScreen() {
   const {deviceModel}: {deviceModel: string} = useLocalSearchParams()
   const {theme} = useAppTheme()
-  const {goBack, replace, pushUnder} = useNavigationHistory()
+  const {goBack, replace} = useNavigationStore.getState()
+  const pushUnder = usePushUnder()
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
   const btcConnected = useGlassesStore((state) => state.btcConnected)
   const [_deviceName, setDeviceName] = useSetting(SETTINGS.device_name.key)
@@ -36,7 +38,11 @@ export default function SelectGlassesBluetoothScreen() {
   //   }, [setSearchResults]),
   // )
 
-  focusEffectPreventBack(() => {
+  focusEffectPreventBack((event) => {
+    // Skip cleanup when navigating forward — only run on actual back navigation.
+    if (event && event.actionType !== "GO_BACK" && event.actionType !== "POP") {
+      return
+    }
     CoreModule.disconnectController()
     CoreModule.forgetController()
     goBack()
@@ -146,7 +152,7 @@ export default function SelectGlassesBluetoothScreen() {
                 {visibleResults.map((res: DeviceSearchResult, index: number) => {
                   let deviceName = filterDeviceName(res.deviceName)
                   return (
-                    <View className="flex-row items-center justify-between px-4 py-3 bg-primary-foreground/80">
+                    <View className="flex-row items-center justify-between px-4 py-3 bg-background">
                       <TouchableOpacity
                         key={index}
                         className="flex-1"
@@ -165,7 +171,7 @@ export default function SelectGlassesBluetoothScreen() {
           )}
           <Divider />
           <View className="flex-row justify-end">
-            <Button preset="alternate" compact tx="common:cancel" onPress={() => goBack()} className="min-w-[100px]" />
+            <Button preset="primary" compact tx="common:cancel" onPress={() => goBack()} className="min-w-[100px]" />
           </View>
         </GlassView>
       </View>

@@ -3,8 +3,8 @@ import {TextInput, View, ViewStyle, TextStyle, TouchableOpacity} from "react-nat
 
 import {Button, Text} from "@/components/ignite"
 import GlassView from "@/components/ui/GlassView"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
@@ -18,7 +18,7 @@ interface SavedUrl {
 
 export default function BackendUrl() {
   const {theme, themed} = useAppTheme()
-  const {replaceAll} = useNavigationHistory()
+  const {replaceAll} = useNavigationStore.getState()
   const [customUrlInput, setCustomUrlInput] = useState("")
   const [isSavingUrl, setIsSavingUrl] = useState(false)
   const [backendUrl, setBackendUrl] = useSetting(SETTINGS.backend_url.key)

@@ -1,6 +1,8 @@
 package com.mentra.asg_client.di;
 
 import android.content.Context;
+import android.os.Build;
+import android.os.UserManager;
 import android.util.Log;
 
 import com.mentra.asg_client.reporting.CrashHandler;
@@ -50,6 +52,13 @@ public class ReportingModule {
      * This ensures crash reports include user info even after app restarts.
      */
     private static void restoreUserContext(Context context, ReportManager manager) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            UserManager um = context.getSystemService(UserManager.class);
+            if (um != null && !um.isUserUnlocked()) {
+                Log.d(TAG, "Skipping user context restore — device locked (CE storage unavailable)");
+                return;
+            }
+        }
         try {
             ConfigurationManager configManager = new ConfigurationManager(context);
             String savedEmail = configManager.getUserEmail();
@@ -57,6 +66,8 @@ public class ReportingModule {
                 manager.setUserContext(savedEmail, null, savedEmail);
                 Log.d(TAG, "Restored user context from saved email");
             }
+        } catch (IllegalStateException e) {
+            Log.d(TAG, "User context restore skipped — credential encrypted storage not ready");
         } catch (Exception e) {
             Log.e(TAG, "Error restoring user context", e);
         }

@@ -65,6 +65,9 @@ export type NavLocationPayload = {
   accuracy: number | null
   /** Unix ms timestamp of the fix. */
   timestamp: number
+  phone_notification: (event: PhoneNotificationEvent) => void
+  phone_notification_dismissed: (event: PhoneNotificationDismissedEvent) => void
+  captions_tester_incident: (event: CaptionsTesterIncidentEvent) => void
 }
 
 export type ChangeEventPayload = {
@@ -111,6 +114,40 @@ export type NavManeuverPayload = {
 
 export type NavErrorPayload = {
   message: string
+}
+
+export type InstalledApp = {
+  packageName: string
+  appName: string
+  isBlocked: boolean
+  icon: string | null
+}
+
+export type PhoneNotificationEvent = {
+  notificationId: string
+  app: string
+  title: string
+  content: string
+  priority: string
+  timestamp: number
+  packageName: string
+}
+
+export type PhoneNotificationDismissedEvent = {
+  notificationKey: string
+  packageName: string
+  notificationId: string
+}
+
+export type CaptionsTesterIncidentEvent = {
+  action?: string
+  timestamp?: number
+  failure_code?: string
+  failure_message?: string
+  test_run_id?: string
+  scenario_name?: string
+  source?: string
+  [key: string]: unknown
 }
 
 export type CrustViewProps = {

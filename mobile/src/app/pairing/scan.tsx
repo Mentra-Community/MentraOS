@@ -1,6 +1,6 @@
-import CoreModule, {DeviceSearchResult} from "core"
-import {useFocusEffect, useLocalSearchParams} from "expo-router"
-import {useCallback, useEffect, useState} from "react"
+import CoreModule, {DeviceSearchResult} from "@mentra/bluetooth-sdk"
+import {useLocalSearchParams} from "expo-router"
+import {useEffect, useState} from "react"
 import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
 
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
@@ -9,9 +9,10 @@ import {Icon, Button, Header, Screen, Text} from "@/components/ignite"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import Divider from "@/components/ui/Divider"
 import {Group} from "@/components/ui/Group"
-import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
+import {useNavigationStore} from "@/stores/navigation"
 import {useGlassesStore} from "@/stores/glasses"
 import showAlert from "@/utils/AlertUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
@@ -23,7 +24,8 @@ import GlassView from "@/components/ui/GlassView"
 export default function SelectGlassesBluetoothScreen() {
   const {deviceModel}: {deviceModel: string} = useLocalSearchParams()
   const {theme} = useAppTheme()
-  const {goBack, replace, pushUnder} = useNavigationHistory()
+  const {goBack, replace, push} = useNavigationStore.getState()
+  const pushUnder = usePushUnder()
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
   const btcConnected = useGlassesStore((state) => state.btcConnected)
   const [_deviceName, setDeviceName] = useSetting(SETTINGS.device_name.key)
@@ -36,7 +38,12 @@ export default function SelectGlassesBluetoothScreen() {
   //   }, [setRememberedSearchResults]),
   // )
 
-  focusEffectPreventBack(() => {
+  focusEffectPreventBack((event) => {
+    // Skip cleanup when navigating forward (e.g. replace() to btclassic) —
+    // only run on actual back navigation.
+    if (event && event.actionType !== "GO_BACK" && event.actionType !== "POP") {
+      return
+    }
     CoreModule.disconnect()
     CoreModule.forget()
     goBack()
@@ -91,7 +98,8 @@ export default function SelectGlassesBluetoothScreen() {
       setTimeout(() => {
         CoreModule.connectByName(deviceName)
       }, 2000)
-      replace("/pairing/loading", {deviceModel: deviceModel, deviceName: deviceName})
+      push("/pairing/loading", {deviceModel: deviceModel, deviceName: deviceName})
+      // push("/pairing/success", {deviceModel: deviceModel})
       return
     }
 
@@ -135,8 +143,12 @@ export default function SelectGlassesBluetoothScreen() {
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
       <Header leftIcon="chevron-left" onLeftPress={goBack} RightActionComponent={<MentraLogoStandalone />} />
       <View className="flex-1 justify-center">
-        <GlassView className="gap-6 rounded-3xl p-6 bg-background" transparent={false}>
-          <Image source={getGlassesOpenImage(deviceModel)} className="h-[90px] w-[156px] mx-auto" resizeMode="contain" />
+        <GlassView className="gap-6 rounded-3xl p-6 bg-primary-foreground" transparent={false}>
+          <Image
+            source={getGlassesOpenImage(deviceModel)}
+            className="h-[90px] w-[156px] mx-auto"
+            resizeMode="contain"
+          />
           <Text
             className="text-center text-xl font-semibold text-text-dim"
             text={translate("pairing:scanningForGlassesModel", {model: deviceModel})}
@@ -153,7 +165,7 @@ export default function SelectGlassesBluetoothScreen() {
                   let deviceName = filterDeviceName(res.deviceName)
 
                   return (
-                    <View className="flex-row items-center justify-between px-4 py-3 bg-primary-foreground/80">
+                    <View className="flex-row items-center justify-between px-4 py-3 bg-background">
                       <TouchableOpacity
                         key={index}
                         className="flex-1"
@@ -172,7 +184,7 @@ export default function SelectGlassesBluetoothScreen() {
           )}
           <Divider />
           <View className="flex-row justify-end">
-            <Button preset="alternate" compact tx="common:cancel" onPress={() => goBack()} className="min-w-[100px]" />
+            <Button preset="primary" compact tx="common:cancel" onPress={() => goBack()} className="min-w-[100px]" />
           </View>
         </GlassView>
       </View>

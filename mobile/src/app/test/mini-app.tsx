@@ -1,10 +1,10 @@
 import {View} from "react-native"
 
 import {Screen, Header} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useNavigationStore} from "@/stores/navigation"
 
 export default function MiniApp() {
-  const {goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
 
   return (
     <Screen preset="fixed" safeAreaEdges={[]}>

@@ -1,22 +1,22 @@
-import CoreModule from "core"
+import CoreModule from "@mentra/bluetooth-sdk"
 
-import {push} from "@/contexts/NavigationHistoryContext"
+import {useNavigationStore} from "@/stores/navigation"
 import audioPlaybackService from "@/services/AudioPlaybackService"
-import displayProcessor from "@/services/DisplayProcessor"
-import localMiniappRuntime from "@/services/LocalMiniappRuntime"
-import localSttFallbackCoordinator from "@/services/LocalSttFallbackCoordinator"
+import {displayProcessor} from "@mentra/island"
+import {localMiniappRuntime} from "@mentra/island"
+import {localSttFallbackCoordinator} from "@mentra/island"
 import mantle from "@/services/MantleManager"
-import micStateCoordinator from "@/services/MicStateCoordinator"
+import {micStateCoordinator} from "@mentra/island"
 import udp from "@/services/UdpManager"
 import ws from "@/services/WebSocketManager"
-import {useAppletStatusStore} from "@/stores/applets"
+import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {useDisplayStore} from "@/stores/display"
 import {useGlassesStore} from "@/stores/glasses"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
 import restComms from "@/services/RestComms"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
-import {throttle} from "@/utils/timers"
+import {throttle} from "@mentra/island"
 
 class SocketComms {
   private static instance: SocketComms | null = null
@@ -128,14 +128,14 @@ class SocketComms {
     )
   }
 
-  public sendBatteryStatus(): void {
-    const batteryLevel = useGlassesStore.getState().batteryLevel
-    const charging = useGlassesStore.getState().charging
+  public sendBatteryStatus(level?: number, charging?: boolean, timestamp: number = Date.now()): void {
+    const batteryLevel = level ?? useGlassesStore.getState().batteryLevel
+    const isCharging = charging ?? useGlassesStore.getState().charging
     const msg = {
       type: "glasses_battery_update",
       level: batteryLevel,
-      charging: charging,
-      timestamp: Date.now(),
+      charging: isCharging,
+      timestamp,
     }
     ws.sendText(JSON.stringify(msg))
   }
@@ -421,7 +421,7 @@ class SocketComms {
   }
 
   private refreshAppletsThrottled = throttle(() => {
-    useAppletStatusStore.getState().refreshApplets()
+    void miniappCatalog.refresh()
   }, 500)
 
   private handle_app_state_change(msg: any) {
@@ -468,6 +468,12 @@ class SocketComms {
       }
     }
 
+    // CoreModule.updateCore({
+    //   // should_send_pcm: shouldSendPcmData,
+    //   should_send_lc3: shouldSendPcmData, // online apps always want lc3
+    //   should_send_transcript: shouldSendTranscript,
+    //   bypass_vad: bypassVad,
+    // })
     micStateCoordinator.setCloudRequirements({
       pcm: !!shouldSendPcmData,
       lc3: !!shouldSendPcmData, // online apps always want lc3
@@ -524,11 +530,11 @@ class SocketComms {
       return
     }
     console.log(`SOCKET: Received app_started message for package: ${msg.packageName}`)
-    useAppletStatusStore.getState().refreshApplets()
+    void miniappCatalog.refresh()
   }
   private handle_app_stopped(msg: any) {
     console.log(`SOCKET: Received app_stopped message for package: ${msg.packageName}`)
-    useAppletStatusStore.getState().refreshApplets()
+    void miniappCatalog.refresh()
   }
 
   private handle_photo_request(msg: any) {
@@ -626,7 +632,8 @@ class SocketComms {
         {
           text: "Setup WiFi",
           onPress: () => {
-            push("/wifi/scan")
+            const nav = useNavigationStore.getState()
+            nav.push("/wifi/scan")
           },
         },
       ],

@@ -7,8 +7,8 @@ import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {Spacer} from "@/components/ui/Spacer"
 import {useAuth} from "@/contexts/AuthContext"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import restComms from "@/services/RestComms"
 import {ThemedStyle} from "@/theme"
@@ -40,7 +40,7 @@ export default function ProfileSettingsPage() {
   const [loading, setLoading] = useState<boolean>(true)
   const [isSigningOut, setIsSigningOut] = useState(false)
 
-  const {goBack, push, replace} = useNavigationHistory()
+  const {goBack, push, replace} = useNavigationStore.getState()
   const {logout} = useAuth()
 
   useEffect(() => {

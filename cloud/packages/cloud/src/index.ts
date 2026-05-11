@@ -195,6 +195,17 @@ logger.info(`\n
     ☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️
     ☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️☁️\n`);
 
+logger.info(
+  {
+    feature: "process-lifecycle",
+    event: "process-started",
+    pid: process.pid,
+    bunVersion: Bun.version,
+    port: PORT,
+  },
+  "Process lifecycle: started",
+);
+
 // ---------------------------------------------------------------------------
 // Fail-fast shutdown on SIGTERM/SIGINT
 //
@@ -278,6 +289,7 @@ async function failFastShutdown(signal: string): Promise<void> {
   // Watchdog: if anything hangs, force-exit at the budget with a distinct code.
   const watchdog = setTimeout(() => {
     shutdownStderrLine({
+      feature: "process-lifecycle",
       event: "shutdown-watchdog-fired",
       signal,
       budgetMs: SHUTDOWN_BUDGET_MS,
@@ -291,6 +303,7 @@ async function failFastShutdown(signal: string): Promise<void> {
   // Step 1: announce via synchronous stderr (Pino logs may not flush in time).
   const sessions = UserSession.getAllSessions();
   shutdownStderrLine({
+    feature: "process-lifecycle",
     event: "shutdown-started",
     signal,
     pid: process.pid,
@@ -340,6 +353,7 @@ async function failFastShutdown(signal: string): Promise<void> {
 
   // Step 5: announce completion via synchronous stderr.
   shutdownStderrLine({
+    feature: "process-lifecycle",
     event: "shutdown-complete",
     signal,
     elapsedMs: Date.now() - t0,

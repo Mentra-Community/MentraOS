@@ -20,6 +20,25 @@
         "tailwindcss": "^4.2.4",
       },
     },
+    "../mobile/modules/miniapp": {
+      "name": "@mentra/miniapp",
+      "version": "0.3.0",
+      "dependencies": {
+        "@mentra/types": "1.0.0-beta.2",
+        "eventemitter3": "^5.0.1",
+      },
+      "devDependencies": {
+        "@types/react": "^19.1.6",
+        "react": "^19.1.0",
+        "typescript": "^5.0.0",
+      },
+      "peerDependencies": {
+        "react": ">=18.0.0",
+      },
+      "optionalPeers": [
+        "react",
+      ],
+    },
     "create-mentra-miniapp": {
       "name": "create-mentra-miniapp",
       "version": "0.1.0",
@@ -62,25 +81,6 @@
         "bun-plugin-tailwind": "^0.1.2",
       },
     },
-    "miniapp": {
-      "name": "@mentra/miniapp",
-      "version": "0.3.0",
-      "dependencies": {
-        "@mentra/types": "1.0.0-beta.2",
-        "eventemitter3": "^5.0.1",
-      },
-      "devDependencies": {
-        "@types/react": "^19.1.6",
-        "react": "^19.1.0",
-        "typescript": "^5.0.0",
-      },
-      "peerDependencies": {
-        "react": ">=18.0.0",
-      },
-      "optionalPeers": [
-        "react",
-      ],
-    },
     "miniapp-cli": {
       "name": "@mentra/miniapp-cli",
       "version": "0.1.0",
@@ -111,7 +111,7 @@
 
     "@floating-ui/utils": ["@floating-ui/utils@0.2.11", "", {}, "sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg=="],
 
-    "@mentra/miniapp": ["@mentra/miniapp@workspace:miniapp"],
+    "@mentra/miniapp": ["@mentra/miniapp@workspace:../mobile/modules/miniapp"],
 
     "@mentra/miniapp-cli": ["@mentra/miniapp-cli@workspace:miniapp-cli"],
 

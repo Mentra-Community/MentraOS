@@ -100,3 +100,4 @@ pnpm-lock.yaml
 .env.local
 
 .model-cache/
+scripts/stress-test/runs/

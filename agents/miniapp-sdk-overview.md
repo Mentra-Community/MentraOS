@@ -4,12 +4,12 @@
 
 The SDK lives across four packages in `sdk/`:
 
-| Package | Role |
-|---|---|
-| `@mentra/miniapp` | Runtime SDK consumed by miniapp authors. Session, modules, transports, React hooks. |
-| `@mentra/miniapp-cli` (`mentra-miniapp`) | Author-facing CLI. `dev` (hot-reload + QR sideload) and `pack` (build a distributable ZIP). |
-| `create-mentra-miniapp` | Project scaffolder. `bunx create-mentra-miniapp my-app` → a working starter. |
-| `sdk/example-miniapp` | Reference miniapp ("Live Captions" + a tester for every module). What we build against. |
+| Package                                  | Role                                                                                         |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `@mentra/miniapp`                        | Runtime SDK consumed by miniapp authors. Session, modules, transports, React hooks.          |
+| `@mentra/miniapp-cli` (`mentra-miniapp`) | Author-facing CLI. `dev`, `release`, `pack`, `manifest`, `permission`, `hardware`, `schema`. |
+| `create-mentra-miniapp`                  | Project scaffolder. `bunx create-mentra-miniapp my-app` → a working starter.                 |
+| `sdk/example-miniapp`                    | Reference miniapp ("Live Captions" + a tester for every module). What we build against.      |
 
 A miniapp is a **static web app** (HTML/JS/CSS bundle, any framework) with a `miniapp.json` manifest. It runs inside the MentraOS app's WebView on the phone. The SDK gives it a typed API for talking to the glasses + phone.
 
@@ -25,38 +25,38 @@ Everything goes through one object: `MiniappSession`. You construct it (or grab 
 const session = new MiniappSession()
 await session.connect()              // sends CONNECT, resolves on CONNECT_ACK
 
-session.layouts.showTextWall("hello")
-session.events.onTranscription(data => …)
-await session.audio.speak("hi there")
+session.display.showTextWall("hello")
+session.transcription.on(data => …)
+await session.speaker.speak("hi there")
 ```
 
-The session owns the transport, the request/response correlation map, the pre-ready outbound queue (so calls made before `CONNECT_ACK` aren't lost), keepalive PONG replies, and the cached visibility / capabilities / color-scheme state.
+The session owns the transport, the request/response correlation map, the pre-ready outbound queue (so calls made before `CONNECT_ACK` aren't lost), keepalive PONG replies, and the cached visibility / capabilities / color-scheme / permissions state.
 
-It also emits four lifecycle events you can subscribe to: `ready`, `disconnect`, `visibility`, `capabilities`, `colorScheme`, `error`.
+It emits eight lifecycle events you can subscribe to: `ready`, `disconnect`, `error`, `visibility`, `capabilities`, `colorScheme`, `permissions`, `speakerState`.
 
 ### Modules on the session
 
 15 modules, named to mirror cloud SDK v3. Events live on the module that owns the domain. Imperative one-shots live alongside their owning surface (`session.speaker.speak`, `session.camera.takePhoto`).
 
-| Module | What it does | Key methods |
-|---|---|---|
-| `session.display` | Push layouts to the glasses display | `showTextWall`, `showDoubleTextWall`, `showReferenceCard`, `showDashboardCard`, `showBitmapView`, `clearView` |
-| `session.speaker` | Phone-side audio **output** | `play({audioUrl})`, `speak(text, {voice_id, …})` (cloud TTS), `stop()` |
-| `session.mic` | Low-level audio **input** | `onAudioChunk`, `onVoiceActivity`, `stop()`, `hasPermission` |
-| `session.transcription` | Speech → text | `on(handler)`, `forLanguage(lang \| [langs], handler)`, `configure({languageHints, vocabulary, diarization})`, `stop()`, `hasPermission` |
-| `session.translation` | Cross-language transcription | `forLanguagePair(from, to, handler)`, `stop()`, `hasPermission` |
-| `session.input` | Physical control events | `onButtonPress`, `onTouch(handler)` / `onTouch("click", handler)` / `onTouch(["a","b"], handler)` |
-| `session.location` | Location events | `onUpdate`, `hasPermission` |
-| `session.imu` | Head position + motion events | `onHeadPosition` |
-| `session.glasses` | Glasses device-state events | `onBattery`, `onConnection` |
-| `session.phone` | Phone device-state events | `notifications.{on, hasPermission, stop}`, `calendar.{on, hasPermission, stop}`, `onBattery` |
-| `session.system` | Phone-OS imperative utilities | `share(...)`, `openUrl(url)`, `copyToClipboard(text)`, `download(...)` |
-| `session.camera` | Glasses camera | `takePhoto({size, compress, sound, saveToGallery})`, `setFov({horizontal, vertical})`, `hasPermission` |
-| `session.led` | Glasses RGB LED | `turnOn({color, ontime, offtime, count})`, `turnOff()`, `blink(color, ontime, offtime, count)`, `solid(color, duration)` |
-| `session.permissions` | Manifest-declared permissions (matches v3 semantics) | `has(type)`, `getAll()`, `onUpdate(handler)`, `onPermissionError(handler)` |
-| `session.storage` | Phone-local AsyncStorage scoped to `(userId, packageName)` | `get`, `set`, `delete`, `list` (string values only) |
-| `session.stream` | Video streaming from glasses (Phase 5 — wired but bridged into existing cloud streaming) | `startUnmanaged({streamUrl})`, `startManaged({restreamDestinations})`, `stop(streamId?)` |
-| `session.dashboard` | Dashboard widget surface — **noop in v1**, prints a one-time warning. Cloud DashboardManager still owns dashboard rendering. | `setContent(mode, content)` |
+| Module                  | What it does                                                                                                                 | Key methods                                                                                                                              |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `session.display`       | Push layouts to the glasses display                                                                                          | `showTextWall`, `showDoubleTextWall`, `showReferenceCard`, `showDashboardCard`, `showBitmapView`, `clearView`                            |
+| `session.speaker`       | Phone-side audio **output**                                                                                                  | `play({audioUrl})`, `speak(text, {voice_id, …})` (cloud TTS), `stop()`, `onStateChange(handler)`                                         |
+| `session.mic`           | Low-level audio **input**                                                                                                    | `onAudioChunk`, `onVoiceActivity`, `stop()`, `hasPermission`                                                                             |
+| `session.transcription` | Speech → text                                                                                                                | `on(handler)`, `forLanguage(lang \| [langs], handler)`, `configure({languageHints, vocabulary, diarization})`, `stop()`, `hasPermission` |
+| `session.translation`   | Cross-language transcription                                                                                                 | `forLanguagePair(from, to, handler)`, `stop()`, `hasPermission`                                                                          |
+| `session.input`         | Physical control events                                                                                                      | `onButtonPress`, `onTouch(handler)` / `onTouch("click", handler)` / `onTouch(["a","b"], handler)`                                        |
+| `session.location`      | Location events                                                                                                              | `onUpdate`, `hasPermission`                                                                                                              |
+| `session.imu`           | Head position + motion events                                                                                                | `onHeadPosition`                                                                                                                         |
+| `session.glasses`       | Glasses device-state events                                                                                                  | `onBattery`, `onConnection`                                                                                                              |
+| `session.phone`         | Phone device-state events                                                                                                    | `notifications.{on, onDismissed, stop, hasPermission}`, `calendar.{on, stop, hasPermission}`, `onBattery`                                |
+| `session.system`        | Phone-OS imperative utilities                                                                                                | `share(...)`, `openUrl(url)`, `copyToClipboard(text)`, `download(...)`                                                                   |
+| `session.camera`        | Glasses camera                                                                                                               | `takePhoto({size, compress, sound, saveToGallery})`, `setFov({horizontal, vertical})`, `hasPermission`                                   |
+| `session.led`           | Glasses RGB LED                                                                                                              | `turnOn({color, ontime, offtime, count})`, `turnOff()`, `blink(color, ontime, offtime, count)`, `solid(color, duration)`                 |
+| `session.permissions`   | Manifest-declared permissions (matches v3 semantics)                                                                         | `has(type)`, `getAll()`, `onUpdate(handler)`, `onPermissionError(handler)`                                                               |
+| `session.storage`       | Phone-local AsyncStorage scoped to `(userId, packageName)`                                                                   | `get`, `set`, `delete`, `list` (string values only)                                                                                      |
+| `session.stream`        | Video streaming from glasses (Phase 5 — wired but bridged into existing cloud streaming)                                     | `startUnmanaged({streamUrl})`, `startManaged({restreamDestinations})`, `stop(streamId?)`                                                 |
+| `session.dashboard`     | Dashboard widget surface — **noop in v1**, prints a one-time warning. Cloud DashboardManager still owns dashboard rendering. | `setContent(mode, content)`                                                                                                              |
 
 `session.events` is **internal** and exposes only `subscribe(rawStreamType, handler)` — a forward-compat escape hatch for new event types not yet wrapped on a domain module. Authors should not reach for it directly; the typed methods on the modules above are the canonical surface.
 
@@ -90,15 +90,15 @@ Transcription/translation streams use a colon-suffixed wire format: `transcripti
 
 Optional but recommended. All hooks share a single session per app.
 
-| Hook | Returns |
-|---|---|
-| `useSession()` | The shared `MiniappSession`. Auto-calls `connect()` once. |
-| `useConnected()` | `boolean` — flips on `ready` / `disconnect` |
-| `useCapabilities()` | The current glasses capability profile (or `null`) |
-| `useVisibility()` | `"foreground" \| "background"` |
-| `useColorScheme()` | `"light" \| "dark"` (the host's current theme) |
-| `useSafeArea()` | `{insets, capsuleMenu}` — pixel insets + bounding rect of the host's floating capsule menu |
-| `useCapsuleHeaderStyle()` | Pre-computed CSS for a header row that aligns with the capsule menu |
+| Hook                      | Returns                                                                                    |
+| ------------------------- | ------------------------------------------------------------------------------------------ |
+| `useSession()`            | The shared `MiniappSession`. Auto-calls `connect()` once.                                  |
+| `useConnected()`          | `boolean` — flips on `ready` / `disconnect`                                                |
+| `useCapabilities()`       | The current glasses capability profile (or `null`)                                         |
+| `useVisibility()`         | `"foreground" \| "background"`                                                             |
+| `useColorScheme()`        | `"light" \| "dark"` (the host's current theme)                                             |
+| `useSafeArea()`           | `{insets, capsuleMenu}` — pixel insets + bounding rect of the host's floating capsule menu |
+| `useCapsuleHeaderStyle()` | Pre-computed CSS for a header row that aligns with the capsule menu                        |
 
 Plus two components:
 
@@ -114,9 +114,7 @@ Plus two components:
   "name": "Live Captions",
   "description": "…",
   "icon": "icon.png",
-  "permissions": [
-    {"type": "MICROPHONE", "description": "…"}
-  ],
+  "permissions": [{"type": "MICROPHONE", "description": "…"}],
   "hardwareRequirements": [
     {"type": "DISPLAY", "level": "REQUIRED"},
     {"type": "MICROPHONE", "level": "REQUIRED"}
@@ -179,8 +177,8 @@ The author writes a normal web app — anything that builds to static HTML/JS/CS
 ```tsx
 const session = useSession()
 useEffect(() => {
-  return session.events.onTranscription(data => {
-    session.layouts.showTextWall(data.text)
+  return session.transcription.on((data) => {
+    session.display.showTextWall(data.text)
   })
 }, [session])
 ```
@@ -189,16 +187,35 @@ When ready to ship:
 
 ```bash
 bun run build       # whatever bundler — outputs to dist/
-bun run pack        # mentra-miniapp pack
+bun run pack        # mentra-miniapp pack — produces the distributable ZIP
+# or:
+mentra-miniapp release   # build + pack + serve a QR to install on a phone
 ```
 
 `mentra-miniapp pack`:
 
 1. Validates `miniapp.json` again.
 2. Copies `miniapp.json` and `icon.png` into `dist/`.
-3. Zips `dist/` to `<packageName>-<version>.zip` using the system `zip`.
+3. Zips `dist/` to `<packageName>-<version>.zip` using JSZip.
+
+`mentra-miniapp release` is the all-in-one verb: it builds, packs, and serves the resulting ZIP behind a QR code so you can sideload it onto a phone over LAN. Pass `--no-cache` to skip the build cache.
 
 That ZIP is the artifact you'd upload to the miniapp store (store backend lives in the `miniapp-store-backend-plan.md` planning doc — not in this PR yet).
+
+### Other CLI verbs
+
+```
+mentra-miniapp manifest                    # interactive wizard for miniapp.json
+mentra-miniapp permission list             # list declared permissions
+mentra-miniapp permission add [TYPE]       # add (interactive without TYPE)
+mentra-miniapp permission remove [TYPE]    # remove a declared permission
+mentra-miniapp hardware list               # list hardware requirements
+mentra-miniapp hardware add [TYPE] [LEVEL] # add a hardware requirement
+mentra-miniapp hardware remove [TYPE]      # remove a hardware requirement
+mentra-miniapp schema print                # print the miniapp.json JSON Schema
+```
+
+`schema regenerate` exists too but is a CLI-internal command — it rewrites the published schema file from the in-source allowed-values lists.
 
 ---
 

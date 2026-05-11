@@ -1,5 +1,5 @@
 import {useFocusEffect} from "@react-navigation/native"
-import CoreModule from "core"
+import CoreModule from "@mentra/bluetooth-sdk"
 import {useCallback, useEffect, useState} from "react"
 import {ActivityIndicator, BackHandler, Platform, ScrollView, View} from "react-native"
 
@@ -7,17 +7,17 @@ import {Header, Screen, Text} from "@/components/ignite"
 import ModelSelector from "@/components/settings/ModelSelector"
 import ToggleSetting from "@/components/settings/ToggleSetting"
 import {Spacer} from "@/components/ui/Spacer"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import STTModelManager from "@/services/STTModelManager"
-import {useStopAllApplets} from "@/stores/applets"
+import {useStopAll} from "@mentra/island"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
 
 export default function TranscriptionSettingsScreen() {
   const {theme} = useAppTheme()
-  const {goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
 
   const [selectedModelId, setSelectedModelId] = useState(STTModelManager.getCurrentModelId())
   const [modelInfo, setModelInfo] = useState<any>(null)
@@ -33,9 +33,9 @@ export default function TranscriptionSettingsScreen() {
   const RESTART_TRANSCRIPTION_DEBOUNCE_MS = 8000 // 8 seconds
   const [lastRestartTime, setLastRestartTime] = useState(0)
 
-  const stopAllApps = useStopAllApplets()
+  const stopAllApps = useStopAll()
 
-  const handleToggleOfflineMode = () => {
+  const _handleToggleOfflineMode = () => {
     const title = offlineMode ? "Disable Offline Mode?" : "Enable Offline Mode?"
     const message = offlineMode
       ? "Switching to online mode will close all offline-only apps and allow you to use all online apps."

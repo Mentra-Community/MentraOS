@@ -1,0 +1,338 @@
+//
+//  Bridge.swift
+//  AOS
+//
+//  Created by Matthew Fosse on 3/4/25.
+//
+
+import Foundation
+
+/// Bridge for Bluetooth SDK communication between Expo modules and native iOS code
+/// Has commands for the Bluetooth SDK to use to send messages to JavaScript
+class Bridge {
+    private static let eventSinkLock = NSLock()
+    private static let defaultEventSinkId = "default"
+    private static var eventSinks: [String: (String, [String: Any]) -> Void] = [:]
+
+    static func initialize(callback: @escaping (String, [String: Any]) -> Void) {
+        setEventSink(defaultEventSinkId, callback)
+    }
+
+    static func addEventSink(callback: @escaping (String, [String: Any]) -> Void) -> String {
+        let id = UUID().uuidString
+        setEventSink(id, callback)
+        return id
+    }
+
+    static func removeEventSink(_ id: String) {
+        eventSinkLock.lock()
+        eventSinks.removeValue(forKey: id)
+        eventSinkLock.unlock()
+    }
+
+    private static func setEventSink(_ id: String, _ callback: @escaping (String, [String: Any]) -> Void) {
+        eventSinkLock.lock()
+        eventSinks[id] = callback
+        eventSinkLock.unlock()
+    }
+
+    private static func currentEventSinks() -> [(String, [String: Any]) -> Void] {
+        eventSinkLock.lock()
+        let sinks = Array(eventSinks.values)
+        eventSinkLock.unlock()
+        return sinks
+    }
+
+    /// Thread-safe event dispatch - ensures callback is invoked on main thread
+    /// to avoid React Native bridge threading issues that can cause EXC_BREAKPOINT
+    private static func dispatchEvent(_ eventName: String, _ data: [String: Any]) {
+        let sinks = currentEventSinks()
+        guard !sinks.isEmpty else { return }
+        if Thread.isMainThread {
+            sinks.forEach { $0(eventName, data) }
+        } else {
+            DispatchQueue.main.async {
+                sinks.forEach { $0(eventName, data) }
+            }
+        }
+    }
+
+    static func log(_ message: String) {
+        let data = ["message": message]
+        Bridge.sendTypedMessage("log", body: data)
+    }
+
+    static func sendHeadUp(_ isUp: Bool) {
+        let data = ["up": isUp]
+        Bridge.sendTypedMessage("head_up", body: data)
+    }
+
+    static func sendPairFailureEvent(_ error: String) {
+        let data = ["error": error]
+        Bridge.sendTypedMessage("pair_failure", body: data)
+    }
+
+    static func sendMicPcm(_ data: Data) {
+        // let base64String = data.base64EncodedString()
+        // let body = ["base64": base64String]
+        let body = ["pcm": data]
+        Bridge.sendTypedMessage("mic_pcm", body: body)
+    }
+
+    static func sendMicLc3(_ data: Data) {
+        // let base64String = data.base64EncodedString()
+        // let body = ["base64": base64String]
+        let body = ["lc3": data]
+        Bridge.sendTypedMessage("mic_lc3", body: body)
+    }
+
+    static func saveSetting(_ key: String, _ value: Any) {
+        let body = ["key": key, "value": value]
+        Bridge.sendTypedMessage("save_setting", body: body)
+    }
+
+    static func sendVadEvent(_ isSpeaking: Bool) {
+        let body: [String: Any] = ["status": isSpeaking]
+        Bridge.sendTypedMessage("vad_status", body: body)
+    }
+
+    static func sendBatteryStatus(level: Int, charging: Bool) {
+        let body: [String: Any] = [
+            "level": level,
+            "charging": charging,
+            "timestamp": Date().timeIntervalSince1970 * 1000,
+        ]
+        Bridge.sendTypedMessage("battery_status", body: body)
+    }
+
+    static func sendDiscoveredDevice(_ deviceModel: String, _ deviceName: String) {
+        Task {
+            await MainActor.run {
+                let searchResults = GlassesStore.shared.get("core", "searchResults") as? [[String: Any]] ?? []
+                let newResult: [String: Any] = [
+                    "deviceModel": deviceModel,
+                    "deviceName": deviceName,
+                ]
+                let allResults = searchResults + [newResult]
+                var seen = Set<String>()
+                let uniqueResults = allResults.reversed().filter {
+                    guard let name = $0["deviceName"] as? String else { return false }
+                    return seen.insert(name).inserted
+                }.reversed()
+                GlassesStore.shared.set("core", "searchResults", Array(uniqueResults))
+            }
+        }
+    }
+
+    // MARK: - Hardware Events
+
+    static func sendButtonPress(buttonId: String, pressType: String) {
+        // Send as typed message so it gets handled locally by MantleBridge.tsx
+        // This allows the React Native layer to process it before forwarding to server
+        let body: [String: Any] = [
+            "buttonId": buttonId,
+            "pressType": pressType,
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+        ]
+        Bridge.sendTypedMessage("button_press", body: body)
+    }
+
+    static func sendTouchEvent(deviceModel: String, gestureName: String, timestamp: Int64, source: Int32? = nil) {
+        var body: [String: Any] = [
+            "device_model": deviceModel,
+            "gesture_name": gestureName,
+            "timestamp": timestamp,
+        ]
+        if let source {
+            body["source"] = source
+        }
+        Bridge.sendTypedMessage("touch_event", body: body)
+    }
+
+    static func sendSwipeVolumeStatus(enabled: Bool, timestamp: Int64) {
+        let body: [String: Any] = [
+            "enabled": enabled,
+            "timestamp": timestamp,
+        ]
+        Bridge.sendTypedMessage("swipe_volume_status", body: body)
+    }
+
+    static func sendSwitchStatus(switchType: Int, value: Int, timestamp: Int64) {
+        let body: [String: Any] = [
+            "switch_type": switchType,
+            "switch_value": value,
+            "timestamp": timestamp,
+        ]
+        Bridge.sendTypedMessage("switch_status", body: body)
+    }
+
+    static func sendRgbLedControlResponse(requestId: String, success: Bool, error: String?) {
+        guard !requestId.isEmpty else { return }
+        var body: [String: Any] = [
+            "requestId": requestId,
+            "success": success,
+        ]
+        if let error {
+            body["error"] = error
+        }
+        Bridge.sendTypedMessage("rgb_led_control_response", body: body)
+    }
+
+    static func sendPhotoError(requestId: String, errorCode: String, errorMessage: String) {
+        var event: [String: Any] = [
+            "type": "photo_response",
+            "requestId": requestId,
+            "success": false,
+            "photoUrl": "",
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+        ]
+        if !errorCode.isEmpty {
+            event["errorCode"] = errorCode
+        }
+        if !errorMessage.isEmpty {
+            event["errorMessage"] = errorMessage
+        }
+        Bridge.sendTypedMessage("photo_response", body: event)
+    }
+
+    static func sendMiniappSelected(packageName: String) {
+        let event: [String: Any] = [
+            "packageName": packageName,
+        ]
+        Bridge.sendTypedMessage("miniapp_selected", body: event)
+    }
+
+    /**
+     * Send transcription result to server
+     * Used by AOSManager to send pre-formatted transcription results
+     * Matches the Java ServerComms structure exactly
+     */
+    static func sendLocalTranscription(transcription: [String: Any]) {
+        guard let text = transcription["text"] as? String, !text.isEmpty else {
+            Bridge.log("Skipping empty transcription result")
+            return
+        }
+
+        Bridge.sendTypedMessage("local_transcription", body: transcription)
+    }
+
+    // Bluetooth SDK bridge funcs:
+
+    static func sendserialNumber(_ serialNumber: String, style: String, color: String) {
+        let body = [
+            "glasses_serial_number": [
+                "serial_number": serialNumber,
+                "style": style,
+                "color": color,
+            ],
+        ]
+        Bridge.sendTypedMessage("glasses_serial_number", body: body)
+    }
+
+    static func sendWifiStatusChange(connected: Bool, ssid: String?, localIp: String?) {
+        let event: [String: Any] = [
+            "connected": connected,
+            "ssid": ssid,
+            "local_ip": localIp,
+        ]
+        Bridge.sendTypedMessage("wifi_status_change", body: event)
+    }
+
+    static func updateWifiScanResults(_ networks: [[String: Any]]) {
+        Task {
+            await MainActor.run {
+                var storedNetworks: [[String: Any]] =
+                    GlassesStore.shared.get("core", "wifiScanResults") as? [[String: Any]] ?? []
+                // add the networks to the storedNetworks array, removing duplicates by ssid
+                for network in networks {
+                    if !storedNetworks.contains(where: {
+                        $0["ssid"] as? String == network["ssid"] as? String
+                    }) {
+                        storedNetworks.append(network)
+                    }
+                }
+                GlassesStore.shared.apply("core", "wifiScanResults", storedNetworks)
+            }
+        }
+    }
+
+    static func sendMtkUpdateComplete(message: String, timestamp: Int64) {
+        let eventBody: [String: Any] = [
+            "message": message,
+            "timestamp": timestamp,
+        ]
+        Bridge.sendTypedMessage("mtk_update_complete", body: eventBody)
+    }
+
+    /// Send ota_start_ack — glasses confirmed receipt of ota_start command
+    static func sendOtaStartAck() {
+        let eventBody: [String: Any] = [
+            "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
+        ]
+        Bridge.sendTypedMessage("ota_start_ack", body: eventBody)
+    }
+
+    /// Send OTA update available notification - glasses have detected an available update (background mode)
+    static func sendOtaUpdateAvailable(
+        versionCode: Int64,
+        versionName: String,
+        updates: [String],
+        totalSize: Int64
+    ) {
+        let eventBody: [String: Any] = [
+            "version_code": versionCode,
+            "version_name": versionName,
+            "updates": updates,
+            "total_size": totalSize,
+        ]
+        Bridge.sendTypedMessage("ota_update_available", body: eventBody)
+    }
+
+    static func sendOtaStatus(
+        sessionId: String,
+        totalSteps: Int,
+        currentStep: Int,
+        stepType: String,
+        phase: String,
+        stepPercent: Int,
+        overallPercent: Int,
+        status: String,
+        errorMessage: String?
+    ) {
+        var eventBody: [String: Any] = [
+            "session_id": sessionId,
+            "total_steps": totalSteps,
+            "current_step": currentStep,
+            "step_type": stepType,
+            "phase": phase,
+            "step_percent": stepPercent,
+            "overall_percent": overallPercent,
+            "status": status,
+        ]
+        if let error = errorMessage {
+            eventBody["error_message"] = error
+        }
+        Bridge.sendTypedMessage("ota_status", body: eventBody)
+    }
+
+    /// Arbitrary WS Comms (dont use these, make a dedicated function for your use case):
+    static func sendWSText(_ msg: String) {
+        let data = ["text": msg]
+        Bridge.sendTypedMessage("ws_text", body: data)
+    }
+
+    static func sendWSBinary(_ data: Data) {
+        let base64String = data.base64EncodedString()
+        let body = ["base64": base64String]
+        Bridge.sendTypedMessage("ws_bin", body: body)
+    }
+
+    /// don't call this function directly, instead
+    /// make a function above that calls this function:
+    static func sendTypedMessage(_ type: String, body: [String: Any]) {
+        var body = body
+        body["type"] = type
+        // Send directly using type as event name - no JSON serialization
+        dispatchEvent(type, body)
+    }
+}

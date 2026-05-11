@@ -7,18 +7,21 @@ import Animated, {useSharedValue, useAnimatedStyle, withTiming} from "react-nati
 import {Header, Screen, Text} from "@/components/ignite"
 import MiniappErrorScreen from "@/components/miniapps/MiniappErrorScreen"
 import LoadingOverlay from "@/components/ui/LoadingOverlay"
-import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import restComms from "@/services/RestComms"
-import miniComms from "@/services/MiniComms"
+import {webviewBridge as miniComms} from "@mentra/island"
 import {WebSocketStatus} from "@/services/ws-types"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
-import {useAppletStatusStore} from "@/stores/applets"
+import {useAppStatusStore} from "@mentra/island"
+
+import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {useConnectionStore} from "@/stores/connection"
-import {MiniAppCapsuleMenu} from "@/components/miniapps/CapsuleMenu"
+import {captureScreenshot} from "@/effects/CapsuleMenu"
 import AppIcon from "@/components/home/AppIcon"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
-import {buildMiniappGlobalsScript} from "@/utils/miniappGlobals"
+import {buildMiniappGlobalsScript} from "@mentra/island"
+import {useRegisterCapsule} from "@/stores/capsule"
 
 export default function AppWebView() {
   const {webviewURL, appName, packageName, isLocal: isLocalParam} = useLocalSearchParams()
@@ -30,7 +33,7 @@ export default function AppWebView() {
   const [isLoadingToken, setIsLoadingToken] = useState(!isLocal)
   const [tokenError, setTokenError] = useState<string | null>(null)
   const [retryTrigger, setRetryTrigger] = useState(0)
-  const {goBack, push} = useNavigationHistory()
+  const {goBack, push} = useNavigationStore.getState()
   const viewShotRef = useRef(null)
   const insets = useSaferAreaInsets()
   const {theme} = useAppTheme()
@@ -46,10 +49,14 @@ export default function AppWebView() {
   const hasValidParams =
     typeof webviewURL === "string" && typeof appName === "string" && typeof packageName === "string"
 
-  const {setForceGestureEnabled} = useNavigationHistory()
+  const {setForceGestureEnabled} = useNavigationStore.getState()
 
   // Back press handler for CapsuleMenu/Header buttons and Android back button.
-  const handleWebViewBack = useCallback(() => {
+  const handleWebViewBack = useCallback(async () => {
+    console.log("WEBVIEW: handleWebViewBack()")
+    if (Platform.OS === "ios") {
+      await captureScreenshot(viewShotRef, packageName.toString(), insets.top)
+    }
     if (!hasValidParams) {
       if (Platform.OS === "android") {
         goBack()
@@ -60,13 +67,14 @@ export default function AppWebView() {
       webViewRef.current.goBack()
     } else {
       if (Platform.OS === "android") {
+        captureScreenshot(viewShotRef, packageName.toString(), insets.top)
         goBack()
       }
     }
   }, [webViewCanGoBack, hasValidParams, goBack])
 
   // Block native back gesture/button — route through handleWebViewBack for Android.
-  focusEffectPreventBack(handleWebViewBack, false)
+  // focusEffectPreventBack(handleWebViewBack, false)
 
   // Dynamically toggle gesture handling based on webview navigation state:
   // - Page 0 (no history): disable WebView's gesture, force-enable React Navigation's
@@ -85,6 +93,13 @@ export default function AppWebView() {
 
     return () => setForceGestureEnabled(false)
   }, [webViewCanGoBack, setForceGestureEnabled])
+
+  useRegisterCapsule({
+    packageName: packageName as string,
+    viewShotRef,
+    visibleOnRoutes: ["/applet/webview"],
+    onBackPress: handleWebViewBack,
+  })
 
   // Two conditions for showing the webview content:
   // 1. WebView HTML has loaded (onLoadEnd fired)
@@ -147,11 +162,11 @@ export default function AppWebView() {
       setAppStartFailed(true)
     }
 
-    checkApplet(useAppletStatusStore.getState())
+    checkApplet(useAppStatusStore.getState())
 
-    const unsubApplets = useAppletStatusStore.subscribe(checkApplet)
+    const unsubApplets = useAppStatusStore.subscribe(checkApplet)
     const unsubConn = useConnectionStore.subscribe(() => {
-      checkApplet(useAppletStatusStore.getState())
+      checkApplet(useAppStatusStore.getState())
     })
     return () => {
       unsubApplets()
@@ -322,7 +337,7 @@ export default function AppWebView() {
   }
 
   // const screenshotComponent = () => {
-  //   const screenshot = useAppletStatusStore.getState().apps.find((a) => a.packageName === packageName)?.screenshot
+  //   const screenshot = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)?.screenshot
   //   if (screenshot) {
   //     return <Image source={{uri: screenshot}} style={{flex: 1, resizeMode: "cover"}} blurRadius={10} />
   //   }
@@ -330,7 +345,7 @@ export default function AppWebView() {
   // }
 
   const renderLoadingOverlay = () => {
-    const app = useAppletStatusStore.getState().apps.find((a) => a.packageName === packageName)
+    const app = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)
 
     // disabled for now:
     // const screenshot = screenshotComponent()
@@ -384,7 +399,6 @@ export default function AppWebView() {
   if (showError) {
     return (
       <>
-        <MiniAppCapsuleMenu packageName={packageName} viewShotRef={viewShotRef} onBackPress={handleWebViewBack} />
         <Screen preset="fixed" safeAreaEdges={["top"]} className="px-0">
           <MiniappErrorScreen
             packageName={packageName}
@@ -400,7 +414,7 @@ export default function AppWebView() {
               webViewOpacity.value = 0
               loadingOpacity.value = 1
               // Re-send the start request and poll for confirmation
-              useAppletStatusStore.getState().retryStartApp(packageName as string)
+              void miniappCatalog.retryStart(packageName as string)
               setRetryTrigger((prev) => prev + 1)
             }}
           />
@@ -424,16 +438,14 @@ export default function AppWebView() {
   })
 
   return (
-    <>
-      <MiniAppCapsuleMenu packageName={packageName} viewShotRef={viewShotRef} onBackPress={handleWebViewBack} />
-      <Screen
-        preset="fixed"
-        safeAreaEdges={Platform.OS === "android" ? ["top", "bottom"] : ["top"]}
-        KeyboardAvoidingViewProps={{enabled: false}}
-        className="px-0"
-        ref={viewShotRef}>
-        {/* rainbow bars for debugging insets / screenshots */}
-        {/* <View className="flex-1 absolute inset-0 z-10">
+    <Screen
+      preset="fixed"
+      safeAreaEdges={Platform.OS === "android" ? ["top", "bottom"] : ["top"]}
+      KeyboardAvoidingViewProps={{enabled: false}}
+      className="px-0"
+      ref={viewShotRef}>
+      {/* rainbow bars for debugging insets / screenshots */}
+      {/* <View className="flex-1 absolute inset-0 z-10">
           <View className="flex-col">
             <View className="w-full h-2 bg-red-500" />
             <View className="w-full h-2 bg-green-500" />
@@ -461,43 +473,42 @@ export default function AppWebView() {
             <View className="w-full h-2 bg-red-500" />
           </View>
         </View> */}
-        <View className="flex-1">
-          {renderLoadingOverlay()}
-          {finalUrl && (
-            <Animated.View className="flex-1" style={[webViewAnimatedStyle]}>
-              <WebView
-                ref={webViewRef}
-                source={{uri: finalUrl}}
-                style={{flex: 1}}
-                onLoadStart={handleLoadStart}
-                onLoadEnd={handleLoadEnd}
-                onError={handleError}
-                onMessage={handleWebViewMessage}
-                javaScriptEnabled={true}
-                domStorageEnabled={true}
-                startInLoadingState={false}
-                allowsInlineMediaPlayback={true}
-                mediaPlaybackRequiresUserAction={false}
-                scalesPageToFit={false}
-                scrollEnabled={true}
-                bounces={false}
-                allowsBackForwardNavigationGestures={true}
-                onNavigationStateChange={(navState) => setWebViewCanGoBack(navState.canGoBack)}
-                automaticallyAdjustContentInsets={false}
-                contentInsetAdjustmentBehavior="never"
-                injectedJavaScriptBeforeContentLoaded={miniappGlobalsScript}
-                injectedJavaScript={`
+      <View className="flex-1">
+        {renderLoadingOverlay()}
+        {finalUrl && (
+          <Animated.View className="flex-1" style={[webViewAnimatedStyle]}>
+            <WebView
+              ref={webViewRef}
+              source={{uri: finalUrl}}
+              style={{flex: 1}}
+              onLoadStart={handleLoadStart}
+              onLoadEnd={handleLoadEnd}
+              onError={handleError}
+              onMessage={handleWebViewMessage}
+              javaScriptEnabled={true}
+              domStorageEnabled={true}
+              startInLoadingState={false}
+              allowsInlineMediaPlayback={true}
+              mediaPlaybackRequiresUserAction={false}
+              scalesPageToFit={false}
+              scrollEnabled={true}
+              bounces={false}
+              allowsBackForwardNavigationGestures={true}
+              onNavigationStateChange={(navState) => setWebViewCanGoBack(navState.canGoBack)}
+              automaticallyAdjustContentInsets={false}
+              contentInsetAdjustmentBehavior="never"
+              injectedJavaScriptBeforeContentLoaded={miniappGlobalsScript}
+              injectedJavaScript={`
                   const meta = document.createElement('meta');
                   meta.setAttribute('name', 'viewport');
                   meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
                   document.getElementsByTagName('head')[0].appendChild(meta);
                   true;
                 `}
-              />
-            </Animated.View>
-          )}
-        </View>
-      </Screen>
-    </>
+            />
+          </Animated.View>
+        )}
+      </View>
+    </Screen>
   )
 }
