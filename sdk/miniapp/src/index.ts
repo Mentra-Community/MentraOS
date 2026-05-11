@@ -102,6 +102,7 @@ export type {LocationModule} from "./modules/location"
 export type {MicModule} from "./modules/mic"
 export type {
   ComputedRoute,
+  ComputedRouteStep,
   ComputeRouteOptions,
   ComputeRouteResult,
   LatLng,
@@ -114,7 +115,11 @@ export type {
   NavRerouting,
   NavRoute,
   NavState,
+  NavStep,
   NavUpdate,
+  Pivot,
+  PivotEvent,
+  PivotOptions,
   RouteAvoidances,
   StartNavigationOptions,
   TravelMode,

@@ -302,13 +302,25 @@ class CrustModule : Module() {
             ),
           )
         }
-        override fun onRoute(points: List<NavigationManager.RoutePoint>) {
-          sendEvent(
-            "onNavRoute",
-            mapOf(
-              "points" to points.map { mapOf("lat" to it.lat, "lng" to it.lng) },
-            ),
-          )
+        override fun onRoute(
+          points: List<NavigationManager.RoutePoint>,
+          steps: List<NavigationManager.RouteStep>?,
+        ) {
+          val payload = HashMap<String, Any?>()
+          payload["points"] = points.map { mapOf("lat" to it.lat, "lng" to it.lng) }
+          if (steps != null) {
+            payload["steps"] = steps.map {
+              mapOf(
+                "lat" to it.lat,
+                "lng" to it.lng,
+                "routeIndex" to it.routeIndex,
+                "road" to it.road,
+                "maneuver" to it.maneuver,
+                "distanceMeters" to it.distanceMeters,
+              )
+            }
+          }
+          sendEvent("onNavRoute", payload)
         }
         override fun onOffRoute(perpendicularDistanceMeters: Double) {
           sendEvent(

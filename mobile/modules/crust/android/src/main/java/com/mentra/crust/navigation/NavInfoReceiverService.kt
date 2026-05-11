@@ -65,11 +65,16 @@ class NavInfoReceiverService : Service() {
         // migrated to nextStepRoad yet.
         val currentRoad = current?.simpleRoadName ?: current?.fullRoadName
         val nextStepRoad = readNextStepRoad(navInfo)
+        // Full ordered step list (currentStep + remainingSteps) for the
+        // SDK's pivot enrichment. Pulled here once per NavInfo tick so
+        // NavigationManager.emitRoute can attach it atomically.
+        val allSteps = readAllSteps(navInfo)
 
         NavInfoHolder.update(
           currentRoad = currentRoad,
           nextRoad = currentRoad,
           nextStepRoad = nextStepRoad,
+          allSteps = allSteps,
           sdkManeuverType = current?.maneuver?.let { mapManeuver(it) },
           distanceToCurrentStepMeters = navInfo.distanceToCurrentStepMeters,
           // Trip totals come straight off NavInfo. Treat negative SDK values
@@ -138,6 +143,66 @@ class NavInfoReceiverService : Service() {
         }
         val name = first?.simpleRoadName ?: first?.fullRoadName
         name?.takeIf { it.isNotBlank() }
+      } catch (_: Throwable) {
+        null
+      }
+    }
+
+    /**
+     * Pull the full step list from NavInfo for pivot enrichment.
+     * Concatenates `currentStep` (where the user is now) + the
+     * remaining steps (everything ahead). Each entry carries the
+     * step's road name + exit maneuver — the SDK consumer uses these
+     * to label pivots with fromRoad / toRoad.
+     *
+     * Returns null when NavInfo isn't yet shaped to deliver them
+     * (e.g. SDK version differences or pre-first-NavInfo).
+     */
+    private fun readAllSteps(navInfo: NavInfo): List<RouteStepInfo>? {
+      return try {
+        val out = ArrayList<RouteStepInfo>()
+        navInfo.currentStep?.let { stepToInfo(it) }?.let { out.add(it) }
+        val m = navInfo::class.java.methods.firstOrNull { it.name == "getRemainingSteps" && it.parameterCount == 0 }
+        if (m != null) {
+          val raw = m.invoke(navInfo)
+          val list: List<StepInfo>? = when (raw) {
+            is Array<*> -> raw.filterIsInstance<StepInfo>()
+            is List<*> -> raw.filterIsInstance<StepInfo>()
+            else -> null
+          }
+          if (list != null) {
+            for (s in list) {
+              stepToInfo(s)?.let { out.add(it) }
+            }
+          }
+        }
+        if (out.isEmpty()) null else out
+      } catch (_: Throwable) {
+        null
+      }
+    }
+
+    /**
+     * Convert a single StepInfo into the wire shape. Reads coords +
+     * road + categorical maneuver + distance defensively — different
+     * Nav SDK builds expose subtly different APIs and we don't want
+     * to crash if a getter is missing.
+     */
+    private fun stepToInfo(step: StepInfo): RouteStepInfo? {
+      return try {
+        val road = (step.simpleRoadName ?: step.fullRoadName)?.takeIf { it.isNotBlank() }
+        val maneuver = step.maneuver.let { mapManeuver(it) }
+        val distance: Int = try {
+          (step.distanceFromPrevStepMeters as Number).toInt()
+        } catch (_: Throwable) {
+          0
+        }
+        // The Nav SDK's StepInfo does NOT expose step coordinates — only
+        // road name, maneuver type, ordinal index, and step length. We
+        // capture those here; the consumer (NavigationManager.buildRouteSteps)
+        // walks the route polyline using `distanceMeters` as cumulative
+        // offsets to derive each step's start vertex.
+        RouteStepInfo(road = road, maneuver = maneuver, distanceMeters = distance)
       } catch (_: Throwable) {
         null
       }
@@ -231,6 +296,20 @@ class NavInfoReceiverService : Service() {
 }
 
 /**
+ * Wire shape of one step in the active route, captured from
+ * `NavInfo.currentStep + remainingSteps`. The Google Nav SDK's
+ * `StepInfo` does not expose coordinates, so we carry only the
+ * non-spatial fields here. The consumer derives each step's
+ * geographic anchor by walking the polyline with `distanceMeters`
+ * (each step's own length) as cumulative offset.
+ */
+data class RouteStepInfo(
+  val road: String?,
+  val maneuver: String,
+  val distanceMeters: Int,
+)
+
+/**
  * Process-wide latest NavInfo signals from the Google Nav SDK.
  * NavigationManager reads these when constructing ManeuverPayloads.
  * Best-effort — fields stay null until the first NavInfo arrives, and may
@@ -246,6 +325,20 @@ object NavInfoHolder {
    * `nextRoad` (legacy, equals `currentRoad`).
    */
   @Volatile var nextStepRoad: String? = null
+  /**
+   * Ordered list of all known route steps (current + remaining), for
+   * pivot enrichment downstream. Null until the first NavInfo tick.
+   * NavigationManager subscribes to `onAllStepsAvailable` to
+   * re-emit the route once steps land, so the SDK's pivot module
+   * can fill in `fromRoad` / `toRoad` for the initial trip.
+   */
+  @Volatile var allSteps: List<RouteStepInfo>? = null
+  /**
+   * Listener fired the FIRST time `allSteps` becomes non-null after
+   * the last `reset()`. Set by NavigationManager at trip start;
+   * cleared by the holder after firing. Single-use per trip.
+   */
+  @Volatile var onAllStepsAvailable: (() -> Unit)? = null
   /** Mapped string per CrustModule's maneuver vocabulary. Null = use bearing-derived. */
   @Volatile var sdkManeuverType: String? = null
   /**
@@ -266,6 +359,7 @@ object NavInfoHolder {
     currentRoad: String?,
     nextRoad: String?,
     nextStepRoad: String?,
+    allSteps: List<RouteStepInfo>?,
     sdkManeuverType: String?,
     distanceToCurrentStepMeters: Int?,
     distanceToFinalDestinationMeters: Int? = null,
@@ -274,16 +368,30 @@ object NavInfoHolder {
     this.currentRoad = currentRoad?.takeIf { it.isNotBlank() }
     this.nextRoad = nextRoad?.takeIf { it.isNotBlank() }
     this.nextStepRoad = nextStepRoad?.takeIf { it.isNotBlank() }
+    val wasMissingSteps = this.allSteps == null
+    this.allSteps = allSteps?.takeIf { it.isNotEmpty() }
     this.sdkManeuverType = sdkManeuverType
     this.distanceToCurrentStepMeters = distanceToCurrentStepMeters
     this.distanceToFinalDestinationMeters = distanceToFinalDestinationMeters
     this.timeToFinalDestinationSeconds = timeToFinalDestinationSeconds
+
+    // First time steps become available after a reset → notify the
+    // pending NavigationManager so it can re-emit the route with the
+    // step list folded in. One-shot per trip — we clear the listener
+    // after firing.
+    if (wasMissingSteps && this.allSteps != null) {
+      val cb = onAllStepsAvailable
+      onAllStepsAvailable = null
+      cb?.invoke()
+    }
   }
 
   fun reset() {
     currentRoad = null
     nextRoad = null
     nextStepRoad = null
+    allSteps = null
+    onAllStepsAvailable = null
     sdkManeuverType = null
     distanceToCurrentStepMeters = null
     distanceToFinalDestinationMeters = null

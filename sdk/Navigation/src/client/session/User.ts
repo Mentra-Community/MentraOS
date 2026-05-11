@@ -28,8 +28,6 @@ import {GoogleMapsManager} from "@/backend/session/managers/GoogleMapsManager"
 import {LocationManager} from "@/backend/session/managers/LocationManager"
 import type {Coords} from "@/backend/session/managers/LocationManager"
 import {NavigationManager} from "@/backend/session/managers/navigation/NavigationManager"
-import {PivotTracker} from "@/backend/session/managers/navigation/PivotTracker"
-import {RoadTracker} from "@/backend/session/managers/RoadTracker"
 import {SimpleStorageManager} from "@/backend/session/managers/SimpleStorageManager"
 
 export class User {
@@ -42,20 +40,6 @@ export class User {
   readonly display: DisplayManager
   readonly navigation: NavigationManager
   readonly storage: SimpleStorageManager
-  /**
-   * Geometry-derived turn tracker. Owns the pivot list extracted from the
-   * SDK route polyline + radius checks on every GPS fix. Drives the
-   * OrientationCard — we no longer trust the SDK's noisy maneuverType stream.
-   */
-  readonly pivots: PivotTracker
-  /**
-   * Geocoder-backed road-name fallback. The Nav SDK's `fromRoad` is the
-   * source of truth, but it's null at trip start and on streets where the
-   * SDK has no name. This tracker reverse-geocodes the user's GPS so the
-   * UI always has a road name to coalesce onto when the SDK is empty.
-   */
-  readonly road: RoadTracker
-
   // ---- reactive snapshot --------------------------------------------------
 
   /** Latest road-snapped GPS fix. Null until first sample. */
@@ -91,8 +75,6 @@ export class User {
     this.display = new DisplayManager(this.session)
     this.navigation = new NavigationManager(this.session)
     this.storage = new SimpleStorageManager(this.session)
-    this.pivots = new PivotTracker()
-    this.road = new RoadTracker(this.maps)
 
     // Last-chance teardown. Fires on phone-initiated WILL_DISCONNECT and
     // also when this.session.disconnect() runs locally — the SDK emits
@@ -199,28 +181,17 @@ export class User {
           accuracy: d.accuracy,
           ts: d.timestamp ?? Date.now(),
         }
-        // Feed the geometry-based maneuver tracker. It checks the 4m radius
-        // against the next pivot and emits "Turn left/right" / "Continue" /
-        // "Arrived" snapshots without trusting the SDK's per-step maneuver.
-        this.pivots.onLocationUpdate({lat: d.lat, lng: d.lng}, d.accuracy)
-        this.road.onLocationUpdate({lat: d.lat, lng: d.lng})
+        // Pivot tracking is owned by the SDK now (subscribes to GPS
+        // internally when a trip is active). User.ts is no longer
+        // responsible for feeding any pivot/road manager — just for
+        // capturing GPS into the reactive `coords` snapshot.
         this.notify()
       }),
     )
 
-    // Route polyline → pivot extraction. Fires on trip start AND every reroute.
-    this.sensorUnsubs.push(
-      this.navigation.onRoute((route) => {
-        const here = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
-        this.pivots.setRoute(route.points, here)
-        this.notify()
-      }),
-    )
-
-    // PivotTracker → React. Whenever the snapshot changes (turn entered,
-    // pivot cursor advanced) bump version so consumers re-render.
-    this.sensorUnsubs.push(this.pivots.subscribe(() => this.notify()))
-    this.sensorUnsubs.push(this.road.subscribe(() => this.notify()))
+    // SDK pivot events → React. Each approaching/entered/exited fires
+    // a notify so consumers re-render with the new active/upcoming pivot.
+    this.sensorUnsubs.push(this.navigation.onPivot(() => this.notify()))
 
     // Throttle compass updates to ~10Hz. The IMU pushes far more
     // frequently than the UI can use, and every notify re-renders every
@@ -314,20 +285,6 @@ export class User {
       this.display.clear()
     } catch (err) {
       console.warn("[User] display.clear during dispose failed:", err)
-    }
-
-    // Reset the pivot tracker.
-    try {
-      this.pivots.clear()
-    } catch (err) {
-      console.warn("[User] pivots.clear threw:", err)
-    }
-
-    // Cancel any pending road-name fetch.
-    try {
-      this.road.clear()
-    } catch (err) {
-      console.warn("[User] road.clear threw:", err)
     }
 
     // Release sensor subscriptions.

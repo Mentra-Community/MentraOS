@@ -100,13 +100,28 @@ object NavigationManager {
 
   data class RoutePoint(val lat: Double, val lng: Double)
 
+  /**
+   * One step along the active route — used by the SDK's pivot module
+   * to enrich pivots with `fromRoad` / `toRoad` metadata. Lat/lng is
+   * the step's START coordinate; the matching is by proximity to the
+   * polyline, not exact index.
+   */
+  data class RouteStep(
+    val lat: Double,
+    val lng: Double,
+    val routeIndex: Int,
+    val road: String?,
+    val maneuver: String,
+    val distanceMeters: Int,
+  )
+
   interface Callbacks {
     fun onManeuver(payload: ManeuverPayload)
     fun onRerouting()
     fun onArrived()
     fun onError(message: String)
     fun onLocation(payload: LocationPayload)
-    fun onRoute(points: List<RoutePoint>)
+    fun onRoute(points: List<RoutePoint>, steps: List<RouteStep>?)
     /**
      * Fires once when the user crosses the off-route threshold. Always
      * arrives before `onRerouting` for the same deviation so a miniapp
@@ -358,10 +373,16 @@ object NavigationManager {
    */
   private fun registerNavInfoUpdates(activity: Activity, nav: Navigator) {
     try {
+      // Request the FULL remaining step list (well above any real route's
+      // depth). The miniapp's pivot engine matches each geometric pivot to
+      // its corresponding step to derive `fromRoad` / `toRoad`; with only
+      // 1 step previewed, pivots past the immediate turn get no match
+      // and render as "∅". Google caps this at the route's actual size
+      // internally — asking for 100 is safe.
       val ok = nav.registerServiceForNavUpdates(
         activity.packageName,
         NavInfoReceiverService::class.java.name,
-        /* numNextStepsToPreview = */ 1,
+        /* numNextStepsToPreview = */ 100,
       )
       if (!ok) {
         Log.w(TAG, "registerServiceForNavUpdates returned false — road names unavailable")
@@ -496,15 +517,104 @@ object NavigationManager {
           points.add(RoutePoint(ll.latitude, ll.longitude))
         }
       }
-      if (points.isNotEmpty()) {
-        Log.d(TAG, "emit route — ${points.size} points")
-        callbacks.onRoute(points)
-      } else {
+      if (points.isEmpty()) {
         Log.w(TAG, "route segments empty, nothing to emit")
+        return
+      }
+      val steps = buildRouteSteps(points)
+      Log.d(TAG, "emit route — ${points.size} points, steps=${steps?.size ?: "null"}")
+      callbacks.onRoute(points, steps)
+      // If we don't have steps yet, register to re-emit once they
+      // arrive from the first NavInfo. One-shot — the holder clears
+      // the listener after firing.
+      if (steps == null) {
+        NavInfoHolder.onAllStepsAvailable = {
+          try {
+            val laterSteps = buildRouteSteps(points)
+            if (laterSteps != null) {
+              Log.d(TAG, "re-emit route with steps now available — steps=${laterSteps.size}")
+              callbacks.onRoute(points, laterSteps)
+            }
+          } catch (e: Throwable) {
+            Log.w(TAG, "deferred route re-emit failed: ${e.message}")
+          }
+        }
       }
     } catch (e: Exception) {
       Log.e(TAG, "emitRoute failed", e)
     }
+  }
+
+  /**
+   * Build the wire-shape step list from the polyline + the latest
+   * `NavInfoHolder.allSteps`. The Google Nav SDK's `StepInfo` does
+   * not expose step coordinates, so we walk the polyline with each
+   * step's `distanceMeters` as the cumulative offset from the trip
+   * start. The polyline vertex closest to that offset is the step's
+   * start anchor.
+   *
+   * `distanceFromPrevStepMeters` semantics on the SDK side: the first
+   * remaining step's value is the distance of the *current* step
+   * (i.e. how far it spans), and subsequent steps describe their own
+   * spans. We treat steps[0] as anchored at offset 0 (user's current
+   * position along the route) and place steps[i>0] at the cumulative
+   * sum of prior steps' lengths.
+   *
+   * Returns null when NavInfo hasn't supplied steps yet — caller
+   * uses this signal to register a re-emit.
+   */
+  private fun buildRouteSteps(points: List<RoutePoint>): List<RouteStep>? {
+    val src = NavInfoHolder.allSteps ?: return null
+    if (src.isEmpty() || points.isEmpty()) return null
+
+    val cumPolylineMeters = DoubleArray(points.size)
+    for (i in 1 until points.size) {
+      cumPolylineMeters[i] = cumPolylineMeters[i - 1] + haversine(
+        points[i - 1].lat, points[i - 1].lng,
+        points[i].lat, points[i].lng,
+      )
+    }
+
+    val out = ArrayList<RouteStep>(src.size)
+    val totalPolylineMeters = cumPolylineMeters.last()
+    var cumStepOffset = 0.0
+    for (s in src) {
+      val idx = closestPolylineIndexByDistance(cumPolylineMeters, cumStepOffset)
+      out.add(
+        RouteStep(
+          lat = points[idx].lat,
+          lng = points[idx].lng,
+          routeIndex = idx,
+          road = s.road,
+          maneuver = s.maneuver,
+          distanceMeters = s.distanceMeters,
+        ),
+      )
+      // Advance the offset by this step's own length so the next step
+      // anchors at the right cumulative distance. `distanceMeters` on
+      // a remaining step is the length of that step, so adding it
+      // moves us to the start of the next. Cap at the polyline total
+      // so a slight distance overshoot doesn't push us out of bounds.
+      cumStepOffset = (cumStepOffset + s.distanceMeters.coerceAtLeast(0))
+        .coerceAtMost(totalPolylineMeters)
+    }
+    return if (out.isEmpty()) null else out
+  }
+
+  /** Polyline vertex index whose cumulative distance is closest to `target`. */
+  private fun closestPolylineIndexByDistance(cum: DoubleArray, target: Double): Int {
+    if (target <= 0) return 0
+    if (target >= cum.last()) return cum.size - 1
+    var best = 0
+    var bestD = Double.MAX_VALUE
+    for (i in cum.indices) {
+      val d = kotlin.math.abs(cum[i] - target)
+      if (d < bestD) {
+        bestD = d
+        best = i
+      }
+    }
+    return best
   }
 
   private fun attachListeners(nav: Navigator, callbacks: Callbacks) {

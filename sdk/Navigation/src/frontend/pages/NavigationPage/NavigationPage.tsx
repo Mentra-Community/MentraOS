@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState} from "react"
+import {useEffect, useMemo, useRef, useState} from "react"
 import type {NavManeuver, NavRoute, NavUpdate, TravelMode} from "@mentra/miniapp"
 
 import {useRouter} from "@/frontend/router"
@@ -17,8 +17,9 @@ import {MyLocationCard} from "@/frontend/pages/NavigationPage/components/MyLocat
 import {NavMap} from "@/frontend/pages/NavigationPage/components/NavMap/NavMap"
 import {useUser} from "@/backend/hooks/useUser"
 import {formatDistance} from "@/backend/lib/formatDistance/formatDistance"
-import type {LatLng} from "@/backend/lib/geometry/geometry"
+import {haversineMeters, type LatLng} from "@/backend/lib/geometry/geometry"
 import type {PlaceDetails} from "@/backend/lib/places/places"
+import type {NavigationManager as LocalNavigationManager} from "@/backend/session/managers/navigation/NavigationManager"
 import { safeHeadingManuverCard } from "@/frontend/components/SafeHeading/SafeHeading"
 
 export type NavStatus = "idle" | "navigating" | "rerouting" | "arrived"
@@ -87,10 +88,78 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
         mode: "walking",
       })
       .then((result) => {
-        console.log("[PREVIEW] computeRoute result:", JSON.stringify(result).slice(0, 200))
         if (ctrl.signal.aborted) return
-        const pts = result.routes?.[0]?.points ?? null
-        console.log("[PREVIEW] setting previewRoutePoints, count:", pts?.length ?? 0)
+        const route = result.routes?.[0]
+        const pts = route?.points ?? null
+        console.log("[PREVIEW] computeRoute ok — points:", pts?.length ?? 0,
+          "totalDistanceMeters:", route?.totalDistanceMeters,
+          "totalDurationSeconds:", route?.totalDurationSeconds)
+        if (pts && pts.length > 0) {
+          console.log("[PREVIEW] polyline start:", pts[0], "end:", pts[pts.length - 1])
+        }
+        // Turn-by-turn preview: dump every step the Routes API returned
+        // with its full metadata. Roads are parsed out of the natural
+        // language instruction ("Turn left onto Gough St" → "Gough St")
+        // and chained: toRoad of step N becomes fromRoad of step N+1.
+        // Pivots = the steps whose maneuver is a real turn (not
+        // STRAIGHT / DEPART / DESTINATION / NAME_CHANGE).
+        const steps = route?.steps ?? []
+        if (steps.length > 0) {
+          const enriched = steps.map((s, i) => {
+            const toRoad = extractRoadFromInstruction(s.instruction)
+            return {...s, idx: i, toRoad}
+          })
+          // Chain: step[i].fromRoad = step[i-1].toRoad (or the departure
+          // road for step 0, which we pull out of "Head ... on Road St").
+          let prevToRoad: string | null = extractDepartureRoad(steps[0]?.instruction) ?? null
+          const withRoads = enriched.map((s) => {
+            const fromRoad = prevToRoad
+            if (s.toRoad) prevToRoad = s.toRoad
+            return {...s, fromRoad}
+          })
+
+          console.log(`[PREVIEW] steps — ${withRoads.length} total`)
+          withRoads.forEach((s) => {
+            console.log(
+              `[PREVIEW] step[${s.idx}] maneuver=${s.maneuver ?? "—"} dist=${s.distanceMeters}m ` +
+                `from="${s.fromRoad ?? "∅"}" to="${s.toRoad ?? "∅"}" ` +
+                `start=(${s.lat.toFixed(6)}, ${s.lng.toFixed(6)}) ` +
+                `end=(${s.endLat.toFixed(6)}, ${s.endLng.toFixed(6)}) ` +
+                `instruction="${s.instruction ?? ""}"`,
+            )
+          })
+          // Pivot filter: only the real road-to-road turns.
+          //   - Drop trip-boundary maneuvers (DEPART / DESTINATION / NAME_CHANGE / STRAIGHT)
+          //   - Drop sub-step crosswalk fragments (no toRoad AND short)
+          // The Routes API splits final-block crosswalks into multiple
+          // bare "Turn left" sub-steps with no road name. Collapsing them
+          // out leaves only the meaningful "turn from X onto Y" pivots.
+          const PIVOT_MIN_METERS_WITHOUT_ROAD = 25
+          const pivots = withRoads.filter((s) => {
+            if (
+              s.maneuver == null ||
+              ["STRAIGHT", "DEPART", "DESTINATION", "NAME_CHANGE"].includes(s.maneuver)
+            ) {
+              return false
+            }
+            // Real turn onto a named road — always keep.
+            if (s.toRoad && s.toRoad !== s.fromRoad) return true
+            // Bare crosswalk/sidewalk fragment without a destination road.
+            // Keep only if it's long enough to plausibly be a real turn
+            // the SDK simply didn't label.
+            return s.distanceMeters >= PIVOT_MIN_METERS_WITHOUT_ROAD
+          })
+          console.log(`[PREVIEW] pivots — ${pivots.length} turning point(s)`)
+          pivots.forEach((s, i) => {
+            console.log(
+              `[PREVIEW] pivot[${i}] ${s.maneuver} from="${s.fromRoad ?? "∅"}" to="${s.toRoad ?? "∅"}" ` +
+                `at=(${s.lat.toFixed(6)}, ${s.lng.toFixed(6)}) dist=${s.distanceMeters}m ` +
+                `instruction="${s.instruction ?? ""}"`,
+            )
+          })
+        } else {
+          console.log("[PREVIEW] no steps returned by Routes API")
+        }
         setPreviewRoutePoints(pts)
       })
       .catch((err) => {
@@ -109,16 +178,25 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
 
   // ---- glasses HUD mirror ------------------------------------------------
   //
-  // Drive the glasses display straight off the PivotTracker — same source
-  // of truth as the OrientationCard. The HUD mirrors the phone card's
-  // layout: distance line, verb, and road context joined with newlines.
-  const pivotSnap = user.pivots.getSnapshot()
-  const roadSnap = user.road.getSnapshot()
+  // Drive the glasses display straight off the SDK's pivot state — same
+  // source of truth as the OrientationCard. The HUD mirrors the phone
+  // card's layout: distance line, verb, and road context joined with
+  // newlines.
+  const activePivot = user.navigation.getActivePivot()
+  const upcomingPivot = user.navigation.getUpcomingPivot()
+  const distanceToUpcomingPivot = useMemo(() => {
+    if (!upcomingPivot || !coords) return null
+    return haversineMeters({lat: coords.lat, lng: coords.lng}, {lat: upcomingPivot.lat, lng: upcomingPivot.lng})
+  }, [upcomingPivot, coords?.lat, coords?.lng])
+  const distanceToDestination =
+    maneuver?.distanceToDestinationMeters != null && maneuver.distanceToDestinationMeters >= 0
+      ? maneuver.distanceToDestinationMeters
+      : null
   useEffect(() => {
     // Arrival takes priority: when the trip ends `running` flips to false,
     // but we still want to show "You have arrived at <name>" instead of the
     // welcome idle message.
-    if (pivotSnap.arrived || status === "arrived") {
+    if (status === "arrived") {
       const at = activeDestinationName ? ` at ${activeDestinationName}` : ""
       display.showText(`You have arrived${at}`, 10000)
       return
@@ -138,27 +216,29 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     }
 
     // Mid-turn — the verb is the headline, no distance countdown.
-    if (pivotSnap.direction === "right" || pivotSnap.direction === "left") {
-      const verb = pivotSnap.direction === "right" ? "Turn right" : "Turn left"
-      const namedRoad = isRealRoadName(maneuver?.nextStepRoad ?? maneuver?.toRoad)
+    // Road name comes from the active pivot ONLY — no NavManeuver
+    // fallback. If the SDK didn't supply a road label, we render the
+    // verb alone.
+    if (activePivot) {
+      const verb = activePivot.direction === "right" ? "Turn right" : "Turn left"
+      const namedRoad = isRealRoadName(activePivot.toRoad)
       const onto = namedRoad ? `onto ${namedRoad}` : null
       display.showText([verb, onto].filter(Boolean).join("\n"))
       return
     }
 
-    // New "Continue" layout: top line = next road we're turning onto,
-    // bottom line = "Turn right in 500 m" (verb + distance combined).
-    // Mirrors the phone card. If we have no upcoming pivot, fall back
-    // to the destination-distance message.
-    if (pivotSnap.nextPivotDirection && pivotSnap.distanceToNextPivotMeters != null) {
-      const verb = pivotSnap.nextPivotDirection === "right" ? "Turn right" : "Turn left"
-      const distStr = formatDistance(pivotSnap.distanceToNextPivotMeters)
-      const nextRoad = isRealRoadName(maneuver?.nextStepRoad ?? maneuver?.toRoad) ?? roadSnap.road
+    // Continue layout: top line = next road we're turning onto (from
+    // the upcoming pivot, no fallback), bottom line = "Turn right in
+    // 500 m" (verb + distance combined). Mirrors the phone card.
+    if (upcomingPivot && distanceToUpcomingPivot != null) {
+      const verb = upcomingPivot.direction === "right" ? "Turn right" : "Turn left"
+      const distStr = formatDistance(distanceToUpcomingPivot)
+      const nextRoad = isRealRoadName(upcomingPivot.toRoad)
       display.showText([nextRoad, `${verb} in ${distStr}`].filter(Boolean).join("\n"))
       return
     }
-    if (pivotSnap.distanceToDestinationMeters != null) {
-      const distStr = formatDistance(pivotSnap.distanceToDestinationMeters)
+    if (distanceToDestination != null) {
+      const distStr = formatDistance(distanceToDestination)
       display.showText(`Arriving in ${distStr}`)
       return
     }
@@ -167,14 +247,10 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     display,
     running,
     status,
-    pivotSnap.direction,
-    pivotSnap.arrived,
-    pivotSnap.distanceToNextPivotMeters,
-    pivotSnap.distanceToDestinationMeters,
-    pivotSnap.nextPivotDirection,
-    pivotSnap.nextPivotIndex,
-    roadSnap.road,
-    maneuver,
+    activePivot,
+    upcomingPivot,
+    distanceToUpcomingPivot,
+    distanceToDestination,
     activeDestinationName,
   ])
 
@@ -197,6 +273,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
       if (!navRouteUnsubRef.current) {
         navRouteUnsubRef.current = navigation.onRoute((route: NavRoute) => {
           setRoutePoints(route.points)
+          logPivotsAfterRoute(navigation, route, "[ROUTE:hydrate]")
         })
       }
     }).catch(() => {
@@ -278,6 +355,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
       navRouteUnsubRef.current = navigation.onRoute((route: NavRoute) => {
         setRoutePoints(route.points)
         append(`route: ${route.points.length} points`)
+        logPivotsAfterRoute(navigation, route, "[ROUTE:start]")
       })
     }
 
@@ -367,6 +445,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
               heading={user.heading}
               maneuver={maneuver}
               routePoints={routePoints}
+              status={status}
             />
           </div>
         )}
@@ -566,6 +645,49 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
 /* -------------------------------------------------------------------------- */
 
 /**
+ * Dump the full pivot list to the console right after a route lands.
+ * The SDK's pivot engine subscribes to `onRoute` internally and
+ * rebuilds the list synchronously inside its own handler — but the
+ * subscriber order isn't guaranteed across consumers. We defer the
+ * read by one microtask so the SDK's handler has definitely run by
+ * the time we call `getPivots()`. Also re-reads ~500ms later in case
+ * the host queued an atomic re-emit (Android does this when steps
+ * aren't yet available at `onRoute` time).
+ *
+ * `tag` lets you tell apart the two callsites (start vs hydrate).
+ */
+function logPivotsAfterRoute(navigation: LocalNavigationManager, route: NavRoute, tag: string): void {
+  const dump = (label: string) => {
+    const pivots = navigation.getPivots()
+    console.log(
+      `${tag} ${label} — ${pivots.length} pivot(s) over ${route.points.length} polyline points` +
+      (route.steps != null ? ` (steps: ${route.steps.length})` : " (steps: none)"),
+    )
+    if (pivots.length === 0) {
+      console.log(`${tag} ${label} — no pivots yet (geometry produced nothing OR steps still loading)`)
+      return
+    }
+    for (const p of pivots) {
+      console.log(
+        `${tag} ${label} pivot[${p.index}] ${p.direction.toUpperCase()} ` +
+        `from="${p.fromRoad ?? "∅"}" to="${p.toRoad ?? "∅"}" ` +
+        `at=(${p.lat.toFixed(6)}, ${p.lng.toFixed(6)}) ` +
+        `distAlongRoute=${Math.round(p.distanceAlongRouteMeters)}m ` +
+        `radius=${p.radiusMeters}m maneuver=${p.maneuver}`,
+      )
+    }
+  }
+  // First pass — after SDK's own onRoute handler runs in this tick.
+  queueMicrotask(() => dump("initial"))
+  // Second pass — after the host's atomic re-emit lands (if any).
+  // Android emits route twice when steps weren't ready at first
+  // onRoute: once without steps, once ~50–500ms later with steps
+  // folded in. The second emit triggers a fresh `getPivots()` build
+  // with full from/to road metadata.
+  setTimeout(() => dump("settled"), 1500)
+}
+
+/**
  * The Nav SDK sometimes returns placeholder road labels like "toward Fell St"
  * when no confirmed road name is available. Strip those — they read as
  * "onto toward Fell St" / "Continue toward Fell St", which is gibberish.
@@ -579,6 +701,36 @@ function isRealRoadName(raw: string | null | undefined): string | null {
   // SDK-instruction-as-road-name leaks.
   if (/^(toward|turn|continue|destination|head|cross|slight|sharp|keep|merge|fork|exit|take|roundabout|u[\s-]?turn|arrive|arriving|depart|enter|leave|stay)\b/i.test(trimmed)) return null
   return trimmed
+}
+
+/**
+ * Pull the road name out of a Routes API turn instruction. The API
+ * returns natural language like "Turn left onto Gough St" or "Turn
+ * right onto Market St / Highway 1". Returns null when the instruction
+ * doesn't follow the "<verb> onto <road>" shape (e.g. bare "Turn left"
+ * with no road, or destination instructions).
+ */
+function extractRoadFromInstruction(instruction: string | undefined): string | null {
+  if (!instruction) return null
+  // Strip the "Destination will be on the right" trailer that Google
+  // sometimes appends to the final instruction.
+  const firstLine = instruction.split("\n")[0]
+  const m = firstLine.match(/\bonto\s+(.+?)(?:\s+toward\b|$)/i)
+  if (!m) return null
+  return m[1].trim() || null
+}
+
+/**
+ * Pull the departure road out of the first step's instruction, e.g.
+ * "Head northeast on Market St toward Octavia St" → "Market St".
+ * Returns null when the instruction doesn't match.
+ */
+function extractDepartureRoad(instruction: string | undefined): string | null {
+  if (!instruction) return null
+  const firstLine = instruction.split("\n")[0]
+  const m = firstLine.match(/\bon\s+(.+?)(?:\s+toward\b|$)/i)
+  if (!m) return null
+  return m[1].trim() || null
 }
 
 function formatUpdate(u: NavUpdate): string {

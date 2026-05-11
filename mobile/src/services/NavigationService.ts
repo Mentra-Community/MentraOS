@@ -56,7 +56,18 @@ export type NavLocation = {
 }
 export type NavLocationListener = (loc: NavLocation) => void
 
-export type NavRoute = {points: Array<{lat: number; lng: number}>}
+export type NavRouteStep = {
+  lat: number
+  lng: number
+  routeIndex: number
+  road: string | null
+  maneuver: string
+  distanceMeters: number
+}
+export type NavRoute = {
+  points: Array<{lat: number; lng: number}>
+  steps?: NavRouteStep[]
+}
 export type NavRouteListener = (route: NavRoute) => void
 
 export type NavState = "idle" | "navigating" | "rerouting" | "arrived"
@@ -326,9 +337,9 @@ class NavigationService {
         })
       }),
       CrustModule.addListener("onNavRoute", (data) => {
-        const route: NavRoute = {points: data.points ?? []}
+        const route: NavRoute = {points: data.points ?? [], steps: data.steps ?? undefined}
         this.lastRoute = route
-        console.log(`${LOG_TAG}: ← onNavRoute (${route.points.length} points)`)
+        console.log(`${LOG_TAG}: ← onNavRoute (${route.points.length} points, steps=${route.steps?.length ?? "null"})`)
         this.routeListeners.forEach((l) => {
           try {
             l(route)
@@ -384,6 +395,15 @@ async function computeRouteViaRoutesApi(payload: Record<string, unknown>): Promi
     totalDistanceMeters: number
     totalDurationSeconds: number
     summary?: string
+    steps?: Array<{
+      lat: number
+      lng: number
+      endLat: number
+      endLng: number
+      distanceMeters: number
+      maneuver?: string
+      instruction?: string
+    }>
   }>
 }> {
   const origin = payload.origin as {lat?: unknown; lng?: unknown} | undefined
@@ -429,7 +449,16 @@ async function computeRouteViaRoutesApi(payload: Record<string, unknown>): Promi
       headers: {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": apiKey,
-        "X-Goog-FieldMask": "routes.polyline.encodedPolyline,routes.distanceMeters,routes.duration,routes.description",
+        "X-Goog-FieldMask": [
+          "routes.polyline.encodedPolyline",
+          "routes.distanceMeters",
+          "routes.duration",
+          "routes.description",
+          "routes.legs.steps.startLocation",
+          "routes.legs.steps.endLocation",
+          "routes.legs.steps.distanceMeters",
+          "routes.legs.steps.navigationInstruction",
+        ].join(","),
       },
       body: JSON.stringify(body),
     })
@@ -442,14 +471,36 @@ async function computeRouteViaRoutesApi(payload: Record<string, unknown>): Promi
         distanceMeters?: number
         duration?: string
         description?: string
+        legs?: Array<{
+          steps?: Array<{
+            startLocation?: {latLng?: {latitude?: number; longitude?: number}}
+            endLocation?: {latLng?: {latitude?: number; longitude?: number}}
+            distanceMeters?: number
+            navigationInstruction?: {maneuver?: string; instructions?: string}
+          }>
+        }>
       }>
     }
-    const routes = (json.routes ?? []).slice(0, alternatives).map((r) => ({
-      points: decodePolyline(r.polyline?.encodedPolyline ?? ""),
-      totalDistanceMeters: r.distanceMeters ?? 0,
-      totalDurationSeconds: parseDurationSeconds(r.duration ?? ""),
-      summary: r.description,
-    }))
+    const routes = (json.routes ?? []).slice(0, alternatives).map((r) => {
+      const steps = (r.legs ?? []).flatMap((leg) =>
+        (leg.steps ?? []).map((s) => ({
+          lat: s.startLocation?.latLng?.latitude ?? Number.NaN,
+          lng: s.startLocation?.latLng?.longitude ?? Number.NaN,
+          endLat: s.endLocation?.latLng?.latitude ?? Number.NaN,
+          endLng: s.endLocation?.latLng?.longitude ?? Number.NaN,
+          distanceMeters: s.distanceMeters ?? 0,
+          maneuver: s.navigationInstruction?.maneuver,
+          instruction: s.navigationInstruction?.instructions,
+        })),
+      )
+      return {
+        points: decodePolyline(r.polyline?.encodedPolyline ?? ""),
+        totalDistanceMeters: r.distanceMeters ?? 0,
+        totalDurationSeconds: parseDurationSeconds(r.duration ?? ""),
+        summary: r.description,
+        steps: steps.length > 0 ? steps : undefined,
+      }
+    })
     if (routes.length === 0) return {ok: false, error: "no routes returned"}
     return {ok: true, routes}
   } catch (err) {

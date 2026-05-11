@@ -13,6 +13,8 @@ import type {
   NavRoute,
   NavState,
   NavUpdate,
+  Pivot,
+  PivotEvent,
   StartNavigationOptions,
 } from "@mentra/miniapp"
 
@@ -20,6 +22,7 @@ import {ManeuverFormatter} from "@/backend/session/managers/navigation/ManeuverF
 
 export type NavUpdateListener = (update: NavUpdate) => void
 export type NavRouteListener = (route: NavRoute) => void
+export type PivotListener = (event: PivotEvent) => void
 export type Unsubscribe = () => void
 
 export class NavigationManager {
@@ -85,5 +88,25 @@ export class NavigationManager {
   /** Compute one or more routes without starting a trip. */
   computeRoute(opts: ComputeRouteOptions): Promise<ComputeRouteResult> {
     return this.session.navigation.computeRoute(opts)
+  }
+
+  /** Subscribe to pivot events (approaching / entered / exited). */
+  onPivot(handler: PivotListener): Unsubscribe {
+    return this.session.navigation.onPivot(handler)
+  }
+
+  /** Full pivot list for the active route. */
+  getPivots(): Pivot[] {
+    return this.session.navigation.getPivots()
+  }
+
+  /** Pivot the user is currently inside the radius of, or null. */
+  getActivePivot(): Pivot | null {
+    return this.session.navigation.getActivePivot()
+  }
+
+  /** Next pivot ahead, or null when past the final pivot. */
+  getUpcomingPivot(): Pivot | null {
+    return this.session.navigation.getUpcomingPivot()
   }
 }

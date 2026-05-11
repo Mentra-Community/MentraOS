@@ -5,7 +5,7 @@ import {useUser} from "@/backend/hooks/useUser"
 import {useDrawerOffset} from "@/frontend/components/Drawer/DrawerOffsetContext"
 import {bearingDeg, haversineMeters} from "@/backend/lib/geometry/geometry"
 import type {LatLng} from "@/backend/lib/geometry/geometry"
-import {rdpSmooth} from "@/backend/lib/geometry/pivots"
+import {rdpSmooth} from "@/backend/lib/geometry/rdpSmooth"
 
 /** Pixels between the bottom of the right-rail button stack and the top
  *  of the active drawer. Tweak as the design wants. */
@@ -393,14 +393,13 @@ export function NavMap({
     }
   }, [ready, me?.lat, me?.lng, destination?.lat, destination?.lng, routePoints])
 
-  // Debug overlay: render a red dot at each detected pivot. Lets us visually
-  // verify that the geometry pipeline placed turn points where they belong.
-  // The pivot list comes from `user.pivots` (PivotTracker), which extracts
-  // pivots from the raw SDK polyline once per route.
+  // Debug overlay: render a red dot at each detected pivot. Lets us
+  // visually verify that the SDK placed turn points where they belong.
+  // Pivot list comes from `user.navigation.getPivots()` now (SDK-owned).
   useEffect(() => {
     if (!ready || !mapRef.current) return
     const g = window.google
-    const pivots = user.pivots.getPivots()
+    const pivots = user.navigation.getPivots()
 
     // Tear down previous markers
     for (const dot of pivotDotsRef.current) dot.setMap(null)
@@ -425,7 +424,7 @@ export function NavMap({
       for (const dot of pivotDotsRef.current) dot.setMap(null)
       pivotDotsRef.current = []
     }
-  }, [ready, routePoints, user.pivots])
+  }, [ready, routePoints, user.navigation])
 
   if (error) {
     return <div className="p-3 text-red-700 text-[13px]">Map failed to load: {error}</div>

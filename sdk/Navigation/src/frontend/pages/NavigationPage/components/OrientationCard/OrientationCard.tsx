@@ -4,8 +4,9 @@ import type {NavManeuver} from "@mentra/miniapp"
 
 import {useUser} from "@/backend/hooks/useUser"
 import {formatDistance} from "@/backend/lib/formatDistance/formatDistance"
-import type {LatLng} from "@/backend/lib/geometry/geometry"
-import type {PivotSnapshot} from "@/client/session/managers/navigation/PivotTracker"
+import {haversineMeters, type LatLng} from "@/backend/lib/geometry/geometry"
+import type {User} from "@/backend/session/User"
+import type {NavStatus} from "@/frontend/pages/NavigationPage/NavigationPage"
 
 const SPRING = {type: "spring", stiffness: 400, damping: 32, mass: 0.6} as const
 
@@ -16,25 +17,26 @@ const SPRING = {type: "spring", stiffness: 400, damping: 32, mass: 0.6} as const
  *   Turn right          ← direction (or "Continue" / "Arrived")
  *   onto Market St      ← road name (toRoad on turns, fromRoad on continue)
  *
- * Direction & distance come from `user.pivots` (geometry).
- * Road names come from the SDK's `NavManeuver` — `fromRoad` is the road
- * we're currently walking on, `toRoad` is the road we're turning onto.
- * The SDK updates these atomically when you transition streets, so they
- * don't flicker the way reverse-geocoding does at intersections.
+ * Pivot direction + position come from the SDK's pivot API
+ * (`user.navigation.getActivePivot()` / `getUpcomingPivot()`), which
+ * owns trip-wide pivot detection. Road names come from the pivot's
+ * own `fromRoad` / `toRoad` (sourced from the SDK's step list at
+ * route-build time) and from the live `NavManeuver` events.
  */
 export function OrientationCard({
   maneuver,
+  status,
 }: {
   me: LatLng | null
   heading: number | null
   maneuver: NavManeuver | null
   routePoints: LatLng[] | null
+  status?: NavStatus
   onClose?: () => void
 }) {
   const user = useUser()
-  const snap = user.pivots.getSnapshot()
-  const roadSnap = user.road.getSnapshot()
-  const {label, icon, road, distance} = pickDisplay(snap, maneuver, roadSnap.road)
+  const snap = derivePivotView(user, maneuver, status)
+  const {label, icon, road, distance} = pickDisplay(snap)
 
   // Single source of truth — log exactly what the ManeuverCard is showing
   // on screen right now. This is the only road/maneuver log in the app.
@@ -82,57 +84,109 @@ export function OrientationCard({
 /* -------------------------------------------------------------------------- */
 /* Snapshot + maneuver -> display fields                                       */
 
+/**
+ * Snapshot derived purely from the SDK's pivot API plus trip status.
+ * Pivots are the SOURCE OF TRUTH for road names — there is no
+ * geocoder fallback and no read from the live NavManeuver event. If
+ * a pivot doesn't have a road name, the UI shows nothing rather than
+ * making something up.
+ */
+type PivotView = {
+  arrived: boolean
+  /** Direction of the pivot the user is currently turning at, if any. */
+  activeDirection: "left" | "right" | null
+  /** Road we're heading onto for the active turn, if known. */
+  activeToRoad: string | null
+  /** Direction of the next upcoming pivot, if any. */
+  upcomingDirection: "left" | "right" | null
+  /** Road the user is currently on (i.e. approach road), if known. */
+  upcomingFromRoad: string | null
+  /** Road we'll be on after the upcoming turn, if known. */
+  upcomingToRoad: string | null
+  distanceToNextPivotMeters: number | null
+  distanceToDestinationMeters: number | null
+}
+
+function derivePivotView(user: User, maneuver: NavManeuver | null, status?: NavStatus): PivotView {
+  if (status === "arrived") {
+    return {
+      arrived: true,
+      activeDirection: null,
+      activeToRoad: null,
+      upcomingDirection: null,
+      upcomingFromRoad: null,
+      upcomingToRoad: null,
+      distanceToNextPivotMeters: null,
+      distanceToDestinationMeters: null,
+    }
+  }
+
+  const active = user.navigation.getActivePivot()
+  const upcoming = user.navigation.getUpcomingPivot()
+  const coords = user.coords
+
+  let distanceToNextPivotMeters: number | null = null
+  if (upcoming && coords) {
+    distanceToNextPivotMeters = haversineMeters(
+      {lat: coords.lat, lng: coords.lng},
+      {lat: upcoming.lat, lng: upcoming.lng},
+    )
+  }
+
+  const distanceToDestinationMeters =
+    maneuver?.distanceToDestinationMeters != null && maneuver.distanceToDestinationMeters >= 0
+      ? maneuver.distanceToDestinationMeters
+      : null
+
+  return {
+    arrived: false,
+    activeDirection: active?.direction ?? null,
+    activeToRoad: realRoadName(active?.toRoad),
+    upcomingDirection: upcoming?.direction ?? null,
+    upcomingFromRoad: realRoadName(upcoming?.fromRoad),
+    upcomingToRoad: realRoadName(upcoming?.toRoad),
+    distanceToNextPivotMeters,
+    distanceToDestinationMeters,
+  }
+}
+
 function pickDisplay(
-  snap: PivotSnapshot,
-  maneuver: NavManeuver | null,
-  geocoderRoad: string | null,
+  snap: PivotView,
 ): {label: string; icon: string; road: string | null; distance: string | null} {
   if (snap.arrived) {
     return {label: "Arrived", icon: "ARRIVE", road: null, distance: null}
   }
 
-  // The SDK sometimes returns placeholder road names like "toward Fell St"
-  // when it doesn't have a confirmed name. Treat those as missing.
-  // Prefer `nextStepRoad` (sourced from remainingSteps[0] — the road
-  // AFTER the upcoming turn). Fall back to `toRoad` for back-compat
-  // until every host build is shipping nextStepRoad.
-  const namedToRoad = realRoadName(maneuver?.nextStepRoad ?? maneuver?.toRoad)
-
-  if (snap.direction === "right") {
+  if (snap.activeDirection === "right") {
     return {
       label: "Turn right",
       icon: "TURN_RIGHT",
-      road: namedToRoad ? `onto ${namedToRoad}` : null,
+      road: snap.activeToRoad ? `onto ${snap.activeToRoad}` : null,
       distance: null,
     }
   }
-  if (snap.direction === "left") {
+  if (snap.activeDirection === "left") {
     return {
       label: "Turn left",
       icon: "TURN_LEFT",
-      road: namedToRoad ? `onto ${namedToRoad}` : null,
+      road: snap.activeToRoad ? `onto ${snap.activeToRoad}` : null,
       distance: null,
     }
   }
 
-  // New "Continue" layout — instead of a tiny "Continue" row plus the
-  // current street, we show the upcoming TURN as the headline
-  // ("Turn right in 500 m") and the NEXT street name as the small
-  // line above it. The user always sees what's coming, not what
-  // they're on.
-  if (snap.distanceToNextPivotMeters != null && snap.nextPivotDirection) {
-    const verb = snap.nextPivotDirection === "right" ? "Turn right" : "Turn left"
+  // Continue layout: top small line is the road the user is currently
+  // on (the upcoming pivot's fromRoad), big bold middle line is the
+  // verb + distance to the upcoming turn, bottom line is the
+  // destination road (the upcoming pivot's toRoad).
+  if (snap.distanceToNextPivotMeters != null && snap.upcomingDirection) {
+    const verb = snap.upcomingDirection === "right" ? "Turn right" : "Turn left"
     const distStr = formatDistance(snap.distanceToNextPivotMeters)
-    const icon = snap.nextPivotDirection === "right" ? "TURN_RIGHT" : "TURN_LEFT"
+    const icon = snap.upcomingDirection === "right" ? "TURN_RIGHT" : "TURN_LEFT"
     return {
       label: `${verb} in ${distStr}`,
       icon,
-      // Top small line: the road we're about to be on. When the SDK
-      // gives no confirmed name, fall back to the live geocoder
-      // (covers Hayes-Valley-style unnamed segments). If both fail,
-      // omit the line entirely — no "Continue" placeholder.
-      distance: namedToRoad ?? geocoderRoad,
-      road: null,
+      distance: snap.upcomingFromRoad,
+      road: snap.upcomingToRoad ? `onto ${snap.upcomingToRoad}` : null,
     }
   }
 
@@ -152,22 +206,20 @@ function pickDisplay(
 }
 
 /**
- * The SDK sometimes returns placeholder road labels like "toward Fell St"
- * when it doesn't have a confirmed road name. Those are useless to show
- * (they read as "onto toward Fell St" / "Continue toward Fell St"). Treat
- * any name starting with "toward" — or a whitespace-only / empty string —
- * as missing.
+ * Sanitize a road label coming off the SDK. The Nav SDK occasionally
+ * leaks its maneuver-instruction text (e.g. "Slight left", "Toward
+ * Fell St", "Roundabout") into the road-name fields when the
+ * underlying road has no real name. Rendered blindly these read as
+ * "onto Slight left", so we treat any label starting with one of
+ * those verbs as missing.
+ *
+ * If this returns null, the UI just shows nothing — there is no
+ * fallback path. Pivot road names are the single source of truth.
  */
 function realRoadName(raw: string | null | undefined): string | null {
   if (!raw) return null
   const trimmed = raw.trim()
   if (trimmed.length === 0) return null
-  // The Nav SDK leaks its maneuver-instruction text into fromRoad/toRoad when
-  // the underlying road has no name ("Slight left", "Sharp right", "Keep
-  // left", "Merge", "Roundabout", "Toward Fell St", "U-turn", etc.). Rendered
-  // blindly these read as gibberish ("Continue | Slight left"), so we treat
-  // anything starting with one of these verbs as missing — the geocoder
-  // fallback in pickDisplay will fill in a real street name instead.
   if (/^(toward|turn|continue|destination|head|cross|slight|sharp|keep|merge|fork|exit|take|roundabout|u[\s-]?turn|arrive|arriving|depart|enter|leave|stay)\b/i.test(trimmed)) return null
   return trimmed
 }

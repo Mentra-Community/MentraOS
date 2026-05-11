@@ -14,7 +14,8 @@
 
 import {MiniappErrorCode, MiniappRequestType, MiniappStreamType} from "../protocol"
 import {MiniappSession} from "../session"
-import type {UnsubscribeFn} from "./events"
+import type {LocationData, UnsubscribeFn} from "./events"
+import {PivotEngine} from "./pivots/engine"
 
 export type LatLng = {lat: number; lng: number}
 
@@ -96,6 +97,127 @@ export type NavRoute = {
   totalDistanceMeters?: number
   /** Engine's estimate of total travel time at trip start, in seconds. */
   totalDurationSeconds?: number
+  /**
+   * Ordered list of steps along the route. Each step is one navigable
+   * segment — typically a straight stretch of road that ends in a
+   * maneuver (a turn, merge, arrival, etc.). The host emits this
+   * alongside the polyline when the underlying engine supplies step
+   * metadata. Older hosts may omit it; the pivot module degrades
+   * gracefully by leaving road names null on the resulting pivots.
+   */
+  steps?: NavStep[]
+}
+
+/**
+ * Tuning knobs for pivot detection on a single trip. Pass via
+ * `StartNavigationOptions.pivots`; omitting any field uses the
+ * mode-aware default below.
+ */
+export type PivotOptions = {
+  /**
+   * "You are turning now" radius in meters. When the user's GPS comes
+   * within this distance of a pivot, `onPivot({kind: "entered"})`
+   * fires. Defaults by mode: walking 7, cycling 15, driving 40.
+   */
+  radiusMeters?: number
+  /**
+   * "Approaching a turn" radius in meters. Fires `onPivot({kind:
+   * "approaching"})` once per pivot when the user first crosses this
+   * threshold ahead of the turn. Defaults by mode: walking 100,
+   * cycling 300, driving 800.
+   */
+  approachThresholdMeters?: number
+}
+
+/**
+ * A real turn along the route. Pivots are derived once per route
+ * (re-derived on every reroute) from the polyline + step list. The
+ * SDK fires `onPivot` events as the user approaches, enters, and
+ * exits each pivot's radius.
+ */
+export type Pivot = {
+  /**
+   * 0-based ordinal along the route. Stable for the lifetime of one
+   * route build — invalidated when `onRoute` fires again.
+   */
+  index: number
+  /** Where the turn fires. */
+  lat: number
+  lng: number
+  /**
+   * Direction of the turn. Only real turns produce pivots —
+   * `STRAIGHT` / `NAME_CHANGE` / `DEPART` are filtered out at
+   * construction.
+   */
+  direction: "left" | "right"
+  /**
+   * Road the user approaches the pivot on. Null when the engine has
+   * no name or when the host couldn't supply step metadata.
+   */
+  fromRoad: string | null
+  /** Road the user exits the pivot onto. Same null semantics. */
+  toRoad: string | null
+  /**
+   * Engine's categorical maneuver. Kept for icon selection in
+   * consumer UIs. Vocabulary matches `NavManeuver.maneuverType`.
+   */
+  maneuver: string
+  /** Meters from trip start to this pivot, along the route. */
+  distanceAlongRouteMeters: number
+  /**
+   * The "you are turning now" radius for this pivot, in meters.
+   * v1: uniform across all pivots in a trip (from PivotOptions).
+   */
+  radiusMeters: number
+}
+
+/**
+ * Discriminated union of events fired by `navigation.onPivot(...)`.
+ * Each pivot fires `approaching` (once, on first cross of the
+ * approach threshold), `entered` (once, on first cross of the
+ * radius), then `exited` (once, when the user leaves the radius
+ * after entering). The cursor then advances and the same sequence
+ * starts for the next pivot.
+ */
+export type PivotEvent =
+  | {
+      kind: "approaching"
+      pivot: Pivot
+      /** Straight-line distance from the user to the pivot when fired. */
+      distanceMeters: number
+    }
+  | {kind: "entered"; pivot: Pivot}
+  | {kind: "exited"; pivot: Pivot}
+
+/**
+ * One leg of a route: a stretch of road that ends in a maneuver. The
+ * SDK's pivot module uses adjacent steps to derive `fromRoad` /
+ * `toRoad` for each turn pivot.
+ */
+export type NavStep = {
+  /** Coordinate where this step begins (== end of the previous step). */
+  lat: number
+  lng: number
+  /**
+   * Index into the parent `NavRoute.points[]` where this step starts.
+   * Lets consumers align step boundaries with polyline geometry.
+   */
+  routeIndex: number
+  /**
+   * Name of the road traversed during this step. Null when the engine
+   * has no name (unnamed paths, plazas) or when the host build doesn't
+   * supply step road names.
+   */
+  road?: string | null
+  /**
+   * Categorical maneuver performed at the END of this step. Same
+   * vocabulary as `NavManeuver.maneuverType`: STRAIGHT, SLIGHT_LEFT,
+   * SLIGHT_RIGHT, TURN_LEFT, TURN_RIGHT, SHARP_LEFT, SHARP_RIGHT,
+   * U_TURN, ARRIVE.
+   */
+  maneuver: string
+  /** Length of this step in meters. */
+  distanceMeters: number
 }
 
 export type StartNavigationOptions = {
@@ -117,6 +239,13 @@ export type StartNavigationOptions = {
   /** For dev/testing only — fake walking along the route at speedMultiplier×. */
   simulate?: boolean
   speedMultiplier?: number
+
+  /**
+   * Override the default pivot-detection knobs for this trip. Affects
+   * the `onPivot` / `getActivePivot` / etc. APIs. Omitted fields use
+   * mode-aware defaults (see `PivotOptions`).
+   */
+  pivots?: PivotOptions
 }
 
 /**
@@ -166,12 +295,43 @@ export type ComputeRouteOptions = {
   alternatives?: number
 }
 
+/**
+ * One turn-by-turn step in a previewed (not-yet-started) route. Sourced
+ * directly from the Google Routes API at `computeRoute` time, so it's
+ * available BEFORE `start()` is called. Each step describes one segment
+ * of the route along with the maneuver that ENDS the segment (e.g. the
+ * turn the user will take at the end of this step to enter the next).
+ */
+export type ComputedRouteStep = {
+  /** Start coordinate of this step. */
+  lat: number
+  lng: number
+  /** End coordinate of this step. */
+  endLat: number
+  endLng: number
+  /** Length of this step in meters. */
+  distanceMeters: number
+  /**
+   * Routes API maneuver enum (e.g. "TURN_LEFT", "TURN_RIGHT", "STRAIGHT",
+   * "DEPART", "DESTINATION"). Missing when the engine didn't classify
+   * the step (e.g. very short or unnamed segments).
+   */
+  maneuver?: string
+  /**
+   * Full natural-language instruction (e.g. "Turn left onto Fell St").
+   * Comes straight from the Routes API; no client-side parsing.
+   */
+  instruction?: string
+}
+
 export type ComputedRoute = {
   points: LatLng[]
   totalDistanceMeters: number
   totalDurationSeconds: number
   /** Polyline-aligned road labels, when supplied by the engine. */
   summary?: string
+  /** Turn-by-turn step list, when the engine returns one. */
+  steps?: ComputedRouteStep[]
 }
 
 export type ComputeRouteResult = {
@@ -182,6 +342,13 @@ export type ComputeRouteResult = {
 }
 
 export class NavigationModule {
+  // Owned by the module — internal to pivot tracking. Lifecycle is
+  // tied to start()/stop(). See `_attachPivotTrackingForTrip` and
+  // `_detachPivotTracking`.
+  private _pivots: PivotEngine = new PivotEngine("walking", undefined)
+  /** Subscriptions the module owns while a trip is active. Released on stop(). */
+  private _tripUnsubs: Array<() => void> = []
+
   constructor(private readonly session: MiniappSession) {}
 
   /** True iff `LOCATION` is declared in the miniapp's manifest. */
@@ -232,6 +399,13 @@ export class NavigationModule {
       }
     }
     const stops = normalizeStops(opts)
+    const mode = opts.mode ?? "driving"
+
+    // Attach pivot tracking for this trip. Subscribes the engine to
+    // route + location streams. Idempotent — detaches any prior trip
+    // first so a stop-less restart doesn't leak subscriptions.
+    this._attachPivotTrackingForTrip(mode, opts.pivots)
+
     return this.session.sendRequest<{ok: boolean; error?: string}>({
       type: MiniappRequestType.NAVIGATION_START,
       // Keep lat/lng on the wire for hosts that haven't been upgraded to
@@ -239,7 +413,7 @@ export class NavigationModule {
       lat: stops[0]?.lat,
       lng: stops[0]?.lng,
       stops,
-      mode: opts.mode ?? "driving",
+      mode,
       avoid: opts.avoid,
       simulate: opts.simulate ?? false,
       speedMultiplier: opts.speedMultiplier ?? 5,
@@ -248,6 +422,7 @@ export class NavigationModule {
 
   /** Stop the active navigation session (if any). Fire-and-forget. */
   stop(): void {
+    this._detachPivotTracking()
     this.session.sendOneShot({type: MiniappRequestType.NAVIGATION_STOP})
   }
 
@@ -317,6 +492,140 @@ export class NavigationModule {
       avoid: opts.avoid,
       alternatives: opts.alternatives ?? 1,
     })
+  }
+
+  // -------------------------------------------------------------------
+  // Pivots
+  //
+  // Pivots are real turns along the active route. The SDK derives them
+  // once per route (re-derives on every reroute) from the polyline +
+  // step list delivered via `onRoute`. As GPS ticks in, the SDK fires
+  // `approaching` / `entered` / `exited` events for each pivot,
+  // backed by a per-trip radius (default 7m walking). This is the
+  // recommended primary abstraction for building turn-by-turn UIs —
+  // it's resilient to the SDK's noisy `maneuverType` flicker and to
+  // GPS jitter.
+  //
+  // The pivot list is owned by the SDK and lives only when a trip is
+  // active. It's cleared on `start()`, rebuilt on the first `onRoute`
+  // event after start (and on every subsequent reroute), and cleared
+  // again on `stop()` or arrival.
+  //
+  // Stubs below — full implementation lands in a follow-up. Signatures
+  // are stable.
+
+  /**
+   * Subscribe to pivot events. Returns an unsubscribe function.
+   *
+   * Each pivot fires (in order):
+   *   - `approaching` — once, when the user crosses the approach
+   *     threshold ahead of the pivot.
+   *   - `entered` — once, when the user crosses into the pivot's
+   *     `radiusMeters`.
+   *   - `exited` — once, when the user leaves the radius after
+   *     entering. The cursor then advances to the next pivot.
+   *
+   * Passed pivots are not re-evaluated. If the user walks back into a
+   * pivot's radius after exiting, no further events fire for it.
+   *
+   * @example
+   * navigation.onPivot((event) => {
+   *   if (event.kind === "entered") {
+   *     showInstruction(`Turn ${event.pivot.direction} onto ${event.pivot.toRoad}`)
+   *   }
+   * })
+   */
+  onPivot(handler: (event: PivotEvent) => void): UnsubscribeFn {
+    return this._pivots.subscribe(handler)
+  }
+
+  /**
+   * Full pivot list for the active route. Empty when no trip is
+   * running or the first `onRoute` hasn't arrived yet.
+   *
+   * The list is stable across the lifetime of one route build — only
+   * a reroute (next `onRoute` event) replaces it.
+   */
+  getPivots(): Pivot[] {
+    return this._pivots.getPivots()
+  }
+
+  /**
+   * The pivot the user is currently inside the radius of, or `null`
+   * when they aren't actively in a turn. Defined as: a pivot is
+   * "active" between its `entered` event and its `exited` event.
+   *
+   * Use this to render the "you are turning now" UI state.
+   */
+  getActivePivot(): Pivot | null {
+    return this._pivots.getActivePivot()
+  }
+
+  /**
+   * The next pivot ahead of the user along the route, regardless of
+   * distance. `null` when the user has passed every pivot (final
+   * approach to destination).
+   *
+   * Use this to render "approaching <road>" / countdown UI.
+   */
+  getUpcomingPivot(): Pivot | null {
+    return this._pivots.getUpcomingPivot()
+  }
+
+  // -------------------------------------------------------------------
+  // Internal: pivot-tracking lifecycle. Wired from start()/stop().
+  // Subscribers to onRoute / location.onUpdate are owned here and
+  // released in _detachPivotTracking().
+
+  private _attachPivotTrackingForTrip(mode: TravelMode, opts: PivotOptions | undefined): void {
+    // If a previous trip's subscriptions are still attached
+    // (shouldn't be, but be safe across hot-reload / dev iterations),
+    // detach them first.
+    this._detachPivotTracking()
+
+    // Reset the engine for the new trip and replace its tuning.
+    this._pivots.reset()
+    this._pivots.updateOptions(mode, opts)
+
+    // Subscribe to onRoute — rebuilds the pivot list whenever the
+    // host emits a new route (initial trip start + every reroute).
+    // The engine reads `route.steps` off the route to enrich each
+    // pivot with `fromRoad` / `toRoad`.
+    this._tripUnsubs.push(
+      this.onRoute((route) => {
+        this._pivots.setRoute(route, null)
+      }),
+    )
+
+    // Subscribe to NavUpdate — `arrived` resets the engine so the
+    // pivot list doesn't linger after a trip ends.
+    this._tripUnsubs.push(
+      this.onUpdate((update) => {
+        if (update.kind === "arrived") {
+          this._pivots.reset()
+        }
+      }),
+    )
+
+    // Subscribe to location updates — every fix drives the cursor
+    // and may fire approaching / entered / exited events.
+    this._tripUnsubs.push(
+      this.session.location.onUpdate((loc: LocationData) => {
+        this._pivots.onLocationUpdate({lat: loc.lat, lng: loc.lng})
+      }),
+    )
+  }
+
+  private _detachPivotTracking(): void {
+    for (const unsub of this._tripUnsubs) {
+      try {
+        unsub()
+      } catch (err) {
+        console.warn("[NavigationModule] pivot-tracking unsubscribe threw:", err)
+      }
+    }
+    this._tripUnsubs = []
+    this._pivots.reset()
   }
 }
 

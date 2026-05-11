@@ -28,6 +28,34 @@ export type HeadingPayload = {
 
 export type NavRoutePayload = {
   points: Array<{lat: number; lng: number}>
+  /**
+   * Ordered step list along the route, when supplied by the host. Each
+   * step is one navigable segment — typically one straight stretch of
+   * road ending in a maneuver. Optional for back-compat with older
+   * hosts that only ship the polyline. The SDK's pivot module consumes
+   * this to enrich pivots with `fromRoad` / `toRoad` metadata.
+   */
+  steps?: NavRouteStepPayload[]
+}
+
+export type NavRouteStepPayload = {
+  /** Coordinate where this step begins (== end of the previous step). */
+  lat: number
+  lng: number
+  /**
+   * Index into `NavRoutePayload.points[]` where this step starts.
+   * Lets consumers correlate step boundaries with polyline geometry.
+   */
+  routeIndex: number
+  /** Name of the road traversed during this step. Null when the engine has no name. */
+  road?: string | null
+  /**
+   * Categorical maneuver performed at the END of this step (i.e. how
+   * the user exits this step). Same vocabulary as `NavManeuverPayload.maneuverType`.
+   */
+  maneuver: string
+  /** Length of this step in meters. */
+  distanceMeters: number
 }
 
 export type NavLocationPayload = {
