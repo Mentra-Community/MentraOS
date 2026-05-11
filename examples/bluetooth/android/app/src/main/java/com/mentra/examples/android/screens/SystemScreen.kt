@@ -43,7 +43,6 @@ import com.mentra.examples.android.galleryServerUrl
 import com.mentra.examples.android.hotspotLabel
 import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.rgbLedColorOptions
-import com.mentra.examples.android.stringValue
 import com.mentra.examples.android.wifiLabel
 import com.mentra.examples.android.wifiScanResults
 import com.mentra.examples.android.ui.AppColor
@@ -56,11 +55,11 @@ import com.mentra.examples.android.ui.scrollBottomPadding
 fun SystemScreen(controller: MentraExampleController) {
     val state = controller.state
     val connected = isGlassesConnected(state.glassesStatus)
-    val currentWifiSsid = stringValue(state.glassesStatus, "wifiSsid")
+    val currentWifiSsid = state.glassesStatus?.wifi?.ssid?.takeIf { it.isNotBlank() }
     val networks = wifiScanResults(state.bluetoothStatus).filter { network ->
         !connected ||
-            state.glassesStatus["wifiConnected"] != true ||
-            stringValue(network, "ssid") != currentWifiSsid
+            state.glassesStatus?.wifi?.connected != true ||
+            network.ssid != currentWifiSsid
     }
     val inputChips = remember(state.events) { recentInputChips(state.events) }
     val galleryUrl = galleryServerUrl(state.glassesStatus, state.hotspotEnabled)
@@ -123,10 +122,10 @@ fun SystemScreen(controller: MentraExampleController) {
                 DisabledHint("Connect glasses first to scan or join Wi-Fi networks.")
                 Spacer(Modifier.height(4.dp))
             }
-            val currentWifiConnected = state.glassesStatus["wifiConnected"] == true
+            val currentWifiConnected = state.glassesStatus?.wifi?.connected == true
             NetworkRow(
                 wifiLabel(state.glassesStatus),
-                (state.glassesStatus["wifiLocalIp"] as? String) ?: "not connected",
+                state.glassesStatus?.wifi?.localIp?.takeIf { it.isNotBlank() } ?: "not connected",
                 if (currentWifiConnected) AppColor.greenAccent else AppColor.muted,
                 check = currentWifiConnected,
                 actionLabel = if (currentWifiConnected) "Forget" else null,
@@ -134,8 +133,8 @@ fun SystemScreen(controller: MentraExampleController) {
                 onActionClick = if (currentWifiConnected) controller::forgetCurrentWifiNetwork else null,
             )
             networks.forEachIndexed { index, network ->
-                val ssid = network["ssid"] as? String ?: "Unknown"
-                val requiresPassword = network["requiresPassword"] as? Boolean ?: false
+                val ssid = network.ssid.ifBlank { "Unknown" }
+                val requiresPassword = network.requiresPassword
                 val pending = state.wifiPendingSsid == ssid
                 val joinNetwork: () -> Unit = {
                     if (requiresPassword) {
@@ -147,7 +146,7 @@ fun SystemScreen(controller: MentraExampleController) {
                 }
                 NetworkRow(
                     ssid,
-                    if (pending) "connecting..." else "${if (requiresPassword) "secured" else "open"} · ${network["signalStrength"] ?: 0}",
+                    if (pending) "connecting..." else "${if (requiresPassword) "secured" else "open"} · ${network.signalStrength}",
                     AppColor.muted,
                     faint = true,
                     locked = requiresPassword,

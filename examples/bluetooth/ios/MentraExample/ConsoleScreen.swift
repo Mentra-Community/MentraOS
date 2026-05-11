@@ -106,8 +106,8 @@ struct ConsoleScreen: View {
                     Image(systemName: "chevron.left.forwardslash.chevron.right")
                         .font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.muted)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Raw status JSON").font(.system(size: 13, weight: .semibold)).foregroundColor(AppColor.ink)
-                        Text("\(model.glassesValues.count + model.bluetoothValues.count) keys · glassesStatus, bluetoothStatus").font(.system(size: 10)).foregroundColor(AppColor.muted)
+                        Text("Typed SDK status").font(.system(size: 13, weight: .semibold)).foregroundColor(AppColor.ink)
+                        Text("glassesStatus, bluetoothStatus").font(.system(size: 10)).foregroundColor(AppColor.muted)
                     }
                     Spacer()
                     Image(systemName: "chevron.down").font(.system(size: 12, weight: .heavy)).foregroundColor(AppColor.ink)

@@ -1,3 +1,4 @@
+import MentraBluetoothSDK
 import SwiftUI
 
 private struct WifiNetworkSelection: Identifiable {
@@ -135,11 +136,11 @@ struct SystemScreen: View {
             currentWifiRow
             let rows = visibleWifiScanResults
             ForEach(Array(rows.enumerated()), id: \.offset) { index, network in
-                let ssid = stringValue(network, "ssid") ?? "Unknown"
-                let requiresPassword = boolValue(network, "requiresPassword") ?? false
+                let ssid = network.ssid.isEmpty ? "Unknown" : network.ssid
+                let requiresPassword = network.requiresPassword
                 NetworkRowV(
                     name: ssid,
-                    sub: "\(requiresPassword ? "secured" : "open") · \(intValue(network, "signalStrength") ?? 0)",
+                    sub: "\(requiresPassword ? "secured" : "open") · \(network.signalStrength)",
                     subColor: AppColor.muted,
                     faint: true,
                     locked: requiresPassword,
@@ -229,10 +230,10 @@ struct SystemScreen: View {
     }
 
     private var currentWifiRow: some View {
-        let isWifiConnected = boolValue(model.glassesValues, "wifiConnected") == true
+        let isWifiConnected = model.glassesValues?.wifi.connected == true
         return NetworkRowV(
             name: wifiLabel(model.glassesValues),
-            sub: stringValue(model.glassesValues, "wifiLocalIp") ?? "not connected",
+            sub: model.glassesValues?.wifi.localIp.nonEmpty ?? "not connected",
             subColor: isWifiConnected ? AppColor.greenAccent : AppColor.muted,
             check: isWifiConnected,
             trailingTitle: isWifiConnected ? "Forget" : nil,
@@ -373,11 +374,11 @@ struct SystemScreen: View {
         .opacity(model.glassesConnected ? 1 : 0.55)
     }
 
-    private var visibleWifiScanResults: [[String: Any]] {
-        let connectedSsid = stringValue(model.glassesValues, "wifiSsid")
+    private var visibleWifiScanResults: [MentraWifiScanResult] {
+        let connectedSsid = model.glassesValues?.wifi.ssid
         return wifiScanResults(model.bluetoothValues).filter { network in
-            guard let connectedSsid, boolValue(model.glassesValues, "wifiConnected") == true else { return true }
-            return stringValue(network, "ssid") != connectedSsid
+            guard let connectedSsid, model.glassesValues?.wifi.connected == true else { return true }
+            return network.ssid != connectedSsid
         }
     }
 

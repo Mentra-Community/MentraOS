@@ -72,7 +72,7 @@ struct DeviceScreen: View {
                     }
                     HStack(spacing: 6) {
                         Image(systemName: "bolt.fill").foregroundColor(AppColor.greenAccent).font(.system(size: 11))
-                        Text(boolValue(model.glassesValues, "charging") == true ? "Charging" : "Waiting").font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.greenAccent)
+                        Text(model.glassesValues?.charging == true ? "Charging" : "Waiting").font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.greenAccent)
                     }
                 }
                 Spacer()
@@ -92,7 +92,7 @@ struct DeviceScreen: View {
     private var statRow: some View {
         HStack(spacing: 10) {
             StatTile(label: "FIRMWARE", value: firmwareLabel(model.glassesValues), sub: firmwareSubLabel(model.glassesValues), subColor: AppColor.greenAccent)
-            StatTile(label: "WI-FI", value: wifiLabel(model.glassesValues), sub: stringValue(model.glassesValues, "wifiLocalIp") ?? "unknown", subColor: AppColor.muted, bold: true)
+            StatTile(label: "WI-FI", value: wifiLabel(model.glassesValues), sub: model.glassesValues?.wifi.localIp.nonEmpty ?? "unknown", subColor: AppColor.muted, bold: true)
             StatTile(label: "RSSI", value: rssiLabel(model.glassesValues), sub: "signal", subColor: AppColor.greenAccent, bold: true)
         }
     }
@@ -268,11 +268,10 @@ struct DeviceScreen: View {
     }
 }
 
-private func glassesAssetName(_ values: [String: Any]) -> String {
+private func glassesAssetName(_ values: MentraGlassesStatus?) -> String {
     let model = [
-        stringValue(values, "deviceModel"),
-        stringValue(values, "bluetoothName"),
-        stringValue(values, "defaultWearable"),
+        values?.deviceModel,
+        values?.bluetoothName,
     ]
     .compactMap { $0 }
     .joined(separator: " ")

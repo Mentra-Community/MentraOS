@@ -51,8 +51,8 @@ enum ExampleStreamProtocol: String, CaseIterable {
 
 @MainActor
 final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDelegate, AVAudioPlayerDelegate {
-    @Published private(set) var glassesValues: [String: Any] = [:]
-    @Published private(set) var bluetoothValues: [String: Any] = [:]
+    @Published private(set) var glassesValues: MentraGlassesStatus?
+    @Published private(set) var bluetoothValues: MentraBluetoothStatus?
     @Published private(set) var discoveredDevices: [MentraDiscoveredDevice] = []
     @Published private(set) var selectedDiscoveredDevice: MentraDiscoveredDevice?
     @Published private(set) var events: [ExampleEvent] = [ExampleEvent.make(tag: "LIVE", text: "SDK ready. Scan to discover glasses.")]
@@ -125,10 +125,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         if let savedDevice = loadPersistedDefaultDevice() {
             mentraBluetoothSdk.setDefaultDevice(savedDevice)
         }
-        glassesValues = mentraBluetoothSdk.glassesStatus.values
-        hotspotEnabled = boolValue(glassesValues, "hotspotEnabled") ?? false
+        glassesValues = mentraBluetoothSdk.glassesStatus
+        hotspotEnabled = glassesValues?.hotspotEnabled ?? false
         refreshGalleryServerStatusForCurrentHotspot(defaultStatus: "Gallery server: enable hotspot to check")
-        applyBluetoothStatus(mentraBluetoothSdk.bluetoothStatus.values)
+        applyBluetoothStatus(mentraBluetoothSdk.bluetoothStatus)
         if let value = ProcessInfo.processInfo.environment["MENTRA_PHOTO_WEBHOOK_URL"] {
             webhookUrl = value
         }
@@ -199,7 +199,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func clearDefaultDevice() {
         runAction("Clear default") {
             mentraBluetoothSdk.clearDefaultDevice()
-            bluetoothValues.merge(defaultDeviceStatus(nil)) { _, new in new }
+            bluetoothValues = bluetoothValues?.withDefaultDevice(nil)
             selectedDiscoveredDevice = nil
         }
     }
@@ -463,8 +463,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func forgetCurrentWifiNetwork() {
         runAction("Forget current Wi-Fi") {
             try requireConnected("forget Wi-Fi network")
-            guard boolValue(glassesValues, "wifiConnected") == true,
-                  let ssid = stringValue(glassesValues, "wifiSsid"),
+            guard glassesValues?.wifi.connected == true,
+                  let ssid = glassesValues?.wifi.ssid,
                   !ssid.isEmpty
             else {
                 throw ExampleActionError(message: "No connected Wi-Fi network to forget.")
@@ -476,7 +476,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func toggleHotspot() {
         runAction(hotspotEnabled ? "Disable hotspot" : "Enable hotspot") {
             try requireConnected("toggle hotspot")
-            let current = boolValue(glassesValues, "hotspotEnabled") ?? hotspotEnabled
+            let current = glassesValues?.hotspotEnabled ?? hotspotEnabled
             let next = !current
             mentraBluetoothSdk.setHotspotState(enabled: next)
         }
@@ -609,20 +609,20 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateGlassesStatus status: MentraGlassesStatusUpdate) {
-        glassesValues.merge(status.values) { _, new in new }
-        if let enabled = boolValue(status.values, "hotspotEnabled") {
+        glassesValues = glassesValues?.applying(status) ?? mentraBluetoothSdk.glassesStatus
+        if let enabled = status.hotspotEnabled {
             hotspotEnabled = enabled
             refreshGalleryServerStatusForCurrentHotspot(defaultStatus: "Gallery server: hotspot off")
         }
-        if isDisconnectedStatus(status.values) {
+        if isDisconnectedStatus(status) {
             applyDisconnectedState(status: "Disconnected")
         }
-        append(tag: "STORE", text: summarize(status.values))
+        append(tag: "STORE", text: summarize(status))
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateBluetoothStatus status: MentraBluetoothStatusUpdate) {
-        applyBluetoothStatus(status.values)
-        append(tag: "BLE", text: summarize(status.values))
+        applyBluetoothStatus(status)
+        append(tag: "BLE", text: summarize(status))
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didDiscover device: MentraDiscoveredDevice) {
@@ -637,7 +637,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didChangeDefaultDevice device: MentraPairedDevice?) {
         savePersistedDefaultDevice(device)
-        bluetoothValues.merge(defaultDeviceStatus(device)) { _, new in new }
+        bluetoothValues = bluetoothValues?.withDefaultDevice(device)
         if let device {
             append(tag: "BLE", text: "saved default \(device.name)")
         }
@@ -669,10 +669,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     private func applyWifiStatus(_ event: MentraWifiStatusEvent) {
-        glassesValues["wifiConnected"] = event.connected
-        glassesValues["wifiSsid"] = event.ssid
-        glassesValues["wifiLocalIp"] = event.localIp
-        append(tag: "STORE", text: "Wi-Fi \(summarize(event.values))")
+        glassesValues = glassesValues?.withWifi(event.status) ?? mentraBluetoothSdk.glassesStatus
+        let label = event.connected ? (event.ssid.isEmpty ? "connected" : event.ssid) : "disconnected"
+        append(tag: "STORE", text: "Wi-Fi \(label)")
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceiveMicPcm frame: Data) {
@@ -796,9 +795,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    private func applyBluetoothStatus(_ values: [String: Any]) {
-        bluetoothValues.merge(values) { _, new in new }
-        if let galleryMode = boolValue(values, "gallery_mode") {
+    private func applyBluetoothStatus(_ status: MentraBluetoothStatus) {
+        bluetoothValues = status
+        galleryModeAuto = status.galleryModeAuto
+    }
+
+    private func applyBluetoothStatus(_ status: MentraBluetoothStatusUpdate) {
+        bluetoothValues = bluetoothValues?.applying(status) ?? mentraBluetoothSdk.bluetoothStatus
+        if let galleryMode = status.galleryModeAuto {
             galleryModeAuto = galleryMode
         }
     }
@@ -838,7 +842,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     private func applyDisconnectedState(status: String) {
-        glassesValues = disconnectedGlassesValues()
+        glassesValues = glassesValues?.disconnected() ?? mentraBluetoothSdk.glassesStatus.disconnected()
         stopKeepAlive()
         stopPreviewHealthPoll()
         activeStreamId = nil
@@ -1051,23 +1055,27 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         case "touch_event":
             append(tag: "LIVE", text: "touch \(summarize(values))")
         case "battery_status":
-            glassesValues["batteryLevel"] = intValue(values, "level") ?? -1
-            glassesValues["charging"] = boolValue(values, "charging") ?? false
+            glassesValues = glassesValues?.withBattery(
+                level: intValue(values, "level") ?? -1,
+                charging: boolValue(values, "charging") ?? false
+            )
             append(tag: "STORE", text: "battery \(intValue(values, "level") ?? -1)%")
         case "hotspot_status_change":
             let enabled = boolValue(values, "enabled") ?? false
             hotspotEnabled = enabled
-            glassesValues["hotspotEnabled"] = enabled
-            glassesValues["hotspotSsid"] = stringValue(values, "ssid") ?? ""
-            glassesValues["hotspotPassword"] = stringValue(values, "password") ?? ""
-            glassesValues["hotspotGatewayIp"] = stringValue(values, "local_ip") ?? ""
+            glassesValues = glassesValues?.withHotspot(
+                enabled: enabled,
+                ssid: stringValue(values, "ssid") ?? "",
+                password: stringValue(values, "password") ?? "",
+                gatewayIp: stringValue(values, "local_ip") ?? ""
+            )
             refreshGalleryServerStatusForCurrentHotspot(defaultStatus: "Gallery server: hotspot off")
             append(tag: "STORE", text: "hotspot \(summarize(values))")
         case "hotspot_error":
             hotspotEnabled = false
             galleryServerReachable = false
             galleryServerStatus = "Gallery server: hotspot error"
-            glassesValues["hotspotEnabled"] = false
+            glassesValues = glassesValues?.withHotspot(enabled: false, ssid: "", password: "", gatewayIp: "")
             append(tag: "TX", text: "hotspot error \(summarize(values))")
         case "photo_response":
             handlePhotoResponse(values)
@@ -1217,51 +1225,46 @@ func boolValue(_ values: [String: Any], _ key: String) -> Bool? {
     return nil
 }
 
-func connectionLabel(_ values: [String: Any]) -> String {
-    stringValue(values, "connectionState") ?? (isGlassesConnected(values) ? "CONNECTED" : "WAITING")
+extension String {
+    var nonEmpty: String? {
+        isEmpty ? nil : self
+    }
 }
 
-func isGlassesConnected(_ values: [String: Any]) -> Bool {
-    if let state = stringValue(values, "connectionState")?.lowercased() {
+func connectionLabel(_ status: MentraGlassesStatus?) -> String {
+    status?.connectionState.nonEmpty ?? (isGlassesConnected(status) ? "CONNECTED" : "WAITING")
+}
+
+func isGlassesConnected(_ status: MentraGlassesStatus?) -> Bool {
+    if let state = status?.connectionState.lowercased(), !state.isEmpty {
         if state == "connected" { return true }
         if state == "disconnected" { return false }
     }
-    return boolValue(values, "connected") == true
+    return status?.connected == true
 }
 
-func isDisconnectedStatus(_ values: [String: Any]) -> Bool {
-    if let state = stringValue(values, "connectionState")?.lowercased() {
+func isDisconnectedStatus(_ status: MentraGlassesStatusUpdate) -> Bool {
+    if let state = status.connectionState?.lowercased() {
         return state == "disconnected"
     }
-    return boolValue(values, "connected") == false
+    return status.connected == false
 }
 
-func modelLabel(_ values: [String: Any]) -> String {
-    stringValue(values, "deviceModel") ?? "Mentra Live"
+func modelLabel(_ status: MentraGlassesStatus?) -> String {
+    status?.deviceModel.nonEmpty ?? "Mentra Live"
 }
 
-func deviceLabel(_ values: [String: Any]) -> String {
-    stringValue(values, "bluetoothName") ?? stringValue(values, "serialNumber") ?? stringValue(values, "deviceModel") ?? "Mentra Live"
+func deviceLabel(_ status: MentraGlassesStatus?) -> String {
+    if let value = status?.bluetoothName, !value.isEmpty { return value }
+    if let value = status?.serialNumber, !value.isEmpty { return value }
+    if let value = status?.deviceModel, !value.isEmpty { return value }
+    return "Mentra Live"
 }
 
-func supportsDisplay(_ values: [String: Any]) -> Bool {
-    for key in ["supportsDisplay", "hasDisplay", "displaySupported", "display"] {
-        if let value = boolValue(values, key) {
-            return value
-        }
-    }
-    for key in ["features", "deviceFeatures", "capabilities"] {
-        if let nested = values[key] as? [String: Any],
-           let value = boolValue(nested, "display")
-        {
-            return value
-        }
-    }
-
+func supportsDisplay(_ status: MentraGlassesStatus?) -> Bool {
     let model = [
-        stringValue(values, "deviceModel"),
-        stringValue(values, "bluetoothName"),
-        stringValue(values, "defaultWearable"),
+        status?.deviceModel,
+        status?.bluetoothName,
     ]
     .compactMap { $0 }
     .joined(separator: " ")
@@ -1282,34 +1285,34 @@ func discoveredDeviceKey(_ device: MentraDiscoveredDevice) -> String {
     device.identifier ?? device.name
 }
 
-func batteryLevel(_ values: [String: Any]) -> Int? {
-    guard isGlassesConnected(values), let level = intValue(values, "batteryLevel"), level >= 0 else { return nil }
+func batteryLevel(_ status: MentraGlassesStatus?) -> Int? {
+    guard isGlassesConnected(status), let level = status?.batteryLevel, level >= 0 else { return nil }
     return min(level, 100)
 }
 
-func batteryLabel(_ values: [String: Any]) -> String {
-    guard let level = batteryLevel(values) else {
-        return isDisconnectedStatus(values) ? "Not connected" : "Waiting for status"
+func batteryLabel(_ status: MentraGlassesStatus?) -> String {
+    guard let level = batteryLevel(status) else {
+        return status?.connected == false || status?.connectionState.lowercased() == "disconnected" ? "Not connected" : "Waiting for status"
     }
-    return "\(level)%\(boolValue(values, "charging") == true ? " charging" : "")"
+    return "\(level)%\(status?.charging == true ? " charging" : "")"
 }
 
-func wifiLabel(_ values: [String: Any]) -> String {
-    if boolValue(values, "wifiConnected") == true {
-        return stringValue(values, "wifiSsid") ?? "Connected"
+func wifiLabel(_ status: MentraGlassesStatus?) -> String {
+    if status?.wifi.connected == true {
+        return status?.wifi.ssid.nonEmpty ?? "Connected"
     }
-    return isGlassesConnected(values) ? "Not connected" : "Unknown"
+    return isGlassesConnected(status) ? "Not connected" : "Unknown"
 }
 
-func hotspotLabel(_ values: [String: Any], fallbackEnabled: Bool) -> String {
-    let enabled = boolValue(values, "hotspotEnabled") ?? fallbackEnabled
+func hotspotLabel(_ status: MentraGlassesStatus?, fallbackEnabled: Bool) -> String {
+    let enabled = status?.hotspotEnabled ?? fallbackEnabled
     guard enabled else { return "disabled" }
 
-    guard let ssid = stringValue(values, "hotspotSsid"), !ssid.isEmpty else {
+    guard let ssid = status?.hotspotSsid, !ssid.isEmpty else {
         return "waiting for SSID"
     }
 
-    if let ip = stringValue(values, "hotspotGatewayIp"), !ip.isEmpty {
+    if let ip = status?.hotspotGatewayIp, !ip.isEmpty {
         return "\(ssid) · \(ip)"
     }
     return ssid
@@ -1317,95 +1320,75 @@ func hotspotLabel(_ values: [String: Any], fallbackEnabled: Bool) -> String {
 
 private let mentraLiveDefaultHotspotPassword = "00001111"
 
-func galleryServerUrl(_ values: [String: Any], fallbackEnabled: Bool) -> String? {
-    let enabled = boolValue(values, "hotspotEnabled") ?? fallbackEnabled
+func galleryServerUrl(_ status: MentraGlassesStatus?, fallbackEnabled: Bool) -> String? {
+    let enabled = status?.hotspotEnabled ?? fallbackEnabled
     guard enabled else { return nil }
 
-    let gateway = stringValue(values, "hotspotGatewayIp").flatMap { $0.isEmpty ? nil : $0 } ?? "192.168.43.1"
+    let gateway = status?.hotspotGatewayIp.nonEmpty ?? "192.168.43.1"
     return "http://\(gateway):8089"
 }
 
-func galleryHotspotSsidLabel(_ values: [String: Any]) -> String {
-    guard let ssid = stringValue(values, "hotspotSsid"), !ssid.isEmpty else {
+func galleryHotspotSsidLabel(_ status: MentraGlassesStatus?) -> String {
+    guard let ssid = status?.hotspotSsid, !ssid.isEmpty else {
         return "the glasses hotspot"
     }
     return "Wi-Fi \(ssid)"
 }
 
-func galleryHotspotPasswordLabel(_ values: [String: Any]) -> String {
-    stringValue(values, "hotspotPassword").flatMap { $0.isEmpty ? nil : $0 } ?? mentraLiveDefaultHotspotPassword
+func galleryHotspotPasswordLabel(_ status: MentraGlassesStatus?) -> String {
+    status?.hotspotPassword.nonEmpty ?? mentraLiveDefaultHotspotPassword
 }
 
-func firmwareLabel(_ values: [String: Any]) -> String {
-    stringValue(values, "fwVersion")
-        ?? stringValue(values, "firmwareVersion")
-        ?? stringValue(values, "deviceFirmwareVersion")
-        ?? stringValue(values, "rightFirmwareVersion")
-        ?? stringValue(values, "leftFirmwareVersion")
-        ?? stringValue(values, "besFwVersion")
-        ?? stringValue(values, "mtkFwVersion")
-        ?? "Unknown"
+func firmwareLabel(_ status: MentraGlassesStatus?) -> String {
+    if let value = status?.firmwareVersion, !value.isEmpty { return value }
+    if let value = status?.besFirmwareVersion, !value.isEmpty { return value }
+    if let value = status?.mtkFirmwareVersion, !value.isEmpty { return value }
+    return "Unknown"
 }
 
-func firmwareSubLabel(_ values: [String: Any]) -> String {
-    if stringValue(values, "fwVersion") != nil || stringValue(values, "firmwareVersion") != nil {
+func firmwareSubLabel(_ status: MentraGlassesStatus?) -> String {
+    if status?.firmwareVersion.isEmpty == false {
         return "reported"
     }
-    if stringValue(values, "deviceFirmwareVersion") != nil {
-        return "device firmware"
-    }
-    if stringValue(values, "rightFirmwareVersion") != nil {
-        return "right firmware"
-    }
-    if stringValue(values, "leftFirmwareVersion") != nil {
-        return "left firmware"
-    }
-    if stringValue(values, "besFwVersion") != nil {
+    if status?.besFirmwareVersion.isEmpty == false {
         return "BES firmware"
     }
-    if stringValue(values, "mtkFwVersion") != nil {
+    if status?.mtkFirmwareVersion.isEmpty == false {
         return "MTK firmware"
     }
-    if let appVersion = stringValue(values, "appVersion") {
+    if let appVersion = status?.appVersion, !appVersion.isEmpty {
         return "ASG app \(appVersion)"
     }
     return "not reported"
 }
 
-func rssiLabel(_ values: [String: Any]) -> String {
-    intValue(values, "signalStrength").map { "\($0) dBm" } ?? "Unknown"
+func rssiLabel(_ status: MentraGlassesStatus?) -> String {
+    guard let signal = status?.signalStrength, signal != -1 else { return "Unknown" }
+    return "\(signal) dBm"
 }
 
-func bluetoothSearchLabel(_ values: [String: Any]) -> String {
-    let count = (values["searchResults"] as? [[String: Any]])?.count ?? 0
-    return "\(boolValue(values, "searching") == true ? "Scanning" : "Idle") · \(count) result\(count == 1 ? "" : "s")"
+func bluetoothSearchLabel(_ status: MentraBluetoothStatus?) -> String {
+    let count = status?.searchResults.count ?? 0
+    return "\(status?.searching == true ? "Scanning" : "Idle") · \(count) result\(count == 1 ? "" : "s")"
 }
 
-func hasSavedConnectionTarget(_ values: [String: Any]) -> Bool {
-    guard let model = stringValue(values, "default_wearable"), !model.isEmpty else { return false }
-    guard let name = stringValue(values, "device_name"), !name.isEmpty else { return false }
+func hasSavedConnectionTarget(_ status: MentraBluetoothStatus?) -> Bool {
+    guard let model = status?.defaultWearable, !model.isEmpty else { return false }
+    guard let name = status?.deviceName, !name.isEmpty else { return false }
     return true
 }
 
-func defaultDeviceStatus(_ device: MentraPairedDevice?) -> [String: Any] {
-    [
-        "default_wearable": device?.model.deviceType ?? "",
-        "device_name": device?.name ?? "",
-        "device_address": device?.identifier ?? "",
-    ]
+func savedConnectionTargetName(_ status: MentraBluetoothStatus?) -> String {
+    status?.deviceName.nonEmpty ?? "Saved glasses"
 }
 
-func savedConnectionTargetName(_ values: [String: Any]) -> String {
-    stringValue(values, "device_name") ?? "Saved glasses"
-}
-
-func savedConnectionTargetDetail(_ values: [String: Any]) -> String {
-    let model = stringValue(values, "default_wearable") ?? "Saved model"
+func savedConnectionTargetDetail(_ status: MentraBluetoothStatus?) -> String {
+    let model = status?.defaultWearable.nonEmpty ?? "Saved model"
     return "\(model) · BluetoothSdk.connectDefault()"
 }
 
-func wifiScanResults(_ values: [String: Any]) -> [[String: Any]] {
-    values["wifiScanResults"] as? [[String: Any]] ?? []
+func wifiScanResults(_ status: MentraBluetoothStatus?) -> [MentraWifiScanResult] {
+    status?.wifiScanResults ?? []
 }
 
 func elapsedText(_ date: Date?) -> String {
@@ -1419,25 +1402,33 @@ func durationLabel(_ seconds: Int) -> String {
     return String(format: "%02d:%02d:%02d", seconds / 3600, (seconds % 3600) / 60, seconds % 60)
 }
 
-func disconnectedGlassesValues() -> [String: Any] {
-        [
-            "connected": false,
-            "connectionState": "DISCONNECTED",
-            "fullyBooted": false,
-            "batteryLevel": -1,
-            "charging": false,
-            "hotspotEnabled": false,
-            "hotspotGatewayIp": "",
-            "hotspotPassword": "",
-            "hotspotSsid": "",
-            "wifiConnected": false,
-            "wifiSsid": "",
-            "wifiLocalIp": "",
-    ]
-}
-
 func summarize(_ values: [String: Any]) -> String {
     let parts = values.prefix(3).map { "\($0.key): \($0.value)" }
+    return parts.isEmpty ? "empty update" : parts.joined(separator: ", ")
+}
+
+func summarize(_ status: MentraGlassesStatusUpdate) -> String {
+    let parts = [
+        status.connectionState.map { "connectionState: \($0)" },
+        status.connected.map { "connected: \($0)" },
+        status.fullyBooted.map { "fullyBooted: \($0)" },
+        status.batteryLevel.map { "batteryLevel: \($0)" },
+        status.wifi.map { "wifi: \($0.connected ? ($0.ssid.isEmpty ? "connected" : $0.ssid) : "disconnected")" },
+        status.hotspotEnabled.map { "hotspotEnabled: \($0)" },
+        status.signalStrength.map { "signalStrength: \($0)" },
+    ].compactMap { $0 }.prefix(3)
+    return parts.isEmpty ? "empty update" : parts.joined(separator: ", ")
+}
+
+func summarize(_ status: MentraBluetoothStatusUpdate) -> String {
+    let parts = [
+        status.searching.map { "searching: \($0)" },
+        status.searchResults.map { "searchResults: \($0.count)" },
+        status.wifiScanResults.map { "wifiScanResults: \($0.count)" },
+        status.galleryModeAuto.map { "galleryModeAuto: \($0)" },
+        status.defaultWearable.map { "defaultWearable: \($0)" },
+        status.deviceName.map { "deviceName: \($0)" },
+    ].compactMap { $0 }.prefix(3)
     return parts.isEmpty ? "empty update" : parts.joined(separator: ", ")
 }
 

@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mentra.core.MentraDiscoveredDevice
+import com.mentra.core.MentraGlassesStatus
 import com.mentra.examples.android.MentraExampleController
 import com.mentra.examples.android.R
 import com.mentra.examples.android.batteryLabel
@@ -45,7 +46,6 @@ import com.mentra.examples.android.modelLabel
 import com.mentra.examples.android.rssiLabel
 import com.mentra.examples.android.savedConnectionTargetDetail
 import com.mentra.examples.android.savedConnectionTargetName
-import com.mentra.examples.android.stringValue
 import com.mentra.examples.android.supportsDisplay
 import com.mentra.examples.android.targetDeviceDetail
 import com.mentra.examples.android.wifiLabel
@@ -99,7 +99,7 @@ fun DeviceScreen(controller: MentraExampleController) {
                     }
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Icon(Icons.Filled.Bolt, contentDescription = null, tint = AppColor.greenAccent, modifier = Modifier.size(11.dp))
-                        Text(if (glasses["charging"] == true) "Charging" else "Waiting", color = AppColor.greenAccent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text(if (glasses?.charging == true) "Charging" else "Waiting", color = AppColor.greenAccent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.Bottom) {
@@ -114,7 +114,7 @@ fun DeviceScreen(controller: MentraExampleController) {
         // Stat row
         Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             StatTile("FIRMWARE", firmwareLabel(glasses), firmwareSubLabel(glasses), AppColor.greenAccent, Modifier.weight(1f))
-            StatTile("WI-FI", wifiLabel(glasses), (glasses["wifiLocalIp"] as? String) ?: "unknown", AppColor.muted, Modifier.weight(1f), bold = true)
+            StatTile("WI-FI", wifiLabel(glasses), glasses?.wifi?.localIp?.takeIf { it.isNotBlank() } ?: "unknown", AppColor.muted, Modifier.weight(1f), bold = true)
             StatTile("RSSI", rssiLabel(glasses), "signal", AppColor.greenAccent, Modifier.weight(1f), bold = true)
         }
 
@@ -241,11 +241,10 @@ fun DeviceScreen(controller: MentraExampleController) {
     }
 }
 
-private fun glassesImageRes(values: Map<String, Any>): Int {
+private fun glassesImageRes(values: MentraGlassesStatus?): Int {
     val model = listOfNotNull(
-        stringValue(values, "deviceModel"),
-        stringValue(values, "bluetoothName"),
-        stringValue(values, "defaultWearable"),
+        values?.deviceModel,
+        values?.bluetoothName,
     ).joinToString(" ").lowercase()
 
     return when {
@@ -259,7 +258,7 @@ private fun glassesImageRes(values: Map<String, Any>): Int {
 }
 
 @Composable
-private fun TargetPicker(controller: MentraExampleController, connected: Boolean, glasses: Map<String, Any>) {
+private fun TargetPicker(controller: MentraExampleController, connected: Boolean, glasses: MentraGlassesStatus?) {
     val state = controller.state
     Column(
         modifier = Modifier

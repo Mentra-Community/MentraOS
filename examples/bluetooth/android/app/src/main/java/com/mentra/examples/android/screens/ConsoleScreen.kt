@@ -133,8 +133,8 @@ fun ConsoleScreen(controller: MentraExampleController) {
         ) {
             Icon(Icons.Outlined.Code, null, tint = AppColor.muted, modifier = Modifier.size(14.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text("Raw status JSON", color = AppColor.ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                Text("${state.glassesStatus.size + state.bluetoothStatus.size} keys · glassesStatus, bluetoothStatus", color = AppColor.muted, fontSize = 10.sp)
+                Text("Typed SDK status", color = AppColor.ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text("glassesStatus, bluetoothStatus", color = AppColor.muted, fontSize = 10.sp)
             }
             Icon(Icons.Outlined.KeyboardArrowDown, null, tint = AppColor.ink, modifier = Modifier.size(14.dp))
         }
