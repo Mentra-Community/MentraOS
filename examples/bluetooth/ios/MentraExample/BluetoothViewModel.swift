@@ -649,6 +649,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             append(tag: "LIVE", text: "button \(button.buttonId): \(button.pressType)")
         case let .touch(touch):
             append(tag: "LIVE", text: "\(touch.isSwipe ? "swipe" : "touch") \(touch.gestureName ?? summarize(touch.values))")
+        case let .wifiStatus(status):
+            applyWifiStatus(status)
         case let .hotspotStatus(status):
             handleRawEvent(name: "hotspot_status_change", values: status.values)
         case let .hotspotError(error):
@@ -664,6 +666,13 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         default:
             append(tag: "LIVE", text: event.description)
         }
+    }
+
+    private func applyWifiStatus(_ event: MentraWifiStatusEvent) {
+        glassesValues["wifiConnected"] = event.connected
+        glassesValues["wifiSsid"] = event.ssid
+        glassesValues["wifiLocalIp"] = event.localIp
+        append(tag: "STORE", text: "Wi-Fi \(summarize(event.values))")
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceiveMicPcm frame: Data) {
@@ -1045,9 +1054,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             glassesValues["batteryLevel"] = intValue(values, "level") ?? -1
             glassesValues["charging"] = boolValue(values, "charging") ?? false
             append(tag: "STORE", text: "battery \(intValue(values, "level") ?? -1)%")
-        case "wifi_status_change":
-            glassesValues.merge(values) { _, new in new }
-            append(tag: "STORE", text: "Wi-Fi \(summarize(values))")
         case "hotspot_status_change":
             let enabled = boolValue(values, "enabled") ?? false
             hotspotEnabled = enabled

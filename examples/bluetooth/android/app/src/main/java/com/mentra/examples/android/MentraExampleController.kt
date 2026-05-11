@@ -723,8 +723,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     override fun onWifiStatusChanged(event: MentraWifiStatusEvent) {
+        val status = event.status
         state = state.copy(
-            glassesStatus = state.glassesStatus + event.values,
+            glassesStatus = state.glassesStatus + mapOf(
+                "wifiConnected" to status.connected,
+                "wifiSsid" to status.ssid,
+                "wifiLocalIp" to status.localIp,
+            ),
             wifiPendingSsid = null,
         )
         addEvent("STORE", "Wi-Fi ${summarize(event.values)}")
