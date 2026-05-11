@@ -7,7 +7,7 @@ import BluetoothSdk, {
   type BatteryStatusEvent,
   type ButtonPressEvent,
   type CompatibleGlassesSearchStopEvent,
-  type CoreStatus,
+  type BluetoothStatus,
   createDisconnectedGlassesStatus,
   type GlassesStatus,
   type HotspotStatus,
@@ -110,7 +110,7 @@ export type SdkConsoleEvent = {
 
 export type MentraSdkState = {
   activeAction: string | null;
-  bluetoothStatus: Partial<CoreStatus> & Record<string, unknown>;
+  bluetoothStatus: Partial<BluetoothStatus> & Record<string, unknown>;
   cameraStatus: string;
   defaultDevice: Device | null;
   discoveredDevices: Device[];
@@ -219,7 +219,7 @@ export function useMentraSdk(): MentraSdkModel {
     () => createDisconnectedGlassesStatus(),
   );
   const [bluetoothStatus, setBluetoothStatus] = useState<
-    Partial<CoreStatus> & Record<string, unknown>
+    Partial<BluetoothStatus> & Record<string, unknown>
   >({});
   const [defaultDevice, setDefaultDevice] = useState<Device | null>(
     null,
@@ -311,17 +311,17 @@ export function useMentraSdk(): MentraSdkModel {
   useEffect(() => {
     let cancelled = false;
 
-    void Promise.all([BluetoothSdk.getGlassesStatus(), BluetoothSdk.getCoreStatus()])
-      .then(([initialGlassesStatus, initialCoreStatus]) => {
+    void Promise.all([BluetoothSdk.getGlassesStatus(), BluetoothSdk.getBluetoothStatus()])
+      .then(([initialGlassesStatus, initialBluetoothStatus]) => {
         if (cancelled) {
           return;
         }
-        const coreStatus = initialCoreStatus as Partial<CoreStatus> & Record<string, unknown>;
+        const bluetoothStatus = initialBluetoothStatus as Partial<BluetoothStatus> & Record<string, unknown>;
         setGlassesStatus(initialGlassesStatus);
-        setBluetoothStatus(coreStatus);
+        setBluetoothStatus(bluetoothStatus);
         setHotspotEnabled(enabledHotspotStatus(initialGlassesStatus) !== null);
-        setGalleryModeAuto(galleryModeAutoFrom(coreStatus));
-        setDefaultDevice(defaultDeviceFromStatus(coreStatus));
+        setGalleryModeAuto(galleryModeAutoFrom(bluetoothStatus));
+        setDefaultDevice(defaultDeviceFromStatus(bluetoothStatus));
       })
       .catch((error) => {
         addEvent('TX', `initial SDK status load failed: ${formatError(error)}`);
@@ -406,7 +406,7 @@ export function useMentraSdk(): MentraSdkModel {
       addEvent('STORE', summarizeMap(changed));
     });
 
-    const removeBluetooth = BluetoothSdk.onCoreStatus((changed) => {
+    const removeBluetooth = BluetoothSdk.onBluetoothStatus((changed) => {
       setBluetoothStatus((current) => ({...current, ...changed}));
       if ('gallery_mode' in changed) {
         setGalleryModeAuto(galleryModeAutoFrom(changed));

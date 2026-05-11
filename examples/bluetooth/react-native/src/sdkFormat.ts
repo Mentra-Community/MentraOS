@@ -1,4 +1,4 @@
-import type {CoreStatus, GlassesConnectionStatus, GlassesStatus, HotspotStatus, Device, WifiStatus} from '@mentra/bluetooth-sdk';
+import type {BluetoothStatus, GlassesConnectionStatus, GlassesStatus, HotspotStatus, Device, WifiStatus} from '@mentra/bluetooth-sdk';
 
 export function connectionLabel(status: Partial<GlassesStatus>) {
   const connection = connectionStatus(status);
@@ -216,7 +216,7 @@ function statusNumber(status: Partial<GlassesStatus>, key: string) {
   return typeof value === 'number' ? value : undefined;
 }
 
-export function bluetoothSearchLabel(status: Partial<CoreStatus>) {
+export function bluetoothSearchLabel(status: Partial<BluetoothStatus>) {
   const count = status.searchResults?.length ?? 0;
   return `${status.searching ? 'Scanning' : 'Idle'} · ${count} result${count === 1 ? '' : 's'}`;
 }
