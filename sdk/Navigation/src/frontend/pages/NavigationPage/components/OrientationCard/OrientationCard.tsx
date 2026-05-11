@@ -36,11 +36,24 @@ export function OrientationCard({
 }) {
   const user = useUser()
   const snap = derivePivotView(user, maneuver, status)
-  const {label, icon, road, distance} = pickDisplay(snap)
+  const real = pickDisplay(snap)
+
+  // HARDCODED PREVIEW STUB — overrides every dynamic field with sample
+  // text so we can iterate on the running-drawer layout. Remove this
+  // block to restore live data.
+  const HARDCODED_PREVIEW = false
+  const {label, icon, road, nextRoad} = HARDCODED_PREVIEW
+    ? {
+        label: "Turn right in 500 m",
+        icon: "TURN_RIGHT",
+        nextRoad: "Laguna St",
+        road: "onto Waller St",
+      }
+    : real
 
   // Single source of truth — log exactly what the ManeuverCard is showing
   // on screen right now. This is the only road/maneuver log in the app.
-  console.log(`[ManeuverCard] ${distance ?? "—"} | ${label} | ${road ?? "—"}`)
+  console.log(`[ManeuverCard] ${nextRoad ?? "—"} | ${label} | ${road ?? "—"}`)
 
   return (
     <div className="mx-1 mt-2">
@@ -58,8 +71,8 @@ export function OrientationCard({
         </AnimatePresence>
 
         <div className="flex flex-col items-start gap-0.5 min-w-0 flex-1">
-          {distance ? (
-            <div className="self-stretch text-[#6B6B6B] font-sans text-sm/4.5">{distance}</div>
+          {nextRoad ? (
+            <div className="self-stretch text-[#6B6B6B] font-sans text-sm/4.5">on {nextRoad}</div>
           ) : null}
           <AnimatePresence mode="popLayout" initial={false}>
             <motion.div
@@ -72,12 +85,26 @@ export function OrientationCard({
               {label}
             </motion.div>
           </AnimatePresence>
-          {road ? (
-            <div className="self-stretch text-[#111111] font-sans text-base/5.5 truncate">{road}</div>
-          ) : null}
+          
+          
         </div>
       </div>
     </div>
+  )
+}
+
+function LaneArrow({direction, highlight}: {direction: "left" | "straight" | "right"; highlight: boolean}) {
+  const color = highlight ? "#111111" : "#9CA3AF"
+  const path =
+    direction === "left"
+      ? "M14 4 L4 12 L14 20 M4 12 L20 12"
+      : direction === "right"
+        ? "M10 4 L20 12 L10 20 M20 12 L4 12"
+        : "M12 4 L12 20 M6 10 L12 4 L18 10"
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+      <path d={path} stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   )
 }
 
@@ -152,9 +179,9 @@ function derivePivotView(user: User, maneuver: NavManeuver | null, status?: NavS
 
 function pickDisplay(
   snap: PivotView,
-): {label: string; icon: string; road: string | null; distance: string | null} {
+): {label: string; icon: string; road: string | null; nextRoad: string | null} {
   if (snap.arrived) {
-    return {label: "Arrived", icon: "ARRIVE", road: null, distance: null}
+    return {label: "Arrived", icon: "ARRIVE", road: null, nextRoad: null}
   }
 
   if (snap.activeDirection === "right") {
@@ -162,7 +189,7 @@ function pickDisplay(
       label: "Turn right",
       icon: "TURN_RIGHT",
       road: snap.activeToRoad ? `onto ${snap.activeToRoad}` : null,
-      distance: null,
+      nextRoad: null,
     }
   }
   if (snap.activeDirection === "left") {
@@ -170,7 +197,7 @@ function pickDisplay(
       label: "Turn left",
       icon: "TURN_LEFT",
       road: snap.activeToRoad ? `onto ${snap.activeToRoad}` : null,
-      distance: null,
+      nextRoad: null,
     }
   }
 
@@ -185,7 +212,7 @@ function pickDisplay(
     return {
       label: `${verb} in ${distStr}`,
       icon,
-      distance: snap.upcomingFromRoad,
+      nextRoad: snap.upcomingFromRoad,
       road: snap.upcomingToRoad ? `onto ${snap.upcomingToRoad}` : null,
     }
   }
@@ -196,13 +223,13 @@ function pickDisplay(
     return {
       label: `Arriving in ${distStr}`,
       icon: "ARRIVE",
-      distance: null,
+      nextRoad: null,
       road: null,
     }
   }
 
   // No pivot, no destination distance — nothing actionable to say.
-  return {label: "Arriving", icon: "ARRIVE", road: null, distance: null}
+  return {label: "Arriving", icon: "ARRIVE", road: null, nextRoad: null}
 }
 
 /**

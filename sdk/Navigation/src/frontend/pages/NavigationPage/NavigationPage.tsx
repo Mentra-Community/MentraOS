@@ -128,25 +128,49 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                 `instruction="${s.instruction ?? ""}"`,
             )
           })
-          // Pivot filter: only the real road-to-road turns.
-          //   - Drop trip-boundary maneuvers (DEPART / DESTINATION / NAME_CHANGE / STRAIGHT)
-          //   - Drop sub-step crosswalk fragments (no toRoad AND short)
-          // The Routes API splits final-block crosswalks into multiple
-          // bare "Turn left" sub-steps with no road name. Collapsing them
-          // out leaves only the meaningful "turn from X onto Y" pivots.
+          // Pivot filter:
+          //   1. Drop trip-boundary maneuvers (DEPART / DESTINATION / NAME_CHANGE / STRAIGHT)
+          //   2. Collapse consecutive turns within INTERSECTION_CLUSTER_M
+          //      of each other into a single pivot — Routes API often
+          //      splits one intersection crossing into multiple bare
+          //      "Turn left / Turn right / Slight left" sub-steps; the
+          //      user perceives it as one turn onto the destination road.
+          //   3. Drop any remaining sub-step crosswalk fragments
+          //      (no toRoad AND short).
+          const INTERSECTION_CLUSTER_M = 30
           const PIVOT_MIN_METERS_WITHOUT_ROAD = 25
-          const pivots = withRoads.filter((s) => {
+          const turnCandidates = withRoads.filter(
+            (s) =>
+              s.maneuver != null &&
+              !["STRAIGHT", "DEPART", "DESTINATION", "NAME_CHANGE"].includes(s.maneuver),
+          )
+          const clustered: typeof turnCandidates = []
+          for (const c of turnCandidates) {
+            const last = clustered[clustered.length - 1]
             if (
-              s.maneuver == null ||
-              ["STRAIGHT", "DEPART", "DESTINATION", "NAME_CHANGE"].includes(s.maneuver)
+              last &&
+              haversineMeters({lat: last.lat, lng: last.lng}, {lat: c.lat, lng: c.lng}) <
+                INTERSECTION_CLUSTER_M
             ) {
-              return false
+              // Inherit the destination road from whichever sub-step has
+              // one — the named segment is the one the user thinks of as
+              // the turn target.
+              const toRoad = last.toRoad ?? c.toRoad
+              clustered[clustered.length - 1] = {
+                ...last,
+                toRoad,
+                // Sum distances so the merged pivot reflects the full
+                // intersection-crossing path.
+                distanceMeters: last.distanceMeters + c.distanceMeters,
+                // Prefer the instruction that names the destination road.
+                instruction: last.toRoad ? last.instruction : c.instruction ?? last.instruction,
+              }
+              continue
             }
-            // Real turn onto a named road — always keep.
+            clustered.push(c)
+          }
+          const pivots = clustered.filter((s) => {
             if (s.toRoad && s.toRoad !== s.fromRoad) return true
-            // Bare crosswalk/sidewalk fragment without a destination road.
-            // Keep only if it's long enough to plausibly be a real turn
-            // the SDK simply didn't label.
             return s.distanceMeters >= PIVOT_MIN_METERS_WITHOUT_ROAD
           })
           console.log(`[PREVIEW] pivots — ${pivots.length} turning point(s)`)

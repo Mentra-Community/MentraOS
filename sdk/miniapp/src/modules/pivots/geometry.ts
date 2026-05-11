@@ -32,6 +32,15 @@ const SAME_DIR_MERGE_M = 25
 const RDP_EPSILON_M = 5
 const MIN_BEND_PER_POINT_DEG = 10
 const STRAIGHT_SEGMENT_BREAK_M = 1
+/**
+ * Pivots within this radius of each other are treated as one
+ * intersection and collapsed into a single net-direction pivot. The
+ * Routes API + walking polylines often split a single perceived turn
+ * (e.g. crossing a 6-way intersection diagonally) into multiple tight
+ * left/right/left zigzag pivots over ~10-20m. Merging them keeps the
+ * UI announcing one turn per real-world intersection.
+ */
+const INTERSECTION_CLUSTER_M = 30
 
 /** Great-circle distance in meters (haversine). */
 export function haversineMeters(a: LatLng, b: LatLng): number {
@@ -228,7 +237,40 @@ export function extractPivots(rawPoints: LatLng[]): RawPivot[] {
     merged.push(p)
   }
 
-  return merged
+  // Intersection-cluster merge: collapse pivots within
+  // INTERSECTION_CLUSTER_M of each other regardless of direction. The
+  // resulting pivot inherits the net heading delta — if a tight
+  // left→right→left zigzag at one intersection nets out to a right
+  // turn, the merged pivot is a right. The anchor lat/lng is the pivot
+  // with the largest individual heading delta in the cluster (most
+  // likely to be the "real" turn vertex). We tag the merged pivot with
+  // the SUMMED `headingDelta` so consumers can still see how sharp the
+  // net turn was.
+  const clustered: RawPivot[] = []
+  for (const p of merged) {
+    const last = clustered[clustered.length - 1]
+    if (
+      last &&
+      haversineMeters({lat: last.lat, lng: last.lng}, {lat: p.lat, lng: p.lng}) < INTERSECTION_CLUSTER_M
+    ) {
+      const netDelta = last.headingDelta + p.headingDelta
+      // Anchor on whichever pivot had the larger absolute bend — that's
+      // typically the geometric vertex of the actual turn.
+      const anchor = Math.abs(p.headingDelta) > Math.abs(last.headingDelta) ? p : last
+      clustered[clustered.length - 1] = {
+        ...anchor,
+        direction: netDelta > 0 ? "right" : "left",
+        headingDelta: netDelta,
+      }
+      continue
+    }
+    clustered.push(p)
+  }
+
+  // Discard clusters whose NET turn fell back below the threshold
+  // (e.g. a left followed by an equal-magnitude right that cancels out
+  // — a pure jog with no real direction change).
+  return clustered.filter((p) => Math.abs(p.headingDelta) >= TURN_THRESHOLD_DEG)
 }
 
 /**
