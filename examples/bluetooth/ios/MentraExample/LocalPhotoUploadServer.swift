@@ -240,32 +240,32 @@ final class LocalPhotoUploadServer {
     }
 
     private func parseMultipart(_ body: Data, boundary: String) -> ParsedMultipart {
-        guard let text = String(data: body, encoding: .isoLatin1) else {
-            return ParsedMultipart(fields: [:], files: [:])
-        }
-
-        let marker = "--\(boundary)"
-        var cursor = text.startIndex
+        let marker = Data("--\(boundary)".utf8)
+        let nextMarkerPrefix = Data("\r\n--\(boundary)".utf8)
+        let crlf = Data("\r\n".utf8)
+        let headerSeparator = Data("\r\n\r\n".utf8)
         var fields: [String: String] = [:]
         var files: [String: Data] = [:]
+        var cursor = body.startIndex
 
-        while let markerRange = text.range(of: marker, range: cursor..<text.endIndex) {
+        while let markerRange = body.range(of: marker, options: [], in: cursor..<body.endIndex) {
             var partStart = markerRange.upperBound
-            if text[partStart...].hasPrefix("--") {
+            if body.hasPrefix(Data("--".utf8), at: partStart) {
                 break
             }
-            if text[partStart...].hasPrefix("\r\n") {
-                partStart = text.index(partStart, offsetBy: 2)
+            if body.hasPrefix(crlf, at: partStart) {
+                partStart += crlf.count
             }
-            guard let headerEnd = text.range(of: "\r\n\r\n", range: partStart..<text.endIndex) else {
+            guard let headerEnd = body.range(of: headerSeparator, options: [], in: partStart..<body.endIndex) else {
                 break
             }
             let dataStart = headerEnd.upperBound
-            guard let nextMarker = text.range(of: "\r\n\(marker)", range: dataStart..<text.endIndex) else {
+            guard let nextMarker = body.range(of: nextMarkerPrefix, options: [], in: dataStart..<body.endIndex) else {
                 break
             }
 
-            let headerBlock = String(text[partStart..<headerEnd.lowerBound])
+            let headerData = body.subdata(in: partStart..<headerEnd.lowerBound)
+            let headerBlock = String(data: headerData, encoding: .isoLatin1) ?? ""
             let disposition = headerBlock
                 .components(separatedBy: "\r\n")
                 .first { $0.lowercased().hasPrefix("content-disposition:") } ?? ""
@@ -274,15 +274,13 @@ final class LocalPhotoUploadServer {
                 continue
             }
 
-            let lowerOffset = text.distance(from: text.startIndex, to: dataStart)
-            let upperOffset = text.distance(from: text.startIndex, to: nextMarker.lowerBound)
-            let bytes = body.subdata(in: lowerOffset..<upperOffset)
+            let bytes = body.subdata(in: dataStart..<nextMarker.lowerBound)
             if quotedValue(named: "filename", in: disposition) != nil {
                 files[name] = bytes
             } else if let value = String(data: bytes, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) {
                 fields[name] = value
             }
-            cursor = nextMarker.lowerBound
+            cursor = nextMarker.lowerBound + crlf.count
         }
 
         return ParsedMultipart(fields: fields, files: files)
@@ -378,6 +376,18 @@ private func parseHeaders(_ headerText: String) -> [String: String] {
         headers[name] = value
     }
     return headers
+}
+
+private extension Data {
+    func hasPrefix(_ prefix: Data, at offset: Data.Index) -> Bool {
+        guard offset >= startIndex,
+              offset + prefix.count <= endIndex
+        else {
+            return false
+        }
+
+        return self[offset..<(offset + prefix.count)].elementsEqual(prefix)
+    }
 }
 
 private func jsonEscape(_ value: String) -> String {
