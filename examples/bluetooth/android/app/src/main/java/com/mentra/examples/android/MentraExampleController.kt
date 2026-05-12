@@ -90,11 +90,6 @@ enum class PhotoDestination {
     THIS_PHONE,
 }
 
-enum class WebRtcDestination {
-    MACBOOK_DOCKER,
-    THIS_PHONE,
-}
-
 data class ExampleEvent(
     val time: String,
     val tag: String,
@@ -166,13 +161,13 @@ data class MentraExampleState(
     val directStreamFrame: Bitmap? = null,
     val directStreamReceiverRunning: Boolean = false,
     val directStreamWhipUrl: String = "Phone receiver not started",
-    val streamProtocol: String = "rtmp",
+    val streamCloudServerEnabled: Boolean = false,
+    val streamProtocol: String = "webrtc",
     val streamRequested: Boolean = false,
     val streamPreviewReady: Boolean = false,
     val streamStartedAt: Long? = null,
-    val streamStatus: String = "Ready to start stream",
-    val streamUrl: String = defaultStreamUrl("rtmp"),
-    val webRtcDestination: WebRtcDestination = WebRtcDestination.MACBOOK_DOCKER,
+    val streamStatus: String = "Ready to stream WebRTC to this phone",
+    val streamUrl: String = defaultStreamUrl("webrtc"),
     val webhookUrl: String = photoUploadDefaultUrl,
     val wifiPendingSsid: String? = null,
 )
@@ -551,32 +546,54 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     fun selectProtocol(protocol: String) {
+        if (state.streamProtocol == protocol) {
+            return
+        }
         val currentUrl = state.streamUrl.trim()
         val shouldUseDefault = currentUrl.isEmpty() || currentUrl in streamDefaultUrls.values
+        val stoppedStream = stopStreamForConfigurationChange("Stopped before changing stream protocol")
         state = state.copy(
             streamProtocol = protocol,
             streamUrl = if (shouldUseDefault) defaultStreamUrl(protocol) else state.streamUrl,
+            streamStatus = if (stoppedStream) "Ready to start stream" else state.streamStatus,
         )
     }
 
-    fun setWebRtcDestination(destination: WebRtcDestination) {
-        if (state.webRtcDestination == destination) {
+    fun setStreamCloudServerEnabled(enabled: Boolean) {
+        if (state.streamCloudServerEnabled == enabled) {
             return
         }
+        stopStreamForConfigurationChange("Stopped before changing stream destination")
+        if (enabled) {
+            val currentUrl = state.streamUrl.trim()
+            val shouldUseDefault = currentUrl.isEmpty() || currentUrl in streamDefaultUrls.values
+            state = state.copy(
+                streamCloudServerEnabled = true,
+                streamUrl = if (shouldUseDefault) defaultStreamUrl(state.streamProtocol) else state.streamUrl,
+                streamStatus = "Ready to start stream",
+                streamPreviewReady = false,
+                directStreamFrame = null,
+            )
+            return
+        }
+
         state = state.copy(
-            webRtcDestination = destination,
-            streamStatus = if (destination == WebRtcDestination.THIS_PHONE) {
-                "Ready to stream WebRTC to this phone"
-            } else {
-                "Ready to start stream"
-            },
+            streamCloudServerEnabled = false,
+            streamStatus = "Ready to stream WebRTC to this phone",
             streamPreviewReady = false,
             directStreamFrame = null,
         )
     }
 
     fun setStreamUrl(url: String) {
-        state = state.copy(streamUrl = url)
+        if (state.streamUrl == url) {
+            return
+        }
+        val stoppedStream = stopStreamForConfigurationChange("Stopped before changing stream URL")
+        state = state.copy(
+            streamUrl = url,
+            streamStatus = if (stoppedStream) "Ready to start stream" else state.streamStatus,
+        )
     }
 
     fun toggleStream() = runAction(if (!state.streamRequested && state.streamStartedAt == null) "Start stream" else "Stop stream") {
@@ -757,6 +774,35 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         )
     }
 
+    private fun stopStreamForConfigurationChange(status: String): Boolean {
+        val streamActive = state.streamRequested || state.streamStartedAt != null || state.directStreamReceiverRunning
+        if (!streamActive) {
+            return false
+        }
+
+        stopKeepAlive()
+        stopPreviewHealthPoll()
+        directStreamStartJob?.cancel()
+        directStreamStartJob = null
+        directStreamStopJob?.cancel()
+        directStreamStopJob = null
+        if (isGlassesConnected()) {
+            mentraBluetoothSdk.stopStream()
+            addEvent("TX", "stopStream before stream configuration change")
+        }
+        activeStreamId = null
+        if (state.directStreamReceiverRunning) {
+            stopDirectPhoneStreamReceiver(status)
+        }
+        state = state.copy(
+            streamRequested = false,
+            streamPreviewReady = false,
+            streamStartedAt = null,
+            streamStatus = status,
+        )
+        return true
+    }
+
     private fun directWhipReceiver(): GStreamerWhipReceiver {
         gStreamerWhipReceiver?.let { return it }
         return GStreamerWhipReceiver(
@@ -797,7 +843,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     private fun isDirectPhoneWebRtcSelected(): Boolean =
-        state.streamProtocol == "webrtc" && state.webRtcDestination == WebRtcDestination.THIS_PHONE
+        !state.streamCloudServerEnabled
 
     private fun startPreviewReadinessPoll(streamUrl: String, protocol: String, streamId: String) {
         scope.launch(Dispatchers.IO) {

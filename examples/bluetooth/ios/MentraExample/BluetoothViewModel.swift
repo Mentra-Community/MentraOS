@@ -31,11 +31,6 @@ enum PhotoDestination {
     case thisPhone
 }
 
-enum WebRtcDestination {
-    case macBookDocker
-    case thisPhone
-}
-
 enum ExampleStreamProtocol: String, CaseIterable {
     case rtmp
     case srt
@@ -78,9 +73,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var photoFlash = false
     @Published private(set) var phonePhotoServerRunning = false
     @Published private(set) var phonePhotoUploadUrl = "Phone receiver not started"
-    @Published var streamProtocol: ExampleStreamProtocol = .rtmp
-    @Published var streamUrl = ExampleStreamProtocol.rtmp.defaultUrl
-    @Published private(set) var webRtcDestination: WebRtcDestination = .macBookDocker
+    @Published var streamProtocol: ExampleStreamProtocol = .webrtc
+    @Published var streamUrl = ExampleStreamProtocol.webrtc.defaultUrl
+    @Published private(set) var streamCloudServerEnabled = false
     @Published private(set) var directStreamReceiverRunning = false
     @Published private(set) var directStreamWhipUrl = "Phone receiver not started"
     @Published private(set) var streamRequested = false
@@ -736,20 +731,76 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         previewHealthTask = nil
     }
 
+    @discardableResult
+    private func stopStreamForConfigurationChange(status: String) -> Bool {
+        let streamActive = streamRequested || streamStartedAt != nil || directStreamReceiverRunning
+        guard streamActive else { return false }
+
+        stopKeepAlive()
+        stopPreviewHealthPoll()
+        directStreamStartTask?.cancel()
+        directStreamStartTask = nil
+        directStreamStopTask?.cancel()
+        directStreamStopTask = nil
+        if glassesConnected {
+            mentraBluetoothSdk.stopStream()
+            append(tag: "TX", text: "stopStream before stream configuration change")
+        }
+        activeStreamId = nil
+        if directStreamReceiverRunning {
+            stopDirectPhoneStreamReceiver(status: status)
+        } else {
+            directStreamFirstFrameSeen = false
+            streamPreviewReady = false
+            streamStatus = status
+        }
+        streamRequested = false
+        streamPreviewReady = false
+        streamStartedAt = nil
+        return true
+    }
+
     func selectStreamProtocol(_ nextProtocol: ExampleStreamProtocol) {
+        guard streamProtocol != nextProtocol else { return }
         let currentUrl = streamUrl.trimmingCharacters(in: .whitespacesAndNewlines)
         let shouldUseDefault = currentUrl.isEmpty || ExampleStreamProtocol.defaultUrls.contains(currentUrl)
+        let stoppedStream = stopStreamForConfigurationChange(status: "Stopped before changing stream protocol")
         streamProtocol = nextProtocol
         if shouldUseDefault {
             streamUrl = nextProtocol.defaultUrl
         }
+        if stoppedStream {
+            streamStatus = "Ready to start stream"
+        }
     }
 
-    func setWebRtcDestination(_ destination: WebRtcDestination) {
-        guard webRtcDestination != destination else { return }
-        webRtcDestination = destination
-        streamStatus = destination == .thisPhone ? "Ready to stream WebRTC to this phone" : "Ready to start stream"
+    func setStreamCloudServerEnabled(_ enabled: Bool) {
+        guard streamCloudServerEnabled != enabled else { return }
+        stopStreamForConfigurationChange(status: "Stopped before changing stream destination")
+        if enabled {
+            let currentUrl = streamUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+            let shouldUseDefault = currentUrl.isEmpty || ExampleStreamProtocol.defaultUrls.contains(currentUrl)
+            streamCloudServerEnabled = true
+            if shouldUseDefault {
+                streamUrl = streamProtocol.defaultUrl
+            }
+            streamStatus = "Ready to start stream"
+            streamPreviewReady = false
+            return
+        }
+
+        streamCloudServerEnabled = false
+        streamStatus = "Ready to stream WebRTC to this phone"
         streamPreviewReady = false
+    }
+
+    func setStreamUrl(_ nextUrl: String) {
+        guard streamUrl != nextUrl else { return }
+        let stoppedStream = stopStreamForConfigurationChange(status: "Stopped before changing stream URL")
+        streamUrl = nextUrl
+        if stoppedStream {
+            streamStatus = "Ready to start stream"
+        }
     }
 
     func requestWifiScan() {
@@ -1514,7 +1565,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     private var isDirectPhoneWebRtcSelected: Bool {
-        streamProtocol == .webrtc && webRtcDestination == .thisPhone
+        !streamCloudServerEnabled
     }
 }
 

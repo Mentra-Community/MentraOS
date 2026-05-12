@@ -20,8 +20,13 @@ struct StreamScreen: View {
     @FocusState private var streamUrlFocused: Bool
     private let bars: [CGFloat] = [18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40]
     private let streamUrlFieldId = "stream-url-field"
+    private var cloudServerEnabled: Bool {
+        model.streamCloudServerEnabled
+    }
+
     private var setupHint: String? {
-        localStreamSetupHint(protocol: model.streamProtocol, streamUrl: model.streamUrl, status: model.streamStatus)
+        guard cloudServerEnabled else { return nil }
+        return localStreamSetupHint(protocol: model.streamProtocol, streamUrl: model.streamUrl, status: model.streamStatus)
     }
 
     private var streamActive: Bool {
@@ -29,11 +34,11 @@ struct StreamScreen: View {
     }
 
     private var directPhoneWebRtc: Bool {
-        model.streamProtocol == .webrtc && model.webRtcDestination == .thisPhone
+        !cloudServerEnabled
     }
 
     private var livePreviewUrl: URL? {
-        guard !directPhoneWebRtc else { return nil }
+        guard cloudServerEnabled else { return nil }
         guard streamActive, model.streamPreviewReady else { return nil }
         switch model.streamProtocol {
         case .rtmp:
@@ -72,7 +77,7 @@ struct StreamScreen: View {
             previewSurface
 
             Button {
-                if !directPhoneWebRtc, shouldFocusStreamUrlTemplate(model.streamUrl, streamActive: streamActive) {
+                if cloudServerEnabled, shouldFocusStreamUrlTemplate(model.streamUrl, streamActive: streamActive) {
                     focusStreamUrlField(scrollProxy)
                 }
                 model.toggleStream()
@@ -101,7 +106,7 @@ struct StreamScreen: View {
                     .clipShape(RoundedRectangle(cornerRadius: 22))
                 previewChrome(
                     label: model.streamPreviewReady ? "LIVE" : "STARTING",
-                    detail: model.streamPreviewReady ? "WebRTC · this phone · keep-alive 15s" : "Waiting for first frame"
+                    detail: model.streamPreviewReady ? "WebRTC · phone receiver · keep-alive 15s" : "Waiting for first frame"
                 )
             }
         } else if let livePreviewUrl {
@@ -127,7 +132,7 @@ struct StreamScreen: View {
                 Circle().fill(AppColor.greenSoft.opacity(0.3)).frame(width: 240, height: 240).blur(radius: 10).offset(x: 100, y: 110)
 
                 VStack {
-                    previewChrome(label: streamActive ? "STARTING" : "READY", detail: streamActive ? "Waiting for preview" : "Ready · enter stream URL")
+                    previewChrome(label: streamActive ? "STARTING" : "READY", detail: streamActive ? "Waiting for preview" : cloudServerEnabled ? "Ready · enter stream URL" : "Ready · phone receiver starts on stream")
 
                     Spacer()
 
@@ -155,7 +160,7 @@ struct StreamScreen: View {
 
     private var previewDetail: String {
         if directPhoneWebRtc {
-            return "WebRTC · this phone · keep-alive 15s"
+            return "WebRTC · phone receiver · keep-alive 15s"
         }
         if model.streamProtocol == .srt {
             return "SRT · web preview · keep-alive 15s"
@@ -235,46 +240,46 @@ struct StreamScreen: View {
 
     private var protocolCard: some View {
         GlassCard(corner: 22, padding: EdgeInsets(top: 14, leading: 14, bottom: 14, trailing: 14)) {
-            HStack(spacing: 4) {
-                ProtocolTab(title: "RTMP", active: model.streamProtocol == .rtmp) { model.selectStreamProtocol(.rtmp) }
-                ProtocolTab(title: "SRT", active: model.streamProtocol == .srt) { model.selectStreamProtocol(.srt) }
-                ProtocolTab(title: "WebRTC", active: model.streamProtocol == .webrtc) { model.selectStreamProtocol(.webrtc) }
+            Toggle(isOn: Binding(
+                get: { cloudServerEnabled },
+                set: { enabled in
+                    model.setStreamCloudServerEnabled(enabled)
+                }
+            )) {
+                Text("Use cloud server")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(AppColor.ink)
             }
-            .padding(4)
-            .background(AppColor.ink.opacity(0.05))
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            .padding(.bottom, 12)
+            .toggleStyle(SwitchToggleStyle(tint: AppColor.greenAccent))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(AppColor.ink.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
 
-            if model.streamProtocol == .webrtc {
+            if cloudServerEnabled {
                 HStack(spacing: 4) {
-                    ProtocolTab(title: "MacBook", active: model.webRtcDestination == .macBookDocker) {
-                        model.setWebRtcDestination(.macBookDocker)
-                    }
-                    ProtocolTab(title: "This phone", active: model.webRtcDestination == .thisPhone) {
-                        model.setWebRtcDestination(.thisPhone)
-                    }
+                    ProtocolTab(title: "RTMP", active: model.streamProtocol == .rtmp) { model.selectStreamProtocol(.rtmp) }
+                    ProtocolTab(title: "SRT", active: model.streamProtocol == .srt) { model.selectStreamProtocol(.srt) }
+                    ProtocolTab(title: "WebRTC", active: model.streamProtocol == .webrtc) { model.selectStreamProtocol(.webrtc) }
                 }
                 .padding(4)
                 .background(AppColor.ink.opacity(0.05))
                 .clipShape(RoundedRectangle(cornerRadius: 14))
+                .padding(.top, 12)
                 .padding(.bottom, 12)
-            }
 
-            HStack(spacing: 10) {
-                Text(model.streamProtocol.inputLabel).font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundColor(AppColor.greenAccent)
-                Rectangle().fill(AppColor.ink.opacity(0.12)).frame(width: 1, height: 14)
-                if directPhoneWebRtc {
-                    Text(model.directStreamWhipUrl)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(AppColor.ink)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer()
-                    Circle()
-                        .fill(model.directStreamReceiverRunning ? AppColor.greenAccent : AppColor.muted.opacity(0.5))
-                        .frame(width: 8, height: 8)
-                } else {
-                    TextField(model.streamProtocol.defaultUrl, text: $model.streamUrl)
+                HStack(spacing: 10) {
+                    Text(model.streamProtocol.inputLabel).font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundColor(AppColor.greenAccent)
+                    Rectangle().fill(AppColor.ink.opacity(0.12)).frame(width: 1, height: 14)
+                    TextField(
+                        model.streamProtocol.defaultUrl,
+                        text: Binding(
+                            get: { model.streamUrl },
+                            set: { nextUrl in
+                                model.setStreamUrl(nextUrl)
+                            }
+                        )
+                    )
                         .focused($streamUrlFocused)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -286,12 +291,25 @@ struct StreamScreen: View {
                     Spacer()
                     Image(systemName: "square.and.pencil").font(.system(size: 14)).foregroundColor(AppColor.muted)
                 }
+                .id(streamUrlFieldId)
+                .padding(.horizontal, 14).padding(.vertical, 12)
+                .background(AppColor.ink.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 12))
+            } else {
+                HStack(spacing: 10) {
+                    Circle()
+                        .fill(model.directStreamReceiverRunning ? AppColor.greenAccent : AppColor.muted.opacity(0.5))
+                        .frame(width: 8, height: 8)
+                    Text(model.directStreamReceiverRunning ? "Phone receiver ready" : "Phone receiver starts on stream")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(AppColor.ink)
+                    Spacer()
+                }
+                .padding(.horizontal, 14).padding(.vertical, 12)
+                .background(AppColor.ink.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 12))
+                .padding(.top, 12)
             }
-            .id(streamUrlFieldId)
-            .padding(.horizontal, 14).padding(.vertical, 12)
-            .background(AppColor.ink.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 12))
 
-            if !directPhoneWebRtc, let setupHint {
+            if cloudServerEnabled, let setupHint {
                 Text(setupHint)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(AppColor.muted)

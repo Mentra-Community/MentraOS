@@ -18,6 +18,7 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -41,14 +42,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mentra.examples.android.MentraExampleController
-import com.mentra.examples.android.WebRtcDestination
 import com.mentra.examples.android.elapsedText
 import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.rtmpHlsPreviewUrl
@@ -88,15 +87,16 @@ fun StreamScreen(controller: MentraExampleController) {
     val connected = isGlassesConnected(state.glassesStatus)
     val streamActive = state.streamRequested || state.streamStartedAt != null
     val previewReady = streamActive && state.streamPreviewReady
-    val directPhoneWebRtc = state.streamProtocol == "webrtc" && state.webRtcDestination == WebRtcDestination.THIS_PHONE
+    val cloudServerEnabled = state.streamCloudServerEnabled
+    val directPhoneWebRtc = !cloudServerEnabled
     val streamIndicatorColor = when {
         previewReady -> AppColor.greenAccent
         streamActive || state.directStreamReceiverRunning -> AppColor.red
         else -> AppColor.muted
     }
     val uptime = elapsedText(state.streamStartedAt)
-    val setupHint = if (directPhoneWebRtc) null else localStreamSetupHint(state.streamProtocol, state.streamUrl, state.streamStatus)
-    val previewTarget = if (!directPhoneWebRtc && previewReady) streamPreviewTarget(state.streamProtocol, state.streamUrl) else null
+    val setupHint = if (cloudServerEnabled) localStreamSetupHint(state.streamProtocol, state.streamUrl, state.streamStatus) else null
+    val previewTarget = if (cloudServerEnabled && previewReady) streamPreviewTarget(state.streamProtocol, state.streamUrl) else null
     val clipboardManager = LocalClipboardManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val streamUrlFocusRequester = remember { FocusRequester() }
@@ -156,7 +156,7 @@ fun StreamScreen(controller: MentraExampleController) {
 
                 Text(
                     if (directPhoneWebRtc && previewReady) {
-                        "WebRTC · this phone · keep-alive 15s"
+                        "WebRTC · phone receiver · keep-alive 15s"
                     } else if (directPhoneWebRtc && streamActive) {
                         "Waiting for first frame"
                     } else if (previewReady) {
@@ -181,7 +181,7 @@ fun StreamScreen(controller: MentraExampleController) {
                     .clip(RoundedCornerShape(18.dp))
                     .background(Brush.verticalGradient(if (streamActive) listOf(Color(0xFFDE3A30), Color(0xFFC43B30)) else listOf(Color(0xFF26473A), Color(0xFF1F3A2A))))
                     .clickable(enabled = connected || streamActive) {
-                        if (!directPhoneWebRtc && shouldFocusStreamUrlTemplate(state.streamUrl, streamActive)) {
+                        if (cloudServerEnabled && shouldFocusStreamUrlTemplate(state.streamUrl, streamActive)) {
                             streamUrlFocusRequester.requestFocus()
                             keyboardController?.show()
                         }
@@ -246,52 +246,28 @@ fun StreamScreen(controller: MentraExampleController) {
             corner = 22,
             padding = PaddingValues(horizontal = 14.dp, vertical = 14.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(AppColor.ink.copy(alpha = 0.05f)).padding(4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                ProtocolTab("RTMP", state.streamProtocol == "rtmp", Modifier.weight(1f)) { controller.selectProtocol("rtmp") }
-                ProtocolTab("SRT", state.streamProtocol == "srt", Modifier.weight(1f)) { controller.selectProtocol("srt") }
-                ProtocolTab("WebRTC", state.streamProtocol == "webrtc", Modifier.weight(1f)) { controller.selectProtocol("webrtc") }
-            }
-            if (state.streamProtocol == "webrtc") {
+            CloudServerToggle(
+                enabled = cloudServerEnabled,
+                onEnabledChange = controller::setStreamCloudServerEnabled,
+            )
+            if (cloudServerEnabled) {
                 Spacer(Modifier.height(12.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(AppColor.ink.copy(alpha = 0.05f)).padding(4.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    ProtocolTab(
-                        "MacBook",
-                        state.webRtcDestination == WebRtcDestination.MACBOOK_DOCKER,
-                        Modifier.weight(1f)
-                    ) { controller.setWebRtcDestination(WebRtcDestination.MACBOOK_DOCKER) }
-                    ProtocolTab(
-                        "This phone",
-                        state.webRtcDestination == WebRtcDestination.THIS_PHONE,
-                        Modifier.weight(1f)
-                    ) { controller.setWebRtcDestination(WebRtcDestination.THIS_PHONE) }
+                    ProtocolTab("RTMP", state.streamProtocol == "rtmp", Modifier.weight(1f)) { controller.selectProtocol("rtmp") }
+                    ProtocolTab("SRT", state.streamProtocol == "srt", Modifier.weight(1f)) { controller.selectProtocol("srt") }
+                    ProtocolTab("WebRTC", state.streamProtocol == "webrtc", Modifier.weight(1f)) { controller.selectProtocol("webrtc") }
                 }
-            }
-            Spacer(Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(AppColor.ink.copy(alpha = 0.04f)).padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Text(streamProtocolLabel(state.streamProtocol), color = AppColor.greenAccent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
-                Box(modifier = Modifier.size(width = 1.dp, height = 14.dp).background(AppColor.ink.copy(alpha = 0.12f)))
-                if (directPhoneWebRtc) {
-                    Text(
-                        state.directStreamWhipUrl,
-                        color = AppColor.ink,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(if (state.directStreamReceiverRunning) AppColor.greenAccent else AppColor.muted))
-                } else {
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(AppColor.ink.copy(alpha = 0.04f)).padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(streamProtocolLabel(state.streamProtocol), color = AppColor.greenAccent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
+                    Box(modifier = Modifier.size(width = 1.dp, height = 14.dp).background(AppColor.ink.copy(alpha = 0.12f)))
                     BasicTextField(
                         value = state.streamUrl,
                         onValueChange = controller::setStreamUrl,
@@ -306,8 +282,24 @@ fun StreamScreen(controller: MentraExampleController) {
                     )
                     Icon(Icons.Outlined.Edit, null, tint = AppColor.muted, modifier = Modifier.size(14.dp))
                 }
+            } else {
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(AppColor.ink.copy(alpha = 0.04f)).padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(if (state.directStreamReceiverRunning) AppColor.greenAccent else AppColor.muted))
+                    Text(
+                        if (state.directStreamReceiverRunning) "Phone receiver ready" else "Phone receiver starts on stream",
+                        color = AppColor.ink,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             }
-            if (setupHint != null) {
+            if (cloudServerEnabled && setupHint != null) {
                 Spacer(Modifier.height(12.dp))
                 Text(
                     setupHint,
@@ -497,6 +489,27 @@ private fun localStreamSetupHint(protocol: String, streamUrl: String, status: St
         return "Local SRT setup: run python3 examples/local-demo-cloud/server.py, paste the printed SRT publish URL here, then start streaming. The app previews the derived HLS URL; the printed SRT ffplay command is optional for debugging."
     }
     return "Local WebRTC setup: run python3 examples/local-demo-cloud/server.py, paste the printed WHIP publish URL here, then start streaming. The app previews the MediaMTX WebRTC page."
+}
+
+@Composable
+private fun CloudServerToggle(enabled: Boolean, onEnabledChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(AppColor.ink.copy(alpha = 0.04f))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            "Use cloud server",
+            color = AppColor.ink,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Switch(checked = enabled, onCheckedChange = onEnabledChange)
+    }
 }
 
 @Composable
