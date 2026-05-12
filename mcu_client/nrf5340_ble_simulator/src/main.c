@@ -29,11 +29,10 @@
 #include "mos_gx8002.h"  // GX8002 VAD path enabled
 // #include "pdm_audio_stream.h"  // PDM path disabled - using GX8002 VAD
 #include "interrupt_handler.h"  // Interrupt handler framework
-#include "mos_button_app.h"  // Button application logic
 #include "mos_dfu_progress.h"
 #include "mos_fuel_gauge.h"
 #include "mos_hinge_fold.h"
-#include "mos_iqs7211a.h"
+#include "mos_iqs7211e.h"
 #include "mos_jlink_usb_switch_app.h"  // J-Link/USB switch application logic
 #include "mos_lsm6dsv16x.h"  // LSM6DSV16X 6-axis IMU sensor
 #include "mos_npm1300_ldsw.h"  // NPM1300 LDSW (load switch) control
@@ -46,6 +45,8 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 
 #define STACKSIZE 2048
 #define PRIORITY 7
+#define TOUCH_LDSW_POWER_CYCLE_OFF_MS 20U
+#define TOUCH_LDSW_POWER_STABILIZE_MS 80U
 
 #define DEVICE_NAME CONFIG_BT_DEVICE_NAME
 #define DEVICE_NAME_LEN (sizeof(DEVICE_NAME) - 1)
@@ -458,6 +459,25 @@ void imu_en_control(bool enable)
     LOG_INF("imu_en %s (physical %s)", enable ? "ENABLED" : "DISABLED", enable ? "HIGH" : "LOW");
 }
 
+void mic_power_control(bool enable)
+{
+#if MIC_POWER_GPIO_AVAILABLE
+    if (gpio_is_ready_dt(&mic_power))
+    {
+        int err = gpio_pin_set_dt(&mic_power, enable ? 1 : 0);
+        if (err != 0)
+        {
+            LOG_ERR("mic_power GPIO set %s failed: %d", enable ? "HIGH" : "LOW", err);
+            return;
+        }
+
+        LOG_INF("mic_power %s (physical %s)", enable ? "ENABLED" : "DISABLED", enable ? "HIGH" : "LOW");
+    }
+#else
+    ARG_UNUSED(enable);
+#endif
+}
+
 /**
  * @brief Configure default LOW GPIO pins | 配置默认拉低的GPIO引脚
  * @return void
@@ -529,17 +549,58 @@ int init_user_gpio(void)
     return 0;
 }
 
+static int touch_power_cycle_ldsw1(void)
+{
+    int ret = mos_npm1300_ldsw1_init();
+    if (ret != 0)
+    {
+        LOG_ERR("Failed to initialize LDSW1 for touch power cycle: %d", ret);
+        return ret;
+    }
+
+    ret = mos_npm1300_ldsw1_disable();
+    if (ret != 0)
+    {
+        LOG_ERR("Failed to disable LDSW1 for touch power cycle: %d", ret);
+        return ret;
+    }
+
+    k_sleep(K_MSEC(TOUCH_LDSW_POWER_CYCLE_OFF_MS));
+
+    ret = mos_npm1300_ldsw1_enable();
+    if (ret != 0)
+    {
+        LOG_ERR("Failed to enable LDSW1 after touch power cycle: %d", ret);
+        return ret;
+    }
+
+    k_sleep(K_MSEC(TOUCH_LDSW_POWER_STABILIZE_MS));
+    LOG_INF("Touch LDSW1 power cycled after reset");
+    return 0;
+}
+
 int main(void)
 {
     int err = 0;
     LOG_INF("🚀🚀🚀 MAIN FUNCTION STARTED - v2.2.0-DISPLAY_OPEN_FIX 🚀🚀🚀");
 
-    bool woke_from_sleep = mos_button_app_check_wakeup_state();
-
     err = init_user_gpio();
     if (err != 0)
     {
         LOG_ERR("Failed to initialize user GPIOs: %d", err);
+    }
+
+    err = touch_power_cycle_ldsw1();
+    if (err != 0)
+    {
+        LOG_ERR("Touch LDSW1 power cycle failed: %d", err);
+    }
+
+    /* Bring touch online before slower display/VAD/sensor init so the first user touch after power-on is handled. */
+    err = mos_touch_app_init();
+    if (err != 0)
+    {
+        LOG_ERR("mos_touch_app_init failed: %d", err);
     }
 
     if (IS_ENABLED(CONFIG_BT_NUS_SECURITY_ENABLED))
@@ -591,28 +652,6 @@ int main(void)
     mos_gx8002_init();  // GX8002 VAD path enabled
     // pdm_audio_stream_init();  // PDM path disabled - using GX8002 VAD
     mos_jlink_usb_switch_app_init();
-    mos_npm1300_ldsw1_init();
-    mos_npm1300_ldsw1_enable();
-
-    /* woke_from_sleep is already set by mos_button_app_check_wakeup_state() called at the start of main() |
-     * woke_from_sleep已由main()开始时调用的mos_button_app_check_wakeup_state()设置 */
-    if (woke_from_sleep)
-    {
-        LOG_INF("Device woke from System OFF - waiting for power-on long press (2.5s)...");
-
-        int ret = mos_button_app_wait_for_power_on(1500);
-
-        if (ret != 0)
-        {
-            LOG_WRN("Power-on long press not detected - entering sleep again");
-            /* Enter sleep again | 再次进入休眠 */
-            mos_button_app_enter_sleep();
-            /* Should not reach here | 不应该到达这里 */
-        }
-
-        LOG_INF("Power-on long press confirmed - starting device normally");
-    }
-    mos_button_app_init();
 
     pm1300_init();
     battery_monitor_auto_start();
@@ -623,8 +662,6 @@ int main(void)
     protobuf_init_ping_monitoring();
 
     opt3006_initialize();
-
-    mos_touch_app_init();
 
     lsm6dsv16x_init();
 

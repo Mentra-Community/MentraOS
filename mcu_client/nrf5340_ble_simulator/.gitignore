@@ -39,3 +39,5 @@ sysbuild/private.pem
 # Clang 
 .clang-format
 .clangd
+
+AGENTS.md

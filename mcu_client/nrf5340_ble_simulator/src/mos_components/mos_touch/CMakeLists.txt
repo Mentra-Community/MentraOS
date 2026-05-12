@@ -1,3 +1,6 @@
 target_include_directories(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/.)
 
-target_sources(app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/mos_touch_app.c)
+target_sources(app PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/mos_touch_app.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/mos_touch_iqs7211e_profile.c
+)
