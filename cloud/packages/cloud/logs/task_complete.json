@@ -1,0 +1,1036 @@
+[
+  {
+    "timestamp": "2026-05-05T10:52:37.044124+00:00",
+    "operation": "agent_identity_check",
+    "data": {
+      "name": "claude-code-assistant",
+      "role": "AI Code Assistant and IDE",
+      "project_name": "claude-code-integration",
+      "capabilities": [
+        "Code analysis and generation",
+        "File system operations",
+        "Task management",
+        "Scientific method documentation",
+        "Multi-agent coordination"
+      ],
+      "context": "Claude-based AI assistant integrated with Obsidian for task tracking and knowledge management"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:52:37.044474+00:00",
+    "operation": "task_location",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "title": "Bash",
+      "description": "",
+      "assigned_to": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "priority": "medium",
+      "status": "in_progress"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:52:37.044995+00:00",
+    "operation": "task_update",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "status": "completed",
+      "description": "\n\n## Decision Log\n{\n  \"timestamp\": \"2026-05-05T10:52:37.044959+00:00\",\n  \"task_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n  \"hypothesis\": \"Implement requested functionality efficiently\",\n  \"tests_evidence\": {\n    \"methods\": [\n      \"Bash\"\n    ],\n    \"data\": {},\n    \"artifacts\": [],\n    \"tool_calls\": [\n      {\n        \"session_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n        \"transcript_path\": \"/Users/hiyabuddy/.claude/projects/-Users-hiyabuddy-sites-brendancopley-MentraOS/7ccd240c-1774-4ec5-a390-39f24ccf8dcd.jsonl\",\n        \"cwd\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/cloud/packages/cloud\",\n        \"permission_mode\": \"auto\",\n        \"hook_event_name\": \"PostToolUse\",\n        \"tool_name\": \"Bash\",\n        \"tool_input\": {\n          \"command\": \"cd /Users/hiyabuddy/sites/brendancopley/MentraOS/cloud/packages/cloud && bunx tsc --noEmit 2>&1 | head -20\",\n          \"description\": \"Run tsc inside cloud package\"\n        },\n        \"tool_response\": {\n          \"stdout\": \"\",\n          \"stderr\": \"\",\n          \"interrupted\": false,\n          \"isImage\": false,\n          \"noOutputExpected\": false\n        },\n        \"tool_use_id\": \"toolu_01HK92Rod2q29mpPWRqvJnJA\",\n        \"duration_ms\": 10151\n      }\n    ]\n  },\n  \"falsification_attempts\": [],\n  \"alternatives\": [],\n  \"conclusion\": {\n    \"summary\": \"Task completed via tool execution\",\n    \"confidence\": 0.8,\n    \"success\": true\n  },\n  \"risks_unknowns\": [],\n  \"next_actions\": [],\n  \"execution_time\": 0,\n  \"resource_usage\": {}\n}"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:52:37.045543+00:00",
+    "operation": "message_check",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "limit": 10
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:52:37.045772+00:00",
+    "operation": "message_response_prepared",
+    "data": {
+      "content": "\nTask Completion Summary:\n- Hypothesis: Implement requested functionality efficiently\n- Conclusion: Task completed via tool execution\n- Confidence: 0.8\n- Next Actions: None\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:52:37.046024+00:00",
+    "operation": "private_note_added",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "content": "\n## Task Completion Notes - 2026-05-05 03:52:37\n\n### Performance Metrics\n- Execution Time: 0\n- Tool Calls: 1\n- Files Modified: 0\n\n### Observations\n- Success Rate: True\n- Confidence Score: 0.8\n- Challenges: None\n\n### Lessons Learned\nStandard task completion workflow executed successfully.\n",
+      "category": "task_completion"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:52:37.046398+00:00",
+    "operation": "housekeeping",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "force": false
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:52:37.046646+00:00",
+    "operation": "completion_verification",
+    "data": {
+      "timestamp": "2026-05-05T10:52:37.046643+00:00",
+      "agent_id": "claude-code-assistant",
+      "project": "claude-code-integration",
+      "verification_status": "completed"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:52:46.255134+00:00",
+    "operation": "agent_identity_check",
+    "data": {
+      "name": "claude-code-assistant",
+      "role": "AI Code Assistant and IDE",
+      "project_name": "claude-code-integration",
+      "capabilities": [
+        "Code analysis and generation",
+        "File system operations",
+        "Task management",
+        "Scientific method documentation",
+        "Multi-agent coordination"
+      ],
+      "context": "Claude-based AI assistant integrated with Obsidian for task tracking and knowledge management"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:52:46.255593+00:00",
+    "operation": "task_location",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "title": "Bash",
+      "description": "",
+      "assigned_to": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "priority": "medium",
+      "status": "in_progress"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:52:46.256441+00:00",
+    "operation": "task_update",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "status": "completed",
+      "description": "\n\n## Decision Log\n{\n  \"timestamp\": \"2026-05-05T10:52:46.256413+00:00\",\n  \"task_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n  \"hypothesis\": \"Implement requested functionality efficiently\",\n  \"tests_evidence\": {\n    \"methods\": [\n      \"Bash\"\n    ],\n    \"data\": {},\n    \"artifacts\": [],\n    \"tool_calls\": [\n      {\n        \"session_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n        \"transcript_path\": \"/Users/hiyabuddy/.claude/projects/-Users-hiyabuddy-sites-brendancopley-MentraOS/7ccd240c-1774-4ec5-a390-39f24ccf8dcd.jsonl\",\n        \"cwd\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/cloud/packages/cloud\",\n        \"permission_mode\": \"auto\",\n        \"hook_event_name\": \"PostToolUse\",\n        \"tool_name\": \"Bash\",\n        \"tool_input\": {\n          \"command\": \"pwd; ls -la node_modules/.bin/tsc 2>/dev/null || echo \\\"no local tsc\\\"; ls -la ../../node_modules/.bin/tsc 2>/dev/null || true\",\n          \"description\": \"Locate tsc\"\n        },\n        \"tool_response\": {\n          \"stdout\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/cloud/packages/cloud\\nno local tsc\\nlrwxrwxrwx@ 1 hiyabuddy  staff  21 May  2 11:56 ../../node_modules/.bin/tsc -> ../typescript/bin/tsc\",\n          \"stderr\": \"\",\n          \"interrupted\": false,\n          \"isImage\": false,\n          \"noOutputExpected\": false\n        },\n        \"tool_use_id\": \"toolu_01GrvhKpevvcMBxUgjm3CDx5\",\n        \"duration_ms\": 135\n      }\n    ]\n  },\n  \"falsification_attempts\": [],\n  \"alternatives\": [],\n  \"conclusion\": {\n    \"summary\": \"Task completed via tool execution\",\n    \"confidence\": 0.8,\n    \"success\": true\n  },\n  \"risks_unknowns\": [],\n  \"next_actions\": [],\n  \"execution_time\": 0,\n  \"resource_usage\": {}\n}"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:52:46.256722+00:00",
+    "operation": "message_check",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "limit": 10
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:52:46.257025+00:00",
+    "operation": "message_response_prepared",
+    "data": {
+      "content": "\nTask Completion Summary:\n- Hypothesis: Implement requested functionality efficiently\n- Conclusion: Task completed via tool execution\n- Confidence: 0.8\n- Next Actions: None\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:52:46.257294+00:00",
+    "operation": "private_note_added",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "content": "\n## Task Completion Notes - 2026-05-05 03:52:46\n\n### Performance Metrics\n- Execution Time: 0\n- Tool Calls: 1\n- Files Modified: 0\n\n### Observations\n- Success Rate: True\n- Confidence Score: 0.8\n- Challenges: None\n\n### Lessons Learned\nStandard task completion workflow executed successfully.\n",
+      "category": "task_completion"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:52:46.257922+00:00",
+    "operation": "housekeeping",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "force": false
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:52:46.260286+00:00",
+    "operation": "completion_verification",
+    "data": {
+      "timestamp": "2026-05-05T10:52:46.260275+00:00",
+      "agent_id": "claude-code-assistant",
+      "project": "claude-code-integration",
+      "verification_status": "completed"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:00.470213+00:00",
+    "operation": "agent_identity_check",
+    "data": {
+      "name": "claude-code-assistant",
+      "role": "AI Code Assistant and IDE",
+      "project_name": "claude-code-integration",
+      "capabilities": [
+        "Code analysis and generation",
+        "File system operations",
+        "Task management",
+        "Scientific method documentation",
+        "Multi-agent coordination"
+      ],
+      "context": "Claude-based AI assistant integrated with Obsidian for task tracking and knowledge management"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:00.470774+00:00",
+    "operation": "task_location",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "title": "Bash",
+      "description": "",
+      "assigned_to": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "priority": "medium",
+      "status": "in_progress"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:00.471485+00:00",
+    "operation": "task_update",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "status": "completed",
+      "description": "\n\n## Decision Log\n{\n  \"timestamp\": \"2026-05-05T10:53:00.471455+00:00\",\n  \"task_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n  \"hypothesis\": \"Implement requested functionality efficiently\",\n  \"tests_evidence\": {\n    \"methods\": [\n      \"Bash\"\n    ],\n    \"data\": {},\n    \"artifacts\": [],\n    \"tool_calls\": [\n      {\n        \"session_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n        \"transcript_path\": \"/Users/hiyabuddy/.claude/projects/-Users-hiyabuddy-sites-brendancopley-MentraOS/7ccd240c-1774-4ec5-a390-39f24ccf8dcd.jsonl\",\n        \"cwd\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/cloud/packages/cloud\",\n        \"permission_mode\": \"auto\",\n        \"hook_event_name\": \"PostToolUse\",\n        \"tool_name\": \"Bash\",\n        \"tool_input\": {\n          \"command\": \"../../node_modules/.bin/tsc --noEmit 2>&1 | grep -E \\\"UserSession|bun-websocket|error TS\\\" | head -30\",\n          \"description\": \"Type-check cloud package with workspace tsc\"\n        },\n        \"tool_response\": {\n          \"stdout\": \"\",\n          \"stderr\": \"\",\n          \"interrupted\": false,\n          \"isImage\": false,\n          \"noOutputExpected\": false\n        },\n        \"tool_use_id\": \"toolu_01A3K6FUnv5h3M9ZBStNUHTz\",\n        \"duration_ms\": 9546\n      }\n    ]\n  },\n  \"falsification_attempts\": [],\n  \"alternatives\": [],\n  \"conclusion\": {\n    \"summary\": \"Task completed via tool execution\",\n    \"confidence\": 0.8,\n    \"success\": true\n  },\n  \"risks_unknowns\": [],\n  \"next_actions\": [],\n  \"execution_time\": 0,\n  \"resource_usage\": {}\n}"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:00.471854+00:00",
+    "operation": "message_check",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "limit": 10
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:00.472220+00:00",
+    "operation": "message_response_prepared",
+    "data": {
+      "content": "\nTask Completion Summary:\n- Hypothesis: Implement requested functionality efficiently\n- Conclusion: Task completed via tool execution\n- Confidence: 0.8\n- Next Actions: None\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:00.472583+00:00",
+    "operation": "private_note_added",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "content": "\n## Task Completion Notes - 2026-05-05 03:53:00\n\n### Performance Metrics\n- Execution Time: 0\n- Tool Calls: 1\n- Files Modified: 0\n\n### Observations\n- Success Rate: True\n- Confidence Score: 0.8\n- Challenges: None\n\n### Lessons Learned\nStandard task completion workflow executed successfully.\n",
+      "category": "task_completion"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:00.472934+00:00",
+    "operation": "housekeeping",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "force": false
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:00.473291+00:00",
+    "operation": "completion_verification",
+    "data": {
+      "timestamp": "2026-05-05T10:53:00.473288+00:00",
+      "agent_id": "claude-code-assistant",
+      "project": "claude-code-integration",
+      "verification_status": "completed"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:14.444252+00:00",
+    "operation": "agent_identity_check",
+    "data": {
+      "name": "claude-code-assistant",
+      "role": "AI Code Assistant and IDE",
+      "project_name": "claude-code-integration",
+      "capabilities": [
+        "Code analysis and generation",
+        "File system operations",
+        "Task management",
+        "Scientific method documentation",
+        "Multi-agent coordination"
+      ],
+      "context": "Claude-based AI assistant integrated with Obsidian for task tracking and knowledge management"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:14.445341+00:00",
+    "operation": "task_location",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "title": "Bash",
+      "description": "",
+      "assigned_to": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "priority": "medium",
+      "status": "in_progress"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:14.446124+00:00",
+    "operation": "task_update",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "status": "completed",
+      "description": "\n\n## Decision Log\n{\n  \"timestamp\": \"2026-05-05T10:53:14.446090+00:00\",\n  \"task_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n  \"hypothesis\": \"Implement requested functionality efficiently\",\n  \"tests_evidence\": {\n    \"methods\": [\n      \"Bash\"\n    ],\n    \"data\": {},\n    \"artifacts\": [],\n    \"tool_calls\": [\n      {\n        \"session_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n        \"transcript_path\": \"/Users/hiyabuddy/.claude/projects/-Users-hiyabuddy-sites-brendancopley-MentraOS/7ccd240c-1774-4ec5-a390-39f24ccf8dcd.jsonl\",\n        \"cwd\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/cloud/packages/cloud\",\n        \"permission_mode\": \"auto\",\n        \"hook_event_name\": \"PostToolUse\",\n        \"tool_name\": \"Bash\",\n        \"tool_input\": {\n          \"command\": \"../../node_modules/.bin/tsc --noEmit 2>&1 | tail -20\",\n          \"description\": \"Show any tsc output\"\n        },\n        \"tool_response\": {\n          \"stdout\": \"\",\n          \"stderr\": \"\",\n          \"interrupted\": false,\n          \"isImage\": false,\n          \"noOutputExpected\": false\n        },\n        \"tool_use_id\": \"toolu_016YqU5tL1GXqkDxGbhk7jwM\",\n        \"duration_ms\": 9613\n      }\n    ]\n  },\n  \"falsification_attempts\": [],\n  \"alternatives\": [],\n  \"conclusion\": {\n    \"summary\": \"Task completed via tool execution\",\n    \"confidence\": 0.8,\n    \"success\": true\n  },\n  \"risks_unknowns\": [],\n  \"next_actions\": [],\n  \"execution_time\": 0,\n  \"resource_usage\": {}\n}"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:14.446546+00:00",
+    "operation": "message_check",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "limit": 10
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:14.446972+00:00",
+    "operation": "message_response_prepared",
+    "data": {
+      "content": "\nTask Completion Summary:\n- Hypothesis: Implement requested functionality efficiently\n- Conclusion: Task completed via tool execution\n- Confidence: 0.8\n- Next Actions: None\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:14.447383+00:00",
+    "operation": "private_note_added",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "content": "\n## Task Completion Notes - 2026-05-05 03:53:14\n\n### Performance Metrics\n- Execution Time: 0\n- Tool Calls: 1\n- Files Modified: 0\n\n### Observations\n- Success Rate: True\n- Confidence Score: 0.8\n- Challenges: None\n\n### Lessons Learned\nStandard task completion workflow executed successfully.\n",
+      "category": "task_completion"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:14.447774+00:00",
+    "operation": "housekeeping",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "force": false
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:14.448189+00:00",
+    "operation": "completion_verification",
+    "data": {
+      "timestamp": "2026-05-05T10:53:14.448186+00:00",
+      "agent_id": "claude-code-assistant",
+      "project": "claude-code-integration",
+      "verification_status": "completed"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:29.838177+00:00",
+    "operation": "agent_identity_check",
+    "data": {
+      "name": "claude-code-assistant",
+      "role": "AI Code Assistant and IDE",
+      "project_name": "claude-code-integration",
+      "capabilities": [
+        "Code analysis and generation",
+        "File system operations",
+        "Task management",
+        "Scientific method documentation",
+        "Multi-agent coordination"
+      ],
+      "context": "Claude-based AI assistant integrated with Obsidian for task tracking and knowledge management"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:29.839013+00:00",
+    "operation": "task_location",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "title": "Bash",
+      "description": "",
+      "assigned_to": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "priority": "medium",
+      "status": "in_progress"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:29.840072+00:00",
+    "operation": "task_update",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "status": "completed",
+      "description": "\n\n## Decision Log\n{\n  \"timestamp\": \"2026-05-05T10:53:29.840026+00:00\",\n  \"task_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n  \"hypothesis\": \"Implement requested functionality efficiently\",\n  \"tests_evidence\": {\n    \"methods\": [\n      \"Bash\"\n    ],\n    \"data\": {},\n    \"artifacts\": [],\n    \"tool_calls\": [\n      {\n        \"session_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n        \"transcript_path\": \"/Users/hiyabuddy/.claude/projects/-Users-hiyabuddy-sites-brendancopley-MentraOS/7ccd240c-1774-4ec5-a390-39f24ccf8dcd.jsonl\",\n        \"cwd\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/cloud/packages/cloud\",\n        \"permission_mode\": \"auto\",\n        \"hook_event_name\": \"PostToolUse\",\n        \"tool_name\": \"Bash\",\n        \"tool_input\": {\n          \"command\": \"../../node_modules/.bin/tsc --noEmit 2>&1; echo \\\"tsc exit: $?\\\"\",\n          \"description\": \"Capture tsc exit and any text\"\n        },\n        \"tool_response\": {\n          \"stdout\": \"tsc exit: 0\",\n          \"stderr\": \"\",\n          \"interrupted\": false,\n          \"isImage\": false,\n          \"noOutputExpected\": false\n        },\n        \"tool_use_id\": \"toolu_01QLN67qobxxrCD1J2g2WzdR\",\n        \"duration_ms\": 9975\n      }\n    ]\n  },\n  \"falsification_attempts\": [],\n  \"alternatives\": [],\n  \"conclusion\": {\n    \"summary\": \"Task completed via tool execution\",\n    \"confidence\": 0.8,\n    \"success\": true\n  },\n  \"risks_unknowns\": [],\n  \"next_actions\": [],\n  \"execution_time\": 0,\n  \"resource_usage\": {}\n}"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:29.840666+00:00",
+    "operation": "message_check",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "limit": 10
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:29.841180+00:00",
+    "operation": "message_response_prepared",
+    "data": {
+      "content": "\nTask Completion Summary:\n- Hypothesis: Implement requested functionality efficiently\n- Conclusion: Task completed via tool execution\n- Confidence: 0.8\n- Next Actions: None\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:29.841652+00:00",
+    "operation": "private_note_added",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "content": "\n## Task Completion Notes - 2026-05-05 03:53:29\n\n### Performance Metrics\n- Execution Time: 0\n- Tool Calls: 1\n- Files Modified: 0\n\n### Observations\n- Success Rate: True\n- Confidence Score: 0.8\n- Challenges: None\n\n### Lessons Learned\nStandard task completion workflow executed successfully.\n",
+      "category": "task_completion"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:29.842071+00:00",
+    "operation": "housekeeping",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "force": false
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:29.842490+00:00",
+    "operation": "completion_verification",
+    "data": {
+      "timestamp": "2026-05-05T10:53:29.842487+00:00",
+      "agent_id": "claude-code-assistant",
+      "project": "claude-code-integration",
+      "verification_status": "completed"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:34.695717+00:00",
+    "operation": "agent_identity_check",
+    "data": {
+      "name": "claude-code-assistant",
+      "role": "AI Code Assistant and IDE",
+      "project_name": "claude-code-integration",
+      "capabilities": [
+        "Code analysis and generation",
+        "File system operations",
+        "Task management",
+        "Scientific method documentation",
+        "Multi-agent coordination"
+      ],
+      "context": "Claude-based AI assistant integrated with Obsidian for task tracking and knowledge management"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:34.696768+00:00",
+    "operation": "task_location",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "title": "Read",
+      "description": "",
+      "assigned_to": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "priority": "medium",
+      "status": "in_progress"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:34.697838+00:00",
+    "operation": "task_update",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "status": "completed",
+      "description": "\n\n## Decision Log\n{\n  \"timestamp\": \"2026-05-05T10:53:34.697799+00:00\",\n  \"task_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n  \"hypothesis\": \"Implement requested functionality efficiently\",\n  \"tests_evidence\": {\n    \"methods\": [\n      \"Read\"\n    ],\n    \"data\": {},\n    \"artifacts\": [],\n    \"tool_calls\": [\n      {\n        \"session_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n        \"transcript_path\": \"/Users/hiyabuddy/.claude/projects/-Users-hiyabuddy-sites-brendancopley-MentraOS/7ccd240c-1774-4ec5-a390-39f24ccf8dcd.jsonl\",\n        \"cwd\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/cloud/packages/cloud\",\n        \"permission_mode\": \"auto\",\n        \"hook_event_name\": \"PostToolUse\",\n        \"tool_name\": \"Read\",\n        \"tool_input\": {\n          \"file_path\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/mobile/src/services/WebSocketManager.ts\",\n          \"offset\": 1,\n          \"limit\": 60\n        },\n        \"tool_response\": {\n          \"type\": \"text\",\n          \"file\": {\n            \"filePath\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/mobile/src/services/WebSocketManager.ts\",\n            \"content\": \"import {EventEmitter} from \\\"events\\\"\\n\\nimport restComms from \\\"@/services/RestComms\\\"\\nimport {useConnectionStore} from \\\"@/stores/connection\\\"\\nimport {getGlasesInfoPartial, useGlassesStore} from \\\"@/stores/glasses\\\"\\nimport GlobalEventEmitter from \\\"@/utils/GlobalEventEmitter\\\"\\nimport {BackgroundTimer} from \\\"@/utils/timers\\\"\\n\\n// ---------------------------------------------------------------------------\\n// Liveness detection constants\\n// ---------------------------------------------------------------------------\\n// The CLIENT sends {\\\"type\\\":\\\"ping\\\"} every 5 s. The server responds with\\n// {\\\"type\\\":\\\"pong\\\"}. If a pong is missed, the client reconnects immediately.\\n\\n// How often the client sends a ping to the server.\\nconst PING_INTERVAL_MS = 5_000\\n\\n// If no pong is received within this window, consider the connection\\n// dead and reconnect. This timeout is measured from the last ping sent,\\n// not from connect time, so the first timer tick always sends a ping\\n// instead of immediately declaring the socket stale.\\nconst PONG_TIMEOUT_MS = 5_000\\n\\n// Delay between reconnect attempts after a disconnect.\\nconst RECONNECT_INTERVAL_MS = 5_000\\n\\nexport enum WebSocketStatus {\\n  DISCONNECTED = \\\"disconnected\\\",\\n  CONNECTING = \\\"connecting\\\",\\n  CONNECTED = \\\"connected\\\",\\n  ERROR = \\\"error\\\",\\n}\\n\\nclass WebSocketManager extends EventEmitter {\\n  private static instance: WebSocketManager | null = null\\n  private webSocket: WebSocket | null = null\\n  private previousStatus: WebSocketStatus = WebSocketStatus.DISCONNECTED\\n  private url: string | null = null\\n  private coreToken: string | null = null\\n  private reconnectInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0\\n  private manuallyDisconnected: boolean = false\\n\\n  // Liveness detection state\\n  private lastPingAt: number = 0\\n  private lastPongTime: number = 0\\n  private awaitingPong: boolean = false\\n  private pingInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0\\n\\n  private constructor() {\\n    super()\\n    GlobalEventEmitter.on(\\\"NO_ACTIVE_SESSION\\\", this.handleNoActiveSession)\\n  }\\n\\n  public static getInstance(): WebSocketManager {\\n    if (!WebSocketManager.instance) {\\n      WebSocketManager.instance = new WebSocketManager()\\n    }\\n    return WebSocketManager.instance\\n  }\\n\",\n            \"numLines\": 60,\n            \"startLine\": 1,\n            \"totalLines\": 384\n          }\n        },\n        \"tool_use_id\": \"toolu_01455j68dz2zepnQmCLn5ZPL\",\n        \"duration_ms\": 1\n      }\n    ]\n  },\n  \"falsification_attempts\": [],\n  \"alternatives\": [],\n  \"conclusion\": {\n    \"summary\": \"Task completed via tool execution\",\n    \"confidence\": 0.8,\n    \"success\": true\n  },\n  \"risks_unknowns\": [],\n  \"next_actions\": [],\n  \"execution_time\": 0,\n  \"resource_usage\": {}\n}"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:34.698408+00:00",
+    "operation": "message_check",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "limit": 10
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:34.698958+00:00",
+    "operation": "message_response_prepared",
+    "data": {
+      "content": "\nTask Completion Summary:\n- Hypothesis: Implement requested functionality efficiently\n- Conclusion: Task completed via tool execution\n- Confidence: 0.8\n- Next Actions: None\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:34.699482+00:00",
+    "operation": "private_note_added",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "content": "\n## Task Completion Notes - 2026-05-05 03:53:34\n\n### Performance Metrics\n- Execution Time: 0\n- Tool Calls: 1\n- Files Modified: 0\n\n### Observations\n- Success Rate: True\n- Confidence Score: 0.8\n- Challenges: None\n\n### Lessons Learned\nStandard task completion workflow executed successfully.\n",
+      "category": "task_completion"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:34.700011+00:00",
+    "operation": "housekeeping",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "force": false
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:34.700539+00:00",
+    "operation": "completion_verification",
+    "data": {
+      "timestamp": "2026-05-05T10:53:34.700537+00:00",
+      "agent_id": "claude-code-assistant",
+      "project": "claude-code-integration",
+      "verification_status": "completed"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:52.979968+00:00",
+    "operation": "agent_identity_check",
+    "data": {
+      "name": "claude-code-assistant",
+      "role": "AI Code Assistant and IDE",
+      "project_name": "claude-code-integration",
+      "capabilities": [
+        "Code analysis and generation",
+        "File system operations",
+        "Task management",
+        "Scientific method documentation",
+        "Multi-agent coordination"
+      ],
+      "context": "Claude-based AI assistant integrated with Obsidian for task tracking and knowledge management"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:52.983339+00:00",
+    "operation": "task_location",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "title": "Edit",
+      "description": "",
+      "assigned_to": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "priority": "medium",
+      "status": "in_progress"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:52.985008+00:00",
+    "operation": "task_update",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "status": "completed",
+      "description": "\n\n## Decision Log\n{\n  \"timestamp\": \"2026-05-05T10:53:52.984671+00:00\",\n  \"task_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n  \"hypothesis\": \"Implement requested functionality efficiently\",\n  \"tests_evidence\": {\n    \"methods\": [\n      \"Edit\"\n    ],\n    \"data\": {},\n    \"artifacts\": [],\n    \"tool_calls\": [\n      {\n        \"session_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n        \"transcript_path\": \"/Users/hiyabuddy/.claude/projects/-Users-hiyabuddy-sites-brendancopley-MentraOS/7ccd240c-1774-4ec5-a390-39f24ccf8dcd.jsonl\",\n        \"cwd\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/cloud/packages/cloud\",\n        \"permission_mode\": \"auto\",\n        \"hook_event_name\": \"PostToolUse\",\n        \"tool_name\": \"Edit\",\n        \"tool_input\": {\n          \"file_path\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/mobile/src/services/WebSocketManager.ts\",\n          \"old_string\": \"import {EventEmitter} from \\\"events\\\"\\n\\nimport restComms from \\\"@/services/RestComms\\\"\\nimport {useConnectionStore} from \\\"@/stores/connection\\\"\\nimport {getGlasesInfoPartial, useGlassesStore} from \\\"@/stores/glasses\\\"\\nimport GlobalEventEmitter from \\\"@/utils/GlobalEventEmitter\\\"\\nimport {BackgroundTimer} from \\\"@/utils/timers\\\"\\n\\n// ---------------------------------------------------------------------------\\n// Liveness detection constants\\n// ---------------------------------------------------------------------------\\n// The CLIENT sends {\\\"type\\\":\\\"ping\\\"} every 5 s. The server responds with\\n// {\\\"type\\\":\\\"pong\\\"}. If a pong is missed, the client reconnects immediately.\\n\\n// How often the client sends a ping to the server.\\nconst PING_INTERVAL_MS = 5_000\\n\\n// If no pong is received within this window, consider the connection\\n// dead and reconnect. This timeout is measured from the last ping sent,\\n// not from connect time, so the first timer tick always sends a ping\\n// instead of immediately declaring the socket stale.\\nconst PONG_TIMEOUT_MS = 5_000\\n\\n// Delay between reconnect attempts after a disconnect.\\nconst RECONNECT_INTERVAL_MS = 5_000\",\n          \"new_string\": \"import {EventEmitter} from \\\"events\\\"\\nimport {AppState, AppStateStatus} from \\\"react-native\\\"\\n\\nimport restComms from \\\"@/services/RestComms\\\"\\nimport {useConnectionStore} from \\\"@/stores/connection\\\"\\nimport {getGlasesInfoPartial, useGlassesStore} from \\\"@/stores/glasses\\\"\\nimport GlobalEventEmitter from \\\"@/utils/GlobalEventEmitter\\\"\\nimport {BackgroundTimer} from \\\"@/utils/timers\\\"\\n\\n// ---------------------------------------------------------------------------\\n// Liveness detection constants\\n// ---------------------------------------------------------------------------\\n// The CLIENT sends {\\\"type\\\":\\\"ping\\\"} every 5 s. The server responds with\\n// {\\\"type\\\":\\\"pong\\\"}. If a pong is missed, the client reconnects immediately.\\n\\n// How often the client sends a ping to the server.\\nconst PING_INTERVAL_MS = 5_000\\n\\n// If no pong is received within this window, consider the connection\\n// dead and reconnect. This timeout is measured from the last ping sent,\\n// not from connect time, so the first timer tick always sends a ping\\n// instead of immediately declaring the socket stale.\\nconst PONG_TIMEOUT_MS = 5_000\\n\\n// Delay between reconnect attempts after a disconnect.\\nconst RECONNECT_INTERVAL_MS = 5_000\\n\\n// ---------------------------------------------------------------------------\\n// Foreground-resume liveness probe\\n// ---------------------------------------------------------------------------\\n// On iOS our BackgroundTimer falls back to plain setInterval \\u2014 so when the\\n// JS thread is suspended (app backgrounded, screen locked, only BLE awake),\\n// the ping loop above stops firing entirely. The TCP socket can stay nominally\\n// open in the kernel for minutes while we receive zero frames, and then on\\n// foreground-return the user presses the camera button before the next ping\\n// tick runs. Result: the cloud's PHOTO_REQUEST gets written into a dead WS,\\n// the photo never lands, the SDK times out at 30s.\\n//\\n// The fix is to treat every transition into `active` as evidence we just\\n// woke up and the socket may be a zombie. We send a ping with a tighter\\n// deadline; if the pong does not land, we reconnect *immediately* rather\\n// than waiting for the next regular ping cycle.\\nconst FOREGROUND_PROBE_PONG_TIMEOUT_MS = 2_500\\n\\n// Max pongs we'll tolerate going missing in a row before reconnecting on the\\n// regular cycle. With PING_INTERVAL_MS=5_000 + PONG_TIMEOUT_MS=5_000, a\\n// single value of 1 already gives ~5\\u201310s detection in the foreground; we\\n// keep a small allowance to ride out brief network glitches.\\nconst MAX_CONSECUTIVE_MISSED_PONGS = 1\",\n          \"replace_all\": false\n        },\n        \"tool_response\": {\n          \"filePath\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/mobile/src/services/WebSocketManager.ts\",\n          \"oldString\": \"import {EventEmitter} from \\\"events\\\"\\n\\nimport restComms from \\\"@/services/RestComms\\\"\\nimport {useConnectionStore} from \\\"@/stores/connection\\\"\\nimport {getGlasesInfoPartial, useGlassesStore} from \\\"@/stores/glasses\\\"\\nimport GlobalEventEmitter from \\\"@/utils/GlobalEventEmitter\\\"\\nimport {BackgroundTimer} from \\\"@/utils/timers\\\"\\n\\n// ---------------------------------------------------------------------------\\n// Liveness detection constants\\n// ---------------------------------------------------------------------------\\n// The CLIENT sends {\\\"type\\\":\\\"ping\\\"} every 5 s. The server responds with\\n// {\\\"type\\\":\\\"pong\\\"}. If a pong is missed, the client reconnects immediately.\\n\\n// How often the client sends a ping to the server.\\nconst PING_INTERVAL_MS = 5_000\\n\\n// If no pong is received within this window, consider the connection\\n// dead and reconnect. This timeout is measured from the last ping sent,\\n// not from connect time, so the first timer tick always sends a ping\\n// instead of immediately declaring the socket stale.\\nconst PONG_TIMEOUT_MS = 5_000\\n\\n// Delay between reconnect attempts after a disconnect.\\nconst RECONNECT_INTERVAL_MS = 5_000\",\n          \"newString\": \"import {EventEmitter} from \\\"events\\\"\\nimport {AppState, AppStateStatus} from \\\"react-native\\\"\\n\\nimport restComms from \\\"@/services/RestComms\\\"\\nimport {useConnectionStore} from \\\"@/stores/connection\\\"\\nimport {getGlasesInfoPartial, useGlassesStore} from \\\"@/stores/glasses\\\"\\nimport GlobalEventEmitter from \\\"@/utils/GlobalEventEmitter\\\"\\nimport {BackgroundTimer} from \\\"@/utils/timers\\\"\\n\\n// ---------------------------------------------------------------------------\\n// Liveness detection constants\\n// ---------------------------------------------------------------------------\\n// The CLIENT sends {\\\"type\\\":\\\"ping\\\"} every 5 s. The server responds with\\n// {\\\"type\\\":\\\"pong\\\"}. If a pong is missed, the client reconnects immediately.\\n\\n// How often the client sends a ping to the server.\\nconst PING_INTERVAL_MS = 5_000\\n\\n// If no pong is received within this window, consider the connection\\n// dead and reconnect. This timeout is measured from the last ping sent,\\n// not from connect time, so the first timer tick always sends a ping\\n// instead of immediately declaring the socket stale.\\nconst PONG_TIMEOUT_MS = 5_000\\n\\n// Delay between reconnect attempts after a disconnect.\\nconst RECONNECT_INTERVAL_MS = 5_000\\n\\n// ---------------------------------------------------------------------------\\n// Foreground-resume liveness probe\\n// ---------------------------------------------------------------------------\\n// On iOS our BackgroundTimer falls back to plain setInterval \\u2014 so when the\\n// JS thread is suspended (app backgrounded, screen locked, only BLE awake),\\n// the ping loop above stops firing entirely. The TCP socket can stay nominally\\n// open in the kernel for minutes while we receive zero frames, and then on\\n// foreground-return the user presses the camera button before the next ping\\n// tick runs. Result: the cloud's PHOTO_REQUEST gets written into a dead WS,\\n// the photo never lands, the SDK times out at 30s.\\n//\\n// The fix is to treat every transition into `active` as evidence we just\\n// woke up and the socket may be a zombie. We send a ping with a tighter\\n// deadline; if the pong does not land, we reconnect *immediately* rather\\n// than waiting for the next regular ping cycle.\\nconst FOREGROUND_PROBE_PONG_TIMEOUT_MS = 2_500\\n\\n// Max pongs we'll tolerate going missing in a row before reconnecting on the\\n// regular cycle. With PING_INTERVAL_MS=5_000 + PONG_TIMEOUT_MS=5_000, a\\n// single value of 1 already gives ~5\\u201310s detection in the foreground; we\\n// keep a small allowance to ride out brief network glitches.\\nconst MAX_CONSECUTIVE_MISSED_PONGS = 1\",\n          \"originalFile\": \"import {EventEmitter} from \\\"events\\\"\\n\\nimport restComms from \\\"@/services/RestComms\\\"\\nimport {useConnectionStore} from \\\"@/stores/connection\\\"\\nimport {getGlasesInfoPartial, useGlassesStore} from \\\"@/stores/glasses\\\"\\nimport GlobalEventEmitter from \\\"@/utils/GlobalEventEmitter\\\"\\nimport {BackgroundTimer} from \\\"@/utils/timers\\\"\\n\\n// ---------------------------------------------------------------------------\\n// Liveness detection constants\\n// ---------------------------------------------------------------------------\\n// The CLIENT sends {\\\"type\\\":\\\"ping\\\"} every 5 s. The server responds with\\n// {\\\"type\\\":\\\"pong\\\"}. If a pong is missed, the client reconnects immediately.\\n\\n// How often the client sends a ping to the server.\\nconst PING_INTERVAL_MS = 5_000\\n\\n// If no pong is received within this window, consider the connection\\n// dead and reconnect. This timeout is measured from the last ping sent,\\n// not from connect time, so the first timer tick always sends a ping\\n// instead of immediately declaring the socket stale.\\nconst PONG_TIMEOUT_MS = 5_000\\n\\n// Delay between reconnect attempts after a disconnect.\\nconst RECONNECT_INTERVAL_MS = 5_000\\n\\nexport enum WebSocketStatus {\\n  DISCONNECTED = \\\"disconnected\\\",\\n  CONNECTING = \\\"connecting\\\",\\n  CONNECTED = \\\"connected\\\",\\n  ERROR = \\\"error\\\",\\n}\\n\\nclass WebSocketManager extends EventEmitter {\\n  private static instance: WebSocketManager | null = null\\n  private webSocket: WebSocket | null = null\\n  private previousStatus: WebSocketStatus = WebSocketStatus.DISCONNECTED\\n  private url: string | null = null\\n  private coreToken: string | null = null\\n  private reconnectInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0\\n  private manuallyDisconnected: boolean = false\\n\\n  // Liveness detection state\\n  private lastPingAt: number = 0\\n  private lastPongTime: number = 0\\n  private awaitingPong: boolean = false\\n  private pingInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0\\n\\n  private constructor() {\\n    super()\\n    GlobalEventEmitter.on(\\\"NO_ACTIVE_SESSION\\\", this.handleNoActiveSession)\\n  }\\n\\n  public static getInstance(): WebSocketManager {\\n    if (!WebSocketManager.instance) {\\n      WebSocketManager.instance = new WebSocketManager()\\n    }\\n    return WebSocketManager.instance\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Connection lifecycle\\n  // -------------------------------------------------------------------------\\n\\n  // things to run when the websocket status changes to connected:\\n  private onConnect() {\\n    const statusObj = getGlasesInfoPartial(useGlassesStore.getState())\\n    restComms.updateGlassesState(statusObj)\\n  }\\n\\n  // Only emit when status actually changes\\n  private updateStatus(newStatus: WebSocketStatus) {\\n    if (newStatus !== this.previousStatus) {\\n      this.previousStatus = newStatus\\n\\n      // Update the connection store\\n      const store = useConnectionStore.getState()\\n      store.setStatus(newStatus)\\n\\n      if (newStatus === WebSocketStatus.CONNECTED) {\\n        this.onConnect()\\n      }\\n    }\\n  }\\n\\n  /**\\n   * Detach all event handlers from the current WebSocket and close it.\\n   *\\n   * Nulling out handlers BEFORE calling .close() prevents a stale `onclose`\\n   * callback from firing asynchronously and kicking off a rogue reconnect\\n   * loop (e.g. when switching backends: disconnect() sets\\n   * manuallyDisconnected = true, connect() resets it to false, then the\\n   * stale onclose fires and calls startReconnectInterval against the old URL).\\n   */\\n  private detachAndCloseSocket() {\\n    if (this.webSocket) {\\n      this.webSocket.onclose = null\\n      this.webSocket.onerror = null\\n      this.webSocket.onmessage = null\\n      this.webSocket.onopen = null\\n      this.webSocket.close()\\n      this.webSocket = null\\n    }\\n  }\\n\\n  public connect(url: string, coreToken: string) {\\n    console.log(`WSM: connect: ${url}`)\\n    this.manuallyDisconnected = false\\n    this.url = url\\n    this.coreToken = coreToken\\n\\n    // Tear down any existing connection cleanly\\n    this.stopLivenessMonitor()\\n    this.detachAndCloseSocket()\\n\\n    // Update status to connecting and set URL in store\\n    this.updateStatus(WebSocketStatus.CONNECTING)\\n    const store = useConnectionStore.getState()\\n    store.setUrl(url)\\n\\n    // Create new WebSocket with authorization header\\n    const wsUrl = new URL(url)\\n    wsUrl.searchParams.set(\\\"token\\\", coreToken)\\n    wsUrl.searchParams.set(\\\"livekit\\\", \\\"true\\\")\\n    wsUrl.searchParams.set(\\\"udpEncryption\\\", \\\"true\\\")\\n\\n    console.log(\\\"WSM: Connecting to WebSocket URL:\\\", wsUrl.toString().replace(/token=[^&]+/, \\\"token=REDACTED\\\"))\\n\\n    this.webSocket = new WebSocket(wsUrl.toString())\\n\\n    // Set up event handlers\\n    this.webSocket.onopen = () => {\\n      console.log(\\\"WSM: WebSocket connection established\\\")\\n      this.updateStatus(WebSocketStatus.CONNECTED)\\n      this.startLivenessMonitor()\\n    }\\n\\n    this.webSocket.onmessage = (event) => {\\n      this.handleIncomingMessage(event.data)\\n    }\\n\\n    this.webSocket.onerror = (_error) => {\\n      console.log(\\\"WSM: WebSocket error:\\\", _error)\\n      this.stopLivenessMonitor()\\n      this.updateStatus(WebSocketStatus.ERROR)\\n      store.setError(_error?.toString() || \\\"WebSocket error\\\")\\n      this.startReconnectInterval()\\n    }\\n\\n    this.webSocket.onclose = (_event) => {\\n      console.log(\\\"WSM: Connection closed with code:\\\", _event.code)\\n      this.stopLivenessMonitor()\\n      this.updateStatus(WebSocketStatus.DISCONNECTED)\\n      this.startReconnectInterval()\\n    }\\n  }\\n\\n  private actuallyReconnect() {\\n    console.log(\\\"WSM: Attempting reconnect\\\")\\n    const store = useConnectionStore.getState()\\n\\n    // Reconnect from both DISCONNECTED and ERROR states.\\n    // The old code only reconnected from DISCONNECTED \\u2014 if onerror fired\\n    // without a subsequent onclose, the client was stuck in ERROR forever.\\n    if (store.status === WebSocketStatus.DISCONNECTED || store.status === WebSocketStatus.ERROR) {\\n      if (this.url && this.coreToken) {\\n        this.connect(this.url, this.coreToken)\\n      }\\n    }\\n    if (store.status === WebSocketStatus.CONNECTED) {\\n      console.log(\\\"WSM: Connected, stopping reconnect interval\\\")\\n      BackgroundTimer.clearInterval(this.reconnectInterval)\\n    }\\n  }\\n\\n  private startReconnectInterval() {\\n    console.log(\\\"WSM: Starting reconnect interval, manuallyDisconnected:\\\", this.manuallyDisconnected)\\n    if (this.reconnectInterval) {\\n      BackgroundTimer.clearInterval(this.reconnectInterval)\\n      this.reconnectInterval = 0\\n    }\\n\\n    // Don't start reconnect if manually disconnected\\n    if (this.manuallyDisconnected) {\\n      return\\n    }\\n\\n    this.reconnectInterval = BackgroundTimer.setInterval(this.actuallyReconnect.bind(this), RECONNECT_INTERVAL_MS)\\n  }\\n\\n  private reconnectNow(reason: string) {\\n    console.log(`WSM: Immediate reconnect requested: ${reason}`)\\n    if (this.manuallyDisconnected) {\\n      return\\n    }\\n\\n    if (this.reconnectInterval) {\\n      BackgroundTimer.clearInterval(this.reconnectInterval)\\n      this.reconnectInterval = 0\\n    }\\n\\n    this.stopLivenessMonitor()\\n    this.detachAndCloseSocket()\\n    this.updateStatus(WebSocketStatus.DISCONNECTED)\\n\\n    if (this.url && this.coreToken) {\\n      this.connect(this.url, this.coreToken)\\n      return\\n    }\\n\\n    this.startReconnectInterval()\\n  }\\n\\n  private handleNoActiveSession = () => {\\n    if (this.previousStatus === WebSocketStatus.CONNECTING) {\\n      return\\n    }\\n\\n    this.reconnectNow(\\\"REST request returned NO_ACTIVE_SESSION\\\")\\n  }\\n\\n  public disconnect() {\\n    this.manuallyDisconnected = true\\n\\n    if (this.reconnectInterval) {\\n      BackgroundTimer.clearInterval(this.reconnectInterval)\\n      this.reconnectInterval = 0\\n    }\\n\\n    this.stopLivenessMonitor()\\n    this.detachAndCloseSocket()\\n    this.updateStatus(WebSocketStatus.DISCONNECTED)\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Liveness detection\\n  // -------------------------------------------------------------------------\\n\\n  /**\\n   * Start the client-initiated ping-pong liveness monitor.\\n   *\\n   * Every PING_INTERVAL_MS the client sends {\\\"type\\\":\\\"ping\\\"} to the server.\\n   * The server responds with {\\\"type\\\":\\\"pong\\\"} which updates lastPongTime\\n   * (via handleIncomingMessage \\u2192 pong branch).\\n   */\\n  private startLivenessMonitor() {\\n    this.stopLivenessMonitor()\\n\\n    this.lastPingAt = 0\\n    this.lastPongTime = Date.now()\\n    this.awaitingPong = false\\n\\n    this.sendPing()\\n\\n    this.pingInterval = BackgroundTimer.setInterval(() => {\\n      if (!this.isConnected()) return\\n\\n      if (this.awaitingPong) {\\n        const elapsed = Date.now() - this.lastPingAt\\n        if (elapsed >= PONG_TIMEOUT_MS) {\\n          this.reconnectNow(`pong timeout after ${elapsed}ms`)\\n        }\\n        return\\n      }\\n\\n      this.sendPing()\\n    }, PING_INTERVAL_MS)\\n  }\\n\\n  private sendPing() {\\n    if (!this.isConnected()) {\\n      return\\n    }\\n\\n    this.lastPingAt = Date.now()\\n    this.awaitingPong = true\\n\\n    try {\\n      this.webSocket?.send(JSON.stringify({type: \\\"ping\\\"}))\\n    } catch (error) {\\n      console.log(\\\"WSM: Error sending ping:\\\", error)\\n    }\\n  }\\n\\n  /**\\n   * Stop the liveness monitor \\u2014 clear the ping interval.\\n   */\\n  private stopLivenessMonitor() {\\n    if (this.pingInterval) {\\n      BackgroundTimer.clearInterval(this.pingInterval)\\n      this.pingInterval = 0\\n    }\\n\\n    this.awaitingPong = false\\n    this.lastPingAt = 0\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // State queries\\n  // -------------------------------------------------------------------------\\n\\n  public isConnected(): boolean {\\n    return this.previousStatus === WebSocketStatus.CONNECTED\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Sending\\n  // -------------------------------------------------------------------------\\n\\n  // Send JSON message\\n  public sendText(text: string) {\\n    if (!this.isConnected()) {\\n      console.log(\\\"WSM: Cannot send message: WebSocket not connected\\\")\\n      return\\n    }\\n\\n    try {\\n      this.webSocket?.send(text)\\n    } catch (error) {\\n      console.log(\\\"WSM: Error sending text message:\\\", error)\\n    }\\n  }\\n\\n  // Send binary data (for audio)\\n  public sendBinary(data: ArrayBuffer | Uint8Array) {\\n    if (!this.isConnected() && __DEV__ && Math.random() < 0.03) {\\n      console.log(\\\"WSM: Cannot send binary data: WebSocket not connected\\\")\\n      return\\n    }\\n\\n    try {\\n      this.webSocket?.send(data)\\n    } catch (error) {\\n      console.log(\\\"WSM: Error sending binary data:\\\", error)\\n    }\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Receiving\\n  // -------------------------------------------------------------------------\\n\\n  private handleIncomingMessage(data: string | ArrayBuffer) {\\n    try {\\n      let message: any\\n\\n      if (typeof data === \\\"string\\\") {\\n        message = JSON.parse(data)\\n      } else {\\n        // Handle binary data - convert to string first\\n        const decoder = new TextDecoder()\\n        const text = decoder.decode(data)\\n        message = JSON.parse(text)\\n      }\\n\\n      // Pong received \\u2014 update liveness timestamp. Don't forward to SocketComms.\\n      if (message.type === \\\"pong\\\") {\\n        this.lastPongTime = Date.now()\\n        this.awaitingPong = false\\n        return\\n      }\\n\\n      // Forward message to listeners\\n      this.emit(\\\"message\\\", message)\\n    } catch (error) {\\n      console.log(\\\"WSM: Failed to parse WebSocket message:\\\", error)\\n    }\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Cleanup\\n  // -------------------------------------------------------------------------\\n\\n  public cleanup() {\\n    console.log(\\\"WSM: cleanup()\\\")\\n    this.disconnect()\\n    this.webSocket = null\\n    const store = useConnectionStore.getState()\\n    store.reset()\\n  }\\n}\\n\\nconst wsManager = WebSocketManager.getInstance()\\nexport default wsManager\\n\",\n          \"structuredPatch\": [\n            {\n              \"oldStart\": 1,\n              \"oldLines\": 4,\n              \"newStart\": 1,\n              \"newLines\": 5,\n              \"lines\": [\n                \" import {EventEmitter} from \\\"events\\\"\",\n                \"+import {AppState, AppStateStatus} from \\\"react-native\\\"\",\n                \" \",\n                \" import restComms from \\\"@/services/RestComms\\\"\",\n                \" import {useConnectionStore} from \\\"@/stores/connection\\\"\"\n              ]\n            },\n            {\n              \"oldStart\": 24,\n              \"oldLines\": 6,\n              \"newStart\": 25,\n              \"newLines\": 29,\n              \"lines\": [\n                \" // Delay between reconnect attempts after a disconnect.\",\n                \" const RECONNECT_INTERVAL_MS = 5_000\",\n                \" \",\n                \"+// ---------------------------------------------------------------------------\",\n                \"+// Foreground-resume liveness probe\",\n                \"+// ---------------------------------------------------------------------------\",\n                \"+// On iOS our BackgroundTimer falls back to plain setInterval \\u2014 so when the\",\n                \"+// JS thread is suspended (app backgrounded, screen locked, only BLE awake),\",\n                \"+// the ping loop above stops firing entirely. The TCP socket can stay nominally\",\n                \"+// open in the kernel for minutes while we receive zero frames, and then on\",\n                \"+// foreground-return the user presses the camera button before the next ping\",\n                \"+// tick runs. Result: the cloud's PHOTO_REQUEST gets written into a dead WS,\",\n                \"+// the photo never lands, the SDK times out at 30s.\",\n                \"+//\",\n                \"+// The fix is to treat every transition into `active` as evidence we just\",\n                \"+// woke up and the socket may be a zombie. We send a ping with a tighter\",\n                \"+// deadline; if the pong does not land, we reconnect *immediately* rather\",\n                \"+// than waiting for the next regular ping cycle.\",\n                \"+const FOREGROUND_PROBE_PONG_TIMEOUT_MS = 2_500\",\n                \"+\",\n                \"+// Max pongs we'll tolerate going missing in a row before reconnecting on the\",\n                \"+// regular cycle. With PING_INTERVAL_MS=5_000 + PONG_TIMEOUT_MS=5_000, a\",\n                \"+// single value of 1 already gives ~5\\u201310s detection in the foreground; we\",\n                \"+// keep a small allowance to ride out brief network glitches.\",\n                \"+const MAX_CONSECUTIVE_MISSED_PONGS = 1\",\n                \"+\",\n                \" export enum WebSocketStatus {\",\n                \"   DISCONNECTED = \\\"disconnected\\\",\",\n                \"   CONNECTING = \\\"connecting\\\",\"\n              ]\n            }\n          ],\n          \"userModified\": false,\n          \"replaceAll\": false\n        },\n        \"tool_use_id\": \"toolu_01QVtTPxxujVRsDcaY8njiL5\",\n        \"duration_ms\": 3\n      }\n    ]\n  },\n  \"falsification_attempts\": [],\n  \"alternatives\": [],\n  \"conclusion\": {\n    \"summary\": \"Task completed via tool execution\",\n    \"confidence\": 0.8,\n    \"success\": true\n  },\n  \"risks_unknowns\": [],\n  \"next_actions\": [],\n  \"execution_time\": 0,\n  \"resource_usage\": {}\n}"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:52.985834+00:00",
+    "operation": "message_check",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "limit": 10
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:52.987234+00:00",
+    "operation": "message_response_prepared",
+    "data": {
+      "content": "\nTask Completion Summary:\n- Hypothesis: Implement requested functionality efficiently\n- Conclusion: Task completed via tool execution\n- Confidence: 0.8\n- Next Actions: None\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:52.988147+00:00",
+    "operation": "private_note_added",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "content": "\n## Task Completion Notes - 2026-05-05 03:53:52\n\n### Performance Metrics\n- Execution Time: 0\n- Tool Calls: 1\n- Files Modified: 0\n\n### Observations\n- Success Rate: True\n- Confidence Score: 0.8\n- Challenges: None\n\n### Lessons Learned\nStandard task completion workflow executed successfully.\n",
+      "category": "task_completion"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:52.988905+00:00",
+    "operation": "housekeeping",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "force": false
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:53:52.989616+00:00",
+    "operation": "completion_verification",
+    "data": {
+      "timestamp": "2026-05-05T10:53:52.989613+00:00",
+      "agent_id": "claude-code-assistant",
+      "project": "claude-code-integration",
+      "verification_status": "completed"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:00.830496+00:00",
+    "operation": "agent_identity_check",
+    "data": {
+      "name": "claude-code-assistant",
+      "role": "AI Code Assistant and IDE",
+      "project_name": "claude-code-integration",
+      "capabilities": [
+        "Code analysis and generation",
+        "File system operations",
+        "Task management",
+        "Scientific method documentation",
+        "Multi-agent coordination"
+      ],
+      "context": "Claude-based AI assistant integrated with Obsidian for task tracking and knowledge management"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:00.832057+00:00",
+    "operation": "task_location",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "title": "Edit",
+      "description": "",
+      "assigned_to": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "priority": "medium",
+      "status": "in_progress"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:00.833377+00:00",
+    "operation": "task_update",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "status": "completed",
+      "description": "\n\n## Decision Log\n{\n  \"timestamp\": \"2026-05-05T10:54:00.833279+00:00\",\n  \"task_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n  \"hypothesis\": \"Implement requested functionality efficiently\",\n  \"tests_evidence\": {\n    \"methods\": [\n      \"Edit\"\n    ],\n    \"data\": {},\n    \"artifacts\": [],\n    \"tool_calls\": [\n      {\n        \"session_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n        \"transcript_path\": \"/Users/hiyabuddy/.claude/projects/-Users-hiyabuddy-sites-brendancopley-MentraOS/7ccd240c-1774-4ec5-a390-39f24ccf8dcd.jsonl\",\n        \"cwd\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/cloud/packages/cloud\",\n        \"permission_mode\": \"auto\",\n        \"hook_event_name\": \"PostToolUse\",\n        \"tool_name\": \"Edit\",\n        \"tool_input\": {\n          \"file_path\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/mobile/src/services/WebSocketManager.ts\",\n          \"old_string\": \"  // Liveness detection state\\n  private lastPingAt: number = 0\\n  private lastPongTime: number = 0\\n  private awaitingPong: boolean = false\\n  private pingInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0\\n\\n  private constructor() {\\n    super()\\n    GlobalEventEmitter.on(\\\"NO_ACTIVE_SESSION\\\", this.handleNoActiveSession)\\n  }\",\n          \"new_string\": \"  // Liveness detection state\\n  private lastPingAt: number = 0\\n  private lastPongTime: number = 0\\n  private awaitingPong: boolean = false\\n  private consecutiveMissedPongs: number = 0\\n  private pingInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0\\n  private foregroundProbeTimer: ReturnType<typeof setTimeout> | null = null\\n  private appStateSubscription: {remove: () => void} | null = null\\n  private lastAppState: AppStateStatus = AppState.currentState\\n\\n  private constructor() {\\n    super()\\n    GlobalEventEmitter.on(\\\"NO_ACTIVE_SESSION\\\", this.handleNoActiveSession)\\n    // App-state listener: a foreground transition is the canonical \\\"JS thread\\n    // just resumed, our timers may have been frozen for an unknown duration\\\"\\n    // signal. Probe the WS aggressively rather than wait for the next tick.\\n    this.appStateSubscription = AppState.addEventListener(\\\"change\\\", this.handleAppStateChange)\\n  }\",\n          \"replace_all\": false\n        },\n        \"tool_response\": {\n          \"filePath\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/mobile/src/services/WebSocketManager.ts\",\n          \"oldString\": \"  // Liveness detection state\\n  private lastPingAt: number = 0\\n  private lastPongTime: number = 0\\n  private awaitingPong: boolean = false\\n  private pingInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0\\n\\n  private constructor() {\\n    super()\\n    GlobalEventEmitter.on(\\\"NO_ACTIVE_SESSION\\\", this.handleNoActiveSession)\\n  }\",\n          \"newString\": \"  // Liveness detection state\\n  private lastPingAt: number = 0\\n  private lastPongTime: number = 0\\n  private awaitingPong: boolean = false\\n  private consecutiveMissedPongs: number = 0\\n  private pingInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0\\n  private foregroundProbeTimer: ReturnType<typeof setTimeout> | null = null\\n  private appStateSubscription: {remove: () => void} | null = null\\n  private lastAppState: AppStateStatus = AppState.currentState\\n\\n  private constructor() {\\n    super()\\n    GlobalEventEmitter.on(\\\"NO_ACTIVE_SESSION\\\", this.handleNoActiveSession)\\n    // App-state listener: a foreground transition is the canonical \\\"JS thread\\n    // just resumed, our timers may have been frozen for an unknown duration\\\"\\n    // signal. Probe the WS aggressively rather than wait for the next tick.\\n    this.appStateSubscription = AppState.addEventListener(\\\"change\\\", this.handleAppStateChange)\\n  }\",\n          \"originalFile\": \"import {EventEmitter} from \\\"events\\\"\\nimport {AppState, AppStateStatus} from \\\"react-native\\\"\\n\\nimport restComms from \\\"@/services/RestComms\\\"\\nimport {useConnectionStore} from \\\"@/stores/connection\\\"\\nimport {getGlasesInfoPartial, useGlassesStore} from \\\"@/stores/glasses\\\"\\nimport GlobalEventEmitter from \\\"@/utils/GlobalEventEmitter\\\"\\nimport {BackgroundTimer} from \\\"@/utils/timers\\\"\\n\\n// ---------------------------------------------------------------------------\\n// Liveness detection constants\\n// ---------------------------------------------------------------------------\\n// The CLIENT sends {\\\"type\\\":\\\"ping\\\"} every 5 s. The server responds with\\n// {\\\"type\\\":\\\"pong\\\"}. If a pong is missed, the client reconnects immediately.\\n\\n// How often the client sends a ping to the server.\\nconst PING_INTERVAL_MS = 5_000\\n\\n// If no pong is received within this window, consider the connection\\n// dead and reconnect. This timeout is measured from the last ping sent,\\n// not from connect time, so the first timer tick always sends a ping\\n// instead of immediately declaring the socket stale.\\nconst PONG_TIMEOUT_MS = 5_000\\n\\n// Delay between reconnect attempts after a disconnect.\\nconst RECONNECT_INTERVAL_MS = 5_000\\n\\n// ---------------------------------------------------------------------------\\n// Foreground-resume liveness probe\\n// ---------------------------------------------------------------------------\\n// On iOS our BackgroundTimer falls back to plain setInterval \\u2014 so when the\\n// JS thread is suspended (app backgrounded, screen locked, only BLE awake),\\n// the ping loop above stops firing entirely. The TCP socket can stay nominally\\n// open in the kernel for minutes while we receive zero frames, and then on\\n// foreground-return the user presses the camera button before the next ping\\n// tick runs. Result: the cloud's PHOTO_REQUEST gets written into a dead WS,\\n// the photo never lands, the SDK times out at 30s.\\n//\\n// The fix is to treat every transition into `active` as evidence we just\\n// woke up and the socket may be a zombie. We send a ping with a tighter\\n// deadline; if the pong does not land, we reconnect *immediately* rather\\n// than waiting for the next regular ping cycle.\\nconst FOREGROUND_PROBE_PONG_TIMEOUT_MS = 2_500\\n\\n// Max pongs we'll tolerate going missing in a row before reconnecting on the\\n// regular cycle. With PING_INTERVAL_MS=5_000 + PONG_TIMEOUT_MS=5_000, a\\n// single value of 1 already gives ~5\\u201310s detection in the foreground; we\\n// keep a small allowance to ride out brief network glitches.\\nconst MAX_CONSECUTIVE_MISSED_PONGS = 1\\n\\nexport enum WebSocketStatus {\\n  DISCONNECTED = \\\"disconnected\\\",\\n  CONNECTING = \\\"connecting\\\",\\n  CONNECTED = \\\"connected\\\",\\n  ERROR = \\\"error\\\",\\n}\\n\\nclass WebSocketManager extends EventEmitter {\\n  private static instance: WebSocketManager | null = null\\n  private webSocket: WebSocket | null = null\\n  private previousStatus: WebSocketStatus = WebSocketStatus.DISCONNECTED\\n  private url: string | null = null\\n  private coreToken: string | null = null\\n  private reconnectInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0\\n  private manuallyDisconnected: boolean = false\\n\\n  // Liveness detection state\\n  private lastPingAt: number = 0\\n  private lastPongTime: number = 0\\n  private awaitingPong: boolean = false\\n  private pingInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0\\n\\n  private constructor() {\\n    super()\\n    GlobalEventEmitter.on(\\\"NO_ACTIVE_SESSION\\\", this.handleNoActiveSession)\\n  }\\n\\n  public static getInstance(): WebSocketManager {\\n    if (!WebSocketManager.instance) {\\n      WebSocketManager.instance = new WebSocketManager()\\n    }\\n    return WebSocketManager.instance\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Connection lifecycle\\n  // -------------------------------------------------------------------------\\n\\n  // things to run when the websocket status changes to connected:\\n  private onConnect() {\\n    const statusObj = getGlasesInfoPartial(useGlassesStore.getState())\\n    restComms.updateGlassesState(statusObj)\\n  }\\n\\n  // Only emit when status actually changes\\n  private updateStatus(newStatus: WebSocketStatus) {\\n    if (newStatus !== this.previousStatus) {\\n      this.previousStatus = newStatus\\n\\n      // Update the connection store\\n      const store = useConnectionStore.getState()\\n      store.setStatus(newStatus)\\n\\n      if (newStatus === WebSocketStatus.CONNECTED) {\\n        this.onConnect()\\n      }\\n    }\\n  }\\n\\n  /**\\n   * Detach all event handlers from the current WebSocket and close it.\\n   *\\n   * Nulling out handlers BEFORE calling .close() prevents a stale `onclose`\\n   * callback from firing asynchronously and kicking off a rogue reconnect\\n   * loop (e.g. when switching backends: disconnect() sets\\n   * manuallyDisconnected = true, connect() resets it to false, then the\\n   * stale onclose fires and calls startReconnectInterval against the old URL).\\n   */\\n  private detachAndCloseSocket() {\\n    if (this.webSocket) {\\n      this.webSocket.onclose = null\\n      this.webSocket.onerror = null\\n      this.webSocket.onmessage = null\\n      this.webSocket.onopen = null\\n      this.webSocket.close()\\n      this.webSocket = null\\n    }\\n  }\\n\\n  public connect(url: string, coreToken: string) {\\n    console.log(`WSM: connect: ${url}`)\\n    this.manuallyDisconnected = false\\n    this.url = url\\n    this.coreToken = coreToken\\n\\n    // Tear down any existing connection cleanly\\n    this.stopLivenessMonitor()\\n    this.detachAndCloseSocket()\\n\\n    // Update status to connecting and set URL in store\\n    this.updateStatus(WebSocketStatus.CONNECTING)\\n    const store = useConnectionStore.getState()\\n    store.setUrl(url)\\n\\n    // Create new WebSocket with authorization header\\n    const wsUrl = new URL(url)\\n    wsUrl.searchParams.set(\\\"token\\\", coreToken)\\n    wsUrl.searchParams.set(\\\"livekit\\\", \\\"true\\\")\\n    wsUrl.searchParams.set(\\\"udpEncryption\\\", \\\"true\\\")\\n\\n    console.log(\\\"WSM: Connecting to WebSocket URL:\\\", wsUrl.toString().replace(/token=[^&]+/, \\\"token=REDACTED\\\"))\\n\\n    this.webSocket = new WebSocket(wsUrl.toString())\\n\\n    // Set up event handlers\\n    this.webSocket.onopen = () => {\\n      console.log(\\\"WSM: WebSocket connection established\\\")\\n      this.updateStatus(WebSocketStatus.CONNECTED)\\n      this.startLivenessMonitor()\\n    }\\n\\n    this.webSocket.onmessage = (event) => {\\n      this.handleIncomingMessage(event.data)\\n    }\\n\\n    this.webSocket.onerror = (_error) => {\\n      console.log(\\\"WSM: WebSocket error:\\\", _error)\\n      this.stopLivenessMonitor()\\n      this.updateStatus(WebSocketStatus.ERROR)\\n      store.setError(_error?.toString() || \\\"WebSocket error\\\")\\n      this.startReconnectInterval()\\n    }\\n\\n    this.webSocket.onclose = (_event) => {\\n      console.log(\\\"WSM: Connection closed with code:\\\", _event.code)\\n      this.stopLivenessMonitor()\\n      this.updateStatus(WebSocketStatus.DISCONNECTED)\\n      this.startReconnectInterval()\\n    }\\n  }\\n\\n  private actuallyReconnect() {\\n    console.log(\\\"WSM: Attempting reconnect\\\")\\n    const store = useConnectionStore.getState()\\n\\n    // Reconnect from both DISCONNECTED and ERROR states.\\n    // The old code only reconnected from DISCONNECTED \\u2014 if onerror fired\\n    // without a subsequent onclose, the client was stuck in ERROR forever.\\n    if (store.status === WebSocketStatus.DISCONNECTED || store.status === WebSocketStatus.ERROR) {\\n      if (this.url && this.coreToken) {\\n        this.connect(this.url, this.coreToken)\\n      }\\n    }\\n    if (store.status === WebSocketStatus.CONNECTED) {\\n      console.log(\\\"WSM: Connected, stopping reconnect interval\\\")\\n      BackgroundTimer.clearInterval(this.reconnectInterval)\\n    }\\n  }\\n\\n  private startReconnectInterval() {\\n    console.log(\\\"WSM: Starting reconnect interval, manuallyDisconnected:\\\", this.manuallyDisconnected)\\n    if (this.reconnectInterval) {\\n      BackgroundTimer.clearInterval(this.reconnectInterval)\\n      this.reconnectInterval = 0\\n    }\\n\\n    // Don't start reconnect if manually disconnected\\n    if (this.manuallyDisconnected) {\\n      return\\n    }\\n\\n    this.reconnectInterval = BackgroundTimer.setInterval(this.actuallyReconnect.bind(this), RECONNECT_INTERVAL_MS)\\n  }\\n\\n  private reconnectNow(reason: string) {\\n    console.log(`WSM: Immediate reconnect requested: ${reason}`)\\n    if (this.manuallyDisconnected) {\\n      return\\n    }\\n\\n    if (this.reconnectInterval) {\\n      BackgroundTimer.clearInterval(this.reconnectInterval)\\n      this.reconnectInterval = 0\\n    }\\n\\n    this.stopLivenessMonitor()\\n    this.detachAndCloseSocket()\\n    this.updateStatus(WebSocketStatus.DISCONNECTED)\\n\\n    if (this.url && this.coreToken) {\\n      this.connect(this.url, this.coreToken)\\n      return\\n    }\\n\\n    this.startReconnectInterval()\\n  }\\n\\n  private handleNoActiveSession = () => {\\n    if (this.previousStatus === WebSocketStatus.CONNECTING) {\\n      return\\n    }\\n\\n    this.reconnectNow(\\\"REST request returned NO_ACTIVE_SESSION\\\")\\n  }\\n\\n  public disconnect() {\\n    this.manuallyDisconnected = true\\n\\n    if (this.reconnectInterval) {\\n      BackgroundTimer.clearInterval(this.reconnectInterval)\\n      this.reconnectInterval = 0\\n    }\\n\\n    this.stopLivenessMonitor()\\n    this.detachAndCloseSocket()\\n    this.updateStatus(WebSocketStatus.DISCONNECTED)\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Liveness detection\\n  // -------------------------------------------------------------------------\\n\\n  /**\\n   * Start the client-initiated ping-pong liveness monitor.\\n   *\\n   * Every PING_INTERVAL_MS the client sends {\\\"type\\\":\\\"ping\\\"} to the server.\\n   * The server responds with {\\\"type\\\":\\\"pong\\\"} which updates lastPongTime\\n   * (via handleIncomingMessage \\u2192 pong branch).\\n   */\\n  private startLivenessMonitor() {\\n    this.stopLivenessMonitor()\\n\\n    this.lastPingAt = 0\\n    this.lastPongTime = Date.now()\\n    this.awaitingPong = false\\n\\n    this.sendPing()\\n\\n    this.pingInterval = BackgroundTimer.setInterval(() => {\\n      if (!this.isConnected()) return\\n\\n      if (this.awaitingPong) {\\n        const elapsed = Date.now() - this.lastPingAt\\n        if (elapsed >= PONG_TIMEOUT_MS) {\\n          this.reconnectNow(`pong timeout after ${elapsed}ms`)\\n        }\\n        return\\n      }\\n\\n      this.sendPing()\\n    }, PING_INTERVAL_MS)\\n  }\\n\\n  private sendPing() {\\n    if (!this.isConnected()) {\\n      return\\n    }\\n\\n    this.lastPingAt = Date.now()\\n    this.awaitingPong = true\\n\\n    try {\\n      this.webSocket?.send(JSON.stringify({type: \\\"ping\\\"}))\\n    } catch (error) {\\n      console.log(\\\"WSM: Error sending ping:\\\", error)\\n    }\\n  }\\n\\n  /**\\n   * Stop the liveness monitor \\u2014 clear the ping interval.\\n   */\\n  private stopLivenessMonitor() {\\n    if (this.pingInterval) {\\n      BackgroundTimer.clearInterval(this.pingInterval)\\n      this.pingInterval = 0\\n    }\\n\\n    this.awaitingPong = false\\n    this.lastPingAt = 0\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // State queries\\n  // -------------------------------------------------------------------------\\n\\n  public isConnected(): boolean {\\n    return this.previousStatus === WebSocketStatus.CONNECTED\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Sending\\n  // -------------------------------------------------------------------------\\n\\n  // Send JSON message\\n  public sendText(text: string) {\\n    if (!this.isConnected()) {\\n      console.log(\\\"WSM: Cannot send message: WebSocket not connected\\\")\\n      return\\n    }\\n\\n    try {\\n      this.webSocket?.send(text)\\n    } catch (error) {\\n      console.log(\\\"WSM: Error sending text message:\\\", error)\\n    }\\n  }\\n\\n  // Send binary data (for audio)\\n  public sendBinary(data: ArrayBuffer | Uint8Array) {\\n    if (!this.isConnected() && __DEV__ && Math.random() < 0.03) {\\n      console.log(\\\"WSM: Cannot send binary data: WebSocket not connected\\\")\\n      return\\n    }\\n\\n    try {\\n      this.webSocket?.send(data)\\n    } catch (error) {\\n      console.log(\\\"WSM: Error sending binary data:\\\", error)\\n    }\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Receiving\\n  // -------------------------------------------------------------------------\\n\\n  private handleIncomingMessage(data: string | ArrayBuffer) {\\n    try {\\n      let message: any\\n\\n      if (typeof data === \\\"string\\\") {\\n        message = JSON.parse(data)\\n      } else {\\n        // Handle binary data - convert to string first\\n        const decoder = new TextDecoder()\\n        const text = decoder.decode(data)\\n        message = JSON.parse(text)\\n      }\\n\\n      // Pong received \\u2014 update liveness timestamp. Don't forward to SocketComms.\\n      if (message.type === \\\"pong\\\") {\\n        this.lastPongTime = Date.now()\\n        this.awaitingPong = false\\n        return\\n      }\\n\\n      // Forward message to listeners\\n      this.emit(\\\"message\\\", message)\\n    } catch (error) {\\n      console.log(\\\"WSM: Failed to parse WebSocket message:\\\", error)\\n    }\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Cleanup\\n  // -------------------------------------------------------------------------\\n\\n  public cleanup() {\\n    console.log(\\\"WSM: cleanup()\\\")\\n    this.disconnect()\\n    this.webSocket = null\\n    const store = useConnectionStore.getState()\\n    store.reset()\\n  }\\n}\\n\\nconst wsManager = WebSocketManager.getInstance()\\nexport default wsManager\\n\",\n          \"structuredPatch\": [\n            {\n              \"oldStart\": 68,\n              \"oldLines\": 11,\n              \"newStart\": 68,\n              \"newLines\": 19,\n              \"lines\": [\n                \"   private lastPingAt: number = 0\",\n                \"   private lastPongTime: number = 0\",\n                \"   private awaitingPong: boolean = false\",\n                \"+  private consecutiveMissedPongs: number = 0\",\n                \"   private pingInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0\",\n                \"+  private foregroundProbeTimer: ReturnType<typeof setTimeout> | null = null\",\n                \"+  private appStateSubscription: {remove: () => void} | null = null\",\n                \"+  private lastAppState: AppStateStatus = AppState.currentState\",\n                \" \",\n                \"   private constructor() {\",\n                \"     super()\",\n                \"     GlobalEventEmitter.on(\\\"NO_ACTIVE_SESSION\\\", this.handleNoActiveSession)\",\n                \"+    // App-state listener: a foreground transition is the canonical \\\"JS thread\",\n                \"+    // just resumed, our timers may have been frozen for an unknown duration\\\"\",\n                \"+    // signal. Probe the WS aggressively rather than wait for the next tick.\",\n                \"+    this.appStateSubscription = AppState.addEventListener(\\\"change\\\", this.handleAppStateChange)\",\n                \"   }\",\n                \" \",\n                \"   public static getInstance(): WebSocketManager {\"\n              ]\n            }\n          ],\n          \"userModified\": false,\n          \"replaceAll\": false\n        },\n        \"tool_use_id\": \"toolu_01SwiW6grfBGnhoGGwvQrdR1\",\n        \"duration_ms\": 5\n      }\n    ]\n  },\n  \"falsification_attempts\": [],\n  \"alternatives\": [],\n  \"conclusion\": {\n    \"summary\": \"Task completed via tool execution\",\n    \"confidence\": 0.8,\n    \"success\": true\n  },\n  \"risks_unknowns\": [],\n  \"next_actions\": [],\n  \"execution_time\": 0,\n  \"resource_usage\": {}\n}"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:00.834465+00:00",
+    "operation": "message_check",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "limit": 10
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:00.836102+00:00",
+    "operation": "message_response_prepared",
+    "data": {
+      "content": "\nTask Completion Summary:\n- Hypothesis: Implement requested functionality efficiently\n- Conclusion: Task completed via tool execution\n- Confidence: 0.8\n- Next Actions: None\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:00.837467+00:00",
+    "operation": "private_note_added",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "content": "\n## Task Completion Notes - 2026-05-05 03:54:00\n\n### Performance Metrics\n- Execution Time: 0\n- Tool Calls: 1\n- Files Modified: 0\n\n### Observations\n- Success Rate: True\n- Confidence Score: 0.8\n- Challenges: None\n\n### Lessons Learned\nStandard task completion workflow executed successfully.\n",
+      "category": "task_completion"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:00.838497+00:00",
+    "operation": "housekeeping",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "force": false
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:00.839469+00:00",
+    "operation": "completion_verification",
+    "data": {
+      "timestamp": "2026-05-05T10:54:00.839464+00:00",
+      "agent_id": "claude-code-assistant",
+      "project": "claude-code-integration",
+      "verification_status": "completed"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:28.447458+00:00",
+    "operation": "agent_identity_check",
+    "data": {
+      "name": "claude-code-assistant",
+      "role": "AI Code Assistant and IDE",
+      "project_name": "claude-code-integration",
+      "capabilities": [
+        "Code analysis and generation",
+        "File system operations",
+        "Task management",
+        "Scientific method documentation",
+        "Multi-agent coordination"
+      ],
+      "context": "Claude-based AI assistant integrated with Obsidian for task tracking and knowledge management"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:28.449155+00:00",
+    "operation": "task_location",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "title": "Edit",
+      "description": "",
+      "assigned_to": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "priority": "medium",
+      "status": "in_progress"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:28.450508+00:00",
+    "operation": "task_update",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "status": "completed",
+      "description": "\n\n## Decision Log\n{\n  \"timestamp\": \"2026-05-05T10:54:28.450381+00:00\",\n  \"task_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n  \"hypothesis\": \"Implement requested functionality efficiently\",\n  \"tests_evidence\": {\n    \"methods\": [\n      \"Edit\"\n    ],\n    \"data\": {},\n    \"artifacts\": [],\n    \"tool_calls\": [\n      {\n        \"session_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n        \"transcript_path\": \"/Users/hiyabuddy/.claude/projects/-Users-hiyabuddy-sites-brendancopley-MentraOS/7ccd240c-1774-4ec5-a390-39f24ccf8dcd.jsonl\",\n        \"cwd\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/cloud/packages/cloud\",\n        \"permission_mode\": \"auto\",\n        \"hook_event_name\": \"PostToolUse\",\n        \"tool_name\": \"Edit\",\n        \"tool_input\": {\n          \"file_path\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/mobile/src/services/WebSocketManager.ts\",\n          \"old_string\": \"  private startLivenessMonitor() {\\n    this.stopLivenessMonitor()\\n\\n    this.lastPingAt = 0\\n    this.lastPongTime = Date.now()\\n    this.awaitingPong = false\\n\\n    this.sendPing()\\n\\n    this.pingInterval = BackgroundTimer.setInterval(() => {\\n      if (!this.isConnected()) return\\n\\n      if (this.awaitingPong) {\\n        const elapsed = Date.now() - this.lastPingAt\\n        if (elapsed >= PONG_TIMEOUT_MS) {\\n          this.reconnectNow(`pong timeout after ${elapsed}ms`)\\n        }\\n        return\\n      }\\n\\n      this.sendPing()\\n    }, PING_INTERVAL_MS)\\n  }\\n\\n  private sendPing() {\\n    if (!this.isConnected()) {\\n      return\\n    }\\n\\n    this.lastPingAt = Date.now()\\n    this.awaitingPong = true\\n\\n    try {\\n      this.webSocket?.send(JSON.stringify({type: \\\"ping\\\"}))\\n    } catch (error) {\\n      console.log(\\\"WSM: Error sending ping:\\\", error)\\n    }\\n  }\\n\\n  /**\\n   * Stop the liveness monitor \\u2014 clear the ping interval.\\n   */\\n  private stopLivenessMonitor() {\\n    if (this.pingInterval) {\\n      BackgroundTimer.clearInterval(this.pingInterval)\\n      this.pingInterval = 0\\n    }\\n\\n    this.awaitingPong = false\\n    this.lastPingAt = 0\\n  }\",\n          \"new_string\": \"  private startLivenessMonitor() {\\n    this.stopLivenessMonitor()\\n\\n    this.lastPingAt = 0\\n    this.lastPongTime = Date.now()\\n    this.awaitingPong = false\\n    this.consecutiveMissedPongs = 0\\n\\n    this.sendPing()\\n\\n    this.pingInterval = BackgroundTimer.setInterval(() => {\\n      if (!this.isConnected()) return\\n\\n      if (this.awaitingPong) {\\n        const elapsed = Date.now() - this.lastPingAt\\n        if (elapsed >= PONG_TIMEOUT_MS) {\\n          // Outstanding ping timed out \\u2014 count it and decide whether to give\\n          // up on this WS or just send the next probe. We use a tolerance\\n          // (MAX_CONSECUTIVE_MISSED_PONGS) because the iOS JS thread can\\n          // stutter for a tick or two on resume without the underlying\\n          // socket actually being dead.\\n          this.consecutiveMissedPongs += 1\\n          console.log(\\n            `WSM: pong missed (${this.consecutiveMissedPongs} in a row, elapsed=${elapsed}ms)`,\\n          )\\n          if (this.consecutiveMissedPongs > MAX_CONSECUTIVE_MISSED_PONGS) {\\n            this.reconnectNow(\\n              `pong timeout: ${this.consecutiveMissedPongs} consecutive misses (last elapsed=${elapsed}ms)`,\\n            )\\n            return\\n          }\\n          // Send the next ping immediately so we don't have to wait another\\n          // PING_INTERVAL_MS to retry.\\n          this.awaitingPong = false\\n          this.sendPing()\\n          return\\n        }\\n        return\\n      }\\n\\n      this.sendPing()\\n    }, PING_INTERVAL_MS)\\n  }\\n\\n  private sendPing() {\\n    if (!this.isConnected()) {\\n      return\\n    }\\n\\n    this.lastPingAt = Date.now()\\n    this.awaitingPong = true\\n\\n    try {\\n      this.webSocket?.send(JSON.stringify({type: \\\"ping\\\"}))\\n    } catch (error) {\\n      console.log(\\\"WSM: Error sending ping:\\\", error)\\n    }\\n  }\\n\\n  /**\\n   * Foreground-resume liveness probe. Called from the AppState listener\\n   * when the app re-enters `active` from any non-active state. iOS may have\\n   * suspended the JS thread (and our ping timer) for an arbitrarily long\\n   * time, so the regular pingInterval logic isn't sufficient on its own \\u2014\\n   * if there's a dead socket we want to find out before the user presses\\n   * the camera button, not 5 seconds after.\\n   */\\n  private probeForForegroundResume() {\\n    if (this.foregroundProbeTimer) {\\n      clearTimeout(this.foregroundProbeTimer)\\n      this.foregroundProbeTimer = null\\n    }\\n    if (!this.isConnected()) {\\n      // If we're not connected, our regular reconnect interval is already\\n      // doing the right thing \\u2014 just nudge it to retry now instead of\\n      // waiting for the next tick.\\n      this.actuallyReconnect()\\n      return\\n    }\\n\\n    // Send a probe ping with a tight deadline. If the pong doesn't land\\n    // inside FOREGROUND_PROBE_PONG_TIMEOUT_MS, the socket is a zombie and\\n    // we reconnect immediately. We don't touch consecutiveMissedPongs here\\n    // because this is a one-shot wake-up check, not part of the steady-\\n    // state ping cycle.\\n    const probeStart = Date.now()\\n    this.lastPingAt = probeStart\\n    this.awaitingPong = true\\n\\n    try {\\n      this.webSocket?.send(JSON.stringify({type: \\\"ping\\\"}))\\n    } catch (error) {\\n      console.log(\\\"WSM: Foreground probe send failed:\\\", error)\\n      this.reconnectNow(\\\"foreground probe send failed\\\")\\n      return\\n    }\\n\\n    this.foregroundProbeTimer = setTimeout(() => {\\n      this.foregroundProbeTimer = null\\n      // If a pong landed strictly after we sent the probe, we're alive.\\n      if (this.lastPongTime >= probeStart) return\\n      const elapsed = Date.now() - probeStart\\n      this.reconnectNow(`foreground probe pong timeout (${elapsed}ms)`)\\n    }, FOREGROUND_PROBE_PONG_TIMEOUT_MS)\\n  }\\n\\n  private handleAppStateChange = (next: AppStateStatus) => {\\n    const previous = this.lastAppState\\n    this.lastAppState = next\\n    if (next !== \\\"active\\\") return\\n    if (previous === \\\"active\\\") return // ignore active\\u2192active edge cases\\n    console.log(`WSM: AppState ${previous} \\u2192 active \\u2014 probing WS`)\\n    this.probeForForegroundResume()\\n  }\\n\\n  /**\\n   * Stop the liveness monitor \\u2014 clear the ping interval.\\n   */\\n  private stopLivenessMonitor() {\\n    if (this.pingInterval) {\\n      BackgroundTimer.clearInterval(this.pingInterval)\\n      this.pingInterval = 0\\n    }\\n    if (this.foregroundProbeTimer) {\\n      clearTimeout(this.foregroundProbeTimer)\\n      this.foregroundProbeTimer = null\\n    }\\n\\n    this.awaitingPong = false\\n    this.lastPingAt = 0\\n    this.consecutiveMissedPongs = 0\\n  }\",\n          \"replace_all\": false\n        },\n        \"tool_response\": {\n          \"filePath\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/mobile/src/services/WebSocketManager.ts\",\n          \"oldString\": \"  private startLivenessMonitor() {\\n    this.stopLivenessMonitor()\\n\\n    this.lastPingAt = 0\\n    this.lastPongTime = Date.now()\\n    this.awaitingPong = false\\n\\n    this.sendPing()\\n\\n    this.pingInterval = BackgroundTimer.setInterval(() => {\\n      if (!this.isConnected()) return\\n\\n      if (this.awaitingPong) {\\n        const elapsed = Date.now() - this.lastPingAt\\n        if (elapsed >= PONG_TIMEOUT_MS) {\\n          this.reconnectNow(`pong timeout after ${elapsed}ms`)\\n        }\\n        return\\n      }\\n\\n      this.sendPing()\\n    }, PING_INTERVAL_MS)\\n  }\\n\\n  private sendPing() {\\n    if (!this.isConnected()) {\\n      return\\n    }\\n\\n    this.lastPingAt = Date.now()\\n    this.awaitingPong = true\\n\\n    try {\\n      this.webSocket?.send(JSON.stringify({type: \\\"ping\\\"}))\\n    } catch (error) {\\n      console.log(\\\"WSM: Error sending ping:\\\", error)\\n    }\\n  }\\n\\n  /**\\n   * Stop the liveness monitor \\u2014 clear the ping interval.\\n   */\\n  private stopLivenessMonitor() {\\n    if (this.pingInterval) {\\n      BackgroundTimer.clearInterval(this.pingInterval)\\n      this.pingInterval = 0\\n    }\\n\\n    this.awaitingPong = false\\n    this.lastPingAt = 0\\n  }\",\n          \"newString\": \"  private startLivenessMonitor() {\\n    this.stopLivenessMonitor()\\n\\n    this.lastPingAt = 0\\n    this.lastPongTime = Date.now()\\n    this.awaitingPong = false\\n    this.consecutiveMissedPongs = 0\\n\\n    this.sendPing()\\n\\n    this.pingInterval = BackgroundTimer.setInterval(() => {\\n      if (!this.isConnected()) return\\n\\n      if (this.awaitingPong) {\\n        const elapsed = Date.now() - this.lastPingAt\\n        if (elapsed >= PONG_TIMEOUT_MS) {\\n          // Outstanding ping timed out \\u2014 count it and decide whether to give\\n          // up on this WS or just send the next probe. We use a tolerance\\n          // (MAX_CONSECUTIVE_MISSED_PONGS) because the iOS JS thread can\\n          // stutter for a tick or two on resume without the underlying\\n          // socket actually being dead.\\n          this.consecutiveMissedPongs += 1\\n          console.log(\\n            `WSM: pong missed (${this.consecutiveMissedPongs} in a row, elapsed=${elapsed}ms)`,\\n          )\\n          if (this.consecutiveMissedPongs > MAX_CONSECUTIVE_MISSED_PONGS) {\\n            this.reconnectNow(\\n              `pong timeout: ${this.consecutiveMissedPongs} consecutive misses (last elapsed=${elapsed}ms)`,\\n            )\\n            return\\n          }\\n          // Send the next ping immediately so we don't have to wait another\\n          // PING_INTERVAL_MS to retry.\\n          this.awaitingPong = false\\n          this.sendPing()\\n          return\\n        }\\n        return\\n      }\\n\\n      this.sendPing()\\n    }, PING_INTERVAL_MS)\\n  }\\n\\n  private sendPing() {\\n    if (!this.isConnected()) {\\n      return\\n    }\\n\\n    this.lastPingAt = Date.now()\\n    this.awaitingPong = true\\n\\n    try {\\n      this.webSocket?.send(JSON.stringify({type: \\\"ping\\\"}))\\n    } catch (error) {\\n      console.log(\\\"WSM: Error sending ping:\\\", error)\\n    }\\n  }\\n\\n  /**\\n   * Foreground-resume liveness probe. Called from the AppState listener\\n   * when the app re-enters `active` from any non-active state. iOS may have\\n   * suspended the JS thread (and our ping timer) for an arbitrarily long\\n   * time, so the regular pingInterval logic isn't sufficient on its own \\u2014\\n   * if there's a dead socket we want to find out before the user presses\\n   * the camera button, not 5 seconds after.\\n   */\\n  private probeForForegroundResume() {\\n    if (this.foregroundProbeTimer) {\\n      clearTimeout(this.foregroundProbeTimer)\\n      this.foregroundProbeTimer = null\\n    }\\n    if (!this.isConnected()) {\\n      // If we're not connected, our regular reconnect interval is already\\n      // doing the right thing \\u2014 just nudge it to retry now instead of\\n      // waiting for the next tick.\\n      this.actuallyReconnect()\\n      return\\n    }\\n\\n    // Send a probe ping with a tight deadline. If the pong doesn't land\\n    // inside FOREGROUND_PROBE_PONG_TIMEOUT_MS, the socket is a zombie and\\n    // we reconnect immediately. We don't touch consecutiveMissedPongs here\\n    // because this is a one-shot wake-up check, not part of the steady-\\n    // state ping cycle.\\n    const probeStart = Date.now()\\n    this.lastPingAt = probeStart\\n    this.awaitingPong = true\\n\\n    try {\\n      this.webSocket?.send(JSON.stringify({type: \\\"ping\\\"}))\\n    } catch (error) {\\n      console.log(\\\"WSM: Foreground probe send failed:\\\", error)\\n      this.reconnectNow(\\\"foreground probe send failed\\\")\\n      return\\n    }\\n\\n    this.foregroundProbeTimer = setTimeout(() => {\\n      this.foregroundProbeTimer = null\\n      // If a pong landed strictly after we sent the probe, we're alive.\\n      if (this.lastPongTime >= probeStart) return\\n      const elapsed = Date.now() - probeStart\\n      this.reconnectNow(`foreground probe pong timeout (${elapsed}ms)`)\\n    }, FOREGROUND_PROBE_PONG_TIMEOUT_MS)\\n  }\\n\\n  private handleAppStateChange = (next: AppStateStatus) => {\\n    const previous = this.lastAppState\\n    this.lastAppState = next\\n    if (next !== \\\"active\\\") return\\n    if (previous === \\\"active\\\") return // ignore active\\u2192active edge cases\\n    console.log(`WSM: AppState ${previous} \\u2192 active \\u2014 probing WS`)\\n    this.probeForForegroundResume()\\n  }\\n\\n  /**\\n   * Stop the liveness monitor \\u2014 clear the ping interval.\\n   */\\n  private stopLivenessMonitor() {\\n    if (this.pingInterval) {\\n      BackgroundTimer.clearInterval(this.pingInterval)\\n      this.pingInterval = 0\\n    }\\n    if (this.foregroundProbeTimer) {\\n      clearTimeout(this.foregroundProbeTimer)\\n      this.foregroundProbeTimer = null\\n    }\\n\\n    this.awaitingPong = false\\n    this.lastPingAt = 0\\n    this.consecutiveMissedPongs = 0\\n  }\",\n          \"originalFile\": \"import {EventEmitter} from \\\"events\\\"\\nimport {AppState, AppStateStatus} from \\\"react-native\\\"\\n\\nimport restComms from \\\"@/services/RestComms\\\"\\nimport {useConnectionStore} from \\\"@/stores/connection\\\"\\nimport {getGlasesInfoPartial, useGlassesStore} from \\\"@/stores/glasses\\\"\\nimport GlobalEventEmitter from \\\"@/utils/GlobalEventEmitter\\\"\\nimport {BackgroundTimer} from \\\"@/utils/timers\\\"\\n\\n// ---------------------------------------------------------------------------\\n// Liveness detection constants\\n// ---------------------------------------------------------------------------\\n// The CLIENT sends {\\\"type\\\":\\\"ping\\\"} every 5 s. The server responds with\\n// {\\\"type\\\":\\\"pong\\\"}. If a pong is missed, the client reconnects immediately.\\n\\n// How often the client sends a ping to the server.\\nconst PING_INTERVAL_MS = 5_000\\n\\n// If no pong is received within this window, consider the connection\\n// dead and reconnect. This timeout is measured from the last ping sent,\\n// not from connect time, so the first timer tick always sends a ping\\n// instead of immediately declaring the socket stale.\\nconst PONG_TIMEOUT_MS = 5_000\\n\\n// Delay between reconnect attempts after a disconnect.\\nconst RECONNECT_INTERVAL_MS = 5_000\\n\\n// ---------------------------------------------------------------------------\\n// Foreground-resume liveness probe\\n// ---------------------------------------------------------------------------\\n// On iOS our BackgroundTimer falls back to plain setInterval \\u2014 so when the\\n// JS thread is suspended (app backgrounded, screen locked, only BLE awake),\\n// the ping loop above stops firing entirely. The TCP socket can stay nominally\\n// open in the kernel for minutes while we receive zero frames, and then on\\n// foreground-return the user presses the camera button before the next ping\\n// tick runs. Result: the cloud's PHOTO_REQUEST gets written into a dead WS,\\n// the photo never lands, the SDK times out at 30s.\\n//\\n// The fix is to treat every transition into `active` as evidence we just\\n// woke up and the socket may be a zombie. We send a ping with a tighter\\n// deadline; if the pong does not land, we reconnect *immediately* rather\\n// than waiting for the next regular ping cycle.\\nconst FOREGROUND_PROBE_PONG_TIMEOUT_MS = 2_500\\n\\n// Max pongs we'll tolerate going missing in a row before reconnecting on the\\n// regular cycle. With PING_INTERVAL_MS=5_000 + PONG_TIMEOUT_MS=5_000, a\\n// single value of 1 already gives ~5\\u201310s detection in the foreground; we\\n// keep a small allowance to ride out brief network glitches.\\nconst MAX_CONSECUTIVE_MISSED_PONGS = 1\\n\\nexport enum WebSocketStatus {\\n  DISCONNECTED = \\\"disconnected\\\",\\n  CONNECTING = \\\"connecting\\\",\\n  CONNECTED = \\\"connected\\\",\\n  ERROR = \\\"error\\\",\\n}\\n\\nclass WebSocketManager extends EventEmitter {\\n  private static instance: WebSocketManager | null = null\\n  private webSocket: WebSocket | null = null\\n  private previousStatus: WebSocketStatus = WebSocketStatus.DISCONNECTED\\n  private url: string | null = null\\n  private coreToken: string | null = null\\n  private reconnectInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0\\n  private manuallyDisconnected: boolean = false\\n\\n  // Liveness detection state\\n  private lastPingAt: number = 0\\n  private lastPongTime: number = 0\\n  private awaitingPong: boolean = false\\n  private consecutiveMissedPongs: number = 0\\n  private pingInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0\\n  private foregroundProbeTimer: ReturnType<typeof setTimeout> | null = null\\n  private appStateSubscription: {remove: () => void} | null = null\\n  private lastAppState: AppStateStatus = AppState.currentState\\n\\n  private constructor() {\\n    super()\\n    GlobalEventEmitter.on(\\\"NO_ACTIVE_SESSION\\\", this.handleNoActiveSession)\\n    // App-state listener: a foreground transition is the canonical \\\"JS thread\\n    // just resumed, our timers may have been frozen for an unknown duration\\\"\\n    // signal. Probe the WS aggressively rather than wait for the next tick.\\n    this.appStateSubscription = AppState.addEventListener(\\\"change\\\", this.handleAppStateChange)\\n  }\\n\\n  public static getInstance(): WebSocketManager {\\n    if (!WebSocketManager.instance) {\\n      WebSocketManager.instance = new WebSocketManager()\\n    }\\n    return WebSocketManager.instance\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Connection lifecycle\\n  // -------------------------------------------------------------------------\\n\\n  // things to run when the websocket status changes to connected:\\n  private onConnect() {\\n    const statusObj = getGlasesInfoPartial(useGlassesStore.getState())\\n    restComms.updateGlassesState(statusObj)\\n  }\\n\\n  // Only emit when status actually changes\\n  private updateStatus(newStatus: WebSocketStatus) {\\n    if (newStatus !== this.previousStatus) {\\n      this.previousStatus = newStatus\\n\\n      // Update the connection store\\n      const store = useConnectionStore.getState()\\n      store.setStatus(newStatus)\\n\\n      if (newStatus === WebSocketStatus.CONNECTED) {\\n        this.onConnect()\\n      }\\n    }\\n  }\\n\\n  /**\\n   * Detach all event handlers from the current WebSocket and close it.\\n   *\\n   * Nulling out handlers BEFORE calling .close() prevents a stale `onclose`\\n   * callback from firing asynchronously and kicking off a rogue reconnect\\n   * loop (e.g. when switching backends: disconnect() sets\\n   * manuallyDisconnected = true, connect() resets it to false, then the\\n   * stale onclose fires and calls startReconnectInterval against the old URL).\\n   */\\n  private detachAndCloseSocket() {\\n    if (this.webSocket) {\\n      this.webSocket.onclose = null\\n      this.webSocket.onerror = null\\n      this.webSocket.onmessage = null\\n      this.webSocket.onopen = null\\n      this.webSocket.close()\\n      this.webSocket = null\\n    }\\n  }\\n\\n  public connect(url: string, coreToken: string) {\\n    console.log(`WSM: connect: ${url}`)\\n    this.manuallyDisconnected = false\\n    this.url = url\\n    this.coreToken = coreToken\\n\\n    // Tear down any existing connection cleanly\\n    this.stopLivenessMonitor()\\n    this.detachAndCloseSocket()\\n\\n    // Update status to connecting and set URL in store\\n    this.updateStatus(WebSocketStatus.CONNECTING)\\n    const store = useConnectionStore.getState()\\n    store.setUrl(url)\\n\\n    // Create new WebSocket with authorization header\\n    const wsUrl = new URL(url)\\n    wsUrl.searchParams.set(\\\"token\\\", coreToken)\\n    wsUrl.searchParams.set(\\\"livekit\\\", \\\"true\\\")\\n    wsUrl.searchParams.set(\\\"udpEncryption\\\", \\\"true\\\")\\n\\n    console.log(\\\"WSM: Connecting to WebSocket URL:\\\", wsUrl.toString().replace(/token=[^&]+/, \\\"token=REDACTED\\\"))\\n\\n    this.webSocket = new WebSocket(wsUrl.toString())\\n\\n    // Set up event handlers\\n    this.webSocket.onopen = () => {\\n      console.log(\\\"WSM: WebSocket connection established\\\")\\n      this.updateStatus(WebSocketStatus.CONNECTED)\\n      this.startLivenessMonitor()\\n    }\\n\\n    this.webSocket.onmessage = (event) => {\\n      this.handleIncomingMessage(event.data)\\n    }\\n\\n    this.webSocket.onerror = (_error) => {\\n      console.log(\\\"WSM: WebSocket error:\\\", _error)\\n      this.stopLivenessMonitor()\\n      this.updateStatus(WebSocketStatus.ERROR)\\n      store.setError(_error?.toString() || \\\"WebSocket error\\\")\\n      this.startReconnectInterval()\\n    }\\n\\n    this.webSocket.onclose = (_event) => {\\n      console.log(\\\"WSM: Connection closed with code:\\\", _event.code)\\n      this.stopLivenessMonitor()\\n      this.updateStatus(WebSocketStatus.DISCONNECTED)\\n      this.startReconnectInterval()\\n    }\\n  }\\n\\n  private actuallyReconnect() {\\n    console.log(\\\"WSM: Attempting reconnect\\\")\\n    const store = useConnectionStore.getState()\\n\\n    // Reconnect from both DISCONNECTED and ERROR states.\\n    // The old code only reconnected from DISCONNECTED \\u2014 if onerror fired\\n    // without a subsequent onclose, the client was stuck in ERROR forever.\\n    if (store.status === WebSocketStatus.DISCONNECTED || store.status === WebSocketStatus.ERROR) {\\n      if (this.url && this.coreToken) {\\n        this.connect(this.url, this.coreToken)\\n      }\\n    }\\n    if (store.status === WebSocketStatus.CONNECTED) {\\n      console.log(\\\"WSM: Connected, stopping reconnect interval\\\")\\n      BackgroundTimer.clearInterval(this.reconnectInterval)\\n    }\\n  }\\n\\n  private startReconnectInterval() {\\n    console.log(\\\"WSM: Starting reconnect interval, manuallyDisconnected:\\\", this.manuallyDisconnected)\\n    if (this.reconnectInterval) {\\n      BackgroundTimer.clearInterval(this.reconnectInterval)\\n      this.reconnectInterval = 0\\n    }\\n\\n    // Don't start reconnect if manually disconnected\\n    if (this.manuallyDisconnected) {\\n      return\\n    }\\n\\n    this.reconnectInterval = BackgroundTimer.setInterval(this.actuallyReconnect.bind(this), RECONNECT_INTERVAL_MS)\\n  }\\n\\n  private reconnectNow(reason: string) {\\n    console.log(`WSM: Immediate reconnect requested: ${reason}`)\\n    if (this.manuallyDisconnected) {\\n      return\\n    }\\n\\n    if (this.reconnectInterval) {\\n      BackgroundTimer.clearInterval(this.reconnectInterval)\\n      this.reconnectInterval = 0\\n    }\\n\\n    this.stopLivenessMonitor()\\n    this.detachAndCloseSocket()\\n    this.updateStatus(WebSocketStatus.DISCONNECTED)\\n\\n    if (this.url && this.coreToken) {\\n      this.connect(this.url, this.coreToken)\\n      return\\n    }\\n\\n    this.startReconnectInterval()\\n  }\\n\\n  private handleNoActiveSession = () => {\\n    if (this.previousStatus === WebSocketStatus.CONNECTING) {\\n      return\\n    }\\n\\n    this.reconnectNow(\\\"REST request returned NO_ACTIVE_SESSION\\\")\\n  }\\n\\n  public disconnect() {\\n    this.manuallyDisconnected = true\\n\\n    if (this.reconnectInterval) {\\n      BackgroundTimer.clearInterval(this.reconnectInterval)\\n      this.reconnectInterval = 0\\n    }\\n\\n    this.stopLivenessMonitor()\\n    this.detachAndCloseSocket()\\n    this.updateStatus(WebSocketStatus.DISCONNECTED)\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Liveness detection\\n  // -------------------------------------------------------------------------\\n\\n  /**\\n   * Start the client-initiated ping-pong liveness monitor.\\n   *\\n   * Every PING_INTERVAL_MS the client sends {\\\"type\\\":\\\"ping\\\"} to the server.\\n   * The server responds with {\\\"type\\\":\\\"pong\\\"} which updates lastPongTime\\n   * (via handleIncomingMessage \\u2192 pong branch).\\n   */\\n  private startLivenessMonitor() {\\n    this.stopLivenessMonitor()\\n\\n    this.lastPingAt = 0\\n    this.lastPongTime = Date.now()\\n    this.awaitingPong = false\\n\\n    this.sendPing()\\n\\n    this.pingInterval = BackgroundTimer.setInterval(() => {\\n      if (!this.isConnected()) return\\n\\n      if (this.awaitingPong) {\\n        const elapsed = Date.now() - this.lastPingAt\\n        if (elapsed >= PONG_TIMEOUT_MS) {\\n          this.reconnectNow(`pong timeout after ${elapsed}ms`)\\n        }\\n        return\\n      }\\n\\n      this.sendPing()\\n    }, PING_INTERVAL_MS)\\n  }\\n\\n  private sendPing() {\\n    if (!this.isConnected()) {\\n      return\\n    }\\n\\n    this.lastPingAt = Date.now()\\n    this.awaitingPong = true\\n\\n    try {\\n      this.webSocket?.send(JSON.stringify({type: \\\"ping\\\"}))\\n    } catch (error) {\\n      console.log(\\\"WSM: Error sending ping:\\\", error)\\n    }\\n  }\\n\\n  /**\\n   * Stop the liveness monitor \\u2014 clear the ping interval.\\n   */\\n  private stopLivenessMonitor() {\\n    if (this.pingInterval) {\\n      BackgroundTimer.clearInterval(this.pingInterval)\\n      this.pingInterval = 0\\n    }\\n\\n    this.awaitingPong = false\\n    this.lastPingAt = 0\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // State queries\\n  // -------------------------------------------------------------------------\\n\\n  public isConnected(): boolean {\\n    return this.previousStatus === WebSocketStatus.CONNECTED\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Sending\\n  // -------------------------------------------------------------------------\\n\\n  // Send JSON message\\n  public sendText(text: string) {\\n    if (!this.isConnected()) {\\n      console.log(\\\"WSM: Cannot send message: WebSocket not connected\\\")\\n      return\\n    }\\n\\n    try {\\n      this.webSocket?.send(text)\\n    } catch (error) {\\n      console.log(\\\"WSM: Error sending text message:\\\", error)\\n    }\\n  }\\n\\n  // Send binary data (for audio)\\n  public sendBinary(data: ArrayBuffer | Uint8Array) {\\n    if (!this.isConnected() && __DEV__ && Math.random() < 0.03) {\\n      console.log(\\\"WSM: Cannot send binary data: WebSocket not connected\\\")\\n      return\\n    }\\n\\n    try {\\n      this.webSocket?.send(data)\\n    } catch (error) {\\n      console.log(\\\"WSM: Error sending binary data:\\\", error)\\n    }\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Receiving\\n  // -------------------------------------------------------------------------\\n\\n  private handleIncomingMessage(data: string | ArrayBuffer) {\\n    try {\\n      let message: any\\n\\n      if (typeof data === \\\"string\\\") {\\n        message = JSON.parse(data)\\n      } else {\\n        // Handle binary data - convert to string first\\n        const decoder = new TextDecoder()\\n        const text = decoder.decode(data)\\n        message = JSON.parse(text)\\n      }\\n\\n      // Pong received \\u2014 update liveness timestamp. Don't forward to SocketComms.\\n      if (message.type === \\\"pong\\\") {\\n        this.lastPongTime = Date.now()\\n        this.awaitingPong = false\\n        return\\n      }\\n\\n      // Forward message to listeners\\n      this.emit(\\\"message\\\", message)\\n    } catch (error) {\\n      console.log(\\\"WSM: Failed to parse WebSocket message:\\\", error)\\n    }\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Cleanup\\n  // -------------------------------------------------------------------------\\n\\n  public cleanup() {\\n    console.log(\\\"WSM: cleanup()\\\")\\n    this.disconnect()\\n    this.webSocket = null\\n    const store = useConnectionStore.getState()\\n    store.reset()\\n  }\\n}\\n\\nconst wsManager = WebSocketManager.getInstance()\\nexport default wsManager\\n\",\n          \"structuredPatch\": [\n            {\n              \"oldStart\": 281,\n              \"oldLines\": 6,\n              \"newStart\": 281,\n              \"newLines\": 7,\n              \"lines\": [\n                \"     this.lastPingAt = 0\",\n                \"     this.lastPongTime = Date.now()\",\n                \"     this.awaitingPong = false\",\n                \"+    this.consecutiveMissedPongs = 0\",\n                \" \",\n                \"     this.sendPing()\",\n                \" \"\n              ]\n            },\n            {\n              \"oldStart\": 290,\n              \"oldLines\": 7,\n              \"newStart\": 291,\n              \"newLines\": 26,\n              \"lines\": [\n                \"       if (this.awaitingPong) {\",\n                \"         const elapsed = Date.now() - this.lastPingAt\",\n                \"         if (elapsed >= PONG_TIMEOUT_MS) {\",\n                \"-          this.reconnectNow(`pong timeout after ${elapsed}ms`)\",\n                \"+          // Outstanding ping timed out \\u2014 count it and decide whether to give\",\n                \"+          // up on this WS or just send the next probe. We use a tolerance\",\n                \"+          // (MAX_CONSECUTIVE_MISSED_PONGS) because the iOS JS thread can\",\n                \"+          // stutter for a tick or two on resume without the underlying\",\n                \"+          // socket actually being dead.\",\n                \"+          this.consecutiveMissedPongs += 1\",\n                \"+          console.log(\",\n                \"+            `WSM: pong missed (${this.consecutiveMissedPongs} in a row, elapsed=${elapsed}ms)`,\",\n                \"+          )\",\n                \"+          if (this.consecutiveMissedPongs > MAX_CONSECUTIVE_MISSED_PONGS) {\",\n                \"+            this.reconnectNow(\",\n                \"+              `pong timeout: ${this.consecutiveMissedPongs} consecutive misses (last elapsed=${elapsed}ms)`,\",\n                \"+            )\",\n                \"+            return\",\n                \"+          }\",\n                \"+          // Send the next ping immediately so we don't have to wait another\",\n                \"+          // PING_INTERVAL_MS to retry.\",\n                \"+          this.awaitingPong = false\",\n                \"+          this.sendPing()\",\n                \"+          return\",\n                \"         }\",\n                \"         return\",\n                \"       }\"\n              ]\n            },\n            {\n              \"oldStart\": 315,\n              \"oldLines\": 6,\n              \"newStart\": 335,\n              \"newLines\": 62,\n              \"lines\": [\n                \"   }\",\n                \" \",\n                \"   /**\",\n                \"+   * Foreground-resume liveness probe. Called from the AppState listener\",\n                \"+   * when the app re-enters `active` from any non-active state. iOS may have\",\n                \"+   * suspended the JS thread (and our ping timer) for an arbitrarily long\",\n                \"+   * time, so the regular pingInterval logic isn't sufficient on its own \\u2014\",\n                \"+   * if there's a dead socket we want to find out before the user presses\",\n                \"+   * the camera button, not 5 seconds after.\",\n                \"+   */\",\n                \"+  private probeForForegroundResume() {\",\n                \"+    if (this.foregroundProbeTimer) {\",\n                \"+      clearTimeout(this.foregroundProbeTimer)\",\n                \"+      this.foregroundProbeTimer = null\",\n                \"+    }\",\n                \"+    if (!this.isConnected()) {\",\n                \"+      // If we're not connected, our regular reconnect interval is already\",\n                \"+      // doing the right thing \\u2014 just nudge it to retry now instead of\",\n                \"+      // waiting for the next tick.\",\n                \"+      this.actuallyReconnect()\",\n                \"+      return\",\n                \"+    }\",\n                \"+\",\n                \"+    // Send a probe ping with a tight deadline. If the pong doesn't land\",\n                \"+    // inside FOREGROUND_PROBE_PONG_TIMEOUT_MS, the socket is a zombie and\",\n                \"+    // we reconnect immediately. We don't touch consecutiveMissedPongs here\",\n                \"+    // because this is a one-shot wake-up check, not part of the steady-\",\n                \"+    // state ping cycle.\",\n                \"+    const probeStart = Date.now()\",\n                \"+    this.lastPingAt = probeStart\",\n                \"+    this.awaitingPong = true\",\n                \"+\",\n                \"+    try {\",\n                \"+      this.webSocket?.send(JSON.stringify({type: \\\"ping\\\"}))\",\n                \"+    } catch (error) {\",\n                \"+      console.log(\\\"WSM: Foreground probe send failed:\\\", error)\",\n                \"+      this.reconnectNow(\\\"foreground probe send failed\\\")\",\n                \"+      return\",\n                \"+    }\",\n                \"+\",\n                \"+    this.foregroundProbeTimer = setTimeout(() => {\",\n                \"+      this.foregroundProbeTimer = null\",\n                \"+      // If a pong landed strictly after we sent the probe, we're alive.\",\n                \"+      if (this.lastPongTime >= probeStart) return\",\n                \"+      const elapsed = Date.now() - probeStart\",\n                \"+      this.reconnectNow(`foreground probe pong timeout (${elapsed}ms)`)\",\n                \"+    }, FOREGROUND_PROBE_PONG_TIMEOUT_MS)\",\n                \"+  }\",\n                \"+\",\n                \"+  private handleAppStateChange = (next: AppStateStatus) => {\",\n                \"+    const previous = this.lastAppState\",\n                \"+    this.lastAppState = next\",\n                \"+    if (next !== \\\"active\\\") return\",\n                \"+    if (previous === \\\"active\\\") return // ignore active\\u2192active edge cases\",\n                \"+    console.log(`WSM: AppState ${previous} \\u2192 active \\u2014 probing WS`)\",\n                \"+    this.probeForForegroundResume()\",\n                \"+  }\",\n                \"+\",\n                \"+  /**\",\n                \"    * Stop the liveness monitor \\u2014 clear the ping interval.\",\n                \"    */\",\n                \"   private stopLivenessMonitor() {\"\n              ]\n            },\n            {\n              \"oldStart\": 322,\n              \"oldLines\": 9,\n              \"newStart\": 398,\n              \"newLines\": 14,\n              \"lines\": [\n                \"       BackgroundTimer.clearInterval(this.pingInterval)\",\n                \"       this.pingInterval = 0\",\n                \"     }\",\n                \"+    if (this.foregroundProbeTimer) {\",\n                \"+      clearTimeout(this.foregroundProbeTimer)\",\n                \"+      this.foregroundProbeTimer = null\",\n                \"+    }\",\n                \" \",\n                \"     this.awaitingPong = false\",\n                \"     this.lastPingAt = 0\",\n                \"+    this.consecutiveMissedPongs = 0\",\n                \"   }\",\n                \" \",\n                \"   // -------------------------------------------------------------------------\"\n              ]\n            }\n          ],\n          \"userModified\": false,\n          \"replaceAll\": false\n        },\n        \"tool_use_id\": \"toolu_01YD4yEjJHWAPqSmt4vkUyaS\",\n        \"duration_ms\": 13\n      }\n    ]\n  },\n  \"falsification_attempts\": [],\n  \"alternatives\": [],\n  \"conclusion\": {\n    \"summary\": \"Task completed via tool execution\",\n    \"confidence\": 0.8,\n    \"success\": true\n  },\n  \"risks_unknowns\": [],\n  \"next_actions\": [],\n  \"execution_time\": 0,\n  \"resource_usage\": {}\n}"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:28.451598+00:00",
+    "operation": "message_check",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "limit": 10
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:28.452927+00:00",
+    "operation": "message_response_prepared",
+    "data": {
+      "content": "\nTask Completion Summary:\n- Hypothesis: Implement requested functionality efficiently\n- Conclusion: Task completed via tool execution\n- Confidence: 0.8\n- Next Actions: None\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:28.454064+00:00",
+    "operation": "private_note_added",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "content": "\n## Task Completion Notes - 2026-05-05 03:54:28\n\n### Performance Metrics\n- Execution Time: 0\n- Tool Calls: 1\n- Files Modified: 0\n\n### Observations\n- Success Rate: True\n- Confidence Score: 0.8\n- Challenges: None\n\n### Lessons Learned\nStandard task completion workflow executed successfully.\n",
+      "category": "task_completion"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:28.455169+00:00",
+    "operation": "housekeeping",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "force": false
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:28.456430+00:00",
+    "operation": "completion_verification",
+    "data": {
+      "timestamp": "2026-05-05T10:54:28.456424+00:00",
+      "agent_id": "claude-code-assistant",
+      "project": "claude-code-integration",
+      "verification_status": "completed"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:35.003927+00:00",
+    "operation": "agent_identity_check",
+    "data": {
+      "name": "claude-code-assistant",
+      "role": "AI Code Assistant and IDE",
+      "project_name": "claude-code-integration",
+      "capabilities": [
+        "Code analysis and generation",
+        "File system operations",
+        "Task management",
+        "Scientific method documentation",
+        "Multi-agent coordination"
+      ],
+      "context": "Claude-based AI assistant integrated with Obsidian for task tracking and knowledge management"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:35.005738+00:00",
+    "operation": "task_location",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "title": "Edit",
+      "description": "",
+      "assigned_to": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "priority": "medium",
+      "status": "in_progress"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:35.007499+00:00",
+    "operation": "task_update",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "status": "completed",
+      "description": "\n\n## Decision Log\n{\n  \"timestamp\": \"2026-05-05T10:54:35.007402+00:00\",\n  \"task_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n  \"hypothesis\": \"Implement requested functionality efficiently\",\n  \"tests_evidence\": {\n    \"methods\": [\n      \"Edit\"\n    ],\n    \"data\": {},\n    \"artifacts\": [],\n    \"tool_calls\": [\n      {\n        \"session_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n        \"transcript_path\": \"/Users/hiyabuddy/.claude/projects/-Users-hiyabuddy-sites-brendancopley-MentraOS/7ccd240c-1774-4ec5-a390-39f24ccf8dcd.jsonl\",\n        \"cwd\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/cloud/packages/cloud\",\n        \"permission_mode\": \"auto\",\n        \"hook_event_name\": \"PostToolUse\",\n        \"tool_name\": \"Edit\",\n        \"tool_input\": {\n          \"file_path\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/mobile/src/services/WebSocketManager.ts\",\n          \"old_string\": \"      // Pong received \\u2014 update liveness timestamp. Don't forward to SocketComms.\\n      if (message.type === \\\"pong\\\") {\\n        this.lastPongTime = Date.now()\\n        this.awaitingPong = false\\n        return\\n      }\",\n          \"new_string\": \"      // Pong received \\u2014 update liveness timestamp. Don't forward to SocketComms.\\n      if (message.type === \\\"pong\\\") {\\n        this.lastPongTime = Date.now()\\n        this.awaitingPong = false\\n        this.consecutiveMissedPongs = 0\\n        return\\n      }\",\n          \"replace_all\": false\n        },\n        \"tool_response\": {\n          \"filePath\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/mobile/src/services/WebSocketManager.ts\",\n          \"oldString\": \"      // Pong received \\u2014 update liveness timestamp. Don't forward to SocketComms.\\n      if (message.type === \\\"pong\\\") {\\n        this.lastPongTime = Date.now()\\n        this.awaitingPong = false\\n        return\\n      }\",\n          \"newString\": \"      // Pong received \\u2014 update liveness timestamp. Don't forward to SocketComms.\\n      if (message.type === \\\"pong\\\") {\\n        this.lastPongTime = Date.now()\\n        this.awaitingPong = false\\n        this.consecutiveMissedPongs = 0\\n        return\\n      }\",\n          \"originalFile\": \"import {EventEmitter} from \\\"events\\\"\\nimport {AppState, AppStateStatus} from \\\"react-native\\\"\\n\\nimport restComms from \\\"@/services/RestComms\\\"\\nimport {useConnectionStore} from \\\"@/stores/connection\\\"\\nimport {getGlasesInfoPartial, useGlassesStore} from \\\"@/stores/glasses\\\"\\nimport GlobalEventEmitter from \\\"@/utils/GlobalEventEmitter\\\"\\nimport {BackgroundTimer} from \\\"@/utils/timers\\\"\\n\\n// ---------------------------------------------------------------------------\\n// Liveness detection constants\\n// ---------------------------------------------------------------------------\\n// The CLIENT sends {\\\"type\\\":\\\"ping\\\"} every 5 s. The server responds with\\n// {\\\"type\\\":\\\"pong\\\"}. If a pong is missed, the client reconnects immediately.\\n\\n// How often the client sends a ping to the server.\\nconst PING_INTERVAL_MS = 5_000\\n\\n// If no pong is received within this window, consider the connection\\n// dead and reconnect. This timeout is measured from the last ping sent,\\n// not from connect time, so the first timer tick always sends a ping\\n// instead of immediately declaring the socket stale.\\nconst PONG_TIMEOUT_MS = 5_000\\n\\n// Delay between reconnect attempts after a disconnect.\\nconst RECONNECT_INTERVAL_MS = 5_000\\n\\n// ---------------------------------------------------------------------------\\n// Foreground-resume liveness probe\\n// ---------------------------------------------------------------------------\\n// On iOS our BackgroundTimer falls back to plain setInterval \\u2014 so when the\\n// JS thread is suspended (app backgrounded, screen locked, only BLE awake),\\n// the ping loop above stops firing entirely. The TCP socket can stay nominally\\n// open in the kernel for minutes while we receive zero frames, and then on\\n// foreground-return the user presses the camera button before the next ping\\n// tick runs. Result: the cloud's PHOTO_REQUEST gets written into a dead WS,\\n// the photo never lands, the SDK times out at 30s.\\n//\\n// The fix is to treat every transition into `active` as evidence we just\\n// woke up and the socket may be a zombie. We send a ping with a tighter\\n// deadline; if the pong does not land, we reconnect *immediately* rather\\n// than waiting for the next regular ping cycle.\\nconst FOREGROUND_PROBE_PONG_TIMEOUT_MS = 2_500\\n\\n// Max pongs we'll tolerate going missing in a row before reconnecting on the\\n// regular cycle. With PING_INTERVAL_MS=5_000 + PONG_TIMEOUT_MS=5_000, a\\n// single value of 1 already gives ~5\\u201310s detection in the foreground; we\\n// keep a small allowance to ride out brief network glitches.\\nconst MAX_CONSECUTIVE_MISSED_PONGS = 1\\n\\nexport enum WebSocketStatus {\\n  DISCONNECTED = \\\"disconnected\\\",\\n  CONNECTING = \\\"connecting\\\",\\n  CONNECTED = \\\"connected\\\",\\n  ERROR = \\\"error\\\",\\n}\\n\\nclass WebSocketManager extends EventEmitter {\\n  private static instance: WebSocketManager | null = null\\n  private webSocket: WebSocket | null = null\\n  private previousStatus: WebSocketStatus = WebSocketStatus.DISCONNECTED\\n  private url: string | null = null\\n  private coreToken: string | null = null\\n  private reconnectInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0\\n  private manuallyDisconnected: boolean = false\\n\\n  // Liveness detection state\\n  private lastPingAt: number = 0\\n  private lastPongTime: number = 0\\n  private awaitingPong: boolean = false\\n  private consecutiveMissedPongs: number = 0\\n  private pingInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0\\n  private foregroundProbeTimer: ReturnType<typeof setTimeout> | null = null\\n  private appStateSubscription: {remove: () => void} | null = null\\n  private lastAppState: AppStateStatus = AppState.currentState\\n\\n  private constructor() {\\n    super()\\n    GlobalEventEmitter.on(\\\"NO_ACTIVE_SESSION\\\", this.handleNoActiveSession)\\n    // App-state listener: a foreground transition is the canonical \\\"JS thread\\n    // just resumed, our timers may have been frozen for an unknown duration\\\"\\n    // signal. Probe the WS aggressively rather than wait for the next tick.\\n    this.appStateSubscription = AppState.addEventListener(\\\"change\\\", this.handleAppStateChange)\\n  }\\n\\n  public static getInstance(): WebSocketManager {\\n    if (!WebSocketManager.instance) {\\n      WebSocketManager.instance = new WebSocketManager()\\n    }\\n    return WebSocketManager.instance\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Connection lifecycle\\n  // -------------------------------------------------------------------------\\n\\n  // things to run when the websocket status changes to connected:\\n  private onConnect() {\\n    const statusObj = getGlasesInfoPartial(useGlassesStore.getState())\\n    restComms.updateGlassesState(statusObj)\\n  }\\n\\n  // Only emit when status actually changes\\n  private updateStatus(newStatus: WebSocketStatus) {\\n    if (newStatus !== this.previousStatus) {\\n      this.previousStatus = newStatus\\n\\n      // Update the connection store\\n      const store = useConnectionStore.getState()\\n      store.setStatus(newStatus)\\n\\n      if (newStatus === WebSocketStatus.CONNECTED) {\\n        this.onConnect()\\n      }\\n    }\\n  }\\n\\n  /**\\n   * Detach all event handlers from the current WebSocket and close it.\\n   *\\n   * Nulling out handlers BEFORE calling .close() prevents a stale `onclose`\\n   * callback from firing asynchronously and kicking off a rogue reconnect\\n   * loop (e.g. when switching backends: disconnect() sets\\n   * manuallyDisconnected = true, connect() resets it to false, then the\\n   * stale onclose fires and calls startReconnectInterval against the old URL).\\n   */\\n  private detachAndCloseSocket() {\\n    if (this.webSocket) {\\n      this.webSocket.onclose = null\\n      this.webSocket.onerror = null\\n      this.webSocket.onmessage = null\\n      this.webSocket.onopen = null\\n      this.webSocket.close()\\n      this.webSocket = null\\n    }\\n  }\\n\\n  public connect(url: string, coreToken: string) {\\n    console.log(`WSM: connect: ${url}`)\\n    this.manuallyDisconnected = false\\n    this.url = url\\n    this.coreToken = coreToken\\n\\n    // Tear down any existing connection cleanly\\n    this.stopLivenessMonitor()\\n    this.detachAndCloseSocket()\\n\\n    // Update status to connecting and set URL in store\\n    this.updateStatus(WebSocketStatus.CONNECTING)\\n    const store = useConnectionStore.getState()\\n    store.setUrl(url)\\n\\n    // Create new WebSocket with authorization header\\n    const wsUrl = new URL(url)\\n    wsUrl.searchParams.set(\\\"token\\\", coreToken)\\n    wsUrl.searchParams.set(\\\"livekit\\\", \\\"true\\\")\\n    wsUrl.searchParams.set(\\\"udpEncryption\\\", \\\"true\\\")\\n\\n    console.log(\\\"WSM: Connecting to WebSocket URL:\\\", wsUrl.toString().replace(/token=[^&]+/, \\\"token=REDACTED\\\"))\\n\\n    this.webSocket = new WebSocket(wsUrl.toString())\\n\\n    // Set up event handlers\\n    this.webSocket.onopen = () => {\\n      console.log(\\\"WSM: WebSocket connection established\\\")\\n      this.updateStatus(WebSocketStatus.CONNECTED)\\n      this.startLivenessMonitor()\\n    }\\n\\n    this.webSocket.onmessage = (event) => {\\n      this.handleIncomingMessage(event.data)\\n    }\\n\\n    this.webSocket.onerror = (_error) => {\\n      console.log(\\\"WSM: WebSocket error:\\\", _error)\\n      this.stopLivenessMonitor()\\n      this.updateStatus(WebSocketStatus.ERROR)\\n      store.setError(_error?.toString() || \\\"WebSocket error\\\")\\n      this.startReconnectInterval()\\n    }\\n\\n    this.webSocket.onclose = (_event) => {\\n      console.log(\\\"WSM: Connection closed with code:\\\", _event.code)\\n      this.stopLivenessMonitor()\\n      this.updateStatus(WebSocketStatus.DISCONNECTED)\\n      this.startReconnectInterval()\\n    }\\n  }\\n\\n  private actuallyReconnect() {\\n    console.log(\\\"WSM: Attempting reconnect\\\")\\n    const store = useConnectionStore.getState()\\n\\n    // Reconnect from both DISCONNECTED and ERROR states.\\n    // The old code only reconnected from DISCONNECTED \\u2014 if onerror fired\\n    // without a subsequent onclose, the client was stuck in ERROR forever.\\n    if (store.status === WebSocketStatus.DISCONNECTED || store.status === WebSocketStatus.ERROR) {\\n      if (this.url && this.coreToken) {\\n        this.connect(this.url, this.coreToken)\\n      }\\n    }\\n    if (store.status === WebSocketStatus.CONNECTED) {\\n      console.log(\\\"WSM: Connected, stopping reconnect interval\\\")\\n      BackgroundTimer.clearInterval(this.reconnectInterval)\\n    }\\n  }\\n\\n  private startReconnectInterval() {\\n    console.log(\\\"WSM: Starting reconnect interval, manuallyDisconnected:\\\", this.manuallyDisconnected)\\n    if (this.reconnectInterval) {\\n      BackgroundTimer.clearInterval(this.reconnectInterval)\\n      this.reconnectInterval = 0\\n    }\\n\\n    // Don't start reconnect if manually disconnected\\n    if (this.manuallyDisconnected) {\\n      return\\n    }\\n\\n    this.reconnectInterval = BackgroundTimer.setInterval(this.actuallyReconnect.bind(this), RECONNECT_INTERVAL_MS)\\n  }\\n\\n  private reconnectNow(reason: string) {\\n    console.log(`WSM: Immediate reconnect requested: ${reason}`)\\n    if (this.manuallyDisconnected) {\\n      return\\n    }\\n\\n    if (this.reconnectInterval) {\\n      BackgroundTimer.clearInterval(this.reconnectInterval)\\n      this.reconnectInterval = 0\\n    }\\n\\n    this.stopLivenessMonitor()\\n    this.detachAndCloseSocket()\\n    this.updateStatus(WebSocketStatus.DISCONNECTED)\\n\\n    if (this.url && this.coreToken) {\\n      this.connect(this.url, this.coreToken)\\n      return\\n    }\\n\\n    this.startReconnectInterval()\\n  }\\n\\n  private handleNoActiveSession = () => {\\n    if (this.previousStatus === WebSocketStatus.CONNECTING) {\\n      return\\n    }\\n\\n    this.reconnectNow(\\\"REST request returned NO_ACTIVE_SESSION\\\")\\n  }\\n\\n  public disconnect() {\\n    this.manuallyDisconnected = true\\n\\n    if (this.reconnectInterval) {\\n      BackgroundTimer.clearInterval(this.reconnectInterval)\\n      this.reconnectInterval = 0\\n    }\\n\\n    this.stopLivenessMonitor()\\n    this.detachAndCloseSocket()\\n    this.updateStatus(WebSocketStatus.DISCONNECTED)\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Liveness detection\\n  // -------------------------------------------------------------------------\\n\\n  /**\\n   * Start the client-initiated ping-pong liveness monitor.\\n   *\\n   * Every PING_INTERVAL_MS the client sends {\\\"type\\\":\\\"ping\\\"} to the server.\\n   * The server responds with {\\\"type\\\":\\\"pong\\\"} which updates lastPongTime\\n   * (via handleIncomingMessage \\u2192 pong branch).\\n   */\\n  private startLivenessMonitor() {\\n    this.stopLivenessMonitor()\\n\\n    this.lastPingAt = 0\\n    this.lastPongTime = Date.now()\\n    this.awaitingPong = false\\n    this.consecutiveMissedPongs = 0\\n\\n    this.sendPing()\\n\\n    this.pingInterval = BackgroundTimer.setInterval(() => {\\n      if (!this.isConnected()) return\\n\\n      if (this.awaitingPong) {\\n        const elapsed = Date.now() - this.lastPingAt\\n        if (elapsed >= PONG_TIMEOUT_MS) {\\n          // Outstanding ping timed out \\u2014 count it and decide whether to give\\n          // up on this WS or just send the next probe. We use a tolerance\\n          // (MAX_CONSECUTIVE_MISSED_PONGS) because the iOS JS thread can\\n          // stutter for a tick or two on resume without the underlying\\n          // socket actually being dead.\\n          this.consecutiveMissedPongs += 1\\n          console.log(\\n            `WSM: pong missed (${this.consecutiveMissedPongs} in a row, elapsed=${elapsed}ms)`,\\n          )\\n          if (this.consecutiveMissedPongs > MAX_CONSECUTIVE_MISSED_PONGS) {\\n            this.reconnectNow(\\n              `pong timeout: ${this.consecutiveMissedPongs} consecutive misses (last elapsed=${elapsed}ms)`,\\n            )\\n            return\\n          }\\n          // Send the next ping immediately so we don't have to wait another\\n          // PING_INTERVAL_MS to retry.\\n          this.awaitingPong = false\\n          this.sendPing()\\n          return\\n        }\\n        return\\n      }\\n\\n      this.sendPing()\\n    }, PING_INTERVAL_MS)\\n  }\\n\\n  private sendPing() {\\n    if (!this.isConnected()) {\\n      return\\n    }\\n\\n    this.lastPingAt = Date.now()\\n    this.awaitingPong = true\\n\\n    try {\\n      this.webSocket?.send(JSON.stringify({type: \\\"ping\\\"}))\\n    } catch (error) {\\n      console.log(\\\"WSM: Error sending ping:\\\", error)\\n    }\\n  }\\n\\n  /**\\n   * Foreground-resume liveness probe. Called from the AppState listener\\n   * when the app re-enters `active` from any non-active state. iOS may have\\n   * suspended the JS thread (and our ping timer) for an arbitrarily long\\n   * time, so the regular pingInterval logic isn't sufficient on its own \\u2014\\n   * if there's a dead socket we want to find out before the user presses\\n   * the camera button, not 5 seconds after.\\n   */\\n  private probeForForegroundResume() {\\n    if (this.foregroundProbeTimer) {\\n      clearTimeout(this.foregroundProbeTimer)\\n      this.foregroundProbeTimer = null\\n    }\\n    if (!this.isConnected()) {\\n      // If we're not connected, our regular reconnect interval is already\\n      // doing the right thing \\u2014 just nudge it to retry now instead of\\n      // waiting for the next tick.\\n      this.actuallyReconnect()\\n      return\\n    }\\n\\n    // Send a probe ping with a tight deadline. If the pong doesn't land\\n    // inside FOREGROUND_PROBE_PONG_TIMEOUT_MS, the socket is a zombie and\\n    // we reconnect immediately. We don't touch consecutiveMissedPongs here\\n    // because this is a one-shot wake-up check, not part of the steady-\\n    // state ping cycle.\\n    const probeStart = Date.now()\\n    this.lastPingAt = probeStart\\n    this.awaitingPong = true\\n\\n    try {\\n      this.webSocket?.send(JSON.stringify({type: \\\"ping\\\"}))\\n    } catch (error) {\\n      console.log(\\\"WSM: Foreground probe send failed:\\\", error)\\n      this.reconnectNow(\\\"foreground probe send failed\\\")\\n      return\\n    }\\n\\n    this.foregroundProbeTimer = setTimeout(() => {\\n      this.foregroundProbeTimer = null\\n      // If a pong landed strictly after we sent the probe, we're alive.\\n      if (this.lastPongTime >= probeStart) return\\n      const elapsed = Date.now() - probeStart\\n      this.reconnectNow(`foreground probe pong timeout (${elapsed}ms)`)\\n    }, FOREGROUND_PROBE_PONG_TIMEOUT_MS)\\n  }\\n\\n  private handleAppStateChange = (next: AppStateStatus) => {\\n    const previous = this.lastAppState\\n    this.lastAppState = next\\n    if (next !== \\\"active\\\") return\\n    if (previous === \\\"active\\\") return // ignore active\\u2192active edge cases\\n    console.log(`WSM: AppState ${previous} \\u2192 active \\u2014 probing WS`)\\n    this.probeForForegroundResume()\\n  }\\n\\n  /**\\n   * Stop the liveness monitor \\u2014 clear the ping interval.\\n   */\\n  private stopLivenessMonitor() {\\n    if (this.pingInterval) {\\n      BackgroundTimer.clearInterval(this.pingInterval)\\n      this.pingInterval = 0\\n    }\\n    if (this.foregroundProbeTimer) {\\n      clearTimeout(this.foregroundProbeTimer)\\n      this.foregroundProbeTimer = null\\n    }\\n\\n    this.awaitingPong = false\\n    this.lastPingAt = 0\\n    this.consecutiveMissedPongs = 0\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // State queries\\n  // -------------------------------------------------------------------------\\n\\n  public isConnected(): boolean {\\n    return this.previousStatus === WebSocketStatus.CONNECTED\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Sending\\n  // -------------------------------------------------------------------------\\n\\n  // Send JSON message\\n  public sendText(text: string) {\\n    if (!this.isConnected()) {\\n      console.log(\\\"WSM: Cannot send message: WebSocket not connected\\\")\\n      return\\n    }\\n\\n    try {\\n      this.webSocket?.send(text)\\n    } catch (error) {\\n      console.log(\\\"WSM: Error sending text message:\\\", error)\\n    }\\n  }\\n\\n  // Send binary data (for audio)\\n  public sendBinary(data: ArrayBuffer | Uint8Array) {\\n    if (!this.isConnected() && __DEV__ && Math.random() < 0.03) {\\n      console.log(\\\"WSM: Cannot send binary data: WebSocket not connected\\\")\\n      return\\n    }\\n\\n    try {\\n      this.webSocket?.send(data)\\n    } catch (error) {\\n      console.log(\\\"WSM: Error sending binary data:\\\", error)\\n    }\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Receiving\\n  // -------------------------------------------------------------------------\\n\\n  private handleIncomingMessage(data: string | ArrayBuffer) {\\n    try {\\n      let message: any\\n\\n      if (typeof data === \\\"string\\\") {\\n        message = JSON.parse(data)\\n      } else {\\n        // Handle binary data - convert to string first\\n        const decoder = new TextDecoder()\\n        const text = decoder.decode(data)\\n        message = JSON.parse(text)\\n      }\\n\\n      // Pong received \\u2014 update liveness timestamp. Don't forward to SocketComms.\\n      if (message.type === \\\"pong\\\") {\\n        this.lastPongTime = Date.now()\\n        this.awaitingPong = false\\n        return\\n      }\\n\\n      // Forward message to listeners\\n      this.emit(\\\"message\\\", message)\\n    } catch (error) {\\n      console.log(\\\"WSM: Failed to parse WebSocket message:\\\", error)\\n    }\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Cleanup\\n  // -------------------------------------------------------------------------\\n\\n  public cleanup() {\\n    console.log(\\\"WSM: cleanup()\\\")\\n    this.disconnect()\\n    this.webSocket = null\\n    const store = useConnectionStore.getState()\\n    store.reset()\\n  }\\n}\\n\\nconst wsManager = WebSocketManager.getInstance()\\nexport default wsManager\\n\",\n          \"structuredPatch\": [\n            {\n              \"oldStart\": 469,\n              \"oldLines\": 6,\n              \"newStart\": 469,\n              \"newLines\": 7,\n              \"lines\": [\n                \"       if (message.type === \\\"pong\\\") {\",\n                \"         this.lastPongTime = Date.now()\",\n                \"         this.awaitingPong = false\",\n                \"+        this.consecutiveMissedPongs = 0\",\n                \"         return\",\n                \"       }\",\n                \" \"\n              ]\n            }\n          ],\n          \"userModified\": false,\n          \"replaceAll\": false\n        },\n        \"tool_use_id\": \"toolu_016gg21dupCvLqWBhB128t4F\",\n        \"duration_ms\": 4\n      }\n    ]\n  },\n  \"falsification_attempts\": [],\n  \"alternatives\": [],\n  \"conclusion\": {\n    \"summary\": \"Task completed via tool execution\",\n    \"confidence\": 0.8,\n    \"success\": true\n  },\n  \"risks_unknowns\": [],\n  \"next_actions\": [],\n  \"execution_time\": 0,\n  \"resource_usage\": {}\n}"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:35.008947+00:00",
+    "operation": "message_check",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "limit": 10
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:35.010278+00:00",
+    "operation": "message_response_prepared",
+    "data": {
+      "content": "\nTask Completion Summary:\n- Hypothesis: Implement requested functionality efficiently\n- Conclusion: Task completed via tool execution\n- Confidence: 0.8\n- Next Actions: None\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:35.011558+00:00",
+    "operation": "private_note_added",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "content": "\n## Task Completion Notes - 2026-05-05 03:54:35\n\n### Performance Metrics\n- Execution Time: 0\n- Tool Calls: 1\n- Files Modified: 0\n\n### Observations\n- Success Rate: True\n- Confidence Score: 0.8\n- Challenges: None\n\n### Lessons Learned\nStandard task completion workflow executed successfully.\n",
+      "category": "task_completion"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:35.012775+00:00",
+    "operation": "housekeeping",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "force": false
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:35.013997+00:00",
+    "operation": "completion_verification",
+    "data": {
+      "timestamp": "2026-05-05T10:54:35.013994+00:00",
+      "agent_id": "claude-code-assistant",
+      "project": "claude-code-integration",
+      "verification_status": "completed"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:40.948667+00:00",
+    "operation": "agent_identity_check",
+    "data": {
+      "name": "claude-code-assistant",
+      "role": "AI Code Assistant and IDE",
+      "project_name": "claude-code-integration",
+      "capabilities": [
+        "Code analysis and generation",
+        "File system operations",
+        "Task management",
+        "Scientific method documentation",
+        "Multi-agent coordination"
+      ],
+      "context": "Claude-based AI assistant integrated with Obsidian for task tracking and knowledge management"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:40.951686+00:00",
+    "operation": "task_location",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "title": "Edit",
+      "description": "",
+      "assigned_to": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "priority": "medium",
+      "status": "in_progress"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:40.953290+00:00",
+    "operation": "task_update",
+    "data": {
+      "task_id": "7ccd240c-1774-4ec5-a390-39f24ccf8dcd",
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "status": "completed",
+      "description": "\n\n## Decision Log\n{\n  \"timestamp\": \"2026-05-05T10:54:40.953201+00:00\",\n  \"task_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n  \"hypothesis\": \"Implement requested functionality efficiently\",\n  \"tests_evidence\": {\n    \"methods\": [\n      \"Edit\"\n    ],\n    \"data\": {},\n    \"artifacts\": [],\n    \"tool_calls\": [\n      {\n        \"session_id\": \"7ccd240c-1774-4ec5-a390-39f24ccf8dcd\",\n        \"transcript_path\": \"/Users/hiyabuddy/.claude/projects/-Users-hiyabuddy-sites-brendancopley-MentraOS/7ccd240c-1774-4ec5-a390-39f24ccf8dcd.jsonl\",\n        \"cwd\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/cloud/packages/cloud\",\n        \"permission_mode\": \"auto\",\n        \"hook_event_name\": \"PostToolUse\",\n        \"tool_name\": \"Edit\",\n        \"tool_input\": {\n          \"file_path\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/mobile/src/services/WebSocketManager.ts\",\n          \"old_string\": \"  public cleanup() {\\n    console.log(\\\"WSM: cleanup()\\\")\\n    this.disconnect()\\n    this.webSocket = null\\n    const store = useConnectionStore.getState()\\n    store.reset()\\n  }\",\n          \"new_string\": \"  public cleanup() {\\n    console.log(\\\"WSM: cleanup()\\\")\\n    this.disconnect()\\n    this.webSocket = null\\n    if (this.appStateSubscription) {\\n      this.appStateSubscription.remove()\\n      this.appStateSubscription = null\\n    }\\n    const store = useConnectionStore.getState()\\n    store.reset()\\n  }\",\n          \"replace_all\": false\n        },\n        \"tool_response\": {\n          \"filePath\": \"/Users/hiyabuddy/sites/brendancopley/MentraOS/mobile/src/services/WebSocketManager.ts\",\n          \"oldString\": \"  public cleanup() {\\n    console.log(\\\"WSM: cleanup()\\\")\\n    this.disconnect()\\n    this.webSocket = null\\n    const store = useConnectionStore.getState()\\n    store.reset()\\n  }\",\n          \"newString\": \"  public cleanup() {\\n    console.log(\\\"WSM: cleanup()\\\")\\n    this.disconnect()\\n    this.webSocket = null\\n    if (this.appStateSubscription) {\\n      this.appStateSubscription.remove()\\n      this.appStateSubscription = null\\n    }\\n    const store = useConnectionStore.getState()\\n    store.reset()\\n  }\",\n          \"originalFile\": \"import {EventEmitter} from \\\"events\\\"\\nimport {AppState, AppStateStatus} from \\\"react-native\\\"\\n\\nimport restComms from \\\"@/services/RestComms\\\"\\nimport {useConnectionStore} from \\\"@/stores/connection\\\"\\nimport {getGlasesInfoPartial, useGlassesStore} from \\\"@/stores/glasses\\\"\\nimport GlobalEventEmitter from \\\"@/utils/GlobalEventEmitter\\\"\\nimport {BackgroundTimer} from \\\"@/utils/timers\\\"\\n\\n// ---------------------------------------------------------------------------\\n// Liveness detection constants\\n// ---------------------------------------------------------------------------\\n// The CLIENT sends {\\\"type\\\":\\\"ping\\\"} every 5 s. The server responds with\\n// {\\\"type\\\":\\\"pong\\\"}. If a pong is missed, the client reconnects immediately.\\n\\n// How often the client sends a ping to the server.\\nconst PING_INTERVAL_MS = 5_000\\n\\n// If no pong is received within this window, consider the connection\\n// dead and reconnect. This timeout is measured from the last ping sent,\\n// not from connect time, so the first timer tick always sends a ping\\n// instead of immediately declaring the socket stale.\\nconst PONG_TIMEOUT_MS = 5_000\\n\\n// Delay between reconnect attempts after a disconnect.\\nconst RECONNECT_INTERVAL_MS = 5_000\\n\\n// ---------------------------------------------------------------------------\\n// Foreground-resume liveness probe\\n// ---------------------------------------------------------------------------\\n// On iOS our BackgroundTimer falls back to plain setInterval \\u2014 so when the\\n// JS thread is suspended (app backgrounded, screen locked, only BLE awake),\\n// the ping loop above stops firing entirely. The TCP socket can stay nominally\\n// open in the kernel for minutes while we receive zero frames, and then on\\n// foreground-return the user presses the camera button before the next ping\\n// tick runs. Result: the cloud's PHOTO_REQUEST gets written into a dead WS,\\n// the photo never lands, the SDK times out at 30s.\\n//\\n// The fix is to treat every transition into `active` as evidence we just\\n// woke up and the socket may be a zombie. We send a ping with a tighter\\n// deadline; if the pong does not land, we reconnect *immediately* rather\\n// than waiting for the next regular ping cycle.\\nconst FOREGROUND_PROBE_PONG_TIMEOUT_MS = 2_500\\n\\n// Max pongs we'll tolerate going missing in a row before reconnecting on the\\n// regular cycle. With PING_INTERVAL_MS=5_000 + PONG_TIMEOUT_MS=5_000, a\\n// single value of 1 already gives ~5\\u201310s detection in the foreground; we\\n// keep a small allowance to ride out brief network glitches.\\nconst MAX_CONSECUTIVE_MISSED_PONGS = 1\\n\\nexport enum WebSocketStatus {\\n  DISCONNECTED = \\\"disconnected\\\",\\n  CONNECTING = \\\"connecting\\\",\\n  CONNECTED = \\\"connected\\\",\\n  ERROR = \\\"error\\\",\\n}\\n\\nclass WebSocketManager extends EventEmitter {\\n  private static instance: WebSocketManager | null = null\\n  private webSocket: WebSocket | null = null\\n  private previousStatus: WebSocketStatus = WebSocketStatus.DISCONNECTED\\n  private url: string | null = null\\n  private coreToken: string | null = null\\n  private reconnectInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0\\n  private manuallyDisconnected: boolean = false\\n\\n  // Liveness detection state\\n  private lastPingAt: number = 0\\n  private lastPongTime: number = 0\\n  private awaitingPong: boolean = false\\n  private consecutiveMissedPongs: number = 0\\n  private pingInterval: ReturnType<typeof BackgroundTimer.setInterval> = 0\\n  private foregroundProbeTimer: ReturnType<typeof setTimeout> | null = null\\n  private appStateSubscription: {remove: () => void} | null = null\\n  private lastAppState: AppStateStatus = AppState.currentState\\n\\n  private constructor() {\\n    super()\\n    GlobalEventEmitter.on(\\\"NO_ACTIVE_SESSION\\\", this.handleNoActiveSession)\\n    // App-state listener: a foreground transition is the canonical \\\"JS thread\\n    // just resumed, our timers may have been frozen for an unknown duration\\\"\\n    // signal. Probe the WS aggressively rather than wait for the next tick.\\n    this.appStateSubscription = AppState.addEventListener(\\\"change\\\", this.handleAppStateChange)\\n  }\\n\\n  public static getInstance(): WebSocketManager {\\n    if (!WebSocketManager.instance) {\\n      WebSocketManager.instance = new WebSocketManager()\\n    }\\n    return WebSocketManager.instance\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Connection lifecycle\\n  // -------------------------------------------------------------------------\\n\\n  // things to run when the websocket status changes to connected:\\n  private onConnect() {\\n    const statusObj = getGlasesInfoPartial(useGlassesStore.getState())\\n    restComms.updateGlassesState(statusObj)\\n  }\\n\\n  // Only emit when status actually changes\\n  private updateStatus(newStatus: WebSocketStatus) {\\n    if (newStatus !== this.previousStatus) {\\n      this.previousStatus = newStatus\\n\\n      // Update the connection store\\n      const store = useConnectionStore.getState()\\n      store.setStatus(newStatus)\\n\\n      if (newStatus === WebSocketStatus.CONNECTED) {\\n        this.onConnect()\\n      }\\n    }\\n  }\\n\\n  /**\\n   * Detach all event handlers from the current WebSocket and close it.\\n   *\\n   * Nulling out handlers BEFORE calling .close() prevents a stale `onclose`\\n   * callback from firing asynchronously and kicking off a rogue reconnect\\n   * loop (e.g. when switching backends: disconnect() sets\\n   * manuallyDisconnected = true, connect() resets it to false, then the\\n   * stale onclose fires and calls startReconnectInterval against the old URL).\\n   */\\n  private detachAndCloseSocket() {\\n    if (this.webSocket) {\\n      this.webSocket.onclose = null\\n      this.webSocket.onerror = null\\n      this.webSocket.onmessage = null\\n      this.webSocket.onopen = null\\n      this.webSocket.close()\\n      this.webSocket = null\\n    }\\n  }\\n\\n  public connect(url: string, coreToken: string) {\\n    console.log(`WSM: connect: ${url}`)\\n    this.manuallyDisconnected = false\\n    this.url = url\\n    this.coreToken = coreToken\\n\\n    // Tear down any existing connection cleanly\\n    this.stopLivenessMonitor()\\n    this.detachAndCloseSocket()\\n\\n    // Update status to connecting and set URL in store\\n    this.updateStatus(WebSocketStatus.CONNECTING)\\n    const store = useConnectionStore.getState()\\n    store.setUrl(url)\\n\\n    // Create new WebSocket with authorization header\\n    const wsUrl = new URL(url)\\n    wsUrl.searchParams.set(\\\"token\\\", coreToken)\\n    wsUrl.searchParams.set(\\\"livekit\\\", \\\"true\\\")\\n    wsUrl.searchParams.set(\\\"udpEncryption\\\", \\\"true\\\")\\n\\n    console.log(\\\"WSM: Connecting to WebSocket URL:\\\", wsUrl.toString().replace(/token=[^&]+/, \\\"token=REDACTED\\\"))\\n\\n    this.webSocket = new WebSocket(wsUrl.toString())\\n\\n    // Set up event handlers\\n    this.webSocket.onopen = () => {\\n      console.log(\\\"WSM: WebSocket connection established\\\")\\n      this.updateStatus(WebSocketStatus.CONNECTED)\\n      this.startLivenessMonitor()\\n    }\\n\\n    this.webSocket.onmessage = (event) => {\\n      this.handleIncomingMessage(event.data)\\n    }\\n\\n    this.webSocket.onerror = (_error) => {\\n      console.log(\\\"WSM: WebSocket error:\\\", _error)\\n      this.stopLivenessMonitor()\\n      this.updateStatus(WebSocketStatus.ERROR)\\n      store.setError(_error?.toString() || \\\"WebSocket error\\\")\\n      this.startReconnectInterval()\\n    }\\n\\n    this.webSocket.onclose = (_event) => {\\n      console.log(\\\"WSM: Connection closed with code:\\\", _event.code)\\n      this.stopLivenessMonitor()\\n      this.updateStatus(WebSocketStatus.DISCONNECTED)\\n      this.startReconnectInterval()\\n    }\\n  }\\n\\n  private actuallyReconnect() {\\n    console.log(\\\"WSM: Attempting reconnect\\\")\\n    const store = useConnectionStore.getState()\\n\\n    // Reconnect from both DISCONNECTED and ERROR states.\\n    // The old code only reconnected from DISCONNECTED \\u2014 if onerror fired\\n    // without a subsequent onclose, the client was stuck in ERROR forever.\\n    if (store.status === WebSocketStatus.DISCONNECTED || store.status === WebSocketStatus.ERROR) {\\n      if (this.url && this.coreToken) {\\n        this.connect(this.url, this.coreToken)\\n      }\\n    }\\n    if (store.status === WebSocketStatus.CONNECTED) {\\n      console.log(\\\"WSM: Connected, stopping reconnect interval\\\")\\n      BackgroundTimer.clearInterval(this.reconnectInterval)\\n    }\\n  }\\n\\n  private startReconnectInterval() {\\n    console.log(\\\"WSM: Starting reconnect interval, manuallyDisconnected:\\\", this.manuallyDisconnected)\\n    if (this.reconnectInterval) {\\n      BackgroundTimer.clearInterval(this.reconnectInterval)\\n      this.reconnectInterval = 0\\n    }\\n\\n    // Don't start reconnect if manually disconnected\\n    if (this.manuallyDisconnected) {\\n      return\\n    }\\n\\n    this.reconnectInterval = BackgroundTimer.setInterval(this.actuallyReconnect.bind(this), RECONNECT_INTERVAL_MS)\\n  }\\n\\n  private reconnectNow(reason: string) {\\n    console.log(`WSM: Immediate reconnect requested: ${reason}`)\\n    if (this.manuallyDisconnected) {\\n      return\\n    }\\n\\n    if (this.reconnectInterval) {\\n      BackgroundTimer.clearInterval(this.reconnectInterval)\\n      this.reconnectInterval = 0\\n    }\\n\\n    this.stopLivenessMonitor()\\n    this.detachAndCloseSocket()\\n    this.updateStatus(WebSocketStatus.DISCONNECTED)\\n\\n    if (this.url && this.coreToken) {\\n      this.connect(this.url, this.coreToken)\\n      return\\n    }\\n\\n    this.startReconnectInterval()\\n  }\\n\\n  private handleNoActiveSession = () => {\\n    if (this.previousStatus === WebSocketStatus.CONNECTING) {\\n      return\\n    }\\n\\n    this.reconnectNow(\\\"REST request returned NO_ACTIVE_SESSION\\\")\\n  }\\n\\n  public disconnect() {\\n    this.manuallyDisconnected = true\\n\\n    if (this.reconnectInterval) {\\n      BackgroundTimer.clearInterval(this.reconnectInterval)\\n      this.reconnectInterval = 0\\n    }\\n\\n    this.stopLivenessMonitor()\\n    this.detachAndCloseSocket()\\n    this.updateStatus(WebSocketStatus.DISCONNECTED)\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Liveness detection\\n  // -------------------------------------------------------------------------\\n\\n  /**\\n   * Start the client-initiated ping-pong liveness monitor.\\n   *\\n   * Every PING_INTERVAL_MS the client sends {\\\"type\\\":\\\"ping\\\"} to the server.\\n   * The server responds with {\\\"type\\\":\\\"pong\\\"} which updates lastPongTime\\n   * (via handleIncomingMessage \\u2192 pong branch).\\n   */\\n  private startLivenessMonitor() {\\n    this.stopLivenessMonitor()\\n\\n    this.lastPingAt = 0\\n    this.lastPongTime = Date.now()\\n    this.awaitingPong = false\\n    this.consecutiveMissedPongs = 0\\n\\n    this.sendPing()\\n\\n    this.pingInterval = BackgroundTimer.setInterval(() => {\\n      if (!this.isConnected()) return\\n\\n      if (this.awaitingPong) {\\n        const elapsed = Date.now() - this.lastPingAt\\n        if (elapsed >= PONG_TIMEOUT_MS) {\\n          // Outstanding ping timed out \\u2014 count it and decide whether to give\\n          // up on this WS or just send the next probe. We use a tolerance\\n          // (MAX_CONSECUTIVE_MISSED_PONGS) because the iOS JS thread can\\n          // stutter for a tick or two on resume without the underlying\\n          // socket actually being dead.\\n          this.consecutiveMissedPongs += 1\\n          console.log(\\n            `WSM: pong missed (${this.consecutiveMissedPongs} in a row, elapsed=${elapsed}ms)`,\\n          )\\n          if (this.consecutiveMissedPongs > MAX_CONSECUTIVE_MISSED_PONGS) {\\n            this.reconnectNow(\\n              `pong timeout: ${this.consecutiveMissedPongs} consecutive misses (last elapsed=${elapsed}ms)`,\\n            )\\n            return\\n          }\\n          // Send the next ping immediately so we don't have to wait another\\n          // PING_INTERVAL_MS to retry.\\n          this.awaitingPong = false\\n          this.sendPing()\\n          return\\n        }\\n        return\\n      }\\n\\n      this.sendPing()\\n    }, PING_INTERVAL_MS)\\n  }\\n\\n  private sendPing() {\\n    if (!this.isConnected()) {\\n      return\\n    }\\n\\n    this.lastPingAt = Date.now()\\n    this.awaitingPong = true\\n\\n    try {\\n      this.webSocket?.send(JSON.stringify({type: \\\"ping\\\"}))\\n    } catch (error) {\\n      console.log(\\\"WSM: Error sending ping:\\\", error)\\n    }\\n  }\\n\\n  /**\\n   * Foreground-resume liveness probe. Called from the AppState listener\\n   * when the app re-enters `active` from any non-active state. iOS may have\\n   * suspended the JS thread (and our ping timer) for an arbitrarily long\\n   * time, so the regular pingInterval logic isn't sufficient on its own \\u2014\\n   * if there's a dead socket we want to find out before the user presses\\n   * the camera button, not 5 seconds after.\\n   */\\n  private probeForForegroundResume() {\\n    if (this.foregroundProbeTimer) {\\n      clearTimeout(this.foregroundProbeTimer)\\n      this.foregroundProbeTimer = null\\n    }\\n    if (!this.isConnected()) {\\n      // If we're not connected, our regular reconnect interval is already\\n      // doing the right thing \\u2014 just nudge it to retry now instead of\\n      // waiting for the next tick.\\n      this.actuallyReconnect()\\n      return\\n    }\\n\\n    // Send a probe ping with a tight deadline. If the pong doesn't land\\n    // inside FOREGROUND_PROBE_PONG_TIMEOUT_MS, the socket is a zombie and\\n    // we reconnect immediately. We don't touch consecutiveMissedPongs here\\n    // because this is a one-shot wake-up check, not part of the steady-\\n    // state ping cycle.\\n    const probeStart = Date.now()\\n    this.lastPingAt = probeStart\\n    this.awaitingPong = true\\n\\n    try {\\n      this.webSocket?.send(JSON.stringify({type: \\\"ping\\\"}))\\n    } catch (error) {\\n      console.log(\\\"WSM: Foreground probe send failed:\\\", error)\\n      this.reconnectNow(\\\"foreground probe send failed\\\")\\n      return\\n    }\\n\\n    this.foregroundProbeTimer = setTimeout(() => {\\n      this.foregroundProbeTimer = null\\n      // If a pong landed strictly after we sent the probe, we're alive.\\n      if (this.lastPongTime >= probeStart) return\\n      const elapsed = Date.now() - probeStart\\n      this.reconnectNow(`foreground probe pong timeout (${elapsed}ms)`)\\n    }, FOREGROUND_PROBE_PONG_TIMEOUT_MS)\\n  }\\n\\n  private handleAppStateChange = (next: AppStateStatus) => {\\n    const previous = this.lastAppState\\n    this.lastAppState = next\\n    if (next !== \\\"active\\\") return\\n    if (previous === \\\"active\\\") return // ignore active\\u2192active edge cases\\n    console.log(`WSM: AppState ${previous} \\u2192 active \\u2014 probing WS`)\\n    this.probeForForegroundResume()\\n  }\\n\\n  /**\\n   * Stop the liveness monitor \\u2014 clear the ping interval.\\n   */\\n  private stopLivenessMonitor() {\\n    if (this.pingInterval) {\\n      BackgroundTimer.clearInterval(this.pingInterval)\\n      this.pingInterval = 0\\n    }\\n    if (this.foregroundProbeTimer) {\\n      clearTimeout(this.foregroundProbeTimer)\\n      this.foregroundProbeTimer = null\\n    }\\n\\n    this.awaitingPong = false\\n    this.lastPingAt = 0\\n    this.consecutiveMissedPongs = 0\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // State queries\\n  // -------------------------------------------------------------------------\\n\\n  public isConnected(): boolean {\\n    return this.previousStatus === WebSocketStatus.CONNECTED\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Sending\\n  // -------------------------------------------------------------------------\\n\\n  // Send JSON message\\n  public sendText(text: string) {\\n    if (!this.isConnected()) {\\n      console.log(\\\"WSM: Cannot send message: WebSocket not connected\\\")\\n      return\\n    }\\n\\n    try {\\n      this.webSocket?.send(text)\\n    } catch (error) {\\n      console.log(\\\"WSM: Error sending text message:\\\", error)\\n    }\\n  }\\n\\n  // Send binary data (for audio)\\n  public sendBinary(data: ArrayBuffer | Uint8Array) {\\n    if (!this.isConnected() && __DEV__ && Math.random() < 0.03) {\\n      console.log(\\\"WSM: Cannot send binary data: WebSocket not connected\\\")\\n      return\\n    }\\n\\n    try {\\n      this.webSocket?.send(data)\\n    } catch (error) {\\n      console.log(\\\"WSM: Error sending binary data:\\\", error)\\n    }\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Receiving\\n  // -------------------------------------------------------------------------\\n\\n  private handleIncomingMessage(data: string | ArrayBuffer) {\\n    try {\\n      let message: any\\n\\n      if (typeof data === \\\"string\\\") {\\n        message = JSON.parse(data)\\n      } else {\\n        // Handle binary data - convert to string first\\n        const decoder = new TextDecoder()\\n        const text = decoder.decode(data)\\n        message = JSON.parse(text)\\n      }\\n\\n      // Pong received \\u2014 update liveness timestamp. Don't forward to SocketComms.\\n      if (message.type === \\\"pong\\\") {\\n        this.lastPongTime = Date.now()\\n        this.awaitingPong = false\\n        this.consecutiveMissedPongs = 0\\n        return\\n      }\\n\\n      // Forward message to listeners\\n      this.emit(\\\"message\\\", message)\\n    } catch (error) {\\n      console.log(\\\"WSM: Failed to parse WebSocket message:\\\", error)\\n    }\\n  }\\n\\n  // -------------------------------------------------------------------------\\n  // Cleanup\\n  // -------------------------------------------------------------------------\\n\\n  public cleanup() {\\n    console.log(\\\"WSM: cleanup()\\\")\\n    this.disconnect()\\n    this.webSocket = null\\n    const store = useConnectionStore.getState()\\n    store.reset()\\n  }\\n}\\n\\nconst wsManager = WebSocketManager.getInstance()\\nexport default wsManager\\n\",\n          \"structuredPatch\": [\n            {\n              \"oldStart\": 488,\n              \"oldLines\": 6,\n              \"newStart\": 488,\n              \"newLines\": 10,\n              \"lines\": [\n                \"     console.log(\\\"WSM: cleanup()\\\")\",\n                \"     this.disconnect()\",\n                \"     this.webSocket = null\",\n                \"+    if (this.appStateSubscription) {\",\n                \"+      this.appStateSubscription.remove()\",\n                \"+      this.appStateSubscription = null\",\n                \"+    }\",\n                \"     const store = useConnectionStore.getState()\",\n                \"     store.reset()\",\n                \"   }\"\n              ]\n            }\n          ],\n          \"userModified\": false,\n          \"replaceAll\": false\n        },\n        \"tool_use_id\": \"toolu_012fry4HH2kofnNB5RK54cuf\",\n        \"duration_ms\": 4\n      }\n    ]\n  },\n  \"falsification_attempts\": [],\n  \"alternatives\": [],\n  \"conclusion\": {\n    \"summary\": \"Task completed via tool execution\",\n    \"confidence\": 0.8,\n    \"success\": true\n  },\n  \"risks_unknowns\": [],\n  \"next_actions\": [],\n  \"execution_time\": 0,\n  \"resource_usage\": {}\n}"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:40.954961+00:00",
+    "operation": "message_check",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "limit": 10
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:40.956746+00:00",
+    "operation": "message_response_prepared",
+    "data": {
+      "content": "\nTask Completion Summary:\n- Hypothesis: Implement requested functionality efficiently\n- Conclusion: Task completed via tool execution\n- Confidence: 0.8\n- Next Actions: None\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:40.958596+00:00",
+    "operation": "private_note_added",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "content": "\n## Task Completion Notes - 2026-05-05 03:54:40\n\n### Performance Metrics\n- Execution Time: 0\n- Tool Calls: 1\n- Files Modified: 0\n\n### Observations\n- Success Rate: True\n- Confidence Score: 0.8\n- Challenges: None\n\n### Lessons Learned\nStandard task completion workflow executed successfully.\n",
+      "category": "task_completion"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:40.960330+00:00",
+    "operation": "housekeeping",
+    "data": {
+      "agent_name": "claude-code-assistant",
+      "project_name": "claude-code-integration",
+      "force": false
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:54:40.962610+00:00",
+    "operation": "completion_verification",
+    "data": {
+      "timestamp": "2026-05-05T10:54:40.962601+00:00",
+      "agent_id": "claude-code-assistant",
+      "project": "claude-code-integration",
+      "verification_status": "completed"
+    },
+    "agent_id": "claude-code-assistant"
+  }
+]

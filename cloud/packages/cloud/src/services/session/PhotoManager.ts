@@ -14,6 +14,7 @@ import {
 import { Logger } from "pino";
 import UserSession from "./UserSession";
 import { ConnectionValidator } from "../validators/ConnectionValidator";
+import { appService } from "../core/app.service";
 
 // Timeout handling is managed by CameraModule in the SDK
 
@@ -90,9 +91,48 @@ export class PhotoManager {
         "Using custom webhook URL for photo request.",
       );
     } else {
-      const app = this.userSession.installedApps.get(packageName);
-      webhookUrl = app?.publicUrl ? `${app.publicUrl}/photo-upload` : undefined;
-      this.logger.info({ requestId, defaultWebhookUrl: webhookUrl }, "Using default webhook URL for photo request.");
+      // Read publicUrl FRESH from MongoDB on every photo request. The
+      // session-scoped `installedApps` map is loaded once at session-start
+      // and the global `appCacheService` only refreshes every 30s — both
+      // can hand back a stale URL after a developer flips their tunnel.
+      // A wrong URL here costs the user the full 30s SDK timeout, which
+      // is much worse than the ~50–400ms cost of a fresh findOne. We
+      // fall back to the in-session map only if the DB lookup itself
+      // fails (DB hiccup), so we don't make the request strictly worse.
+      let publicUrl: string | undefined;
+      try {
+        const fresh = await appService.getApp(packageName);
+        publicUrl = fresh?.publicUrl;
+        if (publicUrl) {
+          // Keep the session map in sync so other callers (uptime checks,
+          // tool invocation) get the new value too.
+          if (fresh) this.userSession.installedApps.set(packageName, fresh);
+        }
+      } catch (err) {
+        this.logger.warn(
+          { err: err instanceof Error ? err.message : String(err), packageName },
+          "Fresh app lookup failed for photo request — falling back to session map.",
+        );
+      }
+      if (!publicUrl) {
+        publicUrl = this.userSession.installedApps.get(packageName)?.publicUrl;
+      }
+
+      webhookUrl = publicUrl ? `${publicUrl}/photo-upload` : undefined;
+
+      if (!publicUrl) {
+        this.logger.error(
+          { requestId, packageName },
+          "Photo upload destination is unset — app has no publicUrl on file. " +
+            "The glasses will have no URL to upload to and the request will time out. " +
+            "Update the app's Public URL via the developer console or `bd app update`.",
+        );
+      } else {
+        this.logger.info(
+          { requestId, packageName, publicUrl, defaultWebhookUrl: webhookUrl },
+          "Using default webhook URL for photo request — glasses will POST the captured photo here.",
+        );
+      }
     }
 
     // Validate connections before processing photo request

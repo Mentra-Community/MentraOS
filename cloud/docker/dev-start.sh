@@ -29,10 +29,19 @@ fi
 if [ "$needs_install" = true ]; then
   echo "📦 Installing dependencies..."
   bun install --no-link --ignore-scripts
+  # Run Bun's postinstall script manually since we used --ignore-scripts
+  if [ -d "node_modules/bun" ]; then
+    (cd node_modules/bun && node install.js)
+  fi
   mkdir -p node_modules/.cache
   touch "$MARKER"
 else
   echo "📦 Dependencies up to date"
+  # Ensure Bun's postinstall has run even if deps are cached
+  if [ -d "node_modules/bun" ] && [ ! -f "node_modules/bun/.postinstall-done" ]; then
+    echo "🔧 Running Bun postinstall..."
+    (cd node_modules/bun && node install.js && touch .postinstall-done)
+  fi
 fi
 
 # ─── Build workspace packages ─────────────────────────────────────────────────

@@ -1,0 +1,8 @@
+[project]
+name = "mongodb-connection-test"
+version = "0.1.0"
+description = "Simple MongoDB connection test"
+requires-python = ">=3.10"
+dependencies = [
+    "pymongo>=4.6.0",
+]

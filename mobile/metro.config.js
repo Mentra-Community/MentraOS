@@ -47,4 +47,23 @@ config = withUniwindConfig(config, {
   dtsFile: "./src/uniwind-types.d.ts",
 })
 
+// Rewrite legacy `event-target-shim/index` imports to the package root.
+// @livekit/react-native(-webrtc) ships compiled output that imports
+// `event-target-shim/index`, but event-target-shim@6 only exposes `.` in its
+// `exports` map, which Metro's package-exports resolver then warns about and
+// falls back to file-based resolution for. Aliasing here silences the warning
+// and avoids the extra fallback work on every cold start.
+//
+// IMPORTANT: install this last so it wraps any resolver Uniwind/Sentry installed.
+const previousResolveRequest = config.resolver.resolveRequest
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (moduleName === "event-target-shim/index" || moduleName === "event-target-shim/index.js") {
+    return context.resolveRequest(context, "event-target-shim", platform)
+  }
+  if (typeof previousResolveRequest === "function") {
+    return previousResolveRequest(context, moduleName, platform)
+  }
+  return context.resolveRequest(context, moduleName, platform)
+}
+
 module.exports = config

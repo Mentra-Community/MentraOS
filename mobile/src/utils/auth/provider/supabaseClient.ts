@@ -28,12 +28,35 @@ class MMKVSupabaseStorage implements SupportedStorage {
   }
 }
 
+// Wrap fetch so timeouts/failures surface the URL that was attempted alongside the
+// configured SUPABASE_URL — otherwise an `AuthRetryableFetchError: Network request timed out`
+// gives no clue whether the build is pointed at prod, a zrok share, localhost, or a stale LAN IP.
+const SUPABASE_FETCH_TIMEOUT_MS = 15000
+const supabaseFetch: typeof fetch = async (input, init) => {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), SUPABASE_FETCH_TIMEOUT_MS)
+  const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url
+  try {
+    return await fetch(input as any, {...init, signal: controller.signal})
+  } catch (err: any) {
+    const reason =
+      err?.name === "AbortError" ? `timed out after ${SUPABASE_FETCH_TIMEOUT_MS}ms` : err?.message || String(err)
+    console.error(`[supabase] fetch failed: ${url} — ${reason} (SUPABASE_URL=${SUPABASE_URL})`)
+    throw err
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 const supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     storage: new MMKVSupabaseStorage(),
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: false,
+  },
+  global: {
+    fetch: supabaseFetch,
   },
 })
 

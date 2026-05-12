@@ -1,0 +1,1602 @@
+[
+  {
+    "timestamp": "2026-05-02T19:00:42.449796+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:04:44.759607+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:05:23.248515+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:05:34.144044+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:05:45.859842+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:13:14.391357+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:14:43.948690+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:14:57.569153+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:15:05.900419+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:18:46.576447+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:18:57.451365+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:19:13.572011+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:19:36.132715+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:19:41.729214+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:19:58.505871+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:20:16.647086+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:22:41.448066+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:24:02.257594+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:24:19.464558+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:24:42.841043+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:25:02.764807+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:25:24.412492+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T19:25:50.113588+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T20:51:20.250461+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T20:51:35.519849+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T20:51:42.761911+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T20:51:56.203858+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T20:52:06.133004+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T20:52:41.506762+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T20:52:54.442009+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T20:53:18.561215+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:14:42.684481+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:14:49.996358+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:15:31.985572+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:15:46.235458+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:16:28.389753+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:16:59.887040+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:17:24.449489+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:18:31.219740+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:18:37.191641+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:19:10.025646+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:19:23.142440+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:19:35.359222+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:21:28.421888+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:22:35.826060+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:23:40.447252+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:23:49.485540+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:24:00.489913+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:24:14.889432+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:36:46.763820+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:47:11.427800+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:47:18.415088+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:47:24.882524+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:47:48.821383+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:47:58.095889+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:48:45.133779+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:49:24.207817+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:49:34.380429+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:49:50.827436+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:50:21.359434+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:54:45.342285+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:54:51.082262+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T21:55:02.018281+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T23:33:33.173431+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T23:47:54.163561+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-02T23:48:04.224193+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T00:01:16.462098+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T00:02:54.300222+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T00:03:37.763005+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T00:04:28.984527+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T00:09:26.904538+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T00:09:37.440384+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T00:10:23.896107+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T00:10:32.008847+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T00:11:20.692483+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T01:29:04.278983+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T01:30:31.402078+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T01:51:24.939997+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T01:51:41.771938+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T01:52:17.383620+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T02:02:48.831596+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T02:03:01.735444+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T02:03:09.236994+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T02:03:34.250320+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T02:04:03.689362+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T02:04:14.555778+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T02:07:49.507834+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T02:32:01.005618+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T02:32:11.860619+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T02:32:39.793403+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T02:32:57.788550+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T02:33:23.984505+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T02:55:12.868325+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T02:55:38.316184+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T02:56:01.816769+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T02:56:22.440265+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T02:56:34.669354+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T14:31:04.923977+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T14:31:16.051845+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T14:31:32.380293+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T14:31:42.617265+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T14:35:19.450295+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T14:35:37.651670+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T14:36:23.863332+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T14:36:53.765031+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T14:37:06.823860+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T14:37:24.724001+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:06:01.073503+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:06:09.546367+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:06:24.470541+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:06:31.705891+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:06:43.393383+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:07:01.937346+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:07:10.402566+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:29:58.201296+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:30:19.105466+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:30:43.533276+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:30:52.850769+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:31:03.993586+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:31:18.508686+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:31:26.770023+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:31:46.780357+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:32:03.026588+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:32:34.464089+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:33:00.917853+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:33:14.066967+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:33:59.974067+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:34:08.584150+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:36:56.416746+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:37:27.060245+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-03T15:48:23.932993+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:21:11.614689+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:21:27.283518+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:21:35.703676+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:21:58.920887+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:22:10.189152+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:22:18.432403+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:22:32.097007+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:22:46.253542+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:22:56.734395+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:23:11.358019+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:23:17.965722+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:23:30.612059+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:23:39.621192+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:23:47.888234+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:24:00.745483+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:24:09.462338+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:24:15.850153+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:24:31.571170+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:24:44.524205+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:25:43.355216+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:25:54.267892+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:26:06.722822+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:26:14.446695+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:27:11.820425+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:34:57.662057+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:35:21.349332+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:35:34.174444+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:35:52.428328+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:37:32.953743+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:37:40.444796+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:37:50.167425+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:38:07.388435+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:38:24.674269+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:38:36.877115+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:38:46.662925+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:51:02.447502+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:51:25.804828+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:52:01.419623+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:52:17.282675+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:53:39.548218+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:58:54.212823+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:59:14.213091+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:59:25.357140+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:59:36.049929+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:59:45.821759+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T05:59:55.231639+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T06:06:06.008906+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T06:06:21.772923+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:47:29.323841+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:47:37.403708+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:47:45.476197+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:47:53.357182+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:48:17.383378+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:48:26.985680+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:49:08.555476+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:49:30.204135+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:50:01.630658+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:50:27.866583+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:50:59.866079+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:51:25.477999+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T10:51:46.405341+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T11:33:49.535078+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T11:33:51.354478+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T11:54:41.100244+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T11:54:46.985343+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T11:54:54.225298+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T11:55:06.206035+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T11:55:16.924067+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  },
+  {
+    "timestamp": "2026-05-05T11:56:27.592146+00:00",
+    "error_type": "task_complete_hook_error",
+    "error_data": {
+      "stderr": "error: Failed to spawn: `hooks/task_complete.py`\n  Caused by: No such file or directory (os error 2)\n"
+    },
+    "agent_id": "claude-code-assistant"
+  }
+]

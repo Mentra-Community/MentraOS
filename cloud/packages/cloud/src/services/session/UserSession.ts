@@ -147,9 +147,12 @@ export class UserSession {
 
   // Heartbeat for glasses connection
   private glassesHeartbeatInterval?: NodeJS.Timeout;
-  private appLevelPingInterval?: NodeJS.Timeout; // Retained for clearGlassesHeartbeat cleanup
+  private appLevelPingInterval?: NodeJS.Timeout; // Server-initiated app-level pings (JSON, not protocol)
+  private appLevelPongTimeoutTimer?: NodeJS.Timeout;
+  private idleWatchdogInterval?: NodeJS.Timeout;
   private pongHandler?: () => void; // Stored for cleanup
   public lastPongTime?: number;
+  public lastAppLevelPingTime?: number;
   private pongTimeoutTimer?: NodeJS.Timeout;
   private readonly PONG_TIMEOUT_MS = 30000; // 30 seconds - 3x heartbeat interval
 
@@ -161,6 +164,28 @@ export class UserSession {
   // for observability — it just doesn't kill connections based on missing pongs.
   // See: cloud/issues/035-nginx-ws-timeout/spike.md
   private static readonly PONG_TIMEOUT_ENABLED = false;
+
+  // Active dead-connection detection via APPLICATION-level ping/pong (JSON
+  // `{type:"ping"}` / `{type:"pong"}` frames). Cloudflare passes these
+  // through unchanged — only the WebSocket *protocol* opcodes get stripped
+  // — so this works in production and through zrok.
+  //
+  // Timeline per cycle:
+  //   t=0     server sends `{type:"ping"}`
+  //   t=Δ     client's WSM responds with `{type:"pong"}` → lastAppLevelPongTime updated
+  //   t=≥30s  if no pong landed, force-close the WS so the client opens a new one.
+  // Picked to be tighter than the SDK's 30s photo timeout but loose enough
+  // to ride out a few-second BLE→JS-thread wake on iOS.
+  private static readonly APP_LEVEL_PING_INTERVAL_MS = 15_000;
+  private static readonly APP_LEVEL_PONG_TIMEOUT_MS = 30_000;
+
+  // Idle watchdog: force-close if we have heard NOTHING from the client for
+  // this long. Catches the case where the client's own ping loop has died
+  // (e.g., iOS suspended the JS thread, NitroBgTimer stub stopped firing).
+  // Picked > APP_LEVEL_PING_INTERVAL_MS * 2 + RTT so we always tolerate one
+  // missed pong cycle before tripping.
+  private static readonly CLIENT_IDLE_TIMEOUT_MS = 45_000;
+  private static readonly IDLE_WATCHDOG_INTERVAL_MS = 5_000;
 
   // Audio play request tracking - maps requestId to packageName
   public audioPlayRequestMapping: Map<string, string> = new Map();
@@ -258,10 +283,62 @@ export class UserSession {
       }
     }, HEARTBEAT_INTERVAL);
 
-    // Application-level pings are no longer sent by the server.
-    // The client now initiates pings and the server responds with pongs
-    // (handled in bun-websocket.ts). This lets the client detect dead
-    // connections faster and trigger its own health-check + reconnect flow.
+    // Application-level pings (re-enabled). The CLIENT also pings every 5s,
+    // but on iOS the JS-thread suspension during background can freeze that
+    // loop indefinitely (BackgroundTimer falls back to plain setInterval —
+    // see mobile/src/utils/timers/timers.ts). When that happens, the cloud
+    // would otherwise keep a half-dead WS forever and writes to it (e.g. a
+    // PHOTO_REQUEST forward) silently disappear into the void.
+    //
+    // Sending JSON `{type:"ping"}` from the cloud + watching for the JSON
+    // pong gives us a server-driven liveness signal that survives
+    // Cloudflare (which strips protocol pings) and forces the WS closed
+    // when the client stops responding — clients then reconnect on a
+    // fresh socket.
+    this.appLevelPingInterval = setInterval(() => {
+      if (this.disposed) return;
+      if (!this.websocket || this.websocket.readyState !== WebSocketReadyState.OPEN) {
+        this.clearGlassesHeartbeat();
+        return;
+      }
+      try {
+        this.websocket.send(JSON.stringify({ type: "ping", timestamp: Date.now() }));
+        this.lastAppLevelPingTime = Date.now();
+        if (LOG_PING_PONG) {
+          this.logger.debug({ appPing: true }, `[UserSession:appPing] Sent app-level ping to ${this.userId}`);
+        }
+      } catch (err) {
+        this.logger.warn({ err }, "[UserSession:appPing] send failed");
+      }
+      // Re-arm the pong-deadline timer. If a pong does NOT land before it
+      // fires, we treat the WS as dead and force-close.
+      this.armAppLevelPongTimeout();
+    }, UserSession.APP_LEVEL_PING_INTERVAL_MS);
+    this.resources.trackInterval(this.appLevelPingInterval);
+
+    // Idle watchdog. Anything from the client (ping, audio frame, button
+    // press) bumps lastClientMessageTime in bun-websocket.ts. If that goes
+    // stale, the connection is dead regardless of what kqueue says about
+    // the underlying TCP socket — close it so the client can reconnect.
+    this.idleWatchdogInterval = setInterval(() => {
+      if (this.disposed) return;
+      if (!this.websocket || this.websocket.readyState !== WebSocketReadyState.OPEN) return;
+      const last = this.lastClientMessageTime;
+      if (!last) return;
+      const idleMs = Date.now() - last;
+      if (idleMs >= UserSession.CLIENT_IDLE_TIMEOUT_MS) {
+        this.logger.warn(
+          { idleMs, userId: this.userId },
+          `[UserSession:idleWatchdog] No client message in ${idleMs}ms — closing zombie WS`,
+        );
+        try {
+          this.websocket.close(1001, `Idle: no client message in ${idleMs}ms`);
+        } catch (err) {
+          this.logger.warn({ err }, "[UserSession:idleWatchdog] close failed");
+        }
+      }
+    }, UserSession.IDLE_WATCHDOG_INTERVAL_MS);
+    this.resources.trackInterval(this.idleWatchdogInterval);
 
     // Track interval for automatic cleanup
     this.resources.trackInterval(this.glassesHeartbeatInterval);
@@ -325,6 +402,18 @@ export class UserSession {
       this.appLevelPingInterval = undefined;
     }
 
+    // Clear app-level pong-deadline timer
+    if (this.appLevelPongTimeoutTimer) {
+      clearTimeout(this.appLevelPongTimeoutTimer);
+      this.appLevelPongTimeoutTimer = undefined;
+    }
+
+    // Clear idle watchdog
+    if (this.idleWatchdogInterval) {
+      clearInterval(this.idleWatchdogInterval);
+      this.idleWatchdogInterval = undefined;
+    }
+
     // Clear pong timeout as well
     if (this.pongTimeoutTimer) {
       clearTimeout(this.pongTimeoutTimer);
@@ -383,6 +472,41 @@ export class UserSession {
         this.websocket.close(1001, "Ping timeout - no pong received");
       }
     }, this.PONG_TIMEOUT_MS);
+  }
+
+  /**
+   * Arm a deadline timer for the next app-level pong. Called from
+   * setupGlassesHeartbeat right after we send `{type:"ping"}`. If no pong
+   * arrives — i.e. lastAppLevelPongTime never advances past the moment we
+   * sent — the WS is closed and the client reconnects on a fresh socket.
+   *
+   * Idempotent: each new ping replaces the previous deadline (the *latest*
+   * ping is the one that matters, not the oldest), so a slow-but-alive
+   * client that pongs every other tick still won't get killed.
+   */
+  private armAppLevelPongTimeout(): void {
+    if (this.appLevelPongTimeoutTimer) {
+      clearTimeout(this.appLevelPongTimeoutTimer);
+    }
+    const sentAt = this.lastAppLevelPingTime ?? Date.now();
+    this.appLevelPongTimeoutTimer = setTimeout(() => {
+      if (this.disposed) return;
+      const lastPong = this.lastAppLevelPongTime ?? 0;
+      // If a pong landed AFTER we sent this ping, we're alive — bail.
+      if (lastPong >= sentAt) return;
+      const sinceLastPong = lastPong ? Date.now() - lastPong : -1;
+      this.logger.warn(
+        { sentAt, lastPong, sinceLastPong, userId: this.userId },
+        `[UserSession:appPongTimeout] No app-level pong in ${UserSession.APP_LEVEL_PONG_TIMEOUT_MS}ms — closing zombie WS`,
+      );
+      if (this.websocket && this.websocket.readyState === WebSocketReadyState.OPEN) {
+        try {
+          this.websocket.close(1001, "App-level pong timeout");
+        } catch (err) {
+          this.logger.warn({ err }, "[UserSession:appPongTimeout] close failed");
+        }
+      }
+    }, UserSession.APP_LEVEL_PONG_TIMEOUT_MS);
   }
 
   /**
