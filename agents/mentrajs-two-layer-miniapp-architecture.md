@@ -1541,6 +1541,120 @@ worth deep reads (with line counts and what to learn):
 - The "why" behind major decisions is not commented. We extract it
   by reading the code.
 
+## Reuse from the existing local SDK
+
+Roughly half of the existing local-miniapp SDK code (~5,500 of
+~11,300 LoC inventoried) lifts into the new architecture with zero
+or near-zero changes. Another ~3,000 LoC keeps its shape and gets
+new internals. Only ~2,800 LoC is genuinely replaced.
+
+### Lift verbatim (zero changes)
+
+These files have no DOM dependency and no WebView assumption — they
+describe wire shapes or wrap a transport-agnostic session primitive.
+Move them into the new `@mentra/sdk` package as-is:
+
+| File | LoC | Why portable |
+|---|---|---|
+| `mobile/modules/miniapp/src/protocol.ts` | 190 | Pure enums (request/response/stream/error types) |
+| `mobile/modules/miniapp/src/envelope.ts` | 54 | JSON serialize/parse + `crypto.randomUUID` (provided by polyfill) |
+| `mobile/modules/miniapp/src/modules/glasses.ts` | 23 | Wraps `session.sendOneShot` — no DOM |
+| `mobile/modules/miniapp/src/modules/imu.ts` | 18 | Same |
+| `mobile/modules/miniapp/src/modules/location.ts` | 30 | Same |
+| `mobile/modules/miniapp/src/modules/mic.ts` | 74 | Same |
+| `mobile/modules/miniapp/src/modules/transcription.ts` | 128 | Same |
+| `mobile/modules/miniapp/src/modules/translation.ts` | 65 | Same |
+| `mobile/modules/miniapp/src/modules/dashboard.ts` | 31 | Same |
+| `mobile/modules/miniapp/src/modules/led.ts` | 55 | Same |
+| `mobile/modules/miniapp/src/modules/camera.ts` | 62 | Same |
+| `mobile/modules/miniapp/src/modules/storage.ts` | 47 | Same |
+| `mobile/modules/miniapp/src/modules/system.ts` | 76 | Same |
+| `mobile/modules/miniapp/src/modules/stream.ts` | 61 | Same |
+| `mobile/modules/miniapp/src/modules/display.ts` | 118 | Same |
+| `mobile/modules/miniapp/src/modules/phone.ts` | 120 | Same |
+| `mobile/modules/miniapp/src/modules/permissions.ts` | 84 | Same |
+| `mobile/modules/miniapp/src/modules/speaker.ts` | 144 | Same |
+| `mobile/modules/miniapp/src/transport/types.ts` | 26 | Transport interface — fits `__dispatch`-based transports |
+| `mobile/modules/island/src/services/MicStateCoordinator.ts` | 113 | Settings + `CoreModule.restartTranscriber`, no WebView |
+| `mobile/modules/island/src/services/LocalSttFallbackCoordinator.ts` | 98 | Same |
+| `mobile/modules/island/src/services/LocalDisplayManager.ts` | 538 | Per-app display arbitration keyed on `packageName` |
+| `mobile/modules/island/src/services/DisplayProcessor.ts` | 714 | Pixel-accurate text wrapping per device profile, pure compute |
+| `mobile/modules/island/src/services/MiniappRunningRegistry.ts` | 63 | Observable Set; just update writers |
+
+**~3,000 LoC of typed API surface and infrastructure that survives
+the architecture change with no edits.**
+
+### Reuse with minor changes (transport swap or single-method tweak)
+
+| File | LoC | Change needed |
+|---|---|---|
+| `mobile/modules/miniapp/src/session.ts` | 612 | Drop `createTransport(options)` autodetection; constructor-inject a `DispatchTransport` instead. Keep queue-before-ACK, request/response correlation, permission cache, speaker state machine. |
+| `mobile/modules/miniapp/src/modules/events.ts` | 208 | Move with `session.ts`; refcounted SUBSCRIBE machinery is pure logic. |
+| `mobile/modules/miniapp/src/transport/mock.ts` | 208 | Stays for browser-tab dev path; no edits. |
+| `mobile/modules/miniapp/src/transport/local-socket.ts` | 93 | Same. |
+| `mobile/modules/miniapp/src/dev-reload.ts` | 60 | Today fires `location.reload()`; keep for WebView path, add sibling for JSContext (`MentraJSRuntime.respawn`). |
+| `mobile/modules/island/src/services/DevServerBridge.ts` | 288 | Same protocol, two delivery sinks (WebView reload + JSContext respawn). |
+| `mobile/modules/miniapp/src/transport/auto.ts` | 125 | Add a 4th branch: if `__dispatch` is on global, return `DispatchTransport`. |
+| `sdk/miniapp-cli/src/manifest*.ts` (5 files) | ~850 | Add `background`, `ui`, `sdkVersion`, `minHostVersion`, `signature` schema fields. Mutation primitives + atomic-write + JSON Schema generator carry over. |
+| `sdk/miniapp-cli/src/dev.ts` + `dev-server.ts` | ~480 | Bundle `dist/background.js` + `dist/ui/`; add `{type:"respawn-bg"}` message in addition to `{type:"reload"}`. |
+| `sdk/miniapp-cli/src/pack.ts` + `release.ts` | ~380 | Two-output bundle; cloud adds META-INF/signature on publish. |
+
+### Reuse with major changes (right shape, internals rewritten)
+
+| File | LoC | What survives, what changes |
+|---|---|---|
+| `mobile/modules/island/src/services/LocalMiniappRuntime.ts` | 1,752 | **Skeleton is exactly right.** Per-app registry, refcounted streams, ping loop, ~22 handler methods (CONNECT, SUBSCRIBE, DISPLAY, PLAY_AUDIO, SPEAK, RGB_LED, LOCATION_POLL, STORAGE_*, CAMERA_FOV, SHARE, OPEN_URL, COPY_CLIPBOARD, DOWNLOAD, PHOTO, STREAM_*, MANAGED_STREAM_*, PING/PONG). Handler bodies don't know they're talking to a WebView — they take `packageName + payload` and dispatch to native modules. Rewrite the front door (`handleRawMessage` → `__dispatch`) and the per-app `sendMessage` (postMessage → `JSContext.evaluateScript("__deliver(...)")`); HMAC/local-token code goes away. |
+| `mobile/modules/island/src/services/AppRegistry.ts` | 675 | Manifest normalization + zip download/unzip pipeline survive. Add `background.js` discovery alongside `index.html`. Recognize new manifest fields. Add signature verification for store-installed bundles. ~70% reuse / 30% rewrite. |
+| `sdk/create-mentra-miniapp/bin/index.ts` + template | ~150 + template | Scaffolder logic survives (clack prompts, `com.mentra.<name>` validation, template substitution). Template files rewrite: scaffold `src/background.ts`, `src/ui/index.html`, `src/ui/index.tsx`, `src/shared/channels.ts` instead of single React SPA. |
+
+### Replace entirely
+
+| File | LoC | Why |
+|---|---|---|
+| `mobile/modules/miniapp/src/transport/postmessage.ts` | 95 | Hard-coded to `window.ReactNativeWebView.postMessage`. Repurpose as `WebViewToJsContextTransport` for the settings WebView half. |
+| `mobile/modules/island/src/services/WebviewBridge.ts` | 50 | Replaced by two sibling routers: `MentraJSRouter` (JSContext fan-out) and `MentraUIRouter` (settings WebView ↔ bound JSContext). |
+| `mobile/modules/miniapp/src/globals.ts` | 62 | `window.MentraOS` is WebView-presentational (safeAreaInsets, capsuleMenu, colorScheme). Keep file for settings WebView; JSContext gets a different injected globals object. |
+| `mobile/modules/miniapp/src/index.ts` | 108 | Splits into two: `@mentra/sdk` (background API surface) and `@mentra/miniapp/ui` (settings WebView API). |
+| `sdk/example-miniapp/` | (entire React SPA) | Restructure into two-layer: logic into `src/background.ts`, UI into `src/ui/`. Existing React code is reusable as the basis for the UI half. |
+
+### Net-new code (doesn't exist today)
+
+These have no analogue in the existing codebase:
+
+- **`MentraJSRuntime`** (Swift, in `crust` module) — spawns one
+  `JSContext` per installed miniapp via `JSVirtualMachine`, injects
+  `__dispatch`, evaluates `dist/background.js`, owns lifecycle.
+  ~300-500 LoC.
+- **`__dispatch` glue + iface registry** — Swift dispatch table that
+  routes `(iface, method, args)` to native handlers, returns Promise.
+- **`DispatchTransport.ts`** — new `Transport` implementation
+  wrapping `__dispatch` so the existing `MiniappSession` sits on top
+  unchanged.
+- **Polyfill bundle** — see "Polyfill strategy" section.
+- **`MentraUIRouter`** — when a WebView mounts, host binds it to a
+  JSContext and routes `mentra.send`/`mentra.on` between them via
+  WKUserScript injection.
+- **WKUserScript `window.mentra` shim** — typed `send`/`on`/`ready`
+  + outbound buffer for messages before `ready()`.
+- **Bundle signature verification** — Ed25519 over META-INF/manifest.sha256
+  in `AppRegistry.installFromUrl`.
+- **`sdkVersion`/`minHostVersion` gating** — host refuses spawn if
+  versions don't match.
+- **Per-miniapp typed `Channels`** — TypeScript generics on
+  `mentra.send`/`mentra.on` enforced at compile time.
+- **Storage namespace cleanup on uninstall** — drop
+  `storage/<id>/` per the bundle/install section.
+
+**Phase 1 cut list:** lift the verbatim items + minor-change items
+into a new `@mentra/sdk` package. Refactor `session.ts` to use a
+new `DispatchTransport`. Write the four net-new native pieces
+(`MentraJSRuntime`, `__dispatch` glue, `DispatchTransport.ts`,
+polyfill bundle). Refactor `LocalMiniappRuntime` into a
+`MentraJSRouter` keeping the 22 handler bodies. **Defer to Phase 2:**
+the settings WebView path (postmessage transport, react hooks,
+MentraUIRouter), CLI/scaffolder updates for two-layer bundle
+output, signed-bundle verification, the tester example rewrite.
+
 ## Implementation plan
 
 Each phase is a standalone, shippable milestone. Each builds on the
