@@ -1,67 +1,35 @@
 # MentraJS Two-Layer Miniapp Architecture
 
-**Status:** Proposed (v2 — verified against Pebble's actual implementation)
+**Status:** Proposed
 **Author:** Alex Israelov + Claude
-**Date:** 2026-05-09
-**Branch:** `mentra-miniapp-sdk-2`
 
-## What changed from v1
+## SDK design principles
 
-v1 of this doc oversold "Pebble validates this." A deep reading of Pebble's
-actual code (see `coredevices/mobileapp` — `libpebble3/src/iosMain/kotlin/
-io/rebble/libpebblecommon/js/`) revealed two big gaps and many small
-missing pieces. Critical changes in v2:
+The MentraOS team will port cloud miniapps to this SDK and external
+developers will build new ones against it. We get one chance to set the
+SDK contract — migrating it later means breaking every miniapp built
+against it. This drives several non-negotiable decisions:
 
-- **Pebble runs ONE PKJS context at a time, not N.** Their lifecycle is
-  "one watch app running → one JSContext." When the user starts a
-  different watch app, the previous context is torn down. **Pebble has
-  not validated the N-concurrent-context model on iOS.** We're the ones
-  signing up for that risk. Phase 1.5 added: real-device memory benchmark
-  of N=10 contexts for 24 hours before committing Phase 4 work.
-- **Pebble's WebView ↔ JS communication is one-shot via URL redirect**,
-  not a live message bus. Our typed-bus design is more powerful but is
-  novel work, not Pebble-proven. Spec now flags this honestly.
-- Added missing pieces Pebble has and we forgot: `signalReady` round-trip
-  with NACK timeout, `evalCatching` wrapper around every script,
-  `console.*` rewiring, `window.onerror` / `onunhandledrejection`,
-  `JSContext.setName` + `setInspectable`, log redaction for sensitive
-  terms, stable per-(user, miniapp) token primitive, `JSManagedValue` for
-  any JSValue native code holds across calls, tear-down race ordering,
-  `debugForceGC` diagnostic hook.
-
-## Writing this once, correctly
-
-The MentraOS team is excited about the local SDK. Once it ships, engineers
-will start porting cloud miniapps to it, and external developers will
-build new ones. **We get one chance to set the SDK contract.** Migrating
-the contract later means breaking every miniapp built against it.
-
-This drives several decisions:
-
-- **Live message bus from v1, not URL-redirect.** Cloud miniapps are real
-  SPAs with React/Vue/Svelte. They need real-time channels between
-  background and UI. URL-redirect is fine for "hit Save and exit"
-  config pages but won't handle live transcription previews, glasses
-  display previews, streaming sensor data into the UI, etc. We commit to
-  the bus from day one even though it's more code.
+- **Live message bus between background and UI layers, not URL-redirect.**
+  Cloud miniapps are real SPAs (React/Vue/Svelte). They need real-time
+  channels between background and UI. URL-redirect handles "hit Save
+  and exit" config pages but not live transcription previews, glasses
+  display previews, streaming sensor data into the UI.
 - **Typed channels enforced at compile time.** `Channels` interface in
   `src/shared/channels.ts` is the single source of truth; both layers
-  import from it; misnamed events fail at compile time. Catches a class
-  of bugs that would otherwise show up only at runtime in production.
-- **Storage as source of truth, not in-memory state.** Miniapps will be
+  import from it; misnamed events fail at compile time.
+- **Storage as source of truth, not in-memory state.** Miniapps get
   killed and respawned (host app jetsam, glasses disconnect, user
-  toggles disable). Every miniapp must hydrate from `phone.storage` on
-  start. Documenting this as a hard rule + adding a lint that flags
-  miniapps which keep state outside storage.
+  toggles disable). Every miniapp must hydrate from `phone.storage`
+  on start. A lint rule flags miniapps which keep state outside
+  storage.
 - **Permissions declared in manifest, prompted at install** — not at
-  first call. Makes the install flow predictable and avoids miniapp
-  authors getting whack-a-mole rejections from iOS permission prompts
-  scattered across their code paths.
-- **Bridge surface frozen for v1, additions go through SDK versioning.**
-  Adding a new bridge method = bumping `sdkVersion` in `mentra.json`.
-  Host refuses to spawn miniapps targeting an SDK version it doesn't
-  support. Removing a method = same. This way miniapps can be confident
-  about what works.
+  first call. Predictable install flow, no whack-a-mole iOS permission
+  prompts scattered across miniapp code.
+- **Bridge surface frozen, additions go through SDK versioning.** Adding
+  a new bridge method = bumping `sdkVersion` in `mentra.json`. Host
+  refuses to spawn miniapps targeting an unsupported SDK version.
+  Removing a method = same.
 - **No "two ways to do things."** Forbidden: WebView calling native
   directly. Forbidden: background reaching into WebView DOM. The only
   paths are background → native (via `__dispatch`) and background ↔
@@ -69,9 +37,7 @@ This drives several decisions:
 - **Hot-reload from day one.** Both layers reload on file change during
   `bun run dev`. Background reloads = `kill(miniappId) + spawn(...)`
   triggered over a websocket from the dev tooling to the host app.
-  WebView reloads via the standard reload trigger. If devs have to
-  restart the host app to test changes, they will hate the SDK. They
-  will be loud about it. We will lose them.
+  WebView reloads via the standard reload trigger.
 
 ## Why this exists
 
@@ -746,7 +712,7 @@ they're inside WebKit. We get nothing free — JSContext is just the
 ECMAScript runtime plus what we add. **Every web API a miniapp
 expects has to be polyfilled in JS, backed by a native handler.**
 
-### What ships at v1 — using existing libraries where possible
+### Polyfill set — using existing libraries where possible
 
 **About half the polyfills are drop-in MIT libraries we don't have to
 write.** The other half are thin bridges to native I/O. Total custom
@@ -784,16 +750,10 @@ earlier ~2000 LoC JS estimate. The MIT libraries handle ~70% of the
 JS plumbing and ALL the spec edge cases (URL parsing alone has
 hundreds of WPT test cases; we delegate to a well-maintained lib).
 
-### Important: don't copy from Pebble
+### What we explicitly DON'T polyfill
 
-Pebble's `coredevices/mobileapp` is GPL-3.0 dual-licensed. Their
-`startup.js` and per-polyfill JS files are reference-only, not
-copy-pasteable. The MIT alternatives in the table above are
-permissive and equivalent in functionality.
-
-### What we explicitly DON'T polyfill at v1
-
-These are non-trivial and we punt to v2:
+These are non-trivial and out of scope for the initial implementation —
+revisit only if miniapp authors actually ask for them:
 
 - `IndexedDB` — complex; we offer `localStorage` for simple key/value
   and document that miniapps wanting structured storage should call
@@ -972,11 +932,117 @@ gated to dev/super-mode builds.
 
 ### What we DON'T inherit from Pebble
 
-- **Multiple concurrent JSContexts.** Pebble has one. We need N. **This
-  is the single biggest risk in the architecture and is unproven.** See
-  the new Phase 1.5 below.
-- **Live message bus between WebView and JS.** Pebble does one-shot URL
-  redirect. Ours is novel; budget for the bugs.
+- **Multiple concurrent JSContexts.** Pebble has one. We need N. We
+  measured this works (0.75 MB per JSContext on iPhone 15) but it is
+  unprecedented vs Pebble's design.
+- **Live message bus between WebView and JS.** Pebble does one-shot
+  URL redirect. Ours is novel.
+
+## Pebble repo as a reference (read, don't copy)
+
+`coredevices/mobileapp` is GPL-3.0 dual-licensed — we cannot copy
+code, but reading it is the closest thing to a design doc since
+Pebble has no published architecture documentation. Specific files
+worth deep reads (with line counts and what to learn):
+
+**JS runtime patterns**
+- `libpebble3/src/commonMain/kotlin/io/rebble/libpebblecommon/js/JsRunner.kt`
+  (58 LoC) — abstract JS runtime interface. Small, well-bounded
+  lifecycle. The right abstraction shape.
+- `libpebble3/src/commonMain/.../js/PKJSApp.kt` (~286 LoC) — how a
+  single miniapp instance coordinates JS runtime + native bridge +
+  app messages + config webview.
+- `libpebble3/src/iosMain/.../js/JavascriptCoreJsRunner.kt` (~281 LoC)
+  — concrete JSContext lifecycle on iOS. Dedicated-thread choice,
+  dispatcher pattern, naming the context for Safari Web Inspector.
+- `libpebble3/src/iosMain/.../js/CrashReproducer.kt` (~99 LoC) — read
+  before exposing Kotlin/Swift functions to JS. Documents the
+  EXC_BAD_ACCESS GC race.
+- `libpebble3/src/iosMain/.../js/JsCoreExtensions.kt` (~50 LoC) —
+  `evalCatching` pattern, source URLs for Safari Web Inspector.
+- `libpebble3/src/iosMain/.../js/RegisterableJsInterface.kt` — the
+  dispatch-table contract.
+- `libpebble3/src/iosMain/.../js/XMLHTTPRequest.js` (~166 LoC),
+  `WebSocket.js`, `JSTimeout.js` — production JS shims (read but
+  write our own; GPL).
+- `libpebble3/src/androidMain/.../js/WebViewJsRunner.kt` (~458 LoC)
+  — alternative Android approach (system WebView instead of bundled
+  JSC). Conscious tradeoff: bigger native bridge surface vs free
+  `fetch`/`WebSocket`/`setTimeout` from V8.
+
+**Lifecycle and state-machine patterns**
+- `libpebble3/src/commonMain/.../connection/WatchManager.kt` (~787
+  LoC) — canonical multi-device state machine. `MutableStateFlow<
+  Map<DeviceId, Device>>` with active state combined from connection
+  + battery + firmware.
+- `libpebble3/src/commonMain/.../connection/Negotiator.kt` (~39 LoC)
+  — concise post-connect handshake under 20s timeout, returns null
+  on failure rather than throwing. Graceful degradation pattern.
+- `libpebble3/src/commonMain/.../connection/endpointmanager/
+  CompanionAppLifecycleManager.kt` (~190 LoC) — the "which miniapp
+  is alive right now" decision logic. The watch is the source of
+  truth, not the phone.
+
+**Storage patterns**
+- `libpebble3/src/commonMain/.../locker/Locker.kt` (~705 LoC) —
+  installed-app storage, 50 MB cache cap, **sideloaded apps never
+  evicted, only store-downloaded ones**. We have the same concern
+  for sideloaded dev miniapps.
+
+**Decisions worth borrowing architecturally** (not the code, the patterns):
+- Single `__nativeDispatch` function + JS-side proxy object instead
+  of N native function bindings. Non-negotiable on iOS.
+- `evalCatching` wrapping every script eval with try/catch that
+  calls `globalThis._Pebble.onError(...)` with source URL.
+- HTTP interceptor as chain-of-responsibility with `shouldIntercept(url)`
+  + `onIntercepted()` — clean way to inject auth, mock in tests.
+- 20s `Negotiator` timeout returning null instead of throwing —
+  graceful degradation.
+- Both `bluetooth-central` AND `bluetooth-peripheral` background modes
+  in iOS Info.plist. We may need both depending on glasses model.
+- Foreground service is opt-in on Android, not forced — avoids
+  battery FUD.
+- Per-watchapp JSContext on its own dedicated thread (JSC is
+  thread-affine).
+- Watch is source-of-truth for "which miniapp is running" — phone
+  subscribes and reacts, doesn't lead.
+- Pre-load JS shims (XHR, WebSocket, timers) BEFORE the user's JS
+  evaluates, so the global environment is ready when their first
+  line runs.
+
+**Decisions to consciously diverge from:**
+- Single concurrent miniapp — we need N.
+- One-shot URL redirect for WebView ↔ JS — we want a live message
+  bus.
+- Android via system WebView — we want JSC on both platforms for
+  SDK uniformity. (Tradeoff: we lose free `fetch`/`WebSocket`/etc
+  and have to polyfill them on Android too.)
+- Their codebase is Kotlin Multiplatform + Compose Multiplatform.
+  Ours is React Native. We can't reuse their layering; we can
+  reuse their patterns.
+
+**Mistakes documented in their code we should avoid:**
+- Don't bind N native functions individually into JSContext —
+  `CrashReproducer.kt` is in their tree because they shipped this
+  bug and had to refactor.
+- Don't ship a thin XHR shim. Their `XMLHTTPRequest.js` is 166 LoC
+  and still doesn't support `blob`/`document` response types.
+- Don't store running-miniapp state on the phone as truth. The
+  source-of-truth is wherever the user's input is (watch for them,
+  glasses for us).
+- Don't conflate the locker (what's installed) with the running-app
+  state (what's executing). Cleanly separate.
+- Don't auto-evict sideloaded miniapps when hitting cache caps.
+  Developers will lose work.
+
+**What's NOT in their repo** (worth knowing):
+- No design docs, no ADRs, no architecture markdown. CONTRIBUTING.md
+  is just the CLA. README is one paragraph. The code IS the
+  documentation.
+- Minimal tests. One PKJS runner test per platform. We should write
+  more.
+- The "why" behind major decisions is not commented. We extract it
+  by reading the code.
 
 ## Implementation plan
 
@@ -1046,7 +1112,7 @@ Tasks:
   `setInspectable`, log redaction, tear-down race ordering,
   `debugForceGC` hook, stable per-(user, miniapp) token.
 
-### Phase 1.5 — N-context memory benchmark ✅ DONE 2026-05-09
+### Phase 1.5 — N-context memory benchmark (done)
 
 **Goal:** Validate the unproven claim that "we can run N concurrent
 JSContexts in background." Pebble has zero data on this.
@@ -1112,19 +1178,16 @@ That works but is too coarse for the kind of settings UIs we want to
 support (real-time previews of glasses display, live device status,
 streaming transcription previews).
 
-**Decision: ship the live message bus from v1.** We are committing to
-writing this correctly once. Reasoning:
+**Decision: live message bus.** We commit to writing this correctly
+once. Reasoning:
 
-- Engineers are excited to port cloud miniapps to local; that means real
-  SPAs (React/Vue/Svelte), not form-submit pages. They WILL need a
-  live channel.
-- Adding the bus later means re-architecting every miniapp that already
-  shipped on the v1 URL-redirect model. Painful migration.
-- The bus is novel but bounded: ~500 lines of TS + Swift. Pebble didn't
-  build it because their use case (config = one-time-saved settings)
-  didn't need it; ours does.
-- Tradeoff: we accept ~1 extra week of dev time + more bugs to hunt in
-  exchange for an SDK that actually fits the use case from day one.
+- Cloud miniaps being ported are real SPAs (React/Vue/Svelte), not
+  form-submit pages. They need a live channel.
+- Adding the bus later means re-architecting every miniapp built on a
+  URL-redirect contract. Painful migration we don't want.
+- The bus is novel but bounded: ~500 lines of TS + Swift. Pebble
+  didn't build it because their use case (config = one-time-saved
+  settings) didn't need it; ours does.
 
 Tasks:
 - Update `LocalMiniappRuntime` to spawn WebView fresh on user navigation
@@ -1224,10 +1287,10 @@ If we throw 2 engineers at it: 4–5 weeks.
 2. **CPU/memory quotas per miniapp?** Pebble had none. A runaway JS app
    would hang itself but not the host. JSC has no built-in quota. We
    can add a watchdog timer in the Swift dispatcher that aborts a
-   miniapp's evaluation if it blocks the JS thread for >N seconds. My
-   take: not in v1. Add when it bites.
-3. **Multiple simultaneous WebViews?** When? Why? My take: never in v1.
-   The product is "user looks at one miniapp's settings at a time."
+   miniapp's evaluation if it blocks the JS thread for >N seconds.
+   Defer until it bites — not initial scope.
+3. **Multiple simultaneous WebViews?** When? Why? Out of scope. The
+   product is "user looks at one miniapp's settings at a time."
 4. **Notification scheduling from the WebView?** All scheduling goes
    through background. WebView never schedules anything directly.
 5. **Hot-reload during development?** Both layers should auto-reload on
@@ -1239,9 +1302,9 @@ If we throw 2 engineers at it: 4–5 weeks.
    host wakes (BLE event arrives), JS resumes mid-task. State is
    preserved. The dev sees their `setInterval` callbacks firing slightly
    irregularly when the host was paused — same as today. Document this.
-7. **Inter-miniapp communication?** Out of scope for v1. If miniapp A
-   needs to wake miniapp B, it goes through the host (e.g. notification,
-   then user opens B). No direct miniapp-to-miniapp messaging.
+7. **Inter-miniapp communication?** Out of scope. If miniapp A needs to
+   wake miniapp B, it goes through the host (e.g. notification, then
+   user opens B). No direct miniapp-to-miniapp messaging.
 8. **Versioning the bridge.** Every `mentra.json` declares `sdkVersion`.
    Host refuses to spawn miniapps targeting an SDK version it doesn't
    support. Bump when we change the bridge contract.
@@ -1258,71 +1321,81 @@ We've succeeded when:
 - Existing miniapps run via the compatibility shim with no developer
   changes required.
 
-## Decision log
+## Key decisions and rationale
 
-- **2026-05-09:** Decided against Maestro for the stress test harness;
-  use deeplinks + autorun instead.
-- **2026-05-09:** Decided against pre-warming WebView pool. Spawn fresh
-  per open; cold-mount latency (~300 ms) is acceptable for a settings
-  sheet.
-- **2026-05-09:** Decided against `@callstack/react-native-sandbox`.
-  Pre-1.0, one-person bus factor, no Expo support, ~15-30 MB per
-  sandbox vs ~5 MB for raw JSC.
-- **2026-05-09:** Decided against Workers-in-shared-WebView. Workers
-  have no DOM and can't render UI; native bridging is two-hop;
-  one-process-many-Workers means one bug jetsams them all.
-- **2026-05-09:** Decided FOR a Pebble-style native JSC architecture.
-  Best memory profile, proven at WeChat scale, Apple-precedent through
-  WeChat/Pebble/RN/CodePush, narrow bridge surface keeps 4.7.2 risk
-  manageable.
-- **2026-05-09 (v2):** After verifying against Pebble's actual code,
-  flagged that **Pebble has not validated the N-concurrent-context
-  model** — they run one PKJS context at a time. We're extrapolating.
-  Added Phase 1.5 as a blocking benchmark before Phase 4.
-- **2026-05-09 (v2):** After verifying against Pebble's actual code,
-  flagged that **our live-message-bus WebView model is novel** —
-  Pebble does one-shot URL redirect. Phase 2 includes both: our richer
-  bus AND a simpler URL-redirect path for compatibility.
-- **2026-05-09 (v2):** Added all the Pebble-inherited "small" pieces
-  that aren't optional: `JSManagedValue`, `evalCatching`, `console.*`
-  rewiring, `window.onerror`, `signalReady` with NACK timeout,
-  `JSContext.setName`/`setInspectable`, log redaction, tear-down race
-  ordering, `debugForceGC`, stable per-(user, miniapp) token. All in
-  Phase 1 scope.
-- **2026-05-09 (v3):** Locked in live message bus from v1 (not URL
-  redirect), added "Writing this once, correctly" section. We get one
-  chance to set the SDK contract; engineers porting cloud miniapps
-  need real-time channels.
-- **2026-05-09 (v4):** Phase 1.5 spike completed: 0.75 MB per JSContext
-  on iPhone 15 release. 50-context wave added 37 MB total. Architecture
-  validated. The N-context risk flagged in v3 is resolved.
-- **2026-05-12 (v5):** Locked in native JavaScriptCore (NOT Hermes via
-  RN's bridge). Apple's 2.5.2 carve-out names JSC and WebKit
-  specifically — not Hermes. Multi-tenant miniapp host is a different
-  review category than RN's "app updating itself," so we want to be
-  squarely inside the explicit rule text. Pebble/WeChat precedent
-  reinforces.
-- **2026-05-12 (v5):** Locked in JSC on Android too (bundled via
-  `react-native-jsc` or similar) for SDK uniformity. Performance
-  difference vs Hermes/V8 is irrelevant for our workload (heavy work
-  is in native modules, miniapp JS is event-handler-tier).
-- **2026-05-12 (v5):** Specced the polyfill set for v1: setTimeout,
-  fetch, WebSocket, localStorage, crypto subset, TextEncoder, URL,
-  EventTarget. ~1500-2000 LoC of JS + ~500 LoC of Swift. IndexedDB,
-  WebRTC, ServiceWorker, Push API, Canvas, IntersectionObserver
-  explicitly punted to v2.
-- **2026-05-12 (v6):** Verified that no library exposes Apple JSC from
-  RN JS code. Worklets-core, react-native-worklets, multithreading all
-  fall back to whatever engine RN booted with (Hermes by default).
-  No JS-only path to spawn Apple JSContexts exists. Must write Swift.
-  Decision: **put the native module inside existing `crust` module,
-  not create a new `mentrajs/` module**. Adds ~300-500 lines of Swift
-  to crust. Smaller surface, doesn't fragment the module set.
-- **2026-05-12 (v6):** Polyfill strategy revised after MIT-library
-  survey: about half the polyfill set is drop-in (`console`,
-  `TextEncoder`, `URL`, `atob/btoa`, `EventTarget`, `Blob/FormData`,
-  `AbortController`). Lift `Headers`/`Request`/`Response` classes
-  verbatim from whatwg-fetch (MIT) and replace XHR core with native
-  bridge. Total custom code revised down to ~1000 LoC JS + ~600 LoC
-  Swift. Total polyfill effort: ~2-3 weeks (down from earlier ~6-week
-  estimate when assuming all-from-scratch).
+### Runtime: native JavaScriptCore per miniapp
+Each miniapp's background JS runs in its own iOS `JSContext` (via
+`JavaScriptCore.framework`) with its own `JSVirtualMachine` for heap
+isolation. Not Hermes, not V8, not a WKWebView, not Worker isolation.
+
+**Why JSC specifically:** Apple's 2.5.2 carve-out names JavaScriptCore
+and WebKit by name as permitted runtimes for downloaded code. Hermes
+isn't named. RN/CodePush get away with downloaded JS in Hermes because
+that's "the app updating itself" — a multi-tenant miniapp platform is
+a different review category. JSC keeps us inside the explicit rule
+text, with Pebble and WeChat precedents.
+
+**Why not Workers in shared WebView:** measured ~5-10× more memory per
+miniapp than JSC, two-hop bridge to native, shared WebContent process
+means one greedy miniapp jetsams everyone, attack surface includes
+DOM + Storage + Networking + Service Workers (vs just JSC for us).
+Workers are explicitly blessed by 4.7 but security defaults are
+fail-open vs JSC's fail-safe.
+
+**Why not Pebble's URL-redirect WebView model:** cloud miniapps are
+real SPAs needing live updates from background (transcription
+previews, display previews, streaming sensor data). URL-redirect
+is fine for "hit Save and exit" config pages, not for what we need.
+
+**Why not `@callstack/react-native-sandbox`:** pre-1.0, one-person
+bus factor, no Expo support, ~15-30 MB per sandbox (full RN per
+instance) vs ~0.75 MB for raw JSC.
+
+### Memory profile measured on iPhone 15
+0.75 MB per JSContext at rest. 50 contexts added 37 MB total. Linear
+scaling from N=1 through N=50, no fixed-cost cliffs. Architecture is
+N-context viable. Source: `agents/spike-results/jsc-spike-iphone15-release-50ctx.log`.
+
+### Native code goes in `crust`, not a new module
+~300-500 lines of Swift in the existing `crust` Expo module gets us
+the full API (`spawn`, `evaluate`, `kill`, `dispatchToJs`). No library
+exposes Apple JSContexts to RN JS code — all JSI isolate libraries
+fall back to whatever engine RN booted (Hermes). Writing Swift is
+unavoidable. Don't fragment the module set by creating a new module
+when crust already owns the SDK's native interface.
+
+### Single `__dispatch` function, not per-method bindings
+Pebble documented a production EXC_BAD_ACCESS crash from binding
+~35 native function references individually as JSValue properties —
+JSC's GC raced with Kotlin's GC, hashing native objects from JSC's
+Heap Helper Thread. Fix: one C-callable dispatch function, generate
+JS-side proxy objects on top. We inherit the lesson without inheriting
+the crash. Same applies to Swift/ARC — different cause, same class
+of issue.
+
+### Polyfills: lift MIT libs where possible
+About half the polyfill set is drop-in MIT (`@react-native/js-polyfills/
+console.js`, `fast-text-encoding`, `whatwg-url-without-unicode`,
+`base-64`, `event-target-shim`, `fetch-blob`, `formdata-polyfill`,
+`abort-controller`). Lift `Headers`/`Request`/`Response` classes from
+whatwg-fetch verbatim and replace XHR core with native bridge. Total
+custom code: ~1000 LoC JS + ~600 LoC Swift, ~2-3 weeks.
+
+### Pre-warm WebView pool — rejected
+Cold-mount latency for a fresh WKWebView is ~100-300 ms, fine for a
+settings sheet. Pool management adds bug surface (orphan messages,
+stale routing, dirty global state from previous miniapp). Spawn fresh
+per open, destroy on exit. Matches Chrome extension popup pattern.
+
+### Live message bus, not URL-redirect
+We commit to the bus from the start. Adding it later means rewriting
+every miniapp built against a URL-redirect contract. ~500 lines of
+TS + Swift. Pebble doesn't have one because their use case didn't
+need it; ours does.
+
+### Test harness uses deeplinks + autorun, not Maestro
+Maestro on real iOS needs WebDriverAgent built/signed onto the device,
+which fights with Apple Team certs and adds slow build steps. The
+stress-test screen accepts `?autorun=1&jsc=N` query params for
+agentic test runs via `xcrun devicectl device process launch
+--payload-url ...`. No UI automation, no driver setup.
