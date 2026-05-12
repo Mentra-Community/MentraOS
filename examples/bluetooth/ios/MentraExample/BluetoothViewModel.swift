@@ -58,8 +58,8 @@ enum ExampleStreamProtocol: String, CaseIterable {
 final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDelegate, AVAudioPlayerDelegate {
     @Published private(set) var glassesValues: MentraGlassesStatus?
     @Published private(set) var bluetoothValues: MentraBluetoothStatus?
-    @Published private(set) var discoveredDevices: [MentraDiscoveredDevice] = []
-    @Published private(set) var selectedDiscoveredDevice: MentraDiscoveredDevice?
+    @Published private(set) var discoveredDevices: [MentraDevice] = []
+    @Published private(set) var selectedDiscoveredDevice: MentraDevice?
     @Published private(set) var events: [ExampleEvent] = [ExampleEvent.make(tag: "LIVE", text: "SDK ready. Scan to discover glasses.")]
     @Published private(set) var activeAction: String?
     @Published private(set) var lastAction = "No actions yet."
@@ -210,12 +210,12 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    func selectDiscoveredDevice(_ device: MentraDiscoveredDevice) {
+    func selectDiscoveredDevice(_ device: MentraDevice) {
         selectedDiscoveredDevice = device
         lastAction = "Selected: \(device.name)"
     }
 
-    func connect(_ device: MentraDiscoveredDevice) {
+    func connect(_ device: MentraDevice) {
         selectedDiscoveredDevice = device
         runAction("Connect \(device.name)") {
             mentraBluetoothSdk.connect(to: device)
@@ -985,7 +985,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         append(tag: "BLE", text: summarize(status))
     }
 
-    func mentraBluetoothSDK(_: MentraBluetoothSDK, didDiscover device: MentraDiscoveredDevice) {
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didDiscover device: MentraDevice) {
         if !discoveredDevices.contains(where: { discoveredDeviceKey($0) == discoveredDeviceKey(device) }) {
             discoveredDevices.append(device)
         }
@@ -995,7 +995,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         append(tag: "BLE", text: "discovered \(device.name)")
     }
 
-    func mentraBluetoothSDK(_: MentraBluetoothSDK, didChangeDefaultDevice device: MentraPairedDevice?) {
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didChangeDefaultDevice device: MentraDevice?) {
         savePersistedDefaultDevice(device)
         bluetoothValues = bluetoothValues?.withDefaultDevice(device)
         if let device {
@@ -1165,7 +1165,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    private func loadPersistedDefaultDevice() -> MentraPairedDevice? {
+    private func loadPersistedDefaultDevice() -> MentraDevice? {
         guard let model = defaultDeviceDefaults.string(forKey: DefaultDeviceStorage.model), !model.isEmpty else {
             return nil
         }
@@ -1175,14 +1175,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         let identifier = defaultDeviceDefaults.string(forKey: DefaultDeviceStorage.identifier).flatMap {
             $0.isEmpty ? nil : $0
         }
-        return MentraPairedDevice(
+        return MentraDevice(
             model: MentraDeviceModel.fromDeviceType(model),
             name: name,
             identifier: identifier
         )
     }
 
-    private func savePersistedDefaultDevice(_ device: MentraPairedDevice?) {
+    private func savePersistedDefaultDevice(_ device: MentraDevice?) {
         guard let device, !device.name.isEmpty else {
             defaultDeviceDefaults.removeObject(forKey: DefaultDeviceStorage.version)
             defaultDeviceDefaults.removeObject(forKey: DefaultDeviceStorage.model)
@@ -1666,8 +1666,8 @@ func supportsDisplay(_ status: MentraGlassesStatus?) -> Bool {
     return false
 }
 
-func discoveredDeviceKey(_ device: MentraDiscoveredDevice) -> String {
-    device.identifier ?? device.name
+func discoveredDeviceKey(_ device: MentraDevice) -> String {
+    device.id
 }
 
 func batteryLevel(_ status: MentraGlassesStatus?) -> Int? {

@@ -29,15 +29,14 @@ import com.mentra.core.MentraBluetoothSdkCallback
 import com.mentra.core.MentraBluetoothStatus
 import com.mentra.core.MentraBluetoothStatusUpdate
 import com.mentra.core.MentraButtonPressEvent
+import com.mentra.core.MentraDevice
 import com.mentra.core.MentraDeviceModel
-import com.mentra.core.MentraDiscoveredDevice
 import com.mentra.core.MentraGalleryMode
 import com.mentra.core.MentraGlassesStatus
 import com.mentra.core.MentraGlassesStatusUpdate
 import com.mentra.core.MentraHotspotErrorEvent
 import com.mentra.core.MentraHotspotStatusEvent
 import com.mentra.core.MentraMicConfig
-import com.mentra.core.MentraPairedDevice
 import com.mentra.core.MentraPhotoCompression
 import com.mentra.core.MentraPhotoRequest
 import com.mentra.core.MentraPhotoSize
@@ -123,8 +122,8 @@ data class MentraExampleState(
     val activeAction: String? = null,
     val bluetoothStatus: MentraBluetoothStatus? = null,
     val cameraStatus: String = "Camera: phone receiver will start before capture",
-    val discoveredDevices: List<MentraDiscoveredDevice> = emptyList(),
-    val selectedDiscoveredDevice: MentraDiscoveredDevice? = null,
+    val discoveredDevices: List<MentraDevice> = emptyList(),
+    val selectedDiscoveredDevice: MentraDevice? = null,
     val events: List<ExampleEvent> = listOf(exampleEvent("LIVE", "SDK ready. Scan to discover glasses.")),
     val galleryModeAuto: Boolean = false,
     val galleryServerReachable: Boolean? = null,
@@ -299,12 +298,12 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
     }
 
-    fun connect(device: MentraDiscoveredDevice) = runAction("Connect ${device.name}") {
+    fun connect(device: MentraDevice) = runAction("Connect ${device.name}") {
         state = state.copy(selectedDiscoveredDevice = device)
         mentraBluetoothSdk.connect(device)
     }
 
-    fun selectDiscoveredDevice(device: MentraDiscoveredDevice) {
+    fun selectDiscoveredDevice(device: MentraDevice) {
         state = state.copy(
             selectedDiscoveredDevice = device,
             lastAction = "Selected: ${device.name}",
@@ -1078,7 +1077,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         addEvent("BLE", summarize(status))
     }
 
-    override fun onDeviceDiscovered(device: MentraDiscoveredDevice) {
+    override fun onDeviceDiscovered(device: MentraDevice) {
         if (state.discoveredDevices.none { discoveredDeviceKey(it) == discoveredDeviceKey(device) }) {
             state = state.copy(
                 discoveredDevices = state.discoveredDevices + device,
@@ -1087,7 +1086,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         addEvent("BLE", "discovered ${device.name}")
     }
 
-    override fun onDefaultDeviceChanged(device: MentraPairedDevice?) {
+    override fun onDefaultDeviceChanged(device: MentraDevice?) {
         savePersistedDefaultDevice(device)
         state = state.copy(bluetoothStatus = state.bluetoothStatus?.withDefaultDevice(device))
         if (device != null) {
@@ -1410,20 +1409,20 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         state = state.copy(events = (listOf(exampleEvent(tag, text)) + state.events).take(30))
     }
 
-    private fun loadPersistedDefaultDevice(): MentraPairedDevice? {
+    private fun loadPersistedDefaultDevice(): MentraDevice? {
         val model = defaultDevicePrefs.getString(DEFAULT_DEVICE_MODEL_KEY, null)?.takeIf { it.isNotBlank() }
             ?: return null
         val name = defaultDevicePrefs.getString(DEFAULT_DEVICE_NAME_KEY, null)?.takeIf { it.isNotBlank() }
             ?: return null
         val address = defaultDevicePrefs.getString(DEFAULT_DEVICE_ADDRESS_KEY, null)?.takeIf { it.isNotBlank() }
-        return MentraPairedDevice(
+        return MentraDevice(
             model = MentraDeviceModel.fromDeviceType(model),
             name = name,
             address = address,
         )
     }
 
-    private fun savePersistedDefaultDevice(device: MentraPairedDevice?) {
+    private fun savePersistedDefaultDevice(device: MentraDevice?) {
         defaultDevicePrefs.edit().apply {
             if (device == null || device.name.isBlank()) {
                 clear()
@@ -2471,10 +2470,10 @@ fun bluetoothSearchLabel(status: MentraBluetoothStatus?): String {
     return "${if (searching) "Scanning" else "Idle"} · $count result${if (count == 1) "" else "s"}"
 }
 
-fun discoveredDeviceKey(device: MentraDiscoveredDevice): String =
-    device.address ?: "${device.model.deviceType}:${device.name}"
+fun discoveredDeviceKey(device: MentraDevice): String =
+    device.id
 
-fun targetDeviceDetail(device: MentraDiscoveredDevice): String =
+fun targetDeviceDetail(device: MentraDevice): String =
     device.rssi?.let { "${device.model.deviceType} · $it dBm" } ?: device.model.deviceType
 
 fun connectionTargetLabel(state: MentraExampleState, status: MentraGlassesStatus?): String =
@@ -2493,7 +2492,7 @@ fun canConnectTarget(state: MentraExampleState): Boolean =
 fun hasSavedConnectionTarget(status: MentraBluetoothStatus?): Boolean =
     !status?.defaultWearable.isNullOrBlank() && !status?.deviceName.isNullOrBlank()
 
-fun MentraBluetoothStatus.withDefaultDevice(device: MentraPairedDevice?): MentraBluetoothStatus =
+fun MentraBluetoothStatus.withDefaultDevice(device: MentraDevice?): MentraBluetoothStatus =
     copy(
         defaultWearable = device?.model?.deviceType ?: "",
         deviceName = device?.name ?: "",

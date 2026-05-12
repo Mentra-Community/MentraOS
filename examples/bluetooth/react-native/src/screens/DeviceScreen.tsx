@@ -206,7 +206,7 @@ function connectionTargetLabel(sdk: MentraSdkModel) {
     return deviceLabel(sdk.glassesStatus);
   }
   if (sdk.selectedDiscoveredDevice) {
-    return sdk.selectedDiscoveredDevice.deviceName;
+    return sdk.selectedDiscoveredDevice.name;
   }
   if (sdk.discoveredDevices.length > 0) {
     return 'Choose a discovered device';
@@ -283,7 +283,7 @@ function TargetPicker({ sdk, connected }: { sdk: MentraSdkModel; connected: bool
         sdk.discoveredDevices.map((device) => (
           <TargetDeviceRow
             key={discoveredDeviceKey(device)}
-            name={device.deviceName}
+            name={device.name}
             detail={targetDeviceDetail(device)}
             selected={selectedKey === discoveredDeviceKey(device)}
             enabled
@@ -334,9 +334,9 @@ function TargetDeviceRow({
 }
 
 function targetDeviceDetail(device: MentraSdkModel['discoveredDevices'][number]) {
-  return device.deviceAddress
-    ? `${device.deviceModel} · ${device.deviceAddress}`
-    : device.deviceModel;
+  return device.address
+    ? `${device.model} · ${device.address}`
+    : device.model;
 }
 
 function savedConnectionTargetDetail(sdk: MentraSdkModel) {
@@ -345,7 +345,7 @@ function savedConnectionTargetDetail(sdk: MentraSdkModel) {
 }
 
 function discoveredDeviceKey(device: MentraSdkModel['discoveredDevices'][number]) {
-  return `${device.deviceModel}:${device.deviceName}:${device.deviceAddress ?? ''}`;
+  return device.id;
 }
 
 function stringValue(values: Record<string, unknown>, key: string) {

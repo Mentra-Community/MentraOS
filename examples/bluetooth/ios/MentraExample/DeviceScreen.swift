@@ -295,7 +295,7 @@ private func glassesAssetName(_ values: MentraGlassesStatus?) -> String {
     return "mentra_live"
 }
 
-private func targetDeviceDetail(_ device: MentraDiscoveredDevice) -> String {
+private func targetDeviceDetail(_ device: MentraDevice) -> String {
     if let rssi = device.rssi {
         return "\(device.model.rawValue) · \(rssi) dBm"
     }

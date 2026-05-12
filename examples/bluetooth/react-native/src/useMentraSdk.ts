@@ -9,9 +9,9 @@ import BluetoothSdk, {
   type CompatibleGlassesSearchStopEvent,
   type CoreStatus,
   type DefaultDevice,
-  type DeviceSearchResult,
   type GlassesStatus,
   type LogEvent,
+  type MentraDevice,
   type MicLc3Event,
   type MicPcmEvent,
   type PhotoResponseEvent,
@@ -84,7 +84,7 @@ export type MentraSdkState = {
   bluetoothStatus: Partial<CoreStatus> & Record<string, unknown>;
   cameraStatus: string;
   defaultDevice: DefaultDevice | null;
-  discoveredDevices: DeviceSearchResult[];
+  discoveredDevices: MentraDevice[];
   events: SdkConsoleEvent[];
   galleryModeAuto: boolean;
   galleryServerReachable: boolean | null;
@@ -112,7 +112,7 @@ export type MentraSdkState = {
   photoPreviewUrl: string | null;
   photoSize: PhotoSize;
   rawJsonExpanded: boolean;
-  selectedDiscoveredDevice: DeviceSearchResult | null;
+  selectedDiscoveredDevice: MentraDevice | null;
   directStreamReceiverRunning: boolean;
   directStreamWhipUrl: string | null;
   streamCloudServerEnabled: boolean;
@@ -130,7 +130,7 @@ export type MentraSdkActions = {
   clearDefaultDevice: () => Promise<void>;
   clearDisplay: () => Promise<void>;
   connect: () => Promise<void>;
-  connectDevice: (device: DeviceSearchResult) => Promise<void>;
+  connectDevice: (device: MentraDevice) => Promise<void>;
   disconnect: () => Promise<void>;
   displayHello: () => Promise<void>;
   forgetCurrentWifiNetwork: () => Promise<void>;
@@ -141,7 +141,7 @@ export type MentraSdkActions = {
   openWifiSettings: () => Promise<void>;
   requestWifiScan: () => Promise<void>;
   playMicRecording: () => Promise<void>;
-  selectDiscoveredDevice: (device: DeviceSearchResult) => void;
+  selectDiscoveredDevice: (device: MentraDevice) => void;
   selectLedColor: (color: LedColor) => Promise<void>;
   selectLedMode: (mode: LedMode) => Promise<void>;
   selectProtocol: (protocol: StreamProtocol) => void;
@@ -194,7 +194,7 @@ export function useMentraSdk(): MentraSdkModel {
     () => defaultDeviceFromStatus(BluetoothSdk.getCoreStatus() as unknown as Record<string, unknown>),
   );
   const [selectedDiscoveredDevice, setSelectedDiscoveredDevice] =
-    useState<DeviceSearchResult | null>(null);
+    useState<MentraDevice | null>(null);
   const [events, setEvents] = useState<SdkConsoleEvent[]>([
     event('LIVE', 'SDK ready. Scan to discover glasses.'),
   ]);
@@ -548,7 +548,7 @@ export function useMentraSdk(): MentraSdkModel {
       }
       setSelectedDiscoveredDevice(null);
       setBluetoothStatus((current) => ({...current, searchResults: []}));
-      await BluetoothSdk.findCompatibleDevices('Mentra Live');
+      await BluetoothSdk.startScan({model: 'Mentra Live'});
     });
   }
 
@@ -558,10 +558,7 @@ export function useMentraSdk(): MentraSdkModel {
         throw new Error('Bluetooth permissions are required to connect.');
       }
       if (selectedDiscoveredDevice) {
-        await BluetoothSdk.connectDevice(
-          selectedDiscoveredDevice.deviceModel,
-          selectedDiscoveredDevice.deviceName,
-        );
+        await BluetoothSdk.connect(selectedDiscoveredDevice);
         return;
       }
       if (discoveredDevices.length === 0 && (defaultDevice || hasSavedConnectionTarget(bluetoothStatus))) {
@@ -575,13 +572,13 @@ export function useMentraSdk(): MentraSdkModel {
     });
   }
 
-  async function connectDevice(device: DeviceSearchResult) {
+  async function connectDevice(device: MentraDevice) {
     setSelectedDiscoveredDevice(device);
-    await runAction(`Connect ${device.deviceName}`, async () => {
+    await runAction(`Connect ${device.name}`, async () => {
       if (!(await ensureAndroidPermissions('connect'))) {
         throw new Error('Bluetooth permissions are required to connect.');
       }
-      await BluetoothSdk.connectDevice(device.deviceModel, device.deviceName);
+      await BluetoothSdk.connect(device);
     });
   }
 
@@ -603,9 +600,9 @@ export function useMentraSdk(): MentraSdkModel {
     });
   }
 
-  function selectDiscoveredDevice(device: DeviceSearchResult) {
+  function selectDiscoveredDevice(device: MentraDevice) {
     setSelectedDiscoveredDevice(device);
-    setLastAction(`Selected: ${device.deviceName}`);
+    setLastAction(`Selected: ${device.name}`);
   }
 
   async function displayHello() {
@@ -1638,7 +1635,12 @@ function parseDefaultDevice(value: unknown): DefaultDevice | null {
     return null;
   }
   const address = stringValue(values, 'address');
-  return address ? {address, model, name} : {model, name};
+  return {
+    id: stringValue(values, 'id') ?? address ?? `${model}:${name}`,
+    model,
+    name,
+    ...(address ? {address} : {}),
+  };
 }
 
 function defaultDeviceStatus(device: DefaultDevice | null): Record<string, string> {
@@ -1667,7 +1669,12 @@ function defaultDeviceFromStatus(values: Record<string, unknown>): DefaultDevice
     return null;
   }
   const address = stringValue(values, 'device_address');
-  return address ? {address, model, name} : {model, name};
+  return {
+    id: address ?? `${model}:${name}`,
+    model,
+    name,
+    ...(address ? {address} : {}),
+  };
 }
 
 function hasDefaultDeviceStatus(values: Record<string, unknown>) {
@@ -1682,8 +1689,8 @@ function hasSavedConnectionTarget(values: Record<string, unknown>) {
   return Boolean(stringValue(values, 'default_wearable') && stringValue(values, 'device_name'));
 }
 
-function discoveredDeviceKey(device: DeviceSearchResult) {
-  return `${device.deviceModel}:${device.deviceName}:${device.deviceAddress ?? ''}`;
+function discoveredDeviceKey(device: MentraDevice) {
+  return device.id;
 }
 
 function stringValue(values: Record<string, unknown>, key: string) {
