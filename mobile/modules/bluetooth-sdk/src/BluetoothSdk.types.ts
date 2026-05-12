@@ -298,6 +298,8 @@ export type CoreModuleEvents = {
   glasses_status: (changed: Partial<GlassesStatus>) => void
   core_status: (changed: Partial<CoreStatus>) => void
   log: (event: LogEvent) => void
+  device_discovered: (device: MentraDevice) => void
+  default_device_changed: (event: {device?: MentraDevice}) => void
   // Individual event handlers
   glasses_not_ready: (event: GlassesNotReadyEvent) => void
   button_press: (event: ButtonPressEvent) => void
@@ -440,17 +442,33 @@ export interface CoreSettings {
 
 export type MicRanking = "auto" | "phone" | "glasses" | "bluetooth"
 
-export interface DeviceSearchResult {
-  deviceModel: string
-  deviceName: string
-  deviceAddress?: string
-}
-
-export type DefaultDevice = {
+export interface MentraDevice {
+  id: string
   model: string
   name: string
   address?: string
+  rssi?: number
 }
+
+export interface DeviceScanRequest {
+  model: string
+}
+
+export interface ConnectOptions {
+  saveAsDefault?: boolean
+  cancelExistingConnectionAttempt?: boolean
+}
+
+export interface DeviceSearchResult extends MentraDevice {
+  /** Deprecated: use model. Present in native search payloads for existing MentraOS pairing screens. */
+  deviceModel: string
+  /** Deprecated: use name. Present in native search payloads for existing MentraOS pairing screens. */
+  deviceName: string
+  /** Deprecated: use address. Present in native search payloads for existing MentraOS pairing screens. */
+  deviceAddress?: string
+}
+
+export interface DefaultDevice extends MentraDevice {}
 
 export interface WifiSearchResult {
   ssid: string

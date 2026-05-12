@@ -25,38 +25,163 @@ enum class MentraDeviceModel(val deviceType: String) {
     }
 }
 
+data class MentraDevice(
+    val model: MentraDeviceModel,
+    val name: String,
+    val address: String? = null,
+    val rssi: Int? = null,
+    val id: String = address?.takeIf { it.isNotBlank() } ?: "${model.deviceType}:$name",
+) {
+    internal fun toPairedDevice(): MentraPairedDevice =
+        MentraPairedDevice(
+            model = model,
+            name = name,
+            address = address,
+        )
+
+    internal fun toDiscoveredDevice(): MentraDiscoveredDevice =
+        MentraDiscoveredDevice(
+            model = model,
+            name = name,
+            address = address,
+            rssi = rssi,
+        )
+
+    internal fun toSearchResult(): MentraDeviceSearchResult =
+        MentraDeviceSearchResult(
+            model = model.deviceType,
+            name = name,
+            address = address ?: "",
+            rssi = rssi,
+            id = id,
+        )
+
+    internal fun toMap(): Map<String, Any> =
+        buildMap {
+            put("id", id)
+            put("model", model.deviceType)
+            put("name", name)
+            put("deviceModel", model.deviceType)
+            put("deviceName", name)
+            address?.takeIf { it.isNotBlank() }?.let {
+                put("address", it)
+                put("deviceAddress", it)
+            }
+            rssi?.let { put("rssi", it) }
+        }
+
+    companion object {
+        internal fun fromMap(values: Map<String, Any>): MentraDevice? {
+            val model = stringValue(values, "model", "deviceModel", "device_model") ?: return null
+            val name = stringValue(values, "name", "deviceName", "device_name") ?: return null
+            val address = stringValue(values, "address", "deviceAddress", "device_address")?.takeIf { it.isNotBlank() }
+            val rssi = numberValue(values, "rssi", "signalStrength", "signal_strength")
+            val id = stringValue(values, "id")?.takeIf { it.isNotBlank() } ?: address ?: "${model}:$name"
+            return MentraDevice(
+                model = MentraDeviceModel.fromDeviceType(model),
+                name = name,
+                address = address,
+                rssi = rssi,
+                id = id,
+            )
+        }
+    }
+}
+
 data class MentraDiscoveredDevice(
     val model: MentraDeviceModel,
     val name: String,
     val address: String? = null,
     val rssi: Int? = null,
-)
+) {
+    internal fun toMentraDevice(): MentraDevice =
+        MentraDevice(
+            model = model,
+            name = name,
+            address = address,
+            rssi = rssi,
+        )
+}
 
 data class MentraPairedDevice(
     val model: MentraDeviceModel,
     val name: String,
     val address: String? = null,
+) {
+    internal fun toMentraDevice(): MentraDevice =
+        MentraDevice(
+            model = model,
+            name = name,
+            address = address,
+        )
+}
+
+data class MentraConnectOptions(
+    val saveAsDefault: Boolean = true,
+    val cancelExistingConnectionAttempt: Boolean = true,
 )
 
 data class MentraDeviceSearchResult(
-    val deviceModel: String,
-    val deviceName: String,
-    val deviceAddress: String = "",
+    val model: String,
+    val name: String,
+    val address: String = "",
+    val rssi: Int? = null,
+    val id: String = address.takeIf { it.isNotBlank() } ?: "$model:$name",
 ) {
-    internal fun toMap(): Map<String, Any> =
-        mapOf(
-            "deviceModel" to deviceModel,
-            "deviceName" to deviceName,
-            "deviceAddress" to deviceAddress,
+    val deviceModel: String
+        get() = model
+    val deviceName: String
+        get() = name
+    val deviceAddress: String
+        get() = address
+
+    @Deprecated("Use model, name, address, and rssi.")
+    constructor(
+        deviceModel: String,
+        deviceName: String,
+        deviceAddress: String = "",
+    ) : this(
+        model = deviceModel,
+        name = deviceName,
+        address = deviceAddress,
+    )
+
+    internal fun toMentraDevice(): MentraDevice =
+        MentraDevice(
+            model = MentraDeviceModel.fromDeviceType(model),
+            name = name,
+            address = address.takeIf { it.isNotBlank() },
+            rssi = rssi,
+            id = id,
         )
 
+    internal fun toMap(): Map<String, Any> =
+        buildMap {
+            put("id", id)
+            put("model", model)
+            put("name", name)
+            put("deviceModel", model)
+            put("deviceName", name)
+            if (address.isNotBlank()) {
+                put("address", address)
+                put("deviceAddress", address)
+            }
+            rssi?.let { put("rssi", it) }
+    }
+
     companion object {
-        internal fun fromMap(values: Map<String, Any>): MentraDeviceSearchResult =
-            MentraDeviceSearchResult(
-                deviceModel = stringValue(values, "deviceModel", "device_model") ?: "",
-                deviceName = stringValue(values, "deviceName", "device_name") ?: "",
-                deviceAddress = stringValue(values, "deviceAddress", "device_address") ?: "",
+        internal fun fromMap(values: Map<String, Any>): MentraDeviceSearchResult {
+            val model = stringValue(values, "model", "deviceModel", "device_model") ?: ""
+            val name = stringValue(values, "name", "deviceName", "device_name") ?: ""
+            val address = stringValue(values, "address", "deviceAddress", "device_address") ?: ""
+            return MentraDeviceSearchResult(
+                model = model,
+                name = name,
+                address = address,
+                rssi = numberValue(values, "rssi", "signalStrength", "signal_strength"),
+                id = stringValue(values, "id")?.takeIf { it.isNotBlank() } ?: address.takeIf { it.isNotBlank() } ?: "$model:$name",
             )
+        }
     }
 }
 
@@ -1101,7 +1226,7 @@ enum class MentraScanStopReason {
 interface MentraBluetoothSdkListener {
     fun onGlassesStatusChanged(status: MentraGlassesStatusUpdate) {}
     fun onBluetoothStatusChanged(status: MentraBluetoothStatusUpdate) {}
-    fun onDeviceDiscovered(device: MentraDiscoveredDevice) {}
+    fun onDeviceDiscovered(device: MentraDevice) {}
     fun onScanStopped(reason: MentraScanStopReason) {}
     fun onButtonPress(event: MentraButtonPressEvent) {}
     fun onTouch(event: MentraTouchEvent) {}
@@ -1117,7 +1242,7 @@ interface MentraBluetoothSdkListener {
     fun onMicPcm(frame: ByteArray) {}
     fun onMicLc3(frame: ByteArray) {}
     fun onLocalTranscription(event: MentraLocalTranscriptionEvent) {}
-    fun onDefaultDeviceChanged(device: MentraPairedDevice?) {}
+    fun onDefaultDeviceChanged(device: MentraDevice?) {}
     fun onLog(message: String) {}
     fun onError(error: MentraBluetoothError) {}
     fun onRawEvent(eventName: String, values: Map<String, Any>) {}

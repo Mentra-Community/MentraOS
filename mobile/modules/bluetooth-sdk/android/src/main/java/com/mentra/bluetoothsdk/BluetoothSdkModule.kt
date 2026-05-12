@@ -1,5 +1,6 @@
 package com.mentra.core
 
+import com.mentra.core.utils.DeviceTypes
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
@@ -14,6 +15,18 @@ class CoreModule : Module() {
 
                 override fun onBluetoothStatusChanged(status: MentraBluetoothStatusUpdate) {
                     sendEvent("core_status", status.toMap())
+                }
+
+                override fun onDeviceDiscovered(device: MentraDevice) {
+                    sendEvent("device_discovered", device.toMap())
+                }
+
+                override fun onDefaultDeviceChanged(device: MentraDevice?) {
+                    val event =
+                            buildMap<String, Any> {
+                                device?.let { put("device", it.toMap()) }
+                            }
+                    sendEvent("default_device_changed", event)
                 }
 
                 override fun onScanStopped(reason: MentraScanStopReason) {
@@ -102,6 +115,8 @@ class CoreModule : Module() {
             "glasses_status",
             "core_status",
             "log",
+            "device_discovered",
+            "default_device_changed",
             // Individual event handlers
             "glasses_not_ready",
             "button_press",
@@ -205,14 +220,25 @@ class CoreModule : Module() {
 
         AsyncFunction("connectDefault") { sdk?.connectDefault() }
 
+        AsyncFunction("connectDefaultWithOptions") { options: Map<String, Any> ->
+            sdk?.connectDefault(options.toMentraConnectOptions())
+        }
+
         AsyncFunction("setDefaultDevice") { device: Map<String, Any>? ->
-            sdk?.setDefaultDevice(device.toMentraPairedDevice())
+            sdk?.setDefaultDevice(device.toMentraDevice())
         }
 
         AsyncFunction("clearDefaultDevice") { sdk?.clearDefaultDevice() }
 
         AsyncFunction("connectByName") { deviceName: String ->
             sdk?.connectByName(deviceName)
+        }
+
+        AsyncFunction("connectWithOptions") { device: Map<String, Any>, options: Map<String, Any> ->
+            sdk?.connect(
+                    device.toMentraDevice() ?: throw IllegalArgumentException("connect requires a MentraDevice with model and name."),
+                    options.toMentraConnectOptions(),
+            )
         }
 
         AsyncFunction("connectDevice") { deviceModel: String, deviceName: String ->
@@ -230,6 +256,13 @@ class CoreModule : Module() {
         AsyncFunction("disconnectController") { deviceManager?.disconnectController() }
 
         AsyncFunction("forgetController") { deviceManager?.forgetController() }
+
+        AsyncFunction("startScan") { params: Map<String, Any> ->
+            val model = params["model"] as? String ?: params["deviceModel"] as? String ?: DeviceTypes.LIVE
+            sdk?.startScan(MentraDeviceModel.fromDeviceType(model))
+        }
+
+        AsyncFunction("cancelConnectionAttempt") { sdk?.cancelConnectionAttempt() }
 
         AsyncFunction("findCompatibleDevices") { deviceModel: String ->
             sdk?.startScan(MentraDeviceModel.fromDeviceType(deviceModel))
@@ -571,21 +604,26 @@ class CoreModule : Module() {
     }
 }
 
-private fun MentraPairedDevice.toMap(): Map<String, Any> =
-        buildMap {
-            put("model", model.deviceType)
-            put("name", name)
-            address?.let { put("address", it) }
-        }
-
-private fun Map<String, Any>?.toMentraPairedDevice(): MentraPairedDevice? {
+private fun Map<String, Any>?.toMentraDevice(): MentraDevice? {
     val values = this ?: return null
     val model = values["model"] as? String ?: values["deviceModel"] as? String ?: return null
     val name = values["name"] as? String ?: values["deviceName"] as? String ?: return null
     val address = values["address"] as? String ?: values["deviceAddress"] as? String
-    return MentraPairedDevice(
+    val rssi = (values["rssi"] as? Number)?.toInt()
+    val id = values["id"] as? String
+    return MentraDevice(
             model = MentraDeviceModel.fromDeviceType(model),
             name = name,
             address = address?.takeIf { it.isNotBlank() },
+            rssi = rssi,
+            id = id?.takeIf { it.isNotBlank() } ?: address?.takeIf { it.isNotBlank() } ?: "$model:$name",
+    )
+}
+
+private fun Map<String, Any>?.toMentraConnectOptions(): MentraConnectOptions {
+    val values = this ?: return MentraConnectOptions()
+    return MentraConnectOptions(
+            saveAsDefault = values["saveAsDefault"] as? Boolean ?: true,
+            cancelExistingConnectionAttempt = values["cancelExistingConnectionAttempt"] as? Boolean ?: true,
     )
 }

@@ -60,9 +60,9 @@ class MentraBluetoothSdk private constructor(
     fun getBluetoothStatus(): MentraBluetoothStatus =
         MentraBluetoothStatus.fromMap(GlassesStore.store.getCategory(ObservableStore.CORE_CATEGORY))
 
-    fun getDefaultDevice(): MentraPairedDevice? = currentDefaultDevice()
+    fun getDefaultDevice(): MentraDevice? = currentDefaultDevice()
 
-    fun setDefaultDevice(device: MentraPairedDevice?) {
+    fun setDefaultDevice(device: MentraDevice?) {
         if (device == null) {
             clearDefaultDevice()
             return
@@ -101,9 +101,20 @@ class MentraBluetoothSdk private constructor(
         dispatchToListeners { it.onScanStopped(MentraScanStopReason.CANCELLED) }
     }
 
-    fun connect(device: MentraDiscoveredDevice) {
+    @JvmOverloads
+    fun connect(device: MentraDevice, options: MentraConnectOptions = MentraConnectOptions()) {
+        if (options.cancelExistingConnectionAttempt) {
+            cancelConnectionAttempt()
+        }
+        if (options.saveAsDefault) {
+            setDefaultDevice(device)
+        }
         GlassesStore.apply(ObservableStore.CORE_CATEGORY, "pending_wearable", device.model.deviceType)
         deviceManager.connectByName(device.name)
+    }
+
+    fun connect(device: MentraDiscoveredDevice) {
+        connect(device.toMentraDevice())
     }
 
     fun connectByName(model: MentraDeviceModel, deviceName: String) {
@@ -115,8 +126,16 @@ class MentraBluetoothSdk private constructor(
         deviceManager.connectByName(deviceName)
     }
 
-    fun connectDefault() {
+    @JvmOverloads
+    fun connectDefault(options: MentraConnectOptions = MentraConnectOptions()) {
+        if (options.cancelExistingConnectionAttempt) {
+            cancelConnectionAttempt()
+        }
         deviceManager.connectDefault()
+    }
+
+    fun cancelConnectionAttempt() {
+        deviceManager.disconnect()
     }
 
     fun connectSimulated() {
@@ -359,13 +378,13 @@ class MentraBluetoothSdk private constructor(
         dispatchToListeners { it.onDefaultDeviceChanged(defaultDevice) }
     }
 
-    private fun currentDefaultDevice(): MentraPairedDevice? {
+    private fun currentDefaultDevice(): MentraDevice? {
         val core = GlassesStore.store.getCategory(ObservableStore.CORE_CATEGORY)
         val model = core["default_wearable"] as? String ?: return null
         val name = core["device_name"] as? String ?: return null
         if (model.isBlank() || name.isBlank()) return null
         val address = (core["device_address"] as? String)?.takeIf { it.isNotBlank() }
-        return MentraPairedDevice(
+        return MentraDevice(
             model = MentraDeviceModel.fromDeviceType(model),
             name = name,
             address = address,
@@ -378,8 +397,11 @@ class MentraBluetoothSdk private constructor(
             val result = rawResult as? Map<*, *> ?: return@forEach
             val name = result["deviceName"] as? String ?: result["name"] as? String ?: return@forEach
             if (!discoveredDeviceNames.add(name)) return@forEach
-            val model = MentraDeviceModel.fromDeviceType(result["deviceModel"] as? String)
-            val device = MentraDiscoveredDevice(model = model, name = name)
+            val values =
+                result.entries.mapNotNull { (key, value) ->
+                    if (key is String && value != null) key to value else null
+                }.toMap()
+            val device = MentraDeviceSearchResult.fromMap(values).toMentraDevice()
             dispatchToListeners { it.onDeviceDiscovered(device) }
         }
     }

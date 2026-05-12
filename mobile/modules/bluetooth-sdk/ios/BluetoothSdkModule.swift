@@ -12,6 +12,8 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
             "glasses_status",
             "core_status",
             "log",
+            "device_discovered",
+            "default_device_changed",
             // Individual event handlers
             "glasses_not_ready",
             "button_press",
@@ -124,6 +126,12 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
+        AsyncFunction("connectDefaultWithOptions") { (options: [String: Any]) in
+            await MainActor.run {
+                self.bluetoothSdk().connectDefault(options: MentraConnectOptions(dictionary: options))
+            }
+        }
+
         AsyncFunction("setDefaultDevice") { (device: [String: Any]?) in
             await MainActor.run {
                 self.bluetoothSdk().setDefaultDevice(MentraPairedDevice(dictionary: device))
@@ -139,6 +147,15 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("connectByName") { (deviceName: String) in
             await MainActor.run {
                 self.bluetoothSdk().connectByName(deviceName)
+            }
+        }
+
+        AsyncFunction("connectWithOptions") { (device: [String: Any], options: [String: Any]) in
+            await MainActor.run {
+                guard let target = MentraDevice(dictionary: device) else {
+                    return
+                }
+                self.bluetoothSdk().connect(to: target, options: MentraConnectOptions(dictionary: options))
             }
         }
 
@@ -181,6 +198,19 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("forgetController") {
             await MainActor.run {
                 CoreManager.shared.forgetController()
+            }
+        }
+
+        AsyncFunction("startScan") { (params: [String: Any]) in
+            await MainActor.run {
+                let model = params["model"] as? String ?? params["deviceModel"] as? String ?? DeviceTypes.LIVE
+                self.bluetoothSdk().startScan(model: MentraDeviceModel.fromDeviceType(model))
+            }
+        }
+
+        AsyncFunction("cancelConnectionAttempt") {
+            await MainActor.run {
+                self.bluetoothSdk().cancelConnectionAttempt()
             }
         }
 
@@ -516,7 +546,9 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
     }
 
     @MainActor
-    public func mentraBluetoothSDK(_: MentraBluetoothSDK, didDiscover _: MentraDiscoveredDevice) {}
+    public func mentraBluetoothSDK(_: MentraBluetoothSDK, didDiscover device: MentraDiscoveredDevice) {
+        sendEvent("device_discovered", device.dictionary)
+    }
 
     @MainActor
     public func mentraBluetoothSDK(_: MentraBluetoothSDK, didStopScan reason: MentraScanStopReason) {
@@ -566,7 +598,13 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
     }
 
     @MainActor
-    public func mentraBluetoothSDK(_: MentraBluetoothSDK, didChangeDefaultDevice _: MentraPairedDevice?) {}
+    public func mentraBluetoothSDK(_: MentraBluetoothSDK, didChangeDefaultDevice device: MentraPairedDevice?) {
+        var event: [String: Any] = [:]
+        if let device {
+            event["device"] = device.dictionary
+        }
+        sendEvent("default_device_changed", event)
+    }
 
     @MainActor
     public func mentraBluetoothSDK(_: MentraBluetoothSDK, didLog message: String) {
@@ -580,26 +618,38 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
 }
 
 private extension MentraPairedDevice {
-    var dictionary: [String: Any] {
-        var values: [String: Any] = [
-            "model": model.deviceType,
-            "name": name,
-        ]
-        if let identifier, !identifier.isEmpty {
-            values["address"] = identifier
-        }
-        return values
-    }
-
     init?(dictionary values: [String: Any]?) {
         guard let values else { return nil }
         guard let model = values["model"] as? String ?? values["deviceModel"] as? String else { return nil }
         guard let name = values["name"] as? String ?? values["deviceName"] as? String else { return nil }
         let identifier = values["address"] as? String ?? values["deviceAddress"] as? String
+        let rssi: Int?
+        switch values["rssi"] {
+        case let value as Int:
+            rssi = value
+        case let value as Double:
+            rssi = Int(value)
+        case let value as NSNumber:
+            rssi = value.intValue
+        default:
+            rssi = nil
+        }
+        let id = values["id"] as? String
         self.init(
             model: MentraDeviceModel.fromDeviceType(model),
             name: name,
-            identifier: identifier?.isEmpty == true ? nil : identifier
+            identifier: identifier?.isEmpty == true ? nil : identifier,
+            rssi: rssi,
+            id: id
+        )
+    }
+}
+
+private extension MentraConnectOptions {
+    init(dictionary values: [String: Any]?) {
+        self.init(
+            saveAsDefault: values?["saveAsDefault"] as? Bool ?? true,
+            cancelExistingConnectionAttempt: values?["cancelExistingConnectionAttempt"] as? Bool ?? true
         )
     }
 }

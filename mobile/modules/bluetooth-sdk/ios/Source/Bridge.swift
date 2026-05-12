@@ -105,19 +105,35 @@ class Bridge {
         Bridge.sendTypedMessage("battery_status", body: body)
     }
 
-    static func sendDiscoveredDevice(_ deviceModel: String, _ deviceName: String) {
+    static func sendDiscoveredDevice(
+        _ deviceModel: String,
+        _ deviceName: String,
+        deviceAddress: String = "",
+        rssi: Int? = nil
+    ) {
         Task {
             await MainActor.run {
                 let searchResults = GlassesStore.shared.get("core", "searchResults") as? [[String: Any]] ?? []
-                let newResult: [String: Any] = [
+                let id = deviceAddress.isEmpty ? "\(deviceModel):\(deviceName)" : deviceAddress
+                var newResult: [String: Any] = [
+                    "id": id,
+                    "model": deviceModel,
+                    "name": deviceName,
                     "deviceModel": deviceModel,
                     "deviceName": deviceName,
                 ]
+                if !deviceAddress.isEmpty {
+                    newResult["address"] = deviceAddress
+                    newResult["deviceAddress"] = deviceAddress
+                }
+                if let rssi {
+                    newResult["rssi"] = rssi
+                }
                 let allResults = searchResults + [newResult]
                 var seen = Set<String>()
                 let uniqueResults = allResults.reversed().filter {
-                    guard let name = $0["deviceName"] as? String else { return false }
-                    return seen.insert(name).inserted
+                    guard let id = $0["id"] as? String ?? $0["deviceName"] as? String else { return false }
+                    return seen.insert(id).inserted
                 }.reversed()
                 GlassesStore.shared.set("core", "searchResults", Array(uniqueResults))
             }

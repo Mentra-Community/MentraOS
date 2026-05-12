@@ -183,14 +183,39 @@ public class Bridge private constructor() {
 
         /** Send discovered device */
         @JvmStatic
-        fun sendDiscoveredDevice(deviceModel: String, deviceName: String) {
+        @JvmOverloads
+        fun sendDiscoveredDevice(
+                deviceModel: String,
+                deviceName: String,
+                deviceAddress: String = "",
+                rssi: Int? = null
+        ) {
             val searchResults =
-                    GlassesStore.store.getCategory("core")["searchResults"] as?
-                            List<Map<String, String>>
+                    (GlassesStore.store.getCategory("core")["searchResults"] as? List<*>)
+                            ?.mapNotNull { result ->
+                                (result as? Map<*, *>)?.entries
+                                        ?.mapNotNull { (key, value) ->
+                                            if (key is String && value != null) key to value else null
+                                        }
+                                        ?.toMap()
+                            }
                             ?: emptyList()
-            val newResult = mapOf("deviceModel" to deviceModel, "deviceName" to deviceName)
+            val id = if (deviceAddress.isNotBlank()) deviceAddress else "$deviceModel:$deviceName"
+            val newResult =
+                    buildMap<String, Any> {
+                        put("id", id)
+                        put("model", deviceModel)
+                        put("name", deviceName)
+                        put("deviceModel", deviceModel)
+                        put("deviceName", deviceName)
+                        if (deviceAddress.isNotBlank()) {
+                            put("address", deviceAddress)
+                            put("deviceAddress", deviceAddress)
+                        }
+                        rssi?.let { put("rssi", it) }
+                    }
             val allResults = searchResults + newResult
-            val uniqueResults = allResults.associateBy { it["deviceName"] }.values.toList()
+            val uniqueResults = allResults.associateBy { it["id"] ?: it["deviceName"] }.values.toList()
             GlassesStore.set("core", "searchResults", uniqueResults)
         }
 

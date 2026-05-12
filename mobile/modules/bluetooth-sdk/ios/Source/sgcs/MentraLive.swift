@@ -574,7 +574,7 @@ extension MentraLive: CBCentralManagerDelegate {
         }
     }
 
-    func handleDiscoveredPeripheral(_ peripheral: CBPeripheral) {
+    func handleDiscoveredPeripheral(_ peripheral: CBPeripheral, rssi: NSNumber? = nil) {
         guard let name = peripheral.name else { return }
 
         // Check for compatible device names
@@ -587,7 +587,7 @@ extension MentraLive: CBCentralManagerDelegate {
             // Store the peripheral
             discoveredPeripherals[name] = peripheral
 
-            emitDiscoveredDevice(name)
+            emitDiscoveredDevice(name, identifier: peripheral.identifier.uuidString, rssi: rssi?.intValue)
 
             // Check if this is the device we want to connect to
             if let savedDeviceName = UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME),
@@ -604,9 +604,9 @@ extension MentraLive: CBCentralManagerDelegate {
 
     func centralManager(
         _: CBCentralManager, didDiscover peripheral: CBPeripheral,
-        advertisementData _: [String: Any], rssi _: NSNumber
+        advertisementData _: [String: Any], rssi: NSNumber
     ) {
-        handleDiscoveredPeripheral(peripheral)
+        handleDiscoveredPeripheral(peripheral, rssi: rssi)
     }
 
     func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
@@ -3757,15 +3757,8 @@ class MentraLive: NSObject, SGCManager {
 
     // MARK: - Event Emission
 
-    private func emitDiscoveredDevice(_ name: String) {
-        // Use the standardized typed message function
-        let body = [
-            "device_model": "Mentra Live",
-            "device_name": name,
-            "device_address": "",
-        ]
-        // Bridge.sendTypedMessage("compatible_glasses_search_result", body: body)
-        Bridge.sendDiscoveredDevice("Mentra Live", name)
+    private func emitDiscoveredDevice(_ name: String, identifier: String = "", rssi: Int? = nil) {
+        Bridge.sendDiscoveredDevice("Mentra Live", name, deviceAddress: identifier, rssi: rssi)
     }
 
     private func emitStopScanEvent() {

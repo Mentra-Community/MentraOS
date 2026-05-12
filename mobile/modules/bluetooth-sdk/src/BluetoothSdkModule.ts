@@ -1,13 +1,16 @@
 import {NativeModule, requireNativeModule} from "expo"
 
 import {
+  ConnectOptions,
   CoreModuleEvents,
   CoreStatus,
   DefaultDevice,
+  DeviceScanRequest,
   GalleryMode,
   GlassesMediaVolumeGetResult,
   GlassesMediaVolumeSetResult,
   GlassesStatus,
+  MentraDevice,
   PhotoCompression,
   PhotoSize,
   RgbLedAction,
@@ -33,9 +36,14 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
 
   // Connection Commands
   requestStatus(): Promise<void>
-  connectDefault(): Promise<void>
+  connectDefault(options?: ConnectOptions): Promise<void>
+  connectDefaultWithOptions(options: Required<ConnectOptions>): Promise<void>
   setDefaultDevice(device: DefaultDevice | null): Promise<void>
   clearDefaultDevice(): Promise<void>
+  startScan(params: DeviceScanRequest): Promise<void>
+  connect(device: MentraDevice, options?: ConnectOptions): Promise<void>
+  connectWithOptions(device: MentraDevice, options: Required<ConnectOptions>): Promise<void>
+  cancelConnectionAttempt(): Promise<void>
   connectByName(deviceName: string): Promise<void>
   connectDevice(deviceModel: string, deviceName: string): Promise<void>
   connectDefaultController(): Promise<void>
@@ -135,6 +143,11 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
 // NativeModule<CoreModuleEvents> already extends EventEmitter<CoreModuleEvents>
 const NativeCoreModule = requireNativeModule<CoreModule>("Core")
 
+const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
+  saveAsDefault: true,
+  cancelExistingConnectionAttempt: true,
+}
+
 // Add helper methods to the module
 NativeCoreModule.updateGlasses = function (values: Partial<GlassesStatus>) {
   return this.update("glasses", values)
@@ -152,6 +165,18 @@ NativeCoreModule.onGlassesStatus = function (callback: GlassesListener) {
 NativeCoreModule.onCoreStatus = function (callback: CoreStatusListener) {
   const subscription = this.addListener("core_status", callback)
   return () => subscription.remove()
+}
+
+const nativeConnectDefault = NativeCoreModule.connectDefault.bind(NativeCoreModule)
+NativeCoreModule.connectDefault = function (options?: ConnectOptions) {
+  if (!options) {
+    return nativeConnectDefault()
+  }
+  return this.connectDefaultWithOptions({...DEFAULT_CONNECT_OPTIONS, ...options})
+}
+
+NativeCoreModule.connect = function (device: MentraDevice, options?: ConnectOptions) {
+  return this.connectWithOptions(device, {...DEFAULT_CONNECT_OPTIONS, ...options})
 }
 
 export default NativeCoreModule

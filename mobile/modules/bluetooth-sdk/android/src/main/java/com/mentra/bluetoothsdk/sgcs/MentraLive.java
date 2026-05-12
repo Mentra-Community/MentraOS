@@ -891,7 +891,7 @@ public class MentraLive extends SGCManager {
                 Bridge.log("LIVE: Found compatible " + glassType + " glasses device: " + deviceName);
                 // EventBus.getDefault().post(new GlassesBluetoothSearchDiscoverEvent(
                         // smartGlassesDevice.deviceModelName, deviceName));
-                Bridge.sendDiscoveredDevice(DeviceTypes.LIVE, deviceName);
+                Bridge.sendDiscoveredDevice(DeviceTypes.LIVE, deviceName, deviceAddress, result.getRssi());
 
                 // If this is the specific device we want to connect to by name, connect to it
                 if (savedDeviceName != null && savedDeviceName.equals(deviceName)) {

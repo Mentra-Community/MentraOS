@@ -144,72 +144,124 @@ public enum MentraDeviceModel: String {
     }
 }
 
-public struct MentraDiscoveredDevice: CustomStringConvertible {
+public struct MentraDevice: Identifiable, Equatable, CustomStringConvertible {
     public let model: MentraDeviceModel
     public let name: String
     public let identifier: String?
     public let rssi: Int?
+    public let id: String
 
     public init(
         model: MentraDeviceModel,
         name: String,
         identifier: String? = nil,
-        rssi: Int? = nil
+        rssi: Int? = nil,
+        id: String? = nil
     ) {
         self.model = model
         self.name = name
         self.identifier = identifier
         self.rssi = rssi
+        self.id = id ?? identifier.flatMap { $0.isEmpty ? nil : $0 } ?? "\(model.deviceType):\(name)"
     }
 
     public var description: String {
-        "MentraDiscoveredDevice(model: \(model), name: \(name))"
+        "MentraDevice(model: \(model), name: \(name))"
+    }
+
+    var dictionary: [String: Any] {
+        var values: [String: Any] = [
+            "id": id,
+            "model": model.deviceType,
+            "name": name,
+            "deviceModel": model.deviceType,
+            "deviceName": name,
+        ]
+        if let identifier, !identifier.isEmpty {
+            values["address"] = identifier
+            values["deviceAddress"] = identifier
+        }
+        if let rssi {
+            values["rssi"] = rssi
+        }
+        return values
     }
 }
 
-public struct MentraPairedDevice: CustomStringConvertible {
-    public let model: MentraDeviceModel
-    public let name: String
-    public let identifier: String?
+public typealias MentraDiscoveredDevice = MentraDevice
+public typealias MentraPairedDevice = MentraDevice
 
-    public init(model: MentraDeviceModel, name: String, identifier: String? = nil) {
-        self.model = model
-        self.name = name
-        self.identifier = identifier
-    }
+public struct MentraConnectOptions {
+    public let saveAsDefault: Bool
+    public let cancelExistingConnectionAttempt: Bool
 
-    public var description: String {
-        "MentraPairedDevice(model: \(model), name: \(name))"
+    public init(saveAsDefault: Bool = true, cancelExistingConnectionAttempt: Bool = true) {
+        self.saveAsDefault = saveAsDefault
+        self.cancelExistingConnectionAttempt = cancelExistingConnectionAttempt
     }
 }
 
 public struct MentraDeviceSearchResult: CustomStringConvertible {
-    public let deviceModel: String
-    public let deviceName: String
-    public let deviceAddress: String
+    public let id: String
+    public let model: String
+    public let name: String
+    public let address: String
+    public let rssi: Int?
+
+    public var deviceModel: String { model }
+    public var deviceName: String { name }
+    public var deviceAddress: String { address }
+
+    public init(model: String, name: String, address: String = "", rssi: Int? = nil, id: String? = nil) {
+        self.model = model
+        self.name = name
+        self.address = address
+        self.rssi = rssi
+        self.id = id ?? (address.isEmpty ? "\(model):\(name)" : address)
+    }
 
     public init(deviceModel: String, deviceName: String, deviceAddress: String = "") {
-        self.deviceModel = deviceModel
-        self.deviceName = deviceName
-        self.deviceAddress = deviceAddress
+        self.init(model: deviceModel, name: deviceName, address: deviceAddress)
     }
 
     init(values: [String: Any]) {
-        deviceModel = stringValue(values, "deviceModel", "device_model") ?? ""
-        deviceName = stringValue(values, "deviceName", "device_name") ?? ""
-        deviceAddress = stringValue(values, "deviceAddress", "device_address") ?? ""
+        model = stringValue(values, "model", "deviceModel", "device_model") ?? ""
+        name = stringValue(values, "name", "deviceName", "device_name") ?? ""
+        address = stringValue(values, "address", "deviceAddress", "device_address") ?? ""
+        rssi = intValue(values["rssi"]) ?? intValue(values["signalStrength"]) ?? intValue(values["signal_strength"])
+        id = stringValue(values, "id") ?? (address.isEmpty ? "\(model):\(name)" : address)
     }
 
     var dictionary: [String: Any] {
-        [
-            "deviceModel": deviceModel,
-            "deviceName": deviceName,
-            "deviceAddress": deviceAddress,
+        var values: [String: Any] = [
+            "id": id,
+            "model": model,
+            "name": name,
+            "deviceModel": model,
+            "deviceName": name,
         ]
+        if !address.isEmpty {
+            values["address"] = address
+            values["deviceAddress"] = address
+        }
+        if let rssi {
+            values["rssi"] = rssi
+        }
+        return values
+    }
+
+    public var device: MentraDevice {
+        MentraDevice(
+            model: MentraDeviceModel.fromDeviceType(model),
+            name: name,
+            identifier: address.isEmpty ? nil : address,
+            rssi: rssi,
+            id: id
+        )
     }
 
     public var description: String {
-        "MentraDeviceSearchResult(deviceModel: \(deviceModel), deviceName: \(deviceName))"
+        "MentraDeviceSearchResult(model: \(model), name: \(name))"
     }
 }
 
@@ -1332,7 +1384,13 @@ public final class MentraBluetoothSDK {
         delegate?.mentraBluetoothSDK(self, didStopScan: .cancelled)
     }
 
-    public func connect(to device: MentraDiscoveredDevice) {
+    public func connect(to device: MentraDevice, options: MentraConnectOptions = MentraConnectOptions()) {
+        if options.cancelExistingConnectionAttempt {
+            cancelConnectionAttempt()
+        }
+        if options.saveAsDefault {
+            setDefaultDevice(device)
+        }
         GlassesStore.shared.apply(ObservableStore.coreCategory, "pending_wearable", device.model.deviceType)
         CoreManager.shared.connectByName(device.name)
     }
@@ -1346,8 +1404,15 @@ public final class MentraBluetoothSDK {
         CoreManager.shared.connectByName(name)
     }
 
-    public func connectDefault() {
+    public func connectDefault(options: MentraConnectOptions = MentraConnectOptions()) {
+        if options.cancelExistingConnectionAttempt {
+            cancelConnectionAttempt()
+        }
         CoreManager.shared.connectDefault()
+    }
+
+    public func cancelConnectionAttempt() {
+        CoreManager.shared.disconnect()
     }
 
     public func connectSimulated() {
@@ -1612,8 +1677,7 @@ public final class MentraBluetoothSDK {
         for result in results {
             guard let name = result["deviceName"] as? String ?? result["name"] as? String else { continue }
             guard discoveredDeviceNames.insert(name).inserted else { continue }
-            let model = MentraDeviceModel.fromDeviceType(result["deviceModel"] as? String)
-            let device = MentraDiscoveredDevice(model: model, name: name)
+            let device = MentraDeviceSearchResult(values: result).device
             delegate?.mentraBluetoothSDK(self, didDiscover: device)
         }
     }
