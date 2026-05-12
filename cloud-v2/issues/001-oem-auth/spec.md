@@ -405,27 +405,13 @@ Path 6:
 
 ---
 
-## Open questions for team review
+## Open questions for team
 
-1. **Identifier shape.** `MentraUserId` opaque (UUID) or structured?
-   Should it carry `oem_id` semantically or stay opaque?
-2. **Existing email-based Mentra users.** Treat the Mentra-direct
-   path as one OEM (Mentra is OEM #0), or as a separate codepath?
-3. **Multi-OEM users.** Should the same human have separate
-   `MentraUserId`s under separate OEMs, or do we try to unify?
-   Default is separate, but with miniapp UX implications.
-4. **Miniapp store login UX.** When a user opens the Mentra-owned
-   miniapp store inside an OEM app, do we surface anything
-   Mentra-branded, or does it stay fully OEM-skinned?
-5. **Token exchange subject identifier.** Use `(oem_id, oem_user_id)`
-   verbatim or hash for privacy?
-6. **Metadata propagation.** What user metadata (display name, email,
+1 **Metadata propagation.** What user metadata (display name, email,
    avatar) does the OEM pass at exchange time, and does that
    metadata show up in miniapp handoffs?
-7. **OEM portal scope.** Just OEM credentials/keys, or also dev
+2. **OEM portal scope.** Just OEM credentials/keys, or also dev
    tooling (logs, support, etc.)?
-8. **Audio event authentication (Phase 2 feature).** Is the Mentra
-   access token sufficient, or does that need its own signing model?
 
 ---
 
