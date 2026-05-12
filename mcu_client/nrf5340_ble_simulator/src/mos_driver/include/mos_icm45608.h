@@ -48,6 +48,7 @@
 #define ICM45608_MREG_I2CM_STATUS               0xa218
 #define ICM45608_MREG_I2CM_RD_DATA0             0xa21b
 #define ICM45608_MREG_I2CM_WR_DATA0             0xa233
+#define ICM45608_MREG_FIFO_SRAM_SLEEP           0xa2a7
 #define ICM45608_I2CM_COMMAND_BURSTLEN_MASK     0x0f
 #define ICM45608_I2CM_COMMAND_READ              BIT(4)
 #define ICM45608_I2CM_COMMAND_END               BIT(7)
@@ -59,6 +60,9 @@
 #define ICM45608_I2CM_TIMEOUT_MS                50
 #define ICM45608_I2CM_MAX_READ_LEN              21
 #define ICM45608_I2CM_MAX_WRITE_LEN             5
+#define ICM45608_FIFO_SRAM_SLEEP_MASK           0x03
+#define ICM45608_FIFO_SRAM_POWER_DOWN           0x00
+#define ICM45608_FIFO_SRAM_POWER_UP             0x03
 typedef struct
 {
     int16_t accel_raw[3];

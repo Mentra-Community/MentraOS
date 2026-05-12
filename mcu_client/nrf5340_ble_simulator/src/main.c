@@ -641,7 +641,22 @@ int main(void)
 
     opt3006_initialize();
 
-    mos_imu_init();
+    err = mos_imu_init();
+    if (err != 0)
+    {
+        LOG_ERR("mos_imu_init failed: %d", err);
+    }
+    else
+    {
+        /* IMU is temporarily unused in this phase: probe it once during boot, then put it back to sleep.
+         * 当前阶段暂不使用 IMU：开机时先完成一次器件探测，然后立即让它重新进入休眠。
+         */
+        err = mos_imu_sleep();
+        if (err != 0)
+        {
+            LOG_WRN("mos_imu_sleep after init failed: %d", err);
+        }
+    }
 
     // err = mos_hinge_fold_service_start(NULL);
     // if (err)

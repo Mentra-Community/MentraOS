@@ -254,6 +254,22 @@ static int icm45608_init_i2cm_master(void)
     return icm45608_write_register(ICM45608_REG_IOC_PAD_SCENARIO_AUX_OVRD, aux_ovrd);
 }
 
+static int icm45608_uninit_i2cm_master(void)
+{
+    uint8_t aux_ovrd;
+    int ret;
+
+    ret = icm45608_read_register(ICM45608_REG_IOC_PAD_SCENARIO_AUX_OVRD, &aux_ovrd);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    aux_ovrd &= (uint8_t)~ICM45608_AUX1_MODE_OVRD_ENABLE;
+    aux_ovrd &= (uint8_t)~ICM45608_AUX1_MODE_OVRD_VAL_MASK;
+    return icm45608_write_register(ICM45608_REG_IOC_PAD_SCENARIO_AUX_OVRD, aux_ovrd);
+}
+
 static int icm45608_i2cm_force_clock(bool enable, uint8_t *previous)
 {
     uint8_t reg_misc1;
@@ -432,6 +448,23 @@ static bool icm45608_sample_has_invalid_raw(const icm45608_sample_t *sample)
     return false;
 }
 
+static int icm45608_set_fifo_shared_sram_power(bool enable)
+{
+    uint8_t fifo_sram_sleep;
+    int ret;
+
+    ret = icm45608_read_mreg(ICM45608_MREG_FIFO_SRAM_SLEEP, &fifo_sram_sleep, sizeof(fifo_sram_sleep));
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    fifo_sram_sleep &= (uint8_t)~ICM45608_FIFO_SRAM_SLEEP_MASK;
+    fifo_sram_sleep |= enable ? ICM45608_FIFO_SRAM_POWER_UP : ICM45608_FIFO_SRAM_POWER_DOWN;
+
+    return icm45608_write_mreg(ICM45608_MREG_FIFO_SRAM_SLEEP, &fifo_sram_sleep, sizeof(fifo_sram_sleep));
+}
+
 static int icm45608_configure_sensor_data(void)
 {
     int ret;
@@ -527,6 +560,13 @@ int icm45608_init(void)
     if (device_id == ICM45608_WHO_AM_I_VAL)
     {
         LOG_INF("ICM-45608 detected at 0x%02x, WHO_AM_I=0x%02x", icm45608_i2c_addr, device_id);
+
+        ret = icm45608_set_fifo_shared_sram_power(true);
+        if (ret != 0)
+        {
+            LOG_WRN("ICM-45608 FIFO shared SRAM power-up during init failed: %d", ret);
+        }
+
         ret = icm45608_configure_sensor_data();
         if (ret != 0)
         {
@@ -770,6 +810,8 @@ uint16_t icm45608_get_i2c_addr(void)
 
 int icm45608_sleep(void)
 {
+    int aux_ret = 0;
+    int sram_ret = 0;
     int ret = 0;
 
     if (!icm45608_suspended)
@@ -778,6 +820,18 @@ int icm45608_sleep(void)
         if (ret != 0)
         {
             LOG_WRN("ICM-45608 sensor sleep command failed, continue power off: %d", ret);
+        }
+
+        aux_ret = icm45608_uninit_i2cm_master();
+        if (aux_ret != 0)
+        {
+            LOG_WRN("ICM-45608 I2CM master release failed during sleep: %d", aux_ret);
+        }
+
+        sram_ret = icm45608_set_fifo_shared_sram_power(false);
+        if (sram_ret != 0)
+        {
+            LOG_WRN("ICM-45608 FIFO shared SRAM power-down failed during sleep: %d", sram_ret);
         }
     }
 
@@ -808,6 +862,7 @@ int icm45608_sleep(void)
 int icm45608_wake(void)
 {
     uint8_t device_id = 0;
+    int sram_ret;
     int ret;
 
     ret = icm45608_set_power(true);
@@ -849,6 +904,12 @@ int icm45608_wake(void)
 
     icm45608_suspended = false;
     icm45608_initialized = true;
+
+    sram_ret = icm45608_set_fifo_shared_sram_power(true);
+    if (sram_ret != 0)
+    {
+        LOG_WRN("ICM-45608 FIFO shared SRAM power-up after wake failed: %d", sram_ret);
+    }
 
     ret = icm45608_configure_sensor_data();
     if (ret != 0)
