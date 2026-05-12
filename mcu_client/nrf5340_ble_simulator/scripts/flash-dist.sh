@@ -64,15 +64,15 @@ echo ""
 
 # Recover both cores first — clears any prior firmware, AP-Protect, or
 # UICR state. Equivalent to the old `nrfjprog --recover` for each core.
-# App core MUST go first: the network core's CTRL-AP is gated by the
-# application core's lock state on nRF5340, so recovering Network first
-# often fails to detect CTRL-AP. App-then-Network mirrors the order
-# `nrfjprog --recover` uses by default.
-echo "  [1/5] Recovering app core..."
-nrfutil device recover --core Application ${SNR_ARG}
-
-echo "  [2/5] Recovering network core..."
+# Network MUST go first: each recover writes a tiny stub into the recovered
+# core's flash to keep the debug-AP open, but recovering Network also erases
+# the Application core's flash — so Network-last would wipe the App core's
+# stub. Order matches west's nrf_common.py:recover_target().
+echo "  [1/5] Recovering network core..."
 nrfutil device recover --core Network ${SNR_ARG}
+
+echo "  [2/5] Recovering app core..."
+nrfutil device recover --core Application ${SNR_ARG}
 
 # Program network core first, then app core — this is the order
 # `west flash` uses by default for nrf5340dk.
