@@ -438,8 +438,8 @@ static void update_display_height(uint16_t height)
 
     uint32_t total_available_margin = config->height - config->layout.usable_height;
 
-    /* height 1 = top (zero margin), height 8 = bottom (max margin) */
-    float mt_f = (float)total_available_margin * ((float)(height - 1) / 7.0f);
+    /* height 8 = top (zero margin), height 1 = bottom (max margin) */
+    float mt_f = (float)total_available_margin * ((float)(8 - height) / 7.0f);
     uint32_t mt = (uint32_t)(mt_f + 0.5f);
 
     if (mt > UINT16_MAX)
