@@ -626,6 +626,172 @@ The risk that's actually worth taking seriously is **4.7.2**: don't
 extend native API surface beyond what we audit. Stay narrow in
 `__dispatch`.
 
+## Engine choice: native JavaScriptCore, not RN's Hermes
+
+**iOS:** every miniapp's background JS runs in a `JSContext` created
+directly from Swift, via a new Expo native module
+(`mobile/modules/mentrajs/`). We do NOT route this through React
+Native's JS bridge or Hermes runtime.
+
+**Why this matters and why it's non-negotiable:**
+
+1. **Apple's 2.5.2 carve-out names JavaScriptCore and WebKit specifically.**
+   The rule text permits "scripts and code downloaded and run by
+   Apple's built-in WebKit framework or JavaScriptCore." Running
+   downloaded miniapp code in JSC is squarely inside the carve-out.
+2. **Hermes is NOT in that list.** Hermes is Facebook's JS engine
+   bundled with React Native. While RN itself is accepted on the App
+   Store (and CodePush/EAS Update have run downloaded JS through
+   Hermes for years without rejection), the formal letter of 2.5.2
+   does not name Hermes as a permitted runtime for downloaded code.
+   Apple has historically not enforced this against RN because RN's
+   downloaded code is "the app itself updating itself" — not "a
+   sandbox running arbitrary third-party miniapp code."
+3. **A platform that hosts arbitrary third-party miniapps is a different
+   review category than a self-updating RN app.** Once Apple notices
+   we're running downloaded code from many third-party developers
+   inside our app, the reviewer will read the rule carefully. JSC
+   keeps us inside the explicit text. Hermes puts us in "Apple has
+   tolerated this for RN but not for multi-tenant miniapp hosts" —
+   uncharted territory with no Pebble/WeChat precedent.
+4. **Pebble shipped PKJS in native JSC on iOS for years.** WeChat does
+   the same. Both went through extensive App Review scrutiny and both
+   landed on JSC. We follow the proven path.
+
+**Cross-platform implication on Android:** Android doesn't have the
+same constraint, but for SDK uniformity we want one engine story.
+Options:
+
+- **JSC on both** — we bundle JavaScriptCore in the Android app
+  (~5-7 MB binary). RN supported this until they switched to Hermes
+  in 0.70+; the JSC binary is still maintained as `react-native-jsc`.
+  Best-case for SDK uniformity.
+- **Hermes on Android, JSC on iOS** — each platform uses its
+  native-blessed engine. Different bytecode formats but same JS
+  source. Slightly larger native bridge to maintain.
+- **V8 on Android, JSC on iOS** — V8 is faster but adds ~8 MB to
+  Android binary. Probably not worth the perf for our workload.
+
+**Decision: JSC on iOS, JSC on Android via bundled `react-native-jsc`.**
+One engine story for SDK developers. Performance is fine for our
+workload (we don't run hot CPU paths in miniapp JS — heavy work
+is in native modules).
+
+### What "native JSC" means in practice
+
+```
+mobile/modules/mentrajs/
+├── ios/
+│   ├── MentraJSRuntime.swift       // Owns N JSContexts keyed by miniapp ID
+│   ├── MentraJSDispatcher.swift    // Implements __dispatch, routes to
+│   │                               //   existing native services
+│   ├── MentraJSStartup.swift       // Loads + evaluates the polyfill bundle
+│   └── MentraJSModule.swift        // Expo Module API:
+│                                   //   spawn(id, jsPath), evaluate(id, src),
+│                                   //   kill(id), dispatchToJs(id, ch, payload)
+├── android/
+│   └── (parallel structure with Kotlin)
+├── runtime/
+│   ├── startup.js                  // Polyfills, injected into every context
+│   │                               //   on creation BEFORE miniapp code runs
+│   ├── setTimeout.js
+│   ├── fetch.js
+│   ├── websocket.js
+│   ├── localStorage.js
+│   └── ... (see polyfill section)
+└── package.json
+```
+
+`MentraJSRuntime.swift` instantiates a fresh `JSContext` per miniapp,
+each with its own `JSVirtualMachine` for hard heap isolation. The
+runtime loads `startup.js` (the polyfill bundle) FIRST, then
+`miniapp/background.js`. The polyfill bundle exposes `setTimeout`,
+`fetch`, `WebSocket`, `localStorage`, `navigator.geolocation`,
+`crypto`, etc., on the JSContext's global. Each polyfill calls into
+the single `__dispatch(iface, method, args)` Swift function.
+
+## Polyfill strategy
+
+Workers-in-WebView get fetch/WebSocket/IndexedDB/crypto free because
+they're inside WebKit. We get nothing free — JSContext is just the
+ECMAScript runtime plus what we add. **Every web API a miniapp
+expects has to be polyfilled in JS, backed by a native handler.**
+
+### What ships at v1 (the minimum viable polyfill set)
+
+Each polyfill is a small JS shim that calls `__dispatch(iface, method,
+args)` and returns a Promise. The Swift side dispatches to existing
+native services. No new native code per polyfill beyond a route table
+entry.
+
+| API | JSC has? | Polyfill complexity | Native backing |
+|---|---|---|---|
+| `setTimeout` / `setInterval` | ❌ | Trivial (~30 LoC) | `DispatchQueue.main.asyncAfter` |
+| `clearTimeout` / `clearInterval` | ❌ | Trivial | Cancel the scheduled task |
+| `Promise` | ✅ (modern JSC) | None — use built-in | — |
+| `console.log` and friends | ❌ | Small (~50 LoC) | `os_log` + forward to JS host for debug overlay |
+| `fetch` | ❌ | Medium (~200 LoC) | `URLSession.shared.dataTask` |
+| `WebSocket` | ❌ | Medium (~300 LoC) | `URLSessionWebSocketTask` |
+| `localStorage` | ❌ | Small (~80 LoC) | `NSUserDefaults` with `"MentraJS-{appId}"` suite name |
+| `crypto.subtle` (subset) | ❌ | Medium (~150 LoC) | `CryptoKit` (SHA, AES-GCM, HMAC, X25519) |
+| `crypto.getRandomValues` | ❌ | Trivial | `SecRandomCopyBytes` |
+| `TextEncoder` / `TextDecoder` | ❌ | Pure JS (no native call) | — |
+| `URL` / `URLSearchParams` | ❌ | Pure JS (small) | — |
+| `Headers` / `Request` / `Response` | ❌ | Pure JS (medium) | — |
+| `atob` / `btoa` | ❌ | Pure JS (trivial) | — |
+| `addEventListener` / `EventTarget` | ❌ | Pure JS (small) | — |
+
+Total v1 polyfill code: ~1500-2000 lines of JS + ~500 lines of Swift
+dispatch routes. One-time engineering cost. Ships once, used by every
+miniapp forever.
+
+### What we explicitly DON'T polyfill at v1
+
+These are non-trivial and we punt to v2:
+
+- `IndexedDB` — complex; we offer `localStorage` for simple key/value
+  and document that miniapps wanting structured storage should call
+  `phone.storage` (our SDK wrapper) which lands in SQLite.
+- `WebRTC` — niche for miniapps; if needed, host app does it.
+- `Service Workers` — irrelevant in non-browser context.
+- `Push API` — push notifications go through `phone.notifications`
+  in the SDK.
+- `WebAssembly` — JSC supports it; we don't actively expose, but
+  if a miniapp uses `WebAssembly.instantiate` on a bundled .wasm it
+  should work. Document as "supported but not first-class."
+- `OffscreenCanvas` / `ImageData` / Canvas — miniapps don't render
+  pixels in background. UI layer (WebView) gets full canvas free.
+- `IntersectionObserver`, `MutationObserver`, `ResizeObserver` — DOM,
+  not applicable.
+
+### Polyfill loading model
+
+When `MentraJSRuntime.spawn(appId, jsPath)` is called:
+
+1. Create `JSVirtualMachine` + `JSContext`.
+2. Inject `__dispatch` as a single `JSValue` function (a Swift block).
+3. Load and `evaluateScript` the polyfill bundle (`startup.js`,
+   ~2000 lines). This installs `setTimeout`, `fetch`, etc., on
+   `globalThis`. Wrap in `evalCatching` per the Pebble pattern.
+4. Inject the SDK shim (`@mentra/sdk` typed wrappers around
+   `__dispatch`, plus `glasses`, `phone`, `buttons`, `ui` namespaces).
+5. Load and `evaluateScript` the miniapp's `background.js`.
+6. Call the miniapp's optional `init()` export.
+
+By step 5, the miniapp's code sees a world that looks almost exactly
+like a Web Worker would — same `setTimeout`, same `fetch`, same
+`crypto.subtle`, same `localStorage`. Developers can write portable
+JS without thinking about which runtime they're in.
+
+### Polyfill correctness via existing test suites
+
+Where possible, run the Web Platform Tests (WPT) subset for each
+polyfilled API against our implementation in CI. WPT is the standard
+test corpus the browsers themselves use. We won't pass all of it
+(some tests depend on DOM/Window), but the parts that don't will
+give us a real conformance signal. Initial target: fetch + URL +
+TextEncoder pass at >80%. Adjust as we ship more.
+
 ## Pieces inherited from Pebble (do not skip these)
 
 A deep read of `coredevices/mobileapp` revealed several "small" things
@@ -1084,3 +1250,18 @@ We've succeeded when:
 - **2026-05-09 (v4):** Phase 1.5 spike completed: 0.75 MB per JSContext
   on iPhone 15 release. 50-context wave added 37 MB total. Architecture
   validated. The N-context risk flagged in v3 is resolved.
+- **2026-05-12 (v5):** Locked in native JavaScriptCore (NOT Hermes via
+  RN's bridge). Apple's 2.5.2 carve-out names JSC and WebKit
+  specifically — not Hermes. Multi-tenant miniapp host is a different
+  review category than RN's "app updating itself," so we want to be
+  squarely inside the explicit rule text. Pebble/WeChat precedent
+  reinforces.
+- **2026-05-12 (v5):** Locked in JSC on Android too (bundled via
+  `react-native-jsc` or similar) for SDK uniformity. Performance
+  difference vs Hermes/V8 is irrelevant for our workload (heavy work
+  is in native modules, miniapp JS is event-handler-tier).
+- **2026-05-12 (v5):** Specced the polyfill set for v1: setTimeout,
+  fetch, WebSocket, localStorage, crypto subset, TextEncoder, URL,
+  EventTarget. ~1500-2000 LoC of JS + ~500 LoC of Swift. IndexedDB,
+  WebRTC, ServiceWorker, Push API, Canvas, IntersectionObserver
+  explicitly punted to v2.
