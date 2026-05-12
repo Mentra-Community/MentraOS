@@ -99,15 +99,15 @@ well-trodden territory at billion-user scale.
 ### Process topology
 
 ```
-┌────────────────────────────────────────────────────────────────────┐
+┌─────────────────────────────────────────────────────────────────────┐
 │                  Mentra Manager (host RN app)                       │
 │                                                                     │
 │  ┌──────────────────────┐         ┌────────────────────────────┐    │
 │  │ Native iOS code      │ ←─────→ │ MentraNativeBus            │    │
 │  │ (BLE, mic, display,  │         │ (single router)            │    │
-│  │  storage, location)  │         └─────────┬──────────────────┘    │
-│  └──────────────────────┘                   │                       │
-│                                              │                       │
+│  │  storage, location)  │         └──────────┬─────────────────┘    │
+│  └──────────────────────┘                    │                      │
+│                                              │                      │
 │             ┌────────────────────────────────┼─────────────┐        │
 │             ▼                                ▼             ▼        │
 │  ┌──────────────────────┐       ┌──────────────────────┐            │
@@ -121,7 +121,7 @@ well-trodden territory at billion-user scale.
 │  │  ui.send/on          │       │  ui.send/on          │            │
 │  └──────────┬───────────┘       └──────────────────────┘            │
 │             │                                                       │
-│             │ (only when user opens app A's settings)              │
+│             │ (only when user opens app A's settings)               │
 │             ▼                                                       │
 │  ┌────────────────────────────┐                                     │
 │  │ WKWebView (transient)      │                                     │
@@ -131,7 +131,7 @@ well-trodden territory at billion-user scale.
 │  │                            │                                     │
 │  │  *no direct native access* │                                     │
 │  └────────────────────────────┘                                     │
-└────────────────────────────────────────────────────────────────────┘
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 Key invariants:
@@ -142,23 +142,21 @@ Key invariants:
 - WebView never talks to native directly. All native capability requests
   go through the bound JSContext.
 
-## Why "fresh WebView per open" instead of pooling
+## Fresh WebView per open, no pooling
 
-The earlier draft of this doc proposed pre-warming a WebView pool to
-reduce mount latency. **Dropped.** Reasons:
+WebViews are spawned cold when the user opens a miniapp's settings,
+destroyed on exit. No pre-warming, no pool. Why:
 
-- WKWebView cold-mount on iPhone 15 is ~100–300 ms. A tap-to-screen
-  latency of 300 ms is fine for a settings sheet. Users don't notice.
+- WKWebView cold-mount on iPhone 15 is ~100–300 ms. Fine for a
+  settings sheet — users don't notice.
 - A pool of 1 means the warm WebView is always the *wrong* miniapp's
-  WebView (we have to call `loadFileURL` to swap it). The "warm"
-  benefit shrinks to ~50 ms saved.
+  WebView; we'd `loadFileURL` to swap it and only save ~50 ms.
 - Pool management adds bug surface (orphan messages, stale routing,
   dirty global state from the previous miniapp).
 - Memory cost of holding a warm WebView in background is ~80 MB
-  permanent — defeats the whole point of the architecture.
+  permanent — defeats the architecture's whole point.
 
-Spawn fresh, destroy on exit. Same pattern Chrome uses for extension
-popups.
+Same pattern Chrome uses for extension popups.
 
 ## The bridge surface
 
@@ -592,118 +590,98 @@ The risk that's actually worth taking seriously is **4.7.2**: don't
 extend native API surface beyond what we audit. Stay narrow in
 `__dispatch`.
 
-## Engine choice: native JavaScriptCore, not RN's Hermes
+## Engine choice: native JavaScriptCore
 
-**iOS:** every miniapp's background JS runs in a `JSContext` created
-directly from Swift, via a new Expo native module
-(`mobile/modules/mentrajs/`). We do NOT route this through React
-Native's JS bridge or Hermes runtime.
+Every miniapp's background JS runs in a native `JSContext` created
+directly from Swift, with its own `JSVirtualMachine` for heap isolation.
+NOT Hermes. NOT a JSI library. NOT React Native's runtime.
 
-**Why this matters and why it's non-negotiable:**
+**Why JSC specifically:**
 
-1. **Apple's 2.5.2 carve-out names JavaScriptCore and WebKit specifically.**
-   The rule text permits "scripts and code downloaded and run by
-   Apple's built-in WebKit framework or JavaScriptCore." Running
-   downloaded miniapp code in JSC is squarely inside the carve-out.
-2. **Hermes is NOT in that list.** Hermes is Facebook's JS engine
-   bundled with React Native. While RN itself is accepted on the App
-   Store (and CodePush/EAS Update have run downloaded JS through
-   Hermes for years without rejection), the formal letter of 2.5.2
-   does not name Hermes as a permitted runtime for downloaded code.
-   Apple has historically not enforced this against RN because RN's
-   downloaded code is "the app itself updating itself" — not "a
-   sandbox running arbitrary third-party miniapp code."
-3. **A platform that hosts arbitrary third-party miniapps is a different
-   review category than a self-updating RN app.** Once Apple notices
-   we're running downloaded code from many third-party developers
-   inside our app, the reviewer will read the rule carefully. JSC
-   keeps us inside the explicit text. Hermes puts us in "Apple has
-   tolerated this for RN but not for multi-tenant miniapp hosts" —
-   uncharted territory with no Pebble/WeChat precedent.
-4. **Pebble shipped PKJS in native JSC on iOS for years.** WeChat does
-   the same. Both went through extensive App Review scrutiny and both
-   landed on JSC. We follow the proven path.
+1. **Apple's 2.5.2 carve-out names JavaScriptCore and WebKit by name.**
+   The rule text permits "scripts and code downloaded and run by Apple's
+   built-in WebKit framework or JavaScriptCore." JSC is squarely inside.
+2. **Hermes is not named.** RN/CodePush/EAS Update get away with
+   Hermes-running downloaded code under the "app updating itself"
+   interpretation. A multi-tenant platform running arbitrary
+   third-party miniapps is a different review category — we want to
+   be inside the explicit rule text, not relying on a precedent that
+   doesn't apply to us.
+3. **Pebble and WeChat both ship native JSC on iOS at scale.** Direct
+   precedent for our exact use case.
 
-**Cross-platform implication on Android:** Android doesn't have the
-same constraint, but for SDK uniformity we want one engine story.
-Options:
+**On Android:** ship JSC too (bundled via `react-native-jsc` or similar)
+for SDK uniformity. Performance gap vs Hermes/V8 is irrelevant for our
+workload — heavy work is in native modules; miniapp JS is event-handler-tier.
 
-- **JSC on both** — we bundle JavaScriptCore in the Android app
-  (~5-7 MB binary). RN supported this until they switched to Hermes
-  in 0.70+; the JSC binary is still maintained as `react-native-jsc`.
-  Best-case for SDK uniformity.
-- **Hermes on Android, JSC on iOS** — each platform uses its
-  native-blessed engine. Different bytecode formats but same JS
-  source. Slightly larger native bridge to maintain.
-- **V8 on Android, JSC on iOS** — V8 is faster but adds ~8 MB to
-  Android binary. Probably not worth the perf for our workload.
+### Why not piggyback on RN's runtime
 
-**Decision: JSC on iOS, JSC on Android via bundled `react-native-jsc`.**
-One engine story for SDK developers. Performance is fine for our
-workload (we don't run hot CPU paths in miniapp JS — heavy work
-is in native modules).
+We surveyed every JSI isolate library:
+`react-native-worklets-core` (Margelo), `react-native-worklets`
+(Software Mansion), `react-native-multithreading` (mrousavy). All of
+them fall back to whatever engine RN booted with — Hermes by default.
+None expose Apple `JSContext`. The only path is calling
+`JavaScriptCore.framework` directly from Swift.
 
-### What "native JSC" means in practice
+Open RN community proposal #193 has been asking for "expose the JS
+runtime to user JS" for years; it remains unresolved. There is no
+library to use here.
 
-**We extend the existing `crust` Expo module** rather than creating a new
-one. crust already owns the iOS/Android native interface for the SDK;
-adding a JSC runtime is a few hundred lines of Swift in there. Don't
+### Where the native code lives
+
+**Inside the existing `crust` Expo module**, not a new module. crust
+already owns the iOS/Android native interface for the SDK. Don't
 fragment the module set.
 
 ```
 mobile/modules/crust/
 ├── ios/
-│   ├── CrustModule.swift           // Existing — add JSC Functions here
-│   ├── Source/JSCRuntime.swift     // NEW: owns N JSContexts keyed by id
-│   ├── Source/JSCDispatcher.swift  // NEW: __dispatch routes
+│   ├── CrustModule.swift              # Existing — add JSC Functions here
+│   ├── Source/JSCRuntime.swift        # NEW: owns N JSContexts keyed by id
+│   ├── Source/JSCDispatcher.swift     # NEW: __dispatch routes
+│   ├── Source/JSCPolyfillBridge.swift # NEW: native handlers for fetch/WS/timers/storage/crypto
 │   └── ... (existing crust files)
-├── android/                        // Parallel structure with Kotlin
-└── src/CrustModule.ts              // Add TS types for spawn/evaluate/kill
-
-mobile/modules/miniapp-runtime/     // OR runs inside crust — separate
-├── runtime/                        //  package because polyfills can be
-│   ├── startup.js                  //  iterated independently of native
-│   ├── (polyfill files)
-└── package.json
+├── android/                           # Parallel Kotlin structure
+└── src/CrustModule.ts                 # TS types for spawn/evaluate/kill
 ```
 
-The Expo module API surface we add to crust is small:
+**Polyfill JS bundle lives in a separate package** (`mobile/modules/mentrajs-runtime/`)
+so the JS shims can iterate independently of the native module. The
+host loads the bundle from that package's `dist/startup.js` at every
+JSContext spawn.
 
-- `spawn(miniappId: string, polyfillBundlePath: string, miniappJsPath: string): boolean`
-- `evaluate(miniappId: string, src: string): void`
-- `kill(miniappId: string): void`
-- `dispatchToJs(miniappId: string, channel: string, payload: any): void`
-- Event: `mentrajs_message` — fires when a JSContext calls `__dispatch`
+### Expo module API surface (small)
 
-**Estimated native code: ~300-500 lines of Swift added to crust.**
-For reference, `CrustModule.swift` is already 323 lines today.
+```typescript
+spawn(miniappId: string, polyfillBundle: string, miniappJs: string): boolean
+evaluate(miniappId: string, src: string): JSValue
+kill(miniappId: string): void
+dispatchToJs(miniappId: string, channel: string, payload: unknown): void
+// Event "mentrajs_message" — fires when a JSContext calls __dispatch
+```
 
-### Why not piggyback on RN's existing runtime
+**Estimated native code: ~300–500 lines of Swift added to crust.** For
+reference, `CrustModule.swift` is already 323 lines today.
 
-We considered using libraries that expose JSI runtimes to RN:
-`react-native-worklets-core`, `react-native-worklets`,
-`react-native-multithreading`. All of them defer to whatever engine
-RN booted with, which is Hermes by default in 0.70+. Using these
-libraries does NOT give us native Apple JSC — it gives us Hermes
-isolates wrapped in a JS API. Same compliance problem as putting
-miniapp code on the main RN bundle.
+### Spawn order
 
-The only way to get an actual Apple `JSContext` is to call
-`JavaScriptCore.framework` from Swift. There is no "RN JS code that
-spawns JSContexts" path. Confirmed via npm/GitHub survey — no such
-library exists. Open RN community proposal #193 has been asking for
-this primitive for years.
+When `spawn(id, polyfillPath, miniappPath)` is called:
 
-So we must write Swift. The good news: it's small, and we already
-own the module to put it in.
+1. Create `JSVirtualMachine` + `JSContext` on a dedicated thread.
+2. Set `context.name = "MentraJS: <id>"` and (DEBUG-only) `isInspectable = true`.
+3. Inject `__dispatch` as a single Swift block on the context's global.
+4. Inject `__hostLog`, `__hostError`, `__hostUnhandledRejection`
+   functions for the polyfill's `console.*` and error rewires to call.
+5. Wrap eval in `evalCatching` and run the polyfill bundle (`startup.js`
+   — installs setTimeout/fetch/WebSocket/localStorage/etc on
+   `globalThis`).
+6. Inject the SDK shim (`@mentra/sdk` typed wrappers around `__dispatch`
+   exposing `glasses`, `phone`, `buttons`, `ui` namespaces).
+7. Run the miniapp's `background.js`.
+8. Call the miniapp's optional `init()` export.
 
-`MentraJSRuntime.swift` instantiates a fresh `JSContext` per miniapp,
-each with its own `JSVirtualMachine` for hard heap isolation. The
-runtime loads `startup.js` (the polyfill bundle) FIRST, then
-`miniapp/background.js`. The polyfill bundle exposes `setTimeout`,
-`fetch`, `WebSocket`, `localStorage`, `navigator.geolocation`,
-`crypto`, etc., on the JSContext's global. Each polyfill calls into
-the single `__dispatch(iface, method, args)` Swift function.
+By step 7 the miniapp sees a world that looks like a Web Worker — same
+`setTimeout`, `fetch`, `WebSocket`, `localStorage`, `crypto.subtle`.
 
 ## Polyfill strategy
 
@@ -715,8 +693,7 @@ expects has to be polyfilled in JS, backed by a native handler.**
 ### Polyfill set — using existing libraries where possible
 
 **About half the polyfills are drop-in MIT libraries we don't have to
-write.** The other half are thin bridges to native I/O. Total custom
-code is much smaller than originally estimated.
+write.** The other half are thin bridges to native I/O.
 
 | API | Strategy | Library / source | Custom LoC |
 |---|---|---|---|
@@ -745,10 +722,10 @@ WebSocket, localStorage, crypto.subtle, crypto.getRandomValues,
 AbortController plumbing into URLSession.cancel. These can't be
 solved by JS libs alone — they need real native I/O.
 
-**Total custom code: ~1000 LoC JS + ~600 LoC Swift.** Down from the
-earlier ~2000 LoC JS estimate. The MIT libraries handle ~70% of the
-JS plumbing and ALL the spec edge cases (URL parsing alone has
-hundreds of WPT test cases; we delegate to a well-maintained lib).
+**Total custom code: ~1000 LoC JS + ~600 LoC Swift.** The MIT
+libraries handle ~70% of the JS plumbing AND all the spec edge cases
+— URL parsing alone has hundreds of WPT test cases we delegate to a
+well-maintained lib.
 
 ### What we explicitly DON'T polyfill
 
@@ -797,6 +774,526 @@ test corpus the browsers themselves use. We won't pass all of it
 (some tests depend on DOM/Window), but the parts that don't will
 give us a real conformance signal. Initial target: fetch + URL +
 TextEncoder pass at >80%. Adjust as we ship more.
+
+## Permissions
+
+Apple's **Guideline 4.7.3** requires per-miniapp user consent for any
+sensitive capability the host shares — the host already holding an
+OS-level permission does NOT let it silently hand that grant to a
+third-party miniapp. WeChat, Telegram, Snapchat all do this; it's the
+canonical pattern App Review expects.
+
+### Permission set
+
+| Permission | Grant model | Prompt timing |
+|---|---|---|
+| `glasses.display` | Install-time | Install consent sheet |
+| `glasses.buttons` | Install-time | Install consent sheet |
+| `glasses.mic` | Install + first-call | Install + JIT modal on first use |
+| `phone.notifications` | Install + first-call | Install + JIT modal |
+| `phone.location` | Install + first-call | Install + JIT modal |
+| `phone.storage` | Implicit, scoped | Never prompt (per-app sandbox) |
+| `phone.network.fetch` | Install-time, **with allowlist** | Install consent |
+| `phone.network.websocket` | Install-time, **with allowlist** | Install consent |
+| `phone.camera`, `phone.photos`, `phone.microphone`, `phone.contacts` (later) | Install + first-call | Install + JIT + OS prompt |
+
+Anything Apple considers sensitive at the OS level (mic, location,
+notifications, camera, contacts) gets a **two-step flow**: declared in
+manifest at install, then a JIT modal on first use. Bulk install-time
+consent is OK for low-sensitivity capabilities (display, buttons) but
+a known dark pattern for sensitive ones — iOS users are trained to
+expect JIT.
+
+### Manifest schema
+
+Three permission shapes, copying Tauri/Chrome:
+
+```jsonc
+{
+  "id": "com.example.coolapp",
+  "name": "Cool App",
+  "version": "1.2.0",
+  "permissions": {
+    "glasses.display": true,
+    "glasses.buttons": true,
+    "glasses.mic": { "purpose": "Voice commands while hiking" },
+    "phone.location": {
+      "purpose": "Show distance to your saved spots",
+      "accuracy": "coarse"
+    },
+    "phone.notifications": {
+      "purpose": "Mirror texts to glasses",
+      "filters": ["sms", "imessage"]
+    },
+    "phone.network.fetch": {
+      "hosts": ["api.coolapp.io", "*.coolapp-cdn.net"]
+    },
+    "phone.network.websocket": {
+      "hosts": ["wss://realtime.coolapp.io"]
+    },
+    "phone.storage": true
+  }
+}
+```
+
+- **Boolean** for non-sensitive capabilities.
+- **Object with `purpose`** for sensitive capabilities — the purpose
+  string is shown in the host's consent UI (matches WeChat's `desc`
+  pattern and Apple's HIG for privacy strings).
+- **Object with `hosts: [...]`** for scoped allowlists (Chrome
+  `host_permissions` style match patterns). Use simple host globs
+  (`*.example.com`), not full match patterns — smaller misconfiguration
+  surface.
+
+Anything not declared in the manifest is rejected at install (manifest
+validation) AND at the bridge (defense in depth). Adding a permission
+post-install triggers an update consent flow, same as Chrome extension
+permission upgrades.
+
+### Enforcement: defense in depth, three layers
+
+1. **Manifest validation at install.** Reject unknown keys, malformed
+   scopes, suspicious host patterns (no wildcard TLDs, no `<all_urls>`
+   for now). Persist granted set in **SQLite**, keyed by `appId` —
+   not NSUserDefaults. UserDefaults is fine for prefs but plaintext
+   on disk and not designed for security boundaries.
+2. **Swift `__dispatch` handler — the authoritative gate.** Every
+   JSContext is tagged with its `appId` at creation. `__dispatch(iface,
+   method, args)` looks up `PermissionStore.granted(appId, iface)`
+   *before* invoking the native API. For scoped permissions (network),
+   the bridge also enforces the scope (URL host match for `fetch`).
+3. **JS shim — purely ergonomic.** Calls `mentra.permissions.query(
+   'phone.location')` returning `granted | denied | prompt` (Capacitor
+   shape). Exists so devs don't write code that silently rejects;
+   must NOT be the only check, since a malicious miniapp could
+   bypass the shim and call `__dispatch` directly.
+
+### What an unpermitted call returns
+
+A structured error, not silent failure and not a surprise prompt:
+
+```json
+{ "error": { "code": "PERMISSION_DENIED",
+             "permission": "phone.location",
+             "canRequest": true } }
+```
+
+If `canRequest`, the SDK can call `mentra.permissions.request(
+'phone.location')` which routes through `__dispatch` to a
+host-rendered modal. Mirrors `navigator.permissions.query` +
+Capacitor `requestPermissions`.
+
+### Capability vs permission
+
+- **Capability** = the static set of `iface` keys the bridge knows
+  how to route. Compile-time fact about the host.
+- **Permission** = the dynamic per-(app, iface) grant. Runtime fact.
+
+A capability with no permission grant is dead code for that miniapp.
+
+### Consent UX flow
+
+- **At install:** single sheet listing all declared permissions with
+  purpose strings, sensitive-first. Required permissions
+  checked-and-locked; sensitive ones checked-but-removable. Tap
+  Install → grants persisted.
+- **At first sensitive call:** host-rendered JIT modal. *"Cool App
+  wants to use the glasses microphone to: Voice commands while
+  hiking. Allow / Don't Allow."* On allow, no further prompts. On
+  deny, returns `PERMISSION_DENIED` for the rest of the session;
+  user can re-enable from the miniapp's settings page.
+- **In the miniapp's settings:** every granted permission is
+  revocable with a single toggle. Revocation fires a
+  `permission.revoked` event so the running JSContext degrades
+  gracefully.
+- **OS-level prompts** still fire the first time the *host* needs
+  the OS permission, separately from the per-miniapp consent. If OS
+  denies, miniapp permission can be granted but the API still fails
+  — surface this distinctly: "MentraOS doesn't have iOS microphone
+  access; open Settings."
+
+### App Review answer
+
+The defensible position: *"Every miniapp declares permissions in a
+manifest, gets per-app user consent at install, gets a second JIT
+consent for OS-level-sensitive APIs, and the native bridge refuses
+unpermitted calls regardless of what the JS attempts."* That
+language maps 1:1 onto 4.7.3.
+
+## Bundle, install, update, sideload
+
+Bundles are how third-party miniapps get from a developer's machine
+to a user's phone. The on-device install layout, the install flow,
+and the update model are all decisions we ship once and live with.
+
+### Bundle format: signed ZIP
+
+Flat ZIP, MIME `application/zip`. Wire extension `.zip`, alias
+`.mpkg` for Finder recognition. Same precedent as Pebble `.pbw`,
+Chrome `.crx`, VS Code `.vsix`, WeChat `.wxapkg` — all zip-derived.
+
+Layout:
+
+```
+miniapp.json                  # manifest, required at zip root
+icon.png                      # 512×512, required for store-installed
+index.html                    # UI entry, required if type=standard
+background.js                 # background entry, required if type=background
+assets/...                    # arbitrary bundler output
+META-INF/
+  manifest.sha256             # tree hash of all non-META-INF files
+  signature.ed25519           # detached sig over manifest.sha256
+  signing-cert.json           # signer keyid + expiry
+```
+
+`META-INF/` is added by the **cloud at publish time**, not by the
+developer's CLI. Developer-produced zips stay clean (`miniapp.json` +
+content); the store re-zips with signatures during publish. Same as
+the Chrome Web Store CRX2/CRX3 pattern.
+
+### Manifest additions for distribution
+
+```jsonc
+{
+  "id": "com.acme.notes",
+  "version": "1.4.2",                  // strict semver
+  "sdkVersion": "^3.0.0",              // host compatibility range
+  "minHostVersion": "2.3.0",           // mobile app minimum
+  "type": "standard",                  // standard | background
+  "entry": { "ui": "index.html", "bg": "background.js" },
+  "sizeBudgetKb": 5000,                // soft cap, enforced at upload
+  "permissions": { ... },              // see Permissions section
+  "hardwareRequirements": [ ... ]
+}
+```
+
+### Signing
+
+**Two-key system, store-only signing.** The platform key
+(`mentra-platform-ed25519`) is held by cloud and used to sign every
+store-distributed bundle. Ed25519 (not RSA, not Apple codesign) — 64
+bytes, fast verify, no PKI rabbit hole. Rotated annually with a
+dual-key window during transitions.
+
+Developers do NOT hold signing keys. Developer identity is bound at
+upload time via API key. "If it's signed, it went through review." Same
+as App Store / Play Store, opposite of Pebble (Pebble didn't sign
+PBWs at all).
+
+### Verification on device
+
+After unzip:
+1. Read `META-INF/manifest.sha256` and `META-INF/signature.ed25519`.
+2. Recompute the tree hash over all non-META-INF files (sorted by
+   path, hash each `path || NUL || content`, then hash the
+   concatenation — deterministic).
+3. Verify Ed25519 sig against the pinned platform pubkey (bundled in
+   the host app binary, with one fallback rotation key).
+4. On mismatch: throw `SIGNATURE_INVALID`, delete unzip dir, surface
+   to UX as *"This mini app failed integrity check."*
+
+Sideloaded and dev bundles are unsigned; verification only runs when
+the bundle came from the store install path.
+
+### Storage layout on device
+
+```
+<App Support>/
+  mentraos/
+    miniapps/
+      <packageName>/
+        <version>/                  # active bundle tree
+        <prev-version>/             # one prior, for rollback
+        manifest.json               # registry entry (active, source, etc)
+    storage/
+      <packageName>/                # phone.storage namespace; survives upgrades
+    cache/
+      downloads/                    # transient ZIPs, evictable
+```
+
+**Use Application Support, NOT Documents.** Documents/ is user-visible
+via Files.app and iCloud-eligible. We don't want the bundle tree
+backed up to iCloud or visible to the user. Application Support is
+the canonical place for app-internal data per Apple's File System
+Programming Guide. The `phone.storage` namespace IS in `storage/<id>/`
+which we want backed up by default — separate concern.
+
+### Retention
+
+- Keep N=2 versions per package (active + previous, for rollback).
+  Older deleted at install time.
+- Sideloaded / dev versions exempt — `pinned: true` flag.
+- Disk budget: soft cap 200 MB total across all bundles. When
+  exceeded, evict by LRU last-launched, never evicting `pinned`,
+  `dev-*`, or the currently-running app.
+- Eviction never touches `storage/<id>/` — user data survives bundle
+  eviction. On re-launch of an evicted app, transparently
+  re-download.
+
+### Install flow (step-by-step)
+
+1. **Resolve.** Mobile `POST /api/client/miniapps/:id/install-url`.
+   Cloud authorizes, mints 5-min signed R2 URL. Returns URL + manifest
+   + size.
+2. **Pre-flight.** Check size against `sizeBudgetKb`, verify host
+   `sdkVersion` range, fail fast if storage budget exceeded.
+3. **Permission prompt.** Manifest `permissions[]` shown as a single
+   iOS-style sheet. If user denies a `required: true` permission,
+   abort.
+4. **Download.** To `cache/downloads/<id>-<ver>.zip`. Progress bar.
+5. **Unzip to staging.** `cache/lma_unzip/`. Atomic — don't touch
+   the live tree.
+6. **Validate.** Verify `miniapp.json.id` matches what the store
+   said. Verify Ed25519 signature. Verify entry files exist per
+   declared `type`.
+7. **Atomic swap.** Move staging → `miniapps/<id>/<new-version>/`.
+   Update `manifest.json`. Old active version stays as rollback slot.
+8. **Spawn / register.** Notify listeners. Store UI flips to "Open."
+   If `autoStart: true`, wire to MiniappHost.
+9. **Cleanup.** Delete `cache/downloads/<id>-*.zip`. Update
+   last-launched timestamp.
+
+Bundle-size targets: 50 KB and 500 KB install in <2s on fast network;
+5 MB takes 3–5s; over 10 MB needs explicit "Downloading X MB…" UI.
+
+### Update flow
+
+1. **Discovery.** Mobile polls `GET /api/client/miniapps/updates` on
+   foreground + every 6h. Returns `[{id, latestVersion, channel,
+   force?: boolean, minHostVersion}]`. Filter < currently-installed.
+2. **Eligibility.** Skip if app is currently `running` (defer until
+   stop, unless `force`); if `sdkVersion` range mismatches host;
+   if host below `minHostVersion`.
+3. **Background download.** Same pipeline, into
+   `miniapps/<id>/<new-version>/` alongside the active one. Active
+   keeps running.
+4. **Activation.**
+   - Not running → bump `manifest.json.active`; new becomes active
+     on next launch.
+   - Running, non-forced → defer. Set `pendingActivation`; swap on
+     next stop.
+   - `force: true` → kill current JSContext, swap, respawn. Toast
+     "Updated mini app."
+5. **State migration.** `phone.storage/<id>/` is shared across
+   versions — new code reads old data. SDK exposes a
+   `storageVersion` hook for the miniapp to migrate its own data
+   on first run. We never auto-migrate.
+6. **Rollback.** If new version's JSContext throws on first boot or
+   fails health check within 30s, AppRegistry rolls back to previous
+   version dir and marks new version `quarantined`. Reports to cloud
+   → cloud can mark version `RECALLED`, halting installs for other
+   users.
+
+### Sideloading for developers
+
+Two paths:
+
+1. **`mentra-miniapp dev`** — hot-reload over LAN. Bundle never
+   lands on disk; runs from in-memory dev server.
+2. **`mentra-miniapp release`** — produces a zip, serves over LAN,
+   phone scans QR. Installed bundle lives at `miniapps/<id>/<ver>/`,
+   marked `pinned: true` + `source: "sideload"`.
+
+Sideloaded bundles are **unsigned** and only install when developer
+mode is enabled (already gating the LMA installer). Same sandbox as
+store apps — same permission prompts, same hardware gating. No
+elevated privileges.
+
+Pinned bit prevents LRU eviction (matches Pebble's `Locker.kt:705`).
+
+### Uninstall
+
+1. Confirm with user. If app has data in `storage/<id>/`, show
+   *"X has 14 KB of data. Delete it too?"* — checkbox default
+   unchecked (mirror iOS app uninstall behavior).
+2. If running: stop JSContext.
+3. Delete `miniapps/<id>/` recursively.
+4. If user opted to delete data: delete `storage/<id>/`. Otherwise
+   keep — reinstall picks it up.
+5. Revoke permissions: remove from local cache. iOS-level
+   permissions stay granted at the host app level.
+6. Notify cloud `POST /api/client/miniapps/:id/uninstall`.
+
+No cloud backup of miniapp data initially. `phone.storage` is
+local-only. iCloud-backed sync layered on later by changing the
+storage namespace's backing store.
+
+## Operations: crash recovery, telemetry, observability
+
+### Crash detection
+
+Three sources:
+1. **JS uncaught throw** — caught by `evalCatching` + `window.onerror`
+   + `onunhandledrejection`. These do NOT kill the JSContext; we just
+   log.
+2. **Native bridge throws** (`__dispatch` returns Error) — surfaced as
+   a JS-side rejection. Same path.
+3. **JSC internal failure / EXC_BAD_ACCESS / OOM in the JSContext**
+   — kills the context. Detected via the dispatcher's `weak self`
+   callback going nil + a `pingLoop` miss (see Health checks).
+
+### Crash respawn
+
+Always a *fresh* `JSContext` (and fresh `JSVirtualMachine`) — same
+JSContext is unsafe after an internal failure. State hydrates from
+`phone.storage` on respawn (the architectural rule). The runtime
+owns respawn, not the miniapp.
+
+**Retry policy:** exponential backoff capped at 3 auto-retries within
+a 5-minute window, then mark `CRASHLOOP_DISABLED`. State machine:
+`RUNNING → CRASHED → BACKOFF(2s/8s/30s) → CRASHLOOP_DISABLED`.
+Counter resets on a clean 60s of uptime.
+
+**UX tiers:**
+- 1st crash: silent respawn (most users never know).
+- 2nd within 5 min: toast *"X restarted."* Sentry breadcrumb only.
+- 3rd → CRASHLOOP_DISABLED: persistent banner on the miniapp's home
+  tile + push to developer (*"your app entered crashloop on N
+  devices in the last hour"*). User-facing CTA: **Restart** /
+  **Disable**.
+
+This is more aggressive than Pebble (Pebble had one PKJS app at a
+time, no crashloop pressure). With N concurrent miniapps, a
+misbehaving app must not consume the spawn budget forever.
+
+### Telemetry counters
+
+Native-side, no JS overhead:
+
+- `dispatch.calls{appId, method}` — counter
+- `dispatch.latency_ms{appId, method}` — histogram
+- `jsc.heap_mb{appId}` — gauge, sampled every 30s
+- `crash.count{appId, kind}` — counter
+- `respawn.count{appId, reason}` — counter
+- `bridge.queue_depth{appId}` — gauge
+
+### Sentry routing
+
+ONE Sentry project for the host (`mentra-mobile`). `release =
+host_version`, `tags = {miniapp.id, miniapp.version,
+miniapp.sdk_version, device.model}`. Miniapp crashes are *host*
+events tagged with miniapp identity — not separate projects per
+developer (operationally untenable). Per-developer visibility via
+the dev portal pulling filtered Sentry data through a server-side
+proxy keyed on `tags["miniapp.id"]`.
+
+**Miniapps do NOT bring their own Sentry SDK.** They get
+`mentra.diagnostics.event(name, props)` and
+`mentra.diagnostics.error(err, ctx)` which the host normalizes and
+forwards under our project. Otherwise every miniapp ships 80 KB of
+Sentry SDK into a 3 MB JSContext, doubles network traffic, and we
+lose the privacy chokepoint.
+
+### Privacy
+
+Counters bucket by 1000+ users only; below that, suppress to prevent
+fingerprinting. No `userId` ever attached to telemetry. Use a
+per-(user, app) hashed token (Pebble's `PKJSInterface.kt:35-61`
+pattern) for deduping unique devices without identifying.
+
+### Logging architecture
+
+```
+miniapp:console.log
+  ↓ rewired in startup.js
+__dispatch("log", level, args)
+  ↓ Swift redaction (regex strip token|password|secret|auth|key|bearer|api[_-]?key)
+  ↓ branch:
+    ├─ dev WS connected → mirror to dev console
+    ├─ ring buffer (200 lines per miniapp, in-memory)
+    └─ Sentry breadcrumb { category: "miniapp.console", level, app_id }
+```
+
+Log volume: token bucket at 100 lines/min sustained per miniapp,
+burst 500. Excess increments a "throttled" counter and is dropped
+with one `[throttled N]` line.
+
+### Health checks
+
+Two layers of heartbeat:
+
+- **WebView ↔ background**: WebView sends `__heartbeat__` every 5s;
+  background considers WebView gone after 15s silence.
+- **Background JSContext ↔ host**: host calls `__dispatch("ping")`
+  every 5s; JSContext returns synchronously. Three consecutive
+  misses (15s) → mark hung → kill + respawn (counts as crash for
+  crashloop purposes).
+
+`ping` is synchronous from native — JS thread responds even if the
+miniapp has nothing to do. **"Hung"** = JS thread wedged (infinite
+loop, blocked sync call). **"Idle"** = miniapp has nothing to do
+but runtime is responsive. Distinguishing them is automatic.
+
+### Performance monitoring
+
+- **Per-call latency:** wrap `__dispatch` in Swift with
+  `CFAbsoluteTimeGetCurrent()` deltas, write to histogram. Anything
+  >100ms gets a Sentry breadcrumb; >1s gets a warn-level event.
+- **Memory growth:** sample heap stats every 30s. Linear-regression
+  last 20 samples per miniapp; if slope >0.5 MB/min sustained for
+  10 min, fire `mentra.runtime.leak_suspected` event with miniapp
+  ID + heap trace. Don't auto-kill — too prone to false positives.
+- **Soft watchdog:** if JS thread blocks >5s on a single sync
+  evaluation, log a warning. >30s → kill + respawn (treated as crash).
+
+### Hot reload (dev mode)
+
+Background reload = full kill + respawn. `bun run dev` opens a
+WebSocket to the host (paired via QR scan); on file change, sends
+`{type: "reload", appId, bundleUrl}`. Host calls
+`MentraJSRuntime.reload(appId)` which:
+1. Cancels coroutine scope (Pebble's tear-down order)
+2. Drops `JSManagedValue` references
+3. Closes the JSContext
+4. Spawns a new context, fetches new bundle from `bundleUrl`,
+   replays init
+5. Miniapp's `init()` hydrates from `phone.storage`
+
+WebView reload = just `webView.reload()`. UI layer state was
+ephemeral anyway.
+
+**Latency target:** save → see-on-glasses < 500 ms for background
+reload (mostly bundle fetch over LAN), < 200 ms for WebView.
+
+### Inspector
+
+`setInspectable = true` is the killer DX feature. Gate on iOS 16.4+
+AND a runtime "developer mode" flag — *off* in App Store builds even
+on iOS 16.4+. Each context named `MentraJS: <appName> (<appId>)` so
+Safari's Develop menu lists them sensibly.
+
+### Network inspection
+
+`fetch` and `WebSocket` are JS shims over native — perfect chokepoint.
+In dev mode, log every request/response (URL, status, duration, byte
+count) to the dev console. In prod, log only failures and Sentry-tag
+with `network.host`. No body capture in prod (privacy).
+
+### Remote kill switch
+
+**Mandatory.** Cloud has a `disabled_miniapps: { [appId]: { reason,
+since, scope: "all" | { userIds: [...] } } }` document the host
+fetches on launch + every 1h. If an installed miniapp is in the
+list, do NOT spawn its JSContext; show a "Disabled by Mentra" tile.
+Critical for security incidents and Apple App Store demands.
+
+### Dev portal expectations
+
+Minimum viable for launch:
+- Upload signed bundle (`.zip` + `mentra.json`)
+- Version channels: `dev`, `beta` (TestFlight-equivalent, user-id
+  allowlist), `production`
+- Crash dashboard (filtered Sentry events)
+- Engagement metrics: DAU, install count, version adoption
+- Store listing editor (icon, screenshots, description, permissions
+  justification)
+- Manage signing keys (upload public key for offline verify)
+- Permission manifest editor with diff preview ("v1.2 adds
+  `camera` — users will be re-prompted")
+- API token + REST endpoint for CI/CD `POST
+  /api/console/miniapps/:id/versions`
+
+Defer: A/B testing, custom dashboards, push-from-console.
 
 ## Pieces inherited from Pebble (do not skip these)
 
