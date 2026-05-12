@@ -679,28 +679,57 @@ is in native modules).
 
 ### What "native JSC" means in practice
 
+**We extend the existing `crust` Expo module** rather than creating a new
+one. crust already owns the iOS/Android native interface for the SDK;
+adding a JSC runtime is a few hundred lines of Swift in there. Don't
+fragment the module set.
+
 ```
-mobile/modules/mentrajs/
+mobile/modules/crust/
 ├── ios/
-│   ├── MentraJSRuntime.swift       // Owns N JSContexts keyed by miniapp ID
-│   ├── MentraJSDispatcher.swift    // Implements __dispatch, routes to
-│   │                               //   existing native services
-│   ├── MentraJSStartup.swift       // Loads + evaluates the polyfill bundle
-│   └── MentraJSModule.swift        // Expo Module API:
-│                                   //   spawn(id, jsPath), evaluate(id, src),
-│                                   //   kill(id), dispatchToJs(id, ch, payload)
-├── android/
-│   └── (parallel structure with Kotlin)
-├── runtime/
-│   ├── startup.js                  // Polyfills, injected into every context
-│   │                               //   on creation BEFORE miniapp code runs
-│   ├── setTimeout.js
-│   ├── fetch.js
-│   ├── websocket.js
-│   ├── localStorage.js
-│   └── ... (see polyfill section)
+│   ├── CrustModule.swift           // Existing — add JSC Functions here
+│   ├── Source/JSCRuntime.swift     // NEW: owns N JSContexts keyed by id
+│   ├── Source/JSCDispatcher.swift  // NEW: __dispatch routes
+│   └── ... (existing crust files)
+├── android/                        // Parallel structure with Kotlin
+└── src/CrustModule.ts              // Add TS types for spawn/evaluate/kill
+
+mobile/modules/miniapp-runtime/     // OR runs inside crust — separate
+├── runtime/                        //  package because polyfills can be
+│   ├── startup.js                  //  iterated independently of native
+│   ├── (polyfill files)
 └── package.json
 ```
+
+The Expo module API surface we add to crust is small:
+
+- `spawn(miniappId: string, polyfillBundlePath: string, miniappJsPath: string): boolean`
+- `evaluate(miniappId: string, src: string): void`
+- `kill(miniappId: string): void`
+- `dispatchToJs(miniappId: string, channel: string, payload: any): void`
+- Event: `mentrajs_message` — fires when a JSContext calls `__dispatch`
+
+**Estimated native code: ~300-500 lines of Swift added to crust.**
+For reference, `CrustModule.swift` is already 323 lines today.
+
+### Why not piggyback on RN's existing runtime
+
+We considered using libraries that expose JSI runtimes to RN:
+`react-native-worklets-core`, `react-native-worklets`,
+`react-native-multithreading`. All of them defer to whatever engine
+RN booted with, which is Hermes by default in 0.70+. Using these
+libraries does NOT give us native Apple JSC — it gives us Hermes
+isolates wrapped in a JS API. Same compliance problem as putting
+miniapp code on the main RN bundle.
+
+The only way to get an actual Apple `JSContext` is to call
+`JavaScriptCore.framework` from Swift. There is no "RN JS code that
+spawns JSContexts" path. Confirmed via npm/GitHub survey — no such
+library exists. Open RN community proposal #193 has been asking for
+this primitive for years.
+
+So we must write Swift. The good news: it's small, and we already
+own the module to put it in.
 
 `MentraJSRuntime.swift` instantiates a fresh `JSContext` per miniapp,
 each with its own `JSVirtualMachine` for hard heap isolation. The
@@ -717,33 +746,50 @@ they're inside WebKit. We get nothing free — JSContext is just the
 ECMAScript runtime plus what we add. **Every web API a miniapp
 expects has to be polyfilled in JS, backed by a native handler.**
 
-### What ships at v1 (the minimum viable polyfill set)
+### What ships at v1 — using existing libraries where possible
 
-Each polyfill is a small JS shim that calls `__dispatch(iface, method,
-args)` and returns a Promise. The Swift side dispatches to existing
-native services. No new native code per polyfill beyond a route table
-entry.
+**About half the polyfills are drop-in MIT libraries we don't have to
+write.** The other half are thin bridges to native I/O. Total custom
+code is much smaller than originally estimated.
 
-| API | JSC has? | Polyfill complexity | Native backing |
+| API | Strategy | Library / source | Custom LoC |
 |---|---|---|---|
-| `setTimeout` / `setInterval` | ❌ | Trivial (~30 LoC) | `DispatchQueue.main.asyncAfter` |
-| `clearTimeout` / `clearInterval` | ❌ | Trivial | Cancel the scheduled task |
-| `Promise` | ✅ (modern JSC) | None — use built-in | — |
-| `console.log` and friends | ❌ | Small (~50 LoC) | `os_log` + forward to JS host for debug overlay |
-| `fetch` | ❌ | Medium (~200 LoC) | `URLSession.shared.dataTask` |
-| `WebSocket` | ❌ | Medium (~300 LoC) | `URLSessionWebSocketTask` |
-| `localStorage` | ❌ | Small (~80 LoC) | `NSUserDefaults` with `"MentraJS-{appId}"` suite name |
-| `crypto.subtle` (subset) | ❌ | Medium (~150 LoC) | `CryptoKit` (SHA, AES-GCM, HMAC, X25519) |
-| `crypto.getRandomValues` | ❌ | Trivial | `SecRandomCopyBytes` |
-| `TextEncoder` / `TextDecoder` | ❌ | Pure JS (no native call) | — |
-| `URL` / `URLSearchParams` | ❌ | Pure JS (small) | — |
-| `Headers` / `Request` / `Response` | ❌ | Pure JS (medium) | — |
-| `atob` / `btoa` | ❌ | Pure JS (trivial) | — |
-| `addEventListener` / `EventTarget` | ❌ | Pure JS (small) | — |
+| `console.*` | **Drop-in MIT** | `@react-native/js-polyfills/console.js` | ~10 (logging hook) |
+| `TextEncoder` / `TextDecoder` | **Drop-in MIT** | `fast-text-encoding` (3 KB, zero deps) | 0 |
+| `URL` / `URLSearchParams` | **Drop-in MIT** | `whatwg-url-without-unicode` (40 KB) | 0 |
+| `atob` / `btoa` | **Drop-in MIT** | `base-64` (3 KB, zero deps) | 0 |
+| `EventTarget` / `addEventListener` | **Drop-in MIT** | `event-target-shim` (5 KB) | 0 |
+| `Blob` / `FormData` | **Drop-in + glue** | `fetch-blob` + `formdata-polyfill` | ~30 |
+| `AbortController` / `AbortSignal` | **Drop-in + glue** | `abort-controller` (depends on event-target-shim) | ~20 (wire into fetch cancellation) |
+| `Promise` | Built-in | (modern JSC has Promises) | 0 |
+| `setTimeout` / `setInterval` / `clear*` | Bridge | — | ~80 |
+| `Headers` / `Request` / `Response` | **Lift from whatwg-fetch (MIT)** | whatwg-fetch's pure-JS classes, swap XHR for native call | ~100 |
+| `fetch` network plane | Bridge | (built atop the Headers/Request/Response above) | ~150 over `URLSession` |
+| `WebSocket` | Bridge | uses `event-target-shim` | ~150 over `URLSessionWebSocketTask` |
+| `localStorage` | Bridge | — | ~50 over `NSUserDefaults` with `"MentraJS-{appId}"` suite |
+| `crypto.subtle` (SHA, AES-GCM, HMAC, X25519) | Bridge | — | ~300 over `CryptoKit` |
+| `crypto.getRandomValues` | Bridge | — | ~30 over `SecRandomCopyBytes` |
 
-Total v1 polyfill code: ~1500-2000 lines of JS + ~500 lines of Swift
-dispatch routes. One-time engineering cost. Ships once, used by every
-miniapp forever.
+**Solved entirely by existing MIT libraries (zero custom code):**
+console, TextEncoder/Decoder, URL/URLSearchParams, atob/btoa,
+EventTarget, Blob/FormData, AbortController class, Promise.
+
+**Requires native bridge work:** timers, fetch network plane,
+WebSocket, localStorage, crypto.subtle, crypto.getRandomValues,
+AbortController plumbing into URLSession.cancel. These can't be
+solved by JS libs alone — they need real native I/O.
+
+**Total custom code: ~1000 LoC JS + ~600 LoC Swift.** Down from the
+earlier ~2000 LoC JS estimate. The MIT libraries handle ~70% of the
+JS plumbing and ALL the spec edge cases (URL parsing alone has
+hundreds of WPT test cases; we delegate to a well-maintained lib).
+
+### Important: don't copy from Pebble
+
+Pebble's `coredevices/mobileapp` is GPL-3.0 dual-licensed. Their
+`startup.js` and per-polyfill JS files are reference-only, not
+copy-pasteable. The MIT alternatives in the table above are
+permissive and equivalent in functionality.
 
 ### What we explicitly DON'T polyfill at v1
 
@@ -1265,3 +1311,18 @@ We've succeeded when:
   EventTarget. ~1500-2000 LoC of JS + ~500 LoC of Swift. IndexedDB,
   WebRTC, ServiceWorker, Push API, Canvas, IntersectionObserver
   explicitly punted to v2.
+- **2026-05-12 (v6):** Verified that no library exposes Apple JSC from
+  RN JS code. Worklets-core, react-native-worklets, multithreading all
+  fall back to whatever engine RN booted with (Hermes by default).
+  No JS-only path to spawn Apple JSContexts exists. Must write Swift.
+  Decision: **put the native module inside existing `crust` module,
+  not create a new `mentrajs/` module**. Adds ~300-500 lines of Swift
+  to crust. Smaller surface, doesn't fragment the module set.
+- **2026-05-12 (v6):** Polyfill strategy revised after MIT-library
+  survey: about half the polyfill set is drop-in (`console`,
+  `TextEncoder`, `URL`, `atob/btoa`, `EventTarget`, `Blob/FormData`,
+  `AbortController`). Lift `Headers`/`Request`/`Response` classes
+  verbatim from whatwg-fetch (MIT) and replace XHR core with native
+  bridge. Total custom code revised down to ~1000 LoC JS + ~600 LoC
+  Swift. Total polyfill effort: ~2-3 weeks (down from earlier ~6-week
+  estimate when assuming all-from-scratch).
