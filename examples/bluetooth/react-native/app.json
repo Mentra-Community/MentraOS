@@ -51,6 +51,7 @@
             "minSdkVersion": 28,
             "packagingOptions": {
               "pickFirst": [
+                "**/libc++_shared.so",
                 "**/libonnxruntime.so",
                 "**/libonnxruntime4j_jni.so"
               ]

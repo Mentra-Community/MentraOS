@@ -4,6 +4,7 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path, Polyline, Rect } from 'react-native-svg';
 import WebView from 'react-native-webview';
+import { MentraDirectReceiverView } from '../../modules/mentra-direct-receiver';
 import { Header } from '../components/Header';
 import { useScrollBottomPadding } from '../components/keyboardLayout';
 import { OfflineNotice } from '../components/OfflineNotice';
@@ -18,7 +19,19 @@ import {
 } from '../useMentraSdk';
 
 const bars = [18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40];
-const streamSdkCall = `const streamId = \`rn-\${Date.now()}\`;
+function streamSdkCall(useCloudServer: boolean) {
+  if (!useCloudServer) {
+    return `const receiver = await MentraDirectReceiver.startWebRtcReceiver();
+const streamId = \`rn-\${Date.now()}\`;
+await BluetoothSdk.startStream({
+  type: 'start_stream',
+  streamId,
+  streamUrl: receiver.streamUrl,
+  keepAlive: true,
+  keepAliveIntervalSeconds: 15,
+})`;
+  }
+  return `const streamId = \`rn-\${Date.now()}\`;
 await BluetoothSdk.startStream({
   type: 'start_stream',
   streamId,
@@ -26,6 +39,7 @@ await BluetoothSdk.startStream({
   keepAlive: true,
   keepAliveIntervalSeconds: 15,
 })`;
+}
 
 export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
   const scrollRef = React.useRef<React.ElementRef<typeof ScrollView>>(null);
@@ -35,8 +49,14 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
   const streamActive = sdk.streamRequested || sdk.streamStartedAt !== null;
   const previewReady = streamActive && sdk.streamPreviewReady;
   const uptime = streamUptime(sdk.streamStartedAt);
-  const setupHint = localStreamSetupHint(sdk.streamProtocol, sdk.streamUrl, sdk.streamStatus);
-  const previewTarget = previewReady ? streamPreviewTarget(sdk.streamProtocol, sdk.streamUrl) : null;
+  const setupHint = sdk.streamCloudServerEnabled
+    ? localStreamSetupHint(sdk.streamProtocol, sdk.streamUrl, sdk.streamStatus)
+    : null;
+  const previewTarget = sdk.streamCloudServerEnabled && previewReady
+    ? streamPreviewTarget(sdk.streamProtocol, sdk.streamUrl)
+    : null;
+  const sdkCall = streamSdkCall(sdk.streamCloudServerEnabled);
+  const statusFailed = isStreamStatusFailure(sdk.streamStatus);
   const focusStreamUrlInput = React.useCallback(() => {
     scrollRef.current?.scrollToEnd({ animated: true });
     requestAnimationFrame(() => {
@@ -45,7 +65,7 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
     });
   }, []);
   const handleStreamPress = React.useCallback(() => {
-    if (!streamActive && sdk.streamUrl.includes('<computer-ip>')) {
+    if (sdk.streamCloudServerEnabled && !streamActive && sdk.streamUrl.includes('<computer-ip>')) {
       focusStreamUrlInput();
     }
     void sdk.toggleStream();
@@ -67,6 +87,8 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
           <View style={styles.preview}>
             {previewTarget ? (
               <LiveStreamPreview target={previewTarget} />
+            ) : !sdk.streamCloudServerEnabled && previewReady ? (
+              <MentraDirectReceiverView style={styles.previewFill} />
             ) : (
               <PlaceholderStreamPreview message={streamActive ? 'Starting stream...\nWaiting for preview' : undefined} />
             )}
@@ -76,7 +98,15 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
             </View>
             <Text style={styles.timer}>{uptime}</Text>
             <Text style={styles.previewMeta}>
-              {previewReady ? `${sdk.streamProtocol.toUpperCase()} · keep-alive 15s` : streamActive ? 'Waiting for preview' : 'Ready · enter stream URL'}
+              {previewReady
+                ? sdk.streamCloudServerEnabled
+                  ? `${sdk.streamProtocol.toUpperCase()} · keep-alive 15s`
+                  : 'WEBRTC · phone receiver'
+                : streamActive
+                  ? 'Waiting for preview'
+                  : sdk.streamCloudServerEnabled
+                    ? 'Ready · enter stream URL'
+                    : 'Ready · WebRTC to phone'}
             </Text>
           </View>
         </View>
@@ -96,7 +126,7 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
         <View style={styles.sdkBlock}>
           <View style={styles.cardHead}>
             <Text style={styles.sdkEyebrow}>SDK CALL</Text>
-            <Pressable style={({pressed}) => [styles.copyChip, pressed && styles.copyChipPressed]} onPress={() => Clipboard.setString(streamSdkCall)}>
+            <Pressable style={({pressed}) => [styles.copyChip, pressed && styles.copyChipPressed]} onPress={() => Clipboard.setString(sdkCall)}>
               <Svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke={colors.consoleText} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
                 <Rect x={9} y={9} width={13} height={13} rx={2} />
                 <Path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
@@ -104,52 +134,71 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
               <Text style={styles.copyText}>Copy</Text>
             </Pressable>
           </View>
-          <Text style={styles.sdkCode}>{streamSdkCall}</Text>
+          <Text style={styles.sdkCode}>{sdkCall}</Text>
         </View>
         <View style={styles.statusBar}>
-          <View style={styles.redCircle}>
-            <View style={styles.redDot} />
+          <View style={[styles.statusCircle, statusFailed ? styles.statusCircleError : styles.statusCircleOk]}>
+            <View style={[styles.statusDot, statusFailed ? styles.statusDotError : styles.statusDotOk]} />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.statusTitle}>{sdk.streamStatus}</Text>
             <Text style={styles.statusSub}>uptime {uptime} · keep-alive 15s</Text>
           </View>
-          <Text style={styles.linkRight}>Stats →</Text>
         </View>
       </LinearGradient>
 
       {/* Protocol */}
       <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={styles.protocolCard}>
-        <View style={styles.tabs}>
-          {(['rtmp', 'srt', 'webrtc'] satisfies StreamProtocol[]).map((protocol) => (
-            <Pressable key={protocol} style={[styles.protoTab, sdk.streamProtocol === protocol && styles.protoTabActive]} onPress={() => sdk.selectProtocol(protocol)}>
-              <Text style={[styles.protoText, sdk.streamProtocol === protocol && styles.protoTextActive]}>{protocol.toUpperCase()}</Text>
-            </Pressable>
-          ))}
+        <View style={styles.cardHead}>
+          <Text style={styles.eyebrow}>DESTINATION</Text>
+          <Pressable
+            onPress={() => void sdk.setStreamCloudServerEnabled(!sdk.streamCloudServerEnabled)}
+            style={[styles.toggleChip, sdk.streamCloudServerEnabled && styles.toggleChipActive]}>
+            {({pressed}) => (
+              <Text style={[styles.toggleText, sdk.streamCloudServerEnabled && styles.toggleTextActive, pressed && styles.toggleTextPressed]}>
+                Use cloud server
+              </Text>
+            )}
+          </Pressable>
         </View>
-        <View style={styles.urlBar}>
-          <Text style={styles.method}>{streamProtocolLabel(sdk.streamProtocol)}</Text>
-          <View style={styles.divider} />
-          <TextInput
-            ref={streamUrlInputRef}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-            onChangeText={sdk.setStreamUrl}
-            onFocus={focusStreamUrlInput}
-            placeholder={STREAM_DEFAULT_URLS[sdk.streamProtocol]}
-            placeholderTextColor={colors.muted}
-            returnKeyType="done"
-            selectTextOnFocus
-            style={styles.url}
-            value={sdk.streamUrl}
-          />
-          <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.muted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-            <Path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-            <Path d="m18.5 2.5 3 3L12 15l-4 1 1-4z" />
-          </Svg>
-        </View>
-        {setupHint ? <Text style={styles.setupHint}>{setupHint}</Text> : null}
+        {sdk.streamCloudServerEnabled ? (
+          <>
+            <View style={styles.tabs}>
+              {(['rtmp', 'srt', 'webrtc'] satisfies StreamProtocol[]).map((protocol) => (
+                <Pressable key={protocol} style={[styles.protoTab, sdk.streamProtocol === protocol && styles.protoTabActive]} onPress={() => sdk.selectProtocol(protocol)}>
+                  <Text style={[styles.protoText, sdk.streamProtocol === protocol && styles.protoTextActive]}>{protocol.toUpperCase()}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <View style={styles.urlBar}>
+              <Text style={styles.method}>{streamProtocolLabel(sdk.streamProtocol)}</Text>
+              <View style={styles.divider} />
+              <TextInput
+                ref={streamUrlInputRef}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+                onChangeText={sdk.setStreamUrl}
+                onFocus={focusStreamUrlInput}
+                placeholder={STREAM_DEFAULT_URLS[sdk.streamProtocol]}
+                placeholderTextColor={colors.muted}
+                returnKeyType="done"
+                selectTextOnFocus
+                style={styles.url}
+                value={sdk.streamUrl}
+              />
+              <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.muted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                <Path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                <Path d="m18.5 2.5 3 3L12 15l-4 1 1-4z" />
+              </Svg>
+            </View>
+            {setupHint ? <Text style={styles.setupHint}>{setupHint}</Text> : null}
+          </>
+        ) : (
+          <Text style={styles.setupHint}>
+            The phone starts a local WebRTC receiver, sends its WHIP URL to the glasses, and previews incoming frames here.
+          </Text>
+        )}
       </LinearGradient>
     </ScrollView>
   );
@@ -229,6 +278,18 @@ function streamProtocolLabel(protocol: StreamProtocol) {
   return protocol === 'webrtc' ? 'WHIP' : protocol.toUpperCase();
 }
 
+function isStreamStatusFailure(status: string) {
+  const normalized = status.toLowerCase();
+  return (
+    normalized.includes('failed') ||
+    normalized.includes('not reachable') ||
+    normalized.includes('required') ||
+    normalized.includes('replace') ||
+    normalized.includes('error') ||
+    normalized.includes('connect glasses first')
+  );
+}
+
 function localStreamSetupHint(protocol: StreamProtocol, streamUrl: string, status: string) {
   if (protocol !== 'rtmp' && protocol !== 'srt' && protocol !== 'webrtc') {
     return null;
@@ -284,13 +345,22 @@ const styles = StyleSheet.create({
   copyText: { color: colors.consoleText, fontSize: 10, fontWeight: '600' },
   sdkCode: { color: colors.consoleText, fontSize: 11, lineHeight: 16, fontFamily: 'Courier' },
   statusBar: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, gap: 10 },
-  redCircle: { width: 22, height: 22, borderRadius: 999, backgroundColor: 'rgba(255,59,48,0.16)', alignItems: 'center', justifyContent: 'center' },
-  redDot: { width: 8, height: 8, borderRadius: 999, backgroundColor: colors.red },
+  statusCircle: { width: 22, height: 22, borderRadius: 999, alignItems: 'center', justifyContent: 'center' },
+  statusCircleOk: { backgroundColor: 'rgba(52,199,89,0.16)' },
+  statusCircleError: { backgroundColor: 'rgba(255,59,48,0.16)' },
+  statusDot: { width: 8, height: 8, borderRadius: 999 },
+  statusDotOk: { backgroundColor: colors.greenAccent },
+  statusDotError: { backgroundColor: colors.red },
   statusTitle: { color: colors.ink, fontSize: 11, fontWeight: '600' },
   statusSub: { color: colors.muted, fontSize: 10, fontWeight: '500' },
-  linkRight: { color: colors.muted, fontSize: 10, fontWeight: '600' },
 
   protocolCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 22, paddingVertical: 14, paddingHorizontal: 14, gap: 12, borderWidth: 1, borderColor: colors.borderSoft },
+  eyebrow: { color: colors.muted, fontSize: 10, fontWeight: '600', letterSpacing: 1.2 },
+  toggleChip: { borderRadius: 999, borderWidth: 1, borderColor: 'rgba(15,42,29,0.12)', paddingVertical: 6, paddingHorizontal: 10, backgroundColor: 'rgba(255,255,255,0.55)' },
+  toggleChipActive: { backgroundColor: 'rgba(52,199,89,0.16)', borderColor: 'rgba(52,199,89,0.32)' },
+  toggleText: { color: colors.muted, fontSize: 10, fontWeight: '700' },
+  toggleTextActive: { color: colors.greenAccent },
+  toggleTextPressed: { opacity: 0.6 },
   tabs: { flexDirection: 'row', gap: 4, backgroundColor: 'rgba(15,42,29,0.05)', borderRadius: 14, padding: 4 },
   protoTab: { flex: 1, paddingVertical: 10, paddingHorizontal: 8, alignItems: 'center', borderRadius: 10 },
   protoTabActive: { backgroundColor: '#fff' },

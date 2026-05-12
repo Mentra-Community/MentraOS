@@ -14,6 +14,12 @@ __pycache__/
 !examples/android/**
 !examples/ios/
 !examples/ios/**
+!examples/react-native/modules/
+!examples/react-native/modules/**
+!examples/react-native/modules/**/android/
+!examples/react-native/modules/**/android/**
+!examples/react-native/modules/**/ios/
+!examples/react-native/modules/**/ios/**
 
 # Android example generated files.
 examples/android/.gradle/
@@ -23,6 +29,10 @@ examples/android/**/*.iml
 examples/android/local.properties
 examples/android/.gstreamer/
 examples/android/app/gst-android-build/
+examples/react-native/.gstreamer/
+examples/react-native/modules/**/android/.gradle/
+examples/react-native/modules/**/android/build/
+examples/react-native/modules/**/android/gst-android-build/
 
 # Local webhook demo uploads.
 examples/photo-webhook-server/uploads/

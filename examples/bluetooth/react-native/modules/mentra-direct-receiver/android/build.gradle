@@ -1,0 +1,86 @@
+import java.io.File
+
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.mentra.directreceiver'
+version = '1.0.0'
+
+def defaultGstreamerRoot = rootProject.layout.projectDirectory.dir("../.gstreamer/Android.sdk").asFile
+def gstreamerRoot = providers.gradleProperty("gstreamerRootAndroid")
+  .orElse(providers.environmentVariable("GSTREAMER_ROOT_ANDROID"))
+  .orElse(providers.provider { defaultGstreamerRoot.absolutePath })
+def gstreamerRootFile = new File(gstreamerRoot.get())
+def gstreamerMkInRoot = new File(gstreamerRootFile, "share/gst-android/ndk-build/gstreamer-1.0.mk")
+def gstreamerArchRootFile = gstreamerMkInRoot.isFile() ? gstreamerRootFile : new File(gstreamerRootFile, "arm64")
+def gstreamerSdkMarker = new File(gstreamerArchRootFile, "share/gst-android/ndk-build/gstreamer-1.0.mk")
+def gstreamerGeneratedJavaDir = layout.buildDirectory.dir("generated/gstreamer/java").get().asFile
+
+def installGStreamerAndroidSdk = tasks.register("installGStreamerAndroidSdk", Exec) {
+  def setupScript = layout.projectDirectory.file("../scripts/setup-gstreamer-android.sh").asFile
+  group = "setup"
+  description = "Downloads the GStreamer Android SDK when it is not installed yet."
+  onlyIf { !gstreamerSdkMarker.isFile() }
+  inputs.file(setupScript)
+  outputs.file(gstreamerSdkMarker)
+  commandLine(setupScript.absolutePath)
+  environment("GSTREAMER_ROOT_ANDROID", gstreamerRootFile.absolutePath)
+}
+
+android {
+  namespace "com.mentra.directreceiver"
+  compileSdk 35
+  ndkVersion "27.1.12297006"
+
+  defaultConfig {
+    versionCode 1
+    versionName "1.0.0"
+    minSdkVersion 28
+    targetSdkVersion 35
+
+    externalNativeBuild {
+      ndkBuild {
+        arguments(
+          "GSTREAMER_ROOT_ANDROID=${gstreamerArchRootFile.absolutePath}",
+          "GSTREAMER_JAVA_SRC_DIR=${gstreamerGeneratedJavaDir.absolutePath}",
+          "GSTREAMER_ASSETS_DIR=src/main/assets",
+          "GSTREAMER_INCLUDE_FONTS=no",
+          "GSTREAMER_INCLUDE_CA_CERTIFICATES=no",
+        )
+        abiFilters "arm64-v8a"
+        targets "mentra_android_webrtc_receiver"
+      }
+    }
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  externalNativeBuild {
+    ndkBuild {
+      path file("src/main/jni/Android.mk")
+    }
+  }
+
+  packagingOptions {
+    pickFirst "**/libc++_shared.so"
+  }
+
+  lintOptions {
+    abortOnError false
+  }
+}
+
+dependencies {
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
+}
+
+tasks.configureEach { task ->
+  if (task.name == "preBuild" || task.name.startsWith("externalNativeBuild") || task.name.contains("NdkBuild")) {
+    task.dependsOn(installGStreamerAndroidSdk)
+  }
+}

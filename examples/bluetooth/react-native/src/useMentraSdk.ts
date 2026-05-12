@@ -20,6 +20,11 @@ import BluetoothSdk, {
   type TouchEvent,
   type WifiStatusChangeEvent,
 } from '@mentra/bluetooth-sdk';
+import MentraDirectReceiver, {
+  type DirectPhotoUploadEvent,
+  type DirectReceiverStatusEvent,
+  type DirectStreamFirstFrameEvent,
+} from '../modules/mentra-direct-receiver';
 import {
   galleryHotspotPasswordLabel,
   galleryHotspotSsidLabel,
@@ -99,11 +104,18 @@ export type MentraSdkState = {
   pcmBytes: number;
   pcmFrames: number;
   permissionStatus: string;
+  phonePhotoReceiverRunning: boolean;
+  phonePhotoUploadUrl: string | null;
   photoCompression: PhotoCompression;
+  photoCloudServerEnabled: boolean;
   photoFlash: boolean;
   photoPreviewUrl: string | null;
   photoSize: PhotoSize;
   rawJsonExpanded: boolean;
+  selectedDiscoveredDevice: DeviceSearchResult | null;
+  directStreamReceiverRunning: boolean;
+  directStreamWhipUrl: string | null;
+  streamCloudServerEnabled: boolean;
   streamProtocol: StreamProtocol;
   streamPreviewReady: boolean;
   streamRequested: boolean;
@@ -129,15 +141,18 @@ export type MentraSdkActions = {
   openWifiSettings: () => Promise<void>;
   requestWifiScan: () => Promise<void>;
   playMicRecording: () => Promise<void>;
+  selectDiscoveredDevice: (device: DeviceSearchResult) => void;
   selectLedColor: (color: LedColor) => Promise<void>;
   selectLedMode: (mode: LedMode) => Promise<void>;
   selectProtocol: (protocol: StreamProtocol) => void;
   sendWifiCredentials: (ssid: string, password: string, requiresPassword: boolean) => Promise<void>;
   setGalleryModeAuto: (enabled: boolean) => Promise<void>;
   setPhotoCompression: (compression: PhotoCompression) => void;
+  setPhotoCloudServerEnabled: (enabled: boolean) => Promise<void>;
   setPhotoFlash: (enabled: boolean) => void;
   setPhotoSize: (size: PhotoSize) => void;
   setRawJsonExpanded: (expanded: boolean) => void;
+  setStreamCloudServerEnabled: (enabled: boolean) => Promise<void>;
   setStreamUrl: (url: string) => void;
   setWebhookUrl: (url: string) => void;
   startScan: () => Promise<void>;
@@ -151,6 +166,8 @@ export type MentraSdkModel = MentraSdkState & MentraSdkActions;
 
 const PHOTO_APP_ID = 'com.mentra.examples.reactnative';
 const PHOTO_POLL_ATTEMPTS = 45;
+const DIRECT_PHOTO_UPLOAD_TIMEOUT_MS = 75_000;
+const DIRECT_WEBRTC_RECEIVER_WARMUP_MS = 1000;
 const ANDROID_12_API_LEVEL = 31;
 const MIC_SAMPLE_RATE = 16000;
 const MIC_CHANNEL_COUNT = 1;
@@ -176,6 +193,8 @@ export function useMentraSdk(): MentraSdkModel {
   const [defaultDevice, setDefaultDevice] = useState<DefaultDevice | null>(
     () => defaultDeviceFromStatus(BluetoothSdk.getCoreStatus() as unknown as Record<string, unknown>),
   );
+  const [selectedDiscoveredDevice, setSelectedDiscoveredDevice] =
+    useState<DeviceSearchResult | null>(null);
   const [events, setEvents] = useState<SdkConsoleEvent[]>([
     event('LIVE', 'SDK ready. Scan to discover glasses.'),
   ]);
@@ -189,22 +208,26 @@ export function useMentraSdk(): MentraSdkModel {
   const [webhookUrl, setWebhookUrl] = useState(
     process.env?.EXPO_PUBLIC_MENTRA_PHOTO_WEBHOOK_URL ?? PHOTO_UPLOAD_DEFAULT_URL,
   );
-  const [cameraStatus, setCameraStatus] = useState(
-    'Camera: replace <computer-ip> in the Photo upload URL',
-  );
+  const [photoCloudServerEnabled, setPhotoCloudServerEnabledState] = useState(false);
+  const [phonePhotoReceiverRunning, setPhonePhotoReceiverRunning] = useState(false);
+  const [phonePhotoUploadUrl, setPhonePhotoUploadUrl] = useState<string | null>(null);
+  const [cameraStatus, setCameraStatus] = useState('Camera: ready to capture to phone');
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [photoSize, setPhotoSize] = useState<PhotoSize>('medium');
   const [photoCompression, setPhotoCompression] = useState<PhotoCompression>('medium');
   const [photoFlash, setPhotoFlash] = useState(false);
+  const [streamCloudServerEnabled, setStreamCloudServerEnabledState] = useState(false);
+  const [directStreamReceiverRunning, setDirectStreamReceiverRunning] = useState(false);
+  const [directStreamWhipUrl, setDirectStreamWhipUrl] = useState<string | null>(null);
   const [streamProtocol, setStreamProtocol] =
-    useState<StreamProtocol>('rtmp');
-  const [streamUrl, setStreamUrl] = useState(
-    process.env?.EXPO_PUBLIC_MENTRA_STREAM_URL ?? STREAM_DEFAULT_URLS.rtmp,
+    useState<StreamProtocol>('webrtc');
+  const [streamUrl, setStreamUrlState] = useState(
+    process.env?.EXPO_PUBLIC_MENTRA_STREAM_URL ?? STREAM_DEFAULT_URLS.webrtc,
   );
   const [streamStartedAt, setStreamStartedAt] = useState<number | null>(null);
   const [streamRequested, setStreamRequested] = useState(false);
   const [streamPreviewReady, setStreamPreviewReady] = useState(false);
-  const [streamStatus, setStreamStatus] = useState('Ready to start stream');
+  const [streamStatus, setStreamStatus] = useState('Ready to stream WebRTC to phone');
   const [hotspotEnabled, setHotspotEnabled] = useState(
     () => Boolean(BluetoothSdk.getGlassesStatus().hotspotEnabled),
   );
@@ -234,6 +257,9 @@ export function useMentraSdk(): MentraSdkModel {
   const activePhotoRequestIdRef = useRef<string | null>(null);
   const activeStreamIdRef = useRef<string | null>(null);
   const pollGenerationRef = useRef(0);
+  const photoCloudServerEnabledRef = useRef(false);
+  const streamCloudServerEnabledRef = useRef(false);
+  const photoUploadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const keepAliveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const previewHealthTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastMicFileUriRef = useRef<string | null>(null);
@@ -252,6 +278,18 @@ export function useMentraSdk(): MentraSdkModel {
   const defaultDeviceName = stringValue(bluetoothStatus, 'device_name');
   const defaultDeviceAddress = stringValue(bluetoothStatus, 'device_address');
   const glassesConnected = isGlassesConnected(glassesStatus);
+
+  useEffect(() => {
+    if (!selectedDiscoveredDevice) {
+      return;
+    }
+    const stillAvailable = discoveredDevices.some(
+      (device) => discoveredDeviceKey(device) === discoveredDeviceKey(selectedDiscoveredDevice),
+    );
+    if (!stillAvailable) {
+      setSelectedDiscoveredDevice(null);
+    }
+  }, [discoveredDevices, selectedDiscoveredDevice]);
 
   useEffect(() => {
     let cancelled = false;
@@ -382,10 +420,15 @@ export function useMentraSdk(): MentraSdkModel {
         setGlassesStatus((current) => ({...current, hotspotEnabled: false}));
         addEvent('TX', `hotspot error ${summarizeMap(payload)}`);
       }),
+      MentraDirectReceiver.addListener('photoUpload', handleDirectPhotoUpload),
+      MentraDirectReceiver.addListener('receiverStatus', handleDirectReceiverStatus),
+      MentraDirectReceiver.addListener('streamFirstFrame', handleDirectStreamFirstFrame),
       BluetoothSdk.addListener('photo_response', handlePhotoResponse),
       BluetoothSdk.addListener('stream_status', (payload: StreamStatusEvent) => {
         applyStreamStatus(payload);
-        setStreamStatus(JSON.stringify(payload));
+        if (streamCloudServerEnabledRef.current) {
+          setStreamStatus(JSON.stringify(payload));
+        }
         addEvent('LIVE', `stream status ${summarizeMap(payload)}`);
       }),
       BluetoothSdk.addListener('mic_pcm', (payload: MicPcmEvent) => {
@@ -443,8 +486,11 @@ export function useMentraSdk(): MentraSdkModel {
       removeGlasses();
       removeBluetooth();
       subscriptions.forEach((subscription) => subscription.remove());
+      clearPhotoUploadTimeout();
       stopKeepAlive();
       stopPreviewHealthPoll();
+      void MentraDirectReceiver.stopPhotoReceiver().catch(() => undefined);
+      void MentraDirectReceiver.stopWebRtcReceiver().catch(() => undefined);
       activeStreamIdRef.current = null;
       activePhotoRequestIdRef.current = null;
       pollGenerationRef.current += 1;
@@ -500,6 +546,8 @@ export function useMentraSdk(): MentraSdkModel {
       if (!(await ensureAndroidPermissions('scan'))) {
         throw new Error('Bluetooth permissions are required to scan.');
       }
+      setSelectedDiscoveredDevice(null);
+      setBluetoothStatus((current) => ({...current, searchResults: []}));
       await BluetoothSdk.findCompatibleDevices('Mentra Live');
     });
   }
@@ -509,20 +557,26 @@ export function useMentraSdk(): MentraSdkModel {
       if (!(await ensureAndroidPermissions('connect'))) {
         throw new Error('Bluetooth permissions are required to connect.');
       }
-      const firstDevice = discoveredDevices[0];
-      if (firstDevice) {
-        await BluetoothSdk.connectDevice(firstDevice.deviceModel, firstDevice.deviceName);
+      if (selectedDiscoveredDevice) {
+        await BluetoothSdk.connectDevice(
+          selectedDiscoveredDevice.deviceModel,
+          selectedDiscoveredDevice.deviceName,
+        );
         return;
       }
-      if (defaultDevice || hasSavedConnectionTarget(bluetoothStatus)) {
+      if (discoveredDevices.length === 0 && (defaultDevice || hasSavedConnectionTarget(bluetoothStatus))) {
         await BluetoothSdk.connectDefault();
         return;
+      }
+      if (discoveredDevices.length > 0) {
+        throw new Error('Choose one of the discovered glasses first.');
       }
       throw new Error('Scan first to choose nearby glasses.');
     });
   }
 
   async function connectDevice(device: DeviceSearchResult) {
+    setSelectedDiscoveredDevice(device);
     await runAction(`Connect ${device.deviceName}`, async () => {
       if (!(await ensureAndroidPermissions('connect'))) {
         throw new Error('Bluetooth permissions are required to connect.');
@@ -543,9 +597,15 @@ export function useMentraSdk(): MentraSdkModel {
     await runAction('Clear default', async () => {
       await BluetoothSdk.clearDefaultDevice();
       setDefaultDevice(null);
+      setSelectedDiscoveredDevice(null);
       setBluetoothStatus((current) => ({...current, ...clearedDefaultDeviceStatus()}));
       await savePersistedDefaultDevice(null);
     });
+  }
+
+  function selectDiscoveredDevice(device: DeviceSearchResult) {
+    setSelectedDiscoveredDevice(device);
+    setLastAction(`Selected: ${device.deviceName}`);
   }
 
   async function displayHello() {
@@ -581,6 +641,15 @@ export function useMentraSdk(): MentraSdkModel {
       if (!(await ensureAndroidPermissions('photo'))) {
         throw new Error('Camera and Bluetooth permissions are required for photos.');
       }
+      if (!photoCloudServerEnabledRef.current) {
+        await captureAndUploadToPhone();
+        return;
+      }
+      await captureAndUploadToCloud();
+    });
+  }
+
+  async function captureAndUploadToCloud() {
       const uploadUrlText = webhookUrl.trim();
       const validationMessage = photoUploadValidationMessage(uploadUrlText);
       if (validationMessage) {
@@ -614,7 +683,38 @@ export function useMentraSdk(): MentraSdkModel {
         true,
       );
       void pollPhotoPreview(requestId, statusUrl, pollGeneration);
-    });
+  }
+
+  async function captureAndUploadToPhone() {
+    const receiver = await MentraDirectReceiver.startPhotoReceiver();
+    setPhonePhotoReceiverRunning(true);
+    setPhonePhotoUploadUrl(receiver.uploadUrl);
+
+    const requestId = `photo-${Date.now()}`;
+    activePhotoRequestIdRef.current = requestId;
+    pollGenerationRef.current += 1;
+
+    setPhotoPreviewUrl(null);
+    setCameraStatus(`Camera: phone upload requested (${requestId})`);
+    clearPhotoUploadTimeout();
+    photoUploadTimeoutRef.current = setTimeout(() => {
+      if (activePhotoRequestIdRef.current === requestId) {
+        activePhotoRequestIdRef.current = null;
+        setCameraStatus('Camera: timed out waiting for phone upload');
+        addEvent('TX', `phone photo upload timed out ${requestId}`);
+      }
+    }, DIRECT_PHOTO_UPLOAD_TIMEOUT_MS);
+
+    await BluetoothSdk.photoRequest(
+      requestId,
+      PHOTO_APP_ID,
+      photoSize,
+      receiver.uploadUrl,
+      null,
+      photoCompression,
+      photoFlash,
+      true,
+    );
   }
 
   async function testWebhook() {
@@ -654,6 +754,52 @@ export function useMentraSdk(): MentraSdkModel {
     });
   }
 
+  function handleDirectPhotoUpload(payload: DirectPhotoUploadEvent) {
+    const activeRequestId = activePhotoRequestIdRef.current;
+    if (activeRequestId && payload.requestId && payload.requestId !== activeRequestId) {
+      addEvent('LIVE', `ignoring stale phone photo ${payload.requestId}`);
+      return;
+    }
+    clearPhotoUploadTimeout();
+    activePhotoRequestIdRef.current = null;
+    setPhonePhotoReceiverRunning(true);
+    setPhotoPreviewUrl(payload.fileUri);
+    setCameraStatus(`Camera: phone photo ready (${Math.round(payload.byteCount / 1024)} KB)`);
+    addEvent('LIVE', `phone photo ready ${payload.fileUri}`);
+  }
+
+  function handleDirectReceiverStatus(payload: DirectReceiverStatusEvent) {
+    if (payload.kind === 'photo') {
+      if (payload.message.toLowerCase().includes('ready at')) {
+        setPhonePhotoReceiverRunning(true);
+      }
+      if (payload.message.toLowerCase().includes('stopped')) {
+        setPhonePhotoReceiverRunning(false);
+      }
+      addEvent('LIVE', `photo receiver ${payload.message}`);
+      return;
+    }
+    if (payload.kind === 'stream') {
+      if (payload.message.toLowerCase().includes('ready at')) {
+        setDirectStreamReceiverRunning(true);
+      }
+      if (payload.message.toLowerCase().includes('stopped')) {
+        setDirectStreamReceiverRunning(false);
+      }
+    }
+    addEvent('LIVE', `${payload.kind} receiver ${payload.message}`);
+  }
+
+  function handleDirectStreamFirstFrame(_payload: DirectStreamFirstFrameEvent) {
+    if (!activeStreamIdRef.current || streamCloudServerEnabledRef.current) {
+      return;
+    }
+    setStreamPreviewReady(true);
+    setStreamStartedAt((current) => current ?? Date.now());
+    setStreamStatus('WebRTC phone preview ready');
+    addEvent('LIVE', 'WebRTC phone preview ready');
+  }
+
   function handlePhotoResponse(payload: PhotoResponseEvent) {
     const activeRequestId = activePhotoRequestIdRef.current;
     if (activeRequestId && payload.requestId !== activeRequestId) {
@@ -667,7 +813,11 @@ export function useMentraSdk(): MentraSdkModel {
       addEvent('LIVE', `photo response ${payload.errorCode ?? 'error'}`);
       return;
     }
-    setCameraStatus('Camera: photo acknowledged; waiting for local upload');
+    setCameraStatus(
+      photoCloudServerEnabledRef.current
+        ? 'Camera: photo acknowledged; waiting for cloud upload'
+        : 'Camera: photo acknowledged; waiting for phone upload',
+    );
     addEvent('LIVE', `photo response ${payload.requestId}`);
   }
 
@@ -714,8 +864,11 @@ export function useMentraSdk(): MentraSdkModel {
   }
 
   function selectProtocol(protocol: StreamProtocol) {
+    if (streamRequested || streamStartedAt !== null) {
+      void stopActiveStream('Stream stopped because protocol changed');
+    }
     setStreamProtocol(protocol);
-    setStreamUrl((current) => {
+    setStreamUrlState((current) => {
       const trimmed = current.trim();
       if (!trimmed || STREAM_DEFAULT_URL_VALUES.has(trimmed)) {
         return STREAM_DEFAULT_URLS[protocol];
@@ -724,59 +877,144 @@ export function useMentraSdk(): MentraSdkModel {
     });
   }
 
+  async function setPhotoCloudServerEnabledAction(enabled: boolean) {
+    await runAction(enabled ? 'Use photo cloud server' : 'Capture photos to phone', async () => {
+      photoCloudServerEnabledRef.current = enabled;
+      setPhotoCloudServerEnabledState(enabled);
+      activePhotoRequestIdRef.current = null;
+      clearPhotoUploadTimeout();
+      pollGenerationRef.current += 1;
+      if (enabled) {
+        await MentraDirectReceiver.stopPhotoReceiver().catch(() => undefined);
+        setPhonePhotoReceiverRunning(false);
+        setPhonePhotoUploadUrl(null);
+        setCameraStatus('Camera: enter the cloud Photo upload URL');
+        return;
+      }
+      setCameraStatus('Camera: ready to capture to phone');
+    });
+  }
+
+  async function setStreamCloudServerEnabledAction(enabled: boolean) {
+    await runAction(enabled ? 'Use stream cloud server' : 'Stream to phone', async () => {
+      if (streamRequested || streamStartedAt !== null) {
+        await stopActiveStream('Stream stopped because destination changed');
+      }
+      streamCloudServerEnabledRef.current = enabled;
+      setStreamCloudServerEnabledState(enabled);
+      setStreamPreviewReady(false);
+      if (enabled) {
+        setStreamStatus('Ready to stream to a cloud server');
+        return;
+      }
+      setStreamProtocol('webrtc');
+      setStreamStatus('Ready to stream WebRTC to phone');
+    });
+  }
+
+  function setStreamUrlAction(url: string) {
+    if (streamRequested || streamStartedAt !== null) {
+      void stopActiveStream('Stream stopped because URL changed');
+    }
+    setStreamUrlState(url);
+  }
+
   async function toggleStream() {
     if (streamRequested || streamStartedAt) {
-      await runAction('Stop stream', async () => {
-        stopKeepAlive();
-        stopPreviewHealthPoll();
-        activeStreamIdRef.current = null;
-        if (isGlassesConnected(glassesStatus)) {
-          await BluetoothSdk.stopStream();
-        }
-        setStreamRequested(false);
-        setStreamPreviewReady(false);
-        setStreamStartedAt(null);
-        setStreamStatus('Stopped');
-      });
+      await runAction('Stop stream', () => stopActiveStream('Stopped'));
       return;
     }
 
     await runAction('Start stream', async () => {
       requireConnected('start streaming');
-      const url = streamUrl.trim();
-      const validationMessage = streamUrlValidationMessage(url);
-      if (validationMessage) {
-        setStreamStatus(validationMessage);
-        throw new Error(validationMessage);
+      if (streamCloudServerEnabledRef.current) {
+        await startCloudStream();
+        return;
       }
-      if (streamProtocol === 'rtmp' || streamProtocol === 'srt' || streamProtocol === 'webrtc') {
-        setStreamStatus(`Checking local ${streamProtocol.toUpperCase()} server`);
-        const reachabilityMessage =
-          streamProtocol === 'rtmp'
-            ? await localRtmpReachabilityMessage(url)
-            : streamProtocol === 'srt'
-              ? await localSrtReachabilityMessage(url)
-              : await localWebrtcReachabilityMessage(url);
-        if (reachabilityMessage) {
-          setStreamStatus(reachabilityMessage);
-          throw new Error(reachabilityMessage);
-        }
+      await startPhoneWebRtcStream();
+    });
+  }
+
+  async function startCloudStream() {
+    const url = streamUrl.trim();
+    const validationMessage = streamUrlValidationMessage(url);
+    if (validationMessage) {
+      setStreamStatus(validationMessage);
+      throw new Error(validationMessage);
+    }
+    if (streamProtocol === 'rtmp' || streamProtocol === 'srt' || streamProtocol === 'webrtc') {
+      setStreamStatus(`Checking local ${streamProtocol.toUpperCase()} server`);
+      const reachabilityMessage =
+        streamProtocol === 'rtmp'
+          ? await localRtmpReachabilityMessage(url)
+          : streamProtocol === 'srt'
+            ? await localSrtReachabilityMessage(url)
+            : await localWebrtcReachabilityMessage(url);
+      if (reachabilityMessage) {
+        setStreamStatus(reachabilityMessage);
+        throw new Error(reachabilityMessage);
       }
-      const streamId = `rn-${Date.now()}`;
-      const params = {
-        keepAlive: true,
-        keepAliveIntervalSeconds: 15,
-        streamId,
-        streamUrl: url,
-        type: 'start_stream',
-      } satisfies StreamStartRequest;
+    }
+    const streamId = `rn-${Date.now()}`;
+    const params = {
+      keepAlive: true,
+      keepAliveIntervalSeconds: 15,
+      streamId,
+      streamUrl: url,
+      type: 'start_stream',
+    } satisfies StreamStartRequest;
+    await BluetoothSdk.startStream(params);
+    activeStreamIdRef.current = streamId;
+    setStreamRequested(true);
+    setStreamPreviewReady(false);
+    setStreamStatus(`Starting ${streamProtocol.toUpperCase()} stream; waiting for preview`);
+    void startPreviewReadinessPoll(url, streamProtocol, streamId);
+  }
+
+  async function startPhoneWebRtcStream() {
+    const receiver = await MentraDirectReceiver.startWebRtcReceiver();
+    setDirectStreamReceiverRunning(true);
+    setDirectStreamWhipUrl(receiver.streamUrl);
+    setStreamPreviewReady(false);
+    setStreamStatus('Phone WebRTC receiver ready; starting glasses stream');
+    await delay(DIRECT_WEBRTC_RECEIVER_WARMUP_MS);
+
+    const streamId = `rn-${Date.now()}`;
+    const params = {
+      keepAlive: true,
+      keepAliveIntervalSeconds: 15,
+      streamId,
+      streamUrl: receiver.streamUrl,
+      type: 'start_stream',
+    } satisfies StreamStartRequest;
+    try {
       await BluetoothSdk.startStream(params);
       activeStreamIdRef.current = streamId;
       setStreamRequested(true);
       setStreamPreviewReady(false);
-      setStreamStatus(`Starting ${streamProtocol.toUpperCase()} stream; waiting for preview`);
-      void startPreviewReadinessPoll(url, streamProtocol, streamId);
-    });
+      setStreamStatus('Starting WebRTC stream to phone; waiting for preview');
+    } catch (error) {
+      await MentraDirectReceiver.stopWebRtcReceiver().catch(() => undefined);
+      setDirectStreamReceiverRunning(false);
+      setDirectStreamWhipUrl(null);
+      throw error;
+    }
+  }
+
+  async function stopActiveStream(status: string) {
+    stopKeepAlive();
+    stopPreviewHealthPoll();
+    activeStreamIdRef.current = null;
+    if (isGlassesConnected(glassesStatus)) {
+      await BluetoothSdk.stopStream();
+    }
+    await MentraDirectReceiver.stopWebRtcReceiver().catch(() => undefined);
+    setDirectStreamReceiverRunning(false);
+    setDirectStreamWhipUrl(null);
+    setStreamRequested(false);
+    setStreamPreviewReady(false);
+    setStreamStartedAt(null);
+    setStreamStatus(status);
   }
 
   async function startPreviewReadinessPoll(
@@ -840,6 +1078,13 @@ export function useMentraSdk(): MentraSdkModel {
     if (previewHealthTimerRef.current) {
       clearInterval(previewHealthTimerRef.current);
       previewHealthTimerRef.current = null;
+    }
+  }
+
+  function clearPhotoUploadTimeout() {
+    if (photoUploadTimeoutRef.current) {
+      clearTimeout(photoUploadTimeoutRef.current);
+      photoUploadTimeoutRef.current = null;
     }
   }
 
@@ -1208,6 +1453,8 @@ export function useMentraSdk(): MentraSdkModel {
   function applyDisconnectedState(status: string) {
     stopKeepAlive();
     stopPreviewHealthPoll();
+    clearPhotoUploadTimeout();
+    void MentraDirectReceiver.stopWebRtcReceiver().catch(() => undefined);
     activeStreamIdRef.current = null;
     const hadPhotoRequest = activePhotoRequestIdRef.current !== null;
     activePhotoRequestIdRef.current = null;
@@ -1217,6 +1464,8 @@ export function useMentraSdk(): MentraSdkModel {
     }
     setGlassesStatus(disconnectedGlassesStatus({connected: false}));
     setStreamRequested(false);
+    setDirectStreamReceiverRunning(false);
+    setDirectStreamWhipUrl(null);
     setStreamPreviewReady(false);
     setStreamStartedAt(null);
     setStreamStatus(status);
@@ -1251,6 +1500,9 @@ export function useMentraSdk(): MentraSdkModel {
       stopKeepAlive();
       stopPreviewHealthPoll();
       activeStreamIdRef.current = null;
+      void MentraDirectReceiver.stopWebRtcReceiver().catch(() => undefined);
+      setDirectStreamReceiverRunning(false);
+      setDirectStreamWhipUrl(null);
       setStreamRequested(false);
       setStreamPreviewReady(false);
       setStreamStartedAt(null);
@@ -1270,6 +1522,8 @@ export function useMentraSdk(): MentraSdkModel {
     copyGalleryServerUrl,
     disconnect,
     defaultDevice,
+    directStreamReceiverRunning,
+    directStreamWhipUrl,
     discoveredDevices,
     displayHello,
     events,
@@ -1295,25 +1549,33 @@ export function useMentraSdk(): MentraSdkModel {
     pcmBytes,
     pcmFrames,
     permissionStatus,
+    phonePhotoReceiverRunning,
+    phonePhotoUploadUrl,
     photoCompression,
+    photoCloudServerEnabled,
     photoFlash,
     photoPreviewUrl,
     photoSize,
     playMicRecording,
     rawJsonExpanded,
     requestWifiScan,
+    selectDiscoveredDevice,
     selectLedColor,
     selectLedMode,
     selectProtocol,
     sendWifiCredentials,
     setGalleryModeAuto: setGalleryModeAutoAction,
     setPhotoCompression,
+    setPhotoCloudServerEnabled: setPhotoCloudServerEnabledAction,
     setPhotoFlash,
     setPhotoSize,
     setRawJsonExpanded,
-    setStreamUrl,
+    setStreamCloudServerEnabled: setStreamCloudServerEnabledAction,
+    setStreamUrl: setStreamUrlAction,
     setWebhookUrl,
+    selectedDiscoveredDevice,
     startScan,
+    streamCloudServerEnabled,
     streamProtocol,
     streamPreviewReady,
     streamRequested,
@@ -1418,6 +1680,10 @@ function hasDefaultDeviceStatus(values: Record<string, unknown>) {
 
 function hasSavedConnectionTarget(values: Record<string, unknown>) {
   return Boolean(stringValue(values, 'default_wearable') && stringValue(values, 'device_name'));
+}
+
+function discoveredDeviceKey(device: DeviceSearchResult) {
+  return `${device.deviceModel}:${device.deviceName}:${device.deviceAddress ?? ''}`;
 }
 
 function stringValue(values: Record<string, unknown>, key: string) {

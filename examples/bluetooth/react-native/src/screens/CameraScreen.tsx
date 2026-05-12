@@ -9,7 +9,20 @@ import { colors } from '../components/theme';
 import { isGlassesConnected } from '../sdkFormat';
 import { PHOTO_COMPRESSIONS, PHOTO_SIZES, type MentraSdkModel, type PhotoCompression, type PhotoSize } from '../useMentraSdk';
 
-function cameraSdkCall(size: PhotoSize, compression: PhotoCompression, flash: boolean) {
+function cameraSdkCall(size: PhotoSize, compression: PhotoCompression, flash: boolean, useCloudServer: boolean) {
+  if (!useCloudServer) {
+    return `const { uploadUrl } = await MentraDirectReceiver.startPhotoReceiver();
+await BluetoothSdk.photoRequest(
+  requestId,
+  PHOTO_APP_ID,
+  "${size}",
+  uploadUrl,
+  null,
+  "${compression}",
+  ${flash},
+  true,
+)`;
+  }
   return `await BluetoothSdk.photoRequest(
   requestId,
   PHOTO_APP_ID,
@@ -26,8 +39,13 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
   const scrollBottomPadding = useScrollBottomPadding();
   const connected = isGlassesConnected(sdk.glassesStatus);
   const cameraStatusFailed = isCameraStatusFailure(sdk.cameraStatus);
-  const setupHint = localCameraSetupHint(sdk.webhookUrl, sdk.cameraStatus);
-  const sdkCall = cameraSdkCall(sdk.photoSize, sdk.photoCompression, sdk.photoFlash);
+  const setupHint = sdk.photoCloudServerEnabled ? localCameraSetupHint(sdk.webhookUrl, sdk.cameraStatus) : null;
+  const sdkCall = cameraSdkCall(
+    sdk.photoSize,
+    sdk.photoCompression,
+    sdk.photoFlash,
+    sdk.photoCloudServerEnabled,
+  );
 
   return (
     <ScrollView
@@ -93,9 +111,16 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.statusTitle}>{sdk.cameraStatus}</Text>
-            <Text style={styles.statusSub}>{sdk.photoPreviewUrl ? 'Preview loaded from local webhook' : 'Waiting for capture'}</Text>
+            <Text style={styles.statusSub}>
+              {sdk.photoPreviewUrl
+                ? sdk.photoCloudServerEnabled
+                  ? 'Preview loaded from cloud server'
+                  : 'Preview loaded from phone receiver'
+                : sdk.photoCloudServerEnabled
+                  ? 'Waiting for cloud upload'
+                  : 'Waiting for capture'}
+            </Text>
           </View>
-          <Text style={styles.linkRight}>View →</Text>
         </View>
       </LinearGradient>
 
@@ -103,28 +128,48 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
       <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={styles.uploadCard}>
         <View style={styles.cardHead}>
           <Text style={styles.eyebrow}>UPLOAD TO</Text>
-          <Pressable onPress={sdk.testWebhook}>
+          <Pressable
+            onPress={() => void sdk.setPhotoCloudServerEnabled(!sdk.photoCloudServerEnabled)}
+            style={[styles.toggleChip, sdk.photoCloudServerEnabled && styles.toggleChipActive]}>
             {({pressed}) => (
-              <Text style={[styles.linkRight, { color: colors.greenAccent, opacity: pressed ? 0.6 : 1 }]}>test webhook ↗</Text>
+              <Text style={[styles.toggleText, sdk.photoCloudServerEnabled && styles.toggleTextActive, pressed && styles.toggleTextPressed]}>
+                Use cloud server
+              </Text>
             )}
           </Pressable>
         </View>
-        <View style={styles.urlBar}>
-          <Text style={styles.method}>POST</Text>
-          <View style={styles.divider} />
-          <TextInput
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="url"
-            onChangeText={sdk.setWebhookUrl}
-            placeholder="Photo upload URL"
-            placeholderTextColor={colors.muted}
-            returnKeyType="done"
-            style={styles.url}
-            value={sdk.webhookUrl}
-          />
-        </View>
-        {setupHint ? <Text style={styles.setupHint}>{setupHint}</Text> : null}
+        {sdk.photoCloudServerEnabled ? (
+          <>
+            <View style={styles.cardHead}>
+              <Text style={styles.modeHint}>Cloud server receives the JPEG upload.</Text>
+              <Pressable onPress={sdk.testWebhook}>
+                {({pressed}) => (
+                  <Text style={[styles.linkRight, { color: colors.greenAccent, opacity: pressed ? 0.6 : 1 }]}>test webhook</Text>
+                )}
+              </Pressable>
+            </View>
+            <View style={styles.urlBar}>
+              <Text style={styles.method}>POST</Text>
+              <View style={styles.divider} />
+              <TextInput
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+                onChangeText={sdk.setWebhookUrl}
+                placeholder="Photo upload URL"
+                placeholderTextColor={colors.muted}
+                returnKeyType="done"
+                style={styles.url}
+                value={sdk.webhookUrl}
+              />
+            </View>
+            {setupHint ? <Text style={styles.setupHint}>{setupHint}</Text> : null}
+          </>
+        ) : (
+          <Text style={styles.setupHint}>
+            The phone starts a local upload receiver before each capture and previews the JPEG when the glasses upload it.
+          </Text>
+        )}
         <OptionGroup label="size">
           {PHOTO_SIZES.map((size) => (
             <Chip key={size} active={sdk.photoSize === size} value={size} onPress={() => sdk.setPhotoSize(size)} />
@@ -229,6 +274,12 @@ const styles = StyleSheet.create({
 
   uploadCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 22, paddingVertical: 16, paddingHorizontal: 18, gap: 12, borderWidth: 1, borderColor: colors.borderSoft },
   eyebrow: { color: colors.muted, fontSize: 10, fontWeight: '600', letterSpacing: 1.2 },
+  toggleChip: { borderRadius: 999, borderWidth: 1, borderColor: 'rgba(15,42,29,0.12)', paddingVertical: 6, paddingHorizontal: 10, backgroundColor: 'rgba(255,255,255,0.55)' },
+  toggleChipActive: { backgroundColor: 'rgba(52,199,89,0.16)', borderColor: 'rgba(52,199,89,0.32)' },
+  toggleText: { color: colors.muted, fontSize: 10, fontWeight: '700' },
+  toggleTextActive: { color: colors.greenAccent },
+  toggleTextPressed: { opacity: 0.6 },
+  modeHint: { flex: 1, color: colors.muted, fontSize: 11, fontWeight: '500' },
   urlBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(15,42,29,0.04)', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, gap: 10 },
   setupHint: { color: colors.muted, fontSize: 11, fontWeight: '500', lineHeight: 15, backgroundColor: 'rgba(15,42,29,0.04)', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12 },
   method: { color: colors.greenAccent, fontSize: 11, fontWeight: '600', letterSpacing: 0.5 },

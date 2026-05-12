@@ -96,6 +96,7 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
           <Text style={styles.cardTitle}>Quick actions</Text>
           <Text style={styles.cardEyebrow}>SDK</Text>
         </View>
+        <TargetPicker sdk={sdk} connected={connected} />
         <View style={{ gap: 8 }}>
           <View style={styles.btnRow}>
             <Pressable disabled={connected} style={({ pressed }) => [styles.btn, pressed && styles.btnPressed, connected && styles.disabled, { backgroundColor: '#0E2C1A' }]} onPress={sdk.startScan}>
@@ -191,20 +192,24 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
 }
 
 function hasConnectionTarget(sdk: MentraSdkModel) {
-  return Boolean(
-    sdk.discoveredDevices.length > 0 ||
-    sdk.defaultDevice ||
-    savedConnectionTargetName(sdk.bluetoothStatus),
-  );
+  if (sdk.selectedDiscoveredDevice) {
+    return true;
+  }
+  if (sdk.discoveredDevices.length > 0) {
+    return false;
+  }
+  return Boolean(sdk.defaultDevice || savedConnectionTargetName(sdk.bluetoothStatus));
 }
 
 function connectionTargetLabel(sdk: MentraSdkModel) {
   if (isGlassesConnected(sdk.glassesStatus)) {
     return deviceLabel(sdk.glassesStatus);
   }
-  const scannedDevice = sdk.discoveredDevices[0];
-  if (scannedDevice) {
-    return scannedDevice.deviceName;
+  if (sdk.selectedDiscoveredDevice) {
+    return sdk.selectedDiscoveredDevice.deviceName;
+  }
+  if (sdk.discoveredDevices.length > 0) {
+    return 'Choose a discovered device';
   }
   return savedConnectionTargetName(sdk.bluetoothStatus) ?? sdk.defaultDevice?.name ?? 'Scan required';
 }
@@ -234,6 +239,118 @@ function glassesImageFor(status: MentraSdkModel['glassesStatus']) {
     return glassesImages.unknownWearable;
   }
   return glassesImages.mentraLive;
+}
+
+function TargetPicker({ sdk, connected }: { sdk: MentraSdkModel; connected: boolean }) {
+  const selectedKey = sdk.selectedDiscoveredDevice
+    ? discoveredDeviceKey(sdk.selectedDiscoveredDevice)
+    : null;
+  const savedName = savedConnectionTargetName(sdk.bluetoothStatus) ?? sdk.defaultDevice?.name;
+
+  return (
+    <View style={styles.targetPicker}>
+      <View style={styles.targetHeader}>
+        <Text style={styles.targetEyebrow}>{connected ? 'CONNECTED DEVICE' : 'CONNECTION TARGET'}</Text>
+        {!connected && sdk.discoveredDevices.length > 0 ? (
+          <Text style={styles.targetSummary}>
+            {selectedKey ? `${sdk.discoveredDevices.length} found` : 'choose one'}
+          </Text>
+        ) : null}
+      </View>
+
+      {connected ? (
+        <TargetDeviceRow
+          name={deviceLabel(sdk.glassesStatus)}
+          detail="Active BLE connection"
+          selected
+          enabled={false}
+        />
+      ) : sdk.discoveredDevices.length === 0 && savedName ? (
+        <TargetDeviceRow
+          name={savedName}
+          detail={savedConnectionTargetDetail(sdk)}
+          selected
+          enabled={false}
+        />
+      ) : sdk.discoveredDevices.length === 0 ? (
+        <TargetDeviceRow
+          name="Scan required"
+          detail="No saved default target yet. Scan to choose nearby glasses."
+          selected={false}
+          enabled={false}
+        />
+      ) : (
+        sdk.discoveredDevices.map((device) => (
+          <TargetDeviceRow
+            key={discoveredDeviceKey(device)}
+            name={device.deviceName}
+            detail={targetDeviceDetail(device)}
+            selected={selectedKey === discoveredDeviceKey(device)}
+            enabled
+            onPress={() => sdk.selectDiscoveredDevice(device)}
+          />
+        ))
+      )}
+    </View>
+  );
+}
+
+function TargetDeviceRow({
+  detail,
+  enabled,
+  name,
+  onPress,
+  selected,
+}: {
+  detail: string;
+  enabled: boolean;
+  name: string;
+  onPress?: () => void;
+  selected: boolean;
+}) {
+  return (
+    <Pressable
+      disabled={!enabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.targetRow,
+        selected ? styles.targetRowSelected : styles.targetRowIdle,
+        pressed && styles.btnPressed,
+        !enabled && styles.targetRowDisabled,
+      ]}>
+      <View style={[styles.targetCheck, selected && styles.targetCheckSelected]}>
+        {selected ? (
+          <Svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round">
+            <Path d="m5 12 4 4 10-10" />
+          </Svg>
+        ) : null}
+      </View>
+      <View style={{ flex: 1, gap: 2 }}>
+        <Text style={styles.targetName}>{name}</Text>
+        <Text style={styles.targetDetail}>{detail}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function targetDeviceDetail(device: MentraSdkModel['discoveredDevices'][number]) {
+  return device.deviceAddress
+    ? `${device.deviceModel} · ${device.deviceAddress}`
+    : device.deviceModel;
+}
+
+function savedConnectionTargetDetail(sdk: MentraSdkModel) {
+  const model = stringValue(sdk.bluetoothStatus, 'default_wearable') ?? sdk.defaultDevice?.model ?? 'Saved model';
+  return `${model} · BluetoothSdk.connectDefault()`;
+}
+
+function discoveredDeviceKey(device: MentraSdkModel['discoveredDevices'][number]) {
+  return `${device.deviceModel}:${device.deviceName}:${device.deviceAddress ?? ''}`;
+}
+
+function stringValue(values: Record<string, unknown>, key: string) {
+  const value = values[key];
+  return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
 function StatCard({ label, value, sub, subColor, bold }: { label: string; value: string; sub: string; subColor: string; bold?: boolean }) {
@@ -315,6 +432,18 @@ const styles = StyleSheet.create({
   cardHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   cardTitle: { color: colors.inkAlt, fontSize: 16, fontWeight: '700', letterSpacing: -0.16 },
   cardEyebrow: { color: 'rgba(14,14,16,0.4)', fontSize: 10, fontWeight: '600', letterSpacing: 1.6, fontFamily: 'Courier' },
+  targetPicker: { backgroundColor: 'rgba(14,14,16,0.035)', borderRadius: 18, padding: 12, gap: 8 },
+  targetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  targetEyebrow: { color: 'rgba(14,14,16,0.45)', fontSize: 10, fontWeight: '600', letterSpacing: 1.4, fontFamily: 'Courier' },
+  targetSummary: { color: colors.greenInk, fontSize: 10, fontWeight: '600' },
+  targetRow: { flexDirection: 'row', alignItems: 'center', borderRadius: 14, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 9, gap: 10 },
+  targetRowIdle: { backgroundColor: 'rgba(255,255,255,0.7)', borderColor: 'rgba(255,255,255,0.7)' },
+  targetRowSelected: { backgroundColor: 'rgba(22,163,74,0.08)', borderColor: 'rgba(22,163,74,0.18)' },
+  targetRowDisabled: { opacity: 1 },
+  targetCheck: { width: 18, height: 18, borderRadius: 999, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', borderWidth: 1, borderColor: colors.borderSoft },
+  targetCheckSelected: { backgroundColor: colors.greenPrimary },
+  targetName: { color: colors.inkAlt, fontSize: 13, fontWeight: '700' },
+  targetDetail: { color: colors.muted, fontSize: 10, fontWeight: '500' },
   btnRow: { flexDirection: 'row', gap: 8 },
   quickNote: { color: colors.muted, fontSize: 11, fontWeight: '500', lineHeight: 15 },
   btn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 14, paddingVertical: 12, paddingHorizontal: 14, gap: 8 },
