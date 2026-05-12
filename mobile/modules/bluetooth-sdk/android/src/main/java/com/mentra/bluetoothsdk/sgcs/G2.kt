@@ -23,6 +23,7 @@ import com.mentra.core.Bridge
 import com.mentra.core.CoreManager
 import com.mentra.core.GlassesStore
 import com.mentra.core.utils.DeviceTypes
+import com.mentra.core.utils.audio.Lc3Player
 import java.io.ByteArrayOutputStream
 import java.util.TimeZone
 import java.util.UUID
@@ -966,11 +967,27 @@ class G2 : SGCManager() {
         private const val PREFS_NAME = "G2Prefs"
         private const val KEY_LEFT_ADDRESS = "g2_leftGlassAddress"
         private const val KEY_RIGHT_ADDRESS = "g2_rightGlassAddress"
+
+        // G2 sends 40-byte LC3 frames (16kHz, mono, 10ms), matching MentraLive.
+        private const val LC3_FRAME_SIZE = 40
+        // Debug: route glasses mic audio to phone speakers via Lc3Player.
+        private const val AUDIO_PLAYBACK_ENABLED = true
     }
+
+    // LC3 debug audio playback (mirrors MentraLive.java)
+    private var lc3AudioPlayer: Lc3Player? = null
 
     init {
         type = DeviceTypes.G2
         hasMic = true
+
+        if (AUDIO_PLAYBACK_ENABLED) {
+            lc3AudioPlayer = Lc3Player(context, LC3_FRAME_SIZE).also {
+                it.init()
+                it.startPlay()
+            }
+            Bridge.log("G2: 🔊 LC3 audio player started (frame size: $LC3_FRAME_SIZE bytes)")
+        }
     }
 
     // BLE
@@ -2494,6 +2511,8 @@ class G2 : SGCManager() {
 
     override fun cleanup() {
         disconnect()
+        lc3AudioPlayer?.stopPlay()
+        lc3AudioPlayer = null
     }
 
     override fun getConnectedBluetoothName(): String {
@@ -3504,6 +3523,8 @@ class G2 : SGCManager() {
 
     // ---------- Audio Handling ----------
 
+    private var lc3PlaybackSeq: Byte = 0
+
     private fun handleAudioData(data: ByteArray) {
         // Diagnostic: if BLE notifications are arriving fragmented (MTU too small), data.size
         // will be consistently < 200. Expected: ~200-byte chunks (5 × 40-byte LC3 frames).
@@ -3514,6 +3535,19 @@ class G2 : SGCManager() {
 
         val audioData = data.copyOfRange(0, usableLength)
         CoreManager.getInstance().handleGlassesMicData(audioData, 40)
+
+        // Debug playback: route LC3 audio out the phone speakers via Lc3Player.
+        // Lc3Player.run() expects a 2-byte header (type/seq) followed by 200 bytes of LC3,
+        // so we wrap the raw G2 frames with a synthetic header before queueing.
+        val player = lc3AudioPlayer
+        if (AUDIO_PLAYBACK_ENABLED && player != null && usableLength >= 200) {
+            val framed = ByteArray(202)
+            framed[0] = 0xA0.toByte()
+            framed[1] = lc3PlaybackSeq
+            lc3PlaybackSeq = ((lc3PlaybackSeq.toInt() + 1) and 0xFF).toByte()
+            System.arraycopy(audioData, 0, framed, 2, 200)
+            player.write(framed, 0, framed.size)
+        }
     }
 
     // ---------- Reconnection ----------
