@@ -55,7 +55,7 @@ export function NavigationRunningDrawer({destination, me, onStop}: Props) {
           exit={{y: "100%"}}
           transition={{type: "spring", stiffness: 320, damping: 42}}
           className="fixed left-0 right-0 bottom-0 z-40 pointer-events-none">
-          <div ref={measureRef} className="[font-synthesis:none] pointer-events-auto mx-auto max-w-md flex items-center pt-4 pb-8.5 gap-2 bg-[#FFFFFFA6] border-t border-t-solid border-t-[#FFFFFF80] [backdrop-filter:blur(40px)_saturate(180%)] antialiased px-4">
+          <div ref={measureRef} className="[font-synthesis:none] pointer-events-auto mx-auto max-w-md flex items-center pt-4 pb-8.5 gap-2 bg-[#FFFFFFA6] border-t border-t-solid border-t-[#FFFFFF80] [backdrop-filter:blur(40px)_saturate(180%)] antialiased px-4 rounded-t-[28px]">
             <Stat label={arrivalLabel} sub="Arrival" />
             <div className="w-px h-7 bg-[#0000001A] shrink-0" />
             <Stat label={etaLabel} sub="Time" />

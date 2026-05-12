@@ -106,6 +106,12 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           "This app needs access to your notifications to provide you with notifications.",
         NSLocalNetworkUsageDescription:
           "Mentra needs to access your local network to connect to Mentra Live glasses for viewing photos and media stored on the device.",
+        // Required because miniapps subscribed to `heading_update` cause
+        // the host's HeadingService to read the device compass via
+        // CoreMotion. iOS hard-crashes any access to motion sensors
+        // without this usage string declared.
+        NSMotionUsageDescription:
+          "Mentra reads your device compass to show heading direction in navigation and similar miniapps on your glasses.",
         NSBonjourServices: ["_mentra-live._tcp", "_http._tcp"],
         NSAppTransportSecurity: {
           NSAllowsLocalNetworking: true,

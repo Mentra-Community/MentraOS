@@ -81,8 +81,8 @@ export default function CapsuleMenu({forceShow}: {forceShow: boolean}) {
 
   return (
     <View
-      className="z-12 absolute right-2 items-center justify-end flex-row"
-      style={{top: top}}
+      className="absolute right-2 items-center justify-end flex-row"
+      style={{top: top, zIndex: 11, elevation: 11}}
       pointerEvents="box-none">
       <CapsuleButton onMinusPress={() => active?.handleExit(true)} />
     </View>

@@ -1,5 +1,5 @@
 /**
- * Dev-only: nudge the simulator ~20m off-route to verify the SDK's
+ * Dev-only: nudge the simulator ~50m off-route to verify the SDK's
  * rerouting pipeline. Only meaningful when a simulated trip is active.
  */
 export function DeviateButton({onDeviate}: {onDeviate: () => void}) {

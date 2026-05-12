@@ -144,6 +144,10 @@ export default function Compositor() {
     <Animated.View
       pointerEvents={isForeground ? "auto" : "box-none"}
       style={[
+        // Match MiniappHost's z-10 so the CapsuleMenu (home/exit button)
+        // rendered inside this view at zIndex 10000 actually wins the stack
+        // — children can't escape their parent's stacking context, so
+        // leaving this at z-10 puts the whole subtree below the WebView.
         {position: "absolute", top: 0, bottom: 0, left: 0, right: 0, zIndex: 10, elevation: 10},
         animatedStyle,
       ]}>

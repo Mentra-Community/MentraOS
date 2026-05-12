@@ -428,8 +428,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   }
 
   function handleDeviate() {
-    append("deviate → +20m off-route")
-    navigation.deviate(20)
+    append("deviate → +50m off-route")
+    navigation.deviate(50)
   }
 
   const me = coords ? {lat: coords.lat, lng: coords.lng} : null
@@ -586,13 +586,16 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
           )}
         </div>
         {simulatorMode && (
-          <SimulationControls
-            simulate={simulate}
-            setSimulate={setSimulate}
-            speedMultiplier={speedMultiplier}
-            setSpeedMultiplier={setSpeedMultiplier}
-            running={running}
-          />
+          <>
+            <SimulationControls
+              simulate={simulate}
+              setSimulate={setSimulate}
+              speedMultiplier={speedMultiplier}
+              setSpeedMultiplier={setSpeedMultiplier}
+              running={running}
+            />
+            {running && simulate ? <DeviateButton onDeviate={handleDeviate} /> : null}
+          </>
         )}
         <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3">
           <div className="text-[11px] font-bold tracking-wider text-neutral-500 uppercase mb-2">
@@ -661,7 +664,6 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
           className="w-full mt-2 mb-1 px-3 py-2.5 rounded-xl text-sm font-semibold border border-dashed border-purple-300 bg-purple-50 text-purple-900">
           🧪 Toggle drawer mode (running={String(running)})
         </button>
-        {running && simulate ? <DeviateButton onDeviate={handleDeviate} /> : null}
         <LiveLog log={log} running={running} status={status} maneuver={maneuver} />
       </FloatingDevPanel>
     </div>

@@ -53,7 +53,7 @@ export default function DevMiniappOfflineScreen() {
     if (!packageName) return
     const devUrlRes = storage.load<string>(`${packageName}_dev_url`)
     if (!devUrlRes.is_ok()) {
-      push("/miniapps/settings/miniapp-developer-scanner")
+      push("/miniapps/miniappdev/scanner")
       return
     }
     // Pre-flight reachability before deciding the route. If still down,
@@ -73,7 +73,7 @@ export default function DevMiniappOfflineScreen() {
   }
 
   const onRescan = () => {
-    push("/miniapps/settings/miniapp-developer-scanner")
+    push("/miniapps/miniappdev/scanner")
   }
 
   const displayName = resolvedName ?? packageName ?? "Dev mini app"

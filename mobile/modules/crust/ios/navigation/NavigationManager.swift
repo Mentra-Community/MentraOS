@@ -32,6 +32,13 @@ final class NavigationManager: NSObject {
   private var simTimer: Timer?
   private var isSimulating = false
 
+  // Deviation walk: when the user presses the Deviate dev button, we
+  // walk them along a custom polyline that either skips the upcoming
+  // turn or takes a random wrong turn at it. The timer feeds waypoints
+  // to the Google Nav simulator one at a time so it looks like natural
+  // walking instead of an instant teleport.
+  private var deviateTimer: Timer?
+
   // Pivot enrichment: when emitRoute() fires before the first NavInfo
   // tick, we don't yet have step metadata (road / maneuver per step).
   // We cache the latest NavInfo's `remainingSteps` here as they arrive,
@@ -41,10 +48,33 @@ final class NavigationManager: NSObject {
   private var lastEmittedPoints: [[String: Double]]? = nil
   private var pendingRouteReEmit: Bool = false
 
+  // MARK: - API Key registration
+
+  // The Google Maps + Navigation SDKs throw an NSException → SIGABRT the
+  // moment ANY GMS* API is touched without `+provideAPIKey:` having been
+  // called first. Android reads the key from the manifest automatically;
+  // iOS doesn't — we have to do it ourselves before any other GMS call.
+  // The key lives in Info.plist under `GOOGLE_NAV_API_KEY` (injected by
+  // app.config.ts from EXPO_PUBLIC_GOOGLE_NAV_API_KEY).
+  private static var apiKeyRegistered = false
+  private static func ensureApiKeyRegistered() {
+    if apiKeyRegistered { return }
+    guard
+      let key = Bundle.main.object(forInfoDictionaryKey: "GOOGLE_NAV_API_KEY") as? String,
+      !key.isEmpty
+    else {
+      print("[NavigationManager] GOOGLE_NAV_API_KEY missing from Info.plist — Google Nav SDK calls will crash")
+      return
+    }
+    GMSServices.provideAPIKey(key)
+    apiKeyRegistered = true
+  }
+
   // MARK: - Permissions
 
   func requestPermission(completion: @escaping (Bool) -> Void) {
     DispatchQueue.main.async {
+      NavigationManager.ensureApiKeyRegistered()
       let options = GMSNavigationTermsAndConditionsOptions(companyName: "Mentra")
       GMSNavigationServices.showTermsAndConditionsDialogIfNeeded(with: options) { accepted in
         completion(accepted)
@@ -70,6 +100,7 @@ final class NavigationManager: NSObject {
 
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
+      NavigationManager.ensureApiKeyRegistered()
 
       let camera = GMSCameraPosition(latitude: 0, longitude: 0, zoom: 1)
       let mapView = GMSMapView(frame: .zero, camera: camera)
@@ -106,7 +137,10 @@ final class NavigationManager: NSObject {
           return
         }
         nav.isGuidanceActive = true
-        nav.isVoiceInstructionsMuted = true
+        // Mute voice guidance — the property name varies across SDK
+        // versions, so go through `voiceGuidance` (which all versions
+        // accept) instead of the missing `isVoiceInstructionsMuted`.
+        nav.voiceGuidance = .silent
 
         if simulate {
           mapView.locationSimulator?.simulateLocationsAlongExistingRoute()
@@ -130,6 +164,8 @@ final class NavigationManager: NSObject {
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
       self.stopSimulationPolling()
+      self.deviateTimer?.invalidate()
+      self.deviateTimer = nil
       self.isSimulating = false
       self.navigator?.isGuidanceActive = false
       self.navigator?.clearDestinations()
@@ -150,9 +186,121 @@ final class NavigationManager: NSObject {
 
   // MARK: - Simulate deviation (dev only)
 
+  // Walk the user off-route naturally instead of teleporting them.
+  // Picks randomly between two flavors:
+  //   • skip-turn: walk straight past the next maneuver (miss the turn)
+  //   • wrong-turn: at the next maneuver, turn the opposite way
+  // Either way the Google Nav SDK detects off-route within ~30m and
+  // fires navigatorDidChangeRoute, where we re-arm the simulator on
+  // the new route. Total walk distance is ~offsetMeters so the
+  // reroute fires mid-deviation and the user lands on the new path
+  // without a jarring snap.
   func simulateDeviation(offsetMeters: Double) {
-    guard let sim = mapView?.locationSimulator else { return }
-    sim.simulateLocation(at: CLLocationCoordinate2D(latitude: 0, longitude: offsetMeters / 111_320))
+    DispatchQueue.main.async { [weak self] in
+      guard let self = self,
+            let mapView = self.mapView,
+            let sim = mapView.locationSimulator,
+            let current = mapView.myLocation else {
+        print("[NavigationManager] simulateDeviation: no map / simulator / location")
+        return
+      }
+      let course = current.course >= 0 ? current.course : 0
+      let waypoints = self.buildDeviationPath(
+        from: current.coordinate,
+        currentBearingDeg: course,
+        totalMeters: offsetMeters
+      )
+      print("[NavigationManager] simulateDeviation: walking \(waypoints.count) waypoints from \(current.coordinate.latitude),\(current.coordinate.longitude)")
+      self.startDeviationWalk(sim: sim, waypoints: waypoints)
+    }
+  }
+
+  // Build a list of ~3-5m-spaced waypoints describing the wrong path.
+  // Coin-flips between "skip-turn" (continue straight) and "wrong-turn"
+  // (~45° off the current heading). We don't have the next pivot's
+  // exact location from the SDK on iOS, so we approximate by projecting
+  // along the current bearing — the Nav SDK will fire off-route
+  // regardless once we drift `offRouteThresholdMeters` from the polyline.
+  private func buildDeviationPath(
+    from origin: CLLocationCoordinate2D,
+    currentBearingDeg: Double,
+    totalMeters: Double
+  ) -> [CLLocationCoordinate2D] {
+    // Coin flip: 50% skip-turn (straight), 50% wrong-turn (angled).
+    let isWrongTurn = Bool.random()
+    // Wrong turn picks a side (left or right) and an angle that's a
+    // realistic-feeling road bend (45-90° off the current heading).
+    let turnSign: Double = Bool.random() ? 1 : -1
+    let turnAngle = Double.random(in: 45...90) * turnSign
+    let walkBearing = isWrongTurn
+      ? (currentBearingDeg + turnAngle).truncatingRemainder(dividingBy: 360)
+      : currentBearingDeg
+
+    // Step size: ~3m per waypoint. At the timer cadence below this
+    // matches a comfortable simulated walking pace.
+    let stepMeters: Double = 3
+    let stepCount = max(1, Int(ceil(totalMeters / stepMeters)))
+    var path: [CLLocationCoordinate2D] = []
+    path.reserveCapacity(stepCount)
+
+    // For wrong-turn we walk a few steps in the original direction
+    // first (so we visibly approach the "intersection") then bend.
+    let preTurnSteps = isWrongTurn ? min(4, stepCount / 3) : 0
+    var pivot = origin
+    for i in 0..<preTurnSteps {
+      pivot = projectCoordinate(from: pivot, distanceMeters: stepMeters, bearingDegrees: currentBearingDeg)
+      _ = i
+      path.append(pivot)
+    }
+    // Remaining steps go in the chosen walkBearing direction.
+    var cursor = pivot
+    for _ in preTurnSteps..<stepCount {
+      cursor = projectCoordinate(from: cursor, distanceMeters: stepMeters, bearingDegrees: walkBearing)
+      path.append(cursor)
+    }
+    return path
+  }
+
+  // Drive the simulator through the deviation waypoints one at a time.
+  // Cancels any prior deviation walk first. We don't pause the existing
+  // route simulator — once we call simulateLocation(at:) the Nav SDK
+  // treats our calls as the authoritative position. The
+  // navigatorDidChangeRoute handler re-arms simulateLocationsAlongExistingRoute()
+  // on the new route once the reroute fires.
+  private func startDeviationWalk(sim: GMSLocationSimulator, waypoints: [CLLocationCoordinate2D]) {
+    deviateTimer?.invalidate()
+    var idx = 0
+    let interval: TimeInterval = 0.4 // 2.5 Hz — smooth-looking walk
+    deviateTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] t in
+      guard let self = self, idx < waypoints.count else {
+        t.invalidate()
+        self?.deviateTimer = nil
+        return
+      }
+      sim.simulateLocation(at: waypoints[idx])
+      idx += 1
+    }
+  }
+
+  // Project `(lat, lng)` along `bearingDegrees` by `distanceMeters` on a
+  // spherical earth. Used by simulateDeviation to nudge perpendicular to
+  // the current heading.
+  private func projectCoordinate(
+    from origin: CLLocationCoordinate2D,
+    distanceMeters: Double,
+    bearingDegrees: Double
+  ) -> CLLocationCoordinate2D {
+    let earthRadius = 6_371_000.0
+    let angular = distanceMeters / earthRadius
+    let bearing = bearingDegrees * .pi / 180
+    let lat1 = origin.latitude * .pi / 180
+    let lng1 = origin.longitude * .pi / 180
+    let lat2 = asin(sin(lat1) * cos(angular) + cos(lat1) * sin(angular) * cos(bearing))
+    let lng2 = lng1 + atan2(
+      sin(bearing) * sin(angular) * cos(lat1),
+      cos(angular) - sin(lat1) * sin(lat2)
+    )
+    return CLLocationCoordinate2D(latitude: lat2 * 180 / .pi, longitude: lng2 * 180 / .pi)
   }
 
   // MARK: - Simulation polling
@@ -271,20 +419,24 @@ final class NavigationManager: NSObject {
     // start doesn't change which pivot a step is paired with.
     var orderedSteps: [(road: String?, maneuver: String, distance: Int)] = []
     if let current = navInfo.currentStep {
+      // simpleRoadName / fullRoadName are non-optional Strings on this
+      // SDK version, but Google leaves them empty for unnamed segments —
+      // normalize through `nonBlank` so the consumer sees nil rather
+      // than the empty string when no road name is available.
       orderedSteps.append((
-        road: current.simpleRoadName?.nonBlank ?? current.fullRoadName?.nonBlank,
+        road: current.simpleRoadName.nonBlank ?? current.fullRoadName.nonBlank,
         maneuver: maneuverString(current.maneuver),
         distance: Int(current.distanceFromPrevStepMeters),
       ))
     }
-    if let remaining = navInfo.remainingSteps {
-      for step in remaining {
-        orderedSteps.append((
-          road: step.simpleRoadName?.nonBlank ?? step.fullRoadName?.nonBlank,
-          maneuver: maneuverString(step.maneuver),
-          distance: Int(step.distanceFromPrevStepMeters),
-        ))
-      }
+    // remainingSteps is a non-optional [GMSNavigationStepInfo] in this
+    // SDK version — no `if let` unwrap needed.
+    for step in navInfo.remainingSteps {
+      orderedSteps.append((
+        road: step.simpleRoadName.nonBlank ?? step.fullRoadName.nonBlank,
+        maneuver: maneuverString(step.maneuver),
+        distance: Int(step.distanceFromPrevStepMeters),
+      ))
     }
     if orderedSteps.isEmpty {
       latestStepsPayload = nil
@@ -412,6 +564,17 @@ extension NavigationManager: GMSNavigatorListener {
     offRouteEmitted = false
     emitRoute()
     onEvent?(["kind": "rerouting"])
+    // Cancel any in-progress deviation walk — the SDK has accepted our
+    // new position and produced a fresh route, so further teleports
+    // would fight the resumed route simulator.
+    deviateTimer?.invalidate()
+    deviateTimer = nil
+    // If we were simulating before the reroute, the simulator is now
+    // paused/stopped at the deviated point. Re-arm it on the new route
+    // so the walk continues automatically (matches Android behavior).
+    if isSimulating, let sim = mapView?.locationSimulator {
+      sim.simulateLocationsAlongExistingRoute()
+    }
   }
 
   func navigator(_ navigator: GMSNavigator, didUpdate navInfo: GMSNavigationNavInfo) {
@@ -426,11 +589,13 @@ extension NavigationManager: GMSNavigatorListener {
     // upcoming maneuver — this is what the miniapp UI shows as the
     // "next street" headline. simpleRoadName falls back to
     // fullRoadName when Google leaves the simple variant blank.
-    let nextStep = navInfo.remainingSteps?.first
+    // remainingSteps is non-optional in this SDK version.
+    let nextStep = navInfo.remainingSteps.first
     let nextStepRoad: String? = {
-      let candidates: [String?] = [nextStep?.simpleRoadName, nextStep?.fullRoadName]
+      let candidates: [String] = [nextStep?.simpleRoadName, nextStep?.fullRoadName].compactMap {$0}
       for c in candidates {
-        if let s = c?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty {
+        let s = c.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !s.isEmpty {
           return s
         }
       }
