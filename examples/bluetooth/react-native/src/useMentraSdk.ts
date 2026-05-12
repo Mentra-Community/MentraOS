@@ -511,7 +511,7 @@ export function useMentraSdk(): MentraSdkModel {
       }
       const firstDevice = discoveredDevices[0];
       if (firstDevice) {
-        await BluetoothSdk.connectDiscoveredDevice(firstDevice);
+        await BluetoothSdk.connectDevice(firstDevice.deviceModel, firstDevice.deviceName);
         return;
       }
       if (defaultDevice || hasSavedConnectionTarget(bluetoothStatus)) {
@@ -527,7 +527,7 @@ export function useMentraSdk(): MentraSdkModel {
       if (!(await ensureAndroidPermissions('connect'))) {
         throw new Error('Bluetooth permissions are required to connect.');
       }
-      await BluetoothSdk.connectDiscoveredDevice(device);
+      await BluetoothSdk.connectDevice(device.deviceModel, device.deviceName);
     });
   }
 

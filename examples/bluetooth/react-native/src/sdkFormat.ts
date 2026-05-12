@@ -199,14 +199,21 @@ function statusString(status: Partial<GlassesStatus>, key: string) {
 }
 
 export function rssiLabel(status: Partial<GlassesStatus>) {
-  return typeof status.signalStrength === 'number' ? `${status.signalStrength} dBm` : 'Unknown';
+  const signal = statusNumber(status, 'signalStrength');
+  return typeof signal === 'number' && signal !== -1 ? `${signal} dBm` : 'Unknown';
 }
 
-export function rssiQuality(status: Partial<GlassesStatus>) {
-  if (typeof status.signalStrength !== 'number') {
-    return 'unknown';
+export function rssiUpdatedLabel(status: Partial<GlassesStatus>) {
+  const updatedAt = statusNumber(status, 'signalStrengthUpdatedAt');
+  if (typeof updatedAt !== 'number' || updatedAt <= 0) {
+    return 'signal';
   }
-  return status.signalStrength > -65 ? 'strong' : status.signalStrength > -80 ? 'fair' : 'weak';
+  return `updated ${eventTime.format(new Date(updatedAt))}`;
+}
+
+function statusNumber(status: Partial<GlassesStatus>, key: string) {
+  const value = (status as Record<string, unknown>)[key];
+  return typeof value === 'number' ? value : undefined;
 }
 
 export function bluetoothSearchLabel(status: Partial<CoreStatus>) {
@@ -225,6 +232,13 @@ export function latestEventLabel(events: {text: string; time: string; tag: strin
   const latest = events[0];
   return latest ? latest.text : 'No events yet';
 }
+
+const eventTime = new Intl.DateTimeFormat('en-US', {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+});
 
 export function streamUptime(startedAt: number | null) {
   if (!startedAt) {

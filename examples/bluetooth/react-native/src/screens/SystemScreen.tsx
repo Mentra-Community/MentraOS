@@ -71,19 +71,9 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
       {/* Wi-Fi card */}
       <LinearGradient colors={['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.55)']} style={styles.bigCard}>
         <View style={styles.wifiHeader}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <View style={styles.iconTile}>
-              <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={colors.greenInk} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                <Path d="M5 12.55a11 11 0 0 1 14.08 0" />
-                <Path d="M1.42 9a16 16 0 0 1 21.16 0" />
-                <Path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
-                <Line x1={12} y1={20} x2={12.01} y2={20} />
-              </Svg>
-            </View>
-            <View>
-              <Text style={styles.wifiTitle}>Wi-Fi</Text>
-              <Text style={styles.wifiSub}>{networks.length} networks nearby</Text>
-            </View>
+          <View>
+            <Text style={styles.wifiTitle}>Wi-Fi</Text>
+            <Text style={styles.wifiSub}>{networks.length} networks nearby</Text>
           </View>
           <Pressable
             disabled={!connected}
@@ -565,7 +555,6 @@ function capitalize(value: string) {
 const styles = StyleSheet.create({
   bigCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 28, paddingVertical: 18, paddingHorizontal: 18, borderWidth: 1, borderColor: colors.border, gap: 12 },
   wifiHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  iconTile: { width: 36, height: 36, borderRadius: 12, backgroundColor: 'rgba(125,216,158,0.18)', borderWidth: 1, borderColor: 'rgba(52,199,89,0.22)', alignItems: 'center', justifyContent: 'center' },
   iconTileSm: { width: 32, height: 32, borderRadius: 10, backgroundColor: 'rgba(125,216,158,0.18)', borderWidth: 1, borderColor: 'rgba(52,199,89,0.22)', alignItems: 'center', justifyContent: 'center' },
   wifiTitle: { color: colors.ink, fontSize: 17, fontWeight: '700', letterSpacing: -0.17 },
   wifiSub: { color: colors.muted, fontSize: 10, fontWeight: '500' },

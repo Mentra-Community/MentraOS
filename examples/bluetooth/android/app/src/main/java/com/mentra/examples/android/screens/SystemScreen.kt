@@ -98,12 +98,9 @@ fun SystemScreen(controller: MentraExampleController) {
             padding = PaddingValues(horizontal = 18.dp, vertical = 18.dp)
         ) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    IconTile(Icons.Outlined.Wifi, big = true)
-                    Column {
-                        Text("Wi-Fi", color = AppColor.ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                        Text("${networks.size} networks nearby", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
-                    }
+                Column {
+                    Text("Wi-Fi", color = AppColor.ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    Text("${networks.size} networks nearby", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
                 }
                 Row(
                     modifier = Modifier.clip(RoundedCornerShape(999.dp))

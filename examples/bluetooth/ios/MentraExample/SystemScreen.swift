@@ -110,12 +110,9 @@ struct SystemScreen: View {
     private var wifiCard: some View {
         GlassCard(padding: EdgeInsets(top: 18, leading: 18, bottom: 6, trailing: 18)) {
             HStack {
-                HStack(spacing: 10) {
-                    iconTile
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Wi-Fi").font(.system(size: 17, weight: .bold)).tracking(-0.17).foregroundColor(AppColor.ink)
-                        Text("\(visibleWifiScanResults.count) networks nearby").font(.system(size: 10, weight: .medium)).foregroundColor(AppColor.muted)
-                    }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Wi-Fi").font(.system(size: 17, weight: .bold)).tracking(-0.17).foregroundColor(AppColor.ink)
+                    Text("\(visibleWifiScanResults.count) networks nearby").font(.system(size: 10, weight: .medium)).foregroundColor(AppColor.muted)
                 }
                 Spacer()
                 Button {
@@ -240,15 +237,6 @@ struct SystemScreen: View {
             trailingColor: AppColor.red,
             action: isWifiConnected ? { model.forgetCurrentWifiNetwork() } : nil
         )
-    }
-
-    private var iconTile: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 12).fill(AppColor.greenSoft.opacity(0.18))
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(AppColor.greenAccent.opacity(0.22), lineWidth: 1))
-                .frame(width: 36, height: 36)
-            Image(systemName: "wifi").foregroundColor(AppColor.greenInk).font(.system(size: 16, weight: .semibold))
-        }
     }
 
     private var hotspotCard: some View {
