@@ -61,7 +61,7 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
         <View style={styles.previewWrap}>
           <LinearGradient colors={['#1F4A33', '#3A8A56', '#7DD89E', '#26B870', '#163A26']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.preview}>
             {sdk.photoPreviewUrl ? <Image source={{ uri: sdk.photoPreviewUrl }} style={styles.previewImage} resizeMode="cover" /> : null}
-            <View style={styles.previewGlow} />
+            {!sdk.photoPreviewUrl && <View style={styles.previewGlow} />}
             <View style={styles.previewBottomShade} />
             <View style={styles.previewBadge}>
               <View style={{ width: 5, height: 5, borderRadius: 999, backgroundColor: colors.greenSoft }} />
@@ -82,7 +82,7 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
                 ? 'Connect glasses first'
                 : sdk.activeAction === 'Capture & upload'
                   ? 'Capturing…'
-                  : 'Capture & upload'}
+                  : 'Capture photo'}
             </Text>
           </LinearGradient>
         </Pressable>
