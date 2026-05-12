@@ -26,12 +26,14 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.mentra.examples.android.MentraExampleController
+import com.mentra.examples.android.PhotoDestination
 import com.mentra.examples.android.cameraSdkCall
 import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.photoCompressionOptions
@@ -47,8 +49,9 @@ import com.mentra.examples.android.ui.scrollBottomPadding
 fun CameraScreen(controller: MentraExampleController) {
     val state = controller.state
     val connected = isGlassesConnected(state.glassesStatus)
+    val directPhone = state.photoDestination == PhotoDestination.THIS_PHONE
     val cameraStatusFailed = isCameraStatusFailure(state.cameraStatus)
-    val setupHint = localCameraSetupHint(state.webhookUrl, state.cameraStatus)
+    val setupHint = if (directPhone) null else localCameraSetupHint(state.webhookUrl, state.cameraStatus)
     val sdkCall = cameraSdkCall(state.photoSize, state.photoCompression, state.photoFlash)
     val clipboardManager = LocalClipboardManager.current
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
@@ -99,7 +102,20 @@ fun CameraScreen(controller: MentraExampleController) {
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Icon(Icons.Outlined.Camera, null, tint = Color.White, modifier = Modifier.size(16.dp))
-                    Text(if (!connected) "Connect glasses first" else if (state.activeAction == "Capture & upload") "Capturing…" else "Capture & upload", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (!connected) {
+                            "Connect glasses first"
+                        } else if (state.activeAction == "Capture & upload") {
+                            "Capturing..."
+                        } else if (directPhone) {
+                            "Capture to phone"
+                        } else {
+                            "Capture & upload"
+                        },
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
             }
         }
@@ -153,7 +169,18 @@ fun CameraScreen(controller: MentraExampleController) {
                 }
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                     Text(state.cameraStatus, color = AppColor.ink, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                    Text(if (state.photoPreviewUrl != null) "Preview loaded from local webhook" else "Waiting for capture", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                    Text(
+                        when {
+                            state.photoPreviewUrl != null && directPhone -> "Preview loaded from phone receiver"
+                            state.photoPreviewUrl != null -> "Preview loaded from local webhook"
+                            directPhone && state.phonePhotoServerRunning -> state.phonePhotoUploadUrl
+                            directPhone -> "Phone receiver starts on capture"
+                            else -> "Waiting for capture"
+                        },
+                        color = AppColor.muted,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium
+                    )
                 }
             }
         }
@@ -166,13 +193,24 @@ fun CameraScreen(controller: MentraExampleController) {
         ) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Eyebrow("UPLOAD TO")
-                Text(
-                    "test webhook ↗",
-                    color = AppColor.greenAccent,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.clickable { controller.testWebhook() }
-                )
+                if (!directPhone) {
+                    Text(
+                        "test webhook",
+                        color = AppColor.greenAccent,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.clickable { controller.testWebhook() }
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            CameraOptionGroup("send to") {
+                OptionChip("MacBook", state.photoDestination == PhotoDestination.MACBOOK_SERVER) {
+                    controller.setPhotoDestination(PhotoDestination.MACBOOK_SERVER)
+                }
+                OptionChip("This phone", directPhone) {
+                    controller.setPhotoDestination(PhotoDestination.THIS_PHONE)
+                }
             }
             Spacer(Modifier.height(12.dp))
             Row(
@@ -182,19 +220,32 @@ fun CameraScreen(controller: MentraExampleController) {
             ) {
                 Text("POST", color = AppColor.greenAccent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
                 Box(modifier = Modifier.size(width = 1.dp, height = 14.dp).background(AppColor.ink.copy(alpha = 0.12f)))
-                BasicTextField(
-                    value = state.webhookUrl,
-                    onValueChange = controller::setWebhookUrl,
-                    singleLine = true,
-                    textStyle = androidx.compose.ui.text.TextStyle(color = AppColor.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium),
-                    modifier = Modifier.weight(1f),
-                    decorationBox = { inner ->
-                        if (state.webhookUrl.isBlank()) {
-                            Text("Photo upload URL", color = AppColor.muted, fontSize = 13.sp)
+                if (directPhone) {
+                    Text(
+                        state.phonePhotoUploadUrl,
+                        color = AppColor.ink,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(if (state.phonePhotoServerRunning) AppColor.greenAccent else AppColor.muted))
+                } else {
+                    BasicTextField(
+                        value = state.webhookUrl,
+                        onValueChange = controller::setWebhookUrl,
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(color = AppColor.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium),
+                        modifier = Modifier.weight(1f),
+                        decorationBox = { inner ->
+                            if (state.webhookUrl.isBlank()) {
+                                Text("Photo upload URL", color = AppColor.muted, fontSize = 13.sp)
+                            }
+                            inner()
                         }
-                        inner()
-                    }
-                )
+                    )
+                }
             }
             Spacer(Modifier.height(12.dp))
             if (setupHint != null) {
@@ -244,7 +295,9 @@ private fun isCameraStatusFailure(status: String): Boolean {
         normalized.contains("invalid") ||
         normalized.contains("replace <computer-ip>") ||
         normalized.contains("valid http") ||
-        normalized.contains("enter a webhook url like")
+        normalized.contains("enter a webhook url like") ||
+        normalized.contains("no phone lan ip") ||
+        normalized.contains("phone receiver failed")
 }
 
 private fun localCameraSetupHint(webhookUrl: String, status: String): String? {

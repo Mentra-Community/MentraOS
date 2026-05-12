@@ -3,6 +3,7 @@ package com.mentra.examples.android.screens
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -33,17 +34,21 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mentra.examples.android.MentraExampleController
+import com.mentra.examples.android.WebRtcDestination
 import com.mentra.examples.android.elapsedText
 import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.rtmpHlsPreviewUrl
@@ -83,9 +88,15 @@ fun StreamScreen(controller: MentraExampleController) {
     val connected = isGlassesConnected(state.glassesStatus)
     val streamActive = state.streamRequested || state.streamStartedAt != null
     val previewReady = streamActive && state.streamPreviewReady
+    val directPhoneWebRtc = state.streamProtocol == "webrtc" && state.webRtcDestination == WebRtcDestination.THIS_PHONE
+    val streamIndicatorColor = when {
+        previewReady -> AppColor.greenAccent
+        streamActive || state.directStreamReceiverRunning -> AppColor.red
+        else -> AppColor.muted
+    }
     val uptime = elapsedText(state.streamStartedAt)
-    val setupHint = localStreamSetupHint(state.streamProtocol, state.streamUrl, state.streamStatus)
-    val previewTarget = if (previewReady) streamPreviewTarget(state.streamProtocol, state.streamUrl) else null
+    val setupHint = if (directPhoneWebRtc) null else localStreamSetupHint(state.streamProtocol, state.streamUrl, state.streamStatus)
+    val previewTarget = if (!directPhoneWebRtc && previewReady) streamPreviewTarget(state.streamProtocol, state.streamUrl) else null
     val clipboardManager = LocalClipboardManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val streamUrlFocusRequester = remember { FocusRequester() }
@@ -113,7 +124,13 @@ fun StreamScreen(controller: MentraExampleController) {
             padding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
         ) {
             Box(modifier = Modifier.fillMaxWidth().height(160.dp).clip(RoundedCornerShape(22.dp))) {
-                if (previewTarget != null) {
+                if (directPhoneWebRtc) {
+                    DirectPhoneStreamPreview(
+                        frame = state.directStreamFrame,
+                        message = if (streamActive) "Waiting for first frame" else null,
+                        modifier = Modifier.matchParentSize()
+                    )
+                } else if (previewTarget != null) {
                     LiveStreamPreview(previewTarget, modifier = Modifier.matchParentSize())
                 } else {
                     PlaceholderStreamPreview(
@@ -138,7 +155,19 @@ fun StreamScreen(controller: MentraExampleController) {
                 Text(uptime, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.align(Alignment.TopEnd).padding(14.dp))
 
                 Text(
-                    if (previewReady) "${state.streamProtocol.uppercase()} · keep-alive 15s" else if (streamActive) "Waiting for preview" else "Ready · enter stream URL",
+                    if (directPhoneWebRtc && previewReady) {
+                        "WebRTC · this phone · keep-alive 15s"
+                    } else if (directPhoneWebRtc && streamActive) {
+                        "Waiting for first frame"
+                    } else if (previewReady) {
+                        "${state.streamProtocol.uppercase()} · keep-alive 15s"
+                    } else if (streamActive) {
+                        "Waiting for preview"
+                    } else if (directPhoneWebRtc) {
+                        "Ready · phone receiver starts on stream"
+                    } else {
+                        "Ready · enter stream URL"
+                    },
                     color = Color.White.copy(alpha = 0.85f),
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
@@ -152,7 +181,7 @@ fun StreamScreen(controller: MentraExampleController) {
                     .clip(RoundedCornerShape(18.dp))
                     .background(Brush.verticalGradient(if (streamActive) listOf(Color(0xFFDE3A30), Color(0xFFC43B30)) else listOf(Color(0xFF26473A), Color(0xFF1F3A2A))))
                     .clickable(enabled = connected || streamActive) {
-                        if (shouldFocusStreamUrlTemplate(state.streamUrl, streamActive)) {
+                        if (!directPhoneWebRtc && shouldFocusStreamUrlTemplate(state.streamUrl, streamActive)) {
                             streamUrlFocusRequester.requestFocus()
                             keyboardController?.show()
                         }
@@ -201,8 +230,8 @@ fun StreamScreen(controller: MentraExampleController) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Box(modifier = Modifier.size(22.dp).clip(CircleShape).background(AppColor.red.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
-                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(AppColor.red))
+                Box(modifier = Modifier.size(22.dp).clip(CircleShape).background(streamIndicatorColor.copy(alpha = 0.16f)), contentAlignment = Alignment.Center) {
+                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(streamIndicatorColor))
                 }
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                     Text(state.streamStatus, color = AppColor.ink, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
@@ -225,6 +254,24 @@ fun StreamScreen(controller: MentraExampleController) {
                 ProtocolTab("SRT", state.streamProtocol == "srt", Modifier.weight(1f)) { controller.selectProtocol("srt") }
                 ProtocolTab("WebRTC", state.streamProtocol == "webrtc", Modifier.weight(1f)) { controller.selectProtocol("webrtc") }
             }
+            if (state.streamProtocol == "webrtc") {
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(AppColor.ink.copy(alpha = 0.05f)).padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    ProtocolTab(
+                        "MacBook",
+                        state.webRtcDestination == WebRtcDestination.MACBOOK_DOCKER,
+                        Modifier.weight(1f)
+                    ) { controller.setWebRtcDestination(WebRtcDestination.MACBOOK_DOCKER) }
+                    ProtocolTab(
+                        "This phone",
+                        state.webRtcDestination == WebRtcDestination.THIS_PHONE,
+                        Modifier.weight(1f)
+                    ) { controller.setWebRtcDestination(WebRtcDestination.THIS_PHONE) }
+                }
+            }
             Spacer(Modifier.height(12.dp))
             Row(
                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(AppColor.ink.copy(alpha = 0.04f)).padding(horizontal = 14.dp, vertical = 12.dp),
@@ -233,19 +280,32 @@ fun StreamScreen(controller: MentraExampleController) {
             ) {
                 Text(streamProtocolLabel(state.streamProtocol), color = AppColor.greenAccent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
                 Box(modifier = Modifier.size(width = 1.dp, height = 14.dp).background(AppColor.ink.copy(alpha = 0.12f)))
-                BasicTextField(
-                    value = state.streamUrl,
-                    onValueChange = controller::setStreamUrl,
-                    singleLine = true,
-                    textStyle = androidx.compose.ui.text.TextStyle(color = AppColor.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium),
-                    modifier = Modifier
-                        .weight(1f)
-                        .focusRequester(streamUrlFocusRequester)
-                        .onFocusChanged { focusState ->
-                            streamUrlFocused = focusState.isFocused
-                        },
-                )
-                Icon(Icons.Outlined.Edit, null, tint = AppColor.muted, modifier = Modifier.size(14.dp))
+                if (directPhoneWebRtc) {
+                    Text(
+                        state.directStreamWhipUrl,
+                        color = AppColor.ink,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(if (state.directStreamReceiverRunning) AppColor.greenAccent else AppColor.muted))
+                } else {
+                    BasicTextField(
+                        value = state.streamUrl,
+                        onValueChange = controller::setStreamUrl,
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(color = AppColor.ink, fontSize = 13.sp, fontWeight = FontWeight.Medium),
+                        modifier = Modifier
+                            .weight(1f)
+                            .focusRequester(streamUrlFocusRequester)
+                            .onFocusChanged { focusState ->
+                                streamUrlFocused = focusState.isFocused
+                            },
+                    )
+                    Icon(Icons.Outlined.Edit, null, tint = AppColor.muted, modifier = Modifier.size(14.dp))
+                }
             }
             if (setupHint != null) {
                 Spacer(Modifier.height(12.dp))
@@ -324,6 +384,30 @@ private fun PlaceholderStreamPreview(message: String? = null, modifier: Modifier
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun DirectPhoneStreamPreview(frame: android.graphics.Bitmap?, message: String? = null, modifier: Modifier = Modifier) {
+    Box(modifier = modifier.background(Color.Black)) {
+        if (frame != null) {
+            Image(
+                bitmap = frame.asImageBitmap(),
+                contentDescription = "Direct phone WebRTC preview",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit
+            )
+        } else if (message != null) {
+            Text(
+                message,
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                lineHeight = 21.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.align(Alignment.Center)
+            )
         }
     }
 }

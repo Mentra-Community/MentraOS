@@ -21,6 +21,8 @@ examples/android/.idea/
 examples/android/**/build/
 examples/android/**/*.iml
 examples/android/local.properties
+examples/android/.gstreamer/
+examples/android/app/gst-android-build/
 
 # Local webhook demo uploads.
 examples/photo-webhook-server/uploads/

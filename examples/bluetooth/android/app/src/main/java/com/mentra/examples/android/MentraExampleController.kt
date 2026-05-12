@@ -10,6 +10,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Bitmap
 import android.media.AudioAttributes
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
@@ -48,6 +49,10 @@ import com.mentra.core.MentraStreamRequest
 import com.mentra.core.MentraTouchEvent
 import com.mentra.core.MentraWifiScanResult
 import com.mentra.core.MentraWifiStatusEvent
+import com.mentra.examples.android.media.GStreamerWhipReceiver
+import com.mentra.examples.android.media.LocalPhotoUploadServer
+import com.mentra.examples.android.media.PhotoUpload
+import com.mentra.examples.android.media.WhipHeaderProxy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -58,6 +63,8 @@ import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.HttpURLConnection
+import java.net.Inet4Address
+import java.net.NetworkInterface
 import java.net.URI
 import java.net.URL
 import java.net.URLDecoder
@@ -77,6 +84,16 @@ const val photoUploadDefaultUrl = "http://<computer-ip>:8787/upload"
 fun defaultStreamUrl(protocol: String): String = streamDefaultUrls[protocol] ?: streamDefaultUrls.getValue("rtmp")
 
 fun streamProtocolLabel(protocol: String): String = if (protocol == "webrtc") "WHIP" else protocol.uppercase()
+
+enum class PhotoDestination {
+    MACBOOK_SERVER,
+    THIS_PHONE,
+}
+
+enum class WebRtcDestination {
+    MACBOOK_DOCKER,
+    THIS_PHONE,
+}
 
 data class ExampleEvent(
     val time: String,
@@ -132,10 +149,13 @@ data class MentraExampleState(
     val micRecording: Boolean = false,
     val pcmBytes: Int = 0,
     val pcmFrames: Int = 0,
+    val photoDestination: PhotoDestination = PhotoDestination.MACBOOK_SERVER,
     val photoPreviewUrl: String? = null,
     val photoCompression: String = "medium",
     val photoFlash: Boolean = false,
     val photoSize: String = "medium",
+    val phonePhotoServerRunning: Boolean = false,
+    val phonePhotoUploadUrl: String = "Phone receiver not started",
     val audioBondStatus: String = "Bond: checking",
     val audioMediaStatus: String = "Media: checking A2DP",
     val audioMediaConnected: Boolean = false,
@@ -143,12 +163,16 @@ data class MentraExampleState(
     val phoneMediaVolume: Int? = null,
     val phoneMediaVolumeMax: Int? = null,
     val rawJsonExpanded: Boolean = false,
+    val directStreamFrame: Bitmap? = null,
+    val directStreamReceiverRunning: Boolean = false,
+    val directStreamWhipUrl: String = "Phone receiver not started",
     val streamProtocol: String = "rtmp",
     val streamRequested: Boolean = false,
     val streamPreviewReady: Boolean = false,
     val streamStartedAt: Long? = null,
     val streamStatus: String = "Ready to start stream",
     val streamUrl: String = defaultStreamUrl("rtmp"),
+    val webRtcDestination: WebRtcDestination = WebRtcDestination.MACBOOK_DOCKER,
     val webhookUrl: String = photoUploadDefaultUrl,
     val wifiPendingSsid: String? = null,
 )
@@ -165,11 +189,22 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private val mentraBluetoothSdk = MentraBluetoothSdk.create(appContext, this)
     private val controllerJob = Job()
     private val scope = CoroutineScope(Dispatchers.Main + controllerJob)
+    private val photoUploadServer = LocalPhotoUploadServer(
+        appContext,
+        onLog = { message -> scope.launch { addEvent("HTTP", message) } },
+        onUpload = ::handleDirectPhotoUpload,
+    )
     private var activePhotoRequestId: String? = null
     private var activeStreamId: String? = null
     private var pollGeneration = 0
+    private var directPhotoTimeoutJob: Job? = null
+    private var gStreamerWhipReceiver: GStreamerWhipReceiver? = null
+    private var whipHeaderProxy: WhipHeaderProxy? = null
     private var keepAliveJob: Job? = null
     private var previewHealthJob: Job? = null
+    private var directStreamStartJob: Job? = null
+    private var directStreamStopJob: Job? = null
+    private var directStreamFirstFrameSeen = false
     private var lastMicFile: File? = null
     private var micElapsedJob: Job? = null
     private var micPlayer: MediaPlayer? = null
@@ -284,6 +319,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     fun disconnect() = runAction("Disconnect") {
         stopKeepAlive()
         stopPreviewHealthPoll()
+        stopDirectPhoneStreamReceiver("Disconnected")
         mentraBluetoothSdk.disconnect()
         applyDisconnectedState("Disconnected")
     }
@@ -316,6 +352,19 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         state = state.copy(webhookUrl = url)
     }
 
+    fun setPhotoDestination(destination: PhotoDestination) {
+        if (state.photoDestination == destination) {
+            return
+        }
+        if (destination == PhotoDestination.MACBOOK_SERVER) {
+            stopPhonePhotoServer()
+            state = state.copy(cameraStatus = "Camera: replace <computer-ip> in the Photo upload URL")
+        } else {
+            state = state.copy(cameraStatus = "Camera: phone receiver will start before capture")
+        }
+        state = state.copy(photoDestination = destination)
+    }
+
     fun setPhotoSize(size: String) {
         state = state.copy(photoSize = size)
     }
@@ -330,6 +379,10 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     fun captureAndUpload() = runAction("Capture & upload") {
         requireConnected("capture photos")
+        if (state.photoDestination == PhotoDestination.THIS_PHONE) {
+            captureAndUploadToPhone()
+            return@runAction
+        }
         val uploadUrl = state.webhookUrl.trim()
         photoUploadValidationMessage(uploadUrl)?.let { message ->
             state = state.copy(cameraStatus = "Camera: $message")
@@ -363,7 +416,98 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         pollPhotoPreview(requestId, statusUrl, generation)
     }
 
+    private fun captureAndUploadToPhone() {
+        val uploadUrl = startPhonePhotoServer()
+        val requestId = "photo-${System.currentTimeMillis()}"
+        activePhotoRequestId = requestId
+        pollGeneration += 1
+        directPhotoTimeoutJob?.cancel()
+        directPhotoTimeoutJob = scope.launch {
+            delay(75_000)
+            if (activePhotoRequestId == requestId) {
+                activePhotoRequestId = null
+                state = state.copy(cameraStatus = "Camera: timed out waiting for phone upload")
+                addEvent("TX", "phone photo upload timed out $requestId")
+            }
+        }
+        state = state.copy(
+            cameraStatus = "Camera: requested phone upload ($requestId)",
+            photoPreviewUrl = null,
+        )
+        mentraBluetoothSdk.requestPhoto(
+            MentraPhotoRequest(
+                requestId = requestId,
+                appId = "com.mentra.examples.android",
+                size = MentraPhotoSize.fromValue(state.photoSize),
+                webhookUrl = uploadUrl,
+                compress = MentraPhotoCompression.fromValue(state.photoCompression),
+                flash = state.photoFlash,
+                sound = true,
+            )
+        )
+        addEvent("TX", "requestPhoto requestId=$requestId webhookUrl=$uploadUrl")
+    }
+
+    private fun startPhonePhotoServer(): String {
+        val host = bestLocalIpv4Address()
+        if (host == null) {
+            val message = "No phone LAN IP found. Connect this phone to Wi-Fi or a network reachable by the glasses."
+            state = state.copy(cameraStatus = "Camera: $message")
+            throw IllegalStateException(message)
+        }
+        val existingUrl = state.phonePhotoUploadUrl
+        if (photoUploadServer.running && existingUrl.startsWith("http://$host:")) {
+            return existingUrl
+        }
+
+        state = state.copy(
+            cameraStatus = "Camera: starting phone upload receiver",
+            phonePhotoServerRunning = false,
+            phonePhotoUploadUrl = "Starting phone receiver",
+        )
+        val ports = listOf(8787, 8788, 8789, 8790)
+        var lastError: Throwable? = null
+        for (port in ports) {
+            try {
+                val actualPort = photoUploadServer.start(port)
+                val url = "http://$host:$actualPort/upload"
+                state = state.copy(
+                    phonePhotoServerRunning = true,
+                    phonePhotoUploadUrl = url,
+                    cameraStatus = "Camera: phone receiver ready",
+                )
+                addEvent("HTTP", "phone photo receiver $url")
+                return url
+            } catch (error: Throwable) {
+                lastError = error
+                addEvent("HTTP", "photo receiver port $port unavailable: ${error.message ?: error::class.java.simpleName}")
+            }
+        }
+        val message = lastError?.message ?: "No local photo receiver port was available."
+        state = state.copy(
+            phonePhotoServerRunning = false,
+            phonePhotoUploadUrl = "Phone receiver failed",
+            cameraStatus = "Camera: phone receiver failed: $message",
+        )
+        throw IllegalStateException("Phone photo receiver failed: $message")
+    }
+
+    private fun stopPhonePhotoServer() {
+        directPhotoTimeoutJob?.cancel()
+        directPhotoTimeoutJob = null
+        photoUploadServer.stop()
+        state = state.copy(
+            phonePhotoServerRunning = false,
+            phonePhotoUploadUrl = "Phone receiver not started",
+        )
+    }
+
     fun testWebhook() = runAction("Test webhook") {
+        if (state.photoDestination == PhotoDestination.THIS_PHONE) {
+            startPhonePhotoServer()
+            state = state.copy(cameraStatus = "Camera: phone receiver ready at ${state.phonePhotoUploadUrl}")
+            return@runAction
+        }
         val uploadUrl = state.webhookUrl.trim()
         photoUploadValidationMessage(uploadUrl)?.let { message ->
             state = state.copy(cameraStatus = "Camera: $message")
@@ -415,6 +559,22 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         )
     }
 
+    fun setWebRtcDestination(destination: WebRtcDestination) {
+        if (state.webRtcDestination == destination) {
+            return
+        }
+        state = state.copy(
+            webRtcDestination = destination,
+            streamStatus = if (destination == WebRtcDestination.THIS_PHONE) {
+                "Ready to stream WebRTC to this phone"
+            } else {
+                "Ready to start stream"
+            },
+            streamPreviewReady = false,
+            directStreamFrame = null,
+        )
+    }
+
     fun setStreamUrl(url: String) {
         state = state.copy(streamUrl = url)
     }
@@ -423,6 +583,28 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (state.streamRequested || state.streamStartedAt != null) {
             stopKeepAlive()
             stopPreviewHealthPoll()
+            if (isDirectPhoneWebRtcSelected()) {
+                directStreamStartJob?.cancel()
+                directStreamStartJob = null
+                if (isGlassesConnected()) {
+                    mentraBluetoothSdk.stopStream()
+                    state = state.copy(streamStatus = "Stopping WebRTC direct phone stream")
+                    directStreamStopJob?.cancel()
+                    directStreamStopJob = scope.launch {
+                        delay(5_000)
+                        if (isDirectPhoneWebRtcSelected() && state.directStreamReceiverRunning) {
+                            activeStreamId = null
+                            stopDirectPhoneStreamReceiver("WebRTC direct phone stopped")
+                            state = state.copy(streamRequested = false, streamStartedAt = null)
+                        }
+                    }
+                    return@runAction
+                }
+                stopDirectPhoneStreamReceiver("Stopped")
+                activeStreamId = null
+                state = state.copy(streamRequested = false, streamPreviewReady = false, streamStartedAt = null, streamStatus = "Stopped")
+                return@runAction
+            }
             if (isGlassesConnected()) {
                 mentraBluetoothSdk.stopStream()
             }
@@ -430,6 +612,10 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             return@runAction
         }
         requireConnected("start streaming")
+        if (isDirectPhoneWebRtcSelected()) {
+            startDirectPhoneWebRtcStream()
+            return@runAction
+        }
         val streamUrl = state.streamUrl.trim()
         streamUrlValidationMessage(streamUrl)?.let { message ->
             state = state.copy(streamStatus = message)
@@ -476,6 +662,142 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         )
         startPreviewReadinessPoll(streamUrl, protocol, streamId)
     }
+
+    private fun startDirectPhoneWebRtcStream() {
+        stopPreviewHealthPoll()
+        directStreamStopJob?.cancel()
+        directStreamStopJob = null
+        stopDirectPhoneStreamReceiver("Starting phone receiver")
+        val host = bestLocalIpv4Address()
+        if (host == null) {
+            val message = "No phone LAN IP found. Connect this phone to Wi-Fi or a network reachable by the glasses."
+            state = state.copy(streamStatus = message)
+            throw IllegalStateException(message)
+        }
+        val receiver = directWhipReceiver()
+        val proxy = directWhipProxy()
+        val ports = listOf(8190 to 8191, 8192 to 8193, 8194 to 8195)
+        var lastError: Throwable? = null
+        for ((publicPort, backendPort) in ports) {
+            try {
+                val url = receiver.start(host, publicPort, backendPort)
+                proxy.start(publicPort, backendPort)
+                val streamId = "android-gst-${System.currentTimeMillis()}"
+                activeStreamId = streamId
+                directStreamFirstFrameSeen = false
+                state = state.copy(
+                    directStreamFrame = null,
+                    directStreamReceiverRunning = true,
+                    directStreamWhipUrl = url,
+                    streamPreviewReady = false,
+                    streamRequested = true,
+                    streamStartedAt = null,
+                    streamStatus = "WebRTC phone receiver ready; starting stream",
+                )
+                addEvent("STREAM", "phone WHIP receiver $url -> GStreamer $backendPort")
+                directStreamStartJob?.cancel()
+                directStreamStartJob = scope.launch {
+                    delay(1_000)
+                    if (activeStreamId == streamId && state.directStreamReceiverRunning && state.streamRequested) {
+                        sendDirectPhoneStartStream(url, streamId)
+                    }
+                }
+                return
+            } catch (error: Throwable) {
+                lastError = error
+                proxy.stop()
+                receiver.stop()
+                addEvent("GST", "port pair $publicPort->$backendPort unavailable: ${error.message ?: error::class.java.simpleName}")
+            }
+        }
+
+        val message = lastError?.message ?: "No local WHIP port pair was available."
+        state = state.copy(
+            directStreamReceiverRunning = false,
+            directStreamWhipUrl = "Phone receiver failed",
+            streamPreviewReady = false,
+            streamRequested = false,
+            streamStatus = "WebRTC phone receiver failed: $message",
+        )
+        throw IllegalStateException("WebRTC phone receiver failed: $message")
+    }
+
+    private fun sendDirectPhoneStartStream(streamUrl: String, streamId: String) {
+        mentraBluetoothSdk.startStream(
+            MentraStreamRequest(
+                streamUrl = streamUrl,
+                streamId = streamId,
+                keepAlive = true,
+                keepAliveIntervalSeconds = 15,
+            )
+        )
+        startKeepAlive(streamId)
+        state = state.copy(
+            streamRequested = true,
+            streamStartedAt = state.streamStartedAt ?: System.currentTimeMillis(),
+            streamStatus = "WebRTC stream requested; waiting for first frame",
+        )
+        addEvent("TX", "startStream direct phone $streamUrl")
+    }
+
+    private fun stopDirectPhoneStreamReceiver(status: String) {
+        directStreamStartJob?.cancel()
+        directStreamStartJob = null
+        directStreamStopJob?.cancel()
+        directStreamStopJob = null
+        directStreamFirstFrameSeen = false
+        whipHeaderProxy?.stop()
+        gStreamerWhipReceiver?.stop()
+        state = state.copy(
+            directStreamFrame = null,
+            directStreamReceiverRunning = false,
+            directStreamWhipUrl = "Phone receiver not started",
+            streamPreviewReady = false,
+            streamStatus = status,
+        )
+    }
+
+    private fun directWhipReceiver(): GStreamerWhipReceiver {
+        gStreamerWhipReceiver?.let { return it }
+        return GStreamerWhipReceiver(
+            appContext,
+            onStatus = { message ->
+                scope.launch {
+                    addEvent("GST", message)
+                    if (isDirectPhoneWebRtcSelected() && state.directStreamReceiverRunning && !state.streamPreviewReady) {
+                        state = state.copy(streamStatus = "WebRTC phone receiver: $message")
+                    }
+                }
+            },
+            onFrame = ::handleDirectStreamFrame,
+        ).also { gStreamerWhipReceiver = it }
+    }
+
+    private fun directWhipProxy(): WhipHeaderProxy {
+        whipHeaderProxy?.let { return it }
+        return WhipHeaderProxy { message -> scope.launch { addEvent("WHIP", message) } }
+            .also { whipHeaderProxy = it }
+    }
+
+    private fun handleDirectStreamFrame(bitmap: Bitmap) {
+        if (!isDirectPhoneWebRtcSelected() || !state.directStreamReceiverRunning) {
+            return
+        }
+        val firstFrame = !directStreamFirstFrameSeen
+        directStreamFirstFrameSeen = true
+        state = state.copy(
+            directStreamFrame = bitmap,
+            streamPreviewReady = true,
+            streamStartedAt = state.streamStartedAt ?: System.currentTimeMillis(),
+            streamStatus = "WebRTC direct phone live",
+        )
+        if (firstFrame) {
+            addEvent("LIVE", "first WebRTC frame received on phone")
+        }
+    }
+
+    private fun isDirectPhoneWebRtcSelected(): Boolean =
+        state.streamProtocol == "webrtc" && state.webRtcDestination == WebRtcDestination.THIS_PHONE
 
     private fun startPreviewReadinessPoll(streamUrl: String, protocol: String, streamId: String) {
         scope.launch(Dispatchers.IO) {
@@ -668,6 +990,24 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         state = state.copy(rawJsonExpanded = !state.rawJsonExpanded)
     }
 
+    private fun handleDirectPhotoUpload(upload: PhotoUpload) {
+        scope.launch {
+            val requestId = upload.requestId
+            if (activePhotoRequestId != null && requestId != null && requestId != activePhotoRequestId) {
+                addEvent("HTTP", "ignoring stale phone upload $requestId")
+                return@launch
+            }
+            activePhotoRequestId = null
+            directPhotoTimeoutJob?.cancel()
+            directPhotoTimeoutJob = null
+            state = state.copy(
+                cameraStatus = "Camera: received phone upload ${requestId ?: ""}".trim(),
+                photoPreviewUrl = Uri.fromFile(upload.photoFile).toString(),
+            )
+            addEvent("LIVE", "phone photo ready ${upload.byteCount} bytes requestId=${requestId ?: ""}")
+        }
+    }
+
     override fun onGlassesStatusChanged(status: MentraGlassesStatusUpdate) {
         val wasConnected = isGlassesConnected()
         val nextStatus = state.glassesStatus?.applyUpdate(status) ?: mentraBluetoothSdk.getGlassesStatus()
@@ -775,11 +1115,12 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             return
         }
         val success = event.values["success"] as? Boolean
+        val uploadTarget = if (state.photoDestination == PhotoDestination.THIS_PHONE) "phone upload" else "local upload"
         state = state.copy(
             cameraStatus = if (success == false) {
-                "Camera: glasses reported ${event.values["errorCode"] ?: "error"}; waiting for upload"
+                "Camera: glasses reported ${event.values["errorCode"] ?: "error"}; waiting for $uploadTarget"
             } else {
-                "Camera: photo acknowledged; waiting for local upload"
+                "Camera: photo acknowledged; waiting for $uploadTarget"
             }
         )
         addEvent("LIVE", "photo response ${requestId ?: ""}")
@@ -787,7 +1128,20 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     override fun onStreamStatus(event: com.mentra.core.MentraStreamStatusEvent) {
         applyStreamStatus(event.values)
-        state = state.copy(streamStatus = summarize(event.values))
+        val summary = summarize(event.values)
+        val status = event.values["status"] as? String
+        if (isDirectPhoneWebRtcSelected()) {
+            state = state.copy(
+                streamStatus = when {
+                    status in setOf("stopped", "stopping") -> "WebRTC direct phone stopped"
+                    status?.startsWith("error", ignoreCase = true) == true -> "WebRTC direct phone error: $summary"
+                    state.streamPreviewReady -> "WebRTC direct phone live"
+                    else -> "WebRTC stream requested; waiting for first frame"
+                }
+            )
+        } else {
+            state = state.copy(streamStatus = summary)
+        }
         addEvent("LIVE", "stream ${summarize(event.values)}")
     }
 
@@ -904,6 +1258,11 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     override fun close() {
         stopKeepAlive()
         stopPreviewHealthPoll()
+        directPhotoTimeoutJob?.cancel()
+        directStreamStartJob?.cancel()
+        photoUploadServer.close()
+        whipHeaderProxy?.close()
+        gStreamerWhipReceiver?.close()
         stopMicElapsedTimer()
         stopMicPlayback()
         unregisterAudioStateObservers()
@@ -1101,9 +1460,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private fun applyDisconnectedState(status: String) {
         stopKeepAlive()
         stopPreviewHealthPoll()
+        stopDirectPhoneStreamReceiver(status)
         activeStreamId = null
         val hadPhotoRequest = activePhotoRequestId != null
         activePhotoRequestId = null
+        directPhotoTimeoutJob?.cancel()
+        directPhotoTimeoutJob = null
+        photoUploadServer.stop()
         if (hadPhotoRequest) {
             pollGeneration += 1
         }
@@ -1120,6 +1483,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             hotspotEnabled = false,
             micRecording = false,
             phoneAudioRoute = currentAudioOutputRouteLabel(),
+            phonePhotoServerRunning = false,
+            phonePhotoUploadUrl = "Phone receiver not started",
             cameraStatus = if (hadPhotoRequest) "Disconnected before photo upload completed" else state.cameraStatus,
             wifiPendingSsid = null,
         )
@@ -1144,6 +1509,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 stopPreviewHealthPoll()
                 activeStreamId = null
                 state = state.copy(streamRequested = false, streamPreviewReady = false, streamStartedAt = null)
+                if (state.directStreamReceiverRunning) {
+                    stopDirectPhoneStreamReceiver("WebRTC direct phone stopped")
+                }
             }
         }
     }
@@ -1572,6 +1940,21 @@ fun photoUploadValidationMessage(uploadUrlText: String): String? {
         return "Replace <computer-ip> with the IP printed by local demo cloud."
     }
     return null
+}
+
+fun bestLocalIpv4Address(): String? {
+    val interfaces = NetworkInterface.getNetworkInterfaces().toList()
+    var fallback: String? = null
+    interfaces.forEach { networkInterface ->
+        if (!networkInterface.isUp || networkInterface.isLoopback) return@forEach
+        networkInterface.inetAddresses.toList().forEach { address ->
+            if (address is Inet4Address && !address.isLoopbackAddress) {
+                if (networkInterface.name == "wlan0") return address.hostAddress
+                fallback = fallback ?: address.hostAddress
+            }
+        }
+    }
+    return fallback
 }
 
 fun localRtmpReachabilityMessage(rtmpUrlText: String): String? {
