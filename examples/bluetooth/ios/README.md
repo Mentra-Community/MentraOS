@@ -22,6 +22,11 @@ The example installs `MentraBluetoothSDK` from CocoaPods. By default it uses SDK
 version `0.1.0`; set `MENTRA_BLUETOOTH_SDK_VERSION` if your release notes
 specify a different version.
 
+The first build downloads the official GStreamer iOS SDK if it is not already
+present under `~/Library/Developer/GStreamer/iPhone.sdk`. The SDK package is
+verified with the upstream `.sha256sum` and is not committed. To use an
+existing install, set `GSTREAMER_ROOT_IOS=/path/to/iPhone.sdk` before building.
+
 For local SDK development before a release is published, point CocoaPods at a
 local SDK checkout:
 
@@ -36,7 +41,9 @@ pod install
 - Displaying connection, battery, firmware, Wi-Fi, RSSI, discovered-device, and event status.
 - Sending display text and clearing the display when the connected glasses support a display.
 - Requesting photo capture plus webhook upload with size, compression, and flash controls, then polling the local webhook server for preview.
+- Requesting photo capture directly to the iPhone with the app-hosted upload receiver.
 - Starting and stopping RTMP/SRT/WebRTC stream requests with 15-second keep-alive calls and embedded previews.
+- Receiving WebRTC directly on the iPhone with the app-hosted GStreamer WHIP receiver.
 - Requesting Wi-Fi scans, opening a password sheet for secured networks, connecting to open networks directly, forgetting the current network, and toggling hotspot state.
 - Enabling microphone PCM delivery and showing received frame and byte counts.
 - Sending RGB LED color and pattern requests.
@@ -57,16 +64,41 @@ is not installed or not running, the command
 still starts the photo webhook and skips streaming with a
 warning.
 
+The Camera screen can also send photos to **This phone**. In that mode the app
+detects the iPhone LAN IP, starts a local HTTP upload receiver, sends the
+generated `http://<phone-ip>:8787/upload` URL to the glasses, and previews the
+received JPEG from app cache.
+
 The Stream screen embeds the derived RTMP/SRT HLS playlist preview and WebRTC
-preview while the stream is live. You can also open the printed HLS or WebRTC
-browser preview URL on your computer.
+preview while the stream is live. For WebRTC, choose **MacBook** to keep using
+the local demo cloud/MediaMTX flow, or **This phone** to start the app-hosted
+GStreamer WHIP receiver. The phone mode generates a
+`http://<phone-ip>:8190/whip/endpoint` URL and renders decoded frames in the app.
+You can also open the printed HLS or WebRTC browser preview URL on your
+computer when using MacBook mode.
 See [`examples/local-demo-cloud`](../local-demo-cloud/README.md) for details.
+
+## Direct Phone Hardware Requirements
+
+Direct phone photo and WebRTC require real hardware:
+
+- Use a physical iPhone. Simulators are useful only for UI and compile checks.
+- Connect Mentra Live through the Bluetooth SDK before capture or streaming.
+- Keep the glasses Wi-Fi active.
+- Keep the iPhone and glasses on a reachable local network. The app binds its
+  receivers to `0.0.0.0`, but sends the detected iPhone LAN IP to the glasses.
+- If the app cannot find an iPhone LAN IP, connect the phone to Wi-Fi or another
+  network that the glasses can reach.
+- Direct phone streaming only covers WebRTC. RTMP and SRT still use the MacBook
+  local demo cloud flow.
 
 ## Files
 
 - `MentraExample/BluetoothViewModel.swift` — SDK integration and screen state.
 - `MentraExample/RootView.swift` — tab container.
 - `MentraExample/DeviceScreen.swift`, `CameraScreen.swift`, `StreamScreen.swift`, `SystemScreen.swift`, `ConsoleScreen.swift` — one SwiftUI screen per tab.
+- `MentraExample/LocalPhotoUploadServer.swift` — direct phone HTTP photo upload receiver.
+- `MentraExample/GStreamerWhipReceiver.*`, `WhipHeaderProxy.swift`, `gst_ios_init.*` — direct phone WebRTC receiver.
 - `MentraExample/Theme.swift` — shared colors, glass cards, status/header pieces.
 - `Podfile` — CocoaPods SDK integration.
 - `project.yml` — optional XcodeGen spec for regenerating the project.

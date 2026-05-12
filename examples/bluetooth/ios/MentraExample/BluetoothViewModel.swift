@@ -26,6 +26,16 @@ private struct GalleryServerCheck {
 
 private let defaultPhotoUploadUrl = "http://<computer-ip>:8787/upload"
 
+enum PhotoDestination {
+    case macBookServer
+    case thisPhone
+}
+
+enum WebRtcDestination {
+    case macBookDocker
+    case thisPhone
+}
+
 enum ExampleStreamProtocol: String, CaseIterable {
     case rtmp
     case srt
@@ -61,11 +71,18 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var cameraStatus = "Camera: replace <computer-ip> in the Photo upload URL"
     @Published var webhookUrl = defaultPhotoUploadUrl
     @Published private(set) var photoPreviewUrl: URL?
+    @Published private(set) var photoPreviewImage: UIImage?
+    @Published private(set) var photoDestination: PhotoDestination = .macBookServer
     @Published private(set) var photoSize: MentraPhotoSize = .medium
     @Published private(set) var photoCompression: MentraPhotoCompression = .medium
     @Published private(set) var photoFlash = false
+    @Published private(set) var phonePhotoServerRunning = false
+    @Published private(set) var phonePhotoUploadUrl = "Phone receiver not started"
     @Published var streamProtocol: ExampleStreamProtocol = .rtmp
     @Published var streamUrl = ExampleStreamProtocol.rtmp.defaultUrl
+    @Published private(set) var webRtcDestination: WebRtcDestination = .macBookDocker
+    @Published private(set) var directStreamReceiverRunning = false
+    @Published private(set) var directStreamWhipUrl = "Phone receiver not started"
     @Published private(set) var streamRequested = false
     @Published private(set) var streamPreviewReady = false
     @Published private(set) var streamStartedAt: Date?
@@ -90,11 +107,16 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private let micChannelCount = 1
     private let micBitsPerSample = 16
     private let mentraBluetoothSdk = MentraBluetoothSDK()
+    let directWhipReceiver = GStreamerWhipReceiver()
     private var activePhotoRequestId: String?
     private var activeStreamId: String?
     private var pollGeneration = 0
+    private var directPhotoTimeoutTask: Task<Void, Never>?
     private var keepAliveTask: Task<Void, Never>?
     private var previewHealthTask: Task<Void, Never>?
+    private var directStreamStartTask: Task<Void, Never>?
+    private var directStreamStopTask: Task<Void, Never>?
+    private var directStreamFirstFrameSeen = false
     private var micStartedAt: Date?
     private var micElapsedTask: Task<Void, Never>?
     private var micPcmData = Data()
@@ -102,6 +124,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var micPlayer: AVAudioPlayer?
     private let validLedColors = Set(["red", "green", "blue", "orange", "white"])
     private let defaultDeviceDefaults = UserDefaults.standard
+    private let directWhipProxy = WhipHeaderProxy()
+    private nonisolated(unsafe) var photoUploadServer: LocalPhotoUploadServer?
 
     private enum DefaultDeviceStorage {
         static let version = "mentra.example.defaultDevice.version"
@@ -122,6 +146,23 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     override init() {
         super.init()
         mentraBluetoothSdk.delegate = self
+        directWhipReceiver.onStateChanged = { [weak self] message in
+            Task { @MainActor in
+                self?.handleDirectReceiverStatus(message)
+            }
+        }
+        photoUploadServer = LocalPhotoUploadServer(
+            onLog: { [weak self] message in
+                Task { @MainActor in
+                    self?.append(tag: "HTTP", text: message)
+                }
+            },
+            onUpload: { [weak self] upload in
+                Task { @MainActor in
+                    self?.handleDirectPhotoUpload(upload)
+                }
+            }
+        )
         if let savedDevice = loadPersistedDefaultDevice() {
             mentraBluetoothSdk.setDefaultDevice(savedDevice)
         }
@@ -142,8 +183,16 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     deinit {
         previewHealthTask?.cancel()
+        directPhotoTimeoutTask?.cancel()
+        directStreamStartTask?.cancel()
+        directStreamStopTask?.cancel()
         micElapsedTask?.cancel()
-        Task { @MainActor [mentraBluetoothSdk] in mentraBluetoothSdk.invalidate() }
+        directWhipProxy.stop()
+        directWhipReceiver.stop()
+        photoUploadServer?.stop()
+        Task { @MainActor [mentraBluetoothSdk] in
+            mentraBluetoothSdk.invalidate()
+        }
     }
 
     func startScan() {
@@ -228,6 +277,17 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
+    func setPhotoDestination(_ destination: PhotoDestination) {
+        guard photoDestination != destination else { return }
+        if destination == .macBookServer {
+            stopPhonePhotoServer()
+            cameraStatus = "Camera: replace <computer-ip> in the Photo upload URL"
+        } else {
+            cameraStatus = "Camera: phone receiver will start before capture"
+        }
+        photoDestination = destination
+    }
+
     func setPhotoSize(_ size: MentraPhotoSize) {
         photoSize = size
     }
@@ -243,6 +303,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func captureAndUpload() {
         runAction("Capture & upload") {
             try requireConnected("capture photos")
+            if photoDestination == .thisPhone {
+                try captureAndUploadToPhone()
+                return
+            }
             let uploadUrl = webhookUrl.trimmingCharacters(in: .whitespacesAndNewlines)
             if let validationMessage = photoUploadValidationMessage(uploadUrl) {
                 cameraStatus = "Camera: \(validationMessage)"
@@ -258,6 +322,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             pollGeneration += 1
             let generation = pollGeneration
             photoPreviewUrl = nil
+            photoPreviewImage = nil
             cameraStatus = "Camera: webhook upload requested (\(requestId))"
             mentraBluetoothSdk.requestPhoto(
                 MentraPhotoRequest(
@@ -274,8 +339,105 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
+    private func captureAndUploadToPhone() throws {
+        let uploadUrl = try startPhonePhotoServer()
+        let requestId = "photo-\(Int(Date().timeIntervalSince1970 * 1000))"
+        activePhotoRequestId = requestId
+        pollGeneration += 1
+        directPhotoTimeoutTask?.cancel()
+        directPhotoTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 75_000_000_000)
+            await MainActor.run {
+                guard let self, self.activePhotoRequestId == requestId else { return }
+                self.activePhotoRequestId = nil
+                self.cameraStatus = "Camera: timed out waiting for phone upload"
+                self.append(tag: "TX", text: "phone photo upload timed out \(requestId)")
+            }
+        }
+        photoPreviewUrl = nil
+        photoPreviewImage = nil
+        cameraStatus = "Camera: requested phone upload (\(requestId))"
+        mentraBluetoothSdk.requestPhoto(
+            MentraPhotoRequest(
+                requestId: requestId,
+                appId: "com.mentra.examples.ios",
+                size: photoSize,
+                webhookUrl: uploadUrl,
+                compress: photoCompression,
+                flash: photoFlash,
+                sound: true
+            )
+        )
+        append(tag: "TX", text: "requestPhoto requestId=\(requestId) webhookUrl=\(uploadUrl)")
+    }
+
+    private func startPhonePhotoServer() throws -> String {
+        guard let host = bestLocalIPv4Address() else {
+            let message = "No phone LAN IP found. Connect this iPhone to Wi-Fi or a network reachable by the glasses."
+            cameraStatus = "Camera: \(message)"
+            throw ExampleActionError(message: message)
+        }
+        let photoUploadServer = photoUploadServer!
+        if photoUploadServer.running, phonePhotoUploadUrl.hasPrefix("http://\(host):") {
+            return phonePhotoUploadUrl
+        }
+
+        cameraStatus = "Camera: starting phone upload receiver"
+        phonePhotoServerRunning = false
+        phonePhotoUploadUrl = "Starting phone receiver"
+
+        var lastError: Error?
+        for port in [UInt16(8787), 8788, 8789, 8790] {
+            do {
+                let actualPort = try photoUploadServer.start(port: port)
+                let url = "http://\(host):\(actualPort)/upload"
+                phonePhotoServerRunning = true
+                phonePhotoUploadUrl = url
+                cameraStatus = "Camera: phone receiver ready"
+                append(tag: "HTTP", text: "phone photo receiver \(url)")
+                return url
+            } catch {
+                lastError = error
+                append(tag: "HTTP", text: "photo receiver port \(port) unavailable: \(error.localizedDescription)")
+            }
+        }
+
+        let message = lastError?.localizedDescription ?? "No local photo receiver port was available."
+        phonePhotoServerRunning = false
+        phonePhotoUploadUrl = "Phone receiver failed"
+        cameraStatus = "Camera: phone receiver failed: \(message)"
+        throw ExampleActionError(message: "Phone photo receiver failed: \(message)")
+    }
+
+    private func stopPhonePhotoServer() {
+        directPhotoTimeoutTask?.cancel()
+        directPhotoTimeoutTask = nil
+        photoUploadServer?.stop()
+        phonePhotoServerRunning = false
+        phonePhotoUploadUrl = "Phone receiver not started"
+    }
+
+    private func handleDirectPhotoUpload(_ upload: LocalPhotoUpload) {
+        if let activePhotoRequestId, let requestId = upload.requestId, requestId != activePhotoRequestId {
+            append(tag: "LIVE", text: "ignoring stale phone upload \(requestId)")
+            return
+        }
+        directPhotoTimeoutTask?.cancel()
+        directPhotoTimeoutTask = nil
+        activePhotoRequestId = nil
+        photoPreviewUrl = upload.fileURL
+        photoPreviewImage = UIImage(contentsOfFile: upload.fileURL.path)
+        cameraStatus = "Camera: received phone upload \(upload.requestId ?? "")"
+        append(tag: "LIVE", text: "phone photo ready \(upload.byteCount) bytes")
+    }
+
     func testWebhook() {
         runAction("Test webhook") {
+            if photoDestination == .thisPhone {
+                _ = try startPhonePhotoServer()
+                cameraStatus = "Camera: phone receiver ready at \(phonePhotoUploadUrl)"
+                return
+            }
             let uploadUrl = webhookUrl.trimmingCharacters(in: .whitespacesAndNewlines)
             if let validationMessage = photoUploadValidationMessage(uploadUrl) {
                 cameraStatus = "Camera: \(validationMessage)"
@@ -321,6 +483,37 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             runAction("Stop stream") {
                 stopKeepAlive()
                 stopPreviewHealthPoll()
+                if isDirectPhoneWebRtcSelected {
+                    directStreamStartTask?.cancel()
+                    directStreamStartTask = nil
+                    if glassesConnected {
+                        mentraBluetoothSdk.stopStream()
+                        streamStatus = "Stopping WebRTC direct phone stream"
+                        directStreamStopTask?.cancel()
+                        directStreamStopTask = Task { [weak self] in
+                            try? await Task.sleep(nanoseconds: 5_000_000_000)
+                            await MainActor.run {
+                                guard let self,
+                                      self.isDirectPhoneWebRtcSelected,
+                                      self.directStreamReceiverRunning else {
+                                    return
+                                }
+                                self.activeStreamId = nil
+                                self.stopDirectPhoneStreamReceiver(status: "WebRTC direct phone stopped")
+                                self.streamRequested = false
+                                self.streamStartedAt = nil
+                            }
+                        }
+                        return
+                    }
+                    stopDirectPhoneStreamReceiver(status: "Stopped")
+                    activeStreamId = nil
+                    streamRequested = false
+                    streamPreviewReady = false
+                    streamStartedAt = nil
+                    streamStatus = "Stopped"
+                    return
+                }
                 if glassesConnected {
                     mentraBluetoothSdk.stopStream()
                 }
@@ -335,6 +528,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
         runAction("Start stream") {
             try requireConnected("start streaming")
+            if isDirectPhoneWebRtcSelected {
+                try startDirectPhoneWebRtcStream()
+                return
+            }
             let url = streamUrl.trimmingCharacters(in: .whitespacesAndNewlines)
             if let validationMessage = streamUrlValidationMessage(url) {
                 streamStatus = validationMessage
@@ -368,6 +565,111 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 return
             }
             startStream(streamUrl: url, streamId: streamId, protocol: selectedProtocol)
+        }
+    }
+
+    private func startDirectPhoneWebRtcStream() throws {
+        stopPreviewHealthPoll()
+        directStreamStopTask?.cancel()
+        directStreamStopTask = nil
+        stopDirectPhoneStreamReceiver(status: "Starting phone receiver")
+        guard let host = bestLocalIPv4Address() else {
+            let message = "No phone LAN IP found. Connect this iPhone to Wi-Fi or a network reachable by the glasses."
+            streamStatus = message
+            throw ExampleActionError(message: message)
+        }
+
+        var lastError: Error?
+        for ports in [(publicPort: 8190, backendPort: 8191), (publicPort: 8192, backendPort: 8193), (publicPort: 8194, backendPort: 8195)] {
+            do {
+                try directWhipReceiver.start(withAdvertisedHost: "127.0.0.1", port: ports.backendPort)
+                try directWhipProxy.start(listenPort: UInt16(ports.publicPort), backendPort: UInt16(ports.backendPort))
+                let streamId = "ios-gst-\(Int(Date().timeIntervalSince1970 * 1000))"
+                let url = "http://\(host):\(ports.publicPort)/whip/endpoint"
+                activeStreamId = streamId
+                directStreamFirstFrameSeen = false
+                directStreamReceiverRunning = true
+                directStreamWhipUrl = url
+                streamPreviewReady = false
+                streamRequested = true
+                streamStartedAt = nil
+                streamStatus = "WebRTC phone receiver ready; starting stream"
+                append(tag: "STREAM", text: "phone WHIP receiver \(url) -> GStreamer \(ports.backendPort)")
+                directStreamStartTask?.cancel()
+                directStreamStartTask = Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    await MainActor.run {
+                        guard let self,
+                              self.activeStreamId == streamId,
+                              self.directStreamReceiverRunning,
+                              self.streamRequested else {
+                            return
+                        }
+                        self.sendDirectPhoneStartStream(streamUrl: url, streamId: streamId)
+                    }
+                }
+                return
+            } catch {
+                lastError = error
+                directWhipProxy.stop()
+                directWhipReceiver.stop()
+                append(tag: "GST", text: "port pair \(ports.publicPort)->\(ports.backendPort) unavailable: \(error.localizedDescription)")
+            }
+        }
+
+        let message = lastError?.localizedDescription ?? "No local WHIP port pair was available."
+        directStreamReceiverRunning = false
+        directStreamWhipUrl = "Phone receiver failed"
+        streamPreviewReady = false
+        streamRequested = false
+        streamStatus = "WebRTC phone receiver failed: \(message)"
+        throw ExampleActionError(message: "WebRTC phone receiver failed: \(message)")
+    }
+
+    private func sendDirectPhoneStartStream(streamUrl: String, streamId: String) {
+        mentraBluetoothSdk.startStream(
+            MentraStreamRequest(
+                streamUrl: streamUrl,
+                streamId: streamId,
+                keepAlive: true,
+                keepAliveIntervalSeconds: 15
+            )
+        )
+        startKeepAlive(streamId: streamId)
+        streamRequested = true
+        streamStartedAt = streamStartedAt ?? Date()
+        streamStatus = "WebRTC stream requested; waiting for first frame"
+        append(tag: "TX", text: "startStream direct phone \(streamUrl)")
+    }
+
+    private func stopDirectPhoneStreamReceiver(status: String) {
+        directStreamStartTask?.cancel()
+        directStreamStartTask = nil
+        directStreamStopTask?.cancel()
+        directStreamStopTask = nil
+        directStreamFirstFrameSeen = false
+        directWhipProxy.stop()
+        directWhipReceiver.stop()
+        directStreamReceiverRunning = false
+        directStreamWhipUrl = "Phone receiver not started"
+        streamPreviewReady = false
+        streamStatus = status
+    }
+
+    private func handleDirectReceiverStatus(_ message: String) {
+        append(tag: "GST", text: message)
+        guard isDirectPhoneWebRtcSelected, directStreamReceiverRunning else { return }
+        if message.hasPrefix("Rendered ") {
+            let firstFrame = !directStreamFirstFrameSeen
+            directStreamFirstFrameSeen = true
+            streamPreviewReady = true
+            streamStartedAt = streamStartedAt ?? Date()
+            streamStatus = "WebRTC direct phone live"
+            if firstFrame {
+                append(tag: "LIVE", text: "first WebRTC frame received on phone")
+            }
+        } else if !streamPreviewReady {
+            streamStatus = "WebRTC phone receiver: \(message)"
         }
     }
 
@@ -441,6 +743,13 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         if shouldUseDefault {
             streamUrl = nextProtocol.defaultUrl
         }
+    }
+
+    func setWebRtcDestination(_ destination: WebRtcDestination) {
+        guard webRtcDestination != destination else { return }
+        webRtcDestination = destination
+        streamStatus = destination == .thisPhone ? "Ready to stream WebRTC to this phone" : "Ready to start stream"
+        streamPreviewReady = false
     }
 
     func requestWifiScan() {
@@ -658,9 +967,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         case let .photoResponse(response):
             handlePhotoResponse(response.values)
         case let .streamStatus(status):
-            applyStreamStatus(status.values)
-            streamStatus = summarize(status.values)
-            append(tag: "LIVE", text: "stream \(summarize(status.values))")
+            handleStreamStatus(status.values)
         case let .raw(name, values):
             handleRawEvent(name: name, values: values)
         default:
@@ -1080,9 +1387,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         case "photo_response":
             handlePhotoResponse(values)
         case "stream_status":
-            applyStreamStatus(values)
-            streamStatus = summarize(values)
-            append(tag: "LIVE", text: "stream \(summarize(values))")
+            handleStreamStatus(values)
         default:
             append(tag: "LIVE", text: "\(name) \(summarize(values))")
         }
@@ -1108,9 +1413,32 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             activeStreamId = nil
             stopKeepAlive()
             stopPreviewHealthPoll()
+            if directStreamReceiverRunning {
+                stopDirectPhoneStreamReceiver(status: "WebRTC direct phone stopped")
+            }
         default:
             break
         }
+    }
+
+    private func handleStreamStatus(_ values: [String: Any]) {
+        applyStreamStatus(values)
+        let summary = summarize(values)
+        let status = stringValue(values, "status")
+        if isDirectPhoneWebRtcSelected {
+            if status == "stopped" || status == "stopping" {
+                streamStatus = "WebRTC direct phone stopped"
+            } else if status?.lowercased().hasPrefix("error") == true {
+                streamStatus = "WebRTC direct phone error: \(summary)"
+            } else if streamPreviewReady {
+                streamStatus = "WebRTC direct phone live"
+            } else {
+                streamStatus = "WebRTC stream requested; waiting for first frame"
+            }
+        } else {
+            streamStatus = summary
+        }
+        append(tag: "LIVE", text: "stream \(summary)")
     }
 
     private func handlePhotoResponse(_ values: [String: Any]) {
@@ -1119,10 +1447,11 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             append(tag: "LIVE", text: "ignoring stale photo \(requestId)")
             return
         }
+        let uploadTarget = photoDestination == .thisPhone ? "phone upload" : "local upload"
         if boolValue(values, "success") == false {
-            cameraStatus = "Camera: glasses reported \(stringValue(values, "errorCode") ?? "error"); waiting for upload"
+            cameraStatus = "Camera: glasses reported \(stringValue(values, "errorCode") ?? "error"); waiting for \(uploadTarget)"
         } else {
-            cameraStatus = "Camera: photo acknowledged; waiting for local upload"
+            cameraStatus = "Camera: photo acknowledged; waiting for \(uploadTarget)"
         }
         append(tag: "LIVE", text: "photo response \(requestId ?? "")")
     }
@@ -1137,9 +1466,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                     if let http = response as? HTTPURLResponse, http.statusCode == 200,
                        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                        let photoUrl = stringValue(json, "photoUrl"),
-                       let url = URL(string: photoUrl)
+                        let url = URL(string: photoUrl)
                     {
                         photoPreviewUrl = url
+                        photoPreviewImage = nil
                         cameraStatus = "Camera: loaded photo preview"
                         activePhotoRequestId = nil
                         append(tag: "LIVE", text: "local photo ready \(photoUrl)")
@@ -1181,6 +1511,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private func stopKeepAlive() {
         keepAliveTask?.cancel()
         keepAliveTask = nil
+    }
+
+    private var isDirectPhoneWebRtcSelected: Bool {
+        streamProtocol == .webrtc && webRtcDestination == .thisPhone
     }
 }
 

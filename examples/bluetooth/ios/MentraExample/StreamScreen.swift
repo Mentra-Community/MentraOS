@@ -28,7 +28,12 @@ struct StreamScreen: View {
         model.streamRequested || model.streamStartedAt != nil
     }
 
+    private var directPhoneWebRtc: Bool {
+        model.streamProtocol == .webrtc && model.webRtcDestination == .thisPhone
+    }
+
     private var livePreviewUrl: URL? {
+        guard !directPhoneWebRtc else { return nil }
         guard streamActive, model.streamPreviewReady else { return nil }
         switch model.streamProtocol {
         case .rtmp:
@@ -67,7 +72,7 @@ struct StreamScreen: View {
             previewSurface
 
             Button {
-                if shouldFocusStreamUrlTemplate(model.streamUrl, streamActive: streamActive) {
+                if !directPhoneWebRtc, shouldFocusStreamUrlTemplate(model.streamUrl, streamActive: streamActive) {
                     focusStreamUrlField(scrollProxy)
                 }
                 model.toggleStream()
@@ -88,7 +93,18 @@ struct StreamScreen: View {
 
     @ViewBuilder
     private var previewSurface: some View {
-        if let livePreviewUrl {
+        if directPhoneWebRtc, streamActive {
+            ZStack {
+                DirectPhoneWebRtcPreviewView(receiver: model.directWhipReceiver)
+                    .frame(height: 160)
+                    .background(Color.black)
+                    .clipShape(RoundedRectangle(cornerRadius: 22))
+                previewChrome(
+                    label: model.streamPreviewReady ? "LIVE" : "STARTING",
+                    detail: model.streamPreviewReady ? "WebRTC · this phone · keep-alive 15s" : "Waiting for first frame"
+                )
+            }
+        } else if let livePreviewUrl {
             ZStack {
                 if model.streamProtocol == .rtmp || model.streamProtocol == .srt {
                     RetryingHlsWebPreviewView(url: livePreviewUrl)
@@ -138,6 +154,9 @@ struct StreamScreen: View {
     }
 
     private var previewDetail: String {
+        if directPhoneWebRtc {
+            return "WebRTC · this phone · keep-alive 15s"
+        }
         if model.streamProtocol == .srt {
             return "SRT · web preview · keep-alive 15s"
         }
@@ -226,26 +245,53 @@ struct StreamScreen: View {
             .clipShape(RoundedRectangle(cornerRadius: 14))
             .padding(.bottom, 12)
 
+            if model.streamProtocol == .webrtc {
+                HStack(spacing: 4) {
+                    ProtocolTab(title: "MacBook", active: model.webRtcDestination == .macBookDocker) {
+                        model.setWebRtcDestination(.macBookDocker)
+                    }
+                    ProtocolTab(title: "This phone", active: model.webRtcDestination == .thisPhone) {
+                        model.setWebRtcDestination(.thisPhone)
+                    }
+                }
+                .padding(4)
+                .background(AppColor.ink.opacity(0.05))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .padding(.bottom, 12)
+            }
+
             HStack(spacing: 10) {
                 Text(model.streamProtocol.inputLabel).font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundColor(AppColor.greenAccent)
                 Rectangle().fill(AppColor.ink.opacity(0.12)).frame(width: 1, height: 14)
-                TextField(model.streamProtocol.defaultUrl, text: $model.streamUrl)
-                    .focused($streamUrlFocused)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .submitLabel(.done)
-                    .onSubmit { streamUrlFocused = false }
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(AppColor.ink)
-                    .lineLimit(1)
-                Spacer()
-                Image(systemName: "square.and.pencil").font(.system(size: 14)).foregroundColor(AppColor.muted)
+                if directPhoneWebRtc {
+                    Text(model.directStreamWhipUrl)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(AppColor.ink)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                    Circle()
+                        .fill(model.directStreamReceiverRunning ? AppColor.greenAccent : AppColor.muted.opacity(0.5))
+                        .frame(width: 8, height: 8)
+                } else {
+                    TextField(model.streamProtocol.defaultUrl, text: $model.streamUrl)
+                        .focused($streamUrlFocused)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .submitLabel(.done)
+                        .onSubmit { streamUrlFocused = false }
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(AppColor.ink)
+                        .lineLimit(1)
+                    Spacer()
+                    Image(systemName: "square.and.pencil").font(.system(size: 14)).foregroundColor(AppColor.muted)
+                }
             }
             .id(streamUrlFieldId)
             .padding(.horizontal, 14).padding(.vertical, 12)
             .background(AppColor.ink.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 12))
 
-            if let setupHint {
+            if !directPhoneWebRtc, let setupHint {
                 Text(setupHint)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(AppColor.muted)
@@ -349,6 +395,17 @@ struct WebStreamPreviewView: UIViewRepresentable {
         if webView.url?.absoluteString != url.absoluteString {
             webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData))
         }
+    }
+}
+
+struct DirectPhoneWebRtcPreviewView: UIViewRepresentable {
+    let receiver: GStreamerWhipReceiver
+
+    func makeUIView(context _: Context) -> UIView {
+        receiver.videoView
+    }
+
+    func updateUIView(_ uiView: UIView, context _: Context) {
     }
 }
 

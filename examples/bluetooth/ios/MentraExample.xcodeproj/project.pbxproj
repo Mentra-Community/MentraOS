@@ -13,6 +13,11 @@
 		657B565C6F560BB6DDA9C415 /* CameraScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 85A06A4B5AFA293DC25C9582 /* CameraScreen.swift */; };
 		7B91A32153C6403B858F7061 /* BluetoothViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C44F0B2F295E4B4593F7C2D7 /* BluetoothViewModel.swift */; };
 		A1B2C3D4E5F60718293A4B5C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C1B2C3D4E5F60718293A4B5C /* Assets.xcassets */; };
+		A10000000000000000000001 /* LocalNetwork.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000011 /* LocalNetwork.swift */; };
+		A10000000000000000000002 /* LocalPhotoUploadServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000012 /* LocalPhotoUploadServer.swift */; };
+		A10000000000000000000003 /* WhipHeaderProxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000013 /* WhipHeaderProxy.swift */; };
+		A10000000000000000000004 /* GStreamerWhipReceiver.m in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000015 /* GStreamerWhipReceiver.m */; };
+		A10000000000000000000005 /* gst_ios_init.m in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000018 /* gst_ios_init.m */; };
 		ACC7B6CBE3726BEDEFC145A5 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4334B27A5FE9C5FECB2F7DF8 /* Theme.swift */; };
 		B2C9CEB092C7392809B1920E /* StreamScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = B886745ADD1960CBF8453687 /* StreamScreen.swift */; };
 		B9993996613A5A1F552A67D5 /* ConsoleScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 28C1C2066D3512195360A795 /* ConsoleScreen.swift */; };
@@ -27,6 +32,14 @@
 		4558D51EE6D8AEE7C32E4C58 /* DeviceScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceScreen.swift; sourceTree = "<group>"; };
 		85A06A4B5AFA293DC25C9582 /* CameraScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraScreen.swift; sourceTree = "<group>"; };
 		A950FB52FB060CCB1BA59390 /* MentraExample.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MentraExample.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000000000000000000011 /* LocalNetwork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalNetwork.swift; sourceTree = "<group>"; };
+		A10000000000000000000012 /* LocalPhotoUploadServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalPhotoUploadServer.swift; sourceTree = "<group>"; };
+		A10000000000000000000013 /* WhipHeaderProxy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhipHeaderProxy.swift; sourceTree = "<group>"; };
+		A10000000000000000000014 /* GStreamerWhipReceiver.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GStreamerWhipReceiver.h; sourceTree = "<group>"; };
+		A10000000000000000000015 /* GStreamerWhipReceiver.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = GStreamerWhipReceiver.m; sourceTree = "<group>"; };
+		A10000000000000000000016 /* MentraExample-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "MentraExample-Bridging-Header.h"; sourceTree = "<group>"; };
+		A10000000000000000000017 /* gst_ios_init.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = gst_ios_init.h; sourceTree = "<group>"; };
+		A10000000000000000000018 /* gst_ios_init.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = gst_ios_init.m; sourceTree = "<group>"; };
 		AF07FC3FFCAAB31DD442E58C /* SystemScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemScreen.swift; sourceTree = "<group>"; };
 		B886745ADD1960CBF8453687 /* StreamScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamScreen.swift; sourceTree = "<group>"; };
 		BB9A9B8B86FC0ACF59F91AF8 /* MentraExampleApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MentraExampleApp.swift; sourceTree = "<group>"; };
@@ -85,11 +98,19 @@
 				85A06A4B5AFA293DC25C9582 /* CameraScreen.swift */,
 				28C1C2066D3512195360A795 /* ConsoleScreen.swift */,
 				4558D51EE6D8AEE7C32E4C58 /* DeviceScreen.swift */,
+				A10000000000000000000014 /* GStreamerWhipReceiver.h */,
+				A10000000000000000000015 /* GStreamerWhipReceiver.m */,
+				A10000000000000000000016 /* MentraExample-Bridging-Header.h */,
+				A10000000000000000000017 /* gst_ios_init.h */,
+				A10000000000000000000018 /* gst_ios_init.m */,
+				A10000000000000000000011 /* LocalNetwork.swift */,
+				A10000000000000000000012 /* LocalPhotoUploadServer.swift */,
 				BB9A9B8B86FC0ACF59F91AF8 /* MentraExampleApp.swift */,
 				EA0ECF511371DFD443892300 /* RootView.swift */,
 				B886745ADD1960CBF8453687 /* StreamScreen.swift */,
 				AF07FC3FFCAAB31DD442E58C /* SystemScreen.swift */,
 				4334B27A5FE9C5FECB2F7DF8 /* Theme.swift */,
+				A10000000000000000000013 /* WhipHeaderProxy.swift */,
 			);
 			path = MentraExample;
 			sourceTree = "<group>";
@@ -110,6 +131,7 @@
 			buildConfigurationList = 6FA7D0F9CD915386455BDDF3 /* Build configuration list for PBXNativeTarget "MentraExample" */;
 			buildPhases = (
 				CB0E901F2019649198E6AED7 /* [CP] Check Pods Manifest.lock */,
+				A10000000000000000000030 /* Install GStreamer iOS SDK */,
 				F57C61A872789A90F58473E5 /* Sources */,
 				8B63371EB5DD19BE924ABA94 /* Frameworks */,
 				B1B2C3D4E5F60718293A4B5C /* Resources */,
@@ -170,6 +192,27 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		A10000000000000000000030 /* Install GStreamer iOS SDK */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(PROJECT_DIR)/scripts/setup-gstreamer-ios.sh",
+			);
+			name = "Install GStreamer iOS SDK";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(HOME)/Library/Developer/GStreamer/iPhone.sdk/GStreamer.framework",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PROJECT_DIR}/scripts/setup-gstreamer-ios.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
 		7B0AACBC4A2E876B72A32DF9 /* [CP] Copy Pods Resources */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -237,11 +280,16 @@
 				657B565C6F560BB6DDA9C415 /* CameraScreen.swift in Sources */,
 				B9993996613A5A1F552A67D5 /* ConsoleScreen.swift in Sources */,
 				FF34A5EFAA30E55E2BDCEF81 /* DeviceScreen.swift in Sources */,
+				A10000000000000000000004 /* GStreamerWhipReceiver.m in Sources */,
+				A10000000000000000000005 /* gst_ios_init.m in Sources */,
+				A10000000000000000000001 /* LocalNetwork.swift in Sources */,
+				A10000000000000000000002 /* LocalPhotoUploadServer.swift in Sources */,
 				636D70A07E2D7BAD88CFBCD2 /* MentraExampleApp.swift in Sources */,
 				3E2B590902496632943A602A /* RootView.swift in Sources */,
 				B2C9CEB092C7392809B1920E /* StreamScreen.swift in Sources */,
 				DD75B705FEBE9ABBE4E144C5 /* SystemScreen.swift in Sources */,
 				ACC7B6CBE3726BEDEFC145A5 /* Theme.swift in Sources */,
+				A10000000000000000000003 /* WhipHeaderProxy.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -253,17 +301,28 @@
 			baseConfigurationReference = 2B95C649CCFB26DB6BA7AD81 /* Pods-MentraExample.debug.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"$(GSTREAMER_ROOT_IOS)\"",
+				);
+				GSTREAMER_ROOT_IOS = "$(HOME)/Library/Developer/GStreamer/iPhone.sdk";
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"$(GSTREAMER_ROOT_IOS)/GStreamer.framework/Headers\"",
+				);
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Mentra Bluetooth SDK uses Bluetooth to discover and connect to smart glasses.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Mentra Bluetooth SDK examples request photo capture from connected smart glasses.";
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Mentra Bluetooth SDK examples connect to local photo upload and preview servers.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Mentra Bluetooth SDK examples connect to local photo upload, streaming preview, and direct phone receiver servers.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Mentra Bluetooth SDK examples stream microphone audio from connected smart glasses.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				OTHER_LDFLAGS = "$(inherited) -Wl,-no_compact_unwind -lresolv -liconv -lc++ -framework GStreamer -framework CoreFoundation -framework Foundation -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework CoreAudio -framework AudioToolbox -framework AssetsLibrary -weak_framework VideoToolbox -framework OpenGLES -framework QuartzCore -framework UIKit";
 				PRODUCT_BUNDLE_IDENTIFIER = com.mentra.examples.ios;
 				PRODUCT_NAME = MentraExample;
 				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "MentraExample/MentraExample-Bridging-Header.h";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
@@ -273,17 +332,28 @@
 			baseConfigurationReference = FFBF10A3E7C9332B4E988290 /* Pods-MentraExample.release.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"$(GSTREAMER_ROOT_IOS)\"",
+				);
+				GSTREAMER_ROOT_IOS = "$(HOME)/Library/Developer/GStreamer/iPhone.sdk";
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"$(GSTREAMER_ROOT_IOS)/GStreamer.framework/Headers\"",
+				);
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Mentra Bluetooth SDK uses Bluetooth to discover and connect to smart glasses.";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Mentra Bluetooth SDK examples request photo capture from connected smart glasses.";
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Mentra Bluetooth SDK examples connect to local photo upload and preview servers.";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Mentra Bluetooth SDK examples connect to local photo upload, streaming preview, and direct phone receiver servers.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Mentra Bluetooth SDK examples stream microphone audio from connected smart glasses.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				OTHER_LDFLAGS = "$(inherited) -Wl,-no_compact_unwind -lresolv -liconv -lc++ -framework GStreamer -framework CoreFoundation -framework Foundation -framework AVFoundation -framework CoreMedia -framework CoreVideo -framework CoreAudio -framework AudioToolbox -framework AssetsLibrary -weak_framework VideoToolbox -framework OpenGLES -framework QuartzCore -framework UIKit";
 				PRODUCT_BUNDLE_IDENTIFIER = com.mentra.examples.ios;
 				PRODUCT_NAME = MentraExample;
 				SDKROOT = iphoneos;
+				SWIFT_OBJC_BRIDGING_HEADER = "MentraExample/MentraExample-Bridging-Header.h";
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;

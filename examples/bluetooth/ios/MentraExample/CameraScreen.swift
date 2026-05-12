@@ -25,12 +25,17 @@ struct CameraScreen: View {
     @ObservedObject var model: BluetoothViewModel
     @Environment(\.keyboardVisible) private var keyboardVisible
     @FocusState private var webhookUrlFocused: Bool
+    private var directPhone: Bool {
+        model.photoDestination == .thisPhone
+    }
+
     private var cameraStatusFailed: Bool {
         isCameraStatusFailure(model.cameraStatus)
     }
 
     private var setupHint: String? {
-        localCameraSetupHint(webhookUrl: model.webhookUrl, status: model.cameraStatus)
+        guard !directPhone else { return nil }
+        return localCameraSetupHint(webhookUrl: model.webhookUrl, status: model.cameraStatus)
     }
 
     var body: some View {
@@ -59,7 +64,13 @@ struct CameraScreen: View {
                 LinearGradient(colors: [Color(hex: 0x1F4A33), Color(hex: 0x3A8A56), Color(hex: 0x7DD89E), Color(hex: 0x26B870), Color(hex: 0x163A26)], startPoint: .topLeading, endPoint: .bottomTrailing)
                     .frame(height: 160)
                     .clipShape(RoundedRectangle(cornerRadius: 22))
-                if let photoPreviewUrl = model.photoPreviewUrl {
+                if let photoPreviewImage = model.photoPreviewImage {
+                    Image(uiImage: photoPreviewImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(height: 160)
+                        .clipShape(RoundedRectangle(cornerRadius: 22))
+                } else if let photoPreviewUrl = model.photoPreviewUrl {
                     AsyncImage(url: photoPreviewUrl) { image in
                         image.resizable().scaledToFill()
                     } placeholder: {
@@ -74,7 +85,7 @@ struct CameraScreen: View {
                 HStack {
                     HStack(spacing: 6) {
                         Circle().fill(AppColor.greenSoft).frame(width: 5, height: 5)
-                        Text(model.photoPreviewUrl == nil ? "JPEG · waiting" : "JPEG · uploaded")
+                        Text(model.photoPreviewUrl == nil && model.photoPreviewImage == nil ? "JPEG · waiting" : "JPEG · uploaded")
                             .font(.system(size: 10, weight: .semibold)).foregroundColor(.white).tracking(0.5)
                     }
                     .padding(.horizontal, 10).padding(.vertical, 5)
@@ -82,7 +93,7 @@ struct CameraScreen: View {
                     .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
                     .clipShape(Capsule())
                     Spacer()
-                    Text(model.photoPreviewUrl == nil ? "ready" : "latest").font(.system(size: 10, weight: .medium)).foregroundColor(Color.white.opacity(0.85))
+                    Text(model.photoPreviewUrl == nil && model.photoPreviewImage == nil ? "ready" : "latest").font(.system(size: 10, weight: .medium)).foregroundColor(Color.white.opacity(0.85))
                 }
                 .padding(.horizontal, 14).padding(.bottom, 14)
             }
@@ -92,7 +103,7 @@ struct CameraScreen: View {
             } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "camera").foregroundColor(.white).font(.system(size: 15, weight: .bold))
-                    Text(!model.glassesConnected ? "Connect glasses first" : model.activeAction == "Capture & upload" ? "Capturing…" : "Capture & upload").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
+                    Text(!model.glassesConnected ? "Connect glasses first" : model.activeAction == "Capture & upload" ? "Capturing..." : directPhone ? "Capture to phone" : "Capture & upload").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity).padding(.vertical, 16)
                 .background(LinearGradient(colors: [Color(hex: 0x26473A), Color(hex: 0x1F3A2A)], startPoint: .top, endPoint: .bottom))
@@ -142,7 +153,7 @@ struct CameraScreen: View {
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(model.cameraStatus).font(.system(size: 11, weight: .semibold)).foregroundColor(AppColor.ink)
-                    Text(model.photoPreviewUrl == nil ? "Waiting for capture" : "Preview loaded from local webhook").font(.system(size: 10, weight: .medium)).foregroundColor(AppColor.muted)
+                    Text(model.photoPreviewUrl == nil && model.photoPreviewImage == nil ? "Waiting for capture" : directPhone ? "Preview loaded from phone receiver" : "Preview loaded from local webhook").font(.system(size: 10, weight: .medium)).foregroundColor(AppColor.muted)
                 }
             }
             .padding(.vertical, 12).padding(.horizontal, 16)
@@ -157,27 +168,49 @@ struct CameraScreen: View {
             HStack {
                 Text("UPLOAD TO").font(.system(size: 10, weight: .semibold)).tracking(1.2).foregroundColor(AppColor.muted)
                 Spacer()
-                Button {
-                    model.testWebhook()
-                } label: {
-                    Text("test webhook ↗").font(.system(size: 11, weight: .medium)).foregroundColor(AppColor.greenAccent)
+                if !directPhone {
+                    Button {
+                        model.testWebhook()
+                    } label: {
+                        Text("test webhook").font(.system(size: 11, weight: .medium)).foregroundColor(AppColor.greenAccent)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
+            }
+            .padding(.bottom, 12)
+
+            HStack(spacing: 8) {
+                CameraOptionChip(value: "MacBook", highlight: model.photoDestination == .macBookServer)
+                    .onTapGesture { model.setPhotoDestination(.macBookServer) }
+                CameraOptionChip(value: "This phone", highlight: directPhone)
+                    .onTapGesture { model.setPhotoDestination(.thisPhone) }
             }
             .padding(.bottom, 12)
 
             HStack(spacing: 10) {
                 Text("POST").font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundColor(AppColor.greenAccent)
                 Rectangle().fill(AppColor.ink.opacity(0.12)).frame(width: 1, height: 14)
-                TextField("Photo upload URL", text: $model.webhookUrl)
-                    .focused($webhookUrlFocused)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .submitLabel(.done)
-                    .onSubmit { webhookUrlFocused = false }
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(AppColor.ink)
-                Spacer()
+                if directPhone {
+                    Text(model.phonePhotoUploadUrl)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(AppColor.ink)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                    Circle()
+                        .fill(model.phonePhotoServerRunning ? AppColor.greenAccent : AppColor.muted.opacity(0.5))
+                        .frame(width: 8, height: 8)
+                } else {
+                    TextField("Photo upload URL", text: $model.webhookUrl)
+                        .focused($webhookUrlFocused)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .submitLabel(.done)
+                        .onSubmit { webhookUrlFocused = false }
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(AppColor.ink)
+                    Spacer()
+                }
             }
             .padding(.horizontal, 14).padding(.vertical, 12)
             .background(AppColor.ink.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 12))
@@ -231,7 +264,9 @@ private func isCameraStatusFailure(_ status: String) -> Bool {
         normalized.contains("invalid") ||
         normalized.contains("replace <computer-ip>") ||
         normalized.contains("valid http") ||
-        normalized.contains("enter a webhook url like")
+        normalized.contains("enter a webhook url like") ||
+        normalized.contains("no phone lan ip") ||
+        normalized.contains("phone receiver failed")
 }
 
 private func localCameraSetupHint(webhookUrl: String, status: String) -> String? {
