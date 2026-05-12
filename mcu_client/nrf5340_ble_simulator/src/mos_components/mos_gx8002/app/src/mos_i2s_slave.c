@@ -35,6 +35,10 @@ LOG_MODULE_REGISTER(mos_i2s_slave, LOG_LEVEL_INF);
 #define GX8002_LC3_BITRATE_DEFAULT 32000  // Default LC3 bitrate for 16 kHz mono audio; can be adjusted based on quality/latency needs
 #define GX8002_LC3_FRAME_LEN (GX8002_LC3_BITRATE_DEFAULT * GX8002_LC3_FRAME_DURATION_US / 8 / 1000000)
 
+/* Expands to static pinctrl tables for &i2s0; PINCTRL_DT_DEV_CONFIG_GET(I2S_NL) refers to this. */
+PINCTRL_DT_DEFINE(I2S_NL);
+static void gx8002_i2s0_bus_hang(void);
+static void gx8002_i2s0_bus_resume(void);
 extern int ble_send_data(const uint8_t *data, uint16_t len);
 extern uint16_t get_ble_payload_mtu(void);
 extern bool get_ble_connected_status(void);
@@ -47,8 +51,6 @@ enum gx8002_i2s_state
 };
 
 static enum gx8002_i2s_state state = GX8002_I2S_UNINIT;
-
-PINCTRL_DT_DEFINE(I2S_NL);
 
 static nrfx_i2s_t i2s_inst = NRFX_I2S_INSTANCE(0);
 
@@ -120,6 +122,31 @@ static uint8_t s_warmup_frames_remaining = 0;
 #define GX8002_DC_BLOCK_SHIFT 8
 static int32_t s_dc_block_prev_x = 0;
 static int32_t s_dc_block_prev_y = 0;
+
+
+static void gx8002_i2s0_bus_hang(void)
+{
+#if DT_NODE_HAS_PROP(I2S_NL, pinctrl_1)
+    int ret = pinctrl_apply_state(PINCTRL_DT_DEV_CONFIG_GET(I2S_NL), PINCTRL_STATE_SLEEP);
+
+    if (ret != 0)
+    {
+        LOG_WRN("I2S0 pinctrl sleep failed: %d", ret);
+    }
+#endif
+}
+
+static void gx8002_i2s0_bus_resume(void)
+{
+#if DT_NODE_HAS_PROP(I2S_NL, pinctrl_1)
+    int ret = pinctrl_apply_state(PINCTRL_DT_DEV_CONFIG_GET(I2S_NL), PINCTRL_STATE_DEFAULT);
+
+    if (ret != 0)
+    {
+        LOG_WRN("I2S0 pinctrl default failed: %d", ret);
+    }
+#endif
+}
 
 static int gx8002_lc3_encoder_start(void)
 {
@@ -477,6 +504,8 @@ int gx8002_i2s_init(void)
 
 int gx8002_i2s_start(void)
 {
+    gx8002_i2s0_bus_resume();
+
     if (state == GX8002_I2S_UNINIT)
     {
         int ret = gx8002_i2s_init();
@@ -545,6 +574,7 @@ int gx8002_i2s_stop(void)
     s_dc_block_prev_x = 0;
     s_dc_block_prev_y = 0;
     gx8002_lc3_encoder_stop();
+    gx8002_i2s0_bus_hang();
     return 0;
 }
 

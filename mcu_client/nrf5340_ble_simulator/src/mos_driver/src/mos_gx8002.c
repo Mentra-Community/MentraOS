@@ -7,6 +7,8 @@
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/pm/device.h>
+#include <zephyr/sys/util.h>
 
 #include "mos_i2s_slave.h"
 #include "vad_interrupt_handler.h"
@@ -15,8 +17,6 @@ LOG_MODULE_REGISTER(mos_gx8002, LOG_LEVEL_INF);
 
 #if DT_NODE_EXISTS(DT_NODELABEL(i2c0))
 static const struct device *i2c_dev = DEVICE_DT_GET(DT_NODELABEL(i2c0));
-#else
-static const struct device *i2c_dev = NULL;
 #endif
 
 #if DT_NODE_EXISTS(DT_PATH(zephyr_user)) && DT_NODE_HAS_PROP(DT_PATH(zephyr_user), vad_power_gpios)
@@ -38,15 +38,60 @@ static bool gx8002_i2c_initialized = false;
 static bool gx8002_i2s_enabled = false;
 static bool gx8002_mos_initialized = false;
 
+
+#if DT_NODE_EXISTS(DT_NODELABEL(i2c0)) && IS_ENABLED(CONFIG_PM_DEVICE)
+static void gx8002_i2c0_bus_hang(void)
+{
+    if ((i2c_dev == NULL) || !device_is_ready(i2c_dev))
+    {
+        return;
+    }
+
+    int hang_ret = pm_device_action_run(i2c_dev, PM_DEVICE_ACTION_SUSPEND);
+
+    if (hang_ret != 0 && hang_ret != -EALREADY)
+    {
+        LOG_WRN("GX8002 i2c0 suspend failed: %d", hang_ret);
+    }
+}
+
+static void gx8002_i2c0_bus_resume(void)
+{
+    if ((i2c_dev == NULL) || !device_is_ready(i2c_dev))
+    {
+        return;
+    }
+
+    int resume_ret = pm_device_action_run(i2c_dev, PM_DEVICE_ACTION_RESUME);
+
+    if (resume_ret != 0 && resume_ret != -EALREADY)
+    {
+        LOG_WRN("GX8002 i2c0 resume failed: %d", resume_ret);
+    }
+}
+#endif
+
 int mos_gx8002_power_control(bool enable)
 {
     if (VAD_POWER_GPIO_AVAILABLE && gpio_is_ready_dt(&vad_power))
     {
         int ret = gpio_pin_configure_dt(&vad_power, GPIO_OUTPUT);
+
         if (ret == 0)
         {
+            if (enable)
+            {
+                gx8002_i2c0_bus_resume();
+            }
+
             ret = gpio_pin_set_dt(&vad_power, enable ? 1 : 0);
+
+            if (ret == 0 && !enable)
+            {
+                gx8002_i2c0_bus_hang();// Hang I2C bus after powering down VAD to release lines (sleep pinctrl)
+            }
         }
+
         if (ret == 0)
         {
             LOG_INF("VAD_EN power %s", enable ? "ON" : "OFF");

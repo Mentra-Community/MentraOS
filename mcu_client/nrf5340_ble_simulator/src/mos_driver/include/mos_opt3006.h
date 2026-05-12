@@ -137,8 +137,8 @@ int opt3006_read_lux(float* lux);
 int opt3006_read_lux_ex(float* lux, uint16_t* raw_result, uint8_t* exponent, uint16_t* mantissa);
 
 /**
- * @brief Suspend i2c3 (OPT3006 bus) and pull P1.04/P1.05 low for sleep.
- * 挂起 i2c3（OPT3006 总线），并将 P1.04/P1.05 拉低用于休眠。
+ * @brief Suspend i2c3 (OPT3006 + IQS7211E shared bus) for sleep; uses DT sleep pinctrl (no drive-low).
+ * 挂起 i2c3（OPT3006 与 IQS7211E 共用），由 pinctrl sleep 释放引脚，不推挽拉低以免顶外部上拉。
  */
 void opt3006_prepare_for_sleep(void);
 

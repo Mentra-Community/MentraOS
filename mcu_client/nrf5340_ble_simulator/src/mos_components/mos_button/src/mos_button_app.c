@@ -1,7 +1,7 @@
 #include "mos_button_app.h"
 
 #include <display/lcd/a6n.h>  // For a6n_power_off()
-#include <hal/nrf_gpio.h> /* For direct GPIO control | 直接GPIO控制 */
+#include <hal/nrf_gpio.h>     /* For direct GPIO control | 直接GPIO控制 */
 #include <helpers/nrfx_reset_reason.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -12,14 +12,13 @@
 // #include "pdm_audio_stream.h"  // PDM path disabled - using GX8002 VAD
 #include "interrupt_handler.h"
 #include "mos_button.h"
-#include "mos_lsm6dsv16x.h"
 #include "mos_display.h"
+#include "mos_imu.h"
 #include "mos_npm1300_ldsw.h"
 #include "mos_opt3006.h"
 
 /* External function from main.c | 来自main.c的外部函数 */
 extern void configure_default_low_pins(void);
-extern void imu_en_control(bool enable);
 
 LOG_MODULE_REGISTER(mos_button_app, LOG_LEVEL_INF);
 
@@ -33,12 +32,12 @@ static bool button_app_initialized = false;
 static mos_button_app_callback_t button_app_callback = NULL;
 static struct k_work_delayable button_poll_work;  // 50ms定时器用于轮询按键状态 | 50ms timer for polling button state
 static bool button_press_detected = false;
-static int64_t button_press_start_time = 0;  // 按键按下开始时间 | Button press start time
-static bool peripherals_turned_off = false;  // 外设是否已关闭 | Whether peripherals are turned off
-static int64_t wakeup_button_press_time = 0;  // 唤醒时按键按下的时间（如果已按下）| Button press time on wakeup (if
-                                              // already pressed)
-static bool button_released_after_wakeup = false;  // 唤醒后按键是否已释放（用于判断是否可以进入休眠逻辑）| Whether
-                                                   // button was released after wakeup (for sleep logic)
+static int64_t button_press_start_time = 0;            // 按键按下开始时间 | Button press start time
+static bool peripherals_turned_off = false;            // 外设是否已关闭 | Whether peripherals are turned off
+static int64_t wakeup_button_press_time = 0;           // 唤醒时按键按下的时间（如果已按下）| Button press time on wakeup (if
+                                                       // already pressed)
+static bool button_released_after_wakeup = false;      // 唤醒后按键是否已释放（用于判断是否可以进入休眠逻辑）| Whether
+                                                       // button was released after wakeup (for sleep logic)
 static bool button_was_released_before_press = false;  // 按键在当前按下前是否已释放（用于休眠逻辑）| Whether button was
                                                        // released before current press (for sleep logic)
 
@@ -137,10 +136,10 @@ static void button_poll_handler(struct k_work *work)
         // opt3006_set_mode(OPT3006_MODE_SHUTDOWN);  // Shutdown OPT3006 | 关闭 OPT3006
         mos_npm1300_ldsw1_disable();
         opt3006_prepare_for_sleep();
-        lsm6dsv16x_sleep();
+        mos_imu_sleep();
         set_display_onoff(false);  // Set display state to off | 设置显示状态为关闭
-        a6n_power_off();  // Turn off A6N display power | 关闭A6N显示电源
-        a6n_io_off();  // Turn off A6N I/O power | 关闭A6N I/O电源
+        a6n_power_off();           // Turn off A6N display power | 关闭A6N显示电源
+        a6n_io_off();              // Turn off A6N I/O power | 关闭A6N I/O电源
         peripherals_turned_off = true;
         LOG_INF("Peripherals turned off, waiting for button release to enter sleep");
     }
@@ -362,18 +361,17 @@ static int prepare_for_sleep(bool turn_off_peripherals)
         LOG_INF("Turning off peripherals before sleep...");
 
         (void)mos_gx8002_power_control(false);  // Disable GX8002(VAD) power control
-        imu_en_control(false);
         /* Disable LDSW1 | 禁用LDSW1 */
 
         /* Put OPT3006 into shutdown mode | 关闭 OPT3006 */
         // opt3006_set_mode(OPT3006_MODE_SHUTDOWN);
         opt3006_prepare_for_sleep();
-        lsm6dsv16x_sleep();
+        mos_imu_sleep();
         mos_npm1300_ldsw1_disable();
         /* Turn off display | 关闭显示 */
         set_display_onoff(false);  // Set display state to off | 设置显示状态为关闭
-        a6n_power_off();  // Turn off A6N display power | 关闭A6N显示电源
-        a6n_io_off();  // Turn off A6N I/O power | 关闭A6N I/O电源
+        a6n_power_off();           // Turn off A6N display power | 关闭A6N显示电源
+        a6n_io_off();              // Turn off A6N I/O power | 关闭A6N I/O电源
 
         LOG_INF("All peripherals turned off");
     }
@@ -537,7 +535,7 @@ int mos_button_app_wait_for_power_on(uint32_t timeout_ms)
             /* Already pressed for 2.5s+ - power on immediately | 已经按下2.5秒+ - 立即开机 */
             LOG_INF("Button already pressed for %lld ms (>= 2500ms) - power on confirmed immediately", elapsed_time);
             wakeup_button_press_time = 0;  // Clear wakeup time | 清除唤醒时间
-            return 0;  // Success | 成功
+            return 0;                      // Success | 成功
         }
         else
         {
@@ -546,7 +544,7 @@ int mos_button_app_wait_for_power_on(uint32_t timeout_ms)
              * 使用唤醒时间作为开始时间，这样按下时长计算将是正确的 */
             button_press_start_time = wakeup_button_press_time;
             button_was_pressed = true;
-            long_press_reached = false;  // Not reached 2.5s yet | 尚未达到2.5秒
+            long_press_reached = false;    // Not reached 2.5s yet | 尚未达到2.5秒
             wakeup_button_press_time = 0;  // Clear wakeup time | 清除唤醒时间
             LOG_INF("Need to wait for remaining time: %lld ms (already waited %lld ms)",
                     BUTTON_LONG_PRESS_MS - elapsed_time, elapsed_time);
@@ -609,7 +607,7 @@ int mos_button_app_wait_for_power_on(uint32_t timeout_ms)
                         press_duration);
                     long_press_reached = true;
                     long_press_detected = true;  // Mark as detected, will exit loop | 标记为已检测，将退出循环
-                    break;  // Exit loop immediately | 立即退出循环
+                    break;                       // Exit loop immediately | 立即退出循环
                 }
             }
         }

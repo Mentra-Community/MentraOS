@@ -32,10 +32,10 @@
 #include "mos_dfu_progress.h"
 #include "mos_fuel_gauge.h"
 #include "mos_hinge_fold.h"
+#include "mos_imu.h"  // IMU component
 #include "mos_iqs7211e.h"
 #include "mos_jlink_usb_switch_app.h"  // J-Link/USB switch application logic
-#include "mos_lsm6dsv16x.h"  // LSM6DSV16X 6-axis IMU sensor
-#include "mos_npm1300_ldsw.h"  // NPM1300 LDSW (load switch) control
+#include "mos_npm1300_ldsw.h"          // NPM1300 LDSW (load switch) control
 #include "mos_npm1300_led.h"
 #include "mos_opt3006.h"  // OPT3006 ambient light sensor
 #include "mos_touch_app.h"
@@ -441,23 +441,12 @@ static void num_comp_reply(bool accept)
  * @return 0 on success, negative value on error
  */
 #define USER_NODE DT_PATH(zephyr_user)
-static const struct gpio_dt_spec imu_en = GPIO_DT_SPEC_GET(USER_NODE, imu_en_gpios);
 #if DT_NODE_HAS_PROP(USER_NODE, vad_power_gpios)
 static const struct gpio_dt_spec mic_power = GPIO_DT_SPEC_GET(USER_NODE, vad_power_gpios);
 #define MIC_POWER_GPIO_AVAILABLE 1
 #else
 #define MIC_POWER_GPIO_AVAILABLE 0
 #endif
-
-/**
- * @brief Control IMU enable line | 控制 IMU 使能引脚
- * @param enable true to drive IMU_EN high, false to drive it low | true 拉高使能，false 拉低关闭
- */
-void imu_en_control(bool enable)
-{
-    gpio_pin_set_dt(&imu_en, enable ? 1 : 0);
-    LOG_INF("imu_en %s (physical %s)", enable ? "ENABLED" : "DISABLED", enable ? "HIGH" : "LOW");
-}
 
 void mic_power_control(bool enable)
 {
@@ -487,8 +476,14 @@ void configure_default_low_pins(void)
 {
     /* Force specified IOs to default LOW | 强制指定IO拉低 */
     const uint32_t default_low_pins[] = {
-        NRF_GPIO_PIN_MAP(1, 12), NRF_GPIO_PIN_MAP(0, 27), NRF_GPIO_PIN_MAP(0, 24), NRF_GPIO_PIN_MAP(0, 26),
-        NRF_GPIO_PIN_MAP(0, 28), NRF_GPIO_PIN_MAP(0, 2),  NRF_GPIO_PIN_MAP(0, 3),  NRF_GPIO_PIN_MAP(0, 4),
+        NRF_GPIO_PIN_MAP(1, 12),
+        NRF_GPIO_PIN_MAP(0, 27),
+        NRF_GPIO_PIN_MAP(0, 24),
+        NRF_GPIO_PIN_MAP(0, 26),
+        NRF_GPIO_PIN_MAP(0, 28),
+        NRF_GPIO_PIN_MAP(0, 2),
+        NRF_GPIO_PIN_MAP(0, 3),
+        NRF_GPIO_PIN_MAP(0, 4),
     };
 
     for (int i = 0; i < ARRAY_SIZE(default_low_pins); i++)
@@ -501,23 +496,6 @@ void configure_default_low_pins(void)
 int init_user_gpio(void)
 {
     int err;
-    /* imu_en: configure as output and default drive LOW | imu_en：配置为输出并默认拉低 */
-    if (gpio_is_ready_dt(&imu_en))
-    {
-        err = gpio_pin_configure_dt(&imu_en, GPIO_OUTPUT_INACTIVE);
-        if (err != 0)
-        {
-            LOG_ERR("imu_en GPIO config error: %d", err);
-            return err;
-        }
-        imu_en_control(false);  // Ensure IMU_EN defaults LOW
-        LOG_INF("imu_en GPIO configured and driven LOW by default");
-    }
-    else
-    {
-        LOG_WRN("imu_en GPIO not ready, skipping");
-    }
-
     /* Mic power rail enable for both VAD and PDM paths */
     if (MIC_POWER_GPIO_AVAILABLE && gpio_is_ready_dt(&mic_power))
     {
@@ -663,7 +641,7 @@ int main(void)
 
     opt3006_initialize();
 
-    lsm6dsv16x_init();
+    mos_imu_init();
 
     // err = mos_hinge_fold_service_start(NULL);
     // if (err)

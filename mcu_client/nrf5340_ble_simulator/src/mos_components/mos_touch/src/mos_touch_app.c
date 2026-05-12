@@ -1,7 +1,7 @@
 #include "mos_touch_app.h"
-#include "mos_touch_iqs7211e_profile.h"
 
 #include <display/lcd/a6n.h>
+#include <errno.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/spinlock.h>
@@ -10,11 +10,14 @@
 #include <zephyr/sys/reboot.h>
 #include <zephyr/sys/util.h>
 
-#include "mos_gx8002.h"
-#include "mos_lsm6dsv16x.h"
 #include "mos_display.h"
+#include "mos_gx8002.h"
+#include "mos_i2s_slave.h"
+#include "mos_imu.h"
 #include "mos_npm1300_ldsw.h"
 #include "mos_opt3006.h"
+#include "mos_touch_iqs7211e_profile.h"
+#include "vad_interrupt_handler.h"
 
 LOG_MODULE_REGISTER(mos_touch_app, LOG_LEVEL_INF);
 
@@ -55,7 +58,6 @@ static void mos_touch_app_sleep_work_handler(struct k_work *work);
 static void mos_touch_app_reboot_work_handler(struct k_work *work);
 
 extern void configure_default_low_pins(void);
-extern void imu_en_control(bool enable);
 extern void mic_power_control(bool enable);
 
 typedef enum
@@ -89,7 +91,7 @@ static int mos_touch_app_activate_profile(void)
     const uint8_t fae_system_settings[] = {
         SYSTEM_CONTROL_0 | (uint8_t)MOS_TOUCH_IQS_SYSTEM_ACK_RESET_MASK | (uint8_t)MOS_TOUCH_IQS_SYSTEM_RE_ATI_MASK,
         SYSTEM_CONTROL_1,
-        /* Keep host-controlled active mode so the first tap after idle is not consumed as a wake-up touch. 
+        /* Keep host-controlled active mode so the first tap after idle is not consumed as a wake-up touch.
          保持主机控制的活跃模式，以便空闲后第一次点击不会被用作唤醒触摸。*/
         CONFIG_SETTINGS0 | (uint8_t)(IQS7211E_CONFIG_COMMS_END_CMD | IQS7211E_CONFIG_MANUAL_CONTROL),
         CONFIG_SETTINGS1 | (uint8_t)(IQS7211E_CONFIG_EVENT_MODE >> 8),
@@ -414,7 +416,7 @@ static void mos_touch_app_runtime_handler(uint16_t gestures, uint16_t info_flags
     const bool reati_frame = ((info_flags & MOS_TOUCH_IQS_INFO_RE_ATI_OCCURRED_BIT) != 0u);
     const bool ati_error_frame = ((info_flags & MOS_TOUCH_IQS_INFO_ATI_ERROR_BIT) != 0u);
     const bool reset_frame = ((info_flags & MOS_TOUCH_IQS_INFO_SHOW_RESET_BIT) != 0u);
-    const bool edge_saturated = (finger1_y >= MOS_TOUCH_EDGE_Y_MAX) || (rel_y == MOS_TOUCH_EDGE_REL_Y_GLITCH);// 检查Y轴边缘饱和 / Check for Y edge saturation
+    const bool edge_saturated = (finger1_y >= MOS_TOUCH_EDGE_Y_MAX) || (rel_y == MOS_TOUCH_EDGE_REL_Y_GLITCH);  // 检查Y轴边缘饱和 / Check for Y edge saturation
     const uint16_t chip_gesture_bits = gestures & mos_touch_app_chip_gesture_mask();
     const bool finger_sample_valid = (num_fingers > 0U) && !too_many_fingers && !edge_saturated && (finger1_x != 0xFFFFu) && (finger1_y != 0xFFFFu);
 
@@ -467,7 +469,7 @@ static void mos_touch_app_runtime_handler(uint16_t gestures, uint16_t info_flags
 
         const uint16_t new_latched_bits = latched_bits & (uint16_t)(~s_touch_prev_reported_gesture_bits);
         uint16_t new_pulse_bits = pulse_bits;
-        /* Pulse gestures may repeat later, but adjacent duplicate frames are suppressed briefly. 
+        /* Pulse gestures may repeat later, but adjacent duplicate frames are suppressed briefly.
         脉冲手势可能会在稍后重复，但相邻的重复帧会被短暂抑制*/
         if ((pulse_bits != 0U)
             && (pulse_bits == (s_touch_prev_reported_gesture_bits & (uint16_t)(~MOS_TOUCH_LATCHED_GESTURE_MASK)))
@@ -559,7 +561,7 @@ static void mos_touch_app_emit_cached_startup_gesture(void)
     }
 
     /* The profile activation cache sync can catch the user's first touch before RDY is armed.
-     * Emit that cached chip gesture instead of silently consuming it as a startup sync frame. 
+     * Emit that cached chip gesture instead of silently consuming it as a startup sync frame.
      * 配置文件激活缓存同步可以在 RDY 启动之前捕获用户的第一次触摸。发出缓存的芯片手势，而不是默默地将其用作启动同步帧 */
     LOG_INF("IQS startup cache contains chip gesture bits; emitting cached first touch");
     mos_touch_app_runtime_handler(gestures, info_flags, finger1_x, finger1_y, rel_x, rel_y, NULL);
@@ -629,28 +631,43 @@ static void mos_touch_app_sleep_work_handler(struct k_work *work)
         return;
     }
 
-    LOG_INF("Touch wakeup configured; powering down peripherals before System OFF");
+    /* i2c3 is shared by IQS7211E and OPT3006: only after all touch I2C above may we use/shutdown the bus and suspend TWIM. */
+    ret = opt3006_set_mode(OPT3006_MODE_SHUTDOWN);
+    if (ret != 0)
+    {
+        LOG_WRN("OPT3006 shutdown before i2c3 suspend failed: %d", ret);
+    }
+    else
+    {
+        LOG_INF("OPT3006 shutdown OK");
+    }
 
+    opt3006_prepare_for_sleep();
+    LOG_INF("i2c3 suspended after IQS sleep/wake config and OPT3006 shutdown");
+
+    LOG_INF("Powering down remaining peripherals before System OFF");
+
+    /* Match protobuf MicState OFF: stop nRF I2S, sync VAD handler, I2C-disable chip I2S, then cut VAD power. */
+    vad_interrupt_handler_set_enabled(false);
+    (void)mos_gx8002_vad_int_disable();
+    {
+        int stop_ret = gx8002_i2s_stop();
+        if (stop_ret == 0 || stop_ret == -EALREADY)
+        {
+            vad_interrupt_handler_notify_i2s_stopped();
+        }
+    }
+    (void)mos_gx8002_disable_i2s();
     (void)mos_gx8002_power_control(false);
+
     mic_power_control(false);
-    imu_en_control(false);
-    (void)lsm6dsv16x_sleep();
+    (void)mos_imu_sleep();
 
     set_display_onoff(false);
     a6n_power_off();
     a6n_io_off();
 
     configure_default_low_pins();
-
-    ret = opt3006_set_mode(OPT3006_MODE_SHUTDOWN);
-    if (ret != 0)
-    {
-        LOG_WRN("Failed to put OPT3006 into shutdown mode before System OFF: %d", ret);
-    }
-    else
-    {
-        LOG_INF("OPT3006 shutdown; i2c3 pins left released for IQS7211E touch wake");
-    }
 
     LOG_INF("Entering System OFF sleep mode; touch RDY will wake the device");
     k_sleep(K_MSEC(50));
