@@ -8,7 +8,6 @@ import BluetoothSdk, {
   type ButtonPressEvent,
   type CompatibleGlassesSearchStopEvent,
   type CoreStatus,
-  type DefaultDevice,
   type GlassesStatus,
   type LogEvent,
   type MentraDevice,
@@ -54,7 +53,7 @@ type StreamStartRequest = {
   type: 'start_stream';
 };
 
-type PersistedDefaultDevice = DefaultDevice & {
+type PersistedDefaultDevice = MentraDevice & {
   savedAt: number;
   version: 1;
 };
@@ -83,7 +82,7 @@ export type MentraSdkState = {
   activeAction: string | null;
   bluetoothStatus: Partial<CoreStatus> & Record<string, unknown>;
   cameraStatus: string;
-  defaultDevice: DefaultDevice | null;
+  defaultDevice: MentraDevice | null;
   discoveredDevices: MentraDevice[];
   events: SdkConsoleEvent[];
   galleryModeAuto: boolean;
@@ -190,7 +189,7 @@ export function useMentraSdk(): MentraSdkModel {
   const [bluetoothStatus, setBluetoothStatus] = useState<
     Partial<CoreStatus> & Record<string, unknown>
   >(() => BluetoothSdk.getCoreStatus() as Partial<CoreStatus> & Record<string, unknown>);
-  const [defaultDevice, setDefaultDevice] = useState<DefaultDevice | null>(
+  const [defaultDevice, setDefaultDevice] = useState<MentraDevice | null>(
     () => defaultDeviceFromStatus(BluetoothSdk.getCoreStatus() as unknown as Record<string, unknown>),
   );
   const [selectedDiscoveredDevice, setSelectedDiscoveredDevice] =
@@ -1607,7 +1606,7 @@ async function loadPersistedDefaultDevice() {
   return parseDefaultDevice(JSON.parse(await file.text()));
 }
 
-async function savePersistedDefaultDevice(device: DefaultDevice | null) {
+async function savePersistedDefaultDevice(device: MentraDevice | null) {
   const file = new File(Paths.document, DEFAULT_DEVICE_FILE);
   if (!device) {
     if (file.exists) {
@@ -1624,7 +1623,7 @@ async function savePersistedDefaultDevice(device: DefaultDevice | null) {
   file.write(JSON.stringify(persisted, null, 2));
 }
 
-function parseDefaultDevice(value: unknown): DefaultDevice | null {
+function parseDefaultDevice(value: unknown): MentraDevice | null {
   if (!value || typeof value !== 'object') {
     return null;
   }
@@ -1643,7 +1642,7 @@ function parseDefaultDevice(value: unknown): DefaultDevice | null {
   };
 }
 
-function defaultDeviceStatus(device: DefaultDevice | null): Record<string, string> {
+function defaultDeviceStatus(device: MentraDevice | null): Record<string, string> {
   if (!device) {
     return clearedDefaultDeviceStatus();
   }
@@ -1662,7 +1661,7 @@ function clearedDefaultDeviceStatus(): Record<string, string> {
   };
 }
 
-function defaultDeviceFromStatus(values: Record<string, unknown>): DefaultDevice | null {
+function defaultDeviceFromStatus(values: Record<string, unknown>): MentraDevice | null {
   const model = stringValue(values, 'default_wearable');
   const name = stringValue(values, 'device_name');
   if (!model || !name) {
