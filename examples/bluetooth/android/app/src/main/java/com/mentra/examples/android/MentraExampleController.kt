@@ -127,7 +127,7 @@ const val MENTRA_LIVE_DEFAULT_HOTSPOT_PASSWORD = "00001111"
 data class MentraExampleState(
     val activeAction: String? = null,
     val bluetoothStatus: MentraBluetoothStatus? = null,
-    val cameraStatus: String = "Camera: replace <computer-ip> in the Photo upload URL",
+    val cameraStatus: String = "Camera: phone receiver will start before capture",
     val discoveredDevices: List<MentraDiscoveredDevice> = emptyList(),
     val selectedDiscoveredDevice: MentraDiscoveredDevice? = null,
     val events: List<ExampleEvent> = listOf(exampleEvent("LIVE", "SDK ready. Scan to discover glasses.")),
@@ -149,7 +149,7 @@ data class MentraExampleState(
     val micRecording: Boolean = false,
     val pcmBytes: Int = 0,
     val pcmFrames: Int = 0,
-    val photoDestination: PhotoDestination = PhotoDestination.MACBOOK_SERVER,
+    val photoDestination: PhotoDestination = PhotoDestination.THIS_PHONE,
     val photoPreviewUrl: String? = null,
     val photoCompression: String = "medium",
     val photoFlash: Boolean = false,
@@ -358,7 +358,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
         if (destination == PhotoDestination.MACBOOK_SERVER) {
             stopPhonePhotoServer()
-            state = state.copy(cameraStatus = "Camera: replace <computer-ip> in the Photo upload URL")
+            state = state.copy(cameraStatus = "Camera: enter a Photo upload URL")
         } else {
             state = state.copy(cameraStatus = "Camera: phone receiver will start before capture")
         }
@@ -1934,10 +1934,10 @@ fun webhookHealthUrl(uploadUrlText: String): String {
 fun photoUploadValidationMessage(uploadUrlText: String): String? {
     val value = uploadUrlText.trim()
     if (value.isEmpty()) {
-        return "Paste the Photo upload URL printed by local demo cloud."
+        return "Enter the cloud server Photo upload URL."
     }
     if (value.contains("<computer-ip>")) {
-        return "Replace <computer-ip> with the IP printed by local demo cloud."
+        return "Replace <computer-ip> with the cloud server IP."
     }
     return null
 }

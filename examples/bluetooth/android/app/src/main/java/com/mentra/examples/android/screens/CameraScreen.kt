@@ -17,6 +17,7 @@ import androidx.compose.material.icons.outlined.Camera
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -26,7 +27,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
@@ -49,9 +49,10 @@ import com.mentra.examples.android.ui.scrollBottomPadding
 fun CameraScreen(controller: MentraExampleController) {
     val state = controller.state
     val connected = isGlassesConnected(state.glassesStatus)
-    val directPhone = state.photoDestination == PhotoDestination.THIS_PHONE
+    val cloudServerEnabled = state.photoDestination == PhotoDestination.MACBOOK_SERVER
+    val directPhone = !cloudServerEnabled
     val cameraStatusFailed = isCameraStatusFailure(state.cameraStatus)
-    val setupHint = if (directPhone) null else localCameraSetupHint(state.webhookUrl, state.cameraStatus)
+    val setupHint = if (cloudServerEnabled) localCameraSetupHint(state.webhookUrl, state.cameraStatus) else null
     val sdkCall = cameraSdkCall(state.photoSize, state.photoCompression, state.photoFlash)
     val clipboardManager = LocalClipboardManager.current
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
@@ -107,10 +108,8 @@ fun CameraScreen(controller: MentraExampleController) {
                             "Connect glasses first"
                         } else if (state.activeAction == "Capture & upload") {
                             "Capturing..."
-                        } else if (directPhone) {
-                            "Capture to phone"
                         } else {
-                            "Capture & upload"
+                            "Capture photo"
                         },
                         color = Color.White,
                         fontSize = 15.sp,
@@ -172,8 +171,8 @@ fun CameraScreen(controller: MentraExampleController) {
                     Text(
                         when {
                             state.photoPreviewUrl != null && directPhone -> "Preview loaded from phone receiver"
-                            state.photoPreviewUrl != null -> "Preview loaded from local webhook"
-                            directPhone && state.phonePhotoServerRunning -> state.phonePhotoUploadUrl
+                            state.photoPreviewUrl != null -> "Preview loaded from cloud server"
+                            directPhone && state.phonePhotoServerRunning -> "Phone receiver ready"
                             directPhone -> "Phone receiver starts on capture"
                             else -> "Waiting for capture"
                         },
@@ -193,7 +192,7 @@ fun CameraScreen(controller: MentraExampleController) {
         ) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Eyebrow("UPLOAD TO")
-                if (!directPhone) {
+                if (cloudServerEnabled) {
                     Text(
                         "test webhook",
                         color = AppColor.greenAccent,
@@ -204,34 +203,21 @@ fun CameraScreen(controller: MentraExampleController) {
                 }
             }
             Spacer(Modifier.height(12.dp))
-            CameraOptionGroup("send to") {
-                OptionChip("MacBook", state.photoDestination == PhotoDestination.MACBOOK_SERVER) {
-                    controller.setPhotoDestination(PhotoDestination.MACBOOK_SERVER)
-                }
-                OptionChip("This phone", directPhone) {
-                    controller.setPhotoDestination(PhotoDestination.THIS_PHONE)
-                }
-            }
+            CloudServerToggle(
+                enabled = cloudServerEnabled,
+                onEnabledChange = { enabled ->
+                    controller.setPhotoDestination(if (enabled) PhotoDestination.MACBOOK_SERVER else PhotoDestination.THIS_PHONE)
+                },
+            )
             Spacer(Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(AppColor.ink.copy(alpha = 0.04f)).padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Text("POST", color = AppColor.greenAccent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
-                Box(modifier = Modifier.size(width = 1.dp, height = 14.dp).background(AppColor.ink.copy(alpha = 0.12f)))
-                if (directPhone) {
-                    Text(
-                        state.phonePhotoUploadUrl,
-                        color = AppColor.ink,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(if (state.phonePhotoServerRunning) AppColor.greenAccent else AppColor.muted))
-                } else {
+            if (cloudServerEnabled) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(AppColor.ink.copy(alpha = 0.04f)).padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("POST", color = AppColor.greenAccent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
+                    Box(modifier = Modifier.size(width = 1.dp, height = 14.dp).background(AppColor.ink.copy(alpha = 0.12f)))
                     BasicTextField(
                         value = state.webhookUrl,
                         onValueChange = controller::setWebhookUrl,
@@ -246,8 +232,24 @@ fun CameraScreen(controller: MentraExampleController) {
                         }
                     )
                 }
+                Spacer(Modifier.height(12.dp))
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(AppColor.ink.copy(alpha = 0.04f)).padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(modifier = Modifier.size(7.dp).clip(CircleShape).background(if (state.phonePhotoServerRunning) AppColor.greenAccent else AppColor.muted))
+                    Text(
+                        if (state.phonePhotoServerRunning) "Phone receiver ready" else "Phone receiver starts on capture",
+                        color = AppColor.ink,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
             }
-            Spacer(Modifier.height(12.dp))
             if (setupHint != null) {
                 Text(
                     setupHint,
@@ -312,7 +314,28 @@ private fun localCameraSetupHint(webhookUrl: String, status: String): String? {
     if (!needsSetup) {
         return null
     }
-    return "Local setup: run python3 examples/local-demo-cloud/server.py from the Partner Kit repo root, then paste the printed Photo upload URL here. It looks like http://<computer-ip>:8787/upload."
+    return "Cloud server setup: run python3 examples/local-demo-cloud/server.py from the Partner Kit repo root, then paste the printed Photo upload URL here. It looks like http://<computer-ip>:8787/upload."
+}
+
+@Composable
+private fun CloudServerToggle(enabled: Boolean, onEnabledChange: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(AppColor.ink.copy(alpha = 0.04f))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            "Use cloud server",
+            color = AppColor.ink,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Switch(checked = enabled, onCheckedChange = onEnabledChange)
+    }
 }
 
 @Composable

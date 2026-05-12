@@ -68,11 +68,11 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var events: [ExampleEvent] = [ExampleEvent.make(tag: "LIVE", text: "SDK ready. Scan to discover glasses.")]
     @Published private(set) var activeAction: String?
     @Published private(set) var lastAction = "No actions yet."
-    @Published private(set) var cameraStatus = "Camera: replace <computer-ip> in the Photo upload URL"
+    @Published private(set) var cameraStatus = "Camera: phone receiver will start before capture"
     @Published var webhookUrl = defaultPhotoUploadUrl
     @Published private(set) var photoPreviewUrl: URL?
     @Published private(set) var photoPreviewImage: UIImage?
-    @Published private(set) var photoDestination: PhotoDestination = .macBookServer
+    @Published private(set) var photoDestination: PhotoDestination = .thisPhone
     @Published private(set) var photoSize: MentraPhotoSize = .medium
     @Published private(set) var photoCompression: MentraPhotoCompression = .medium
     @Published private(set) var photoFlash = false
@@ -281,7 +281,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         guard photoDestination != destination else { return }
         if destination == .macBookServer {
             stopPhonePhotoServer()
-            cameraStatus = "Camera: replace <computer-ip> in the Photo upload URL"
+            cameraStatus = "Camera: enter a Photo upload URL"
         } else {
             cameraStatus = "Camera: phone receiver will start before capture"
         }
@@ -1795,10 +1795,10 @@ func webhookHealthUrl(_ uploadUrlText: String) -> URL? {
 func photoUploadValidationMessage(_ uploadUrlText: String) -> String? {
     let value = uploadUrlText.trimmingCharacters(in: .whitespacesAndNewlines)
     if value.isEmpty {
-        return "Paste the Photo upload URL printed by local demo cloud."
+        return "Enter the cloud server Photo upload URL."
     }
     if value.contains("<computer-ip>") {
-        return "Replace <computer-ip> with the IP printed by local demo cloud."
+        return "Replace <computer-ip> with the cloud server IP."
     }
     return nil
 }

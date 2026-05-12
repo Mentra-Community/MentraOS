@@ -25,8 +25,12 @@ struct CameraScreen: View {
     @ObservedObject var model: BluetoothViewModel
     @Environment(\.keyboardVisible) private var keyboardVisible
     @FocusState private var webhookUrlFocused: Bool
+    private var cloudServerEnabled: Bool {
+        model.photoDestination == .macBookServer
+    }
+
     private var directPhone: Bool {
-        model.photoDestination == .thisPhone
+        !cloudServerEnabled
     }
 
     private var cameraStatusFailed: Bool {
@@ -103,7 +107,7 @@ struct CameraScreen: View {
             } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "camera").foregroundColor(.white).font(.system(size: 15, weight: .bold))
-                    Text(!model.glassesConnected ? "Connect glasses first" : model.activeAction == "Capture & upload" ? "Capturing..." : directPhone ? "Capture to phone" : "Capture & upload").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
+                    Text(!model.glassesConnected ? "Connect glasses first" : model.activeAction == "Capture & upload" ? "Capturing..." : "Capture photo").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity).padding(.vertical, 16)
                 .background(LinearGradient(colors: [Color(hex: 0x26473A), Color(hex: 0x1F3A2A)], startPoint: .top, endPoint: .bottom))
@@ -153,7 +157,7 @@ struct CameraScreen: View {
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(model.cameraStatus).font(.system(size: 11, weight: .semibold)).foregroundColor(AppColor.ink)
-                    Text(model.photoPreviewUrl == nil && model.photoPreviewImage == nil ? "Waiting for capture" : directPhone ? "Preview loaded from phone receiver" : "Preview loaded from local webhook").font(.system(size: 10, weight: .medium)).foregroundColor(AppColor.muted)
+                    Text(model.photoPreviewUrl == nil && model.photoPreviewImage == nil ? "Waiting for capture" : directPhone ? "Preview loaded from phone receiver" : "Preview loaded from cloud server").font(.system(size: 10, weight: .medium)).foregroundColor(AppColor.muted)
                 }
             }
             .padding(.vertical, 12).padding(.horizontal, 16)
@@ -168,7 +172,7 @@ struct CameraScreen: View {
             HStack {
                 Text("UPLOAD TO").font(.system(size: 10, weight: .semibold)).tracking(1.2).foregroundColor(AppColor.muted)
                 Spacer()
-                if !directPhone {
+                if cloudServerEnabled {
                     Button {
                         model.testWebhook()
                     } label: {
@@ -179,28 +183,27 @@ struct CameraScreen: View {
             }
             .padding(.bottom, 12)
 
-            HStack(spacing: 8) {
-                CameraOptionChip(value: "MacBook", highlight: model.photoDestination == .macBookServer)
-                    .onTapGesture { model.setPhotoDestination(.macBookServer) }
-                CameraOptionChip(value: "This phone", highlight: directPhone)
-                    .onTapGesture { model.setPhotoDestination(.thisPhone) }
+            Toggle(isOn: Binding(
+                get: { cloudServerEnabled },
+                set: { enabled in
+                    model.setPhotoDestination(enabled ? .macBookServer : .thisPhone)
+                }
+            )) {
+                Text("Use cloud server")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(AppColor.ink)
             }
+            .toggleStyle(SwitchToggleStyle(tint: AppColor.greenAccent))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(AppColor.ink.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
             .padding(.bottom, 12)
 
-            HStack(spacing: 10) {
-                Text("POST").font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundColor(AppColor.greenAccent)
-                Rectangle().fill(AppColor.ink.opacity(0.12)).frame(width: 1, height: 14)
-                if directPhone {
-                    Text(model.phonePhotoUploadUrl)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(AppColor.ink)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer()
-                    Circle()
-                        .fill(model.phonePhotoServerRunning ? AppColor.greenAccent : AppColor.muted.opacity(0.5))
-                        .frame(width: 8, height: 8)
-                } else {
+            if cloudServerEnabled {
+                HStack(spacing: 10) {
+                    Text("POST").font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundColor(AppColor.greenAccent)
+                    Rectangle().fill(AppColor.ink.opacity(0.12)).frame(width: 1, height: 14)
                     TextField("Photo upload URL", text: $model.webhookUrl)
                         .focused($webhookUrlFocused)
                         .textInputAutocapitalization(.never)
@@ -211,10 +214,23 @@ struct CameraScreen: View {
                         .foregroundColor(AppColor.ink)
                     Spacer()
                 }
+                .padding(.horizontal, 14).padding(.vertical, 12)
+                .background(AppColor.ink.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 12))
+                .padding(.bottom, 12)
+            } else {
+                HStack(spacing: 10) {
+                    Circle()
+                        .fill(model.phonePhotoServerRunning ? AppColor.greenAccent : AppColor.muted.opacity(0.5))
+                        .frame(width: 8, height: 8)
+                    Text(model.phonePhotoServerRunning ? "Phone receiver ready" : "Phone receiver starts on capture")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(AppColor.ink)
+                    Spacer()
+                }
+                .padding(.horizontal, 14).padding(.vertical, 12)
+                .background(AppColor.ink.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 12))
+                .padding(.bottom, 12)
             }
-            .padding(.horizontal, 14).padding(.vertical, 12)
-            .background(AppColor.ink.opacity(0.04)).clipShape(RoundedRectangle(cornerRadius: 12))
-            .padding(.bottom, 12)
 
             if let setupHint {
                 Text(setupHint)
@@ -281,7 +297,7 @@ private func localCameraSetupHint(webhookUrl: String, status: String) -> String?
     if !needsSetup {
         return nil
     }
-    return "Local setup: run python3 examples/local-demo-cloud/server.py from the Partner Kit repo root, then paste the printed Photo upload URL here. It looks like http://<computer-ip>:8787/upload."
+    return "Cloud server setup: run python3 examples/local-demo-cloud/server.py from the Partner Kit repo root, then paste the printed Photo upload URL here. It looks like http://<computer-ip>:8787/upload."
 }
 
 struct CameraOptionGroup<Content: View>: View {
