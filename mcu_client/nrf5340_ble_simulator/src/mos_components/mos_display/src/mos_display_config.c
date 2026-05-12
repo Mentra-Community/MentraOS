@@ -1,10 +1,13 @@
 #include "mos_display_config.h"
 
+#include <stdint.h>
 #include <string.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/display.h>
 #include <zephyr/logging/log.h>
+
+#include "mos_display_settings.h"
 
 #if defined(CONFIG_LVGL)
 #include "mos_binfont_lvgl.h"
@@ -198,7 +201,54 @@ int display_config_init(void)
     }
 
     config_initialized = true;
+
+    /* Apply any persisted display height before first paint, so the welcome scene
+     * comes up with the user's previous geometry. Idempotent re-scan in case the
+     * LVGL thread races main()'s settings_load(). */
+    (void)mos_display_settings_load();
+    uint8_t persisted_height;
+    if (mos_display_settings_get_height(&persisted_height))
+    {
+        current_config.layout.margin_top = display_compute_margin_top_from_height(persisted_height);
+        LOG_INF("Applied persisted display height %u -> margin_top %u",
+                persisted_height, current_config.layout.margin_top);
+    }
+
     return 0;
+}
+
+uint16_t display_compute_margin_top_from_height(uint16_t height)
+{
+    if (height < 1u)
+    {
+        height = 1u;
+    }
+    if (height > 8u)
+    {
+        height = 8u;
+    }
+
+    uint32_t total_available = (uint32_t)current_config.height -
+                               (uint32_t)current_config.layout.usable_height;
+    /* height 8 = top (zero margin), height 1 = bottom (max margin) */
+    float mt_f = (float)total_available * ((float)(8u - height) / 7.0f);
+    uint32_t mt = (uint32_t)(mt_f + 0.5f);
+
+    if (mt > UINT16_MAX)
+    {
+        mt = UINT16_MAX;
+    }
+
+    /* Keep container fully visible: margin_top + usable_height <= screen height */
+    uint32_t max_margin = (current_config.height > current_config.layout.usable_height)
+                              ? (uint32_t)(current_config.height - current_config.layout.usable_height)
+                              : 0u;
+    if (mt > max_margin)
+    {
+        mt = max_margin;
+    }
+
+    return (uint16_t)mt;
 }
 
 const display_config_t *display_get_config(void)
