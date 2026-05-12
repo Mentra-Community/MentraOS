@@ -44,6 +44,7 @@ import com.mentra.examples.android.hasSavedConnectionTarget
 import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.modelLabel
 import com.mentra.examples.android.rssiLabel
+import com.mentra.examples.android.rssiUpdatedLabel
 import com.mentra.examples.android.savedConnectionTargetDetail
 import com.mentra.examples.android.savedConnectionTargetName
 import com.mentra.examples.android.supportsDisplay
@@ -115,7 +116,7 @@ fun DeviceScreen(controller: MentraExampleController) {
         Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             StatTile("FIRMWARE", firmwareLabel(glasses), firmwareSubLabel(glasses), AppColor.greenAccent, Modifier.weight(1f))
             StatTile("WI-FI", wifiLabel(glasses), glasses?.wifi?.localIp?.takeIf { it.isNotBlank() } ?: "unknown", AppColor.muted, Modifier.weight(1f), bold = true)
-            StatTile("RSSI", rssiLabel(glasses), "signal", AppColor.greenAccent, Modifier.weight(1f), bold = true)
+            StatTile("RSSI", rssiLabel(glasses), rssiUpdatedLabel(glasses), AppColor.greenAccent, Modifier.weight(1f), bold = true)
         }
 
         // Quick actions

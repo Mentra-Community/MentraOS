@@ -2221,6 +2221,7 @@ fun summarize(status: MentraGlassesStatusUpdate): String =
         status.wifi?.let { "wifi: ${if (it.connected) it.ssid.ifBlank { "connected" } else "disconnected"}" },
         status.hotspotEnabled?.let { "hotspotEnabled: $it" },
         status.signalStrength?.let { "signalStrength: $it" },
+        status.signalStrengthUpdatedAt?.let { "RSSI updated: ${formatTime(it)}" },
     ).take(3).joinToString(", ").ifBlank { "empty update" }
 
 fun summarize(status: MentraBluetoothStatusUpdate): String =
@@ -2241,6 +2242,7 @@ fun MentraGlassesStatus.applyUpdate(update: MentraGlassesStatusUpdate): MentraGl
         connectionState = update.connectionState ?: connectionState,
         btcConnected = update.btcConnected ?: btcConnected,
         signalStrength = update.signalStrength ?: signalStrength,
+        signalStrengthUpdatedAt = update.signalStrengthUpdatedAt ?: signalStrengthUpdatedAt,
         deviceModel = update.deviceModel ?: deviceModel,
         androidVersion = update.androidVersion ?: androidVersion,
         firmwareVersion = update.firmwareVersion ?: firmwareVersion,
@@ -2456,6 +2458,12 @@ fun firmwareSubLabel(status: MentraGlassesStatus?): String {
 
 fun rssiLabel(status: MentraGlassesStatus?): String =
     status?.signalStrength?.takeIf { it != -1 }?.let { "$it dBm" } ?: "Unknown"
+
+fun rssiUpdatedLabel(status: MentraGlassesStatus?): String =
+    status?.signalStrengthUpdatedAt?.takeIf { it > 0 }?.let { "updated ${formatTime(it)}" } ?: "signal"
+
+private fun formatTime(timestampMs: Long): String =
+    SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(timestampMs))
 
 fun bluetoothSearchLabel(status: MentraBluetoothStatus?): String {
     val searching = status?.searching == true

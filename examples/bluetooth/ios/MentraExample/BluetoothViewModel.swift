@@ -1752,6 +1752,12 @@ func rssiLabel(_ status: MentraGlassesStatus?) -> String {
     return "\(signal) dBm"
 }
 
+func rssiUpdatedLabel(_ status: MentraGlassesStatus?) -> String {
+    guard let updatedAt = status?.signalStrengthUpdatedAt, updatedAt > 0 else { return "signal" }
+    let date = Date(timeIntervalSince1970: TimeInterval(updatedAt) / 1000)
+    return "updated \(DateFormatter.exampleEventTime.string(from: date))"
+}
+
 func bluetoothSearchLabel(_ status: MentraBluetoothStatus?) -> String {
     let count = status?.searchResults.count ?? 0
     return "\(status?.searching == true ? "Scanning" : "Idle") · \(count) result\(count == 1 ? "" : "s")"
@@ -1801,6 +1807,7 @@ func summarize(_ status: MentraGlassesStatusUpdate) -> String {
         status.wifi.map { "wifi: \($0.connected ? ($0.ssid.isEmpty ? "connected" : $0.ssid) : "disconnected")" },
         status.hotspotEnabled.map { "hotspotEnabled: \($0)" },
         status.signalStrength.map { "signalStrength: \($0)" },
+        status.signalStrengthUpdatedAt.map { "RSSI updated: \(DateFormatter.exampleEventTime.string(from: Date(timeIntervalSince1970: TimeInterval($0) / 1000)))" },
     ].compactMap { $0 }.prefix(3)
     return parts.isEmpty ? "empty update" : parts.joined(separator: ", ")
 }
