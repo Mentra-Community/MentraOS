@@ -157,6 +157,7 @@ function setPlatformOS(os: typeof Platform.OS) {
 
 describe("pairing scan screen", () => {
   const replace = jest.fn()
+  const push = jest.fn()
   const pushUnder = jest.fn()
   const goBack = jest.fn()
 
@@ -167,7 +168,7 @@ describe("pairing scan screen", () => {
     useGlassesStore.getState().reset()
     useSettingsStore.getState().resetAllSettingsLocally()
     ;(useLocalSearchParams as jest.Mock).mockReturnValue({deviceModel: "Mentra Live"})
-    ;(useNavigationStore.getState as jest.Mock).mockReturnValue({replace, goBack})
+    ;(useNavigationStore.getState as jest.Mock).mockReturnValue({replace, push, goBack})
     ;(usePushUnder as jest.Mock).mockReturnValue(pushUnder)
     ;(requestFeaturePermissions as jest.Mock).mockResolvedValue(true)
     setPlatformOS("ios")
@@ -180,15 +181,15 @@ describe("pairing scan screen", () => {
   it("starts a compatible-device search and routes Mentra Live through btclassic on iOS", async () => {
     useCoreStore.setState({
       searchResults: [
-        {deviceModel: "Mentra Live", deviceName: "MENTRA_LIVE_BLE_001", deviceAddress: "a"},
-        {deviceModel: "Even Realities G1", deviceName: "OTHER", deviceAddress: "b"},
+        {id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"},
+        {id: "b", model: "Even Realities G1", name: "OTHER", address: "b"},
       ],
     })
 
     const {getByText} = render(<SelectGlassesBluetoothScreen />)
 
     await waitFor(() => {
-      expect(CoreModule.findCompatibleDevices).toHaveBeenCalledWith("Mentra Live")
+      expect(CoreModule.startScan).toHaveBeenCalledWith({model: "Mentra Live"})
     })
 
     fireEvent.press(getByText("001"))
@@ -201,6 +202,12 @@ describe("pairing scan screen", () => {
       })
     })
 
+    expect(CoreModule.setDefaultDevice).toHaveBeenCalledWith({
+      id: "a",
+      model: "Mentra Live",
+      name: "MENTRA_LIVE_BLE_001",
+      address: "a",
+    })
     expect(useSettingsStore.getState().getSetting(SETTINGS.device_name.key)).toBe("MENTRA_LIVE_BLE_001")
   })
 
@@ -208,17 +215,16 @@ describe("pairing scan screen", () => {
     setPlatformOS("android")
     useGlassesStore.getState().setGlassesInfo({btcConnected: false})
     useCoreStore.setState({
-      searchResults: [{deviceModel: "Mentra Live", deviceName: "NOTREQUIREDSKIP", deviceAddress: "skip"}],
+      searchResults: [{id: "skip", model: "Mentra Live", name: "NOTREQUIREDSKIP", address: "skip"}],
     })
 
     render(<SelectGlassesBluetoothScreen />)
 
     await waitFor(() => {
-      expect(replace).toHaveBeenCalledWith("/pairing/loading", {
+      expect(push).toHaveBeenCalledWith("/pairing/loading", {
         deviceModel: "Mentra Live",
         deviceName: "NOTREQUIREDSKIP",
       })
-      expect(CoreModule.connectByName).not.toHaveBeenCalled()
     })
   })
 })

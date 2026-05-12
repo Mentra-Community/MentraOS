@@ -459,17 +459,6 @@ export interface ConnectOptions {
   cancelExistingConnectionAttempt?: boolean
 }
 
-export interface DeviceSearchResult extends MentraDevice {
-  /** Deprecated: use model. Present in native search payloads for existing MentraOS pairing screens. */
-  deviceModel: string
-  /** Deprecated: use name. Present in native search payloads for existing MentraOS pairing screens. */
-  deviceName: string
-  /** Deprecated: use address. Present in native search payloads for existing MentraOS pairing screens. */
-  deviceAddress?: string
-}
-
-export interface DefaultDevice extends MentraDevice {}
-
 export interface WifiSearchResult {
   ssid: string
   requiresPassword: boolean
@@ -488,7 +477,7 @@ export interface CoreStatus {
   systemMicUnavailable: boolean
   micRanking: MicRanking[]
   currentMic: MicRanking | null
-  searchResults: DeviceSearchResult[]
+  searchResults: MentraDevice[]
   wifiScanResults: WifiSearchResult[]
   lastLog: string[]
   otherBtConnected: boolean

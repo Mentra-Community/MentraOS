@@ -206,16 +206,13 @@ public class Bridge private constructor() {
                         put("id", id)
                         put("model", deviceModel)
                         put("name", deviceName)
-                        put("deviceModel", deviceModel)
-                        put("deviceName", deviceName)
                         if (deviceAddress.isNotBlank()) {
                             put("address", deviceAddress)
-                            put("deviceAddress", deviceAddress)
                         }
                         rssi?.let { put("rssi", it) }
                     }
             val allResults = searchResults + newResult
-            val uniqueResults = allResults.associateBy { it["id"] ?: it["deviceName"] }.values.toList()
+            val uniqueResults = allResults.associateBy { it["id"] ?: it["name"] }.values.toList()
             GlassesStore.set("core", "searchResults", uniqueResults)
         }
 

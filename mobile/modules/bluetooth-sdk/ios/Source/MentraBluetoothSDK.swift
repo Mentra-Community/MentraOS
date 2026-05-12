@@ -174,22 +174,30 @@ public struct MentraDevice: Identifiable, Equatable, CustomStringConvertible {
             "id": id,
             "model": model.deviceType,
             "name": name,
-            "deviceModel": model.deviceType,
-            "deviceName": name,
         ]
         if let identifier, !identifier.isEmpty {
             values["address"] = identifier
-            values["deviceAddress"] = identifier
         }
         if let rssi {
             values["rssi"] = rssi
         }
         return values
     }
-}
 
-public typealias MentraDiscoveredDevice = MentraDevice
-public typealias MentraPairedDevice = MentraDevice
+    init?(values: [String: Any]) {
+        guard let model = stringValue(values, "model", "deviceModel", "device_model") else { return nil }
+        guard let name = stringValue(values, "name", "deviceName", "device_name") else { return nil }
+        let identifier = stringValue(values, "address", "deviceAddress", "device_address").flatMap { $0.isEmpty ? nil : $0 }
+        let rssi = intValue(values["rssi"]) ?? intValue(values["signalStrength"]) ?? intValue(values["signal_strength"])
+        self.init(
+            model: MentraDeviceModel.fromDeviceType(model),
+            name: name,
+            identifier: identifier,
+            rssi: rssi,
+            id: stringValue(values, "id")
+        )
+    }
+}
 
 public struct MentraConnectOptions {
     public let saveAsDefault: Bool
@@ -198,70 +206,6 @@ public struct MentraConnectOptions {
     public init(saveAsDefault: Bool = true, cancelExistingConnectionAttempt: Bool = true) {
         self.saveAsDefault = saveAsDefault
         self.cancelExistingConnectionAttempt = cancelExistingConnectionAttempt
-    }
-}
-
-public struct MentraDeviceSearchResult: CustomStringConvertible {
-    public let id: String
-    public let model: String
-    public let name: String
-    public let address: String
-    public let rssi: Int?
-
-    public var deviceModel: String { model }
-    public var deviceName: String { name }
-    public var deviceAddress: String { address }
-
-    public init(model: String, name: String, address: String = "", rssi: Int? = nil, id: String? = nil) {
-        self.model = model
-        self.name = name
-        self.address = address
-        self.rssi = rssi
-        self.id = id ?? (address.isEmpty ? "\(model):\(name)" : address)
-    }
-
-    public init(deviceModel: String, deviceName: String, deviceAddress: String = "") {
-        self.init(model: deviceModel, name: deviceName, address: deviceAddress)
-    }
-
-    init(values: [String: Any]) {
-        model = stringValue(values, "model", "deviceModel", "device_model") ?? ""
-        name = stringValue(values, "name", "deviceName", "device_name") ?? ""
-        address = stringValue(values, "address", "deviceAddress", "device_address") ?? ""
-        rssi = intValue(values["rssi"]) ?? intValue(values["signalStrength"]) ?? intValue(values["signal_strength"])
-        id = stringValue(values, "id") ?? (address.isEmpty ? "\(model):\(name)" : address)
-    }
-
-    var dictionary: [String: Any] {
-        var values: [String: Any] = [
-            "id": id,
-            "model": model,
-            "name": name,
-            "deviceModel": model,
-            "deviceName": name,
-        ]
-        if !address.isEmpty {
-            values["address"] = address
-            values["deviceAddress"] = address
-        }
-        if let rssi {
-            values["rssi"] = rssi
-        }
-        return values
-    }
-
-    public var device: MentraDevice {
-        MentraDevice(
-            model: MentraDeviceModel.fromDeviceType(model),
-            name: name,
-            identifier: address.isEmpty ? nil : address,
-            rssi: rssi,
-            id: id
-        )
-    }
-
-    public var description: String {
-        "MentraDeviceSearchResult(model: \(model), name: \(name))"
     }
 }
 
@@ -404,14 +348,22 @@ public struct MentraBluetoothStatus: CustomStringConvertible {
     let values: [String: Any]
 
     init(values: [String: Any]) {
-        self.values = values
+        self.values = Self.normalized(values)
+    }
+
+    private static func normalized(_ values: [String: Any]) -> [String: Any] {
+        var normalizedValues = values
+        if let searchResults = values["searchResults"] as? [[String: Any]] {
+            normalizedValues["searchResults"] = searchResults.compactMap { MentraDevice(values: $0)?.dictionary }
+        }
+        return normalizedValues
     }
 
     public func applying(_ update: MentraBluetoothStatusUpdate) -> MentraBluetoothStatus {
         MentraBluetoothStatus(values: values.merging(update.values) { _, new in new })
     }
 
-    public func withDefaultDevice(_ device: MentraPairedDevice?) -> MentraBluetoothStatus {
+    public func withDefaultDevice(_ device: MentraDevice?) -> MentraBluetoothStatus {
         applying(MentraBluetoothStatusUpdate(values: [
             "default_wearable": device?.model.deviceType ?? "",
             "device_name": device?.name ?? "",
@@ -425,8 +377,8 @@ public struct MentraBluetoothStatus: CustomStringConvertible {
     public var micEnabled: Bool { boolValue(values, "micEnabled") ?? false }
     public var currentMic: String { stringValue(values, "currentMic") ?? "" }
     public var micRanking: [String] { stringListValue(values, "micRanking") }
-    public var searchResults: [MentraDeviceSearchResult] {
-        dictionaryListValue(values, "searchResults").map(MentraDeviceSearchResult.init(values:))
+    public var searchResults: [MentraDevice] {
+        dictionaryListValue(values, "searchResults").compactMap(MentraDevice.init(values:))
     }
     public var wifiScanResults: [MentraWifiScanResult] {
         dictionaryListValue(values, "wifiScanResults").map(MentraWifiScanResult.init(values:))
@@ -467,9 +419,9 @@ public struct MentraBluetoothStatus: CustomStringConvertible {
     public var localSttFallbackActive: Bool { boolValue(values, "local_stt_fallback_active") ?? false }
     public var shouldSendBootingMessage: Bool { boolValue(values, "shouldSendBootingMessage") ?? true }
 
-    public var defaultDevice: MentraPairedDevice? {
+    public var defaultDevice: MentraDevice? {
         guard !defaultWearable.isEmpty else { return nil }
-        return MentraPairedDevice(
+        return MentraDevice(
             model: MentraDeviceModel.fromDeviceType(defaultWearable),
             name: deviceName,
             identifier: deviceAddress.isEmpty ? nil : deviceAddress
@@ -541,7 +493,11 @@ public struct MentraBluetoothStatusUpdate: CustomStringConvertible {
     let values: [String: Any]
 
     init(values: [String: Any]) {
-        self.values = values
+        var normalizedValues = values
+        if let searchResults = values["searchResults"] as? [[String: Any]] {
+            normalizedValues["searchResults"] = searchResults.compactMap { MentraDevice(values: $0)?.dictionary }
+        }
+        self.values = normalizedValues
     }
 
     public var searching: Bool? { optionalBoolValue(values, "searching") }
@@ -550,8 +506,8 @@ public struct MentraBluetoothStatusUpdate: CustomStringConvertible {
     public var micEnabled: Bool? { optionalBoolValue(values, "micEnabled") }
     public var currentMic: String? { optionalStringValue(values, "currentMic") }
     public var micRanking: [String]? { optionalStringListValue(values, "micRanking") }
-    public var searchResults: [MentraDeviceSearchResult]? {
-        optionalDictionaryListValue(values, "searchResults")?.map(MentraDeviceSearchResult.init(values:))
+    public var searchResults: [MentraDevice]? {
+        optionalDictionaryListValue(values, "searchResults")?.compactMap(MentraDevice.init(values:))
     }
     public var wifiScanResults: [MentraWifiScanResult]? {
         optionalDictionaryListValue(values, "wifiScanResults")?.map(MentraWifiScanResult.init(values:))
@@ -1283,12 +1239,12 @@ public enum MentraBluetoothEvent: CustomStringConvertible {
 public protocol MentraBluetoothSDKDelegate: AnyObject {
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateGlassesStatus status: MentraGlassesStatusUpdate)
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateBluetoothStatus status: MentraBluetoothStatusUpdate)
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didDiscover device: MentraDiscoveredDevice)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didDiscover device: MentraDevice)
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didStopScan reason: MentraScanStopReason)
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: MentraBluetoothEvent)
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicPcm frame: Data)
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicLc3 frame: Data)
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didChangeDefaultDevice device: MentraPairedDevice?)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didChangeDefaultDevice device: MentraDevice?)
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didLog message: String)
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didFail error: MentraBluetoothError)
 }
@@ -1297,12 +1253,12 @@ public protocol MentraBluetoothSDKDelegate: AnyObject {
 public extension MentraBluetoothSDKDelegate {
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateGlassesStatus _: MentraGlassesStatusUpdate) {}
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateBluetoothStatus _: MentraBluetoothStatusUpdate) {}
-    func mentraBluetoothSDK(_: MentraBluetoothSDK, didDiscover _: MentraDiscoveredDevice) {}
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didDiscover _: MentraDevice) {}
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didStopScan _: MentraScanStopReason) {}
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceive _: MentraBluetoothEvent) {}
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceiveMicPcm _: Data) {}
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceiveMicLc3 _: Data) {}
-    func mentraBluetoothSDK(_: MentraBluetoothSDK, didChangeDefaultDevice _: MentraPairedDevice?) {}
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didChangeDefaultDevice _: MentraDevice?) {}
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didLog _: String) {}
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didFail _: MentraBluetoothError) {}
 }
@@ -1341,15 +1297,15 @@ public final class MentraBluetoothSDK {
         MentraBluetoothStatus(values: GlassesStore.shared.store.getCategory(ObservableStore.coreCategory))
     }
 
-    public var defaultDevice: MentraPairedDevice? {
+    public var defaultDevice: MentraDevice? {
         currentDefaultDevice()
     }
 
-    public func getDefaultDevice() -> MentraPairedDevice? {
+    public func getDefaultDevice() -> MentraDevice? {
         currentDefaultDevice()
     }
 
-    public func setDefaultDevice(_ device: MentraPairedDevice?) {
+    public func setDefaultDevice(_ device: MentraDevice?) {
         guard let device else {
             clearDefaultDevice()
             return
@@ -1385,23 +1341,19 @@ public final class MentraBluetoothSDK {
     }
 
     public func connect(to device: MentraDevice, options: MentraConnectOptions = MentraConnectOptions()) {
+        let isController = ControllerTypes.ALL.contains(device.model.deviceType)
         if options.cancelExistingConnectionAttempt {
-            cancelConnectionAttempt()
+            if isController {
+                CoreManager.shared.disconnectController()
+            } else {
+                cancelConnectionAttempt()
+            }
         }
-        if options.saveAsDefault {
+        if options.saveAsDefault && !isController {
             setDefaultDevice(device)
         }
         GlassesStore.shared.apply(ObservableStore.coreCategory, "pending_wearable", device.model.deviceType)
         CoreManager.shared.connectByName(device.name)
-    }
-
-    public func connect(model: MentraDeviceModel, name: String) {
-        GlassesStore.shared.apply(ObservableStore.coreCategory, "pending_wearable", model.deviceType)
-        CoreManager.shared.connectByName(name)
-    }
-
-    public func connectByName(_ name: String) {
-        CoreManager.shared.connectByName(name)
     }
 
     public func connectDefault(options: MentraConnectOptions = MentraConnectOptions()) {
@@ -1660,12 +1612,12 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    private func currentDefaultDevice() -> MentraPairedDevice? {
+    private func currentDefaultDevice() -> MentraDevice? {
         let core = GlassesStore.shared.store.getCategory(ObservableStore.coreCategory)
         guard let model = core["default_wearable"] as? String, !model.isEmpty else { return nil }
         guard let name = core["device_name"] as? String, !name.isEmpty else { return nil }
         let identifier = (core["device_address"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-        return MentraPairedDevice(
+        return MentraDevice(
             model: MentraDeviceModel.fromDeviceType(model),
             name: name,
             identifier: identifier
@@ -1677,7 +1629,7 @@ public final class MentraBluetoothSDK {
         for result in results {
             guard let name = result["deviceName"] as? String ?? result["name"] as? String else { continue }
             guard discoveredDeviceNames.insert(name).inserted else { continue }
-            let device = MentraDeviceSearchResult(values: result).device
+            guard let device = MentraDevice(values: result) else { continue }
             delegate?.mentraBluetoothSDK(self, didDiscover: device)
         }
     }

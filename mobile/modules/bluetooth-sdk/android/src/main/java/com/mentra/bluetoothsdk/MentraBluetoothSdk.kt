@@ -3,6 +3,7 @@ package com.mentra.core
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import com.mentra.core.utils.ControllerTypes
 import com.mentra.core.utils.PhoneAudioMonitor
 import java.util.Collections
 
@@ -103,27 +104,19 @@ class MentraBluetoothSdk private constructor(
 
     @JvmOverloads
     fun connect(device: MentraDevice, options: MentraConnectOptions = MentraConnectOptions()) {
+        val isController = ControllerTypes.ALL.contains(device.model.deviceType)
         if (options.cancelExistingConnectionAttempt) {
-            cancelConnectionAttempt()
+            if (isController) {
+                deviceManager.disconnectController()
+            } else {
+                cancelConnectionAttempt()
+            }
         }
-        if (options.saveAsDefault) {
+        if (options.saveAsDefault && !isController) {
             setDefaultDevice(device)
         }
         GlassesStore.apply(ObservableStore.CORE_CATEGORY, "pending_wearable", device.model.deviceType)
         deviceManager.connectByName(device.name)
-    }
-
-    fun connect(device: MentraDiscoveredDevice) {
-        connect(device.toMentraDevice())
-    }
-
-    fun connectByName(model: MentraDeviceModel, deviceName: String) {
-        GlassesStore.apply(ObservableStore.CORE_CATEGORY, "pending_wearable", model.deviceType)
-        deviceManager.connectByName(deviceName)
-    }
-
-    fun connectByName(deviceName: String) {
-        deviceManager.connectByName(deviceName)
     }
 
     @JvmOverloads
@@ -401,7 +394,7 @@ class MentraBluetoothSdk private constructor(
                 result.entries.mapNotNull { (key, value) ->
                     if (key is String && value != null) key to value else null
                 }.toMap()
-            val device = MentraDeviceSearchResult.fromMap(values).toMentraDevice()
+            val device = MentraDevice.fromMap(values) ?: return@forEach
             dispatchToListeners { it.onDeviceDiscovered(device) }
         }
     }

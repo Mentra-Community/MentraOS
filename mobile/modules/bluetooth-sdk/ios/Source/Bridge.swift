@@ -119,12 +119,9 @@ class Bridge {
                     "id": id,
                     "model": deviceModel,
                     "name": deviceName,
-                    "deviceModel": deviceModel,
-                    "deviceName": deviceName,
                 ]
                 if !deviceAddress.isEmpty {
                     newResult["address"] = deviceAddress
-                    newResult["deviceAddress"] = deviceAddress
                 }
                 if let rssi {
                     newResult["rssi"] = rssi
@@ -132,7 +129,7 @@ class Bridge {
                 let allResults = searchResults + [newResult]
                 var seen = Set<String>()
                 let uniqueResults = allResults.reversed().filter {
-                    guard let id = $0["id"] as? String ?? $0["deviceName"] as? String else { return false }
+                    guard let id = $0["id"] as? String ?? $0["name"] as? String else { return false }
                     return seen.insert(id).inserted
                 }.reversed()
                 GlassesStore.shared.set("core", "searchResults", Array(uniqueResults))

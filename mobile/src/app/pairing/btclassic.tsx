@@ -24,8 +24,7 @@ export default function BtClassicPairingScreen() {
   focusEffectPreventBack()
 
   const handleSuccess = () => {
-    // we should have a device name saved in the core:
-    CoreModule.connectByName(deviceName)
+    CoreModule.connectDefault()
     pushPrevious()
   }
 

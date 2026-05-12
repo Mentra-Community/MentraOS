@@ -32,40 +32,13 @@ data class MentraDevice(
     val rssi: Int? = null,
     val id: String = address?.takeIf { it.isNotBlank() } ?: "${model.deviceType}:$name",
 ) {
-    internal fun toPairedDevice(): MentraPairedDevice =
-        MentraPairedDevice(
-            model = model,
-            name = name,
-            address = address,
-        )
-
-    internal fun toDiscoveredDevice(): MentraDiscoveredDevice =
-        MentraDiscoveredDevice(
-            model = model,
-            name = name,
-            address = address,
-            rssi = rssi,
-        )
-
-    internal fun toSearchResult(): MentraDeviceSearchResult =
-        MentraDeviceSearchResult(
-            model = model.deviceType,
-            name = name,
-            address = address ?: "",
-            rssi = rssi,
-            id = id,
-        )
-
     internal fun toMap(): Map<String, Any> =
         buildMap {
             put("id", id)
             put("model", model.deviceType)
             put("name", name)
-            put("deviceModel", model.deviceType)
-            put("deviceName", name)
             address?.takeIf { it.isNotBlank() }?.let {
                 put("address", it)
-                put("deviceAddress", it)
             }
             rssi?.let { put("rssi", it) }
         }
@@ -88,102 +61,10 @@ data class MentraDevice(
     }
 }
 
-data class MentraDiscoveredDevice(
-    val model: MentraDeviceModel,
-    val name: String,
-    val address: String? = null,
-    val rssi: Int? = null,
-) {
-    internal fun toMentraDevice(): MentraDevice =
-        MentraDevice(
-            model = model,
-            name = name,
-            address = address,
-            rssi = rssi,
-        )
-}
-
-data class MentraPairedDevice(
-    val model: MentraDeviceModel,
-    val name: String,
-    val address: String? = null,
-) {
-    internal fun toMentraDevice(): MentraDevice =
-        MentraDevice(
-            model = model,
-            name = name,
-            address = address,
-        )
-}
-
 data class MentraConnectOptions(
     val saveAsDefault: Boolean = true,
     val cancelExistingConnectionAttempt: Boolean = true,
 )
-
-data class MentraDeviceSearchResult(
-    val model: String,
-    val name: String,
-    val address: String = "",
-    val rssi: Int? = null,
-    val id: String = address.takeIf { it.isNotBlank() } ?: "$model:$name",
-) {
-    val deviceModel: String
-        get() = model
-    val deviceName: String
-        get() = name
-    val deviceAddress: String
-        get() = address
-
-    @Deprecated("Use model, name, address, and rssi.")
-    constructor(
-        deviceModel: String,
-        deviceName: String,
-        deviceAddress: String = "",
-    ) : this(
-        model = deviceModel,
-        name = deviceName,
-        address = deviceAddress,
-    )
-
-    internal fun toMentraDevice(): MentraDevice =
-        MentraDevice(
-            model = MentraDeviceModel.fromDeviceType(model),
-            name = name,
-            address = address.takeIf { it.isNotBlank() },
-            rssi = rssi,
-            id = id,
-        )
-
-    internal fun toMap(): Map<String, Any> =
-        buildMap {
-            put("id", id)
-            put("model", model)
-            put("name", name)
-            put("deviceModel", model)
-            put("deviceName", name)
-            if (address.isNotBlank()) {
-                put("address", address)
-                put("deviceAddress", address)
-            }
-            rssi?.let { put("rssi", it) }
-    }
-
-    companion object {
-        internal fun fromMap(values: Map<String, Any>): MentraDeviceSearchResult {
-            val model = stringValue(values, "model", "deviceModel", "device_model") ?: ""
-            val name = stringValue(values, "name", "deviceName", "device_name") ?: ""
-            val address = stringValue(values, "address", "deviceAddress", "device_address") ?: ""
-            return MentraDeviceSearchResult(
-                model = model,
-                name = name,
-                address = address,
-                rssi = numberValue(values, "rssi", "signalStrength", "signal_strength"),
-                id = stringValue(values, "id")?.takeIf { it.isNotBlank() } ?: address.takeIf { it.isNotBlank() } ?: "$model:$name",
-            )
-        }
-    }
-}
 
 data class MentraWifiScanResult(
     val ssid: String,
@@ -359,7 +240,7 @@ data class MentraBluetoothStatus(
     val micEnabled: Boolean,
     val currentMic: String,
     val micRanking: List<String>,
-    val searchResults: List<MentraDeviceSearchResult>,
+    val searchResults: List<MentraDevice>,
     val wifiScanResults: List<MentraWifiScanResult>,
     val lastLog: List<String>,
     val otherBtConnected: Boolean,
@@ -395,10 +276,10 @@ data class MentraBluetoothStatus(
     val localSttFallbackActive: Boolean,
     val shouldSendBootingMessage: Boolean,
 ) {
-    val defaultDevice: MentraPairedDevice?
+    val defaultDevice: MentraDevice?
         get() =
             defaultWearable.takeIf { it.isNotBlank() }?.let {
-                MentraPairedDevice(
+                MentraDevice(
                     model = MentraDeviceModel.fromDeviceType(it),
                     name = deviceName,
                     address = deviceAddress.takeIf(String::isNotBlank),
@@ -413,7 +294,7 @@ data class MentraBluetoothStatus(
             "micEnabled" to micEnabled,
             "currentMic" to currentMic,
             "micRanking" to micRanking,
-            "searchResults" to searchResults.map { it.toMap() },
+            "searchResults" to searchResults.map(MentraDevice::toMap),
             "wifiScanResults" to wifiScanResults.map { it.toMap() },
             "lastLog" to lastLog,
             "otherBtConnected" to otherBtConnected,
@@ -460,7 +341,7 @@ data class MentraBluetoothStatus(
                 currentMic = stringValue(values, "currentMic") ?: "",
                 micRanking = stringListValue(values, "micRanking"),
                 searchResults =
-                    mapListValue(values, "searchResults").map(MentraDeviceSearchResult::fromMap),
+                    mapListValue(values, "searchResults").mapNotNull(MentraDevice::fromMap),
                 wifiScanResults =
                     mapListValue(values, "wifiScanResults").map(MentraWifiScanResult::fromMap),
                 lastLog = stringListValue(values, "lastLog"),
@@ -652,7 +533,7 @@ data class MentraBluetoothStatusUpdate(
     val micEnabled: Boolean? = null,
     val currentMic: String? = null,
     val micRanking: List<String>? = null,
-    val searchResults: List<MentraDeviceSearchResult>? = null,
+    val searchResults: List<MentraDevice>? = null,
     val wifiScanResults: List<MentraWifiScanResult>? = null,
     val lastLog: List<String>? = null,
     val otherBtConnected: Boolean? = null,
@@ -696,7 +577,7 @@ data class MentraBluetoothStatusUpdate(
             putIfNotNull("micEnabled", micEnabled)
             putIfNotNull("currentMic", currentMic)
             putIfNotNull("micRanking", micRanking)
-            searchResults?.let { put("searchResults", it.map(MentraDeviceSearchResult::toMap)) }
+            searchResults?.let { put("searchResults", it.map(MentraDevice::toMap)) }
             wifiScanResults?.let { put("wifiScanResults", it.map(MentraWifiScanResult::toMap)) }
             putIfNotNull("lastLog", lastLog)
             putIfNotNull("otherBtConnected", otherBtConnected)
@@ -744,7 +625,7 @@ data class MentraBluetoothStatusUpdate(
                 micRanking = optionalStringListValue(values, "micRanking"),
                 searchResults =
                     optionalMapListValue(values, "searchResults")
-                        ?.map(MentraDeviceSearchResult::fromMap),
+                        ?.mapNotNull(MentraDevice::fromMap),
                 wifiScanResults =
                     optionalMapListValue(values, "wifiScanResults")
                         ?.map(MentraWifiScanResult::fromMap),

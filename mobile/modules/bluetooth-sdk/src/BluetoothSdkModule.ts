@@ -4,7 +4,6 @@ import {
   ConnectOptions,
   CoreModuleEvents,
   CoreStatus,
-  DefaultDevice,
   DeviceScanRequest,
   GalleryMode,
   GlassesMediaVolumeGetResult,
@@ -26,7 +25,7 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   // Observable Store Functions (native)
   getGlassesStatus(): GlassesStatus
   getCoreStatus(): CoreStatus
-  getDefaultDevice(): DefaultDevice | null
+  getDefaultDevice(): MentraDevice | null
   update(category: string, values: Record<string, any>): Promise<void>
 
   // Display Commands
@@ -38,21 +37,18 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   requestStatus(): Promise<void>
   connectDefault(options?: ConnectOptions): Promise<void>
   connectDefaultWithOptions(options: Required<ConnectOptions>): Promise<void>
-  setDefaultDevice(device: DefaultDevice | null): Promise<void>
+  setDefaultDevice(device: MentraDevice | null): Promise<void>
   clearDefaultDevice(): Promise<void>
   startScan(params: DeviceScanRequest): Promise<void>
   connect(device: MentraDevice, options?: ConnectOptions): Promise<void>
   connectWithOptions(device: MentraDevice, options: Required<ConnectOptions>): Promise<void>
   cancelConnectionAttempt(): Promise<void>
-  connectByName(deviceName: string): Promise<void>
-  connectDevice(deviceModel: string, deviceName: string): Promise<void>
   connectDefaultController(): Promise<void>
   disconnectController(): Promise<void>
   connectSimulated(): Promise<void>
   disconnect(): Promise<void>
   forget(): Promise<void>
   forgetController(): Promise<void>
-  findCompatibleDevices(deviceModel: string): Promise<void>
   showDashboard(): Promise<void>
   ping(): Promise<void>
 

@@ -25,8 +25,11 @@ const removeStatusListener = BluetoothSdk.onGlassesStatus((status) => {
   console.log("Glasses status changed", status)
 })
 
-await BluetoothSdk.findCompatibleDevices("Mentra Live")
-await BluetoothSdk.connectDefault()
+await BluetoothSdk.startScan({model: "Mentra Live"})
+const device = BluetoothSdk.getCoreStatus().searchResults[0]
+if (device) {
+  await BluetoothSdk.connect(device)
+}
 await BluetoothSdk.displayText({text: "Hello from Mentra", x: 0, y: 0, size: 24})
 
 removeStatusListener()

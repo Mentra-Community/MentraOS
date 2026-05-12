@@ -230,19 +230,11 @@ class CoreModule : Module() {
 
         AsyncFunction("clearDefaultDevice") { sdk?.clearDefaultDevice() }
 
-        AsyncFunction("connectByName") { deviceName: String ->
-            sdk?.connectByName(deviceName)
-        }
-
         AsyncFunction("connectWithOptions") { device: Map<String, Any>, options: Map<String, Any> ->
             sdk?.connect(
                     device.toMentraDevice() ?: throw IllegalArgumentException("connect requires a MentraDevice with model and name."),
                     options.toMentraConnectOptions(),
             )
-        }
-
-        AsyncFunction("connectDevice") { deviceModel: String, deviceName: String ->
-            sdk?.connectByName(MentraDeviceModel.fromDeviceType(deviceModel), deviceName)
         }
 
         AsyncFunction("connectSimulated") { sdk?.connectSimulated() }
@@ -258,15 +250,11 @@ class CoreModule : Module() {
         AsyncFunction("forgetController") { deviceManager?.forgetController() }
 
         AsyncFunction("startScan") { params: Map<String, Any> ->
-            val model = params["model"] as? String ?: params["deviceModel"] as? String ?: DeviceTypes.LIVE
+            val model = params["model"] as? String ?: DeviceTypes.LIVE
             sdk?.startScan(MentraDeviceModel.fromDeviceType(model))
         }
 
         AsyncFunction("cancelConnectionAttempt") { sdk?.cancelConnectionAttempt() }
-
-        AsyncFunction("findCompatibleDevices") { deviceModel: String ->
-            sdk?.startScan(MentraDeviceModel.fromDeviceType(deviceModel))
-        }
 
         AsyncFunction("showDashboard") { sdk?.showDashboard() }
 

@@ -1,4 +1,4 @@
-import CoreModule, {DeviceSearchResult} from "@mentra/bluetooth-sdk"
+import CoreModule, {MentraDevice} from "@mentra/bluetooth-sdk"
 import {useLocalSearchParams} from "expo-router"
 import {useEffect, useState} from "react"
 import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
@@ -30,7 +30,7 @@ export default function SelectGlassesBluetoothScreen() {
   const btcConnected = useGlassesStore((state) => state.btcConnected)
   const [_deviceName, setDeviceName] = useSetting(SETTINGS.device_name.key)
   const searchResults = useCoreStore((state) => state.searchResults)
-  const [rememberedSearchResults, setRememberedSearchResults] = useState<DeviceSearchResult[]>(searchResults)
+  const [rememberedSearchResults, setRememberedSearchResults] = useState<MentraDevice[]>(searchResults)
 
   // useFocusEffect(
   //   useCallback(() => {
@@ -50,21 +50,22 @@ export default function SelectGlassesBluetoothScreen() {
   }, true)
 
   useEffect(() => {
-    if (searchResults.some((result) => result.deviceName === "NOTREQUIREDSKIP")) {
-      triggerGlassesPairingGuide(deviceModel, "NOTREQUIREDSKIP")
+    const skipDevice = searchResults.find((result) => result.name === "NOTREQUIREDSKIP")
+    if (skipDevice) {
+      triggerGlassesPairingGuide(skipDevice)
       return
     }
   }, [searchResults])
 
   useEffect(() => {
     const initializeAndSearchForDevices = async () => {
-      CoreModule.findCompatibleDevices(deviceModel)
+      CoreModule.startScan({model: deviceModel})
     }
 
     initializeAndSearchForDevices()
   }, [])
 
-  const triggerGlassesPairingGuide = async (deviceModel: string, deviceName: string) => {
+  const triggerGlassesPairingGuide = async (device: MentraDevice) => {
     if (Platform.OS === "android") {
       const hasLocationPermission = await requestFeaturePermissions(PermissionFeatures.LOCATION)
 
@@ -89,24 +90,25 @@ export default function SelectGlassesBluetoothScreen() {
       return
     }
 
-    startPairing(deviceModel, deviceName)
+    await startPairing(device)
   }
 
-  const startPairing = async (deviceModel: string, deviceName: string) => {
+  const startPairing = async (device: MentraDevice) => {
     const deviceTypesWithBtClassic = [DeviceTypes.LIVE]
-    if (Platform.OS === "android" || btcConnected || !deviceTypesWithBtClassic.includes(deviceModel as DeviceTypes)) {
+    if (Platform.OS === "android" || btcConnected || !deviceTypesWithBtClassic.includes(device.model as DeviceTypes)) {
       setTimeout(() => {
-        CoreModule.connectByName(deviceName)
+        CoreModule.connect(device)
       }, 2000)
-      push("/pairing/loading", {deviceModel: deviceModel, deviceName: deviceName})
+      push("/pairing/loading", {deviceModel: device.model, deviceName: device.name})
       // push("/pairing/success", {deviceModel: deviceModel})
       return
     }
 
-    setDeviceName(deviceName)
+    await CoreModule.setDefaultDevice(device)
+    setDeviceName(device.name)
     // pair bt classic first:
     replace("/pairing/btclassic")
-    pushUnder("/pairing/loading", {deviceModel: deviceModel, deviceName: deviceName})
+    pushUnder("/pairing/loading", {deviceModel: device.model, deviceName: device.name})
   }
 
   const filterDeviceName = (deviceName: string) => {
@@ -124,10 +126,10 @@ export default function SelectGlassesBluetoothScreen() {
       const combined = [...prev]
       for (const result of searchResults) {
         // if the device model is not our current device model, skip it:
-        if (result.deviceModel !== deviceModel) {
+        if (result.model !== deviceModel) {
           continue
         }
-        if (!combined.some((r) => r.deviceAddress === result.deviceAddress && r.deviceName === result.deviceName)) {
+        if (!combined.some((r) => r.id === result.id)) {
           combined.push(result)
         }
       }
@@ -136,7 +138,7 @@ export default function SelectGlassesBluetoothScreen() {
   }, [searchResults])
 
   const visibleResults = rememberedSearchResults.filter(
-    (r) => r.deviceName !== "NOTREQUIREDSKIP" && r.deviceModel === deviceModel,
+    (r) => r.name !== "NOTREQUIREDSKIP" && r.model === deviceModel,
   )
 
   return (
@@ -161,15 +163,14 @@ export default function SelectGlassesBluetoothScreen() {
           ) : (
             <ScrollView className="max-h-[300px] -mr-4 pr-4" contentContainerClassName="my-4">
               <Group>
-                {visibleResults.map((res: DeviceSearchResult, index: number) => {
-                  let deviceName = filterDeviceName(res.deviceName)
+                {visibleResults.map((res: MentraDevice) => {
+                  let deviceName = filterDeviceName(res.name)
 
                   return (
-                    <View className="flex-row items-center justify-between px-4 py-3 bg-background">
+                    <View key={res.id} className="flex-row items-center justify-between px-4 py-3 bg-background">
                       <TouchableOpacity
-                        key={index}
                         className="flex-1"
-                        onPress={() => triggerGlassesPairingGuide(res.deviceModel, res.deviceName)}>
+                        onPress={() => triggerGlassesPairingGuide(res)}>
                         <View className="flex-1 px-2.5 flex-col">
                           <Text text={deviceModel} className="flex-wrap text-sm font-semibold" numberOfLines={2} />
                           <Text text={deviceName} className="text-xs text-muted-foreground" numberOfLines={1} />

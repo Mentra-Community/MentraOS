@@ -1,36 +1,30 @@
-import CoreModule, {DeviceSearchResult} from "@mentra/bluetooth-sdk"
+import CoreModule, {MentraDevice} from "@mentra/bluetooth-sdk"
 import {useLocalSearchParams} from "expo-router"
 import {useEffect, useState} from "react"
 import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
 
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Icon, Button, Header, Screen, Text} from "@/components/ignite"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import Divider from "@/components/ui/Divider"
 import {Group} from "@/components/ui/Group"
-import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
+import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
-import {useGlassesStore} from "@/stores/glasses"
 import showAlert from "@/utils/AlertUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {getGlassesOpenImage} from "@/utils/getGlassesImage"
-import {SETTINGS, useSetting} from "@/stores/settings"
 import {useCoreStore} from "@/stores/core"
 import GlassView from "@/components/ui/GlassView"
-import { useNavigationStore } from "@/stores/navigation"
+import {useNavigationStore} from "@/stores/navigation"
 
 export default function SelectGlassesBluetoothScreen() {
   const {deviceModel}: {deviceModel: string} = useLocalSearchParams()
   const {theme} = useAppTheme()
   const {goBack, replace} = useNavigationStore.getState()
-  const pushUnder = usePushUnder()
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
-  const btcConnected = useGlassesStore((state) => state.btcConnected)
-  const [_deviceName, setDeviceName] = useSetting(SETTINGS.device_name.key)
   const searchResults = useCoreStore((state) => state.searchResults)
-  const [rememberedSearchResults, setRememberedSearchResults] = useState<DeviceSearchResult[]>(searchResults)
+  const [rememberedSearchResults, setRememberedSearchResults] = useState<MentraDevice[]>(searchResults)
 
   // useFocusEffect(
   //   useCallback(() => {
@@ -49,21 +43,22 @@ export default function SelectGlassesBluetoothScreen() {
   }, true)
 
   useEffect(() => {
-    if (searchResults.some((result) => result.deviceName === "NOTREQUIREDSKIP")) {
-      triggerGlassesPairingGuide(deviceModel, "NOTREQUIREDSKIP")
+    const skipDevice = searchResults.find((result) => result.name === "NOTREQUIREDSKIP")
+    if (skipDevice) {
+      triggerGlassesPairingGuide(skipDevice)
       return
     }
   }, [searchResults])
 
   useEffect(() => {
     const initializeAndSearchForDevices = async () => {
-      CoreModule.findCompatibleDevices(deviceModel)
+      CoreModule.startScan({model: deviceModel})
     }
 
     initializeAndSearchForDevices()
   }, [])
 
-  const triggerGlassesPairingGuide = async (deviceModel: string, deviceName: string) => {
+  const triggerGlassesPairingGuide = async (device: MentraDevice) => {
     if (Platform.OS === "android") {
       const hasLocationPermission = await requestFeaturePermissions(PermissionFeatures.LOCATION)
 
@@ -88,23 +83,14 @@ export default function SelectGlassesBluetoothScreen() {
       return
     }
 
-    startPairing(deviceModel, deviceName)
+    await startPairing(device)
   }
 
-  const startPairing = async (deviceModel: string, deviceName: string) => {
-    const deviceTypesWithBtClassic = [DeviceTypes.LIVE]
-    if (Platform.OS === "android" || btcConnected || !deviceTypesWithBtClassic.includes(deviceModel as DeviceTypes)) {
-      setTimeout(() => {
-        CoreModule.connectByName(deviceName)
-      }, 2000)
-      replace("/pairing/loading", {deviceModel: deviceModel, deviceName: deviceName})
-      return
-    }
-
-    setDeviceName(deviceName)
-    // pair bt classic first:
-    replace("/pairing/btclassic")
-    pushUnder("/pairing/loading", {deviceModel: deviceModel, deviceName: deviceName})
+  const startPairing = async (device: MentraDevice) => {
+    setTimeout(() => {
+      CoreModule.connect(device)
+    }, 2000)
+    replace("/pairing/loading", {deviceModel: device.model, deviceName: device.name})
   }
 
   const filterDeviceName = (deviceName: string) => {
@@ -121,7 +107,7 @@ export default function SelectGlassesBluetoothScreen() {
     setRememberedSearchResults((prev) => {
       const combined = [...prev]
       for (const result of searchResults) {
-        if (!combined.some((r) => r.deviceAddress === result.deviceAddress && r.deviceName === result.deviceName)) {
+        if (!combined.some((r) => r.id === result.id)) {
           combined.push(result)
         }
       }
@@ -129,7 +115,7 @@ export default function SelectGlassesBluetoothScreen() {
     })
   }, [searchResults])
 
-  const visibleResults = rememberedSearchResults.filter((r) => r.deviceModel === deviceModel)
+  const visibleResults = rememberedSearchResults.filter((r) => r.model === deviceModel)
 
   return (
     <Screen preset="fixed" safeAreaEdges={["bottom"]} extraAndroidInsets>
@@ -149,14 +135,13 @@ export default function SelectGlassesBluetoothScreen() {
           ) : (
             <ScrollView className="max-h-[300px] -mr-4 pr-4" contentContainerClassName="my-4">
               <Group>
-                {visibleResults.map((res: DeviceSearchResult, index: number) => {
-                  let deviceName = filterDeviceName(res.deviceName)
+                {visibleResults.map((res: MentraDevice) => {
+                  let deviceName = filterDeviceName(res.name)
                   return (
-                    <View className="flex-row items-center justify-between px-4 py-3 bg-background">
+                    <View key={res.id} className="flex-row items-center justify-between px-4 py-3 bg-background">
                       <TouchableOpacity
-                        key={index}
                         className="flex-1"
-                        onPress={() => triggerGlassesPairingGuide(res.deviceModel, res.deviceName)}>
+                        onPress={() => triggerGlassesPairingGuide(res)}>
                         <View className="flex-1 px-2.5 flex-col">
                           <Text text={deviceModel} className="flex-wrap text-sm font-semibold" numberOfLines={2} />
                           <Text text={deviceName} className="text-xs text-muted-foreground" numberOfLines={1} />

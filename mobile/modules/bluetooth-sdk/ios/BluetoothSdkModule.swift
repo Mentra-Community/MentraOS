@@ -134,7 +134,7 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
 
         AsyncFunction("setDefaultDevice") { (device: [String: Any]?) in
             await MainActor.run {
-                self.bluetoothSdk().setDefaultDevice(MentraPairedDevice(dictionary: device))
+                self.bluetoothSdk().setDefaultDevice(MentraDevice(dictionary: device))
             }
         }
 
@@ -144,24 +144,12 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
-        AsyncFunction("connectByName") { (deviceName: String) in
-            await MainActor.run {
-                self.bluetoothSdk().connectByName(deviceName)
-            }
-        }
-
         AsyncFunction("connectWithOptions") { (device: [String: Any], options: [String: Any]) in
             await MainActor.run {
                 guard let target = MentraDevice(dictionary: device) else {
                     return
                 }
                 self.bluetoothSdk().connect(to: target, options: MentraConnectOptions(dictionary: options))
-            }
-        }
-
-        AsyncFunction("connectDevice") { (deviceModel: String, deviceName: String) in
-            await MainActor.run {
-                self.bluetoothSdk().connect(model: MentraDeviceModel.fromDeviceType(deviceModel), name: deviceName)
             }
         }
 
@@ -203,7 +191,7 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
 
         AsyncFunction("startScan") { (params: [String: Any]) in
             await MainActor.run {
-                let model = params["model"] as? String ?? params["deviceModel"] as? String ?? DeviceTypes.LIVE
+                let model = params["model"] as? String ?? DeviceTypes.LIVE
                 self.bluetoothSdk().startScan(model: MentraDeviceModel.fromDeviceType(model))
             }
         }
@@ -211,12 +199,6 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("cancelConnectionAttempt") {
             await MainActor.run {
                 self.bluetoothSdk().cancelConnectionAttempt()
-            }
-        }
-
-        AsyncFunction("findCompatibleDevices") { (deviceModel: String) in
-            await MainActor.run {
-                self.bluetoothSdk().startScan(model: MentraDeviceModel.fromDeviceType(deviceModel))
             }
         }
 
@@ -546,7 +528,7 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
     }
 
     @MainActor
-    public func mentraBluetoothSDK(_: MentraBluetoothSDK, didDiscover device: MentraDiscoveredDevice) {
+    public func mentraBluetoothSDK(_: MentraBluetoothSDK, didDiscover device: MentraDevice) {
         sendEvent("device_discovered", device.dictionary)
     }
 
@@ -598,7 +580,7 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
     }
 
     @MainActor
-    public func mentraBluetoothSDK(_: MentraBluetoothSDK, didChangeDefaultDevice device: MentraPairedDevice?) {
+    public func mentraBluetoothSDK(_: MentraBluetoothSDK, didChangeDefaultDevice device: MentraDevice?) {
         var event: [String: Any] = [:]
         if let device {
             event["device"] = device.dictionary
@@ -617,7 +599,7 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
     }
 }
 
-private extension MentraPairedDevice {
+private extension MentraDevice {
     init?(dictionary values: [String: Any]?) {
         guard let values else { return nil }
         guard let model = values["model"] as? String ?? values["deviceModel"] as? String else { return nil }
