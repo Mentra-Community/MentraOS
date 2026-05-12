@@ -246,6 +246,15 @@ export type StartNavigationOptions = {
    * mode-aware defaults (see `PivotOptions`).
    */
   pivots?: PivotOptions
+
+  /**
+   * When set, the SDK fires a reroute as soon as the user is more than
+   * this many meters past a pivot they didn't take. The new route is
+   * planned from the user's current position, so the next pivot is
+   * always ahead of them rather than behind. Omit (or set to 0) to keep
+   * the Google Nav SDK's default off-route behavior.
+   */
+  missedTurnRerouteMeters?: number
 }
 
 /**
@@ -417,6 +426,7 @@ export class NavigationModule {
       avoid: opts.avoid,
       simulate: opts.simulate ?? false,
       speedMultiplier: opts.speedMultiplier ?? 5,
+      missedTurnRerouteMeters: opts.missedTurnRerouteMeters,
     })
   }
 

@@ -39,6 +39,19 @@ final class NavigationManager: NSObject {
   // walking instead of an instant teleport.
   private var deviateTimer: Timer?
 
+  // Missed-turn reroute (opt-in via StartNavigationOptions). When the
+  // current step advances we cache the user's location at that moment
+  // — that's the pivot they just crossed. If the straight-line distance
+  // from the user to that cached pivot exceeds this threshold, we force
+  // a reroute by re-issuing setDestinations from the current position.
+  // nil means the feature is off.
+  private var missedTurnRerouteMeters: Double?
+  private var lastPassedPivot: CLLocationCoordinate2D?
+  private var lastCurrentStepKey: String?
+  private var finalDestination: CLLocationCoordinate2D?
+  private var travelMode: String = "driving"
+  private var missedTurnRerouteInFlight = false
+
   // Pivot enrichment: when emitRoute() fires before the first NavInfo
   // tick, we don't yet have step metadata (road / maneuver per step).
   // We cache the latest NavInfo's `remainingSteps` here as they arrive,
@@ -89,6 +102,7 @@ final class NavigationManager: NSObject {
     mode: String,
     simulate: Bool,
     speedMultiplier: Double,
+    missedTurnRerouteMeters: Double? = nil,
     onEvent: @escaping EventCallback,
     onLocation: @escaping LocationCallback,
     onRoute: @escaping RouteCallback,
@@ -97,6 +111,15 @@ final class NavigationManager: NSObject {
     self.onEvent = onEvent
     self.onLocation = onLocation
     self.onRoute = onRoute
+    self.missedTurnRerouteMeters =
+      (missedTurnRerouteMeters ?? 0) > 0 ? missedTurnRerouteMeters : nil
+    self.lastPassedPivot = nil
+    self.lastCurrentStepKey = nil
+    self.missedTurnRerouteInFlight = false
+    self.travelMode = mode
+    if let last = stops.last {
+      self.finalDestination = CLLocationCoordinate2D(latitude: last.lat, longitude: last.lng)
+    }
 
     DispatchQueue.main.async { [weak self] in
       guard let self else { return }
@@ -113,8 +136,12 @@ final class NavigationManager: NSObject {
       }
       nav.add(self)
       nav.sendsBackgroundNotifications = false
-      // Enable full voice guidance (turn-by-turn announcements + alerts).
-      nav.voiceGuidance = .alertsAndGuidance
+      // Audio guidance is suppressed for the entire trip — the glasses
+      // deliver turn-by-turn instructions visually, so the phone playing
+      // its own "in 50 feet, turn right" audio is redundant and
+      // confusing. Set silent here so nothing plays during the brief
+      // window before setDestinations finishes either.
+      nav.voiceGuidance = .silent
       self.navigator = nav
 
       let provider = mapView.roadSnappedLocationProvider
@@ -137,9 +164,8 @@ final class NavigationManager: NSObject {
           return
         }
         nav.isGuidanceActive = true
-        // Mute voice guidance — the property name varies across SDK
-        // versions, so go through `voiceGuidance` (which all versions
-        // accept) instead of the missing `isVoiceInstructionsMuted`.
+        // Belt-and-suspenders: re-affirm silent in case anything during
+        // setDestinations flipped the value back to a default.
         nav.voiceGuidance = .silent
 
         if simulate {
@@ -181,6 +207,44 @@ final class NavigationManager: NSObject {
       self.latestStepsPayload = nil
       self.lastEmittedPoints = nil
       self.pendingRouteReEmit = false
+      self.missedTurnRerouteMeters = nil
+      self.lastPassedPivot = nil
+      self.lastCurrentStepKey = nil
+      self.finalDestination = nil
+      self.missedTurnRerouteInFlight = false
+    }
+  }
+
+  // MARK: - Missed-turn reroute
+
+  // Force the Nav SDK to plan a fresh route from the user's current
+  // position to the trip's final destination. Used when the user has
+  // walked `missedTurnRerouteMeters` past a pivot they didn't take —
+  // without this, the SDK eventually reroutes too, but the upcoming
+  // pivot in its new plan can sit behind the user, which is confusing.
+  // Re-issuing setDestinations from the current position guarantees the
+  // next pivot is ahead of them.
+  private func triggerMissedTurnReroute(from origin: CLLocationCoordinate2D) {
+    guard let nav = navigator, let dest = finalDestination else { return }
+    guard let waypoint = GMSNavigationWaypoint(location: dest, title: "") else {
+      print("[NavigationManager] missed-turn reroute: could not build waypoint")
+      return
+    }
+    missedTurnRerouteInFlight = true
+    print("[NavigationManager] missed-turn reroute: replanning from \(origin.latitude),\(origin.longitude) → \(dest.latitude),\(dest.longitude)")
+    nav.setDestinations([waypoint]) { [weak self] status in
+      guard let self = self else { return }
+      self.missedTurnRerouteInFlight = false
+      if status == .OK {
+        // setDestinations triggers navigatorDidChangeRoute which handles
+        // emitRoute() and the simulator re-arm — no extra work here.
+        // Reset the cached pivot so the next pivot becomes "passed" only
+        // after the SDK actually advances past it on the new route.
+        self.lastPassedPivot = nil
+        self.lastCurrentStepKey = nil
+      } else {
+        print("[NavigationManager] missed-turn reroute failed (status \(status.rawValue))")
+      }
     }
   }
 
@@ -585,6 +649,21 @@ extension NavigationManager: GMSNavigatorListener {
 
     guard let step = navInfo.currentStep else { return }
 
+    // Track step transitions so the missed-turn reroute check knows
+    // where the most recently crossed pivot was. The step's road +
+    // maneuver makes a stable enough fingerprint to detect changes
+    // without depending on private SDK identity.
+    let stepKey = "\(step.fullRoadName)|\(maneuverString(step.maneuver))"
+    if stepKey != lastCurrentStepKey {
+      if lastCurrentStepKey != nil, let here = mapView?.myLocation?.coordinate {
+        // Step just advanced — the user is at (or just past) the pivot.
+        // Cache that location so we can measure how far they walk away
+        // from it without taking the upcoming new step.
+        lastPassedPivot = here
+      }
+      lastCurrentStepKey = stepKey
+    }
+
     // remainingSteps[0] is the road the user will be on AFTER the
     // upcoming maneuver — this is what the miniapp UI shows as the
     // "next street" headline. simpleRoadName falls back to
@@ -633,18 +712,34 @@ extension NavigationManager: GMSRoadSnappedLocationProviderListener {
     ])
 
     // Off-route detection: measure distance from current position to the route polyline.
-    guard !offRouteEmitted,
-          let path = navigator?.currentRouteLeg?.path,
-          path.count() > 1
-    else { return }
-
+    guard let path = navigator?.currentRouteLeg?.path, path.count() > 1 else { return }
     let distanceToRoute = minDistanceToPath(path, from: location.coordinate)
-    if distanceToRoute > Self.offRouteThresholdMeters {
+    if !offRouteEmitted, distanceToRoute > Self.offRouteThresholdMeters {
       offRouteEmitted = true
       onEvent?([
         "kind": "off_route",
         "offRouteDistanceMeters": distanceToRoute,
       ])
+    }
+
+    // Missed-turn reroute (opt-in). When the SDK user passed a
+    // missedTurnRerouteMeters value at start time, force a reroute as
+    // soon as they're that many meters past the last pivot they crossed
+    // AND they're not still hugging the planned polyline. The
+    // polyline-distance check rules out the "took the turn correctly"
+    // case where they're naturally walking away from the pivot along
+    // the new step. A small slack (8m) absorbs GPS noise at crosswalks.
+    if let threshold = missedTurnRerouteMeters,
+       let pivot = lastPassedPivot,
+       !missedTurnRerouteInFlight,
+       distanceToRoute > 8 {
+      let distFromPivot = haversineMeters(
+        aLat: pivot.latitude, aLng: pivot.longitude,
+        bLat: location.coordinate.latitude, bLng: location.coordinate.longitude
+      )
+      if distFromPivot > threshold {
+        triggerMissedTurnReroute(from: location.coordinate)
+      }
     }
   }
 

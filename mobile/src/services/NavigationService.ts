@@ -190,6 +190,7 @@ class NavigationService {
       stops?: Array<{lat: number; lng: number}>
       mode?: string
       avoid?: {highways?: boolean; tolls?: boolean; ferries?: boolean}
+      missedTurnRerouteMeters?: number
     },
   ): Promise<{ok: boolean; error?: string}> {
     console.log(
@@ -206,6 +207,7 @@ class NavigationService {
       stops: options?.stops,
       mode: options?.mode ?? "driving",
       avoid: options?.avoid,
+      missedTurnRerouteMeters: options?.missedTurnRerouteMeters,
     })
     if (!result.ok) {
       console.warn(`${LOG_TAG}: start failed — ${result.error}`)

@@ -54,6 +54,14 @@ public class CrustModule: Module {
             let simulate = options?["simulate"] as? Bool ?? false
             let speedMultiplier = options?["speedMultiplier"] as? Double ?? 1.0
             let mode = options?["mode"] as? String ?? "driving"
+            // Opt-in: when > 0, the NavigationManager forces a reroute as
+            // soon as the user is this many meters past a pivot they
+            // didn't take. nil disables the check entirely.
+            let missedTurnRerouteMeters: Double? = {
+                if let d = options?["missedTurnRerouteMeters"] as? Double { return d > 0 ? d : nil }
+                if let i = options?["missedTurnRerouteMeters"] as? Int { return i > 0 ? Double(i) : nil }
+                return nil
+            }()
 
             var stops: [(lat: Double, lng: Double)] = []
             if let stopsArr = options?["stops"] as? [[String: Double]] {
@@ -70,6 +78,7 @@ public class CrustModule: Module {
                     mode: mode,
                     simulate: simulate,
                     speedMultiplier: speedMultiplier,
+                    missedTurnRerouteMeters: missedTurnRerouteMeters,
                     onEvent: { [weak self] payload in
                         guard let self else { return }
                         let kind = payload["kind"] as? String ?? ""

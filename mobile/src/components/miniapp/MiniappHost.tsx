@@ -14,6 +14,11 @@ import {webviewBridge as miniComms, miniappRunningRegistry, buildMiniappGlobalsS
 
 const BEFORE_EVICT_TIMEOUT_MS = 500
 
+// zIndex covers iOS/web; elevation does the same job on Android, where
+// zIndex alone doesn't always win against native nav layers. Both set to
+// 10 to match Compositor; CapsuleMenu sits one notch higher at 11.
+const hostStackStyle = {zIndex: 10, elevation: 10} as const
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -527,9 +532,9 @@ export default function MiniappHost() {
   )
 
   return (
-    // MiniappHost sits above the Stack so the foregrounded WebView covers the
-    // current route. z-[10]/elevation keep us on top of native nav layers.
-    <View className="absolute inset-0 z-10" pointerEvents="box-none">
+    // MiniappHost sits above the Stack so the foregrounded WebView covers
+    // the current route. See hostStackStyle for the rationale.
+    <View className="absolute inset-0" style={hostStackStyle} pointerEvents="box-none">
       {entries.map((app) => {
         const isFg = app.isForeground
 

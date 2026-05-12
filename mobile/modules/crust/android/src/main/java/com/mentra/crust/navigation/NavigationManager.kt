@@ -243,11 +243,13 @@ object NavigationManager {
         override fun onNavigatorReady(nav: Navigator) {
           Log.d(TAG, "navigator ready")
           navigator = nav
-          // Enable full SDK voice guidance (turn-by-turn announcements + alerts).
+          // Audio guidance is suppressed — the glasses deliver
+          // turn-by-turn instructions visually, so the phone playing its
+          // own "in 50 feet, turn right" audio is redundant.
           try {
-            nav.setAudioGuidance(Navigator.AudioGuidance.VOICE_ALERTS_AND_GUIDANCE)
+            nav.setAudioGuidance(Navigator.AudioGuidance.SILENT)
           } catch (e: Throwable) {
-            Log.w(TAG, "setAudioGuidance(VOICE_ALERTS_AND_GUIDANCE) failed", e)
+            Log.w(TAG, "setAudioGuidance(SILENT) failed", e)
           }
           attachListeners(nav, callbacks)
           attachLocationListener(activity, callbacks)

@@ -1165,6 +1165,9 @@ class LocalMiniappRuntime {
           ferries: avoidRaw.ferries === true,
         }
       : undefined
+    const missedRaw = Number(payload.missedTurnRerouteMeters)
+    const missedTurnRerouteMeters =
+      Number.isFinite(missedRaw) && missedRaw > 0 ? missedRaw : undefined
 
     const navigation = getRuntimeHooks().navigation
     if (!navigation) {
@@ -1236,7 +1239,7 @@ class LocalMiniappRuntime {
     }
 
     try {
-      const result = await navigation.start({lat, lng}, {simulate, speedMultiplier, stops, mode, avoid})
+      const result = await navigation.start({lat, lng}, {simulate, speedMultiplier, stops, mode, avoid, missedTurnRerouteMeters})
       if (result.ok) {
         this.activeNavApps.add(packageName)
       }

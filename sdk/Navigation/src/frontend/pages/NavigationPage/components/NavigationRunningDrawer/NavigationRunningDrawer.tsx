@@ -10,18 +10,39 @@ import type {PlaceDetails} from "@/backend/lib/places/places"
 type Props = {
   destination: PlaceDetails | null
   me: LatLng | null
+  /** Remaining route distance from the Nav SDK — follows the actual path. */
+  routeDistanceMeters?: number | null
+  /** Remaining route duration from the Nav SDK — mode-aware. */
+  routeDurationSeconds?: number | null
   onStop: () => void
   onClose: () => void
 }
 
-const WALKING_M_PER_S = 1.4
+// Fallback only — used when the Nav SDK hasn't sent a maneuver event yet
+// so the drawer can render *something* during the brief startup window.
+const FALLBACK_WALKING_M_PER_S = 1.4
 
-export function NavigationRunningDrawer({destination, me, onStop}: Props) {
-  const distanceMeters = destination && me ? haversineMeters(me, destination) : null
+export function NavigationRunningDrawer({
+  destination,
+  me,
+  routeDistanceMeters,
+  routeDurationSeconds,
+  onStop,
+}: Props) {
+  // Prefer the SDK's mode-correct, polyline-following remaining values;
+  // fall back to crow-flies + walking speed until the first event lands.
+  const haversineDistance = destination && me ? haversineMeters(me, destination) : null
+  const distanceMeters =
+    routeDistanceMeters != null && routeDistanceMeters > 0 ? routeDistanceMeters : haversineDistance
+  const durationSeconds =
+    routeDurationSeconds != null && routeDurationSeconds > 0
+      ? routeDurationSeconds
+      : haversineDistance != null
+        ? haversineDistance / FALLBACK_WALKING_M_PER_S
+        : null
   const distanceLabel = distanceMeters != null ? formatDistance(distanceMeters) : "—"
-  const etaMinutes = distanceMeters != null ? Math.round(distanceMeters / WALKING_M_PER_S / 60) : null
-  const etaLabel = etaMinutes != null ? formatEta(distanceMeters!) : "—"
-  const arrivalLabel = etaMinutes != null ? formatArrival(etaMinutes) : "—"
+  const etaLabel = durationSeconds != null ? formatEta(durationSeconds) : "—"
+  const arrivalLabel = durationSeconds != null ? formatArrival(durationSeconds) : "—"
 
   // Publish the bar's measured height into the shared drawer-offset
   // MotionValue so the NavMap right-rail buttons sit just above us
@@ -85,8 +106,8 @@ function Stat({label, sub}: {label: string; sub: string}) {
   )
 }
 
-function formatEta(meters: number): string {
-  const minutes = meters / WALKING_M_PER_S / 60
+function formatEta(seconds: number): string {
+  const minutes = seconds / 60
   if (minutes < 1) return "<1 min"
   if (minutes < 60) return `${Math.round(minutes)} min`
   const hours = Math.floor(minutes / 60)
@@ -94,7 +115,7 @@ function formatEta(meters: number): string {
   return `${hours}h ${rem}m`
 }
 
-function formatArrival(etaMinutes: number): string {
-  const arrival = new Date(Date.now() + etaMinutes * 60 * 1000)
+function formatArrival(seconds: number): string {
+  const arrival = new Date(Date.now() + seconds * 1000)
   return arrival.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})
 }

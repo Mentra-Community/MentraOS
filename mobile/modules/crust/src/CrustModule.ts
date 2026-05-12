@@ -83,6 +83,8 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
       /** "walking" | "driving" | "cycling" | "two_wheeler". Defaults driving. */
       mode?: string
       avoid?: {highways?: boolean; tolls?: boolean; ferries?: boolean}
+      /** Force a reroute when the user is more than N meters past a pivot they didn't take. */
+      missedTurnRerouteMeters?: number
     },
   ): Promise<{ok: boolean; error?: string}>
   stopNavigation(): Promise<{ok: boolean; error?: string}>

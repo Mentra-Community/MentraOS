@@ -66,6 +66,12 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const [activeDestinationName, setActiveDestinationName] = useState<string | null>(null)
   const [routePoints, setRoutePoints] = useState<NavRoute["points"] | null>(null)
   const [previewRoutePoints, setPreviewRoutePoints] = useState<LatLng[] | null>(null)
+  // Route-aware totals from computeRoute (mode-correct, follows the actual
+  // walking path rather than crow-flies). Cleared when destination changes
+  // or trip ends. Drawers prefer these over recomputing.
+  const [previewRouteSummary, setPreviewRouteSummary] = useState<
+    {distanceMeters: number; durationSeconds: number} | null
+  >(null)
   const [log, setLog] = useState<LogEntry[]>([])
 
   // Fetch a preview route whenever destination changes and we're not navigating
@@ -74,6 +80,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     console.log("[PREVIEW] effect fired — running:", running, "destination:", destination?.name, "coords:", coords?.lat, coords?.lng)
     if (running || !destination || !coords) {
       setPreviewRoutePoints(null)
+      setPreviewRouteSummary(null)
       return
     }
     previewAbortRef.current?.abort()
@@ -185,6 +192,17 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
           console.log("[PREVIEW] no steps returned by Routes API")
         }
         setPreviewRoutePoints(pts)
+        if (
+          typeof route?.totalDistanceMeters === "number" &&
+          typeof route?.totalDurationSeconds === "number"
+        ) {
+          setPreviewRouteSummary({
+            distanceMeters: route.totalDistanceMeters,
+            durationSeconds: route.totalDurationSeconds,
+          })
+        } else {
+          setPreviewRouteSummary(null)
+        }
       })
       .catch((err) => {
         console.warn("[PREVIEW] computeRoute failed:", err)
@@ -373,6 +391,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     setActiveDestinationName(destination.name || destination.address || null)
     setRoutePoints(null)
     setPreviewRoutePoints(null)
+    setPreviewRouteSummary(null)
     append(`start → ${destination.name || `${latNum}, ${lngNum}`}${simulate ? ` (sim ${speedMultiplier}x)` : ""}`)
 
     if (!navUpdateUnsubRef.current) {
@@ -391,6 +410,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
       mode: "walking",
       simulate,
       speedMultiplier,
+      missedTurnRerouteMeters: 3,
     })
     append(`start ack: ${JSON.stringify(result)}`)
     if (result.ok) {
@@ -420,6 +440,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     setActiveDestinationName(null)
     setRoutePoints(null)
     setPreviewRoutePoints(null)
+    setPreviewRouteSummary(null)
     setOffRouteAt(null)
     // Also clear the picked destination so the page returns to the
     // idle (no-destination) state — otherwise tapping Done after
@@ -500,6 +521,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
             me={me}
             simulate={simulate}
             speedMultiplier={speedMultiplier}
+            routeDistanceMeters={previewRouteSummary?.distanceMeters ?? null}
+            routeDurationSeconds={previewRouteSummary?.durationSeconds ?? null}
             onStart={handleStart}
             onClose={() => { setDestination(null); setActiveDestination(null) }}
           />
@@ -508,6 +531,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
           <NavigationRunningDrawer
             destination={devDestination}
             me={me}
+            routeDistanceMeters={maneuver?.distanceToDestinationMeters ?? null}
+            routeDurationSeconds={maneuver?.timeToDestinationSeconds ?? null}
             onStop={handleStop}
             onClose={() => setDestination(null)}
           />

@@ -168,6 +168,7 @@ export interface NavigationAdapter {
       stops?: Array<{lat: number; lng: number}>
       mode?: string
       avoid?: {highways?: boolean; tolls?: boolean; ferries?: boolean}
+      missedTurnRerouteMeters?: number
     },
   ) => Promise<{ok: boolean; error?: string}>
   stop: () => Promise<{ok: boolean; error?: string}>

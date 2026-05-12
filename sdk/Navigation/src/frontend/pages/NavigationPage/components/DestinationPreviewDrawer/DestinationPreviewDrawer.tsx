@@ -9,18 +9,43 @@ type Props = {
   me: LatLng | null
   simulate: boolean
   speedMultiplier: number
+  /** Route distance from the Routes API — follows the actual walking path. */
+  routeDistanceMeters?: number | null
+  /** Route duration from the Routes API — mode-aware (walking/driving/etc). */
+  routeDurationSeconds?: number | null
   onStart: () => void
   onClose: () => void
 }
 
-const WALKING_M_PER_S = 1.4
+// Fallback only — used when the Routes API hasn't returned yet so the
+// drawer can still show *something* instead of em-dashes. Once the route
+// summary arrives we prefer those mode-correct values.
+const FALLBACK_WALKING_M_PER_S = 1.4
 
-export function DestinationPreviewDrawer({destination, me, simulate, speedMultiplier, onStart, onClose}: Props) {
-  const distanceMeters = destination && me ? haversineMeters(me, destination) : null
+export function DestinationPreviewDrawer({
+  destination,
+  me,
+  simulate,
+  speedMultiplier,
+  routeDistanceMeters,
+  routeDurationSeconds,
+  onStart,
+  onClose,
+}: Props) {
+  // Prefer real route totals from computeRoute; fall back to straight-line
+  // haversine + walking-speed only while waiting for the API response.
+  const haversineDistance = destination && me ? haversineMeters(me, destination) : null
+  const distanceMeters =
+    routeDistanceMeters != null && routeDistanceMeters > 0 ? routeDistanceMeters : haversineDistance
+  const durationSeconds =
+    routeDurationSeconds != null && routeDurationSeconds > 0
+      ? routeDurationSeconds
+      : haversineDistance != null
+        ? haversineDistance / FALLBACK_WALKING_M_PER_S
+        : null
   const distanceLabel = distanceMeters != null ? formatDistance(distanceMeters) : null
-  const etaMinutes = distanceMeters != null ? Math.round(distanceMeters / WALKING_M_PER_S / 60) : null
-  const etaLabel = etaMinutes != null ? formatEta(distanceMeters!) : null
-  const arrivalLabel = etaMinutes != null ? formatArrival(etaMinutes) : null
+  const etaLabel = durationSeconds != null ? formatEta(durationSeconds) : null
+  const arrivalLabel = durationSeconds != null ? formatArrival(durationSeconds) : null
 
   return (
     <Drawer
@@ -76,8 +101,8 @@ export function DestinationPreviewDrawer({destination, me, simulate, speedMultip
   )
 }
 
-function formatEta(meters: number): string {
-  const minutes = meters / WALKING_M_PER_S / 60
+function formatEta(seconds: number): string {
+  const minutes = seconds / 60
   if (minutes < 1) return "<1 min"
   if (minutes < 60) return `${Math.round(minutes)} min`
   const hours = Math.floor(minutes / 60)
@@ -85,7 +110,7 @@ function formatEta(meters: number): string {
   return `${hours}h ${rem}m`
 }
 
-function formatArrival(etaMinutes: number): string {
-  const arrival = new Date(Date.now() + etaMinutes * 60 * 1000)
+function formatArrival(seconds: number): string {
+  const arrival = new Date(Date.now() + seconds * 1000)
   return arrival.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})
 }
