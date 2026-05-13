@@ -11,8 +11,11 @@ new pieces are bounded: a Swift JSContext runtime in the existing
 bridge, a polyfill bundle, and a WebView-↔-JSContext message bus.
 
 **See also:**
+- **Testing strategy** (above the Implementation plan) — three
+  layers of tests + per-phase acceptance gates so an agent can
+  verify each phase end-to-end.
 - **Appendix A** — file-by-file migration of `sdk/example-miniapp/`,
-  the canonical fixture and acceptance gate.
+  the canonical fixture and integration test fixture.
 - **Appendix B** — SDK + CLI migration checklist.
 
 ---
@@ -302,13 +305,18 @@ few hundred lines of Swift in there. Don't fragment the module set.
 ```
 mobile/modules/crust/
 ├── ios/
-│   ├── CrustModule.swift              # existing — add JSC Functions here
-│   ├── Source/JSCRuntime.swift        # NEW: owns N JSContexts keyed by id
-│   ├── Source/JSCDispatcher.swift     # NEW: __dispatch routes
-│   ├── Source/JSCPolyfillBridge.swift # NEW: native handlers for fetch/WS/timers/storage/crypto
+│   ├── CrustModule.swift                          # add JSC Functions
+│   ├── Source/JSCRuntime.swift                    # owns N JSContexts keyed by id
+│   ├── Source/JSCDispatcher.swift                 # __dispatch routes
+│   ├── Source/JSCPolyfillBridge.swift             # native handlers for fetch/WS/timers/storage/crypto
 │   └── ... existing crust files
-├── android/                           # parallel Kotlin structure
-└── src/CrustModule.ts                 # TS types for spawn/evaluate/kill
+├── android/
+│   └── src/main/java/com/mentra/crust/
+│       ├── CrustModule.kt                         # add Zipline Functions
+│       ├── jsc/JSCRuntime.kt                      # owns N Zipline instances keyed by id
+│       ├── jsc/JSCDispatcher.kt                   # __dispatch routes
+│       └── jsc/JSCPolyfillBridge.kt               # native handlers for fetch/WS/timers/storage/crypto
+└── src/CrustModule.ts                             # TS types for spawn/evaluate/kill
 ```
 
 Polyfill JS bundle ships in a separate package
@@ -1110,23 +1118,37 @@ signature verification kicks in. Same install flow otherwise.
 
 ### Host app backgrounded by user (screen off, in pocket)
 
-1. iOS may or may not suspend the host process — depends on whether
-   we hold a `bluetooth-central` background mode (we do) and have an
-   active BLE session (we do, while glasses are connected).
-2. As long as host process is alive, all JSContexts continue running.
-3. WebViews are already destroyed (user navigated away).
-4. Background JS receives glasses events normally via the BLE bridge,
-   processes them, calls `session.display.*` etc.
+**iOS:** Host process stays alive while we hold the
+`bluetooth-central` background mode (we do) and have an active BLE
+session (we do, while glasses are connected). All JSContexts
+continue running. WebViews are already destroyed (user navigated
+away). Background JS receives glasses events normally via the BLE
+bridge, processes them, calls `session.display.*` etc.
 
-This is the steady-state production scenario.
+**Android:** Host process stays alive via the foreground service we
+already run for BLE. All Zipline/QuickJS contexts continue running.
+JS timers fire reliably under Doze because the polyfill bridge
+routes `setInterval` through our existing `BackgroundTimer` pattern
+(AlarmManager + wakelock from the foreground service), bypassing
+WebView-style timer throttling. WebViews are already destroyed.
+Background JS receives glasses events normally.
 
-### iOS jetsams the host app
+This is the steady-state production scenario on both platforms.
 
-1. All JSContexts die.
-2. On next launch, host re-spawns each installed-and-enabled
-   miniapp's JSContext.
-3. Each miniapp's `background/index.ts` re-runs from scratch, hydrating
-   from `session.storage`.
+### Host process killed (iOS jetsam / Android LMK)
+
+**iOS jetsam.** When iOS's jetsam kills the host process under
+memory pressure, all JSContexts die. On next launch (BLE event
+wakes the host), each installed-and-enabled miniapp's JSContext
+re-spawns and `background/index.ts` re-runs from scratch, hydrating
+from `session.storage`.
+
+**Android LMK / OEM background killers.** Same recovery shape on
+the Android side. Foreground service + glasses connection should
+keep us alive, but Xiaomi/Huawei/Samsung aggressive-killer behavior
+is real. Same re-spawn-on-launch path applies — Zipline contexts
+reconstruct, `init(session)` re-fires, state hydrates from
+`session.storage`.
 
 **`session.storage` is the source of truth, not in-memory state.**
 Same lesson Chrome MV3 service workers had to teach.
@@ -1539,11 +1561,12 @@ Apple Guideline 2.5.2 compliance when the store ships.
 
 ---
 
-## Pieces inherited from Pebble (do not skip)
+## Production-critical implementation details (do not skip)
 
-A deep read of `coredevices/mobileapp` revealed several "small" things
-that aren't optional. They are how PKJS doesn't crash in production.
-Reference-only (GPL-3.0); we re-implement.
+The items below are non-optional. Each is a small piece of code that
+keeps the runtime from crashing or losing data in production. Most
+were validated by Pebble's `coredevices/mobileapp` (GPL-3.0,
+reference-only — we re-implement).
 
 ### Single `__dispatch`, NOT per-method bindings (production crash)
 
@@ -1686,6 +1709,105 @@ no published architecture documentation.
 
 ---
 
+## Testing strategy
+
+**Three layers of tests, ordered by what they catch:**
+
+### Layer 1 — Unit tests (every phase)
+
+Standard Jest suites colocated with the code. Each phase's
+acceptance gate enumerates the unit tests it must add.
+
+- **iOS native:** XCTest in `mobile/modules/crust/ios/Tests/`.
+  `bun test:ios:native` runs them.
+- **Android native:** JUnit + Robolectric in
+  `mobile/modules/crust/android/src/test/`.
+  `bun test:android:native` runs them.
+- **Polyfill bundle:** Jest snapshot tests against `dist/startup.js`
+  output; per-API conformance tests for `fetch`, `URL`, `crypto`,
+  etc. Run as part of `bun test`.
+- **TypeScript SDK:** Jest in `mobile/modules/miniapp/test/` and
+  `mobile/test/`. Existing harness; just add cases.
+
+Unit tests catch wire-protocol regressions and per-handler bugs.
+They don't prove the system works end-to-end — that's Layer 3.
+
+### Layer 2 — Conformance tests (Phase 1 onward)
+
+Run a subset of [Web Platform Tests](https://github.com/web-platform-tests/wpt)
+against the polyfill bundle inside both engines, in CI:
+
+- `fetch` — at least the `headers/`, `request/`, `response/`,
+  `redirect/`, `abort/` subdirectories.
+- `url` — `URL` parse / serialize / IDL surface.
+- `encoding` — `TextEncoder`/`TextDecoder` round-trips.
+- `WebCryptoAPI` — `subtle.digest` / `subtle.encrypt` / etc.
+
+Initial target: **>80% pass on each suite, both engines.** Failures
+are tracked as known-bug exceptions in a YAML allowlist (so new
+regressions are caught but pre-existing gaps don't block CI).
+
+This is the only way to know our `fetch` shim *behaves* like
+browser fetch, not just "doesn't throw."
+
+### Layer 3 — Example app as integration test
+
+**`sdk/example-miniapp/` is the canonical end-to-end test fixture.**
+It exists today as a single React SPA (Live Captions + 15 tester
+pages exercising every `session.*` interface). Appendix A
+documents the migration to the two-layer architecture, and that
+migration is itself the integration acceptance gate for Phase 5.
+
+After Phase 5 ships, the example app must round-trip every
+`session.*` call through the new architecture — same observable
+behavior as today, plus the new background/UI separation. The
+existing tester pages effectively become an end-to-end test
+suite for the SDK surface.
+
+**Manual gate (run on real hardware before each phase ships):**
+1. Install the latest example app on iPhone 15 + Pixel 4a.
+2. Connect glasses (G1 or G2).
+3. Open the app, navigate to each tester page in turn, exercise
+   the controls. Visually verify expected glasses behavior +
+   on-phone UI updates.
+4. Background the host app for 5 min with glasses connected;
+   verify transcription + display still work.
+5. Force-kill the host app; reopen; verify state hydrates from
+   `session.storage`.
+
+This is the gate that catches integration bugs unit tests miss.
+Maestro scripts cover the on-phone UI half (already exists at
+`mobile/.maestro/`); glasses-side verification is manual until we
+build a hardware-in-the-loop harness (out of scope for V1).
+
+### Layer 4 — Production telemetry (Phase 6 onward)
+
+Sentry counters `miniapp.crash`, `miniapp.respawn`,
+`miniapp.evicted`, `miniapp.dispatch_latency_ms{method}` are the
+post-ship feedback loop. Document baseline ranges in Phase 6 so
+on-call has a target to compare against.
+
+### What an agent should do
+
+When implementing a phase end-to-end, in order:
+1. Write the unit tests called out in the phase's "Acceptance gate"
+   *first* (or alongside the implementation, but before declaring
+   the phase done).
+2. Run the WPT subset and check no regressions vs the previous
+   phase's allowlist.
+3. Walk through the manual gate above on real hardware. If you
+   don't have hardware, **say so explicitly** in the PR
+   description rather than claiming success.
+4. After Phase 5: re-run the full example-app acceptance from
+   Appendix A. After Phases 1-4: run the example app's *current*
+   single-bundle behavior to confirm nothing broke for downstream
+   work; the new behavior lights up at Phase 5.
+
+If a unit test passes but the manual gate fails, the unit test is
+wrong (or insufficient) — fix it, don't paper over the failure.
+
+---
+
 ## Implementation plan
 
 The architecture is a refactor + add, not a rewrite. **Two parallel
@@ -1739,6 +1861,16 @@ Tasks:
 **Android:** explicitly out of scope for Phase 0. Android doesn't
 hit the same jetsam wall — multiple WebViews share one renderer
 process. We don't need eviction there until usage shows we do.
+
+**Acceptance gate (how to know Phase 0 is done):**
+- Unit: `MiniappRunningRegistry` LRU test suite passes (eviction
+  picks oldest `lastForegroundAt`, capacity matches device tier).
+- Manual: install 3 miniapps on iPhone SE 2; foreground each in
+  turn; verify the OLDEST gets evicted (telemetry counter
+  `miniapp.evicted` increments) when capacity exceeded.
+- Manual: re-foreground an evicted miniapp; verify splash shows
+  "restoring…" then app rehydrates from `session.storage`.
+- Telemetry: `miniapp.evicted` counter visible in Sentry.
 
 ### Phase 1 — JS runtime in `crust` (~3 weeks iOS, +2-3 weeks Android)
 
@@ -1826,17 +1958,31 @@ JS:
   `auto.ts` (currently has 3: PostMessage, Mock,
   LocalSocketWithMockFallback).
 
-Tests:
-- Snapshot tests for the polyfill bundle output.
-- Smoke tests for `mentraJsSpawn`/`mentraJsKill` lifecycle.
-- E2E test: hello-world miniapp installs, JSContext spawns,
-  `session.display.showTextWall("hi")`, glasses display it.
-
 **Android sequencing within Phase 1.** iOS first to prove the
 architecture (~2 weeks), then port to Android (~1 week given
 the shape is identical). The ~3-week Phase 1 budget covers both.
 If iOS surfaces architectural issues, Android port slips a phase;
 otherwise it ships in Phase 1. Don't ship the SDK as iOS-only.
+
+**Acceptance gate (how to know Phase 1 is done):**
+- Snapshot test: polyfill bundle output is byte-stable across
+  builds.
+- Unit (iOS): spawn → evaluate `2+2` → expect `4` → kill, no leaks
+  per Instruments Allocations.
+- Unit (Android): spawn → evaluate `2+2` → expect `4` → kill, no
+  leaks per Android Profiler.
+- Unit: `JSCPolyfillBridge` round-trips fetch / setTimeout /
+  localStorage / crypto.subtle on both platforms (mocked native).
+- Memory benchmark (iOS): 50 idle JSContexts ≤ ~50 MB total
+  delta — see existing measured table.
+- Memory benchmark (Android): record actual numbers in
+  `agents/spike-results/zipline-spike-android.log` (the iOS
+  estimate of ~1-1.5 MB per Zipline context needs validation).
+- E2E (iOS + Android): hello-world miniapp installs, JS context
+  spawns, `session.display.showTextWall("hi")`, glasses display it.
+- Microtask test (Android): native bridge resolves a Promise from
+  outside a JS call; verify `.then()` runs (proves microtask drain
+  helper is wired).
 
 ### Phase 2 — Refactor `LocalMiniappRuntime` → `MentraJSRouter` (~3 weeks)
 
@@ -1890,6 +2036,20 @@ this phase is pure RN runtime refactor (TypeScript). The
 `MentraJSRouter` is platform-agnostic; it talks to whichever
 `Crust` native module is loaded. As long as Phase 1 Android (Zipline/QuickJS integration) is
 done, Phase 2 lights up on Android automatically.
+
+**Acceptance gate (how to know Phase 2 is done):**
+- Unit: each lifted handler has at least one test against a stub
+  `__dispatch` event input and asserted native call.
+- Unit: `MentraJSRouter` routes `__dispatch` to the correct handler
+  by `iface`/`method` keys.
+- Integration: install the example miniapp; verify every existing
+  `session.*` call (display, transcription, mic, camera, speaker,
+  LED, location, IMU, button events) round-trips correctly by
+  observing the existing tester pages still work end-to-end.
+- Grep: zero references to `generateLocalToken`/`validateLocalToken`
+  outside the deletion site.
+- Grep: zero references to `app.sendMessage(...)` (replaced by
+  `JSCRuntime.dispatchToJs(...)`).
 
 ### Phase 3 — WebView lifecycle inversion + UI message bus (~4 weeks)
 
@@ -1950,16 +2110,28 @@ Tasks:
   WebViews; reconcile with cold-spawn UX. Document expected
   splash-time behavior.
 - Port the Notes example end-to-end.
-- Acceptance: round-trip "WebView taps button → background runs
-  glasses display call → glasses show text" — measure on iPhone 15
-  with a real perf harness. No specific latency target — measure
-  first, set a budget once we know what's normal.
 
 **Android sequencing within Phase 3.** iOS WebView binding first,
 then Android equivalent (`addJavascriptInterface` +
 `evaluateJavascript` on Android WebView). Same shape, slightly
 different native surface. ~3 weeks iOS + ~1 week Android — fits
 the 4-week phase budget.
+
+**Acceptance gate (how to know Phase 3 is done):**
+- Unit: `MentraUIRouter` routes `mentra.send` → JSContext's
+  `session.ui.on` handler in both directions, including outbound
+  buffer flush after `ready()`.
+- Integration: round-trip "WebView taps button → background runs
+  glasses display call → glasses show text" on real hardware (iOS
+  and Android).
+- Manual: Notes example app — tap "show" in the WebView, see text
+  on glasses, dismiss WebView, re-open WebView, see state preserved
+  via `session.storage`.
+- Manual: kill WebView mid-message-flight; verify background
+  doesn't crash and re-opens cleanly.
+- Perf: measure WebView open-to-render latency on iPhone 15 and
+  Pixel 4a. Set a budget if numbers are surprising; otherwise just
+  log them as the baseline.
 
 ### Phase 4 — Bundle / install / sideload (~1-2 weeks, mobile only)
 
@@ -2016,7 +2188,17 @@ discovery as iOS.
 
 These come back when we ship the store; not now.
 
-### Phase 5 — SDK split + scaffolder rewrite (~2 weeks)
+**Acceptance gate (how to know Phase 4 is done):**
+- Unit: `buildProjectZip` test asserting the zip contains both
+  `dist/background/index.js` and `dist/ui/index.html` with correct
+  prefixes.
+- Unit: manifest schema validates a sample two-layer manifest with
+  `entry.background` + `entry.ui` + `sdkVersion` + `minHostVersion`.
+- Unit: `AppRegistry` rejects a manifest whose `minHostVersion`
+  exceeds the current host version.
+- Integration: `bun mentra-miniapp dev` from `sdk/example-miniapp/`
+  produces a working zip; install via QR; both halves load on iOS
+  and Android.
 
 **Goal:** Developers can `bun create mentra-miniapp` and get a
 two-layer template.
@@ -2071,6 +2253,19 @@ two-layer template.
 **Android within Phase 5.** None — `@mentra/miniapp/{background,ui}`
 is platform-agnostic JS. Same package serves both platforms.
 
+**Acceptance gate (how to know Phase 5 is done):**
+- `bun create mentra-miniapp test-app` produces a working scaffold
+  with the symmetric `src/background/` + `src/ui/` layout from
+  Appendix A.
+- TypeScript compile passes for both `@mentra/miniapp/background`
+  and `@mentra/miniapp/ui` sub-paths with their separate ambient
+  types (e.g. `mentra: ...` global is undefined when imported via
+  `/background`, defined via `/ui`).
+- `sdk/example-miniapp/` runs end-to-end on the new architecture
+  (full Appendix A acceptance gate — see "Acceptance test for the
+  example-app migration" in Appendix A).
+- Mintlify docs site builds and the two-layer model is documented.
+
 ### Phase 6 — Operations (~2 weeks)
 
 **Goal:** Crash detection, telemetry, logging.
@@ -2099,6 +2294,21 @@ the store.
 telemetry mirror in Kotlin's `JSCRuntime.kt`. Same Sentry SDK
 (`@sentry/react-native`) ships unified events across platforms;
 no Android-specific tag work needed.
+
+**Acceptance gate (how to know Phase 6 is done):**
+- Inject a deliberate crash into the example app's background
+  (`throw new Error("test crash")` in `init`); observe the state
+  machine progress through CRASHED → BACKOFF → eventual respawn.
+- Inject a tight infinite loop; verify the soft watchdog warns at
+  5s and kills at 30s; verify the kill is logged to Sentry with
+  the right tags.
+- Trigger a Sentry test event from inside a miniapp; verify it
+  appears in Sentry tagged with `miniapp.packageName`,
+  `miniapp.engine`, `miniapp.version`.
+- Manual: connect Safari Web Inspector to an iOS-JSC context;
+  verify console / sources panels work.
+- Manual: connect Chrome DevTools to a Zipline context on Android;
+  verify the same.
 
 ### Total: ~17 weeks mobile (iOS leading), Android lags by ~2-3 weeks
 
@@ -2410,10 +2620,12 @@ Normal client/server async problems, none unique to this architecture:
 1. **Should disabled miniapps keep their JSContext alive?** Instinct:
    no, tear down on disable. Saves memory. JSContext re-spawns on
    re-enable, hydrates from storage.
-2. **CPU/memory quotas per miniapp?** Pebble had none. JSC has no
-   built-in quota. We can add a watchdog timer in the Swift
-   dispatcher that aborts a miniapp's evaluation if it blocks the JS
-   thread for >N seconds. Defer until it bites.
+2. **CPU/memory quotas per miniapp?** Neither JSC nor QuickJS ships
+   built-in quotas. We can add a watchdog timer in the dispatcher
+   (Swift on iOS, Kotlin on Android) that aborts a miniapp's
+   evaluation if it blocks the JS thread for >N seconds. QuickJS
+   exposes `JS_SetInterruptHandler` for clean preemption; iOS-JSC
+   has `JSContextGroupSetExecutionTimeLimit`. Defer until it bites.
 3. **Multiple simultaneous WebViews?** Out of scope. Product is "user
    looks at one miniapp's settings at a time."
 4. **Notification scheduling from the WebView?** All scheduling goes
@@ -2437,9 +2649,12 @@ Normal client/server async problems, none unique to this architecture:
 
 - 10+ miniapps run simultaneously in background on iPhone SE 2
   (3 GB RAM) without jetsam.
+- 10+ miniapps run simultaneously in background on a low-end Android
+  device (e.g. Pixel 4a, 6 GB RAM) without LMK.
 - WebView open-to-render latency <500ms (p95).
 - A developer can `bun create mentra-miniapp` and ship a working
   miniapp in <30 minutes.
 - Pass at least one App Store review with the new architecture.
-- Existing miniapps run via compatibility shim with no developer
-  changes required.
+- `sdk/example-miniapp/` runs end-to-end on the new architecture
+  (the only existing miniapp; doubles as integration test — see
+  Appendix A acceptance gate).
