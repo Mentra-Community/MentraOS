@@ -1,4 +1,4 @@
-import {GlassesStatus, OtaProgress, OtaStatus, OtaUpdateInfo, WifiStatus} from "@mentra/bluetooth-sdk"
+import {GlassesStatus, HotspotStatus, OtaProgress, OtaStatus, OtaUpdateInfo, WifiStatus} from "@mentra/bluetooth-sdk"
 import {create} from "zustand"
 import {subscribeWithSelector} from "zustand/middleware"
 
@@ -35,7 +35,15 @@ type LegacyWifiFields = {
   wifiLocalIp?: string
 }
 
-type GlassesInfoUpdate = Partial<GlassesStatus> & LegacyWifiFields
+type LegacyHotspotFields = {
+  hotspotEnabled?: boolean
+  hotspotSsid?: string
+  hotspotPassword?: string
+  hotspotGatewayIp?: string
+  hotspotLocalIp?: string
+}
+
+type GlassesInfoUpdate = Partial<GlassesStatus> & LegacyWifiFields & LegacyHotspotFields
 
 function wifiFromLegacyFields(info: LegacyWifiFields): WifiStatus | null {
   if (info.wifiConnected === true) {
@@ -61,6 +69,36 @@ function derivedWifiFields(wifi: WifiStatus): LegacyWifiFields {
     wifiConnected: false,
     wifiSsid: "",
     wifiLocalIp: "",
+  }
+}
+
+function hotspotFromLegacyFields(info: LegacyHotspotFields): HotspotStatus | null {
+  if (info.hotspotEnabled === true) {
+    const ssid = info.hotspotSsid?.trim()
+    const password = info.hotspotPassword?.trim()
+    const localIp = (info.hotspotGatewayIp ?? info.hotspotLocalIp)?.trim()
+    return ssid && password && localIp ? {state: "enabled", ssid, password, localIp} : {state: "unknown"}
+  }
+  if (info.hotspotEnabled === false) {
+    return {state: "disabled"}
+  }
+  return null
+}
+
+function derivedHotspotFields(hotspot: HotspotStatus): LegacyHotspotFields {
+  if (hotspot.state === "enabled") {
+    return {
+      hotspotEnabled: true,
+      hotspotSsid: hotspot.ssid,
+      hotspotPassword: hotspot.password,
+      hotspotGatewayIp: hotspot.localIp,
+    }
+  }
+  return {
+    hotspotEnabled: false,
+    hotspotSsid: "",
+    hotspotPassword: "",
+    hotspotGatewayIp: "",
   }
 }
 
@@ -129,6 +167,7 @@ const initialState: GlassesStore = {
   caseOpen: false,
   caseRemoved: true,
   // hotspot info
+  hotspot: {state: "disabled"},
   hotspotEnabled: false,
   hotspotSsid: "",
   hotspotPassword: "",
@@ -153,8 +192,21 @@ export const useGlassesStore = create<GlassesState>()(
 
     setGlassesInfo: (info) =>
       set((state) => {
-        const {wifiConnected, wifiSsid, wifiLocalIp, ...sdkInfo} = info
+        const {
+          wifiConnected,
+          wifiSsid,
+          wifiLocalIp,
+          hotspotEnabled,
+          hotspotSsid,
+          hotspotPassword,
+          hotspotGatewayIp,
+          hotspotLocalIp,
+          ...sdkInfo
+        } = info
         const wifiUpdate = info.wifi ?? wifiFromLegacyFields({wifiConnected, wifiSsid, wifiLocalIp})
+        const hotspotUpdate =
+          info.hotspot ??
+          hotspotFromLegacyFields({hotspotEnabled, hotspotSsid, hotspotPassword, hotspotGatewayIp, hotspotLocalIp})
         const hasWifiInfoUpdate =
           Object.prototype.hasOwnProperty.call(info, "wifi") ||
           Object.prototype.hasOwnProperty.call(info, "wifiConnected") ||
@@ -164,6 +216,7 @@ export const useGlassesStore = create<GlassesState>()(
           ...state,
           ...sdkInfo,
           ...(wifiUpdate ? {wifi: wifiUpdate, ...derivedWifiFields(wifiUpdate)} : {}),
+          ...(hotspotUpdate ? {hotspot: hotspotUpdate, ...derivedHotspotFields(hotspotUpdate)} : {}),
           ...(hasWifiInfoUpdate ? {wifiStatusKnown: true} : {}),
         }
         if (next.connected === false) {
@@ -191,6 +244,12 @@ export const useGlassesStore = create<GlassesState>()(
 
     setHotspotInfo: (enabled: boolean, ssid: string, password: string, ip: string) =>
       set({
+        hotspot: hotspotFromLegacyFields({
+          hotspotEnabled: enabled,
+          hotspotSsid: ssid,
+          hotspotPassword: password,
+          hotspotGatewayIp: ip,
+        }) ?? {state: "unknown"},
         hotspotEnabled: enabled,
         hotspotSsid: ssid,
         hotspotPassword: password,

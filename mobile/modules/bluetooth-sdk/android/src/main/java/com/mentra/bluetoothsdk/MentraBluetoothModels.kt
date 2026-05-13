@@ -132,10 +132,7 @@ data class MentraGlassesStatus(
     val caseCharging: Boolean,
     val caseOpen: Boolean,
     val caseRemoved: Boolean,
-    val hotspotEnabled: Boolean,
-    val hotspotSsid: String,
-    val hotspotPassword: String,
-    val hotspotGatewayIp: String,
+    val hotspot: MentraHotspotStatus,
     val headUp: Boolean,
     val controllerConnected: Boolean,
     val controllerFullyBooted: Boolean,
@@ -176,10 +173,7 @@ data class MentraGlassesStatus(
             "caseCharging" to caseCharging,
             "caseOpen" to caseOpen,
             "caseRemoved" to caseRemoved,
-            "hotspotEnabled" to hotspotEnabled,
-            "hotspotSsid" to hotspotSsid,
-            "hotspotPassword" to hotspotPassword,
-            "hotspotGatewayIp" to hotspotGatewayIp,
+            "hotspot" to hotspot.toMap(),
             "headUp" to headUp,
             "controllerConnected" to controllerConnected,
             "controllerFullyBooted" to controllerFullyBooted,
@@ -222,10 +216,7 @@ data class MentraGlassesStatus(
                 caseCharging = boolValue(values, "caseCharging") ?: false,
                 caseOpen = boolValue(values, "caseOpen") ?: true,
                 caseRemoved = boolValue(values, "caseRemoved") ?: true,
-                hotspotEnabled = boolValue(values, "hotspotEnabled") ?: false,
-                hotspotSsid = stringValue(values, "hotspotSsid") ?: "",
-                hotspotPassword = stringValue(values, "hotspotPassword") ?: "",
-                hotspotGatewayIp = stringValue(values, "hotspotGatewayIp", "hotspotLocalIp") ?: "",
+                hotspot = MentraHotspotStatus.fromMap(values),
                 headUp = boolValue(values, "headUp") ?: false,
                 controllerConnected = boolValue(values, "controllerConnected") ?: false,
                 controllerFullyBooted = boolValue(values, "controllerFullyBooted") ?: false,
@@ -416,10 +407,7 @@ data class MentraGlassesStatusUpdate(
     val caseCharging: Boolean? = null,
     val caseOpen: Boolean? = null,
     val caseRemoved: Boolean? = null,
-    val hotspotEnabled: Boolean? = null,
-    val hotspotSsid: String? = null,
-    val hotspotPassword: String? = null,
-    val hotspotGatewayIp: String? = null,
+    val hotspot: MentraHotspotStatus? = null,
     val headUp: Boolean? = null,
     val controllerConnected: Boolean? = null,
     val controllerFullyBooted: Boolean? = null,
@@ -462,10 +450,9 @@ data class MentraGlassesStatusUpdate(
             putIfNotNull("caseCharging", caseCharging)
             putIfNotNull("caseOpen", caseOpen)
             putIfNotNull("caseRemoved", caseRemoved)
-            putIfNotNull("hotspotEnabled", hotspotEnabled)
-            putIfNotNull("hotspotSsid", hotspotSsid)
-            putIfNotNull("hotspotPassword", hotspotPassword)
-            putIfNotNull("hotspotGatewayIp", hotspotGatewayIp)
+            hotspot?.let {
+                put("hotspot", it.toMap())
+            }
             putIfNotNull("headUp", headUp)
             putIfNotNull("controllerConnected", controllerConnected)
             putIfNotNull("controllerFullyBooted", controllerFullyBooted)
@@ -513,10 +500,12 @@ data class MentraGlassesStatusUpdate(
                 caseCharging = optionalBoolValue(values, "caseCharging"),
                 caseOpen = optionalBoolValue(values, "caseOpen"),
                 caseRemoved = optionalBoolValue(values, "caseRemoved"),
-                hotspotEnabled = optionalBoolValue(values, "hotspotEnabled"),
-                hotspotSsid = optionalStringValue(values, "hotspotSsid"),
-                hotspotPassword = optionalStringValue(values, "hotspotPassword"),
-                hotspotGatewayIp = optionalStringValue(values, "hotspotGatewayIp", "hotspotLocalIp"),
+                hotspot =
+                    if (hasAnyKey(values, "hotspot", "enabled", "hotspotEnabled", "hotspotSsid", "hotspotPassword", "hotspotGatewayIp", "hotspotLocalIp")) {
+                        MentraHotspotStatus.fromMap(values)
+                    } else {
+                        null
+                    },
                 headUp = optionalBoolValue(values, "headUp"),
                 controllerConnected = optionalBoolValue(values, "controllerConnected"),
                 controllerFullyBooted = optionalBoolValue(values, "controllerFullyBooted"),
@@ -1066,13 +1055,91 @@ data class MentraWifiStatusEvent(
     val values: Map<String, Any> get() = status.toEventMap()
 }
 
+sealed interface MentraHotspotStatus {
+    val state: String
+
+    fun toMap(): Map<String, Any> =
+        when (this) {
+            is Enabled ->
+                mapOf(
+                    "state" to state,
+                    "ssid" to ssid,
+                    "password" to password,
+                    "localIp" to localIp,
+                )
+            Disabled -> mapOf("state" to state)
+            Unknown -> mapOf("state" to state)
+        }
+
+    fun toEventMap(): Map<String, Any> =
+        toMap() + mapOf("type" to "hotspot_status_change")
+
+    object Unknown : MentraHotspotStatus {
+        override val state: String = "unknown"
+    }
+
+    object Disabled : MentraHotspotStatus {
+        override val state: String = "disabled"
+    }
+
+    data class Enabled(
+        val ssid: String,
+        val password: String,
+        val localIp: String,
+    ) : MentraHotspotStatus {
+        override val state: String = "enabled"
+    }
+
+    companion object {
+        @JvmStatic
+        fun fromMap(values: Map<String, Any>): MentraHotspotStatus {
+            val hotspotValues = (values["hotspot"] as? Map<*, *>)?.stringKeyedMap() ?: values
+            return when (stringValue(hotspotValues, "state", "hotspotState")?.lowercase()) {
+                "enabled" -> enabledFrom(hotspotValues)
+                "disabled" -> Disabled
+                "unknown" -> Unknown
+                else -> {
+                    when (boolValue(hotspotValues, "enabled") ?: boolValue(hotspotValues, "hotspotEnabled")) {
+                        true -> enabledFrom(hotspotValues)
+                        false -> Disabled
+                        null -> Unknown
+                    }
+                }
+            }
+        }
+
+        @JvmStatic
+        fun fromRaw(enabled: Boolean, ssid: String?, password: String?, localIp: String?): MentraHotspotStatus {
+            if (!enabled) return Disabled
+            val nonEmptySsid = ssid?.trim()?.takeIf { it.isNotEmpty() }
+            val nonEmptyPassword = password?.trim()?.takeIf { it.isNotEmpty() }
+            val nonEmptyLocalIp = localIp?.trim()?.takeIf { it.isNotEmpty() }
+            return if (nonEmptySsid != null && nonEmptyPassword != null && nonEmptyLocalIp != null) {
+                Enabled(nonEmptySsid, nonEmptyPassword, nonEmptyLocalIp)
+            } else {
+                Unknown
+            }
+        }
+
+        private fun enabledFrom(values: Map<String, Any>): MentraHotspotStatus =
+            fromRaw(
+                enabled = true,
+                ssid = stringValue(values, "ssid", "hotspotSsid"),
+                password = stringValue(values, "password", "hotspotPassword"),
+                localIp = stringValue(values, "localIp", "local_ip", "hotspotGatewayIp", "hotspotLocalIp"),
+            )
+    }
+}
+
 data class MentraHotspotStatusEvent(
-    val values: Map<String, Any>,
+    val status: MentraHotspotStatus,
 ) {
-    val enabled: Boolean? get() = boolValue(values, "enabled")
-    val ssid: String? get() = stringValue(values, "ssid")
-    val password: String? get() = stringValue(values, "password")
-    val localIp: String? get() = stringValue(values, "local_ip", "localIp")
+    constructor(values: Map<String, Any>) : this(MentraHotspotStatus.fromMap(values))
+    constructor(enabled: Boolean, ssid: String?, password: String?, localIp: String?) : this(
+        MentraHotspotStatus.fromRaw(enabled, ssid, password, localIp)
+    )
+
+    val values: Map<String, Any> get() = status.toEventMap()
 }
 
 data class MentraHotspotErrorEvent(

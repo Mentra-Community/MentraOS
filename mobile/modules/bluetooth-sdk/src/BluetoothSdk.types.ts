@@ -70,12 +70,19 @@ export type WifiStatusChangeEvent = WifiStatus & {
   type: "wifi_status_change"
 }
 
-export type HotspotStatusChangeEvent = {
+export type HotspotStatus =
+  | {state: "unknown"}
+  | {state: "disabled"}
+  | {state: "enabled"; ssid: string; password: string; localIp: string}
+
+export type EnabledHotspotStatus = Extract<HotspotStatus, {state: "enabled"}>
+
+export function isEnabledHotspotStatus(status: HotspotStatus): status is EnabledHotspotStatus {
+  return status.state === "enabled"
+}
+
+export type HotspotStatusChangeEvent = HotspotStatus & {
   type: "hotspot_status_change"
-  enabled: boolean
-  ssid: string
-  password: string
-  local_ip: string
 }
 
 export type HotspotErrorEvent = {
@@ -417,10 +424,7 @@ export interface GlassesStatus {
   caseOpen: boolean
   caseRemoved: boolean
   // hotspot info
-  hotspotEnabled: boolean
-  hotspotSsid: string
-  hotspotPassword: string
-  hotspotGatewayIp: string
+  hotspot: HotspotStatus
   // OTA update info
   otaUpdateAvailable: OtaUpdateInfo | null
   otaProgress: OtaProgress | null

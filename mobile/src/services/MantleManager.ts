@@ -387,12 +387,16 @@ class MantleManager {
       // TODO: remove since we can sub to the zustand store for wifi info:
       this.subs.push(
         CoreModule.addListener("hotspot_status_change", (event) => {
-          useGlassesStore.getState().setHotspotInfo(event.enabled, event.ssid, event.password, event.local_ip)
+          const enabled = event.state === "enabled"
+          const ssid = enabled ? event.ssid : ""
+          const password = enabled ? event.password : ""
+          const localIp = enabled ? event.localIp : ""
+          useGlassesStore.getState().setHotspotInfo(enabled, ssid, password, localIp)
           GlobalEventEmitter.emit("hotspot_status_change", {
-            enabled: event.enabled,
-            ssid: event.ssid,
-            password: event.password,
-            local_ip: event.local_ip,
+            enabled,
+            ssid,
+            password,
+            local_ip: localIp,
           })
         }),
       )

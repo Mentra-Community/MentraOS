@@ -9,6 +9,7 @@ import {
   GlassesMediaVolumeGetResult,
   GlassesMediaVolumeSetResult,
   GlassesStatus,
+  HotspotStatus,
   MentraDevice,
   PhotoCompression,
   PhotoSize,
@@ -152,6 +153,22 @@ type NativeWifiFields = {
   wifiLocalIp?: string
 }
 
+type NativeHotspotFields = {
+  hotspot?: HotspotStatus
+  enabled?: boolean
+  ssid?: string
+  password?: string
+  localIp?: string
+  local_ip?: string
+  hotspotEnabled?: boolean
+  hotspotSsid?: string
+  hotspotPassword?: string
+  hotspotGatewayIp?: string
+  hotspotLocalIp?: string
+}
+
+type NativeGlassesStatusFields = NativeWifiFields & NativeHotspotFields
+
 function wifiStatusFromNative(values: NativeWifiFields): WifiStatus {
   if (values.wifi) {
     return values.wifi
@@ -167,36 +184,99 @@ function wifiStatusFromNative(values: NativeWifiFields): WifiStatus {
   return {state: "unknown"}
 }
 
-function normalizeGlassesStatus<T extends NativeWifiFields>(values: T): Omit<T, keyof NativeWifiFields> & {wifi: WifiStatus} {
-  const {wifi, wifiConnected, wifiSsid, wifiLocalIp, ...rest} = values
+function hotspotStatusFromNative(values: NativeHotspotFields): HotspotStatus {
+  if (values.hotspot) {
+    return values.hotspot
+  }
+  const enabled = values.hotspotEnabled ?? values.enabled
+  if (enabled === true) {
+    const ssid = (values.hotspotSsid ?? values.ssid)?.trim()
+    const password = (values.hotspotPassword ?? values.password)?.trim()
+    const localIp = (values.hotspotGatewayIp ?? values.hotspotLocalIp ?? values.localIp ?? values.local_ip)?.trim()
+    return ssid && password && localIp ? {state: "enabled", ssid, password, localIp} : {state: "unknown"}
+  }
+  if (enabled === false) {
+    return {state: "disabled"}
+  }
+  return {state: "unknown"}
+}
+
+function normalizeGlassesStatus<T extends NativeGlassesStatusFields>(
+  values: T,
+): Omit<T, keyof NativeGlassesStatusFields> & {wifi: WifiStatus; hotspot: HotspotStatus} {
+  const {
+    wifi,
+    wifiConnected,
+    wifiSsid,
+    wifiLocalIp,
+    hotspot,
+    enabled,
+    ssid,
+    password,
+    localIp,
+    local_ip,
+    hotspotEnabled,
+    hotspotSsid,
+    hotspotPassword,
+    hotspotGatewayIp,
+    hotspotLocalIp,
+    ...rest
+  } = values
   return {
     ...rest,
     wifi: wifiStatusFromNative({wifi, wifiConnected, wifiSsid, wifiLocalIp}),
+    hotspot: hotspotStatusFromNative({
+      hotspot,
+      enabled,
+      ssid,
+      password,
+      localIp,
+      local_ip,
+      hotspotEnabled,
+      hotspotSsid,
+      hotspotPassword,
+      hotspotGatewayIp,
+      hotspotLocalIp,
+    }),
   }
 }
 
 function denormalizeGlassesUpdate(values: Partial<GlassesStatus>): Record<string, any> {
-  const {wifi, ...rest} = values
-  if (!wifi) {
-    return rest
-  }
-  if (wifi.state === "connected") {
-    return {
-      ...rest,
+  const {wifi, hotspot, ...rest} = values
+  let update: Record<string, any> = {...rest}
+  if (wifi?.state === "connected") {
+    update = {
+      ...update,
       wifiConnected: true,
       wifiSsid: wifi.ssid,
       wifiLocalIp: wifi.localIp,
     }
+  } else if (wifi?.state === "disconnected") {
+    update = {
+      ...update,
+      wifiConnected: false,
+      wifiSsid: "",
+      wifiLocalIp: "",
+    }
   }
-  if (wifi.state === "unknown") {
-    return rest
+  if (hotspot?.state === "enabled") {
+    update = {
+      ...update,
+      hotspotEnabled: true,
+      hotspotSsid: hotspot.ssid,
+      hotspotPassword: hotspot.password,
+      hotspotGatewayIp: hotspot.localIp,
+    }
+  } else if (hotspot?.state === "disabled") {
+    update = {
+      ...update,
+      hotspotEnabled: false,
+      hotspotSsid: "",
+      hotspotPassword: "",
+      hotspotGatewayIp: "",
+    }
   }
-  return {
-    ...rest,
-    wifiConnected: false,
-    wifiSsid: "",
-    wifiLocalIp: "",
-  }
+  return update
 }
 
 // Add helper methods to the module
@@ -204,9 +284,11 @@ const nativeGetGlassesStatus = NativeCoreModule.getGlassesStatus.bind(NativeCore
 NativeCoreModule.getGlassesStatus = function () {
   const result = nativeGetGlassesStatus() as unknown
   if (result && typeof (result as Promise<unknown>).then === "function") {
-    return (result as Promise<NativeWifiFields & Record<string, any>>).then(normalizeGlassesStatus) as unknown as GlassesStatus
+    return (result as Promise<NativeGlassesStatusFields & Record<string, any>>).then(
+      normalizeGlassesStatus,
+    ) as unknown as GlassesStatus
   }
-  return normalizeGlassesStatus(result as NativeWifiFields & Record<string, any>) as GlassesStatus
+  return normalizeGlassesStatus(result as NativeGlassesStatusFields & Record<string, any>) as GlassesStatus
 }
 
 NativeCoreModule.updateGlasses = function (values: Partial<GlassesStatus>) {
@@ -219,7 +301,7 @@ NativeCoreModule.updateCore = function (values: Record<string, any>) {
 
 NativeCoreModule.onGlassesStatus = function (callback: GlassesListener) {
   const subscription = this.addListener("glasses_status", (changed) => {
-    callback(normalizeGlassesStatus(changed as NativeWifiFields & Record<string, any>))
+    callback(normalizeGlassesStatus(changed as NativeGlassesStatusFields & Record<string, any>))
   })
   return () => subscription.remove()
 }
