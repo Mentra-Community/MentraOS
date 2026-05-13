@@ -241,8 +241,20 @@ When `spawn(id, polyfillPath, miniappPath)` is called:
    `globalThis`.
 6. Inject the SDK shim (`@mentra/sdk` typed wrappers around
    `__dispatch` exposing the existing `session.*` API surface).
-7. Run the miniapp's `background.js`.
-8. Call the miniapp's optional `init(session)` export.
+7. Run the miniapp's `background.js`. Top-level code executes in
+   the JSContext but **does not** receive `session` — it can set up
+   module-level state but should not register listeners or call any
+   `session.*` APIs (session isn't available yet).
+8. Call the miniapp's `init(session)` export. **All listener
+   registration and SDK calls go here.** This separation matters
+   for respawn/hot-reload: `init` is re-invoked with a fresh session
+   on every spawn, while top-level state is just where module
+   declarations live.
+
+If the miniapp doesn't export `init`, top-level code runs once at
+spawn time and that's it. Document this clearly — registering
+`session.*` handlers from top-level when `init` exists creates
+double-registration on respawn.
 
 By step 7 the miniapp sees a world that looks like a Web Worker — same
 `setTimeout`, `fetch`, `WebSocket`, `localStorage`, `crypto.subtle`.
@@ -269,18 +281,74 @@ We do NOT redesign it. The 17 module wrappers (`session.glasses`,
 Transport-agnostic.
 
 Three new session modules are added by this proposal — flagged here
-so readers don't assume they exist today:
-- **`session.ui`** (`send/on/onOpen/onClose/isOpen`) — message bus to
-  the miniapp's WebView when one is mounted.
-- **`session.diagnostics`** (`event/error`) — structured telemetry
-  emitter the host normalizes and forwards under the platform Sentry
-  project.
-- **`session.permissions.query` and `request`** — the existing
-  `permissions.ts` (84 LoC) has `has`, `getAll`, `onUpdate`,
-  `onPermissionError`. `request()` is explicitly marked as
-  "deferred to a future round" in the source. We add `query()`
-  (returns `granted | denied | prompt`) and `request()` (host-rendered
-  modal) as part of this work.
+so readers don't assume they exist today.
+
+**`session.ui`** — message bus to the miniapp's WebView when one is
+mounted. Full surface:
+
+```typescript
+interface UIModule {
+  // True when a WebView is currently bound to this miniapp.
+  isOpen(): boolean
+
+  // Fires once each time a WebView mounts and acks `mentra.ready()`.
+  // If a handler is registered AFTER a WebView is already mounted,
+  // it fires immediately for the current binding.
+  onOpen(cb: () => void): UnsubscribeFn
+
+  // Fires when the bound WebView closes (user navigates away or
+  // WebView crashes / heartbeat times out).
+  onClose(cb: () => void): UnsubscribeFn
+
+  // Send a message to the bound WebView. If no WebView is bound,
+  // the call is silently dropped (NOT buffered — UI state is
+  // ephemeral; if the user isn't looking, the data isn't relevant).
+  // Background's job is to maintain the source of truth in
+  // session.storage; the WebView re-fetches on next open.
+  send<C extends keyof Channels>(channel: C, payload: Channels[C]): void
+
+  // Subscribe to messages from the WebView. Handlers persist across
+  // WebView open/close cycles — registering once is enough.
+  on<C extends keyof Channels>(channel: C, cb: (payload: Channels[C]) => void): UnsubscribeFn
+}
+```
+
+Asymmetry with `mentra.send` (the WebView side): WebView-side
+**buffers** until `ready()` ack (because the WebView is the
+short-lived side and shouldn't drop user input). Background-side
+**drops** silently when no WebView is bound (because the long-lived
+side shouldn't accumulate stale UI updates; truth is in storage).
+
+**`session.diagnostics`** — structured telemetry emitter:
+
+```typescript
+interface DiagnosticsModule {
+  // Custom event with arbitrary props. Goes to Sentry breadcrumb
+  // in production, mirrored to dev console in dev mode.
+  event(name: string, props?: Record<string, unknown>): void
+
+  // Structured error capture with optional context. Goes to Sentry
+  // event (not just breadcrumb) in production, mirrored to dev
+  // console in dev mode.
+  error(err: Error | string, ctx?: Record<string, unknown>): void
+}
+```
+
+Same token-bucket throttle as `console.*` (100/min sustained,
+burst 500). `props` and `ctx` get JSON-serialized; non-serializable
+values get coerced to strings. Redaction (token/password/secret/etc)
+applies to all string values.
+
+**`session.permissions.query` and `request`** — the existing
+`permissions.ts` (84 LoC) has `has`, `getAll`, `onUpdate`,
+`onPermissionError`. `request()` is explicitly marked as
+"deferred to a future round" in the source. We add:
+
+- `query(permission)` — returns `granted | denied | prompt`
+  (matches `navigator.permissions.query` shape).
+- `request(permission)` — host-rendered modal, resolves to
+  `granted | denied | prompt` (`prompt` if user dismisses without
+  choosing).
 
 What changes: instead of `createTransport()` autodetecting
 `PostMessageTransport`, we add a fourth branch that detects
@@ -400,7 +468,10 @@ my-notes-miniapp/
 }
 ```
 
-`src/shared/channels.ts` — single source of truth for message names:
+`src/shared/channels.ts` — single source of truth for message names.
+Both bundlers (background output and UI output) inline this file at
+build time, so there's no runtime resolution. Only types and value
+constants live here; runtime logic doesn't:
 
 ```typescript
 export interface Note {
@@ -637,16 +708,11 @@ CLI + manifest:
 - **`{type:"respawn-bg"}` message type** in `dev-server.ts`
   alongside existing `{type:"reload"}`.
 
-Cloud-side (separate work track, see "Cross-cutting cloud work" below):
-- **Publish pipeline that produces `META-INF/signature.ed25519`** —
-  not currently in `agents/miniapp-store-backend-plan.md`; that plan
-  covers SHA-256 integrity but not Ed25519 signing.
-- **Version channel field** (`dev | beta | production`) — extension
-  to the `miniapps` collection schema.
-- **Remote kill switch endpoint** — `disabled_miniapps` document
-  fetched on launch + every 1h.
-- **Storage namespace cleanup on uninstall** — drop
-  `storage/<packageName>/` per the bundle/install section.
+**Cloud:** none for V1. The CLI's `bun mentra-miniapp release`
+serves bundles over LAN HTTP + QR (already implemented). Mobile
+fetches from the developer's laptop. No store, no signing pipeline,
+no kill switch, no dev portal — those return when we ship the
+store later (separate spec).
 
 ---
 
@@ -702,15 +768,20 @@ above are equivalent in functionality.
 
 ## Lifecycle
 
-### Miniapp install
+### Miniapp install (V1: LAN sideload only)
 
-1. Host downloads bundle from `apps.mentra.glass`, validates manifest
-   + Ed25519 signature, unzips into the app sandbox under
-   `Application Support/mentraos/miniapps/<packageName>/<version>/`.
-2. Host spawns a `JSContext` via `MentraJSRuntime.spawn(packageName,
+1. User scans `mentra-miniapp release` QR or hits the dev URL. Host
+   downloads the bundle ZIP over LAN HTTP from the developer's
+   laptop, validates manifest, unzips into the app sandbox under
+   `Documents/lmas/<packageName>/<version>/` (existing path).
+2. Host spawns a `JSContext` via `JSCRuntime.spawn(packageName,
    polyfillBundle, dist/background.js)`. JSContext now alive.
 3. Background's `init(session)` runs (typically: hydrate state from
    `session.storage`, register listeners).
+
+When the store ships later: bundle download URL changes from "LAN
+HTTP from dev laptop" to "signed R2 URL minted by cloud," and
+signature verification kicks in. Same install flow otherwise.
 
 ### User opens the miniapp's UI
 
@@ -853,6 +924,13 @@ known dark pattern for sensitive APIs — iOS users expect JIT.
 
 ### Unpermitted call returns
 
+The existing SDK already defines a `PERMISSION_NOT_DECLARED` error
+code in `mobile/modules/miniapp/src/modules/permissions.ts:33` —
+fired when a miniapp calls an API for a permission its manifest
+didn't declare. Reuse it. Add one new code, `PERMISSION_DENIED`,
+for the case where the manifest declared the permission but the
+user denied it at install or via JIT modal:
+
 ```json
 { "error": { "code": "PERMISSION_DENIED",
              "permission": "MICROPHONE",
@@ -861,6 +939,9 @@ known dark pattern for sensitive APIs — iOS users expect JIT.
 
 If `canRequest`, the SDK can call `session.permissions.request(...)`
 which routes through `__dispatch` to a host-rendered modal.
+`request()` resolves to `granted` (user approved), `denied` (user
+declined), or `prompt` (user dismissed without choosing — same as
+the browser's `navigator.permissions.query` shape).
 
 ### App Review answer
 
@@ -920,28 +1001,29 @@ After unzip:
 Sideloaded and dev bundles are unsigned; verification only runs when
 bundle came from store install path.
 
-### Storage layout
+### Storage layout (V1)
+
+Today's `AppRegistry.ts` uses `Documents/lmas/`:
 
 ```
-<App Support>/
-  mentraos/
-    miniapps/
-      <packageName>/
-        <version>/                  # active bundle tree
-        <prev-version>/             # one prior, for rollback
-        manifest.json               # registry entry (active, source)
-    storage/
-      <packageName>/                # session.storage namespace; survives upgrades
-    cache/
-      downloads/                    # transient ZIPs, evictable
+<Documents>/
+  lmas/
+    <packageName>/
+      <version>/                    # active bundle tree
+      <prev-version>/               # one prior, for rollback
+      manifest.json                 # registry entry (active, source)
 ```
 
-**Use Application Support, NOT Documents.** Documents/ is user-visible
-via Files.app and iCloud-eligible. The `storage/` namespace IS in a
-user-data location so iCloud backup picks it up — separate concern.
+`session.storage` is a separate namespace per miniapp, backed by
+NSUserDefaults under suite name `MentraJS-<packageName>` (per the
+polyfill bridge). It survives bundle upgrades and uninstall (until
+the user explicitly opts to delete data on uninstall).
 
-(Today's `AppRegistry.ts` uses `Documents/lmas/` — migrate as part of
-Phase 4.)
+When the store ships later, we may want to migrate the bundle tree
+to `Application Support/mentraos/miniapps/` so it isn't user-visible
+via Files.app or iCloud-eligible — but that migration is its own
+footgun (per-iOS-version path-resolution differences, existing
+sideloaded apps to preserve) and not worth the risk for V1.
 
 ### Retention
 
@@ -952,65 +1034,53 @@ Phase 4.)
 - Eviction never touches `storage/<id>/` — user data survives bundle
   eviction.
 
-### Install flow
+### Install flow (V1: LAN sideload only)
 
-1. **Resolve.** Mobile `POST /api/client/miniapps/:id/install-url`
-   → cloud authorizes, mints 5-min signed R2 URL.
+1. **Discover.** User scans QR from `mentra-miniapp release` or
+   types the dev URL.
 2. **Pre-flight.** Check size, sdkVersion range, storage budget.
 3. **Permission prompt.** Manifest `permissions[]` shown as iOS-style
    sheet.
-4. **Download.** To `cache/downloads/`. Progress bar.
+4. **Download.** Bundle ZIP from developer's laptop over LAN HTTP,
+   to `cache/downloads/`. Progress bar.
 5. **Unzip to staging.** `cache/lma_unzip/`. Atomic.
-6. **Validate.** `packageName` matches; signature verified; entry
-   files exist.
-7. **Atomic swap.** Move staging → `miniapps/<id>/<new-version>/`.
-   Old active version stays as rollback slot.
-8. **Spawn / register.** Notify listeners. Store UI flips to "Open."
+6. **Validate.** `packageName` matches; entry files exist per
+   manifest's `entry.background` and `entry.ui`.
+7. **Atomic swap.** Move staging → `lmas/<packageName>/<version>/`.
+   Old active version stays as rollback slot (if any).
+8. **Spawn / register.** Spawn JSContext. Notify listeners.
 9. **Cleanup.** Delete cached download.
-
-### Update flow
-
-1. **Discovery.** Mobile polls `GET /api/client/miniapps/updates` on
-   foreground + every 6h.
-2. **Eligibility.** Skip if running (defer until stop, unless
-   `force`); skip if sdkVersion mismatches host.
-3. **Background download.** Same pipeline, into `<new-version>/`
-   alongside active. Active keeps running.
-4. **Activation.**
-   - Not running → bump `manifest.json.active` on next launch.
-   - Running, non-forced → defer; swap on next stop.
-   - `force: true` → kill, swap, respawn.
-5. **State migration.** `storage/<id>/` is shared across versions —
-   new code reads old data. SDK exposes a `storageVersion` hook for
-   the miniapp to migrate its own data on first run.
-6. **Rollback.** New version's JSContext throws on first boot or
-   fails health check within 30s → AppRegistry rolls back to
-   previous version dir, marks new version `quarantined`. Reports to
-   cloud → cloud can mark version `RECALLED`, halting installs.
 
 ### Sideloading for developers
 
-Two existing paths in `sdk/miniapp-cli/`:
+Two existing paths in `sdk/miniapp-cli/` (both implemented today):
 1. **`mentra-miniapp dev`** — hot-reload over LAN. Bundle never lands
    on disk; runs from in-memory dev server.
 2. **`mentra-miniapp release`** — produces a zip, serves over LAN,
    phone scans QR. Installed bundle marked `pinned: true` +
    `source: "sideload"`.
 
-Sideloaded bundles are unsigned; only install when developer mode
-enabled (already gating). Same sandbox as store apps — same
-permission prompts, no elevated privileges. Pinned bit prevents LRU
-eviction.
+Sideloaded bundles are unsigned (only LAN-trusted). Same sandbox as
+the eventual store apps — same permission prompts, no elevated
+privileges. Pinned bit prevents LRU eviction.
+
+### Update flow (V1)
+
+For sideloaded miniapps, "update" = developer re-runs
+`mentra-miniapp release` and the user re-scans QR. New version
+installs alongside old; activates on next launch (or immediately
+on QR scan, depending on dev preference). No store-driven update
+discovery.
 
 ### Uninstall
 
 1. Confirm with user. If app has data, *"X has 14 KB of data. Delete
    it too?"* — checkbox default unchecked (mirror iOS app uninstall).
 2. If running: stop JSContext.
-3. Delete `miniapps/<id>/`.
-4. If user opted to delete data: delete `storage/<id>/`.
+3. Delete `lmas/<packageName>/`.
+4. If user opted to delete data: delete the app's `phone.storage`
+   namespace (NSUserDefaults `MentraJS-<packageName>` suite).
 5. Revoke permissions; remove from local cache.
-6. Notify cloud `POST /api/client/miniapps/:id/uninstall`.
 
 ---
 
@@ -1515,26 +1585,24 @@ Tasks:
 - Port the Notes example end-to-end.
 - Acceptance: round-trip "WebView taps button → background runs
   glasses display call → glasses show text" — measure on iPhone 15
-  with a real perf harness. Realistic budget: 30-100 ms p95
-  including JS thread scheduling (under load may exceed). Original
-  "<50ms p95" target is aspirational; revisit after first
-  measurement.
+  with a real perf harness. No specific latency target — measure
+  first, set a budget once we know what's normal.
 
 **Android:** out of scope for Phase 3. Android needs equivalent
 plumbing (`addJavascriptInterface` + `evaluateJavascript`) but
 follows the same shape. Do after iOS lands.
 
-### Phase 4 — Bundle / install (~2-3 weeks, mobile only)
+### Phase 4 — Bundle / install / sideload (~1-2 weeks, mobile only)
 
-Mobile-side. Cloud-side signing + publish pipeline is in
-"Cross-cutting cloud work" below.
+V1 ships LAN-only sideloading via `bun mentra-miniapp dev` and
+`bun mentra-miniapp release`. **No store, no signing, no remote
+download** for V1. Bundles come from the developer's laptop over
+LAN HTTP + QR code (already implemented).
 
-**Goal:** Two-output bundles flow through CLI and install path,
-with optional signature verification when bundles come from store.
+**Goal:** Two-output bundles flow through CLI and install path.
 
 - Update `sdk/miniapp-cli/schema/miniapp.schema.json` (120 LoC):
-  add `sdkVersion`, `minHostVersion`, `entry` object, `signature`
-  schema fields.
+  add `sdkVersion`, `minHostVersion`, `entry` object schema fields.
 - Update `sdk/miniapp-cli/src/manifest*.ts` (4 non-test files,
   ~712 LoC): manifest pipeline + JSON Schema generator. Add new
   fields. Keep mutation primitives, atomic-write, Levenshtein
@@ -1550,20 +1618,16 @@ with optional signature verification when bundles come from store.
   (675 LoC): recognize new manifest fields; sdkVersion/
   minHostVersion gating; `background.js` discovery alongside
   `index.html`.
-- **Add Ed25519 signature verification** when `source: "store"` —
-  add `@noble/ed25519` dependency (~25 KB pure JS; React Native
-  doesn't ship Ed25519). Skip verification for `source: "sideload"`
-  and `source: "dev"`. Plumb a `source` flag through
-  `installFromUrl()` (doesn't exist today).
-- **Storage migration:** today's `AppRegistry.ts` hard-codes
-  `Documents/lmas/` in 11 places (`:223,304,312,390,419,441,444,449,462,475,513,573,646`)
-  plus 1 in `LocalMiniappRuntime.ts` and a user-visible reference
-  in `mobile/src/app/applet/local.tsx:72`. Centralize the path
-  constant; migrate to `Application Support/mentraos/miniapps/`;
-  ship one-time copy code for existing installs (or document that
-  upgrade re-downloads from store — but be aware that drops
-  sideloaded apps silently). Note: `expo-file-system`'s `Paths.document`
-  is built-in; Application Support requires custom path resolution.
+
+**Out of scope for V1, deferred:**
+- Ed25519 signature verification (no store, all bundles are
+  sideloaded → unsigned by definition).
+- `Documents/lmas/` → `Application Support/mentraos/` migration.
+  Today's path works; migration is a per-platform footgun and not
+  worth the risk for the current LAN-sideload product.
+- Cloud-hosted bundle storage / R2 / install-URL flow.
+
+These come back when we ship the store; not now.
 
 ### Phase 5 — SDK split + scaffolder rewrite (~2 weeks)
 
@@ -1597,14 +1661,15 @@ two-layer template.
   implementations that wrap the message bus rather than the
   in-WebView `MiniappSession`.
 - Documentation: SDK reference, tutorial, **migration guide for
-  existing miniapps in production** (live at apps.mentra.glass —
-  `EditMiniApp.tsx` already manages them, can't break them).
-  Mintlify docs site exists at `docs/docs.json` and
-  `cloud/docs/docs.json`. Realistic doc effort: 3-5 days.
+  existing local miniapps that were built against the
+  pre-two-layer SDK (compatibility shim — single-bundle manifests
+  treated as WebView-only). Mintlify docs site exists at
+  `docs/docs.json` and `cloud/docs/docs.json`. Realistic doc effort:
+  3-5 days.
 
-### Phase 6 — Operations (~2 weeks, NOT including dev portal)
+### Phase 6 — Operations (~2 weeks)
 
-**Goal:** Crash detection, telemetry, kill switch.
+**Goal:** Crash detection, telemetry, logging.
 
 - Crash recovery state machine in `JSCRuntime` (RUNNING → CRASHED →
   BACKOFF → CRASHLOOP_DISABLED).
@@ -1616,89 +1681,47 @@ two-layer template.
 - Logging architecture (redaction, ring buffer, throttle).
 - Health checks (heartbeat + ping).
 - Soft watchdog (5s warn / 30s kill).
-- Remote kill switch fetch on app launch + every 1h. **No existing
-  feature-flag infra in cloud (verified).** Net-new endpoint:
-  `GET /api/client/disabled-miniapps`. Auth: who can add an entry?
-  Storage: Cloudflare KV / D1 / R2 — needs decision.
 
-**Dev portal moves to a separate work track** — see "Cross-cutting
-cloud work" below. The original Phase 6 conflated mobile ops
-(~2 weeks) with dev portal (~3-4 weeks); they're independently
-ownable.
+**Out of scope for V1:** remote kill switch, dev portal. No store
+in V1 → no kill switch needed; no upload UI / signing UI / crash
+dashboard / engagement metrics needed. These come back when we ship
+the store.
 
-### Cross-cutting cloud work (separate track, ~6-8 weeks)
+### Total: ~17 weeks mobile, no cloud work for V1
 
-Specced separately — `agents/miniapp-store-backend-plan.md` covers
-parts of this in 13 endpoints/tickets, but several pieces are
-missing from that plan and need addition or new specs:
+Phases 0-6 sequential: 1.5 + 3 + 3 + 4 + 1.5 + 2 + 2 = **17 weeks**.
+With one engineer; ~10-12 weeks calendar time with two engineers
+working Phases 0/Phase 1 in parallel and Phase 4/Phase 5 in parallel
+later.
 
-**Already in `miniapp-store-backend-plan.md`:**
-- `miniapps` collection schema
-- R2 bundle bucket
-- 13 REST endpoints (install-url, sharing, etc.)
-- SHA-256 integrity hashes (`bundleSha256`)
+V1 has **zero cloud work**. The CLI's `bun mentra-miniapp release`
+flow already serves bundles over LAN HTTP + QR (existing,
+implemented). Mobile runtime fetches from the laptop. Done.
 
-**Missing from store backend plan, needed for this architecture:**
-- **Ed25519 signing pipeline.** Cloud needs to mint
-  `META-INF/signature.ed25519` at publish. Requires KMS or signing
-  service (Cloudflare or AWS); neither exists today. ~1-2 weeks
-  cloud work.
-- **Version channels** (`dev | beta | production`) on the `miniapps`
-  collection schema. Today's plan has flat `versions[]` only.
-- **`minHostVersion` gating.** Today's plan's `manifestSnapshot`
-  doesn't capture it.
-- **Remote kill switch endpoint** + storage + admin auth. Net-new.
-- **Migration from existing cloud-app schema** — the
-  `EditMiniApp.tsx`/`MiniAppList.tsx`/`CreateMiniApp.tsx` UI
-  (~600+ LoC) targets the existing cloud-app schema. Moving to
-  `miniapps` collection means rebuilding the developer-facing UI,
-  with a migration path for live apps in production. Significant
-  work not in any plan today.
+When we ship a store later, the cloud work returns:
+- Ed25519 signing pipeline (mint `META-INF/signature.ed25519` at publish)
+- Version channels on the `miniapps` collection schema
+- `minHostVersion` gating in cloud manifest snapshot
+- Remote kill switch endpoint + storage + admin auth
+- Migration from existing cloud-app schema (`EditMiniApp.tsx` etc.)
+- Dev portal MVP (upload, channels, crash dashboard, engagement
+  metrics, signing key UI, permission diff preview, CI/CD endpoint)
 
-**Dev portal MVP** (was originally Phase 6, separated here):
-- Bundle upload UI
-- Version channels (dev/beta/production)
-- Crash dashboard (filtered Sentry view via server-side proxy)
-- Engagement metrics (requires defining what events count)
-- Store listing editor
-- Signing key management UI (depends on signing pipeline above)
-- Permission manifest editor with diff preview ("v1.2 adds
-  `MICROPHONE` — users will be re-prompted")
-- REST endpoint for CI/CD (`POST /api/console/miniapps/:id/versions`)
-- ~3-4 weeks cloud + UI work.
+That's its own work track and its own spec — not part of this one.
 
-### Total: 16-22 weeks combined, not a single 8-10 week effort
+### Migration path for existing miniapps (V1)
 
-Mobile track: ~17 weeks (Phases 0-6 sequential).
-Cloud track: ~6-8 weeks (parallelizable with mobile after Phase 4
-schema lands).
-Critical path is the mobile track. Cloud finishes ~4 weeks after
-mobile if started in parallel.
+For V1 (LAN sideload only), no store-deployed miniapps to migrate.
+The `EditMiniApp.tsx` flow in console targets cloud miniapps
+(server-hosted), which is a separate product still — not affected
+by this architecture change.
 
-The original "8-10 weeks" estimate covered mobile-only optimistic
-scoping. Realistic mobile + cloud + dev portal: **4-5 months
-calendar time** with 2 mobile engineers + 1 cloud engineer in
-parallel.
+When the store ships later, we'll need:
+- Compatibility shim for single-bundle (legacy) miniapps
+- Manifest auto-migration command
+- Cloud-side dual-write during migration window
 
-### Migration path for existing miniapps
-
-Live miniapps at `apps.mentra.glass` currently use:
-- The single-bundle WebView SDK (`@mentra/miniapp`)
-- The cloud-app schema (managed via `EditMiniApp.tsx`)
-- Persistent backgrounded WebViews
-
-Cutting over without breaking them requires:
-- **Compatibility shim:** if a miniapp's `miniapp.json` lacks a
-  `background` entry, host treats it as "WebView-only" and runs the
-  bundle in a single-output mode (legacy behavior). Mark deprecated;
-  remove after 6 months.
-- **Manifest auto-migration:** the CLI's
-  `bun mentra-miniapp upgrade-manifest` command rewrites old
-  manifests to the new schema (adds `entry`, `sdkVersion`,
-  `minHostVersion` with sensible defaults).
-- **Cloud-side dual-write:** during the migration window, the cloud
-  serves both old and new manifest formats from the install
-  endpoint based on host version.
+Out of scope for the V1 doc.
 
 ---
 
