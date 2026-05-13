@@ -151,12 +151,18 @@ export type SwitchStatusEvent = {
   timestamp: number
 }
 
-export type RgbLedControlResponseEvent = {
-  type: "rgb_led_control_response"
-  requestId: string
-  success: boolean
-  error?: string
-}
+export type RgbLedControlResponseEvent =
+  | {
+      type: "rgb_led_control_response"
+      state: "success"
+      requestId: string
+    }
+  | {
+      type: "rgb_led_control_response"
+      state: "error"
+      requestId: string
+      errorCode: string
+    }
 
 export type RgbLedAction = "on" | "off"
 export type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"

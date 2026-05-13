@@ -1901,8 +1901,9 @@ class MentraLive: NSObject, SGCManager {
 
         case "rgb_led_control_response":
             let requestId = json["requestId"] as? String ?? ""
-            let success = json["success"] as? Bool ?? false
-            let error = json["error"] as? String
+            let state = json["state"] as? String
+            let success = state == "success" || json["success"] as? Bool == true
+            let error = json["errorCode"] as? String ?? json["error"] as? String
             Bridge.sendRgbLedControlResponse(requestId: requestId, success: success, error: error)
 
         case "pong":

@@ -494,8 +494,8 @@ class MantleManager {
       this.subs.push(
         CoreModule.addListener("rgb_led_control_response", (event) => {
           const requestId = event.requestId ?? ""
-          const success = !!event.success
-          const errorMessage = typeof event.error === "string" ? event.error : null
+          const success = event.state === "success"
+          const errorMessage = event.state === "error" ? event.errorCode : null
           socketComms.sendRgbLedControlResponse(requestId, success, errorMessage)
           // TODO: remove
           GlobalEventEmitter.emit("rgb_led_control_response", {requestId, success, error: errorMessage})

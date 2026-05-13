@@ -183,10 +183,10 @@ class Bridge {
         guard !requestId.isEmpty else { return }
         var body: [String: Any] = [
             "requestId": requestId,
-            "success": success,
+            "state": success ? "success" : "error",
         ]
-        if let error {
-            body["error"] = error
+        if !success {
+            body["errorCode"] = error ?? "unknown_error"
         }
         Bridge.sendTypedMessage("rgb_led_control_response", body: body)
     }

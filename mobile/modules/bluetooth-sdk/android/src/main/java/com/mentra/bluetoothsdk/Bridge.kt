@@ -294,8 +294,10 @@ public class Bridge private constructor() {
             try {
                 val body = HashMap<String, Any>()
                 body["requestId"] = requestId
-                body["success"] = success
-                error?.let { body["error"] = it }
+                body["state"] = if (success) "success" else "error"
+                if (!success) {
+                    body["errorCode"] = error ?: "unknown_error"
+                }
                 sendTypedMessage("rgb_led_control_response", body)
             } catch (e: Exception) {
                 log("Bridge: Error sending rgb_led_control_response: $e")
