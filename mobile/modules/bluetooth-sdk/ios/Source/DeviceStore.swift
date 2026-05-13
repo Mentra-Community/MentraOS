@@ -7,7 +7,6 @@
 
 import Foundation
 
-@MainActor
 class GlassesStore {
     static let shared = GlassesStore()
     let store = ObservableStore()
@@ -107,6 +106,7 @@ class GlassesStore {
         store.set(category, key, value)
     }
 
+    @MainActor
     private func scheduleDashboardHeightToGlasses() {
         dashboardHeightDebounceTask?.cancel()
         dashboardHeightDebounceTask = Task { @MainActor in
@@ -116,6 +116,7 @@ class GlassesStore {
         }
     }
 
+    @MainActor
     private func scheduleDashboardDepthToGlasses() {
         dashboardDepthDebounceTask?.cancel()
         dashboardDepthDebounceTask = Task { @MainActor in
@@ -126,6 +127,7 @@ class GlassesStore {
     }
 
     /// Apply changes with side effects
+    @MainActor
     func apply(_ category: String, _ key: String, _ value: Any) {
         let oldValue = store.get(category, key)
         store.set(category, key, value)

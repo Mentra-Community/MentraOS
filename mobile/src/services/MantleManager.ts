@@ -918,11 +918,11 @@ class MantleManager {
     }
 
     // one time get all:
-    const coreStatus = await CoreModule.getCoreStatus()
+    const coreStatus = CoreModule.getCoreStatus()
     // console.log("MANTLE: core status:", coreStatus)
     useCoreStore.getState().setCoreInfo(coreStatus)
 
-    const glassesStatus = await CoreModule.getGlassesStatus()
+    const glassesStatus = CoreModule.getGlassesStatus()
     // console.log("MANTLE: glasses status:", glassesStatus)
     useGlassesStore.getState().setGlassesInfo(glassesStatus)
   }

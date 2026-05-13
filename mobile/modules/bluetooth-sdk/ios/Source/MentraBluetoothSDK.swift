@@ -2285,6 +2285,10 @@ public final class MentraBluetoothSDK {
 
     private func currentDefaultDevice() -> MentraDevice? {
         let core = GlassesStore.shared.store.getCategory(ObservableStore.coreCategory)
+        return Self.defaultDevice(from: core)
+    }
+
+    nonisolated static func defaultDevice(from core: [String: Any]) -> MentraDevice? {
         guard let model = core["default_wearable"] as? String, !model.isEmpty else { return nil }
         guard let name = core["device_name"] as? String, !name.isEmpty else { return nil }
         let identifier = (core["device_address"] as? String).flatMap { $0.isEmpty ? nil : $0 }

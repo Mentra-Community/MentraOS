@@ -73,22 +73,16 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
 
         // MARK: - Observable Store Functions
 
-        AsyncFunction("getGlassesStatus") {
-            await MainActor.run {
-                self.bluetoothSdk().glassesStatus.dictionary
-            }
+        Function("getGlassesStatus") {
+            MentraGlassesStatus(values: GlassesStore.shared.store.getCategory("glasses")).dictionary
         }
 
-        AsyncFunction("getCoreStatus") {
-            await MainActor.run {
-                self.bluetoothSdk().bluetoothStatus.values
-            }
+        Function("getCoreStatus") {
+            MentraBluetoothStatus(values: GlassesStore.shared.store.getCategory(ObservableStore.coreCategory)).values
         }
 
-        AsyncFunction("getDefaultDevice") {
-            await MainActor.run {
-                self.bluetoothSdk().getDefaultDevice()?.dictionary
-            }
+        Function("getDefaultDevice") {
+            MentraBluetoothSDK.defaultDevice(from: GlassesStore.shared.store.getCategory(ObservableStore.coreCategory))?.dictionary
         }
 
         AsyncFunction("update") { (category: String, values: [String: Any]) in

@@ -20,13 +20,12 @@ import {
 
 type GlassesListener = (changed: Partial<GlassesStatus>) => void
 type CoreStatusListener = (changed: Partial<CoreStatus>) => void
-type MaybePromise<T> = T | Promise<T>
 
 declare class CoreModule extends NativeModule<CoreModuleEvents> {
   // Observable Store Functions (native)
-  getGlassesStatus(): Promise<GlassesStatus>
-  getCoreStatus(): Promise<CoreStatus>
-  getDefaultDevice(): Promise<MentraDevice | null>
+  getGlassesStatus(): GlassesStatus
+  getCoreStatus(): CoreStatus
+  getDefaultDevice(): MentraDevice | null
   update(category: string, values: Record<string, any>): Promise<void>
 
   // Display Commands
@@ -181,26 +180,6 @@ function adaptGlassesUpdateToNative(values: Partial<GlassesStatus>): Record<stri
     }
   }
   return update
-}
-
-// Add helper methods to the module
-const nativeGetGlassesStatus = NativeCoreModule.getGlassesStatus.bind(
-  NativeCoreModule,
-) as () => MaybePromise<GlassesStatus>
-NativeCoreModule.getGlassesStatus = function () {
-  return Promise.resolve(nativeGetGlassesStatus())
-}
-
-const nativeGetCoreStatus = NativeCoreModule.getCoreStatus.bind(NativeCoreModule) as () => MaybePromise<CoreStatus>
-NativeCoreModule.getCoreStatus = function () {
-  return Promise.resolve(nativeGetCoreStatus())
-}
-
-const nativeGetDefaultDevice = NativeCoreModule.getDefaultDevice.bind(
-  NativeCoreModule,
-) as () => MaybePromise<MentraDevice | null>
-NativeCoreModule.getDefaultDevice = function () {
-  return Promise.resolve(nativeGetDefaultDevice())
 }
 
 NativeCoreModule.updateGlasses = function (values: Partial<GlassesStatus>) {

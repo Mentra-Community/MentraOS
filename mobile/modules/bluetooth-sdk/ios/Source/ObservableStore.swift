@@ -7,58 +7,77 @@
 
 import Foundation
 
-@MainActor
 class ObservableStore {
-    private nonisolated(unsafe) var values: [String: Any] = [:]
+    private let lock = NSLock()
+    private var values: [String: Any] = [:]
     private var onEmit: ((String, [String: Any]) -> Void)?
     private var listeners: [String: (String, [String: Any]) -> Void] = [:]
 
-    nonisolated static let coreCategory = "core"
-    private nonisolated static let legacyBluetoothCategory = "bluetooth"
+    static let coreCategory = "core"
+    private static let legacyBluetoothCategory = "bluetooth"
 
-    nonisolated static func normalizeCategory(_ category: String) -> String {
+    static func normalizeCategory(_ category: String) -> String {
         category == legacyBluetoothCategory ? coreCategory : category
     }
 
     func configure(onEmit: @escaping (String, [String: Any]) -> Void) {
+        lock.lock()
         self.onEmit = onEmit
+        lock.unlock()
     }
 
     func addListener(_ listener: @escaping (String, [String: Any]) -> Void) -> String {
         let id = UUID().uuidString
+        lock.lock()
         listeners[id] = listener
+        lock.unlock()
         return id
     }
 
     func removeListener(_ id: String) {
+        lock.lock()
         listeners.removeValue(forKey: id)
+        lock.unlock()
     }
 
     func set(_ category: String, _ key: String, _ value: Any) {
         let normalizedCategory = Self.normalizeCategory(category)
         let fullKey = "\(normalizedCategory).\(key)"
+        let changes = [key: value]
+        let emitter: ((String, [String: Any]) -> Void)?
+        let activeListeners: [(String, [String: Any]) -> Void]
+
+        lock.lock()
         let oldValue = values[fullKey]
 
         // Skip if unchanged
         if let old = oldValue, areEqual(old, value) {
+            lock.unlock()
             return
         }
 
         values[fullKey] = value
+        emitter = onEmit
+        activeListeners = Array(listeners.values)
+        lock.unlock()
 
         // Emit immediately
-        let changes = [key: value]
-        onEmit?(normalizedCategory, changes)
-        for listener in listeners.values {
+        emitter?(normalizedCategory, changes)
+        for listener in activeListeners {
             listener(normalizedCategory, changes)
         }
     }
 
-    nonisolated func get(_ category: String, _ key: String) -> Any? {
-        values["\(Self.normalizeCategory(category)).\(key)"]
+    func get(_ category: String, _ key: String) -> Any? {
+        lock.lock()
+        defer { lock.unlock() }
+        return values["\(Self.normalizeCategory(category)).\(key)"]
     }
 
     func getCategory(_ category: String) -> [String: Any] {
+        lock.lock()
+        defer { lock.unlock() }
+
         var result: [String: Any] = [:]
         let prefix = "\(Self.normalizeCategory(category))."
         for (key, value) in values where key.hasPrefix(prefix) {
