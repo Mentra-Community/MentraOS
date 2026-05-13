@@ -148,74 +148,20 @@ const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
 
 type NativeHotspotFields = {
   hotspot?: HotspotStatus
-  enabled?: boolean
-  ssid?: string
-  password?: string
-  localIp?: string
-  local_ip?: string
-  hotspotEnabled?: boolean
-  hotspotSsid?: string
-  hotspotPassword?: string
-  hotspotGatewayIp?: string
-  hotspotLocalIp?: string
 }
 
 type NativeGlassesStatusFields = NativeHotspotFields & {
   wifi?: WifiStatus
 }
 
-function adaptHotspotStatusFromNative(values: NativeHotspotFields): HotspotStatus | undefined {
-  if (values.hotspot) {
-    return values.hotspot
-  }
-  const enabled = values.hotspotEnabled ?? values.enabled
-  if (enabled === true) {
-    const ssid = (values.hotspotSsid ?? values.ssid)?.trim()
-    const password = (values.hotspotPassword ?? values.password)?.trim()
-    const localIp = (values.hotspotGatewayIp ?? values.hotspotLocalIp ?? values.localIp ?? values.local_ip)?.trim()
-    return ssid && password && localIp ? {state: "enabled", ssid, password, localIp} : {state: "unknown"}
-  }
-  if (enabled === false) {
-    return {state: "disabled"}
-  }
-  return undefined
-}
-
 function adaptGlassesStatusFromNative<T extends NativeGlassesStatusFields>(
   values: T,
 ): Omit<T, keyof NativeGlassesStatusFields> & {wifi?: WifiStatus; hotspot?: HotspotStatus} {
-  const {
-    wifi,
-    hotspot,
-    enabled,
-    ssid,
-    password,
-    localIp,
-    local_ip,
-    hotspotEnabled,
-    hotspotSsid,
-    hotspotPassword,
-    hotspotGatewayIp,
-    hotspotLocalIp,
-    ...rest
-  } = values
-  const hotspotStatus = adaptHotspotStatusFromNative({
-    hotspot,
-    enabled,
-    ssid,
-    password,
-    localIp,
-    local_ip,
-    hotspotEnabled,
-    hotspotSsid,
-    hotspotPassword,
-    hotspotGatewayIp,
-    hotspotLocalIp,
-  })
+  const {wifi, hotspot, ...rest} = values
   return {
     ...rest,
     ...(wifi ? {wifi} : {}),
-    ...(hotspotStatus ? {hotspot: hotspotStatus} : {}),
+    ...(hotspot ? {hotspot} : {}),
   }
 }
 

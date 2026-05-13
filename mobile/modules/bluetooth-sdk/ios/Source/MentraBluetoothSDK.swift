@@ -324,7 +324,7 @@ public struct MentraGlassesStatus: CustomStringConvertible {
     public var style: String { stringValue(values, "style") ?? "" }
     public var color: String { stringValue(values, "color") ?? "" }
     public var wifi: MentraWifiStatus { MentraWifiStatus.fromStoreValues(values) ?? .disconnected }
-    public var hotspot: MentraHotspotStatus { MentraHotspotStatus(values: values) }
+    public var hotspot: MentraHotspotStatus { MentraHotspotStatus.fromStoreValues(values) ?? .disabled }
     public var dictionary: [String: Any] { Self.dictionary(from: values) }
     public var batteryLevel: Int { intValue(values["batteryLevel"]) ?? -1 }
     public var charging: Bool { boolValue(values, "charging") ?? false }
@@ -347,7 +347,7 @@ public struct MentraGlassesStatus: CustomStringConvertible {
     static func dictionary(from values: [String: Any]) -> [String: Any] {
         var dictionary = values
         dictionary["wifi"] = (MentraWifiStatus.fromStoreValues(values) ?? .disconnected).values
-        dictionary["hotspot"] = MentraHotspotStatus(values: values).values
+        dictionary["hotspot"] = (MentraHotspotStatus.fromStoreValues(values) ?? .disabled).values
         dictionary.removeValue(forKey: "wifiConnected")
         dictionary.removeValue(forKey: "wifiSsid")
         dictionary.removeValue(forKey: "wifiLocalIp")
@@ -371,13 +371,14 @@ public struct MentraGlassesStatus: CustomStringConvertible {
             dictionary.removeValue(forKey: "wifiSsid")
             dictionary.removeValue(forKey: "wifiLocalIp")
         }
-        if hasAnyKey(values, "hotspot", "enabled", "hotspotEnabled", "hotspotSsid", "hotspotPassword", "hotspotGatewayIp", "hotspotLocalIp") {
-            dictionary["hotspot"] = MentraHotspotStatus(values: values).values
-            dictionary.removeValue(forKey: "enabled")
-            dictionary.removeValue(forKey: "ssid")
-            dictionary.removeValue(forKey: "password")
-            dictionary.removeValue(forKey: "localIp")
-            dictionary.removeValue(forKey: "local_ip")
+        if hasAnyKey(values, "hotspot") {
+            if let hotspot = (values["hotspot"] as? [String: Any]).flatMap(MentraHotspotStatus.init(values:)) {
+                dictionary["hotspot"] = hotspot.values
+            }
+        } else if hasAnyKey(values, "hotspotEnabled", "hotspotSsid", "hotspotPassword", "hotspotGatewayIp", "hotspotLocalIp") {
+            if let hotspot = MentraHotspotStatus.fromStoreValues(values) {
+                dictionary["hotspot"] = hotspot.values
+            }
             dictionary.removeValue(forKey: "hotspotEnabled")
             dictionary.removeValue(forKey: "hotspotSsid")
             dictionary.removeValue(forKey: "hotspotPassword")
@@ -517,7 +518,13 @@ public struct MentraGlassesStatusUpdate: CustomStringConvertible {
         return nil
     }
     public var hotspot: MentraHotspotStatus? {
-        hasAnyKey(values, "hotspot", "enabled", "hotspotEnabled", "hotspotSsid", "hotspotPassword", "hotspotGatewayIp", "hotspotLocalIp") ? MentraHotspotStatus(values: values) : nil
+        if let hotspot = values["hotspot"] as? [String: Any] {
+            return MentraHotspotStatus(values: hotspot)
+        }
+        if hasAnyKey(values, "hotspotEnabled", "hotspotSsid", "hotspotPassword", "hotspotGatewayIp", "hotspotLocalIp") {
+            return MentraHotspotStatus.fromStoreValues(values)
+        }
+        return nil
     }
     public var dictionary: [String: Any] { MentraGlassesStatus.updateDictionary(from: values) }
     public var batteryLevel: Int? { optionalIntValue(values, "batteryLevel") }
@@ -1204,16 +1211,14 @@ public struct MentraWifiStatusEvent: CustomStringConvertible {
 
 public enum MentraHotspotStatus: CustomStringConvertible, Equatable {
     public enum State: String {
-        case unknown
         case disabled
         case enabled
     }
 
-    case unknown
     case disabled
     case enabled(ssid: String, password: String, localIp: String)
 
-    public init(enabled: Bool, ssid: String?, password: String?, localIp: String?) {
+    public init?(enabled: Bool, ssid: String?, password: String?, localIp: String?) {
         if enabled {
             guard
                 let ssid = ssid?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1223,8 +1228,7 @@ public enum MentraHotspotStatus: CustomStringConvertible, Equatable {
                 let localIp = localIp?.trimmingCharacters(in: .whitespacesAndNewlines),
                 !localIp.isEmpty
             else {
-                self = .unknown
-                return
+                return nil
             }
             self = .enabled(ssid: ssid, password: password, localIp: localIp)
         } else {
@@ -1232,79 +1236,50 @@ public enum MentraHotspotStatus: CustomStringConvertible, Equatable {
         }
     }
 
-    public init(values: [String: Any]) {
+    public init?(values: [String: Any]) {
         if let nested = values["hotspot"] as? [String: Any] {
-            self = MentraHotspotStatus(values: nested)
+            self.init(values: nested)
             return
         }
 
-        if let state = stringValue(values, "state", "hotspotState")?.lowercased() {
-            switch state {
-            case State.enabled.rawValue:
-                self = MentraHotspotStatus(
-                    enabled: true,
-                    ssid: nonEmptyStringValue(values, "ssid", "hotspotSsid"),
-                    password: nonEmptyStringValue(values, "password", "hotspotPassword"),
-                    localIp: nonEmptyStringValue(values, "localIp", "local_ip", "hotspotGatewayIp", "hotspotLocalIp")
-                )
-            case State.disabled.rawValue:
-                self = .disabled
-            default:
-                self = .unknown
-            }
-            return
+        guard let state = stringValue(values, "state")?.lowercased() else {
+            return nil
         }
 
-        guard hasAnyKey(values, "enabled", "hotspotEnabled", "ssid", "hotspotSsid", "password", "hotspotPassword", "localIp", "local_ip", "hotspotGatewayIp", "hotspotLocalIp") else {
-            self = .unknown
-            return
+        switch state {
+        case State.enabled.rawValue:
+            self.init(
+                enabled: true,
+                ssid: nonEmptyStringValue(values, "ssid"),
+                password: nonEmptyStringValue(values, "password"),
+                localIp: nonEmptyStringValue(values, "localIp")
+            )
+        case State.disabled.rawValue:
+            self = .disabled
+        default:
+            return nil
         }
+    }
 
-        self = MentraHotspotStatus(
-            enabled: boolValue(values, "enabled") ?? boolValue(values, "hotspotEnabled") ?? false,
-            ssid: nonEmptyStringValue(values, "ssid", "hotspotSsid"),
-            password: nonEmptyStringValue(values, "password", "hotspotPassword"),
-            localIp: nonEmptyStringValue(values, "localIp", "local_ip", "hotspotGatewayIp", "hotspotLocalIp")
+    static func fromStoreValues(_ values: [String: Any]) -> MentraHotspotStatus? {
+        guard let enabled = boolValue(values, "hotspotEnabled") else {
+            return nil
+        }
+        return fromStoreFields(
+            enabled: enabled,
+            ssid: nonEmptyStringValue(values, "hotspotSsid"),
+            password: nonEmptyStringValue(values, "hotspotPassword"),
+            localIp: nonEmptyStringValue(values, "hotspotGatewayIp", "hotspotLocalIp")
         )
     }
 
-    public var state: State {
-        switch self {
-        case .unknown:
-            .unknown
-        case .disabled:
-            .disabled
-        case .enabled:
-            .enabled
-        }
-    }
-
-    public var isEnabled: Bool {
-        if case .enabled = self {
-            return true
-        }
-        return false
-    }
-
-    public var values: [String: Any] {
-        switch self {
-        case .unknown:
-            ["state": State.unknown.rawValue]
-        case .disabled:
-            ["state": State.disabled.rawValue]
-        case let .enabled(ssid, password, localIp):
-            [
-                "state": State.enabled.rawValue,
-                "ssid": ssid,
-                "password": password,
-                "localIp": localIp,
-            ]
-        }
+    static func fromStoreFields(enabled: Bool, ssid: String?, password: String?, localIp: String?) -> MentraHotspotStatus? {
+        MentraHotspotStatus(enabled: enabled, ssid: ssid, password: password, localIp: localIp)
     }
 
     var storeValues: [String: Any] {
         switch self {
-        case .unknown, .disabled:
+        case .disabled:
             [
                 "hotspotEnabled": false,
                 "hotspotSsid": "",
@@ -1321,10 +1296,38 @@ public enum MentraHotspotStatus: CustomStringConvertible, Equatable {
         }
     }
 
+    public var values: [String: Any] {
+        switch self {
+        case .disabled:
+            ["state": State.disabled.rawValue]
+        case let .enabled(ssid, password, localIp):
+            [
+                "state": State.enabled.rawValue,
+                "ssid": ssid,
+                "password": password,
+                "localIp": localIp,
+            ]
+        }
+    }
+
+    public var state: State {
+        switch self {
+        case .disabled:
+            .disabled
+        case .enabled:
+            .enabled
+        }
+    }
+
+    public var isEnabled: Bool {
+        if case .enabled = self {
+            return true
+        }
+        return false
+    }
+
     public var description: String {
         switch self {
-        case .unknown:
-            "MentraHotspotStatus(unknown)"
         case .disabled:
             "MentraHotspotStatus(disabled)"
         case let .enabled(ssid, _, localIp):
@@ -1340,12 +1343,12 @@ public struct MentraHotspotStatusEvent: CustomStringConvertible {
         self.status = status
     }
 
-    public init(enabled: Bool, ssid: String?, password: String?, localIp: String?) {
-        self.status = MentraHotspotStatus(enabled: enabled, ssid: ssid, password: password, localIp: localIp)
+    init(enabled: Bool, ssid: String?, password: String?, localIp: String?) {
+        self.status = MentraHotspotStatus.fromStoreFields(enabled: enabled, ssid: ssid, password: password, localIp: localIp) ?? .disabled
     }
 
-    public init(values: [String: Any]) {
-        self.status = MentraHotspotStatus(values: values)
+    init(values: [String: Any]) {
+        self.status = MentraHotspotStatus(values: values) ?? .disabled
     }
 
     public var values: [String: Any] {

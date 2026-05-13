@@ -13,6 +13,10 @@ interface GlassesState extends GlassesStatus {
   wifiConnected: boolean
   wifiSsid: string
   wifiLocalIp: string
+  hotspotEnabled: boolean
+  hotspotSsid: string
+  hotspotPassword: string
+  hotspotGatewayIp: string
   setGlassesInfo: (info: GlassesInfoUpdate) => void
   setBatteryInfo: (batteryLevel: number, charging: boolean, caseBatteryLevel: number, caseCharging: boolean) => void
   setWifiInfo: (connected: boolean, ssid: string) => void
@@ -77,7 +81,7 @@ function hotspotFromLegacyFields(info: LegacyHotspotFields): HotspotStatus | nul
     const ssid = info.hotspotSsid?.trim()
     const password = info.hotspotPassword?.trim()
     const localIp = (info.hotspotGatewayIp ?? info.hotspotLocalIp)?.trim()
-    return ssid && password && localIp ? {state: "enabled", ssid, password, localIp} : {state: "unknown"}
+    return ssid && password && localIp ? {state: "enabled", ssid, password, localIp} : null
   }
   if (info.hotspotEnabled === false) {
     return {state: "disabled"}
@@ -125,6 +129,10 @@ interface GlassesStore extends GlassesStatus {
   wifiConnected: boolean
   wifiSsid: string
   wifiLocalIp: string
+  hotspotEnabled: boolean
+  hotspotSsid: string
+  hotspotPassword: string
+  hotspotGatewayIp: string
   otaStatus: OtaStatus | null
 }
 
@@ -248,17 +256,14 @@ export const useGlassesStore = create<GlassesState>()(
       }),
 
     setHotspotInfo: (enabled: boolean, ssid: string, password: string, ip: string) =>
-      set({
-        hotspot: hotspotFromLegacyFields({
+      set(() => {
+        const hotspot = hotspotFromLegacyFields({
           hotspotEnabled: enabled,
           hotspotSsid: ssid,
           hotspotPassword: password,
           hotspotGatewayIp: ip,
-        }) ?? {state: "unknown"},
-        hotspotEnabled: enabled,
-        hotspotSsid: ssid,
-        hotspotPassword: password,
-        hotspotGatewayIp: ip,
+        })
+        return hotspot ? {hotspot, ...derivedHotspotFields(hotspot)} : {}
       }),
 
     // OTA methods

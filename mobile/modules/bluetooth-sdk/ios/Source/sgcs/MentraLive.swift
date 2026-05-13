@@ -3785,13 +3785,15 @@ class MentraLive: NSObject, SGCManager {
     }
 
     private func emitHotspotStatusChange() {
-        let eventBody: [String: Any] = [
-            "enabled": hotspotEnabled,
-            "ssid": hotspotSsid,
-            "password": hotspotPassword,
-            "local_ip": hotspotGatewayIp, // Using gateway IP for consistency with Android
-        ]
-        Bridge.sendTypedMessage("hotspot_status_change", body: eventBody)
+        guard let status = MentraHotspotStatus.fromStoreFields(
+            enabled: hotspotEnabled,
+            ssid: hotspotSsid,
+            password: hotspotPassword,
+            localIp: hotspotGatewayIp
+        ) else {
+            return
+        }
+        Bridge.sendTypedMessage("hotspot_status_change", body: status.values)
     }
 
     private func emitRtmpStreamStatus(_ json: [String: Any]) {

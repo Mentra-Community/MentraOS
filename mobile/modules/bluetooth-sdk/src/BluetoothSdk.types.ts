@@ -70,7 +70,6 @@ export type WifiStatusChangeEvent = WifiStatus & {
 }
 
 export type HotspotStatus =
-  | {state: "unknown"}
   | {state: "disabled"}
   | {state: "enabled"; ssid: string; password: string; localIp: string}
 

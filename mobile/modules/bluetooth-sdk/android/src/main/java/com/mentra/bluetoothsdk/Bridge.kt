@@ -411,13 +411,8 @@ public class Bridge private constructor() {
                 password: String,
                 gatewayIp: String
         ) {
-            val eventBody = HashMap<String, Any>()
-            eventBody["enabled"] = enabled
-            eventBody["ssid"] = ssid
-            eventBody["password"] = password
-            eventBody["local_ip"] = gatewayIp // Using gateway IP for consistency with iOS
-
-            sendTypedMessage("hotspot_status_change", eventBody as Map<String, Any>)
+            val status = MentraHotspotStatus.fromStoreFields(enabled, ssid, password, gatewayIp) ?: return
+            sendTypedMessage("hotspot_status_change", status.toMap())
         }
 
         /** Send hotspot error - notifies React Native of hotspot failures */

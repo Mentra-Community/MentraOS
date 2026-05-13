@@ -95,6 +95,33 @@ describe("wifiStatusKnown reset on disconnect", () => {
   })
 })
 
+describe("hotspot status store shape", () => {
+  it("maps complete legacy hotspot fields to the typed enabled state", () => {
+    useGlassesStore.getState().setGlassesInfo({
+      hotspotEnabled: true,
+      hotspotSsid: "Mentra Hotspot",
+      hotspotPassword: "password",
+      hotspotGatewayIp: "192.168.43.1",
+    })
+
+    expect(useGlassesStore.getState().hotspot).toEqual({
+      state: "enabled",
+      ssid: "Mentra Hotspot",
+      password: "password",
+      localIp: "192.168.43.1",
+    })
+    expect(useGlassesStore.getState().hotspotEnabled).toBe(true)
+    expect(useGlassesStore.getState().hotspotGatewayIp).toBe("192.168.43.1")
+  })
+
+  it("does not manufacture an unknown hotspot state from incomplete enabled fields", () => {
+    useGlassesStore.getState().setGlassesInfo({hotspotEnabled: true})
+
+    expect(useGlassesStore.getState().hotspot).toEqual({state: "disabled"})
+    expect(useGlassesStore.getState().hotspotEnabled).toBe(false)
+  })
+})
+
 describe("otaProgress monotonic guard", () => {
   it("prevents progress regression within same stage+update", () => {
     const progress1 = {
