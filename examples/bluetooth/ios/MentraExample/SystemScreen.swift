@@ -226,17 +226,19 @@ struct SystemScreen: View {
         .background(AppColor.bg)
     }
 
+    @ViewBuilder
     private var currentWifiRow: some View {
-        let isWifiConnected = model.glassesValues?.wifi.connected == true
-        return NetworkRowV(
-            name: wifiLabel(model.glassesValues),
-            sub: model.glassesValues?.wifi.localIp.nonEmpty ?? "not connected",
-            subColor: isWifiConnected ? AppColor.greenAccent : AppColor.muted,
-            check: isWifiConnected,
-            trailingTitle: isWifiConnected ? "Forget" : nil,
-            trailingColor: AppColor.red,
-            action: isWifiConnected ? { model.forgetCurrentWifiNetwork() } : nil
-        )
+        if let currentWifi = connectedWifiStatus(model.glassesValues) {
+            NetworkRowV(
+                name: currentWifi.ssid,
+                sub: currentWifi.localIp,
+                subColor: AppColor.greenAccent,
+                check: true,
+                trailingTitle: "Forget",
+                trailingColor: AppColor.red,
+                action: { model.forgetCurrentWifiNetwork() }
+            )
+        }
     }
 
     private var hotspotCard: some View {
@@ -363,9 +365,9 @@ struct SystemScreen: View {
     }
 
     private var visibleWifiScanResults: [MentraWifiScanResult] {
-        let connectedSsid = model.glassesValues?.wifi.ssid
+        let connectedSsid = connectedWifiStatus(model.glassesValues)?.ssid
         return wifiScanResults(model.bluetoothValues).filter { network in
-            guard let connectedSsid, model.glassesValues?.wifi.connected == true else { return true }
+            guard let connectedSsid else { return true }
             return network.ssid != connectedSsid
         }
     }

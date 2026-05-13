@@ -15,6 +15,7 @@ import { useScrollBottomPadding } from '../components/keyboardLayout';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { colors } from '../components/theme';
 import {
+  connectedWifiStatus,
   galleryHotspotPasswordLabel,
   galleryHotspotSsidLabel,
   galleryServerUrl,
@@ -28,8 +29,9 @@ import { RGB_LED_COLORS, durationText, type LedColor, type LedMode, type MentraS
 export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
   const scrollBottomPadding = useScrollBottomPadding();
   const connected = isGlassesConnected(sdk.glassesStatus);
+  const currentWifi = connectedWifiStatus(sdk.glassesStatus);
   const networks = (sdk.bluetoothStatus.wifiScanResults ?? []).filter(
-    (network) => !connected || !sdk.glassesStatus.wifiConnected || network.ssid !== sdk.glassesStatus.wifiSsid,
+    (network) => !connected || !currentWifi || network.ssid !== currentWifi.ssid,
   );
   const galleryUrl = galleryServerUrl(sdk.glassesStatus, sdk.hotspotEnabled);
   const galleryHotspotPassword = galleryUrl ? galleryHotspotPasswordLabel(sdk.glassesStatus) : null;
@@ -86,15 +88,17 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
             <Text style={styles.scanText}>Scan</Text>
           </Pressable>
         </View>
-        <NetworkRow
-          actionLabel={sdk.glassesStatus.wifiConnected ? 'Forget' : undefined}
-          actionColor={colors.red}
-          check={sdk.glassesStatus.wifiConnected}
-          name={wifiLabel(sdk.glassesStatus)}
-          onActionPress={sdk.glassesStatus.wifiConnected ? sdk.forgetCurrentWifiNetwork : undefined}
-          sub={wifiSubLabel(sdk.glassesStatus)}
-          subColor={sdk.glassesStatus.wifiConnected ? colors.greenAccent : colors.muted}
-        />
+        {currentWifi ? (
+          <NetworkRow
+            actionLabel="Forget"
+            actionColor={colors.red}
+            check
+            name={wifiLabel(sdk.glassesStatus)}
+            onActionPress={sdk.forgetCurrentWifiNetwork}
+            sub={wifiSubLabel(sdk.glassesStatus)}
+            subColor={colors.greenAccent}
+          />
+        ) : null}
         {networks.map((network, index) => {
           const joinNetwork = () => {
             if (network.requiresPassword) {

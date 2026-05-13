@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mentra.examples.android.ExampleEvent
 import com.mentra.examples.android.MentraExampleController
+import com.mentra.examples.android.connectedWifiStatus
 import com.mentra.examples.android.durationText
 import com.mentra.examples.android.galleryHotspotPasswordLabel
 import com.mentra.examples.android.galleryHotspotSsidLabel
@@ -55,10 +56,11 @@ import com.mentra.examples.android.ui.scrollBottomPadding
 fun SystemScreen(controller: MentraExampleController) {
     val state = controller.state
     val connected = isGlassesConnected(state.glassesStatus)
-    val currentWifiSsid = state.glassesStatus?.wifi?.ssid?.takeIf { it.isNotBlank() }
+    val currentWifi = connectedWifiStatus(state.glassesStatus)
+    val currentWifiSsid = currentWifi?.ssid
     val networks = wifiScanResults(state.bluetoothStatus).filter { network ->
         !connected ||
-            state.glassesStatus?.wifi?.connected != true ||
+            currentWifi == null ||
             network.ssid != currentWifiSsid
     }
     val inputChips = remember(state.events) { recentInputChips(state.events) }
@@ -119,16 +121,17 @@ fun SystemScreen(controller: MentraExampleController) {
                 DisabledHint("Connect glasses first to scan or join Wi-Fi networks.")
                 Spacer(Modifier.height(4.dp))
             }
-            val currentWifiConnected = state.glassesStatus?.wifi?.connected == true
-            NetworkRow(
-                wifiLabel(state.glassesStatus),
-                state.glassesStatus?.wifi?.localIp?.takeIf { it.isNotBlank() } ?: "not connected",
-                if (currentWifiConnected) AppColor.greenAccent else AppColor.muted,
-                check = currentWifiConnected,
-                actionLabel = if (currentWifiConnected) "Forget" else null,
-                actionColor = AppColor.red,
-                onActionClick = if (currentWifiConnected) controller::forgetCurrentWifiNetwork else null,
-            )
+            currentWifi?.let { wifi ->
+                NetworkRow(
+                    wifiLabel(state.glassesStatus),
+                    wifi.localIp,
+                    AppColor.greenAccent,
+                    check = true,
+                    actionLabel = "Forget",
+                    actionColor = AppColor.red,
+                    onActionClick = controller::forgetCurrentWifiNetwork,
+                )
+            }
             networks.forEachIndexed { index, network ->
                 val ssid = network.ssid.ifBlank { "Unknown" }
                 val requiresPassword = network.requiresPassword

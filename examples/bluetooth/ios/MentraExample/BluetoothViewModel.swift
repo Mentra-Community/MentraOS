@@ -135,7 +135,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     var glassesWifiConnected: Bool {
-        glassesValues?.wifi.connected == true
+        connectedWifiStatus(glassesValues) != nil
     }
 
     var hasMicRecording: Bool {
@@ -829,13 +829,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func forgetCurrentWifiNetwork() {
         runAction("Forget current Wi-Fi") {
             try requireConnected("forget Wi-Fi network")
-            guard glassesValues?.wifi.connected == true,
-                  let ssid = glassesValues?.wifi.ssid,
-                  !ssid.isEmpty
-            else {
+            guard let wifi = connectedWifiStatus(glassesValues) else {
                 throw ExampleActionError(message: "No connected Wi-Fi network to forget.")
             }
-            mentraBluetoothSdk.forgetWifiNetwork(ssid: ssid)
+            mentraBluetoothSdk.forgetWifiNetwork(ssid: wifi.ssid)
         }
     }
 
@@ -1034,7 +1031,15 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func applyWifiStatus(_ event: MentraWifiStatusEvent) {
         glassesValues = glassesValues?.withWifi(event.status) ?? mentraBluetoothSdk.glassesStatus
-        let label = event.connected ? (event.ssid.isEmpty ? "connected" : event.ssid) : "disconnected"
+        let label: String
+        switch event.status {
+        case let .connected(ssid, _):
+            label = ssid
+        case .disconnected:
+            label = "disconnected"
+        case .unknown:
+            label = "unknown"
+        }
         append(tag: "STORE", text: "Wi-Fi \(label)")
     }
 
@@ -1703,10 +1708,21 @@ func batteryLabel(_ status: MentraGlassesStatus?) -> String {
 }
 
 func wifiLabel(_ status: MentraGlassesStatus?) -> String {
-    if status?.wifi.connected == true {
-        return status?.wifi.ssid.nonEmpty ?? "Connected"
+    switch status?.wifi {
+    case let .connected(ssid, _):
+        return ssid
+    case .disconnected:
+        return isGlassesConnected(status) ? "Not connected" : "Unknown"
+    case .unknown, .none:
+        return "Unknown"
     }
-    return isGlassesConnected(status) ? "Not connected" : "Unknown"
+}
+
+func connectedWifiStatus(_ status: MentraGlassesStatus?) -> (ssid: String, localIp: String)? {
+    guard case let .connected(ssid, localIp) = status?.wifi else {
+        return nil
+    }
+    return (ssid, localIp)
 }
 
 func hotspotLabel(_ status: MentraGlassesStatus?, fallbackEnabled: Bool) -> String {
@@ -1819,15 +1835,29 @@ func summarize(_ values: [String: Any]) -> String {
 }
 
 func summarize(_ status: MentraGlassesStatusUpdate) -> String {
+    let wifiSummary: String? = status.wifi.map { wifi in
+        switch wifi {
+        case let .connected(ssid, _):
+            return "wifi: \(ssid)"
+        case .disconnected:
+            return "wifi: disconnected"
+        case .unknown:
+            return "wifi: unknown"
+        }
+    }
+    let signalStrengthUpdatedSummary = status.signalStrengthUpdatedAt.map { timestamp in
+        let date = Date(timeIntervalSince1970: TimeInterval(timestamp) / 1000)
+        return "RSSI updated: \(DateFormatter.exampleEventTime.string(from: date))"
+    }
     let parts = [
         status.connectionState.map { "connectionState: \($0)" },
         status.connected.map { "connected: \($0)" },
         status.fullyBooted.map { "fullyBooted: \($0)" },
         status.batteryLevel.map { "batteryLevel: \($0)" },
-        status.wifi.map { "wifi: \($0.connected ? ($0.ssid.isEmpty ? "connected" : $0.ssid) : "disconnected")" },
+        wifiSummary,
         status.hotspotEnabled.map { "hotspotEnabled: \($0)" },
         status.signalStrength.map { "signalStrength: \($0)" },
-        status.signalStrengthUpdatedAt.map { "RSSI updated: \(DateFormatter.exampleEventTime.string(from: Date(timeIntervalSince1970: TimeInterval($0) / 1000)))" },
+        signalStrengthUpdatedSummary,
     ].compactMap { $0 }.prefix(3)
     return parts.isEmpty ? "empty update" : parts.joined(separator: ", ")
 }

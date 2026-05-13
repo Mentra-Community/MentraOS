@@ -90,9 +90,10 @@ struct DeviceScreen: View {
     }
 
     private var statRow: some View {
-        HStack(spacing: 10) {
+        let currentWifi = connectedWifiStatus(model.glassesValues)
+        return HStack(spacing: 10) {
             StatTile(label: "FIRMWARE", value: firmwareLabel(model.glassesValues), sub: firmwareSubLabel(model.glassesValues), subColor: AppColor.greenAccent)
-            StatTile(label: "WI-FI", value: wifiLabel(model.glassesValues), sub: model.glassesValues?.wifi.localIp.nonEmpty ?? "unknown", subColor: AppColor.muted, bold: true)
+            StatTile(label: "WI-FI", value: wifiLabel(model.glassesValues), sub: currentWifi?.localIp ?? "unknown", subColor: AppColor.muted, bold: true)
             StatTile(label: "RSSI", value: rssiLabel(model.glassesValues), sub: rssiUpdatedLabel(model.glassesValues), subColor: AppColor.greenAccent, bold: true)
         }
     }

@@ -17,6 +17,7 @@ import BluetoothSdk, {
   type RgbLedControlResponseEvent,
   type StreamStatusEvent,
   type TouchEvent,
+  type WifiStatus,
   type WifiStatusChangeEvent,
 } from '@mentra/bluetooth-sdk';
 import MentraDirectReceiver, {
@@ -28,6 +29,7 @@ import {
   galleryHotspotPasswordLabel,
   galleryHotspotSsidLabel,
   galleryServerUrl,
+  connectedWifiStatus,
   isDisconnectedStatus,
   isGlassesConnected,
   isGlassesWifiConnected,
@@ -72,6 +74,17 @@ export const STREAM_DEFAULT_URLS: Record<StreamProtocol, string> = {
 export const PHOTO_UPLOAD_DEFAULT_URL = 'http://<computer-ip>:8787/upload';
 
 const STREAM_DEFAULT_URL_VALUES = new Set(Object.values(STREAM_DEFAULT_URLS));
+
+function wifiStatusFromEvent(event: WifiStatusChangeEvent): WifiStatus {
+  switch (event.state) {
+    case 'connected':
+      return {state: 'connected', ssid: event.ssid, localIp: event.localIp};
+    case 'disconnected':
+      return {state: 'disconnected'};
+    default:
+      return {state: 'unknown'};
+  }
+}
 
 export type SdkConsoleEvent = {
   tag: 'LIVE' | 'STORE' | 'BLE' | 'TX';
@@ -381,12 +394,12 @@ export function useMentraSdk(): MentraSdkModel {
         addEvent('STORE', `battery ${payload.level}%${payload.charging ? ' charging' : ''}`);
       }),
       BluetoothSdk.addListener('wifi_status_change', (payload: WifiStatusChangeEvent) => {
+        const wifi = wifiStatusFromEvent(payload);
         setGlassesStatus((current) => ({
           ...current,
-          wifiConnected: payload.connected,
-          wifiSsid: payload.ssid,
+          wifi,
         }));
-        addEvent('STORE', `Wi-Fi ${payload.connected ? 'connected' : 'disconnected'} ${payload.ssid}`);
+        addEvent('STORE', `Wi-Fi ${wifi.state === 'connected' ? wifi.ssid : wifi.state}`);
       }),
       BluetoothSdk.addListener('hotspot_status_change', (payload) => {
         const enabled = Boolean(payload.enabled);
@@ -1126,10 +1139,11 @@ export function useMentraSdk(): MentraSdkModel {
   async function forgetCurrentWifiNetwork() {
     await runAction('Forget current Wi-Fi', async () => {
       requireConnected('forget Wi-Fi network');
-      if (!glassesStatus.wifiConnected || !glassesStatus.wifiSsid) {
+      const wifi = connectedWifiStatus(glassesStatus);
+      if (!wifi) {
         throw new Error('No connected Wi-Fi network to forget.');
       }
-      await BluetoothSdk.forgetWifiNetwork(glassesStatus.wifiSsid);
+      await BluetoothSdk.forgetWifiNetwork(wifi.ssid);
     });
   }
 
@@ -1803,9 +1817,7 @@ function disconnectedGlassesStatus(
     hotspotGatewayIp: '',
     hotspotPassword: '',
     hotspotSsid: '',
-    wifiConnected: false,
-    wifiLocalIp: '',
-    wifiSsid: '',
+    wifi: {state: 'disconnected'},
   } as Partial<GlassesStatus>;
 }
 

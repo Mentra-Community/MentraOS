@@ -35,6 +35,7 @@ import com.mentra.examples.android.bluetoothSearchLabel
 import com.mentra.examples.android.canConnectTarget
 import com.mentra.examples.android.connectionLabel
 import com.mentra.examples.android.connectionTargetLabel
+import com.mentra.examples.android.connectedWifiStatus
 import com.mentra.examples.android.deviceLabel
 import com.mentra.examples.android.discoveredDeviceKey
 import com.mentra.examples.android.firmwareLabel
@@ -66,6 +67,7 @@ fun DeviceScreen(controller: MentraExampleController) {
     val currentDeviceName = if (connected) connectionTargetLabel(state, glasses) else deviceLabel(glasses)
     val level = batteryLevel(glasses)
     val latestEvent = state.events.firstOrNull()
+    val currentWifi = connectedWifiStatus(glasses)
     Column(
         modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())
     ) {
@@ -114,7 +116,7 @@ fun DeviceScreen(controller: MentraExampleController) {
         // Stat row
         Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             StatTile("FIRMWARE", firmwareLabel(glasses), firmwareSubLabel(glasses), AppColor.greenAccent, Modifier.weight(1f))
-            StatTile("WI-FI", wifiLabel(glasses), glasses?.wifi?.localIp?.takeIf { it.isNotBlank() } ?: "unknown", AppColor.muted, Modifier.weight(1f), bold = true)
+            StatTile("WI-FI", wifiLabel(glasses), currentWifi?.localIp ?: "unknown", AppColor.muted, Modifier.weight(1f), bold = true)
             StatTile("RSSI", rssiLabel(glasses), rssiUpdatedLabel(glasses), AppColor.greenAccent, Modifier.weight(1f), bold = true)
         }
 

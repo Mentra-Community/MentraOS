@@ -1,4 +1,4 @@
-import type {CoreStatus, GlassesStatus, MentraDevice} from '@mentra/bluetooth-sdk';
+import type {CoreStatus, GlassesStatus, MentraDevice, WifiStatus} from '@mentra/bluetooth-sdk';
 
 export function connectionLabel(status: Partial<GlassesStatus>) {
   if (status.connectionState) {
@@ -21,7 +21,11 @@ export function isGlassesConnected(status: Partial<GlassesStatus>) {
 }
 
 export function isGlassesWifiConnected(status: Partial<GlassesStatus>) {
-  return status.wifiConnected === true;
+  return status.wifi?.state === 'connected';
+}
+
+export function connectedWifiStatus(status: Partial<GlassesStatus>): Extract<WifiStatus, {state: 'connected'}> | null {
+  return status.wifi?.state === 'connected' ? status.wifi : null;
 }
 
 export function isDisconnectedStatus(status: Partial<GlassesStatus>) {
@@ -102,15 +106,18 @@ export function batteryLabel(status: Partial<GlassesStatus>) {
 }
 
 export function wifiLabel(status: Partial<GlassesStatus>) {
-  if (status.wifiConnected) {
-    return status.wifiSsid || 'Connected';
+  if (status.wifi?.state === 'connected') {
+    return status.wifi.ssid;
   }
-  return isGlassesConnected(status) ? 'Disconnected' : 'Unknown';
+  if (status.wifi?.state === 'disconnected') {
+    return isGlassesConnected(status) ? 'Not connected' : 'Unknown';
+  }
+  return 'Unknown';
 }
 
 export function wifiSubLabel(status: Partial<GlassesStatus>) {
-  if (status.wifiConnected) {
-    return status.wifiLocalIp || 'connected';
+  if (status.wifi?.state === 'connected') {
+    return status.wifi.localIp;
   }
   return 'not connected';
 }
