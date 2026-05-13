@@ -198,16 +198,16 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         runAction("Scan") {
             discoveredDevices.removeAll()
             selectedDiscoveredDevice = nil
-            mentraBluetoothSdk.startScan(model: .mentraLive)
+            try mentraBluetoothSdk.startScan(model: .mentraLive)
         }
     }
 
     func connect() {
         runAction("Connect") {
             if let device = selectedDiscoveredDevice ?? discoveredDevices.first {
-                mentraBluetoothSdk.connect(to: device)
+                try mentraBluetoothSdk.connect(to: device)
             } else if hasSavedConnectionTarget(bluetoothValues) {
-                mentraBluetoothSdk.connectDefault()
+                try mentraBluetoothSdk.connectDefault()
             } else {
                 throw ExampleActionError(message: "Scan first to choose nearby glasses.")
             }
@@ -222,7 +222,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func connect(_ device: MentraDevice) {
         selectedDiscoveredDevice = device
         runAction("Connect \(device.name)") {
-            mentraBluetoothSdk.connect(to: device)
+            try mentraBluetoothSdk.connect(to: device)
         }
     }
 
@@ -1075,7 +1075,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private func autoConnectDefaultOnStartup() {
         guard !glassesConnected, hasSavedConnectionTarget(bluetoothValues) else { return }
         runAction("Auto-connect default") {
-            mentraBluetoothSdk.connectDefault()
+            try mentraBluetoothSdk.connectDefault()
         }
     }
 
