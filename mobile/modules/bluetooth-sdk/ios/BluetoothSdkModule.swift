@@ -121,14 +121,14 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
         // MARK: - Connection Commands
 
         AsyncFunction("connectDefault") {
-            await MainActor.run {
-                self.bluetoothSdk().connectDefault()
+            try await MainActor.run {
+                try self.bluetoothSdk().connectDefault()
             }
         }
 
         AsyncFunction("connectDefaultWithOptions") { (options: [String: Any]) in
-            await MainActor.run {
-                self.bluetoothSdk().connectDefault(options: MentraConnectOptions(dictionary: options))
+            try await MainActor.run {
+                try self.bluetoothSdk().connectDefault(options: MentraConnectOptions(dictionary: options))
             }
         }
 
@@ -145,11 +145,14 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
         }
 
         AsyncFunction("connectWithOptions") { (device: [String: Any], options: [String: Any]) in
-            await MainActor.run {
+            try await MainActor.run {
                 guard let target = MentraDevice(dictionary: device) else {
-                    return
+                    throw MentraBluetoothError(
+                        code: "invalid_device",
+                        message: "connect requires a MentraDevice with model and name."
+                    )
                 }
-                self.bluetoothSdk().connect(to: target, options: MentraConnectOptions(dictionary: options))
+                try self.bluetoothSdk().connect(to: target, options: MentraConnectOptions(dictionary: options))
             }
         }
 
@@ -190,9 +193,9 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
         }
 
         AsyncFunction("startScan") { (params: [String: Any]) in
-            await MainActor.run {
+            try await MainActor.run {
                 let model = params["model"] as? String ?? DeviceTypes.LIVE
-                self.bluetoothSdk().startScan(model: MentraDeviceModel.fromDeviceType(model))
+                try self.bluetoothSdk().startScan(model: MentraDeviceModel.fromDeviceType(model))
             }
         }
 

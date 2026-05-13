@@ -34,7 +34,12 @@ export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
   if (!requirementsCheck) {
     return true
   }
-  await CoreModule.connectDefault()
+  try {
+    await CoreModule.connectDefault()
+  } catch (error) {
+    console.warn("RECONNECT: failed to connect default wearable:", error)
+    return false
+  }
   return true
 }
 

@@ -7,6 +7,12 @@ data class MentraBluetoothSdkConfig(
     val deliverCallbacksOnMainThread: Boolean = true,
 )
 
+class MentraBluetoothException(
+    val code: String,
+    message: String,
+    cause: Throwable? = null,
+) : IllegalStateException(message, cause)
+
 enum class MentraDeviceModel(val deviceType: String) {
     G1(DeviceTypes.G1),
     G2(DeviceTypes.G2),

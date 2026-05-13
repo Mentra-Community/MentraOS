@@ -52,10 +52,14 @@ export default function SelectGlassesBluetoothScreen() {
 
   useEffect(() => {
     const initializeAndSearchForDevices = async () => {
-      CoreModule.startScan({model: deviceModel})
+      try {
+        await CoreModule.startScan({model: deviceModel})
+      } catch (error) {
+        console.error("Failed to start controller scan:", error)
+      }
     }
 
-    initializeAndSearchForDevices()
+    void initializeAndSearchForDevices()
   }, [])
 
   const triggerGlassesPairingGuide = async (device: MentraDevice) => {
@@ -88,7 +92,9 @@ export default function SelectGlassesBluetoothScreen() {
 
   const startPairing = async (device: MentraDevice) => {
     setTimeout(() => {
-      CoreModule.connect(device)
+      CoreModule.connect(device).catch((error) => {
+        console.error("Failed to connect to controller:", error)
+      })
     }, 2000)
     replace("/pairing/loading", {deviceModel: device.model, deviceName: device.name})
   }

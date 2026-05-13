@@ -1,3 +1,4 @@
+import CoreBluetooth
 import Foundation
 
 private func intValue(_ value: Any?) -> Int? {
@@ -1164,7 +1165,7 @@ public struct MentraStreamStatusEvent: CustomStringConvertible {
     }
 }
 
-public struct MentraBluetoothError: Error, CustomStringConvertible {
+public struct MentraBluetoothError: Error, LocalizedError, CustomStringConvertible {
     public let code: String
     public let message: String
 
@@ -1173,8 +1174,68 @@ public struct MentraBluetoothError: Error, CustomStringConvertible {
         self.message = message
     }
 
+    public var errorDescription: String? {
+        message
+    }
+
     public var description: String {
         "\(code): \(message)"
+    }
+}
+
+private final class BluetoothAvailability: NSObject, CBCentralManagerDelegate {
+    static let shared = BluetoothAvailability()
+
+    private var centralManager: CBCentralManager?
+    private var state: CBManagerState = .unknown
+
+    override private init() {
+        super.init()
+        centralManager = CBCentralManager(
+            delegate: self,
+            queue: .main,
+            options: [CBCentralManagerOptionShowPowerAlertKey: false]
+        )
+        state = centralManager?.state ?? .unknown
+    }
+
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        state = central.state
+    }
+
+    func requirePoweredOn(operation: String) throws {
+        if let current = centralManager?.state {
+            state = current
+        }
+        switch state {
+        case .poweredOn:
+            return
+        case .poweredOff:
+            throw MentraBluetoothError(
+                code: "bluetooth_powered_off",
+                message: "Turn on phone Bluetooth to \(operation)."
+            )
+        case .unauthorized:
+            throw MentraBluetoothError(
+                code: "bluetooth_unauthorized",
+                message: "Allow Bluetooth access to \(operation)."
+            )
+        case .unsupported:
+            throw MentraBluetoothError(
+                code: "bluetooth_unsupported",
+                message: "This phone does not support Bluetooth."
+            )
+        case .resetting, .unknown:
+            throw MentraBluetoothError(
+                code: "bluetooth_not_ready",
+                message: "Bluetooth is not ready yet. Try again."
+            )
+        @unknown default:
+            throw MentraBluetoothError(
+                code: "bluetooth_unavailable",
+                message: "Bluetooth is unavailable. Try again."
+            )
+        }
     }
 }
 
@@ -1277,6 +1338,7 @@ public final class MentraBluetoothSDK {
 
     public init(configuration: MentraBluetoothSDKConfiguration = .default) {
         self.configuration = configuration
+        _ = BluetoothAvailability.shared
         bridgeEventSinkId = Bridge.addEventSink { [weak self] eventName, data in
             Task { @MainActor [weak self] in
                 self?.dispatchBridgeEvent(eventName, data)
@@ -1329,7 +1391,10 @@ public final class MentraBluetoothSDK {
         finishDefaultDeviceApply(generation: generation)
     }
 
-    public func startScan(model: MentraDeviceModel) {
+    public func startScan(model: MentraDeviceModel) throws {
+        if model != .simulated {
+            try BluetoothAvailability.shared.requirePoweredOn(operation: "scan for glasses")
+        }
         discoveredDeviceNames.removeAll()
         GlassesStore.shared.apply(ObservableStore.coreCategory, "searching", true)
         CoreManager.shared.findCompatibleDevices(model.deviceType)
@@ -1340,7 +1405,10 @@ public final class MentraBluetoothSDK {
         delegate?.mentraBluetoothSDK(self, didStopScan: .cancelled)
     }
 
-    public func connect(to device: MentraDevice, options: MentraConnectOptions = MentraConnectOptions()) {
+    public func connect(to device: MentraDevice, options: MentraConnectOptions = MentraConnectOptions()) throws {
+        if device.model != .simulated {
+            try BluetoothAvailability.shared.requirePoweredOn(operation: "connect to glasses")
+        }
         let isController = ControllerTypes.ALL.contains(device.model.deviceType)
         if options.cancelExistingConnectionAttempt {
             if isController {
@@ -1356,7 +1424,16 @@ public final class MentraBluetoothSDK {
         CoreManager.shared.connectByName(device.name)
     }
 
-    public func connectDefault(options: MentraConnectOptions = MentraConnectOptions()) {
+    public func connectDefault(options: MentraConnectOptions = MentraConnectOptions()) throws {
+        guard let device = currentDefaultDevice() else {
+            throw MentraBluetoothError(
+                code: "default_device_missing",
+                message: "Set a default glasses device before calling connectDefault."
+            )
+        }
+        if device.model != .simulated {
+            try BluetoothAvailability.shared.requirePoweredOn(operation: "connect to glasses")
+        }
         if options.cancelExistingConnectionAttempt {
             cancelConnectionAttempt()
         }

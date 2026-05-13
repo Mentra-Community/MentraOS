@@ -1,5 +1,6 @@
 package com.mentra.core
 
+import android.bluetooth.BluetoothManager
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
@@ -92,6 +93,9 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun startScan(model: MentraDeviceModel) {
+        if (model != MentraDeviceModel.SIMULATED) {
+            requireBluetoothReady("scan for glasses")
+        }
         discoveredDeviceNames.clear()
         GlassesStore.apply(ObservableStore.CORE_CATEGORY, "searching", true)
         deviceManager.findCompatibleDevices(model.deviceType)
@@ -104,6 +108,9 @@ class MentraBluetoothSdk private constructor(
 
     @JvmOverloads
     fun connect(device: MentraDevice, options: MentraConnectOptions = MentraConnectOptions()) {
+        if (device.model != MentraDeviceModel.SIMULATED) {
+            requireBluetoothReady("connect to glasses")
+        }
         val isController = ControllerTypes.ALL.contains(device.model.deviceType)
         if (options.cancelExistingConnectionAttempt) {
             if (isController) {
@@ -121,6 +128,15 @@ class MentraBluetoothSdk private constructor(
 
     @JvmOverloads
     fun connectDefault(options: MentraConnectOptions = MentraConnectOptions()) {
+        val defaultDevice =
+            currentDefaultDevice()
+                ?: throw MentraBluetoothException(
+                    "default_device_missing",
+                    "Set a default glasses device before calling connectDefault.",
+                )
+        if (defaultDevice.model != MentraDeviceModel.SIMULATED) {
+            requireBluetoothReady("connect to glasses")
+        }
         if (options.cancelExistingConnectionAttempt) {
             cancelConnectionAttempt()
         }
@@ -382,6 +398,32 @@ class MentraBluetoothSdk private constructor(
             name = name,
             address = address,
         )
+    }
+
+    private fun requireBluetoothReady(operation: String) {
+        val bluetoothManager = appContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        val adapter =
+            bluetoothManager?.adapter
+                ?: throw MentraBluetoothException(
+                    "bluetooth_unsupported",
+                    "This phone does not support Bluetooth.",
+                )
+        val enabled =
+            try {
+                adapter.isEnabled
+            } catch (error: SecurityException) {
+                throw MentraBluetoothException(
+                    "bluetooth_permission_denied",
+                    "Allow Bluetooth permission to $operation.",
+                    error,
+                )
+            }
+        if (!enabled) {
+            throw MentraBluetoothException(
+                "bluetooth_powered_off",
+                "Turn on phone Bluetooth to $operation.",
+            )
+        }
     }
 
     private fun dispatchDiscoveredDevices(rawSearchResults: Any?) {

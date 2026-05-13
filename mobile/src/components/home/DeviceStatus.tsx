@@ -130,11 +130,11 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       if (!requirementsCheck) {
         return
       }
+      await CoreModule.connectDefault()
     } catch (error) {
       console.error("connect to glasses error:", error)
       showAlert("Connection Error", "Failed to connect to glasses. Please try again.", [{text: "OK"}])
     }
-    await CoreModule.connectDefault()
   }
 
   const handleConnectOrDisconnect = async () => {
