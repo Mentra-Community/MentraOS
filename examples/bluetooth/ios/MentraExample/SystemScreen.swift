@@ -364,7 +364,7 @@ struct SystemScreen: View {
         .opacity(model.glassesConnected ? 1 : 0.55)
     }
 
-    private var visibleWifiScanResults: [MentraWifiScanResult] {
+    private var visibleWifiScanResults: [WifiScanResult] {
         let connectedSsid = connectedWifiStatus(model.glassesValues)?.ssid
         return wifiScanResults(model.bluetoothValues).filter { network in
             guard let connectedSsid else { return true }

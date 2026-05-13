@@ -2,13 +2,13 @@ import MentraBluetoothSDK
 import SwiftUI
 import UIKit
 
-private let photoSizeOptions: [MentraPhotoSize] = [.small, .medium, .large, .full]
-private let photoCompressionOptions: [MentraPhotoCompression] = [.none, .medium, .heavy]
+private let photoSizeOptions: [PhotoSize] = [.small, .medium, .large, .full]
+private let photoCompressionOptions: [PhotoCompression] = [.none, .medium, .heavy]
 
 private func cameraSdkCall(size: String, compression: String, flash: Bool) -> String {
     """
 mentraBluetoothSdk.requestPhoto(
-    MentraPhotoRequest(
+    PhotoRequest(
       requestId: requestId,
       appId: "com.mentra.examples.ios",
       size: .\(size),

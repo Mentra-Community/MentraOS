@@ -56,10 +56,10 @@ enum ExampleStreamProtocol: String, CaseIterable {
 
 @MainActor
 final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDelegate, AVAudioPlayerDelegate {
-    @Published private(set) var glassesValues: MentraGlassesStatus?
-    @Published private(set) var bluetoothValues: MentraBluetoothStatus?
-    @Published private(set) var discoveredDevices: [MentraDevice] = []
-    @Published private(set) var selectedDiscoveredDevice: MentraDevice?
+    @Published private(set) var glassesValues: GlassesStatus?
+    @Published private(set) var bluetoothValues: BluetoothStatus?
+    @Published private(set) var discoveredDevices: [Device] = []
+    @Published private(set) var selectedDiscoveredDevice: Device?
     @Published private(set) var events: [ExampleEvent] = [ExampleEvent.make(tag: "LIVE", text: "SDK ready. Scan to discover glasses.")]
     @Published private(set) var activeAction: String?
     @Published private(set) var lastAction = "No actions yet."
@@ -68,8 +68,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var photoPreviewUrl: URL?
     @Published private(set) var photoPreviewImage: UIImage?
     @Published private(set) var photoDestination: PhotoDestination = .thisPhone
-    @Published private(set) var photoSize: MentraPhotoSize = .medium
-    @Published private(set) var photoCompression: MentraPhotoCompression = .medium
+    @Published private(set) var photoSize: PhotoSize = .medium
+    @Published private(set) var photoCompression: PhotoCompression = .medium
     @Published private(set) var photoFlash = false
     @Published private(set) var phonePhotoServerRunning = false
     @Published private(set) var phonePhotoUploadUrl = "Phone receiver not started"
@@ -214,12 +214,12 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    func selectDiscoveredDevice(_ device: MentraDevice) {
+    func selectDiscoveredDevice(_ device: Device) {
         selectedDiscoveredDevice = device
         lastAction = "Selected: \(device.name)"
     }
 
-    func connect(_ device: MentraDevice) {
+    func connect(_ device: Device) {
         selectedDiscoveredDevice = device
         runAction("Connect \(device.name)") {
             try mentraBluetoothSdk.connect(to: device)
@@ -256,7 +256,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         runAction("Display Hello") {
             try requireDisplaySupport("display text")
             Task {
-                try? await mentraBluetoothSdk.displayText(MentraDisplayTextRequest(text: "Hello from Mentra Bluetooth SDK"))
+                try? await mentraBluetoothSdk.displayText(DisplayTextRequest(text: "Hello from Mentra Bluetooth SDK"))
             }
         }
     }
@@ -287,11 +287,11 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         photoDestination = destination
     }
 
-    func setPhotoSize(_ size: MentraPhotoSize) {
+    func setPhotoSize(_ size: PhotoSize) {
         photoSize = size
     }
 
-    func setPhotoCompression(_ compression: MentraPhotoCompression) {
+    func setPhotoCompression(_ compression: PhotoCompression) {
         photoCompression = compression
     }
 
@@ -325,7 +325,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             photoPreviewImage = nil
             cameraStatus = "Camera: webhook upload requested (\(requestId))"
             mentraBluetoothSdk.requestPhoto(
-                MentraPhotoRequest(
+                PhotoRequest(
                     requestId: requestId,
                     appId: "com.mentra.examples.ios",
                     size: photoSize,
@@ -358,7 +358,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         photoPreviewImage = nil
         cameraStatus = "Camera: requested phone upload (\(requestId))"
         mentraBluetoothSdk.requestPhoto(
-            MentraPhotoRequest(
+            PhotoRequest(
                 requestId: requestId,
                 appId: "com.mentra.examples.ios",
                 size: photoSize,
@@ -629,7 +629,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func sendDirectPhoneStartStream(streamUrl: String, streamId: String) {
         mentraBluetoothSdk.startStream(
-            MentraStreamRequest(
+            StreamRequest(
                 streamUrl: streamUrl,
                 streamId: streamId,
                 keepAlive: true,
@@ -676,7 +676,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func startStream(streamUrl: String, streamId: String, protocol selectedProtocol: ExampleStreamProtocol) {
         mentraBluetoothSdk.startStream(
-            MentraStreamRequest(
+            StreamRequest(
                 streamUrl: streamUrl,
                 streamId: streamId,
                 keepAlive: true,
@@ -945,7 +945,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private func sendRgbLedRequest(mode: String, color: String) {
         let request = rgbLedRequest(for: mode, color: color)
         mentraBluetoothSdk.rgbLedControl(
-            MentraRgbLedRequest(
+            RgbLedRequest(
                 requestId: "rgb-\(Int(Date().timeIntervalSince1970 * 1000))",
                 packageName: "com.mentra.examples.ios",
                 action: request.action,
@@ -957,8 +957,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         )
     }
 
-    private func rgbLedRequest(for mode: String, color: String) -> (action: MentraRgbLedAction, color: MentraRgbLedColor?, ontime: Int, offtime: Int, count: Int) {
-        let ledColor = MentraRgbLedColor(rawValue: color) ?? .red
+    private func rgbLedRequest(for mode: String, color: String) -> (action: RgbLedAction, color: RgbLedColor?, ontime: Int, offtime: Int, count: Int) {
+        let ledColor = RgbLedColor(rawValue: color) ?? .red
         switch mode {
         case "Solid":
             return (.on, ledColor, 30000, 0, 1)
@@ -971,7 +971,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateGlassesStatus status: MentraGlassesStatusUpdate) {
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateGlassesStatus status: GlassesStatusUpdate) {
         glassesValues = glassesValues?.applying(status) ?? mentraBluetoothSdk.glassesStatus
         if let hotspot = status.hotspot {
             hotspotEnabled = enabledHotspotStatus(hotspot) != nil
@@ -983,12 +983,12 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         append(tag: "STORE", text: summarize(status))
     }
 
-    func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateBluetoothStatus status: MentraBluetoothStatusUpdate) {
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateBluetoothStatus status: BluetoothStatusUpdate) {
         applyBluetoothStatus(status)
         append(tag: "BLE", text: summarize(status))
     }
 
-    func mentraBluetoothSDK(_: MentraBluetoothSDK, didDiscover device: MentraDevice) {
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didDiscover device: Device) {
         if !discoveredDevices.contains(where: { discoveredDeviceKey($0) == discoveredDeviceKey(device) }) {
             discoveredDevices.append(device)
         }
@@ -998,7 +998,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         append(tag: "BLE", text: "discovered \(device.name)")
     }
 
-    func mentraBluetoothSDK(_: MentraBluetoothSDK, didChangeDefaultDevice device: MentraDevice?) {
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didChangeDefaultDevice device: Device?) {
         savePersistedDefaultDevice(device)
         bluetoothValues = bluetoothValues?.withDefaultDevice(device)
         if let device {
@@ -1006,7 +1006,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceive event: MentraBluetoothEvent) {
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceive event: BluetoothEvent) {
         switch event {
         case let .buttonPress(button):
             append(tag: "LIVE", text: "button \(button.buttonId): \(button.pressType)")
@@ -1057,7 +1057,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         append(tag: "LIVE", text: message)
     }
 
-    func mentraBluetoothSDK(_: MentraBluetoothSDK, didFail error: MentraBluetoothError) {
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didFail error: BluetoothError) {
         append(tag: "TX", text: error.description)
     }
 
@@ -1176,19 +1176,19 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    private func applyBluetoothStatus(_ status: MentraBluetoothStatus) {
+    private func applyBluetoothStatus(_ status: BluetoothStatus) {
         bluetoothValues = status
         galleryModeAuto = status.galleryModeAuto
     }
 
-    private func applyBluetoothStatus(_ status: MentraBluetoothStatusUpdate) {
+    private func applyBluetoothStatus(_ status: BluetoothStatusUpdate) {
         bluetoothValues = bluetoothValues?.applying(status) ?? mentraBluetoothSdk.bluetoothStatus
         if let galleryMode = status.galleryModeAuto {
             galleryModeAuto = galleryMode
         }
     }
 
-    private func loadPersistedDefaultDevice() -> MentraDevice? {
+    private func loadPersistedDefaultDevice() -> Device? {
         guard let model = defaultDeviceDefaults.string(forKey: DefaultDeviceStorage.model), !model.isEmpty else {
             return nil
         }
@@ -1198,14 +1198,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         let identifier = defaultDeviceDefaults.string(forKey: DefaultDeviceStorage.identifier).flatMap {
             $0.isEmpty ? nil : $0
         }
-        return MentraDevice(
-            model: MentraDeviceModel.fromDeviceType(model),
+        return Device(
+            model: DeviceModel.fromDeviceType(model),
             name: name,
             identifier: identifier
         )
     }
 
-    private func savePersistedDefaultDevice(_ device: MentraDevice?) {
+    private func savePersistedDefaultDevice(_ device: Device?) {
         guard let device, !device.name.isEmpty else {
             defaultDeviceDefaults.removeObject(forKey: DefaultDeviceStorage.version)
             defaultDeviceDefaults.removeObject(forKey: DefaultDeviceStorage.model)
@@ -1256,14 +1256,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         pcmBytes = 0
         micElapsedSeconds = 0
         micStartedAt = Date()
-        mentraBluetoothSdk.setMicState(MentraMicConfiguration(sendPcmData: true, sendTranscript: false, bypassVad: true))
+        mentraBluetoothSdk.setMicState(MicConfiguration(sendPcmData: true, sendTranscript: false, bypassVad: true))
         micRecording = true
         startMicElapsedTimer()
     }
 
     private func stopMicRecording() {
         if glassesConnected {
-            mentraBluetoothSdk.setMicState(MentraMicConfiguration(sendPcmData: false, sendTranscript: false, bypassVad: true))
+            mentraBluetoothSdk.setMicState(MicConfiguration(sendPcmData: false, sendTranscript: false, bypassVad: true))
         }
         micRecording = false
         stopMicElapsedTimer()
@@ -1442,7 +1442,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             )
             append(tag: "STORE", text: "battery \(intValue(values, "level") ?? -1)%")
         case "hotspot_status_change":
-            let hotspot = MentraHotspotStatus(values: values) ?? .disabled
+            let hotspot = HotspotStatus(values: values) ?? .disabled
             let enabled = enabledHotspotStatus(hotspot) != nil
             hotspotEnabled = enabled
             glassesValues = glassesValues?.withHotspot(hotspot)
@@ -1455,15 +1455,15 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             glassesValues = glassesValues?.withHotspot(.disabled)
             append(tag: "TX", text: "hotspot error \(summarize(values))")
         case "photo_response":
-            handlePhotoResponse(MentraPhotoResponse(values: values))
+            handlePhotoResponse(PhotoResponse(values: values))
         case "stream_status":
-            handleStreamStatus(MentraStreamStatus(values: values))
+            handleStreamStatus(StreamStatus(values: values))
         default:
             append(tag: "LIVE", text: "\(name) \(summarize(values))")
         }
     }
 
-    private func applyStreamStatus(_ status: MentraStreamStatus) {
+    private func applyStreamStatus(_ status: StreamStatus) {
         switch status.state {
         case .streaming, .initializing, .reconnecting, .reconnected:
             streamRequested = true
@@ -1489,7 +1489,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    private func handleStreamStatus(_ status: MentraStreamStatus) {
+    private func handleStreamStatus(_ status: StreamStatus) {
         applyStreamStatus(status)
         let summary = summarize(status.values)
         if isDirectPhoneWebRtcSelected {
@@ -1508,7 +1508,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         append(tag: "LIVE", text: "stream \(summary)")
     }
 
-    private func handlePhotoResponse(_ response: MentraPhotoResponse) {
+    private func handlePhotoResponse(_ response: PhotoResponse) {
         let requestId = response.requestId
         if let activePhotoRequestId, requestId != activePhotoRequestId {
             append(tag: "LIVE", text: "ignoring stale photo \(requestId)")
@@ -1566,7 +1566,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 try? await Task.sleep(nanoseconds: 15_000_000_000)
                 guard let self else { return }
                 self.mentraBluetoothSdk.keepStreamAlive(
-                    MentraStreamKeepAliveRequest(
+                    StreamKeepAliveRequest(
                         streamId: streamId,
                         ackId: "ack-\(Int(Date().timeIntervalSince1970 * 1000))"
                     )
@@ -1633,11 +1633,11 @@ extension String {
     }
 }
 
-func connectionLabel(_ status: MentraGlassesStatus?) -> String {
+func connectionLabel(_ status: GlassesStatus?) -> String {
     status?.connectionState.nonEmpty ?? (isGlassesConnected(status) ? "CONNECTED" : "WAITING")
 }
 
-func isGlassesConnected(_ status: MentraGlassesStatus?) -> Bool {
+func isGlassesConnected(_ status: GlassesStatus?) -> Bool {
     if let state = status?.connectionState.lowercased(), !state.isEmpty {
         if state == "connected" { return true }
         if state == "disconnected" { return false }
@@ -1645,25 +1645,25 @@ func isGlassesConnected(_ status: MentraGlassesStatus?) -> Bool {
     return status?.connected == true
 }
 
-func isDisconnectedStatus(_ status: MentraGlassesStatusUpdate) -> Bool {
+func isDisconnectedStatus(_ status: GlassesStatusUpdate) -> Bool {
     if let state = status.connectionState?.lowercased() {
         return state == "disconnected"
     }
     return status.connected == false
 }
 
-func modelLabel(_ status: MentraGlassesStatus?) -> String {
+func modelLabel(_ status: GlassesStatus?) -> String {
     status?.deviceModel.nonEmpty ?? "Mentra Live"
 }
 
-func deviceLabel(_ status: MentraGlassesStatus?) -> String {
+func deviceLabel(_ status: GlassesStatus?) -> String {
     if let value = status?.bluetoothName, !value.isEmpty { return value }
     if let value = status?.serialNumber, !value.isEmpty { return value }
     if let value = status?.deviceModel, !value.isEmpty { return value }
     return "Mentra Live"
 }
 
-func supportsDisplay(_ status: MentraGlassesStatus?) -> Bool {
+func supportsDisplay(_ status: GlassesStatus?) -> Bool {
     let model = [
         status?.deviceModel,
         status?.bluetoothName,
@@ -1683,23 +1683,23 @@ func supportsDisplay(_ status: MentraGlassesStatus?) -> Bool {
     return false
 }
 
-func discoveredDeviceKey(_ device: MentraDevice) -> String {
+func discoveredDeviceKey(_ device: Device) -> String {
     device.id
 }
 
-func batteryLevel(_ status: MentraGlassesStatus?) -> Int? {
+func batteryLevel(_ status: GlassesStatus?) -> Int? {
     guard isGlassesConnected(status), let level = status?.batteryLevel, level >= 0 else { return nil }
     return min(level, 100)
 }
 
-func batteryLabel(_ status: MentraGlassesStatus?) -> String {
+func batteryLabel(_ status: GlassesStatus?) -> String {
     guard let level = batteryLevel(status) else {
         return status?.connected == false || status?.connectionState.lowercased() == "disconnected" ? "Not connected" : "Waiting for status"
     }
     return "\(level)%\(status?.charging == true ? " charging" : "")"
 }
 
-func wifiLabel(_ status: MentraGlassesStatus?) -> String {
+func wifiLabel(_ status: GlassesStatus?) -> String {
     switch status?.wifi {
     case let .connected(ssid, _):
         return ssid
@@ -1710,28 +1710,28 @@ func wifiLabel(_ status: MentraGlassesStatus?) -> String {
     }
 }
 
-func connectedWifiStatus(_ status: MentraGlassesStatus?) -> (ssid: String, localIp: String?)? {
+func connectedWifiStatus(_ status: GlassesStatus?) -> (ssid: String, localIp: String?)? {
     guard case let .connected(ssid, localIp) = status?.wifi else {
         return nil
     }
     return (ssid, localIp)
 }
 
-func enabledHotspotStatus(_ hotspot: MentraHotspotStatus) -> (ssid: String, password: String, localIp: String)? {
+func enabledHotspotStatus(_ hotspot: HotspotStatus) -> (ssid: String, password: String, localIp: String)? {
     guard case let .enabled(ssid, password, localIp) = hotspot else {
         return nil
     }
     return (ssid, password, localIp)
 }
 
-func enabledHotspotStatus(_ status: MentraGlassesStatus?) -> (ssid: String, password: String, localIp: String)? {
+func enabledHotspotStatus(_ status: GlassesStatus?) -> (ssid: String, password: String, localIp: String)? {
     guard let hotspot = status?.hotspot else {
         return nil
     }
     return enabledHotspotStatus(hotspot)
 }
 
-func hotspotLabel(_ status: MentraGlassesStatus?, fallbackEnabled: Bool) -> String {
+func hotspotLabel(_ status: GlassesStatus?, fallbackEnabled: Bool) -> String {
     if let hotspot = enabledHotspotStatus(status) {
         return "\(hotspot.ssid) · \(hotspot.localIp)"
     }
@@ -1740,7 +1740,7 @@ func hotspotLabel(_ status: MentraGlassesStatus?, fallbackEnabled: Bool) -> Stri
 
 private let mentraLiveDefaultHotspotPassword = "00001111"
 
-func galleryServerUrl(_ status: MentraGlassesStatus?, fallbackEnabled: Bool) -> String? {
+func galleryServerUrl(_ status: GlassesStatus?, fallbackEnabled: Bool) -> String? {
     let hotspot = enabledHotspotStatus(status)
     guard hotspot != nil || (status == nil && fallbackEnabled) else { return nil }
 
@@ -1748,25 +1748,25 @@ func galleryServerUrl(_ status: MentraGlassesStatus?, fallbackEnabled: Bool) -> 
     return "http://\(gateway):8089"
 }
 
-func galleryHotspotSsidLabel(_ status: MentraGlassesStatus?) -> String {
+func galleryHotspotSsidLabel(_ status: GlassesStatus?) -> String {
     guard let ssid = enabledHotspotStatus(status)?.ssid else {
         return "the glasses hotspot"
     }
     return "Wi-Fi \(ssid)"
 }
 
-func galleryHotspotPasswordLabel(_ status: MentraGlassesStatus?) -> String {
+func galleryHotspotPasswordLabel(_ status: GlassesStatus?) -> String {
     enabledHotspotStatus(status)?.password ?? mentraLiveDefaultHotspotPassword
 }
 
-func firmwareLabel(_ status: MentraGlassesStatus?) -> String {
+func firmwareLabel(_ status: GlassesStatus?) -> String {
     if let value = status?.firmwareVersion, !value.isEmpty { return value }
     if let value = status?.besFirmwareVersion, !value.isEmpty { return value }
     if let value = status?.mtkFirmwareVersion, !value.isEmpty { return value }
     return "Unknown"
 }
 
-func firmwareSubLabel(_ status: MentraGlassesStatus?) -> String {
+func firmwareSubLabel(_ status: GlassesStatus?) -> String {
     if status?.firmwareVersion.isEmpty == false {
         return "reported"
     }
@@ -1782,38 +1782,38 @@ func firmwareSubLabel(_ status: MentraGlassesStatus?) -> String {
     return "not reported"
 }
 
-func rssiLabel(_ status: MentraGlassesStatus?) -> String {
+func rssiLabel(_ status: GlassesStatus?) -> String {
     guard let signal = status?.signalStrength, signal != -1 else { return "Unknown" }
     return "\(signal) dBm"
 }
 
-func rssiUpdatedLabel(_ status: MentraGlassesStatus?) -> String {
+func rssiUpdatedLabel(_ status: GlassesStatus?) -> String {
     guard let updatedAt = status?.signalStrengthUpdatedAt, updatedAt > 0 else { return "signal" }
     let date = Date(timeIntervalSince1970: TimeInterval(updatedAt) / 1000)
     return "updated \(DateFormatter.exampleEventTime.string(from: date))"
 }
 
-func bluetoothSearchLabel(_ status: MentraBluetoothStatus?) -> String {
+func bluetoothSearchLabel(_ status: BluetoothStatus?) -> String {
     let count = status?.searchResults.count ?? 0
     return "\(status?.searching == true ? "Scanning" : "Idle") · \(count) result\(count == 1 ? "" : "s")"
 }
 
-func hasSavedConnectionTarget(_ status: MentraBluetoothStatus?) -> Bool {
+func hasSavedConnectionTarget(_ status: BluetoothStatus?) -> Bool {
     guard let model = status?.defaultWearable, !model.isEmpty else { return false }
     guard let name = status?.deviceName, !name.isEmpty else { return false }
     return true
 }
 
-func savedConnectionTargetName(_ status: MentraBluetoothStatus?) -> String {
+func savedConnectionTargetName(_ status: BluetoothStatus?) -> String {
     status?.deviceName.nonEmpty ?? "Saved glasses"
 }
 
-func savedConnectionTargetDetail(_ status: MentraBluetoothStatus?) -> String {
+func savedConnectionTargetDetail(_ status: BluetoothStatus?) -> String {
     let model = status?.defaultWearable.nonEmpty ?? "Saved model"
-    return "\(model) · BluetoothSdk.connectDefault()"
+    return "\(model) · mentraBluetoothSdk.connectDefault()"
 }
 
-func wifiScanResults(_ status: MentraBluetoothStatus?) -> [MentraWifiScanResult] {
+func wifiScanResults(_ status: BluetoothStatus?) -> [WifiScanResult] {
     status?.wifiScanResults ?? []
 }
 
@@ -1833,7 +1833,7 @@ func summarize(_ values: [String: Any]) -> String {
     return parts.isEmpty ? "empty update" : parts.joined(separator: ", ")
 }
 
-func summarize(_ status: MentraGlassesStatusUpdate) -> String {
+func summarize(_ status: GlassesStatusUpdate) -> String {
     let wifiSummary: String? = status.wifi.map { wifi in
         switch wifi {
         case let .connected(ssid, _):
@@ -1867,7 +1867,7 @@ func summarize(_ status: MentraGlassesStatusUpdate) -> String {
     return parts.isEmpty ? "empty update" : parts.joined(separator: ", ")
 }
 
-func summarize(_ status: MentraBluetoothStatusUpdate) -> String {
+func summarize(_ status: BluetoothStatusUpdate) -> String {
     let parts = [
         status.searching.map { "searching: \($0)" },
         status.searchResults.map { "searchResults: \($0.count)" },

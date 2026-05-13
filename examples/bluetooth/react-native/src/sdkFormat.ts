@@ -1,4 +1,4 @@
-import type {CoreStatus, GlassesStatus, HotspotStatus, MentraDevice, WifiStatus} from '@mentra/bluetooth-sdk';
+import type {CoreStatus, GlassesStatus, HotspotStatus, Device, WifiStatus} from '@mentra/bluetooth-sdk';
 
 export function connectionLabel(status: Partial<GlassesStatus>) {
   if (status.connectionState) {
@@ -234,7 +234,7 @@ export function bluetoothSearchLabel(status: Partial<CoreStatus>) {
   return `${status.searching ? 'Scanning' : 'Idle'} · ${count} result${count === 1 ? '' : 's'}`;
 }
 
-export function discoveredLabel(devices: MentraDevice[]) {
+export function discoveredLabel(devices: Device[]) {
   if (devices.length === 0) {
     return 'None yet';
   }

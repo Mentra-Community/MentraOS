@@ -269,7 +269,7 @@ struct DeviceScreen: View {
     }
 }
 
-private func glassesAssetName(_ values: MentraGlassesStatus?) -> String {
+private func glassesAssetName(_ values: GlassesStatus?) -> String {
     let model = [
         values?.deviceModel,
         values?.bluetoothName,
@@ -296,7 +296,7 @@ private func glassesAssetName(_ values: MentraGlassesStatus?) -> String {
     return "mentra_live"
 }
 
-private func targetDeviceDetail(_ device: MentraDevice) -> String {
+private func targetDeviceDetail(_ device: Device) -> String {
     if let rssi = device.rssi {
         return "\(device.model.rawValue) · \(rssi) dBm"
     }

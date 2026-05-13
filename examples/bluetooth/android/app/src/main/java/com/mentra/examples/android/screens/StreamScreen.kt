@@ -73,7 +73,7 @@ private val barHeights = listOf(18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 
 private val streamSdkCall = """
 val streamId = "android-${'$'}{System.currentTimeMillis()}"
 mentraBluetoothSdk.startStream(
-  MentraStreamRequest(
+  StreamRequest(
     streamUrl = streamUrl,
     streamId = streamId,
     keepAlive = true,

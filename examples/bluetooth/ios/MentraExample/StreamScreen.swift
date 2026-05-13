@@ -5,7 +5,7 @@ import WebKit
 private let streamSdkCall = """
 let streamId = "ios-..."
 mentraBluetoothSdk.startStream(
-  MentraStreamRequest(
+  StreamRequest(
     streamUrl: streamUrl,
     streamId: streamId,
     keepAlive: true,

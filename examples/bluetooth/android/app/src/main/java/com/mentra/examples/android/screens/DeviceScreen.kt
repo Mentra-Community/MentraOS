@@ -26,7 +26,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.mentra.core.MentraGlassesStatus
+import com.mentra.core.GlassesStatus
 import com.mentra.examples.android.MentraExampleController
 import com.mentra.examples.android.R
 import com.mentra.examples.android.batteryLabel
@@ -243,7 +243,7 @@ fun DeviceScreen(controller: MentraExampleController) {
     }
 }
 
-private fun glassesImageRes(values: MentraGlassesStatus?): Int {
+private fun glassesImageRes(values: GlassesStatus?): Int {
     val model = listOfNotNull(
         values?.deviceModel,
         values?.bluetoothName,
@@ -260,7 +260,7 @@ private fun glassesImageRes(values: MentraGlassesStatus?): Int {
 }
 
 @Composable
-private fun TargetPicker(controller: MentraExampleController, connected: Boolean, glasses: MentraGlassesStatus?) {
+private fun TargetPicker(controller: MentraExampleController, connected: Boolean, glasses: GlassesStatus?) {
     val state = controller.state
     Column(
         modifier = Modifier
