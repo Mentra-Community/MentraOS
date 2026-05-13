@@ -752,7 +752,7 @@ void ble_write_thread(void)
 				nus_data.len = 0;
 			}
 
-			plen = MIN(sizeof(nus_data.data), buf->len - loc);
+			plen = MIN(sizeof(nus_data.data) - nus_data.len, buf->len - loc);
 		}
 
 		k_free(buf);
