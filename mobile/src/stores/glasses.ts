@@ -49,7 +49,7 @@ function wifiFromLegacyFields(info: LegacyWifiFields): WifiStatus | null {
   if (info.wifiConnected === true) {
     const ssid = info.wifiSsid?.trim()
     const localIp = info.wifiLocalIp?.trim()
-    return ssid && localIp ? {state: "connected", ssid, localIp} : {state: "unknown"}
+    return ssid ? {state: "connected", ssid, ...(localIp ? {localIp} : {})} : null
   }
   if (info.wifiConnected === false) {
     return {state: "disconnected"}
@@ -62,7 +62,7 @@ function derivedWifiFields(wifi: WifiStatus): LegacyWifiFields {
     return {
       wifiConnected: true,
       wifiSsid: wifi.ssid,
-      wifiLocalIp: wifi.localIp,
+      wifiLocalIp: wifi.localIp ?? "",
     }
   }
   return {
@@ -234,12 +234,17 @@ export const useGlassesStore = create<GlassesState>()(
       }),
 
     setWifiInfo: (connected, ssid) =>
-      set({
-        wifi: connected ? {state: "unknown"} : {state: "disconnected"},
-        wifiConnected: connected,
-        wifiSsid: ssid,
-        wifiLocalIp: "",
-        wifiStatusKnown: true,
+      set(() => {
+        const trimmedSsid = ssid.trim()
+        if (connected && !trimmedSsid) {
+          return {}
+        }
+        const wifi: WifiStatus = connected ? {state: "connected", ssid: trimmedSsid} : {state: "disconnected"}
+        return {
+          wifi,
+          ...derivedWifiFields(wifi),
+          wifiStatusKnown: true,
+        }
       }),
 
     setHotspotInfo: (enabled: boolean, ssid: string, password: string, ip: string) =>

@@ -374,12 +374,24 @@ class MentraBluetoothSdk private constructor(
     }
 
     private fun glassesStatusChanges(changes: Map<String, Any>): Map<String, Any> {
-        if (!changes.containsKey("signalStrengthUpdatedAt") || changes.containsKey("signalStrength")) {
-            return changes
+        var merged = changes
+
+        if (changes.keys.any { it in setOf("wifiConnected", "wifiSsid", "wifiLocalIp") }) {
+            merged =
+                merged +
+                    mapOf(
+                        "wifiConnected" to ((GlassesStore.get("glasses", "wifiConnected") as? Boolean) ?: false),
+                        "wifiSsid" to ((GlassesStore.get("glasses", "wifiSsid") as? String) ?: ""),
+                        "wifiLocalIp" to ((GlassesStore.get("glasses", "wifiLocalIp") as? String) ?: ""),
+                    )
         }
 
-        val signalStrength = (GlassesStore.get("glasses", "signalStrength") as? Number)?.toInt() ?: -1
-        return changes + ("signalStrength" to signalStrength)
+        if (changes.containsKey("signalStrengthUpdatedAt") && !changes.containsKey("signalStrength")) {
+            val signalStrength = (GlassesStore.get("glasses", "signalStrength") as? Number)?.toInt() ?: -1
+            merged = merged + ("signalStrength" to signalStrength)
+        }
+
+        return merged
     }
 
     private fun dispatchDefaultDeviceChanged() {

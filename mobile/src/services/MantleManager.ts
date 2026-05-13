@@ -384,7 +384,15 @@ class MantleManager {
         }),
       )
 
-      // TODO: remove since we can sub to the zustand store for wifi info:
+      // Keep the store in sync for standalone WiFi status events.
+      this.subs.push(
+        CoreModule.addListener("wifi_status_change", (event) => {
+          const {type: _type, ...wifi} = event
+          useGlassesStore.getState().setGlassesInfo({wifi})
+        }),
+      )
+
+      // TODO: remove since we can sub to the zustand store for hotspot info:
       this.subs.push(
         CoreModule.addListener("hotspot_status_change", (event) => {
           const enabled = event.state === "enabled"

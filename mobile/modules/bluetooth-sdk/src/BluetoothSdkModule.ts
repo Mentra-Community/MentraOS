@@ -146,13 +146,6 @@ const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
   cancelExistingConnectionAttempt: true,
 }
 
-type NativeWifiFields = {
-  wifi?: WifiStatus
-  wifiConnected?: boolean
-  wifiSsid?: string
-  wifiLocalIp?: string
-}
-
 type NativeHotspotFields = {
   hotspot?: HotspotStatus
   enabled?: boolean
@@ -167,24 +160,11 @@ type NativeHotspotFields = {
   hotspotLocalIp?: string
 }
 
-type NativeGlassesStatusFields = NativeWifiFields & NativeHotspotFields
-
-function wifiStatusFromNative(values: NativeWifiFields): WifiStatus {
-  if (values.wifi) {
-    return values.wifi
-  }
-  if (values.wifiConnected === true) {
-    const ssid = values.wifiSsid?.trim()
-    const localIp = values.wifiLocalIp?.trim()
-    return ssid && localIp ? {state: "connected", ssid, localIp} : {state: "unknown"}
-  }
-  if (values.wifiConnected === false) {
-    return {state: "disconnected"}
-  }
-  return {state: "unknown"}
+type NativeGlassesStatusFields = NativeHotspotFields & {
+  wifi?: WifiStatus
 }
 
-function hotspotStatusFromNative(values: NativeHotspotFields): HotspotStatus {
+function adaptHotspotStatusFromNative(values: NativeHotspotFields): HotspotStatus | undefined {
   if (values.hotspot) {
     return values.hotspot
   }
@@ -198,17 +178,14 @@ function hotspotStatusFromNative(values: NativeHotspotFields): HotspotStatus {
   if (enabled === false) {
     return {state: "disabled"}
   }
-  return {state: "unknown"}
+  return undefined
 }
 
-function normalizeGlassesStatus<T extends NativeGlassesStatusFields>(
+function adaptGlassesStatusFromNative<T extends NativeGlassesStatusFields>(
   values: T,
-): Omit<T, keyof NativeGlassesStatusFields> & {wifi: WifiStatus; hotspot: HotspotStatus} {
+): Omit<T, keyof NativeGlassesStatusFields> & {wifi?: WifiStatus; hotspot?: HotspotStatus} {
   const {
     wifi,
-    wifiConnected,
-    wifiSsid,
-    wifiLocalIp,
     hotspot,
     enabled,
     ssid,
@@ -222,26 +199,38 @@ function normalizeGlassesStatus<T extends NativeGlassesStatusFields>(
     hotspotLocalIp,
     ...rest
   } = values
+  const hotspotStatus = adaptHotspotStatusFromNative({
+    hotspot,
+    enabled,
+    ssid,
+    password,
+    localIp,
+    local_ip,
+    hotspotEnabled,
+    hotspotSsid,
+    hotspotPassword,
+    hotspotGatewayIp,
+    hotspotLocalIp,
+  })
   return {
     ...rest,
-    wifi: wifiStatusFromNative({wifi, wifiConnected, wifiSsid, wifiLocalIp}),
-    hotspot: hotspotStatusFromNative({
-      hotspot,
-      enabled,
-      ssid,
-      password,
-      localIp,
-      local_ip,
-      hotspotEnabled,
-      hotspotSsid,
-      hotspotPassword,
-      hotspotGatewayIp,
-      hotspotLocalIp,
-    }),
+    ...(wifi ? {wifi} : {}),
+    ...(hotspotStatus ? {hotspot: hotspotStatus} : {}),
   }
 }
 
-function denormalizeGlassesUpdate(values: Partial<GlassesStatus>): Record<string, any> {
+function adaptFullGlassesStatusFromNative<T extends NativeGlassesStatusFields>(
+  values: T,
+): Omit<T, keyof NativeGlassesStatusFields> & {wifi: WifiStatus; hotspot: HotspotStatus} {
+  const adapted = adaptGlassesStatusFromNative(values)
+  return {
+    ...adapted,
+    wifi: adapted.wifi ?? {state: "disconnected"},
+    hotspot: adapted.hotspot ?? {state: "disabled"},
+  }
+}
+
+function adaptGlassesUpdateToNative(values: Partial<GlassesStatus>): Record<string, any> {
   const {wifi, hotspot, ...rest} = values
   let update: Record<string, any> = {...rest}
   if (wifi?.state === "connected") {
@@ -249,7 +238,7 @@ function denormalizeGlassesUpdate(values: Partial<GlassesStatus>): Record<string
       ...update,
       wifiConnected: true,
       wifiSsid: wifi.ssid,
-      wifiLocalIp: wifi.localIp,
+      wifiLocalIp: wifi.localIp ?? "",
     }
   } else if (wifi?.state === "disconnected") {
     update = {
@@ -285,14 +274,14 @@ NativeCoreModule.getGlassesStatus = function () {
   const result = nativeGetGlassesStatus() as unknown
   if (result && typeof (result as Promise<unknown>).then === "function") {
     return (result as Promise<NativeGlassesStatusFields & Record<string, any>>).then(
-      normalizeGlassesStatus,
+      adaptFullGlassesStatusFromNative,
     ) as unknown as GlassesStatus
   }
-  return normalizeGlassesStatus(result as NativeGlassesStatusFields & Record<string, any>) as GlassesStatus
+  return adaptFullGlassesStatusFromNative(result as NativeGlassesStatusFields & Record<string, any>) as GlassesStatus
 }
 
 NativeCoreModule.updateGlasses = function (values: Partial<GlassesStatus>) {
-  return this.update("glasses", denormalizeGlassesUpdate(values))
+  return this.update("glasses", adaptGlassesUpdateToNative(values))
 }
 
 NativeCoreModule.updateCore = function (values: Record<string, any>) {
@@ -301,7 +290,7 @@ NativeCoreModule.updateCore = function (values: Record<string, any>) {
 
 NativeCoreModule.onGlassesStatus = function (callback: GlassesListener) {
   const subscription = this.addListener("glasses_status", (changed) => {
-    callback(normalizeGlassesStatus(changed as NativeGlassesStatusFields & Record<string, any>))
+    callback(adaptGlassesStatusFromNative(changed as NativeGlassesStatusFields & Record<string, any>))
   })
   return () => subscription.remove()
 }

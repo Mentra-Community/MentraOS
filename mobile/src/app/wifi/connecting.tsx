@@ -23,8 +23,8 @@ export default function WifiConnectingScreen() {
   const {theme} = useAppTheme()
   const [connectionStatus, setConnectionStatus] = useState<"connecting" | "success" | "failed">("connecting")
   const [errorMessage, setErrorMessage] = useState("")
-  const connectionTimeoutRef = useRef<number | null>(null)
-  const failureGracePeriodRef = useRef<number | null>(null)
+  const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const failureGracePeriodRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const {goBack, push} = useNavigationStore.getState()
   const pushPrevious = usePushPrevious()
@@ -50,13 +50,11 @@ export default function WifiConnectingScreen() {
   useEffect(() => {
     console.log("WiFi connection status changed:", wifiConnected, wifiSsid)
 
-    if (connectionTimeoutRef.current) {
-      clearTimeout(connectionTimeoutRef.current)
-      connectionTimeoutRef.current = null
-    }
-
     if (wifiConnected && wifiSsid === ssid) {
-      // Clear any failure grace period if it exists
+      if (connectionTimeoutRef.current) {
+        clearTimeout(connectionTimeoutRef.current)
+        connectionTimeoutRef.current = null
+      }
       if (failureGracePeriodRef.current) {
         clearTimeout(failureGracePeriodRef.current)
         failureGracePeriodRef.current = null
@@ -72,8 +70,9 @@ export default function WifiConnectingScreen() {
       setConnectionStatus("success")
       // Don't show banner anymore since we have a dedicated success screen
       // User will manually dismiss with Done button
-    } else if (!wifiConnected && connectionStatus === "connecting") {
-      // Set up 5-second grace period before showing failure
+    } else if (connectionStatus === "connecting" && !failureGracePeriodRef.current) {
+      // Set up a grace period before showing failure. The glasses can briefly
+      // report old or disconnected WiFi state while applying new credentials.
       failureGracePeriodRef.current = setTimeout(() => {
         console.log("#$%^& Failed to connect to the network. Please check your password and try again.")
         setConnectionStatus("failed")
@@ -81,7 +80,7 @@ export default function WifiConnectingScreen() {
         failureGracePeriodRef.current = null
       }, 10000)
     }
-  }, [wifiConnected, wifiSsid])
+  }, [connectionStatus, password, rememberPassword, ssid, wifiConnected, wifiSsid])
 
   const attemptConnection = async () => {
     try {

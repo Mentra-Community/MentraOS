@@ -141,7 +141,7 @@ jest.mock("@/stores/applets", () => ({
       remove: jest.fn(),
     })),
   },
-}))
+}), {virtual: true})
 
 jest.mock("@/utils/PermissionsUtils", () => ({
   PermissionFeatures: {
@@ -360,6 +360,27 @@ describe("MantleManager", () => {
         power_saving_mode: true,
       }),
     )
+  })
+
+  it("syncs standalone WiFi status events into the glasses store", () => {
+    emitCoreModuleEvent("wifi_status_change", {
+      type: "wifi_status_change",
+      state: "connected",
+      ssid: "Mentra",
+    })
+
+    expect(useGlassesStore.getState().wifi).toEqual({state: "connected", ssid: "Mentra"})
+    expect(useGlassesStore.getState().wifiConnected).toBe(true)
+    expect(useGlassesStore.getState().wifiSsid).toBe("Mentra")
+
+    emitCoreModuleEvent("wifi_status_change", {
+      type: "wifi_status_change",
+      state: "disconnected",
+    })
+
+    expect(useGlassesStore.getState().wifi).toEqual({state: "disconnected"})
+    expect(useGlassesStore.getState().wifiConnected).toBe(false)
+    expect(useGlassesStore.getState().wifiSsid).toBe("")
   })
 
   it("renders offline local transcription locally instead of forwarding it to cloud", async () => {

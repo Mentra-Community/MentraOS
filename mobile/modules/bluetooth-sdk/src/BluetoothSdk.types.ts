@@ -56,9 +56,8 @@ export type LogEvent = {
 }
 
 export type WifiStatus =
-  | {state: "unknown"}
   | {state: "disconnected"}
-  | {state: "connected"; ssid: string; localIp: string}
+  | {state: "connected"; ssid: string; localIp?: string}
 
 export type ConnectedWifiStatus = Extract<WifiStatus, {state: "connected"}>
 

@@ -72,11 +72,26 @@ describe("wifiStatusKnown reset on disconnect", () => {
     useGlassesStore.getState().setGlassesInfo({connected: true})
     useGlassesStore.getState().setGlassesInfo({wifiConnected: true, wifiSsid: "TestNetwork"})
     expect(useGlassesStore.getState().wifiStatusKnown).toBe(true)
+    expect(useGlassesStore.getState().wifiConnected).toBe(true)
+    expect(useGlassesStore.getState().wifi).toEqual({state: "connected", ssid: "TestNetwork"})
   })
 
   it("does not set wifiStatusKnown for non-wifi updates", () => {
     useGlassesStore.getState().setGlassesInfo({batteryLevel: 80})
     expect(useGlassesStore.getState().wifiStatusKnown).toBe(false)
+  })
+
+  it("keeps local IP optional for connected WiFi status", () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connected: true,
+      wifiConnected: true,
+      wifiSsid: "Mentra",
+    })
+
+    expect(useGlassesStore.getState().wifi).toEqual({state: "connected", ssid: "Mentra"})
+    expect(useGlassesStore.getState().wifiConnected).toBe(true)
+    expect(useGlassesStore.getState().wifiSsid).toBe("Mentra")
+    expect(useGlassesStore.getState().wifiLocalIp).toBe("")
   })
 })
 
