@@ -14,7 +14,7 @@ export default function ForgotPasswordScreen() {
   const [email, setEmail] = useState("")
   const [isLoading, setIsLoading] = useState(false)
 
-  const {goBack} = useNavigationStore.getState()
+  const {push, goBack} = useNavigationStore.getState()
   const {theme} = useAppTheme()
   const [isChina] = useSetting<boolean>(SETTINGS.china_deployment.key)
 
