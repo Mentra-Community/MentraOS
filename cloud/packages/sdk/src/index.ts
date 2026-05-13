@@ -77,8 +77,9 @@ export * from "./types/layouts";
 // Dashboard types
 export * from "./types/dashboard";
 
-// RTMP streaming types
-export * from "./types/rtmp-stream";
+// RTMP streaming types (explicit: value exports + types; see ./types/rtmp-stream)
+export type { VideoConfig, AudioConfig, StreamConfig, StreamStatusHandler } from "./types/rtmp-stream";
+export { VIDEO_CONFIG_LIMITS, validateVideoConfig } from "./types/rtmp-stream";
 
 // Other system enums
 export { AppType, LayoutType, ViewType, AppSettingType, HardwareType, HardwareRequirementLevel } from "./types/enums";
@@ -245,9 +246,6 @@ export type {
   PreviewImage,
   PhotoOrientation,
 } from "./types/models";
-
-// Export RTMP streaming types
-export type { VideoConfig, AudioConfig, StreamConfig, StreamStatusHandler } from "./types/rtmp-stream";
 
 // Export app session modules
 export * from "./app/session/modules";

@@ -5,9 +5,6 @@ public class CoreModule: Module {
         Name("Core")
 
         OnCreate {
-            // Auto-trigger JSC benchmark when MENTRA_RUN_JSC_BENCH env var
-            // is set. Cheap no-op otherwise. Used by the agentic spike test.
-            JSCExperiment.maybeAutoBenchmark()
         }
 
         // Define events that can be sent to JavaScript
@@ -94,6 +91,7 @@ public class CoreModule: Module {
         AsyncFunction("update") { (category: String, values: [String: Any]) in
             await MainActor.run {
                 for (key, value) in values {
+                    if value is NSNull { continue }
                     GlassesStore.shared.apply(category, key, value)
                 }
             }

@@ -8,8 +8,6 @@ export default function NavigationHost() {
 
   useEffect(() => {
     useNavigationStore.getState()._trackPathname(pathname)
-    
-
     // if we're on the home screen, reset the animation to fade:
     if (pathname === "/home") {
       useNavigationStore.getState()._resetAnimationDelayed("fade")

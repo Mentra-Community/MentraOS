@@ -1357,7 +1357,20 @@ public class G1 extends SGCManager {
 
         // Start scanning
         isScanning = true;
-        scanner.startScan(filters, settings, modernScanCallback);
+        try {
+            scanner.startScan(filters, settings, modernScanCallback);
+        } catch (SecurityException e) {
+            // Auto-reconnect paths may fire before BLUETOOTH_SCAN is granted on Android 12+
+            Bridge.log("G1: startScan SecurityException — bluetooth permission missing: " + e.getMessage());
+            isScanning = false;
+            connectionState = SmartGlassesConnectionState.DISCONNECTED;
+            return;
+        } catch (Exception e) {
+            Bridge.log("G1: startScan failed: " + e.getMessage());
+            isScanning = false;
+            connectionState = SmartGlassesConnectionState.DISCONNECTED;
+            return;
+        }
         Bridge.log("G1: CALL START SCAN - Started scanning for devices...");
 
         // Ensure scanning state is immediately communicated to UI
@@ -2498,7 +2511,17 @@ public class G1 extends SGCManager {
         };
 
         // Start scanning
-        scanner.startScan(filters, settings, bleScanCallback);
+        try {
+            scanner.startScan(filters, settings, bleScanCallback);
+        } catch (SecurityException e) {
+            Bridge.log("G1: findCompatibleDevices startScan SecurityException — bluetooth permission missing: " + e.getMessage());
+            isScanningForCompatibleDevices = false;
+            return;
+        } catch (Exception e) {
+            Bridge.log("G1: findCompatibleDevices startScan failed: " + e.getMessage());
+            isScanningForCompatibleDevices = false;
+            return;
+        }
         Bridge.log("G1: Started scanning for smart glasses with BluetoothLeScanner...");
 
         // Stop scanning after 10 seconds (adjust as needed)

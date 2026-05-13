@@ -20,6 +20,8 @@ export interface CapsuleRegistration {
   visibleOnRoutes?: string[]
   /** Called when the user taps the house/minus button. Captures screenshot + navigates back. */
   handleExit: (shouldGoBack?: boolean) => Promise<void> | void
+  offsetTop?: number
+  offsetRight?: number
 }
 
 interface CapsuleStore {
@@ -40,6 +42,8 @@ interface UseRegisterCapsuleArgs {
   visibleOnRoutes?: string[]
   /** Override the default screenshot+goBack behavior on Android back press. */
   onBackPress?: () => void
+  offsetTop?: number
+  offsetRight?: number
 }
 
 /**
@@ -56,6 +60,8 @@ export function useRegisterCapsule({
   appNameOverride,
   iconUrlOverride,
   visibleOnRoutes,
+  offsetTop,
+  offsetRight,
   onBackPress,
 }: UseRegisterCapsuleArgs) {
   const insets = useSaferAreaInsets()
@@ -104,6 +110,8 @@ export function useRegisterCapsule({
       iconUrlOverride,
       visibleOnRoutes,
       handleExit,
+      offsetTop,
+      offsetRight,
     })
     return () => {
       const current = useCapsuleStore.getState().active
@@ -112,5 +120,5 @@ export function useRegisterCapsule({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [packageName, viewShotRef, appNameOverride, iconUrlOverride, routesKey, handleExit])
+  }, [packageName, viewShotRef, appNameOverride, iconUrlOverride, routesKey, handleExit, offsetTop, offsetRight])
 }

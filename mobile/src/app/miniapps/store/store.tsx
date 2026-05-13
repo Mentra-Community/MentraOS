@@ -30,6 +30,7 @@ export default function AppStoreWeb() {
     packageName: "com.mentra.store",
     viewShotRef,
     visibleOnRoutes: ["/miniapps/store"],
+    offsetRight: theme.spacing.s2,
   })
 
   // Construct the final URL with packageName if provided

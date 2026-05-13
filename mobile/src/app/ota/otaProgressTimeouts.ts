@@ -2,8 +2,8 @@
 
 /**
  * First glasses `build_number` (ASG `versionCode`) that uses `progress.tsx` with unified
- * `ota_status` session UI. Strictly lower builds redirect to `/ota/progress-legacy`.
- * Change only here.
+ * `ota_status` session UI. Strictly lower builds use `/ota/progress-legacy` (routed from
+ * `check-for-updates.tsx` before navigation). Change only here.
  */
 export const MINIMUM_OTA_STATUS_BUILD = 37
 

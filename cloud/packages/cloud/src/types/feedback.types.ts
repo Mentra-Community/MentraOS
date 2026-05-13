@@ -54,6 +54,21 @@ export interface FeedbackResponse {
   success: boolean;
 }
 
+export type FeedbackReceiptType = "bug" | "feature" | "feedback";
+
+/**
+ * The user-visible portion of a feedback submission, echoed back in receipt
+ * emails so the submitter can see their report did not vanish.
+ */
+export interface FeedbackReceiptDetails {
+  expectedBehavior?: string;
+  actualBehavior?: string;
+  severityRating?: number;
+  feedbackText?: string;
+  experienceRating?: number;
+  legacyText?: string;
+}
+
 // ============================================================================
 // Shared Types
 // ============================================================================

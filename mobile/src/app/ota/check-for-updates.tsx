@@ -3,6 +3,7 @@ import {useEffect, useState, useCallback, useRef} from "react"
 import {View, ActivityIndicator} from "react-native"
 import CoreModule from "@mentra/bluetooth-sdk"
 
+import {MINIMUM_OTA_STATUS_BUILD} from "@/app/ota/otaProgressTimeouts"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Screen, Header, Button, Text, Icon} from "@/components/ignite"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
@@ -246,7 +247,9 @@ export default function OtaCheckForUpdatesScreen() {
     )
     store.setOtaProgress(null)
     store.setOtaStatus(null)
-    replace("/ota/progress")
+    const buildNum = parseInt(currentBuildNumber || "0", 10)
+    const route = buildNum > 0 && buildNum < MINIMUM_OTA_STATUS_BUILD ? "/ota/progress-legacy" : "/ota/progress"
+    replace(route)
   }
 
   const renderContent = () => {

@@ -1033,7 +1033,12 @@ class G2 : SGCManager() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var heartbeatRunnable: Runnable? = null
     private var devSettingsHeartbeatRunnable: Runnable? = null
-    private var micEnabled_: Boolean = false
+    private var evenHubQueueRunnable: Runnable? = null
+    private var pendingTextMsg: ByteArray? = null
+    private var lastEvenHubMsg: ByteArray? = null
+    private var lastEvenHubResendsRemaining: Int = 0
+    private val EVEN_HUB_RESEND_COUNT: Int = 1
+    private val EVEN_HUB_QUEUE_TICK_MS = 100L
     private var startupPageCreated: Boolean = false
     private var pageCreated: Boolean = false
     private var pageHasTextContainer: Boolean = false
@@ -1701,6 +1706,17 @@ class G2 : SGCManager() {
                 }
         devSettingsHeartbeatRunnable = dsRunnable
         mainHandler.postDelayed(dsRunnable, 5000)
+
+        // EvenHub text command queue: drain the most recent pending updateText every 100ms
+        val queueRunnable =
+                object : Runnable {
+                    override fun run() {
+                        drainEvenHubQueue()
+                        mainHandler.postDelayed(this, EVEN_HUB_QUEUE_TICK_MS)
+                    }
+                }
+        evenHubQueueRunnable = queueRunnable
+        mainHandler.postDelayed(queueRunnable, EVEN_HUB_QUEUE_TICK_MS)
     }
 
     private fun stopHeartbeats() {
@@ -1708,6 +1724,11 @@ class G2 : SGCManager() {
         heartbeatRunnable = null
         devSettingsHeartbeatRunnable?.let { mainHandler.removeCallbacks(it) }
         devSettingsHeartbeatRunnable = null
+        evenHubQueueRunnable?.let { mainHandler.removeCallbacks(it) }
+        evenHubQueueRunnable = null
+        pendingTextMsg = null
+        lastEvenHubMsg = null
+        lastEvenHubResendsRemaining = 0
     }
 
     private fun sendEvenHubHeartbeat() {
@@ -2143,9 +2164,31 @@ class G2 : SGCManager() {
                         contentLength = text.toByteArray(Charsets.UTF_8).size,
                         content = text
                 )
-        sendEvenHubCommand(msg)
+        queueEvenHubCommand(msg)
         currentTextContent = text
         currentBitmapBase64 = ""
+    }
+
+    @Synchronized
+    private fun queueEvenHubCommand(payload: ByteArray) {
+        pendingTextMsg = payload
+    }
+
+    @Synchronized
+    private fun drainEvenHubQueue() {
+        val msg = pendingTextMsg
+        pendingTextMsg = null
+        val toSend: ByteArray? = if (msg != null) {
+            lastEvenHubMsg = msg
+            lastEvenHubResendsRemaining = EVEN_HUB_RESEND_COUNT
+            msg
+        } else if (lastEvenHubResendsRemaining > 0 && lastEvenHubMsg != null) {
+            lastEvenHubResendsRemaining -= 1
+            lastEvenHubMsg
+        } else {
+            null
+        }
+        toSend?.let { sendEvenHubCommand(it) }
     }
 
     // ---------- Bitmap Conversion ----------
@@ -2295,9 +2338,20 @@ class G2 : SGCManager() {
 
     override fun setMicEnabled(enabled: Boolean) {
         Bridge.log("G2: setMicEnabled($enabled)")
-        micEnabled_ = enabled
+        val currentEnabled = GlassesStore.get("glasses", "micEnabled") as? Boolean ?: false
+        
+        // if already enabled, set to disabled, then send enabled after 500ms:
+        if (currentEnabled && enabled) {
+            GlassesStore.apply("glasses", "micEnabled", true)
+            val msg = EvenHubProto.audioControlMessage(false)
+            sendEvenHubCommand(msg)
+            mainHandler.postDelayed({
+                val msg = EvenHubProto.audioControlMessage(true)
+                sendEvenHubCommand(msg)
+            }, 500)
+            return
+        }
         GlassesStore.apply("glasses", "micEnabled", enabled)
-
         val msg = EvenHubProto.audioControlMessage(enabled)
         sendEvenHubCommand(msg)
     }
@@ -2719,7 +2773,18 @@ class G2 : SGCManager() {
                 }
 
         scanCallback = callback
-        scanner.startScan(null, settings, callback)
+        try {
+            scanner.startScan(null, settings, callback)
+        } catch (e: SecurityException) {
+            // Auto-reconnect paths may fire before BLUETOOTH_SCAN is granted on Android 12+
+            Bridge.log("G2: startScan SecurityException — bluetooth permission missing: ${e.message}")
+            scanCallback = null
+            return false
+        } catch (e: Exception) {
+            Bridge.log("G2: startScan failed: ${e.message}")
+            scanCallback = null
+            return false
+        }
         return true
     }
 
@@ -2985,7 +3050,7 @@ class G2 : SGCManager() {
 
                 val sourceKey = if (side == "LEFT") "L" else "R"
                 when (characteristic.uuid) {
-                    G2BLE.AUDIO_NOTIFY -> handleAudioData(data)
+                    G2BLE.AUDIO_NOTIFY -> handleAudioData(data, sourceKey)
                     G2BLE.CHAR_NOTIFY -> mainHandler.post { handleNotifyData(data, sourceKey) }
                 }
             }
@@ -3205,7 +3270,7 @@ class G2 : SGCManager() {
             }
 
             Bridge.sendTouchEvent(DeviceTypes.G2, gestureName, timestamp, eventSource)
-            // Bridge.log("G2: SysEvent → $eventType $eventSource")
+            Bridge.log("G2: SysEvent → $eventType $eventSource")
 
             if (eventSource == 2) {
                 // controller must be connected and fully booted:
@@ -3217,10 +3282,10 @@ class G2 : SGCManager() {
                 val isHeadUp = GlassesStore.get("glasses", "headUp") as? Boolean ?: false
                 // toggle head up:
                 GlassesStore.apply("glasses", "headUp", !isHeadUp)
-                if (isHeadUp) {
-                    // clear the display after a delay:
-                    mainHandler.postDelayed({ clearDisplay() }, 500)
-                }
+                // if (isHeadUp) {
+                //     // clear the display after a delay:
+                //     mainHandler.postDelayed({ clearDisplay() }, 500)
+                // }
             }
 
             // System exit: glasses killed our EvenHub page (user opened menu or another app)
@@ -3462,15 +3527,22 @@ class G2 : SGCManager() {
 
     // ---------- Audio Handling ----------
 
-    private fun handleAudioData(data: ByteArray) {
+    private var lastAudioFrame: ByteArray? = null
+
+    private fun handleAudioData(data: ByteArray, sourceKey: String) {
         // Diagnostic: if BLE notifications are arriving fragmented (MTU too small), data.size
         // will be consistently < 200. Expected: ~200-byte chunks (5 × 40-byte LC3 frames).
-        // Bridge.log("G2: audio chunk size=${data.size}")
 
         val usableLength = minOf(data.size, 200)
         if (usableLength < 40) return
 
         val audioData = data.copyOfRange(0, usableLength)
+        if (lastAudioFrame?.contentEquals(audioData) == true) {
+            // Bridge.log("G2: audio dup from $sourceKey: ${data.take(10).joinToString("") { String.format("%02X", it) }}")
+            return
+        }
+        lastAudioFrame = audioData
+        Bridge.log("G2: audio data from $sourceKey: ${data.take(10).joinToString("") { String.format("%02X", it) }}")
         CoreManager.getInstance().handleGlassesMicData(audioData, 40)
     }
 

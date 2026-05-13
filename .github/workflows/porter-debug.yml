@@ -7,6 +7,7 @@ on:
       - cloud/issues-048
       - cloud/pod-loop-stall-cascade
       - cloud/104-soniox-eventqueue-leak-fix
+      - codex/issue-107-reconnect-storm
     paths:
       - "cloud/**"
       - ".github/workflows/porter-debug.yml"

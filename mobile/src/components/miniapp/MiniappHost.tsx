@@ -532,9 +532,8 @@ export default function MiniappHost() {
   )
 
   return (
-    // MiniappHost sits above the Stack so the foregrounded WebView covers
-    // the current route. See hostStackStyle for the rationale.
-    <View className="absolute inset-0" style={hostStackStyle} pointerEvents="box-none">
+    // MiniappHost sits above the Stack so the foregrounded WebView
+    <View className="absolute inset-0 z-10" pointerEvents="box-none">
       {entries.map((app) => {
         const isFg = app.isForeground
 

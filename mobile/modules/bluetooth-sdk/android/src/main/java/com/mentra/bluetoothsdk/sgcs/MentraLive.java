@@ -168,7 +168,7 @@ public class MentraLive extends SGCManager {
     // private PublishSubject<JSONObject> dataObservable;
     private BluetoothAdapter bluetoothAdapter;
     private BluetoothLeScanner bluetoothScanner;
-    private BluetoothGatt bluetoothGatt;
+    private volatile BluetoothGatt bluetoothGatt;
     private BluetoothDevice connectedDevice;
     private BluetoothGattCharacteristic txCharacteristic;
     private BluetoothGattCharacteristic rxCharacteristic;
@@ -908,6 +908,48 @@ public class MentraLive extends SGCManager {
     };
 
     /**
+     * device.getName() requires BLUETOOTH_CONNECT on Android 12+ and throws
+     * SecurityException when not granted. Auto-reconnect paths fire before
+     * permissions are requested in some flows (MENTRA-OS-21Y).
+     */
+    private String safeDeviceName(BluetoothDevice device) {
+        if (device == null) return "";
+        try {
+            String name = device.getName();
+            return name != null ? name : "";
+        } catch (SecurityException e) {
+            return "";
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
+     * Safely tear down the GATT reference. Avoids NPE / races with gatt callbacks
+     * disconnecting on a binder thread while a queued teardown runnable fires.
+     * Pass disconnect=true to call disconnect() before close().
+     */
+    private synchronized void closeGattQuietly(boolean disconnect) {
+        BluetoothGatt gatt = bluetoothGatt;
+        bluetoothGatt = null;
+        if (gatt == null) {
+            return;
+        }
+        try {
+            if (disconnect) {
+                gatt.disconnect();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "🔌 closeGattQuietly: disconnect threw " + e);
+        }
+        try {
+            gatt.close();
+        } catch (Exception e) {
+            Log.w(TAG, "🔌 closeGattQuietly: close threw " + e);
+        }
+    }
+
+    /**
      * Connect to a specific BLE device
      */
     private void connectToDevice(BluetoothDevice device) {
@@ -929,11 +971,7 @@ public class MentraLive extends SGCManager {
                     Bridge.log("LIVE: 🔌 ⏰ Connection timeout - closing GATT connection and retrying");
                     isConnecting = false;
 
-                    if (bluetoothGatt != null) {
-                        bluetoothGatt.disconnect();
-                        bluetoothGatt.close();
-                        bluetoothGatt = null;
-                    }
+                    closeGattQuietly(true);
 
                     // Try to reconnect with exponential backoff
                     Log.i(TAG, "🔌 🔄 Scheduling next reconnection attempt after timeout...");
@@ -947,7 +985,7 @@ public class MentraLive extends SGCManager {
         // Update connection state
         isConnecting = true;
         updateConnectionState(ConnTypes.CONNECTING);
-        Log.i(TAG, "🔌 🔗 ATTEMPTING CONNECTION to device: " + device.getAddress() + " (" + device.getName() + ") - Reconnect attempt #" + reconnectAttempts);
+        Log.i(TAG, "🔌 🔗 ATTEMPTING CONNECTION to device: " + device.getAddress() + " (" + safeDeviceName(device) + ") - Reconnect attempt #" + reconnectAttempts);
         Bridge.log("LIVE: 🔌 🔗 Connecting to device: " + device.getAddress() + " (Attempt #" + reconnectAttempts + ")");
 
         // Connect to the device
@@ -1174,10 +1212,7 @@ public class MentraLive extends SGCManager {
                     stopMicBeat();
 
                     // Clean up GATT resources
-                    if (bluetoothGatt != null) {
-                        bluetoothGatt.close();
-                        bluetoothGatt = null;
-                    }
+                    closeGattQuietly(false);
 
                     // Attempt reconnection if not killed
                     if (!isKilled) {
@@ -1215,10 +1250,7 @@ public class MentraLive extends SGCManager {
                 stopMicBeat();
 
                 // Clean up resources
-                if (bluetoothGatt != null) {
-                    bluetoothGatt.close();
-                    bluetoothGatt = null;
-                }
+                closeGattQuietly(false);
 
                 // Attempt reconnection if not killed
                 if (!isKilled) {
@@ -4564,11 +4596,7 @@ public class MentraLive extends SGCManager {
         // }
 
         // Disconnect from GATT if connected
-        if (bluetoothGatt != null) {
-            bluetoothGatt.disconnect();
-            bluetoothGatt.close();
-            bluetoothGatt = null;
-        }
+        closeGattQuietly(true);
 
         isConnected = false;
         isConnecting = false;

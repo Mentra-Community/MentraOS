@@ -5,7 +5,7 @@
 // New clients should use POST /api/incidents for bug reports instead.
 
 import { Feedback } from "../../models/feedback.model";
-import { emailService } from "../email/resend.service";
+import { queueFeedbackReceipt } from "./feedback-receipt.service";
 import { slackService } from "../notifications/slack.service";
 import type { FeedbackData, PhoneStateSnapshot, FeedbackResponse } from "../../types/feedback.types";
 import { logger as rootLogger } from "../logging/pino-logger";
@@ -52,6 +52,8 @@ export async function submitFeedback(
     // Legacy format - just send as plain text
     slackService.notifyUserFeedbackLegacy(email, feedback).catch(() => {});
   }
+
+  queueFeedbackReceipt(email, feedback);
 
   return {
     success: true,

@@ -69,39 +69,6 @@ afterEach(() => {
   jest.useRealTimers()
 })
 
-describe("progress.tsx version gating", () => {
-  it("redirects to legacy for old firmware build number", () => {
-    const oldBuild = Math.max(1, MINIMUM_OTA_STATUS_BUILD - 7)
-    useGlassesStore.getState().setGlassesInfo({buildNumber: sb(oldBuild), connected: true})
-    render(<OtaProgressScreen />)
-    expect(mockReplace).toHaveBeenCalledWith("/ota/progress-legacy")
-  })
-
-  it("does NOT redirect for buildNumber of 0 or empty", () => {
-    useGlassesStore.getState().setGlassesInfo({buildNumber: "0", connected: true})
-    render(<OtaProgressScreen />)
-    expect(mockReplace).not.toHaveBeenCalledWith("/ota/progress-legacy")
-  })
-
-  it("redirects to legacy for build one below MINIMUM_OTA_STATUS_BUILD", () => {
-    useGlassesStore.getState().setGlassesInfo({buildNumber: sb(MINIMUM_OTA_STATUS_BUILD - 1), connected: true})
-    render(<OtaProgressScreen />)
-    expect(mockReplace).toHaveBeenCalledWith("/ota/progress-legacy")
-  })
-
-  it("does NOT redirect at MINIMUM_OTA_STATUS_BUILD", () => {
-    useGlassesStore.getState().setGlassesInfo({buildNumber: sb(MINIMUM_OTA_STATUS_BUILD), connected: true})
-    render(<OtaProgressScreen />)
-    expect(mockReplace).not.toHaveBeenCalledWith("/ota/progress-legacy")
-  })
-
-  it("does NOT redirect for buildNumber above threshold", () => {
-    useGlassesStore.getState().setGlassesInfo({buildNumber: sb(MINIMUM_OTA_STATUS_BUILD + 20), connected: true})
-    render(<OtaProgressScreen />)
-    expect(mockReplace).not.toHaveBeenCalledWith("/ota/progress-legacy")
-  })
-})
-
 describe("progress.tsx display states", () => {
   it("starts in starting state", () => {
     useGlassesStore.getState().setGlassesInfo({connected: true})

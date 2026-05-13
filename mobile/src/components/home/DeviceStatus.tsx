@@ -4,7 +4,6 @@ import {useState, useEffect} from "react"
 import {ActivityIndicator, Image, TouchableOpacity, View, ViewStyle} from "react-native"
 import GlassView from "@/components/ui/GlassView"
 import {Button, Icon, Text} from "@/components/ignite"
-import ConnectedSimulatedGlassesInfo from "@/components/mirror/ConnectedSimulatedGlassesInfo"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
@@ -112,7 +111,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
           flexContainer={false}
           tx="home:connectGlasses"
           preset="primary"
-          onPress={() => push("/pairing/select-glasses-model")}
+          onPress={() => push("/pairing/select-glasses-model", {transition: "simple_push"})}
         />
       </GlassView>
     )
@@ -120,7 +119,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
 
   const connectGlasses = async () => {
     if (!defaultWearable) {
-      push("/pairing/select-glasses-model")
+      push("/pairing/select-glasses-model", {transition: "simple_push"})
       return
     }
 
@@ -175,7 +174,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   }
 
   const features = getModelCapabilities(defaultWearable)
-  const onPress = () => push("/miniapps/settings/glasses")
+  const onPress = () => push("/miniapps/settings/glasses", {transition: "simple_push"})
 
   if (!glassesConnected || !glassesFullyBooted || isSearching) {
     return (
@@ -229,11 +228,17 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
         <Icon name="bluetooth-connected" size={22} color={theme.colors.foreground} />
         {features?.hasWifi &&
           (wifiConnected ? (
-            <Button compactIcon className="bg-transparent -m-2" onPress={() => push("/wifi/scan")}>
+            <Button
+              compactIcon
+              className="bg-transparent -m-2"
+              onPress={() => push("/wifi/scan", {transition: "simple_push"})}>
               <Icon name="wifi" size={18} color={theme.colors.foreground} />
             </Button>
           ) : (
-            <Button compactIcon className="bg-transparent -m-2" onPress={() => push("/wifi/scan")}>
+            <Button
+              compactIcon
+              className="bg-transparent -m-2"
+              onPress={() => push("/wifi/scan", {transition: "simple_push"})}>
               <Icon name="wifi-off" size={18} color={theme.colors.foreground} />
             </Button>
           ))}
@@ -265,7 +270,7 @@ export const ControllerStatus = ({style}: {style?: ViewStyle}) => {
     return null
   }
 
-  const onPress = () => push("/miniapps/settings/controller")
+  const onPress = () => push("/miniapps/settings/controller", {transition: "simple_push"})
 
   if (!controllerConnected || !controllerFullyBooted) {
     return (

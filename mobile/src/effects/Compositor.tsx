@@ -19,7 +19,14 @@
 import {useEffect, useRef} from "react"
 import {Dimensions, Platform, View} from "react-native"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
-import Animated, {runOnJS, useAnimatedStyle, useSharedValue, withDelay, withSpring, withTiming} from "react-native-reanimated"
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withSpring,
+  withTiming,
+} from "react-native-reanimated"
 
 import MiniappHost, {miniappHost} from "@/components/miniapp/MiniappHost"
 import CapsuleMenu from "@/effects/CapsuleMenu"
@@ -74,7 +81,7 @@ export default function Compositor() {
   // miniapp screen having to call useRegisterCapsule.
   useEffect(() => {
     if (!foregroundApp) return
-    const setActive = useCapsuleStore.getState().setActive
+    const {setActive} = useCapsuleStore.getState()
     setActive({
       packageName: foregroundApp.packageName,
       viewShotRef: {current: null},
@@ -143,14 +150,7 @@ export default function Compositor() {
   return (
     <Animated.View
       pointerEvents={isForeground ? "auto" : "box-none"}
-      style={[
-        // Match MiniappHost's z-10 so the CapsuleMenu (home/exit button)
-        // rendered inside this view at zIndex 10000 actually wins the stack
-        // — children can't escape their parent's stacking context, so
-        // leaving this at z-10 puts the whole subtree below the WebView.
-        {position: "absolute", top: 0, bottom: 0, left: 0, right: 0, zIndex: 10, elevation: 10},
-        animatedStyle,
-      ]}>
+      style={[{position: "absolute", top: 0, bottom: 0, left: 0, right: 0, zIndex: 10}, animatedStyle]}>
       <MiniappHost />
       {isForeground && (
         <GestureDetector gesture={swipeGesture}>
@@ -161,7 +161,7 @@ export default function Compositor() {
               bottom: 0,
               left: 0,
               width: EDGE_HIT_WIDTH,
-              zIndex: 11,
+              zIndex: 10,
             }}
           />
         </GestureDetector>

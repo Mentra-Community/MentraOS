@@ -25,6 +25,7 @@ export default function MainSettingsPage() {
     packageName: "com.mentra.settings",
     viewShotRef,
     visibleOnRoutes: ["/miniapps/settings/main"],
+    offsetRight: theme.spacing.s2,
   })
 
   return (

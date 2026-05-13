@@ -88,12 +88,18 @@ class CoreModule : Module() {
 
         Function("getCoreStatus") { GlassesStore.store.getCategory("core") }
 
-        Function("set") { category: String, key: String, value: Any ->
-            GlassesStore.apply(category, key, value)
+        Function("set") { category: String, key: String, value: Any? ->
+            if (value != null) {
+                GlassesStore.apply(category, key, value)
+            }
         }
 
-        Function("update") { category: String, values: Map<String, Any> ->
-            values.forEach { (key, value) -> GlassesStore.apply(category, key, value) }
+        Function("update") { category: String, values: Map<String, Any?> ->
+            values.forEach { (key, value) ->
+                if (value != null) {
+                    GlassesStore.apply(category, key, value)
+                }
+            }
             // Persist core_token to SharedPreferences so MentraLive.getCoreToken() finds it
             // (bridge may run this after glasses_ready; prefs survive retries and next connection)
             // TODO: move this to the mantle:

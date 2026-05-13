@@ -436,6 +436,11 @@ public class WhipCameraCapturer implements VideoCapturer {
       return buffer;
     }
 
+    if (mCropWidth < mWidth || mCropHeight < mHeight) {
+      Log.w(TAG, "UNEXPECTED upscale path: crop " + mCropWidth + "x" + mCropHeight + " -> output "
+          + mWidth + "x" + mHeight + " (preflight should have rejected this)");
+    }
+
     return buffer.cropAndScale(mCropX, mCropY, mCropWidth, mCropHeight, mWidth, mHeight);
   }
 
