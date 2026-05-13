@@ -155,9 +155,52 @@ for this primitive for years; remains unresolved.
 
 ### Cross-platform: JSC on Android too
 
-Bundle JSC on Android via `react-native-jsc` for SDK uniformity.
-Performance gap vs Hermes/V8 is irrelevant for our workload — heavy
-work is in native modules; miniapp JS is event-handler-tier.
+We bundle JavaScriptCore on Android so the same engine runs miniapp
+JS on both platforms. Performance gap vs Hermes/V8 is irrelevant for
+our workload — heavy work is in native modules; miniapp JS is
+event-handler-tier.
+
+**Android JSC binary source:** `org.webkit:android-jsc-intl`
+(packaged by Facebook for years as the pre-Hermes default RN engine
+on Android). Adds ~5-7 MB to the Android binary. We add this as a
+dependency in `mobile/modules/crust/android/build.gradle` —
+independent of whatever engine the host RN bundle uses.
+
+**Android implementation lives alongside the iOS one in `crust`:**
+
+```
+mobile/modules/crust/android/src/main/java/com/mentra/crust/
+├── CrustModule.kt                     # existing — add JSC Functions
+├── jsc/JSCRuntime.kt                  # NEW: owns N JSContexts
+├── jsc/JSCDispatcher.kt               # NEW: __dispatch routes
+└── jsc/JSCPolyfillBridge.kt           # NEW: native fetch/WS/timers/storage/crypto
+```
+
+The Android JSC API (Java/Kotlin) is shaped almost identically to
+iOS Swift's: `org.webkit.android_jsc.JSContext`,
+`evaluateScript(...)`, set globals as Java function references.
+Same `__dispatch` single-function pattern (Pebble's lesson applies
+across both platforms — they hit the same GC race on Kotlin/Native
+that we'd hit on Java if we bound functions individually).
+
+The polyfill bundle (`mobile/modules/mentrajs-runtime/runtime/`) is
+**identical JS for both platforms**. Native bridge hooks differ
+under the hood (`URLSession` vs OkHttp, `NSUserDefaults` vs
+SharedPreferences, `CryptoKit` vs `javax.crypto`) but JS-side API
+is one shape.
+
+**One concrete cross-platform divergence:** iOS uses
+`URLSessionWebSocketTask`; Android uses OkHttp's `WebSocketListener`.
+Same JS surface, different native code in `JSCPolyfillBridge`.
+
+**Android-specific risks the spec assumes can be solved:**
+- Android's `org.webkit.android-jsc-intl` is currently maintained
+  by Facebook for RN's pre-Hermes path. If they ever stop
+  publishing it, we'd need to fork or vendor.
+- Bundle size concern: ~5-7 MB binary growth on Android. Acceptable
+  for our use case.
+- No Safari Web Inspector equivalent on Android JSC (use Chrome
+  DevTools via a different debug protocol if we want one — defer).
 
 ### Memory profile: measured, not estimated
 
@@ -212,7 +255,8 @@ JSContext spawn.
 ### Expo module API surface (small)
 
 ```typescript
-// Functions added to CoreModule
+// Functions added to CoreModule (cross-platform Expo Module API,
+// implemented twice — once in Swift, once in Kotlin)
 spawn(miniappId: string, polyfillBundle: string, miniappJs: string): boolean
 evaluate(miniappId: string, src: string): JSValue
 kill(miniappId: string): void
@@ -220,8 +264,115 @@ dispatchToJs(miniappId: string, channel: string, payload: unknown): void
 // Event "mentrajs_message" — fires when a JSContext calls __dispatch
 ```
 
-Estimated ~300-500 LoC of Swift added to `crust`. For reference,
-`CrustModule.swift` is 323 LoC today.
+Estimated ~300-500 LoC of Swift added to `crust` plus a parallel
+~300-500 LoC of Kotlin for Android. For reference,
+`CrustModule.swift` is 323 LoC today and `CrustModule.kt` is 484 LoC.
+
+### How JS↔Native messages actually flow
+
+**Three distinct JavaScript runtimes are involved.** Be careful not
+to conflate them:
+
+1. **Host RN runtime** (Hermes, the React Native bridge — the
+   "main" JS the Mentra app runs in). This is where
+   `LocalMiniappRuntime` / `MentraJSRouter` lives, and where the
+   `MiniappHost` React component lives.
+2. **Per-miniapp JSContext** (native iOS JSC / Android JSC, one
+   per installed miniapp). Runs the miniapp's `background.js`.
+3. **Per-miniapp WebView** (transient WKWebView / Android WebView,
+   exists only when user opens settings). Runs the miniapp's
+   `dist/ui/index.html`.
+
+These three NEVER share a JS heap. All inter-runtime communication
+goes through native code as a router. The native router is
+the source of truth for "which miniapp owns which messages."
+
+**Background → Native → RN flow** (e.g. miniapp calls
+`session.display.showTextWall("hi")`):
+
+```
+miniapp BG JS calls session.display.showTextWall("hi")
+  ↓ SDK shim (in @mentra/miniapp/background)
+  ↓
+__dispatch("display", "showTextWall", ["hi"])
+  ↓ injected as a single Swift block / Kotlin lambda
+  ↓
+Native JSCDispatcher (Swift on iOS, Kotlin on Android)
+  ↓
+Tag the call with this JSContext's miniappId
+  ↓
+Send Expo Module event "mentrajs_message" with payload
+  { miniappId, iface: "display", method: "showTextWall", args }
+  ↓ via the Expo Module event system (NativeEventEmitter
+    on iOS, ReactContext.emit on Android)
+  ↓
+React Native receives in MentraJSRouter (host RN runtime)
+  ↓
+Routes to the existing handler body (lifted from
+LocalMiniappRuntime.ts, line 812 handleDisplay)
+  ↓
+Dispatches via existing native services (CoreModule.displayEvent)
+  ↓
+BLE write → glasses display "hi"
+```
+
+**RN → Native → Background flow** (e.g. host wants to push glasses
+status change to all running miniapps):
+
+```
+MentraJSRouter (host RN) computes the event payload
+  ↓
+Calls CoreModule.dispatchToJs(miniappId, "glasses_status",
+  { connected: true })
+  ↓ Expo Module Function call (sync from JS perspective)
+  ↓
+Native JSCDispatcher looks up the JSContext for miniappId
+  ↓
+Calls jsContext.evaluateScript(`globalThis.__deliver(${json})`)
+  ↓ runs on the JSContext's dedicated thread
+  ↓
+__deliver dispatches to subscribed session.* listeners
+  in the miniapp's background.js
+```
+
+**WebView → Native → Background flow** (e.g. user taps button in
+WebView, miniapp wants to display text on glasses):
+
+```
+WebView event handler calls mentra.send("show-glasses", { text })
+  ↓ injected window.mentra shim
+  ↓
+window.ReactNativeWebView.postMessage(JSON.stringify({...}))
+  ↓ react-native-webview's bridge
+  ↓
+MiniappHost.tsx onMessage handler (host RN runtime)
+  ↓
+Looks up which JSContext is bound to this WebView
+  ↓
+Calls CoreModule.dispatchToJs(miniappId, "show-glasses", { text })
+  ↓ same path as RN → Background above
+  ↓
+Background's session.ui.on("show-glasses") handler fires
+  ↓
+Handler calls session.display.showTextWall(text)
+  ↓ same path as Background → Native → RN above
+  ↓
+glasses display the text
+```
+
+**Two key properties to notice:**
+1. **The host RN runtime is always in the middle.** It's the only
+   place where messages from JSContexts and WebViews can be
+   correlated and routed. JSContexts and WebViews never talk to
+   each other directly.
+2. **All three flows use Expo Module events / function calls as the
+   transport between native and RN.** No custom IPC. Same plumbing
+   we use for every other native module in the app.
+
+The cost of this architecture: every cross-runtime hop has at least
+one JSON serialize/deserialize. Acceptable for our message shape
+(small JSON payloads, no streaming binary data — those go through
+specialized native paths like `mic_pcm`).
 
 ### Spawn order
 
@@ -645,7 +796,7 @@ unchanged.**
 | `mobile/modules/miniapp/src/transport/postmessage.ts` | 95 | Hard-coded to `window.ReactNativeWebView`. Repurpose as `WebViewToJsContextTransport` for the settings WebView. |
 | `mobile/modules/island/src/services/WebviewBridge.ts` | 50 | Replaced by two sibling routers: `MentraJSRouter` (JSContext fan-out) + `MentraUIRouter` (settings WebView ↔ bound JSContext). |
 | `mobile/modules/miniapp/src/globals.ts` | 62 | `window.MentraOS` is WebView-presentational. Keep file for WebView; JSContext gets a different injected globals object. |
-| `mobile/modules/miniapp/src/index.ts` | 108 | Splits into two sub-paths via `package.json` `exports`: `@mentra/miniapp/background` (session API for the JSContext layer) and `@mentra/miniapp/ui` (WebView-side `mentra` global + React hooks). Bare `@mentra/miniapp` import retained as a deprecated alias to `/ui` for back-compat with any leftover single-bundle code, removed after one release cycle. |
+| `mobile/modules/miniapp/src/index.ts` | 108 | Replaced by two sub-path entry points via `package.json` `exports`: `@mentra/miniapp/background` (session API for the JSContext layer) and `@mentra/miniapp/ui` (WebView-side `mentra` global + React hooks). No bare `@mentra/miniapp` import — sub-paths only. |
 | `sdk/example-miniapp/` | (entire React SPA) | Restructure into two-layer: logic into `src/background.ts`, UI into `src/ui/`. Existing React code is reusable as the basis for the UI half. |
 
 ### Net-new code
@@ -1472,10 +1623,11 @@ Tests:
 - E2E test: hello-world miniapp installs, JSContext spawns,
   `session.display.showTextWall("hi")`, glasses display it.
 
-**Android: deferred.** The cross-platform commitment to "JSC on
-Android via `react-native-jsc`" stands but is not implemented in
-Phase 1. iOS-only first; Android comes after the architecture is
-proven. Add an Android-parity phase later (or scope into Phase 4).
+**Android sequencing within Phase 1.** iOS first to prove the
+architecture (~2 weeks), then port to Android (~1 week given
+the shape is identical). The ~3-week Phase 1 budget covers both.
+If iOS surfaces architectural issues, Android port slips a phase;
+otherwise it ships in Phase 1. Don't ship the SDK as iOS-only.
 
 ### Phase 2 — Refactor `LocalMiniappRuntime` → `MentraJSRouter` (~3 weeks)
 
@@ -1588,9 +1740,11 @@ Tasks:
   with a real perf harness. No specific latency target — measure
   first, set a budget once we know what's normal.
 
-**Android:** out of scope for Phase 3. Android needs equivalent
-plumbing (`addJavascriptInterface` + `evaluateJavascript`) but
-follows the same shape. Do after iOS lands.
+**Android sequencing within Phase 3.** iOS WebView binding first,
+then Android equivalent (`addJavascriptInterface` +
+`evaluateJavascript` on Android WebView). Same shape, slightly
+different native surface. ~3 weeks iOS + ~1 week Android — fits
+the 4-week phase budget.
 
 ### Phase 4 — Bundle / install / sideload (~1-2 weeks, mobile only)
 
@@ -1641,9 +1795,9 @@ two-layer template.
     `stream`, `system`, `ui`, `diagnostics`).
   - `@mentra/miniapp/ui` — WebView-side `mentra` global, React
     hooks, `MentraProvider`, settings-page components.
-  - Bare `@mentra/miniapp` import retained for one release cycle
-    as a deprecated alias to `/ui` (the historical surface), then
-    removed.
+  - **No bare `@mentra/miniapp` import.** Sub-paths only. There
+    is no installed-base of miniapps to maintain back-compat with —
+    we have one example app and rewrite it.
   - The unrelated cloud-side `@mentra/sdk` package keeps its name —
     no collision because we don't take that name.
   - Pattern matches Firebase, tRPC, Radix UI, Sentry: import path
