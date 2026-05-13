@@ -7,8 +7,13 @@ A spec for moving the local miniapp SDK from a persistent-WebView model
 to a JavaScriptCore-per-miniapp background runtime + on-demand WebView
 for UI. Most of the existing SDK (~49% of LoC) lifts unchanged. The
 new pieces are bounded: a Swift JSContext runtime in the existing
-`crust` module, a `__dispatch` bridge, a polyfill bundle, and a
-WebView-↔-JSContext message bus.
+`crust` module (and a Kotlin/JNI mirror on Android), a `__dispatch`
+bridge, a polyfill bundle, and a WebView-↔-JSContext message bus.
+
+**See also:**
+- **Appendix A** — file-by-file migration of `sdk/example-miniapp/`,
+  the canonical fixture and acceptance gate.
+- **Appendix B** — SDK + CLI migration checklist.
 
 ---
 
@@ -74,31 +79,30 @@ billion-user scale.
 ┌─────────────────────────────────────────────────────────────────┐
 │                  Mentra Manager (host RN app)                    │
 │                                                                  │
-│  ┌──────────────────────┐         ┌────────────────────────┐    │
-│  │ Native iOS code      │ ←─────→ │ MentraJS native router │    │
-│  │ (BLE, mic, display,  │         │ (Swift, in `crust`)    │    │
-│  │  storage, location)  │         └─────────┬──────────────┘    │
-│  └──────────────────────┘                   │                   │
-│                                              │                   │
-│             ┌────────────────────────────────┼─────────┐         │
-│             ▼                                ▼         ▼         │
-│  ┌─────────────────┐              ┌─────────────────┐           │
-│  │ JSContext A     │              │ JSContext B     │  ...      │
-│  │ (always alive)  │              │ (always alive)  │           │
-│  │  __dispatch     │              │  __dispatch     │           │
-│  │  polyfills      │              │  polyfills      │           │
-│  │  /background    │              │  /background    │           │
-│  │  miniapp BG JS  │              │  miniapp BG JS  │           │
-│  │     │           │              └─────────────────┘           │
-│  │     ↕ ui bus    │                                            │
-│  │  ┌──┴────────────────┐                                       │
-│  │  │ WKWebView         │  ← only when user is looking          │
-│  │  │ (transient)       │     at this miniapp's settings        │
-│  │  │ window.mentra     │                                       │
-│  │  │ no native access  │                                       │
-│  │  └───────────────────┘                                       │
-│  └─────────────────┘                                            │
-└─────────────────────────────────────────────────────────────────┘
+│   ┌──────────────────────┐        ┌─────────────────────────┐    │
+│   │ Native iOS / Android │ ←────→ │ MentraJS native router  │    │
+│   │ (BLE, mic, display,  │        │ (Swift / Kotlin,        │    │
+│   │  storage, location)  │        │  in `crust`)            │    │
+│   └──────────────────────┘        └────────────┬────────────┘    │
+│                                                │                 │
+│              ┌─────────────────────────────────┼──────────────┐  │
+│              ▼                                 ▼              ▼  │
+│   ┌─────────────────────┐         ┌─────────────────────┐  ...   │
+│   │ JSContext A         │         │ JSContext B         │        │
+│   │ (always alive)      │         │ (always alive)      │        │
+│   │  __dispatch         │         │  __dispatch         │        │
+│   │  polyfills          │         │  polyfills          │        │
+│   │  background.js      │         │  background.js      │        │
+│   └──────────┬──────────┘         └─────────────────────┘        │
+│              │                                                   │
+│              │ ui bus (mentra.send / mentra.on)                  │
+│              ▼                                                   │
+│   ┌─────────────────────┐                                        │
+│   │ WebView (transient) │ ← only when user is looking            │
+│   │  window.mentra      │   at this miniapp's settings           │
+│   │  no native access   │                                        │
+│   └─────────────────────┘                                        │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ### Invariants
@@ -153,35 +157,56 @@ Apple `JSContext`. The only path is calling `JavaScriptCore.framework`
 directly from Swift. Open RN community proposal #193 has been asking
 for this primitive for years; remains unresolved.
 
-### Cross-platform: JSC on Android too
+### Cross-platform: JSC on Android, with JNI work
 
 We bundle JavaScriptCore on Android so the same engine runs miniapp
 JS on both platforms. Performance gap vs Hermes/V8 is irrelevant for
 our workload — heavy work is in native modules; miniapp JS is
 event-handler-tier.
 
-**Android JSC binary source:** `org.webkit:android-jsc-intl`
-(packaged by Facebook for years as the pre-Hermes default RN engine
-on Android). Adds ~5-7 MB to the Android binary. We add this as a
-dependency in `mobile/modules/crust/android/build.gradle` —
-independent of whatever engine the host RN bundle uses.
+**Android JSC binary source:**
+`io.github.react-native-community:jsc-android:2026004.+` — the
+maintained successor to the original Facebook `org.webkit:android-jsc`
+(last published 2015) and the artifact already used in
+`mobile/android/app/build.gradle` for the host RN bundle. We pin to
+the same version coordinate so we don't ship two JSC builds. Adds
+~5-7 MB to the Android binary (already paid by the host app).
+
+**Critical Android caveat:** `jsc-android` ships as **prebuilt `.so`
+files** for arm64-v8a / armeabi-v7a / x86_64 / x86. There is **no
+Java / Kotlin API** equivalent to iOS's `JSContext` Swift class.
+Calling JSC from Kotlin requires JNI glue. Three options:
+
+- **(A) Write our own JNI wrapper** over the JSC C API exposed by
+  `jsc-android` headers. Full control, ~2-3 weeks NDK work for the
+  surface we need (create context / virtual machine / inject
+  function / evaluateScript / set+get globals). C++ bridge code in
+  `crust/android/src/main/cpp/`, bound to Kotlin via JNI.
+- **(B) Vendor LiquidCore** (MIT, last released ~2019, stale but
+  functional). Provides a Java API over JSC very close to iOS's
+  Swift surface. Requires audit + likely forking to update for
+  modern Android.
+- **(C) Defer Android to a later phase**, ship iOS-only at GA.
+  Honest if we're resource-constrained.
+
+**Recommendation: option A (own JNI wrapper).** LiquidCore's staleness
+makes it a long-term liability, and the surface we need is small
+enough (~6 native methods) that hand-rolling JNI is bounded work.
 
 **Android implementation lives alongside the iOS one in `crust`:**
 
 ```
-mobile/modules/crust/android/src/main/java/com/mentra/crust/
-├── CrustModule.kt                     # existing — add JSC Functions
-├── jsc/JSCRuntime.kt                  # NEW: owns N JSContexts
-├── jsc/JSCDispatcher.kt               # NEW: __dispatch routes
-└── jsc/JSCPolyfillBridge.kt           # NEW: native fetch/WS/timers/storage/crypto
+mobile/modules/crust/android/src/main/
+├── java/com/mentra/crust/
+│   ├── CrustModule.kt                  # existing — add JSC Functions
+│   ├── jsc/JSCRuntime.kt               # NEW: owns N JSContext handles
+│   ├── jsc/JSCDispatcher.kt            # NEW: __dispatch routes
+│   └── jsc/JSCPolyfillBridge.kt        # NEW: native fetch/WS/timers/storage/crypto
+└── cpp/                                # NEW JNI layer
+    ├── CMakeLists.txt
+    ├── jsc_jni.cpp                     # JNI ↔ JSC C API
+    └── jsc_jni.h
 ```
-
-The Android JSC API (Java/Kotlin) is shaped almost identically to
-iOS Swift's: `org.webkit.android_jsc.JSContext`,
-`evaluateScript(...)`, set globals as Java function references.
-Same `__dispatch` single-function pattern (Pebble's lesson applies
-across both platforms — they hit the same GC race on Kotlin/Native
-that we'd hit on Java if we bound functions individually).
 
 The polyfill bundle (`mobile/modules/mentrajs-runtime/runtime/`) is
 **identical JS for both platforms**. Native bridge hooks differ
@@ -189,18 +214,19 @@ under the hood (`URLSession` vs OkHttp, `NSUserDefaults` vs
 SharedPreferences, `CryptoKit` vs `javax.crypto`) but JS-side API
 is one shape.
 
-**One concrete cross-platform divergence:** iOS uses
-`URLSessionWebSocketTask`; Android uses OkHttp's `WebSocketListener`.
-Same JS surface, different native code in `JSCPolyfillBridge`.
+**Android-specific risks:**
+- JNI surface adds C++ to a previously Kotlin/Swift-only repo;
+  team needs an engineer comfortable with NDK builds and JSC C API.
+- Bundle size concern: ~5-7 MB binary growth, but already paid by
+  host RN — adding `crust`'s JNI lib is a few hundred KB on top.
+- No Safari Web Inspector equivalent on Android JSC. We can wire
+  Chrome DevTools' V8 protocol over WebSocket later if needed —
+  defer.
 
-**Android-specific risks the spec assumes can be solved:**
-- Android's `org.webkit.android-jsc-intl` is currently maintained
-  by Facebook for RN's pre-Hermes path. If they ever stop
-  publishing it, we'd need to fork or vendor.
-- Bundle size concern: ~5-7 MB binary growth on Android. Acceptable
-  for our use case.
-- No Safari Web Inspector equivalent on Android JSC (use Chrome
-  DevTools via a different debug protocol if we want one — defer).
+**Android JSC sequencing:** because of the JNI work, Android takes
+**3-5 weeks**, not 1. iOS Phase 1 ships first (~3 weeks); Android
+JSC follows (~3-5 weeks). Either accept Android lagging by a phase
+or budget two engineers in parallel from Phase 1.
 
 ### Memory profile: measured, not estimated
 
@@ -255,13 +281,15 @@ JSContext spawn.
 ### Expo module API surface (small)
 
 ```typescript
-// Functions added to CoreModule (cross-platform Expo Module API,
+// Functions added to CrustModule (cross-platform Expo Module API,
 // implemented twice — once in Swift, once in Kotlin)
-spawn(miniappId: string, polyfillBundle: string, miniappJs: string): boolean
-evaluate(miniappId: string, src: string): JSValue
-kill(miniappId: string): void
-dispatchToJs(miniappId: string, channel: string, payload: unknown): void
+spawn(packageName: string, polyfillBundle: string, miniappJs: string): boolean
+evaluate(packageName: string, src: string): JSValue
+kill(packageName: string): void
+dispatchToJs(packageName: string, channel: string, payload: unknown): void
 // Event "mentrajs_message" — fires when a JSContext calls __dispatch
+// Delivered via Expo `sendEvent("mentrajs_message", ...)` from native;
+// JS subscribes via `Crust.addListener("mentrajs_message", handler)`.
 ```
 
 Estimated ~300-500 LoC of Swift added to `crust` plus a parallel
@@ -299,19 +327,21 @@ __dispatch("display", "showTextWall", ["hi"])
   ↓
 Native JSCDispatcher (Swift on iOS, Kotlin on Android)
   ↓
-Tag the call with this JSContext's miniappId
+Tag the call with this JSContext's packageName
   ↓
 Send Expo Module event "mentrajs_message" with payload
-  { miniappId, iface: "display", method: "showTextWall", args }
-  ↓ via the Expo Module event system (NativeEventEmitter
-    on iOS, ReactContext.emit on Android)
+  { packageName, iface: "display", method: "showTextWall", args }
+  ↓ via Expo Module API `sendEvent("mentrajs_message", payload)`
+    (same call shape on iOS and Android — Expo Modules normalize
+    the underlying NativeEventEmitter / DeviceEventEmitter delivery)
   ↓
-React Native receives in MentraJSRouter (host RN runtime)
+React Native receives in MentraJSRouter (host RN runtime),
+  subscribed via Crust.addListener("mentrajs_message", ...)
   ↓
 Routes to the existing handler body (lifted from
-LocalMiniappRuntime.ts, line 812 handleDisplay)
+LocalMiniappRuntime.ts handleDisplay)
   ↓
-Dispatches via existing native services (CoreModule.displayEvent)
+Dispatches via existing native services (CrustModule.displayEvent)
   ↓
 BLE write → glasses display "hi"
 ```
@@ -322,11 +352,11 @@ status change to all running miniapps):
 ```
 MentraJSRouter (host RN) computes the event payload
   ↓
-Calls CoreModule.dispatchToJs(miniappId, "glasses_status",
+Calls Crust.dispatchToJs(packageName, "glasses_status",
   { connected: true })
   ↓ Expo Module Function call (sync from JS perspective)
   ↓
-Native JSCDispatcher looks up the JSContext for miniappId
+Native JSCDispatcher looks up the JSContext for packageName
   ↓
 Calls jsContext.evaluateScript(`globalThis.__deliver(${json})`)
   ↓ runs on the JSContext's dedicated thread
@@ -349,7 +379,7 @@ MiniappHost.tsx onMessage handler (host RN runtime)
   ↓
 Looks up which JSContext is bound to this WebView
   ↓
-Calls CoreModule.dispatchToJs(miniappId, "show-glasses", { text })
+Calls Crust.dispatchToJs(packageName, "show-glasses", { text })
   ↓ same path as RN → Background above
   ↓
 Background's session.ui.on("show-glasses") handler fires
@@ -777,16 +807,16 @@ unchanged.**
 | `mobile/modules/miniapp/src/transport/auto.ts` | 125 | Add 4th branch: if `__dispatch` global → return `DispatchTransport`. |
 | `mobile/modules/miniapp/src/dev-reload.ts` | 60 | Keep for WebView; add sibling for JSContext respawn. |
 | `mobile/modules/island/src/services/DevServerBridge.ts` | 288 | Same protocol, two delivery sinks (WebView reload + JSContext respawn). |
-| `sdk/miniapp-cli/src/manifest*.ts` (4 non-test files) | ~712 | Add `sdkVersion`, `minHostVersion`, `entry` (object), `signature` schema fields. |
-| `sdk/miniapp-cli/src/dev.ts` + `dev-server.ts` | ~480 | Bundle `dist/background.js` + `dist/ui/`; add `{type:"respawn-bg"}` message alongside `{type:"reload"}`. |
-| `sdk/miniapp-cli/src/pack.ts` + `release.ts` | ~380 | Two-output bundle; cloud adds META-INF/signature on publish. |
+| `sdk/miniapp-cli/src/manifest*.ts` (4 non-test files) | ~712 | Add `sdkVersion`, `minHostVersion`, `entry` (object) schema fields. (Signature schema deferred to store-ship spec.) |
+| `sdk/miniapp-cli/src/dev.ts` + `dev-server.ts` | ~480 | Bundle `dist/background.js` + `dist/ui/`; add `{type:"respawn-bg"}` message alongside `{type:"reload"}`. Drop today's `user-server.ts` spawning — there's no longer a separate Express server fronting the WebView. |
+| `sdk/miniapp-cli/src/pack.ts` + `release.ts` | ~380 | Two-output bundle. (Signing pipeline deferred to store-ship spec.) |
 
 ### Reuse with major changes (right shape, internals rewritten)
 
 | File | LoC | What survives, what changes |
 |---|---|---|
-| `mobile/modules/island/src/services/LocalMiniappRuntime.ts` | 1,752 | **Skeleton survives:** per-app registry, refcounted streams, ping loop, **~24 request handlers** (CONNECT, SUBSCRIBE, DISPLAY, PLAY_AUDIO, SPEAK, RGB_LED, LOCATION_POLL, STORAGE_*, CAMERA_FOV, SHARE, OPEN_URL, COPY_CLIPBOARD, DOWNLOAD, PHOTO, STREAM_*, MANAGED_STREAM_*, PING/PONG). Handler bodies don't know they're talking to a WebView — they take `(packageName, payload)` and dispatch to native. **Rewrite:** front door (`handleRawMessage` → `__dispatch`); per-app `sendMessage` (postMessage → `JSContext.evaluateScript`); HMAC/local-token code goes away. |
-| `mobile/modules/island/src/services/AppRegistry.ts` | 675 | Manifest normalization + zip pipeline survive. **Add:** `background.js` discovery alongside `index.html`; recognize new manifest fields; signature verification for store-installed bundles; sdkVersion/minHostVersion compatibility check on spawn. |
+| `mobile/modules/island/src/services/LocalMiniappRuntime.ts` | 1,752 | **Skeleton survives:** per-app registry, refcounted streams, ping loop, **25 dispatch arms** (21 explicit `handle*` private methods + 4 inline arms in the type switch — covers CONNECT, SUBSCRIBE, DISPLAY, PLAY_AUDIO, SPEAK, RGB_LED, LOCATION_POLL, STORAGE_*, CAMERA_FOV, SHARE, OPEN_URL, COPY_CLIPBOARD, DOWNLOAD, PHOTO, STREAM_*, MANAGED_STREAM_*, PING/PONG). Handler bodies don't know they're talking to a WebView — they take `(packageName, payload)` and dispatch to native. **Rewrite:** front door (`handleRawMessage` → `__dispatch`); per-app `sendMessage` (postMessage → `JSContext.evaluateScript`); HMAC/local-token code goes away. |
+| `mobile/modules/island/src/services/AppRegistry.ts` | 675 | Manifest normalization + zip pipeline survive. **Add:** `background.js` discovery alongside `index.html`; recognize new manifest fields; sdkVersion/minHostVersion compatibility check on spawn. (Signature verification deferred to store-ship spec — all current bundles are LAN-sideloaded and unsigned.) |
 | `sdk/create-mentra-miniapp/bin/index.ts` + template | ~150 + template | Scaffolder logic survives (clack prompts, validation, template substitution). **Template files rewrite:** scaffold `src/background.ts`, `src/ui/`, `src/shared/channels.ts` instead of single React SPA. |
 
 ### Replace entirely
@@ -807,23 +837,53 @@ Native (Swift, in `crust`):
 - **`JSCPolyfillBridge.swift`** — native handlers for fetch/WS/timers/storage/crypto.
 - **`PermissionStore` (SQLite)** — per-(packageName, iface) grant
   table; `__dispatch` consults this before invoking native APIs.
+  Distinct from miniapp-facing `session.storage` (NSUserDefaults) —
+  this is host-internal and never exposed to JS. Implemented in
+  Phase 1 alongside `JSCDispatcher` (the dispatcher's first
+  consumer is the permission gate). FMDB or sqlite3 binding —
+  schema is two columns (`packageName TEXT, iface TEXT,
+  PRIMARY KEY (packageName, iface)`).
 - **Device-tier eviction** — `physicalMemory` query + LRU policy in
   `MiniappRunningRegistry`. Only relevant for the WebView half (the
   JSContext half doesn't need eviction at our memory profile).
-- **Bundle signature verification** — Ed25519 over
-  META-INF/manifest.sha256 in `AppRegistry.installFromUrl`.
 
-Native (Swift, in `mobile/src/components/miniapp/`):
+Native (Kotlin, in `crust`):
+- **`JSCRuntime.kt`** + JNI wrapper — see the "Cross-platform: JSC
+  on Android, with JNI work" section above for the `cpp/` JNI layer.
+- **`JSCDispatcher.kt`** — Kotlin mirror of Swift dispatcher.
+- **`JSCPolyfillBridge.kt`** — OkHttp / SharedPreferences / javax.crypto
+  backed equivalents.
+- **`PermissionStore`** — SQLite via Android's built-in
+  `SQLiteOpenHelper`. Same schema as iOS.
+- **Device-tier eviction** — `ActivityManager.getMemoryInfo()` for
+  the equivalent of `physicalMemory`.
+
+React Native UI (cross-platform TS/TSX, in `mobile/src/components/miniapp/`):
 - **WebView host refactor** — `MiniappHost.tsx` (627 LoC today) shifts
   from "persistent off-screen WebViews" to "spawn cold per open,
   destroy on exit" for the UI layer. Existing `mount/unmount/
   setForeground/setBackground` API is kept; semantics inverted.
+  **One file serves both iOS and Android** — `react-native-webview`
+  abstracts WKWebView vs Android WebView underneath; the same
+  `injectedJavaScriptBeforeContentLoaded` + `postMessage` surface
+  works on both platforms. No platform-conditional branches needed
+  in this layer.
 - **`MentraUIRouter`** — when WebView mounts, host binds it to a
   JSContext and routes `mentra.send`/`mentra.on` between them. We
   use `react-native-webview`'s `injectedJavaScriptBeforeContentLoaded`
   + `postMessage`, NOT raw `WKUserScript` (which RN-WebView doesn't
   expose). Behavior matches Pebble's native bridge but layered on top
   of `react-native-webview`.
+
+JS (host RN runtime, in `mobile/modules/island/src/services/`):
+- **`MentraJSRouter.ts`** — host-side router that subscribes to
+  `Crust.addListener("mentrajs_message", ...)`, looks up the
+  packageName, and dispatches to existing handler bodies lifted
+  from `LocalMiniappRuntime.ts`. Owns the JSContext-side fan-out.
+  Distinct from the runtime *inside* JSC (`JSCRuntime` is native
+  Swift/Kotlin). ~400-600 LoC.
+- **`MentraUIRouter.ts`** — bridges the bound WebView to its
+  JSContext sibling, routing `mentra.send/on` between them.
 
 JS (in `mobile/modules/miniapp/src/`):
 - **`DispatchTransport.ts`** — new `Transport` implementation
@@ -891,8 +951,14 @@ bridges to native I/O.
 | `localStorage` | Bridge | — | ~50 over `NSUserDefaults` with `"MentraJS-{appId}"` suite |
 | `crypto.subtle` (SHA, AES-GCM, HMAC, X25519) | Bridge | — | ~300 over `CryptoKit` |
 | `crypto.getRandomValues` | Bridge | — | ~30 over `SecRandomCopyBytes` |
+| `crypto.randomUUID` | Pure-JS shim atop `getRandomValues` | RFC 4122 v4 (~10 lines) | ~10 |
 
 **Total custom code: ~1000 LoC JS + ~600 LoC Swift, ~2-3 weeks.**
+
+Android counterparts: same JS shims; native swap is `OkHttp` for
+fetch/WebSocket, `SharedPreferences` for `localStorage`,
+`javax.crypto` for `crypto.subtle`, `SecureRandom.nextBytes` for
+`crypto.getRandomValues`. Same total LoC, +~600 Kotlin.
 
 ### Out of scope (don't polyfill at v1)
 
@@ -984,7 +1050,7 @@ Same lesson Chrome MV3 service workers had to teach.
 
 ### Miniapp disabled by user
 
-1. Host calls `MentraJSRuntime.kill(packageName)`.
+1. Host calls `JSCRuntime.kill(packageName)`.
 2. Marks miniapp inactive in installed-apps state.
 3. In-memory state is gone. Storage remains until uninstall.
 
@@ -1076,7 +1142,8 @@ known dark pattern for sensitive APIs — iOS users expect JIT.
 ### Unpermitted call returns
 
 The existing SDK already defines a `PERMISSION_NOT_DECLARED` error
-code in `mobile/modules/miniapp/src/modules/permissions.ts:33` —
+code in `mobile/modules/miniapp/src/protocol.ts:172` (sugar accessor
+in `modules/permissions.ts:67-77`) —
 fired when a miniapp calls an API for a permission its manifest
 didn't declare. Reuse it. Add one new code, `PERMISSION_DENIED`,
 for the case where the manifest declared the permission but the
@@ -1105,8 +1172,15 @@ what the JS attempts."* Maps 1:1 onto 4.7.3.
 
 ## Bundle, install, update, sideload
 
-The existing `AppRegistry.ts` already does most of this. Additions:
-signature verification, two-output bundle support, version retention.
+The existing `AppRegistry.ts` already does most of this. Additions
+**in the initial cut:** two-output bundle support, version retention.
+
+**Signing / `META-INF/` / Ed25519 verification ships when the store
+ships, not in the initial cut.** The bundle format and signing
+sections below describe the full target so the layout is reserved
+upfront — but in the initial cut bundles are unsigned, sideloaded
+over LAN from the developer's CLI, and `AppRegistry` skips the
+signature check entirely. See Phase 4 for what actually lands.
 
 ### Bundle format
 
@@ -1229,7 +1303,7 @@ discovery.
    it too?"* — checkbox default unchecked (mirror iOS app uninstall).
 2. If running: stop JSContext.
 3. Delete `lmas/<packageName>/`.
-4. If user opted to delete data: delete the app's `phone.storage`
+4. If user opted to delete data: delete the app's `session.storage`
    namespace (NSUserDefaults `MentraJS-<packageName>` suite).
 5. Revoke permissions; remove from local cache.
 
@@ -1331,7 +1405,7 @@ to do but runtime is responsive.
 
 Background reload = full kill + respawn. `bun run dev` opens WS to
 host, on file change sends `{type: "respawn-bg", packageName, bundleUrl}`.
-Host calls `MentraJSRuntime.respawn(packageName)`:
+Host calls `JSCRuntime.respawn(packageName)`:
 1. Cancel coroutine scope (Pebble's tear-down order)
 2. Drop `JSManagedValue` references
 3. Close JSContext
@@ -1357,13 +1431,18 @@ Dev mode: log every request/response (URL, status, duration, byte
 count). Prod: log only failures and Sentry-tag with `network.host`.
 No body capture in prod (privacy).
 
-### Remote kill switch (mandatory)
+### Remote kill switch (deferred — design only)
 
-Cloud has `disabled_miniapps: { [packageName]: { reason, since,
+**Not in initial scope.** No store ships in the initial cut, so there
+is no upload pipeline to gate and no platform-distributed bundle to
+revoke. Sketch retained here so the design slot is reserved when the
+store ships.
+
+Future cloud has `disabled_miniapps: { [packageName]: { reason, since,
 scope: "all" | { userIds: [...] } } }` document. Host fetches on
 launch + every 1h. If installed miniapp is in list, do NOT spawn its
-JSContext; show "Disabled by Mentra" tile. Critical for security
-incidents and Apple App Store demands.
+JSContext; show "Disabled by Mentra" tile. Will be required for
+Apple Guideline 2.5.2 compliance when the store ships.
 
 ---
 
@@ -1568,11 +1647,15 @@ Tasks:
 hit the same jetsam wall — multiple WebViews share one renderer
 process. We don't need eviction there until usage shows we do.
 
-### Phase 1 — JSC runtime in `crust` (~3 weeks)
+### Phase 1 — JSC runtime in `crust` (~3 weeks iOS, +3-5 weeks Android)
 
-**Goal:** Spawn N JSContexts from Swift, route `__dispatch` to
-existing native services, get a "hello world" miniapp displaying text
-on glasses without WebView.
+**Goal:** Spawn N JSContexts from Swift (and from Kotlin via JNI),
+route `__dispatch` to existing native services, get a "hello world"
+miniapp displaying text on glasses without WebView.
+
+**iOS-first.** Android lags because of the JNI work — see "Cross-platform:
+JSC on Android, with JNI work" earlier. Phase 2-6 below assume iOS is
+the leading edge; each phase notes any Android-specific work.
 
 Native (Swift):
 - New files in `mobile/modules/crust/ios/Source/`:
@@ -1601,6 +1684,14 @@ Polyfill bundle (new package):
   inside the JSContext. Needs a bundler step (esbuild/rollup) that
   produces `dist/startup.js` — a single file with all polyfills
   inlined. **Add this build step explicitly; it's not free.**
+- **Distribution to device:** the bundled `startup.js` is committed
+  to source as a build artifact and shipped *inside the host RN app
+  binary* via Expo Module assets. iOS: bundled into the Expo module
+  framework's resources, read at runtime via `Bundle.module`.
+  Android: placed under `crust/android/src/main/assets/` and read
+  via `AssetManager.open("startup.js")`. **Not** fetched OTA — must
+  match the host's `JSCDispatcher` ABI exactly, so it ships with
+  the host app version.
 - Install MIT libs to `mobile/package.json`:
   `@react-native/js-polyfills`, `fast-text-encoding`,
   `whatwg-url-without-unicode`, `base-64`, `event-target-shim`,
@@ -1610,6 +1701,26 @@ Polyfill bundle (new package):
   (DispatchQueue), fetch (URLSession), WebSocket
   (URLSessionWebSocketTask), localStorage (NSUserDefaults with
   `MentraJS-{packageName}` suite), crypto (CryptoKit).
+
+Native (Kotlin + C++):
+- New `cpp/` directory under `mobile/modules/crust/android/src/main/`
+  with `jsc_jni.cpp` + `jsc_jni.h` + `CMakeLists.txt`. Wraps the JSC
+  C API exposed by `io.github.react-native-community:jsc-android` —
+  ~6 native methods (createContext, evaluate, set/get global, dispose).
+  ~2-3 weeks NDK work; engineer needs JSC C API + JNI familiarity.
+- New Kotlin files in `mobile/modules/crust/android/src/main/java/com/mentra/crust/`:
+  `jsc/JSCRuntime.kt`, `jsc/JSCDispatcher.kt`, `jsc/JSCPolyfillBridge.kt`.
+  ~600-800 LoC. Mirrors the Swift surface 1:1 over the JNI wrapper.
+- Add the same Expo Functions to `CrustModule.kt`. Verify
+  `bun expo prebuild` regenerates the Gradle config including the
+  CMake step (no `--clean`).
+- Bridge concretes: OkHttp (fetch/WebSocket), `Handler.postDelayed`
+  (setTimeout), SharedPreferences (`localStorage` with
+  `MentraJS-{packageName}` name), `javax.crypto` + `SecureRandom`
+  (crypto.subtle / getRandomValues).
+- Same Pebble-inherited pieces apply on Android: stable token,
+  log redaction, single `__dispatch` (binding individual native
+  functions hits the same JSC GC race), tear-down ordering.
 
 JS:
 - New `DispatchTransport.ts` in
@@ -1650,7 +1761,7 @@ survive, front door swaps from postMessage to `__dispatch`.
   `LocalMiniappRuntime.ts:1626`, registered in `registerApp()` at
   `:379-408`, wired in `MiniappHost.tsx:136-140` via
   `webview.injectJavaScript("window.receiveNativeMessage(...)")`)
-  becomes `MentraJSRuntime.dispatchToJs(...)`.
+  becomes `JSCRuntime.dispatchToJs(...)`.
 - **Cloud message routing:** preserve `handleCloudMessage(msg)` at
   `LocalMiniappRuntime.ts:284` — it routes cloud-relayed responses
   (`phone_photo_ready`, `phone_stream_status`,
@@ -1675,6 +1786,12 @@ survive, front door swaps from postMessage to `__dispatch`.
 - Verify all existing miniapp APIs (display, transcription, mic,
   camera, speaker, LED, location, IMU, button events) work
   end-to-end through the new path.
+
+**Android within Phase 2.** No additional Android-specific code —
+this phase is pure RN runtime refactor (TypeScript). The
+`MentraJSRouter` is platform-agnostic; it talks to whichever
+`Crust` native module is loaded. As long as Phase 1 Android JSC is
+done, Phase 2 lights up on Android automatically.
 
 ### Phase 3 — WebView lifecycle inversion + UI message bus (~4 weeks)
 
@@ -1772,6 +1889,22 @@ LAN HTTP + QR code (already implemented).
   (675 LoC): recognize new manifest fields; sdkVersion/
   minHostVersion gating; `background.js` discovery alongside
   `index.html`.
+- **Update `sdk/example-miniapp/miniapp.json`** to add `entry`,
+  `sdkVersion`, `minHostVersion` fields (Appendix A) — this app is
+  the canonical fixture and must match the new schema before
+  Phase 5's scaffolder rewrite ships.
+- **`buildProjectZip` contract change:** today the zip pipeline
+  walks `dist/` flat. New contract walks `dist/background.js` plus
+  `dist/ui/` recursively, preserves the `dist/ui/` prefix.
+  Document both in the function's TSDoc and add a unit test for
+  the new layout.
+
+**Android within Phase 4.** `AppRegistry.ts` is platform-agnostic
+TypeScript — the install path / unzip / on-disk layout (under
+`Documents/lmas/` on iOS, `getFilesDir()/lmas/` on Android — same
+relative tree) is identical across platforms. Verify the Android
+unzip path resolves the same `dist/background.js` + `dist/ui/`
+discovery as iOS.
 
 **Out of scope for V1, deferred:**
 - Ed25519 signature verification (no store, all bundles are
@@ -1816,17 +1949,23 @@ two-layer template.
   `src/ui/index.tsx`, `src/shared/channels.ts`. Two-output build.
   Scaffolder logic at `sdk/create-mentra-miniapp/bin/index.ts`
   (149 LoC) survives — only template files change.
-- Restructure `sdk/example-miniapp/` (entire React SPA) into
-  two-layer. Existing React components are reusable as the basis
-  for the UI half but `useSession`/`MentraProvider` need new
-  implementations that wrap the message bus rather than the
-  in-WebView `MiniappSession`.
-- Documentation: SDK reference, tutorial, **migration guide for
-  existing local miniapps that were built against the
-  pre-two-layer SDK (compatibility shim — single-bundle manifests
-  treated as WebView-only). Mintlify docs site exists at
-  `docs/docs.json` and `cloud/docs/docs.json`. Realistic doc effort:
-  3-5 days.
+- Restructure `sdk/example-miniapp/` per **Appendix A** (entire
+  React SPA migration). The new `MentraProvider` and `useSession`
+  implementations live in `@mentra/miniapp/ui` and wrap the message
+  bus rather than the in-WebView `MiniappSession` (which goes
+  away on the UI side). New `useChannel<T>(name)` hook is the
+  primary read path for state pushed by background.
+- Documentation: SDK reference, tutorial, **rewrite the existing
+  Mintlify docs** at `docs/docs.json` (and `cloud/docs/docs.json`
+  if it overlaps) to describe the two-layer model. Greenfield —
+  no compat shim or migration guide for legacy single-bundle apps,
+  per the "no installed base" decision. Realistic doc effort: 3-5
+  days. Doc updates that cross multiple phases (e.g. permission
+  model, signing) get scheduled in the phase that lands the
+  feature, not lumped here.
+
+**Android within Phase 5.** None — `@mentra/miniapp/{background,ui}`
+is platform-agnostic JS. Same package serves both platforms.
 
 ### Phase 6 — Operations (~2 weeks)
 
@@ -1848,12 +1987,18 @@ in V1 → no kill switch needed; no upload UI / signing UI / crash
 dashboard / engagement metrics needed. These come back when we ship
 the store.
 
-### Total: ~17 weeks mobile, no cloud work for V1
+**Android within Phase 6.** Crash recovery state machine and
+telemetry mirror in Kotlin's `JSCRuntime.kt`. Same Sentry SDK
+(`@sentry/react-native`) ships unified events across platforms;
+no Android-specific tag work needed.
 
-Phases 0-6 sequential: 1.5 + 3 + 3 + 4 + 1.5 + 2 + 2 = **17 weeks**.
-With one engineer; ~10-12 weeks calendar time with two engineers
-working Phases 0/Phase 1 in parallel and Phase 4/Phase 5 in parallel
-later.
+### Total: ~17 weeks mobile (iOS leading), Android lags by ~2 weeks
+
+Phases 0-6 iOS sequential: 1.5 + 3 + 3 + 4 + 1.5 + 2 + 2 = **17 weeks**.
+Phase 1 Android adds **3-5 weeks** for the JNI work. With one
+engineer doing both platforms sequentially: ~22 weeks total. With
+two engineers parallelizing iOS and Android JSC from Phase 1
+onward: ~17-19 weeks calendar time.
 
 V1 has **zero cloud work**. The CLI's `bun mentra-miniapp release`
 flow already serves bundles over LAN HTTP + QR (existing,
@@ -1883,6 +2028,206 @@ When the store ships later, we'll need:
 - Cloud-side dual-write during migration window
 
 Out of scope for the V1 doc.
+
+---
+
+## Appendix A — `sdk/example-miniapp/` migration, file by file
+
+The only existing miniapp in the repo. Migration here is the
+acceptance gate for "the SDK split is real" — if `bun mentra-miniapp
+dev` from the new template produces a working two-layer build of
+this app, the migration story works. Concrete file map below.
+
+### Today's structure (single React SPA, runs inside one WebView)
+
+```
+sdk/example-miniapp/
+├── miniapp.json                    # manifest
+├── src/
+│   ├── main.tsx                    # entry: instantiates GlassesController, mounts <App/>
+│   ├── App.tsx                     # React tree root
+│   ├── controller/
+│   │   └── GlassesController.ts    # session.* subscriptions, glasses logic (113 LoC)
+│   ├── store/
+│   │   └── appStore.ts             # zustand store (43 LoC) shared by controller + UI
+│   ├── pages/
+│   │   ├── Shell.tsx               # nav shell
+│   │   ├── CaptionsPage.tsx        # main UI
+│   │   └── tester/
+│   │       ├── _TesterRow.tsx      # shared row component
+│   │       ├── TesterMenu.tsx      # menu of testers
+│   │       └── 14 *Page.tsx files  # one per session.* iface (Display, IMU, Input,
+│   │                               # Led, Location, Microphone, Permissions, Phone,
+│   │                               # Speaker, Storage, System, Transcription,
+│   │                               # Translation, Glasses, ComingSoon)
+│   ├── ui/                         # shared UI components
+│   ├── lib/                        # (empty today)
+│   └── styles/, index.css, env.d.ts
+```
+
+### Target structure (two-layer)
+
+```
+sdk/example-miniapp/
+├── miniapp.json                    # manifest — adds entry{} object,
+│                                   #   sdkVersion, minHostVersion fields
+├── src/
+│   ├── background.ts               # NEW entry — replaces main.tsx role on
+│   │                               #   the JSContext side. Re-exports
+│   │                               #   GlassesController logic.
+│   ├── ui/
+│   │   ├── index.html              # NEW WebView entry
+│   │   ├── main.tsx                # WebView entry — mounts <App/>
+│   │   ├── App.tsx                 # MOVED from src/App.tsx (unchanged)
+│   │   ├── pages/                  # MOVED — same files, new home
+│   │   ├── components/             # was src/ui/
+│   │   ├── hooks/
+│   │   │   └── useChannel.ts       # NEW thin wrapper over `mentra.on/send`
+│   │   └── styles/, index.css
+│   └── shared/
+│       ├── channels.ts             # NEW — typed channel registry
+│       │                           #   (TS interface for every name on
+│       │                           #   `mentra.send`/`session.ui.send`)
+│       └── types.ts                # NEW — domain types referenced by both
+│                                   #   sides (TranscriptionEvent shape, etc.)
+```
+
+### File-by-file changes
+
+**`src/controller/GlassesController.ts` → `src/background.ts`.**
+Already shaped correctly for the new world (it already documents
+"Subscriptions are bound to the session lifetime, NOT to any React
+component lifecycle" — this is exactly the JSContext model).
+Concrete changes:
+1. Replace `import {useAppStore} from "../store/appStore"` — zustand
+   does not cross the JSContext/WebView boundary. State that the UI
+   needs is published via `session.ui.send(channel, payload)`.
+   The local copy lives only in WebView memory.
+2. Add an `init(session)` entry point exported from the module top
+   level. The runtime will call this once after spawn (via a
+   `__deliver({event: "init", session})` injection — see the
+   "Spawn" section).
+3. Where the controller wrote to `appStore`, instead emit a UI
+   channel: e.g. `appStore.setTranscript(t)` becomes
+   `session.ui.send("transcript", {text: t})`.
+4. Where the controller exposed imperative methods that React called
+   (e.g. `controller.startCaptions()`), become
+   `session.ui.on("startCaptions", () => { ... })` handlers.
+
+**`src/store/appStore.ts`** — does not move directly. The store is
+WebView-side only (zustand mounted in the React tree). The
+background.ts side has no `useAppStore`; it owns the canonical state
+in plain TS variables and persists via `session.storage`. The
+WebView's zustand store is a *cache* of what the background just
+sent, hydrated on `mentra.ready()` from a one-shot
+`session.ui.send("snapshot", {...})` call.
+
+**`src/main.tsx` → `src/ui/main.tsx`.** Drop the
+`new GlassesController(session)` call (background owns it now). New
+entry calls `mentra.ready()` and subscribes to `mentra.on(...)` for
+each channel. ~15 lines.
+
+**`src/App.tsx`, `src/pages/`, `src/ui/`** — moved under `src/ui/`
+unchanged. React tree is identical; only the *source of data*
+changes. Replace `useAppStore(s => s.transcript)` with a
+`useChannel<TranscriptPayload>("transcript")` hook (new, ~20 LoC,
+lives in `src/ui/hooks/useChannel.ts`). The hook reads from the
+WebView-local zustand cache that the new entry hydrates from
+`mentra.on("transcript", ...)`.
+
+**`src/pages/tester/*Page.tsx` (15 files including `_TesterRow.tsx`
+and `TesterMenu.tsx`).** Each tester page today calls `session.*`
+directly (per the explicit exception in `GlassesController.ts:15`).
+After migration, **none of them can.** Three options per page:
+
+- **(a) Mostly read-only testers** (Permissions, Storage,
+  Transcription, IMU, Location, Microphone, System): page sends a
+  `mentra.send("tester:start", {iface: "imu"})`; background opens
+  the relevant subscription, pipes events back via
+  `mentra.send("tester:event", {iface, payload})`. Page renders
+  what it sees. ~30 LoC delta per tester.
+- **(b) Fire-and-forget testers** (Display, Led, Speaker, Phone):
+  page calls `mentra.send("tester:fire", {iface, method, args})`;
+  background dispatches to `session[iface][method](...args)`.
+  ~10 LoC delta per tester (one shared handler).
+- **(c) Pure UI testers** (TesterMenu, _TesterRow, ComingSoon):
+  unchanged.
+
+Roll-up estimate: 3 fire-and-forget pages × 10 LoC + 7 read-only
+× 30 LoC + 5 unchanged = ~240 LoC of tester-side delta plus a
+~50 LoC dispatcher handler in `background.ts`. ~2-3 days work
+for one engineer.
+
+**`miniapp.json`.** Add fields per the new schema:
+```json
+{
+  "sdkVersion": "0.2.0",
+  "minHostVersion": "1.42.0",
+  "entry": {
+    "background": "dist/background.js",
+    "ui": "dist/ui/index.html"
+  }
+}
+```
+All existing fields kept.
+
+**Build config.** Today's miniapp uses a single bundler config
+(likely `vite.config.ts`). Phase 4 of `sdk/miniapp-cli/src/pack.ts`
+emits two outputs; the example app gets two `vite.config.*.ts`
+files (one for `background`, one for `ui`) or a single config with
+`build.lib.entry` mapping. Example template owns the canonical shape.
+
+### Acceptance test for the example-app migration
+
+The migration is "done" when:
+1. `bun create mentra-miniapp my-app` produces a scaffold matching
+   the target structure above.
+2. `bun mentra-miniapp dev` in `sdk/example-miniapp/` builds both
+   `dist/background.js` and `dist/ui/`, serves over LAN, and the
+   QR-code install on a real device:
+   - Spawns a JSContext, runs `init(session)`, glasses display
+     starts working *before* the user opens the WebView.
+   - Opens the WebView via app-tile tap; transcripts flow into the
+     WebView's UI in real time.
+   - Tester pages all behave identically to today.
+3. Background survives going off-screen for >5 minutes (was the
+   original jetsam motivation).
+
+---
+
+## Appendix B — SDK + CLI migration checklist
+
+In addition to the example app, these shipped artifacts move:
+
+- **`sdk/create-mentra-miniapp/bin/index.ts` + template** —
+  scaffolder; rewrite template per Appendix A target structure.
+  ~150 LoC scaffolder logic untouched (clack prompts, validation);
+  template files swap. (Phase 5.)
+- **`sdk/miniapp-cli/`** — see Phase 4 file list. Drop `user-server.ts`
+  Express-spawning path entirely; `dev.ts` orchestrates background
+  bundler + UI bundler + dev-server.ts WebSocket only. (Phase 4.)
+- **`@mentra/miniapp` package.json `exports`** — gain
+  `./background` and `./ui` sub-paths; the bare `@mentra/miniapp`
+  import is removed. Greenfield, no compat shim. (Phase 5.)
+- **Docs** (`docs/miniapp-*.md` if they exist; `sdk/example-miniapp/
+  README.md`; `sdk/miniapp-cli/README.md`): rewrite. (Phase 5 +
+  ongoing across phases as APIs stabilize — schedule a doc-update
+  line item in each phase that lands a public-surface change.)
+- **Tests in `sdk/miniapp-cli/tests/` and `mobile/test/`** — current
+  suite asserts single-bundle behavior; rewrite to assert two-output
+  bundle. (Phases 3-6 each include test updates for code they touch;
+  no separate "tests phase" — tests ship with the code.)
+
+### Could an agent execute this migration end-to-end?
+
+Now: yes — the file mapping is concrete, the channel boundary is
+specified, and acceptance criteria are testable. The two judgment
+calls an agent will face are:
+1. Picking option (a) vs (b) for each tester page — Appendix A
+   gives the heuristic ("mostly read-only" vs "fire-and-forget").
+2. Whether to keep zustand on the WebView side or replace with
+   plain `useState`/context. Either is fine; spec recommends keeping
+   zustand purely as a WebView-local cache (no boundary crossing).
 
 ---
 
