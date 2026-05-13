@@ -1,2 +1,0 @@
-bleak>=0.20.0
-asyncio-mqtt>=0.11.0
