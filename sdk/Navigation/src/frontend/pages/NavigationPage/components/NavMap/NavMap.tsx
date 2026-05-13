@@ -583,6 +583,19 @@ export function NavMap({
         <div className="absolute inset-0 flex items-center justify-center bg-neutral-100 text-neutral-500 text-[13px]">
           loading map…
         </div>
+      ) : !me && !destination ? (
+        // Map is ready but we have no real position yet — it would be
+        // centered on the SF fallback coords for ~1s until the first GPS
+        // fix arrives. Cover with a spinner so the user doesn't see the
+        // jarring "wrong city" snap. Disappears once `me` lands; the
+        // existing panTo effect has already moved the map underneath.
+        <div className="absolute inset-0 flex items-center justify-center bg-neutral-100">
+          <div
+            className="w-8 h-8 rounded-full border-[3px] border-neutral-300 border-t-neutral-700 animate-spin"
+            role="status"
+            aria-label="Finding your location"
+          />
+        </div>
       ) : null}
 
 

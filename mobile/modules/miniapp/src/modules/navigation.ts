@@ -8,11 +8,30 @@
  * the trip lifecycle. The SDK module is a thin pass-through over the
  * bridge.
  *
- * Android only on the phone side. iOS calls return ok=false at the native
- * layer.
+ * ## Platform support
+ *
+ * - **Android** — fully supported. `start`, `stop`, `computeRoute`,
+ *   `onUpdate`, `onRoute`, `onPivot`, and the `dev.*` simulator helpers
+ *   all work on real GPS and simulated trips.
+ * - **iOS** — partial. The trip lifecycle currently returns
+ *   `{ok: false, error: ...}` and the `dev.*` helpers return the same.
+ *   Callers should treat the trip-level methods as may-fail and surface
+ *   the error string rather than assuming success.
+ *
+ * ## Error contract
+ *
+ * Every method that returns a `Promise` resolves with an `{ok, error?}`
+ * shape — no method throws synchronously for missing-permission or
+ * other reachable failures. Wrap a single `if (!result.ok)` check
+ * around any call instead of mixing `try/catch` with `result.ok`.
+ *
+ * ## Maneuver vocabulary
+ *
+ * All maneuver-typed fields use the `ManeuverKind` literal union so
+ * typos like `"CROSS_STRET"` fail at compile time.
  */
 
-import {MiniappErrorCode, MiniappRequestType, MiniappStreamType} from "../protocol"
+import {MiniappRequestType, MiniappStreamType} from "../protocol"
 import {MiniappSession} from "../session"
 import type {LocationData, UnsubscribeFn} from "./events"
 import {PivotEngine} from "./pivots/engine"
@@ -21,6 +40,35 @@ export type LatLng = {lat: number; lng: number}
 
 /** How the user is travelling. Drives routing + maneuver vocabulary. */
 export type TravelMode = "walking" | "driving" | "cycling" | "two_wheeler"
+
+/**
+ * The complete categorical vocabulary the SDK uses for a maneuver. All
+ * fields typed `ManeuverKind` (NavManeuver.maneuverType, Pivot.maneuver,
+ * NavStep.maneuver, NavRouteStep.maneuver) use exactly this set so a
+ * developer who typos a string gets a compile error instead of a runtime
+ * surprise.
+ *
+ * - The "TURN_*" / "SLIGHT_*" / "SHARP_*" / "U_TURN" / "STRAIGHT" /
+ *   "CONTINUE" / "NAME_CHANGE" / "DEPART" / "ARRIVE" set comes from the
+ *   underlying Google Nav SDK + Routes API.
+ * - "CROSS_STREET" is SDK-synthesized — the pivot engine detects
+ *   crosswalk legs in the route geometry and surfaces them as a
+ *   first-class maneuver so glasses HUDs can prompt the user to cross.
+ */
+export type ManeuverKind =
+  | "STRAIGHT"
+  | "CONTINUE"
+  | "SLIGHT_LEFT"
+  | "SLIGHT_RIGHT"
+  | "TURN_LEFT"
+  | "TURN_RIGHT"
+  | "SHARP_LEFT"
+  | "SHARP_RIGHT"
+  | "U_TURN"
+  | "NAME_CHANGE"
+  | "DEPART"
+  | "ARRIVE"
+  | "CROSS_STREET"
 
 /** Optional routing preferences. All flags default to false. */
 export type RouteAvoidances = {
@@ -32,14 +80,11 @@ export type RouteAvoidances = {
 export type NavManeuver = {
   kind: "maneuver"
   /**
-   * Categorical type of the upcoming maneuver. One of: STRAIGHT,
-   * SLIGHT_LEFT, SLIGHT_RIGHT, TURN_LEFT, TURN_RIGHT, SHARP_LEFT,
-   * SHARP_RIGHT, U_TURN, ARRIVE, CROSS_STREET.
-   * CROSS_STREET is SDK-synthesized: the engine detects crosswalk legs
-   * in the route geometry and surfaces them as first-class maneuvers
-   * so glasses HUDs can prompt the user to cross.
+   * Categorical type of the upcoming maneuver. See `ManeuverKind` for
+   * the full vocabulary. The discriminated union forces callers to
+   * handle the cases they care about and catches typos at compile time.
    */
-  maneuverType: string
+  maneuverType: ManeuverKind
   /** Distance in meters from the user's current position to that maneuver. -1 if unknown. */
   distanceMeters: number
   /**
@@ -164,7 +209,7 @@ export type Pivot = {
    * Engine's categorical maneuver. Kept for icon selection in
    * consumer UIs. Vocabulary matches `NavManeuver.maneuverType`.
    */
-  maneuver: string
+  maneuver: ManeuverKind
   /** Meters from trip start to this pivot, along the route. */
   distanceAlongRouteMeters: number
   /**
@@ -213,14 +258,27 @@ export type NavStep = {
    */
   road?: string | null
   /**
-   * Categorical maneuver performed at the END of this step. Same
-   * vocabulary as `NavManeuver.maneuverType`: STRAIGHT, SLIGHT_LEFT,
-   * SLIGHT_RIGHT, TURN_LEFT, TURN_RIGHT, SHARP_LEFT, SHARP_RIGHT,
-   * U_TURN, ARRIVE.
+   * Categorical maneuver performed at the END of this step. See
+   * `ManeuverKind` for the full vocabulary.
    */
-  maneuver: string
+  maneuver: ManeuverKind
   /** Length of this step in meters. */
   distanceMeters: number
+}
+
+/**
+ * The shape returned by `navigation.dev`. Surfaced as an exported type
+ * so consumers writing wrapper utilities (the demo Navigation miniapp's
+ * `NavigationManager` wrapper, for example) can reference it without
+ * inlining the method signatures.
+ */
+export type NavigationDev = {
+  /** See `NavigationModule.dev.deviate`. */
+  deviate(offsetMeters?: number): void
+  /** See `NavigationModule.dev.setWrongSidewalkOffset`. */
+  setWrongSidewalkOffset(enabled: boolean): void
+  /** See `NavigationModule.dev.setSkipCrossings`. */
+  setSkipCrossings(enabled: boolean): void
 }
 
 export type StartNavigationOptions = {
@@ -324,11 +382,10 @@ export type ComputedRouteStep = {
   /** Length of this step in meters. */
   distanceMeters: number
   /**
-   * Routes API maneuver enum (e.g. "TURN_LEFT", "TURN_RIGHT", "STRAIGHT",
-   * "DEPART", "DESTINATION"). Missing when the engine didn't classify
-   * the step (e.g. very short or unnamed segments).
+   * Categorical maneuver, see `ManeuverKind`. Missing when the engine
+   * didn't classify the step (e.g. very short or unnamed segments).
    */
-  maneuver?: string
+  maneuver?: ManeuverKind
   /**
    * Full natural-language instruction (e.g. "Turn left onto Fell St").
    * Comes straight from the Routes API; no client-side parsing.
@@ -375,16 +432,18 @@ export class NavigationModule {
    * immediately with `{accepted: true}` when the user has already
    * accepted (cached in-process / on-disk).
    *
-   * Throws `{code: PERMISSION_NOT_DECLARED}` synchronously if the miniapp
-   * manifest is missing the LOCATION permission, since the host would
-   * reject anyway.
+   * Always resolves; never throws. Check `result.ok` and
+   * `result.accepted`. If the miniapp manifest is missing the LOCATION
+   * permission the call resolves with `{ok: false, accepted: false,
+   * error: "..."}` so a single error-handling path covers all failures.
    */
   requestPermission(): Promise<NavPermissionResult> {
     if (!this.hasPermission) {
-      throw {
-        code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
-        message: "LOCATION permission not declared in miniapp.json (required for navigation.requestPermission).",
-      }
+      return Promise.resolve({
+        ok: false,
+        accepted: false,
+        error: "LOCATION permission not declared in miniapp.json (required for navigation.requestPermission).",
+      })
     }
     return this.session.sendRequest<NavPermissionResult>({
       type: MiniappRequestType.NAVIGATION_REQUEST_PERMISSION,
@@ -399,16 +458,16 @@ export class NavigationModule {
    * was successfully built. Listen via `onUpdate(...)` for the actual nav
    * events.
    *
-   * Throws `{code: PERMISSION_NOT_DECLARED}` synchronously if the miniapp
-   * manifest is missing the LOCATION permission. The host would reject the
-   * same way, but failing fast saves a round trip.
+   * Always resolves; never throws. Permission errors, missing stops,
+   * and host rejections all come back through `{ok: false, error}` so
+   * a single error path covers every failure mode.
    */
   start(opts: StartNavigationOptions): Promise<{ok: boolean; error?: string}> {
     if (!this.hasPermission) {
-      throw {
-        code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
-        message: "LOCATION permission not declared in miniapp.json (required for navigation.start).",
-      }
+      return Promise.resolve({
+        ok: false,
+        error: "LOCATION permission not declared in miniapp.json (required for navigation.start).",
+      })
     }
     const stops = normalizeStops(opts)
     const mode = opts.mode ?? "driving"
@@ -433,67 +492,123 @@ export class NavigationModule {
     })
   }
 
-  /** Stop the active navigation session (if any). Fire-and-forget. */
+  /**
+   * Stop the active navigation session. Safe to call when no trip is
+   * running — the host treats it as a no-op. Fire-and-forget; the call
+   * does not resolve a status because the simulator-pause / nav-SDK-
+   * teardown sequence is sync on the host. Also detaches pivot
+   * tracking, so any `onPivot(...)` listeners attached for the active
+   * trip stop firing after this returns.
+   *
+   * @example
+   *   const result = await user.navigation.start({...})
+   *   if (result.ok) {
+   *     // ...
+   *     user.navigation.stop()
+   *   }
+   */
   stop(): void {
     this._detachPivotTracking()
     this.session.sendOneShot({type: MiniappRequestType.NAVIGATION_STOP})
   }
 
   /**
-   * Dev-only: nudge the simulator perpendicular to the route by ~`offsetMeters`
-   * so the Nav SDK detects an off-route condition and reroutes. Useful for
-   * testing the reroute pipeline without physically walking off-path.
-   * Default 20m. Android (simulated trips) only — iOS / real GPS is a no-op.
-   * Fire-and-forget.
+   * Dev-only helpers, namespaced so production consumers can't tab-
+   * complete into them accidentally. The getter also throws when
+   * `process.env.NODE_ENV === "production"` so a release build that
+   * forgot to remove a `navigation.dev.*` call fails loudly rather
+   * than silently kicking the simulator.
+   *
+   * Every method here is Android (simulated trips) only. iOS returns
+   * `{ok: false, error: "Not implemented on iOS"}` at the bridge layer.
+   *
+   * @example
+   *   if (process.env.NODE_ENV !== "production") {
+   *     user.navigation.dev.deviate(50) // skip the next turn
+   *   }
    */
-  deviate(offsetMeters: number = 20): void {
-    this.session.sendOneShot({
-      type: MiniappRequestType.NAVIGATION_DEVIATE,
-      offsetMeters,
-    })
+  get dev(): NavigationDev {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "navigation.dev is unavailable in production builds. " +
+          "Gate dev calls behind `if (process.env.NODE_ENV !== \"production\")`.",
+      )
+    }
+    return {
+      /**
+       * Nudge the simulator ~`offsetMeters` perpendicular to the route
+       * so the Nav SDK detects an off-route condition and reroutes.
+       * Default 20m. Fire-and-forget.
+       */
+      deviate: (offsetMeters: number = 20): void => {
+        this.session.sendOneShot({
+          type: MiniappRequestType.NAVIGATION_DEVIATE,
+          offsetMeters,
+        })
+      },
+      /**
+       * Toggle: lock simulated locations to the wrong sidewalk (~8m
+       * perpendicular to the route bearing). Lets us verify the
+       * along-path pivot trigger fires even when the user never comes
+       * within the 7m radius of a pivot point.
+       */
+      setWrongSidewalkOffset: (enabled: boolean): void => {
+        this.session.sendOneShot({
+          type: MiniappRequestType.NAVIGATION_SET_WRONG_SIDEWALK,
+          enabled,
+        })
+      },
+      /**
+       * Toggle: take over from Google's simulator and walk a polyline
+       * with crossing micro-steps removed. Reproduces the
+       * pedestrian-ignores-crosswalk scenario for missed-turn testing.
+       */
+      setSkipCrossings: (enabled: boolean): void => {
+        this.session.sendOneShot({
+          type: MiniappRequestType.NAVIGATION_SET_SKIP_CROSSINGS,
+          enabled,
+        })
+      },
+    }
   }
 
   /**
-   * Dev-only toggle: lock simulated locations to the wrong sidewalk
-   * (~8m perpendicular to the route bearing) so we can test pivot
-   * triggering for pedestrians who never come within the 7m point
-   * radius. Android (simulated trips) only — iOS / real GPS is a no-op.
-   * Fire-and-forget.
-   */
-  setWrongSidewalkOffset(enabled: boolean): void {
-    this.session.sendOneShot({
-      type: MiniappRequestType.NAVIGATION_SET_WRONG_SIDEWALK,
-      enabled,
-    })
-  }
-
-  /**
-   * Dev-only toggle. When enabled mid-trip, the simulator stops
-   * following Google's planned route and instead walks a polyline with
-   * crossing micro-steps removed — reproducing a pedestrian who
-   * ignores cross-the-street instructions. Android (simulated trips)
-   * only — iOS / real GPS is a no-op. Fire-and-forget.
-   */
-  setSkipCrossings(enabled: boolean): void {
-    this.session.sendOneShot({
-      type: MiniappRequestType.NAVIGATION_SET_SKIP_CROSSINGS,
-      enabled,
-    })
-  }
-
-  /**
-   * Subscribe to live navigation updates. Returns an unsubscribe function.
-   * Maneuvers, off-route, rerouting, arrival, and errors all arrive
-   * through this single stream — discriminate by `update.kind`.
+   * Subscribe to live navigation updates. Returns an unsubscribe
+   * function — call it to stop receiving events. All five trip-state
+   * events (maneuver / off_route / rerouting / arrived / error) flow
+   * through this single stream as a discriminated union. Narrow on
+   * `update.kind` to pick the case you care about; TypeScript will
+   * tell you when you've missed one.
+   *
+   * @example
+   *   const unsub = user.navigation.onUpdate((u) => {
+   *     switch (u.kind) {
+   *       case "maneuver":   showCard(u.maneuverType, u.distanceMeters); break
+   *       case "off_route":  console.warn("off route by", u.offRouteDistanceMeters, "m"); break
+   *       case "rerouting":  setStatus("rerouting"); break
+   *       case "arrived":    setStatus("arrived"); break
+   *       case "error":      console.error(u.message); break
+   *     }
+   *   })
+   *   // later — when the component unmounts or the trip ends
+   *   unsub()
    */
   onUpdate(handler: (update: NavUpdate) => void): UnsubscribeFn {
     return this.session._subscribe(MiniappStreamType.NAVIGATION_UPDATE, handler as (data: unknown) => void)
   }
 
   /**
-   * Subscribe to the active route polyline. Fires once per route build —
-   * the full path is delivered each time, not a diff. Use this to draw
-   * the route on a map.
+   * Subscribe to the active route polyline. Fires once per route build
+   * (initial route + every reroute), delivering the full path each
+   * time — not a diff. Use this to draw the route on a map. Returns an
+   * unsubscribe function.
+   *
+   * @example
+   *   const unsub = user.navigation.onRoute((route) => {
+   *     map.setPolyline(route.points)
+   *     console.log("route is", route.totalDistanceMeters, "m")
+   *   })
+   *   return unsub // e.g. from useEffect's cleanup
    */
   onRoute(handler: (route: NavRoute) => void): UnsubscribeFn {
     return this.session._subscribe(MiniappStreamType.NAVIGATION_ROUTE, handler as (data: unknown) => void)
@@ -515,15 +630,15 @@ export class NavigationModule {
    * Compute a route without starting a trip. Resolves with the primary
    * route plus any alternates the engine produced (up to `alternatives`).
    *
-   * Throws `{code: PERMISSION_NOT_DECLARED}` synchronously if LOCATION is
-   * missing from the manifest.
+   * Always resolves; never throws. Permission errors come back through
+   * `{ok: false, error}` so a single error path covers every failure.
    */
   computeRoute(opts: ComputeRouteOptions): Promise<ComputeRouteResult> {
     if (!this.hasPermission) {
-      throw {
-        code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
-        message: "LOCATION permission not declared in miniapp.json (required for navigation.computeRoute).",
-      }
+      return Promise.resolve({
+        ok: false,
+        error: "LOCATION permission not declared in miniapp.json (required for navigation.computeRoute).",
+      })
     }
     return this.session.sendRequest<ComputeRouteResult>({
       type: MiniappRequestType.NAVIGATION_COMPUTE_ROUTE,

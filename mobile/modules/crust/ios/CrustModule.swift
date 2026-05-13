@@ -115,16 +115,14 @@ public class CrustModule: Module {
             return ["ok": true]
         }
 
-        // No-op stub on iOS — Android implements the wrong-sidewalk dev
-        // toggle today. iOS will follow in a separate pass.
+        // iOS doesn't implement the dev toggles yet. Return an explicit
+        // error so the JS side can surface "not supported" instead of
+        // silently believing the call succeeded.
         AsyncFunction("setWrongSidewalkOffset") { (_: Bool) -> [String: Any] in
-            return ["ok": true]
+            return ["ok": false, "error": "Not implemented on iOS"]
         }
-
-        // No-op stub on iOS — Android implements the skip-crossings dev
-        // walker today. iOS will follow in a separate pass.
         AsyncFunction("setSkipCrossings") { (_: Bool) -> [String: Any] in
-            return ["ok": true]
+            return ["ok": false, "error": "Not implemented on iOS"]
         }
 
         AsyncFunction("startHeading") { () -> [String: Any] in

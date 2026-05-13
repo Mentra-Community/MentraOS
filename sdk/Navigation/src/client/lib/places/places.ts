@@ -28,6 +28,14 @@ export type PlaceDetails = {
   address: string
   /** User-defined label when saved as a favorite or custom place */
   savedName?: string
+  /**
+   * True while a reverse-geocode is in flight for a dropped pin. The
+   * `name` / `address` fields are placeholders (raw lat/lng) until this
+   * flips back to false. UI consumers render a skeleton while this is
+   * true so the user doesn't see the bare coordinates flash on screen
+   * before the real address lands.
+   */
+  isGeocoding?: boolean
 }
 
 /**

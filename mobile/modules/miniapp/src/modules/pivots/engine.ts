@@ -21,7 +21,7 @@
  * subscription. Keeps this class pure-state with no side effects.
  */
 
-import type {LatLng, NavRoute, NavStep, Pivot, PivotEvent, PivotOptions, TravelMode} from "../navigation"
+import type {LatLng, ManeuverKind, NavRoute, NavStep, Pivot, PivotEvent, PivotOptions, TravelMode} from "../navigation"
 import {
   bearingDeg,
   cumulativeDistances,
@@ -488,7 +488,7 @@ function buildStepIndex(steps: NavStep[]): NavStep[] {
 type MatchedStep = {
   fromRoad: string | null
   toRoad: string | null
-  maneuver: string
+  maneuver: ManeuverKind
 }
 
 /**

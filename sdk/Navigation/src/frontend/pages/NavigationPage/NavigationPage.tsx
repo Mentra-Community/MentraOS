@@ -459,7 +459,11 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
 
   function handleDeviate() {
     append("deviate → +50m off-route")
-    navigation.deviate(50)
+    // Gate dev-only calls so a production build doesn't accidentally
+    // call into navigation.dev (which throws in production).
+    if (isDev) {
+      navigation.dev.deviate(50)
+    }
   }
 
   // Long-press on the map drops a destination pin at the pressed coord.
@@ -480,6 +484,11 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
       lng: coord.lng,
       name: coordStr,
       address: "Dropped pin",
+      // Flag the pin as awaiting geocoding so the preview drawer
+      // renders a skeleton instead of the placeholder strings — avoids
+      // the 1-2s flash of bare lat/lng coords before the real address
+      // lands.
+      isGeocoding: true,
     }
     append(`dropped pin @ ${coordStr}`)
     setDestination(pin)
@@ -489,23 +498,33 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     // subtitle (address) so the preview card reads like
     //   100 Van Ness Ave
     //   37.795600, -122.393300
-    // If geocoding fails or returns nothing, the original coord-as-name
-    // pin keeps showing.
+    // If geocoding fails or returns nothing, fall back to coord-as-name.
+    // Either way we clear `isGeocoding` so the skeleton stops showing.
+    const finalize = (next: Partial<PlaceDetails>) => {
+      // Only apply the upgrade if the same pin is still selected —
+      // user may have dropped another one in the meantime.
+      setDestination((prev) =>
+        prev && prev.placeId === pinId ? {...prev, ...next, isGeocoding: false} : prev,
+      )
+    }
     const g = (window as any).google
     if (g?.maps?.Geocoder) {
       try {
         const geocoder = new g.maps.Geocoder()
         geocoder.geocode({location: {lat: coord.lat, lng: coord.lng}}, (results: any[], status: string) => {
-          if (status !== "OK" || !results || results.length === 0) return
-          const formatted = results[0]?.formatted_address
-          if (!formatted) return
-          // Only apply the upgrade if the same pin is still selected —
-          // user may have dropped another one in the meantime.
-          setDestination((prev) => (prev && prev.placeId === pinId ? {...prev, name: formatted, address: coordStr} : prev))
+          const formatted = status === "OK" && results?.[0]?.formatted_address
+          if (formatted) {
+            finalize({name: formatted, address: coordStr})
+          } else {
+            finalize({})
+          }
         })
       } catch (err) {
         console.warn("[NAV-MINI] reverse-geocode failed:", err)
+        finalize({})
       }
+    } else {
+      finalize({})
     }
   }
 
@@ -674,7 +693,9 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                 onClick={() => {
                   const next = !wrongSidewalk
                   setWrongSidewalk(next)
-                  navigation.setWrongSidewalkOffset(next)
+                  if (isDev) {
+                    navigation.dev.setWrongSidewalkOffset(next)
+                  }
                   append(`wrong-sidewalk offset → ${next ? "on" : "off"}`)
                 }}
                 className={`w-full mt-2 px-3 py-2.5 rounded-xl text-sm font-semibold border border-dashed ${
@@ -690,7 +711,9 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                 onClick={() => {
                   const next = !skipCrossings
                   setSkipCrossings(next)
-                  navigation.setSkipCrossings(next)
+                  if (isDev) {
+                    navigation.dev.setSkipCrossings(next)
+                  }
                   append(`skip-crossings → ${next ? "on" : "off"}`)
                 }}
                 className={`w-full mt-2 px-3 py-2.5 rounded-xl text-sm font-semibold border border-dashed ${

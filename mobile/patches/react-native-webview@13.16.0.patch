@@ -1,0 +1,55 @@
+diff --git a/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java b/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
+index 80c68034b193a47bedb56ca527352de9548e8ac6..33471a5f6cb95175024753a2f802cd586edf7e9c 100644
+--- a/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
++++ b/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
+@@ -109,12 +109,48 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+ 
+     @Override
+     public void onHostResume() {
+-        // do nothing
++        // MentraOS patch: explicit resume keeps the WebView's JS scheduler
++        // running across host lifecycle transitions.
++        android.util.Log.d("MentraOSWebView", "onHostResume — forcing resume");
++        onResume();
++        resumeTimers();
+     }
+ 
+     @Override
+     public void onHostPause() {
+-        // do nothing
++        // MentraOS patch: do NOT propagate the host pause to the WebView.
++        // Local miniapps must keep rendering and emitting display updates
++        // even when the host activity is hidden (lock screen, recents),
++        // because the glasses are still attached and the foreground
++        // service is still running.
++        android.util.Log.d("MentraOSWebView", "onHostPause — forcing resume instead");
++        onResume();
++        resumeTimers();
++    }
++
++    @Override
++    protected void onWindowVisibilityChanged(int visibility) {
++        // MentraOS patch: lie to Chromium about window visibility. The WebView's
++        // internal JS scheduler pauses when its window goes INVISIBLE/GONE.
++        android.util.Log.d("MentraOSWebView", "onWindowVisibilityChanged real=" + visibility + " — reporting VISIBLE");
++        super.onWindowVisibilityChanged(View.VISIBLE);
++        onResume();
++        resumeTimers();
++    }
++
++    @Override
++    public void dispatchWindowVisibilityChanged(int visibility) {
++        // MentraOS patch: belt-and-suspenders. The activity calls this when it
++        // transitions to STOPPED; force VISIBLE before super.
++        android.util.Log.d("MentraOSWebView", "dispatchWindowVisibilityChanged real=" + visibility + " — dispatching VISIBLE");
++        super.dispatchWindowVisibilityChanged(View.VISIBLE);
++    }
++
++    @Override
++    protected void onVisibilityChanged(View changedView, int visibility) {
++        // MentraOS patch: same logic for view-visibility (parent View hidden).
++        android.util.Log.d("MentraOSWebView", "onVisibilityChanged real=" + visibility + " — reporting VISIBLE");
++        super.onVisibilityChanged(changedView, View.VISIBLE);
+     }
+ 
+     @Override

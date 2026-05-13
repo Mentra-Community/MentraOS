@@ -55,14 +55,26 @@ export function DestinationPreviewDrawer({
       className="[font-synthesis:none] pointer-events-auto mx-auto max-w-md flex flex-col rounded-tl-[28px] rounded-tr-[28px] pb-8 gap-4 bg-[#FFFFFFB3] border-t border-t-solid border-t-[#FFFFFF99] [backdrop-filter:blur(40px)_saturate(180%)] [box-shadow:#0000001A_0px_-8px_28px] antialiased px-5">
       {destination ? (
         <>
-          {/* Name + address */}
+          {/* Name + address. Dropped pins start with `isGeocoding: true`
+              and placeholder strings (raw lat/lng); show a skeleton
+              while the reverse-geocoder is in flight to avoid flashing
+              the coords on screen for the 1-2s the API takes. */}
           <div className="flex flex-col pt-1 gap-1 mb-4">
-            <div className="tracking-[-0.02em] text-[#000000E6] font-sans font-semibold text-[22px]/7 truncate">
-              {destination.name || "Unnamed place"}
-            </div>
-            <div className="text-[#00000099] font-sans text-sm/4.5 truncate">
-              {destination.address}
-            </div>
+            {destination.isGeocoding ? (
+              <>
+                <div className="h-7 w-3/5 rounded-md bg-[#00000014] animate-pulse" />
+                <div className="h-4.5 w-2/5 rounded-md bg-[#00000014] animate-pulse mt-1.5" />
+              </>
+            ) : (
+              <>
+                <div className="tracking-[-0.02em] text-[#000000E6] font-sans font-semibold text-[22px]/7 truncate">
+                  {destination.name || "Unnamed place"}
+                </div>
+                <div className="text-[#00000099] font-sans text-sm/4.5 truncate">
+                  {destination.address}
+                </div>
+              </>
+            )}
           </div>
 
           {/* ETA + distance + arrival */}
