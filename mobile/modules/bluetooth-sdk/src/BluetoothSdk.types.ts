@@ -249,14 +249,68 @@ export type MicLc3Event = {
   lc3: ArrayBuffer
 }
 
-export type StreamStatusEvent = {
-  type: "stream_status"
-  [key: string]: any
-}
+export type StreamStatusLifecycleState = "initializing" | "streaming" | "stopping" | "stopped"
+export type StreamStatusReconnectState = "reconnecting" | "reconnected" | "reconnect_failed"
+export type StreamStatusState = StreamStatusLifecycleState | StreamStatusReconnectState | "error"
+
+export type StreamStatusEvent =
+  | {
+      type: "stream_status"
+      kind: "lifecycle"
+      status: StreamStatusLifecycleState
+      streamId?: string
+      timestamp?: number
+    }
+  | {
+      type: "stream_status"
+      kind: "reconnect"
+      status: "reconnecting"
+      streamId?: string
+      attempt: number
+      maxAttempts: number
+      reason: string
+      timestamp?: number
+    }
+  | {
+      type: "stream_status"
+      kind: "reconnect"
+      status: "reconnected"
+      streamId?: string
+      attempt: number
+      timestamp?: number
+    }
+  | {
+      type: "stream_status"
+      kind: "reconnect"
+      status: "reconnect_failed"
+      streamId?: string
+      maxAttempts: number
+      timestamp?: number
+    }
+  | {
+      type: "stream_status"
+      kind: "error"
+      status: "error"
+      streamId?: string
+      errorDetails: string
+      timestamp?: number
+    }
+  | {
+      type: "stream_status"
+      kind: "snapshot"
+      status: "streaming" | "reconnecting" | "stopped"
+      streaming: boolean
+      reconnecting: boolean
+      streamId?: string
+      attempt?: number
+      timestamp?: number
+    }
 
 export type KeepAliveAckEvent = {
   type: "keep_alive_ack"
-  [key: string]: any
+  streamId: string
+  ackId: string
+  timestamp?: number
 }
 
 export type MtkUpdateCompleteEvent = {

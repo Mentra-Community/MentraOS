@@ -1473,23 +1473,267 @@ public struct MentraPhotoResponseEvent: CustomStringConvertible {
     }
 }
 
-public struct MentraStreamStatusEvent: CustomStringConvertible {
-    public let values: [String: Any]
+public enum MentraStreamState: String, Equatable {
+    case initializing
+    case streaming
+    case stopping
+    case stopped
+    case reconnecting
+    case reconnected
+    case reconnectFailed = "reconnect_failed"
+    case error
+
+    fileprivate static func from(_ value: String?) -> MentraStreamState? {
+        switch value?.lowercased() {
+        case "initializing", "starting", "connecting":
+            return .initializing
+        case "streaming", "streaming_started", "active":
+            return .streaming
+        case "stopping":
+            return .stopping
+        case "stopped", "not_streaming", "disconnected", "timeout":
+            return .stopped
+        case "reconnecting":
+            return .reconnecting
+        case "reconnected":
+            return .reconnected
+        case "reconnect_failed":
+            return .reconnectFailed
+        case "error", "error_not_streaming":
+            return .error
+        default:
+            return nil
+        }
+    }
+}
+
+public enum MentraStreamStatusKind: String, Equatable {
+    case lifecycle
+    case reconnect
+    case error
+    case snapshot
+}
+
+public enum MentraStreamStatus: CustomStringConvertible, Equatable {
+    case lifecycle(state: MentraStreamState, streamId: String?, timestamp: Int?)
+    case reconnecting(streamId: String?, attempt: Int, maxAttempts: Int, reason: String, timestamp: Int?)
+    case reconnected(streamId: String?, attempt: Int, timestamp: Int?)
+    case reconnectFailed(streamId: String?, maxAttempts: Int, timestamp: Int?)
+    case error(streamId: String?, errorDetails: String, timestamp: Int?)
+    case snapshot(state: MentraStreamState, streaming: Bool, reconnecting: Bool, streamId: String?, attempt: Int?, timestamp: Int?)
 
     public init(values: [String: Any]) {
-        self.values = values
+        let rawState = stringValue(values, "status")
+        let streamId = stringValue(values, "streamId", "stream_id")
+        let timestamp = intValue(values["timestamp"])
+        let attempt = optionalIntValue(values, "attempt")
+        let maxAttempts = optionalIntValue(values, "maxAttempts", "max_attempts") ?? 0
+
+        if hasAnyKey(values, "streaming") || hasAnyKey(values, "reconnecting") {
+            let streaming = boolValue(values, "streaming") == true
+            let reconnecting = boolValue(values, "reconnecting") == true
+            let snapshotState: MentraStreamState = reconnecting ? .reconnecting : (streaming ? .streaming : .stopped)
+            self = .snapshot(
+                state: snapshotState,
+                streaming: streaming,
+                reconnecting: reconnecting,
+                streamId: streamId,
+                attempt: attempt,
+                timestamp: timestamp
+            )
+            return
+        }
+
+        guard let state = MentraStreamState.from(rawState) else {
+            self = .error(
+                streamId: streamId,
+                errorDetails: rawState.map { "Unknown stream status: \($0)" } ?? "Missing stream status",
+                timestamp: timestamp
+            )
+            return
+        }
+
+        switch state {
+        case .reconnecting:
+            self = .reconnecting(
+                streamId: streamId,
+                attempt: attempt ?? 0,
+                maxAttempts: maxAttempts,
+                reason: stringValue(values, "reason") ?? "",
+                timestamp: timestamp
+            )
+        case .reconnected:
+            self = .reconnected(streamId: streamId, attempt: attempt ?? 0, timestamp: timestamp)
+        case .reconnectFailed:
+            self = .reconnectFailed(streamId: streamId, maxAttempts: maxAttempts, timestamp: timestamp)
+        case .error:
+            self = .error(
+                streamId: streamId,
+                errorDetails: stringValue(values, "errorDetails", "error_details", "details", "error", "errorMessage")
+                    ?? (rawState == "error_not_streaming" ? "not_streaming" : "Unknown stream error"),
+                timestamp: timestamp
+            )
+        default:
+            self = .lifecycle(state: state, streamId: streamId, timestamp: timestamp)
+        }
     }
 
-    public var status: String? {
-        stringValue(values, "status")
+    public var kind: MentraStreamStatusKind {
+        switch self {
+        case .lifecycle:
+            .lifecycle
+        case .reconnecting, .reconnected, .reconnectFailed:
+            .reconnect
+        case .error:
+            .error
+        case .snapshot:
+            .snapshot
+        }
+    }
+
+    public var state: MentraStreamState {
+        switch self {
+        case let .lifecycle(state, _, _):
+            state
+        case .reconnecting:
+            .reconnecting
+        case .reconnected:
+            .reconnected
+        case .reconnectFailed:
+            .reconnectFailed
+        case .error:
+            .error
+        case let .snapshot(state, _, _, _, _, _):
+            state
+        }
     }
 
     public var streamId: String? {
-        stringValue(values, "streamId", "stream_id")
+        switch self {
+        case let .lifecycle(_, streamId, _),
+             let .reconnecting(streamId, _, _, _, _),
+             let .reconnected(streamId, _, _),
+             let .reconnectFailed(streamId, _, _),
+             let .error(streamId, _, _),
+             let .snapshot(_, _, _, streamId, _, _):
+            streamId
+        }
+    }
+
+    public var timestamp: Int? {
+        switch self {
+        case let .lifecycle(_, _, timestamp),
+             let .reconnecting(_, _, _, _, timestamp),
+             let .reconnected(_, _, timestamp),
+             let .reconnectFailed(_, _, timestamp),
+             let .error(_, _, timestamp),
+             let .snapshot(_, _, _, _, _, timestamp):
+            timestamp
+        }
+    }
+
+    public var values: [String: Any] {
+        var values: [String: Any] = [
+            "kind": kind.rawValue,
+            "status": state.rawValue,
+        ]
+        if let streamId, !streamId.isEmpty {
+            values["streamId"] = streamId
+        }
+        if let timestamp {
+            values["timestamp"] = timestamp
+        }
+
+        switch self {
+        case .lifecycle:
+            break
+        case let .reconnecting(_, attempt, maxAttempts, reason, _):
+            values["attempt"] = attempt
+            values["maxAttempts"] = maxAttempts
+            values["reason"] = reason
+        case let .reconnected(_, attempt, _):
+            values["attempt"] = attempt
+        case let .reconnectFailed(_, maxAttempts, _):
+            values["maxAttempts"] = maxAttempts
+        case let .error(_, errorDetails, _):
+            values["errorDetails"] = errorDetails
+        case let .snapshot(_, streaming, reconnecting, _, attempt, _):
+            values["streaming"] = streaming
+            values["reconnecting"] = reconnecting
+            if let attempt {
+                values["attempt"] = attempt
+            }
+        }
+
+        return values
     }
 
     public var description: String {
-        "MentraStreamStatusEvent(status: \(status ?? "unknown"), streamId: \(streamId ?? "none"))"
+        "MentraStreamStatus(kind: \(kind.rawValue), status: \(state.rawValue), streamId: \(streamId ?? "none"))"
+    }
+}
+
+public struct MentraStreamStatusEvent: CustomStringConvertible {
+    public let status: MentraStreamStatus
+
+    public init(status: MentraStreamStatus) {
+        self.status = status
+    }
+
+    public init(values: [String: Any]) {
+        self.status = MentraStreamStatus(values: values)
+    }
+
+    public var state: MentraStreamState {
+        status.state
+    }
+
+    public var streamId: String? {
+        status.streamId
+    }
+
+    public var values: [String: Any] {
+        var values = status.values
+        values["type"] = "stream_status"
+        return values
+    }
+
+    public var description: String {
+        "MentraStreamStatusEvent(kind: \(status.kind.rawValue), status: \(state.rawValue), streamId: \(streamId ?? "none"))"
+    }
+}
+
+public struct MentraKeepAliveAckEvent: CustomStringConvertible, Equatable {
+    public let streamId: String
+    public let ackId: String
+    public let timestamp: Int?
+
+    public init(streamId: String, ackId: String, timestamp: Int? = nil) {
+        self.streamId = streamId
+        self.ackId = ackId
+        self.timestamp = timestamp
+    }
+
+    public init(values: [String: Any]) {
+        self.streamId = stringValue(values, "streamId", "stream_id") ?? ""
+        self.ackId = stringValue(values, "ackId", "ack_id") ?? ""
+        self.timestamp = intValue(values["timestamp"])
+    }
+
+    public var values: [String: Any] {
+        var values: [String: Any] = [
+            "type": "keep_alive_ack",
+            "streamId": streamId,
+            "ackId": ackId,
+        ]
+        if let timestamp {
+            values["timestamp"] = timestamp
+        }
+        return values
+    }
+
+    public var description: String {
+        "MentraKeepAliveAckEvent(streamId: \(streamId), ackId: \(ackId))"
     }
 }
 
@@ -1597,6 +1841,7 @@ public enum MentraBluetoothEvent: CustomStringConvertible {
     case hotspotError(MentraHotspotErrorEvent)
     case photoResponse(MentraPhotoResponseEvent)
     case streamStatus(MentraStreamStatusEvent)
+    case keepAliveAck(MentraKeepAliveAckEvent)
     case localTranscription(MentraLocalTranscriptionEvent)
     case raw(name: String, values: [String: Any])
 
@@ -1615,6 +1860,8 @@ public enum MentraBluetoothEvent: CustomStringConvertible {
         case let .photoResponse(event):
             event.description
         case let .streamStatus(event):
+            event.description
+        case let .keepAliveAck(event):
             event.description
         case let .localTranscription(event):
             event.description
@@ -2077,6 +2324,8 @@ public final class MentraBluetoothSDK {
             delegate?.mentraBluetoothSDK(self, didReceive: .photoResponse(MentraPhotoResponseEvent(values: data)))
         case "stream_status":
             delegate?.mentraBluetoothSDK(self, didReceive: .streamStatus(MentraStreamStatusEvent(values: data)))
+        case "keep_alive_ack":
+            delegate?.mentraBluetoothSDK(self, didReceive: .keepAliveAck(MentraKeepAliveAckEvent(values: data)))
         case "compatible_glasses_search_stop":
             delegate?.mentraBluetoothSDK(self, didStopScan: .completed)
         case "pair_failure":

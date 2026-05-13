@@ -565,6 +565,8 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
             sendEvent("photo_response", response.values)
         case let .streamStatus(status):
             sendEvent("stream_status", status.values)
+        case let .keepAliveAck(ack):
+            sendEvent("keep_alive_ack", ack.values)
         case let .localTranscription(transcription):
             sendEvent("local_transcription", transcription.values)
         case let .raw(name, values):

@@ -478,6 +478,7 @@ class MentraBluetoothSdk private constructor(
             "gallery_status" -> dispatchToListeners { it.onGalleryStatus(MentraGalleryStatusEvent(data)) }
             "photo_response" -> dispatchToListeners { it.onPhotoResponse(MentraPhotoResponseEvent(data)) }
             "stream_status" -> dispatchToListeners { it.onStreamStatus(MentraStreamStatusEvent(data)) }
+            "keep_alive_ack" -> dispatchToListeners { it.onKeepAliveAck(MentraKeepAliveAckEvent(data)) }
             "mic_pcm" -> (data["pcm"] as? ByteArray)?.let { frame ->
                 dispatchToListeners { it.onMicPcm(frame) }
             }

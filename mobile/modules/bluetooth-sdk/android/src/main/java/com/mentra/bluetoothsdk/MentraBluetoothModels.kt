@@ -1229,11 +1229,228 @@ data class MentraPhotoResponseEvent(
     val values: Map<String, Any> get() = response.toEventMap()
 }
 
+enum class MentraStreamState(val value: String) {
+    INITIALIZING("initializing"),
+    STREAMING("streaming"),
+    STOPPING("stopping"),
+    STOPPED("stopped"),
+    RECONNECTING("reconnecting"),
+    RECONNECTED("reconnected"),
+    RECONNECT_FAILED("reconnect_failed"),
+    ERROR("error");
+
+    companion object {
+        @JvmStatic
+        fun fromValue(value: String?): MentraStreamState? =
+            when (value?.lowercase()) {
+                "initializing", "starting", "connecting" -> INITIALIZING
+                "streaming", "streaming_started", "active" -> STREAMING
+                "stopping" -> STOPPING
+                "stopped", "not_streaming", "disconnected", "timeout" -> STOPPED
+                "reconnecting" -> RECONNECTING
+                "reconnected" -> RECONNECTED
+                "reconnect_failed" -> RECONNECT_FAILED
+                "error", "error_not_streaming" -> ERROR
+                else -> null
+            }
+    }
+}
+
+enum class MentraStreamStatusKind(val value: String) {
+    LIFECYCLE("lifecycle"),
+    RECONNECT("reconnect"),
+    ERROR("error"),
+    SNAPSHOT("snapshot"),
+}
+
+sealed interface MentraStreamStatus {
+    val kind: MentraStreamStatusKind
+    val state: MentraStreamState
+    val streamId: String?
+    val timestamp: Long?
+
+    fun toMap(): Map<String, Any> {
+        val values = mutableMapOf<String, Any>(
+            "kind" to kind.value,
+            "status" to state.value,
+        )
+        streamId?.takeIf { it.isNotBlank() }?.let { values["streamId"] = it }
+        timestamp?.let { values["timestamp"] = it }
+
+        when (this) {
+            is Lifecycle -> Unit
+            is Reconnecting -> {
+                values["attempt"] = attempt
+                values["maxAttempts"] = maxAttempts
+                values["reason"] = reason
+            }
+            is Reconnected -> values["attempt"] = attempt
+            is ReconnectFailed -> values["maxAttempts"] = maxAttempts
+            is Error -> values["errorDetails"] = errorDetails
+            is Snapshot -> {
+                values["streaming"] = streaming
+                values["reconnecting"] = reconnecting
+                attempt?.let { values["attempt"] = it }
+            }
+        }
+
+        return values
+    }
+
+    fun toEventMap(): Map<String, Any> = toMap() + mapOf("type" to "stream_status")
+
+    data class Lifecycle(
+        override val state: MentraStreamState,
+        override val streamId: String?,
+        override val timestamp: Long?,
+    ) : MentraStreamStatus {
+        override val kind: MentraStreamStatusKind = MentraStreamStatusKind.LIFECYCLE
+    }
+
+    data class Reconnecting(
+        override val streamId: String?,
+        val attempt: Int,
+        val maxAttempts: Int,
+        val reason: String,
+        override val timestamp: Long?,
+    ) : MentraStreamStatus {
+        override val kind: MentraStreamStatusKind = MentraStreamStatusKind.RECONNECT
+        override val state: MentraStreamState = MentraStreamState.RECONNECTING
+    }
+
+    data class Reconnected(
+        override val streamId: String?,
+        val attempt: Int,
+        override val timestamp: Long?,
+    ) : MentraStreamStatus {
+        override val kind: MentraStreamStatusKind = MentraStreamStatusKind.RECONNECT
+        override val state: MentraStreamState = MentraStreamState.RECONNECTED
+    }
+
+    data class ReconnectFailed(
+        override val streamId: String?,
+        val maxAttempts: Int,
+        override val timestamp: Long?,
+    ) : MentraStreamStatus {
+        override val kind: MentraStreamStatusKind = MentraStreamStatusKind.RECONNECT
+        override val state: MentraStreamState = MentraStreamState.RECONNECT_FAILED
+    }
+
+    data class Error(
+        override val streamId: String?,
+        val errorDetails: String,
+        override val timestamp: Long?,
+    ) : MentraStreamStatus {
+        override val kind: MentraStreamStatusKind = MentraStreamStatusKind.ERROR
+        override val state: MentraStreamState = MentraStreamState.ERROR
+    }
+
+    data class Snapshot(
+        override val state: MentraStreamState,
+        val streaming: Boolean,
+        val reconnecting: Boolean,
+        override val streamId: String?,
+        val attempt: Int?,
+        override val timestamp: Long?,
+    ) : MentraStreamStatus {
+        override val kind: MentraStreamStatusKind = MentraStreamStatusKind.SNAPSHOT
+    }
+
+    companion object {
+        @JvmStatic
+        fun fromMap(values: Map<String, Any>): MentraStreamStatus {
+            val rawState = stringValue(values, "status")
+            val streaming = boolValue(values, "streaming")
+            val reconnecting = boolValue(values, "reconnecting") ?: false
+            val streamId = stringValue(values, "streamId", "stream_id")
+            val timestamp = longValue(values, "timestamp")
+            val attempt = numberValue(values, "attempt")
+            val maxAttempts = numberValue(values, "maxAttempts", "max_attempts") ?: 0
+
+            if (streaming != null || hasAnyKey(values, "reconnecting")) {
+                return Snapshot(
+                    state = when {
+                        reconnecting -> MentraStreamState.RECONNECTING
+                        streaming == true -> MentraStreamState.STREAMING
+                        else -> MentraStreamState.STOPPED
+                    },
+                    streaming = streaming == true,
+                    reconnecting = reconnecting,
+                    streamId = streamId,
+                    attempt = attempt,
+                    timestamp = timestamp,
+                )
+            }
+
+            val state = MentraStreamState.fromValue(rawState)
+                ?: return Error(
+                    streamId = streamId,
+                    errorDetails = rawState?.let { "Unknown stream status: $it" } ?: "Missing stream status",
+                    timestamp = timestamp,
+                )
+
+            return when (state) {
+                MentraStreamState.RECONNECTING -> Reconnecting(
+                    streamId = streamId,
+                    attempt = attempt ?: 0,
+                    maxAttempts = maxAttempts,
+                    reason = stringValue(values, "reason") ?: "",
+                    timestamp = timestamp,
+                )
+                MentraStreamState.RECONNECTED -> Reconnected(
+                    streamId = streamId,
+                    attempt = attempt ?: 0,
+                    timestamp = timestamp,
+                )
+                MentraStreamState.RECONNECT_FAILED -> ReconnectFailed(
+                    streamId = streamId,
+                    maxAttempts = maxAttempts,
+                    timestamp = timestamp,
+                )
+                MentraStreamState.ERROR -> Error(
+                    streamId = streamId,
+                    errorDetails = stringValue(values, "errorDetails", "error_details", "details", "error", "errorMessage")
+                        ?: if (rawState == "error_not_streaming") "not_streaming" else "Unknown stream error",
+                    timestamp = timestamp,
+                )
+                else -> Lifecycle(
+                    state = state,
+                    streamId = streamId,
+                    timestamp = timestamp,
+                )
+            }
+        }
+    }
+}
+
 data class MentraStreamStatusEvent(
-    val values: Map<String, Any>,
+    val status: MentraStreamStatus,
 ) {
-    val status: String? get() = stringValue(values, "status")
-    val streamId: String? get() = stringValue(values, "streamId", "stream_id")
+    constructor(values: Map<String, Any>) : this(MentraStreamStatus.fromMap(values))
+
+    val state: MentraStreamState get() = status.state
+    val streamId: String? get() = status.streamId
+    val values: Map<String, Any> get() = status.toEventMap()
+}
+
+data class MentraKeepAliveAckEvent(
+    val streamId: String,
+    val ackId: String,
+    val timestamp: Long?,
+) {
+    constructor(values: Map<String, Any>) : this(
+        streamId = stringValue(values, "streamId", "stream_id").orEmpty(),
+        ackId = stringValue(values, "ackId", "ack_id").orEmpty(),
+        timestamp = longValue(values, "timestamp"),
+    )
+
+    val values: Map<String, Any>
+        get() = buildMap {
+            put("type", "keep_alive_ack")
+            put("streamId", streamId)
+            put("ackId", ackId)
+            timestamp?.let { put("timestamp", it) }
+        }
 }
 
 data class MentraLocalTranscriptionEvent(
@@ -1298,6 +1515,7 @@ interface MentraBluetoothSdkListener {
     fun onGalleryStatus(event: MentraGalleryStatusEvent) {}
     fun onPhotoResponse(event: MentraPhotoResponseEvent) {}
     fun onStreamStatus(event: MentraStreamStatusEvent) {}
+    fun onKeepAliveAck(event: MentraKeepAliveAckEvent) {}
     fun onMicPcm(frame: ByteArray) {}
     fun onMicLc3(frame: ByteArray) {}
     fun onLocalTranscription(event: MentraLocalTranscriptionEvent) {}

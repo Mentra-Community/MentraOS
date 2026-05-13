@@ -82,6 +82,10 @@ class CoreModule : Module() {
                     sendEvent("stream_status", event.values)
                 }
 
+                override fun onKeepAliveAck(event: MentraKeepAliveAckEvent) {
+                    sendEvent("keep_alive_ack", event.values)
+                }
+
                 override fun onMicPcm(frame: ByteArray) {
                     sendEvent("mic_pcm", mapOf("pcm" to frame))
                 }
