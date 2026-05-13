@@ -24,6 +24,12 @@ const placesKey = process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY ?? ""
 if (!placesKey) {
   console.warn("WARN: EXPO_PUBLIC_GOOGLE_PLACES_API_KEY is not set — search will fail.")
 }
+// "development" (default) keeps the FloatingDevPanel and debug map
+// overlays in the bundle so we can iterate. `mentra-miniapp release`
+// flips this to "production" before invoking the build, which lets the
+// minifier tree-shake the dev-only branches out entirely.
+const nodeEnv = process.env.NODE_ENV === "production" ? "production" : "development"
+console.log(`Building with NODE_ENV=${nodeEnv}`)
 
 const tailwind = (await import("bun-plugin-tailwind")).default
 
@@ -36,6 +42,7 @@ const result = await Bun.build({
   define: {
     "process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY": JSON.stringify(apiKey),
     "process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY": JSON.stringify(placesKey),
+    "process.env.NODE_ENV": JSON.stringify(nodeEnv),
   },
 })
 

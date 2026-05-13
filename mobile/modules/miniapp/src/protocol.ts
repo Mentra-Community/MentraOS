@@ -45,6 +45,10 @@ export enum MiniappRequestType {
   NAVIGATION_STOP = "miniapp_navigation_stop",
   /** Dev-only: nudge the simulator off-route to test rerouting. Android sim only. */
   NAVIGATION_DEVIATE = "miniapp_navigation_deviate",
+  /** Dev-only: lock simulated locations to the wrong sidewalk for pivot-trigger testing. */
+  NAVIGATION_SET_WRONG_SIDEWALK = "miniapp_navigation_set_wrong_sidewalk",
+  /** Dev-only: take over the simulator and walk a polyline with crossings stripped. */
+  NAVIGATION_SET_SKIP_CROSSINGS = "miniapp_navigation_set_skip_crossings",
   /** Snapshot of the active trip (or null). Lets a miniapp opening mid-trip hydrate. */
   NAVIGATION_GET_STATE = "miniapp_navigation_get_state",
   /** Compute a route without starting a trip. Replaces hand-rolled Directions calls. */

@@ -676,6 +676,26 @@ class CrustModule : Module() {
       }
     }
 
+    AsyncFunction("setWrongSidewalkOffset") { enabled: Boolean ->
+      try {
+        NavigationManager.setWrongSidewalkOffset(enabled)
+        mapOf("ok" to true)
+      } catch (e: Exception) {
+        android.util.Log.e("CrustModule", "setWrongSidewalkOffset failed", e)
+        mapOf("ok" to false, "error" to (e.message ?: "setWrongSidewalkOffset failed"))
+      }
+    }
+
+    AsyncFunction("setSkipCrossings") { enabled: Boolean ->
+      try {
+        NavigationManager.setSkipCrossings(enabled)
+        mapOf("ok" to true)
+      } catch (e: Exception) {
+        android.util.Log.e("CrustModule", "setSkipCrossings failed", e)
+        mapOf("ok" to false, "error" to (e.message ?: "setSkipCrossings failed"))
+      }
+    }
+
     // MARK: - Heading (compass) — Android only
 
     AsyncFunction("startHeading") {

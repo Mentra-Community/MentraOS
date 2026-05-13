@@ -273,6 +273,131 @@ export function extractPivots(rawPoints: LatLng[]): RawPivot[] {
   return clustered.filter((p) => Math.abs(p.headingDelta) >= TURN_THRESHOLD_DEG)
 }
 
+/** Raw crossing leg returned by `extractCrossings`. */
+export type RawCrossing = {
+  /** Polyline index of the curb on the user's current sidewalk (start of leg). */
+  startIndex: number
+  /** Polyline index of the curb on the far sidewalk (end of leg). */
+  endIndex: number
+  /** Coords at startIndex, surfaced for convenience. */
+  lat: number
+  lng: number
+}
+
+/**
+ * Detect crosswalk-shaped micro-legs in a route polyline. A crossing
+ * is a short leg (<maxLegMeters) that turns sharply (>minBendDeg) off
+ * the previous leg and is followed by a sharp turn *back* to roughly
+ * the original direction — the classic "step off the sidewalk → walk
+ * across → step back onto the sidewalk" shape.
+ *
+ * The shape check alone isn't enough though: at every intersection
+ * Google's polyline traces small perpendicular curb-cut bends even when
+ * the user is walking straight through on the SAME sidewalk. To filter
+ * those out we also require a meaningful perpendicular displacement —
+ * the route after the crossing must continue on the OTHER side of the
+ * pre-crossing path, not curve back onto it.
+ *
+ * Returns each crossing as the polyline indices that bracket the leg
+ * we'd skip. The engine wraps each into a synthetic `CROSS_STREET`
+ * pivot so glasses HUDs can announce "Cross the road" alongside the
+ * usual turn maneuvers.
+ */
+export function extractCrossings(
+  points: LatLng[],
+  opts: {maxLegMeters?: number; minBendDeg?: number; minSidewalkSwitchMeters?: number} = {},
+): RawCrossing[] {
+  const maxLeg = opts.maxLegMeters ?? 25
+  const minBend = opts.minBendDeg ?? 60
+  // Minimum perpendicular distance from the post-crossing line back to
+  // the pre-crossing line. ~4m is wider than any sidewalk + GPS noise
+  // and narrower than a typical road. A real sidewalk-switch easily
+  // clears this; a curb-cut zigzag at a crosswalk you DON'T take stays
+  // well under it.
+  const minSwitch = opts.minSidewalkSwitchMeters ?? 4
+  // How far past the crossing's end to sample for the displacement
+  // check. ~10m gives the polyline room to resume its post-crossing
+  // direction without being influenced by an immediate follow-on turn.
+  const sampleMeters = 10
+  const out: RawCrossing[] = []
+  if (points.length < 4) return out
+  for (let i = 1; i < points.length - 2; i++) {
+    const prev = points[i - 1]
+    const here = points[i]
+    const next = points[i + 1]
+    const afterNext = points[i + 2]
+    const legOut = haversineMeters(here, next)
+    if (legOut >= maxLeg) continue
+    const bearIn = bearingDeg(prev, here)
+    const bearOut = bearingDeg(here, next)
+    const bend = Math.abs(signedAngleDiff(bearIn, bearOut))
+    if (bend <= minBend) continue
+    const bearAfter = bearingDeg(next, afterNext)
+    const bendBack = Math.abs(signedAngleDiff(bearOut, bearAfter))
+    const inOutDelta = Math.abs(signedAngleDiff(bearIn, bearAfter))
+    if (!(bendBack > minBend && inOutDelta < minBend)) continue
+
+    // Displacement gate. Walk ~sampleMeters along the post-crossing
+    // polyline from `next` and ask: how far is that point from the
+    // pre-crossing line (extended forward through `here`)? Pass-through
+    // crosswalk traces have the route curving back to the same side
+    // (displacement ≈ 0). Real sidewalk-switches leave the route on
+    // the opposite side (displacement ≈ road width).
+    const sample = walkAlongPolyline(points, i + 1, sampleMeters)
+    if (!sample) continue
+    const displacement = perpDistanceMeters(sample, prev, here)
+    if (displacement < minSwitch) continue
+
+    out.push({startIndex: i, endIndex: i + 1, lat: here.lat, lng: here.lng})
+  }
+  return out
+}
+
+/**
+ * Walk forward from polyline index `startIdx` by `meters` and return
+ * the interpolated LatLng. Returns null when the remaining polyline
+ * is shorter than `meters` (we'd be measuring noise at the tail).
+ */
+function walkAlongPolyline(points: LatLng[], startIdx: number, meters: number): LatLng | null {
+  if (startIdx >= points.length - 1) return null
+  let remaining = meters
+  let idx = startIdx
+  while (idx < points.length - 1) {
+    const a = points[idx]
+    const b = points[idx + 1]
+    const segLen = haversineMeters(a, b)
+    if (remaining <= segLen) {
+      const t = segLen > 0 ? remaining / segLen : 0
+      return {lat: a.lat + (b.lat - a.lat) * t, lng: a.lng + (b.lng - a.lng) * t}
+    }
+    remaining -= segLen
+    idx++
+  }
+  return null
+}
+
+/**
+ * Perpendicular distance in meters from `p` to the infinite line
+ * through `a → b`. Local-flat-earth projection — fine for the scales
+ * we're checking (a single intersection's worth of polyline).
+ */
+function perpDistanceMeters(p: LatLng, a: LatLng, b: LatLng): number {
+  const mPerDegLat = 111_320
+  const mPerDegLng = 111_320 * Math.cos((a.lat * Math.PI) / 180)
+  const ax = a.lng * mPerDegLng
+  const ay = a.lat * mPerDegLat
+  const bx = b.lng * mPerDegLng
+  const by = b.lat * mPerDegLat
+  const px = p.lng * mPerDegLng
+  const py = p.lat * mPerDegLat
+  const dx = bx - ax
+  const dy = by - ay
+  const len = Math.sqrt(dx * dx + dy * dy)
+  if (len === 0) return Math.hypot(px - ax, py - ay)
+  // |cross product| / |line vector| = perpendicular distance.
+  return Math.abs(dx * (py - ay) - dy * (px - ax)) / len
+}
+
 /**
  * Cumulative haversine distance along a polyline from index 0 to
  * each point. Returned array is the same length as `points` —

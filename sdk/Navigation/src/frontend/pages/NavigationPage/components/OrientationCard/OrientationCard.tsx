@@ -85,7 +85,7 @@ export function OrientationCard({
               animate={{opacity: 1, y: 0}}
               exit={{opacity: 0, y: -6}}
               transition={SPRING}
-              className="tracking-[-0.02em] self-stretch text-[#111111] font-sans font-semibold text-[28px]/8.5 truncate">
+              className="tracking-[-0.02em] self-stretch text-[#111111] font-sans font-semibold text-[28px]/8.5 wrap-break-word">
               {label}
             </motion.div>
           </AnimatePresence>
@@ -126,10 +126,14 @@ type PivotView = {
   arrived: boolean
   /** Direction of the pivot the user is currently turning at, if any. */
   activeDirection: "left" | "right" | null
+  /** Maneuver string of the active pivot (e.g. CROSS_STREET, TURN_LEFT). */
+  activeManeuver: string | null
   /** Road we're heading onto for the active turn, if known. */
   activeToRoad: string | null
   /** Direction of the next upcoming pivot, if any. */
   upcomingDirection: "left" | "right" | null
+  /** Maneuver string of the upcoming pivot. */
+  upcomingManeuver: string | null
   /** Road the user is currently on (i.e. approach road), if known. */
   upcomingFromRoad: string | null
   /** Road we'll be on after the upcoming turn, if known. */
@@ -143,8 +147,10 @@ function derivePivotView(user: User, maneuver: NavManeuver | null, status?: NavS
     return {
       arrived: true,
       activeDirection: null,
+      activeManeuver: null,
       activeToRoad: null,
       upcomingDirection: null,
+      upcomingManeuver: null,
       upcomingFromRoad: null,
       upcomingToRoad: null,
       distanceToNextPivotMeters: null,
@@ -172,8 +178,10 @@ function derivePivotView(user: User, maneuver: NavManeuver | null, status?: NavS
   return {
     arrived: false,
     activeDirection: active?.direction ?? null,
+    activeManeuver: active?.maneuver ?? null,
     activeToRoad: realRoadName(active?.toRoad),
     upcomingDirection: upcoming?.direction ?? null,
+    upcomingManeuver: upcoming?.maneuver ?? null,
     upcomingFromRoad: realRoadName(upcoming?.fromRoad),
     upcomingToRoad: realRoadName(upcoming?.toRoad),
     distanceToNextPivotMeters,
@@ -188,6 +196,14 @@ function pickDisplay(
     return {label: "Arrived", icon: "ARRIVE", road: null, nextRoad: null}
   }
 
+  if (snap.activeManeuver === "CROSS_STREET") {
+    return {
+      label: "Cross the road",
+      icon: "CROSS_STREET",
+      road: null,
+      nextRoad: null,
+    }
+  }
   if (snap.activeDirection === "right") {
     return {
       label: "Turn right",
@@ -209,6 +225,16 @@ function pickDisplay(
   // on (the upcoming pivot's fromRoad), big bold middle line is the
   // verb + distance to the upcoming turn, bottom line is the
   // destination road (the upcoming pivot's toRoad).
+  if (snap.distanceToNextPivotMeters != null && snap.upcomingManeuver === "CROSS_STREET") {
+    const distStr = formatDistance(snap.distanceToNextPivotMeters)
+    return {
+      label: `Cross the road in ${distStr}`,
+      icon: "CROSS_STREET",
+      // Crossings stay on the same street — no toRoad to surface.
+      nextRoad: snap.upcomingFromRoad,
+      road: null,
+    }
+  }
   if (snap.distanceToNextPivotMeters != null && snap.upcomingDirection) {
     const verb = snap.upcomingDirection === "right" ? "Turn right" : "Turn left"
     const distStr = formatDistance(snap.distanceToNextPivotMeters)

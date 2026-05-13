@@ -4,6 +4,7 @@ import type {NavManeuver, NavRoute, NavUpdate, TravelMode} from "@mentra/miniapp
 import {useRouter} from "@/frontend/router"
 import {DrawerOffsetProvider} from "@/frontend/components/Drawer/DrawerOffsetContext"
 import {FloatingDevPanel} from "@/frontend/components/FloatingDevPanel/FloatingDevPanel"
+import {isDev} from "@/backend/lib/env/env"
 import {SimulationControls} from "@/frontend/pages/NavigationPage/components/Controls/Controls"
 import {ArrivalDrawer} from "@/frontend/pages/NavigationPage/components/ArrivalDrawer/ArrivalDrawer"
 import {DestinationPreviewDrawer} from "@/frontend/pages/NavigationPage/components/DestinationPreviewDrawer/DestinationPreviewDrawer"
@@ -50,6 +51,8 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const [devDrawer, setDevDrawer] = useState<"auto" | "idle" | "preview" | "running" | "arrived">("auto")
   const [simulate, setSimulate] = useState(false)
   const [speedMultiplier, setSpeedMultiplier] = useState(5)
+  const [wrongSidewalk, setWrongSidewalk] = useState(false)
+  const [skipCrossings, setSkipCrossings] = useState(false)
   const [travelMode, setTravelMode] = useState<TravelMode>("walking")
 
   // Trip state — owned by the page; navigation manager is just an SDK wrapper.
@@ -275,9 +278,15 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     // Top line is rendered only when the pivot supplied a road name —
     // no geocoder/maneuver fallback.
     if (upcomingPivot && distanceToUpcomingPivot != null) {
-      const verb = upcomingPivot.direction === "right" ? "Turn right" : "Turn left"
+      const isCross = upcomingPivot.maneuver === "CROSS_STREET"
+      const verb = isCross
+        ? "Cross the road"
+        : upcomingPivot.direction === "right"
+          ? "Turn right"
+          : "Turn left"
       const distStr = formatDistance(distanceToUpcomingPivot)
-      const nextRoad = isRealRoadName(upcomingPivot.fromRoad)
+      // Crossings stay on the same street — no "Onto X" preface.
+      const nextRoad = isCross ? null : isRealRoadName(upcomingPivot.fromRoad)
       const topLine = nextRoad ? `Onto ${nextRoad}` : null
       display.showText([topLine, `${verb} in ${distStr}`].filter(Boolean).join("\n"))
       return
@@ -453,6 +462,53 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     navigation.deviate(50)
   }
 
+  // Long-press on the map drops a destination pin at the pressed coord.
+  // Mirrors Google Maps "drop pin" UX: the pin enters the same flow as
+  // a search-result destination — preview drawer opens, route preview
+  // computes from the user's current position, "Start Navigation"
+  // button arms the trip. Reverse-geocoding upgrades the pin's name to
+  // a real street address in the background; no-op if it fails.
+  // Disabled during active trips: re-routing mid-trip via long-press
+  // would be too easy to do by accident.
+  function handleMapLongPress(coord: LatLng) {
+    if (running) return
+    const coordStr = `${coord.lat.toFixed(6)}, ${coord.lng.toFixed(6)}`
+    const pinId = `dropped-pin-${Date.now()}`
+    const pin: PlaceDetails = {
+      placeId: pinId,
+      lat: coord.lat,
+      lng: coord.lng,
+      name: coordStr,
+      address: "Dropped pin",
+    }
+    append(`dropped pin @ ${coordStr}`)
+    setDestination(pin)
+    setActiveDestination({lat: coord.lat, lng: coord.lng})
+    // Reverse-geocode in the background. Upgrade the pin's name to the
+    // formatted address when it lands; demote the coords to the
+    // subtitle (address) so the preview card reads like
+    //   100 Van Ness Ave
+    //   37.795600, -122.393300
+    // If geocoding fails or returns nothing, the original coord-as-name
+    // pin keeps showing.
+    const g = (window as any).google
+    if (g?.maps?.Geocoder) {
+      try {
+        const geocoder = new g.maps.Geocoder()
+        geocoder.geocode({location: {lat: coord.lat, lng: coord.lng}}, (results: any[], status: string) => {
+          if (status !== "OK" || !results || results.length === 0) return
+          const formatted = results[0]?.formatted_address
+          if (!formatted) return
+          // Only apply the upgrade if the same pin is still selected —
+          // user may have dropped another one in the meantime.
+          setDestination((prev) => (prev && prev.placeId === pinId ? {...prev, name: formatted, address: coordStr} : prev))
+        })
+      } catch (err) {
+        console.warn("[NAV-MINI] reverse-geocode failed:", err)
+      }
+    }
+  }
+
   const me = coords ? {lat: coords.lat, lng: coords.lng} : null
 
   return (
@@ -463,6 +519,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
         destination={activeDestination}
         routePoints={running ? routePoints : previewRoutePoints}
         autoFollow={running}
+        onLongPress={handleMapLongPress}
       />
 
       {/* Top floating stack — search bar, then orientation card while running. */}
@@ -480,7 +537,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
               if (!running) setActiveDestination(null)
             }}
             disabled={running}
-            devFrozen={simulatorMode && searchFrozen}
+            devFrozen={searchFrozen}
             onSearchingChange={setIsSearching}
             refreshKey={savedPlacesVersion}
           />
@@ -546,6 +603,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
         onDone={handleStop}
       />
 
+      {isDev ? (
       <FloatingDevPanel title="Navigation Dev" storageKey="NavigationPage:dev">
         <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
           <span className="text-[13px] font-medium text-neutral-700">Simulator Mode</span>
@@ -569,15 +627,6 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
         </div>
         {simulatorMode && (
           <>
-            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-              <span className="text-[13px] font-medium text-neutral-700">Freeze location search panel</span>
-              <button
-                type="button"
-                onClick={() => setSearchFrozen((f) => !f)}
-                className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold ${searchFrozen ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"}`}>
-                {searchFrozen ? "Frozen" : "Freeze"}
-              </button>
-            </div>
             <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3">
               <div className="text-[11px] font-bold tracking-wider text-neutral-500 uppercase mb-2">Drawer</div>
               <div className="flex gap-1.5 flex-wrap">
@@ -620,6 +669,38 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
               running={running}
             />
             {running && simulate ? <DeviateButton onDeviate={handleDeviate} /> : null}
+            {simulate ? (
+              <button
+                onClick={() => {
+                  const next = !wrongSidewalk
+                  setWrongSidewalk(next)
+                  navigation.setWrongSidewalkOffset(next)
+                  append(`wrong-sidewalk offset → ${next ? "on" : "off"}`)
+                }}
+                className={`w-full mt-2 px-3 py-2.5 rounded-xl text-sm font-semibold border border-dashed ${
+                  wrongSidewalk
+                    ? "border-amber-500 bg-amber-100 text-amber-900"
+                    : "border-amber-300 bg-amber-50 text-amber-800"
+                }`}>
+                🚶‍♂️ Wrong sidewalk: {wrongSidewalk ? "ON" : "OFF"}
+              </button>
+            ) : null}
+            {simulate ? (
+              <button
+                onClick={() => {
+                  const next = !skipCrossings
+                  setSkipCrossings(next)
+                  navigation.setSkipCrossings(next)
+                  append(`skip-crossings → ${next ? "on" : "off"}`)
+                }}
+                className={`w-full mt-2 px-3 py-2.5 rounded-xl text-sm font-semibold border border-dashed ${
+                  skipCrossings
+                    ? "border-rose-500 bg-rose-100 text-rose-900"
+                    : "border-rose-300 bg-rose-50 text-rose-800"
+                }`}>
+                🚷 Skip crossings: {skipCrossings ? "ON" : "OFF"}
+              </button>
+            ) : null}
           </>
         )}
         <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3">
@@ -689,8 +770,18 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
           className="w-full mt-2 mb-1 px-3 py-2.5 rounded-xl text-sm font-semibold border border-dashed border-purple-300 bg-purple-50 text-purple-900">
           🧪 Toggle drawer mode (running={String(running)})
         </button>
+        <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+          <span className="text-[13px] font-medium text-neutral-700">Freeze location search panel</span>
+          <button
+            type="button"
+            onClick={() => setSearchFrozen((f) => !f)}
+            className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold ${searchFrozen ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"}`}>
+            {searchFrozen ? "Frozen" : "Freeze"}
+          </button>
+        </div>
         <LiveLog log={log} running={running} status={status} maneuver={maneuver} />
       </FloatingDevPanel>
+      ) : null}
     </div>
     </DrawerOffsetProvider>
   )

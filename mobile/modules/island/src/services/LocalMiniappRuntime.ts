@@ -595,6 +595,12 @@ class LocalMiniappRuntime {
       case MiniappRequestType.NAVIGATION_DEVIATE:
         this.handleNavigationDeviate(packageName, payload, requestId)
         break
+      case MiniappRequestType.NAVIGATION_SET_WRONG_SIDEWALK:
+        this.handleNavigationSetWrongSidewalk(packageName, payload, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_SET_SKIP_CROSSINGS:
+        this.handleNavigationSetSkipCrossings(packageName, payload, requestId)
+        break
       case MiniappRequestType.NAVIGATION_GET_STATE:
         this.handleNavigationGetState(packageName, requestId)
         break
@@ -1296,6 +1302,48 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "navigation deviate error",
+      })
+    }
+  }
+
+  private async handleNavigationSetWrongSidewalk(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const enabled = payload.enabled === true
+      const navigation = getRuntimeHooks().navigation
+      const result = navigation
+        ? await navigation.setWrongSidewalkOffset(enabled)
+        : {ok: false, error: "navigation adapter not configured"}
+      this.sendResult(packageName, requestId, result.ok, result, undefined)
+    } catch (err) {
+      console.error(`${LOG_TAG}: navigation setWrongSidewalkOffset error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "navigation setWrongSidewalkOffset error",
+      })
+    }
+  }
+
+  private async handleNavigationSetSkipCrossings(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const enabled = payload.enabled === true
+      const navigation = getRuntimeHooks().navigation
+      const result = navigation
+        ? await navigation.setSkipCrossings(enabled)
+        : {ok: false, error: "navigation adapter not configured"}
+      this.sendResult(packageName, requestId, result.ok, result, undefined)
+    } catch (err) {
+      console.error(`${LOG_TAG}: navigation setSkipCrossings error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "navigation setSkipCrossings error",
       })
     }
   }

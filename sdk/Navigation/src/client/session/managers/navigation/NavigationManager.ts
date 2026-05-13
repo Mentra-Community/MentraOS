@@ -67,6 +67,27 @@ export class NavigationManager {
     this.session.navigation.deviate(offsetMeters)
   }
 
+  /**
+   * Dev-only toggle: lock simulated locations to the wrong sidewalk
+   * (~8m perpendicular to the route bearing). Used to verify the SDK's
+   * along-path pivot trigger fires even when the user never crosses the
+   * 7m radius of the pivot point. Android sim only. Fire-and-forget.
+   */
+  setWrongSidewalkOffset(enabled: boolean): void {
+    this.session.navigation.setWrongSidewalkOffset(enabled)
+  }
+
+  /**
+   * Dev-only toggle. When enabled mid-trip, the simulator stops
+   * following Google's planned route and instead walks a polyline with
+   * crossing micro-steps removed — reproducing a pedestrian who
+   * ignores cross-the-street instructions so we can verify the along-
+   * path pivot trigger and the missed-turn reroute. Android sim only.
+   */
+  setSkipCrossings(enabled: boolean): void {
+    this.session.navigation.setSkipCrossings(enabled)
+  }
+
   /** Subscribe to maneuver / rerouting / arrived / error events. */
   onUpdate(handler: NavUpdateListener): Unsubscribe {
     return this.session.navigation.onUpdate(handler)

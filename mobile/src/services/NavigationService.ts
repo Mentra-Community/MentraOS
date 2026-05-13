@@ -279,6 +279,29 @@ class NavigationService {
   }
 
   /**
+   * Dev toggle: lock simulated locations onto the wrong sidewalk
+   * (perpendicular-right of the route bearing by ~8m). Used to verify
+   * the SDK's along-path pivot trigger fires even when the user never
+   * comes within the 7m radius of a pivot point. Android-only today; iOS
+   * is a no-op stub.
+   */
+  public async setWrongSidewalkOffset(enabled: boolean): Promise<{ok: boolean; error?: string}> {
+    console.log(`${LOG_TAG}: setWrongSidewalkOffset(${enabled})`)
+    return await CrustModule.setWrongSidewalkOffset(enabled)
+  }
+
+  /**
+   * Dev toggle: take over from the Google simulator and walk the user
+   * along a modified polyline that skips crossing micro-steps. Lets us
+   * reproduce the wrong-sidewalk-then-missed-the-turn scenario for
+   * pivot trigger testing. Android-only today; iOS is a no-op stub.
+   */
+  public async setSkipCrossings(enabled: boolean): Promise<{ok: boolean; error?: string}> {
+    console.log(`${LOG_TAG}: setSkipCrossings(${enabled})`)
+    return await CrustModule.setSkipCrossings(enabled)
+  }
+
+  /**
    * Compute one or more routes without starting a trip. Implemented by
    * calling Google's Routes API (REST) so we don't disturb the active
    * Navigator. Returns `{ok: false}` plus an error string when the engine

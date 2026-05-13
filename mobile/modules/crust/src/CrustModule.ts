@@ -103,6 +103,25 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
    */
   simulateDeviation(offsetMeters?: number): Promise<{ok: boolean; error?: string}>
 
+  /**
+   * Dev toggle. When enabled, the native NavigationManager shifts every
+   * reported location ~8m perpendicular to the route bearing, simulating
+   * a pedestrian walking on the wrong sidewalk. Only meaningful in
+   * simulate mode; lets us verify the SDK's along-path pivot trigger
+   * fires even when the user never crosses the 7m pivot point radius.
+   * Android-only today; iOS is a no-op stub.
+   */
+  setWrongSidewalkOffset(enabled: boolean): Promise<{ok: boolean; error?: string}>
+
+  /**
+   * Dev toggle. When enabled, the native NavigationManager takes over
+   * from the Google simulator and walks the user along a modified
+   * polyline that omits crossing micro-steps — reproducing the
+   * wrong-sidewalk-then-missed-the-turn scenario. Android-only today;
+   * iOS is a no-op stub.
+   */
+  setSkipCrossings(enabled: boolean): Promise<{ok: boolean; error?: string}>
+
   // Heading / compass (Android only)
   startHeading(): Promise<{ok: boolean; error?: string}>
   stopHeading(): Promise<{ok: boolean; error?: string}>

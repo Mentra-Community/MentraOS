@@ -175,6 +175,8 @@ class MantleManager {
         start: (coords, options) => navigationService.start(coords, options),
         stop: () => navigationService.stop(),
         simulateDeviation: (offsetMeters) => navigationService.simulateDeviation(offsetMeters),
+        setWrongSidewalkOffset: (enabled) => navigationService.setWrongSidewalkOffset(enabled),
+        setSkipCrossings: (enabled) => navigationService.setSkipCrossings(enabled),
         requestPermission: () => navigationService.requestPermission(),
         computeRoute: (payload) => navigationService.computeRoute(payload),
       },

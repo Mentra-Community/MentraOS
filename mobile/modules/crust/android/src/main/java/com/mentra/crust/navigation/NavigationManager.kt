@@ -46,12 +46,89 @@ object NavigationManager {
   /** Most recent road-snapped fix. Used to compute distance-to-maneuver. */
   private var lastFixLat: Double = Double.NaN
   private var lastFixLng: Double = Double.NaN
+  /**
+   * The sample BEFORE lastFix. Used by the Deviate dev button to
+   * derive the user's actual direction of travel (prev → last) so the
+   * straight-walk uses *their* bearing, not the route's local bearing.
+   */
+  private var prevFixLat: Double = Double.NaN
+  private var prevFixLng: Double = Double.NaN
   /** Most recent speed in m/s, off the road-snapped Location. Null until first sample. */
   private var lastSpeedMps: Float? = null
   /** Set true once we cross the off-route threshold; cleared by the route-changed listener. */
   private var offRouteFired: Boolean = false
   /** Distance threshold (meters) at which we declare the user has left the route. */
   private val OFF_ROUTE_THRESHOLD_M = 30.0
+  /**
+   * Dev toggle: when true, every emitted location is shifted ~8m to the
+   * right of the local route bearing before being reported. Simulates a
+   * pedestrian walking on the wrong sidewalk so we can verify the
+   * along-path pivot trigger fires even when they're never within the
+   * 7m point radius of a pivot. Only meaningful in simulate mode; on a
+   * real fix the road-snapped provider would just snap us back.
+   */
+  private var wrongSidewalkOffsetEnabled: Boolean = false
+  private val WRONG_SIDEWALK_OFFSET_M = 8.0
+
+  /**
+   * Dev toggle: when true, takes over from the Google Nav SDK's
+   * simulator and walks the user along a *modified* polyline that omits
+   * crossing micro-steps. So when the route says "cross the road, then
+   * turn right", the simulator pretends the user kept walking straight
+   * on the same sidewalk — letting us reproduce the wrong-sidewalk-then-
+   * missed-the-turn scenario. Only takes effect with simulate=true.
+   */
+  private var skipCrossingsEnabled: Boolean = false
+  /** Monotonic timer driving our custom walker when skip-crossings is on. */
+  private var skipCrossingsTimer: java.util.Timer? = null
+  /** Per-tick step length in meters at simulationSpeed=1x; scaled by speed. */
+  private val SKIP_CROSSINGS_BASE_M_PER_TICK = 0.56
+  /** Walker tick interval. ~2.5Hz feels smooth and matches a stroll cadence. */
+  private val SKIP_CROSSINGS_TICK_MS = 400L
+  /** Polyline segment short enough to be considered a crosswalk leg. */
+  private val CROSSING_MAX_LEG_METERS = 25.0
+  /** Bearing change vs adjacent segments that flags a leg as a crosswalk. */
+  private val CROSSING_MIN_BEND_DEG = 60.0
+
+  /**
+   * Timer driving the Deviate dev button's "walk straight for 10s"
+   * behavior. We pause Google's simulator, feed setUserLocation()
+   * waypoints along the user's current direction of travel, then
+   * freeze when the duration elapses.
+   */
+  private var deviateTimer: java.util.Timer? = null
+  /** How long the Deviate dev button keeps walking the user straight. */
+  private val DEVIATE_DURATION_S = 10.0
+  /** Walker tick interval (s); matches the skip-crossings walker. */
+  private val DEVIATE_TICK_MS = 400L
+  /** Baseline walking speed in m/s; scaled by simulationSpeed at tick time. */
+  private val DEVIATE_BASE_MPS = 1.4
+  /**
+   * Cached StartOptions from the active trip. Used by the deviate
+   * reroute to re-issue setDestination(s) with the same final stop +
+   * routing prefs from the walker's current position.
+   */
+  private var activeOptions: StartOptions? = null
+  /**
+   * True while the Deviate walker owns the simulator. The road-snapped
+   * location listener checks this flag and short-circuits — otherwise
+   * Google's provider keeps snapping incoming locations back onto the
+   * route polyline and the dot visibly jumps between the deviated
+   * position (from our tick) and the snapped-back one.
+   */
+  private var deviateWalkerActive: Boolean = false
+  /**
+   * Perpendicular distance from the planned route (m) at which the
+   * deviate walker considers the user truly off-route. Crossing this
+   * threshold fires `off_route`, re-issues setDestinations from the
+   * walker's current position to force a reroute, and cancels the
+   * walk — the new route's first pivot is now ahead of them.
+   *
+   * Smaller than OFF_ROUTE_THRESHOLD_M (30m) on purpose — for the
+   * dev button we want the reroute to kick in quickly during testing
+   * rather than waiting for the user to drift further.
+   */
+  private val DEVIATE_OFF_ROUTE_TRIGGER_M = 12.0
 
   data class ManeuverPayload(
     /**
@@ -251,6 +328,16 @@ object NavigationManager {
           } catch (e: Throwable) {
             Log.w(TAG, "setAudioGuidance(SILENT) failed", e)
           }
+          // Suppress the SDK's built-in "off course, recalibrating"
+          // and similar heads-up banner / toast notifications. Our UI
+          // surfaces those events through `onRerouting`/`onOffRoute`
+          // and renders them on the glasses, so the phone-side popup
+          // is duplicate noise.
+          try {
+            nav.setHeadsUpNotificationEnabled(false)
+          } catch (e: Throwable) {
+            Log.w(TAG, "setHeadsUpNotificationEnabled(false) failed", e)
+          }
           attachListeners(nav, callbacks)
           attachLocationListener(activity, callbacks)
           registerNavInfoUpdates(activity, nav)
@@ -268,15 +355,14 @@ object NavigationManager {
   }
 
   /**
-   * Dev-only: nudge the simulator off-route so we can verify the rerouting
-   * pipeline end-to-end. Picks a small perpendicular offset (~`offsetMeters`)
-   * from the user's current road-snapped position and teleports the
-   * simulator there. The Nav SDK detects the user is off the polyline and
-   * fires `onRerouting()`, which our existing listener already handles.
-   *
-   * Keep `offsetMeters` modest (15–25m) so the reroute is plausible — far
-   * enough to leave the polyline tolerance, close enough that the rebuild
-   * just patches the route rather than dragging the user across the city.
+   * Dev-only. Pauses Google's simulator and walks the user STRAIGHT
+   * FORWARD in their current direction of travel for DEVIATE_DURATION_S
+   * seconds, then freezes the simulator. The bearing is derived from
+   * prevFix → lastFix — *their* direction of travel, not the route's
+   * local bearing — so this reproduces "user ignored the route and
+   * kept walking the way they were going". After the window elapses,
+   * everything stops. `offsetMeters` is ignored (kept for legacy
+   * protocol back-compat).
    */
   fun simulateDeviation(offsetMeters: Double = 20.0) {
     val nav = navigator ?: run {
@@ -291,35 +377,386 @@ object NavigationManager {
       Log.w(TAG, "simulateDeviation: no simulator (real fixes only?)")
       return
     }
-
-    // Pick a perpendicular bearing relative to the route's local direction
-    // so the offset actually leaves the road, not slides along it.
-    val flat = flattenRoute(nav)
-    val routeBearing = if (flat != null && flat.size >= 2) {
-      val (idx, _) = closestSegmentIndex(flat, lastFixLat, lastFixLng)
-      val a = flat[idx]
-      val b = flat[(idx + 1).coerceAtMost(flat.size - 1)]
-      bearing(a.first, a.second, b.first, b.second)
+    // Bearing source: derive from prev → last so we use the user's
+    // *actual* direction of travel. Need a non-degenerate distance
+    // between samples (>0.5m) to avoid using noise as bearing.
+    val travelBearing: Double = if (
+      !prevFixLat.isNaN() && !prevFixLng.isNaN() &&
+      haversine(prevFixLat, prevFixLng, lastFixLat, lastFixLng) > 0.5
+    ) {
+      bearing(prevFixLat, prevFixLng, lastFixLat, lastFixLng)
     } else {
-      0.0
+      // No usable prev sample — bail. We refuse to guess a direction.
+      Log.w(TAG, "simulateDeviation: no recent movement to infer bearing — ignoring")
+      return
     }
-    val perpBearing = (routeBearing + 90.0) % 360.0
 
-    val (offLat, offLng) = movePoint(lastFixLat, lastFixLng, offsetMeters, perpBearing)
-    Log.d(TAG, "simulateDeviation: $lastFixLat,$lastFixLng → $offLat,$offLng (offset ${offsetMeters}m bearing ${perpBearing}°)")
+    // Cancel any existing walker, take over the simulator.
+    deviateTimer?.cancel()
+    deviateTimer = null
+    try { sim.pause() } catch (_: Throwable) {}
+    // Gate the road-snapped listener so it stops fighting us by
+    // snapping incoming positions back onto the polyline. Cleared
+    // when the walker stops (either timer end or off-route trigger).
+    deviateWalkerActive = true
 
+    val stepMeters = (DEVIATE_BASE_MPS * simulationSpeed * (DEVIATE_TICK_MS / 1000.0)).coerceAtLeast(0.1)
+    val totalTicks = (DEVIATE_DURATION_S / (DEVIATE_TICK_MS / 1000.0)).toInt().coerceAtLeast(1)
+    Log.d(
+      TAG,
+      "simulateDeviation: walk straight for ${DEVIATE_DURATION_S}s @ ${simulationSpeed}× — bearing=$travelBearing°, step=${stepMeters}m, ticks=$totalTicks",
+    )
+    @Suppress("UNUSED_VARIABLE") val _legacyOffset = offsetMeters // protocol back-compat; unused
+
+    var cursorLat = lastFixLat
+    var cursorLng = lastFixLng
+    var ticksRemaining = totalTicks
+    // Run SDK calls on the main looper; setUserLocation from a
+    // background thread silently fails after the first call on some
+    // SDK builds, which would make the dot teleport once and stop.
+    val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    val timer = java.util.Timer("deviateWalker", true)
+    timer.scheduleAtFixedRate(object : java.util.TimerTask() {
+      override fun run() {
+        mainHandler.post {
+          try {
+            if (ticksRemaining <= 0) {
+              cancel()
+              deviateTimer = null
+              deviateWalkerActive = false
+              // Freeze the simulator. No handoff to Google sim — the
+              // user wanted everything to stop after the 10s window.
+              try { navigator?.simulator?.pause() } catch (_: Throwable) {}
+              Log.d(TAG, "simulateDeviation: done; simulator frozen")
+              return@post
+            }
+            val (nLat, nLng) = movePoint(cursorLat, cursorLng, stepMeters, travelBearing)
+            cursorLat = nLat
+            cursorLng = nLng
+            navigator?.simulator?.setUserLocation(
+              com.google.android.gms.maps.model.LatLng(cursorLat, cursorLng),
+            )
+            // Also forward the synthetic position directly to JS in
+            // case the road-snapped provider isn't pumping locations
+            // while the Google sim is paused. Mirrors the same payload
+            // shape the location listener emits.
+            activeCallbacks?.onLocation(
+              LocationPayload(
+                lat = cursorLat,
+                lng = cursorLng,
+                accuracy = null,
+                timestamp = System.currentTimeMillis(),
+              ),
+            )
+            // Slide the prev/last window forward so a follow-up
+            // Deviate press can still infer a bearing while we walk.
+            prevFixLat = lastFixLat
+            prevFixLng = lastFixLng
+            lastFixLat = cursorLat
+            lastFixLng = cursorLng
+            ticksRemaining--
+
+            // Off-route trigger. Once we've drifted more than
+            // DEVIATE_OFF_ROUTE_TRIGGER_M from the planned polyline,
+            // fire off_route, force the Nav SDK to replan from here,
+            // and stop the deviate walk — the user is now on a fresh
+            // route whose first pivot is ahead of them.
+            val nav = navigator
+            if (nav != null && !offRouteFired) {
+              val flatNow = flattenRoute(nav)
+              if (flatNow != null && flatNow.size >= 2) {
+                val (_, perp) = closestSegmentIndex(flatNow, cursorLat, cursorLng)
+                if (perp > DEVIATE_OFF_ROUTE_TRIGGER_M) {
+                  Log.d(TAG, "deviate: off-route at ${perp}m — triggering reroute")
+                  offRouteFired = true
+                  activeCallbacks?.onOffRoute(perp)
+                  triggerDeviateReroute(nav, cursorLat, cursorLng)
+                  cancel()
+                  deviateTimer = null
+                  deviateWalkerActive = false
+                  return@post
+                }
+              }
+            }
+          } catch (e: Throwable) {
+            Log.e(TAG, "simulateDeviation tick failed", e)
+          }
+        }
+      }
+    }, 0L, DEVIATE_TICK_MS)
+    deviateTimer = timer
+  }
+
+  /**
+   * Force the Nav SDK to plan a fresh route to the trip's final stop
+   * from the deviate walker's current position. The SDK treats this as
+   * a route recompute and fires routeChangedListener, which our
+   * existing handler routes through onRerouting/emitRoute to JS.
+   */
+  private fun triggerDeviateReroute(nav: Navigator, fromLat: Double, fromLng: Double) {
+    val options = activeOptions ?: run {
+      Log.w(TAG, "triggerDeviateReroute: no active options cached")
+      return
+    }
+    if (options.stops.isEmpty()) return
+    // Seed the navigator's "current position" with the walker's
+    // position so its replanner starts from where we are. Without
+    // this the new route would still anchor at the last road-snapped
+    // fix Google saw (which may be where the user was before we
+    // paused its simulator).
     try {
-      // ONLY teleport — do NOT call simulateLocationsAlongExistingRoute() here.
-      // That method walks the *current* route from its start, which would
-      // snap the user back to the trip origin. Instead, we let the SDK
-      // notice we're off-route, fire onRouteChanged, and we restart the
-      // simulator on the NEW route from the deviated position inside
-      // routeChangedListener.
-      sim.pause()
-      sim.setUserLocation(com.google.android.gms.maps.model.LatLng(offLat, offLng))
-    } catch (e: Throwable) {
-      Log.e(TAG, "simulateDeviation failed", e)
+      nav.simulator?.setUserLocation(
+        com.google.android.gms.maps.model.LatLng(fromLat, fromLng),
+      )
+    } catch (_: Throwable) {}
+    val waypoints = try {
+      options.stops.mapIndexed { idx, (lat, lng) ->
+        Waypoint.builder()
+          .setLatLng(lat, lng)
+          .setTitle(if (idx == options.stops.lastIndex) "Destination" else "Stop ${idx + 1}")
+          .build()
+      }
+    } catch (e: Waypoint.UnsupportedPlaceIdException) {
+      Log.w(TAG, "triggerDeviateReroute: bad waypoint: ${e.message}")
+      return
     }
+    val routingOptions = RoutingOptions()
+      .travelMode(translateMode(options.mode))
+      .avoidHighways(options.avoidHighways)
+      .avoidTolls(options.avoidTolls)
+      .avoidFerries(options.avoidFerries)
+    try {
+      if (waypoints.size == 1) {
+        nav.setDestination(waypoints[0], routingOptions)
+      } else {
+        nav.setDestinations(waypoints, routingOptions)
+      }
+      Log.d(TAG, "triggerDeviateReroute: replanning from $fromLat,$fromLng")
+    } catch (e: Throwable) {
+      Log.e(TAG, "triggerDeviateReroute failed", e)
+    }
+  }
+
+  /**
+   * Dev toggle. When enabled, every emitted location is shifted ~8m
+   * perpendicular-right of the route bearing before being reported to
+   * JS, simulating a pedestrian walking on the wrong sidewalk. Lets us
+   * verify the SDK's along-path pivot trigger fires even when the user
+   * never comes within the 7m point radius of a pivot.
+   */
+  fun setWrongSidewalkOffset(enabled: Boolean) {
+    Log.d(TAG, "setWrongSidewalkOffset($enabled)")
+    wrongSidewalkOffsetEnabled = enabled
+  }
+
+  /**
+   * Dev toggle. Enable/disable the "skip crossings" custom walker. When
+   * enabled mid-trip, we pause Google's simulator and take over with
+   * our own timer that feeds setUserLocation() waypoints along a
+   * polyline with crossing micro-steps removed. When disabled, we stop
+   * our walker and (if a trip is in progress) hand control back to the
+   * Google simulator from the user's current position.
+   */
+  fun setSkipCrossings(enabled: Boolean) {
+    Log.d(TAG, "setSkipCrossings($enabled)")
+    skipCrossingsEnabled = enabled
+    if (enabled) {
+      startSkipCrossingsWalker()
+    } else {
+      stopSkipCrossingsWalker(resumeGoogleSim = true)
+    }
+  }
+
+  /**
+   * Build the modified polyline for the active route (with crossing
+   * micro-steps replaced by straight-line projections) and start a
+   * timer that walks it. If a previous walker is running we cancel it
+   * first. Safe to call when no route is active — does nothing.
+   */
+  private fun startSkipCrossingsWalker() {
+    val nav = navigator ?: run {
+      Log.w(TAG, "startSkipCrossingsWalker: no navigator")
+      return
+    }
+    val flat = flattenRoute(nav)
+    if (flat == null || flat.size < 2) {
+      Log.w(TAG, "startSkipCrossingsWalker: no route polyline")
+      return
+    }
+    // Take over from Google's simulator so we don't fight over positions.
+    try {
+      nav.simulator?.pause()
+    } catch (e: Throwable) {
+      Log.w(TAG, "couldn't pause Google simulator: ${e.message}")
+    }
+    val modified = stripCrossings(flat)
+    Log.d(TAG, "skip-crossings walker: original=${flat.size} pts, modified=${modified.size} pts")
+    stopSkipCrossingsWalker(resumeGoogleSim = false)
+    // Find the closest modified-polyline index to the user's last known
+    // position so we resume from where they are instead of teleporting
+    // back to the route start.
+    val startIdx = if (!lastFixLat.isNaN() && !lastFixLng.isNaN()) {
+      closestPolylineIndex(modified, lastFixLat, lastFixLng)
+    } else {
+      0
+    }
+    val timer = java.util.Timer("skipCrossingsWalker", true)
+    val stepMeters = SKIP_CROSSINGS_BASE_M_PER_TICK * simulationSpeed
+    var cursor = startIdx.toDouble() // float index along `modified`
+    timer.scheduleAtFixedRate(object : java.util.TimerTask() {
+      override fun run() {
+        try {
+          if (!skipCrossingsEnabled) {
+            cancel()
+            return
+          }
+          val advanced = advanceCursor(modified, cursor, stepMeters)
+          cursor = advanced
+          if (cursor >= modified.size - 1) {
+            // Reached end of the modified polyline. Let the SDK handle
+            // arrival via its own detection; just stop ticking.
+            cancel()
+            return
+          }
+          val (lat, lng) = pointAt(modified, cursor)
+          val sim = navigator?.simulator
+          if (sim != null) {
+            sim.setUserLocation(com.google.android.gms.maps.model.LatLng(lat, lng))
+          }
+        } catch (e: Throwable) {
+          Log.e(TAG, "skip-crossings walker tick failed", e)
+        }
+      }
+    }, 0L, SKIP_CROSSINGS_TICK_MS)
+    skipCrossingsTimer = timer
+  }
+
+  private fun stopSkipCrossingsWalker(resumeGoogleSim: Boolean) {
+    skipCrossingsTimer?.cancel()
+    skipCrossingsTimer = null
+    if (resumeGoogleSim && simulating) {
+      try {
+        navigator?.simulator?.simulateLocationsAlongExistingRoute(
+          SimulationOptions().speedMultiplier(simulationSpeed),
+        )
+      } catch (e: Throwable) {
+        Log.w(TAG, "couldn't resume Google simulator: ${e.message}")
+      }
+    }
+  }
+
+  /**
+   * Return a modified polyline with crossing micro-steps replaced by a
+   * straight-line projection from the pre-crossing direction. A
+   * crossing is detected when a short (<CROSSING_MAX_LEG_METERS) leg
+   * turns sharply (>CROSSING_MIN_BEND_DEG) from the previous leg AND
+   * the leg after it turns sharply back. We then drop those crossing
+   * legs and project the user's pre-crossing direction forward by the
+   * total crossing length, so the modified polyline keeps the same
+   * along-path length as the original — letting Google's distance/eta
+   * math stay roughly consistent.
+   */
+  private fun stripCrossings(points: List<Pair<Double, Double>>): List<Pair<Double, Double>> {
+    if (points.size < 4) return points
+    val out = ArrayList<Pair<Double, Double>>(points.size)
+    out.add(points[0])
+    var i = 1
+    while (i < points.size - 1) {
+      val prev = points[i - 1]
+      val here = points[i]
+      val next = points[i + 1]
+      val legIn = haversine(prev.first, prev.second, here.first, here.second)
+      val legOut = haversine(here.first, here.second, next.first, next.second)
+      val bearIn = bearing(prev.first, prev.second, here.first, here.second)
+      val bearOut = bearing(here.first, here.second, next.first, next.second)
+      val bend = bearingDiffAbs(bearIn, bearOut)
+      // A crossing's first leg is short and turns sharply.
+      val looksLikeCrossingStart = legOut < CROSSING_MAX_LEG_METERS && bend > CROSSING_MIN_BEND_DEG
+      if (looksLikeCrossingStart && i + 2 < points.size) {
+        val afterNext = points[i + 2]
+        val bearAfter = bearing(next.first, next.second, afterNext.first, afterNext.second)
+        val bendBack = bearingDiffAbs(bearOut, bearAfter)
+        // …and turns sharply back to roughly the original direction.
+        val isCrossing = bendBack > CROSSING_MIN_BEND_DEG &&
+          bearingDiffAbs(bearIn, bearAfter) < CROSSING_MIN_BEND_DEG
+        if (isCrossing) {
+          // Skip the crossing: project forward along bearIn by the
+          // total crossing length (legOut + legAfter) so we don't
+          // shorten the path.
+          val legAfter = haversine(next.first, next.second, afterNext.first, afterNext.second)
+          val skipDist = legOut + legAfter
+          val (newLat, newLng) = movePoint(here.first, here.second, skipDist, bearIn)
+          out.add(Pair(newLat, newLng))
+          i += 3 // skip `next` and `afterNext`
+          continue
+        }
+      }
+      out.add(here)
+      i++
+    }
+    // Always include the final point so the route still ends at the destination.
+    if (out.last() != points.last()) out.add(points.last())
+    return out
+  }
+
+  /** Absolute smallest bearing difference, in degrees [0, 180]. */
+  private fun bearingDiffAbs(a: Double, b: Double): Double {
+    val d = (a - b + 540.0) % 360.0 - 180.0
+    return kotlin.math.abs(d)
+  }
+
+  /** Closest polyline vertex to (lat, lng) by squared lat/lng distance. */
+  private fun closestPolylineIndex(points: List<Pair<Double, Double>>, lat: Double, lng: Double): Int {
+    var best = 0
+    var bestD = Double.MAX_VALUE
+    for (i in points.indices) {
+      val (plat, plng) = points[i]
+      val dx = plat - lat
+      val dy = plng - lng
+      val d = dx * dx + dy * dy
+      if (d < bestD) {
+        bestD = d
+        best = i
+      }
+    }
+    return best
+  }
+
+  /**
+   * Advance a float-index cursor along the polyline by `meters`,
+   * crossing vertex boundaries as needed. Returns the new cursor
+   * value. Clamped to the polyline length.
+   */
+  private fun advanceCursor(points: List<Pair<Double, Double>>, cursor: Double, meters: Double): Double {
+    if (points.size < 2) return cursor.coerceAtMost(0.0)
+    var idx = cursor.toInt()
+    var frac = cursor - idx
+    var remaining = meters
+    while (remaining > 0 && idx < points.size - 1) {
+      val a = points[idx]
+      val b = points[idx + 1]
+      val segLen = haversine(a.first, a.second, b.first, b.second)
+      val segLeft = (1.0 - frac) * segLen
+      if (remaining < segLeft) {
+        frac += remaining / segLen
+        remaining = 0.0
+      } else {
+        remaining -= segLeft
+        idx++
+        frac = 0.0
+      }
+    }
+    return idx.toDouble() + frac
+  }
+
+  /** Interpolated (lat, lng) at a float index along the polyline. */
+  private fun pointAt(points: List<Pair<Double, Double>>, cursor: Double): Pair<Double, Double> {
+    val idx = cursor.toInt().coerceIn(0, points.size - 1)
+    val frac = (cursor - idx).coerceIn(0.0, 1.0)
+    if (idx >= points.size - 1) return points.last()
+    val a = points[idx]
+    val b = points[idx + 1]
+    return Pair(a.first + (b.first - a.first) * frac, a.second + (b.second - a.second) * frac)
   }
 
   /** Project a point along a bearing in meters. */
@@ -365,6 +802,18 @@ object NavigationManager {
     NavInfoHolder.reset()
     lastSpeedMps = null
     offRouteFired = false
+    wrongSidewalkOffsetEnabled = false
+    skipCrossingsEnabled = false
+    skipCrossingsTimer?.cancel()
+    skipCrossingsTimer = null
+    deviateTimer?.cancel()
+    deviateTimer = null
+    deviateWalkerActive = false
+    activeOptions = null
+    prevFixLat = Double.NaN
+    prevFixLng = Double.NaN
+    lastFixLat = Double.NaN
+    lastFixLng = Double.NaN
   }
 
   /**
@@ -439,6 +888,7 @@ object NavigationManager {
       .avoidFerries(options.avoidFerries)
 
     activeCallbacks = callbacks
+    activeOptions = options
     val resultPending = if (waypoints.size == 1) {
       // Single-destination call path keeps using setDestination(), which is
       // the only API exposed by older SDK builds. Multi-stop trips upgrade
@@ -635,12 +1085,18 @@ object NavigationManager {
       // simulateDeviation). Restart it on the new route so the user keeps
       // "walking" without having to do anything.
       if (simulating) {
-        try {
-          nav.simulator?.simulateLocationsAlongExistingRoute(
-            SimulationOptions().speedMultiplier(simulationSpeed),
-          )
-        } catch (e: Throwable) {
-          Log.w(TAG, "failed to restart simulator after reroute: ${e.message}")
+        if (skipCrossingsEnabled) {
+          // Our walker owns the simulator while this flag is on. Stop
+          // any in-progress timer and rebuild against the new route.
+          startSkipCrossingsWalker()
+        } else {
+          try {
+            nav.simulator?.simulateLocationsAlongExistingRoute(
+              SimulationOptions().speedMultiplier(simulationSpeed),
+            )
+          } catch (e: Throwable) {
+            Log.w(TAG, "failed to restart simulator after reroute: ${e.message}")
+          }
         }
       }
       emitCurrentManeuverIfChanged(nav, callbacks)
@@ -678,13 +1134,43 @@ object NavigationManager {
         return
       }
       val listener = RoadSnappedLocationProvider.LocationListener { loc: Location ->
-        lastFixLat = loc.latitude
-        lastFixLng = loc.longitude
+        // While the deviate walker is in flight, the provider is still
+        // alive but its snapped positions would fight the synthetic
+        // ones our walker is emitting — the dot would jump between the
+        // two. Short-circuit: walker owns location until it stops.
+        if (deviateWalkerActive) return@LocationListener
+        // Compute the effective (lat, lng) we'll report — either the raw
+        // road-snapped fix or its wrong-sidewalk-shifted twin. Everything
+        // downstream (lastFix tracking, off-route detection, JS event)
+        // sees the same value so the system stays coherent.
+        var effectiveLat = loc.latitude
+        var effectiveLng = loc.longitude
+        if (wrongSidewalkOffsetEnabled) {
+          val nav = navigator
+          val flat = if (nav != null) flattenRoute(nav) else null
+          if (flat != null && flat.size >= 2) {
+            val (idx, _) = closestSegmentIndex(flat, loc.latitude, loc.longitude)
+            val a = flat[idx]
+            val b = flat[(idx + 1).coerceAtMost(flat.size - 1)]
+            val routeBearing = bearing(a.first, a.second, b.first, b.second)
+            // Perpendicular-right of the route bearing.
+            val perpBearing = (routeBearing + 90.0) % 360.0
+            val (offLat, offLng) = movePoint(loc.latitude, loc.longitude, WRONG_SIDEWALK_OFFSET_M, perpBearing)
+            effectiveLat = offLat
+            effectiveLng = offLng
+          }
+        }
+        // Slide the prev → last window so the Deviate dev button can
+        // recover the user's actual direction of travel.
+        prevFixLat = lastFixLat
+        prevFixLng = lastFixLng
+        lastFixLat = effectiveLat
+        lastFixLng = effectiveLng
         lastSpeedMps = if (loc.hasSpeed()) loc.speed else null
         callbacks.onLocation(
           LocationPayload(
-            lat = loc.latitude,
-            lng = loc.longitude,
+            lat = effectiveLat,
+            lng = effectiveLng,
             accuracy = if (loc.hasAccuracy()) loc.accuracy else null,
             timestamp = loc.time,
           ),
@@ -698,7 +1184,7 @@ object NavigationManager {
         if (nav != null && !offRouteFired) {
           val flat = flattenRoute(nav)
           if (flat != null && flat.size >= 2) {
-            val (_, perp) = closestSegmentIndex(flat, loc.latitude, loc.longitude)
+            val (_, perp) = closestSegmentIndex(flat, effectiveLat, effectiveLng)
             if (perp > OFF_ROUTE_THRESHOLD_M) {
               offRouteFired = true
               callbacks.onOffRoute(perp)

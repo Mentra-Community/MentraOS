@@ -115,6 +115,18 @@ public class CrustModule: Module {
             return ["ok": true]
         }
 
+        // No-op stub on iOS — Android implements the wrong-sidewalk dev
+        // toggle today. iOS will follow in a separate pass.
+        AsyncFunction("setWrongSidewalkOffset") { (_: Bool) -> [String: Any] in
+            return ["ok": true]
+        }
+
+        // No-op stub on iOS — Android implements the skip-crossings dev
+        // walker today. iOS will follow in a separate pass.
+        AsyncFunction("setSkipCrossings") { (_: Bool) -> [String: Any] in
+            return ["ok": true]
+        }
+
         AsyncFunction("startHeading") { () -> [String: Any] in
             HeadingManager.shared.start { [weak self] degrees in
                 self?.sendEvent("onHeading", ["degrees": degrees])

@@ -173,6 +173,8 @@ export interface NavigationAdapter {
   ) => Promise<{ok: boolean; error?: string}>
   stop: () => Promise<{ok: boolean; error?: string}>
   simulateDeviation: (offsetMeters?: number) => Promise<{ok: boolean; error?: string}>
+  setWrongSidewalkOffset: (enabled: boolean) => Promise<{ok: boolean; error?: string}>
+  setSkipCrossings: (enabled: boolean) => Promise<{ok: boolean; error?: string}>
   requestPermission: () => Promise<{ok: boolean; accepted: boolean; error?: string}>
   computeRoute: (payload: Record<string, unknown>) => Promise<{
     ok: boolean

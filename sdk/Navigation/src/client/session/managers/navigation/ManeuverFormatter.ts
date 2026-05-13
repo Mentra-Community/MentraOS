@@ -51,6 +51,8 @@ export class ManeuverFormatter {
         return "↑"
       case "ARRIVE":
         return "●"
+      case "CROSS_STREET":
+        return "⇆"
       default:
         return "↑"
     }
@@ -59,6 +61,7 @@ export class ManeuverFormatter {
   /** Compact arrow for short text lines (←/→/↑). */
   arrow(type: string): string {
     const t = type.toUpperCase()
+    if (t === "CROSS_STREET") return "⇆"
     if (t.includes("LEFT")) return "←"
     if (t.includes("RIGHT")) return "→"
     if (t === "U_TURN") return "↺"
@@ -87,6 +90,8 @@ export class ManeuverFormatter {
         return "continue straight"
       case "ARRIVE":
         return "arrive"
+      case "CROSS_STREET":
+        return "cross the road"
       default:
         return type.toLowerCase().replace(/_/g, " ")
     }
@@ -127,7 +132,9 @@ export class ManeuverFormatter {
 
     if (!isStraightT && dist >= 0 && dist <= IMMINENT_M) {
       const verb = this.humanize(m.maneuverType)
-      const onto = toRoad ? ` onto ${toRoad}` : ""
+      // CROSS_STREET keeps the same road on both sides — never append
+      // "onto X". The verb already reads as a complete instruction.
+      const onto = m.maneuverType === "CROSS_STREET" || !toRoad ? "" : ` onto ${toRoad}`
       return {now: arrowed(`${this.cap(verb)}${onto}`), next: null}
     }
 
@@ -146,7 +153,7 @@ export class ManeuverFormatter {
       return {now: nowLine, next: null}
     }
     const verb = this.humanize(m.maneuverType)
-    const onto = toRoad ? ` onto ${toRoad}` : ""
+    const onto = m.maneuverType === "CROSS_STREET" || !toRoad ? "" : ` onto ${toRoad}`
     return {now: nowLine, next: arrowed(`Then ${verb}${onto}`)}
   }
 

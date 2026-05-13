@@ -85,3 +85,78 @@ export function nextSegmentBearing(me: LatLng | null, route: LatLng[] | null): n
   }
   return bearingDeg(route[bestIdx], route[bestIdx + 1])
 }
+
+export type Crossing = {
+  /** Start of the crossing leg (curb on the user's current sidewalk). */
+  start: LatLng
+  /** End of the crossing leg (curb on the other sidewalk). */
+  end: LatLng
+}
+
+/**
+ * Detect crossing micro-steps in a route polyline. A "crossing" is a
+ * short polyline leg (<maxLegMeters) that turns sharply (>minBendDeg)
+ * away from the previous leg and then turns sharply back to roughly
+ * the original direction on the leg after — characteristic of a
+ * crosswalk where the planned route briefly leaves the sidewalk to
+ * traverse the road, then resumes along the opposite curb.
+ *
+ * Heuristic-based; tweakable via `maxLegMeters` and `minBendDeg`.
+ * Mirrors the same algorithm as the Android NavigationManager's
+ * stripCrossings() so the dev-panel visualization and the simulator
+ * walker agree on what counts as a crossing.
+ */
+export function detectCrossings(
+  points: LatLng[],
+  opts: {maxLegMeters?: number; minBendDeg?: number; minSidewalkSwitchMeters?: number} = {},
+): Crossing[] {
+  const maxLeg = opts.maxLegMeters ?? 25
+  const minBend = opts.minBendDeg ?? 60
+  // Reject pass-through crosswalk traces at intersections where the
+  // user stays on the same sidewalk. A real sidewalk-switch leaves the
+  // post-crossing polyline ≥4m perpendicular from the pre-crossing line.
+  const minSwitch = opts.minSidewalkSwitchMeters ?? 4
+  const sampleMeters = 10
+  const out: Crossing[] = []
+  if (points.length < 4) return out
+  for (let i = 1; i < points.length - 2; i++) {
+    const prev = points[i - 1]
+    const here = points[i]
+    const next = points[i + 1]
+    const afterNext = points[i + 2]
+    const legOut = haversineMeters(here, next)
+    if (legOut >= maxLeg) continue
+    const bearIn = bearingDeg(prev, here)
+    const bearOut = bearingDeg(here, next)
+    const bend = Math.abs(((bearIn - bearOut + 540) % 360) - 180)
+    if (bend <= minBend) continue
+    const bearAfter = bearingDeg(next, afterNext)
+    const bendBack = Math.abs(((bearOut - bearAfter + 540) % 360) - 180)
+    const inOutDelta = Math.abs(((bearIn - bearAfter + 540) % 360) - 180)
+    if (!(bendBack > minBend && inOutDelta < minBend)) continue
+    const sample = walkAlongPolyline(points, i + 1, sampleMeters)
+    if (!sample) continue
+    const displacement = perpDistanceMeters(sample, prev, here)
+    if (displacement < minSwitch) continue
+    out.push({start: here, end: next})
+  }
+  return out
+}
+
+function walkAlongPolyline(points: LatLng[], startIdx: number, meters: number): LatLng | null {
+  if (startIdx >= points.length - 1) return null
+  let remaining = meters
+  let idx = startIdx
+  while (idx < points.length - 1) {
+    const a = points[idx]
+    const b = points[idx + 1]
+    const segLen = haversineMeters(a, b)
+    if (remaining <= segLen) {
+      const t = segLen > 0 ? remaining / segLen : 0
+      return {lat: a.lat + (b.lat - a.lat) * t, lng: a.lng + (b.lng - a.lng) * t}
+    }
+    remaining -= segLen
+    idx++
+  }
+  return null
+}

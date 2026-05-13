@@ -3,8 +3,9 @@ import {motion, useMotionValue, useTransform} from "motion/react"
 
 import {useUser} from "@/backend/hooks/useUser"
 import {useDrawerOffset} from "@/frontend/components/Drawer/DrawerOffsetContext"
-import {bearingDeg, haversineMeters} from "@/backend/lib/geometry/geometry"
+import {bearingDeg, detectCrossings, haversineMeters} from "@/backend/lib/geometry/geometry"
 import type {LatLng} from "@/backend/lib/geometry/geometry"
+import {isDev} from "@/backend/lib/env/env"
 import {rdpSmooth} from "@/backend/lib/geometry/rdpSmooth"
 
 /** Pixels between the bottom of the right-rail button stack and the top
@@ -16,6 +17,7 @@ export function NavMap({
   destination,
   routePoints,
   autoFollow = true,
+  onLongPress,
 }: {
   me: LatLng | null
   destination: LatLng | null
@@ -23,6 +25,13 @@ export function NavMap({
    *  to a straight me→destination line so the map has *something*. */
   routePoints?: Array<LatLng> | null
   autoFollow?: boolean
+  /**
+   * Fires when the user holds a single finger on the map for ~2s
+   * without panning. Receives the lat/lng under the pressed point.
+   * Used to drop a destination pin (Google-Maps-style "long press to
+   * search this location"). Parent decides what to do with it.
+   */
+  onLongPress?: (coord: LatLng) => void
 }) {
   const user = useUser()
   const ready = user.mapsReady
@@ -71,6 +80,10 @@ export function NavMap({
   const pastRouteRef = useRef<any | null>(null)
   /** Debug: red dots at each detected pivot (turn point). */
   const pivotDotsRef = useRef<any[]>([])
+  // One Polyline per detected crossing leg. Blue, semi-transparent,
+  // thicker than the route line so it visually highlights the crossing
+  // segment we'd skip when "Skip crossings" is on.
+  const crossingMarkersRef = useRef<any[]>([])
   const isTouchingRef = useRef(false)
 
   // Follow-user mode: starts from the `autoFollow` prop, breaks when the
@@ -177,6 +190,100 @@ export function NavMap({
     container.addEventListener("touchend", onTouchInactive, {passive: true, capture: true})
     container.addEventListener("touchcancel", onTouchInactive, {passive: true, capture: true})
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready])
+
+  // Long-press to drop a destination pin. The Android WebView's own
+  // long-press recognizer fires `contextmenu` after ~500-800ms and
+  // then synthesizes a `pointerup` regardless of whether the finger
+  // is still on screen — so a custom-duration timer past that point
+  // can't work without disabling the system gesture at the native
+  // layer. Instead we treat `contextmenu` itself as the canonical
+  // "user long-pressed here" signal (mirrors what google.com/maps and
+  // every other web-based map does). The duration matches the OS
+  // long-press threshold, not an arbitrary in-app value.
+  //
+  // The latest handler is read via a ref so a parent re-render doesn't
+  // tear down the listeners.
+  const onLongPressRef = useRef(onLongPress)
+  useEffect(() => {
+    onLongPressRef.current = onLongPress
+  }, [onLongPress])
+  useEffect(() => {
+    if (!ready || !mapRef.current || !containerRef.current) return
+    const g = window.google
+    const container = containerRef.current
+    // Cap on how far the user can drift between pointerdown and
+    // contextmenu before we discount the gesture as a pan.
+    const MAX_MOVE_PX = 12
+    // The OS long-press recognizer typically fires `contextmenu`
+    // around 500–800ms in. Above this gap we assume `contextmenu`
+    // is unrelated to the press we tracked (e.g. a long-tap on a
+    // map control). Keeps us from cross-firing.
+    const MAX_CONTEXTMENU_DELAY_MS = 1500
+    let downX = 0
+    let downY = 0
+    let downAt = 0
+    let armed = false
+    let cancelled = false
+    const onDown = (e: PointerEvent) => {
+      if (!e.isPrimary) {
+        // Second finger arrived (pinch). Disarm.
+        armed = false
+        cancelled = true
+        return
+      }
+      downX = e.clientX
+      downY = e.clientY
+      downAt = Date.now()
+      armed = true
+      cancelled = false
+      console.log("[NavMap] pointerdown — armed for long-press")
+    }
+    const onMove = (e: PointerEvent) => {
+      if (!armed) return
+      const dx = e.clientX - downX
+      const dy = e.clientY - downY
+      if (dx * dx + dy * dy > MAX_MOVE_PX * MAX_MOVE_PX) {
+        armed = false
+        cancelled = true
+        console.log("[NavMap] long-press disarmed — finger moved >", MAX_MOVE_PX, "px")
+      }
+    }
+    // The WebView's `contextmenu` event IS the OS-level long-press
+    // signal. We can't stretch the duration past it because the
+    // WebView synthesizes a pointerup right after, killing the
+    // gesture. Treat contextmenu itself as "the user long-pressed
+    // here" — same approach google.com/maps uses.
+    const onContextMenu = (e: Event) => {
+      e.preventDefault()
+      console.log("[NavMap] contextmenu fired", {armed, cancelled, sinceDown: Date.now() - downAt})
+      if (!armed || cancelled) return
+      if (Date.now() - downAt > MAX_CONTEXTMENU_DELAY_MS) return
+      armed = false
+      const rect = container.getBoundingClientRect()
+      const point = new g.maps.Point(downX - rect.left, downY - rect.top)
+      const proj =
+        meDotRef.current && typeof meDotRef.current.getProjection === "function"
+          ? meDotRef.current.getProjection()
+          : null
+      const ll = proj?.fromContainerPixelToLatLng?.(point)
+      if (!ll) {
+        console.warn("[NavMap] long-press: no projection available; pin not dropped")
+        return
+      }
+      const lat = ll.lat()
+      const lng = ll.lng()
+      console.log("[NavMap] long-press @", lat.toFixed(6), lng.toFixed(6))
+      onLongPressRef.current?.({lat, lng})
+    }
+    container.addEventListener("pointerdown", onDown, {capture: true})
+    container.addEventListener("pointermove", onMove, {capture: true})
+    container.addEventListener("contextmenu", onContextMenu)
+    return () => {
+      container.removeEventListener("pointerdown", onDown, {capture: true} as any)
+      container.removeEventListener("pointermove", onMove, {capture: true} as any)
+      container.removeEventListener("contextmenu", onContextMenu)
+    }
   }, [ready])
 
   // Re-center on the user the first time their position arrives — handles
@@ -393,10 +500,45 @@ export function NavMap({
     }
   }, [ready, me?.lat, me?.lng, destination?.lat, destination?.lng, routePoints])
 
+  // Debug overlay: render a blue line across each detected crossing
+  // leg. Same heuristic the simulator's skip-crossings walker uses, so
+  // visually verifying these markers is also verifying what the walker
+  // will skip. Rebuilt on every route change.
+  useEffect(() => {
+    if (!isDev) return
+    if (!ready || !mapRef.current) return
+    const g = window.google
+    const path: LatLng[] = routePoints && routePoints.length > 1 ? routePoints : []
+    const crossings = path.length > 3 ? detectCrossings(path) : []
+
+    for (const m of crossingMarkersRef.current) m.setMap(null)
+    crossingMarkersRef.current = []
+
+    for (const c of crossings) {
+      const line = new g.maps.Polyline({
+        map: mapRef.current,
+        path: [
+          new g.maps.LatLng(c.start.lat, c.start.lng),
+          new g.maps.LatLng(c.end.lat, c.end.lng),
+        ],
+        strokeColor: "#3B82F6",
+        strokeOpacity: 0.9,
+        strokeWeight: 10,
+        zIndex: 4,
+      })
+      crossingMarkersRef.current.push(line)
+    }
+    return () => {
+      for (const m of crossingMarkersRef.current) m.setMap(null)
+      crossingMarkersRef.current = []
+    }
+  }, [ready, routePoints])
+
   // Debug overlay: render a red dot at each detected pivot. Lets us
   // visually verify that the SDK placed turn points where they belong.
   // Pivot list comes from `user.navigation.getPivots()` now (SDK-owned).
   useEffect(() => {
+    if (!isDev) return
     if (!ready || !mapRef.current) return
     const g = window.google
     const pivots = user.navigation.getPivots()
@@ -432,7 +574,10 @@ export function NavMap({
 
   return (
     <div className="relative w-full h-full overflow-hidden">
-      <div ref={containerRef} className="w-full h-full" />
+      <div
+        ref={containerRef}
+        className="w-full h-full select-none touch-manipulation [-webkit-touch-callout:none]"
+      />
 
       {!ready ? (
         <div className="absolute inset-0 flex items-center justify-center bg-neutral-100 text-neutral-500 text-[13px]">

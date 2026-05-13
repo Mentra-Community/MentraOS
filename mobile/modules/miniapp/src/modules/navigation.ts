@@ -34,7 +34,10 @@ export type NavManeuver = {
   /**
    * Categorical type of the upcoming maneuver. One of: STRAIGHT,
    * SLIGHT_LEFT, SLIGHT_RIGHT, TURN_LEFT, TURN_RIGHT, SHARP_LEFT,
-   * SHARP_RIGHT, U_TURN, ARRIVE.
+   * SHARP_RIGHT, U_TURN, ARRIVE, CROSS_STREET.
+   * CROSS_STREET is SDK-synthesized: the engine detects crosswalk legs
+   * in the route geometry and surfaces them as first-class maneuvers
+   * so glasses HUDs can prompt the user to cross.
    */
   maneuverType: string
   /** Distance in meters from the user's current position to that maneuver. -1 if unknown. */
@@ -447,6 +450,34 @@ export class NavigationModule {
     this.session.sendOneShot({
       type: MiniappRequestType.NAVIGATION_DEVIATE,
       offsetMeters,
+    })
+  }
+
+  /**
+   * Dev-only toggle: lock simulated locations to the wrong sidewalk
+   * (~8m perpendicular to the route bearing) so we can test pivot
+   * triggering for pedestrians who never come within the 7m point
+   * radius. Android (simulated trips) only — iOS / real GPS is a no-op.
+   * Fire-and-forget.
+   */
+  setWrongSidewalkOffset(enabled: boolean): void {
+    this.session.sendOneShot({
+      type: MiniappRequestType.NAVIGATION_SET_WRONG_SIDEWALK,
+      enabled,
+    })
+  }
+
+  /**
+   * Dev-only toggle. When enabled mid-trip, the simulator stops
+   * following Google's planned route and instead walks a polyline with
+   * crossing micro-steps removed — reproducing a pedestrian who
+   * ignores cross-the-street instructions. Android (simulated trips)
+   * only — iOS / real GPS is a no-op. Fire-and-forget.
+   */
+  setSkipCrossings(enabled: boolean): void {
+    this.session.sendOneShot({
+      type: MiniappRequestType.NAVIGATION_SET_SKIP_CROSSINGS,
+      enabled,
     })
   }
 

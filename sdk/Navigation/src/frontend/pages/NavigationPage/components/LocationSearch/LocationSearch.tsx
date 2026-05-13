@@ -193,22 +193,21 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
             autoComplete="off"
           />
 
-          {/* Right button: clear (when text entered) or mic */}
+          {/* Right button: clear (when text entered). Sits flush inside
+              the pill — no own background, just the X glyph. */}
           {query ? (
             <button
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={handleClear}
               disabled={disabled}
-              className="w-6.5 h-6.5 flex items-center justify-center shrink-0 rounded-[13px] bg-[#00000014]"
+              className="w-6.5 h-6.5 flex items-center justify-center shrink-0 rounded-full bg-[#00000014]"
               aria-label="Clear">
               <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 10 10" fill="none">
                 <path d="M1 1L9 9M9 1L1 9" stroke="#737373" strokeWidth="1.75" strokeLinecap="round"/>
               </svg>
             </button>
-          ) : (
-            null
-          )}
+          ) : null}
         </div>
 
         {/* Full-screen results panel — sits below the search pill */}

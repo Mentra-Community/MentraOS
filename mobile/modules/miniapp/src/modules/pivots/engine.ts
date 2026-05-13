@@ -22,7 +22,15 @@
  */
 
 import type {LatLng, NavRoute, NavStep, Pivot, PivotEvent, PivotOptions, TravelMode} from "../navigation"
-import {bearingDeg, cumulativeDistances, extractPivots, haversineMeters, signedAngleDiff, type RawPivot} from "./geometry"
+import {
+  bearingDeg,
+  cumulativeDistances,
+  extractCrossings,
+  extractPivots,
+  haversineMeters,
+  signedAngleDiff,
+  type RawPivot,
+} from "./geometry"
 
 /**
  * Mode-aware defaults for `PivotOptions`. Tuned for typical
@@ -63,6 +71,14 @@ const NON_TURN_MANEUVERS = new Set([
 const STEP_MATCH_MAX_INDEX_DELTA = 8
 
 /**
+ * A crossing pivot within this along-route distance of an existing
+ * turn pivot is dropped — the turn maneuver already implies the user
+ * will cross the road as part of the turn, so a duplicate
+ * "Cross the road" prompt right next to "Turn right" is noise.
+ */
+const CROSS_MERGE_M = 15
+
+/**
  * Realized PivotOptions with all fields resolved (no undefined).
  */
 type ResolvedOptions = {
@@ -78,6 +94,16 @@ type PivotState = {
 
 type Subscriber = (event: PivotEvent) => void
 
+/**
+ * Threshold (meters) for perpendicular distance to the route polyline.
+ * Beyond this, the user is treated as "not on the route" — we fall back
+ * to straight-line distance to the pivot point so pivots on a parallel
+ * street don't fire by accident. Within this, we use along-path
+ * projection (the user is on/near the planned path, just maybe on the
+ * wrong sidewalk).
+ */
+const ON_ROUTE_PERP_TOLERANCE_M = 50
+
 export class PivotEngine {
   private opts: ResolvedOptions
   private pivots: Pivot[] = []
@@ -86,6 +112,16 @@ export class PivotEngine {
   private cursor = 0
   /** Pivot currently between `entered` and `exited`, or null. */
   private activePivotIndex: number | null = null
+  /**
+   * Latest route polyline + its cumulative-distance array. Retained
+   * after `setRoute()` so `onLocationUpdate` can project the user onto
+   * the path and compare along-path distance to each pivot's
+   * `distanceAlongRouteMeters`. This is what makes a pedestrian on the
+   * wrong sidewalk still trigger the upcoming turn — straight-line
+   * distance to the pivot point would miss it.
+   */
+  private points: LatLng[] = []
+  private cumulative: number[] = []
 
   private subscribers = new Set<Subscriber>()
 
@@ -119,6 +155,8 @@ export class PivotEngine {
     this.states = []
     this.cursor = 0
     this.activePivotIndex = null
+    this.points = []
+    this.cumulative = []
   }
 
   /**
@@ -142,6 +180,8 @@ export class PivotEngine {
       this.states = []
       this.cursor = 0
       this.activePivotIndex = null
+      this.points = []
+      this.cumulative = []
       return
     }
 
@@ -173,18 +213,77 @@ export class PivotEngine {
       })
     }
 
+    // Inject CROSS_STREET pivots for each detected crosswalk leg. The
+    // crossing's pivot lives at the START curb so the "approaching"
+    // event fires as the user nears the crosswalk on their current
+    // sidewalk. Drop any crossing whose along-route distance lands
+    // within CROSS_MERGE_M of an existing turn pivot — the turn-card
+    // already implies the user will cross at that intersection, and a
+    // duplicate "Cross the road" prompt right next to a "Turn right"
+    // is noise.
+    const crossings = extractCrossings(points)
+    for (const c of crossings) {
+      const along = distanceAtIndex(cumulative, c.startIndex)
+      const nearTurn = pivots.some((p) => Math.abs(p.distanceAlongRouteMeters - along) < CROSS_MERGE_M)
+      if (nearTurn) continue
+      pivots.push({
+        index: -1, // assigned after the sort below
+        lat: c.lat,
+        lng: c.lng,
+        // Crossings have no rotation direction; pick "right" so consumers
+        // expecting one of the two values don't see undefined.
+        direction: "right",
+        fromRoad: null,
+        toRoad: null,
+        maneuver: "CROSS_STREET",
+        distanceAlongRouteMeters: along,
+        radiusMeters: this.opts.radiusMeters,
+      })
+    }
+    // Sort by along-route distance so the cursor walks them in
+    // geographic order, then re-assign indices.
+    pivots.sort((a, b) => a.distanceAlongRouteMeters - b.distanceAlongRouteMeters)
+    for (let i = 0; i < pivots.length; i++) pivots[i].index = i
+
     this.pivots = pivots
     this.states = pivots.map(() => ({approachingFired: false, entered: false, exited: false}))
     this.cursor = 0
     this.activePivotIndex = null
+    this.points = points
+    this.cumulative = cumulative
   }
 
   /**
    * Drive the cursor with a new GPS fix. Fires `approaching` /
    * `entered` / `exited` as thresholds are crossed.
+   *
+   * Two distance metrics are used:
+   *
+   *   1. **Along-path distance** — the user's projected position on the
+   *      route polyline gives `userAlong`; each pivot's
+   *      `distanceAlongRouteMeters` is its `pivotAlong`. The signed
+   *      delta `pivotAlong - userAlong` says how far the user still has
+   *      to walk to reach the pivot's perpendicular line (positive =
+   *      ahead, negative = past). This is the primary metric for
+   *      pedestrians, because it doesn't care which sidewalk they're on
+   *      — only that they've crossed the pivot's latitude/longitude
+   *      band.
+   *
+   *   2. **Straight-line distance** — fallback when the user is more
+   *      than ON_ROUTE_PERP_TOLERANCE_M from the polyline (they've
+   *      really wandered off, not just onto the wrong sidewalk). Keeps
+   *      the legacy behavior for that case.
    */
   onLocationUpdate(coords: LatLng): void {
     if (this.pivots.length === 0) return
+
+    // Project the user onto the polyline. perpMeters tells us how far
+    // they are from the route; userAlong tells us how far along the
+    // route their projected position sits. Both are needed to choose
+    // between the along-path and straight-line trigger metrics.
+    const projection = projectOntoPolyline(this.points, this.cumulative, coords)
+    const useAlongPath = projection !== null && projection.perpMeters <= ON_ROUTE_PERP_TOLERANCE_M
+    const userAlong = projection?.alongMeters ?? 0
 
     // Walk forward from cursor — only consider the upcoming pivot
     // and any not-yet-finalized pivots ahead of it. We never
@@ -194,23 +293,58 @@ export class PivotEngine {
       const state = this.states[i]
       if (state.exited) continue
 
-      const distance = haversineMeters(coords, {lat: pivot.lat, lng: pivot.lng})
+      // `distanceToPivot` is the metric that decides approaching/entered/exited.
+      // When the user is on the route polyline, it's how far they still
+      // have to walk along the path; when they've wandered off, it
+      // falls back to straight-line so we don't fire pivots they can't
+      // reasonably reach.
+      // `aheadDelta` is the signed along-path distance: positive means
+      // pivot is ahead of the user, negative means they've already
+      // crossed it. Only meaningful when useAlongPath is true.
+      const aheadDelta = pivot.distanceAlongRouteMeters - userAlong
+      const distanceToPivot = useAlongPath
+        ? Math.abs(aheadDelta)
+        : haversineMeters(coords, {lat: pivot.lat, lng: pivot.lng})
 
-      // Approaching — first time inside the approach threshold.
-      if (!state.approachingFired && distance <= this.opts.approachThresholdMeters) {
+      // Approaching — first time inside the approach threshold. Only
+      // counts if the pivot is still ahead of the user; we never
+      // announce "approaching" for a pivot they've already crossed.
+      const approaching =
+        !state.approachingFired &&
+        distanceToPivot <= this.opts.approachThresholdMeters &&
+        (!useAlongPath || aheadDelta >= -this.opts.radiusMeters)
+      if (approaching) {
         state.approachingFired = true
-        this.emit({kind: "approaching", pivot, distanceMeters: distance})
+        this.emit({kind: "approaching", pivot, distanceMeters: distanceToPivot})
       }
 
-      // Entered — first time inside the pivot radius.
-      if (!state.entered && distance <= pivot.radiusMeters) {
+      // Entered — user is within radiusMeters of the pivot. On-route
+      // this fires the moment they cross the pivot's perpendicular
+      // band, regardless of which sidewalk they're on.
+      if (!state.entered && distanceToPivot <= pivot.radiusMeters) {
         state.entered = true
         this.activePivotIndex = i
         this.emit({kind: "entered", pivot})
       }
 
-      // Exited — was entered, now outside the radius again.
-      if (state.entered && !state.exited && distance > pivot.radiusMeters) {
+      // Exited — was entered and is now past the radius. With
+      // along-path projection we additionally exit as soon as the user
+      // is past the pivot by more than radiusMeters in the forward
+      // direction — even if they never tripped `entered` (e.g. they
+      // walked straight through the pivot band on a wide intersection
+      // without ever being within radiusMeters of the point itself).
+      const movedPastOnPath = useAlongPath && aheadDelta < -pivot.radiusMeters
+      if (
+        ((state.entered && distanceToPivot > pivot.radiusMeters) || (!state.entered && movedPastOnPath)) &&
+        !state.exited
+      ) {
+        // If we're exiting without ever entering (skipped the band),
+        // still emit `entered` first so subscribers can pair entered/exited.
+        if (!state.entered) {
+          state.entered = true
+          this.activePivotIndex = i
+          this.emit({kind: "entered", pivot})
+        }
         state.exited = true
         if (this.activePivotIndex === i) this.activePivotIndex = null
         this.emit({kind: "exited", pivot})
@@ -223,7 +357,7 @@ export class PivotEngine {
       // Specifically: if it's >2× approach threshold, don't bother
       // checking pivots beyond it this tick. Avoids O(N) work per
       // GPS fix on long routes.
-      if (!state.approachingFired && distance > this.opts.approachThresholdMeters * 2) {
+      if (!state.approachingFired && distanceToPivot > this.opts.approachThresholdMeters * 2) {
         break
       }
     }
@@ -277,6 +411,61 @@ function resolveOptions(mode: TravelMode, opts: PivotOptions | undefined): Resol
     approachThresholdMeters:
       opts?.approachThresholdMeters ?? APPROACH_DEFAULTS_M[mode] ?? APPROACH_DEFAULTS_M.walking,
   }
+}
+
+/**
+ * Project `user` onto the polyline. Returns:
+ *   - `perpMeters`: shortest distance from the user to the polyline (any segment).
+ *   - `alongMeters`: cumulative distance from the polyline's start to
+ *     the projection point, measured along the polyline.
+ *
+ * Used by `onLocationUpdate` to decide whether the user is "on the
+ * route" (eligible for along-path pivot triggering) and how far they
+ * have walked along it. Returns null when the polyline has fewer than
+ * two points and projection is undefined.
+ *
+ * Uses a flat-earth approximation (lat/lng → meters via per-degree
+ * scale at the local latitude). City-scale routes don't see meaningful
+ * error from this; the alternative is per-segment spherical math which
+ * doesn't pay for itself here.
+ */
+function projectOntoPolyline(
+  points: LatLng[],
+  cumulative: number[],
+  user: LatLng,
+): {perpMeters: number; alongMeters: number} | null {
+  if (points.length < 2 || cumulative.length !== points.length) return null
+  const mPerDegLat = 111_320
+  const mPerDegLng = 111_320 * Math.cos((user.lat * Math.PI) / 180)
+  const ux = user.lng * mPerDegLng
+  const uy = user.lat * mPerDegLat
+
+  let bestPerp = Number.POSITIVE_INFINITY
+  let bestAlong = 0
+  for (let i = 0; i < points.length - 1; i++) {
+    const a = points[i]
+    const b = points[i + 1]
+    const ax = a.lng * mPerDegLng
+    const ay = a.lat * mPerDegLat
+    const bx = b.lng * mPerDegLng
+    const by = b.lat * mPerDegLat
+    const dx = bx - ax
+    const dy = by - ay
+    const segLen2 = dx * dx + dy * dy
+    // Parameter t along segment [0..1] of the closest point to user.
+    // Degenerate zero-length segments (duplicate vertices) get t=0.
+    const t = segLen2 > 0 ? Math.max(0, Math.min(1, ((ux - ax) * dx + (uy - ay) * dy) / segLen2)) : 0
+    const px = ax + t * dx
+    const py = ay + t * dy
+    const perp = Math.hypot(ux - px, uy - py)
+    if (perp < bestPerp) {
+      bestPerp = perp
+      const segLen = Math.sqrt(segLen2)
+      bestAlong = cumulative[i] + t * segLen
+    }
+  }
+  if (!Number.isFinite(bestPerp)) return null
+  return {perpMeters: bestPerp, alongMeters: bestAlong}
 }
 
 /** Cumulative-distance lookup. Clamps out-of-range indices. */

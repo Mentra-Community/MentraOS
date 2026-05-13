@@ -33,11 +33,20 @@ final class NavigationManager: NSObject {
   private var isSimulating = false
 
   // Deviation walk: when the user presses the Deviate dev button, we
-  // walk them along a custom polyline that either skips the upcoming
-  // turn or takes a random wrong turn at it. The timer feeds waypoints
-  // to the Google Nav simulator one at a time so it looks like natural
-  // walking instead of an instant teleport.
+  // pause the Google Nav simulator and walk them straight forward in
+  // their current direction of travel for a fixed duration. Simulates
+  // a user who ignores the route and keeps walking the way they were
+  // going. The timer feeds waypoints to setUserLocation at ~2.5Hz so
+  // the walk looks smooth rather than a teleport.
   private var deviateTimer: Timer?
+  // Saved sim speed (×) so the deviate walker matches the same pace
+  // the Google simulator was using before we took over.
+  private var currentSpeedMultiplier: Double = 1.0
+  // Last two road-snapped positions we forwarded to JS. The deviate
+  // walker derives its bearing from prev→last so the user keeps moving
+  // in *their* direction of travel, not the route's local bearing.
+  private var lastReportedCoord: CLLocationCoordinate2D?
+  private var prevReportedCoord: CLLocationCoordinate2D?
 
   // Missed-turn reroute (opt-in via StartNavigationOptions). When the
   // current step advances we cache the user's location at that moment
@@ -172,6 +181,7 @@ final class NavigationManager: NSObject {
           mapView.locationSimulator?.simulateLocationsAlongExistingRoute()
           if let sim = mapView.locationSimulator, speedMultiplier > 0 {
             sim.speedMultiplier = Float(speedMultiplier)
+            self.currentSpeedMultiplier = speedMultiplier
           }
           self.isSimulating = true
           self.startSimulationPolling()
@@ -212,6 +222,9 @@ final class NavigationManager: NSObject {
       self.lastCurrentStepKey = nil
       self.finalDestination = nil
       self.missedTurnRerouteInFlight = false
+      self.currentSpeedMultiplier = 1.0
+      self.lastReportedCoord = nil
+      self.prevReportedCoord = nil
     }
   }
 
@@ -250,100 +263,109 @@ final class NavigationManager: NSObject {
 
   // MARK: - Simulate deviation (dev only)
 
-  // Walk the user off-route naturally instead of teleporting them.
-  // Picks randomly between two flavors:
-  //   • skip-turn: walk straight past the next maneuver (miss the turn)
-  //   • wrong-turn: at the next maneuver, turn the opposite way
-  // Either way the Google Nav SDK detects off-route within ~30m and
-  // fires navigatorDidChangeRoute, where we re-arm the simulator on
-  // the new route. Total walk distance is ~offsetMeters so the
-  // reroute fires mid-deviation and the user lands on the new path
-  // without a jarring snap.
+  // Pause the Google simulator and walk the user STRAIGHT FORWARD in
+  // their current direction of travel for DEVIATE_DURATION_S seconds,
+  // then freeze the simulator. The bearing is computed from the last
+  // two road-snapped GPS positions — *their* direction of travel, not
+  // the route's local bearing — so this reproduces the "user kept
+  // walking the way they were going, ignoring the route" scenario.
+  //
+  // `offsetMeters` from the legacy API is ignored. Duration and
+  // speed are governed by DEVIATE_DURATION_S and the current sim
+  // speed multiplier.
   func simulateDeviation(offsetMeters: Double) {
     DispatchQueue.main.async { [weak self] in
       guard let self = self,
             let mapView = self.mapView,
-            let sim = mapView.locationSimulator,
-            let current = mapView.myLocation else {
-        print("[NavigationManager] simulateDeviation: no map / simulator / location")
+            let sim = mapView.locationSimulator else {
+        print("[NavigationManager] simulateDeviation: no map / simulator")
         return
       }
-      let course = current.course >= 0 ? current.course : 0
-      let waypoints = self.buildDeviationPath(
-        from: current.coordinate,
-        currentBearingDeg: course,
-        totalMeters: offsetMeters
-      )
-      print("[NavigationManager] simulateDeviation: walking \(waypoints.count) waypoints from \(current.coordinate.latitude),\(current.coordinate.longitude)")
-      self.startDeviationWalk(sim: sim, waypoints: waypoints)
+      // Start position: prefer the last value we forwarded to JS so
+      // there's no visual snap. Fall back to mapView.myLocation when
+      // we haven't seen a fix yet.
+      let origin: CLLocationCoordinate2D = self.lastReportedCoord
+        ?? mapView.myLocation?.coordinate
+        ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
+      // Bearing: derive from prev → last so we keep going in the
+      // user's *actual* direction of travel. If we only have one
+      // sample, fall back to CLLocation.course; if that's also
+      // missing, bail with a warning (no defensible direction).
+      let bearing: Double = {
+        if let prev = self.prevReportedCoord, let last = self.lastReportedCoord {
+          let d = self.haversineMeters(
+            aLat: prev.latitude, aLng: prev.longitude,
+            bLat: last.latitude, bLng: last.longitude
+          )
+          if d > 0.5 {
+            return self.bearingDegrees(from: prev, to: last)
+          }
+        }
+        let course = mapView.myLocation?.course ?? -1
+        return course >= 0 ? course : .nan
+      }()
+      guard !bearing.isNaN else {
+        print("[NavigationManager] simulateDeviation: no recent movement to infer bearing — ignoring")
+        return
+      }
+
+      // Cancel any existing walker, then take over the simulator. We
+      // pause Google's sim so it doesn't fight our setUserLocation
+      // calls. Locations we emit during the walk go through the
+      // road-snapped listener like normal, so JS sees a continuous
+      // stream.
+      self.deviateTimer?.invalidate()
+      self.deviateTimer = nil
+      sim.pause()
+
+      // Pace the walk to match the user's normal sim speed. Walking
+      // baseline is ~1.4 m/s; speedMultiplier scales that. At a 0.4s
+      // tick this lands ~0.56m per tick at 1×, ~2.8m per tick at 5×.
+      let baselineMps = 1.4
+      let stepMeters = max(0.1, baselineMps * self.currentSpeedMultiplier * 0.4)
+      let interval: TimeInterval = 0.4
+      let durationS = self.DEVIATE_DURATION_S
+      let totalTicks = Int((durationS / interval).rounded())
+      print("[NavigationManager] simulateDeviation: walk straight for \(durationS)s @ \(self.currentSpeedMultiplier)× — bearing=\(bearing)°, step=\(stepMeters)m, ticks=\(totalTicks)")
+      _ = offsetMeters // legacy arg, intentionally unused
+
+      var cursor = origin
+      var ticksRemaining = totalTicks
+      self.deviateTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] t in
+        guard let self = self else {
+          t.invalidate()
+          return
+        }
+        if ticksRemaining <= 0 {
+          // 10s elapsed — freeze the simulator and stop ticking. We
+          // intentionally do NOT resume the Google sim; the user
+          // wanted everything to stop after the deviation window.
+          t.invalidate()
+          self.deviateTimer = nil
+          self.navigator?.simulator?.pause()
+          print("[NavigationManager] simulateDeviation: done; simulator frozen")
+          return
+        }
+        cursor = self.projectCoordinate(from: cursor, distanceMeters: stepMeters, bearingDegrees: bearing)
+        self.navigator?.simulator?.setUserLocation(cursor)
+        ticksRemaining -= 1
+      }
     }
   }
 
-  // Build a list of ~3-5m-spaced waypoints describing the wrong path.
-  // Coin-flips between "skip-turn" (continue straight) and "wrong-turn"
-  // (~45° off the current heading). We don't have the next pivot's
-  // exact location from the SDK on iOS, so we approximate by projecting
-  // along the current bearing — the Nav SDK will fire off-route
-  // regardless once we drift `offRouteThresholdMeters` from the polyline.
-  private func buildDeviationPath(
-    from origin: CLLocationCoordinate2D,
-    currentBearingDeg: Double,
-    totalMeters: Double
-  ) -> [CLLocationCoordinate2D] {
-    // Coin flip: 50% skip-turn (straight), 50% wrong-turn (angled).
-    let isWrongTurn = Bool.random()
-    // Wrong turn picks a side (left or right) and an angle that's a
-    // realistic-feeling road bend (45-90° off the current heading).
-    let turnSign: Double = Bool.random() ? 1 : -1
-    let turnAngle = Double.random(in: 45...90) * turnSign
-    let walkBearing = isWrongTurn
-      ? (currentBearingDeg + turnAngle).truncatingRemainder(dividingBy: 360)
-      : currentBearingDeg
+  // How long the Deviate dev button keeps walking the user straight.
+  private let DEVIATE_DURATION_S: Double = 10.0
 
-    // Step size: ~3m per waypoint. At the timer cadence below this
-    // matches a comfortable simulated walking pace.
-    let stepMeters: Double = 3
-    let stepCount = max(1, Int(ceil(totalMeters / stepMeters)))
-    var path: [CLLocationCoordinate2D] = []
-    path.reserveCapacity(stepCount)
-
-    // For wrong-turn we walk a few steps in the original direction
-    // first (so we visibly approach the "intersection") then bend.
-    let preTurnSteps = isWrongTurn ? min(4, stepCount / 3) : 0
-    var pivot = origin
-    for i in 0..<preTurnSteps {
-      pivot = projectCoordinate(from: pivot, distanceMeters: stepMeters, bearingDegrees: currentBearingDeg)
-      _ = i
-      path.append(pivot)
-    }
-    // Remaining steps go in the chosen walkBearing direction.
-    var cursor = pivot
-    for _ in preTurnSteps..<stepCount {
-      cursor = projectCoordinate(from: cursor, distanceMeters: stepMeters, bearingDegrees: walkBearing)
-      path.append(cursor)
-    }
-    return path
-  }
-
-  // Drive the simulator through the deviation waypoints one at a time.
-  // Cancels any prior deviation walk first. We don't pause the existing
-  // route simulator — once we call simulateLocation(at:) the Nav SDK
-  // treats our calls as the authoritative position. The
-  // navigatorDidChangeRoute handler re-arms simulateLocationsAlongExistingRoute()
-  // on the new route once the reroute fires.
-  private func startDeviationWalk(sim: GMSLocationSimulator, waypoints: [CLLocationCoordinate2D]) {
-    deviateTimer?.invalidate()
-    var idx = 0
-    let interval: TimeInterval = 0.4 // 2.5 Hz — smooth-looking walk
-    deviateTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] t in
-      guard let self = self, idx < waypoints.count else {
-        t.invalidate()
-        self?.deviateTimer = nil
-        return
-      }
-      sim.simulateLocation(at: waypoints[idx])
-      idx += 1
-    }
+  /// Initial compass bearing from `a` to `b`, degrees [0, 360).
+  private func bearingDegrees(from a: CLLocationCoordinate2D, to b: CLLocationCoordinate2D) -> Double {
+    let toRad = Double.pi / 180
+    let toDeg = 180 / Double.pi
+    let lat1 = a.latitude * toRad
+    let lat2 = b.latitude * toRad
+    let dLng = (b.longitude - a.longitude) * toRad
+    let y = sin(dLng) * cos(lat2)
+    let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLng)
+    return (atan2(y, x) * toDeg + 360).truncatingRemainder(dividingBy: 360)
   }
 
   // Project `(lat, lng)` along `bearingDegrees` by `distanceMeters` on a
@@ -710,6 +732,11 @@ extension NavigationManager: GMSRoadSnappedLocationProviderListener {
       "accuracy": location.horizontalAccuracy,
       "timestamp": location.timestamp.timeIntervalSince1970 * 1000,
     ])
+
+    // Track the last two road-snapped coords so the deviate walker
+    // can derive the user's actual recent direction of travel.
+    prevReportedCoord = lastReportedCoord
+    lastReportedCoord = location.coordinate
 
     // Off-route detection: measure distance from current position to the route polyline.
     guard let path = navigator?.currentRouteLeg?.path, path.count() > 1 else { return }
