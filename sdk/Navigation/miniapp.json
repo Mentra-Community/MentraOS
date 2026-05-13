@@ -2,7 +2,7 @@
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
   "packageName": "com.mentra.navigation",
   "version": "1.0.2",
-  "name": "Mentra Mapp",
+  "name": "Mentra Map",
   "description": "Turn-by-turn walking navigation with compass and Google Maps.",
   "icon": "icon.png",
   "permissions": [

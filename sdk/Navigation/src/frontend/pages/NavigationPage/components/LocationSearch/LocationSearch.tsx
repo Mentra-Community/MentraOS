@@ -162,10 +162,10 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
   const showSuggestions = (focused || devFrozen) && !selected
 
   return (
-    <div className="relative mt-4 mx-3 flex flex-col">
+    <div className="relative mt-4 mx-3 flex flex-col mr-14">
       <div className="relative flex flex-col">
         {/* Search pill */}
-        <div className={`absolute z-90 flex items-center h-[52px] rounded-[20px] px-3.5 gap-2.5 bg-[#FFFFFFA6] border border-[#FFFFFF99] [backdrop-filter:blur(30px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#0000001A_0px_6px_22px] left-0 right-22 ${safeHeadingSearchPill}`}>
+        <div className={`relative z-90 flex items-center h-[52px] rounded-[20px] px-3.5 gap-2.5 bg-[#FFFFFFA6] border border-[#FFFFFF99] [backdrop-filter:blur(30px)_saturate(180%)] [box-shadow:#FFFFFF80_0px_1px_0px_inset,#0000001A_0px_6px_22px] ${safeHeadingSearchPill}`}>
           {/* Search icon */}
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{flexShrink: 0}}>
             <circle cx="11" cy="11" r="7" stroke="#0000008C" strokeWidth="2" />
