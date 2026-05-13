@@ -194,9 +194,8 @@ class Bridge {
     static func sendPhotoError(requestId: String, errorCode: String, errorMessage: String) {
         var event: [String: Any] = [
             "type": "photo_response",
+            "state": "error",
             "requestId": requestId,
-            "success": false,
-            "photoUrl": "",
             "timestamp": Int(Date().timeIntervalSince1970 * 1000),
         ]
         if !errorCode.isEmpty {

@@ -2339,11 +2339,12 @@ public class MentraLive extends SGCManager {
                 // Process photo response (success or failure)
                 String requestId = json.optString("requestId", "");
                 String appId = json.optString("appId", "");
-                boolean photoSuccess = json.optBoolean("success", false);
+                String photoState = json.optString("state", "");
+                boolean photoSuccess = "success".equals(photoState) || json.optBoolean("success", false);
 
                 if (!photoSuccess) {
                     // Handle failed photo response
-                    String errorMsg = json.optString("error", "Unknown error");
+                    String errorMsg = json.optString("errorMessage", json.optString("error", "Unknown error"));
                     Bridge.log("LIVE: Photo request failed - requestId: " + requestId +
                           ", appId: " + appId + ", error: " + errorMsg);
                 } else {

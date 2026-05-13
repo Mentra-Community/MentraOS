@@ -666,10 +666,27 @@ class RestComms {
   }
 
   public sendPhotoResponse(data: PhotoResponseEvent): AsyncResult<any, Error> {
+    const response =
+      data.state === "success"
+        ? {
+            type: data.type,
+            requestId: data.requestId,
+            photoUrl: data.photoUrl,
+            timestamp: data.timestamp,
+            success: true,
+          }
+        : {
+            type: data.type,
+            requestId: data.requestId,
+            timestamp: data.timestamp,
+            success: false,
+            errorCode: data.errorCode,
+            errorMessage: data.errorMessage,
+          }
     const config: RequestConfig = {
       method: "POST",
       endpoint: "/api/client/photo/response",
-      data: data,
+      data: response,
     }
     interface Response {
       success: boolean

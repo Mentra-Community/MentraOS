@@ -245,10 +245,10 @@ describe("MantleManager", () => {
 
     emitCoreModuleEvent("photo_response", {
       type: "photo_response",
+      state: "success",
       requestId: "req-1",
       photoUrl: "https://example.com/photo.jpg",
       timestamp: 123,
-      success: true,
     })
     expect(restComms.sendPhotoResponse).toHaveBeenCalledWith(
       expect.objectContaining({

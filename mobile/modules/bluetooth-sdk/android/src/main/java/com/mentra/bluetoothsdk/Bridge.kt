@@ -279,9 +279,8 @@ public class Bridge private constructor() {
         fun sendPhotoError(requestId: String, errorCode: String, errorMessage: String) {
             val event = HashMap<String, Any>()
             event["type"] = "photo_response"
+            event["state"] = "error"
             event["requestId"] = requestId
-            event["photoUrl"] = ""
-            event["success"] = false
             event["errorCode"] = errorCode
             event["errorMessage"] = errorMessage
             event["timestamp"] = System.currentTimeMillis()

@@ -1153,14 +1153,80 @@ data class MentraGalleryStatusEvent(
     val values: Map<String, Any>,
 )
 
+sealed interface MentraPhotoResponse {
+    val state: String
+    val requestId: String
+    val timestamp: Long
+
+    fun toMap(): Map<String, Any> =
+        when (this) {
+            is Success -> mapOf(
+                "state" to state,
+                "requestId" to requestId,
+                "photoUrl" to photoUrl,
+                "timestamp" to timestamp,
+            )
+
+            is Error -> mutableMapOf<String, Any>(
+                "state" to state,
+                "requestId" to requestId,
+                "timestamp" to timestamp,
+                "errorMessage" to errorMessage,
+            ).apply {
+                if (!errorCode.isNullOrBlank()) {
+                    this["errorCode"] = errorCode
+                }
+            }
+        }
+
+    fun toEventMap(): Map<String, Any> = toMap() + mapOf("type" to "photo_response")
+
+    data class Success(
+        override val requestId: String,
+        val photoUrl: String,
+        override val timestamp: Long,
+    ) : MentraPhotoResponse {
+        override val state: String = "success"
+    }
+
+    data class Error(
+        override val requestId: String,
+        val errorCode: String?,
+        val errorMessage: String,
+        override val timestamp: Long,
+    ) : MentraPhotoResponse {
+        override val state: String = "error"
+    }
+
+    companion object {
+        fun fromMap(values: Map<String, Any>): MentraPhotoResponse {
+            val requestId = stringValue(values, "requestId", "request_id").orEmpty()
+            val timestamp = longValue(values, "timestamp") ?: System.currentTimeMillis()
+            val state = stringValue(values, "state", "status")?.lowercase()
+            val success = boolValue(values, "success")
+            return if (state == "success" || success == true) {
+                val photoUrl = stringValue(values, "photoUrl", "photo_url").orEmpty()
+                Success(requestId = requestId, photoUrl = photoUrl, timestamp = timestamp)
+            } else {
+                Error(
+                    requestId = requestId,
+                    errorCode = stringValue(values, "errorCode", "error_code"),
+                    errorMessage = stringValue(values, "errorMessage", "error_message", "error")
+                        ?: "Unknown photo error",
+                    timestamp = timestamp,
+                )
+            }
+        }
+    }
+}
+
 data class MentraPhotoResponseEvent(
-    val values: Map<String, Any>,
+    val response: MentraPhotoResponse,
 ) {
-    val requestId: String? get() = stringValue(values, "requestId", "request_id")
-    val success: Boolean? get() = boolValue(values, "success")
-    val photoUrl: String? get() = stringValue(values, "photoUrl", "photo_url")
-    val errorCode: String? get() = stringValue(values, "errorCode", "error_code")
-    val errorMessage: String? get() = stringValue(values, "errorMessage", "error_message")
+    constructor(values: Map<String, Any>) : this(MentraPhotoResponse.fromMap(values))
+
+    val requestId: String get() = response.requestId
+    val values: Map<String, Any> get() = response.toEventMap()
 }
 
 data class MentraStreamStatusEvent(

@@ -1367,35 +1367,109 @@ public struct MentraHotspotErrorEvent: CustomStringConvertible {
     }
 }
 
-public struct MentraPhotoResponseEvent: CustomStringConvertible {
-    public let values: [String: Any]
+public enum MentraPhotoResponse: CustomStringConvertible, Equatable {
+    public enum State: String {
+        case success
+        case error
+    }
+
+    case success(requestId: String, photoUrl: String, timestamp: Int)
+    case error(requestId: String, errorCode: String?, errorMessage: String, timestamp: Int)
 
     public init(values: [String: Any]) {
-        self.values = values
+        let requestId = stringValue(values, "requestId", "request_id") ?? ""
+        let timestamp = intValue(values["timestamp"]) ?? Int(Date().timeIntervalSince1970 * 1000)
+        let state = stringValue(values, "state", "status")?.lowercased()
+        if state == State.success.rawValue || boolValue(values, "success") == true {
+            self = .success(
+                requestId: requestId,
+                photoUrl: stringValue(values, "photoUrl", "photo_url") ?? "",
+                timestamp: timestamp
+            )
+        } else {
+            self = .error(
+                requestId: requestId,
+                errorCode: stringValue(values, "errorCode", "error_code"),
+                errorMessage: stringValue(values, "errorMessage", "error_message", "error") ?? "Unknown photo error",
+                timestamp: timestamp
+            )
+        }
     }
 
-    public var requestId: String? {
-        stringValue(values, "requestId", "request_id")
+    public var state: State {
+        switch self {
+        case .success:
+            .success
+        case .error:
+            .error
+        }
     }
 
-    public var success: Bool? {
-        boolValue(values, "success")
+    public var requestId: String {
+        switch self {
+        case let .success(requestId, _, _), let .error(requestId, _, _, _):
+            requestId
+        }
     }
 
-    public var photoUrl: String? {
-        stringValue(values, "photoUrl", "photo_url")
+    public var timestamp: Int {
+        switch self {
+        case let .success(_, _, timestamp), let .error(_, _, _, timestamp):
+            timestamp
+        }
     }
 
-    public var errorCode: String? {
-        stringValue(values, "errorCode", "error_code")
-    }
-
-    public var errorMessage: String? {
-        stringValue(values, "errorMessage", "error_message")
+    public var values: [String: Any] {
+        switch self {
+        case let .success(requestId, photoUrl, timestamp):
+            return [
+                "state": State.success.rawValue,
+                "requestId": requestId,
+                "photoUrl": photoUrl,
+                "timestamp": timestamp,
+            ]
+        case let .error(requestId, errorCode, errorMessage, timestamp):
+            var values: [String: Any] = [
+                "state": State.error.rawValue,
+                "requestId": requestId,
+                "errorMessage": errorMessage,
+                "timestamp": timestamp,
+            ]
+            if let errorCode, !errorCode.isEmpty {
+                values["errorCode"] = errorCode
+            }
+            return values
+        }
     }
 
     public var description: String {
-        "MentraPhotoResponseEvent(requestId: \(requestId ?? "unknown"), success: \(success.map(String.init) ?? "unknown"))"
+        "MentraPhotoResponse(requestId: \(requestId), state: \(state.rawValue))"
+    }
+}
+
+public struct MentraPhotoResponseEvent: CustomStringConvertible {
+    public let response: MentraPhotoResponse
+
+    public init(response: MentraPhotoResponse) {
+        self.response = response
+    }
+
+    public init(values: [String: Any]) {
+        self.response = MentraPhotoResponse(values: values)
+    }
+
+    public var requestId: String {
+        response.requestId
+    }
+
+    public var values: [String: Any] {
+        var values = response.values
+        values["type"] = "photo_response"
+        return values
+    }
+
+    public var description: String {
+        "MentraPhotoResponseEvent(requestId: \(requestId), state: \(response.state.rawValue))"
     }
 }
 

@@ -91,15 +91,22 @@ export type HotspotErrorEvent = {
   timestamp: number
 }
 
-export type PhotoResponseEvent = {
-  type: "photo_response"
-  requestId: string
-  photoUrl: string
-  timestamp: number
-  success: boolean
-  errorCode?: string
-  errorMessage?: string
-}
+export type PhotoResponseEvent =
+  | {
+      type: "photo_response"
+      state: "success"
+      requestId: string
+      photoUrl: string
+      timestamp: number
+    }
+  | {
+      type: "photo_response"
+      state: "error"
+      requestId: string
+      timestamp: number
+      errorCode?: string
+      errorMessage: string
+    }
 
 export type GalleryStatusEvent = {
   type: "gallery_status"
