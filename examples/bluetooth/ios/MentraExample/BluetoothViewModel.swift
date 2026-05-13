@@ -1019,7 +1019,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         case let .hotspotError(error):
             handleRawEvent(name: "hotspot_error", values: error.values)
         case let .photoResponse(response):
-            handlePhotoResponse(response.values)
+            handlePhotoResponse(response.response)
         case let .streamStatus(status):
             handleStreamStatus(status.values)
         case let .raw(name, values):
@@ -1457,7 +1457,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             glassesValues = glassesValues?.withHotspot(.disabled)
             append(tag: "TX", text: "hotspot error \(summarize(values))")
         case "photo_response":
-            handlePhotoResponse(values)
+            handlePhotoResponse(MentraPhotoResponse(values: values))
         case "stream_status":
             handleStreamStatus(values)
         default:
@@ -1513,19 +1513,20 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         append(tag: "LIVE", text: "stream \(summary)")
     }
 
-    private func handlePhotoResponse(_ values: [String: Any]) {
-        let requestId = stringValue(values, "requestId") ?? stringValue(values, "request_id")
-        if let activePhotoRequestId, let requestId, requestId != activePhotoRequestId {
+    private func handlePhotoResponse(_ response: MentraPhotoResponse) {
+        let requestId = response.requestId
+        if let activePhotoRequestId, requestId != activePhotoRequestId {
             append(tag: "LIVE", text: "ignoring stale photo \(requestId)")
             return
         }
         let uploadTarget = photoDestination == .thisPhone ? "phone upload" : "local upload"
-        if boolValue(values, "success") == false {
-            cameraStatus = "Camera: glasses reported \(stringValue(values, "errorCode") ?? "error"); waiting for \(uploadTarget)"
-        } else {
+        switch response {
+        case .success:
             cameraStatus = "Camera: photo acknowledged; waiting for \(uploadTarget)"
+        case let .error(_, errorCode, errorMessage, _):
+            cameraStatus = "Camera: glasses reported \(errorCode ?? errorMessage); waiting for \(uploadTarget)"
         }
-        append(tag: "LIVE", text: "photo response \(requestId ?? "")")
+        append(tag: "LIVE", text: "photo response \(requestId)")
     }
 
     private func pollPhotoPreview(requestId: String, statusUrl: URL, generation: Int) {

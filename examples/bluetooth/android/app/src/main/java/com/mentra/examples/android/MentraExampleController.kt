@@ -40,6 +40,7 @@ import com.mentra.core.MentraHotspotStatusEvent
 import com.mentra.core.MentraMicConfig
 import com.mentra.core.MentraPhotoCompression
 import com.mentra.core.MentraPhotoRequest
+import com.mentra.core.MentraPhotoResponse
 import com.mentra.core.MentraPhotoSize
 import com.mentra.core.MentraRgbLedAction
 import com.mentra.core.MentraRgbLedColor
@@ -1159,21 +1160,22 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     override fun onPhotoResponse(event: com.mentra.core.MentraPhotoResponseEvent) {
-        val requestId = event.values["requestId"] as? String ?: event.values["request_id"] as? String
-        if (activePhotoRequestId != null && requestId != null && requestId != activePhotoRequestId) {
+        val response = event.response
+        val requestId = response.requestId
+        if (activePhotoRequestId != null && requestId != activePhotoRequestId) {
             addEvent("LIVE", "ignoring stale photo $requestId")
             return
         }
-        val success = event.values["success"] as? Boolean
         val uploadTarget = if (state.photoDestination == PhotoDestination.THIS_PHONE) "phone upload" else "local upload"
         state = state.copy(
-            cameraStatus = if (success == false) {
-                "Camera: glasses reported ${event.values["errorCode"] ?: "error"}; waiting for $uploadTarget"
-            } else {
-                "Camera: photo acknowledged; waiting for $uploadTarget"
-            }
+            cameraStatus = when (response) {
+                is MentraPhotoResponse.Error ->
+                    "Camera: glasses reported ${response.errorCode ?: response.errorMessage}; waiting for $uploadTarget"
+                is MentraPhotoResponse.Success ->
+                    "Camera: photo acknowledged; waiting for $uploadTarget"
+            },
         )
-        addEvent("LIVE", "photo response ${requestId ?: ""}")
+        addEvent("LIVE", "photo response $requestId")
     }
 
     override fun onStreamStatus(event: com.mentra.core.MentraStreamStatusEvent) {

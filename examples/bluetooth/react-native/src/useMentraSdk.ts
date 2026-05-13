@@ -827,11 +827,11 @@ export function useMentraSdk(): MentraSdkModel {
       addEvent('LIVE', `ignoring stale photo ${payload.requestId}`);
       return;
     }
-    if (payload.success === false) {
+    if (payload.state === 'error') {
       setCameraStatus(
-        `Camera: glasses reported ${payload.errorCode ?? 'error'}; waiting for upload`,
+        `Camera: glasses reported ${payload.errorCode ?? payload.errorMessage}; waiting for upload`,
       );
-      addEvent('LIVE', `photo response ${payload.errorCode ?? 'error'}`);
+      addEvent('LIVE', `photo response ${payload.errorCode ?? payload.errorMessage}`);
       return;
     }
     setCameraStatus(
