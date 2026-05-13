@@ -436,14 +436,38 @@ Handler calls session.display.showTextWall(text)
 glasses display the text
 ```
 
-**Two key properties to notice:**
+**Cloud → Background flow** (cloud-relayed responses for
+asynchronous-by-design APIs like photo capture, managed streams):
+
+```
+Cloud server sends "phone_photo_ready" / "phone_stream_status" /
+  "phone_managed_stream_status" to mobile via existing cloud socket
+  ↓
+MentraJSRouter.handleCloudMessage(msg) (lifted from
+  LocalMiniappRuntime.ts:284-336, 3 inline switch arms)
+  ↓
+Looks up the pending request in pendingCloudRequests Map (matching
+  packageName + requestId)
+  ↓
+Calls Crust.dispatchToJs(packageName, "<corresponding event>", {...})
+  ↓ same delivery path as the RN → Background flow above
+  ↓
+Background's awaiting Promise resolves
+```
+
+**Three key properties to notice:**
 1. **The host RN runtime is always in the middle.** It's the only
-   place where messages from JSContexts and WebViews can be
-   correlated and routed. JSContexts and WebViews never talk to
-   each other directly.
-2. **All three flows use Expo Module events / function calls as the
-   transport between native and RN.** No custom IPC. Same plumbing
-   we use for every other native module in the app.
+   place where messages from JSContexts, WebViews, and the cloud
+   socket can be correlated and routed. JSContexts and WebViews
+   never talk to each other or to the cloud directly.
+2. **All four flows use Expo Module events / function calls as the
+   transport between native and RN** (the cloud flow inherits the
+   same downstream path once it's inside `MentraJSRouter`). No
+   custom IPC. Same plumbing we use for every other native module.
+3. **Cloud responses are a third inbound source** for `MentraJSRouter`,
+   alongside JSContext-originating `__dispatch` events and WebView
+   `mentra.send`. Don't forget this when wiring the router; it's
+   easy to miss because the cloud path doesn't go through `__dispatch`.
 
 The cost of this architecture: every cross-runtime hop has at least
 one JSON serialize/deserialize. Acceptable for our message shape
@@ -886,7 +910,7 @@ unchanged.**
 
 | File | LoC | What survives, what changes |
 |---|---|---|
-| `mobile/modules/island/src/services/LocalMiniappRuntime.ts` | 1,752 | **Skeleton survives:** per-app registry, refcounted streams, ping loop, **25 dispatch arms** (21 explicit `handle*` private methods + 4 inline arms in the type switch — covers CONNECT, SUBSCRIBE, DISPLAY, PLAY_AUDIO, SPEAK, RGB_LED, LOCATION_POLL, STORAGE_*, CAMERA_FOV, SHARE, OPEN_URL, COPY_CLIPBOARD, DOWNLOAD, PHOTO, STREAM_*, MANAGED_STREAM_*, PING/PONG). Handler bodies don't know they're talking to a WebView — they take `(packageName, payload)` and dispatch to native. **Rewrite:** front door (`handleRawMessage` → `__dispatch`); per-app `sendMessage` (postMessage → `JSContext.evaluateScript`); HMAC/local-token code goes away. |
+| `mobile/modules/island/src/services/LocalMiniappRuntime.ts` | 1,752 | **Skeleton survives:** per-app registry, refcounted streams, ping loop, **25 dispatch arms in `handleRawMessage`'s switch (`:516-595`) + 3 arms in `handleCloudMessage`'s switch (`:304-336`)**. Of the 25 main arms, 11 delegate to `private handle*` methods; the remaining 14 (including SPEAK, LOCATION_POLL, STORAGE_*, SHARE, OPEN_URL, COPY_CLIPBOARD, DOWNLOAD, PHOTO, PING/PONG, etc.) are implemented inline. Handler bodies don't know they're talking to a WebView — they take `(packageName, payload)` and dispatch to native. **Rewrite:** front door (`handleRawMessage` → `__dispatch`); per-app `sendMessage` (postMessage → `JSContext.evaluateScript`); HMAC/local-token code goes away. |
 | `mobile/modules/island/src/services/AppRegistry.ts` | 675 | Manifest normalization + zip pipeline survive. **Add:** `background/index.js` discovery alongside `index.html`; recognize new manifest fields; sdkVersion/minHostVersion compatibility check on spawn. (Signature verification deferred to store-ship spec — all current bundles are LAN-sideloaded and unsigned.) |
 | `sdk/create-mentra-miniapp/bin/index.ts` + template | ~150 + template | Scaffolder logic survives (clack prompts, validation, template substitution). **Template files rewrite:** scaffold `src/background/index.ts`, `src/ui/`, `src/shared/channels.ts` instead of single React SPA. |
 
@@ -1053,7 +1077,7 @@ miniapp-facing JS API is identical down to error messages.
 
 ### Out of scope (don't polyfill at v1)
 
-- `IndexedDB` — complex; SDK's `session.storage` covers structured needs via SQLite native.
+- `IndexedDB` — complex; SDK's `session.storage` is the alternative (string key/value backed by NSUserDefaults / SharedPreferences; miniapp authors JSON-encode structured data themselves, as shown in the Notes example).
 - `WebRTC` — niche; if needed, host app does it.
 - `Service Workers` — irrelevant in non-browser context.
 - `Push API` — push notifications go through `session.phone.notifications`.
@@ -1082,8 +1106,9 @@ above are equivalent in functionality.
    downloads the bundle ZIP over LAN HTTP from the developer's
    laptop, validates manifest, unzips into the app sandbox under
    `Documents/lmas/<packageName>/<version>/` (existing path).
-2. Host spawns a `JSContext` via `JSCRuntime.spawn(packageName,
-   polyfillBundle, dist/background/index.js)`. JSContext now alive.
+2. Host spawns a JS context via `JSCRuntime.spawn(packageName,
+   polyfillBundle, dist/background/index.js)`. Context now alive
+   (Apple `JSContext` on iOS, Zipline/QuickJS context on Android).
 3. Background's `init(session)` runs (typically: hydrate state from
    `session.storage`, register listeners).
 
@@ -1095,9 +1120,14 @@ signature verification kicks in. Same install flow otherwise.
 
 1. Host navigates to the miniapp UI route (e.g.
    `/applet/<packageName>/ui`).
-2. Host spawns a fresh `WKWebView`.
-3. Host installs the WebView's user script (`window.mentra` shim
-   pointing at `webkit.messageHandlers.mentra`).
+2. Host spawns a fresh `react-native-webview` instance (WKWebView
+   on iOS, Android `WebView` underneath).
+3. Host injects the `window.mentra` shim via
+   `injectedJavaScriptBeforeContentLoaded`. The shim posts via
+   `window.ReactNativeWebView.postMessage(...)` and receives via
+   `window.__mentra.recv(...)` calls injected by the host using
+   `webview.injectJavaScript(...)`. (Not raw `webkit.messageHandlers`
+   — `react-native-webview` doesn't expose that surface.)
 4. Host binds the WebView to the miniapp's JSContext (router knows
    "messages from this WebView go to JSContext X").
 5. Host calls `webView.loadFileURL(<bundle>/dist/ui/index.html)`.
@@ -1304,36 +1334,19 @@ dist/ui/                      # UI bundle folder
   index.js                    #   UI bundle
   styles.css                  #   UI styles
   ...                         #   any other UI assets
-META-INF/                     # added by cloud at publish
-  manifest.sha256             # tree hash of all non-META-INF files
-  signature.ed25519           # detached sig over manifest.sha256
-  signing-cert.json           # signer keyid + expiry
 ```
 
-`META-INF/` is added by the cloud at publish time, not the developer's
-CLI. Same as Chrome Web Store CRX2/CRX3.
+### Signing (deferred — design only)
 
-### Signing
-
-Two-key system, store-only signing. The platform key
-(`mentra-platform-ed25519`) is held by cloud, signs every store
-bundle. Developers don't hold signing keys — identity bound at upload
-via API key. Same as App Store / Play Store. Different from Pebble
-(Pebble didn't sign PBWs).
-
-### Verification on device
-
-After unzip:
-1. Read `META-INF/manifest.sha256` and `META-INF/signature.ed25519`.
-2. Recompute tree hash over all non-META-INF files (sorted by path,
-   deterministic).
-3. Verify Ed25519 sig against pinned platform pubkey (bundled in host
-   app, with one fallback rotation key).
-4. Mismatch → throw `SIGNATURE_INVALID`, delete unzip, surface as
-   *"This mini app failed integrity check."*
-
-Sideloaded and dev bundles are unsigned; verification only runs when
-bundle came from store install path.
+Future store ships will add a `META-INF/` directory with
+`manifest.sha256`, `signature.ed25519`, and `signing-cert.json` —
+two-key system, store-only signing, platform key held by cloud,
+developers don't hold keys (App Store / Play Store model).
+Verification on device: tree-hash all non-META-INF files, verify
+Ed25519 against a pinned platform pubkey, throw `SIGNATURE_INVALID`
+on mismatch. Bundle layout above reserves space; the actual
+META-INF emission, signing pipeline, and on-device verification
+ship with the store-spec, not here.
 
 ### Storage layout (V1)
 
@@ -1410,11 +1423,33 @@ discovery.
 
 1. Confirm with user. If app has data, *"X has 14 KB of data. Delete
    it too?"* — checkbox default unchecked (mirror iOS app uninstall).
-2. If running: stop JSContext.
+2. If running: stop JS context.
 3. Delete `lmas/<packageName>/`.
 4. If user opted to delete data: delete the app's `session.storage`
-   namespace (NSUserDefaults `MentraJS-<packageName>` suite).
+   namespace (NSUserDefaults `MentraJS-<packageName>` suite, or
+   the equivalent SharedPreferences file on Android).
 5. Revoke permissions; remove from local cache.
+
+### Host app upgrade
+
+When the Mentra Manager app updates (App Store / Play Store
+upgrade), miniapp bundles and `session.storage` survive — both live
+in app-private storage that the OS preserves across upgrades. Two
+things to handle:
+
+- **Polyfill bundle ABI.** The bundled `startup.js` ships *inside*
+  the host binary, so it always matches the host's `JSCDispatcher`.
+  No coordination needed; new host = new polyfill bundle, same
+  install.
+- **`session.storage` schema.** Miniapp authors own their own
+  `session.storage` schema; we do not migrate user data. SDK guidance:
+  treat `session.storage` like Chrome MV3 `chrome.storage` — the
+  miniapp checks for legacy keys on startup and migrates in-app.
+- **Bundle re-validation.** On host upgrade, `AppRegistry` re-reads
+  each installed manifest and re-checks `minHostVersion`. Bundles
+  that would now fail the version gate are marked disabled (not
+  deleted) with a clear UI surfacing "needs newer SDK"; user can
+  uninstall manually.
 
 ---
 
@@ -1856,7 +1891,10 @@ Tasks:
 - Telemetry counter for `miniapp.evicted` (drops are otherwise
   invisible).
 - Tests: `MiniappRunningRegistry` has none today; LRU policy needs
-  a real test suite.
+  a real test suite. **Keep tests focused on the eviction policy,
+  not the persistent-WebView wiring** — Phase 3 deletes the wiring
+  and the policy-only tests will survive into the new architecture
+  unchanged.
 
 **Android:** explicitly out of scope for Phase 0. Android doesn't
 hit the same jetsam wall — multiple WebViews share one renderer
@@ -1958,11 +1996,11 @@ JS:
   `auto.ts` (currently has 3: PostMessage, Mock,
   LocalSocketWithMockFallback).
 
-**Android sequencing within Phase 1.** iOS first to prove the
-architecture (~2 weeks), then port to Android (~1 week given
-the shape is identical). The ~3-week Phase 1 budget covers both.
-If iOS surfaces architectural issues, Android port slips a phase;
-otherwise it ships in Phase 1. Don't ship the SDK as iOS-only.
+**Android sequencing within Phase 1.** iOS ~3 wks, Android +2-3 wks
+(matching the header). One engineer sequential ≈ 5-6 wks; two
+engineers parallel ≈ ~3 wks calendar (iOS paces). If iOS surfaces
+architectural issues mid-phase, Android port slips and ships in
+Phase 2's window — but **don't ship the SDK as iOS-only at GA**.
 
 **Acceptance gate (how to know Phase 1 is done):**
 - Snapshot test: polyfill bundle output is byte-stable across
@@ -1986,18 +2024,24 @@ otherwise it ships in Phase 1. Don't ship the SDK as iOS-only.
 
 ### Phase 2 — Refactor `LocalMiniappRuntime` → `MentraJSRouter` (~3 weeks)
 
-**Goal:** All ~24 request handlers from `LocalMiniappRuntime.ts`
+**Goal:** All 25 dispatch arms from `LocalMiniappRuntime.ts`
 survive, front door swaps from postMessage to `__dispatch`.
 
-- Move ~24 `private handle*` bodies (currently
-  `LocalMiniappRuntime.ts:612–1714`: handleConnect, handleSubscribe,
-  handleDisplay, handlePlayAudio, handleStopAudio, handleSpeak,
-  handleRgbLed, handleLocationPoll, handleStorage{Get,Set,Delete,List},
-  handleCameraFov, handleShare, handleOpenUrl, handleCopyClipboard,
-  handleDownload, handlePhoto, handleStream{Start,Stop},
-  handleManagedStream{Start,Stop}, handlePong, plus inlined PING and
-  stub DASHBOARD_CONTENT_UPDATE) to a new `MentraJSRouter` class
-  taking `(packageName, payload)` from `__dispatch` events.
+- Move all 25 dispatch arms in `handleRawMessage`'s switch
+  (`LocalMiniappRuntime.ts:516-595`) to a new `MentraJSRouter` class
+  taking `(packageName, payload)` from `__dispatch` events. Of these,
+  11 currently delegate to `private handle*` methods
+  (`handleConnect`, `handleSubscribe`, `handleDisplay`,
+  `handlePlayAudio`, `handleStopAudio`, `handleRgbLed`,
+  `handleCameraFov`, `handleStreamStart`, `handleStreamStop`,
+  `handleManagedStreamStart`, `handleManagedStreamStop`); the
+  remaining 14 (SPEAK, LOCATION_POLL, STORAGE_GET/SET/DELETE/LIST,
+  SHARE, OPEN_URL, COPY_CLIPBOARD, DOWNLOAD, PHOTO, PING, PONG, and
+  the DASHBOARD_CONTENT_UPDATE stub) are inline `case` blocks. Lift
+  both shapes verbatim — keep the inline ones inline in the new
+  router unless they grow.
+- Public `handlePong` (`:1714`) and inline PING handler stay; both
+  are wired into the existing ping/keepalive loop.
 - Front door: replace `handleRawMessage(packageName, raw)` (current
   signature at `LocalMiniappRuntime.ts:474`) with the new
   `__dispatch`-driven entry point.
@@ -2021,7 +2065,8 @@ survive, front door swaps from postMessage to `__dispatch`.
   `recomputeMicRequirements`, `updateCloudSubscriptions`,
   `installedManifest` permission gating (`:671-687`),
   `setInstalledManifest` (`:415`), `unregisterApp` (`:432`),
-  `PERMISSION_NOT_DECLARED` once-per-session dedup (`:107-120`).
+  `PERMISSION_NOT_DECLARED` once-per-session dedup (`:104-150`,
+  `warnedPermission` Set + `logPermissionNotDeclared` helper).
 - **HMAC/local-token code removal:** verify nothing outside
   `LocalMiniappRuntime.ts` calls `generateLocalToken`/
   `validateLocalToken` (grep before deletion). Currently exposed
@@ -2200,8 +2245,12 @@ These come back when we ship the store; not now.
   produces a working zip; install via QR; both halves load on iOS
   and Android.
 
+### Phase 5 — SDK split + scaffolder + example app migration (~2 weeks)
+
 **Goal:** Developers can `bun create mentra-miniapp` and get a
-two-layer template.
+two-layer template. Existing `sdk/example-miniapp/` migrates per
+Appendix A — that migration is the integration acceptance gate for
+the entire architecture.
 
 - **Package naming: sub-paths under `@mentra/miniapp` (decided).**
   - `@mentra/miniapp/background` — session API (`glasses`, `phone`,
@@ -2259,8 +2308,13 @@ is platform-agnostic JS. Same package serves both platforms.
   Appendix A.
 - TypeScript compile passes for both `@mentra/miniapp/background`
   and `@mentra/miniapp/ui` sub-paths with their separate ambient
-  types (e.g. `mentra: ...` global is undefined when imported via
-  `/background`, defined via `/ui`).
+  types. **Test harness:** new file
+  `sdk/example-miniapp/test/sub-path-types.test-d.ts` (or in
+  `@mentra/miniapp` itself) using `tsd` or `@ts-expect-error` blocks:
+  one block imports `from "@mentra/miniapp/background"` and asserts
+  `// @ts-expect-error` on a reference to the `mentra` global; a
+  second block imports `from "@mentra/miniapp/ui"` and asserts
+  `mentra.send` typechecks. `bun typecheck` must pass.
 - `sdk/example-miniapp/` runs end-to-end on the new architecture
   (full Appendix A acceptance gate — see "Acceptance test for the
   example-app migration" in Appendix A).
@@ -2334,19 +2388,14 @@ When we ship a store later, the cloud work returns:
 
 That's its own work track and its own spec — not part of this one.
 
-### Migration path for existing miniapps (V1)
+### Migration path for existing miniapps
 
-For V1 (LAN sideload only), no store-deployed miniapps to migrate.
-The `EditMiniApp.tsx` flow in console targets cloud miniapps
-(server-hosted), which is a separate product still — not affected
-by this architecture change.
-
-When the store ships later, we'll need:
-- Compatibility shim for single-bundle (legacy) miniapps
-- Manifest auto-migration command
-- Cloud-side dual-write during migration window
-
-Out of scope for the V1 doc.
+Greenfield — `sdk/example-miniapp/` is the only existing miniapp
+and its rewrite is scheduled in Phase 5 per Appendix A. No
+compatibility shims, no auto-migration command, no legacy single-
+bundle support. The `EditMiniApp.tsx` flow in console targets
+cloud miniapps (server-hosted), which is a separate product not
+affected by this architecture change.
 
 ---
 
@@ -2617,28 +2666,25 @@ Normal client/server async problems, none unique to this architecture:
 
 ## Open questions
 
-1. **Should disabled miniapps keep their JSContext alive?** Instinct:
-   no, tear down on disable. Saves memory. JSContext re-spawns on
-   re-enable, hydrates from storage.
-2. **CPU/memory quotas per miniapp?** Neither JSC nor QuickJS ships
+1. **CPU/memory quotas per miniapp?** Neither JSC nor QuickJS ships
    built-in quotas. We can add a watchdog timer in the dispatcher
    (Swift on iOS, Kotlin on Android) that aborts a miniapp's
    evaluation if it blocks the JS thread for >N seconds. QuickJS
    exposes `JS_SetInterruptHandler` for clean preemption; iOS-JSC
    has `JSContextGroupSetExecutionTimeLimit`. Defer until it bites.
-3. **Multiple simultaneous WebViews?** Out of scope. Product is "user
+2. **Multiple simultaneous WebViews?** Out of scope. Product is "user
    looks at one miniapp's settings at a time."
-4. **Notification scheduling from the WebView?** All scheduling goes
+3. **Notification scheduling from the WebView?** All scheduling goes
    through background. WebView never schedules anything directly.
-5. **What does the JSContext do during the iOS suspension window?**
+4. **What does the JS context do during the iOS suspension window?**
    Nothing — JS execution is paused with the host process. When the
    host wakes (BLE event arrives), JS resumes mid-task. State is
    preserved. The dev sees `setInterval` callbacks firing slightly
    irregularly when host was paused. Document this.
-6. **Inter-miniapp communication?** Out of scope. If miniapp A needs
+5. **Inter-miniapp communication?** Out of scope. If miniapp A needs
    to wake miniapp B, it goes through the host (notification, then
    user opens B). No direct miniapp-to-miniapp messaging.
-7. **Versioning the bridge.** Every `miniapp.json` declares
+6. **Versioning the bridge.** Every `miniapp.json` declares
    `sdkVersion`. Host refuses to spawn miniapps targeting an SDK
    version it doesn't support. Bump when we change the bridge
    contract.
