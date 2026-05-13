@@ -1021,7 +1021,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         case let .photoResponse(response):
             handlePhotoResponse(response.response)
         case let .streamStatus(status):
-            handleStreamStatus(status.values)
+            handleStreamStatus(status.status)
         case let .raw(name, values):
             handleRawEvent(name: name, values: values)
         default:
@@ -1459,26 +1459,26 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         case "photo_response":
             handlePhotoResponse(MentraPhotoResponse(values: values))
         case "stream_status":
-            handleStreamStatus(values)
+            handleStreamStatus(MentraStreamStatus(values: values))
         default:
             append(tag: "LIVE", text: "\(name) \(summarize(values))")
         }
     }
 
-    private func applyStreamStatus(_ values: [String: Any]) {
-        switch stringValue(values, "status") {
-        case "streaming", "initializing", "starting":
+    private func applyStreamStatus(_ status: MentraStreamStatus) {
+        switch status.state {
+        case .streaming, .initializing, .reconnecting, .reconnected:
             streamRequested = true
             if streamStartedAt == nil {
                 streamStartedAt = Date()
             }
-            if let streamId = stringValue(values, "streamId") {
+            if let streamId = status.streamId {
                 activeStreamId = streamId
             }
             if let activeStreamId, keepAliveTask == nil {
                 startKeepAlive(streamId: activeStreamId)
             }
-        case "stopped", "stopping", "error", "error_not_streaming":
+        case .stopped, .stopping, .error, .reconnectFailed:
             streamRequested = false
             streamPreviewReady = false
             streamStartedAt = nil
@@ -1488,19 +1488,16 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             if directStreamReceiverRunning {
                 stopDirectPhoneStreamReceiver(status: "WebRTC direct phone stopped")
             }
-        default:
-            break
         }
     }
 
-    private func handleStreamStatus(_ values: [String: Any]) {
-        applyStreamStatus(values)
-        let summary = summarize(values)
-        let status = stringValue(values, "status")
+    private func handleStreamStatus(_ status: MentraStreamStatus) {
+        applyStreamStatus(status)
+        let summary = summarize(status.values)
         if isDirectPhoneWebRtcSelected {
-            if status == "stopped" || status == "stopping" {
+            if status.state == .stopped || status.state == .stopping || status.state == .reconnectFailed {
                 streamStatus = "WebRTC direct phone stopped"
-            } else if status?.lowercased().hasPrefix("error") == true {
+            } else if status.state == .error {
                 streamStatus = "WebRTC direct phone error: \(summary)"
             } else if streamPreviewReady {
                 streamStatus = "WebRTC direct phone live"

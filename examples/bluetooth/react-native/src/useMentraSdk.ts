@@ -1516,8 +1516,13 @@ export function useMentraSdk(): MentraSdkModel {
   }
 
   function applyStreamStatus(payload: StreamStatusEvent) {
-    const status = typeof payload.status === 'string' ? payload.status : '';
-    if (status === 'streaming' || status === 'initializing' || status === 'starting') {
+    const status = payload.status;
+    if (
+      status === 'streaming' ||
+      status === 'initializing' ||
+      status === 'reconnecting' ||
+      status === 'reconnected'
+    ) {
       if (typeof payload.streamId === 'string') {
         activeStreamIdRef.current = payload.streamId;
       }
@@ -1532,7 +1537,7 @@ export function useMentraSdk(): MentraSdkModel {
       status === 'stopped' ||
       status === 'stopping' ||
       status === 'error' ||
-      status === 'error_not_streaming'
+      status === 'reconnect_failed'
     ) {
       stopKeepAlive();
       stopPreviewHealthPoll();

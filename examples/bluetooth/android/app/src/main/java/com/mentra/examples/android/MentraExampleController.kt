@@ -45,8 +45,10 @@ import com.mentra.core.MentraPhotoSize
 import com.mentra.core.MentraRgbLedAction
 import com.mentra.core.MentraRgbLedColor
 import com.mentra.core.MentraRgbLedRequest
+import com.mentra.core.MentraStreamState
 import com.mentra.core.MentraStreamKeepAliveRequest
 import com.mentra.core.MentraStreamRequest
+import com.mentra.core.MentraStreamStatus
 import com.mentra.core.MentraTouchEvent
 import com.mentra.core.MentraWifiScanResult
 import com.mentra.core.MentraWifiStatus
@@ -1179,17 +1181,22 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     override fun onStreamStatus(event: com.mentra.core.MentraStreamStatusEvent) {
-        applyStreamStatus(event.values)
+        applyStreamStatus(event.status)
         val summary = summarize(event.values)
-        val status = event.values["status"] as? String
+        val streamState = event.state
         if (isDirectPhoneWebRtcSelected()) {
             state = state.copy(
-                streamStatus = when {
-                    status in setOf("stopped", "stopping") -> "WebRTC direct phone stopped"
-                    status?.startsWith("error", ignoreCase = true) == true -> "WebRTC direct phone error: $summary"
-                    state.streamPreviewReady -> "WebRTC direct phone live"
-                    else -> "WebRTC stream requested; waiting for first frame"
-                }
+                streamStatus = when (streamState) {
+                    MentraStreamState.STOPPED, MentraStreamState.STOPPING, MentraStreamState.RECONNECT_FAILED ->
+                        "WebRTC direct phone stopped"
+                    MentraStreamState.ERROR -> "WebRTC direct phone error: $summary"
+                    else ->
+                        if (state.streamPreviewReady) {
+                            "WebRTC direct phone live"
+                        } else {
+                            "WebRTC stream requested; waiting for first frame"
+                        }
+                },
             )
         } else {
             state = state.copy(streamStatus = summary)
@@ -1559,10 +1566,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         stopMicPlayback()
     }
 
-    private fun applyStreamStatus(values: Map<String, Any>) {
-        when (values["status"] as? String) {
-            "streaming", "initializing", "starting" -> {
-                activeStreamId = values["streamId"] as? String ?: activeStreamId
+    private fun applyStreamStatus(status: MentraStreamStatus) {
+        when (status.state) {
+            MentraStreamState.INITIALIZING,
+            MentraStreamState.STREAMING,
+            MentraStreamState.RECONNECTING,
+            MentraStreamState.RECONNECTED -> {
+                activeStreamId = status.streamId ?: activeStreamId
                 state = state.copy(
                     streamRequested = true,
                     streamStartedAt = state.streamStartedAt ?: System.currentTimeMillis(),
@@ -1571,7 +1581,10 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                     startKeepAlive(activeStreamId ?: return)
                 }
             }
-            "stopped", "stopping", "error", "error_not_streaming" -> {
+            MentraStreamState.STOPPED,
+            MentraStreamState.STOPPING,
+            MentraStreamState.RECONNECT_FAILED,
+            MentraStreamState.ERROR -> {
                 stopKeepAlive()
                 stopPreviewHealthPoll()
                 activeStreamId = null
