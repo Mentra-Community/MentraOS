@@ -9,6 +9,8 @@ import BluetoothSdk, {
   type CompatibleGlassesSearchStopEvent,
   type CoreStatus,
   type GlassesStatus,
+  type HotspotStatus,
+  type HotspotStatusChangeEvent,
   type LogEvent,
   type MentraDevice,
   type MicLc3Event,
@@ -30,6 +32,7 @@ import {
   galleryHotspotSsidLabel,
   galleryServerUrl,
   connectedWifiStatus,
+  enabledHotspotStatus,
   isDisconnectedStatus,
   isGlassesConnected,
   isGlassesWifiConnected,
@@ -84,6 +87,18 @@ function wifiStatusFromEvent(event: WifiStatusChangeEvent): WifiStatus {
     default:
       return {state: 'unknown'};
   }
+}
+
+function hotspotStatusFromEvent(event: HotspotStatusChangeEvent): HotspotStatus {
+  if (event.state === 'enabled') {
+    return {
+      state: 'enabled',
+      ssid: event.ssid,
+      password: event.password,
+      localIp: event.localIp,
+    };
+  }
+  return {state: event.state};
 }
 
 export type SdkConsoleEvent = {
@@ -242,7 +257,7 @@ export function useMentraSdk(): MentraSdkModel {
   const [streamPreviewReady, setStreamPreviewReady] = useState(false);
   const [streamStatus, setStreamStatus] = useState('Ready to stream WebRTC to phone');
   const [hotspotEnabled, setHotspotEnabled] = useState(
-    () => Boolean(BluetoothSdk.getGlassesStatus().hotspotEnabled),
+    () => enabledHotspotStatus(BluetoothSdk.getGlassesStatus()) !== null,
   );
   const [micRecording, setMicRecording] = useState(false);
   const [micPlaying, setMicPlaying] = useState(false);
@@ -355,8 +370,8 @@ export function useMentraSdk(): MentraSdkModel {
 
   useEffect(() => {
     const removeGlasses = BluetoothSdk.onGlassesStatus((changed) => {
-      if (typeof changed.hotspotEnabled === 'boolean') {
-        setHotspotEnabled(changed.hotspotEnabled);
+      if (changed.hotspot) {
+        setHotspotEnabled(changed.hotspot.state === 'enabled');
       }
       if (isDisconnectedStatus(changed)) {
         applyDisconnectedState('Disconnected');
@@ -401,14 +416,12 @@ export function useMentraSdk(): MentraSdkModel {
         }));
         addEvent('STORE', `Wi-Fi ${wifi.state === 'connected' ? wifi.ssid : wifi.state}`);
       }),
-      BluetoothSdk.addListener('hotspot_status_change', (payload) => {
-        const enabled = Boolean(payload.enabled);
+      BluetoothSdk.addListener('hotspot_status_change', (payload: HotspotStatusChangeEvent) => {
+        const hotspot = hotspotStatusFromEvent(payload);
+        const enabled = hotspot.state === 'enabled';
         const nextStatus = {
           ...BluetoothSdk.getGlassesStatus(),
-          hotspotEnabled: enabled,
-          hotspotGatewayIp: payload.local_ip ?? '',
-          hotspotPassword: payload.password ?? '',
-          hotspotSsid: payload.ssid ?? '',
+          hotspot,
         };
         setHotspotEnabled(enabled);
         setGalleryServerReachable(null);
@@ -419,10 +432,7 @@ export function useMentraSdk(): MentraSdkModel {
         );
         setGlassesStatus((current) => ({
           ...current,
-          hotspotEnabled: enabled,
-          hotspotGatewayIp: payload.local_ip ?? '',
-          hotspotPassword: payload.password ?? '',
-          hotspotSsid: payload.ssid ?? '',
+          hotspot,
         }));
         addEvent('STORE', `hotspot ${summarizeMap(payload)}`);
       }),
@@ -430,7 +440,7 @@ export function useMentraSdk(): MentraSdkModel {
         setHotspotEnabled(false);
         setGalleryServerReachable(false);
         setGalleryServerStatus('Gallery server: hotspot error');
-        setGlassesStatus((current) => ({...current, hotspotEnabled: false}));
+        setGlassesStatus((current) => ({...current, hotspot: {state: 'disabled'}}));
         addEvent('TX', `hotspot error ${summarizeMap(payload)}`);
       }),
       MentraDirectReceiver.addListener('photoUpload', handleDirectPhotoUpload),
@@ -1150,10 +1160,9 @@ export function useMentraSdk(): MentraSdkModel {
   async function toggleHotspot() {
     await runAction(hotspotEnabled ? 'Disable hotspot' : 'Enable hotspot', async () => {
       requireConnected('toggle hotspot');
-      const current =
-        typeof glassesStatus.hotspotEnabled === 'boolean'
-          ? glassesStatus.hotspotEnabled
-          : hotspotEnabled;
+      const current = glassesStatus.hotspot
+        ? enabledHotspotStatus(glassesStatus) !== null
+        : hotspotEnabled;
       const next = !current;
       await BluetoothSdk.setHotspotState(next);
     });
@@ -1813,10 +1822,7 @@ function disconnectedGlassesStatus(
     connected: false,
     connectionState: 'DISCONNECTED',
     fullyBooted: false,
-    hotspotEnabled: false,
-    hotspotGatewayIp: '',
-    hotspotPassword: '',
-    hotspotSsid: '',
+    hotspot: {state: 'disabled'},
     wifi: {state: 'disconnected'},
   } as Partial<GlassesStatus>;
 }

@@ -1,4 +1,4 @@
-import type {CoreStatus, GlassesStatus, MentraDevice, WifiStatus} from '@mentra/bluetooth-sdk';
+import type {CoreStatus, GlassesStatus, HotspotStatus, MentraDevice, WifiStatus} from '@mentra/bluetooth-sdk';
 
 export function connectionLabel(status: Partial<GlassesStatus>) {
   if (status.connectionState) {
@@ -26,6 +26,17 @@ export function isGlassesWifiConnected(status: Partial<GlassesStatus>) {
 
 export function connectedWifiStatus(status: Partial<GlassesStatus>): Extract<WifiStatus, {state: 'connected'}> | null {
   return status.wifi?.state === 'connected' ? status.wifi : null;
+}
+
+export function enabledHotspotStatus(status: Partial<GlassesStatus>): Extract<HotspotStatus, {state: 'enabled'}> | null {
+  return status.hotspot?.state === 'enabled' ? status.hotspot : null;
+}
+
+export function isHotspotEnabled(status: Partial<GlassesStatus>, fallbackEnabled: boolean) {
+  if (status.hotspot) {
+    return status.hotspot.state === 'enabled';
+  }
+  return fallbackEnabled;
 }
 
 export function isDisconnectedStatus(status: Partial<GlassesStatus>) {
@@ -123,46 +134,37 @@ export function wifiSubLabel(status: Partial<GlassesStatus>) {
 }
 
 export function hotspotLabel(status: Partial<GlassesStatus>, fallbackEnabled: boolean) {
-  const values = status as Record<string, unknown>;
-  const enabled = typeof values.hotspotEnabled === 'boolean' ? values.hotspotEnabled : fallbackEnabled;
-  if (!enabled) {
+  const hotspot = enabledHotspotStatus(status);
+  if (hotspot) {
+    return hotspot.localIp ? `${hotspot.ssid} · ${hotspot.localIp}` : hotspot.ssid;
+  }
+  if (!isHotspotEnabled(status, fallbackEnabled)) {
     return 'disabled';
   }
-  const ssid = typeof values.hotspotSsid === 'string' ? values.hotspotSsid : '';
-  if (!ssid) {
-    return 'waiting for SSID';
-  }
-  const ip = typeof values.hotspotGatewayIp === 'string' ? values.hotspotGatewayIp : '';
-  return ip ? `${ssid} · ${ip}` : ssid;
+  return 'waiting for SSID';
 }
 
 const MENTRA_LIVE_DEFAULT_HOTSPOT_PASSWORD = '00001111';
 
 export function galleryServerUrl(status: Partial<GlassesStatus>, fallbackEnabled: boolean) {
-  const values = status as Record<string, unknown>;
-  const enabled = typeof values.hotspotEnabled === 'boolean' ? values.hotspotEnabled : fallbackEnabled;
-  if (!enabled) {
+  const hotspot = enabledHotspotStatus(status);
+  if (hotspot) {
+    return `http://${hotspot.localIp}:8089`;
+  }
+  if (!isHotspotEnabled(status, fallbackEnabled)) {
     return null;
   }
-  const gateway = typeof values.hotspotGatewayIp === 'string' && values.hotspotGatewayIp
-    ? values.hotspotGatewayIp
-    : '192.168.43.1';
-  return `http://${gateway}:8089`;
+  return 'http://192.168.43.1:8089';
 }
 
 export function galleryHotspotSsidLabel(status: Partial<GlassesStatus>) {
-  const values = status as Record<string, unknown>;
-  const ssid = typeof values.hotspotSsid === 'string' && values.hotspotSsid
-    ? values.hotspotSsid
-    : '';
-  return ssid ? `Wi-Fi ${ssid}` : 'the glasses hotspot';
+  const hotspot = enabledHotspotStatus(status);
+  return hotspot ? `Wi-Fi ${hotspot.ssid}` : 'the glasses hotspot';
 }
 
 export function galleryHotspotPasswordLabel(status: Partial<GlassesStatus>) {
-  const values = status as Record<string, unknown>;
-  return typeof values.hotspotPassword === 'string' && values.hotspotPassword
-    ? values.hotspotPassword
-    : MENTRA_LIVE_DEFAULT_HOTSPOT_PASSWORD;
+  const hotspot = enabledHotspotStatus(status);
+  return hotspot?.password || MENTRA_LIVE_DEFAULT_HOTSPOT_PASSWORD;
 }
 
 export function firmwareLabel(status: Partial<GlassesStatus>) {

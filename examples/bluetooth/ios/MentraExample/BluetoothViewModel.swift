@@ -166,7 +166,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             mentraBluetoothSdk.setDefaultDevice(savedDevice)
         }
         glassesValues = mentraBluetoothSdk.glassesStatus
-        hotspotEnabled = glassesValues?.hotspotEnabled ?? false
+        hotspotEnabled = enabledHotspotStatus(glassesValues) != nil
         refreshGalleryServerStatusForCurrentHotspot(defaultStatus: "Gallery server: enable hotspot to check")
         applyBluetoothStatus(mentraBluetoothSdk.bluetoothStatus)
         if let value = ProcessInfo.processInfo.environment["MENTRA_PHOTO_WEBHOOK_URL"] {
@@ -839,7 +839,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func toggleHotspot() {
         runAction(hotspotEnabled ? "Disable hotspot" : "Enable hotspot") {
             try requireConnected("toggle hotspot")
-            let current = glassesValues?.hotspotEnabled ?? hotspotEnabled
+            let current = enabledHotspotStatus(glassesValues) != nil || (glassesValues == nil && hotspotEnabled)
             let next = !current
             mentraBluetoothSdk.setHotspotState(enabled: next)
         }
@@ -973,8 +973,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateGlassesStatus status: MentraGlassesStatusUpdate) {
         glassesValues = glassesValues?.applying(status) ?? mentraBluetoothSdk.glassesStatus
-        if let enabled = status.hotspotEnabled {
-            hotspotEnabled = enabled
+        if let hotspot = status.hotspot {
+            hotspotEnabled = enabledHotspotStatus(hotspot) != nil
             refreshGalleryServerStatusForCurrentHotspot(defaultStatus: "Gallery server: hotspot off")
         }
         if isDisconnectedStatus(status) {
@@ -1444,21 +1444,17 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             )
             append(tag: "STORE", text: "battery \(intValue(values, "level") ?? -1)%")
         case "hotspot_status_change":
-            let enabled = boolValue(values, "enabled") ?? false
+            let hotspot = MentraHotspotStatus(values: values)
+            let enabled = enabledHotspotStatus(hotspot) != nil
             hotspotEnabled = enabled
-            glassesValues = glassesValues?.withHotspot(
-                enabled: enabled,
-                ssid: stringValue(values, "ssid") ?? "",
-                password: stringValue(values, "password") ?? "",
-                gatewayIp: stringValue(values, "local_ip") ?? ""
-            )
+            glassesValues = glassesValues?.withHotspot(hotspot)
             refreshGalleryServerStatusForCurrentHotspot(defaultStatus: "Gallery server: hotspot off")
             append(tag: "STORE", text: "hotspot \(summarize(values))")
         case "hotspot_error":
             hotspotEnabled = false
             galleryServerReachable = false
             galleryServerStatus = "Gallery server: hotspot error"
-            glassesValues = glassesValues?.withHotspot(enabled: false, ssid: "", password: "", gatewayIp: "")
+            glassesValues = glassesValues?.withHotspot(.disabled)
             append(tag: "TX", text: "hotspot error \(summarize(values))")
         case "photo_response":
             handlePhotoResponse(values)
@@ -1725,39 +1721,46 @@ func connectedWifiStatus(_ status: MentraGlassesStatus?) -> (ssid: String, local
     return (ssid, localIp)
 }
 
+func enabledHotspotStatus(_ hotspot: MentraHotspotStatus) -> (ssid: String, password: String, localIp: String)? {
+    guard case let .enabled(ssid, password, localIp) = hotspot else {
+        return nil
+    }
+    return (ssid, password, localIp)
+}
+
+func enabledHotspotStatus(_ status: MentraGlassesStatus?) -> (ssid: String, password: String, localIp: String)? {
+    guard let hotspot = status?.hotspot else {
+        return nil
+    }
+    return enabledHotspotStatus(hotspot)
+}
+
 func hotspotLabel(_ status: MentraGlassesStatus?, fallbackEnabled: Bool) -> String {
-    let enabled = status?.hotspotEnabled ?? fallbackEnabled
-    guard enabled else { return "disabled" }
-
-    guard let ssid = status?.hotspotSsid, !ssid.isEmpty else {
-        return "waiting for SSID"
+    if let hotspot = enabledHotspotStatus(status) {
+        return "\(hotspot.ssid) · \(hotspot.localIp)"
     }
-
-    if let ip = status?.hotspotGatewayIp, !ip.isEmpty {
-        return "\(ssid) · \(ip)"
-    }
-    return ssid
+    return status == nil && fallbackEnabled ? "waiting for SSID" : "disabled"
 }
 
 private let mentraLiveDefaultHotspotPassword = "00001111"
 
 func galleryServerUrl(_ status: MentraGlassesStatus?, fallbackEnabled: Bool) -> String? {
-    let enabled = status?.hotspotEnabled ?? fallbackEnabled
-    guard enabled else { return nil }
+    let hotspot = enabledHotspotStatus(status)
+    guard hotspot != nil || (status == nil && fallbackEnabled) else { return nil }
 
-    let gateway = status?.hotspotGatewayIp.nonEmpty ?? "192.168.43.1"
+    let gateway = hotspot?.localIp ?? "192.168.43.1"
     return "http://\(gateway):8089"
 }
 
 func galleryHotspotSsidLabel(_ status: MentraGlassesStatus?) -> String {
-    guard let ssid = status?.hotspotSsid, !ssid.isEmpty else {
+    guard let ssid = enabledHotspotStatus(status)?.ssid else {
         return "the glasses hotspot"
     }
     return "Wi-Fi \(ssid)"
 }
 
 func galleryHotspotPasswordLabel(_ status: MentraGlassesStatus?) -> String {
-    status?.hotspotPassword.nonEmpty ?? mentraLiveDefaultHotspotPassword
+    enabledHotspotStatus(status)?.password ?? mentraLiveDefaultHotspotPassword
 }
 
 func firmwareLabel(_ status: MentraGlassesStatus?) -> String {
@@ -1845,6 +1848,16 @@ func summarize(_ status: MentraGlassesStatusUpdate) -> String {
             return "wifi: unknown"
         }
     }
+    let hotspotSummary: String? = status.hotspot.map { hotspot in
+        switch hotspot {
+        case let .enabled(ssid, _, localIp):
+            return "hotspot: \(ssid) · \(localIp)"
+        case .disabled:
+            return "hotspot: disabled"
+        case .unknown:
+            return "hotspot: unknown"
+        }
+    }
     let signalStrengthUpdatedSummary = status.signalStrengthUpdatedAt.map { timestamp in
         let date = Date(timeIntervalSince1970: TimeInterval(timestamp) / 1000)
         return "RSSI updated: \(DateFormatter.exampleEventTime.string(from: date))"
@@ -1855,7 +1868,7 @@ func summarize(_ status: MentraGlassesStatusUpdate) -> String {
         status.fullyBooted.map { "fullyBooted: \($0)" },
         status.batteryLevel.map { "batteryLevel: \($0)" },
         wifiSummary,
-        status.hotspotEnabled.map { "hotspotEnabled: \($0)" },
+        hotspotSummary,
         status.signalStrength.map { "signalStrength: \($0)" },
         signalStrengthUpdatedSummary,
     ].compactMap { $0 }.prefix(3)

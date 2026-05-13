@@ -35,6 +35,7 @@ import com.mentra.core.MentraGalleryMode
 import com.mentra.core.MentraGlassesStatus
 import com.mentra.core.MentraGlassesStatusUpdate
 import com.mentra.core.MentraHotspotErrorEvent
+import com.mentra.core.MentraHotspotStatus
 import com.mentra.core.MentraHotspotStatusEvent
 import com.mentra.core.MentraMicConfig
 import com.mentra.core.MentraPhotoCompression
@@ -274,7 +275,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             glassesStatus = initialGlassesStatus,
             bluetoothStatus = initialBluetoothStatus,
             galleryModeAuto = galleryModeAuto(initialBluetoothStatus),
-            hotspotEnabled = initialGlassesStatus.hotspotEnabled,
+            hotspotEnabled = enabledHotspotStatus(initialGlassesStatus) != null,
             phoneAudioRoute = currentAudioOutputRouteLabel(),
         )
         registerAudioStateObservers()
@@ -934,7 +935,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     fun toggleHotspot() = runAction(if (state.hotspotEnabled) "Disable hotspot" else "Enable hotspot") {
         requireConnected("toggle hotspot")
-        val current = state.glassesStatus?.hotspotEnabled ?: state.hotspotEnabled
+        val current = enabledHotspotStatus(state.glassesStatus) != null ||
+            (state.glassesStatus == null && state.hotspotEnabled)
         val next = !current
         mentraBluetoothSdk.setHotspotState(next)
     }
@@ -1057,8 +1059,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         val wasConnected = isGlassesConnected()
         val nextStatus = state.glassesStatus?.applyUpdate(status) ?: mentraBluetoothSdk.getGlassesStatus()
         state = state.copy(glassesStatus = nextStatus)
-        status.hotspotEnabled?.let { enabled ->
-            state = state.copy(hotspotEnabled = enabled)
+        status.hotspot?.let { hotspot ->
+            state = state.copy(hotspotEnabled = hotspot is MentraHotspotStatus.Enabled)
         }
         if (isDisconnectedStatus(status)) {
             applyDisconnectedState("Disconnected")
@@ -1128,12 +1130,10 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     override fun onHotspotStatusChanged(event: MentraHotspotStatusEvent) {
-        val enabled = event.enabled ?: false
+        val status = event.status
+        val enabled = status is MentraHotspotStatus.Enabled
         val nextGlassesStatus = state.glassesStatus?.copy(
-            hotspotEnabled = enabled,
-            hotspotSsid = event.ssid ?: "",
-            hotspotPassword = event.password ?: "",
-            hotspotGatewayIp = event.localIp ?: "",
+            hotspot = status,
         )
         state = state.copy(
             hotspotEnabled = enabled,
@@ -1145,7 +1145,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             },
             glassesStatus = nextGlassesStatus,
         )
-        addEvent("STORE", "hotspot ${summarize(event.values)}")
+        addEvent("STORE", "hotspot ${hotspotSummary(status)}")
     }
 
     override fun onHotspotError(event: MentraHotspotErrorEvent) {
@@ -1153,7 +1153,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             hotspotEnabled = false,
             galleryServerReachable = false,
             galleryServerStatus = "Gallery server: hotspot error",
-            glassesStatus = state.glassesStatus?.copy(hotspotEnabled = false),
+            glassesStatus = state.glassesStatus?.copy(hotspot = MentraHotspotStatus.Disabled),
         )
         addEvent("TX", "hotspot error ${event.message ?: summarize(event.values)}")
     }
@@ -1947,10 +1947,7 @@ fun disconnectedGlassesStatus(status: MentraGlassesStatus?): MentraGlassesStatus
         fullyBooted = false,
         batteryLevel = -1,
         charging = false,
-        hotspotEnabled = false,
-        hotspotGatewayIp = "",
-        hotspotPassword = "",
-        hotspotSsid = "",
+        hotspot = MentraHotspotStatus.Disabled,
         wifi = MentraWifiStatus.Disconnected,
     )
 
@@ -2234,7 +2231,7 @@ fun summarize(status: MentraGlassesStatusUpdate): String =
         status.fullyBooted?.let { "fullyBooted: $it" },
         status.batteryLevel?.let { "batteryLevel: $it" },
         status.wifi?.let { "wifi: ${wifiSummary(it)}" },
-        status.hotspotEnabled?.let { "hotspotEnabled: $it" },
+        status.hotspot?.let { "hotspot: ${hotspotSummary(it)}" },
         status.signalStrength?.let { "signalStrength: $it" },
         status.signalStrengthUpdatedAt?.let { "RSSI updated: ${formatTime(it)}" },
     ).take(3).joinToString(", ").ifBlank { "empty update" }
@@ -2281,10 +2278,7 @@ fun MentraGlassesStatus.applyUpdate(update: MentraGlassesStatusUpdate): MentraGl
         caseCharging = update.caseCharging ?: caseCharging,
         caseOpen = update.caseOpen ?: caseOpen,
         caseRemoved = update.caseRemoved ?: caseRemoved,
-        hotspotEnabled = update.hotspotEnabled ?: hotspotEnabled,
-        hotspotSsid = update.hotspotSsid ?: hotspotSsid,
-        hotspotPassword = update.hotspotPassword ?: hotspotPassword,
-        hotspotGatewayIp = update.hotspotGatewayIp ?: hotspotGatewayIp,
+        hotspot = update.hotspot ?: hotspot,
         headUp = update.headUp ?: headUp,
         controllerConnected = update.controllerConnected ?: controllerConnected,
         controllerFullyBooted = update.controllerFullyBooted ?: controllerFullyBooted,
@@ -2429,42 +2423,46 @@ fun wifiSummary(wifi: MentraWifiStatus): String =
         MentraWifiStatus.Unknown -> "unknown"
     }
 
+fun hotspotSummary(hotspot: MentraHotspotStatus): String =
+    when (hotspot) {
+        is MentraHotspotStatus.Enabled -> "${hotspot.ssid} · ${hotspot.localIp}"
+        MentraHotspotStatus.Disabled -> "disabled"
+        MentraHotspotStatus.Unknown -> "unknown"
+    }
+
 fun isGlassesWifiConnected(status: MentraGlassesStatus?): Boolean =
     connectedWifiStatus(status) != null
 
 fun connectedWifiStatus(status: MentraGlassesStatus?): MentraWifiStatus.Connected? =
     status?.wifi as? MentraWifiStatus.Connected
 
+fun enabledHotspotStatus(status: MentraGlassesStatus?): MentraHotspotStatus.Enabled? =
+    status?.hotspot as? MentraHotspotStatus.Enabled
+
 fun hotspotLabel(status: MentraGlassesStatus?, fallbackEnabled: Boolean): String {
-    val enabled = status?.hotspotEnabled ?: fallbackEnabled
-    if (!enabled) {
-        return "disabled"
+    val hotspot = enabledHotspotStatus(status)
+    if (hotspot != null) {
+        return "${hotspot.ssid} · ${hotspot.localIp}"
     }
-    val ssid = status?.hotspotSsid
-    if (ssid.isNullOrBlank()) {
-        return "waiting for SSID"
-    }
-    val ip = status.hotspotGatewayIp
-    return if (ip.isNullOrBlank()) ssid else "$ssid · $ip"
+    return if (status == null && fallbackEnabled) "waiting for SSID" else "disabled"
 }
 
 fun galleryServerUrl(status: MentraGlassesStatus?, fallbackEnabled: Boolean): String? {
-    val enabled = status?.hotspotEnabled ?: fallbackEnabled
-    if (!enabled) {
+    val hotspot = enabledHotspotStatus(status)
+    if (hotspot == null && !(status == null && fallbackEnabled)) {
         return null
     }
-    val gateway = status?.hotspotGatewayIp?.takeIf { it.isNotBlank() }
-        ?: "192.168.43.1"
+    val gateway = hotspot?.localIp ?: "192.168.43.1"
     return "http://$gateway:8089"
 }
 
 fun galleryHotspotSsidLabel(status: MentraGlassesStatus?): String {
-    val ssid = status?.hotspotSsid?.takeIf { it.isNotBlank() }
+    val ssid = enabledHotspotStatus(status)?.ssid
     return if (ssid == null) "the glasses hotspot" else "Wi-Fi $ssid"
 }
 
 fun galleryHotspotPasswordLabel(status: MentraGlassesStatus?): String =
-    status?.hotspotPassword?.takeIf { it.isNotBlank() }
+    enabledHotspotStatus(status)?.password
         ?: MENTRA_LIVE_DEFAULT_HOTSPOT_PASSWORD
 
 fun firmwareLabel(status: MentraGlassesStatus?): String =
