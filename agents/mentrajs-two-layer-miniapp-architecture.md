@@ -92,7 +92,7 @@ billion-user scale.
 │   │ (always alive)      │         │ (always alive)      │        │
 │   │  __dispatch         │         │  __dispatch         │        │
 │   │  polyfills          │         │  polyfills          │        │
-│   │  background.js      │         │  background.js      │        │
+│   │  background/        │         │  background/        │        │
 │   └──────────┬──────────┘         └─────────────────────┘        │
 │              │                                                   │
 │              │ ui bus (mentra.send / mentra.on)                  │
@@ -306,7 +306,7 @@ to conflate them:
    `LocalMiniappRuntime` / `MentraJSRouter` lives, and where the
    `MiniappHost` React component lives.
 2. **Per-miniapp JSContext** (native iOS JSC / Android JSC, one
-   per installed miniapp). Runs the miniapp's `background.js`.
+   per installed miniapp). Runs the miniapp's `background/index.js`.
 3. **Per-miniapp WebView** (transient WKWebView / Android WebView,
    exists only when user opens settings). Runs the miniapp's
    `dist/ui/index.html`.
@@ -362,7 +362,7 @@ Calls jsContext.evaluateScript(`globalThis.__deliver(${json})`)
   ↓ runs on the JSContext's dedicated thread
   ↓
 __deliver dispatches to subscribed session.* listeners
-  in the miniapp's background.js
+  in the miniapp's background/index.js
 ```
 
 **WebView → Native → Background flow** (e.g. user taps button in
@@ -422,7 +422,7 @@ When `spawn(id, polyfillPath, miniappPath)` is called:
    `globalThis`.
 6. Inject the SDK shim (`@mentra/miniapp/background` typed wrappers around
    `__dispatch` exposing the existing `session.*` API surface).
-7. Run the miniapp's `background.js`. Top-level code executes in
+7. Run the miniapp's `background/index.js`. Top-level code executes in
    the JSContext but **does not** receive `session` — it can set up
    module-level state but should not register listeners or call any
    `session.*` APIs (session isn't available yet).
@@ -607,7 +607,9 @@ my-notes-miniapp/
 ├── package.json
 ├── tsconfig.json
 ├── src/
-│   ├── background.ts          # MentraJS entrypoint — always running
+│   ├── background/            # MentraJS entrypoint — always running
+│   │   └── index.ts           # exports `init(session)` — runtime calls
+│   │                          #   this once after spawn
 │   ├── ui/
 │   │   ├── index.html         # WebView entrypoint
 │   │   ├── index.tsx          # WebView code (React or vanilla)
@@ -616,12 +618,19 @@ my-notes-miniapp/
 │       └── channels.ts        # message channel typings, shared
 ├── icon.png                   # 512x512
 └── dist/                      # output of `bun run build`
-    ├── background.js
+    ├── background/
+    │   └── index.js
     └── ui/
         ├── index.html
         ├── index.js
         └── styles.css
 ```
+
+Background and UI sit in **symmetric folders** so the layout reads
+the same on both halves and `background/` can grow into multiple
+files (controllers, managers, services) without restructuring.
+`background/index.ts` is the canonical entry — the runtime loads
+it and calls `init(session)`.
 
 `miniapp.json` (existing schema + new fields, `packageName` not `id`):
 
@@ -637,7 +646,7 @@ my-notes-miniapp/
   "minHostVersion": "2.3.0",
   "type": "standard",
   "entry": {
-    "background": "dist/background.js",
+    "background": "dist/background/index.js",
     "ui": "dist/ui/index.html"
   },
   "permissions": [
@@ -673,7 +682,7 @@ export interface Channels {
 }
 ```
 
-`src/background.ts` — uses the existing SDK API:
+`src/background/index.ts` — uses the existing SDK API:
 
 ```typescript
 import type {MiniappSession} from "@mentra/miniapp/background"
@@ -808,7 +817,7 @@ unchanged.**
 | `mobile/modules/miniapp/src/dev-reload.ts` | 60 | Keep for WebView; add sibling for JSContext respawn. |
 | `mobile/modules/island/src/services/DevServerBridge.ts` | 288 | Same protocol, two delivery sinks (WebView reload + JSContext respawn). |
 | `sdk/miniapp-cli/src/manifest*.ts` (4 non-test files) | ~712 | Add `sdkVersion`, `minHostVersion`, `entry` (object) schema fields. (Signature schema deferred to store-ship spec.) |
-| `sdk/miniapp-cli/src/dev.ts` + `dev-server.ts` | ~480 | Bundle `dist/background.js` + `dist/ui/`; add `{type:"respawn-bg"}` message alongside `{type:"reload"}`. Drop today's `user-server.ts` spawning — there's no longer a separate Express server fronting the WebView. |
+| `sdk/miniapp-cli/src/dev.ts` + `dev-server.ts` | ~480 | Bundle `dist/background/index.js` + `dist/ui/`; add `{type:"respawn-bg"}` message alongside `{type:"reload"}`. Drop today's `user-server.ts` spawning — there's no longer a separate Express server fronting the WebView. |
 | `sdk/miniapp-cli/src/pack.ts` + `release.ts` | ~380 | Two-output bundle. (Signing pipeline deferred to store-ship spec.) |
 
 ### Reuse with major changes (right shape, internals rewritten)
@@ -816,8 +825,8 @@ unchanged.**
 | File | LoC | What survives, what changes |
 |---|---|---|
 | `mobile/modules/island/src/services/LocalMiniappRuntime.ts` | 1,752 | **Skeleton survives:** per-app registry, refcounted streams, ping loop, **25 dispatch arms** (21 explicit `handle*` private methods + 4 inline arms in the type switch — covers CONNECT, SUBSCRIBE, DISPLAY, PLAY_AUDIO, SPEAK, RGB_LED, LOCATION_POLL, STORAGE_*, CAMERA_FOV, SHARE, OPEN_URL, COPY_CLIPBOARD, DOWNLOAD, PHOTO, STREAM_*, MANAGED_STREAM_*, PING/PONG). Handler bodies don't know they're talking to a WebView — they take `(packageName, payload)` and dispatch to native. **Rewrite:** front door (`handleRawMessage` → `__dispatch`); per-app `sendMessage` (postMessage → `JSContext.evaluateScript`); HMAC/local-token code goes away. |
-| `mobile/modules/island/src/services/AppRegistry.ts` | 675 | Manifest normalization + zip pipeline survive. **Add:** `background.js` discovery alongside `index.html`; recognize new manifest fields; sdkVersion/minHostVersion compatibility check on spawn. (Signature verification deferred to store-ship spec — all current bundles are LAN-sideloaded and unsigned.) |
-| `sdk/create-mentra-miniapp/bin/index.ts` + template | ~150 + template | Scaffolder logic survives (clack prompts, validation, template substitution). **Template files rewrite:** scaffold `src/background.ts`, `src/ui/`, `src/shared/channels.ts` instead of single React SPA. |
+| `mobile/modules/island/src/services/AppRegistry.ts` | 675 | Manifest normalization + zip pipeline survive. **Add:** `background/index.js` discovery alongside `index.html`; recognize new manifest fields; sdkVersion/minHostVersion compatibility check on spawn. (Signature verification deferred to store-ship spec — all current bundles are LAN-sideloaded and unsigned.) |
+| `sdk/create-mentra-miniapp/bin/index.ts` + template | ~150 + template | Scaffolder logic survives (clack prompts, validation, template substitution). **Template files rewrite:** scaffold `src/background/index.ts`, `src/ui/`, `src/shared/channels.ts` instead of single React SPA. |
 
 ### Replace entirely
 
@@ -827,7 +836,7 @@ unchanged.**
 | `mobile/modules/island/src/services/WebviewBridge.ts` | 50 | Replaced by two sibling routers: `MentraJSRouter` (JSContext fan-out) + `MentraUIRouter` (settings WebView ↔ bound JSContext). |
 | `mobile/modules/miniapp/src/globals.ts` | 62 | `window.MentraOS` is WebView-presentational. Keep file for WebView; JSContext gets a different injected globals object. |
 | `mobile/modules/miniapp/src/index.ts` | 108 | Replaced by two sub-path entry points via `package.json` `exports`: `@mentra/miniapp/background` (session API for the JSContext layer) and `@mentra/miniapp/ui` (WebView-side `mentra` global + React hooks). No bare `@mentra/miniapp` import — sub-paths only. |
-| `sdk/example-miniapp/` | (entire React SPA) | Restructure into two-layer: logic into `src/background.ts`, UI into `src/ui/`. Existing React code is reusable as the basis for the UI half. |
+| `sdk/example-miniapp/` | (entire React SPA) | Restructure into two-layer with **symmetric folders**: logic into `src/background/` (entry `background/index.ts` + `background/controllers/`), UI into `src/ui/`. Existing React code is reusable as the basis for the UI half. See Appendix A for the file-by-file map. |
 
 ### Net-new code
 
@@ -915,7 +924,7 @@ CLI + manifest:
 - **`entry` object** in manifest schema (replaces today's flat layout
   for two-layer bundle support).
 - **Two-output bundler** in `sdk/miniapp-cli/src/pack.ts` and
-  `release.ts` — emit `dist/background.js` + `dist/ui/`.
+  `release.ts` — emit `dist/background/index.js` + `dist/ui/`.
 - **`{type:"respawn-bg"}` message type** in `dev-server.ts`
   alongside existing `{type:"reload"}`.
 
@@ -992,7 +1001,7 @@ above are equivalent in functionality.
    laptop, validates manifest, unzips into the app sandbox under
    `Documents/lmas/<packageName>/<version>/` (existing path).
 2. Host spawns a `JSContext` via `JSCRuntime.spawn(packageName,
-   polyfillBundle, dist/background.js)`. JSContext now alive.
+   polyfillBundle, dist/background/index.js)`. JSContext now alive.
 3. Background's `init(session)` runs (typically: hydrate state from
    `session.storage`, register listeners).
 
@@ -1042,7 +1051,7 @@ This is the steady-state production scenario.
 1. All JSContexts die.
 2. On next launch, host re-spawns each installed-and-enabled
    miniapp's JSContext.
-3. Each miniapp's `background.ts` re-runs from scratch, hydrating
+3. Each miniapp's `background/index.ts` re-runs from scratch, hydrating
    from `session.storage`.
 
 **`session.storage` is the source of truth, not in-memory state.**
@@ -1191,10 +1200,14 @@ Flat ZIP, MIME `application/zip`. Wire extension `.zip`, alias
 ```
 miniapp.json                  # manifest, required at zip root
 icon.png                      # 512×512 PNG
-dist/background.js            # background entry (required)
-dist/ui/index.html            # UI entry (required)
-dist/ui/index.js              # UI bundle
-dist/ui/styles.css            # UI styles
+dist/background/              # background bundle folder
+  index.js                    #   entry (required, name from manifest.entry.background)
+  ...                         #   chunked imports if bundler splits
+dist/ui/                      # UI bundle folder
+  index.html                  #   entry (required, name from manifest.entry.ui)
+  index.js                    #   UI bundle
+  styles.css                  #   UI styles
+  ...                         #   any other UI assets
 META-INF/                     # added by cloud at publish
   manifest.sha256             # tree hash of all non-META-INF files
   signature.ed25519           # detached sig over manifest.sha256
@@ -1879,7 +1892,7 @@ LAN HTTP + QR code (already implemented).
   fields. Keep mutation primitives, atomic-write, Levenshtein
   validator, clack wizard.
 - Update `sdk/miniapp-cli/src/pack.ts` (90 LoC) + `release.ts`
-  (294 LoC): emit two-output bundle (`dist/background.js` +
+  (294 LoC): emit two-output bundle (`dist/background/index.js` +
   `dist/ui/`). Today's pack zips a flat `dist/` — needs a
   convention shift.
 - Update `sdk/miniapp-cli/src/dev.ts` + `dev-server.ts` (~480 LoC):
@@ -1887,23 +1900,25 @@ LAN HTTP + QR code (already implemented).
   existing `{type:"reload"}`.
 - Update `mobile/modules/island/src/services/AppRegistry.ts`
   (675 LoC): recognize new manifest fields; sdkVersion/
-  minHostVersion gating; `background.js` discovery alongside
+  minHostVersion gating; `background/index.js` discovery alongside
   `index.html`.
 - **Update `sdk/example-miniapp/miniapp.json`** to add `entry`,
   `sdkVersion`, `minHostVersion` fields (Appendix A) — this app is
   the canonical fixture and must match the new schema before
   Phase 5's scaffolder rewrite ships.
 - **`buildProjectZip` contract change:** today the zip pipeline
-  walks `dist/` flat. New contract walks `dist/background.js` plus
-  `dist/ui/` recursively, preserves the `dist/ui/` prefix.
-  Document both in the function's TSDoc and add a unit test for
-  the new layout.
+  walks `dist/` flat. New contract walks `dist/background/`
+  recursively (preserving the `dist/background/` prefix) and
+  `dist/ui/` recursively (preserving the `dist/ui/` prefix). Both
+  folders mirror the `src/` layout 1:1. Document the new layout in
+  the function's TSDoc and add a unit test asserting both folders
+  are present in the zip.
 
 **Android within Phase 4.** `AppRegistry.ts` is platform-agnostic
 TypeScript — the install path / unzip / on-disk layout (under
 `Documents/lmas/` on iOS, `getFilesDir()/lmas/` on Android — same
 relative tree) is identical across platforms. Verify the Android
-unzip path resolves the same `dist/background.js` + `dist/ui/`
+unzip path resolves the same `dist/background/index.js` + `dist/ui/`
 discovery as iOS.
 
 **Out of scope for V1, deferred:**
@@ -1945,8 +1960,12 @@ two-layer template.
   rename.
 - Update `sdk/create-mentra-miniapp/template/`: today scaffolds a
   Bun-server-based React SPA (`server.ts`, `index.html`, `src/`).
-  Rewrite to scaffold `src/background.ts`, `src/ui/index.html`,
-  `src/ui/index.tsx`, `src/shared/channels.ts`. Two-output build.
+  Rewrite to scaffold `src/background/index.ts` (+ optional
+  `src/background/controllers/` placeholder), `src/ui/index.html`,
+  `src/ui/main.tsx`, `src/ui/App.tsx`, `src/shared/channels.ts`.
+  Two-output build (Vite has separate `vite.config.background.ts`
+  and `vite.config.ui.ts` — or one config with `build.lib.entry`
+  mapping). Symmetric folder layout per Appendix A.
   Scaffolder logic at `sdk/create-mentra-miniapp/bin/index.ts`
   (149 LoC) survives — only template files change.
 - Restructure `sdk/example-miniapp/` per **Appendix A** (entire
@@ -2067,15 +2086,24 @@ sdk/example-miniapp/
 
 ### Target structure (two-layer)
 
+**Symmetric `background/` and `ui/` folders.** Background gets its
+own folder (not a single `background.ts` file at `src/`) so the layout is
+consistent and `background/` can grow into multiple files
+(managers, helpers, per-domain modules) without restructuring.
+The JSContext entry is `background/index.ts`.
+
 ```
 sdk/example-miniapp/
 ├── miniapp.json                    # manifest — adds entry{} object,
 │                                   #   sdkVersion, minHostVersion fields
 ├── src/
-│   ├── background.ts               # NEW entry — replaces main.tsx role on
-│   │                               #   the JSContext side. Re-exports
-│   │                               #   GlassesController logic.
-│   ├── ui/
+│   ├── background/                 # NEW — JSContext side
+│   │   ├── index.ts                # entry: exports `init(session)` —
+│   │   │                           #   runtime calls this once after spawn
+│   │   └── controllers/
+│   │       └── GlassesController.ts # MOVED from src/controller/ (logic
+│   │                               #   layer, instantiated from index.ts)
+│   ├── ui/                         # WebView side (folder, as today)
 │   │   ├── index.html              # NEW WebView entry
 │   │   ├── main.tsx                # WebView entry — mounts <App/>
 │   │   ├── App.tsx                 # MOVED from src/App.tsx (unchanged)
@@ -2084,7 +2112,7 @@ sdk/example-miniapp/
 │   │   ├── hooks/
 │   │   │   └── useChannel.ts       # NEW thin wrapper over `mentra.on/send`
 │   │   └── styles/, index.css
-│   └── shared/
+│   └── shared/                     # imported by BOTH background/ and ui/
 │       ├── channels.ts             # NEW — typed channel registry
 │       │                           #   (TS interface for every name on
 │       │                           #   `mentra.send`/`session.ui.send`)
@@ -2092,31 +2120,64 @@ sdk/example-miniapp/
 │                                   #   sides (TranscriptionEvent shape, etc.)
 ```
 
+**Manifest `entry` object reflects the symmetric layout:**
+
+```json
+"entry": {
+  "background": "dist/background/index.js",
+  "ui": "dist/ui/index.html"
+}
+```
+
+**Build outputs mirror sources:** `dist/background/index.js`
+(plus any chunked imports under `dist/background/`) and
+`dist/ui/index.html` + `dist/ui/*` assets. The CLI's two-output
+bundler emits one bundle per layer, each rooted at the
+corresponding source folder. Imports from `src/shared/` are
+inlined into both bundles by the bundler — no runtime sharing
+across the JSContext/WebView boundary.
+
 ### File-by-file changes
 
-**`src/controller/GlassesController.ts` → `src/background.ts`.**
-Already shaped correctly for the new world (it already documents
-"Subscriptions are bound to the session lifetime, NOT to any React
-component lifecycle" — this is exactly the JSContext model).
-Concrete changes:
+**`src/controller/GlassesController.ts` → `src/background/controllers/GlassesController.ts`.**
+Class moves verbatim — already shaped correctly for the new world
+(it already documents "Subscriptions are bound to the session
+lifetime, NOT to any React component lifecycle" — this is exactly
+the JSContext model). Two changes to the class body:
+
 1. Replace `import {useAppStore} from "../store/appStore"` — zustand
    does not cross the JSContext/WebView boundary. State that the UI
    needs is published via `session.ui.send(channel, payload)`.
    The local copy lives only in WebView memory.
-2. Add an `init(session)` entry point exported from the module top
-   level. The runtime will call this once after spawn (via a
-   `__deliver({event: "init", session})` injection — see the
-   "Spawn" section).
-3. Where the controller wrote to `appStore`, instead emit a UI
+2. Where the controller wrote to `appStore`, instead emit a UI
    channel: e.g. `appStore.setTranscript(t)` becomes
    `session.ui.send("transcript", {text: t})`.
-4. Where the controller exposed imperative methods that React called
+3. Where the controller exposed imperative methods that React called
    (e.g. `controller.startCaptions()`), become
    `session.ui.on("startCaptions", () => { ... })` handlers.
 
+**`src/background/index.ts` is NEW** — a tiny entry file:
+
+```typescript
+import type {MiniappSession} from "@mentra/miniapp/background"
+import {GlassesController} from "./controllers/GlassesController"
+
+export function init(session: MiniappSession): void {
+  const controller = new GlassesController(session)
+  controller.start()
+}
+```
+
+The runtime calls `init(session)` once after spawn (via a
+`__deliver({event: "init", session})` injection — see the
+"Spawn" section). Apps with multiple concerns instantiate multiple
+controllers here. This file stays small on purpose; logic lives in
+`background/controllers/` (or `background/managers/`,
+`background/services/` — whatever the app's domain calls for).
+
 **`src/store/appStore.ts`** — does not move directly. The store is
 WebView-side only (zustand mounted in the React tree). The
-background.ts side has no `useAppStore`; it owns the canonical state
+background side has no `useAppStore`; it owns the canonical state
 in plain TS variables and persists via `session.storage`. The
 WebView's zustand store is a *cache* of what the background just
 sent, hydrated on `mentra.ready()` from a one-shot
@@ -2155,7 +2216,9 @@ After migration, **none of them can.** Three options per page:
 
 Roll-up estimate: 3 fire-and-forget pages × 10 LoC + 7 read-only
 × 30 LoC + 5 unchanged = ~240 LoC of tester-side delta plus a
-~50 LoC dispatcher handler in `background.ts`. ~2-3 days work
+~50 LoC dispatcher handler in `background/index.ts` (or a
+`background/testers.ts` helper imported from `index.ts`).
+~2-3 days work
 for one engineer.
 
 **`miniapp.json`.** Add fields per the new schema:
@@ -2164,7 +2227,7 @@ for one engineer.
   "sdkVersion": "0.2.0",
   "minHostVersion": "1.42.0",
   "entry": {
-    "background": "dist/background.js",
+    "background": "dist/background/index.js",
     "ui": "dist/ui/index.html"
   }
 }
@@ -2183,7 +2246,7 @@ The migration is "done" when:
 1. `bun create mentra-miniapp my-app` produces a scaffold matching
    the target structure above.
 2. `bun mentra-miniapp dev` in `sdk/example-miniapp/` builds both
-   `dist/background.js` and `dist/ui/`, serves over LAN, and the
+   `dist/background/index.js` and `dist/ui/`, serves over LAN, and the
    QR-code install on a real device:
    - Spawns a JSContext, runs `init(session)`, glasses display
      starts working *before* the user opens the WebView.
