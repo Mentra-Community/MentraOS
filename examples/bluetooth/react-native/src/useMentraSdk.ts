@@ -492,7 +492,7 @@ export function useMentraSdk(): MentraSdkModel {
         },
       ),
       BluetoothSdk.addListener('rgb_led_control_response', (payload: RgbLedControlResponseEvent) => {
-        addEvent('LIVE', `RGB LED ${payload.success ? 'ack' : payload.error ?? 'failed'}`);
+        addEvent('LIVE', `RGB LED ${payload.state === 'success' ? 'ack' : payload.errorCode}`);
       }),
       BluetoothSdk.addListener('log', (payload: LogEvent) => {
         addEvent('LIVE', payload.message);
