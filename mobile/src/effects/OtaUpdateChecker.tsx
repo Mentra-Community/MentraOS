@@ -1,13 +1,15 @@
 import {Capabilities, getModelCapabilities} from "@/../../cloud/packages/types/src"
+import type {OtaUpdateInfo} from "@mentra/bluetooth-sdk"
+
 import {useEffect, useRef} from "react"
 
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {useGlassesStore, waitForGlassesState} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
 import {translate} from "@/i18n/translate"
 import {usePathname} from "expo-router"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@mentra/island"
 
 export interface VersionInfo {
   versionCode: number
@@ -196,7 +198,7 @@ function compareVersions(version1: string, version2: string): number {
   }
 }
 
-interface OtaUpdateAvailable {
+export interface OtaCheckResult {
   hasCheckCompleted: boolean
   updateAvailable: boolean
   latestVersionInfo: VersionInfo | null
@@ -205,12 +207,44 @@ interface OtaUpdateAvailable {
   besVersion: string | null
 }
 
+/**
+ * Merge HTTP OTA check with glasses `ota_update_available`. When the phone-side
+ * manifest comparison misses work (e.g. stale build number), glasses can still
+ * advertise the true update set — union the steps and surface `updateAvailable`.
+ */
+export function mergeOtaCheckWithGlasses(phone: OtaCheckResult, glassesHint: OtaUpdateInfo | null): OtaCheckResult {
+  if (glassesHint == null || !glassesHint.available || !glassesHint.updates?.length) {
+    return phone
+  }
+
+  const union = [...new Set([...phone.updates, ...glassesHint.updates])]
+  const latestVersionInfo =
+    phone.latestVersionInfo ??
+    (glassesHint.versionCode
+      ? {
+          versionCode: glassesHint.versionCode,
+          versionName: glassesHint.versionName || "",
+          downloadUrl: "",
+          apkSize: glassesHint.totalSize ?? 0,
+          sha256: "",
+          releaseNotes: "",
+        }
+      : null)
+
+  return {
+    ...phone,
+    updateAvailable: phone.updateAvailable || union.length > 0,
+    updates: union,
+    latestVersionInfo,
+  }
+}
+
 export async function checkForOtaUpdate(
   otaVersionUrl: string,
   currentBuildNumber: string,
   currentMtkVersion?: string, // MTK firmware version (e.g., "20241130")
   currentBesVersion?: string, // BES firmware version (e.g., "17.26.1.14")
-): Promise<OtaUpdateAvailable> {
+): Promise<OtaCheckResult> {
   try {
     console.log("OTA: Checking for OTA update - URL: " + otaVersionUrl + ", current build: " + currentBuildNumber)
     const versionJson = await fetchVersionInfo(otaVersionUrl)
@@ -327,7 +361,7 @@ export async function checkForOtaUpdate(
 // }
 
 export function OtaUpdateChecker() {
-  const {push} = useNavigationHistory()
+  const {push} = useNavigationStore.getState()
   const pathname = usePathname()
 
   // OTA check state from glasses store
@@ -371,12 +405,12 @@ export function OtaUpdateChecker() {
       }
       // Clear any pending OTA check timeout
       if (otaCheckTimeoutRef.current) {
-        BackgroundTimer.clearTimeout(otaCheckTimeoutRef.current)
+        BgTimer.clearTimeout(otaCheckTimeoutRef.current)
         otaCheckTimeoutRef.current = null
       }
       // Clear fallback timeout - prefetch is irrelevant after disconnect
       if (cacheReadyFallbackTimeoutRef.current) {
-        BackgroundTimer.clearTimeout(cacheReadyFallbackTimeoutRef.current)
+        BgTimer.clearTimeout(cacheReadyFallbackTimeoutRef.current)
         cacheReadyFallbackTimeoutRef.current = null
       }
       // Clear MTK session flag on disconnect (glasses rebooted, new version now active)
@@ -483,7 +517,7 @@ export function OtaUpdateChecker() {
 
     // Glasses delivered the cache-ready signal - cancel the phone-side fallback timer
     if (cacheReadyFallbackTimeoutRef.current) {
-      BackgroundTimer.clearTimeout(cacheReadyFallbackTimeoutRef.current)
+      BgTimer.clearTimeout(cacheReadyFallbackTimeoutRef.current)
       cacheReadyFallbackTimeoutRef.current = null
     }
     pendingUpdate.current = null
@@ -530,13 +564,13 @@ export function OtaUpdateChecker() {
 
     // Clear any existing timeout
     if (otaCheckTimeoutRef.current) {
-      BackgroundTimer.clearTimeout(otaCheckTimeoutRef.current)
+      BgTimer.clearTimeout(otaCheckTimeoutRef.current)
     }
 
     // Delay OTA check by 500ms to allow all version_info chunks to arrive
     // (version_info_1, version_info_2, version_info_3 arrive sequentially with ~100ms gaps)
     console.log("OTA: check scheduled - waiting 500ms for firmware version info...")
-    otaCheckTimeoutRef.current = BackgroundTimer.setTimeout(async () => {
+    otaCheckTimeoutRef.current = BgTimer.setTimeout(async () => {
       let connected = useGlassesStore.getState().connected
       // Re-check conditions after delay (glasses might have disconnected)
       if (!connected) {
@@ -564,7 +598,7 @@ export function OtaUpdateChecker() {
         } else {
           console.log("OTA: BES version still unknown after extended wait - proceeding without it")
         }
-        // Re-check connection after waiting
+        connected = useGlassesStore.getState().connected
         if (!connected) {
           console.log("OTA: check cancelled - glasses disconnected while waiting for BES version")
           return
@@ -612,9 +646,9 @@ export function OtaUpdateChecker() {
             // Start a 3-minute fallback timer. If the glasses never send the cache-ready signal
             // (silent prefetch failure), escalate to showing the alert directly.
             if (cacheReadyFallbackTimeoutRef.current) {
-              BackgroundTimer.clearTimeout(cacheReadyFallbackTimeoutRef.current)
+              BgTimer.clearTimeout(cacheReadyFallbackTimeoutRef.current)
             }
-            cacheReadyFallbackTimeoutRef.current = BackgroundTimer.setTimeout(() => {
+            cacheReadyFallbackTimeoutRef.current = BgTimer.setTimeout(() => {
               cacheReadyFallbackTimeoutRef.current = null
               const pending = pendingUpdate.current
               if (!pending) return // prefetch succeeded and was already handled
@@ -676,7 +710,7 @@ export function OtaUpdateChecker() {
     // Cleanup timeout on effect re-run or unmount
     return () => {
       if (otaCheckTimeoutRef.current) {
-        BackgroundTimer.clearTimeout(otaCheckTimeoutRef.current)
+        BgTimer.clearTimeout(otaCheckTimeoutRef.current)
         otaCheckTimeoutRef.current = null
       }
     }

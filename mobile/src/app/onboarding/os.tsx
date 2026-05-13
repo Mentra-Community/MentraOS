@@ -1,6 +1,6 @@
 import {Screen} from "@/components/ignite"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {usePushPrevious} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
@@ -10,10 +10,9 @@ import {CDN_BASE_URL} from "@/constants/appConfig"
 const CDN_BASE = `${CDN_BASE_URL}/onboarding/mentraos/light`
 
 export default function MentraOSOnboarding() {
-  const {pushPrevious} = useNavigationHistory()
+  const pushPrevious = usePushPrevious()
   const [_onboardingOsCompleted, setOnboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  // focusEffectPreventBack()
 
   // NOTE: you can't have 2 transition videos in a row or things will break:
   const steps: OnboardingStep[] = [

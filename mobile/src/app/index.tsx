@@ -7,16 +7,16 @@ import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {useAuth} from "@/contexts/AuthContext"
 import {useDeeplink} from "@/contexts/DeeplinkContext"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import mantle from "@/services/MantleManager"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import {SplashVideo} from "@/components/splash/SplashVideo"
-import {BackgroundTimer} from "@/utils/timers"
 import {APP_STORE_URL, PLAY_STORE_URL} from "@/constants/appConfig"
+import {BgTimer} from "@mentra/island"
 
 // Types
 type ScreenState = "loading" | "connection" | "auth" | "outdated" | "success"
@@ -37,7 +37,7 @@ export default function InitScreen() {
   const {theme} = useAppTheme()
   const {user, session, loading: authLoading} = useAuth()
   const {replace, replaceAll, getPendingRoute, setPendingRoute, clearHistoryAndGoHome, setAnimation} =
-    useNavigationHistory()
+    useNavigationStore.getState()
   const {processUrl} = useDeeplink()
   const rootNavigationState = useRootNavigationState()
   const isNavigationReady = rootNavigationState?.key != null
@@ -79,7 +79,7 @@ export default function InitScreen() {
   }
 
   const setAnimationDelayed = () => {
-    BackgroundTimer.setTimeout(() => {
+    BgTimer.setTimeout(() => {
       setAnimation("simple_push")
     }, 800)
   }
@@ -121,16 +121,7 @@ export default function InitScreen() {
     await new Promise((resolve) => setTimeout(resolve, NAVIGATION_DELAY))
     setAnimationDelayed()
     clearHistoryAndGoHome({transition: "fade"})
-  }, [
-    user,
-    getPendingRoute,
-    processUrl,
-    clearHistoryAndGoHome,
-    replace,
-    replaceAll,
-    setPendingRoute,
-    setAnimation,
-  ])
+  }, [user, getPendingRoute, processUrl, clearHistoryAndGoHome, replace, replaceAll, setPendingRoute, setAnimation])
 
   const checkLoggedIn = async (): Promise<void> => {
     if (!user) {
@@ -292,7 +283,6 @@ export default function InitScreen() {
 
   // Effects
   useEffect(() => {
-
     console.log("INDEX: USE EFFECT: authLoading, isNavigationReady:", authLoading, isNavigationReady)
     if (authLoading || !isNavigationReady) return
     if (initStartedRef.current) return

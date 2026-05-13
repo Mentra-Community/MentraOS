@@ -31,9 +31,24 @@ const variant = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china" ? VARIANTS
  * https://docs.expo.dev/workflow/configuration/#configuration-resolution-rules
  */
 module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
+  // Optional build-variant suffix. Set MENTRAOS_BUILD_NAME=stable to produce
+  // a parallel-installable build with package com.mentra.mentra.stable and app
+  // label "stable". Leave unset for the normal Mentra build.
+  const variantName = process.env.MENTRAOS_BUILD_NAME?.trim() || null
+  const isValidVariant = variantName && /^[a-zA-Z][a-zA-Z0-9_]*$/.test(variantName)
+  if (variantName && !isValidVariant) {
+    throw new Error(
+      `MENTRAOS_BUILD_NAME="${variantName}" is invalid. Must start with a letter and contain only letters, digits, or underscores.`,
+    )
+  }
+  const appName = isValidVariant ? variantName : variant.appName
+  const baseId = variant.packageName
+  const androidPackage = isValidVariant ? `${baseId}.${variantName}` : baseId
+  const iosBundleId = isValidVariant ? `${baseId}.${variantName}` : baseId
+
   return {
     ...config,
-    name: variant.appName,
+    name: appName,
     slug: "Mentra",
     version: process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "0.0.1",
     scheme: "com.mentra",
@@ -47,9 +62,9 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     assetBundlePatterns: ["**/*"],
     android: {
       // icon: "./assets/app-icons/ic_launcher.png",
-      package: variant.packageName,
+      package: androidPackage,
       ...(variant.googleServicesFile ? {googleServicesFile: variant.googleServicesFile} : {}),
-      versionCode: 197,
+      versionCode: 240,
       adaptiveIcon: {
         foregroundImage: variant.adaptiveIcon,
         // backgroundImage: "./assets/app-icons/ic_launcher.png",
@@ -87,8 +102,9 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       icon: variant.icon,
       supportsTablet: false,
       requireFullScreen: true,
-      buildNumber: "197",
-      bundleIdentifier: variant.packageName,
+      buildNumber: "240",
+      bundleIdentifier: iosBundleId,
+      appleTeamId: "T5XXXL6N36",
       ...(variant.googleServicesPlist ? {googleServicesFile: variant.googleServicesPlist} : {}),
       associatedDomains: ["applinks:apps.mentra.glass", "applinks:apps.mentraglass.com"],
       infoPlist: {
@@ -146,7 +162,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       "./plugins/remove-ipad-orientations.js",
       "./plugins/android.ts",
       [
-        "./modules/core/app.plugin.js",
+        "./modules/bluetooth-sdk/app.plugin.js",
         {
           node: true,
         },
@@ -217,6 +233,30 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           ios: {
             deploymentTarget: "15.5", // for react-native-zip-archive
             extraPods: [
+              {
+                name: "FirebaseCore",
+                modular_headers: true,
+              },
+              {
+                name: "FirebaseCoreInternal",
+                modular_headers: true,
+              },
+              {
+                name: "FirebaseInstallations",
+                modular_headers: true,
+              },
+              {
+                name: "GoogleAppMeasurement",
+                modular_headers: true,
+              },
+              {
+                name: "GoogleUtilities",
+                modular_headers: true,
+              },
+              {
+                name: "nanopb",
+                modular_headers: true,
+              },
               {
                 name: "SDWebImage",
                 modular_headers: true,

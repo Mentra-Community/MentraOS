@@ -13,6 +13,7 @@ import {
   StreamStatus,
   KeepAliveAck,
 } from "@mentra/sdk";
+import { PHONE_PACKAGE_NAME } from "../session/PhoneSession";
 import UserSession from "../session/UserSession";
 import { CloudflareStreamService } from "./CloudflareStreamService";
 import { StreamRegistry, ManagedStreamState, StreamState } from "./StreamRegistry";
@@ -85,8 +86,8 @@ export class ManagedStreamingExtension {
         : "📡 Starting managed stream in SRT mode (SRT ingest → HLS/DASH playback, with RTMP fan-out)",
     );
 
-    // Validate app is running
-    if (!userSession.appManager.isAppRunning(packageName)) {
+    // Validate app is running — skip for __phone__ (local miniapp streaming)
+    if (packageName !== PHONE_PACKAGE_NAME && !userSession.appManager.isAppRunning(packageName)) {
       throw new Error(`App ${packageName} is not running`);
     }
 
@@ -1097,15 +1098,6 @@ export class ManagedStreamingExtension {
     const stream = this.stateManager.getStreamByStreamId(streamId);
     if (!stream || stream.type !== "managed") return;
 
-    const appWs = userSession.appWebsockets.get(packageName);
-    if (!appWs || appWs.readyState !== WebSocket.OPEN) {
-      this.logger.warn({ packageName }, "App WebSocket not available for status update");
-      // Clear last sent status for this app since connection is gone
-      const statusKey = `${streamId}:${packageName}`;
-      this.lastSentStatus.delete(statusKey);
-      return;
-    }
-
     // Convert CloudflareOutput to OutputStatus format
     let outputs: OutputStatus[] | undefined;
     if (stream.outputs && stream.outputs.length > 0) {
@@ -1162,8 +1154,13 @@ export class ManagedStreamingExtension {
       }
     }
 
-    // Send the status update
-    appWs.send(JSON.stringify(statusMessage));
+    // Route through AppManager for unified delivery (supports __phone__ path)
+    const result = await userSession.appManager.sendMessageToApp(packageName, statusMessage);
+    if (!result.sent) {
+      this.logger.warn({ packageName, streamId }, "Managed stream status delivery failed");
+      this.lastSentStatus.delete(statusKey);
+      return;
+    }
 
     // Track this as the last sent status
     this.lastSentStatus.set(statusKey, statusMessage);

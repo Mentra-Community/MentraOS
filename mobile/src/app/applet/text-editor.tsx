@@ -4,8 +4,8 @@ import {View, TextInput, Platform, ScrollView, TextStyle, ViewStyle, TouchableOp
 import {SafeAreaView} from "react-native-safe-area-context"
 
 import {Screen, Text} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {ThemedStyle} from "@/theme"
 import {textEditorStore} from "@/utils/TextEditorStore"
 
@@ -14,7 +14,7 @@ export default function TextEditorScreen() {
   const [tempValue, setTempValue] = useState((value as string) || "")
   const {theme, themed} = useAppTheme()
   const textInputRef = useRef<TextInput>(null)
-  const {goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
 
   // Auto-focus text input when screen opens
   useEffect(() => {

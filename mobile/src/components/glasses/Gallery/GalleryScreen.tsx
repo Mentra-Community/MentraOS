@@ -29,8 +29,8 @@ import {MediaViewer} from "@/components/glasses/Gallery/MediaViewer"
 import {PhotoImage} from "@/components/glasses/Gallery/PhotoImage"
 import {ProgressRing} from "@/components/glasses/Gallery/ProgressRing"
 import {Header, Icon, Text} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {gallerySyncService} from "@/services/asg/gallerySyncService"
 import {localStorageService} from "@/services/asg/localStorageService"
@@ -71,7 +71,7 @@ interface GalleryItem {
 }
 
 export function GalleryScreen() {
-  const {goBack, push} = useNavigationHistory()
+  const {goBack, push} = useNavigationStore.getState()
   const {theme, themed} = useAppTheme()
   const insets = useSaferAreaInsets()
 

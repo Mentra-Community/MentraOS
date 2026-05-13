@@ -20,18 +20,14 @@ import ToggleSetting from "@/components/settings/ToggleSetting"
 import Divider from "@/components/ui/Divider"
 import InfoCardSection from "@/components/ui/InfoCard"
 import {RouteButton} from "@/components/ui/RouteButton"
-import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import restComms from "@/services/RestComms"
-import {
-  useApplets,
-  useAppletStatusStore,
-  useRefreshApplets,
-  useStartApplet,
-  useStopApplet,
-  SYSTEM_APPS,
-} from "@/stores/applets"
+import {useApps, useAppStatusStore, useRefresh, useStart, useStop} from "@mentra/island"
+
+import {SYSTEM_APPS} from "@/constants/miniapps"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
@@ -42,7 +38,7 @@ export default function AppSettings() {
   const {packageName, appName: appNameParam} = useLocalSearchParams()
   const [isUninstalling, setIsUninstalling] = useState(false)
   const {theme, themed} = useAppTheme()
-  const {goBack, replaceAll} = useNavigationHistory()
+  const {goBack, replaceAll} = useNavigationStore.getState()
   const insets = useSaferAreaInsets()
   const hasLoadedData = useRef(false)
 
@@ -62,10 +58,10 @@ export default function AppSettings() {
   // Local state to track current values for each setting.
   const [settingsState, setSettingsState] = useState<{[key: string]: any}>({})
 
-  const startApp = useStartApplet()
-  const applets = useApplets()
-  const refreshApplets = useRefreshApplets()
-  const stopApp = useStopApplet()
+  const startApp = useStart()
+  const applets = useApps()
+  const refreshApplets = useRefresh()
+  const stopApp = useStop()
 
   const appInfo = useMemo(() => {
     return applets.find((app) => app.packageName === packageName) || null
@@ -83,7 +79,7 @@ export default function AppSettings() {
         quality: 0.5,
       })
       console.log("saving screenshot for", packageName)
-      await useAppletStatusStore.getState().saveScreenshot(packageName as string, uri)
+      await useAppStatusStore.getState().saveScreenshot(packageName as string, uri)
     } catch (e) {
       console.warn("screenshot failed:", e)
     }
@@ -93,6 +89,7 @@ export default function AppSettings() {
     goBack()
   }
   focusEffectPreventBack(() => {
+    console.log("SETTINGS: focusEffectPreventBack() called")
     // On iOS, iosDontPreventBack=true lets the native gesture handle navigation,
     // so we only need to capture the screenshot. On Android, preventBack is still
     // true so we must also call goBack() to navigate.

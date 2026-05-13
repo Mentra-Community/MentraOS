@@ -6,8 +6,8 @@ import {Header, Screen, Text} from "@/components/ignite"
 import ToggleSetting from "@/components/settings/ToggleSetting"
 import InfoCardSection from "@/components/ui/InfoCard"
 import {RouteButton} from "@/components/ui/RouteButton"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {gallerySettingsService} from "@/services/asg/gallerySettingsService"
 import {localStorageService} from "@/services/asg/localStorageService"
@@ -17,7 +17,7 @@ import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 
 export default function GallerySettingsScreen() {
-  const {goBack, push} = useNavigationHistory()
+  const {goBack, push} = useNavigationStore.getState()
   const {themed} = useAppTheme()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
 

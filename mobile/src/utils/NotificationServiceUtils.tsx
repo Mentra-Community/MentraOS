@@ -1,15 +1,14 @@
-import {Linking, Platform} from "react-native"
+import {Platform} from "react-native"
+import CrustModule from "crust"
 
 import showAlert from "@/utils/AlertUtils"
-
-import CoreModule from "core"
 
 export async function checkAndRequestNotificationAccessSpecialPermission(): Promise<boolean> {
   if (Platform.OS !== "android") {
     return false
   }
 
-  let hasAccess = await CoreModule.hasNotificationListenerPermission()
+  let hasAccess = await CrustModule.hasNotificationListenerPermission()
   if (hasAccess) {
     console.log("Notification access already granted")
     return true
@@ -18,13 +17,13 @@ export async function checkAndRequestNotificationAccessSpecialPermission(): Prom
   return await new Promise<boolean>((resolve) => {
     // useFocusEffect(
     //   useCallback(() => {
-    //     // let hasAccess = await CoreModule.hasNotificationListenerPermission()
+    //     // let hasAccess = await CrustModule.hasNotificationListenerPermission()
     //     // if (hasAccess) {
     //     //   console.log("Notification access already granted")
     //     //   return true
     //     // }
 
-    //     resolve(CoreModule.hasNotificationListenerPermission())
+    //     resolve(CrustModule.hasNotificationListenerPermission())
     //     return async () => {}
     //   }, []),
     // )
@@ -46,7 +45,7 @@ export async function checkAndRequestNotificationAccessSpecialPermission(): Prom
         {
           text: "Go to Settings",
           onPress: async () => {
-            Linking.sendIntent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS").catch((err: any) => {
+            CrustModule.openNotificationListenerSettings().catch((err: any) => {
               console.error("Error opening notification settings:", err)
               showAlert(
                 "Error",

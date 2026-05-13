@@ -25,6 +25,7 @@ import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.media.interfaces.ServiceCallbackInterface;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
 import com.mentra.asg_client.io.network.interfaces.NetworkStateListener;
+import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.io.streaming.events.StreamingEvent;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
@@ -801,6 +802,13 @@ public class AsgClientService extends Service implements NetworkStateListener, B
         Log.i(TAG, "📶 Bluetooth connection state changed: " + (connected ? "CONNECTED" : "DISCONNECTED"));
 
         if (connected) {
+            // Send the pending APK-done signal immediately on reconnect (before WiFi/version info).
+            // This is the primary path for the phone to learn the APK updated successfully.
+            OtaHelper otaHelper = OtaHelper.getInstance();
+            if (otaHelper != null) {
+                otaHelper.onPhoneConnected();
+            }
+
             Log.d(TAG, "⏱️ Scheduling WiFi status send in 3 seconds");
             // Send WiFi status after delay
             new Handler(Looper.getMainLooper()).postDelayed(() -> {

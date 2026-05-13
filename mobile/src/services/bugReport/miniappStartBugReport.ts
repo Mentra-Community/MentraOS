@@ -1,6 +1,6 @@
 import axios from "axios"
 
-import type {ClientAppletInterface} from "@/stores/applets"
+import type {ClientApp} from "@mentra/island"
 import {submitAutomaticBugIncident} from "./automaticBugReport"
 
 interface SerializedStartAppError {
@@ -37,7 +37,7 @@ function serializeStartAppError(error: unknown): SerializedStartAppError {
 }
 
 export async function submitMiniappStartFailedBugReport(
-  applet: ClientAppletInterface,
+  applet: ClientApp,
   error: unknown,
   phase: "initial_start" | "retry_start" = "initial_start",
 ): Promise<void> {

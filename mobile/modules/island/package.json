@@ -1,0 +1,57 @@
+{
+  "name": "@mentra/island",
+  "version": "0.1.0",
+  "description": "Mentra Manager Island — miniapp registry, WebView bridge, and miniapp store",
+  "main": "build/index.js",
+  "types": "build/index.d.ts",
+  "scripts": {
+    "build": "expo-module build",
+    "clean": "expo-module clean",
+    "lint": "expo-module lint",
+    "test": "expo-module test",
+    "build:module": "expo-module prepare",
+    "prepublishOnly": "expo-module prepublishOnly",
+    "expo-module": "expo-module"
+  },
+  "keywords": [
+    "react-native",
+    "expo",
+    "island",
+    "Island",
+    "miniapp"
+  ],
+  "repository": "https://github.com/Mentra-Community/MentraOS",
+  "bugs": {
+    "url": "https://github.com/Mentra-Community/MentraOS/issues"
+  },
+  "author": "Mentra Community",
+  "license": "MIT",
+  "homepage": "https://github.com/Mentra-Community/MentraOS#readme",
+  "dependencies": {
+    "typesafe-ts": "^1.7.1",
+    "@types/semver": "^7.7.1"
+  },
+  "devDependencies": {
+    "expo-module-scripts": "^55.0.2",
+    "@mentra/bluetooth-sdk": "workspace:*",
+    "@mentra/miniapp": "workspace:*"
+  },
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*",
+    "@types/react": "*",
+    "react-native-mmkv": "*",
+    "react-native-nitro-bg-timer": "*",
+    "expo-file-system": "*",
+    "react-native-zip-archive": "*",
+    "semver": "*",
+    "zustand": "*",
+    "expo-battery": "*",
+    "expo-clipboard": "*",
+    "expo-location": "*",
+    "react-native-share": "*",
+    "@mentra/bluetooth-sdk": "*",
+    "@mentra/miniapp": "*"
+  }
+}

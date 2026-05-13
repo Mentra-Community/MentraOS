@@ -5,8 +5,8 @@ import {ActivityIndicator, ScrollView, TextInput, TextStyle, TouchableOpacity, V
 
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {ThemedStyle, spacing} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
@@ -28,7 +28,7 @@ export default function ResetPasswordScreen() {
   const [isValidToken, setIsValidToken] = useState(isCodeFlow)
 
   const {theme, themed} = useAppTheme()
-  const {goBack, replaceAll} = useNavigationHistory()
+  const {goBack, replaceAll} = useNavigationStore.getState()
 
   const passwordsMatch = newPassword === confirmPassword && newPassword.length > 0
   const isFormValid = isCodeFlow

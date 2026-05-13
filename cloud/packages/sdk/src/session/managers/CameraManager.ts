@@ -20,6 +20,7 @@ import {
   type AudioConfig,
   type StreamConfig,
   type VideoConfig,
+  validateVideoConfig,
 } from "../../types";
 
 export interface PhotoOptions {
@@ -286,7 +287,6 @@ export class CameraManager {
    */
   async startStream(options?: StreamOptions): Promise<StreamResult | void> {
     const opts = options ?? {};
-
     if (opts.direct) {
       return this._startDirectStream(opts);
     }
@@ -369,6 +369,7 @@ export class CameraManager {
   // ── Direct streaming (glasses → URL, no relay) ───────────────────────────
 
   private async _startDirectStream(opts: StreamOptions): Promise<void> {
+    validateVideoConfig(opts.video);
     const url = opts.direct!;
 
     if (!url.startsWith("rtmp://") && !url.startsWith("rtmps://") && !url.startsWith("srt://") && !url.startsWith("https://") && !url.startsWith("http://")) {
@@ -400,6 +401,7 @@ export class CameraManager {
   // ── Managed streaming (glasses → cloud relay → viewers/destinations) ─────
 
   private async _startManagedStream(opts: StreamOptions): Promise<StreamResult> {
+    validateVideoConfig(opts.video);
     // Only check streams WE started, not orphaned streams from a previous session.
     if (this.isStreaming || this.isManagedStreaming) {
       throw new Error("Already streaming. Stop the current stream before starting a new one.");

@@ -1,17 +1,17 @@
-import {ScrollView, View} from "react-native"
+import {View} from "react-native"
 import {useRef, useEffect, useState} from "react"
 
-import {Icon, Text} from "@/components/ignite"
+import {Icon, IconTypes, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useConnectionStore} from "@/stores/connection"
 import {useCoreStore} from "@/stores/core"
 import {useDebugStore} from "@/stores/debug"
 import {useGlassesStore} from "@/stores/glasses"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
-import CoreModule, {TouchEvent} from "core"
-import {BackgroundTimer} from "@/utils/timers"
+import CoreModule, {TouchEvent} from "@mentra/bluetooth-sdk"
+import {BgTimer} from "@mentra/island"
 
-function Tag({icon, label, bg}: {icon: string; label: string; bg: string}) {
+function Tag({icon, label, bg}: {icon: IconTypes; label: string; bg: string}) {
   const {theme} = useAppTheme()
   return (
     <View className={`flex-row items-center px-1.5 rounded-full ${bg} mx-0.5`}>
@@ -40,8 +40,8 @@ export default function CoreStatusBar() {
   useEffect(() => {
     let sub = CoreModule.addListener("touch_event", (event: TouchEvent) => {
       setTouchEvent(event)
-      BackgroundTimer.clearTimeout(touchEventTimer.current ?? 0)
-      touchEventTimer.current = BackgroundTimer.setTimeout(() => {
+      BgTimer.clearTimeout(touchEventTimer.current ?? 0)
+      touchEventTimer.current = BgTimer.setTimeout(() => {
         setTouchEvent(null)
       }, 1000)
       // console.log("touch_event", event)
@@ -90,7 +90,7 @@ export default function CoreStatusBar() {
             {systemMicUnavailable && <Tag icon="unplug" label="SMIC unavailable!" bg="bg-destructive" />}
           </View>
           <View className="flex-row flex-wrap items-center justify-center justify-end">
-            <Tag icon="pointer" label={touchEvent ? touchEvent.gesture_name ?? "None" : "None"} bg="bg-primary" />
+            <Tag icon="pointer" label={touchEvent ? (touchEvent.gesture_name ?? "None") : "None"} bg="bg-primary" />
             <Tag icon="bluetooth" label={glassesFullyBooted ? "Booted" : "Not booted"} bg="bg-primary" />
             <Tag
               icon="bluetooth"
@@ -111,17 +111,17 @@ export default function CoreStatusBar() {
                 cloudStatus === "connected"
                   ? "Cloud"
                   : cloudStatus === "connecting"
-                  ? "Connecting"
-                  : cloudStatus === "error"
-                  ? "Cloud Err"
-                  : "Cloud Off"
+                    ? "Connecting"
+                    : cloudStatus === "error"
+                      ? "Cloud Err"
+                      : "Cloud Off"
               }
               bg={
                 cloudStatus === "connected"
                   ? "bg-primary"
                   : cloudStatus === "connecting"
-                  ? "bg-chart-3"
-                  : "bg-destructive"
+                    ? "bg-chart-3"
+                    : "bg-destructive"
               }
             />
           </View>

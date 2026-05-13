@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/react-native"
-import CoreModule from "core"
+import CoreModule from "@mentra/bluetooth-sdk"
 import {FC, createContext, useEffect, useState, useContext} from "react"
 
 import mentraAuth from "@/utils/auth/authClient"

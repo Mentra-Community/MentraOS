@@ -1,4 +1,4 @@
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@mentra/island"
 
 export class TranscriptProcessor {
   private maxCharsPerLine: number = 44
@@ -51,7 +51,7 @@ export class TranscriptProcessor {
 
         // If no timer is running, schedule one
         if (!this.pendingTimer) {
-          this.pendingTimer = BackgroundTimer.setTimeout(() => {
+          this.pendingTimer = BgTimer.setTimeout(() => {
             // Trigger sending the most recent pending update
             this.lastPartialUpdateTime = Date.now()
             this.pendingTimer = null
@@ -70,7 +70,7 @@ export class TranscriptProcessor {
 
       // Clear any pending update since we're sending now
       if (this.pendingTimer) {
-        BackgroundTimer.clearTimeout(this.pendingTimer)
+        BgTimer.clearTimeout(this.pendingTimer)
         this.pendingTimer = null
       }
       this.pendingUpdate = null
@@ -184,7 +184,7 @@ export class TranscriptProcessor {
     this.currentDisplayLines = []
     this.lastPartialUpdateTime = 0
     if (this.pendingTimer) {
-      BackgroundTimer.clearTimeout(this.pendingTimer)
+      BgTimer.clearTimeout(this.pendingTimer)
       this.pendingTimer = null
     }
     this.pendingUpdate = null

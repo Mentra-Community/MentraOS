@@ -26,6 +26,7 @@ import { StreamLifecycleController } from "../streaming/StreamLifecycleControlle
 import { ConnectionValidator } from "../validators/ConnectionValidator";
 import { WebSocketReadyState } from "../websocket/types";
 
+import { PHONE_PACKAGE_NAME } from "./PhoneSession";
 import UserSession from "./UserSession";
 // session.service no longer needed; using UserSession instance methods
 
@@ -84,8 +85,8 @@ export class UnmanagedStreamingExtension {
       "STREAM_START_REQUEST: UnmanagedStreamingExtension starting stream tracking request",
     );
 
-    // Basic validation
-    if (!this.userSession.appManager.isAppRunning(packageName)) {
+    // Basic validation — skip for __phone__ (local miniapp streaming)
+    if (packageName !== PHONE_PACKAGE_NAME && !this.userSession.appManager.isAppRunning(packageName)) {
       throw new Error(`App ${packageName} is not running`);
     }
     const validation = ConnectionValidator.validateForHardwareRequest(this.userSession, "stream");
@@ -535,7 +536,7 @@ export class UnmanagedStreamingExtension {
     if (streamId) {
       // Stop specific stream
       const stream = this.unmanagedStreams.get(streamId);
-      if (stream && stream.packageName === packageName) {
+      if (stream && (stream.packageName === packageName || packageName === PHONE_PACKAGE_NAME)) {
         await this.updateStatus(streamId, "stopped");
       } else if (stream) {
         throw new Error(`App ${packageName} cannot stop stream ${streamId} owned by ${stream.packageName}`);

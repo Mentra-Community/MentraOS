@@ -1,10 +1,10 @@
 import {Header, Screen, Text} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {View} from "react-native"
 import {DraggableMasonryList} from "react-native-draggable-masonry"
 
 export default function LayoutSettingsScreen() {
-  const {goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
 
   const data = [
     {id: "1", height: 100, title: "Item 1"},

@@ -1,8 +1,7 @@
 import {DeviceTypes, ControllerTypes} from "@/../../cloud/packages/types/src"
-import CoreModule from "core"
 import {useFocusEffect} from "expo-router"
 import {useCallback} from "react"
-import {View, TouchableOpacity, Platform, ScrollView, Image, ViewStyle, ImageStyle, TextStyle} from "react-native"
+import {View, TouchableOpacity, Platform, ScrollView, Image} from "react-native"
 
 import {EvenRealitiesLogo} from "@/components/brands/EvenRealitiesLogo"
 import {MentraLogo} from "@/components/brands/MentraLogo"
@@ -11,9 +10,8 @@ import {VuzixLogo} from "@/components/brands/VuzixLogo"
 import {Text, Header} from "@/components/ignite"
 import {Screen} from "@/components/ignite/Screen"
 import {Spacer} from "@/components/ui/Spacer"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {useNavigationStore} from "@/stores/navigation"
 import {getGlassesImage} from "@/utils/getGlassesImage"
 import GlassView from "@/components/ui/GlassView"
 
@@ -21,7 +19,7 @@ import GlassView from "@/components/ui/GlassView"
 
 export default function SelectControllerScreen() {
   const {theme} = useAppTheme()
-  const {push, goBack} = useNavigationHistory()
+  const {push, goBack} = useNavigationStore.getState()
 
   // when this screen is focused, forget any glasses that may be paired:
   useFocusEffect(
@@ -80,7 +78,7 @@ export default function SelectControllerScreen() {
         <View className="flex-col gap-4 pb-8">
           {controllerOptions.map((controller) => (
             <TouchableOpacity key={controller.key} onPress={() => triggerGlassesPairingGuide(controller.deviceModel)}>
-              <GlassView className="bg-primary-foreground flex-col items-center justify-center h-[190px] rounded-2xl overflow-hidden">
+              <GlassView className="bg-primary-foreground border border-background flex-col items-center justify-center h-[190px] rounded-2xl overflow-hidden">
                 <View className="flex-col items-center justify-center gap-3 w-full">
                   <View className="items-center justify-center min-h-6">
                     {getManufacturerLogo(controller.deviceModel)}
@@ -89,7 +87,7 @@ export default function SelectControllerScreen() {
                     source={getGlassesImage(controller.deviceModel)}
                     className="w-[180px] max-h-[80px] object-contain"
                   />
-                  <Text className="text-[16px] text-foreground" text={controller.deviceModel} />
+                  <Text className="text-2xl text-foreground" adjustsFontSizeToFit text={controller.deviceModel} />
                 </View>
               </GlassView>
             </TouchableOpacity>

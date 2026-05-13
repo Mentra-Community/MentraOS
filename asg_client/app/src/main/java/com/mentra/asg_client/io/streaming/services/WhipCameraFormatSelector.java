@@ -8,8 +8,10 @@ import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.util.Size;
 
+import com.mentra.asg_client.io.streaming.config.RtmpStreamConfig;
+
 /**
- * Shared capture-size selection logic for WHIP camera streaming.
+ * Shared capture-size selection logic for WHIP, RTMP, and SRT camera streaming.
  */
 public final class WhipCameraFormatSelector {
 
@@ -83,6 +85,75 @@ public final class WhipCameraFormatSelector {
 
     String[] ids = cameraManager.getCameraIdList();
     return ids.length > 0 ? ids[0] : null;
+  }
+
+  /**
+   * True when a native {@link SurfaceTexture} output size exists that can reach the requested
+   * output via center-crop / downscale only (never upscale).
+   */
+  public static boolean canSatisfyWithoutUpscale(Context context, int requestedWidth,
+      int requestedHeight) throws CameraAccessException {
+    CameraManager cameraManager =
+        (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
+    if (cameraManager == null) {
+      return false;
+    }
+    String cameraId = selectBackCamera(cameraManager);
+    if (cameraId == null) {
+      return false;
+    }
+    CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(cameraId);
+    return canSatisfyWithoutUpscale(characteristics, requestedWidth, requestedHeight);
+  }
+
+  public static boolean canSatisfyWithoutUpscale(CameraCharacteristics characteristics,
+      int requestedWidth, int requestedHeight) {
+    SelectionResult selection =
+        selectCaptureSize(characteristics, requestedWidth, requestedHeight);
+    return selection != null && selection.hasSupportedSizes() && !selection.requiresUpscale();
+  }
+
+  /**
+   * Raw sensor output size for streaming, or null if the request cannot be satisfied without
+   * upscaling or no sizes are available.
+   */
+  public static Size selectNativeCaptureSizeRawOrNull(CameraCharacteristics characteristics,
+      int requestedWidth, int requestedHeight) {
+    SelectionResult selection =
+        selectCaptureSize(characteristics, requestedWidth, requestedHeight);
+    if (selection == null || !selection.hasSupportedSizes() || selection.requiresUpscale()) {
+      return null;
+    }
+    return selection.getRawCaptureSize();
+  }
+
+  /**
+   * Preflight for RTMP/SRT: validates the request and writes native capture dimensions into
+   * {@code config} for StreamPackLite / preview surface sizing.
+   *
+   * @return false if the camera cannot satisfy the request without upscale or camera is unavailable
+   */
+  public static boolean stampCaptureSizeOntoConfig(Context context, RtmpStreamConfig config)
+      throws CameraAccessException {
+    CameraManager cm = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
+    if (cm == null) {
+      return false;
+    }
+    String id = selectBackCamera(cm);
+    if (id == null) {
+      return false;
+    }
+    CameraCharacteristics chars = cm.getCameraCharacteristics(id);
+    if (!canSatisfyWithoutUpscale(chars, config.getVideoWidth(), config.getVideoHeight())) {
+      return false;
+    }
+    Size raw = selectNativeCaptureSizeRawOrNull(chars, config.getVideoWidth(),
+        config.getVideoHeight());
+    if (raw == null) {
+      return false;
+    }
+    config.setCaptureSize(raw.getWidth(), raw.getHeight());
+    return true;
   }
 
   public static SelectionResult selectCaptureSize(CameraCharacteristics characteristics,

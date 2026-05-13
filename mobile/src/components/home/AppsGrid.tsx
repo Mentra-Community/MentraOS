@@ -1,45 +1,39 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
-import {Dimensions, Pressable, StyleSheet, TouchableOpacity, View} from "react-native"
-import {DraggableMasonryList} from "react-native-draggable-masonry"
+import {Dimensions, FlatList, Platform, Pressable, StyleSheet, TouchableOpacity, View} from "react-native"
+import {DraggableList} from "@/components/home/DraggableList"
+import {BlurView} from "expo-blur"
 
 import {Icon, Text} from "@/components/ignite"
 import AppIcon from "@/components/home/AppIcon"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {
-  ClientAppletInterface,
   DUMMY_APPLET,
   getAppsOrder,
-  OrderMap,
   saveAppsOrder,
   sortAppsByPackageNamePriority,
-  SYSTEM_APPS,
-  uninstallAppUI,
-  useAppletStatusStore,
-  useForegroundApps,
-  useStartApplet,
-  useStopApplet,
-} from "@/stores/applets"
+  useAppStatusStore,
+  useStart,
+  useStop,
+  type ClientApp,
+  type OrderMap,
+} from "@mentra/island"
+
+import {SYSTEM_APPS} from "@/constants/miniapps"
+import {useForegroundApps} from "@/hooks/useAppsExtras"
+import {uninstallAppUI} from "@/utils/uninstallAppUI"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {SETTINGS, useSetting} from "@/stores/settings"
+import {storage} from "@/utils/storage"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import GlassView from "@/components/ui/GlassView"
-import Animated, {
-  cancelAnimation,
-  useAnimatedReaction,
-  useAnimatedStyle,
-  useSharedValue,
-  withRepeat,
-  withSequence,
-  withTiming,
-  SharedValue,
-} from "react-native-reanimated"
-import {BackgroundTimer} from "@/utils/timers"
+import { DraggableMasonryList } from "react-native-draggable-masonry"
 
 const GRID_COLUMNS = 4
 const POPOVER_WIDTH = 180
 const SCREEN_PADDING = 4 * 12
 
-type MasonryAppItem = ClientAppletInterface & {id: string; height: number}
+type MasonryAppItem = ClientApp & {id: string; height: number}
 
 interface PopoverAction {
   label: string
@@ -116,7 +110,7 @@ const AppPopover: React.FC<{
               />
             </View>
             <Text
-              className={`text-[15px] ${action.destructive ? "text-destructive" : "text-foreground"}`}
+              className={`text-[15px] leading-[15px] ${action.destructive ? "text-destructive" : "text-foreground"}`}
               text={action.label}
             />
           </Pressable>
@@ -150,6 +144,7 @@ const AppPopover: React.FC<{
           <GlassView className="rounded-2xl overflow-hidden bg-primary-foreground/95">{popoverContent}</GlassView>
         </View>
         <GlassView
+          disableOnAndroid={true}
           className="absolute bg-primary-foreground/95 w-8 h-8 transform rotate-45 -z-1"
           style={{left: arrowLeft, top: arrowTop}}
         />
@@ -160,73 +155,27 @@ const AppPopover: React.FC<{
 
 interface AppsGridProps {
   showAllApps?: boolean
-  onOpenApp?: (app: ClientAppletInterface) => void
-  onAddToHome?: (app: ClientAppletInterface) => void
+  onOpenApp?: (app: ClientApp) => void
+  onAddToHome?: (app: ClientApp) => void
   searchQuery?: string
-}
-
-const WiggleWrapper: React.FC<{
-  enabled: SharedValue<boolean>
-  isDummy: boolean
-  children: React.ReactNode
-}> = ({enabled, isDummy, children}) => {
-  const offset = useSharedValue(0)
-  const randomPhase = useRef(Math.random() * 120).current
-
-  // React to `enabled` flipping instead of polling it 10×/sec. With 50+ icons,
-  // a per-icon setInterval pegged the JS thread enough to heat the device on
-  // an idle home screen.
-  useAnimatedReaction(
-    () => enabled.value,
-    (isEnabled, wasEnabled) => {
-      "worklet"
-      if (isEnabled === wasEnabled) return
-      if (isEnabled && !isDummy) {
-        offset.value = withRepeat(
-          withSequence(
-            withTiming(1, {duration: 60 + randomPhase}),
-            withTiming(-1, {duration: 120}),
-            withTiming(0, {duration: 60 + randomPhase}),
-          ),
-          -1,
-        )
-      } else {
-        cancelAnimation(offset)
-        offset.value = withTiming(0, {duration: 100})
-      }
-    },
-    [isDummy],
-  )
-
-  const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{rotate: `${offset.value * 2}deg`}],
-  }))
-
-  return (
-    <Animated.View style={animatedStyle} className="items-center">
-      {children}
-    </Animated.View>
-  )
 }
 
 export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQuery}: AppsGridProps) {
   const {themed, theme} = useAppTheme()
 
-  const startApplet = useStartApplet()
-  const stopApplet = useStopApplet()
+  const startApplet = useStart()
+  const stopApplet = useStop()
   const apps = useForegroundApps()
 
   const [orderMap, setOrderMap] = useState<OrderMap>({})
   const [popoverVisible, setPopoverVisible] = useState(false)
   const [popoverPosition, setPopoverPosition] = useState<PopoverPosition>({x: 0, y: 0, screenX: 0, screenY: 0})
-  const [selectedApp, setSelectedApp] = useState<ClientAppletInterface | null>(null)
-  const {push} = useNavigationHistory()
+  const [selectedApp, setSelectedApp] = useState<ClientApp | null>(null)
+  const {push} = useNavigationStore.getState()
 
   const containerRef = useRef<View>(null)
   const isMovingRef = useRef(false)
   const draggingIndexRef = useRef(0)
-  const wiggleEnabled = useSharedValue(false)
-  const wiggleTimeoutRef = useRef<number | null>(null)
 
   useEffect(() => {
     const result = getAppsOrder()
@@ -241,17 +190,11 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
   const gridData: MasonryAppItem[] = useMemo(() => {
     let filteredApps = apps.filter((app) => {
       if (showAllApps) {
-        // if (!app.compatibility?.isCompatible) {
-        // return false
-        // }
         return true
       }
       if (app.hidden) {
         return false
       }
-      // if (!app.compatibility?.isCompatible) {
-      //   return false
-      // }
       return true
     })
 
@@ -365,9 +308,8 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
 
     return filteredApps.map((app) => ({
       ...app,
-      // force masonry to re-render when the compatibility changes (fairly expensive :/)
-      id: `${app.packageName}:${app.compatibility?.isCompatible ? 1 : 0}`,
-      // id: app.packageName,
+      // id: `${app.packageName}-${app.compatibility?.isCompatible}`,
+      id: app.packageName,
       height: 110,
     }))
   }, [apps, orderMap, showAllApps, searchQuery])
@@ -422,8 +364,8 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
           icon: "circle-minus",
           onPress: () => {
             if (liveSelectedApp) {
-              useAppletStatusStore.getState().setHiddenStatus(liveSelectedApp.packageName, true)
-              // useAppletStatusStore.getState().refreshApplets()
+              useAppStatusStore.getState().setHiddenStatus(liveSelectedApp.packageName, true)
+              // useAppStatusStore.getState().refreshApplets()
             }
           },
         },
@@ -432,7 +374,7 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
             label: translate("appInfo:addToHome"),
             icon: "plus",
             onPress: () => {
-              useAppletStatusStore.getState().setHiddenStatus(liveSelectedApp?.packageName, false)
+              useAppStatusStore.getState().setHiddenStatus(liveSelectedApp?.packageName, false)
               if (onAddToHome) {
                 onAddToHome(liveSelectedApp)
               }
@@ -452,7 +394,7 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
     [liveSelectedApp, startApplet, stopApplet, showAllApps],
   )
 
-  const handlePress = async (app: ClientAppletInterface) => {
+  const handlePress = async (app: ClientApp) => {
     if (app.packageName.includes("@empty")) return // ignore dummy apps
     const result = await askPermissionsUI(app, theme)
     if (result !== 1) return
@@ -507,19 +449,13 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
         () => console.warn("measureLayout failed"),
       )
     },
-    [gridData, handlePress],
+    [gridData],
   )
 
-  const handleDragStart = useCallback(
-    ({key}: {key: string; fromIndex: number}) => {
-      isMovingRef.current = false
-      showPopover(key)
-      wiggleTimeoutRef.current = BackgroundTimer.setTimeout(() => {
-        wiggleEnabled.value = true
-      }, 500)
-    },
-    [showPopover],
-  )
+  const handleDragStart = ({key}: {key: string; fromIndex: number}) => {
+    isMovingRef.current = false
+    showPopover(key)
+  }
 
   const handleDragChange = ({key, x, y, index}: {key: string; x: number; y: number; index: number}) => {
     if (!isMovingRef.current) {
@@ -534,13 +470,7 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
 
   const handleDragEnd = ({data}: {data: MasonryAppItem[]}) => {
     isMovingRef.current = false
-    // stop wiggle:
-    wiggleEnabled.value = false
-    if (wiggleTimeoutRef.current) {
-      BackgroundTimer.clearTimeout(wiggleTimeoutRef.current)
-      wiggleTimeoutRef.current = null
-    }
-    // save the new order:
+
     const newOrderMap: OrderMap = {}
     data.forEach((item, index) => {
       newOrderMap[item.packageName] = index
@@ -553,7 +483,6 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
 
   const renderItem = useCallback(
     ({item}: {item: MasonryAppItem}) => {
-      const isDummy = item.packageName.startsWith("@empty")
       return (
         <TouchableOpacity
           ref={(ref) => {
@@ -574,26 +503,24 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
             }
           }}
           activeOpacity={0.7}>
-          <WiggleWrapper enabled={wiggleEnabled} isDummy={isDummy}>
-            <AppIcon app={item} className="w-16 h-16" />
-            <View className="w-full h-9 my-1 items-center justify-start">
-              <Text
-                className="text-foreground text-center mt-1 text-[12px] shrink"
-                style={{
-                  textShadowColor: "rgba(0,0,0,0.08)",
-                  textShadowOffset: {width: 0, height: 0},
-                  textShadowRadius: 30,
-                }}
-                numberOfLines={2}
-                ellipsizeMode="tail"
-                text={item.name}
-              />
-            </View>
-          </WiggleWrapper>
+          <AppIcon app={item} className="w-16 h-16" />
+          <View className="w-full h-9 my-1 items-center justify-start">
+            <Text
+              className="text-foreground text-center mt-1 text-[12px] shrink"
+              style={{
+                textShadowColor: "rgba(0,0,0,0.08)",
+                textShadowOffset: {width: 0, height: 0},
+                textShadowRadius: 30,
+              }}
+              numberOfLines={2}
+              ellipsizeMode="tail"
+              text={item.name}
+            />
+          </View>
         </TouchableOpacity>
       )
     },
-    [themed, theme, startApplet, wiggleEnabled, handlePress, showAllApps],
+    [themed, theme, startApplet],
   )
 
   return (

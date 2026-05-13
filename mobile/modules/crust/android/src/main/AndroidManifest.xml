@@ -1,2 +1,15 @@
-<manifest>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <service
+      android:name="com.mentra.crust.services.NotificationListenerServiceImpl"
+      android:label="@string/mentra_crust_notification_listener_label"
+      android:exported="false"
+      android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+      <intent-filter>
+        <action android:name="android.service.notification.NotificationListenerService" />
+      </intent-filter>
+      <meta-data android:name="android.service.notification.default_filter_types" android:value="conversations|alerting" />
+      <meta-data android:name="android.service.notification.disabled_filter_types" android:value="ongoing|silent" />
+    </service>
+  </application>
 </manifest>

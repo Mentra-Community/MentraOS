@@ -89,7 +89,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--alert-intent-component",
-        default="com.mentra.mentra/com.mentra.core.receivers.CaptionsTesterIncidentReceiver",
+        default="com.mentra.mentra/com.mentra.crust.receivers.CaptionsTesterIncidentReceiver",
         help="Optional explicit Android broadcast component for alert dispatch.",
     )
     parser.add_argument(

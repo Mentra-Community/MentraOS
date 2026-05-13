@@ -80,7 +80,7 @@ export async function validateApiKey(packageName: string, apiKey: string, userSe
     // Hash the provided API key and compare with stored hash
     const hashedKey = hashApiKey(apiKey);
 
-    _logger.debug({ hashedKey, apiKey }, `Validating API key for ${packageName}`);
+    _logger.debug({ hashedKey, hasApiKey: Boolean(apiKey) }, `Validating API key for ${packageName}`);
 
     // Compare the hashed API key with the stored hashed API key
     const isValid = hashedKey === app.hashedApiKey;

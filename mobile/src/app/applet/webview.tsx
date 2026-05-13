@@ -1,36 +1,43 @@
 import {useLocalSearchParams} from "expo-router"
 import {useRef, useState, useEffect, useCallback} from "react"
-import {Dimensions, Platform, View} from "react-native"
+import {Platform, View} from "react-native"
 import {WebView} from "react-native-webview"
 import Animated, {useSharedValue, useAnimatedStyle, withTiming} from "react-native-reanimated"
 
 import {Header, Screen, Text} from "@/components/ignite"
 import MiniappErrorScreen from "@/components/miniapps/MiniappErrorScreen"
 import LoadingOverlay from "@/components/ui/LoadingOverlay"
-import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import restComms from "@/services/RestComms"
-import miniComms from "@/services/MiniComms"
+import {webviewBridge as miniComms} from "@mentra/island"
 import {WebSocketStatus} from "@/services/ws-types"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
-import {useAppletStatusStore} from "@/stores/applets"
+import {useAppStatusStore} from "@mentra/island"
+
+import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {useConnectionStore} from "@/stores/connection"
-import {MiniAppCapsuleMenu} from "@/components/miniapps/CapsuleMenu"
+import {captureScreenshot} from "@/effects/CapsuleMenu"
 import AppIcon from "@/components/home/AppIcon"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
-import {useAppTheme} from "@/contexts/ThemeContext"
+import {buildMiniappGlobalsScript} from "@mentra/island"
+import {useRegisterCapsule} from "@/stores/capsule"
 
 export default function AppWebView() {
-  const {webviewURL, appName, packageName} = useLocalSearchParams()
+  const {webviewURL, appName, packageName, isLocal: isLocalParam} = useLocalSearchParams()
+  const isLocal = isLocalParam === "true"
   const [hasError, setHasError] = useState(false)
   const webViewRef = useRef<WebView>(null)
 
   const [finalUrl, setFinalUrl] = useState<string | null>(null)
-  const [isLoadingToken, setIsLoadingToken] = useState(true)
+  const [isLoadingToken, setIsLoadingToken] = useState(!isLocal)
   const [tokenError, setTokenError] = useState<string | null>(null)
   const [retryTrigger, setRetryTrigger] = useState(0)
-  const {goBack, push} = useNavigationHistory()
+  const {goBack, push} = useNavigationStore.getState()
   const viewShotRef = useRef(null)
+  const insets = useSaferAreaInsets()
   const {theme} = useAppTheme()
+  const colorScheme = theme.isDark ? "dark" : "light"
 
   // Track if the server-side app start failed
   const [appStartFailed, setAppStartFailed] = useState(false)
@@ -42,10 +49,14 @@ export default function AppWebView() {
   const hasValidParams =
     typeof webviewURL === "string" && typeof appName === "string" && typeof packageName === "string"
 
-  const {setForceGestureEnabled} = useNavigationHistory()
+  const {setForceGestureEnabled} = useNavigationStore.getState()
 
   // Back press handler for CapsuleMenu/Header buttons and Android back button.
-  const handleWebViewBack = useCallback(() => {
+  const handleWebViewBack = useCallback(async () => {
+    console.log("WEBVIEW: handleWebViewBack()")
+    if (Platform.OS === "ios") {
+      await captureScreenshot(viewShotRef, packageName.toString(), insets.top)
+    }
     if (!hasValidParams) {
       if (Platform.OS === "android") {
         goBack()
@@ -56,13 +67,14 @@ export default function AppWebView() {
       webViewRef.current.goBack()
     } else {
       if (Platform.OS === "android") {
+        captureScreenshot(viewShotRef, packageName.toString(), insets.top)
         goBack()
       }
     }
   }, [webViewCanGoBack, hasValidParams, goBack])
 
   // Block native back gesture/button — route through handleWebViewBack for Android.
-  focusEffectPreventBack(handleWebViewBack, false)
+  // focusEffectPreventBack(handleWebViewBack, false)
 
   // Dynamically toggle gesture handling based on webview navigation state:
   // - Page 0 (no history): disable WebView's gesture, force-enable React Navigation's
@@ -82,11 +94,19 @@ export default function AppWebView() {
     return () => setForceGestureEnabled(false)
   }, [webViewCanGoBack, setForceGestureEnabled])
 
+  useRegisterCapsule({
+    packageName: packageName as string,
+    viewShotRef,
+    visibleOnRoutes: ["/applet/webview"],
+    onBackPress: handleWebViewBack,
+  })
+
   // Two conditions for showing the webview content:
   // 1. WebView HTML has loaded (onLoadEnd fired)
   const [isWebViewLoaded, setIsWebViewLoaded] = useState(false)
   // 2. Server confirmed the app is running (loading=false, running=true in store)
-  const [isServerConfirmed, setIsServerConfirmed] = useState(false)
+  //    Local miniapps skip the server handshake, so they are confirmed immediately.
+  const [isServerConfirmed, setIsServerConfirmed] = useState(isLocal)
   // Splash screen stays up until BOTH are true
   const isWebViewReady = isWebViewLoaded && isServerConfirmed
 
@@ -108,6 +128,8 @@ export default function AppWebView() {
   // Watch the applet's store state for server confirmation.
   // startApplet() sets loading=true, then refreshApplets() (at ~2s) fetches
   // the real state from the server which sets loading=false.
+  // If running=false after server confirms, the app failed to start.
+  // Local miniapps skip this entirely — they don't need server confirmation.
   //
   // Un-latch on positive confirmation: running=true clears a prior failure
   // (e.g. if the WS briefly dropped and the store observed running=false
@@ -117,6 +139,8 @@ export default function AppWebView() {
   // grace window after reconnect — the store is inherently stale in that
   // window and false-negatives there were causing "Cannot reach" mid-session.
   useEffect(() => {
+    if (isLocal) return
+
     const POST_RECONNECT_GRACE_MS = 5_000
 
     const checkApplet = (state: {apps: Array<{packageName: string; loading: boolean; running: boolean}>}) => {
@@ -138,17 +162,17 @@ export default function AppWebView() {
       setAppStartFailed(true)
     }
 
-    checkApplet(useAppletStatusStore.getState())
+    checkApplet(useAppStatusStore.getState())
 
-    const unsubApplets = useAppletStatusStore.subscribe(checkApplet)
+    const unsubApplets = useAppStatusStore.subscribe(checkApplet)
     const unsubConn = useConnectionStore.subscribe(() => {
-      checkApplet(useAppletStatusStore.getState())
+      checkApplet(useAppStatusStore.getState())
     })
     return () => {
       unsubApplets()
       unsubConn()
     }
-  }, [packageName])
+  }, [packageName, isLocal])
 
   // Fade in webview once both conditions are met
   useEffect(() => {
@@ -159,6 +183,17 @@ export default function AppWebView() {
   }, [isWebViewReady])
 
   useEffect(() => {
+    // Local miniapps don't need token generation — use the URL directly.
+    if (isLocal) {
+      if (webviewURL) {
+        setFinalUrl(webviewURL as string)
+        console.log(`WEBVIEW: local miniapp URL: ${webviewURL}`)
+      } else {
+        setTokenError("Webview URL is missing.")
+      }
+      return
+    }
+
     const generateTokenAndSetUrl = async () => {
       console.log("WEBVIEW: generateTokenAndSetUrl()")
       setIsLoadingToken(true)
@@ -217,7 +252,7 @@ export default function AppWebView() {
     }
 
     generateTokenAndSetUrl()
-  }, [packageName, webviewURL, appName, retryTrigger])
+  }, [packageName, webviewURL, appName, retryTrigger, isLocal])
 
   // Register with MiniComms for bridge messaging
   useEffect(() => {
@@ -234,9 +269,26 @@ export default function AppWebView() {
     }
   }, [packageName])
 
+  // Push color scheme changes into the WebView so miniapps using
+  // useColorScheme() can react. Skipped until the WebView has loaded.
+  useEffect(() => {
+    if (!webViewRef.current || !isWebViewLoaded) return
+    const envelope = JSON.stringify({
+      payload: {type: "miniapp_color_scheme_change", colorScheme},
+    })
+    try {
+      webViewRef.current.injectJavaScript(
+        `window.dispatchEvent(new MessageEvent('message', {data: ${JSON.stringify(envelope)}})); true;`,
+      )
+    } catch {
+      // noop
+    }
+  }, [colorScheme, isWebViewLoaded])
+
   const handleWebViewMessage = (event: any) => {
-    const data = event.nativeEvent.data
-    miniComms.handleRawMessageFromMiniApp(packageName, data)
+    // Cloud app webviews don't send miniapp SDK envelopes.
+    // Local miniapp WebViews are routed through MiniappHost → LocalMiniappRuntime.
+    const _data = event.nativeEvent.data
   }
 
   const handleLoadStart = () => {
@@ -285,7 +337,7 @@ export default function AppWebView() {
   }
 
   // const screenshotComponent = () => {
-  //   const screenshot = useAppletStatusStore.getState().apps.find((a) => a.packageName === packageName)?.screenshot
+  //   const screenshot = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)?.screenshot
   //   if (screenshot) {
   //     return <Image source={{uri: screenshot}} style={{flex: 1, resizeMode: "cover"}} blurRadius={10} />
   //   }
@@ -293,7 +345,7 @@ export default function AppWebView() {
   // }
 
   const renderLoadingOverlay = () => {
-    const app = useAppletStatusStore.getState().apps.find((a) => a.packageName === packageName)
+    const app = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)
 
     // disabled for now:
     // const screenshot = screenshotComponent()
@@ -347,7 +399,6 @@ export default function AppWebView() {
   if (showError) {
     return (
       <>
-        <MiniAppCapsuleMenu packageName={packageName} viewShotRef={viewShotRef} onBackPress={handleWebViewBack} />
         <Screen preset="fixed" safeAreaEdges={["top"]} className="px-0">
           <MiniappErrorScreen
             packageName={packageName}
@@ -363,7 +414,7 @@ export default function AppWebView() {
               webViewOpacity.value = 0
               loadingOpacity.value = 1
               // Re-send the start request and poll for confirmation
-              useAppletStatusStore.getState().retryStartApp(packageName as string)
+              void miniappCatalog.retryStart(packageName as string)
               setRetryTrigger((prev) => prev + 1)
             }}
           />
@@ -372,34 +423,29 @@ export default function AppWebView() {
     )
   }
 
-  // Capsule menu bounding rect relative to the webview content area.
-  // CapsuleButton: h-7.5 (30px), width ~73px (px-2 + two 24px buttons + gap + divider)
-  // Positioned at right-2 (8px) with top = theme.spacing.s2 (8px) relative to webview.
-  const capsuleMenuHeight = 30
-  const capsuleMenuWidth = 73
-  const capsuleMenuRight = theme.spacing.s2
-  const capsuleMenuTop = theme.spacing.s2
-  const screenWidth = Dimensions.get("window").width
-  const capsuleMenuRect = {
-    top: capsuleMenuTop,
-    right: capsuleMenuRight,
-    bottom: capsuleMenuTop + capsuleMenuHeight,
-    left: screenWidth - capsuleMenuRight - capsuleMenuWidth,
-    width: capsuleMenuWidth,
-    height: capsuleMenuHeight,
-  }
+  // Build the window.MentraOS globals (safeAreaInsets, capsuleMenu, etc.) via
+  // the shared util so cloud and local miniapps see identical shapes.
+  const miniappGlobalsScript = buildMiniappGlobalsScript({
+    packageName: packageName as string,
+    miniappLocal: isLocal,
+    safeAreaInsets: {
+      top: insets.top,
+      bottom: Platform.OS === "android" ? insets.bottom : 0,
+      left: insets.left,
+      right: insets.right,
+    },
+    colorScheme,
+  })
 
   return (
-    <>
-      <MiniAppCapsuleMenu packageName={packageName} viewShotRef={viewShotRef} onBackPress={handleWebViewBack} />
-      <Screen
-        preset="fixed"
-        safeAreaEdges={Platform.OS === "android" ? ["top", "bottom"] : ["top"]}
-        KeyboardAvoidingViewProps={{enabled: false}}
-        className="px-0"
-        ref={viewShotRef}>
-        {/* rainbow bars for debugging insets / screenshots */}
-        {/* <View className="flex-1 absolute inset-0 z-10">
+    <Screen
+      preset="fixed"
+      safeAreaEdges={Platform.OS === "android" ? ["top", "bottom"] : ["top"]}
+      KeyboardAvoidingViewProps={{enabled: false}}
+      className="px-0"
+      ref={viewShotRef}>
+      {/* rainbow bars for debugging insets / screenshots */}
+      {/* <View className="flex-1 absolute inset-0 z-10">
           <View className="flex-col">
             <View className="w-full h-2 bg-red-500" />
             <View className="w-full h-2 bg-green-500" />
@@ -427,51 +473,42 @@ export default function AppWebView() {
             <View className="w-full h-2 bg-red-500" />
           </View>
         </View> */}
-        <View className="flex-1">
-          {renderLoadingOverlay()}
-          {finalUrl && (
-            <Animated.View className="flex-1" style={[webViewAnimatedStyle]}>
-              <WebView
-                ref={webViewRef}
-                source={{uri: finalUrl}}
-                style={{flex: 1}}
-                onLoadStart={handleLoadStart}
-                onLoadEnd={handleLoadEnd}
-                onError={handleError}
-                onMessage={handleWebViewMessage}
-                javaScriptEnabled={true}
-                domStorageEnabled={true}
-                startInLoadingState={false}
-                allowsInlineMediaPlayback={true}
-                mediaPlaybackRequiresUserAction={false}
-                scalesPageToFit={false}
-                scrollEnabled={true}
-                bounces={false}
-                allowsBackForwardNavigationGestures={true}
-                onNavigationStateChange={(navState) => setWebViewCanGoBack(navState.canGoBack)}
-                automaticallyAdjustContentInsets={false}
-                contentInsetAdjustmentBehavior="never"
-                injectedJavaScriptBeforeContentLoaded={`
-                  window.MentraOS = {
-                    platform: '${Platform.OS}',
-                    capabilities: ['share', 'open_url', 'copy_clipboard', 'download'],
-                    capsuleMenu: ${capsuleMenuRect ? JSON.stringify(capsuleMenuRect) : "null"},
-                  };
-                  window.receiveNativeMessage = window.receiveNativeMessage || function() {};
-                  true;
-                `}
-                injectedJavaScript={`
+      <View className="flex-1">
+        {renderLoadingOverlay()}
+        {finalUrl && (
+          <Animated.View className="flex-1" style={[webViewAnimatedStyle]}>
+            <WebView
+              ref={webViewRef}
+              source={{uri: finalUrl}}
+              style={{flex: 1}}
+              onLoadStart={handleLoadStart}
+              onLoadEnd={handleLoadEnd}
+              onError={handleError}
+              onMessage={handleWebViewMessage}
+              javaScriptEnabled={true}
+              domStorageEnabled={true}
+              startInLoadingState={false}
+              allowsInlineMediaPlayback={true}
+              mediaPlaybackRequiresUserAction={false}
+              scalesPageToFit={false}
+              scrollEnabled={true}
+              bounces={false}
+              allowsBackForwardNavigationGestures={true}
+              onNavigationStateChange={(navState) => setWebViewCanGoBack(navState.canGoBack)}
+              automaticallyAdjustContentInsets={false}
+              contentInsetAdjustmentBehavior="never"
+              injectedJavaScriptBeforeContentLoaded={miniappGlobalsScript}
+              injectedJavaScript={`
                   const meta = document.createElement('meta');
                   meta.setAttribute('name', 'viewport');
                   meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
                   document.getElementsByTagName('head')[0].appendChild(meta);
                   true;
                 `}
-              />
-            </Animated.View>
-          )}
-        </View>
-      </Screen>
-    </>
+            />
+          </Animated.View>
+        )}
+      </View>
+    </Screen>
   )
 }

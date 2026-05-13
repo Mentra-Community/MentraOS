@@ -3,17 +3,17 @@ import {ImageStyle, TextStyle, TouchableOpacity, View, ViewStyle} from "react-na
 import {Icon, Text} from "@/components/ignite"
 import AppIcon from "@/components/home/AppIcon"
 import {Badge} from "@/components/ui"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useActiveForegroundApp, useStopApplet} from "@/stores/applets"
+import {useNavigationStore} from "@/stores/navigation"
+import {useActiveForegroundApp, useStop} from "@mentra/island"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 
 export const ActiveForegroundApp: React.FC = () => {
   const {themed, theme} = useAppTheme()
-  const {push} = useNavigationHistory()
+  const {push} = useNavigationStore.getState()
   const applet = useActiveForegroundApp()
-  const stopApplet = useStopApplet()
+  const stopApplet = useStop()
 
   const handlePress = () => {
     if (!applet) {

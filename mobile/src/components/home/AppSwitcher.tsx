@@ -17,20 +17,21 @@ import Animated, {
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 import {runOnJS, scheduleOnRN} from "react-native-worklets"
 import {
-  ClientAppletInterface,
+  BgTimer,
   saveLastOpenTime,
   sortAppsByLastOpenTime,
   useActiveApps,
-  useAppletStatusStore,
-} from "@/stores/applets"
+  useAppStatusStore,
+  type ClientApp,
+} from "@mentra/island"
 import AppIcon from "@/components/home/AppIcon"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {BlurView} from "expo-blur"
 import GlassView from "@/components/ui/GlassView"
 import {hapticBuzz} from "@/utils/utils"
-import { storage } from "@/utils/storage"
+import {storage} from "@/utils/storage"
 
 const {width: SCREEN_WIDTH, height: SCREEN_HEIGHT} = Dimensions.get("window")
 const CARD_SCALE = 0.67
@@ -48,7 +49,7 @@ interface AppCard {
 }
 
 interface AppCardItemProps {
-  app: ClientAppletInterface
+  app: ClientApp
   index: number
   onDismiss: (packageName: string) => void
   onSelect: (packageName: string) => void
@@ -249,7 +250,7 @@ interface AppSwitcherProps {
 }
 
 // for testing:
-// let DUMMY_APPS: ClientAppletInterface[] = []
+// let DUMMY_APPS: ClientApp[] = []
 // for (let i = 0; i < 30; i++) {
 //   DUMMY_APPS.push({
 //     packageName: `com.mentra.dummy.${i}`,
@@ -277,10 +278,10 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
   const targetIndex = useSharedValue(0)
   const prevTranslationX = useSharedValue(0)
   const openX = useSharedValue(-1)
-  const {push} = useNavigationHistory()
+  const {push} = useNavigationStore.getState()
   const insets = useSaferAreaInsets()
   let directApps = useActiveApps()
-  let [apps, setApps] = useState<ClientAppletInterface[]>([])
+  let [apps, setApps] = useState<ClientApp[]>([])
   const prevAppsLength = useRef(0)
   const [blurPointerEvents, setBlurPointerEvents] = useState<"auto" | "none">("none")
   const [_androidBlur] = useSetting(SETTINGS.android_blur.key)
@@ -300,6 +301,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
     sortAppsByLastOpenTime(directApps).then((sorted) => {
       if (!cancelled) setApps(sorted)
     })
+    // console.log("apps screenshot", apps.map((a) => a.screenshot))
     return () => {
       cancelled = true
     }
@@ -562,7 +564,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         goToIndex(index)
       }
       // setTimeout(() => {
-      useAppletStatusStore.getState().stopApplet(packageName)
+      useAppStatusStore.getState().stop(packageName)
       // }, 100)
 
       // auto-close if there are no more apps left:
@@ -594,7 +596,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
   )
 
   const handleSelect = (packageName: string) => {
-    console.log("selecting", packageName)
+    // console.log("selecting", packageName)
 
     const applet = apps.find((app) => app.packageName === packageName)
     if (!applet) {
@@ -616,11 +618,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
       })
     } else if (applet.local) {
       saveLastOpenTime(applet.packageName)
-      push("/applet/local", {
-        packageName: applet.packageName,
-        appName: applet.name,
-        transition: "fade",
-      })
+      useAppStatusStore.getState().setForeground(applet.packageName)
     } else {
       saveLastOpenTime(applet.packageName)
       push("/applet/settings", {
@@ -630,7 +628,10 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
       })
     }
 
-    handleClose()
+    // do this after the app is started:
+    BgTimer.setTimeout(() => {
+      handleClose()
+    }, 500)
   }
 
   const handleClose = useCallback(() => {
@@ -678,7 +679,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
     // doesn't work yet on android for some reason :(
     if (Platform.OS === "android" /*&& !androidBlur*/) {
       return (
-        <Animated.View className="absolute inset-0 bg-black/75" style={backdropStyle}>
+        <Animated.View className="absolute inset-0 bg-background/75" style={backdropStyle}>
           <Pressable className="flex-1" onPress={handleClose} />
         </Animated.View>
       )
@@ -746,13 +747,15 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
 
         {apps.length > 0 && (
           <GestureDetector gesture={dotsPanGesture}>
-            <GlassView
-              transparent={false}
-              className="mb-5 px-4 py-2 rounded-full mx-auto bg-black/30 items-center justify-center gap-1.5 flex-row">
-              {apps.map((_, index) => (
-                <PageDot key={index} index={index} activeIndex={activeIndex} />
-              ))}
-            </GlassView>
+            <View collapsable={false}>
+              <GlassView
+                transparent={false}
+                className="mb-5 px-4 py-2 h-8 rounded-full mx-auto bg-black/30 items-center justify-center gap-1.5 flex-row">
+                {apps.map((_, index) => (
+                  <PageDot key={index} index={index} activeIndex={activeIndex} />
+                ))}
+              </GlassView>
+            </View>
           </GestureDetector>
         )}
 

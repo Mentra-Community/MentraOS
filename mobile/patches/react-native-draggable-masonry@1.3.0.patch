@@ -23,7 +23,7 @@ index cacb84dbd769c001852547c720696ff2772cbdca..86a91158ceb7772df7eaa34f806148f4
          setActiveDragId(id);
          isDraggingShared.value = true;
 diff --git a/src/MasonryItem.tsx b/src/MasonryItem.tsx
-index e4bbf4c488c5406be4222d7b76fae950bc2ce162..755f657aa98603281a7eb8b6bb7a579e01f67a48 100644
+index e4bbf4c488c5406be4222d7b76fae950bc2ce162..3f5a067e59cbdb1e492e55b615bbf442c0863bb4 100644
 --- a/src/MasonryItem.tsx
 +++ b/src/MasonryItem.tsx
 @@ -238,6 +238,13 @@ const MasonryItemComponent = ({
@@ -49,3 +49,13 @@ index e4bbf4c488c5406be4222d7b76fae950bc2ce162..755f657aa98603281a7eb8b6bb7a579e
              {/* 外側: 位置とentering/exitingアニメーション */}
              <Animated.View
                  style={wrapperStyle}
+@@ -336,6 +343,9 @@ const arePropsEqual = (prev: MasonryItemProps, next: MasonryItemProps) => {
+     if (prev.isNewItem !== next.isNewItem) {
+         return false;
+     }
++    if (prev.children !== next.children) {
++        return false;
++    }
+     return true;
+ };
+ 

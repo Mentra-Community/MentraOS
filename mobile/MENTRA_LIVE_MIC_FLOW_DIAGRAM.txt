@@ -54,14 +54,14 @@
                       │                        │
                       ▼                        ▼
     ┌────────────────────────────┐   ┌──────────────────────┐
-    │ CoreManager.handlePcm()    │   │ LC3Player (Optional) │
+    │ DeviceManager.handlePcm()  │   │ LC3Player (Optional) │
     │ (Line 4809)                │   │ • Plays to speakers  │
     │                            │   │ • Real-time monitor  │
     └──────────┬─────────────────┘   │ • audioPlaybackEnabled│
                │                      └──────────────────────┘
                ▼
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│  PHONE - CoreManager.kt:428 (handlePcm)                                         │
+│  PHONE - DeviceManager.kt:428 (handlePcm)                                       │
 ├─────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                 │
 │  ┌────────────────────────────────────────────────────────────────────┐        │
@@ -80,12 +80,12 @@
 
 
 ╔════════════════════════════════════════════════════════════════════════════════╗
-║                         CONTROL FLAGS (CoreManager)                             ║
+║                         CONTROL FLAGS (DeviceManager)                           ║
 ╚════════════════════════════════════════════════════════════════════════════════╝
 
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │  handle_microphone_state_change(requiredData, bypassVad)                       │
-│  Location: CoreManager.kt:1001                                                  │
+│  Location: DeviceManager.kt:1001                                                │
 ├─────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                 │
 │  SpeechRequiredDataType.PCM                                                     │
@@ -138,8 +138,8 @@
 [✓] LC3 packets arriving       → Check logs for "F1" packets
 [✓] LC3 decoder initialized     → lc3DecoderPtr != 0
 [✓] PCM conversion working      → Check for decoded byte counts
-[✓] CoreManager routing exists  → handlePcm() method in place
-[ ] shouldSendPcmData = true    → Check CoreManager logs!
+[✓] DeviceManager routing exists → handlePcm() method in place
+[ ] shouldSendPcmData = true    → Check DeviceManager logs!
 [ ] Bridge.sendMicData() called → Verify server transmission
 
 
@@ -150,4 +150,3 @@ Legend:
   ► = Data Flow Direction
   │ = Connection
   ┌─┐ = Component Box
-

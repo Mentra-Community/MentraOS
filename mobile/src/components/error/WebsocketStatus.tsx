@@ -4,12 +4,12 @@ import {TouchableOpacity, View} from "react-native"
 import {Icon, Text} from "@/components/ignite"
 import {translate} from "@/i18n"
 import {WebSocketStatus} from "@/services/WebSocketManager"
-import {useRefreshApplets} from "@/stores/applets"
+import {useRefresh} from "@mentra/island"
 import {useConnectionStore} from "@/stores/connection"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@mentra/island"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useNavigationStore} from "@/stores/navigation"
 
 type DisplayStatus = "connected" | "warning" | "disconnected"
 
@@ -39,12 +39,12 @@ export default function WebsocketStatus() {
   const [displayStatus, setDisplayStatus] = useState<DisplayStatus>("connected")
   const [offlineMode] = useSetting(SETTINGS.offline_mode.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
-  const refreshApplets = useRefreshApplets()
+  const refreshApplets = useRefresh()
   const {theme} = useAppTheme()
   const disconnectionTimerRef = useRef<number | null>(null)
   const DISCONNECTION_DELAY = 3000
   const prevConnectionStatusRef = useRef(connectionStatus)
-  const {push} = useNavigationHistory()
+  const {push} = useNavigationStore.getState()
 
   // Track whether the WS was observed as disconnected long enough that we
   // might genuinely have missed applet state changes. Flipped true by the
@@ -66,7 +66,7 @@ export default function WebsocketStatus() {
 
     if (connectionStatus === WebSocketStatus.CONNECTED) {
       if (disconnectionTimerRef.current) {
-        BackgroundTimer.clearTimeout(disconnectionTimerRef.current)
+        BgTimer.clearTimeout(disconnectionTimerRef.current)
         disconnectionTimerRef.current = null
       }
       setDisplayStatus("connected")
@@ -82,10 +82,10 @@ export default function WebsocketStatus() {
       // we just disconnected
       setDisplayStatus("warning")
       if (disconnectionTimerRef.current) {
-        BackgroundTimer.clearTimeout(disconnectionTimerRef.current)
+        BgTimer.clearTimeout(disconnectionTimerRef.current)
         disconnectionTimerRef.current = null
       }
-      disconnectionTimerRef.current = BackgroundTimer.setTimeout(() => {
+      disconnectionTimerRef.current = BgTimer.setTimeout(() => {
         setDisplayStatus("disconnected")
         wasSustainedDisconnectedRef.current = true
         refreshApplets()
@@ -95,7 +95,7 @@ export default function WebsocketStatus() {
 
     return () => {
       if (disconnectionTimerRef.current) {
-        BackgroundTimer.clearTimeout(disconnectionTimerRef.current)
+        BgTimer.clearTimeout(disconnectionTimerRef.current)
         disconnectionTimerRef.current = null
       }
     }

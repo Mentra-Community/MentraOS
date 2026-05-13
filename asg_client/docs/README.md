@@ -1,33 +1,30 @@
-# ASG Client Documentation
+# ASG Client documentation
 
 Android application that runs on Mentra Live smart glasses, bridging hardware and the MentraOS ecosystem.
 
-## Getting Started
+## Getting started
 
-- [Overview](overview.md) — Architecture and core concepts
-- [Mentra Live Setup](mentra-live-setup.md) — ADB connection, building, installing, log filtering
+- [Overview](overview.md) — architecture, K900/Mentra Live naming, key components
+- [Top-level README](../README.md) — environment setup, ADB (USB + WiFi), building and installing your fork
 
-## API Reference
+## API reference
 
-- [ASG Client Command API](ASG_CLIENT_API.md) — Full command reference (BLE + intent debug interface)
+- [ASG Client Command API](ASG_CLIENT_API.md) — full BLE + intent JSON command surface (the source-of-truth wire reference)
 
 ## Features
 
-- [Button Press System](features/button-press-system.md) — Physical button handling and modes
-- [RTMP Streaming](features/rtmp-streaming.md) — Live video streaming
-- [Gallery Mode](features/gallery-mode-button-capture.md) — Button-triggered photo/video capture
-- [File Manager](features/file-manager-integration.md) — File operations and media management
-- [Command Processor](features/command-processor-refactoring.md) — Command routing architecture
-
-## Hardware & Firmware
-
-- [BES OTA Updates](agents/BES_OTA_README.md) — BES2700 firmware OTA system
-- [Camera Web Server](agents/CAMERA_WEBSERVER_README.md) — HTTP server for remote photo access
-- [Custom GATT Audio](agents/CUSTOM_GATT_AUDIO.md) — LC3 audio streaming implementation
-- [K900 LED Control](agents/K900_LED_CONTROL.md) — Native recording LED control
-- [RGB LED Control](agents/RGB_LED_CONTROL_IMPLEMENTATION.md) — RGB LED command interface
-- [Delete Files Endpoint](agents/DELETE_FILES_ENDPOINT.md) — File deletion API
+- [Button press system](features/button-press-system.md) — camera button, gallery-mode gate, video/photo dispatch
+- [Live streaming (RTMP / SRT / WHIP)](features/rtmp-streaming.md) — protocols, lifecycle, keep-alive, reconnect
+- [Camera web server](features/camera-web-server.md) — embedded HTTP server for gallery sync, downloads, deletion
+- [LED control](features/led-control.md) — local MTK recording LED + RGB ring (BES authority handoff)
+- [Command processor](features/command-processor.md) — handler registry, protocol detection, ACK/dedup
+- [File manager integration](features/file-manager-integration.md) — package-namespaced media storage
+- [BES MCU firmware OTA](features/bes-ota.md) — pushing new BES firmware over UART
 
 ## Compatibility
 
-- **Mentra Live** (primary supported device)
+- **Mentra Live** is the only officially supported device. The codebase uses `K900` as the internal codename for Mentra Live's hardware platform — see [overview.md → K900 = Mentra Live](overview.md#a-naming-note-k900--mentra-live).
+
+## Internal scratchpad
+
+The [`agents/`](agents/) folder is an LLM planning scratchpad. **It is not part of the public docs** — see [`agents/README.md`](agents/README.md) for the policy.

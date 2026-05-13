@@ -16,7 +16,7 @@
  * See: cloud/issues/069-ws-disconnect-observability/spike.md
  */
 
-import { PerformanceObserver } from "node:perf_hooks";
+import { PerformanceObserver, monitorEventLoopDelay } from "node:perf_hooks";
 import { heapStats } from "bun:jsc";
 import { logger as rootLogger } from "../logging/pino-logger";
 import { UserSession } from "../session/UserSession";
@@ -24,6 +24,7 @@ import { memoryLeakDetector } from "../debug/MemoryLeakDetector";
 import { mongoQueryStats } from "../../connections/mongodb.connection";
 import { udpAudioServer } from "../udp/UdpAudioServer";
 import { getDeviceStateCounters, resetDeviceStateCounters } from "./device-state-counters";
+import { cascadeDiagnostics } from "./cascade-diagnostics";
 
 const logger = rootLogger.child({ service: "SystemVitalsLogger" });
 
@@ -47,6 +48,7 @@ const VITALS_SELF_SLOW_MS = 500;
 // Natural minor GCs are typically <10ms; 100ms catches plausibly-relevant
 // pauses without flooding.
 const NATURAL_GC_THRESHOLD_MS = 100;
+const EVENT_LOOP_DELAY_HISTOGRAM_RESOLUTION_MS = 10;
 
 /**
  * Operation timing accumulator.
@@ -135,6 +137,7 @@ class SystemVitalsLogger {
   private heartbeatInterval?: NodeJS.Timeout;
   private lastHeartbeatTick: number = Date.now();
   private gcObserver?: PerformanceObserver;
+  private eventLoopDelayHistogram?: ReturnType<typeof monitorEventLoopDelay>;
   // Issue 102: previous UDP stats snapshot for delta calculation per vitals window.
   // Initialized to all-zeros (not null) so the first vitals window after pod
   // start captures the from-boot traffic as its delta instead of hardcoding 0.
@@ -179,9 +182,19 @@ class SystemVitalsLogger {
     // Issue 102: observe natural V8 GC pauses (not just our forced gc-probe).
     this.startGcObserver();
 
+    // Issue 105: continuous event-loop delay histogram. This catches isolated
+    // blocks that rolling p99 sampling can miss. Use maxMs as the primary
+    // cascade signal; local Bun 1.3.13 testing showed p99 may miss one-off
+    // stalls while maxMs catches them.
+    this.startEventLoopDelayHistogram();
+
     logger.info(
-      { vitalsIntervalMs: VITALS_INTERVAL_MS, gcProbeIntervalMs: GC_PROBE_INTERVAL_MS },
-      "SystemVitalsLogger started (vitals + GC probe + gap detector + heartbeat + natural-GC observer)",
+      {
+        vitalsIntervalMs: VITALS_INTERVAL_MS,
+        gcProbeIntervalMs: GC_PROBE_INTERVAL_MS,
+        eventLoopDelayHistogramResolutionMs: EVENT_LOOP_DELAY_HISTOGRAM_RESOLUTION_MS,
+      },
+      "SystemVitalsLogger started (vitals + GC probe + gap detector + heartbeat + natural-GC observer + event-loop histogram)",
     );
   }
 
@@ -206,7 +219,58 @@ class SystemVitalsLogger {
       this.gcObserver.disconnect();
       this.gcObserver = undefined;
     }
+    if (this.eventLoopDelayHistogram) {
+      this.eventLoopDelayHistogram.disable();
+      this.eventLoopDelayHistogram = undefined;
+    }
     logger.info("SystemVitalsLogger stopped");
+  }
+
+  private startEventLoopDelayHistogram(): void {
+    try {
+      this.eventLoopDelayHistogram = monitorEventLoopDelay({
+        resolution: EVENT_LOOP_DELAY_HISTOGRAM_RESOLUTION_MS,
+      });
+      this.eventLoopDelayHistogram.enable();
+      logger.info(
+        {
+          feature: "event-loop-delay-histogram",
+          resolutionMs: EVENT_LOOP_DELAY_HISTOGRAM_RESOLUTION_MS,
+        },
+        "Event-loop delay histogram started",
+      );
+    } catch (err) {
+      logger.warn(
+        {
+          feature: "event-loop-delay-histogram-unsupported",
+          err,
+        },
+        "Event-loop delay histogram NOT installed",
+      );
+    }
+  }
+
+  private getEventLoopDelayHistogramSnapshot(): Record<string, number> {
+    const histogram = this.eventLoopDelayHistogram;
+    if (!histogram) {
+      return {};
+    }
+
+    try {
+      const maxMs = histogram.max / 1_000_000;
+      const meanMs = histogram.mean / 1_000_000;
+      const p99Ms = histogram.percentile(99) / 1_000_000;
+      const snapshot = {
+        eventLoopDelayMaxMs: Math.round(maxMs * 10) / 10,
+        eventLoopDelayMeanMs: Number.isFinite(meanMs) ? Math.round(meanMs * 10) / 10 : 0,
+        eventLoopDelayP99Ms: Math.round(p99Ms * 10) / 10,
+      };
+      histogram.reset();
+      return snapshot;
+    } catch (err) {
+      logger.warn({ err }, "Failed to read event-loop delay histogram");
+      return {};
+    }
   }
 
   /**
@@ -445,6 +509,8 @@ class SystemVitalsLogger {
       const sessions = UserSession.getAllSessions();
       sessionCountForLog = sessions.length;
       const mongoStats = mongoQueryStats.getAndReset();
+      const cascadeSnapshot = cascadeDiagnostics.getAndReset();
+      const eventLoopDelaySnapshot = this.getEventLoopDelayHistogramSnapshot();
 
       // Issue 102: pod-level UDP counter deltas per 30s vitals window.
       // UdpAudioServer exposes cumulative counters; we compute deltas against
@@ -707,6 +773,19 @@ class SystemVitalsLogger {
           ...Object.fromEntries(Object.entries(operationSnapshot).map(([k, v]) => [`op_${k}_ms`, Math.round(v)])),
           opTotalMs: Math.round(totalOperationMs),
           opBudgetUsedPct: Math.round((totalOperationMs / VITALS_INTERVAL_MS) * 100),
+
+          // Issue 105 Phase 1.5 diagnostic timers/counters. These are logged
+          // as op_* fields for query consistency but excluded from opTotalMs so
+          // the long-lived coarse budget signal does not double-count nested
+          // phase timings.
+          ...Object.fromEntries(
+            Object.entries(cascadeSnapshot.timers).map(([k, v]) => [`op_${k}_ms`, Math.round(v)]),
+          ),
+          ...Object.fromEntries(Object.entries(cascadeSnapshot.counters).map(([k, v]) => [k, Math.round(v)])),
+
+          // Continuous event-loop delay histogram. maxMs is the main signal for
+          // isolated sync blocks; p99 is useful only for broader degradation.
+          ...eventLoopDelaySnapshot,
 
           // Issue 102: pod-level UDP load per 30s window. Quantifies the regime
           // where the cascade fires (per the independent spike, dangerous

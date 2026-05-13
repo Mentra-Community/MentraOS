@@ -55,7 +55,7 @@ bun ios
 - **Routing**: File-based routing with expo-router (no more src/screens folder)
 - **Imports**: Absolute paths instead of relative paths
 - **Components**: Categorized into folders or misc/ folder
-- **Theming**: Components use theme/themed from useAppTheme() hook
+- **Theming**: Components use theme/themed from useAppTheme() hook, but strongly prefer to use tailwindcss
 - **Entry Point**: expo-router/entry instead of traditional App.js
 
 ### File Structure
@@ -63,7 +63,7 @@ bun ios
 - `src/app/` - File-based routes (expo-router)
 - `src/components/` - Reusable components (categorized by feature)
 - `src/contexts/` - React Context providers
-- `src/utils/` - Utility functions and helpers
+- `src/utils/` - Utility functions and helpers, always put new utilities into an existing folder or make one
 - `src/theme/` - Theme configuration and styling
 
 ## Code Style

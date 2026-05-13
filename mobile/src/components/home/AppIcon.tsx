@@ -1,12 +1,14 @@
 import {Image} from "expo-image"
 import {SquircleView} from "expo-squircle-view"
 import {memo} from "react"
-import {ActivityIndicator, StyleProp, TouchableOpacity, View, ViewStyle} from "react-native"
+import {ActivityIndicator, StyleProp, StyleSheet, TouchableOpacity, View, ViewStyle} from "react-native"
 import {withUniwind} from "uniwind"
 
 import {Icon} from "@/components/ignite"
+import {DevMiniappBadge} from "@/components/miniapps/DevMiniappBadge"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {ClientAppletInterface} from "@/stores/applets"
+import {useCachedRemoteImageSource} from "@/hooks/useCachedRemoteImageSource"
+import type {ClientApp} from "@mentra/island"
 
 // Helper to extract style properties for width/height override
 const extractStyleProps = (style: StyleProp<ViewStyle>): Partial<ViewStyle> => {
@@ -19,7 +21,7 @@ const extractStyleProps = (style: StyleProp<ViewStyle>): Partial<ViewStyle> => {
 }
 
 interface AppIconProps {
-  app: ClientAppletInterface
+  app: ClientApp
   onClick?: () => void
   style?: StyleProp<ViewStyle>
   disableLoader?: boolean
@@ -29,6 +31,7 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
   const {theme} = useAppTheme()
   const WrapperComponent = onClick ? TouchableOpacity : View
   const flatStyle = extractStyleProps(style)
+  const imageSource = useCachedRemoteImageSource(app.logoUrl)
 
   const iconSize = {
     width: flatStyle?.width ?? 64,
@@ -37,7 +40,7 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
   }
 
   return (
-    <View className={`items-center ${app.compatibility?.isCompatible ? "" : "opacity-50"}`}>
+    <View className={`items-center`}>
       <WrapperComponent
         onPress={onClick}
         activeOpacity={onClick ? 0.7 : undefined}
@@ -53,6 +56,7 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
             alignItems: "center",
             justifyContent: "center",
             ...iconSize,
+            // backgroundColor: app.compatibility?.isCompatible ? "transparent" : "gray",
           }}>
           {app.loading && !disableLoader && (
             <View className="absolute inset-0 justify-center items-center z-10 bg-black/40">
@@ -60,12 +64,21 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
             </View>
           )}
           <Image
-            source={app.logoUrl}
+            source={imageSource}
             style={{width: "100%", height: "100%", resizeMode: "cover"}}
             contentFit="cover"
             transition={200}
             cachePolicy="memory-disk"
           />
+          {!app.compatibility?.isCompatible && !app.packageName.startsWith("@") && (
+            <View
+              style={{
+                ...StyleSheet.absoluteFill,
+                backgroundColor: "gray",
+                mixBlendMode: "saturation",
+              }}
+            />
+          )}
         </SquircleView>
       </WrapperComponent>
       {!app.healthy && (
@@ -73,6 +86,7 @@ const AppIcon = ({app, onClick, style, disableLoader}: AppIconProps) => {
           <Icon name="alert" size={theme.spacing.s4} color={theme.colors.error} />
         </View>
       )}
+      {app.isMiniappDev && <DevMiniappBadge />}
       {/* Show wifi-off badge for offline apps (excluding camera app) */}
       {/* disabled for now */}
       {/* {app.offline && app.packageName !== getMoreAppsApplet().packageName && app.packageName !== cameraPackageName && (

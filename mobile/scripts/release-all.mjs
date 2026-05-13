@@ -1,6 +1,7 @@
 #!/usr/bin/env zx
 
 import { setBuildEnv } from './set-build-env.mjs';
+import { withRetry } from './release-utils.mjs';
 import { readFile, writeFile, cp, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
@@ -68,6 +69,12 @@ process.env.ORG_GRADLE_PROJECT_reactNativeArchitectures = 'arm64-v8a';
 await $({ stdio: 'inherit' })`rm -rf android`;
 await $({ stdio: 'inherit' })`bun expo prebuild --platform android`;
 await $({ stdio: 'inherit' })`bun expo export --platform android --clear`;
+
+// Prebuild can leave a stale autolinking.json with the wrong packageName
+// (com.mentra instead of com.mentra.mentra), which makes the generated
+// ReactNativeApplicationEntryPoint reference a non-existent BuildConfig.
+// Delete it so gradle's settings phase regenerates it against the final build.gradle.
+await $({ stdio: 'inherit' })`rm -rf android/build/generated/autolinking`;
 
 // ── Step 4: Copy fastlane config into android/ ────────────────────────────────
 
@@ -142,10 +149,14 @@ console.log('\n━━━ Step 7: Uploading APK to GitHub release ━━━');
 
 if (!releaseExists) {
   console.log(`Creating new pre-release: ${tag}`);
-  await $({ stdio: 'inherit' })`gh release create ${tag} --prerelease --title ${tag} --notes ${'Pre-release ' + tag}`;
+  await withRetry('gh release create', () =>
+    $({ stdio: 'inherit' })`gh release create ${tag} --prerelease --title ${tag} --notes ${'Pre-release ' + tag}`
+  );
 }
 
-await $({ stdio: 'inherit' })`gh release upload ${tag} ${renamedApkPath} --clobber`;
+await withRetry('gh release upload (APK)', () =>
+  $({ stdio: 'inherit' })`gh release upload ${tag} ${renamedApkPath} --clobber`
+);
 console.log(`Uploaded ${apkName} to release ${tag}`);
 
 // ── Step 8: Build AAB ─────────────────────────────────────────────────────────
@@ -175,7 +186,9 @@ if (!existsSync(keyPath)) {
   process.env.GOOGLE_PLAY_JSON_KEY = keyPath;
   // Install gems and run fastlane
   await $({ stdio: 'inherit', cwd: 'android' })`bundle install`;
-  await $({ stdio: 'inherit', cwd: 'android' })`bundle exec fastlane google_play`;
+  await withRetry('fastlane google_play', () =>
+    $({ stdio: 'inherit', cwd: 'android' })`bundle exec fastlane google_play`
+  );
   console.log('AAB uploaded to Google Play (internal track)');
 }
 

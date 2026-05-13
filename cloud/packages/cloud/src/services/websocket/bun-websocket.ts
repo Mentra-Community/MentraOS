@@ -30,6 +30,18 @@ import { isShuttingDown } from "../shutdown";
 import { metricsService } from "../metrics";
 import { PosthogService } from "../logging/posthog.service";
 import UserSession from "../session/UserSession";
+import {
+  buildAppWsCloseTelemetry,
+  cascadeDiagnostics,
+  createPhaseTimer,
+  hashUserId,
+  logSlowAppProtocol,
+  markWebSocketDrain,
+  markWebSocketMessageReceived,
+  markWebSocketOpened,
+  markWebSocketPongReceived,
+  recordWebSocketSend,
+} from "../metrics/cascade-diagnostics";
 
 import type {
   GlassesWebSocketData,
@@ -120,6 +132,15 @@ function handleGlassesUpgrade(req: Request, server: any, url: URL): Response | u
         type: "glasses",
         userId,
         udpEncryptionRequested,
+        obs: {
+          openedAt: Date.now(),
+          sendCount: 0,
+          sendReturnPositiveCount: 0,
+          sendReturnZeroCount: 0,
+          sendReturnNegativeCount: 0,
+          sendReturnVoidCount: 0,
+          drainCount: 0,
+        },
       } as GlassesWebSocketData,
     });
 
@@ -207,6 +228,15 @@ function handleAppUpgrade(req: Request, server: any, _url: URL): Response | unde
       apiKey,
       sdkVersion,
       appJwtPayload,
+      obs: {
+        openedAt: Date.now(),
+        sendCount: 0,
+        sendReturnPositiveCount: 0,
+        sendReturnZeroCount: 0,
+        sendReturnNegativeCount: 0,
+        sendReturnVoidCount: 0,
+        drainCount: 0,
+      },
     } as AppWebSocketData,
   });
 
@@ -259,6 +289,7 @@ export const websocketHandlers = {
    * Called when backpressure is relieved (can resume sending)
    */
   drain(ws: CloudServerWebSocket) {
+    markWebSocketDrain(ws);
     logger.debug({ userId: ws.data.userId, type: ws.data.type }, "WebSocket drain - backpressure relieved");
   },
 
@@ -268,8 +299,9 @@ export const websocketHandlers = {
   pong(ws: CloudServerWebSocket, _data: Buffer) {
     if (ws.data.type === "glasses") {
       handleGlassesPong(ws as GlassesServerWebSocket);
+    } else if (ws.data.type === "app") {
+      markWebSocketPongReceived(ws);
     }
-    // Apps don't need pong handling currently
   },
 
   // WebSocket configuration
@@ -286,6 +318,7 @@ export const websocketHandlers = {
  * Handle glasses WebSocket connection open
  */
 async function handleGlassesOpen(ws: GlassesServerWebSocket): Promise<void> {
+  markWebSocketOpened(ws);
   const { userId, udpEncryptionRequested } = ws.data;
 
   try {
@@ -397,7 +430,7 @@ async function handleGlassesConnectionInit(
     }
   }
 
-  ws.send(JSON.stringify(ackMessage));
+  recordWebSocketSend(ws, "glasses", ws.send(JSON.stringify(ackMessage)));
   metricsService.incrementClientMessagesOut();
 }
 
@@ -407,6 +440,7 @@ async function handleGlassesConnectionInit(
 async function handleGlassesMessage(ws: GlassesServerWebSocket, message: string | Buffer): Promise<void> {
   const t0 = performance.now();
   metricsService.incrementClientMessagesIn();
+  markWebSocketMessageReceived(ws);
   const { userId } = ws.data;
   const userSession = UserSession.getById(userId);
 
@@ -435,7 +469,7 @@ async function handleGlassesMessage(ws: GlassesServerWebSocket, message: string 
     // Application-level ping/pong for client liveness detection.
     // Respond immediately — don't log, don't relay, don't touch session state.
     if (parsed.type === "ping") {
-      ws.send(JSON.stringify({ type: "pong" }));
+      recordWebSocketSend(ws, "glasses", ws.send(JSON.stringify({ type: "pong" })));
       return;
     }
 
@@ -571,6 +605,7 @@ function handleGlassesClose(ws: GlassesServerWebSocket, code: number, reason: st
  * Handle app WebSocket connection open
  */
 async function handleAppOpen(ws: AppServerWebSocket): Promise<void> {
+  markWebSocketOpened(ws);
   const { userId, sessionId, appJwtPayload } = ws.data;
 
   logger.info({ userId, hasJwt: !!appJwtPayload }, "App WebSocket connection opened");
@@ -602,7 +637,16 @@ async function handleAppOpen(ws: AppServerWebSocket): Promise<void> {
     };
 
     try {
+      const phaseTimer = createPhaseTimer();
       await userSession.appManager.handleAppInit(ws as any, initMessage);
+      const durationMs = phaseTimer.durationMs;
+      cascadeDiagnostics.addTimer("appProtocol_connectionInit", durationMs);
+      cascadeDiagnostics.increment("appProtocol_connectionInit_count");
+      logSlowAppProtocol("connection_init", {
+        packageName: appJwtPayload.packageName,
+        userIdHash: hashUserId(userId),
+        durationMs,
+      });
       // Store package name in ws.data for later use
       ws.data.packageName = appJwtPayload.packageName;
     } catch (error) {
@@ -619,6 +663,7 @@ async function handleAppOpen(ws: AppServerWebSocket): Promise<void> {
 async function handleAppMessage(ws: AppServerWebSocket, message: string | Buffer): Promise<void> {
   const t0 = performance.now();
   metricsService.incrementMiniappMessagesIn();
+  markWebSocketMessageReceived(ws);
   const { userId, packageName } = ws.data;
 
   try {
@@ -636,45 +681,67 @@ async function handleAppMessage(ws: AppServerWebSocket, message: string | Buffer
       return;
     }
 
+    const parseStart = performance.now();
     const parsed = JSON.parse(message.toString()) as AppToCloudMessage;
+    cascadeDiagnostics.addTimer("appProtocol_parse", performance.now() - parseStart);
 
     // App-level ping from SDK — respond immediately, don't touch session state.
     // Only new SDK versions (3.x hono+) send these. Old 2.x apps never send pings
     // so this branch is never hit for legacy apps — fully backwards compatible.
     // See: cloud/issues/046-sdk-app-ws-liveness
     if ((parsed as any).type === "ping") {
-      ws.send(JSON.stringify({ type: "pong", timestamp: Date.now() }));
+      const pingStart = performance.now();
+      recordWebSocketSend(ws, "app", ws.send(JSON.stringify({ type: "pong", timestamp: Date.now() })));
+      const pingDurationMs = performance.now() - pingStart;
+      cascadeDiagnostics.addTimer("appProtocol_ping", pingDurationMs);
+      cascadeDiagnostics.increment("appProtocol_ping_count");
       return;
     }
 
     // App-level pong (future: SDK responding to cloud-initiated ping) — consume silently.
     if ((parsed as any).type === "pong") {
+      markWebSocketPongReceived(ws);
       return;
     }
 
     // Handle CONNECTION_INIT for legacy apps
     if (parsed.type === AppToCloudMessageType.CONNECTION_INIT) {
+      const protocolTimer = createPhaseTimer();
       const initMessage = parsed as AppConnectionInit;
 
-      const parsedUserId = userId || ws.data.userId || parseUserIdFromLegacySessionId(initMessage.sessionId);
+      const parsedUserId = protocolTimer.measureSync(
+        "sessionIdParse",
+        () => userId || ws.data.userId || parseUserIdFromLegacySessionId(initMessage.sessionId),
+      );
       if (!parsedUserId) {
         logger.error({ sessionId: initMessage.sessionId }, "Unable to determine user ID for app init");
         ws.close(1008, "User session identity missing");
+        recordAppProtocolTiming("appProtocol_connectionInit", "connection_init", protocolTimer, {
+          packageName: initMessage.packageName,
+        });
         return;
       }
 
-      const userSession = UserSession.getById(parsedUserId);
+      const userSession = protocolTimer.measureSync("sessionLookup", () => UserSession.getById(parsedUserId));
       if (!userSession) {
         logger.error({ userId: parsedUserId }, "User session not found for app message");
-        ws.send(
-          JSON.stringify({
-            type: CloudToAppMessageType.CONNECTION_ERROR,
-            code: "SESSION_NOT_FOUND",
-            message: "Session not found",
-            timestamp: new Date(),
-          }),
+        recordWebSocketSend(
+          ws,
+          "app",
+          ws.send(
+            JSON.stringify({
+              type: CloudToAppMessageType.CONNECTION_ERROR,
+              code: "SESSION_NOT_FOUND",
+              message: "Session not found",
+              timestamp: new Date(),
+            }),
+          ),
         );
         ws.close(1008, "Session not found");
+        recordAppProtocolTiming("appProtocol_connectionInit", "connection_init", protocolTimer, {
+          packageName: initMessage.packageName,
+          userId: parsedUserId,
+        });
         return;
       }
 
@@ -684,42 +751,71 @@ async function handleAppMessage(ws: AppServerWebSocket, message: string | Buffer
       ws.data.sdkVersion = initMessage.sdkVersion;
       ws.data.apiKey = initMessage.apiKey;
 
-      await userSession.appManager.handleAppInit(ws as any, initMessage);
+      await protocolTimer.measure("handleAppInit", () => userSession.appManager.handleAppInit(ws as any, initMessage));
+      const durationMs = protocolTimer.durationMs;
+      cascadeDiagnostics.addTimer("appProtocol_connectionInit", durationMs);
+      cascadeDiagnostics.increment("appProtocol_connectionInit_count");
+      logSlowAppProtocol("connection_init", {
+        packageName: initMessage.packageName,
+        userIdHash: hashUserId(parsedUserId),
+        durationMs,
+        phaseTimings: protocolTimer.timings,
+      });
       return;
     }
 
     if (parsed.type === AppToCloudMessageType.RECONNECT) {
+      const protocolTimer = createPhaseTimer();
       const reconnectMessage = parsed as any;
-      const reconnectUserId = userId || ws.data.userId;
-      const reconnectPackageName =
-        ws.data.packageName ||
-        ws.data.appJwtPayload?.packageName ||
-        parsePackageNameFromLegacySessionId(reconnectMessage.sessionId);
+      const reconnectUserId = protocolTimer.measureSync("sessionIdentity", () => userId || ws.data.userId);
+      const reconnectPackageName = protocolTimer.measureSync(
+        "packageIdentity",
+        () =>
+          ws.data.packageName ||
+          ws.data.appJwtPayload?.packageName ||
+          parsePackageNameFromLegacySessionId(reconnectMessage.sessionId),
+      );
       const reconnectSdkVersion = reconnectMessage.sdkVersion || ws.data.sdkVersion;
 
       if (!isV3Sdk(reconnectSdkVersion)) {
-        ws.send(
-          JSON.stringify({
-            type: CloudToAppMessageType.RECONNECT_REJECTED,
-            code: "SESSION_NOT_FOUND",
-            message: "Reconnect is only supported for SDK v3",
-            timestamp: new Date(),
-          }),
+        recordWebSocketSend(
+          ws,
+          "app",
+          ws.send(
+            JSON.stringify({
+              type: CloudToAppMessageType.RECONNECT_REJECTED,
+              code: "SESSION_NOT_FOUND",
+              message: "Reconnect is only supported for SDK v3",
+              timestamp: new Date(),
+            }),
+          ),
         );
         ws.close(1008, "Reconnect unsupported");
+        recordAppProtocolTiming("appProtocol_reconnect", "reconnect", protocolTimer, {
+          packageName: reconnectPackageName,
+          userId: reconnectUserId,
+        });
         return;
       }
 
       if (!reconnectUserId || !reconnectPackageName) {
-        ws.send(
-          JSON.stringify({
-            type: CloudToAppMessageType.RECONNECT_REJECTED,
-            code: "SESSION_NOT_FOUND",
-            message: "Reconnect missing user or package identity",
-            timestamp: new Date(),
-          }),
+        recordWebSocketSend(
+          ws,
+          "app",
+          ws.send(
+            JSON.stringify({
+              type: CloudToAppMessageType.RECONNECT_REJECTED,
+              code: "SESSION_NOT_FOUND",
+              message: "Reconnect missing user or package identity",
+              timestamp: new Date(),
+            }),
+          ),
         );
         ws.close(1008, "Reconnect identity missing");
+        recordAppProtocolTiming("appProtocol_reconnect", "reconnect", protocolTimer, {
+          packageName: reconnectPackageName,
+          userId: reconnectUserId,
+        });
         return;
       }
 
@@ -727,79 +823,132 @@ async function handleAppMessage(ws: AppServerWebSocket, message: string | Buffer
       ws.data.packageName = reconnectPackageName;
       ws.data.sdkVersion = reconnectSdkVersion;
 
-      const activeUserSession = UserSession.getById(reconnectUserId);
+      const activeUserSession = protocolTimer.measureSync("sessionLookup", () => UserSession.getById(reconnectUserId));
       if (!activeUserSession) {
         const apiKey = ws.data.appJwtPayload?.apiKey || ws.data.apiKey;
         if (!apiKey) {
-          ws.send(
-            JSON.stringify({
-              type: CloudToAppMessageType.RECONNECT_REJECTED,
-              code: "SESSION_NOT_FOUND",
-              message: "Reconnect requires apiKey when cloud state is unavailable",
-              timestamp: new Date(),
-            }),
+          recordWebSocketSend(
+            ws,
+            "app",
+            ws.send(
+              JSON.stringify({
+                type: CloudToAppMessageType.RECONNECT_REJECTED,
+                code: "SESSION_NOT_FOUND",
+                message: "Reconnect requires apiKey when cloud state is unavailable",
+                timestamp: new Date(),
+              }),
+            ),
           );
           ws.close(1008, "Reconnect unauthenticated");
+          recordAppProtocolTiming("appProtocol_reconnect", "reconnect", protocolTimer, {
+            packageName: reconnectPackageName,
+            userId: reconnectUserId,
+          });
           return;
         }
 
-        const isValidApiKey = await developerService.validateApiKey(reconnectPackageName, apiKey);
+        const isValidApiKey = await protocolTimer.measure("validateApiKey", () =>
+          developerService.validateApiKey(reconnectPackageName, apiKey),
+        );
         if (!isValidApiKey) {
-          ws.send(
-            JSON.stringify({
-              type: CloudToAppMessageType.CONNECTION_ERROR,
-              code: "INVALID_API_KEY",
-              message: "Invalid API key",
-              timestamp: new Date(),
-            }),
+          recordWebSocketSend(
+            ws,
+            "app",
+            ws.send(
+              JSON.stringify({
+                type: CloudToAppMessageType.CONNECTION_ERROR,
+                code: "INVALID_API_KEY",
+                message: "Invalid API key",
+                timestamp: new Date(),
+              }),
+            ),
           );
           ws.close(1008, "Invalid API key");
+          recordAppProtocolTiming("appProtocol_reconnect", "reconnect", protocolTimer, {
+            packageName: reconnectPackageName,
+            userId: reconnectUserId,
+          });
           return;
         }
 
-        deferredAppConnectionRegistry.register({
-          userId: reconnectUserId,
-          packageName: reconnectPackageName,
-          sdkVersion: reconnectSdkVersion,
-          apiKey,
-          priorSessionId: reconnectMessage.sessionId,
-          websocket: ws,
-          reason: "booting",
-        });
-
-        ws.send(
-          JSON.stringify({
-            type: CloudToAppMessageType.RECONNECT_DEFERRED,
-            code: "BOOTING",
-            message: "Cloud is still restoring user session state",
-            timeoutMs: 30_000,
-            timestamp: new Date(),
+        protocolTimer.measureSync("deferRegister", () =>
+          deferredAppConnectionRegistry.register({
+            userId: reconnectUserId,
+            packageName: reconnectPackageName,
+            sdkVersion: reconnectSdkVersion,
+            apiKey,
+            priorSessionId: reconnectMessage.sessionId,
+            websocket: ws,
+            reason: "booting",
           }),
         );
+
+        recordWebSocketSend(
+          ws,
+          "app",
+          ws.send(
+            JSON.stringify({
+              type: CloudToAppMessageType.RECONNECT_DEFERRED,
+              code: "BOOTING",
+              message: "Cloud is still restoring user session state",
+              timeoutMs: 30_000,
+              timestamp: new Date(),
+            }),
+          ),
+        );
+        recordAppProtocolTiming("appProtocol_reconnect", "reconnect", protocolTimer, {
+          packageName: reconnectPackageName,
+          userId: reconnectUserId,
+        });
         return;
       }
 
-      await activeUserSession.appManager.handleReconnect(ws as any, reconnectMessage, reconnectPackageName);
+      await protocolTimer.measure("handleReconnect", () =>
+        activeUserSession.appManager.handleReconnect(ws as any, reconnectMessage, reconnectPackageName),
+      );
+      recordAppProtocolTiming("appProtocol_reconnect", "reconnect", protocolTimer, {
+        packageName: reconnectPackageName,
+        userId: reconnectUserId,
+      });
       return;
     }
 
     // For other messages, we need an existing session
+    const sessionLookupStart = performance.now();
     const userSession = UserSession.getById(userId || ws.data.userId);
+    cascadeDiagnostics.addTimer("appProtocol_sessionLookup", performance.now() - sessionLookupStart);
     if (!userSession) {
       logger.error({ userId }, "User session not found for app message");
-      ws.send(
-        JSON.stringify({
-          type: CloudToAppMessageType.CONNECTION_ERROR,
-          code: "SESSION_NOT_FOUND",
-          message: "Session not found",
-          timestamp: new Date(),
-        }),
+      recordWebSocketSend(
+        ws,
+        "app",
+        ws.send(
+          JSON.stringify({
+            type: CloudToAppMessageType.CONNECTION_ERROR,
+            code: "SESSION_NOT_FOUND",
+            message: "Session not found",
+            timestamp: new Date(),
+          }),
+        ),
       );
+      recordAppProtocolTiming("appProtocol_regularMessage", "regular_message", undefined, {
+        packageName: ws.data.packageName || packageName,
+        userId: userId || ws.data.userId,
+        durationMs: performance.now() - t0,
+      });
       return;
     }
 
     // Delegate message handling to UserSession
     await userSession.handleAppMessage(ws as any, parsed);
+    const regularDurationMs = performance.now() - t0;
+    cascadeDiagnostics.addTimer("appProtocol_regularMessage", regularDurationMs);
+    cascadeDiagnostics.increment("appProtocol_regularMessage_count");
+    logSlowAppProtocol("regular_message", {
+      packageName: ws.data.packageName || packageName,
+      userIdHash: hashUserId(userId || ws.data.userId),
+      durationMs: regularDurationMs,
+    });
   } catch (error) {
     logger.error({ error, userId, packageName }, "Error processing app message");
     ws.close(1011, "Internal server error");
@@ -827,10 +976,33 @@ function isJsonBuffer(buf: Buffer | Uint8Array): boolean {
   return buf.length > 0 && buf[0] === 0x7b; // '{' character
 }
 
+function recordAppProtocolTiming(
+  timerName: "appProtocol_connectionInit" | "appProtocol_reconnect" | "appProtocol_regularMessage",
+  protocolType: Parameters<typeof logSlowAppProtocol>[0],
+  protocolTimer: ReturnType<typeof createPhaseTimer> | undefined,
+  data: { packageName?: string; userId?: string; durationMs?: number },
+): void {
+  const durationMs = data.durationMs ?? protocolTimer?.durationMs ?? 0;
+  cascadeDiagnostics.addTimer(timerName, durationMs);
+  cascadeDiagnostics.increment(`${timerName}_count`);
+  logSlowAppProtocol(protocolType, {
+    packageName: data.packageName,
+    userIdHash: hashUserId(data.userId),
+    durationMs,
+    phaseTimings: protocolTimer?.timings,
+  });
+}
+
 function handleAppClose(ws: AppServerWebSocket, code: number, reason: string): void {
   const { userId, packageName } = ws.data;
 
   logger.info({ userId, packageName, code, reason }, "App WebSocket closed");
+  const closeTelemetry = { ...buildAppWsCloseTelemetry(ws, code), reason: reason || undefined };
+  if (code === 1006) {
+    logger.warn(closeTelemetry, "App WebSocket close telemetry");
+  } else {
+    logger.info(closeTelemetry, "App WebSocket close telemetry");
+  }
 
   deferredAppConnectionRegistry.removeSocket(ws);
 

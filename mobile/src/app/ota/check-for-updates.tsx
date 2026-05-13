@@ -1,35 +1,34 @@
 import {useFocusEffect} from "expo-router"
 import {useEffect, useState, useCallback, useRef} from "react"
 import {View, ActivityIndicator} from "react-native"
-import CoreModule from "core"
+import CoreModule from "@mentra/bluetooth-sdk"
 
+import {MINIMUM_OTA_STATUS_BUILD} from "@/app/ota/otaProgressTimeouts"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Screen, Header, Button, Text, Icon} from "@/components/ignite"
-import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {checkForOtaUpdate, OTA_VERSION_URL_PROD} from "@/effects/OtaUpdateChecker"
 import {translate} from "@/i18n/translate"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {BackgroundTimer} from "@/utils/timers"
+import {BgTimer} from "@mentra/island"
 
 type CheckState = "checking" | "update_available" | "no_update" | "error"
 
 export default function OtaCheckForUpdatesScreen() {
   const {theme} = useAppTheme()
-  const {replace, clearHistoryAndGoHome} = useNavigationHistory()
+  const {replace, clearHistoryAndGoHome} = useNavigationStore.getState()
   const currentBuildNumber = useGlassesStore((state) => state.buildNumber)
   const mtkFwVersion = useGlassesStore((state) => state.mtkFwVersion)
   const besFwVersion = useGlassesStore((state) => state.besFwVersion)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const deviceName = defaultWearable || "Glasses"
   const glassesConnected = useGlassesStore((state) => state.connected)
-  const wifiConnected = useGlassesStore((state) => state.wifiConnected)
   const [onboardingLiveCompleted] = useSetting(SETTINGS.onboarding_live_completed.key)
 
-  const [superMode] = useSetting(SETTINGS.super_mode.key)
   const [checkState, setCheckState] = useState<CheckState>("checking")
-  const [availableUpdates, setAvailableUpdates] = useState<string[]>([])
   const [isUpdateRequired, setIsUpdateRequired] = useState(true) // Default to required if not specified
   const [checkKey, setCheckKey] = useState(0)
   const versionInfoTimeoutRef = useRef<number | null>(null)
@@ -44,10 +43,9 @@ export default function OtaCheckForUpdatesScreen() {
     useCallback(() => {
       console.log("OTA: Screen focused - triggering re-check")
       setCheckState("checking")
-      setAvailableUpdates([])
       // Reset timeout tracking for fresh check
       if (versionInfoTimeoutRef.current) {
-        BackgroundTimer.clearTimeout(versionInfoTimeoutRef.current)
+        BgTimer.clearTimeout(versionInfoTimeoutRef.current)
         versionInfoTimeoutRef.current = null
       }
       waitStartTimeRef.current = null
@@ -64,27 +62,23 @@ export default function OtaCheckForUpdatesScreen() {
     const MAX_WAIT_FOR_VERSION_INFO_MS = 10000 // Wait up to 10 seconds for version_info
 
     const performCheck = async () => {
+      // Bail out if the check already completed for this checkKey — prevents re-entry
+      // when unrelated store fields (e.g. otaUpdateAvailable written by this very check)
+      // cause React to re-fire the effect before the dependency array was narrowed.
+      if (checkCompletedRef.current) {
+        return
+      }
+
       // Only apply early-exit conditions on the FIRST check attempt for this checkKey
-      // This prevents auto-navigation when WiFi/connection state changes mid-operation
       if (!hasInitiatedCheckRef.current) {
         if (!glassesConnected) {
           console.log("OTA: Glasses not connected - proceeding to next step")
           if (versionInfoTimeoutRef.current) {
-            BackgroundTimer.clearTimeout(versionInfoTimeoutRef.current)
+            BgTimer.clearTimeout(versionInfoTimeoutRef.current)
             versionInfoTimeoutRef.current = null
           }
           hasInitiatedCheckRef.current = true
           handleContinue()
-          return
-        }
-        if (!wifiConnected) {
-          console.log("OTA: WiFi not connected - showing error state")
-          if (versionInfoTimeoutRef.current) {
-            BackgroundTimer.clearTimeout(versionInfoTimeoutRef.current)
-            versionInfoTimeoutRef.current = null
-          }
-          hasInitiatedCheckRef.current = true
-          setCheckState("error")
           return
         }
       }
@@ -103,7 +97,7 @@ export default function OtaCheckForUpdatesScreen() {
           console.log("OTA: Requesting version_info from glasses")
           CoreModule.requestVersionInfo()
 
-          versionInfoTimeoutRef.current = BackgroundTimer.setTimeout(() => {
+          versionInfoTimeoutRef.current = BgTimer.setTimeout(() => {
             if (checkCompletedRef.current) {
               console.log("OTA: Timeout fired but check already progressed - ignoring stale timeout")
               return
@@ -122,7 +116,7 @@ export default function OtaCheckForUpdatesScreen() {
       // Clear timeout since we got the data
       if (versionInfoTimeoutRef.current) {
         console.log("OTA: Got version_info - clearing wait timeout")
-        BackgroundTimer.clearTimeout(versionInfoTimeoutRef.current)
+        BgTimer.clearTimeout(versionInfoTimeoutRef.current)
         versionInfoTimeoutRef.current = null
       }
       waitStartTimeRef.current = null
@@ -132,6 +126,11 @@ export default function OtaCheckForUpdatesScreen() {
       const startTime = Date.now()
 
       try {
+        // Refresh version_info (build / fw) in case the store still held values from a prior session
+        // before the native clear-on-connect + glasses_ready re-query completed.
+        console.log("OTA: Requesting fresh version_info from glasses before HTTP compare")
+        void CoreModule.requestVersionInfo()
+
         const result = await checkForOtaUpdate(OTA_VERSION_URL_PROD, currentBuildNumber, mtkFwVersion, besFwVersion)
         console.log("📱 OTA check completed - result:", JSON.stringify(result))
 
@@ -159,16 +158,16 @@ export default function OtaCheckForUpdatesScreen() {
 
           if (filteredUpdates.length > 0) {
             console.log("📱 Updates available - setting update_available state")
-            setAvailableUpdates(filteredUpdates)
             // If isRequired is not specified in version.json, default to true (forced update)
             setIsUpdateRequired(result.latestVersionInfo?.isRequired !== false)
-            // Store the update info in global state so progress screen can access the sequence
+            // Store the update info in global state so progress screen can access the sequence.
             useGlassesStore.getState().setOtaUpdateAvailable({
               available: true,
               versionCode: result.latestVersionInfo?.versionCode || 0,
               versionName: result.latestVersionInfo?.versionName || "",
               updates: filteredUpdates,
               totalSize: 0,
+              cacheReady: false,
             })
             setCheckState("update_available")
           } else {
@@ -191,14 +190,15 @@ export default function OtaCheckForUpdatesScreen() {
 
     performCheck()
 
-    // Cleanup timeout on unmount or when dependencies change
+    // Cleanup timeouts on unmount or when dependencies change
     return () => {
       if (versionInfoTimeoutRef.current) {
-        BackgroundTimer.clearTimeout(versionInfoTimeoutRef.current)
+        BgTimer.clearTimeout(versionInfoTimeoutRef.current)
         versionInfoTimeoutRef.current = null
       }
     }
-  }, [checkKey, currentBuildNumber, glassesConnected, wifiConnected])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checkKey, currentBuildNumber, mtkFwVersion, besFwVersion, glassesConnected])
 
   // Navigate to next step based on onboarding status
   const handleContinue = () => {
@@ -218,7 +218,13 @@ export default function OtaCheckForUpdatesScreen() {
   const handleRetry = () => {
     console.log("OTA: handleRetry()")
     setCheckState("checking")
-    setAvailableUpdates([])
+    if (versionInfoTimeoutRef.current) {
+      BgTimer.clearTimeout(versionInfoTimeoutRef.current)
+      versionInfoTimeoutRef.current = null
+    }
+    waitStartTimeRef.current = null
+    hasInitiatedCheckRef.current = false
+    checkCompletedRef.current = false
     setCheckKey((k) => k + 1)
   }
 
@@ -240,7 +246,10 @@ export default function OtaCheckForUpdatesScreen() {
       }),
     )
     store.setOtaProgress(null)
-    replace("/ota/progress")
+    store.setOtaStatus(null)
+    const buildNum = parseInt(currentBuildNumber || "0", 10)
+    const route = buildNum > 0 && buildNum < MINIMUM_OTA_STATUS_BUILD ? "/ota/progress-legacy" : "/ota/progress"
+    replace(route)
   }
 
   const renderContent = () => {
@@ -266,22 +275,12 @@ export default function OtaCheckForUpdatesScreen() {
 
     // Update available state
     if (checkState === "update_available") {
-      const updateCount = availableUpdates.length
-      // Super mode shows technical details (APK, MTK, BES), normal mode shows simple count
-      const updateText = superMode
-        ? `Updates available: ${availableUpdates.map((u) => u.toUpperCase()).join(", ")}`
-        : updateCount === 1
-          ? "1 update available"
-          : `${updateCount} updates available`
-
       return (
         <>
           <View className="flex-1 items-center justify-center px-6">
             <Icon name="world-download" size={64} color={theme.colors.primary} />
             <View className="h-6" />
             <Text text={translate("ota:updateAvailable", {deviceName})} className="font-semibold text-xl text-center" />
-            <View className="h-2" />
-            <Text text={updateText} className="text-base text-center" style={{color: theme.colors.textDim}} />
             <View className="h-4" />
             <Text tx="ota:updateDescription" className="text-sm text-center" style={{color: theme.colors.textDim}} />
           </View>
@@ -320,7 +319,7 @@ export default function OtaCheckForUpdatesScreen() {
     return (
       <>
         <View className="flex-1 items-center justify-center px-6">
-          <Icon name="warning" size={64} color={theme.colors.error} />
+          <Icon name="alert-triangle" size={64} color={theme.colors.error} />
           <View className="h-6" />
           <Text tx="ota:checkFailed" className="font-semibold text-xl text-center" />
           <View className="h-2" />

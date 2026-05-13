@@ -3,14 +3,14 @@ import {ScrollView, View} from "react-native"
 import {Header, Screen} from "@/components/ignite"
 import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 
 export default function DeviceInfoScreen() {
-  const {goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
   const {theme} = useAppTheme()
 
   // Get all available device info from the glasses store

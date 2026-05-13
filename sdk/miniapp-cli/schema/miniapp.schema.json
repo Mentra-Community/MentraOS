@@ -1,0 +1,120 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://schemas.mentra.glass/miniapp/v1.json",
+  "title": "MentraOS miniapp manifest",
+  "description": "Manifest schema for a Mentra miniapp (miniapp.json)",
+  "type": "object",
+  "required": [
+    "packageName",
+    "version",
+    "name",
+    "hardwareRequirements"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "packageName": {
+      "type": "string",
+      "pattern": "^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+$",
+      "description": "Reverse-DNS app identifier (e.g. com.example.app)"
+    },
+    "version": {
+      "type": "string",
+      "description": "Semver version string (e.g. 1.0.0)"
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable app name"
+    },
+    "description": {
+      "type": "string",
+      "description": "Short description shown in the store / dev tools"
+    },
+    "icon": {
+      "type": "string",
+      "description": "Path or URL to the app icon (e.g. icon.png)"
+    },
+    "port": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "Port the dev server listens on (default 3000)"
+    },
+    "permissions": {
+      "type": "array",
+      "description": "Phone permissions the miniapp needs to declare",
+      "items": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "MICROPHONE",
+              "CAMERA",
+              "CALENDAR",
+              "LOCATION",
+              "BACKGROUND_LOCATION",
+              "READ_NOTIFICATIONS",
+              "POST_NOTIFICATIONS"
+            ],
+            "description": "Permission type"
+          },
+          "required": {
+            "type": "boolean",
+            "description": "If false, the permission is optional. Defaults to required at runtime."
+          },
+          "description": {
+            "type": "string",
+            "description": "User-facing reason this permission is needed (shown in OS prompts)"
+          }
+        }
+      }
+    },
+    "hardwareRequirements": {
+      "type": "array",
+      "description": "Glasses hardware capabilities the miniapp needs",
+      "items": {
+        "type": "object",
+        "required": [
+          "type",
+          "level"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "CAMERA",
+              "DISPLAY",
+              "MICROPHONE",
+              "SPEAKER",
+              "IMU",
+              "BUTTON",
+              "LIGHT",
+              "WIFI"
+            ],
+            "description": "Hardware capability type"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "REQUIRED",
+              "OPTIONAL"
+            ],
+            "description": "REQUIRED hides the app on glasses without it; OPTIONAL still lets it run"
+          },
+          "description": {
+            "type": "string",
+            "description": "How the miniapp uses this hardware"
+          }
+        }
+      }
+    }
+  }
+}

@@ -2,8 +2,9 @@ import {useState} from "react"
 import {TextInput, View, ViewStyle, TextStyle, TouchableOpacity} from "react-native"
 
 import {Button, Text} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import GlassView from "@/components/ui/GlassView"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
@@ -16,7 +17,7 @@ interface SavedUrl {
 
 export default function StoreUrl() {
   const {theme, themed} = useAppTheme()
-  const {replace} = useNavigationHistory()
+  const {replace} = useNavigationStore.getState()
   const [customUrlInput, setCustomUrlInput] = useState("")
   const [storeUrl, setStoreUrl] = useSetting(SETTINGS.store_url.key)
   const [savedUrls, setSavedUrls] = useSetting(SETTINGS.saved_store_urls.key)
@@ -117,7 +118,7 @@ export default function StoreUrl() {
   }
 
   return (
-    <View style={themed($container)}>
+    <GlassView className="bg-primary-foreground rounded-2xl" style={themed($container)}>
       <View style={themed($textContainer)}>
         <Text style={themed($label)}>Custom Store URL</Text>
         <Text style={themed($subtitle)}>
@@ -185,13 +186,11 @@ export default function StoreUrl() {
           />
         </View>
       </View>
-    </View>
+    </GlassView>
   )
 }
 
-const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  backgroundColor: colors.primary_foreground,
-  borderRadius: spacing.s4,
+const $container: ThemedStyle<ViewStyle> = ({spacing}) => ({
   paddingHorizontal: spacing.s6,
   paddingVertical: spacing.s4,
 })

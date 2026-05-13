@@ -15,6 +15,7 @@ import type { Logger } from "pino";
 import {
   GlassesToCloudMessage,
   GlassesToCloudMessageType,
+  AppToCloudMessageType,
   Vad,
   HeadPosition,
   GlassesConnectionState,
@@ -28,11 +29,17 @@ import {
   CloudToAppMessageType,
   UdpRegister,
   UdpUnregister,
+  PhoneSubscriptionUpdate,
+  StreamRequest,
+  StreamStopRequest,
+  ManagedStreamRequest,
+  ManagedStreamStopRequest,
 } from "@mentra/sdk";
 
 import { PosthogService } from "../../logging/posthog.service";
 import { WebSocketReadyState } from "../../websocket/types";
 import { metricsService } from "../../metrics/MetricsService";
+import { PHONE_PACKAGE_NAME } from "../PhoneSession";
 import type UserSession from "../UserSession";
 
 const SERVICE_NAME = "GlassesMessageHandler";
@@ -149,8 +156,32 @@ export async function handleGlassesMessage(userSession: UserSession, message: Gl
         handleUdpUnregister(userSession, message as UdpUnregister);
         break;
 
-      // Default - relay to apps based on subscriptions
+      // Local miniapp support — phone subscribes on behalf of local miniapps
+      case GlassesToCloudMessageType.PHONE_SUBSCRIPTION_UPDATE:
+        handlePhoneSubscriptionUpdate(userSession, message as PhoneSubscriptionUpdate, logger);
+        break;
+
+      // Default - handle phone-originated streaming messages, then relay to apps
       default:
+        // Phone client sends streaming messages on behalf of local miniapps using
+        // AppToCloudMessageType values that aren't in GlassesToCloudMessageType.
+        // Cast to string because TS sees disjoint enum types at compile time.
+        if ((message.type as string) === AppToCloudMessageType.STREAM_REQUEST) {
+          await handlePhoneStreamRequest(userSession, message as unknown as StreamRequest, logger);
+          break;
+        }
+        if ((message.type as string) === AppToCloudMessageType.STREAM_STOP) {
+          await handlePhoneStreamStop(userSession, message as unknown as StreamStopRequest, logger);
+          break;
+        }
+        if ((message.type as string) === AppToCloudMessageType.MANAGED_STREAM_REQUEST) {
+          await handlePhoneManagedStreamRequest(userSession, message as unknown as ManagedStreamRequest, logger);
+          break;
+        }
+        if ((message.type as string) === AppToCloudMessageType.MANAGED_STREAM_STOP) {
+          await handlePhoneManagedStreamStop(userSession, message as unknown as ManagedStreamStopRequest, logger);
+          break;
+        }
         logger.debug(`Relaying message type ${message.type} to Apps for user: ${userSession.userId}`);
         userSession.relayMessageToApps(message);
         break;
@@ -338,6 +369,99 @@ function handleUdpRegister(userSession: UserSession, message: UdpRegister): void
  */
 function handleUdpUnregister(userSession: UserSession, message: UdpUnregister): void {
   userSession.udpAudioManager.handleUnregister(message);
+}
+
+/**
+ * Handle phone subscription update for local miniapps.
+ * The phone subscribes to cloud streams (transcription, translation) on behalf
+ * of locally-running miniapps under the reserved packageName "__phone__".
+ */
+async function handlePhoneSubscriptionUpdate(
+  userSession: UserSession,
+  message: PhoneSubscriptionUpdate,
+  logger: Logger,
+): Promise<void> {
+  try {
+    // Ensure the phone session exists before processing subscriptions
+    userSession.appManager.getOrCreatePhoneSession();
+    logger.info(
+      { subscriptions: message.subscriptions },
+      "Processing phone subscription update for local miniapps",
+    );
+    // Use the public updateSubscriptions method — it has an internal __phone__
+    // branch that skips DB permission checks and routes to PhoneSession.
+    await userSession.subscriptionManager.updateSubscriptions(
+      PHONE_PACKAGE_NAME,
+      message.subscriptions,
+    );
+  } catch (error) {
+    logger.error({ error }, "Error processing phone subscription update");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phone-originated streaming handlers (local miniapp support, Phase 5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Phone sends stream_request on behalf of a local miniapp.
+ * We override packageName to __phone__ so the cloud treats the phone as the
+ * stream owner and routes status updates back over the phone WS.
+ */
+async function handlePhoneStreamRequest(
+  userSession: UserSession,
+  message: StreamRequest,
+  logger: Logger,
+): Promise<void> {
+  try {
+    const request: StreamRequest = { ...message, packageName: PHONE_PACKAGE_NAME };
+    logger.info({ streamUrl: request.streamUrl }, "Phone stream_request received for local miniapp");
+    await userSession.unmanagedStreamingExtension.startStream(request);
+  } catch (error) {
+    logger.error({ error }, "Error handling phone stream_request");
+  }
+}
+
+async function handlePhoneStreamStop(
+  userSession: UserSession,
+  message: StreamStopRequest,
+  logger: Logger,
+): Promise<void> {
+  try {
+    const request: StreamStopRequest = { ...message, packageName: PHONE_PACKAGE_NAME };
+    logger.info({ streamId: request.streamId }, "Phone stream_stop received for local miniapp");
+    await userSession.unmanagedStreamingExtension.stopStream(request);
+  } catch (error) {
+    logger.error({ error }, "Error handling phone stream_stop");
+  }
+}
+
+async function handlePhoneManagedStreamRequest(
+  userSession: UserSession,
+  message: ManagedStreamRequest,
+  logger: Logger,
+): Promise<void> {
+  try {
+    const request: ManagedStreamRequest = { ...message, packageName: PHONE_PACKAGE_NAME };
+    logger.info("Phone managed_stream_request received for local miniapp");
+    await userSession.managedStreamingExtension.startManagedStream(userSession, request);
+  } catch (error) {
+    logger.error({ error }, "Error handling phone managed_stream_request");
+  }
+}
+
+async function handlePhoneManagedStreamStop(
+  userSession: UserSession,
+  message: ManagedStreamStopRequest,
+  logger: Logger,
+): Promise<void> {
+  try {
+    const request: ManagedStreamStopRequest = { ...message, packageName: PHONE_PACKAGE_NAME };
+    logger.info("Phone managed_stream_stop received for local miniapp");
+    await userSession.managedStreamingExtension.stopManagedStream(userSession, request);
+  } catch (error) {
+    logger.error({ error }, "Error handling phone managed_stream_stop");
+  }
 }
 
 export default handleGlassesMessage;
