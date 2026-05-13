@@ -4,10 +4,10 @@
 **Authors:** Alex Israelov + Claude
 
 A spec for moving the local miniapp SDK from a persistent-WebView model
-to a JavaScriptCore-per-miniapp background runtime + on-demand WebView
+to a per-miniapp background JS runtime (JSC on iOS, QuickJS on Android) + on-demand WebView
 for UI. Most of the existing SDK (~49% of LoC) lifts unchanged. The
 new pieces are bounded: a Swift JSContext runtime in the existing
-`crust` module (and a Kotlin/JNI mirror on Android), a `__dispatch`
+`crust` module (and a Kotlin/Zipline mirror on Android), a `__dispatch`
 bridge, a polyfill bundle, and a WebView-↔-JSContext message bus.
 
 **See also:**
@@ -60,15 +60,19 @@ silently keep N of them warm to relay glasses events.
 
 Each miniapp ships as **two cooperating layers in one bundle**:
 
-1. **Background layer (MentraJS)** — a `JSContext` (Apple's
-   JavaScriptCore framework), one per installed miniapp, **always
-   running** while the host app process is alive. ~3-5 MB resident
-   per context. No DOM, no rendering. Owns all glasses logic.
-2. **UI layer (MentraUI)** — a `WKWebView` spawned **on demand**
-   when the user opens the miniapp's settings screen. Destroyed
-   when they navigate away. Standard HTML/CSS/JS, full DOM. **Has
-   zero direct native access** — only talks to its own background
-   layer via a typed message bus.
+1. **Background layer (MentraJS)** — a per-miniapp JS context
+   (Apple's `JSContext` on iOS, QuickJS via Cash App's Zipline on
+   Android), one per installed miniapp, **always running** while
+   the host app process is alive. ~3-5 MB resident per context on
+   iOS-JSC; <1 MB per context on Android-QuickJS. No DOM, no
+   rendering. Owns all glasses logic. The doc uses `JSContext` as
+   shorthand for both engines — the per-miniapp JS sandbox, regardless
+   of platform.
+2. **UI layer (MentraUI)** — a `WKWebView` (iOS) / Android
+   `WebView` spawned **on demand** when the user opens the miniapp's
+   settings screen. Destroyed when they navigate away. Standard
+   HTML/CSS/JS, full DOM. **Has zero direct native access** — only
+   talks to its own background layer via a typed message bus.
 
 This is the **WeChat mini-program model** (logic in JSCore + view in
 WebView, native router between) and the **VS Code extension model**
@@ -88,8 +92,10 @@ billion-user scale.
 │              ┌─────────────────────────────────┼──────────────┐  │
 │              ▼                                 ▼              ▼  │
 │   ┌─────────────────────┐         ┌─────────────────────┐  ...   │
-│   │ JSContext A         │         │ JSContext B         │        │
-│   │ (always alive)      │         │ (always alive)      │        │
+│   │ JS context A        │         │ JS context B        │        │
+│   │ (JSC on iOS,        │         │ (JSC on iOS,        │        │
+│   │  QuickJS on Android,│         │  QuickJS on Android,│        │
+│   │  always alive)      │         │  always alive)      │        │
 │   │  __dispatch         │         │  __dispatch         │        │
 │   │  polyfills          │         │  polyfills          │        │
 │   │  background/        │         │  background/        │        │
@@ -128,14 +134,19 @@ extension popups.
 
 ---
 
-## Engine choice: native JavaScriptCore
+## Engine choice: JavaScriptCore on iOS, QuickJS on Android
 
-Background JS runs in a native iOS `JSContext` from
-`JavaScriptCore.framework`, with its own `JSVirtualMachine` per
-miniapp for heap isolation. **Not Hermes. Not React Native's runtime.
-Not a JSI library. Not a hidden WebView.**
+Background JS runs in:
+- **iOS:** native `JSContext` from `JavaScriptCore.framework`, with
+  its own `JSVirtualMachine` per miniapp for heap isolation.
+- **Android:** QuickJS via [Cash App's Zipline](https://github.com/cashapp/zipline),
+  one Zipline/QuickJS context per miniapp.
 
-### Why JSC specifically
+In both cases: **not Hermes. Not React Native's runtime. Not a JSI
+library. Not a hidden WebView.** Each miniapp gets its own isolated
+JS engine instance.
+
+### Why JSC specifically (iOS)
 
 1. **Apple's 2.5.2 carve-out names JSC and WebKit by name** as
    permitted runtimes for downloaded code. Hermes isn't named.
@@ -157,82 +168,128 @@ Apple `JSContext`. The only path is calling `JavaScriptCore.framework`
 directly from Swift. Open RN community proposal #193 has been asking
 for this primitive for years; remains unresolved.
 
-### Cross-platform: JSC on Android, with JNI work
+### Cross-platform: QuickJS on Android (via Zipline), JSC on iOS
 
-We bundle JavaScriptCore on Android so the same engine runs miniapp
-JS on both platforms. Performance gap vs Hermes/V8 is irrelevant for
-our workload — heavy work is in native modules; miniapp JS is
-event-handler-tier.
+iOS keeps Apple's JavaScriptCore. Android uses **QuickJS via
+[Cash App's Zipline](https://github.com/cashapp/zipline)**
+(`app.cash.zipline:zipline`). Different engine, but the architectural
+shape (per-miniapp context, single `__dispatch` callback, polyfill
+bundle providing the SDK surface) is identical, and ~95% of the
+polyfill JS is byte-shared between platforms.
 
-**Android JSC binary source:**
-`io.github.react-native-community:jsc-android:2026004.+` — the
-maintained successor to the original Facebook `org.webkit:android-jsc`
-(last published 2015) and the artifact already used in
-`mobile/android/app/build.gradle` for the host RN bundle. We pin to
-the same version coordinate so we don't ship two JSC builds. Adds
-~5-7 MB to the Android binary (already paid by the host app).
+**Why not JSC on Android?** Two real options exist for getting JSC
+onto Android — building a JNI wrapper over `io.github.react-native-community:jsc-android:2026004.+`
+(2-3 wks NDK work, single-maintainer upstream), or vendoring the
+stale LiquidCore. Both end up with us owning a C++/JNI layer
+forever for an engine where the maintained-fork releases are bursty.
+Zipline gives us a tighter Kotlin API, smaller binary, faster
+ship date, and the same JS-spec coverage we need.
 
-**Critical Android caveat:** `jsc-android` ships as **prebuilt `.so`
-files** for arm64-v8a / armeabi-v7a / x86_64 / x86. There is **no
-Java / Kotlin API** equivalent to iOS's `JSContext` Swift class.
-Calling JSC from Kotlin requires JNI glue. Three options:
+**Why not Pebble-style invisible WebView on Android?** The agent
+verified Pebble's actual setup: Android = full system WebView with
+all browser APIs (fetch, WebSocket, IndexedDB, crypto.subtle, Blob,
+etc.); iOS = bare JSC + 3 hand-rolled shims (XMLHttpRequest,
+WebSocket, timers). PKJS apps calling `fetch()` on iOS literally
+throw `ReferenceError`. Pebble pays a permanent divergence tax
+they don't even document. We've already committed to a real
+polyfill bundle on iOS (~1000 LoC JS / ~600 LoC Swift); the same
+JS bundle runs on QuickJS unchanged with two trivial guards
+(`if (!globalThis.console)` etc.). Choosing WebView would be
+choosing Pebble's documented divergence over our own real
+polyfill bundle.
 
-- **(A) Write our own JNI wrapper** over the JSC C API exposed by
-  `jsc-android` headers. Full control, ~2-3 weeks NDK work for the
-  surface we need (create context / virtual machine / inject
-  function / evaluateScript / set+get globals). C++ bridge code in
-  `crust/android/src/main/cpp/`, bound to Kotlin via JNI.
-- **(B) Vendor LiquidCore** (MIT, last released ~2019, stale but
-  functional). Provides a Java API over JSC very close to iOS's
-  Swift surface. Requires audit + likely forking to update for
-  modern Android.
-- **(C) Defer Android to a later phase**, ship iOS-only at GA.
-  Honest if we're resource-constrained.
+**Android engine source:** `app.cash.zipline:zipline:1.27.0+` —
+Block-funded, monthly releases, in production at Cash App, Apache 2.0,
+Kotlin Multiplatform. Bundles QuickJS-NG (~400 KB engine, ~1.2 MB
+total native lib including Zipline's Kotlin glue).
 
-**Recommendation: option A (own JNI wrapper).** LiquidCore's staleness
-makes it a long-term liability, and the surface we need is small
-enough (~6 native methods) that hand-rolling JNI is bounded work.
+**ECMAScript coverage:** QuickJS-NG covers everything we and modern
+miniapp authors will hit — async/await, async iterators, optional
+chaining, private class fields, top-level await (in modules), Proxy,
+Reflect, BigInt, WeakRef/FinalizationRegistry, Error cause, all the
+modern array/object methods, regex with lookbehind / named groups /
+Unicode property escapes. **One categorical hole: no `Intl`** —
+QuickJS-NG won't ship it for size reasons. Documented as
+"unsupported on Android" in the SDK; ship `@formatjs/intl` as an
+opt-in polyfill if a miniapp needs it.
 
 **Android implementation lives alongside the iOS one in `crust`:**
 
 ```
-mobile/modules/crust/android/src/main/
-├── java/com/mentra/crust/
-│   ├── CrustModule.kt                  # existing — add JSC Functions
-│   ├── jsc/JSCRuntime.kt               # NEW: owns N JSContext handles
-│   ├── jsc/JSCDispatcher.kt            # NEW: __dispatch routes
-│   └── jsc/JSCPolyfillBridge.kt        # NEW: native fetch/WS/timers/storage/crypto
-└── cpp/                                # NEW JNI layer
-    ├── CMakeLists.txt
-    ├── jsc_jni.cpp                     # JNI ↔ JSC C API
-    └── jsc_jni.h
+mobile/modules/crust/android/src/main/java/com/mentra/crust/
+├── CrustModule.kt                     # existing — add Zipline Functions
+├── jsc/JSCRuntime.kt                  # NEW: owns N Zipline instances,
+│                                      #   one per installed miniapp.
+│                                      #   ("JSC" name kept for cross-platform
+│                                      #   parity in the codebase, even
+│                                      #   though Android's engine is QuickJS.)
+├── jsc/JSCDispatcher.kt               # NEW: single __dispatch route per context
+└── jsc/JSCPolyfillBridge.kt           # NEW: native fetch/WS/timers/storage/crypto
 ```
 
-The polyfill bundle (`mobile/modules/mentrajs-runtime/runtime/`) is
-**identical JS for both platforms**. Native bridge hooks differ
-under the hood (`URLSession` vs OkHttp, `NSUserDefaults` vs
-SharedPreferences, `CryptoKit` vs `javax.crypto`) but JS-side API
-is one shape.
+No `cpp/` directory, no JNI to write — Zipline's QuickJS bridge is
+already done. Our Kotlin code calls
+`Zipline.create(coroutineScope).also { it.quickJs.evaluate(...) }`
+to spawn a context, registers a single Kotlin object exposing
+`__dispatch(iface, method, argsJson)` via Zipline's bridge, and
+calls back into JS by `evaluate("globalThis.__deliver(${json})")`.
+
+**Mandatory microtask discipline (Zipline-specific):** QuickJS keeps
+Promise reactions on its own pending-jobs queue. Zipline drains it
+after each call into JS, but if our native fetch / crypto / WebSocket
+resolves a Promise from a host callback **outside** a bridge call,
+the `.then()` won't fire until the next bridge call. Every
+native-resolved Promise in `JSCPolyfillBridge.kt` must be wrapped:
+after resolving, re-enter JS to drain pending jobs. ~20 LoC of
+shared Kotlin helper. iOS-JSC drains automatically via the iOS
+run loop, so this concern is Android-only.
+
+**Polyfill divergence — small and explicit:**
+- Zipline pre-injects `console.{log,info,warn,error}` and
+  `setTimeout`/`clearTimeout` into every QuickJS context. Our
+  startup polyfill guards: `if (!globalThis.console) install(...)`,
+  `if (!globalThis.setTimeout) install(...)`.
+- We still polyfill `setInterval` and `queueMicrotask` ourselves
+  on Android (~30 LoC) — Zipline doesn't provide them.
+- `whatwg-url-without-unicode` occasionally reaches for `Buffer` in
+  IPv6 paths. Pre-bundle with `rollup-plugin-node-polyfills` (or a
+  small `Buffer` shim); test the IPv6 path. ~half day of work.
+- `fetch-blob` references `ReadableStream` which neither JSC nor
+  QuickJS has. Drop streams support (sync `arrayBuffer()` only) or
+  add `web-streams-polyfill`. **Engine-agnostic** — same problem on
+  both platforms.
+
+**Native bridge concretes** (Kotlin, in `JSCPolyfillBridge.kt`):
+- `setTimeout`/`setInterval` — `Handler.postDelayed` (already-foreground-service-backed),
+  same BackgroundTimer pattern we use elsewhere in the host RN code
+  to keep timers firing under Doze.
+- `fetch` / `XMLHttpRequest` core — OkHttp.
+- `WebSocket` — OkHttp's `WebSocketListener`.
+- `localStorage` — `SharedPreferences` (per-miniapp file name
+  `MentraJS-{packageName}`).
+- `crypto.subtle` — `javax.crypto` for SHA / AES-GCM / HMAC; X25519
+  via Tink or BouncyCastle (Android stdlib only added X25519 at
+  API 33+).
+- `crypto.getRandomValues` — `SecureRandom.nextBytes`.
 
 **Android-specific risks:**
-- JNI surface adds C++ to a previously Kotlin/Swift-only repo;
-  team needs an engineer comfortable with NDK builds and JSC C API.
-- Bundle size concern: ~5-7 MB binary growth, but already paid by
-  host RN — adding `crust`'s JNI lib is a few hundred KB on top.
-- No Safari Web Inspector equivalent on Android JSC. We can wire
-  Chrome DevTools' V8 protocol over WebSocket later if needed —
-  defer.
+- Zipline's bus factor is ~1 (Cash App employs the maintainer). If
+  it ever goes dark, exit is "fork QuickJS-NG (~30 KLoC C, MIT) and
+  write our own thin Kotlin bridge — bounded ~2 weeks of work."
+- ~1.2 MB APK growth (Zipline + QuickJS native lib).
+- No Safari Web Inspector equivalent. Zipline supports Chrome
+  DevTools wiring; defer to Phase 6.
 
-**Android JSC sequencing:** because of the JNI work, Android takes
-**3-5 weeks**, not 1. iOS Phase 1 ships first (~3 weeks); Android
-JSC follows (~3-5 weeks). Either accept Android lagging by a phase
-or budget two engineers in parallel from Phase 1.
+**Android sequencing:** Phase 1 Android ≈ **2-3 weeks** with Zipline
+(vs 3-5 wks for the dropped JNI/JSC plan). iOS Phase 1 ships first
+(~3 wks); Android follows (~2-3 wks). One engineer sequential ≈
+6 wks; two engineers parallel ≈ ~3 wks calendar.
 
-### Memory profile: measured, not estimated
+### Memory profile: measured (iOS), estimated (Android)
 
-Real-device benchmark on iPhone 15 release build, 50 idle JSContexts
-each running a representative workload (timer + 100-entry state +
-`__dispatch` stub):
+**iOS — measured.** Real-device benchmark on iPhone 15 release build,
+50 idle JSContexts each running a representative workload (timer +
+100-entry state + `__dispatch` stub):
 
 | Wave | Contexts | Resident MB | MB per context |
 |---|---|---|---|
@@ -242,16 +299,26 @@ each running a representative workload (timer + 100-entry state +
 | 4 | 25 | 1028 → 1039 | 0.75 |
 | 5 | 50 | 1039 → 1058 | 0.75 |
 
-**~0.75 MB per JSContext at rest. Linear scaling.** With realistic
-fetch/WebSocket shims holding NSURLSession instances, budget ~3-5 MB
-per context. Even on iPhone SE 2 (3 GB RAM, ~600 MB jetsam ceiling),
-50+ background miniapps fit comfortably.
+**~0.75 MB per JSContext at rest on iOS. Linear scaling.** With
+realistic fetch/WebSocket shims holding NSURLSession instances,
+budget ~3-5 MB per context. Even on iPhone SE 2 (3 GB RAM, ~600 MB
+jetsam ceiling), 50+ background miniapps fit comfortably.
 
 Raw log: `agents/spike-results/jsc-spike-iphone15-release-50ctx.log`.
 Reproducible via `xcrun devicectl device process launch -e
 '{"MENTRA_RUN_JSC_BENCH":"1"}' com.mentra.mentra` then
 `xcrun devicectl device copy from --domain-type appDataContainer
 --domain-identifier com.mentra.mentra --source Documents/jsc-spike.log`.
+
+**Android — estimated.** QuickJS contexts are ~200-400 KB each (per
+QuickJS-NG docs and Cash App's published Zipline measurements),
+plus Zipline's per-instance Kotlin overhead (~0.5-1 MB). Budget
+**~1-1.5 MB per Android context** vs ~3-5 MB on iOS. Android's
+process model also lacks iOS-style jetsam — foreground service +
+no offscreen-renderer constraints. Memory ceiling is "whatever
+the host RN process can hold," typically ~500 MB before LMK
+becomes a concern. **Re-measure with the actual Zipline integration
+in Phase 1.** Add to the spike-results folder when done.
 
 ---
 
@@ -305,7 +372,7 @@ to conflate them:
    "main" JS the Mentra app runs in). This is where
    `LocalMiniappRuntime` / `MentraJSRouter` lives, and where the
    `MiniappHost` React component lives.
-2. **Per-miniapp JSContext** (native iOS JSC / Android JSC, one
+2. **Per-miniapp JS context** (native iOS JSC / Android QuickJS via Zipline, one
    per installed miniapp). Runs the miniapp's `background/index.js`.
 3. **Per-miniapp WebView** (transient WKWebView / Android WebView,
    exists only when user opens settings). Runs the miniapp's
@@ -408,18 +475,34 @@ specialized native paths like `mic_pcm`).
 
 When `spawn(id, polyfillPath, miniappPath)` is called:
 
-1. Create `JSVirtualMachine` + `JSContext` on a dedicated thread.
-2. Set `context.name = "MentraJS: <id>"` and (DEBUG-only)
+1. **iOS:** Create `JSVirtualMachine` + `JSContext` on a dedicated thread.
+   **Android:** Create a `Zipline` instance (which owns a `QuickJs`
+   context) on a `CoroutineScope` bound to a single-thread
+   `Dispatcher`. Same conceptual shape; same one-context-per-miniapp
+   isolation.
+2. **iOS:** Set `context.name = "MentraJS: <id>"` and (DEBUG-only)
    `isInspectable = true` (gated on iOS 16.4+).
-3. Inject `__dispatch` as a single Swift block on the context's
-   global. Per Pebble's `CrashReproducer.kt`, never bind individual
-   native callbacks as JSValue properties — JSC's GC races and
-   crashes. **One C-callable function only.**
+   **Android:** No equivalent — Safari Inspector is iOS-only.
+   Chrome DevTools wiring via Zipline's debugger support is
+   deferred to Phase 6.
+3. Inject `__dispatch` as a single function on the context's global.
+   **iOS:** a Swift block. Per Pebble's `CrashReproducer.kt`, never
+   bind individual native callbacks as JSValue properties — JSC's
+   GC races and crashes. **One C-callable function only.**
+   **Android:** a Kotlin object exposed via Zipline's bridge. We
+   keep the same single-`__dispatch` shape for cross-platform
+   parity even though QuickJS doesn't have JSC's GC race.
 4. Inject `__hostLog`, `__hostError`, `__hostUnhandledRejection`
-   for the polyfill's `console.*` and error rewires.
-5. Wrap eval in `evalCatching`. Run the polyfill bundle (`startup.js`).
-   Installs `setTimeout`/`fetch`/`WebSocket`/`localStorage`/etc on
-   `globalThis`.
+   for the polyfill's `console.*` and error rewires. **Android:**
+   guard the `console.*` install — Zipline pre-injects
+   `console.{log,info,warn,error}`, so wire `__hostLog` into
+   Zipline's existing `console` instead of overwriting.
+5. Run the polyfill bundle (`startup.js`) — wrapped in `evalCatching`
+   on iOS / try-catch around `Zipline.quickJs.evaluate(...)` on
+   Android. Installs `setTimeout`/`setInterval`/`fetch`/`WebSocket`/
+   `localStorage`/etc on `globalThis`. Two `if (!globalThis.X)`
+   guards in the bundle handle Zipline's pre-injected
+   `console`/`setTimeout`/`clearTimeout`.
 6. Inject the SDK shim (`@mentra/miniapp/background` typed wrappers around
    `__dispatch` exposing the existing `session.*` API surface).
 7. Run the miniapp's `background/index.js`. Top-level code executes in
@@ -856,12 +939,18 @@ Native (Swift, in `crust`):
   `MiniappRunningRegistry`. Only relevant for the WebView half (the
   JSContext half doesn't need eviction at our memory profile).
 
-Native (Kotlin, in `crust`):
-- **`JSCRuntime.kt`** + JNI wrapper — see the "Cross-platform: JSC
-  on Android, with JNI work" section above for the `cpp/` JNI layer.
-- **`JSCDispatcher.kt`** — Kotlin mirror of Swift dispatcher.
-- **`JSCPolyfillBridge.kt`** — OkHttp / SharedPreferences / javax.crypto
-  backed equivalents.
+Native (Kotlin, in `crust` — uses Zipline/QuickJS, no JNI):
+- **`JSCRuntime.kt`** — wraps `Zipline.create(...)` per miniapp,
+  owns lifecycle. Class name kept (not `QuickJSRuntime`) to mirror
+  iOS `JSCRuntime.swift` for cross-platform code symmetry. ~300-500 LoC.
+- **`JSCDispatcher.kt`** — Kotlin mirror of Swift dispatcher;
+  registers a single Kotlin object exposing `__dispatch` via Zipline's
+  bridge. Same iface registry shape.
+- **`JSCPolyfillBridge.kt`** — OkHttp / SharedPreferences / javax.crypto /
+  Tink (X25519) backed equivalents. **Includes the
+  `executePendingJobs` / re-enter-after-resolve helper** that drains
+  QuickJS microtasks every time a native callback resolves a Promise
+  (the iOS-JSC code doesn't need this — JSC drains via the iOS run loop).
 - **`PermissionStore`** — SQLite via Android's built-in
   `SQLiteOpenHelper`. Same schema as iOS.
 - **Device-tier eviction** — `ActivityManager.getMemoryInfo()` for
@@ -938,36 +1027,52 @@ store later (separate spec).
 
 ## Polyfill strategy
 
-JSContext is a bare ECMAScript runtime. Workers-in-WebView would get
+Both engines (iOS JSC and Android QuickJS via Zipline) are bare
+ECMAScript runtimes. Workers-in-WebView would get
 fetch/WebSocket/IndexedDB/crypto for free; we don't. **About half the
 polyfills are drop-in MIT libraries** — the other half are thin
 bridges to native I/O.
 
-| API | Strategy | Library / source | Custom LoC |
-|---|---|---|---|
-| `console.*` | **Drop-in MIT** | `@react-native/js-polyfills/console.js` | ~10 (logging hook) |
-| `TextEncoder` / `TextDecoder` | **Drop-in MIT** | `fast-text-encoding` (3 KB) | 0 |
-| `URL` / `URLSearchParams` | **Drop-in MIT** | `whatwg-url-without-unicode` (40 KB) | 0 |
-| `atob` / `btoa` | **Drop-in MIT** | `base-64` (3 KB) | 0 |
-| `EventTarget` / `addEventListener` | **Drop-in MIT** | `event-target-shim` (5 KB) | 0 |
-| `Blob` / `FormData` | **Drop-in + glue** | `fetch-blob` + `formdata-polyfill` | ~30 |
-| `AbortController` / `AbortSignal` | **Drop-in + glue** | `abort-controller` | ~20 |
-| `Promise` | Built-in | (modern JSC has Promises) | 0 |
-| `setTimeout` / `setInterval` / `clear*` | Bridge | — | ~80 |
-| `Headers` / `Request` / `Response` | **Lift from whatwg-fetch (MIT)** | swap XHR core for native | ~100 |
-| `fetch` network plane | Bridge | atop the Headers/Request/Response above | ~150 over `URLSession` |
-| `WebSocket` | Bridge | uses `event-target-shim` | ~150 over `URLSessionWebSocketTask` |
-| `localStorage` | Bridge | — | ~50 over `NSUserDefaults` with `"MentraJS-{appId}"` suite |
-| `crypto.subtle` (SHA, AES-GCM, HMAC, X25519) | Bridge | — | ~300 over `CryptoKit` |
-| `crypto.getRandomValues` | Bridge | — | ~30 over `SecRandomCopyBytes` |
-| `crypto.randomUUID` | Pure-JS shim atop `getRandomValues` | RFC 4122 v4 (~10 lines) | ~10 |
+**The same JS polyfill bundle ships on both platforms.** Two trivial
+runtime guards handle engine differences (Zipline pre-injects
+`console.*` and `setTimeout`/`clearTimeout`; iOS-JSC has neither).
+Native bridges differ underneath (URLSession vs OkHttp, NSUserDefaults
+vs SharedPreferences, CryptoKit vs javax.crypto) — but the
+miniapp-facing JS API is identical down to error messages.
 
-**Total custom code: ~1000 LoC JS + ~600 LoC Swift, ~2-3 weeks.**
+| API | Strategy | Library / source | Custom LoC | Engine notes |
+|---|---|---|---|---|
+| `console.*` | **Drop-in MIT** | `@react-native/js-polyfills/console.js` | ~10 (logging hook) | Zipline pre-injects `console.{log,info,warn,error}` — guard with `if (!globalThis.console)`. On iOS we always install. |
+| `TextEncoder` / `TextDecoder` | **Drop-in MIT** | `fast-text-encoding` (3 KB) | 0 | Both engines lack natively. |
+| `URL` / `URLSearchParams` | **Drop-in MIT** | `whatwg-url-without-unicode` (40 KB) | 0 | Bundle with `rollup-plugin-node-polyfills` for `Buffer` refs in IPv6 paths. ~0.5 day. |
+| `atob` / `btoa` | **Drop-in MIT** | `base-64` (3 KB) | 0 | |
+| `EventTarget` / `addEventListener` | **Drop-in MIT** | `event-target-shim` (5 KB) | 0 | |
+| `Blob` / `FormData` | **Drop-in + glue** | `fetch-blob` + `formdata-polyfill` | ~30 | `fetch-blob` references `ReadableStream` — drop streams (sync `arrayBuffer()` only) or add `web-streams-polyfill`. Same on both engines. |
+| `AbortController` / `AbortSignal` | **Drop-in + glue** | `abort-controller` | ~20 | |
+| `Promise` | Built-in | both engines ship modern Promises | 0 | iOS-JSC drains microtasks via the iOS run loop. **QuickJS does not** — see "Microtask discipline" above. Kotlin native bridge must re-enter JS to drain after every native-resolved Promise. ~20 LoC Kotlin helper. |
+| `setTimeout` / `clearTimeout` | Bridge | — | ~40 | Zipline pre-injects `setTimeout`/`clearTimeout`. Guard with `if (!globalThis.setTimeout)` — on Android we use Zipline's, on iOS we install. |
+| `setInterval` / `queueMicrotask` | Bridge | — | ~40 | Always-installed (Zipline ships neither). Android implementation uses our existing `BackgroundTimer` pattern so timers fire under Doze. |
+| `Headers` / `Request` / `Response` | **Lift from whatwg-fetch (MIT)** | swap XHR core for native | ~100 | |
+| `fetch` network plane | Bridge | atop the Headers/Request/Response above | ~150 over `URLSession` (iOS) / OkHttp (Android) | |
+| `WebSocket` | Bridge | uses `event-target-shim` | ~150 over `URLSessionWebSocketTask` (iOS) / OkHttp `WebSocketListener` (Android) | |
+| `localStorage` | Bridge | — | ~50 over `NSUserDefaults` (iOS) / `SharedPreferences` (Android) with `"MentraJS-{packageName}"` suite/file | |
+| `crypto.subtle` (SHA, AES-GCM, HMAC, X25519) | Bridge | — | ~300 over `CryptoKit` (iOS) / `javax.crypto` + Tink for X25519 (Android — stdlib X25519 only API 33+) | |
+| `crypto.getRandomValues` | Bridge | — | ~30 over `SecRandomCopyBytes` (iOS) / `SecureRandom.nextBytes` (Android) | |
+| `crypto.randomUUID` | Pure-JS shim atop `getRandomValues` | RFC 4122 v4 (~10 lines) | ~10 | |
 
-Android counterparts: same JS shims; native swap is `OkHttp` for
-fetch/WebSocket, `SharedPreferences` for `localStorage`,
-`javax.crypto` for `crypto.subtle`, `SecureRandom.nextBytes` for
-`crypto.getRandomValues`. Same total LoC, +~600 Kotlin.
+**Total custom code:**
+- **JS polyfill bundle:** ~1000 LoC, shipped to both platforms unchanged
+  (with the two guards above).
+- **iOS native bridge:** ~600 LoC Swift in `JSCPolyfillBridge.swift`.
+- **Android native bridge:** ~600 LoC Kotlin in `JSCPolyfillBridge.kt`,
+  plus ~20 LoC shared microtask-drain helper.
+
+**Documented engine gaps that miniapp authors will hit:**
+- `Intl.*` — not available on Android (QuickJS-NG won't ship it).
+  Document as unsupported, or load `@formatjs/intl` opt-in.
+- `ReadableStream` / `WritableStream` — not available on either
+  engine; `fetch().body` is treated as null-or-array-buffer only.
+- `IndexedDB` — not provided; use `session.storage` instead.
 
 ### Out of scope (don't polyfill at v1)
 
@@ -1432,10 +1537,16 @@ Latency target: save → see-on-glasses < 500ms for background reload,
 
 ### Inspector
 
-`setInspectable = true` is the killer DX feature. Gate on iOS 16.4+
-AND a runtime developer-mode flag — *off* in App Store builds even on
-iOS 16.4+. Each context named `MentraJS: <appName> (<packageName>)`
-so Safari Develop menu lists them sensibly.
+**iOS:** `setInspectable = true` is the killer DX feature. Gate on
+iOS 16.4+ AND a runtime developer-mode flag — *off* in App Store
+builds even on iOS 16.4+. Each context named
+`MentraJS: <appName> (<packageName>)` so Safari Develop menu lists
+them sensibly.
+
+**Android:** Zipline exposes a Chrome DevTools wiring over the V8
+debug protocol. Gate on `BuildConfig.DEBUG` only. Each context
+labeled with `MentraJS: <appName> (<packageName>)` so the
+chrome://inspect page lists them sensibly. Wired in Phase 6 (~3 days).
 
 ### Network inspection
 
@@ -1660,15 +1771,17 @@ Tasks:
 hit the same jetsam wall — multiple WebViews share one renderer
 process. We don't need eviction there until usage shows we do.
 
-### Phase 1 — JSC runtime in `crust` (~3 weeks iOS, +3-5 weeks Android)
+### Phase 1 — JS runtime in `crust` (~3 weeks iOS, +2-3 weeks Android)
 
-**Goal:** Spawn N JSContexts from Swift (and from Kotlin via JNI),
-route `__dispatch` to existing native services, get a "hello world"
-miniapp displaying text on glasses without WebView.
+**Goal:** Spawn N JS contexts from Swift (JSC) and from Kotlin
+(QuickJS via Zipline), route `__dispatch` to existing native
+services, get a "hello world" miniapp displaying text on glasses
+without WebView.
 
-**iOS-first.** Android lags because of the JNI work — see "Cross-platform:
-JSC on Android, with JNI work" earlier. Phase 2-6 below assume iOS is
-the leading edge; each phase notes any Android-specific work.
+**iOS uses JSC, Android uses QuickJS via Zipline.** See
+"Cross-platform: QuickJS on Android (via Zipline), JSC on iOS"
+earlier for the rationale. Phase 2-6 below assume iOS is the
+leading edge; each phase notes any Android-specific work.
 
 Native (Swift):
 - New files in `mobile/modules/crust/ios/Source/`:
@@ -1715,25 +1828,37 @@ Polyfill bundle (new package):
   (URLSessionWebSocketTask), localStorage (NSUserDefaults with
   `MentraJS-{packageName}` suite), crypto (CryptoKit).
 
-Native (Kotlin + C++):
-- New `cpp/` directory under `mobile/modules/crust/android/src/main/`
-  with `jsc_jni.cpp` + `jsc_jni.h` + `CMakeLists.txt`. Wraps the JSC
-  C API exposed by `io.github.react-native-community:jsc-android` —
-  ~6 native methods (createContext, evaluate, set/get global, dispose).
-  ~2-3 weeks NDK work; engineer needs JSC C API + JNI familiarity.
+Native (Kotlin, in `crust` — uses Zipline, no JNI):
+- Add `app.cash.zipline:zipline:1.27.0+` to
+  `mobile/modules/crust/android/build.gradle`. ~1.2 MB native lib
+  added per ABI; ~5 MB APK growth on arm64-only Play Store splits.
 - New Kotlin files in `mobile/modules/crust/android/src/main/java/com/mentra/crust/`:
   `jsc/JSCRuntime.kt`, `jsc/JSCDispatcher.kt`, `jsc/JSCPolyfillBridge.kt`.
-  ~600-800 LoC. Mirrors the Swift surface 1:1 over the JNI wrapper.
+  ~600-800 LoC. Mirrors the Swift surface 1:1 — same class names so
+  cross-platform code reads symmetrically. Each `JSCRuntime` per
+  miniapp wraps a `Zipline` instance (which owns a `QuickJs` context).
 - Add the same Expo Functions to `CrustModule.kt`. Verify
-  `bun expo prebuild` regenerates the Gradle config including the
-  CMake step (no `--clean`).
-- Bridge concretes: OkHttp (fetch/WebSocket), `Handler.postDelayed`
-  (setTimeout), SharedPreferences (`localStorage` with
-  `MentraJS-{packageName}` name), `javax.crypto` + `SecureRandom`
-  (crypto.subtle / getRandomValues).
-- Same Pebble-inherited pieces apply on Android: stable token,
-  log redaction, single `__dispatch` (binding individual native
-  functions hits the same JSC GC race), tear-down ordering.
+  `bun expo prebuild` regenerates the Gradle config (no `--clean`).
+- Bridge concretes: OkHttp (fetch/WebSocket), our existing
+  `BackgroundTimer` pattern wrapped in `JSCPolyfillBridge.kt` for
+  `setInterval` (Zipline supplies `setTimeout`/`clearTimeout`),
+  SharedPreferences (`localStorage` with `MentraJS-{packageName}`
+  name), `javax.crypto` for SHA / AES-GCM / HMAC, **Tink for X25519**
+  (Android stdlib X25519 is API 33+ only; Tink keeps us minSdk-friendly),
+  `SecureRandom.nextBytes` for `crypto.getRandomValues`.
+- **Microtask drain helper** in `JSCPolyfillBridge.kt` — single
+  ~20 LoC function called after every native callback that resolves
+  a Promise, ensuring QuickJS drains its pending-jobs queue. iOS-JSC
+  doesn't need this. **Zipline-specific discipline; do NOT skip.**
+- Pebble-inherited pieces that still apply on Android:
+  log redaction, single `__dispatch` pattern (consistency with iOS,
+  even though QuickJS doesn't have JSC's GC race), tear-down ordering,
+  stable per-(user, miniapp) token, `signalReady` with NACK timeout.
+- **Pieces that drop on Android because they're JSC-specific:**
+  `JSManagedValue` (QuickJS uses ref-counted `JSValue` with no
+  managed-value pattern), `JSContext.setName` + `setInspectable`
+  (Safari Inspector — N/A), `debugForceGC` (QuickJS exposes
+  `JS_RunGC` directly via Zipline if needed; different shape).
 
 JS:
 - New `DispatchTransport.ts` in
@@ -1803,7 +1928,7 @@ survive, front door swaps from postMessage to `__dispatch`.
 **Android within Phase 2.** No additional Android-specific code —
 this phase is pure RN runtime refactor (TypeScript). The
 `MentraJSRouter` is platform-agnostic; it talks to whichever
-`Crust` native module is loaded. As long as Phase 1 Android JSC is
+`Crust` native module is loaded. As long as Phase 1 Android (Zipline/QuickJS integration) is
 done, Phase 2 lights up on Android automatically.
 
 ### Phase 3 — WebView lifecycle inversion + UI message bus (~4 weeks)
@@ -1991,15 +2116,19 @@ is platform-agnostic JS. Same package serves both platforms.
 **Goal:** Crash detection, telemetry, logging.
 
 - Crash recovery state machine in `JSCRuntime` (RUNNING → CRASHED →
-  BACKOFF → CRASHLOOP_DISABLED).
+  BACKOFF → CRASHLOOP_DISABLED). Implement on both platforms.
 - Telemetry counters wired to **Sentry** (no separate telemetry
   pipeline exists — verified). Tag events with
   `miniapp.packageName`, `miniapp.version`, `miniapp.sdk_version`,
-  `device.model`. Existing Sentry infra at
-  `mobile/src/effects/SentrySetup.tsx`.
+  `device.model`, `miniapp.engine` (`jsc` or `quickjs`). Existing
+  Sentry infra at `mobile/src/effects/SentrySetup.tsx`.
 - Logging architecture (redaction, ring buffer, throttle).
 - Health checks (heartbeat + ping).
 - Soft watchdog (5s warn / 30s kill).
+- **Android Chrome DevTools wiring (~3 days).** Zipline supports
+  attaching Chrome DevTools to its QuickJS contexts via the V8
+  debug protocol over WebSocket. Wire it behind `BuildConfig.DEBUG`
+  to give Android the equivalent of iOS's Safari Inspector workflow.
 
 **Out of scope for V1:** remote kill switch, dev portal. No store
 in V1 → no kill switch needed; no upload UI / signing UI / crash
@@ -2011,13 +2140,14 @@ telemetry mirror in Kotlin's `JSCRuntime.kt`. Same Sentry SDK
 (`@sentry/react-native`) ships unified events across platforms;
 no Android-specific tag work needed.
 
-### Total: ~17 weeks mobile (iOS leading), Android lags by ~2 weeks
+### Total: ~17 weeks mobile (iOS leading), Android lags by ~2-3 weeks
 
 Phases 0-6 iOS sequential: 1.5 + 3 + 3 + 4 + 1.5 + 2 + 2 = **17 weeks**.
-Phase 1 Android adds **3-5 weeks** for the JNI work. With one
-engineer doing both platforms sequentially: ~22 weeks total. With
-two engineers parallelizing iOS and Android JSC from Phase 1
-onward: ~17-19 weeks calendar time.
+Phase 1 Android (Zipline / QuickJS integration + Kotlin bridge +
+microtask discipline) adds **2-3 weeks**. With one engineer doing
+both platforms sequentially: ~19-20 weeks total. With two engineers
+parallelizing iOS-JSC and Android-Zipline from Phase 1 onward:
+**~17 weeks calendar time** (iOS Phase 1 paces).
 
 V1 has **zero cloud work**. The CLI's `bun mentra-miniapp release`
 flow already serves bundles over LAN HTTP + QR (existing,
