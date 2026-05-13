@@ -7,15 +7,16 @@
 #include "mos_gx8002.h"
 #include "mos_i2s_slave.h"
 #include "vad_interrupt_handler.h"
-#define GX8002_FIRMWARE_DATA_DEFINE  // 在此文件中定义固件数据
+/* 在当前 update 编译单元内展开固件数组实体，其他文件只看到 extern 声明。
+ * Materialize the firmware blob in this update translation unit; other files only see extern declarations.
+ */
+#define GX8002_FIRMWARE_DATA_DEFINE
 #include "grus_i2c_boot.h"
-#include "gx8002_firmware_data.h"
+#include "gx8002_firmware_current.h"
 
 LOG_MODULE_REGISTER(gx8002_update, LOG_LEVEL_INF);
 
-// Current firmware version
-static uint8_t gx8002_fm_current_version[] = {0, 0, 0, 3};
-
+#if GX8002_VAD_FIRMWARE_ENABLE
 #define UPGRADE_DATA_BLOCK_SIZE 16
 #define UPGRADE_FLASH_BLOCK_SIZE (1024 * 8)
 
@@ -429,32 +430,11 @@ uint8_t gx8002_fw_update(const uint8_t *firmware_data, uint32_t firmware_len)
 {
     LOG_INF("vad fw update start ...");
     uint8_t version[4] = {0};
-    uint8_t need_update = 0;
+    bool version_valid = false;
 
     // Set firmware data source
     current_firmware_data = firmware_data;
     current_firmware_len = firmware_len;
-
-    if (!mos_gx8002_getversion(version))
-    {
-        LOG_ERR("vad version failed");
-        return 0;
-    }
-
-    for (uint8_t k = 0; k < 4; k++)
-    {
-        if (gx8002_fm_current_version[k] < version[k])
-        {
-            need_update = 1;
-            break;
-        }
-    }
-
-    if (!need_update)
-    {
-        LOG_INF("vad is lastest version=%d.%d.%d.%d", version[0], version[1], version[2], version[3]);
-        return 1;
-    }
 
     boot_len = grus_i2c_boot_len;
 
@@ -498,6 +478,19 @@ uint8_t gx8002_fw_update(const uint8_t *firmware_data, uint32_t firmware_len)
 
     // Stop I2S if running to free bus/resources before update
     gx8002_i2s_stop();
+
+    version_valid = mos_gx8002_getversion(version);
+    if (version_valid)
+    {
+        LOG_INF("vad pre-update running version=%d.%d.%d.%d, bundled firmware=%s", version[0], version[1], version[2],
+                version[3], GX8002_VAD_FW_VERSION_STR);
+    }
+    else
+    {
+        LOG_WRN("vad pre-update version read failed, continuing with explicit firmware update (%s)",
+                GX8002_VAD_FW_VERSION_STR);
+    }
+    LOG_INF("vad firmware update requested explicitly, proceeding with bundled image");
 
     mos_gx8002_reset();
     k_sleep(K_MSEC(50));
@@ -546,9 +539,31 @@ uint8_t gx8002_fw_update(const uint8_t *firmware_data, uint32_t firmware_len)
     k_sleep(K_MSEC(2000));
     mos_gx8002_reset();  // Final reset to start new firmware
     k_sleep(K_MSEC(10));
+
+    LOG_INF("Verifying firmware version after final reset...");
+    version_valid = mos_gx8002_getversion(version);
+    if (version_valid)
+    {
+        LOG_INF("vad post-update running version=%d.%d.%d.%d", version[0], version[1], version[2], version[3]);
+    }
+    else
+    {
+        LOG_WRN("vad post-update version read failed after final reset");
+    }
+
     // Re-enable VAD interrupt after firmware update completes
     LOG_INF("Re-enabling VAD interrupt after firmware update...");
     mos_gx8002_vad_int_re_enable();
 
     return 1;
 }
+#else
+uint8_t gx8002_fw_update(const uint8_t *firmware_data, uint32_t firmware_len)
+{
+    (void)firmware_data;
+    (void)firmware_len;
+
+    LOG_ERR("GX8002 VAD firmware update is disabled in this build");
+    return 0;
+}
+#endif

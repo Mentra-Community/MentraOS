@@ -1,12 +1,13 @@
 #include <errno.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/shell/shell.h>
 
-#include "gx8002_firmware_data.h"
+#include "gx8002_firmware_current.h"
 #include "gx8002_update.h"
 #include "mos_gx8002.h"
 #include "mos_i2s_slave.h"
@@ -17,36 +18,30 @@ typedef struct
     const char *name;
     const uint8_t *data;
     uint32_t len;
+    bool available;
 } firmware_entry_t;
 
-static firmware_entry_t firmware_table[2];
-static size_t firmware_table_size = 0;
-
-/* 固件表按宏开关填充：V09/V10 未启用时对应固件不编入镜像，此处不加入表 */
-static void init_firmware_table(void)
+static firmware_entry_t get_current_firmware(void)
 {
-    if (firmware_table_size > 0)
-    {
-        return; /* 已初始化 */
-    }
+    /* 将“当前生效固件”的名字、地址和长度打包给 shell 使用。
+     * Package the active firmware name, address, and length for shell commands.
+     */
+    firmware_entry_t firmware = {
+        .name = NULL,
+        .data = NULL,
+        .len = 0,
+        .available = false,
+    };
 
-    size_t idx = 0;
-#if GX8002_FIRMWARE_ENABLE_V09
-    firmware_table[idx].name = "v09";
-    firmware_table[idx].data = gx8002_firmware_data_09;
-    firmware_table[idx].len = gx8002_firmware_data_09_len;
-    idx++;
+#if GX8002_VAD_FIRMWARE_ENABLE
+    firmware.name = GX8002_VAD_FW_VERSION_STR;
+    firmware.data = gx8002_firmware_data_current;
+    firmware.len = gx8002_firmware_data_current_len;
+    firmware.available = true;
 #endif
-#if GX8002_FIRMWARE_ENABLE_V10
-    firmware_table[idx].name = "v10";
-    firmware_table[idx].data = gx8002_firmware_data_10;
-    firmware_table[idx].len = gx8002_firmware_data_10_len;
-    idx++;
-#endif
-    firmware_table_size = idx;
+
+    return firmware;
 }
-
-#define FIRMWARE_TABLE_SIZE_MAX 10  // 最大固件数量
 
 LOG_MODULE_REGISTER(shell_gx8002, LOG_LEVEL_INF);
 
@@ -55,6 +50,8 @@ LOG_MODULE_REGISTER(shell_gx8002, LOG_LEVEL_INF);
  */
 static int cmd_gx8002_help(const struct shell *shell, size_t argc, char **argv)
 {
+    const firmware_entry_t current_firmware = get_current_firmware();
+
     shell_print(shell, "");
     shell_print(shell, "🎤 GX8002 Control Commands:");
     shell_print(shell, "");
@@ -67,13 +64,17 @@ static int cmd_gx8002_help(const struct shell *shell, size_t argc, char **argv)
     shell_print(shell, "  gx8002 enable_i2s               - Enable GX8002 I2S output (write 0x71 to 0xC4)");
     shell_print(shell, "  gx8002 disable_i2s              - Disable GX8002 I2S output (write 0x72 to 0xC4)");
     shell_print(shell, "  gx8002 mic_state                - Get GX8002 microphone (VAD) state");
+    shell_print(shell, "  gx8002 dmic_gain <0-48>         - DMIC gain: 0~48 dB, 1 dB per step");
     shell_print(shell, "  gx8002 update [firmware_name]   - Start firmware OTA update");
     shell_print(shell, "");
-    shell_print(shell, "📦 Available Firmware:");
-    init_firmware_table();
-    for (size_t i = 0; i < firmware_table_size; i++)
+    shell_print(shell, "📦 Current Built-in Firmware:");
+    if (current_firmware.available)
     {
-        shell_print(shell, "  - %s (%u bytes)", firmware_table[i].name, firmware_table[i].len);
+        shell_print(shell, "  - %s (%u bytes)", current_firmware.name, current_firmware.len);
+    }
+    else
+    {
+        shell_print(shell, "  - none (disabled in current build)");
     }
     shell_print(shell, "");
 
@@ -89,7 +90,7 @@ static int cmd_gx8002_version(const struct shell *shell, size_t argc, char **arg
     if (ret != 0)
     {
         shell_error(shell, "❌ Failed to initialize GX8002: %d", ret);
-        shell_print(shell, "💡 Check i2c1 node in device tree");
+        shell_print(shell, "💡 Check i2c0 node in device tree");
         return ret;
     }
 
@@ -132,7 +133,7 @@ static int cmd_gx8002_handshake(const struct shell *shell, size_t argc, char **a
     if (ret != 0)
     {
         shell_error(shell, "❌ Failed to initialize GX8002: %d", ret);
-        shell_print(shell, "💡 Check i2c1 node in device tree");
+        shell_print(shell, "💡 Check i2c0 node in device tree");
         return ret;
     }
 
@@ -177,7 +178,7 @@ static int cmd_gx8002_start_i2s(const struct shell *shell, size_t argc, char **a
     if (ret != 0)
     {
         shell_error(shell, "❌ Failed to initialize GX8002: %d", ret);
-        shell_print(shell, "💡 Check i2c1 node in device tree");
+        shell_print(shell, "💡 Check i2c0 node in device tree");
         return ret;
     }
 
@@ -222,7 +223,7 @@ static int cmd_gx8002_enable_i2s(const struct shell *shell, size_t argc, char **
     if (ret != 0)
     {
         shell_error(shell, "❌ Failed to initialize GX8002: %d", ret);
-        shell_print(shell, "💡 Check i2c1 node in device tree");
+        shell_print(shell, "💡 Check i2c0 node in device tree");
         return ret;
     }
 
@@ -280,7 +281,7 @@ static int cmd_gx8002_disable_i2s(const struct shell *shell, size_t argc, char *
     if (ret != 0)
     {
         shell_error(shell, "❌ Failed to initialize GX8002: %d", ret);
-        shell_print(shell, "💡 Check i2c1 node in device tree");
+        shell_print(shell, "💡 Check i2c0 node in device tree");
         return ret;
     }
 
@@ -322,7 +323,7 @@ static int cmd_gx8002_mic_state(const struct shell *shell, size_t argc, char **a
     if (ret != 0)
     {
         shell_error(shell, "❌ Failed to initialize GX8002: %d", ret);
-        shell_print(shell, "💡 Check i2c1 node in device tree");
+        shell_print(shell, "💡 Check i2c0 node in device tree");
         return ret;
     }
 
@@ -363,63 +364,115 @@ static int cmd_gx8002_mic_state(const struct shell *shell, size_t argc, char **a
 }
 
 /**
+ * Set DMIC gain command - Set GX8002 VAD DMIC gain
+ * Usage: gx8002 dmic_gain <0-48>
+ */
+static int cmd_gx8002_dmic_gain(const struct shell *shell, size_t argc, char **argv)
+{
+    char *endptr = NULL;
+    unsigned long gain_ul;
+    uint8_t apply_status = 0;
+    int ret = mos_gx8002_init();
+
+    if (ret != 0)
+    {
+        shell_error(shell, "❌ Failed to initialize GX8002: %d", ret);
+        shell_print(shell, "💡 Check i2c0 node in device tree");
+        return ret;
+    }
+
+    if (argc != 2)
+    {
+        shell_error(shell, "Usage: gx8002 dmic_gain <0-48>");
+        shell_error(shell, "Example: gx8002 dmic_gain 24");
+        return -EINVAL;
+    }
+
+    gain_ul = strtoul(argv[1], &endptr, 0);
+    if ((argv[1][0] == '\0') || (endptr == NULL) || (*endptr != '\0') || (gain_ul > GX8002_DMIC_GAIN_MAX))
+    {
+        shell_error(shell, "❌ Invalid gain value: %s", argv[1]);
+        shell_print(shell, "💡 Valid range: 0-48, 1 dB per step");
+        return -EINVAL;
+    }
+
+    shell_print(shell, "🎚️ Setting GX8002 DMIC gain (FAE / I2C)...");
+    shell_print(shell, "💡 Gain value: %lu dB (range 0~48, 1 dB per step)", gain_ul);
+    shell_print(shell, "💡 (1) Write index to reg 0xAC  (2) Write 0x73 to reg 0xC4  (3) Read 0xAC: 1=success 0=fail");
+    shell_print(shell, "💡 Firmware polls 0xAC briefly after apply in case the flag updates late");
+    shell_print(shell, "");
+
+    if (!mos_gx8002_set_dmic_gain((uint8_t)gain_ul, &apply_status))
+    {
+        shell_error(shell, "❌ Failed to send DMIC gain command");
+        shell_print(shell, "💡 Check GX8002 connection and I2C communication");
+        return -EIO;
+    }
+
+    if (apply_status == 1)
+    {
+        shell_print(shell, "✅ DMIC gain set successfully");
+        shell_print(shell, "📊 Apply status (0xAC): %u", apply_status);
+        shell_print(shell, "📊 Gain value: %lu dB", gain_ul);
+        return 0;
+    }
+
+    if (apply_status == 0)
+    {
+        shell_error(shell, "❌ DMIC gain apply failed (read 0xAC == 0 per FAE)");
+        shell_print(shell, "📊 Apply status (0xAC): %u — not success; I2C writes did complete", apply_status);
+        shell_print(shell, "💡 Try: gx8002 enable_i2s, wait after VAD power-on, or gain 1~48 if 0 is rejected by chip FW");
+        shell_print(shell, "💡 Confirm with FAE: VAD state required before 0x73, and whether gain index 0 is valid");
+        return -EIO;
+    }
+
+    shell_error(shell, "❌ DMIC gain apply returned unexpected status: %u", apply_status);
+    return -EIO;
+}
+
+/**
  * Update command - Start GX8002 firmware OTA update
  * Usage: gx8002 update [firmware_name]
  */
 static int cmd_gx8002_update(const struct shell *shell, size_t argc, char **argv)
 {
+#if !GX8002_VAD_FIRMWARE_ENABLE
+    shell_error(shell, "❌ GX8002 VAD firmware update is disabled in this build");
+    shell_print(shell, "💡 Enable GX8002_VAD_FIRMWARE_ENABLE to include update resources");
+    return -ENOTSUP;
+#else
+    const firmware_entry_t current_firmware = get_current_firmware();
+
+    if (!current_firmware.available)
+    {
+        shell_error(shell, "❌ No built-in VAD firmware in current build");
+        shell_print(shell, "💡 Enable GX8002_VAD_FIRMWARE_ENABLE to include update resources");
+        return -ENOENT;
+    }
+
     int ret = mos_gx8002_init();
     if (ret != 0)
     {
         shell_error(shell, "❌ Failed to initialize GX8002: %d", ret);
-        shell_print(shell, "💡 Check i2c1 node in device tree");
+        shell_print(shell, "💡 Check i2c0 node in device tree");
         return ret;
     }
 
-    const uint8_t *firmware_data = NULL;
-    uint32_t firmware_len = 0;
-    const char *firmware_name = "v09";
+    const uint8_t *firmware_data = current_firmware.data;
+    uint32_t firmware_len = current_firmware.len;
+    const char *firmware_name = current_firmware.name;
 
-    init_firmware_table();
     if (argc > 1)
     {
         firmware_name = argv[1];
-        bool found = false;
-        for (size_t i = 0; i < firmware_table_size; i++)
-        {
-            if (strcmp(firmware_table[i].name, firmware_name) == 0)
-            {
-                firmware_data = firmware_table[i].data;
-                firmware_len = firmware_table[i].len;
-                found = true;
-                break;
-            }
-        }
-
-        if (!found)
+        if (strcmp(current_firmware.name, firmware_name) != 0)
         {
             shell_error(shell, "❌ Firmware '%s' not found!", firmware_name);
             shell_print(shell, "");
-            shell_print(shell, "📦 Available firmware:");
-            for (size_t i = 0; i < firmware_table_size; i++)
-            {
-                shell_print(shell, "  - %s", firmware_table[i].name);
-            }
+            shell_print(shell, "📦 Current built-in firmware:");
+            shell_print(shell, "  - %s", current_firmware.name);
             return -EINVAL;
         }
-    }
-    else
-    {
-        /* 无参数时使用表中第一项；若未启用任何内置固件则无可用项 */
-        if (firmware_table_size == 0)
-        {
-            shell_error(shell, "❌ No built-in firmware (V09/V10 both disabled in build)");
-            shell_print(shell, "   Enable GX8002_FIRMWARE_ENABLE_V09 or V10 to use gx8002 update");
-            return -ENOENT;
-        }
-        firmware_data = firmware_table[0].data;
-        firmware_len = firmware_table[0].len;
-        firmware_name = firmware_table[0].name;
     }
 
     shell_print(shell, "🚀 Starting GX8002 firmware OTA update...");
@@ -433,7 +486,7 @@ static int cmd_gx8002_update(const struct shell *shell, size_t argc, char **argv
     {
         shell_print(shell, "");
         shell_print(shell, "✅ Firmware update completed successfully!");
-        shell_print(shell, "💡 Please reset the device to apply the new firmware");
+        shell_print(shell, "💡 Device reset and post-update version check were handled automatically");
         return 0;
     }
     else
@@ -443,6 +496,7 @@ static int cmd_gx8002_update(const struct shell *shell, size_t argc, char **argv
         shell_print(shell, "💡 Check logs for detailed error information");
         return -EIO;
     }
+#endif
 }
 
 /* Shell command definitions */
@@ -455,6 +509,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
     SHELL_CMD(enable_i2s, NULL, "Enable GX8002 I2S output (write 0x71 to 0xC4)", cmd_gx8002_enable_i2s),
     SHELL_CMD(disable_i2s, NULL, "Disable GX8002 I2S output (write 0x72 to 0xC4)", cmd_gx8002_disable_i2s),
     SHELL_CMD(mic_state, NULL, "Get GX8002 microphone (VAD) state", cmd_gx8002_mic_state),
+    SHELL_CMD_ARG(dmic_gain, NULL, "Set GX8002 DMIC gain: <0-48>", cmd_gx8002_dmic_gain, 2, 0),
     SHELL_CMD_ARG(update, NULL, "Start firmware OTA update [firmware_name]", cmd_gx8002_update, 1, 1),
     SHELL_SUBCMD_SET_END /* Array terminated. */
 );

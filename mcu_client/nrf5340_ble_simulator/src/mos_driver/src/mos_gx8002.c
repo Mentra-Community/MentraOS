@@ -433,6 +433,82 @@ uint8_t mos_gx8002_get_mic_state(uint8_t *state)
     return mos_gx8002_iic_read_data(MOS_GX_CMD_ADDR, 0xA0, state);
 }
 
+uint8_t mos_gx8002_set_dmic_gain(uint8_t gain, uint8_t *apply_status)
+{
+    uint8_t gain_write[2] = {GX8002_REG_DMIC_GAIN, gain};
+    uint8_t apply_cmd[2] = {GX8002_REG_CMD, GX8002_CMD_SET_DMIC_GAIN};
+    uint8_t status = 0;
+
+    if (apply_status != NULL)
+    {
+        *apply_status = 0;
+    }
+
+    if (gain > GX8002_DMIC_GAIN_MAX)
+    {
+        LOG_ERR("Invalid DMIC gain index: %u", gain);
+        return 0;
+    }
+
+    if (!mos_gx8002_iic_write_data(MOS_GX_CMD_ADDR, gain_write, sizeof(gain_write)))
+    {
+        LOG_ERR("Failed to write DMIC gain index to 0x%02X", GX8002_REG_DMIC_GAIN);
+        return 0;
+    }
+
+    if (!mos_gx8002_iic_write_data(MOS_GX_CMD_ADDR, apply_cmd, sizeof(apply_cmd)))
+    {
+        LOG_ERR("Failed to send DMIC gain apply command 0x%02X", GX8002_CMD_SET_DMIC_GAIN);
+        return 0;
+    }
+
+    k_sleep(K_MSEC(GX8002_DMIC_GAIN_APPLY_DELAY_MS));
+
+    if (!mos_gx8002_iic_read_data(MOS_GX_CMD_ADDR, GX8002_REG_DMIC_GAIN, &status))
+    {
+        LOG_ERR("Failed to read DMIC gain apply status from 0x%02X", GX8002_REG_DMIC_GAIN);
+        return 0;
+    }
+
+    if (status != 0 && status != 1)
+    {
+        LOG_WRN("DMIC gain status 0xAC unexpected value 0x%02x (FAE expects 0 or 1)", status);
+    }
+
+    if (status != 1)
+    {
+        for (int waited = 0; waited < GX8002_DMIC_GAIN_STATUS_POLL_TOTAL_MS; waited += GX8002_DMIC_GAIN_STATUS_POLL_STEP_MS)
+        {
+            k_sleep(K_MSEC(GX8002_DMIC_GAIN_STATUS_POLL_STEP_MS));
+
+            if (!mos_gx8002_iic_read_data(MOS_GX_CMD_ADDR, GX8002_REG_DMIC_GAIN, &status))
+            {
+                LOG_ERR("Failed to read DMIC gain apply status from 0x%02X (poll)", GX8002_REG_DMIC_GAIN);
+                return 0;
+            }
+
+            if (status == 1)
+            {
+                break;
+            }
+
+            if (status != 0 && status != 1)
+            {
+                LOG_WRN("DMIC gain status 0xAC unexpected value 0x%02x (FAE expects 0 or 1)", status);
+            }
+        }
+    }
+
+    if (apply_status != NULL)
+    {
+        *apply_status = status;
+    }
+
+    LOG_INF("GX8002 DMIC gain set: gain=%u status=%u (%s)", gain, status,
+            status == 1 ? "ok" : "fail_or_pending");
+    return 1;
+}
+
 uint8_t mos_gx8002_is_i2s_enabled(void)
 {
     return gx8002_i2s_enabled ? 1 : 0;

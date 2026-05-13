@@ -11,7 +11,7 @@
  * @return 1 on success, 0 on failure
  *
  * This function performs the complete OTA update process:
- * 1. Check current firmware version
+ * 1. Best-effort read current firmware version for logging
  * 2. Reset chip
  * 3. Handshake
  * 4. Download boot stage1
@@ -19,7 +19,8 @@
  * 6. Download flash image
  *
  * Note: firmware_data and firmware_len are required parameters.
- * Available firmware versions: v09, v10 (defined in gx8002_firmware_data.h)
+ * The current built-in firmware is wrapped by gx8002_firmware_current.h.
+ * When this API is invoked, it always attempts to program the bundled image.
  */
 uint8_t gx8002_fw_update(const uint8_t *firmware_data, uint32_t firmware_len);
 
