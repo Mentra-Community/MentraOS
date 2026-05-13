@@ -310,13 +310,13 @@ class MantleManager {
   private async setupSubscriptions() {
     useGlassesStore.subscribe(
       getGlasesInfoPartial,
-      (state: Partial<GlassesStatus>, previousState: Partial<GlassesStatus>) => {
-        const statusObj: Partial<GlassesStatus> = {}
+      (state: Record<string, any>, previousState: Record<string, any>) => {
+        const statusObj: Record<string, any> = {}
 
         for (const key in state) {
-          const k = key as keyof GlassesStatus
+          const k = key as keyof typeof state
           if (state[k] !== previousState[k]) {
-            statusObj[k] = state[k] as any
+            statusObj[k] = state[k]
           }
         }
         restComms.updateGlassesState(statusObj)

@@ -55,10 +55,15 @@ export type LogEvent = {
   message: string
 }
 
-export type WifiStatus = {
-  connected: boolean
-  ssid: string
-  localIp: string
+export type WifiStatus =
+  | {state: "unknown"}
+  | {state: "disconnected"}
+  | {state: "connected"; ssid: string; localIp: string}
+
+export type ConnectedWifiStatus = Extract<WifiStatus, {state: "connected"}>
+
+export function isConnectedWifiStatus(status: WifiStatus): status is ConnectedWifiStatus {
+  return status.state === "connected"
 }
 
 export type WifiStatusChangeEvent = WifiStatus & {
@@ -403,9 +408,7 @@ export interface GlassesStatus {
   style: string
   color: string
   // wifi info
-  wifiConnected: boolean
-  wifiSsid: string
-  wifiLocalIp: string
+  wifi: WifiStatus
   // battery info
   batteryLevel: number
   charging: boolean

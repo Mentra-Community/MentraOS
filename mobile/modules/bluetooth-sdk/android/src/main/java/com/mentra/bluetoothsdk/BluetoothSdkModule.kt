@@ -180,7 +180,10 @@ class CoreModule : Module() {
 
         // MARK: - Observable Store Functions
 
-        Function("getGlassesStatus") { sdk?.getGlassesStatus()?.toMap() ?: GlassesStore.store.getCategory("glasses") }
+        Function("getGlassesStatus") {
+            sdk?.getGlassesStatus()?.toMap()
+                    ?: MentraGlassesStatus.fromMap(GlassesStore.store.getCategory("glasses")).toMap()
+        }
 
         Function("getCoreStatus") {
             sdk?.getBluetoothStatus()?.toMap() ?: GlassesStore.store.getCategory(ObservableStore.CORE_CATEGORY)

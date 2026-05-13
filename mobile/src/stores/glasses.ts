@@ -1,4 +1,4 @@
-import {GlassesStatus, OtaProgress, OtaStatus, OtaUpdateInfo} from "@mentra/bluetooth-sdk"
+import {GlassesStatus, OtaProgress, OtaStatus, OtaUpdateInfo, WifiStatus} from "@mentra/bluetooth-sdk"
 import {create} from "zustand"
 import {subscribeWithSelector} from "zustand/middleware"
 
@@ -10,7 +10,10 @@ export function isGlassesLinkLayerBusy(connectionState: string | undefined): boo
 
 interface GlassesState extends GlassesStatus {
   wifiStatusKnown: boolean
-  setGlassesInfo: (info: Partial<GlassesStatus>) => void
+  wifiConnected: boolean
+  wifiSsid: string
+  wifiLocalIp: string
+  setGlassesInfo: (info: GlassesInfoUpdate) => void
   setBatteryInfo: (batteryLevel: number, charging: boolean, caseBatteryLevel: number, caseCharging: boolean) => void
   setWifiInfo: (connected: boolean, ssid: string) => void
   setHotspotInfo: (enabled: boolean, ssid: string, password: string, ip: string) => void
@@ -26,15 +29,51 @@ interface GlassesState extends GlassesStatus {
   mtkUpdatedThisSession: boolean
 }
 
-export const getGlasesInfoPartial = (state: GlassesStatus) => {
+type LegacyWifiFields = {
+  wifiConnected?: boolean
+  wifiSsid?: string
+  wifiLocalIp?: string
+}
+
+type GlassesInfoUpdate = Partial<GlassesStatus> & LegacyWifiFields
+
+function wifiFromLegacyFields(info: LegacyWifiFields): WifiStatus | null {
+  if (info.wifiConnected === true) {
+    const ssid = info.wifiSsid?.trim()
+    const localIp = info.wifiLocalIp?.trim()
+    return ssid && localIp ? {state: "connected", ssid, localIp} : {state: "unknown"}
+  }
+  if (info.wifiConnected === false) {
+    return {state: "disconnected"}
+  }
+  return null
+}
+
+function derivedWifiFields(wifi: WifiStatus): LegacyWifiFields {
+  if (wifi.state === "connected") {
+    return {
+      wifiConnected: true,
+      wifiSsid: wifi.ssid,
+      wifiLocalIp: wifi.localIp,
+    }
+  }
+  return {
+    wifiConnected: false,
+    wifiSsid: "",
+    wifiLocalIp: "",
+  }
+}
+
+export const getGlasesInfoPartial = (state: GlassesStatus | GlassesStore) => {
+  const wifi = state.wifi
   return {
     batteryLevel: state.batteryLevel,
     charging: state.charging,
     caseBatteryLevel: state.caseBatteryLevel,
     caseCharging: state.caseCharging,
     connected: state.connected,
-    wifiConnected: state.wifiConnected,
-    wifiSsid: state.wifiSsid,
+    wifiConnected: wifi.state === "connected",
+    wifiSsid: wifi.state === "connected" ? wifi.ssid : "",
     deviceModel: state.deviceModel,
     // Cloud GlassesInfo uses modelName, map from deviceModel so the cloud
     // knows which device is connected when it receives connection state updates
@@ -45,6 +84,9 @@ export const getGlasesInfoPartial = (state: GlassesStatus) => {
 interface GlassesStore extends GlassesStatus {
   mtkUpdatedThisSession: boolean
   wifiStatusKnown: boolean
+  wifiConnected: boolean
+  wifiSsid: string
+  wifiLocalIp: string
   otaStatus: OtaStatus | null
 }
 
@@ -56,6 +98,7 @@ const initialState: GlassesStore = {
   connectionState: "disconnected",
   btcConnected: false,
   signalStrength: -1,
+  signalStrengthUpdatedAt: 0,
   // device info
   deviceModel: "",
   androidVersion: "",
@@ -73,6 +116,7 @@ const initialState: GlassesStore = {
   mtkFwVersion: "",
   besFwVersion: "",
   // wifi info
+  wifi: {state: "disconnected"},
   wifiConnected: false,
   wifiSsid: "",
   wifiLocalIp: "",
@@ -109,13 +153,17 @@ export const useGlassesStore = create<GlassesState>()(
 
     setGlassesInfo: (info) =>
       set((state) => {
+        const {wifiConnected, wifiSsid, wifiLocalIp, ...sdkInfo} = info
+        const wifiUpdate = info.wifi ?? wifiFromLegacyFields({wifiConnected, wifiSsid, wifiLocalIp})
         const hasWifiInfoUpdate =
+          Object.prototype.hasOwnProperty.call(info, "wifi") ||
           Object.prototype.hasOwnProperty.call(info, "wifiConnected") ||
           Object.prototype.hasOwnProperty.call(info, "wifiSsid") ||
           Object.prototype.hasOwnProperty.call(info, "wifiLocalIp")
         const next = {
           ...state,
-          ...info,
+          ...sdkInfo,
+          ...(wifiUpdate ? {wifi: wifiUpdate, ...derivedWifiFields(wifiUpdate)} : {}),
           ...(hasWifiInfoUpdate ? {wifiStatusKnown: true} : {}),
         }
         if (next.connected === false) {
@@ -134,8 +182,10 @@ export const useGlassesStore = create<GlassesState>()(
 
     setWifiInfo: (connected, ssid) =>
       set({
+        wifi: connected ? {state: "unknown"} : {state: "disconnected"},
         wifiConnected: connected,
         wifiSsid: ssid,
+        wifiLocalIp: "",
         wifiStatusKnown: true,
       }),
 
@@ -193,9 +243,9 @@ export const useGlassesStore = create<GlassesState>()(
   })),
 )
 
-export const waitForGlassesState = <K extends keyof GlassesStatus>(
+export const waitForGlassesState = <K extends keyof GlassesState>(
   key: K,
-  predicate: (value: GlassesStatus[K]) => boolean,
+  predicate: (value: GlassesState[K]) => boolean,
   timeoutMs = 1000,
 ): Promise<boolean> => {
   return new Promise((resolve) => {

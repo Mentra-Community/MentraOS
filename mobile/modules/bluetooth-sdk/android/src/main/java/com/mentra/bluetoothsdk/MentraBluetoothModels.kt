@@ -169,9 +169,7 @@ data class MentraGlassesStatus(
             "serialNumber" to serialNumber,
             "style" to style,
             "color" to color,
-            "wifiConnected" to wifi.connected,
-            "wifiSsid" to wifi.ssid,
-            "wifiLocalIp" to wifi.localIp,
+            "wifi" to wifi.toMap(),
             "batteryLevel" to batteryLevel,
             "charging" to charging,
             "caseBatteryLevel" to caseBatteryLevel,
@@ -456,9 +454,7 @@ data class MentraGlassesStatusUpdate(
             putIfNotNull("style", style)
             putIfNotNull("color", color)
             wifi?.let {
-                put("wifiConnected", it.connected)
-                put("wifiSsid", it.ssid)
-                put("wifiLocalIp", it.localIp)
+                put("wifi", it.toMap())
             }
             putIfNotNull("batteryLevel", batteryLevel)
             putIfNotNull("charging", charging)
@@ -506,7 +502,7 @@ data class MentraGlassesStatusUpdate(
                 style = optionalStringValue(values, "style"),
                 color = optionalStringValue(values, "color"),
                 wifi =
-                    if (hasAnyKey(values, "wifiConnected", "wifiSsid", "wifiLocalIp")) {
+                    if (hasAnyKey(values, "wifi", "wifiConnected", "wifiSsid", "wifiLocalIp")) {
                         MentraWifiStatus.fromMap(values)
                     } else {
                         null
@@ -989,28 +985,74 @@ data class MentraBatteryStatusEvent(
     val values: Map<String, Any>,
 )
 
-data class MentraWifiStatus(
-    val connected: Boolean,
-    val ssid: String,
-    val localIp: String,
-) {
+sealed interface MentraWifiStatus {
+    val state: String
+
     fun toMap(): Map<String, Any> =
-        mapOf(
-            "connected" to connected,
-            "ssid" to ssid,
-            "localIp" to localIp,
-        )
+        when (this) {
+            is Connected ->
+                mapOf(
+                    "state" to state,
+                    "ssid" to ssid,
+                    "localIp" to localIp,
+                )
+            Disconnected -> mapOf("state" to state)
+            Unknown -> mapOf("state" to state)
+        }
 
     fun toEventMap(): Map<String, Any> =
         toMap() + mapOf("type" to "wifi_status_change")
 
+    object Unknown : MentraWifiStatus {
+        override val state: String = "unknown"
+    }
+
+    object Disconnected : MentraWifiStatus {
+        override val state: String = "disconnected"
+    }
+
+    data class Connected(
+        val ssid: String,
+        val localIp: String,
+    ) : MentraWifiStatus {
+        override val state: String = "connected"
+    }
+
     companion object {
         @JvmStatic
-        fun fromMap(values: Map<String, Any>): MentraWifiStatus =
-            MentraWifiStatus(
-                connected = boolValue(values, "connected") ?: boolValue(values, "wifiConnected") ?: false,
-                ssid = stringValue(values, "ssid", "wifiSsid") ?: "",
-                localIp = stringValue(values, "localIp", "local_ip", "wifiLocalIp") ?: "",
+        fun fromMap(values: Map<String, Any>): MentraWifiStatus {
+            val wifiValues = (values["wifi"] as? Map<*, *>)?.stringKeyedMap() ?: values
+            return when (stringValue(wifiValues, "state", "wifiState")?.lowercase()) {
+                "connected" -> connectedFrom(wifiValues)
+                "disconnected" -> Disconnected
+                "unknown" -> Unknown
+                else -> {
+                    when (boolValue(wifiValues, "connected") ?: boolValue(wifiValues, "wifiConnected")) {
+                        true -> connectedFrom(wifiValues)
+                        false -> Disconnected
+                        null -> Unknown
+                    }
+                }
+            }
+        }
+
+        @JvmStatic
+        fun fromRaw(connected: Boolean, ssid: String?, localIp: String?): MentraWifiStatus {
+            if (!connected) return Disconnected
+            val nonEmptySsid = ssid?.trim()?.takeIf { it.isNotEmpty() }
+            val nonEmptyLocalIp = localIp?.trim()?.takeIf { it.isNotEmpty() }
+            return if (nonEmptySsid != null && nonEmptyLocalIp != null) {
+                Connected(nonEmptySsid, nonEmptyLocalIp)
+            } else {
+                Unknown
+            }
+        }
+
+        private fun connectedFrom(values: Map<String, Any>): MentraWifiStatus =
+            fromRaw(
+                connected = true,
+                ssid = stringValue(values, "ssid", "wifiSsid"),
+                localIp = stringValue(values, "localIp", "local_ip", "wifiLocalIp"),
             )
     }
 }
@@ -1019,11 +1061,8 @@ data class MentraWifiStatusEvent(
     val status: MentraWifiStatus,
 ) {
     constructor(values: Map<String, Any>) : this(MentraWifiStatus.fromMap(values))
-    constructor(connected: Boolean, ssid: String, localIp: String) : this(MentraWifiStatus(connected, ssid, localIp))
+    constructor(connected: Boolean, ssid: String?, localIp: String?) : this(MentraWifiStatus.fromRaw(connected, ssid, localIp))
 
-    val connected: Boolean get() = status.connected
-    val ssid: String get() = status.ssid
-    val localIp: String get() = status.localIp
     val values: Map<String, Any> get() = status.toEventMap()
 }
 
@@ -1179,6 +1218,13 @@ private fun hasAnyKey(
     values: Map<String, Any>,
     vararg keys: String,
 ): Boolean = keys.any(values::containsKey)
+
+private fun Map<*, *>.stringKeyedMap(): Map<String, Any> =
+    entries.mapNotNull { (key, value) ->
+        val stringKey = key as? String ?: return@mapNotNull null
+        val anyValue = value ?: return@mapNotNull null
+        stringKey to anyValue
+    }.toMap()
 
 private fun optionalNumberValue(
     values: Map<String, Any>,

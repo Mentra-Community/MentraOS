@@ -2,7 +2,7 @@ import {AppletInterface} from "@/../../cloud/packages/types/src"
 import axios, {AxiosInstance, AxiosRequestConfig} from "axios"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
-import CoreModule, {GlassesStatus, PhotoResponseEvent} from "@mentra/bluetooth-sdk"
+import CoreModule, {PhotoResponseEvent} from "@mentra/bluetooth-sdk"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {useConnectionStore} from "@/stores/connection"
 import {WebSocketStatus} from "@/services/ws-types"
@@ -313,7 +313,7 @@ class RestComms {
     return res.map((response) => response.data)
   }
 
-  public updateGlassesState(state: Partial<GlassesStatus>): AsyncResult<void, Error> {
+  public updateGlassesState(state: Record<string, any>): AsyncResult<void, Error> {
     const config: RequestConfig = {
       method: "POST",
       endpoint: "/api/client/device/state",

@@ -245,8 +245,8 @@ class Bridge {
     static func sendWifiStatusChange(connected: Bool, ssid: String?, localIp: String?) {
         let status = MentraWifiStatus(
             connected: connected,
-            ssid: ssid ?? "",
-            localIp: localIp ?? ""
+            ssid: ssid,
+            localIp: localIp
         )
         Bridge.sendTypedMessage("wifi_status_change", body: status.values)
     }

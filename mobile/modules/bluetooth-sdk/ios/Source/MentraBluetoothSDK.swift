@@ -45,6 +45,17 @@ private func optionalStringValue(_ values: [String: Any], _ keys: String...) -> 
     hasAnyKey(values, keys) ? (stringValue(values, keys) ?? "") : nil
 }
 
+private func nonEmptyStringValue(_ values: [String: Any], _ keys: String...) -> String? {
+    for key in keys {
+        guard let value = values[key] as? String else { continue }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            return value
+        }
+    }
+    return nil
+}
+
 private func optionalIntValue(_ values: [String: Any], _ keys: String...) -> Int? {
     guard hasAnyKey(values, keys) else { return nil }
     for key in keys {
@@ -263,11 +274,7 @@ public struct MentraGlassesStatus: CustomStringConvertible {
     }
 
     public func withWifi(_ wifi: MentraWifiStatus) -> MentraGlassesStatus {
-        applying(MentraGlassesStatusUpdate(values: [
-            "wifiConnected": wifi.connected,
-            "wifiSsid": wifi.ssid,
-            "wifiLocalIp": wifi.localIp,
-        ]))
+        applying(MentraGlassesStatusUpdate(values: wifi.storeValues))
     }
 
     public func withHotspot(enabled: Bool, ssid: String, password: String, gatewayIp: String) -> MentraGlassesStatus {
@@ -322,6 +329,7 @@ public struct MentraGlassesStatus: CustomStringConvertible {
     public var style: String { stringValue(values, "style") ?? "" }
     public var color: String { stringValue(values, "color") ?? "" }
     public var wifi: MentraWifiStatus { MentraWifiStatus(values: values) }
+    public var dictionary: [String: Any] { Self.dictionary(from: values) }
     public var batteryLevel: Int { intValue(values["batteryLevel"]) ?? -1 }
     public var charging: Bool { boolValue(values, "charging") ?? false }
     public var caseBatteryLevel: Int { intValue(values["caseBatteryLevel"]) ?? -1 }
@@ -342,6 +350,26 @@ public struct MentraGlassesStatus: CustomStringConvertible {
 
     public var description: String {
         values.description
+    }
+
+    static func dictionary(from values: [String: Any]) -> [String: Any] {
+        var dictionary = values
+        dictionary["wifi"] = MentraWifiStatus(values: values).values
+        dictionary.removeValue(forKey: "wifiConnected")
+        dictionary.removeValue(forKey: "wifiSsid")
+        dictionary.removeValue(forKey: "wifiLocalIp")
+        return dictionary
+    }
+
+    static func updateDictionary(from values: [String: Any]) -> [String: Any] {
+        var dictionary = values
+        if hasAnyKey(values, "wifi", "wifiConnected", "wifiSsid", "wifiLocalIp") {
+            dictionary["wifi"] = MentraWifiStatus(values: values).values
+            dictionary.removeValue(forKey: "wifiConnected")
+            dictionary.removeValue(forKey: "wifiSsid")
+            dictionary.removeValue(forKey: "wifiLocalIp")
+        }
+        return dictionary
     }
 }
 
@@ -465,8 +493,9 @@ public struct MentraGlassesStatusUpdate: CustomStringConvertible {
     public var style: String? { optionalStringValue(values, "style") }
     public var color: String? { optionalStringValue(values, "color") }
     public var wifi: MentraWifiStatus? {
-        hasAnyKey(values, "wifiConnected", "wifiSsid", "wifiLocalIp") ? MentraWifiStatus(values: values) : nil
+        hasAnyKey(values, "wifi", "wifiConnected", "wifiSsid", "wifiLocalIp") ? MentraWifiStatus(values: values) : nil
     }
+    public var dictionary: [String: Any] { MentraGlassesStatus.updateDictionary(from: values) }
     public var batteryLevel: Int? { optionalIntValue(values, "batteryLevel") }
     public var charging: Bool? { optionalBoolValue(values, "charging") }
     public var caseBatteryLevel: Int? { optionalIntValue(values, "caseBatteryLevel") }
@@ -999,33 +1028,133 @@ public struct MentraTouchEvent: CustomStringConvertible {
     }
 }
 
-public struct MentraWifiStatus: CustomStringConvertible {
-    public let connected: Bool
-    public let ssid: String
-    public let localIp: String
+public enum MentraWifiStatus: CustomStringConvertible, Equatable {
+    public enum State: String {
+        case unknown
+        case disconnected
+        case connected
+    }
 
-    public init(connected: Bool, ssid: String, localIp: String) {
-        self.connected = connected
-        self.ssid = ssid
-        self.localIp = localIp
+    case unknown
+    case disconnected
+    case connected(ssid: String, localIp: String)
+
+    public init(connected: Bool, ssid: String?, localIp: String?) {
+        if connected {
+            guard
+                let ssid = ssid?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !ssid.isEmpty,
+                let localIp = localIp?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !localIp.isEmpty
+            else {
+                self = .unknown
+                return
+            }
+            self = .connected(ssid: ssid, localIp: localIp)
+        } else {
+            self = .disconnected
+        }
     }
 
     public init(values: [String: Any]) {
-        self.connected = boolValue(values, "connected") ?? boolValue(values, "wifiConnected") ?? false
-        self.ssid = stringValue(values, "ssid", "wifiSsid") ?? ""
-        self.localIp = stringValue(values, "localIp", "local_ip", "wifiLocalIp") ?? ""
+        if let nested = values["wifi"] as? [String: Any] {
+            self = MentraWifiStatus(values: nested)
+            return
+        }
+
+        if let state = stringValue(values, "state", "wifiState")?.lowercased() {
+            switch state {
+            case State.connected.rawValue:
+                self = MentraWifiStatus(
+                    connected: true,
+                    ssid: nonEmptyStringValue(values, "ssid", "wifiSsid"),
+                    localIp: nonEmptyStringValue(values, "localIp", "local_ip", "wifiLocalIp")
+                )
+            case State.disconnected.rawValue:
+                self = .disconnected
+            default:
+                self = .unknown
+            }
+            return
+        }
+
+        guard hasAnyKey(values, "connected", "wifiConnected", "ssid", "wifiSsid", "localIp", "local_ip", "wifiLocalIp") else {
+            self = .unknown
+            return
+        }
+
+        self = MentraWifiStatus(
+            connected: boolValue(values, "connected") ?? boolValue(values, "wifiConnected") ?? false,
+            ssid: nonEmptyStringValue(values, "ssid", "wifiSsid"),
+            localIp: nonEmptyStringValue(values, "localIp", "local_ip", "wifiLocalIp")
+        )
+    }
+
+    public var state: State {
+        switch self {
+        case .unknown:
+            .unknown
+        case .disconnected:
+            .disconnected
+        case .connected:
+            .connected
+        }
+    }
+
+    public var isConnected: Bool {
+        if case .connected = self {
+            return true
+        }
+        return false
     }
 
     public var values: [String: Any] {
-        [
-            "connected": connected,
-            "ssid": ssid,
-            "localIp": localIp,
-        ]
+        switch self {
+        case .unknown:
+            ["state": State.unknown.rawValue]
+        case .disconnected:
+            ["state": State.disconnected.rawValue]
+        case let .connected(ssid, localIp):
+            [
+                "state": State.connected.rawValue,
+                "ssid": ssid,
+                "localIp": localIp,
+            ]
+        }
+    }
+
+    var storeValues: [String: Any] {
+        switch self {
+        case .unknown:
+            [
+                "wifiConnected": false,
+                "wifiSsid": "",
+                "wifiLocalIp": "",
+            ]
+        case .disconnected:
+            [
+                "wifiConnected": false,
+                "wifiSsid": "",
+                "wifiLocalIp": "",
+            ]
+        case let .connected(ssid, localIp):
+            [
+                "wifiConnected": true,
+                "wifiSsid": ssid,
+                "wifiLocalIp": localIp,
+            ]
+        }
     }
 
     public var description: String {
-        "MentraWifiStatus(connected: \(connected), ssid: \(ssid.isEmpty ? "none" : ssid), localIp: \(localIp.isEmpty ? "none" : localIp))"
+        switch self {
+        case .unknown:
+            "MentraWifiStatus(unknown)"
+        case .disconnected:
+            "MentraWifiStatus(disconnected)"
+        case let .connected(ssid, localIp):
+            "MentraWifiStatus(connected: \(ssid), localIp: \(localIp))"
+        }
     }
 }
 
@@ -1036,24 +1165,12 @@ public struct MentraWifiStatusEvent: CustomStringConvertible {
         self.status = status
     }
 
-    public init(connected: Bool, ssid: String, localIp: String) {
+    public init(connected: Bool, ssid: String?, localIp: String?) {
         self.status = MentraWifiStatus(connected: connected, ssid: ssid, localIp: localIp)
     }
 
     public init(values: [String: Any]) {
         self.status = MentraWifiStatus(values: values)
-    }
-
-    public var connected: Bool {
-        status.connected
-    }
-
-    public var ssid: String {
-        status.ssid
-    }
-
-    public var localIp: String {
-        status.localIp
     }
 
     public var values: [String: Any] {

@@ -16,6 +16,7 @@ import {
   RgbLedColor,
   StreamKeepAliveRequest,
   StreamStartRequest,
+  WifiStatus,
 } from "./BluetoothSdk.types"
 
 type GlassesListener = (changed: Partial<GlassesStatus>) => void
@@ -144,9 +145,72 @@ const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
   cancelExistingConnectionAttempt: true,
 }
 
+type NativeWifiFields = {
+  wifi?: WifiStatus
+  wifiConnected?: boolean
+  wifiSsid?: string
+  wifiLocalIp?: string
+}
+
+function wifiStatusFromNative(values: NativeWifiFields): WifiStatus {
+  if (values.wifi) {
+    return values.wifi
+  }
+  if (values.wifiConnected === true) {
+    const ssid = values.wifiSsid?.trim()
+    const localIp = values.wifiLocalIp?.trim()
+    return ssid && localIp ? {state: "connected", ssid, localIp} : {state: "unknown"}
+  }
+  if (values.wifiConnected === false) {
+    return {state: "disconnected"}
+  }
+  return {state: "unknown"}
+}
+
+function normalizeGlassesStatus<T extends NativeWifiFields>(values: T): Omit<T, keyof NativeWifiFields> & {wifi: WifiStatus} {
+  const {wifi, wifiConnected, wifiSsid, wifiLocalIp, ...rest} = values
+  return {
+    ...rest,
+    wifi: wifiStatusFromNative({wifi, wifiConnected, wifiSsid, wifiLocalIp}),
+  }
+}
+
+function denormalizeGlassesUpdate(values: Partial<GlassesStatus>): Record<string, any> {
+  const {wifi, ...rest} = values
+  if (!wifi) {
+    return rest
+  }
+  if (wifi.state === "connected") {
+    return {
+      ...rest,
+      wifiConnected: true,
+      wifiSsid: wifi.ssid,
+      wifiLocalIp: wifi.localIp,
+    }
+  }
+  if (wifi.state === "unknown") {
+    return rest
+  }
+  return {
+    ...rest,
+    wifiConnected: false,
+    wifiSsid: "",
+    wifiLocalIp: "",
+  }
+}
+
 // Add helper methods to the module
+const nativeGetGlassesStatus = NativeCoreModule.getGlassesStatus.bind(NativeCoreModule)
+NativeCoreModule.getGlassesStatus = function () {
+  const result = nativeGetGlassesStatus() as unknown
+  if (result && typeof (result as Promise<unknown>).then === "function") {
+    return (result as Promise<NativeWifiFields & Record<string, any>>).then(normalizeGlassesStatus) as unknown as GlassesStatus
+  }
+  return normalizeGlassesStatus(result as NativeWifiFields & Record<string, any>) as GlassesStatus
+}
+
 NativeCoreModule.updateGlasses = function (values: Partial<GlassesStatus>) {
-  return this.update("glasses", values)
+  return this.update("glasses", denormalizeGlassesUpdate(values))
 }
 
 NativeCoreModule.updateCore = function (values: Record<string, any>) {
@@ -154,7 +218,9 @@ NativeCoreModule.updateCore = function (values: Record<string, any>) {
 }
 
 NativeCoreModule.onGlassesStatus = function (callback: GlassesListener) {
-  const subscription = this.addListener("glasses_status", callback)
+  const subscription = this.addListener("glasses_status", (changed) => {
+    callback(normalizeGlassesStatus(changed as NativeWifiFields & Record<string, any>))
+  })
   return () => subscription.remove()
 }
 
