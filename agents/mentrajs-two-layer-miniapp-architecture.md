@@ -87,7 +87,7 @@ billion-user scale.
 │  │ (always alive)  │              │ (always alive)  │           │
 │  │  __dispatch     │              │  __dispatch     │           │
 │  │  polyfills      │              │  polyfills      │           │
-│  │  @mentra/sdk    │              │  @mentra/sdk    │           │
+│  │  /background    │              │  /background    │           │
 │  │  miniapp BG JS  │              │  miniapp BG JS  │           │
 │  │     │           │              └─────────────────┘           │
 │  │     ↕ ui bus    │                                            │
@@ -239,7 +239,7 @@ When `spawn(id, polyfillPath, miniappPath)` is called:
 5. Wrap eval in `evalCatching`. Run the polyfill bundle (`startup.js`).
    Installs `setTimeout`/`fetch`/`WebSocket`/`localStorage`/etc on
    `globalThis`.
-6. Inject the SDK shim (`@mentra/sdk` typed wrappers around
+6. Inject the SDK shim (`@mentra/miniapp/background` typed wrappers around
    `__dispatch` exposing the existing `session.*` API surface).
 7. Run the miniapp's `background.js`. Top-level code executes in
    the JSContext but **does not** receive `session` — it can set up
@@ -495,7 +495,7 @@ export interface Channels {
 `src/background.ts` — uses the existing SDK API:
 
 ```typescript
-import type {MiniappSession} from "@mentra/sdk"
+import type {MiniappSession} from "@mentra/miniapp/background"
 import type {Note} from "./shared/channels"
 
 let notes: Note[] = []
@@ -536,8 +536,8 @@ export async function init(session: MiniappSession) {
 }
 ```
 
-`src/ui/index.tsx` — uses the existing React helpers from
-`@mentra/miniapp/react`, adapted to talk to background via the bus:
+`src/ui/index.tsx` — uses React helpers from `@mentra/miniapp/ui`,
+adapted to talk to background via the bus:
 
 ```tsx
 import type {Note} from "../shared/channels"
@@ -645,7 +645,7 @@ unchanged.**
 | `mobile/modules/miniapp/src/transport/postmessage.ts` | 95 | Hard-coded to `window.ReactNativeWebView`. Repurpose as `WebViewToJsContextTransport` for the settings WebView. |
 | `mobile/modules/island/src/services/WebviewBridge.ts` | 50 | Replaced by two sibling routers: `MentraJSRouter` (JSContext fan-out) + `MentraUIRouter` (settings WebView ↔ bound JSContext). |
 | `mobile/modules/miniapp/src/globals.ts` | 62 | `window.MentraOS` is WebView-presentational. Keep file for WebView; JSContext gets a different injected globals object. |
-| `mobile/modules/miniapp/src/index.ts` | 108 | Splits into two: `@mentra/sdk` (background API) and `@mentra/miniapp/ui` (settings WebView API). |
+| `mobile/modules/miniapp/src/index.ts` | 108 | Splits into two sub-paths via `package.json` `exports`: `@mentra/miniapp/background` (session API for the JSContext layer) and `@mentra/miniapp/ui` (WebView-side `mentra` global + React hooks). Bare `@mentra/miniapp` import retained as a deprecated alias to `/ui` for back-compat with any leftover single-bundle code, removed after one release cycle. |
 | `sdk/example-miniapp/` | (entire React SPA) | Restructure into two-layer: logic into `src/background.ts`, UI into `src/ui/`. Existing React code is reusable as the basis for the UI half. |
 
 ### Net-new code
@@ -1634,21 +1634,28 @@ These come back when we ship the store; not now.
 **Goal:** Developers can `bun create mentra-miniapp` and get a
 two-layer template.
 
-- **Resolve `@mentra/sdk` naming collision FIRST.** The name
-  `@mentra/sdk` is already used in cloud (per
-  `cloud/websites/console/src/pages/EditMiniApp.tsx:25`: *"Locally
-  defined until PreviewImage/PhotoOrientation are published to
-  @mentra/sdk@latest"*). Three options:
-  (a) rename our cloud-app-SDK to `@mentra/cloud-sdk`,
-  (b) name our background package `@mentra/miniapp` (breaks today's
-      package — 1.0 cutover), or
-  (c) introduce `@mentra/miniapp/background` and `@mentra/miniapp/ui`
-      sub-paths, no name change.
-  **Recommendation: (c)** — minimal disruption, today's
-  `@mentra/miniapp` keeps shipping for the existing cloud miniapps
-  in production, new code uses sub-paths.
-- Split `mobile/modules/miniapp/src/index.ts` (108 LoC) by sub-path
-  (no rename of the npm package).
+- **Package naming: sub-paths under `@mentra/miniapp` (decided).**
+  - `@mentra/miniapp/background` — session API (`glasses`, `phone`,
+    `input`, `display`, `transcription`, `mic`, `speaker`, `camera`,
+    `dashboard`, `led`, `location`, `imu`, `permissions`, `storage`,
+    `stream`, `system`, `ui`, `diagnostics`).
+  - `@mentra/miniapp/ui` — WebView-side `mentra` global, React
+    hooks, `MentraProvider`, settings-page components.
+  - Bare `@mentra/miniapp` import retained for one release cycle
+    as a deprecated alias to `/ui` (the historical surface), then
+    removed.
+  - The unrelated cloud-side `@mentra/sdk` package keeps its name —
+    no collision because we don't take that name.
+  - Pattern matches Firebase, tRPC, Radix UI, Sentry: import path
+    encodes the layer, so wrong-layer imports are caught at code
+    review and bundlers tree-shake by sub-path boundary.
+  - Set up via `package.json` `exports` field with separate
+    `types` entries per sub-path so TypeScript can attach
+    different ambient types per layer (e.g. `mentra: ...` global
+    only declared in the `/ui` entry).
+- Split `mobile/modules/miniapp/src/index.ts` (108 LoC) into
+  `src/background/index.ts` and `src/ui/index.ts`. No npm-package
+  rename.
 - Update `sdk/create-mentra-miniapp/template/`: today scaffolds a
   Bun-server-based React SPA (`server.ts`, `index.html`, `src/`).
   Rewrite to scaffold `src/background.ts`, `src/ui/index.html`,
