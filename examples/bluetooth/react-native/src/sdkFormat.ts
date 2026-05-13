@@ -128,7 +128,7 @@ export function wifiLabel(status: Partial<GlassesStatus>) {
 
 export function wifiSubLabel(status: Partial<GlassesStatus>) {
   if (status.wifi?.state === 'connected') {
-    return status.wifi.localIp;
+    return status.wifi.localIp ?? 'connected';
   }
   return 'not connected';
 }

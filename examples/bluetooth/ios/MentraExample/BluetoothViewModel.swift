@@ -1029,7 +1029,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    private func applyWifiStatus(_ event: MentraWifiStatusEvent) {
+    private func applyWifiStatus(_ event: WifiStatusEvent) {
         glassesValues = glassesValues?.withWifi(event.status) ?? mentraBluetoothSdk.glassesStatus
         let label: String
         switch event.status {
@@ -1037,8 +1037,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             label = ssid
         case .disconnected:
             label = "disconnected"
-        case .unknown:
-            label = "unknown"
         }
         append(tag: "STORE", text: "Wi-Fi \(label)")
     }
@@ -1444,7 +1442,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             )
             append(tag: "STORE", text: "battery \(intValue(values, "level") ?? -1)%")
         case "hotspot_status_change":
-            let hotspot = MentraHotspotStatus(values: values)
+            let hotspot = MentraHotspotStatus(values: values) ?? .disabled
             let enabled = enabledHotspotStatus(hotspot) != nil
             hotspotEnabled = enabled
             glassesValues = glassesValues?.withHotspot(hotspot)
@@ -1707,12 +1705,12 @@ func wifiLabel(_ status: MentraGlassesStatus?) -> String {
         return ssid
     case .disconnected:
         return isGlassesConnected(status) ? "Not connected" : "Unknown"
-    case .unknown, .none:
+    case .none:
         return "Unknown"
     }
 }
 
-func connectedWifiStatus(_ status: MentraGlassesStatus?) -> (ssid: String, localIp: String)? {
+func connectedWifiStatus(_ status: MentraGlassesStatus?) -> (ssid: String, localIp: String?)? {
     guard case let .connected(ssid, localIp) = status?.wifi else {
         return nil
     }
@@ -1842,8 +1840,6 @@ func summarize(_ status: MentraGlassesStatusUpdate) -> String {
             return "wifi: \(ssid)"
         case .disconnected:
             return "wifi: disconnected"
-        case .unknown:
-            return "wifi: unknown"
         }
     }
     let hotspotSummary: String? = status.hotspot.map { hotspot in
@@ -1852,8 +1848,6 @@ func summarize(_ status: MentraGlassesStatusUpdate) -> String {
             return "hotspot: \(ssid) · \(localIp)"
         case .disabled:
             return "hotspot: disabled"
-        case .unknown:
-            return "hotspot: unknown"
         }
     }
     let signalStrengthUpdatedSummary = status.signalStrengthUpdatedAt.map { timestamp in

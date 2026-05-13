@@ -9,6 +9,11 @@ target 'MentraExample' do
   use_frameworks!
 
   if local_sdk_path && !local_sdk_path.empty?
+    if ENV['MENTRA_BLUETOOTH_SDK_INCLUDE_EXPO_ADAPTER'] == '1'
+      sdk_package_root = File.expand_path('..', local_sdk_path)
+      expo_modules_core_path = File.join(sdk_package_root, 'node_modules', 'expo-modules-core')
+      pod 'ExpoModulesCore', :path => expo_modules_core_path
+    end
     pod 'MentraBluetoothSDK', :path => local_sdk_path
   else
     pod 'MentraBluetoothSDK', mentra_sdk_version

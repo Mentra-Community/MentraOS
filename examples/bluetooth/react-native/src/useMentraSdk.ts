@@ -84,8 +84,6 @@ function wifiStatusFromEvent(event: WifiStatusChangeEvent): WifiStatus {
       return {state: 'connected', ssid: event.ssid, localIp: event.localIp};
     case 'disconnected':
       return {state: 'disconnected'};
-    default:
-      return {state: 'unknown'};
   }
 }
 
@@ -213,13 +211,13 @@ declare const process: {
 
 export function useMentraSdk(): MentraSdkModel {
   const [glassesStatus, setGlassesStatus] = useState<Partial<GlassesStatus>>(
-    () => BluetoothSdk.getGlassesStatus(),
+    {},
   );
   const [bluetoothStatus, setBluetoothStatus] = useState<
     Partial<CoreStatus> & Record<string, unknown>
-  >(() => BluetoothSdk.getCoreStatus() as Partial<CoreStatus> & Record<string, unknown>);
+  >({});
   const [defaultDevice, setDefaultDevice] = useState<MentraDevice | null>(
-    () => defaultDeviceFromStatus(BluetoothSdk.getCoreStatus() as unknown as Record<string, unknown>),
+    null,
   );
   const [selectedDiscoveredDevice, setSelectedDiscoveredDevice] =
     useState<MentraDevice | null>(null);
@@ -256,9 +254,7 @@ export function useMentraSdk(): MentraSdkModel {
   const [streamRequested, setStreamRequested] = useState(false);
   const [streamPreviewReady, setStreamPreviewReady] = useState(false);
   const [streamStatus, setStreamStatus] = useState('Ready to stream WebRTC to phone');
-  const [hotspotEnabled, setHotspotEnabled] = useState(
-    () => enabledHotspotStatus(BluetoothSdk.getGlassesStatus()) !== null,
-  );
+  const [hotspotEnabled, setHotspotEnabled] = useState(false);
   const [micRecording, setMicRecording] = useState(false);
   const [micPlaying, setMicPlaying] = useState(false);
   const [micElapsedSeconds, setMicElapsedSeconds] = useState(0);
@@ -276,9 +272,7 @@ export function useMentraSdk(): MentraSdkModel {
   const [galleryServerStatus, setGalleryServerStatus] = useState(
     'Gallery server: enable hotspot to check',
   );
-  const [galleryModeAuto, setGalleryModeAuto] = useState(
-    () => galleryModeAutoFrom(BluetoothSdk.getCoreStatus()),
-  );
+  const [galleryModeAuto, setGalleryModeAuto] = useState(false);
   const [ledColor, setLedColor] = useState<LedColor>('green');
   const [ledMode, setLedMode] = useState<LedMode>('Off');
   const [rawJsonExpanded, setRawJsonExpanded] = useState(false);
@@ -306,6 +300,30 @@ export function useMentraSdk(): MentraSdkModel {
   const defaultDeviceName = stringValue(bluetoothStatus, 'device_name');
   const defaultDeviceAddress = stringValue(bluetoothStatus, 'device_address');
   const glassesConnected = isGlassesConnected(glassesStatus);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void Promise.all([BluetoothSdk.getGlassesStatus(), BluetoothSdk.getCoreStatus()])
+      .then(([initialGlassesStatus, initialCoreStatus]) => {
+        if (cancelled) {
+          return;
+        }
+        const coreStatus = initialCoreStatus as Partial<CoreStatus> & Record<string, unknown>;
+        setGlassesStatus(initialGlassesStatus);
+        setBluetoothStatus(coreStatus);
+        setHotspotEnabled(enabledHotspotStatus(initialGlassesStatus) !== null);
+        setGalleryModeAuto(galleryModeAutoFrom(coreStatus));
+        setDefaultDevice(defaultDeviceFromStatus(coreStatus));
+      })
+      .catch((error) => {
+        addEvent('TX', `initial SDK status load failed: ${formatError(error)}`);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!selectedDiscoveredDevice) {
@@ -419,21 +437,17 @@ export function useMentraSdk(): MentraSdkModel {
       BluetoothSdk.addListener('hotspot_status_change', (payload: HotspotStatusChangeEvent) => {
         const hotspot = hotspotStatusFromEvent(payload);
         const enabled = hotspot.state === 'enabled';
-        const nextStatus = {
-          ...BluetoothSdk.getGlassesStatus(),
-          hotspot,
-        };
         setHotspotEnabled(enabled);
         setGalleryServerReachable(null);
-        setGalleryServerStatus(
-          enabled
-            ? `Gallery server: ${galleryServerUrl(nextStatus, enabled)}`
-            : 'Gallery server: hotspot off',
-        );
-        setGlassesStatus((current) => ({
-          ...current,
-          hotspot,
-        }));
+        setGlassesStatus((current) => {
+          const nextStatus = {...current, hotspot};
+          setGalleryServerStatus(
+            enabled
+              ? `Gallery server: ${galleryServerUrl(nextStatus, enabled)}`
+              : 'Gallery server: hotspot off',
+          );
+          return nextStatus;
+        });
         addEvent('STORE', `hotspot ${summarizeMap(payload)}`);
       }),
       BluetoothSdk.addListener('hotspot_error', (payload) => {

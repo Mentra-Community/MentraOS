@@ -231,7 +231,7 @@ struct SystemScreen: View {
         if let currentWifi = connectedWifiStatus(model.glassesValues) {
             NetworkRowV(
                 name: currentWifi.ssid,
-                sub: currentWifi.localIp,
+                sub: currentWifi.localIp ?? "connected",
                 subColor: AppColor.greenAccent,
                 check: true,
                 trailingTitle: "Forget",

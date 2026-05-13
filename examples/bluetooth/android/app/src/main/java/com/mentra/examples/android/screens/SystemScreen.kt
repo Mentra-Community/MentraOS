@@ -124,7 +124,7 @@ fun SystemScreen(controller: MentraExampleController) {
             currentWifi?.let { wifi ->
                 NetworkRow(
                     wifiLabel(state.glassesStatus),
-                    wifi.localIp,
+                    wifi.localIp ?: "connected",
                     AppColor.greenAccent,
                     check = true,
                     actionLabel = "Forget",
