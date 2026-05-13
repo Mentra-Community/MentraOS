@@ -146,12 +146,9 @@ const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
   cancelExistingConnectionAttempt: true,
 }
 
-type NativeHotspotFields = {
-  hotspot?: HotspotStatus
-}
-
-type NativeGlassesStatusFields = NativeHotspotFields & {
+type NativeGlassesStatusFields = {
   wifi?: WifiStatus
+  hotspot?: HotspotStatus
 }
 
 function adaptGlassesStatusFromNative<T extends NativeGlassesStatusFields>(
