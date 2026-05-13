@@ -575,7 +575,8 @@ int icm45608_init(void)
     }
     else
     {
-        LOG_WRN("ICM-45608 unexpected WHO_AM_I=0x%02x, expected 0x%02x", device_id, ICM45608_WHO_AM_I_VAL);
+        LOG_ERR("ICM-45608 unexpected WHO_AM_I=0x%02x, expected 0x%02x", device_id, ICM45608_WHO_AM_I_VAL);
+        return -ENODEV;
     }
 
     icm45608_initialized = true;
@@ -596,11 +597,15 @@ int icm45608_read_device_id(uint8_t *device_id)
         ICM45608_I2C_ADDR_1,
     };
     int last_ret = -ENODEV;
+    bool saw_unexpected_id = false;
 
     if (device_id == NULL)
     {
         return -EINVAL;
     }
+
+    *device_id = 0;
+    icm45608_i2c_addr_valid = false;
 
     last_ret = icm45608_configure_i2c();
     if (last_ret != 0)
@@ -628,13 +633,27 @@ int icm45608_read_device_id(uint8_t *device_id)
         last_ret = icm45608_try_read_id_at(addrs[i], device_id);
         if (last_ret == 0)
         {
-            icm45608_i2c_addr = addrs[i];
-            icm45608_i2c_addr_valid = (*device_id == ICM45608_WHO_AM_I_VAL);
-            LOG_INF("ICM-45608 WHO_AM_I read at 0x%02x: 0x%02x", icm45608_i2c_addr, *device_id);
-            return 0;
+            if (*device_id == ICM45608_WHO_AM_I_VAL)
+            {
+                icm45608_i2c_addr = addrs[i];
+                icm45608_i2c_addr_valid = true;
+                LOG_INF("ICM-45608 WHO_AM_I read at 0x%02x: 0x%02x", icm45608_i2c_addr, *device_id);
+                return 0;
+            }
+
+            saw_unexpected_id = true;
+            last_ret = -ENODEV;
+            LOG_WRN("Unexpected device at 0x%02x: WHO_AM_I=0x%02x, continue scan", addrs[i], *device_id);
+            continue;
         }
 
         LOG_DBG("ICM-45608 WHO_AM_I read failed at 0x%02x: %d", addrs[i], last_ret);
+    }
+
+    if (saw_unexpected_id)
+    {
+        *device_id = 0;
+        return -ENODEV;
     }
 
     return last_ret;

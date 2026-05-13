@@ -14,6 +14,21 @@ K_MUTEX_DEFINE(mos_imu_lock);
 static bool mos_imu_initialized;
 static bool mos_imu_sleeping = true;
 
+static void mos_imu_rollback_icm_to_sleep(const char *context)
+{
+    int sleep_ret = icm45608_sleep();
+
+    if (sleep_ret != 0)
+    {
+        mos_imu_sleeping = false;
+        LOG_ERR("ICM-45608 rollback to sleep failed after %s: %d", context, sleep_ret);
+    }
+    else
+    {
+        mos_imu_sleeping = true;
+    }
+}
+
 int mos_imu_init(void)
 {
     int ret;
@@ -32,6 +47,7 @@ int mos_imu_init(void)
     if (ret != 0)
     {
         LOG_ERR("ICT1531x init failed: %d", ret);
+        mos_imu_rollback_icm_to_sleep("ICT1531x init error");
         k_mutex_unlock(&mos_imu_lock);
         return ret;
     }
@@ -107,6 +123,7 @@ int mos_imu_wake(void)
     if (ret != 0)
     {
         LOG_ERR("ICT1531x wake init failed: %d", ret);
+        mos_imu_rollback_icm_to_sleep("ICT1531x wake init error");
         k_mutex_unlock(&mos_imu_lock);
         return ret;
     }

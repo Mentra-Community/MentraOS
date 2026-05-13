@@ -12,10 +12,20 @@
 
 LOG_MODULE_REGISTER(shell_imu, LOG_LEVEL_INF);
 
+static void continuous_read_work_handler(struct k_work *work);
+
 static bool continuous_read_active;
 static uint32_t continuous_read_interval_ms = 1000;
 static uint32_t continuous_read_count;
-static struct k_work_delayable continuous_read_work;
+K_WORK_DELAYABLE_DEFINE(continuous_read_work, continuous_read_work_handler);
+
+static void continuous_read_stop_sync(void)
+{
+    struct k_work_sync sync;
+
+    continuous_read_active = false;
+    (void)k_work_cancel_delayable_sync(&continuous_read_work, &sync);
+}
 
 static int parse_u8(const char *text, uint8_t *value)
 {
@@ -242,7 +252,6 @@ static int cmd_imu_start(const struct shell *shell, size_t argc, char **argv)
         }
     }
 
-    k_work_init_delayable(&continuous_read_work, continuous_read_work_handler);
     continuous_read_interval_ms = interval_ms;
     continuous_read_count = 0;
     continuous_read_active = true;
@@ -264,8 +273,7 @@ static int cmd_imu_stop(const struct shell *shell, size_t argc, char **argv)
         return 0;
     }
 
-    continuous_read_active = false;
-    (void)k_work_cancel_delayable(&continuous_read_work);
+    continuous_read_stop_sync();
     shell_print(shell, "ICM-45608 periodic reading stopped, total=%u", continuous_read_count);
     return 0;
 }
@@ -279,8 +287,7 @@ static int cmd_imu_sleep(const struct shell *shell, size_t argc, char **argv)
 
     if (continuous_read_active)
     {
-        continuous_read_active = false;
-        (void)k_work_cancel_delayable(&continuous_read_work);
+        continuous_read_stop_sync();
     }
 
     ret = mos_imu_sleep();

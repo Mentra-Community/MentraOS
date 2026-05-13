@@ -647,17 +647,8 @@ static void mos_touch_app_sleep_work_handler(struct k_work *work)
 
     LOG_INF("Powering down remaining peripherals before System OFF");
 
-    /* Match protobuf MicState OFF: stop nRF I2S, sync VAD handler, I2C-disable chip I2S, then cut VAD power. */
-    vad_interrupt_handler_set_enabled(false);
-    (void)mos_gx8002_vad_int_disable();
-    {
-        int stop_ret = gx8002_i2s_stop();
-        if (stop_ret == 0 || stop_ret == -EALREADY)
-        {
-            vad_interrupt_handler_notify_i2s_stopped();
-        }
-    }
-    (void)mos_gx8002_disable_i2s();
+    /* Reuse the shared MicState OFF local shutdown path, then cut VAD power for System OFF. */
+    (void)vad_interrupt_handler_apply_mic_off();
     (void)mos_gx8002_power_control(false);
 
     mic_power_control(false);
