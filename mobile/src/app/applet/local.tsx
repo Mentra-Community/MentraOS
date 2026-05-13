@@ -56,39 +56,47 @@ export default function LocalMiniAppPage() {
     if (devUrl) {
       // Parse the pre-fetched manifest from route params so mountDev
       // doesn't need a second network round-trip to get permissions.
-      let parsedManifest: {permissions?: Array<{type: string}>; hardwareRequirements?: Array<{type: string; level: string}>} | undefined
+      let parsedManifest:
+        | {permissions?: Array<{type: string}>; hardwareRequirements?: Array<{type: string; level: string}>}
+        | undefined
       if (manifestJson) {
-        try { parsedManifest = JSON.parse(manifestJson) } catch { /* ignore */ }
+        try {
+          parsedManifest = JSON.parse(manifestJson)
+        } catch {
+          /* ignore */
+        }
       }
       // Reachability was pre-flighted by the entry point. Mount live.
       // setForeground is called synchronously before the async mount so a
       // re-render during the manifest fetch can't set cancelled=true and
       // prevent the miniapp from ever becoming visible.
-      miniappHost.mountDev(packageName, devUrl, {
-        developerMode: true,
-        appName,
-        iconUrl,
-        manifest: parsedManifest,
-      }).then(() => {
-        const portNum = resolveDevPort(devPort, packageName)
-        if (portNum !== null) {
-          devServerBridge.connect(packageName, devUrl, portNum)
-          const sidecarBase = buildSidecarBaseUrl(devUrl, portNum)
-          if (sidecarBase) {
-            const versionOverride = `dev-${Date.now()}`
-            void appRegistry
-              .installFromUrl(`${sidecarBase}/__mentra_dev/bundle.zip`, {versionOverride})
-              .then((res) => {
-                if (res.is_error()) {
-                  console.warn(`Dev miniapp snapshot failed for ${packageName}:`, res.error)
-                } else {
-                  appRegistry.gcDevVersions(packageName, 2)
-                }
-              })
+      miniappHost
+        .mountDev(packageName, devUrl, {
+          developerMode: true,
+          appName,
+          iconUrl,
+          manifest: parsedManifest,
+        })
+        .then(() => {
+          const portNum = resolveDevPort(devPort, packageName)
+          if (portNum !== null) {
+            devServerBridge.connect(packageName, devUrl, portNum)
+            const sidecarBase = buildSidecarBaseUrl(devUrl, portNum)
+            if (sidecarBase) {
+              const versionOverride = `dev-${Date.now()}`
+              void appRegistry
+                .installFromUrl(`${sidecarBase}/__mentra_dev/bundle.zip`, {versionOverride})
+                .then((res) => {
+                  if (res.is_error()) {
+                    console.warn(`Dev miniapp snapshot failed for ${packageName}:`, res.error)
+                  } else {
+                    appRegistry.gcDevVersions(packageName, 2)
+                  }
+                })
+            }
           }
-        }
-        storage.save(`${packageName}_dev_last_reachable`, Date.now())
-      })
+          storage.save(`${packageName}_dev_last_reachable`, Date.now())
+        })
       miniappHost.setForeground(packageName, {onClose: handleClose, onBack: handleBack})
       // Mirror to the apps store so Compositor's CapsuleMenu/forceShow + swipe
       // overlay activate (the press path sets foreground via the store; the
@@ -101,9 +109,10 @@ export default function LocalMiniAppPage() {
       // SUBSCRIBE / one-shot calls against declared permissions. The
       // mountDev path fetches this from the live server; the installed
       // path reads from the unzipped bundle.
-      const manifest = appRegistry.getMiniappManifest(packageName, version) as
-        | {permissions?: Array<{type: string; required?: boolean; description?: string}>; hardwareRequirements?: Array<{type: string; level: string; description?: string}>}
-        | null
+      const manifest = appRegistry.getMiniappManifest(packageName, version) as {
+        permissions?: Array<{type: string; required?: boolean; description?: string}>
+        hardwareRequirements?: Array<{type: string; level: string; description?: string}>
+      } | null
       miniappHost.mount(packageName, bundleUri, {
         developerMode: false,
         appName,

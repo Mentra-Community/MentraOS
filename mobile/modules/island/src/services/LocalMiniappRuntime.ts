@@ -91,9 +91,7 @@ const ALL_CANONICAL_PERMISSIONS = ["location", "microphone", "camera", "notifica
  * Build the {location, microphone, camera, notifications, calendar} record the
  * SDK's session.permissions module reads from. Missing types are false.
  */
-function computeDeclaredPermissionRecord(
-  manifest: InstalledMiniappManifest | undefined,
-): Record<string, boolean> {
+function computeDeclaredPermissionRecord(manifest: InstalledMiniappManifest | undefined): Record<string, boolean> {
   const record: Record<string, boolean> = {}
   for (const k of ALL_CANONICAL_PERMISSIONS) record[k] = false
   for (const perm of manifest?.permissions ?? []) {
@@ -413,10 +411,7 @@ class LocalMiniappRuntime {
    * Used when the manifest is fetched asynchronously (dev miniapps) after the
    * miniapp has already CONNECTed — preserves existing subscriptions.
    */
-  public setInstalledManifest(
-    packageName: string,
-    installedManifest: InstalledMiniappManifest,
-  ): void {
+  public setInstalledManifest(packageName: string, installedManifest: InstalledMiniappManifest): void {
     const app = this.connectedApps.get(packageName)
     if (!app) return
     app.installedManifest = installedManifest
@@ -685,7 +680,7 @@ class LocalMiniappRuntime {
   private handleConnect(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
     console.log(`${LOG_TAG}: CONNECT from ${packageName}`)
 
-    const userId = (getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken)) || ""
+    const userId = getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken) || ""
 
     // Register if not already
     const existing = this.connectedApps.get(packageName)
@@ -698,9 +693,7 @@ class LocalMiniappRuntime {
     existing.lastPongAt = Date.now()
 
     // Read current glasses capabilities from the settings store
-    const defaultWearable = getRuntimeHooks().settings?.getSetting<DeviceTypes>(
-      ISLAND_SETTINGS_KEYS.defaultWearable,
-    )
+    const defaultWearable = getRuntimeHooks().settings?.getSetting<DeviceTypes>(ISLAND_SETTINGS_KEYS.defaultWearable)
     const capabilities = getModelCapabilities(defaultWearable || DeviceTypes.NONE)
 
     // Build the declared-permission record for the SDK's session.permissions
@@ -727,7 +720,9 @@ class LocalMiniappRuntime {
     const app = this.connectedApps.get(packageName)
     if (!app) return
 
-    const rawStreams = (payload.subscriptions ?? payload.streams) as (string | {stream: string; rate?: string})[] | undefined
+    const rawStreams = (payload.subscriptions ?? payload.streams) as
+      | (string | {stream: string; rate?: string})[]
+      | undefined
     // Normalize: objects like {stream: "location_stream", rate: "realtime"} → extract stream name
     // "location_stream" is the rate-bearing alias for "location_update"
     let requestedLocationRate: string | null = null
@@ -769,12 +764,7 @@ class LocalMiniappRuntime {
     for (const stream of streams) {
       const required = permissionForStream(stream)
       if (required && !declaredTypes.has(required)) {
-        logPermissionNotDeclared(
-          packageName,
-          required,
-          `to subscribe to "${stream}"`,
-          `{"type": "${required}"}`,
-        )
+        logPermissionNotDeclared(packageName, required, `to subscribe to "${stream}"`, `{"type": "${required}"}`)
         this.sendResult(packageName, requestId, false, undefined, {
           code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
           message: `${required} permission not declared in miniapp.json (required for "${stream}"). Add {"type": "${required}"} to the "permissions" array.`,
@@ -1172,8 +1162,7 @@ class LocalMiniappRuntime {
         }
       : undefined
     const missedRaw = Number(payload.missedTurnRerouteMeters)
-    const missedTurnRerouteMeters =
-      Number.isFinite(missedRaw) && missedRaw > 0 ? missedRaw : undefined
+    const missedTurnRerouteMeters = Number.isFinite(missedRaw) && missedRaw > 0 ? missedRaw : undefined
 
     const navigation = getRuntimeHooks().navigation
     if (!navigation) {
@@ -1245,7 +1234,10 @@ class LocalMiniappRuntime {
     }
 
     try {
-      const result = await navigation.start({lat, lng}, {simulate, speedMultiplier, stops, mode, avoid, missedTurnRerouteMeters})
+      const result = await navigation.start(
+        {lat, lng},
+        {simulate, speedMultiplier, stops, mode, avoid, missedTurnRerouteMeters},
+      )
       if (result.ok) {
         this.activeNavApps.add(packageName)
       }
@@ -1401,8 +1393,7 @@ class LocalMiniappRuntime {
   // ---------------------------------------------------------------------------
 
   private getStorageKeyPrefix(packageName: string): string {
-    const userId =
-      getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken) || "anonymous"
+    const userId = getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken) || "anonymous"
     return `mentraos_localstorage_${userId}_${packageName}_`
   }
 
@@ -1522,11 +1513,7 @@ class LocalMiniappRuntime {
       const roiStr = (payload.roiPosition as string) ?? "center"
       const numericRoi = ROI_MAP[roiStr] ?? 0
       console.log(`${LOG_TAG}: camera_fov_set fov=${fov} roi=${roiStr} (${numericRoi})`)
-      getRuntimeHooks().settings?.setSetting(
-        ISLAND_SETTINGS_KEYS.cameraFov,
-        {fov, roi_position: numericRoi},
-        false,
-      )
+      getRuntimeHooks().settings?.setSetting(ISLAND_SETTINGS_KEYS.cameraFov, {fov, roi_position: numericRoi}, false)
       this.sendResult(packageName, requestId, true)
     } catch (err) {
       console.error(`${LOG_TAG}: camera_fov error:`, err)

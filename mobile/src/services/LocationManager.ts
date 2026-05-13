@@ -52,9 +52,7 @@ class LocationManager {
   /**
    * Get a fresh GPS fix. Slower than getLastKnownPosition() but current.
    */
-  public async getCurrentPosition(
-    accuracy: Location.Accuracy = Location.Accuracy.Balanced,
-  ): Promise<Coords | null> {
+  public async getCurrentPosition(accuracy: Location.Accuracy = Location.Accuracy.Balanced): Promise<Coords | null> {
     if (!(await this.ensurePermission())) {
       console.warn(`${LOG_TAG}: permission denied`)
       return null

@@ -27,7 +27,6 @@ import {SaferAreaProvider, useSaferAreaInsets} from "@/contexts/SaferAreaContext
 import CoreStatusBar from "@/components/dev/CoreStatusBar"
 import {useShallow} from "zustand/shallow"
 import {useNavigationStore} from "@/stores/navigation"
-import { getAnimation, JsStack, woltScreenOptions } from "@/components/navigation/JsStack"
 // JsStack imports commented out - were used for Android-specific navigation (currently disabled)
 // import {getAnimation, JsStack, woltScreenOptions} from "@/components/navigation/JsStack"
 

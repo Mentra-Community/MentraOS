@@ -1,4 +1,4 @@
-import {describe, expect, test, beforeEach, mock} from "bun:test"
+import {describe, expect, test} from "bun:test"
 import {MockTransport} from "./mock"
 import {parseEnvelope, serializeEnvelope, makeRequestId} from "../envelope"
 import {MiniappRequestType, MiniappResponseType} from "../protocol"

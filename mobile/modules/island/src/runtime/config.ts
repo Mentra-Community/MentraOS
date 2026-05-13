@@ -109,12 +109,7 @@ export type NavOffRouteEvent = {kind: "off_route"; offRouteDistanceMeters: numbe
 export type NavReroutingEvent = {kind: "rerouting"}
 export type NavArrivedEvent = {kind: "arrived"}
 export type NavErrorEvent = {kind: "error"; message: string}
-export type NavUpdate =
-  | NavManeuverEvent
-  | NavOffRouteEvent
-  | NavReroutingEvent
-  | NavArrivedEvent
-  | NavErrorEvent
+export type NavUpdate = NavManeuverEvent | NavOffRouteEvent | NavReroutingEvent | NavArrivedEvent | NavErrorEvent
 
 export type NavLocation = {
   lat: number

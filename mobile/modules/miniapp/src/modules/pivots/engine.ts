@@ -55,12 +55,7 @@ const APPROACH_DEFAULTS_M: Record<TravelMode, number> = {
  * SDK-internal maneuver categories that don't constitute a real
  * "turn" the UI should announce. Filtered out at pivot construction.
  */
-const NON_TURN_MANEUVERS = new Set([
-  "STRAIGHT",
-  "NAME_CHANGE",
-  "DEPART",
-  "ARRIVE",
-])
+const NON_TURN_MANEUVERS = new Set(["STRAIGHT", "NAME_CHANGE", "DEPART", "ARRIVE"])
 
 /**
  * Maximum routeIndex delta when matching a geometry-derived pivot
@@ -408,8 +403,7 @@ export class PivotEngine {
 function resolveOptions(mode: TravelMode, opts: PivotOptions | undefined): ResolvedOptions {
   return {
     radiusMeters: opts?.radiusMeters ?? RADIUS_DEFAULTS_M[mode] ?? RADIUS_DEFAULTS_M.walking,
-    approachThresholdMeters:
-      opts?.approachThresholdMeters ?? APPROACH_DEFAULTS_M[mode] ?? APPROACH_DEFAULTS_M.walking,
+    approachThresholdMeters: opts?.approachThresholdMeters ?? APPROACH_DEFAULTS_M[mode] ?? APPROACH_DEFAULTS_M.walking,
   }
 }
 

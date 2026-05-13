@@ -268,7 +268,9 @@ class LocalDisplayManager {
         this.currentDisplay &&
         this.currentDisplay.packageName === this.backgroundLock.packageName
       if (bgHoldsAndDisplays) {
-        console.log(`${LOG_TAG}: DROP core ${packageName} — bg lock (${this.backgroundLock?.packageName}) is on glasses`)
+        console.log(
+          `${LOG_TAG}: DROP core ${packageName} — bg lock (${this.backgroundLock?.packageName}) is on glasses`,
+        )
         return
       }
 
@@ -285,9 +287,7 @@ class LocalDisplayManager {
     // Non-core: this is a background app.
     if (this.backgroundLock && this.backgroundLock.packageName !== packageName) {
       // Another bg app already holds the lock — drop.
-      console.log(
-        `${LOG_TAG}: DROP non-core ${packageName} — bg lock held by ${this.backgroundLock.packageName}`,
-      )
+      console.log(`${LOG_TAG}: DROP non-core ${packageName} — bg lock held by ${this.backgroundLock.packageName}`)
       return
     }
 

@@ -14,12 +14,7 @@
 
 import {EventEmitter} from "eventemitter3"
 
-import {
-  makeRequestId,
-  MiniappEnvelope,
-  parseEnvelope,
-  serializeEnvelope,
-} from "./envelope"
+import {makeRequestId, MiniappEnvelope, parseEnvelope, serializeEnvelope} from "./envelope"
 import {getMentraOSGlobals, MiniappColorScheme} from "./globals"
 import {MiniappErrorCode, MiniappRequestType, MiniappResponseType} from "./protocol"
 import {createTransport, CreateTransportOptions} from "./transport/auto"
@@ -482,13 +477,7 @@ export class MiniappSession {
       }
 
       case MiniappResponseType.SPEAKER_STATE: {
-        const state = payload.state as
-          | "idle"
-          | "loading"
-          | "playing"
-          | "stopped"
-          | "error"
-          | undefined
+        const state = payload.state as "idle" | "loading" | "playing" | "stopped" | "error" | undefined
         if (!state) return
         const event = {
           state,

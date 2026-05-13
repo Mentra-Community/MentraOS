@@ -206,9 +206,7 @@ export class EventManager {
 
   private sendSubscriptionUpdate(): void {
     const subscriptions = Array.from(this.refCounts.keys()).map((stream) =>
-      stream === MiniappStreamType.LOCATION_UPDATE
-        ? {stream: "location_stream", rate: "realtime"}
-        : stream,
+      stream === MiniappStreamType.LOCATION_UPDATE ? {stream: "location_stream", rate: "realtime"} : stream,
     )
     this.session.sendOneShot({
       type: MiniappRequestType.SUBSCRIBE,

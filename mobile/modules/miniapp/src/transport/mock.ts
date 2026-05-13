@@ -165,7 +165,7 @@ export class MockTransport implements Transport {
 
   private log(...args: unknown[]): void {
     if (this.silent) return
-    // eslint-disable-next-line no-console
+
     console.log(LOG_PREFIX, ...args)
   }
 }

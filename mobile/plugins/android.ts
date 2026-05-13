@@ -349,9 +349,7 @@ function withAndroidManifestModifications(config: any) {
       manifest.permission = []
     }
     const customPermName = `${pkg}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`
-    const customPermExists = manifest.permission.find(
-      (p: any) => p.$["android:name"] === customPermName,
-    )
+    const customPermExists = manifest.permission.find((p: any) => p.$["android:name"] === customPermName)
     if (!customPermExists) {
       manifest.permission.push({
         $: {
@@ -376,9 +374,7 @@ function withAndroidManifestModifications(config: any) {
       if (!app["meta-data"]) {
         app["meta-data"] = []
       }
-      const existing = app["meta-data"].find(
-        (m: any) => m.$["android:name"] === "com.google.android.geo.API_KEY",
-      )
+      const existing = app["meta-data"].find((m: any) => m.$["android:name"] === "com.google.android.geo.API_KEY")
       if (existing) {
         existing.$["android:value"] = navApiKey
       } else {
@@ -559,7 +555,7 @@ function withGradlePropertiesModifications(config: any) {
  * Expo prebuild doesn't generate this on its own.
  */
 function withSettingsGradleModifications(config: any) {
-  return withSettingsGradle(config, config => {
+  return withSettingsGradle(config, (config) => {
     let settingsGradle = config.modResults.contents
 
     if (!settingsGradle.includes("include ':lc3Lib'")) {

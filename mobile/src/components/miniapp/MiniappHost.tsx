@@ -7,17 +7,16 @@ import LeftEdgeBackSwipe from "@/components/miniapp/LeftEdgeBackSwipe"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useStressTestStore} from "@/stores/stressTest"
-import {devServerBridge} from "@mentra/island"
-import {localDisplayManager} from "@mentra/island"
-import {localMiniappRuntime} from "@mentra/island"
-import {webviewBridge as miniComms, miniappRunningRegistry, buildMiniappGlobalsScript} from "@mentra/island"
+import {
+  devServerBridge,
+  localDisplayManager,
+  localMiniappRuntime,
+  webviewBridge as miniComms,
+  miniappRunningRegistry,
+  buildMiniappGlobalsScript,
+} from "@mentra/island"
 
 const BEFORE_EVICT_TIMEOUT_MS = 500
-
-// zIndex covers iOS/web; elevation does the same job on Android, where
-// zIndex alone doesn't always win against native nav layers. Both set to
-// 10 to match Compositor; CapsuleMenu sits one notch higher at 11.
-const hostStackStyle = {zIndex: 10, elevation: 10} as const
 
 // ---------------------------------------------------------------------------
 // Types
@@ -70,11 +69,7 @@ export type MountDevManifest = {
 
 type MiniappHostAPI = {
   mount(packageName: string, bundleUri: string, options?: MiniappMountOptions): void
-  mountDev(
-    packageName: string,
-    devUrl: string,
-    options?: MiniappMountOptions,
-  ): Promise<MountDevManifest | undefined>
+  mountDev(packageName: string, devUrl: string, options?: MiniappMountOptions): Promise<MountDevManifest | undefined>
   unmount(packageName: string): void
   setForeground(packageName: string, callbacks?: {onClose?: () => void; onBack?: () => void}): void
   setBackground(packageName: string): void
@@ -629,13 +624,7 @@ export default function MiniappHost() {
               webviewDebuggingEnabled={__DEV__}
               style={{flex: 1, backgroundColor: theme.colors.background}}
             />
-            {isFg && (
-              <MiniappSplash
-                iconUrl={app.iconUrl}
-                bgColor={theme.colors.background}
-                isLoaded={app.isLoaded}
-              />
-            )}
+            {isFg && <MiniappSplash iconUrl={app.iconUrl} bgColor={theme.colors.background} isLoaded={app.isLoaded} />}
             {isFg && <LeftEdgeBackSwipe packageName={app.packageName} onBack={app.onBack} />}
           </View>
         )
@@ -643,4 +632,3 @@ export default function MiniappHost() {
     </View>
   )
 }
-
