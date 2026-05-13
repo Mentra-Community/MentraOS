@@ -9,7 +9,6 @@ import {
   GlassesMediaVolumeGetResult,
   GlassesMediaVolumeSetResult,
   GlassesStatus,
-  HotspotStatus,
   MentraDevice,
   PhotoCompression,
   PhotoSize,
@@ -17,17 +16,17 @@ import {
   RgbLedColor,
   StreamKeepAliveRequest,
   StreamStartRequest,
-  WifiStatus,
 } from "./BluetoothSdk.types"
 
 type GlassesListener = (changed: Partial<GlassesStatus>) => void
 type CoreStatusListener = (changed: Partial<CoreStatus>) => void
+type MaybePromise<T> = T | Promise<T>
 
 declare class CoreModule extends NativeModule<CoreModuleEvents> {
   // Observable Store Functions (native)
-  getGlassesStatus(): GlassesStatus
-  getCoreStatus(): CoreStatus
-  getDefaultDevice(): MentraDevice | null
+  getGlassesStatus(): Promise<GlassesStatus>
+  getCoreStatus(): Promise<CoreStatus>
+  getDefaultDevice(): Promise<MentraDevice | null>
   update(category: string, values: Record<string, any>): Promise<void>
 
   // Display Commands
@@ -146,33 +145,6 @@ const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
   cancelExistingConnectionAttempt: true,
 }
 
-type NativeGlassesStatusFields = {
-  wifi?: WifiStatus
-  hotspot?: HotspotStatus
-}
-
-function adaptGlassesStatusFromNative<T extends NativeGlassesStatusFields>(
-  values: T,
-): Omit<T, keyof NativeGlassesStatusFields> & {wifi?: WifiStatus; hotspot?: HotspotStatus} {
-  const {wifi, hotspot, ...rest} = values
-  return {
-    ...rest,
-    ...(wifi ? {wifi} : {}),
-    ...(hotspot ? {hotspot} : {}),
-  }
-}
-
-function adaptFullGlassesStatusFromNative<T extends NativeGlassesStatusFields>(
-  values: T,
-): Omit<T, keyof NativeGlassesStatusFields> & {wifi: WifiStatus; hotspot: HotspotStatus} {
-  const adapted = adaptGlassesStatusFromNative(values)
-  return {
-    ...adapted,
-    wifi: adapted.wifi ?? {state: "disconnected"},
-    hotspot: adapted.hotspot ?? {state: "disabled"},
-  }
-}
-
 function adaptGlassesUpdateToNative(values: Partial<GlassesStatus>): Record<string, any> {
   const {wifi, hotspot, ...rest} = values
   let update: Record<string, any> = {...rest}
@@ -212,15 +184,23 @@ function adaptGlassesUpdateToNative(values: Partial<GlassesStatus>): Record<stri
 }
 
 // Add helper methods to the module
-const nativeGetGlassesStatus = NativeCoreModule.getGlassesStatus.bind(NativeCoreModule)
+const nativeGetGlassesStatus = NativeCoreModule.getGlassesStatus.bind(
+  NativeCoreModule,
+) as () => MaybePromise<GlassesStatus>
 NativeCoreModule.getGlassesStatus = function () {
-  const result = nativeGetGlassesStatus() as unknown
-  if (result && typeof (result as Promise<unknown>).then === "function") {
-    return (result as Promise<NativeGlassesStatusFields & Record<string, any>>).then(
-      adaptFullGlassesStatusFromNative,
-    ) as unknown as GlassesStatus
-  }
-  return adaptFullGlassesStatusFromNative(result as NativeGlassesStatusFields & Record<string, any>) as GlassesStatus
+  return Promise.resolve(nativeGetGlassesStatus())
+}
+
+const nativeGetCoreStatus = NativeCoreModule.getCoreStatus.bind(NativeCoreModule) as () => MaybePromise<CoreStatus>
+NativeCoreModule.getCoreStatus = function () {
+  return Promise.resolve(nativeGetCoreStatus())
+}
+
+const nativeGetDefaultDevice = NativeCoreModule.getDefaultDevice.bind(
+  NativeCoreModule,
+) as () => MaybePromise<MentraDevice | null>
+NativeCoreModule.getDefaultDevice = function () {
+  return Promise.resolve(nativeGetDefaultDevice())
 }
 
 NativeCoreModule.updateGlasses = function (values: Partial<GlassesStatus>) {
@@ -232,9 +212,7 @@ NativeCoreModule.updateCore = function (values: Record<string, any>) {
 }
 
 NativeCoreModule.onGlassesStatus = function (callback: GlassesListener) {
-  const subscription = this.addListener("glasses_status", (changed) => {
-    callback(adaptGlassesStatusFromNative(changed as NativeGlassesStatusFields & Record<string, any>))
-  })
+  const subscription = this.addListener("glasses_status", callback)
   return () => subscription.remove()
 }
 
