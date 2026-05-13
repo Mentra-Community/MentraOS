@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet, Image, TextInput, Clipboard } from 'react-native';
+import { View, Text, ScrollView, Pressable, StyleSheet, Image, TextInput, Clipboard, Switch } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Path, Polyline, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
@@ -128,25 +128,28 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
       <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={styles.uploadCard}>
         <View style={styles.cardHead}>
           <Text style={styles.eyebrow}>UPLOAD TO</Text>
-          <Pressable
-            onPress={() => void sdk.setPhotoCloudServerEnabled(!sdk.photoCloudServerEnabled)}
-            style={[styles.toggleChip, sdk.photoCloudServerEnabled && styles.toggleChipActive]}>
-            {({pressed}) => (
-              <Text style={[styles.toggleText, sdk.photoCloudServerEnabled && styles.toggleTextActive, pressed && styles.toggleTextPressed]}>
-                Use cloud server
-              </Text>
-            )}
-          </Pressable>
+          {sdk.photoCloudServerEnabled ? (
+            <Pressable onPress={sdk.testWebhook}>
+              {({pressed}) => (
+                <Text style={[styles.linkRight, { color: colors.greenAccent, opacity: pressed ? 0.6 : 1 }]}>test webhook</Text>
+              )}
+            </Pressable>
+          ) : null}
+        </View>
+        <View style={styles.cloudToggleRow}>
+          <Text style={styles.cloudToggleLabel}>Use cloud server</Text>
+          <Switch
+            ios_backgroundColor="rgba(15,42,29,0.18)"
+            onValueChange={sdk.setPhotoCloudServerEnabled}
+            thumbColor="#fff"
+            trackColor={{ false: 'rgba(15,42,29,0.18)', true: colors.greenAccent }}
+            value={sdk.photoCloudServerEnabled}
+          />
         </View>
         {sdk.photoCloudServerEnabled ? (
           <>
             <View style={styles.cardHead}>
               <Text style={styles.modeHint}>Cloud server receives the JPEG upload.</Text>
-              <Pressable onPress={sdk.testWebhook}>
-                {({pressed}) => (
-                  <Text style={[styles.linkRight, { color: colors.greenAccent, opacity: pressed ? 0.6 : 1 }]}>test webhook</Text>
-                )}
-              </Pressable>
             </View>
             <View style={styles.urlBar}>
               <Text style={styles.method}>POST</Text>
@@ -274,11 +277,8 @@ const styles = StyleSheet.create({
 
   uploadCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 22, paddingVertical: 16, paddingHorizontal: 18, gap: 12, borderWidth: 1, borderColor: colors.borderSoft },
   eyebrow: { color: colors.muted, fontSize: 10, fontWeight: '600', letterSpacing: 1.2 },
-  toggleChip: { borderRadius: 999, borderWidth: 1, borderColor: 'rgba(15,42,29,0.12)', paddingVertical: 6, paddingHorizontal: 10, backgroundColor: 'rgba(255,255,255,0.55)' },
-  toggleChipActive: { backgroundColor: 'rgba(52,199,89,0.16)', borderColor: 'rgba(52,199,89,0.32)' },
-  toggleText: { color: colors.muted, fontSize: 10, fontWeight: '700' },
-  toggleTextActive: { color: colors.greenAccent },
-  toggleTextPressed: { opacity: 0.6 },
+  cloudToggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(15,42,29,0.04)', borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12 },
+  cloudToggleLabel: { color: colors.ink, fontSize: 13, fontWeight: '600' },
   modeHint: { flex: 1, color: colors.muted, fontSize: 11, fontWeight: '500' },
   urlBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(15,42,29,0.04)', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, gap: 10 },
   setupHint: { color: colors.muted, fontSize: 11, fontWeight: '500', lineHeight: 15, backgroundColor: 'rgba(15,42,29,0.04)', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12 },

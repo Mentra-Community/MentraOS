@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet, TextInput, Clipboard } from 'react-native';
+import { View, Text, ScrollView, Pressable, StyleSheet, TextInput, Clipboard, Switch } from 'react-native';
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path, Polyline, Rect } from 'react-native-svg';
@@ -151,15 +151,16 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
       <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={styles.protocolCard}>
         <View style={styles.cardHead}>
           <Text style={styles.eyebrow}>DESTINATION</Text>
-          <Pressable
-            onPress={() => void sdk.setStreamCloudServerEnabled(!sdk.streamCloudServerEnabled)}
-            style={[styles.toggleChip, sdk.streamCloudServerEnabled && styles.toggleChipActive]}>
-            {({pressed}) => (
-              <Text style={[styles.toggleText, sdk.streamCloudServerEnabled && styles.toggleTextActive, pressed && styles.toggleTextPressed]}>
-                Use cloud server
-              </Text>
-            )}
-          </Pressable>
+        </View>
+        <View style={styles.cloudToggleRow}>
+          <Text style={styles.cloudToggleLabel}>Use cloud server</Text>
+          <Switch
+            ios_backgroundColor="rgba(15,42,29,0.18)"
+            onValueChange={sdk.setStreamCloudServerEnabled}
+            thumbColor="#fff"
+            trackColor={{ false: 'rgba(15,42,29,0.18)', true: colors.greenAccent }}
+            value={sdk.streamCloudServerEnabled}
+          />
         </View>
         {sdk.streamCloudServerEnabled ? (
           <>
@@ -356,11 +357,8 @@ const styles = StyleSheet.create({
 
   protocolCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 22, paddingVertical: 14, paddingHorizontal: 14, gap: 12, borderWidth: 1, borderColor: colors.borderSoft },
   eyebrow: { color: colors.muted, fontSize: 10, fontWeight: '600', letterSpacing: 1.2 },
-  toggleChip: { borderRadius: 999, borderWidth: 1, borderColor: 'rgba(15,42,29,0.12)', paddingVertical: 6, paddingHorizontal: 10, backgroundColor: 'rgba(255,255,255,0.55)' },
-  toggleChipActive: { backgroundColor: 'rgba(52,199,89,0.16)', borderColor: 'rgba(52,199,89,0.32)' },
-  toggleText: { color: colors.muted, fontSize: 10, fontWeight: '700' },
-  toggleTextActive: { color: colors.greenAccent },
-  toggleTextPressed: { opacity: 0.6 },
+  cloudToggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'rgba(15,42,29,0.04)', borderRadius: 12, paddingVertical: 8, paddingHorizontal: 12 },
+  cloudToggleLabel: { color: colors.ink, fontSize: 13, fontWeight: '600' },
   tabs: { flexDirection: 'row', gap: 4, backgroundColor: 'rgba(15,42,29,0.05)', borderRadius: 14, padding: 4 },
   protoTab: { flex: 1, paddingVertical: 10, paddingHorizontal: 8, alignItems: 'center', borderRadius: 10 },
   protoTabActive: { backgroundColor: '#fff' },
