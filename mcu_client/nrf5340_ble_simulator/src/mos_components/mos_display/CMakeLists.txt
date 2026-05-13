@@ -7,6 +7,7 @@ target_sources(app PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mos_display.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/mos_display_screen_utils.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mos_display_config.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/mos_display_settings.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/mos_display_caption_throttler.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/mos_display_utf8.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/utils/mos_display_custom_rendering.c

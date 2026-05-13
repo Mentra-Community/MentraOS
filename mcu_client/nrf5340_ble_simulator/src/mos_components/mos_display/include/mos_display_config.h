@@ -81,6 +81,17 @@ const display_config_t* display_get_config(void);
 void display_set_margin_top(uint16_t margin_top);
 
 /**
+ * @brief Compute the top margin for a 1..8 height input using the canonical formula.
+ *        height=8 → top of screen (margin 0); height=1 → bottom (max margin).
+ *        Result is clamped so margin_top + usable_height <= screen height.
+ *        Out-of-range inputs are clamped to [1,8].
+ *        Requires display_config_init() to have run.
+ * @param height Height bucket in [1,8]
+ * @return Computed margin_top in pixels
+ */
+uint16_t display_compute_margin_top_from_height(uint16_t height);
+
+/**
  * @brief Initialize display configuration system and detect active display
  * @return 0 on success, negative error code on failure
  */

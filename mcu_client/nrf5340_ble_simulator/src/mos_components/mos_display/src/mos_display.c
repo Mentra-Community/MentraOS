@@ -15,6 +15,7 @@
 #include "bal_os.h"
 #include "mos_display_caption_throttler.h"
 #include "mos_display_config.h"
+#include "mos_display_settings.h"
 #include "main.h"
 #include "mos_brightness.h"
 #include "mos_display.h"
@@ -435,25 +436,14 @@ static void update_display_height(uint16_t height)
 
     const display_config_t *config = display_get_config();
     display_config_t tmp = *config;
-
-    uint32_t total_available_margin = config->height - config->layout.usable_height;
-
-    /* height 8 = top (zero margin), height 1 = bottom (max margin) */
-    float mt_f = (float)total_available_margin * ((float)(8 - height) / 7.0f);
-    uint32_t mt = (uint32_t)(mt_f + 0.5f);
-
-    if (mt > UINT16_MAX)
-        mt = UINT16_MAX;
-    tmp.layout.margin_top = (uint16_t)mt;
-
-    /* Keep container fully visible: margin_top + usable_height <= screen height */
-    if ((uint32_t)tmp.layout.margin_top + (uint32_t)tmp.layout.usable_height > (uint32_t)tmp.height)
-    {
-        tmp.layout.margin_top = (tmp.height > tmp.layout.usable_height) ? (tmp.height - tmp.layout.usable_height) : 0;
-    }
+    tmp.layout.margin_top = display_compute_margin_top_from_height(height);
 
     display_set_margin_top(tmp.layout.margin_top);
     mos_ui_main_scene_apply_height_config(&g_main_scene, mos_screen_get_root(), &tmp);
+
+    /* Persist the raw 1..8 input so the formula can evolve without orphaning saved values.
+     * Boot replay calls this with the just-loaded value; save_height short-circuits no-ops. */
+    (void)mos_display_settings_save_height((uint8_t)height);
 
     /* lv_obj_set_pos invalidates the container's old/new bbox, but child labels can render
      * past that bbox (multi-line text, descenders), and on a partial-buffer mono panel any
