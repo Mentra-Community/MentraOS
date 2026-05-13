@@ -210,14 +210,32 @@ registers a single Kotlin object exposing
 `__dispatch(iface, method, argsJson)` via Zipline's bridge, and
 calls back into JS via `evaluate("globalThis.__deliver(${json})")`.
 
-**Mandatory microtask discipline.** QuickJS keeps Promise reactions
-on its own pending-jobs queue. Zipline drains it after each call
-into JS, but if a native fetch / crypto / WebSocket resolves a
-Promise from a host callback **outside** a bridge call, the `.then()`
-won't fire until the next bridge call. Every native-resolved Promise
-in `JSCPolyfillBridge.kt` must be wrapped: after resolving, re-enter
-JS to drain pending jobs. ~20 LoC of shared Kotlin helper. iOS-JSC
-drains automatically via the iOS run loop, so this is Android-only.
+**Mandatory microtask discipline (Android only).** QuickJS keeps
+Promise reactions on its own pending-jobs queue. Zipline drains it
+during bridge re-entry but **does not expose `executePendingJobs`
+publicly** (verified against `cashapp/zipline` trunk:
+`QuickJs.kt` exposes only `evaluate`/`compile`/`execute`/`gc`/
+`interruptHandler`/memory props; `JS_ExecutePendingJob` is in the
+vendored C source with no JNI export). Two viable patterns:
+
+- **(preferred) Resolve via `ZiplineService` suspend.** Every native
+  callback that needs to resolve a JS Promise calls back through a
+  Kotlin `suspend` exposed as a `ZiplineService`. Zipline's bridge
+  resumes the awaiting JS continuation and naturally drains pending
+  jobs as part of the resume. This is the supported path; no fork
+  needed.
+- **(fallback) No-op `evaluate("0")` to force a bridge entry** that
+  triggers Zipline's internal drain. Layering violation; works today
+  but could break under future Zipline versions. Only use if the
+  suspend-based path proves unworkable for a specific shim.
+
+Either way, **iOS-JSC drains automatically via the iOS run loop, so
+this is Android-only discipline.** The `JSCPolyfillBridge.kt`
+helpers (fetch, WebSocket, crypto, etc.) are written as suspending
+Kotlin functions on a `ZiplineService` interface; the JS-side
+polyfill calls them via the typed bridge and gets a real `Promise`
+that resolves correctly. **~50 LoC of shared scaffolding** to define
+the `ZiplineService` interface that all polyfill shims share.
 
 **Two engine-conditional polyfill guards** in the shared startup
 bundle (Zipline pre-injects `console.{log,info,warn,error}` and
@@ -256,8 +274,16 @@ first (~3 wks); Android follows (~2-3 wks). One engineer sequential
 ≈ 6 wks; two engineers parallel ≈ ~3 wks calendar.
 
 **Bus factor.** Zipline's maintainer is one engineer at Block. Exit
-ramp if it goes dark: fork QuickJS-NG (~30 KLoC C, MIT) and write
-our own thin Kotlin bridge — bounded ~2 weeks of work.
+ramp if it goes dark: fork the engine (QuickJS-NG, ~62K lines C in
+`quickjs.c` plus ~20K across `libregexp` / `libunicode` / `libbf` /
+`dtoa`, MIT) and write our own JNI bridge providing the surface we
+use (suspending bridge methods + Promise resume + microtask drain).
+**Realistic budget: 4-6 weeks** for parity with what we'd actually
+use — Zipline ships a typed bridge, kotlinx.serialization interop,
+source maps wired to QuickJS bytecode, and a coroutine event loop;
+our minimal replacement skips the typed-bridge code generation but
+must reproduce the suspend resume + drain plumbing. Hot-reload and
+typed-interop niceties are lost on the exit ramp.
 
 ### Memory profile: measured (iOS), estimated (Android)
 
@@ -444,7 +470,7 @@ Cloud server sends "phone_photo_ready" / "phone_stream_status" /
   "phone_managed_stream_status" to mobile via existing cloud socket
   ↓
 MentraJSRouter.handleCloudMessage(msg) (lifted from
-  LocalMiniappRuntime.ts:284-336, 3 inline switch arms)
+  LocalMiniappRuntime.ts:284-365, 3 inline switch arms)
   ↓
 Looks up the pending request in pendingCloudRequests Map (matching
   packageName + requestId)
@@ -622,6 +648,76 @@ What changes: instead of `createTransport()` autodetecting
 `__dispatch` on the global and returns a new `DispatchTransport`.
 Same `MiniappSession` class, same module wrappers, same developer API.
 
+#### Wire format
+
+**`__dispatch` request envelope** (JS calls native):
+```typescript
+type DispatchRequest = {
+  iface: string       // e.g. "display"
+  method: string      // e.g. "showTextWall"
+  args: unknown[]     // method-specific positional args, JSON-serializable
+  reqId?: string      // present for request/response; absent for one-shots
+}
+```
+
+**Native return value** (synchronous from JS perspective):
+- One-shots (`session.sendOneShot`) return immediately with `null`.
+  Native processes asynchronously; errors surface via the
+  `mentrajs_message` event with `iface: "_error"`.
+- Requests (`session.sendRequest`) return a `Promise` resolved when
+  native posts the matching `mentrajs_message` event with the same
+  `reqId`. Resolution payload:
+  ```typescript
+  type DispatchResponse =
+    | { reqId: string; ok: true; result: unknown }
+    | { reqId: string; ok: false; error: DispatchError }
+  ```
+
+**`__deliver` envelope** (native pushes to JS):
+```typescript
+type DeliverEnvelope =
+  | { kind: "init"; sessionId: string }                    // first delivery, post-spawn
+  | { kind: "event"; iface: string; payload: unknown }     // subscribed events
+  | { kind: "response"; reqId: string; ok: boolean; result?: unknown; error?: DispatchError }
+```
+
+`__deliver` is **defined by the polyfill bundle** (`startup.js`).
+The bundle installs `globalThis.__deliver` to dispatch to subscribed
+`session.*` listeners and pending request resolvers. The `init`
+event triggers the SDK shim to construct the actual `MiniappSession`
+object (the `session` is built JS-side from the polyfill bundle's
+factory; native only sends `sessionId`, not a serialized session).
+
+**Error code catalog** — all `DispatchError.code` values:
+```
+PERMISSION_NOT_DECLARED   // missing from miniapp.json permissions[]
+PERMISSION_DENIED         // declared but user grant missing or revoked
+INTERFACE_NOT_FOUND       // unknown iface name
+METHOD_NOT_FOUND          // unknown method on a known iface
+INVALID_ARGS              // arg shape doesn't match method's contract
+NATIVE_THROW              // native handler threw — message includes details
+TIMEOUT                   // request exceeded its timeout (native-side)
+```
+
+`DispatchError` shape: `{ code: string; message?: string; details?: Record<string, unknown> }`.
+
+#### Polyfill bundle entry-point contract
+
+`dist/startup.js` is evaluated as a single string at JS context
+spawn time (step 5 of the spawn order). It runs **side-effecting
+installs at top level** — no exported `install(globals)` function.
+Concretely it:
+1. Installs missing globals (`console`, `setTimeout`, `setInterval`,
+   `queueMicrotask`, `URL`, `TextEncoder`, etc.) onto `globalThis`,
+   guarded by `if (!globalThis.X)`.
+2. Installs `globalThis.__deliver` per the envelope above.
+3. Installs `globalThis.__hostLog`, `__hostError`,
+   `__hostUnhandledRejection` for the polyfill's `console.*` and
+   error rewires.
+4. Does NOT install `__dispatch` — that's injected by native code
+   (Swift block on iOS, Zipline `ZiplineService` on Android)
+   before the bundle runs.
+
 Real existing usage (from `sdk/example-miniapp/src/controller/GlassesController.ts`):
 
 ```typescript
@@ -656,6 +752,46 @@ JSContext's `session.ui.on()` handlers via the host router.
 
 `Channels` is defined per-miniapp in `src/shared/channels.ts` and
 imported by both layers, so message names are typed at compile time.
+**Channels is compile-time only** — there is no runtime registry; the
+host router treats `channel` as an opaque string and routes by name.
+
+#### UI bus wire format
+
+WebView → host (via `window.ReactNativeWebView.postMessage(JSON)`):
+```typescript
+type UIInbound =
+  | { type: "msg"; seq: number; channel: string; payload: unknown }
+  | { type: "ready" }
+  | { type: "heartbeat"; seq: number }
+```
+
+Host → WebView (via `webview.injectJavaScript("window.__mentra.recv(...)")`):
+```typescript
+type UIOutbound =
+  | { type: "msg"; seq: number; channel: string; payload: unknown }
+  | { type: "ack"; seq: number }              // ACK for a message
+  | { type: "open" }                          // background-side onOpen fired
+  | { type: "close" }                         // host is about to destroy WebView
+```
+
+**Sequence numbers** monotonically increase per direction. The host
+maintains a per-WebView dedup window (last 64 seqs); duplicates from
+a transient reconnect are silently dropped. `ack` is for delivery
+confirmation only — the WebView side does not need to await acks
+before sending more messages (fire-and-forget bus). The seq +
+dedup window protects against the message-bus replays during
+reconnect noted in Phase 3 tasks.
+
+**Synthetic channels:** `mentra.on("__open__", ...)` and
+`mentra.on("__close__", ...)` are reserved for lifecycle events and
+delivered via the same `msg` envelope with channel name prefixed by
+`__`. Miniapp authors should use `session.ui.onOpen` / `onClose` on
+the background side instead; the WebView-side reserved names are
+escape hatches for advanced use.
+
+**Heartbeat:** WebView sends `{type: "heartbeat", seq}` every 5s;
+host considers the WebView gone after 15s of silence and tears it
+down (cleanup runs via the same code path as user-initiated close).
 
 ### Why "no native shortcut for the WebView"
 
@@ -728,8 +864,8 @@ it and calls `init(session)`.
   "name": "Notes",
   "description": "Voice-driven note taking",
   "icon": "icon.png",
-  "sdkVersion": "^3.0.0",
-  "minHostVersion": "2.3.0",
+  "sdkVersion": "^0.2.0",
+  "minHostVersion": "1.42.0",
   "type": "standard",
   "entry": {
     "background": "dist/background/index.js",
@@ -903,14 +1039,14 @@ unchanged.**
 | `mobile/modules/miniapp/src/dev-reload.ts` | 60 | Keep for WebView; add sibling for JSContext respawn. |
 | `mobile/modules/island/src/services/DevServerBridge.ts` | 288 | Same protocol, two delivery sinks (WebView reload + JSContext respawn). |
 | `sdk/miniapp-cli/src/manifest*.ts` (4 non-test files) | ~712 | Add `sdkVersion`, `minHostVersion`, `entry` (object) schema fields. (Signature schema deferred to store-ship spec.) |
-| `sdk/miniapp-cli/src/dev.ts` + `dev-server.ts` | ~480 | Bundle `dist/background/index.js` + `dist/ui/`; add `{type:"respawn-bg"}` message alongside `{type:"reload"}`. Drop today's `user-server.ts` spawning — there's no longer a separate Express server fronting the WebView. |
+| `sdk/miniapp-cli/src/dev.ts` + `dev-server.ts` | ~480 | Bundle `dist/background/index.js` + `dist/ui/`; add `{type:"respawn-bg"}` message alongside `{type:"reload"}`. Today's `dev.ts` spawns a single dev server fronting the WebView; new flow orchestrates two bundlers (background + UI) plus the dev-server WebSocket. |
 | `sdk/miniapp-cli/src/pack.ts` + `release.ts` | ~380 | Two-output bundle. (Signing pipeline deferred to store-ship spec.) |
 
 ### Reuse with major changes (right shape, internals rewritten)
 
 | File | LoC | What survives, what changes |
 |---|---|---|
-| `mobile/modules/island/src/services/LocalMiniappRuntime.ts` | 1,752 | **Skeleton survives:** per-app registry, refcounted streams, ping loop, **25 dispatch arms in `handleRawMessage`'s switch (`:516-595`) + 3 arms in `handleCloudMessage`'s switch (`:304-336`)**. Of the 25 main arms, 11 delegate to `private handle*` methods; the remaining 14 (including SPEAK, LOCATION_POLL, STORAGE_*, SHARE, OPEN_URL, COPY_CLIPBOARD, DOWNLOAD, PHOTO, PING/PONG, etc.) are implemented inline. Handler bodies don't know they're talking to a WebView — they take `(packageName, payload)` and dispatch to native. **Rewrite:** front door (`handleRawMessage` → `__dispatch`); per-app `sendMessage` (postMessage → `JSContext.evaluateScript`); HMAC/local-token code goes away. |
+| `mobile/modules/island/src/services/LocalMiniappRuntime.ts` | 1,752 | **Skeleton survives:** per-app registry, refcounted streams, ping loop, **25 dispatch arms in `handleRawMessage`'s switch (`:516-595`) + 3 arms in `handleCloudMessage`'s switch (`:303-365`)**. Of the 25 main arms, 11 delegate to `private handle*` methods; the remaining 14 (including SPEAK, LOCATION_POLL, STORAGE_*, SHARE, OPEN_URL, COPY_CLIPBOARD, DOWNLOAD, PHOTO, PING/PONG, etc.) are implemented inline. Handler bodies don't know they're talking to a WebView — they take `(packageName, payload)` and dispatch to native. **Rewrite:** front door (`handleRawMessage` → `__dispatch`); per-app `sendMessage` (postMessage → `JSContext.evaluateScript`); HMAC/local-token code goes away. |
 | `mobile/modules/island/src/services/AppRegistry.ts` | 675 | Manifest normalization + zip pipeline survive. **Add:** `background/index.js` discovery alongside `index.html`; recognize new manifest fields; sdkVersion/minHostVersion compatibility check on spawn. (Signature verification deferred to store-ship spec — all current bundles are LAN-sideloaded and unsigned.) |
 | `sdk/create-mentra-miniapp/bin/index.ts` + template | ~150 + template | Scaffolder logic survives (clack prompts, validation, template substitution). **Template files rewrite:** scaffold `src/background/index.ts`, `src/ui/`, `src/shared/channels.ts` instead of single React SPA. |
 
@@ -949,9 +1085,11 @@ Native (Kotlin, in `crust`):
   registers a single Kotlin object exposing `__dispatch` via
   Zipline's bridge.
 - **`JSCPolyfillBridge.kt`** — OkHttp / SharedPreferences /
-  javax.crypto / Tink (X25519) backed equivalents. Includes the
-  microtask drain helper that re-enters JS after every native-resolved
-  Promise.
+  javax.crypto / Tink (X25519) backed equivalents. Each shim is a
+  suspending method on a `ZiplineService` interface; Zipline's bridge
+  handles Promise resume + microtask drain automatically. **No public
+  `executePendingJobs` API exists in Zipline — relying on
+  bridge-mediated resume is the only supported path.**
 - **`PermissionStore`** — SQLite via Android's built-in
   `SQLiteOpenHelper`. Same schema as iOS.
 - **Device-tier eviction** — `ActivityManager.getMemoryInfo()` for
@@ -962,17 +1100,27 @@ React Native UI (cross-platform TS/TSX, in `mobile/src/components/miniapp/`):
   from "persistent off-screen WebViews" to "spawn cold per open,
   destroy on exit" for the UI layer. Existing `mount/unmount/
   setForeground/setBackground` API is kept; semantics inverted.
-  **One file serves both iOS and Android** — `react-native-webview`
-  abstracts WKWebView vs Android WebView underneath; the same
-  `injectedJavaScriptBeforeContentLoaded` + `postMessage` surface
-  works on both platforms. No platform-conditional branches needed
-  in this layer.
+  **Mostly one file for both platforms** via `react-native-webview`,
+  but **iOS and Android take different paths for the
+  bootstrap-before-page-load shim** (see below).
+- **iOS bootstrap:** `injectedJavaScriptBeforeContentLoaded` is
+  reliable on iOS — use it to install the `window.mentra` shim before
+  page JS runs.
+- **Android bootstrap:** `injectedJavaScriptBeforeContentLoaded` is
+  documented unreliable on Android (race with content load —
+  react-native-webview docs explicitly warn, refs issues #1099 / #1609).
+  Use `injectedJavaScriptObject` instead — exposes
+  `window.ReactNativeWebView.injectedObjectJson()` synchronously
+  before page scripts run. Bootstrap reads the JSON object and
+  installs the runtime `window.mentra` shim from a small inline
+  `<script>` injected into `index.html` by the bundler (or via
+  `injectedJavaScript` post-load for any callable methods that don't
+  need pre-load timing).
 - **`MentraUIRouter`** — when WebView mounts, host binds it to a
-  JSContext and routes `mentra.send`/`mentra.on` between them. We
-  use `react-native-webview`'s `injectedJavaScriptBeforeContentLoaded`
-  + `postMessage`, NOT raw `WKUserScript` (which RN-WebView doesn't
-  expose). Behavior matches Pebble's native bridge but layered on top
-  of `react-native-webview`.
+  JSContext and routes `mentra.send`/`mentra.on` between them via
+  `postMessage` / `injectJavaScript` (cross-platform). The
+  bootstrap-shim divergence above is the only platform-conditional
+  branch in this layer; everything downstream is one code path.
 
 JS (host RN runtime, in `mobile/modules/island/src/services/`):
 - **`MentraJSRouter.ts`** — host-side router that subscribes to
@@ -1045,12 +1193,12 @@ miniapp-facing JS API is identical down to error messages.
 |---|---|---|---|---|
 | `console.*` | **Drop-in MIT** | `@react-native/js-polyfills/console.js` | ~10 (logging hook) | Zipline pre-injects `console.{log,info,warn,error}` — guard with `if (!globalThis.console)`. On iOS we always install. |
 | `TextEncoder` / `TextDecoder` | **Drop-in MIT** | `fast-text-encoding` (3 KB) | 0 | Both engines lack natively. |
-| `URL` / `URLSearchParams` | **Drop-in MIT** | `whatwg-url-without-unicode` (40 KB) | 0 | Bundle with `rollup-plugin-node-polyfills` for `Buffer` refs in IPv6 paths. ~0.5 day. |
+| `URL` / `URLSearchParams` | **Drop-in MIT** | `whatwg-url-without-unicode` (40 KB) | 0 | Last published 2022-05 (prerelease tag, unmaintained). Pin the version, vendor the source, or budget for an eventual fork. Bundle with `rollup-plugin-node-polyfills` for `Buffer` refs in IPv6 paths. ~0.5 day. |
 | `atob` / `btoa` | **Drop-in MIT** | `base-64` (3 KB) | 0 | |
 | `EventTarget` / `addEventListener` | **Drop-in MIT** | `event-target-shim` (5 KB) | 0 | |
 | `Blob` / `FormData` | **Drop-in + glue** | `fetch-blob` + `formdata-polyfill` | ~30 | `fetch-blob` references `ReadableStream` — drop streams (sync `arrayBuffer()` only) or add `web-streams-polyfill`. Same on both engines. |
 | `AbortController` / `AbortSignal` | **Drop-in + glue** | `abort-controller` | ~20 | |
-| `Promise` | Built-in | both engines ship modern Promises | 0 | iOS-JSC drains microtasks via the iOS run loop. **QuickJS does not** — see "Microtask discipline" above. Kotlin native bridge must re-enter JS to drain after every native-resolved Promise. ~20 LoC Kotlin helper. |
+| `Promise` | Built-in | both engines ship modern Promises | 0 | iOS-JSC drains microtasks via the iOS run loop. **QuickJS does not** — see "Mandatory microtask discipline" above. All Android polyfill shims are written as suspending Kotlin `ZiplineService` methods so Zipline's bridge resumes await chains correctly. |
 | `setTimeout` / `clearTimeout` | Bridge | — | ~40 | Zipline pre-injects `setTimeout`/`clearTimeout`. Guard with `if (!globalThis.setTimeout)` — on Android we use Zipline's, on iOS we install. |
 | `setInterval` / `queueMicrotask` | Bridge | — | ~40 | Always-installed (Zipline ships neither). Android implementation uses our existing `BackgroundTimer` pattern so timers fire under Doze. |
 | `Headers` / `Request` / `Response` | **Lift from whatwg-fetch (MIT)** | swap XHR core for native | ~100 | |
@@ -1122,12 +1270,16 @@ signature verification kicks in. Same install flow otherwise.
    `/applet/<packageName>/ui`).
 2. Host spawns a fresh `react-native-webview` instance (WKWebView
    on iOS, Android `WebView` underneath).
-3. Host injects the `window.mentra` shim via
-   `injectedJavaScriptBeforeContentLoaded`. The shim posts via
+3. Host injects the `window.mentra` shim. **iOS:** via
+   `injectedJavaScriptBeforeContentLoaded` (reliable on iOS).
+   **Android:** via `injectedJavaScriptObject` + a small inline
+   bootstrap `<script>` in `index.html` (the
+   `injectedJavaScriptBeforeContentLoaded` prop is documented
+   unreliable on Android per react-native-webview issues
+   #1099 / #1609). Either way, the shim posts via
    `window.ReactNativeWebView.postMessage(...)` and receives via
    `window.__mentra.recv(...)` calls injected by the host using
-   `webview.injectJavaScript(...)`. (Not raw `webkit.messageHandlers`
-   — `react-native-webview` doesn't expose that surface.)
+   `webview.injectJavaScript(...)`.
 4. Host binds the WebView to the miniapp's JSContext (router knows
    "messages from this WebView go to JSContext X").
 5. Host calls `webView.loadFileURL(<bundle>/dist/ui/index.html)`.
@@ -1226,7 +1378,7 @@ Snapchat all do this; canonical pattern.
 
 ### Permission set
 
-The existing `AppPermissionType` enum in `mobile/modules/island/src/types/applet.ts`:
+The existing `AppPermissionType` union (string-literal type, not a TS `enum`) in `mobile/modules/island/src/types/applet.ts`:
 
 ```typescript
 type AppPermissionType =
@@ -1261,18 +1413,43 @@ known dark pattern for sensitive APIs — iOS users expect JIT.
 
 ### Enforcement: defense in depth
 
-1. **Manifest validation at install.** Reject malformed `permissions[]`.
-   Persist granted set in **SQLite** keyed by `packageName` (not
-   NSUserDefaults — needs a real security boundary).
-2. **Swift `__dispatch` handler — the authoritative gate.** Every
-   JSContext is tagged with its `packageName` at creation.
-   `__dispatch(iface, method, args)` looks up
-   `PermissionStore.granted(packageName, iface)` BEFORE invoking the
-   native API.
+**Two gates, distinct concepts:**
+- **Declared in manifest** — *exists today.* `LocalMiniappRuntime.ts`
+  reads `app.installedManifest.permissions` (in-memory array on the
+  registered-app record) inline at each call site (e.g. `:683-700`,
+  `:981`, `:1280`). Returns `PERMISSION_NOT_DECLARED` if the iface's
+  required permission is missing. This is a *static* check —
+  whatever the developer put in `miniapp.json`.
+- **Granted by user** — **NET-NEW for Phase 1.** Today the host
+  doesn't enforce per-user grants separately from declarations
+  (consent is implicit at install). Phase 1 adds a `PermissionStore`
+  (SQLite) that records which permissions the user has explicitly
+  granted, and JIT-prompt UI for first-call escalation.
+
+**Authoritative gate sequence (after Phase 1):**
+
+1. **Manifest validation at install.** Reject malformed `permissions[]`
+   (existing). Persist granted set in **SQLite** (`PermissionStore`,
+   net-new) keyed by `(packageName, permission)`. Distinct from
+   miniapp-facing `session.storage` (which is NSUserDefaults /
+   SharedPreferences).
+2. **Native `__dispatch` handler — the authoritative gate.** Every
+   JS context is tagged with its `packageName` at creation.
+   `__dispatch(iface, method, args)` looks up:
+   - `installedManifest.permissions` — declared? (existing check)
+   - `PermissionStore.granted(packageName, permission)` — granted?
+     (net-new check)
+   - Both must pass; either failure returns the appropriate error
+     code (`PERMISSION_NOT_DECLARED` or `PERMISSION_DENIED`).
 3. **JS shim — purely ergonomic.** `session.permissions.query(...)`
    returns `granted | denied | prompt`. Devs call this to avoid
    silent rejections; must NOT be the only check (a malicious
    miniapp could bypass and call `__dispatch` directly).
+
+**Effort estimate for the net-new permission grant flow:** ~1 week
+of Phase 1 (SQLite store + native JIT modal + migrate the ~25
+inline check sites in `LocalMiniappRuntime.ts` to the new gate).
+Counted in Phase 1's 3-week iOS budget.
 
 ### Unpermitted call returns
 
@@ -1639,7 +1816,30 @@ throws that wouldn't fire `window.onerror`. **Never call
 `PKJSApp.kt:91-117`. When host needs to deliver a message to JS, it
 checks if JS has signalled `ready`. JS confirms via
 `_Pebble.privateFnConfirmReadySignal(success)`. Host buffers messages
-with a bounded timeout (Pebble: 6s), NACKs on timeout. We use 6s.
+with a bounded timeout, NACKs on timeout.
+
+**Two timeouts, not one** (Pebble's single 6s value is wrong for our
+cold-start path):
+- **Cold-start timeout: 15s.** First message after process spawn may
+  need: spawn JS context (50-200ms) + evaluate ~100KB polyfill bundle
+  (200-800ms) + load `background/index.js` (50-200ms) + run
+  `init(session)` (user code, unbounded) + wait for the host to
+  signal it's ready to deliver. On a slow Android device with
+  battery saver active, this can be 3-10s; 15s gives realistic
+  headroom.
+- **Steady-state timeout: 3s.** Subsequent messages to an already-
+  warm context — anything past 3s indicates the JS thread is wedged.
+
+**NACK semantics:** the host's `dispatchToJs` returns an error to
+its caller (the cloud-message handler / UI router / event source)
+indicating the message was undeliverable. The miniapp's `init` did
+not register, so from the miniapp's perspective the event simply
+didn't happen — no exception is raised JS-side. Document expected
+behavior so callers know to retry or surface "miniapp unresponsive."
+
+**Re-measure on bottom-tier hardware before pinning the cold-start
+number.** Pixel 4a + battery-saver + 50% storage full is the
+recommended floor.
 
 ### `console.*` rewiring + `window.onerror` + `onunhandledrejection`
 
@@ -1937,7 +2137,8 @@ Native (Swift):
   `--clean` or `--clear` flags).
 - Pebble-inherited pieces all in scope: `JSManagedValue`,
   `evalCatching`, `console.*` rewiring, `window.onerror` /
-  `onunhandledrejection`, `signalReady` with 6s NACK timeout,
+  `onunhandledrejection`, `signalReady` with 15s cold-start /
+  3s steady-state NACK timeouts,
   `JSContext.setName` + `setInspectable`, log redaction, tear-down
   race ordering, `debugForceGC` hook, stable per-(user, miniapp)
   token. Each is a 1-2 day item.
@@ -1969,8 +2170,11 @@ Polyfill bundle (new package):
 
 Native (Kotlin):
 - Add `app.cash.zipline:zipline:1.27.0+` to
-  `mobile/modules/crust/android/build.gradle`. ~1.2 MB native lib
-  per ABI; ~5 MB APK growth on arm64-only Play Store splits.
+  `mobile/modules/crust/android/build.gradle`. ~1.2 MB Zipline +
+  QuickJS native lib per ABI. Plus
+  `com.google.crypto.tink:tink-android:1.13.0+` (~1.2 MB AAR for
+  X25519 / `crypto.subtle`). **Total APK growth: ~6-7 MB** on
+  arm64-only Play Store splits (universal APK higher).
 - New Kotlin files in `mobile/modules/crust/android/src/main/java/com/mentra/crust/`:
   `jsc/JSCRuntime.kt`, `jsc/JSCDispatcher.kt`, `jsc/JSCPolyfillBridge.kt`.
   ~600-800 LoC. Symmetric with the Swift surface — each `JSCRuntime`
@@ -1983,9 +2187,11 @@ Native (Kotlin):
   (`localStorage` with `MentraJS-{packageName}` name), `javax.crypto`
   for SHA / AES-GCM / HMAC, Tink for X25519 (Android stdlib X25519
   is API 33+ only), `SecureRandom.nextBytes` for `crypto.getRandomValues`.
-- **Microtask drain helper** in `JSCPolyfillBridge.kt` — ~20 LoC,
-  called after every native callback that resolves a Promise so
-  QuickJS drains its pending-jobs queue. **Mandatory.**
+- **All polyfill shims are `ZiplineService` suspend methods** so
+  Zipline's bridge handles Promise resume + microtask drain. No
+  public `executePendingJobs` API exists in Zipline. ~50 LoC of
+  `ZiplineService` interface scaffolding shared across the shim
+  files. See "Mandatory microtask discipline" earlier.
 - Same single-`__dispatch` pattern, log redaction, tear-down
   ordering, stable per-(user, miniapp) token, and `signalReady`
   with NACK timeout as iOS.
@@ -2063,7 +2269,8 @@ survive, front door swaps from postMessage to `__dispatch`.
   in this file: `dev_log` console-tap (`:498-512`), stream fan-out
   subscribers (`streamSubscribers` Map at `:160`),
   `recomputeMicRequirements`, `updateCloudSubscriptions`,
-  `installedManifest` permission gating (`:671-687`),
+  `installedManifest` permission gating (`:671-700+` — `declaredTypes`
+  set, `permissionForStream` helper, gating loop, reject branch),
   `setInstalledManifest` (`:415`), `unregisterApp` (`:432`),
   `PERMISSION_NOT_DECLARED` once-per-session dedup (`:104-150`,
   `warnedPermission` Set + `logPermissionNotDeclared` helper).
@@ -2108,23 +2315,31 @@ the offscreen class. This phase inverts the lifecycle to "spawn cold
 on user open, destroy on exit." Phase 0's eviction code becomes
 obsolete and gets removed here.
 
-Implementation strategy for WKUserScript-style injection:
+Implementation strategy for the bootstrap shim:
 - `react-native-webview` does NOT expose raw `WKUserScript` or
   `webkit.messageHandlers` (verified: zero uses anywhere in the
   codebase). All WebView communication goes through
-  `injectedJavaScriptBeforeContentLoaded` (`MiniappHost.tsx:584`,
-  `webview.tsx:500`) for setup and `injectJavaScript` (runtime
-  injection) + `onMessage` (`postMessage` from JS to native) for
-  bidirectional comms.
+  `injectJavaScript` (runtime injection) + `onMessage`
+  (`postMessage` from JS to native) for bidirectional comms.
+- **Bootstrap-before-page-load is the only thing that differs by
+  platform.** iOS uses `injectedJavaScriptBeforeContentLoaded`
+  (reliable, see `MiniappHost.tsx:584`, `webview.tsx:500`).
+  Android must use `injectedJavaScriptObject` instead, with a small
+  inline `<script>` in the WebView's `index.html` that reads
+  `window.ReactNativeWebView.injectedObjectJson()` and installs
+  the `window.mentra` shim — the
+  `injectedJavaScriptBeforeContentLoaded` prop is documented
+  unreliable on Android (react-native-webview docs warn explicitly,
+  refs issues #1099 / #1609).
 - We layer the new `mentra.send/on/ready` API on top of this
   existing primitive — NOT raw WKUserScript. The spec's earlier
   references to `webkit.messageHandlers` were imprecise; the actual
   implementation uses `window.ReactNativeWebView.postMessage` with
   a typed envelope.
-- Either: (a) build the new `MentraUIRouter` over
-  `react-native-webview`'s primitives (preferred, ~1 week), or
-  (b) write a custom WKWebView wrapper for full WKUserScript
-  control (~1 week extra, only if (a) hits a wall).
+- Build the new `MentraUIRouter` over `react-native-webview`'s
+  primitives, with the platform-conditional bootstrap above.
+  ~1 week iOS + ~3 days Android (the bundler-injected inline
+  bootstrap is a small new piece).
 
 Tasks:
 - Refactor `MiniappHost.tsx` (627 LoC): change `mount` semantics
@@ -2136,10 +2351,13 @@ Tasks:
   `packageName`, routes `postMessage` from JS to the JSContext's
   `session.ui.on()` handlers, and routes `session.ui.send()`
   outputs back via `injectJavaScript("window.__mentra.recv(...)")`.
-- `window.mentra` shim injected via
-  `injectedJavaScriptBeforeContentLoaded` (~50 LoC). Full surface:
+- `window.mentra` shim (~50 LoC). Full surface:
   `send`, `on`, `ready`, `onOpen`, `onClose`. Outbound buffer for
-  messages before `ready()` ack.
+  messages before `ready()` ack. **Bootstrap path:** iOS injects via
+  `injectedJavaScriptBeforeContentLoaded`; Android injects via
+  `injectedJavaScriptObject` + a small bundler-emitted inline
+  `<script>` in the WebView's `index.html` (see "Implementation
+  strategy for the bootstrap shim" above).
 - New `session.ui` module in
   `mobile/modules/miniapp/src/modules/ui.ts`. Surface:
   `send/on/onOpen/onClose/isOpen`. Wire into
@@ -2178,7 +2396,7 @@ the 4-week phase budget.
   Pixel 4a. Set a budget if numbers are surprising; otherwise just
   log them as the baseline.
 
-### Phase 4 — Bundle / install / sideload (~1-2 weeks, mobile only)
+### Phase 4 — Bundle / install / sideload (~1.5 weeks, mobile only)
 
 V1 ships LAN-only sideloading via `bun mentra-miniapp dev` and
 `bun mentra-miniapp release`. **No store, no signing, no remote
@@ -2424,7 +2642,7 @@ sdk/example-miniapp/
 │   │   └── tester/
 │   │       ├── _TesterRow.tsx      # shared row component
 │   │       ├── TesterMenu.tsx      # menu of testers
-│   │       └── 14 *Page.tsx files  # one per session.* iface (Display, IMU, Input,
+│   │       └── 15 *Page.tsx files  # one per session.* iface (Display, IMU, Input,
 │   │                               # Led, Location, Microphone, Permissions, Phone,
 │   │                               # Speaker, Storage, System, Transcription,
 │   │                               # Translation, Glasses, ComingSoon)
@@ -2615,9 +2833,9 @@ In addition to the example app, these shipped artifacts move:
   scaffolder; rewrite template per Appendix A target structure.
   ~150 LoC scaffolder logic untouched (clack prompts, validation);
   template files swap. (Phase 5.)
-- **`sdk/miniapp-cli/`** — see Phase 4 file list. Drop `user-server.ts`
-  Express-spawning path entirely; `dev.ts` orchestrates background
-  bundler + UI bundler + dev-server.ts WebSocket only. (Phase 4.)
+- **`sdk/miniapp-cli/`** — see Phase 4 file list. `dev.ts` evolves to
+  orchestrate background bundler + UI bundler + `dev-server.ts`
+  WebSocket. (Phase 4.)
 - **`@mentra/miniapp` package.json `exports`** — gain
   `./background` and `./ui` sub-paths; the bare `@mentra/miniapp`
   import is removed. Greenfield, no compat shim. (Phase 5.)
@@ -2645,7 +2863,7 @@ calls an agent will face are:
 
 ## Race conditions worth thinking about
 
-Normal client/server async problems, none unique to this architecture:
+### Steady-state UI/background
 
 1. **WebView opens, fires events before background is ready.**
    `mentra.ready()` is required. SDK buffers `mentra.send()` until
@@ -2661,6 +2879,42 @@ Normal client/server async problems, none unique to this architecture:
    function.
 5. **Two WebView messages arrive interleaved.** Processed sequentially
    on JSContext's main thread (single-threaded JS).
+
+### Cross-lifecycle (install / spawn / uninstall / kill)
+
+6. **Install-during-spawn.** User installs miniapp B while A's
+   spawn is in-flight. Both writes to `MiniappRunningRegistry`
+   (Phase 2's "ONE registry") must be serialized — use a single
+   mutex around register/unregister, with all reads against the
+   same lock. Without it, duplicate spawn or lost registration.
+7. **Uninstall-while-WebView-foregrounded.** User uninstalls a
+   miniapp whose WebView is currently mounted. Sequence: tear down
+   WebView FIRST (synchronous), then kill JS context, then delete
+   bundle. In-flight `mentra.send` from a WebView that's gone
+   resolves to "no bound JS context"; in-flight native dispatch
+   from a JS context that's gone returns the standard `INTERFACE_NOT_FOUND`
+   error path with the context's `packageName` already deregistered.
+8. **Jetsam during polyfill evaluate.** Host is killed mid-`evaluate`
+   of `startup.js` (plausible on SE 2 under memory pressure with
+   the polyfill bundle still loading). On-disk state is intact; the
+   in-memory `MiniappRunningRegistry` may have a half-written entry.
+   Crash recovery (Phase 6 state machine) **must handle "registry
+   says running, no JS context exists"** — treat as a pseudo-crash,
+   transition through CRASHED → respawn.
+9. **Two host events fire concurrently into the same JS context.**
+   `Crust.dispatchToJs(packageName, channelA, ...)` and
+   `dispatchToJs(packageName, channelB, ...)` from different RN
+   threads. The native dispatcher must serialize per-context (one
+   thread per JS context already enforces this on iOS via
+   `DispatchQueue`, on Android via Zipline's per-instance
+   single-thread dispatcher requirement).
+10. **Permission revocation during in-flight call.** User revokes
+    `MICROPHONE` permission while miniapp has a pending audio request.
+    The host's permission gate is checked at dispatch time; the
+    in-flight call may already be past the gate. Mid-call revocation
+    is best-effort: the next dispatch fails with `PERMISSION_DENIED`,
+    but the current operation completes. Document this; don't
+    promise hard cutoff.
 
 ---
 
@@ -2693,14 +2947,24 @@ Normal client/server async problems, none unique to this architecture:
 
 ## Success criteria
 
-- 10+ miniapps run simultaneously in background on iPhone SE 2
-  (3 GB RAM) without jetsam.
-- 10+ miniapps run simultaneously in background on a low-end Android
-  device (e.g. Pixel 4a, 6 GB RAM) without LMK.
-- WebView open-to-render latency <500ms (p95).
-- A developer can `bun create mentra-miniapp` and ship a working
-  miniapp in <30 minutes.
-- Pass at least one App Store review with the new architecture.
+**Hard gates (CI / acceptance-gate enforced):**
 - `sdk/example-miniapp/` runs end-to-end on the new architecture
-  (the only existing miniapp; doubles as integration test — see
-  Appendix A acceptance gate).
+  per Appendix A — the integration acceptance gate for Phase 5.
+- Pass App Store review with the new architecture (binary outcome;
+  no plan B, but the architecture is explicitly designed against
+  Apple Guideline 2.5.2 / 4.7).
+
+**Aspirational targets (measure and report; not blocking):**
+- 10+ miniapps run simultaneously in background on iPhone SE 2
+  (3 GB RAM) without jetsam — Phase 1 measures with realistic
+  miniapp workloads (existing 50-context spike used a stub
+  workload).
+- 10+ miniapps run simultaneously in background on a low-end Android
+  device (e.g. Pixel 4a, 6 GB RAM) without LMK — to be measured in
+  Phase 1 alongside the iOS number.
+- WebView open-to-render latency: **measured in Phase 3 acceptance
+  gate**, no preset budget. The earlier "<500ms p95" was a guess;
+  set the budget after measurement, not before.
+- `bun create mentra-miniapp` to a working miniapp in under 30
+  minutes for an experienced web dev (smoke-tested by an outside
+  developer at the end of Phase 5; not CI-measurable).
