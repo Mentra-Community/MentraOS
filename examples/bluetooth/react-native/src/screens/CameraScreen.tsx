@@ -6,7 +6,7 @@ import { Header } from '../components/Header';
 import { useScrollBottomPadding } from '../components/keyboardLayout';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { colors } from '../components/theme';
-import { isGlassesConnected } from '../sdkFormat';
+import { isGlassesConnected, isGlassesWifiConnected } from '../sdkFormat';
 import { PHOTO_COMPRESSIONS, PHOTO_SIZES, type MentraSdkModel, type PhotoCompression, type PhotoSize } from '../useMentraSdk';
 
 function cameraSdkCall(size: PhotoSize, compression: PhotoCompression, flash: boolean, useCloudServer: boolean) {
@@ -38,6 +38,8 @@ await BluetoothSdk.photoRequest(
 export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
   const scrollBottomPadding = useScrollBottomPadding();
   const connected = isGlassesConnected(sdk.glassesStatus);
+  const glassesWifiConnected = isGlassesWifiConnected(sdk.glassesStatus);
+  const wifiRequired = connected && !glassesWifiConnected;
   const cameraStatusFailed = isCameraStatusFailure(sdk.cameraStatus);
   const setupHint = sdk.photoCloudServerEnabled ? localCameraSetupHint(sdk.webhookUrl, sdk.cameraStatus) : null;
   const sdkCall = cameraSdkCall(
@@ -54,7 +56,11 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
       style={{ flex: 1, backgroundColor: colors.bg }}
       contentContainerStyle={{ paddingBottom: scrollBottomPadding }}>
       <Header connected={connected} title="Camera" />
-      {!connected && <OfflineNotice />}
+      {!connected ? (
+        <OfflineNotice />
+      ) : wifiRequired ? (
+        <OfflineNotice message="Connect the glasses to Wi-Fi from the System tab before capturing photos. Photos are uploaded over the glasses network connection." />
+      ) : null}
 
       {/* Preview card */}
       <LinearGradient colors={['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.55)']} style={styles.card}>
@@ -71,8 +77,8 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
           </LinearGradient>
         </View>
 
-        <Pressable disabled={!connected} onPress={sdk.captureAndUpload}>
-          <LinearGradient colors={['#26473A', '#1F3A2A']} style={[styles.captureBtn, !connected && styles.disabled]}>
+        <Pressable disabled={!connected || !glassesWifiConnected} onPress={sdk.captureAndUpload}>
+          <LinearGradient colors={['#26473A', '#1F3A2A']} style={[styles.captureBtn, (!connected || !glassesWifiConnected) && styles.disabled]}>
             <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
               <Path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
               <Circle cx={12} cy={13} r={4} />
@@ -80,6 +86,8 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
             <Text style={styles.captureText}>
               {!connected
                 ? 'Connect glasses first'
+                : !glassesWifiConnected
+                  ? 'Connect glasses to Wi-Fi'
                 : sdk.activeAction === 'Capture & upload'
                   ? 'Capturing…'
                   : 'Capture photo'}
@@ -208,6 +216,7 @@ function isCameraStatusFailure(status: string) {
     normalized.includes('replace <computer-ip>') ||
     normalized.includes('valid http') ||
     normalized.includes('enter a webhook url like') ||
+    normalized.includes('connect the glasses to wi-fi') ||
     normalized.includes('connect glasses first')
   );
 }

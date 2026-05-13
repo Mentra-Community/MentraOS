@@ -373,6 +373,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     fun captureAndUpload() = runAction("Capture & upload") {
         requireConnected("capture photos")
+        requireGlassesWifi("capture photos")
         if (state.photoDestination == PhotoDestination.THIS_PHONE) {
             captureAndUploadToPhone()
             return@runAction
@@ -628,6 +629,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             return@runAction
         }
         requireConnected("start streaming")
+        requireGlassesWifi("start streaming")
         if (isDirectPhoneWebRtcSelected()) {
             startDirectPhoneWebRtcStream()
             return@runAction
@@ -1437,6 +1439,21 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     private fun isGlassesConnected(): Boolean = isGlassesConnected(state.glassesStatus)
+
+    private fun requireGlassesWifi(feature: String) {
+        if (isGlassesWifiConnected(state.glassesStatus)) {
+            return
+        }
+        val message = "Connect the glasses to Wi-Fi from the System tab before you $feature."
+        if ("photo" in feature || "capture" in feature) {
+            state = state.copy(cameraStatus = "Camera: $message")
+        }
+        if ("stream" in feature) {
+            state = state.copy(streamStatus = message)
+        }
+        addEvent("TX", message)
+        throw IllegalStateException(message)
+    }
 
     private fun requireConnected(feature: String) {
         if (isGlassesConnected()) {
@@ -2405,6 +2422,9 @@ fun wifiLabel(status: MentraGlassesStatus?): String =
     } else {
         "Unknown"
     }
+
+fun isGlassesWifiConnected(status: MentraGlassesStatus?): Boolean =
+    status?.wifi?.connected == true
 
 fun hotspotLabel(status: MentraGlassesStatus?, fallbackEnabled: Boolean): String {
     val enabled = status?.hotspotEnabled ?: fallbackEnabled

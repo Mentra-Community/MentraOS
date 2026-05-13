@@ -134,6 +134,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         isGlassesConnected(glassesValues)
     }
 
+    var glassesWifiConnected: Bool {
+        glassesValues?.wifi.connected == true
+    }
+
     var hasMicRecording: Bool {
         micRecordingUrl != nil && lastMicBytes > 0
     }
@@ -298,6 +302,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func captureAndUpload() {
         runAction("Capture & upload") {
             try requireConnected("capture photos")
+            try requireGlassesWifi("capture photos")
             if photoDestination == .thisPhone {
                 try captureAndUploadToPhone()
                 return
@@ -523,6 +528,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
         runAction("Start stream") {
             try requireConnected("start streaming")
+            try requireGlassesWifi("start streaming")
             if isDirectPhoneWebRtcSelected {
                 try startDirectPhoneWebRtcStream()
                 return
@@ -1078,6 +1084,20 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             let message = "Connect glasses first to \(feature)."
             if feature.contains("photo") || feature.contains("capture") {
                 cameraStatus = message
+            }
+            if feature.contains("stream") {
+                streamStatus = message
+            }
+            append(tag: "TX", text: message)
+            throw ExampleActionError(message: message)
+        }
+    }
+
+    private func requireGlassesWifi(_ feature: String) throws {
+        guard glassesWifiConnected else {
+            let message = "Connect the glasses to Wi-Fi from the System tab before you \(feature)."
+            if feature.contains("photo") || feature.contains("capture") {
+                cameraStatus = "Camera: \(message)"
             }
             if feature.contains("stream") {
                 streamStatus = message

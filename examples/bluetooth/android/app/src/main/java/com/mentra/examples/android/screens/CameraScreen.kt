@@ -36,6 +36,7 @@ import com.mentra.examples.android.MentraExampleController
 import com.mentra.examples.android.PhotoDestination
 import com.mentra.examples.android.cameraSdkCall
 import com.mentra.examples.android.isGlassesConnected
+import com.mentra.examples.android.isGlassesWifiConnected
 import com.mentra.examples.android.photoCompressionOptions
 import com.mentra.examples.android.photoSizeOptions
 import com.mentra.examples.android.ui.AppColor
@@ -49,6 +50,8 @@ import com.mentra.examples.android.ui.scrollBottomPadding
 fun CameraScreen(controller: MentraExampleController) {
     val state = controller.state
     val connected = isGlassesConnected(state.glassesStatus)
+    val glassesWifiConnected = isGlassesWifiConnected(state.glassesStatus)
+    val wifiRequired = connected && !glassesWifiConnected
     val cloudServerEnabled = state.photoDestination == PhotoDestination.MACBOOK_SERVER
     val directPhone = !cloudServerEnabled
     val cameraStatusFailed = isCameraStatusFailure(state.cameraStatus)
@@ -59,6 +62,11 @@ fun CameraScreen(controller: MentraExampleController) {
         PageHeader("Camera", connected)
         if (!connected) {
             OfflineNotice(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+        } else if (wifiRequired) {
+            OfflineNotice(
+                message = "Connect the glasses to Wi-Fi from the System tab before capturing photos. Photos are uploaded over the glasses network connection.",
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
         }
 
         // Preview card
@@ -97,7 +105,7 @@ fun CameraScreen(controller: MentraExampleController) {
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp)
                     .clip(RoundedCornerShape(18.dp))
                     .background(Brush.verticalGradient(listOf(Color(0xFF26473A), Color(0xFF1F3A2A))))
-                    .clickable(enabled = connected) { controller.captureAndUpload() }
+                    .clickable(enabled = connected && glassesWifiConnected) { controller.captureAndUpload() }
                     .padding(vertical = 16.dp),
                 contentAlignment = Alignment.Center
             ) {
@@ -106,6 +114,8 @@ fun CameraScreen(controller: MentraExampleController) {
                     Text(
                         if (!connected) {
                             "Connect glasses first"
+                        } else if (!glassesWifiConnected) {
+                            "Connect glasses to Wi-Fi"
                         } else if (state.activeAction == "Capture & upload") {
                             "Capturing..."
                         } else {
@@ -298,6 +308,7 @@ private fun isCameraStatusFailure(status: String): Boolean {
         normalized.contains("replace <computer-ip>") ||
         normalized.contains("valid http") ||
         normalized.contains("enter a webhook url like") ||
+        normalized.contains("connect the glasses to wi-fi") ||
         normalized.contains("no phone lan ip") ||
         normalized.contains("phone receiver failed")
 }

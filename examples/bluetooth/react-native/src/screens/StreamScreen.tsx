@@ -9,7 +9,7 @@ import { Header } from '../components/Header';
 import { useScrollBottomPadding } from '../components/keyboardLayout';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { colors } from '../components/theme';
-import { isGlassesConnected, streamUptime } from '../sdkFormat';
+import { isGlassesConnected, isGlassesWifiConnected, streamUptime } from '../sdkFormat';
 import {
   STREAM_DEFAULT_URLS,
   streamPreviewTarget,
@@ -46,7 +46,9 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
   const streamUrlInputRef = React.useRef<React.ElementRef<typeof TextInput>>(null);
   const scrollBottomPadding = useScrollBottomPadding();
   const connected = isGlassesConnected(sdk.glassesStatus);
+  const glassesWifiConnected = isGlassesWifiConnected(sdk.glassesStatus);
   const streamActive = sdk.streamRequested || sdk.streamStartedAt !== null;
+  const wifiRequired = connected && !glassesWifiConnected && !streamActive;
   const previewReady = streamActive && sdk.streamPreviewReady;
   const uptime = streamUptime(sdk.streamStartedAt);
   const setupHint = sdk.streamCloudServerEnabled
@@ -79,7 +81,11 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
       style={{ flex: 1, backgroundColor: colors.bg }}
       contentContainerStyle={{ paddingBottom: scrollBottomPadding }}>
       <Header connected={connected} title="Stream" />
-      {!connected && <OfflineNotice />}
+      {!connected ? (
+        <OfflineNotice />
+      ) : wifiRequired ? (
+        <OfflineNotice message="Connect the glasses to Wi-Fi from the System tab before streaming. Streams are published over the glasses network connection." />
+      ) : null}
 
       {/* Live preview */}
       <LinearGradient colors={['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.55)']} style={styles.card}>
@@ -111,11 +117,17 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
           </View>
         </View>
 
-        <Pressable disabled={!connected && !streamActive} onPress={handleStreamPress}>
-          <LinearGradient colors={streamActive ? ['#DE3A30', '#C43B30'] : ['#26473A', '#1F3A2A']} style={[styles.endBtn, !connected && !streamActive && styles.disabled]}>
+        <Pressable disabled={(!connected || !glassesWifiConnected) && !streamActive} onPress={handleStreamPress}>
+          <LinearGradient colors={streamActive ? ['#DE3A30', '#C43B30'] : ['#26473A', '#1F3A2A']} style={[styles.endBtn, (!connected || !glassesWifiConnected) && !streamActive && styles.disabled]}>
             <View style={styles.stopSquare} />
             <Text style={styles.endText}>
-              {!connected && !streamActive ? 'Connect glasses first' : streamActive ? 'End stream' : 'Start stream'}
+              {!connected && !streamActive
+                ? 'Connect glasses first'
+                : !glassesWifiConnected && !streamActive
+                  ? 'Connect glasses to Wi-Fi'
+                  : streamActive
+                    ? 'End stream'
+                    : 'Start stream'}
             </Text>
           </LinearGradient>
         </Pressable>
@@ -287,6 +299,7 @@ function isStreamStatusFailure(status: string) {
     normalized.includes('required') ||
     normalized.includes('replace') ||
     normalized.includes('error') ||
+    normalized.includes('connect the glasses to wi-fi') ||
     normalized.includes('connect glasses first')
   );
 }

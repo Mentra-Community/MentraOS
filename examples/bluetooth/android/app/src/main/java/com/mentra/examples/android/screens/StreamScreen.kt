@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.sp
 import com.mentra.examples.android.MentraExampleController
 import com.mentra.examples.android.elapsedText
 import com.mentra.examples.android.isGlassesConnected
+import com.mentra.examples.android.isGlassesWifiConnected
 import com.mentra.examples.android.rtmpHlsPreviewUrl
 import com.mentra.examples.android.srtHlsPreviewUrl
 import com.mentra.examples.android.streamProtocolLabel
@@ -85,7 +86,9 @@ mentraBluetoothSdk.startStream(
 fun StreamScreen(controller: MentraExampleController) {
     val state = controller.state
     val connected = isGlassesConnected(state.glassesStatus)
+    val glassesWifiConnected = isGlassesWifiConnected(state.glassesStatus)
     val streamActive = state.streamRequested || state.streamStartedAt != null
+    val wifiRequired = connected && !glassesWifiConnected && !streamActive
     val previewReady = streamActive && state.streamPreviewReady
     val cloudServerEnabled = state.streamCloudServerEnabled
     val directPhoneWebRtc = !cloudServerEnabled
@@ -116,6 +119,11 @@ fun StreamScreen(controller: MentraExampleController) {
         PageHeader("Stream", connected)
         if (!connected) {
             OfflineNotice(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+        } else if (wifiRequired) {
+            OfflineNotice(
+                message = "Connect the glasses to Wi-Fi from the System tab before streaming. Streams are published over the glasses network connection.",
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
         }
 
         // Live preview card
@@ -180,7 +188,7 @@ fun StreamScreen(controller: MentraExampleController) {
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp)
                     .clip(RoundedCornerShape(18.dp))
                     .background(Brush.verticalGradient(if (streamActive) listOf(Color(0xFFDE3A30), Color(0xFFC43B30)) else listOf(Color(0xFF26473A), Color(0xFF1F3A2A))))
-                    .clickable(enabled = connected || streamActive) {
+                    .clickable(enabled = (connected && glassesWifiConnected) || streamActive) {
                         if (cloudServerEnabled && shouldFocusStreamUrlTemplate(state.streamUrl, streamActive)) {
                             streamUrlFocusRequester.requestFocus()
                             keyboardController?.show()
@@ -192,7 +200,20 @@ fun StreamScreen(controller: MentraExampleController) {
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Box(modifier = Modifier.size(12.dp).clip(RoundedCornerShape(3.dp)).background(Color.White))
-                    Text(if (!connected && !streamActive) "Connect glasses first" else if (streamActive) "End stream" else "Start stream", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (!connected && !streamActive) {
+                            "Connect glasses first"
+                        } else if (!glassesWifiConnected && !streamActive) {
+                            "Connect glasses to Wi-Fi"
+                        } else if (streamActive) {
+                            "End stream"
+                        } else {
+                            "Start stream"
+                        },
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
             }
         }

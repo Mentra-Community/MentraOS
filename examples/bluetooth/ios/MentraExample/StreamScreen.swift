@@ -33,6 +33,10 @@ struct StreamScreen: View {
         model.streamRequested || model.streamStartedAt != nil
     }
 
+    private var wifiRequired: Bool {
+        model.glassesConnected && !model.glassesWifiConnected && !streamActive
+    }
+
     private var directPhoneWebRtc: Bool {
         !cloudServerEnabled
     }
@@ -57,6 +61,10 @@ struct StreamScreen: View {
                     PageHeader(title: "Stream", connected: model.glassesConnected)
                     if !model.glassesConnected {
                         OfflineNotice()
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 8)
+                    } else if wifiRequired {
+                        OfflineNotice(message: "Connect the glasses to Wi-Fi from the System tab before streaming. Streams are published over the glasses network connection.")
                             .padding(.horizontal, 16)
                             .padding(.bottom, 8)
                     }
@@ -84,14 +92,14 @@ struct StreamScreen: View {
             } label: {
                 HStack(spacing: 10) {
                     RoundedRectangle(cornerRadius: 3).fill(Color.white).frame(width: 12, height: 12)
-                    Text(!model.glassesConnected && !streamActive ? "Connect glasses first" : streamActive ? "End stream" : "Start stream").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
+                    Text(!model.glassesConnected && !streamActive ? "Connect glasses first" : !model.glassesWifiConnected && !streamActive ? "Connect glasses to Wi-Fi" : streamActive ? "End stream" : "Start stream").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity).padding(.vertical, 16)
                 .background(LinearGradient(colors: streamActive ? [Color(hex: 0xDE3A30), Color(hex: 0xC43B30)] : [Color(hex: 0x26473A), Color(hex: 0x1F3A2A)], startPoint: .top, endPoint: .bottom))
                 .clipShape(RoundedRectangle(cornerRadius: 18))
             }
-            .disabled(!model.glassesConnected && !streamActive)
-            .opacity(!model.glassesConnected && !streamActive ? 0.55 : 1)
+            .disabled((!model.glassesConnected || !model.glassesWifiConnected) && !streamActive)
+            .opacity((!model.glassesConnected || !model.glassesWifiConnected) && !streamActive ? 0.55 : 1)
             .padding(.horizontal, 6).padding(.top, 14)
         }
     }

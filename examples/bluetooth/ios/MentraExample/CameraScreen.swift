@@ -33,6 +33,10 @@ struct CameraScreen: View {
         !cloudServerEnabled
     }
 
+    private var wifiRequired: Bool {
+        model.glassesConnected && !model.glassesWifiConnected
+    }
+
     private var cameraStatusFailed: Bool {
         isCameraStatusFailure(model.cameraStatus)
     }
@@ -48,6 +52,10 @@ struct CameraScreen: View {
                 PageHeader(title: "Camera", connected: model.glassesConnected)
                 if !model.glassesConnected {
                     OfflineNotice()
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 8)
+                } else if wifiRequired {
+                    OfflineNotice(message: "Connect the glasses to Wi-Fi from the System tab before capturing photos. Photos are uploaded over the glasses network connection.")
                         .padding(.horizontal, 16)
                         .padding(.bottom, 8)
                 }
@@ -107,14 +115,14 @@ struct CameraScreen: View {
             } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "camera").foregroundColor(.white).font(.system(size: 15, weight: .bold))
-                    Text(!model.glassesConnected ? "Connect glasses first" : model.activeAction == "Capture & upload" ? "Capturing..." : "Capture photo").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
+                    Text(!model.glassesConnected ? "Connect glasses first" : !model.glassesWifiConnected ? "Connect glasses to Wi-Fi" : model.activeAction == "Capture & upload" ? "Capturing..." : "Capture photo").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity).padding(.vertical, 16)
                 .background(LinearGradient(colors: [Color(hex: 0x26473A), Color(hex: 0x1F3A2A)], startPoint: .top, endPoint: .bottom))
                 .clipShape(RoundedRectangle(cornerRadius: 18))
             }
-            .disabled(!model.glassesConnected)
-            .opacity(model.glassesConnected ? 1 : 0.55)
+            .disabled(!model.glassesConnected || !model.glassesWifiConnected)
+            .opacity(model.glassesConnected && model.glassesWifiConnected ? 1 : 0.55)
             .padding(.horizontal, 6).padding(.top, 14)
         }
     }
@@ -277,6 +285,7 @@ private func isCameraStatusFailure(_ status: String) -> Bool {
         normalized.contains("timed out") ||
         normalized.contains("reported") ||
         normalized.contains("connect glasses first") ||
+        normalized.contains("connect the glasses to wi-fi") ||
         normalized.contains("invalid") ||
         normalized.contains("replace <computer-ip>") ||
         normalized.contains("valid http") ||

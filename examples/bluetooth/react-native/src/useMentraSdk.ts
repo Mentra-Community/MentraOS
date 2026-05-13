@@ -30,6 +30,7 @@ import {
   galleryServerUrl,
   isDisconnectedStatus,
   isGlassesConnected,
+  isGlassesWifiConnected,
 } from './sdkFormat';
 
 export type StreamProtocol = 'rtmp' | 'srt' | 'webrtc';
@@ -634,6 +635,7 @@ export function useMentraSdk(): MentraSdkModel {
   async function captureAndUpload() {
     await runAction('Capture & upload', async () => {
       requireConnected('capture photos');
+      requireGlassesWifi('capture photos');
       if (!(await ensureAndroidPermissions('photo'))) {
         throw new Error('Camera and Bluetooth permissions are required for photos.');
       }
@@ -923,6 +925,7 @@ export function useMentraSdk(): MentraSdkModel {
 
     await runAction('Start stream', async () => {
       requireConnected('start streaming');
+      requireGlassesWifi('start streaming');
       if (streamCloudServerEnabledRef.current) {
         await startCloudStream();
         return;
@@ -1431,6 +1434,21 @@ export function useMentraSdk(): MentraSdkModel {
     const message = `Connect glasses first to ${feature}.`;
     if (feature.includes('photo') || feature.includes('capture')) {
       setCameraStatus(message);
+    }
+    if (feature.includes('stream')) {
+      setStreamStatus(message);
+    }
+    addEvent('TX', message);
+    throw new Error(message);
+  }
+
+  function requireGlassesWifi(feature: string) {
+    if (isGlassesWifiConnected(glassesStatus)) {
+      return;
+    }
+    const message = `Connect the glasses to Wi-Fi from the System tab before you ${feature}.`;
+    if (feature.includes('photo') || feature.includes('capture')) {
+      setCameraStatus(`Camera: ${message}`);
     }
     if (feature.includes('stream')) {
       setStreamStatus(message);

@@ -20,6 +20,10 @@ export function isGlassesConnected(status: Partial<GlassesStatus>) {
   return status.connected === true;
 }
 
+export function isGlassesWifiConnected(status: Partial<GlassesStatus>) {
+  return status.wifiConnected === true;
+}
+
 export function isDisconnectedStatus(status: Partial<GlassesStatus>) {
   if (typeof status.connectionState === 'string') {
     const state = status.connectionState.toLowerCase();

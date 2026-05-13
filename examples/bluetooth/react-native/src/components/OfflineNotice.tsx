@@ -3,7 +3,11 @@ import {StyleSheet, Text, View} from 'react-native';
 import Svg, {Circle, Path} from 'react-native-svg';
 import {colors} from './theme';
 
-export function OfflineNotice() {
+export function OfflineNotice({
+  message = 'Connect glasses first. Hardware controls are disabled until the SDK reports an active connection.',
+}: {
+  message?: string;
+}) {
   return (
     <View style={styles.wrap}>
       <View style={styles.icon}>
@@ -21,10 +25,7 @@ export function OfflineNotice() {
           <Path d="M15.5 8.5 8.5 15.5" />
         </Svg>
       </View>
-      <Text style={styles.text}>
-        Connect glasses first. Hardware controls are disabled until the SDK
-        reports an active connection.
-      </Text>
+      <Text style={styles.text}>{message}</Text>
     </View>
   );
 }
