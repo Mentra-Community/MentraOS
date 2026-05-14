@@ -29,8 +29,26 @@ public class CrustModule: Module {
             "onNavOffRoute",
             "onNavLocation",
             "onNavRoute",
-            "onHeading"
+            "onHeading",
+            // MentraJS — fires whenever a per-miniapp JSContext calls
+            // __dispatch(iface, method, args). RN-side MentraJSRouter
+            // (Phase 2) subscribes to route by packageName.
+            "mentrajs_message"
         )
+
+        OnCreate {
+            // Wire the JSCRuntime's outbound event sink to the Expo
+            // event emitter. The JSCDispatcher fires `forwardToRn` for
+            // anything that isn't a built-in route (localStorage, fetch,
+            // crypto.getRandomBytes, __runtime.ready), and the runtime's
+            // exception/log/error handlers route through the same sink.
+            JSCRuntime.shared.onOutbound = { [weak self] message in
+                self?.sendEvent("mentrajs_message", message.payload)
+            }
+            // Install the polyfill bridge once, lazily on first module
+            // creation. JSCPolyfillBridge.install is idempotent.
+            JSCPolyfillBridge.install(into: JSCRuntime.shared.dispatcherTable)
+        }
 
         Function("hello") {
             "Hello world! 👋"
@@ -175,6 +193,72 @@ public class CrustModule: Module {
 
         AsyncFunction("openNotificationListenerSettings") { () -> Bool in
             return false
+        }
+
+        // MARK: - MentraJS Runtime (Phase 1)
+
+        /// Spawn a per-miniapp JS context. Re-spawn is allowed: a live
+        /// context with the same packageName is killed first.
+        /// Returns true if the polyfill + miniapp source evaluated without
+        /// throwing. On failure the context is torn down.
+        AsyncFunction("mentraJsSpawn") { (packageName: String, polyfillBundle: String, miniappJs: String) -> Bool in
+            return JSCRuntime.shared.spawn(
+                packageName: packageName,
+                polyfillBundle: polyfillBundle,
+                miniappJs: miniappJs
+            )
+        }
+
+        /// Evaluate an arbitrary script inside the named context. Returns
+        /// the JS return value bridged to a JSON-friendly Swift type, or
+        /// nil if the context is dead / eval threw. Mostly for dev tooling
+        /// + tests; production code paths use mentraJsDispatchToJs.
+        AsyncFunction("mentraJsEvaluate") { (packageName: String, source: String) -> Any? in
+            return JSCRuntime.shared.evaluate(packageName: packageName, source: source)
+        }
+
+        /// Tear down a JS context. Cancels timers, drops refs, forces GC.
+        AsyncFunction("mentraJsKill") { (packageName: String) -> Void in
+            JSCRuntime.shared.kill(packageName: packageName)
+        }
+
+        /// Push an event / response envelope into the named context's
+        /// globalThis.__deliver. Used by MentraJSRouter (Phase 2) for
+        /// glasses-status broadcasts and request/response correlation.
+        AsyncFunction("mentraJsDispatchToJs") { (packageName: String, envelope: [String: Any]) -> Void in
+            JSCRuntime.shared.dispatchToJs(packageName: packageName, envelope: envelope)
+        }
+
+        /// Set the installed manifest for a miniapp so the dispatcher's
+        /// permission gate can authorize sensitive `__dispatch` calls.
+        AsyncFunction("mentraJsSetManifest") { (packageName: String, permissions: [String]) -> Void in
+            JSCRuntime.shared.dispatcherTable.setManifest(
+                packageName: packageName,
+                manifest: InstalledMiniappManifest(permissions: Set(permissions))
+            )
+        }
+
+        /// Test/dev-only: directly grant or revoke a permission for a
+        /// package. Production grant flow goes through the JIT modal.
+        AsyncFunction("mentraJsGrantPermission") { (packageName: String, permission: String, granted: Bool) -> Void in
+            if granted {
+                JSCRuntime.shared.dispatcherTable.permissionStore.grant(packageName: packageName, permission: permission)
+            } else {
+                JSCRuntime.shared.dispatcherTable.permissionStore.revoke(packageName: packageName, permission: permission)
+            }
+        }
+
+        /// Diagnostic: list all live packageNames.
+        Function("mentraJsAlivePackages") { () -> [String] in
+            return JSCRuntime.shared.alivePackages()
+        }
+
+        /// Read the bundled MentraJS polyfill (startup.js) from the iOS
+        /// pod's resource bundle. The host calls this once on app boot,
+        /// caches the string, and passes it to every mentraJsSpawn so
+        /// every JSContext starts with the same polyfill ABI.
+        Function("mentraJsLoadPolyfillBundle") { () -> String in
+            return JSCRuntime.loadPolyfillBundle()
         }
 
         // MARK: - Device Memory (Phase 0 LRU eviction)
