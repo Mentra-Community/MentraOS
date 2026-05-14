@@ -1,7 +1,0 @@
-
-name: custom_driver_module
-build:
-  kconfig: Kconfig
-  cmake: .
-  settings:
-    dts_root: .

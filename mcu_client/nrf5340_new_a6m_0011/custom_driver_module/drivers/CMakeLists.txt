@@ -1,2 +1,0 @@
-
-add_subdirectory_ifdef(CONFIG_DISPLAY display)

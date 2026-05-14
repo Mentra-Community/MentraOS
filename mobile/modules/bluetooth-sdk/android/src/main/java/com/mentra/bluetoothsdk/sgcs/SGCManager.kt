@@ -31,7 +31,6 @@ abstract class SGCManager {
 
     // Button Settings
     abstract fun sendButtonPhotoSettings()
-    abstract fun sendButtonModeSetting()
     abstract fun sendButtonVideoRecordingSettings()
     abstract fun sendButtonMaxRecordingTime()
     abstract fun sendButtonCameraLedSetting()
@@ -86,6 +85,7 @@ abstract class SGCManager {
     abstract fun disconnect()
     abstract fun forget()
     abstract fun findCompatibleDevices()
+    abstract fun stopScan()
     abstract fun connectById(id: String)
     abstract fun getConnectedBluetoothName(): String
     abstract fun cleanup()

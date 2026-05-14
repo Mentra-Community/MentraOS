@@ -33,8 +33,6 @@ class Mach1: UltraliteBaseViewController, SGCManager {
 
     func sendButtonPhotoSettings() {}
 
-    func sendButtonModeSetting() {}
-
     func sendButtonVideoRecordingSettings() {}
 
     func sendButtonMaxRecordingTime(_: Int) {}
@@ -321,6 +319,10 @@ class Mach1: UltraliteBaseViewController, SGCManager {
         UltraliteManager.shared.stopScan()
         ready = false
         connected = false
+    }
+
+    func stopScan() {
+        UltraliteManager.shared.stopScan()
     }
 
     func sendTextWall(_ text: String) {

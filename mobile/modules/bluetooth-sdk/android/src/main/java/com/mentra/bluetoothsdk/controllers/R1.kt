@@ -267,7 +267,7 @@ class R1 : ControllerManager() {
         return true
     }
 
-    private fun stopScan() {
+    override fun stopScan() {
         val s = scanner ?: return
         val cb = scanCallback ?: return
         try {
@@ -871,7 +871,6 @@ class R1 : ControllerManager() {
     override fun stopStream() {}
     override fun sendStreamKeepAlive(message: Map<String, Any>) {}
     override fun sendButtonPhotoSettings() {}
-    override fun sendButtonModeSetting() {}
     override fun sendButtonVideoRecordingSettings() {}
     override fun sendButtonMaxRecordingTime() {}
     override fun sendButtonCameraLedSetting() {}

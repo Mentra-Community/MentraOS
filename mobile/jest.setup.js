@@ -47,6 +47,105 @@ jest.mock("react-native-localize", () => ({
   removeEventListener: jest.fn(),
 }))
 
+// Mock native WebView for Jest runs. Several service tests import screens
+// transitively; they only need the module to load, not a native webview.
+jest.mock("react-native-webview", () => {
+  const React = require("react")
+  const {View} = require("react-native")
+
+  const WebView = React.forwardRef((props, ref) => {
+    React.useImperativeHandle(ref, () => ({
+      goBack: jest.fn(),
+      injectJavaScript: jest.fn(),
+      reload: jest.fn(),
+    }))
+
+    return React.createElement(View, props, props.children)
+  })
+  WebView.displayName = "MockWebView"
+
+  return {
+    __esModule: true,
+    default: WebView,
+    WebView,
+  }
+})
+
+// Mock native keyboard controller wrappers for non-native Jest runs.
+jest.mock("react-native-keyboard-controller", () => {
+  const React = require("react")
+  const {ScrollView} = require("react-native")
+
+  const KeyboardAwareScrollView = React.forwardRef((props, ref) =>
+    React.createElement(ScrollView, {...props, ref}, props.children),
+  )
+  KeyboardAwareScrollView.displayName = "MockKeyboardAwareScrollView"
+
+  return {
+    __esModule: true,
+    KeyboardAwareScrollView,
+    KeyboardProvider: ({children}) => React.createElement(React.Fragment, null, children),
+  }
+})
+
+// Mock Reanimated/Worklets native runtime for import-only service tests.
+jest.mock("react-native-reanimated", () => {
+  const ReactNative = require("react-native")
+
+  const passthroughAnimation = (toValue, _config, callback) => {
+    if (typeof callback === "function") callback(true)
+    return toValue
+  }
+  const Animated = {
+    ...ReactNative.Animated,
+    View: ReactNative.View,
+    Text: ReactNative.Text,
+    Image: ReactNative.Image,
+    ScrollView: ReactNative.ScrollView,
+    createAnimatedComponent: (component) => component,
+    call: () => {},
+  }
+
+  return {
+    __esModule: true,
+    default: Animated,
+    runOnJS: (fn) => fn,
+    useAnimatedStyle: (updater) => (typeof updater === "function" ? updater() : updater),
+    useDerivedValue: (updater) => ({value: typeof updater === "function" ? updater() : updater}),
+    useSharedValue: (value) => ({value}),
+    withDelay: (_delay, animation) => animation,
+    withRepeat: (animation) => animation,
+    withSequence: (...animations) => animations[animations.length - 1],
+    withSpring: passthroughAnimation,
+    withTiming: passthroughAnimation,
+    cancelAnimation: jest.fn(),
+    interpolate: jest.fn((value) => value),
+    Extrapolation: {
+      CLAMP: "clamp",
+      EXTEND: "extend",
+      IDENTITY: "identity",
+    },
+    Easing: {
+      linear: jest.fn((value) => value),
+      in: jest.fn(() => (value) => value),
+      out: jest.fn(() => (value) => value),
+      inOut: jest.fn(() => (value) => value),
+      exp: jest.fn((value) => value),
+    },
+    configureReanimatedLogger: jest.fn(),
+    ReanimatedLogLevel: {
+      warn: 1,
+      error: 2,
+    },
+  }
+})
+
+jest.mock("react-native-worklets", () => ({
+  __esModule: true,
+  runOnJS: (fn) => fn,
+  scheduleOnRN: (fn, ...args) => fn(...args),
+}))
+
 // Mock expo-audio
 jest.mock("expo-audio", () => ({
   createAudioPlayer: jest.fn(() => ({
@@ -75,47 +174,133 @@ jest.mock("react-native-zip-archive", () => ({
   subscribe: jest.fn(() => ({remove: jest.fn()})),
 }))
 
+// Mock native filesystem package for tests that import storage-heavy services transitively.
+jest.mock("@dr.pogodin/react-native-fs", () => ({
+  __esModule: true,
+  CachesDirectoryPath: "/tmp/cache",
+  DocumentDirectoryPath: "/tmp/documents",
+  ExternalDirectoryPath: "/tmp/external",
+  TemporaryDirectoryPath: "/tmp",
+  copyFile: jest.fn(() => Promise.resolve()),
+  downloadFile: jest.fn(() => ({
+    jobId: 1,
+    promise: Promise.resolve({statusCode: 200, bytesWritten: 0}),
+  })),
+  exists: jest.fn(() => Promise.resolve(false)),
+  getFSInfo: jest.fn(() => Promise.resolve({freeSpace: 1024 * 1024 * 1024, totalSpace: 1024 * 1024 * 1024})),
+  mkdir: jest.fn(() => Promise.resolve()),
+  moveFile: jest.fn(() => Promise.resolve()),
+  read: jest.fn(() => Promise.resolve("")),
+  readDir: jest.fn(() => Promise.resolve([])),
+  readFile: jest.fn(() => Promise.resolve("")),
+  stat: jest.fn(() => Promise.resolve({size: 0})),
+  stopDownload: jest.fn(() => Promise.resolve()),
+  unlink: jest.fn(() => Promise.resolve()),
+  writeFile: jest.fn(() => Promise.resolve()),
+}))
+
 // Mock @mentra/island — its barrel pulls in many native modules
 // (react-native-share, expo-battery/clipboard/location, etc.). Tests that
 // only need a handful of exports get stubs here; specific tests can override.
-jest.mock("@mentra/island", () => ({
-  __esModule: true,
-  BgTimer: {
-    setInterval: jest.fn((callback, delay) => setInterval(callback, delay)),
-    clearInterval: jest.fn((id) => clearInterval(id)),
-    setTimeout: jest.fn((callback, delay) => setTimeout(callback, delay)),
-    clearTimeout: jest.fn((id) => clearTimeout(id)),
-  },
-  useApps: jest.fn(() => []),
-  useAppStatusStore: jest.fn(() => ({})),
-  useRefresh: jest.fn(() => ({refresh: jest.fn(), isRefreshing: false})),
-  useStopAll: jest.fn(() => jest.fn()),
-  sortAppsByLastOpenTime: jest.fn((apps) => apps),
-  decideDevLaunchRoute: jest.fn(),
-  buildMiniappGlobalsScript: jest.fn(() => ""),
-  appRegistry: {
-    subscribe: jest.fn(() => () => {}),
-    getApps: jest.fn(() => []),
-  },
-  webviewBridge: {
-    handleMessage: jest.fn(),
-  },
-  miniappRunningRegistry: {
-    isRunning: jest.fn(() => false),
-  },
-  devServerBridge: {},
-  displayProcessor: {},
-  localDisplayManager: {},
-  localMiniappRuntime: {},
-  localSttFallbackCoordinator: {},
-  micStateCoordinator: {},
-  configureRuntime: jest.fn(),
-  getRuntimeHooks: jest.fn(() => ({})),
-  ISLAND_SETTINGS_KEYS: {},
-  normalizeManifestPermissions: jest.fn(),
-  buildHardwareRequirements: jest.fn(() => []),
-  saveLocalAppRunningState: jest.fn(),
-}))
+jest.mock("@mentra/island", () => {
+  const appStatusState = {
+    apps: [],
+    refresh: jest.fn(),
+    start: jest.fn(),
+    stop: jest.fn(),
+    stopAll: jest.fn(),
+  }
+  const useAppStatusStore = jest.fn((selector) =>
+    typeof selector === "function" ? selector(appStatusState) : appStatusState,
+  )
+  useAppStatusStore.getState = jest.fn(() => appStatusState)
+  useAppStatusStore.setState = jest.fn((partial) => Object.assign(appStatusState, partial))
+  useAppStatusStore.subscribe = jest.fn(() => () => {})
+
+  return {
+    __esModule: true,
+    BgTimer: {
+      setInterval: jest.fn((callback, delay) => setInterval(callback, delay)),
+      clearInterval: jest.fn((id) => clearInterval(id)),
+      setTimeout: jest.fn((callback, delay) => setTimeout(callback, delay)),
+      clearTimeout: jest.fn((id) => clearTimeout(id)),
+    },
+    useApps: jest.fn(() => appStatusState.apps),
+    useAppStatusStore,
+    useRefresh: jest.fn(() => appStatusState.refresh),
+    useStopAll: jest.fn(() => appStatusState.stopAll),
+    useStart: jest.fn(() => appStatusState.start),
+    useStop: jest.fn(() => appStatusState.stop),
+    sortAppsByLastOpenTime: jest.fn((apps) => apps),
+    decideDevLaunchRoute: jest.fn(),
+    buildMiniappGlobalsScript: jest.fn(() => ""),
+    appRegistry: {
+      subscribe: jest.fn(() => () => {}),
+      getApps: jest.fn(() => []),
+      getInstalledMiniapps: jest.fn(() => Promise.resolve([])),
+      installOfflineApp: jest.fn((app) => {
+        appStatusState.apps = [...appStatusState.apps.filter((item) => item.packageName !== app.packageName), app]
+        return {is_ok: () => true, is_error: () => false, value: app}
+      }),
+    },
+    configureIsland: jest.fn(),
+    webviewBridge: {
+      handleMessage: jest.fn(),
+    },
+    miniappRunningRegistry: {
+      isRunning: jest.fn(() => false),
+    },
+    devServerBridge: {},
+    displayProcessor: {
+      processDisplayEvent: jest.fn((event) => ({...event, _processed: true})),
+    },
+    HardwareCompatibility: {
+      checkCompatibility: jest.fn(() => ({
+        isCompatible: true,
+        missingRequired: [],
+        missingOptional: [],
+        warnings: [],
+      })),
+    },
+    HardwareRequirementLevel: {
+      OPTIONAL: "optional",
+      REQUIRED: "required",
+    },
+    HardwareType: {
+      BUTTON: "button",
+      CAMERA: "camera",
+      DISPLAY: "display",
+      EXIST: "exist",
+      IMU: "imu",
+      LIGHT: "light",
+      MICROPHONE: "microphone",
+      SPEAKER: "speaker",
+      WIFI: "wifi",
+    },
+    localDisplayManager: {},
+    localMiniappRuntime: {
+      cleanup: jest.fn(),
+      forwardEvent: jest.fn(),
+      getAppStatus: jest.fn(() => null),
+      handleRawMessage: jest.fn(),
+      initialize: jest.fn(),
+    },
+    localSttFallbackCoordinator: {
+      getActiveLanguage: jest.fn(() => null),
+      isActive: jest.fn(() => false),
+    },
+    micStateCoordinator: {
+      cleanup: jest.fn(),
+    },
+    throttle: jest.fn((callback) => callback),
+    configureRuntime: jest.fn(),
+    getRuntimeHooks: jest.fn(() => ({})),
+    ISLAND_SETTINGS_KEYS: {},
+    normalizeManifestPermissions: jest.fn(),
+    buildHardwareRequirements: jest.fn(() => []),
+    saveLocalAppRunningState: jest.fn(),
+  }
+})
 
 // Mock SocketComms to avoid complex dependency chains
 jest.mock("@/services/SocketComms", () => ({
@@ -155,21 +340,12 @@ jest.mock("@/services/WebSocketManager", () => {
   }
 })
 
-// Mock core native module to avoid native bridge errors
+// Mock Bluetooth SDK native module to avoid native bridge errors
 jest.mock("@mentra/bluetooth-sdk", () => {
-  const CoreModuleMock = {
-    getCoreStatus: jest.fn(() => Promise.resolve("disabled")),
-    requestBluetoothPermissions: jest.fn(() => Promise.resolve(true)),
-    onGlassesStatus: jest.fn(() => () => {}),
-    restartTranscriber: jest.fn(() => Promise.resolve()),
-    displayEvent: jest.fn(),
-    rgbLedControl: jest.fn(),
-    update: jest.fn(),
-    addListener: jest.fn(() => ({remove: jest.fn()})),
-  }
+  const {coreModuleMock} = require("./src/test-utils/mockCoreModule")
   return {
     __esModule: true,
-    default: CoreModuleMock,
+    default: coreModuleMock,
     GlassesStatus: {},
   }
 })

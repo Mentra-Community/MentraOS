@@ -187,7 +187,7 @@ class R1: NSObject, ControllerManager {
         return true
     }
 
-    private func stopScan() {
+    func stopScan() {
         centralManager?.stopScan()
     }
 
@@ -511,7 +511,6 @@ class R1: NSObject, ControllerManager {
     func stopStream() {}
     func sendStreamKeepAlive(_: [String: Any]) {}
     func sendButtonPhotoSettings() {}
-    func sendButtonModeSetting() {}
     func sendButtonVideoRecordingSettings() {}
     func sendButtonMaxRecordingTime() {}
     func sendButtonCameraLedSetting() {}

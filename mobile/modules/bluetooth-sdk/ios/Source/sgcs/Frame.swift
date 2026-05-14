@@ -71,8 +71,6 @@
 
 //     func sendButtonPhotoSettings() {}
 
-//     func sendButtonModeSetting() {}
-
 //     func sendButtonVideoRecordingSettings() {}
 
 //     func sendButtonMaxRecordingTime(_: Int) {}

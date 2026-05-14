@@ -1,7 +1,6 @@
-// Extend the global core mock (from jest.setup.js) with `update`.
-// Using jest.doMock to override the global mock for this file only.
+// Override the global Bluetooth SDK mock so we can capture `update` calls.
 const mockUpdate = jest.fn()
-jest.doMock("core", () => ({
+jest.doMock("@mentra/bluetooth-sdk", () => ({
   __esModule: true,
   default: {
     update: mockUpdate,
@@ -25,8 +24,8 @@ describe("MicStateCoordinator", () => {
     expect(mockUpdate).toHaveBeenCalledWith(
       "core",
       expect.objectContaining({
-        should_send_pcm: true,
-        should_send_lc3: false,
+        should_send_pcm: false,
+        should_send_lc3: true,
       }),
     )
   })
@@ -47,7 +46,7 @@ describe("MicStateCoordinator", () => {
     const lastCall = mockUpdate.mock.calls[mockUpdate.mock.calls.length - 1]
     expect(lastCall[1]).toEqual(
       expect.objectContaining({
-        should_send_pcm: true,
+        should_send_pcm: false,
         should_send_lc3: true,
         should_send_transcript: true,
       }),

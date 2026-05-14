@@ -2339,7 +2339,7 @@ class G2 : SGCManager() {
     override fun setMicEnabled(enabled: Boolean) {
         Bridge.log("G2: setMicEnabled($enabled)")
         val currentEnabled = GlassesStore.get("glasses", "micEnabled") as? Boolean ?: false
-        
+
         // if already enabled, set to disabled, then send enabled after 500ms:
         if (currentEnabled && enabled) {
             GlassesStore.apply("glasses", "micEnabled", true)
@@ -2402,10 +2402,6 @@ class G2 : SGCManager() {
     // Button Settings
     override fun sendButtonPhotoSettings() {
         Bridge.log("G2: sendButtonPhotoSettings")
-    }
-
-    override fun sendButtonModeSetting() {
-        Bridge.log("G2: sendButtonModeSetting")
     }
 
     override fun sendButtonVideoRecordingSettings() {
@@ -2773,11 +2769,22 @@ class G2 : SGCManager() {
                 }
 
         scanCallback = callback
-        scanner.startScan(null, settings, callback)
+        try {
+            scanner.startScan(null, settings, callback)
+        } catch (e: SecurityException) {
+            // Auto-reconnect paths may fire before BLUETOOTH_SCAN is granted on Android 12+
+            Bridge.log("G2: startScan SecurityException — bluetooth permission missing: ${e.message}")
+            scanCallback = null
+            return false
+        } catch (e: Exception) {
+            Bridge.log("G2: startScan failed: ${e.message}")
+            scanCallback = null
+            return false
+        }
         return true
     }
 
-    private fun stopScan() {
+    override fun stopScan() {
         scanCallback?.let { cb -> bluetoothAdapter?.bluetoothLeScanner?.stopScan(cb) }
         scanCallback = null
     }

@@ -1261,6 +1261,14 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     }
 
     /**
+     * Handle the phone_ready/glasses_ready handshake completing over Bluetooth.
+     */
+    public void onPhoneReadyHandshakeComplete() {
+        Log.d(TAG, "📱 Phone ready handshake complete - marking phone connection active");
+        resetHeartbeatTimeout();
+    }
+
+    /**
      * Handle service heartbeat received from MentraLiveSGC
      */
     public void onServiceHeartbeatReceived() {
@@ -1599,4 +1607,4 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             Log.e(TAG, "🗑️ Error cleaning up orphaned BLE transfers", e);
         }
     }
-} 
+}

@@ -591,6 +591,17 @@ export default function OtaProgressScreen() {
     }
   }, [displayState, clearPerStepTimers])
 
+  // Clear the cache-ready install hint when this session reaches any terminal UI state.
+  // Catches paths the MantleManager ota_status listener misses — notably BES success
+  // (which terminates as `step_complete`, not `complete`) and APK build-number fallback
+  // completions (which never produce a `complete` ota_status). Without this, a stale
+  // otaUpdateAvailable would survive into /home and trip the cache-ready popup.
+  useEffect(() => {
+    if (displayState === "complete" || displayState === "restarting" || displayState === "failed") {
+      useGlassesStore.getState().setOtaUpdateAvailable(null)
+    }
+  }, [displayState])
+
   useEffect(() => {
     return () => {
       clearAllOtaTimers()
@@ -598,6 +609,7 @@ export default function OtaProgressScreen() {
   }, [clearAllOtaTimers])
 
   const handleContinue = () => {
+    useGlassesStore.getState().setOtaUpdateAvailable(null)
     replace("/ota/check-for-updates")
   }
 
@@ -618,6 +630,7 @@ export default function OtaProgressScreen() {
   }
 
   const handleDone = () => {
+    useGlassesStore.getState().setOtaUpdateAvailable(null)
     replace("/ota/check-for-updates")
   }
 

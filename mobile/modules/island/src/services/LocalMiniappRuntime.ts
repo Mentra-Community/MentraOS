@@ -15,7 +15,7 @@ import * as Battery from "expo-battery"
 import * as Clipboard from "expo-clipboard"
 import {File, Paths} from "expo-file-system"
 import * as Location from "expo-location"
-import CoreModule from "@mentra/bluetooth-sdk"
+import CoreModule, {type RgbLedAction, type RgbLedColor} from "@mentra/bluetooth-sdk"
 
 import {
   MiniappErrorCode,
@@ -60,6 +60,8 @@ interface ConnectedMiniapp {
 const LOG_TAG = "LOCAL_MINIAPP"
 const PING_INTERVAL_MS = 5_000
 const PING_TIMEOUT_THRESHOLD = 3 // unregister after 3 missed pongs (~15s)
+const RGB_LED_ACTIONS = new Set<RgbLedAction>(["on", "off"])
+const RGB_LED_COLORS = new Set<RgbLedColor>(["red", "green", "blue", "orange", "white"])
 
 // =============================================================================
 // Declared-permission record helper (for CONNECT_ACK / PERMISSIONS_UPDATE)
@@ -82,6 +84,14 @@ const PERMISSION_TYPE_TO_CANONICAL: Record<string, string> = {
   READ_NOTIFICATIONS: "notifications",
   POST_NOTIFICATIONS: "notifications",
   CALENDAR: "calendar",
+}
+
+function normalizeRgbLedAction(value: unknown): RgbLedAction {
+  return typeof value === "string" && RGB_LED_ACTIONS.has(value as RgbLedAction) ? (value as RgbLedAction) : "off"
+}
+
+function normalizeRgbLedColor(value: unknown): RgbLedColor | null {
+  return typeof value === "string" && RGB_LED_COLORS.has(value as RgbLedColor) ? (value as RgbLedColor) : null
 }
 
 const ALL_CANONICAL_PERMISSIONS = ["location", "microphone", "camera", "notifications", "calendar"] as const
@@ -957,8 +967,8 @@ class LocalMiniappRuntime {
     }
 
     const ledRequestId = requestId || `led_${Date.now()}`
-    const action = (payload.action as string) ?? "off"
-    const color = typeof payload.color === "string" ? payload.color : null
+    const action = normalizeRgbLedAction(payload.action)
+    const color = normalizeRgbLedColor(payload.color)
 
     CoreModule.rgbLedControl(
       ledRequestId,

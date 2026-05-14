@@ -310,13 +310,13 @@ class MantleManager {
   private async setupSubscriptions() {
     useGlassesStore.subscribe(
       getGlasesInfoPartial,
-      (state: Partial<GlassesStatus>, previousState: Partial<GlassesStatus>) => {
-        const statusObj: Partial<GlassesStatus> = {}
+      (state: Record<string, any>, previousState: Record<string, any>) => {
+        const statusObj: Record<string, any> = {}
 
         for (const key in state) {
-          const k = key as keyof GlassesStatus
+          const k = key as keyof typeof state
           if (state[k] !== previousState[k]) {
-            statusObj[k] = state[k] as any
+            statusObj[k] = state[k]
           }
         }
         restComms.updateGlassesState(statusObj)
@@ -384,15 +384,27 @@ class MantleManager {
         }),
       )
 
-      // TODO: remove since we can sub to the zustand store for wifi info:
+      // Keep the store in sync for standalone WiFi status events.
+      this.subs.push(
+        CoreModule.addListener("wifi_status_change", (event) => {
+          const {type: _type, ...wifi} = event
+          useGlassesStore.getState().setGlassesInfo({wifi})
+        }),
+      )
+
+      // TODO: remove since we can sub to the zustand store for hotspot info:
       this.subs.push(
         CoreModule.addListener("hotspot_status_change", (event) => {
-          useGlassesStore.getState().setHotspotInfo(event.enabled, event.ssid, event.password, event.local_ip)
+          const enabled = event.state === "enabled"
+          const ssid = enabled ? event.ssid : ""
+          const password = enabled ? event.password : ""
+          const localIp = enabled ? event.localIp : ""
+          useGlassesStore.getState().setHotspotInfo(enabled, ssid, password, localIp)
           GlobalEventEmitter.emit("hotspot_status_change", {
-            enabled: event.enabled,
-            ssid: event.ssid,
-            password: event.password,
-            local_ip: event.local_ip,
+            enabled,
+            ssid,
+            password,
+            local_ip: localIp,
           })
         }),
       )
@@ -490,8 +502,8 @@ class MantleManager {
       this.subs.push(
         CoreModule.addListener("rgb_led_control_response", (event) => {
           const requestId = event.requestId ?? ""
-          const success = !!event.success
-          const errorMessage = typeof event.error === "string" ? event.error : null
+          const success = event.state === "success"
+          const errorMessage = event.state === "error" ? event.errorCode : null
           socketComms.sendRgbLedControlResponse(requestId, success, errorMessage)
           // TODO: remove
           GlobalEventEmitter.emit("rgb_led_control_response", {requestId, success, error: errorMessage})
