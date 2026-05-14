@@ -20,13 +20,13 @@ interface ShimGlobals {
   clearInterval: typeof clearInterval
 }
 
-function evalShim(packageName = "com.test", heartbeatMs = 5000): ShimGlobals {
+function evalShim(packageName = "com.test"): ShimGlobals {
   const sandbox: Record<string, unknown> = {}
   sandbox.globalThis = sandbox
   sandbox.window = sandbox
   sandbox.console = console
-  // Fake setInterval that does nothing — we don't fire the heartbeat in
-  // tests, just want ready() to wire it up without throwing.
+  // No timers needed — the shim no longer schedules anything (heartbeat
+  // removed when Phase 3 made WebViews foreground-only).
   sandbox.setInterval = (() => 0) as typeof setInterval
   sandbox.clearInterval = (() => {}) as typeof clearInterval
   sandbox.Date = Date
@@ -42,7 +42,7 @@ function evalShim(packageName = "com.test", heartbeatMs = 5000): ShimGlobals {
     },
   }
   vm.createContext(sandbox)
-  vm.runInContext(buildMentraUiShim({packageName, heartbeatIntervalMs: heartbeatMs}), sandbox)
+  vm.runInContext(buildMentraUiShim({packageName}), sandbox)
   return sandbox as unknown as ShimGlobals
 }
 

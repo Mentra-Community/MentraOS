@@ -32,13 +32,12 @@
 
 export interface MentraUiShimOptions {
   packageName: string
-  /** Heartbeat interval in milliseconds. Defaults to 5000. */
+  /** @deprecated No longer used — heartbeat removed in Phase 3 (foreground-only WebViews). */
   heartbeatIntervalMs?: number
 }
 
 export function buildMentraUiShim(options: MentraUiShimOptions): string {
   const packageNameJson = JSON.stringify(options.packageName)
-  const heartbeatMs = options.heartbeatIntervalMs ?? 5000
   // The IIFE assembles a typed `mentra` global plus an internal
   // `__mentra` for host inbound calls. Quoted strings are JSON-safe so
   // direct injection inside another JS literal also works.
@@ -58,7 +57,6 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
   var dedupRing = new Array(64);
   var dedupHead = 0;
   var ready = false;
-  var heartbeatTimer = null;
   var channelHandlers = Object.create(null);
   var openHandlers = [];
   var closeHandlers = [];
@@ -128,11 +126,6 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
     for (var i = 0; i < openHandlers.length; i++) {
       try { openHandlers[i](); } catch (e) {}
     }
-    if (!heartbeatTimer) {
-      heartbeatTimer = setInterval(function () {
-        postEnvelope({ type: 'heartbeat', seq: outboundSeq++ });
-      }, ${heartbeatMs});
-    }
   }
 
   function fireChannel(channel, payload) {
@@ -168,7 +161,6 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
       return;
     }
     if (type === 'close') {
-      if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
       for (var k = 0; k < closeHandlers.length; k++) {
         try { closeHandlers[k](); } catch (e) {}
       }

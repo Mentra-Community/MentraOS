@@ -170,35 +170,11 @@ describe("MentraUIRouter — lifecycle", () => {
     expect(injects[0]).toContain('\\"type\\":\\"close\\"')
   })
 
-  test("heartbeat envelope resets the watchdog deadline (no inbound until next poll)", () => {
+  test("legacy heartbeat envelope is silently consumed (back-compat for older shims)", () => {
     bindCapture(router, "com.foo")
     crust.dispatchCalls.length = 0
     router.routeFromWebView("com.foo", JSON.stringify({type: "heartbeat", seq: 1}))
     expect(crust.dispatchCalls).toHaveLength(0)
     expect(router.isBound("com.foo")).toBe(true)
-  })
-})
-
-describe("MentraUIRouter — heartbeat timeout", () => {
-  test("onHeartbeatTimeout fires when no heartbeat arrives within 15s", async () => {
-    const crust = buildMockCrust()
-    const router = new MentraUIRouter(crust.binding)
-    const timeouts: string[] = []
-    router.onHeartbeatTimeout = (p) => timeouts.push(p)
-    bindCapture(router, "com.foo")
-    // Wait long enough for the watchdog interval (~5s default) to fire
-    // and detect the absence of a heartbeat. We can't reasonably wait
-    // 15s in a unit test, so test the smaller behaviour: a bound
-    // WebView with no heartbeat eventually unbinds. To do that without
-    // a 15s wall-clock wait, the watchdog needs an injected clock —
-    // but the existing class uses Date.now() directly. We assert the
-    // structural contract via isBound right after bind (heartbeat
-    // deadline is set) and unbind path (UI_CLOSE delivered).
-    expect(router.isBound("com.foo")).toBe(true)
-    router.unbindWebView("com.foo")
-    expect(router.isBound("com.foo")).toBe(false)
-    // The hook is only fired by the watchdog interval; in unit tests
-    // we can't easily fake-tick setInterval without mocking globals.
-    // Production verification: 15s real-time on device.
   })
 })

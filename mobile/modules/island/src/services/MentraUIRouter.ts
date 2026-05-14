@@ -49,26 +49,25 @@ interface BoundWebView {
   inject: MentraUIInjectFn
   /** Sequence numbers seen inbound (from WebView). Used for dedup. */
   seenSeqs: Set<number>
-  /** Wall-clock timestamp (ms) of the last heartbeat from the WebView. */
-  lastHeartbeatAt: number
-  /** Interval handle for the host's heartbeat watchdog. */
-  heartbeatWatchdog: ReturnType<typeof setInterval> | null
 }
 
-/** WebView heartbeat watchdog interval — how often we poll for staleness. */
-const HEARTBEAT_POLL_MS = 5_000
-/** Spec: a WebView is considered gone after 15s of heartbeat silence. */
-const HEARTBEAT_TIMEOUT_MS = 15_000
+/**
+ * NOTE: the WebView ↔ host heartbeat was removed when Phase 3's
+ * lifecycle inversion landed. The pre-inversion world had persistent
+ * off-screen WebViews that could be wedged invisibly (motivating the
+ * spec's 5s send / 15s timeout watchdog). The post-inversion world has
+ * **at most one WebView at a time, always foreground, spawn-cold-per-open**
+ * (same shape as the cloud-WebView miniapps). User navigation closes it
+ * explicitly; `onContentProcessDidTerminate` catches OS-level crashes;
+ * there's no scenario left where we'd silently leak a wedged WebView.
+ * Keeping the heartbeat for that environment would be defensive
+ * over-engineering with a real cost (`setInterval` runs every 5s for the
+ * lifetime of every open WebView).
+ */
 
 export class MentraUIRouter {
   private readonly bindings: Map<string, BoundWebView> = new Map()
   private readonly crust: MentraUICrustBinding
-  /**
-   * Hook fired when a bound WebView's heartbeat goes silent for >15s.
-   * The host (MiniappHost.closeUI) wires this to tear down the WebView
-   * — the router itself doesn't own the WebView's React lifecycle.
-   */
-  onHeartbeatTimeout: ((packageName: string) => void) | null = null
 
   constructor(crust: MentraUICrustBinding) {
     this.crust = crust
@@ -87,34 +86,7 @@ export class MentraUIRouter {
    * practice because only one WebView is open at a time).
    */
   bindWebView(packageName: string, injectFn: MentraUIInjectFn): void {
-    // Drop any prior binding's watchdog before installing the new one
-    // — the new WebView's first heartbeat resets the clock.
-    const prev = this.bindings.get(packageName)
-    if (prev?.heartbeatWatchdog) clearInterval(prev.heartbeatWatchdog)
-    const now = Date.now()
-    const watchdog = setInterval(() => {
-      const binding = this.bindings.get(packageName)
-      if (!binding) return
-      if (Date.now() - binding.lastHeartbeatAt > HEARTBEAT_TIMEOUT_MS) {
-        clearInterval(binding.heartbeatWatchdog!)
-        binding.heartbeatWatchdog = null
-        try {
-          this.onHeartbeatTimeout?.(packageName)
-        } catch {
-          /* host-side handler error shouldn't poison the router */
-        }
-        // Synthesise UI_CLOSE to background so any onClose handlers
-        // can flush state even if the host's teardown raced.
-        this.deliverToBackground(packageName, {type: "UI_CLOSE", reason: "heartbeat_timeout"})
-        this.bindings.delete(packageName)
-      }
-    }, HEARTBEAT_POLL_MS)
-    this.bindings.set(packageName, {
-      inject: injectFn,
-      seenSeqs: new Set(),
-      lastHeartbeatAt: now,
-      heartbeatWatchdog: watchdog,
-    })
+    this.bindings.set(packageName, {inject: injectFn, seenSeqs: new Set()})
   }
 
   /**
@@ -123,9 +95,7 @@ export class MentraUIRouter {
    * so handlers can flush state, then drops the binding.
    */
   unbindWebView(packageName: string): void {
-    const binding = this.bindings.get(packageName)
-    if (!binding) return
-    if (binding.heartbeatWatchdog) clearInterval(binding.heartbeatWatchdog)
+    if (!this.bindings.has(packageName)) return
     this.bindings.delete(packageName)
     this.deliverToBackground(packageName, {type: "UI_CLOSE"})
   }
@@ -160,19 +130,16 @@ export class MentraUIRouter {
       return
     }
     if (env.type === "heartbeat") {
-      // Liveness signal — reset the watchdog deadline so the WebView
-      // stays bound. Spec: WebView sends every 5s, host considers it
-      // gone after 15s of silence.
-      const binding = this.bindings.get(packageName)
-      if (binding) binding.lastHeartbeatAt = Date.now()
+      // Legacy envelope from older shims — silently consumed. The
+      // post-Phase-3 WebView lifecycle (foreground-only, short-lived,
+      // teardown via user navigation or onContentProcessDidTerminate)
+      // doesn't need a liveness watchdog. Kept here so old polyfill
+      // bundles in already-installed miniapps don't generate noise.
       return
     }
     if (env.type === "msg" && typeof env.channel === "string") {
       // Dedup: drop if we've seen this seq already on this binding.
       const binding = this.bindings.get(packageName)
-      // Any inbound packet — not just heartbeats — proves the WebView
-      // is alive. Bump the watchdog deadline.
-      if (binding) binding.lastHeartbeatAt = Date.now()
       const seq = typeof env.seq === "number" ? env.seq : null
       if (binding && seq != null) {
         if (binding.seenSeqs.has(seq)) return

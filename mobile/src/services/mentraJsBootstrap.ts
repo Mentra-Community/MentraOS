@@ -88,18 +88,10 @@ export function bootstrapMentraJS() {
   // route mentra.send / mentra.on through the bound JSContext.
   miniappHost.attachUIRouter(uiRouter)
 
-  // WebView heartbeat watchdog — when 15s pass without a heartbeat from
-  // a bound WebView, MentraUIRouter fires this hook so MiniappHost
-  // tears down the WebView. The JSContext stays alive; only the UI
-  // half goes. Background's session.ui.onClose handlers already fire
-  // from the router's synthetic UI_CLOSE.
-  uiRouter.onHeartbeatTimeout = (packageName) => {
-    try {
-      miniappHost.closeUI(packageName)
-    } catch (e) {
-      console.warn(`MentraJS: closeUI(${packageName}) threw on heartbeat timeout:`, e)
-    }
-  }
+  // (WebView heartbeat watchdog removed — Phase 3+ WebViews are
+  // foreground-only and short-lived, so the spec's pre-inversion
+  // 5s/15s liveness check is overengineering. WebView crashes are
+  // caught by onContentProcessDidTerminate; user close is explicit.)
 
   // Wire up the dev server's "respawn-bg" signal so a touch under
   // src/background/ kills + re-spawns the JSContext with the latest
