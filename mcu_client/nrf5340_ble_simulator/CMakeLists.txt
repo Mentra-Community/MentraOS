@@ -25,6 +25,7 @@ add_subdirectory(src/mos_components/mos_jlink_usb_switch)
 add_subdirectory(src/mos_components/mos_dfu_progress)
 add_subdirectory(src/mos_components/mos_touch)
 add_subdirectory(src/mos_components/mos_brightness)
+add_subdirectory(src/mos_components/mos_watchdog)
 add_subdirectory(src/protobuf)
 add_subdirectory(src/proto)
 
@@ -43,6 +44,7 @@ target_sources(app PRIVATE
     src/shell_lsm6dsv16x.c
     src/shell_jlink_usb_switch.c
     src/shell_npm1300_led.c
+    src/shell_watchdog_control.c
 )
 
 zephyr_library_include_directories(.)

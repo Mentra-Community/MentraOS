@@ -40,6 +40,7 @@
 #include "mos_opt3006.h"  // OPT3006 ambient light sensor
 #include "mos_touch_app.h"
 #include "mos_usb_detect.h"  // USB cable detection (polling mode)
+#include "mos_watchdog_app.h"
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 
@@ -488,7 +489,7 @@ void configure_default_low_pins(void)
     /* Force specified IOs to default LOW | 强制指定IO拉低 */
     const uint32_t default_low_pins[] = {
         NRF_GPIO_PIN_MAP(1, 12), NRF_GPIO_PIN_MAP(0, 27), NRF_GPIO_PIN_MAP(0, 24), NRF_GPIO_PIN_MAP(0, 26),
-        NRF_GPIO_PIN_MAP(0, 28), NRF_GPIO_PIN_MAP(0, 2),  NRF_GPIO_PIN_MAP(0, 3),  NRF_GPIO_PIN_MAP(0, 4),
+        NRF_GPIO_PIN_MAP(0, 28), NRF_GPIO_PIN_MAP(0, 2),  NRF_GPIO_PIN_MAP(0, 3),
     };
 
     for (int i = 0; i < ARRAY_SIZE(default_low_pins); i++)
@@ -588,6 +589,12 @@ int main(void)
     if (err != 0)
     {
         LOG_ERR("Failed to initialize user GPIOs: %d", err);
+    }
+
+    err = mos_watchdog_app_init();
+    if (err != 0)
+    {
+        LOG_WRN("Watchdog app init failed: %d", err);
     }
 
     err = touch_power_cycle_ldsw1();
