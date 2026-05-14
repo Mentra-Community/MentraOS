@@ -3185,9 +3185,9 @@ calls an agent will face are:
 
 ## Open questions
 
-Each entry has a parked answer for now. The two that are genuinely
-unresolved are flagged **UNRESOLVED** — both are deferred until we
-have data from the example miniapp running end-to-end.
+Every entry below has a parked answer. Nothing here is blocking
+this spec's implementation — the items get revisited later when
+the right data shows up.
 
 1. **CPU/memory quotas per miniapp?** Neither JSC nor QuickJS ships
    built-in quotas. We could add a watchdog in the dispatcher
@@ -3213,20 +3213,18 @@ have data from the example miniapp running end-to-end.
    theoretical behavior; don't engineer around it.
 5. **Bridge contract versioning.** Every `miniapp.json` declares
    `sdkVersion`. Host refuses to spawn miniapps targeting an SDK
-   version it doesn't support. Bump on contract changes.
-   **UNRESOLVED — out of scope for now.** We need a real
-   policy here (what's a breaking change? semver? marketing-version
-   for the host?) before the SDK ships to external developers.
-   Decide before the store opens.
+   version it doesn't support. **Decision: out of scope for now.**
+   The policy details (what counts as a breaking change, semver
+   vs marketing-version, etc.) get figured out later — there's no
+   external developer base and no store yet, so nothing forces the
+   call.
 6. **Should the SDK provide a typed RPC helper over the UI bus?**
    The raw bus today is `mentra.send(channel, payload)` +
    `session.ui.on(channel, cb)` with a `shared/channels.ts` registry
    for types. Authors who want request/response semantics
    re-implement the correlation by hand. **Decision: keep the raw
-   bus for now (option A).** If the same boilerplate shows up in
-   3+ miniapps, revisit and consider adding a thin typed RPC
-   helper. **UNRESOLVED — revisit post-Phase-5** when we have one
-   real miniapp's worth of data.
+   bus for now (option A).** Revisit later if the same boilerplate
+   shows up across multiple miniapps.
 
 ---
 
