@@ -159,16 +159,26 @@ export class EventManager {
    * suffix like `"transcription:en-US"`. Forward-compat escape hatch for new
    * event types not yet wrapped on a domain module. Most authors should use
    * typed methods on domain modules instead.
+   *
+   * Stream names beginning with `_` (e.g. `_ui` for the session.ui bus) are
+   * INTERNAL — they ride the local _forwardEvent fan-out and never appear in
+   * the outbound SUBSCRIBE list. Native already knows to deliver UI envelopes
+   * via a separate envelope `type`; the EventManager only routes them
+   * locally.
    */
   subscribe(stream: string, handler: (data: unknown) => void): UnsubscribeFn {
     this.emitter.on(stream, handler)
-    const before = this.refCounts.get(stream) ?? 0
-    this.refCounts.set(stream, before + 1)
-    if (before === 0) {
-      this.sendSubscriptionUpdate()
+    const isInternal = stream.startsWith("_")
+    if (!isInternal) {
+      const before = this.refCounts.get(stream) ?? 0
+      this.refCounts.set(stream, before + 1)
+      if (before === 0) {
+        this.sendSubscriptionUpdate()
+      }
     }
     return () => {
       this.emitter.off(stream, handler)
+      if (isInternal) return
       const current = this.refCounts.get(stream) ?? 0
       if (current <= 1) {
         this.refCounts.delete(stream)
