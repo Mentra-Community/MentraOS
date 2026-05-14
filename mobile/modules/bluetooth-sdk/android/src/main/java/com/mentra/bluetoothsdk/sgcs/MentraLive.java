@@ -1777,6 +1777,9 @@ public class MentraLive extends SGCManager {
                 if (buildNumberInt < 5) {
                     String jsonStr = json.toString();
                     // Bridge.log("LIVE: 📤 Sending JSON with esoteric message ID: " + jsonStr);
+                    if ("take_photo".equals(json.optString("type", ""))) {
+                        Bridge.log("LIVE: PHOTO PIPELINE [4/4] sendJson(build<5) -> sendDataToGlasses — " + summarizeOutgoingMessage(jsonStr));
+                    }
                     sendDataToGlasses(jsonStr, wakeup);
                 } else {
                     // Add esoteric message ID to the JSON
@@ -1812,6 +1815,9 @@ public class MentraLive extends SGCManager {
                     trackMessageForAck(messageId, jsonStr, ackTimeout);
 
                     // Send the data
+                    if ("take_photo".equals(json.optString("type", ""))) {
+                        Bridge.log("LIVE: PHOTO PIPELINE [4/4] sendJson -> sendDataToGlasses (mId=" + messageId + ", ackTimeoutMs=" + ackTimeout + ") — " + summarizeOutgoingMessage(jsonStr));
+                    }
                     sendDataToGlasses(jsonStr, wakeup);
                 }
             } catch (JSONException e) {
@@ -4095,6 +4101,7 @@ public class MentraLive extends SGCManager {
     public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean sound, Long exposureTimeNs) {
         boolean hasAuthToken = authToken != null && !authToken.isEmpty();
         Bridge.log("LIVE: Requesting photo: " + requestId + " for app: " + appId + " with size: " + size + ", webhookUrl: " + webhookUrl + ", authToken: " + (hasAuthToken ? "***" : "none") + ", compress=" + compress + ", flash=" + flash + ", sound=" + sound + ", exposureTimeNs=" + exposureTimeNs);
+        Bridge.log("LIVE: PHOTO PIPELINE [1/4] requestPhoto() entry — requestId=" + requestId + ", appId=" + appId);
 
         try {
             JSONObject json = new JSONObject();
@@ -4138,6 +4145,8 @@ public class MentraLive extends SGCManager {
             }
 
             Bridge.log("LIVE: Using auto transfer mode with BLE fallback ID: " + bleImgId);
+            Bridge.log("LIVE: PHOTO PIPELINE [2/4] JSON ready — " + summarizeOutgoingMessage(json.toString()) + ", wakeup=true");
+            Bridge.log("LIVE: PHOTO PIPELINE [3/4] Dispatching to sendJson()");
 
             sendJson(json, true);
         } catch (JSONException e) {
@@ -5568,6 +5577,12 @@ public class MentraLive extends SGCManager {
         }
 
         try {
+            String outgoingSummary = summarizeOutgoingMessage(data);
+            boolean isPhotoRequest = outgoingSummary.contains("type=take_photo");
+            if (isPhotoRequest) {
+                Bridge.log("LIVE: PHOTO PIPELINE BLE handoff — sendDataToGlasses() start, wakeup=" + wakeup + ", " + outgoingSummary);
+            }
+
             // First check if the message needs chunking
             // Create a test C-wrapped version to check size
             JSONObject testWrapper = new JSONObject();
@@ -5580,6 +5595,9 @@ public class MentraLive extends SGCManager {
             // Check if chunking is needed
             if (MessageChunker.needsChunking(testWrappedJson)) {
                 Bridge.log("LIVE: Message exceeds threshold, chunking required");
+                if (isPhotoRequest) {
+                    Bridge.log("LIVE: PHOTO PIPELINE BLE handoff — chunking enabled for request payload");
+                }
 
                 // Extract message ID if present for ACK tracking
                 long messageId = -1;
@@ -5593,6 +5611,9 @@ public class MentraLive extends SGCManager {
                 // Create chunks
                 List<JSONObject> chunks = MessageChunker.createChunks(data, messageId);
                 Bridge.log("LIVE: Sending " + chunks.size() + " chunks");
+                if (isPhotoRequest) {
+                    Bridge.log("LIVE: PHOTO PIPELINE BLE handoff — created " + chunks.size() + " chunks for transmission");
+                }
 
                 // Send each chunk
                 for (int i = 0; i < chunks.size(); i++) {
@@ -5616,6 +5637,9 @@ public class MentraLive extends SGCManager {
                 }
 
                 Bridge.log("LIVE: All chunks queued for transmission");
+                if (isPhotoRequest) {
+                    Bridge.log("LIVE: PHOTO PIPELINE BLE handoff — all photo chunks queued");
+                }
             } else {
                 // Normal single message transmission
                 Bridge.log("LIVE: Sending data to glasses: " + data);
@@ -5625,10 +5649,38 @@ public class MentraLive extends SGCManager {
 
                 // Queue the data for sending
                 queueData(packedData);
+                if (isPhotoRequest) {
+                    Bridge.log("LIVE: PHOTO PIPELINE BLE handoff — packedLen=" + packedData.length + " bytes queued");
+                }
             }
 
         } catch (Exception e) {
             Log.e(TAG, "Error creating data JSON", e);
+        }
+    }
+
+    private String summarizeOutgoingMessage(String payload) {
+        if (payload == null || payload.isEmpty()) {
+            return "type=unknown, requestId=none, appId=none, transferMethod=none, bleImgId=none, exposureTimeNs=none, mId=none";
+        }
+        try {
+            JSONObject obj = new JSONObject(payload);
+            String type = obj.optString("type", "unknown");
+            String requestId = obj.optString("requestId", "none");
+            String appId = obj.optString("appId", "none");
+            String transferMethod = obj.optString("transferMethod", "none");
+            String bleImgId = obj.optString("bleImgId", "none");
+            String exposure = obj.has("exposureTimeNs") ? String.valueOf(obj.optLong("exposureTimeNs")) : "none";
+            String mId = obj.has("mId") ? String.valueOf(obj.optLong("mId")) : "none";
+            return "type=" + type
+                    + ", requestId=" + requestId
+                    + ", appId=" + appId
+                    + ", transferMethod=" + transferMethod
+                    + ", bleImgId=" + bleImgId
+                    + ", exposureTimeNs=" + exposure
+                    + ", mId=" + mId;
+        } catch (JSONException ignored) {
+            return "type=non_json, payloadLen=" + payload.length();
         }
     }
 
