@@ -27,6 +27,18 @@ export {
   type RouterLogger as MentraJSRouterLogger,
 } from "./services/MentraJSRouter"
 export {buildMentraUiShim, type MentraUiShimOptions} from "./services/mentraUiShim"
+export {
+  MentraJSCrashController,
+  type CrashState,
+  type CrashOutcome,
+  type CrashControllerOptions,
+} from "./services/MentraJSCrashController"
+export {
+  redactSecrets,
+  MentraJSLogThrottle,
+  MentraJSLogRingBuffer,
+  type ThrottleOptions,
+} from "./services/MentraJSLogRedactor"
 export {default as localSttFallbackCoordinator} from "./services/LocalSttFallbackCoordinator"
 export {default as micStateCoordinator} from "./services/MicStateCoordinator"
 
