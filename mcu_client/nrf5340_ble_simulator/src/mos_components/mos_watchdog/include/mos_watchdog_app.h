@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "mos_yhm4005.h"
+
 #define MOS_WATCHDOG_APP_FEED_DIVISOR         4U
 #define MOS_WATCHDOG_APP_MIN_FEED_INTERVAL_MS 100U
 
@@ -63,6 +65,19 @@ int mos_watchdog_app_feed(void);
  * @return 成功返回 0；空指针返回 -EINVAL，驱动或 ACMD 失败返回负数 errno。
  */
 int mos_watchdog_app_read_id(uint8_t *id);
+
+/**
+ * @brief Read YHM4005AW4T ID with ACMD diagnostics | 带 ACMD 诊断信息读取 YHM4005AW4T ID
+ * @param id Output pointer that receives the ID register value.
+ * @param id 输出指针，用于接收 ID 寄存器值。
+ * @param diag Optional output diagnostics from the driver.
+ * @param diag 可选输出驱动层诊断信息。
+ * @details Ensures the app layer is initialized, reads ID through the confirmed normal address 0x1A, and records the last operation result.
+ * @details 确保应用层已初始化，通过已确认的 normal 地址 0x1A 读取 ID，并记录最近一次操作结果。
+ * @return 0 on success, -EINVAL for null pointer, or negative errno from driver/ACMD failure.
+ * @return 成功返回 0；空指针返回 -EINVAL，驱动或 ACMD 失败返回负数 errno。
+ */
+int mos_watchdog_app_read_id_diag(uint8_t *id, mos_yhm4005_diag_t *diag);
 
 /**
  * @brief Get cached watchdog status | 获取缓存的看门狗状态

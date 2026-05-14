@@ -590,19 +590,16 @@ int main(void)
     {
         LOG_ERR("Failed to initialize user GPIOs: %d", err);
     }
-
-    err = mos_watchdog_app_init();
-    if (err != 0)
-    {
-        LOG_WRN("Watchdog app init failed: %d", err);
-    }
-
     err = touch_power_cycle_ldsw1();
     if (err != 0)
     {
         LOG_ERR("Touch LDSW1 power cycle failed: %d", err);
     }
-
+    err = mos_watchdog_app_init();
+    if (err != 0)
+    {
+        LOG_WRN("Watchdog app init failed: %d", err);
+    }
     /* Bring touch online before slower display/VAD/sensor init so the first user touch after power-on is handled. */
     err = mos_touch_app_init();
     if (err != 0)

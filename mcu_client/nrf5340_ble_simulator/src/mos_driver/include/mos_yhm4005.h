@@ -4,6 +4,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* YHM4005AW4T ACMD addresses | YHM4005AW4T ACMD 地址 */
+/* Normal address is the production path confirmed on YHM4005AW4T. */
+/* normal 地址是 YHM4005AW4T 已确认的正式读写路径。 */
 #define MOS_YHM4005_ADDRESS_NORMAL       0x1A
 #define MOS_YHM4005_REG_ID               0x00
 #define MOS_YHM4005_REG_CTRL             0x04
@@ -13,13 +16,51 @@
 #define MOS_YHM4005_CTRL_RST_DOG         (1U << 1)
 #define MOS_YHM4005_CTRL_EN_DOG          (1U << 0)
 #define MOS_YHM4005_DEV_CFG_ACTIVE_LOW_OD 0x10
+
+/* ID validation for YHM4005AW4T register 0x00 | YHM4005AW4T 0x00 寄存器 ID 校验 */
+/* Vendor reset check uses (ID & 0xC0) == 0x80; board-read AW4T ID 0x93 is therefore valid. */
+/* 厂商 reset 检查使用 (ID & 0xC0) == 0x80；本板 AW4T 实测 ID 0x93 因此是合法值。 */
+#define MOS_YHM4005_ID_VALID_MASK        0xC0
+#define MOS_YHM4005_ID_VALID_VALUE       0x80
 #define MOS_YHM4005_RETRY_COUNT          10
-#define MOS_YHM4005_DELAY_B0_US          3
-#define MOS_YHM4005_DELAY_B1_US          8
-#define MOS_YHM4005_DELAY_BZ_US          27
-#define MOS_YHM4005_DELAY_SA_US          2
+
+/* ACMD bit timing defaults | ACMD 位时序默认值 */
+/* Vendor target low widths: B0 ~= 2.4us, B1 ~= 7.8us, BZ ~= 27us, tolerance about +/-10%. */
+/* Board-tuned stable values on YHM4005AW4T + nRF5340 P0.04 + nRF GPIO HAL: B0=2us, B1=6us, BZ=25us, SA=4us. */
+/* 厂商目标低电平宽度：B0 约 2.4us，B1 约 7.8us，BZ 约 27us，误差建议约 +/-10%。 */
+/* YHM4005AW4T + nRF5340 P0.04 + nRF GPIO HAL 上板实测稳定值：B0=2us，B1=6us，BZ=25us，SA=4us。 */
+#define MOS_YHM4005_DELAY_B0_US          2
+#define MOS_YHM4005_DELAY_B1_US          6
+#define MOS_YHM4005_DELAY_BZ_US          25
+#define MOS_YHM4005_DELAY_SA_US          4
 #define MOS_YHM4005_FEED_LOW_US          1000
 #define MOS_YHM4005_WAIT_RELEASE_LOOPS   10000
+
+typedef enum
+{
+    MOS_YHM4005_ACMD_MODE_NORMAL = 0,
+} mos_yhm4005_acmd_mode_t;
+
+typedef struct
+{
+    /* ACMD mode/address used by the last read | 最近一次读取使用的 ACMD 模式和地址 */
+    mos_yhm4005_acmd_mode_t mode;
+    uint8_t address;
+
+    /* ID and timing snapshot for the last attempt | 最近一次尝试的 ID 和时序快照 */
+    uint8_t id;
+    uint32_t delay_b0_us;
+    uint32_t delay_b1_us;
+    uint32_t delay_bz_us;
+    uint32_t delay_sa_us;
+
+    /* Vendor-style failure details for waveform/timing debug | 厂商风格的失败定位信息，用于波形和时序调试 */
+    int error_location;
+    int read_bit_error1;
+    int read_bit_error2;
+    int last_ack;
+    int expected_ack;
+} mos_yhm4005_diag_t;
 
 typedef enum
 {
@@ -53,8 +94,8 @@ typedef enum
 
 /**
  * @brief Initialize YHM4005 ACMD GPIO | 初始化 YHM4005 ACMD GPIO
- * @details Configures the watchdog ACMD pin from devicetree as output high so the single-wire bus is idle and ready for ID/read/write/feed operations.
- * @details 从设备树读取 watchdog ACMD 引脚并配置为输出高电平，使单线总线处于空闲状态，供后续读 ID、读写寄存器和喂狗使用。
+ * @details Validates the devicetree ACMD pin and configures hardware-confirmed P0.04 through nRF GPIO HAL as output high so the single-wire bus is idle.
+ * @details 校验设备树中的 ACMD 引脚，并通过 nRF GPIO HAL 将硬件已确认的 P0.04 配置为输出高电平，使单线总线处于空闲状态。
  * @return 0 on success, negative errno on GPIO/devicetree failure.
  * @return 成功返回 0，GPIO 或设备树异常时返回负数 errno。
  */
@@ -68,6 +109,19 @@ int mos_yhm4005_init(void);
  * @return 成功返回 0；空指针返回 -EINVAL，未初始化返回 -ENODEV，ACMD 通讯失败返回 -EIO。
  */
 int mos_yhm4005_read_id(uint8_t *id);
+
+/**
+ * @brief Read YHM4005AW4T ID with diagnostics | 带诊断信息读取 YHM4005AW4T ID
+ * @param id Output pointer that receives register 0x00 value.
+ * @param id 输出指针，用于接收 0x00 寄存器的值。
+ * @param diag Optional output diagnostics including timing, address, error location, and read-bit errors.
+ * @param diag 可选输出诊断信息，包含时序、地址、错误位置和 read-bit 错误。
+ * @details Uses the confirmed YHM4005AW4T normal address 0x1A and records vendor-style error_location/read_bit_error fields for ACMD debugging.
+ * @details 使用已确认的 YHM4005AW4T normal 地址 0x1A，并记录厂商风格的 error_location/read_bit_error 字段用于 ACMD 调试。
+ * @return 0 on success, -EINVAL for null ID pointer, -ENODEV before init, or -EIO when ACMD communication fails.
+ * @return 成功返回 0；ID 指针为空返回 -EINVAL，未初始化返回 -ENODEV，ACMD 通讯失败返回 -EIO。
+ */
+int mos_yhm4005_read_id_diag(uint8_t *id, mos_yhm4005_diag_t *diag);
 
 /**
  * @brief Enable YHM4005 watchdog | 启用 YHM4005 看门狗

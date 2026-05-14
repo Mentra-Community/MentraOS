@@ -10,6 +10,29 @@ static void print_supported_timeouts(const struct shell *shell)
     shell_print(shell, "Supported timeout seconds: 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000");
 }
 
+static void print_id_diag(const struct shell *shell, const mos_yhm4005_diag_t *diag)
+{
+    if (diag == NULL)
+    {
+        return;
+    }
+
+    shell_print(shell,
+                "  diag: mode=%s addr=0x%02x id=0x%02x b0=%uus b1=%uus bz=%uus sa=%uus error_location=%d read_bit_error1=%d read_bit_error2=%d ack=%d expected=%d",
+                "normal",
+                diag->address,
+                diag->id,
+                diag->delay_b0_us,
+                diag->delay_b1_us,
+                diag->delay_bz_us,
+                diag->delay_sa_us,
+                diag->error_location,
+                diag->read_bit_error1,
+                diag->read_bit_error2,
+                diag->last_ack,
+                diag->expected_ack);
+}
+
 static int cmd_wdt_help(const struct shell *shell, size_t argc, char **argv)
 {
     ARG_UNUSED(argc);
@@ -19,7 +42,7 @@ static int cmd_wdt_help(const struct shell *shell, size_t argc, char **argv)
     shell_print(shell, "Watchdog shell commands:");
     shell_print(shell, "  wdt help             - Show this menu");
     shell_print(shell, "  wdt status           - Show watchdog status");
-    shell_print(shell, "  wdt id               - Read YHM4005 ID register");
+    shell_print(shell, "  wdt id               - Read YHM4005AW4T ID with ACMD diagnostics");
     shell_print(shell, "  wdt enable <seconds> - Enable watchdog and auto feed");
     shell_print(shell, "  wdt disable          - Disable watchdog");
     shell_print(shell, "  wdt feed             - Feed watchdog once");
@@ -52,18 +75,21 @@ static int cmd_wdt_id(const struct shell *shell, size_t argc, char **argv)
 {
     int ret;
     uint8_t id = 0;
+    mos_yhm4005_diag_t diag;
 
     ARG_UNUSED(argc);
     ARG_UNUSED(argv);
 
-    ret = mos_watchdog_app_read_id(&id);
+    ret = mos_watchdog_app_read_id_diag(&id, &diag);
     if (ret != 0)
     {
         shell_error(shell, "YHM4005 ID read failed: %d", ret);
+        print_id_diag(shell, &diag);
         return ret;
     }
 
-    shell_print(shell, "YHM4005 ID: 0x%02x", id);
+    shell_print(shell, "YHM4005AW4T ID: 0x%02x", id);
+    print_id_diag(shell, &diag);
     return 0;
 }
 
@@ -139,7 +165,7 @@ static int cmd_wdt_feed(const struct shell *shell, size_t argc, char **argv)
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_wdt,
                                SHELL_CMD(help, NULL, "Show watchdog commands help", cmd_wdt_help),
                                SHELL_CMD(status, NULL, "Show watchdog status", cmd_wdt_status),
-                               SHELL_CMD(id, NULL, "Read YHM4005 ID register", cmd_wdt_id),
+                               SHELL_CMD(id, NULL, "Read YHM4005AW4T ID with ACMD diagnostics", cmd_wdt_id),
                                SHELL_CMD_ARG(enable, NULL, "Enable watchdog: wdt enable <seconds>", cmd_wdt_enable, 2, 0),
                                SHELL_CMD(disable, NULL, "Disable watchdog", cmd_wdt_disable),
                                SHELL_CMD(feed, NULL, "Feed watchdog once", cmd_wdt_feed),

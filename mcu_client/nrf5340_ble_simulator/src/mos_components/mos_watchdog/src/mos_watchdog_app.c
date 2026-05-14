@@ -8,17 +8,13 @@
 
 LOG_MODULE_REGISTER(mos_watchdog_app, LOG_LEVEL_INF);
 
-static bool s_initialized;
-static bool s_available;
-static bool s_enabled;
-static uint32_t s_timeout_seconds;
-static uint32_t s_feed_interval_ms;
-static int s_last_error;
+static mos_watchdog_status_t s_watchdog_status;
 static struct k_work_delayable s_feed_work;
 
 static void feed_work_handler(struct k_work *work);
 static void schedule_next_feed(void);
 static uint32_t get_feed_interval_ms(uint32_t timeout_seconds);
+static int ensure_initialized(void);
 static int ensure_available(void);
 static void set_last_error(int err);
 
@@ -27,7 +23,7 @@ int mos_watchdog_app_init(void)
     int ret;
     uint8_t id = 0;
 
-    if (s_initialized)
+    if (s_watchdog_status.initialized)
     {
         return 0;
     }
@@ -46,28 +42,28 @@ int mos_watchdog_app_init(void)
     if (ret != 0)
     {
         set_last_error(ret);
-        LOG_WRN("YHM4005 not available or ACMD read failed: %d", ret);
-        s_initialized = true;
+        LOG_WRN("YHM4005AW4T not available or ACMD ID read failed: %d", ret);
+        s_watchdog_status.initialized = true;
         return ret;
     }
 
-    s_available = true;
-    LOG_INF("YHM4005 ID: 0x%02x", id);
+    s_watchdog_status.available = true;
+    LOG_INF("YHM4005AW4T ID: 0x%02x addr=0x%02x", id, MOS_YHM4005_ADDRESS_NORMAL);
 
     ret = mos_yhm4005_disable();
     if (ret != 0)
     {
         set_last_error(ret);
         LOG_WRN("YHM4005 disable during init failed: %d", ret);
-        s_initialized = true;
+        s_watchdog_status.initialized = true;
         return ret;
     }
 
-    s_enabled = false;
-    s_timeout_seconds = 0;
-    s_feed_interval_ms = 0;
+    s_watchdog_status.enabled = false;
+    s_watchdog_status.timeout_seconds = 0;
+    s_watchdog_status.feed_interval_ms = 0;
     set_last_error(0);
-    s_initialized = true;
+    s_watchdog_status.initialized = true;
     LOG_INF("Watchdog app initialized, watchdog kept disabled by default");
     return 0;
 }
@@ -97,9 +93,9 @@ int mos_watchdog_app_enable(uint32_t timeout_seconds)
         return ret;
     }
 
-    s_enabled = true;
-    s_timeout_seconds = timeout_seconds;
-    s_feed_interval_ms = get_feed_interval_ms(timeout_seconds);
+    s_watchdog_status.enabled = true;
+    s_watchdog_status.timeout_seconds = timeout_seconds;
+    s_watchdog_status.feed_interval_ms = get_feed_interval_ms(timeout_seconds);
     set_last_error(0);
     schedule_next_feed();
     return 0;
@@ -124,9 +120,9 @@ int mos_watchdog_app_disable(void)
         return ret;
     }
 
-    s_enabled = false;
-    s_timeout_seconds = 0;
-    s_feed_interval_ms = 0;
+    s_watchdog_status.enabled = false;
+    s_watchdog_status.timeout_seconds = 0;
+    s_watchdog_status.feed_interval_ms = 0;
     set_last_error(0);
     return 0;
 }
@@ -155,19 +151,43 @@ int mos_watchdog_app_read_id(uint8_t *id)
         return -EINVAL;
     }
 
-    if (!s_initialized)
+    ret = ensure_initialized();
+    if (ret != 0)
     {
-        ret = mos_watchdog_app_init();
-        if (ret != 0 && !s_initialized)
-        {
-            return ret;
-        }
+        return ret;
     }
 
     ret = mos_yhm4005_read_id(id);
     if (ret == 0)
     {
-        s_available = true;
+        s_watchdog_status.available = true;
+        LOG_INF("YHM4005AW4T ID read ok: id=0x%02x addr=0x%02x", *id, MOS_YHM4005_ADDRESS_NORMAL);
+    }
+
+    set_last_error(ret);
+    return ret;
+}
+
+int mos_watchdog_app_read_id_diag(uint8_t *id, mos_yhm4005_diag_t *diag)
+{
+    int ret;
+
+    if (id == NULL)
+    {
+        return -EINVAL;
+    }
+
+    ret = ensure_initialized();
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    ret = mos_yhm4005_read_id_diag(id, diag);
+    if (ret == 0)
+    {
+        s_watchdog_status.available = true;
+        LOG_INF("YHM4005AW4T ID diag read ok: id=0x%02x", *id);
     }
 
     set_last_error(ret);
@@ -181,19 +201,14 @@ void mos_watchdog_app_get_status(mos_watchdog_status_t *status)
         return;
     }
 
-    status->initialized = s_initialized;
-    status->available = s_available;
-    status->enabled = s_enabled;
-    status->timeout_seconds = s_timeout_seconds;
-    status->feed_interval_ms = s_feed_interval_ms;
-    status->last_error = s_last_error;
+    *status = s_watchdog_status;
 }
 
 static void feed_work_handler(struct k_work *work)
 {
     ARG_UNUSED(work);
 
-    if (!s_enabled)
+    if (!s_watchdog_status.enabled)
     {
         return;
     }
@@ -214,12 +229,12 @@ static void feed_work_handler(struct k_work *work)
 
 static void schedule_next_feed(void)
 {
-    if (!s_enabled || s_feed_interval_ms == 0)
+    if (!s_watchdog_status.enabled || s_watchdog_status.feed_interval_ms == 0)
     {
         return;
     }
 
-    (void)k_work_reschedule(&s_feed_work, K_MSEC(s_feed_interval_ms));
+    (void)k_work_reschedule(&s_feed_work, K_MSEC(s_watchdog_status.feed_interval_ms));
 }
 
 static uint32_t get_feed_interval_ms(uint32_t timeout_seconds)
@@ -234,21 +249,36 @@ static uint32_t get_feed_interval_ms(uint32_t timeout_seconds)
     return interval_ms;
 }
 
+static int ensure_initialized(void)
+{
+    int ret;
+
+    if (s_watchdog_status.initialized)
+    {
+        return 0;
+    }
+
+    ret = mos_watchdog_app_init();
+    if (ret != 0 && !s_watchdog_status.initialized)
+    {
+        return ret;
+    }
+
+    return 0;
+}
+
 static int ensure_available(void)
 {
     int ret;
     uint8_t id = 0;
 
-    if (!s_initialized)
+    ret = ensure_initialized();
+    if (ret != 0)
     {
-        ret = mos_watchdog_app_init();
-        if (ret != 0 && !s_initialized)
-        {
-            return ret;
-        }
+        return ret;
     }
 
-    if (s_available)
+    if (s_watchdog_status.available)
     {
         return 0;
     }
@@ -260,12 +290,13 @@ static int ensure_available(void)
         return ret;
     }
 
-    s_available = true;
+    s_watchdog_status.available = true;
+    LOG_INF("YHM4005AW4T available: id=0x%02x addr=0x%02x", id, MOS_YHM4005_ADDRESS_NORMAL);
     set_last_error(0);
     return 0;
 }
 
 static void set_last_error(int err)
 {
-    s_last_error = err;
+    s_watchdog_status.last_error = err;
 }
