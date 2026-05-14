@@ -261,6 +261,76 @@ describe("MentraJSRouter", () => {
     expect(router.registeredPackages().sort()).toEqual(["a", "b"])
   })
 
+  test("crash controller receives __error frames and schedules respawn", async () => {
+    const {MentraJSCrashController} = await import("../MentraJSCrashController")
+    let clock = 0
+    const controller = new MentraJSCrashController({
+      now: () => clock,
+      backoffMs: [2_000],
+      maxRetries: 3,
+    })
+    router.crashController = controller
+    await router.spawnAndRegister("com.foo", "/* miniapp js */", {permissions: ["MICROPHONE"]})
+    router.start()
+    crust.emit("mentrajs_message", {
+      packageName: "com.foo",
+      iface: "__error",
+      method: "exception",
+      argsJson: JSON.stringify({message: "boom"}),
+    })
+    expect(controller.stateFor("com.foo")?.kind).toBe("BACKOFF")
+  })
+
+  test("crashloop transitions invoke onCrashloop hook", async () => {
+    const {MentraJSCrashController} = await import("../MentraJSCrashController")
+    let clock = 0
+    const controller = new MentraJSCrashController({
+      now: () => clock,
+      backoffMs: [10],
+      maxRetries: 3,
+    })
+    router.crashController = controller
+    const crashloops: Array<{packageName: string; reason: string}> = []
+    router.onCrashloop = (p, r) => crashloops.push({packageName: p, reason: r})
+    await router.spawnAndRegister("com.foo", "/* miniapp js */")
+    router.start()
+    for (let i = 0; i < 4; i++) {
+      crust.emit("mentrajs_message", {
+        packageName: "com.foo",
+        iface: "__error",
+        method: "exception",
+        argsJson: JSON.stringify({message: `boom-${i}`}),
+      })
+      clock += 100
+    }
+    expect(controller.stateFor("com.foo")?.kind).toBe("CRASHLOOP_DISABLED")
+    expect(crashloops).toHaveLength(1)
+    expect(crashloops[0]!.packageName).toBe("com.foo")
+  })
+
+  test("unregister cancels a pending crash-respawn timer", async () => {
+    const {MentraJSCrashController} = await import("../MentraJSCrashController")
+    const controller = new MentraJSCrashController({
+      now: () => 0,
+      backoffMs: [60_000], // long backoff so the timer would still be pending
+      maxRetries: 3,
+    })
+    router.crashController = controller
+    await router.spawnAndRegister("com.foo", "/* miniapp js */")
+    router.start()
+    crust.emit("mentrajs_message", {
+      packageName: "com.foo",
+      iface: "__error",
+      method: "exception",
+      argsJson: JSON.stringify({message: "boom"}),
+    })
+    crust.spawnCalls.length = 0
+    await router.unregister("com.foo")
+    // Give the timer a chance to fire (it shouldn't, because we cancelled it).
+    await new Promise((r) => setTimeout(r, 20))
+    expect(crust.spawnCalls).toHaveLength(0)
+  })
+
   test("listener throwing does not poison subsequent events", () => {
     router.start()
     // Send a bad event that makes our handler throw, then a good one.

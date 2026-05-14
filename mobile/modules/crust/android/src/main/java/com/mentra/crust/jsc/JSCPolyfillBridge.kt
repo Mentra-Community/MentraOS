@@ -9,8 +9,15 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import okio.ByteString
+import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
+import org.json.JSONArray
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import android.util.Base64
 
 /**
  * Native bridge for the network polyfills that can't be implemented in
@@ -41,6 +48,123 @@ object JSCPolyfillBridge {
     /** Idempotent. Call once on host boot, after the dispatcher is created. */
     fun install(runtime: JSCRuntime) {
         installFetch(runtime)
+        installWebSocket(runtime)
+    }
+
+    private val sockets = ConcurrentHashMap<String, OkSocketRecord>()
+
+    private data class OkSocketRecord(
+        val packageName: String,
+        val socket: WebSocket,
+        @Volatile var closedSent: Boolean = false,
+    )
+
+    private fun installWebSocket(runtime: JSCRuntime) {
+        runtime.dispatcher.register("ws", "open") { packageName, args, _ ->
+            val req = args.firstOrNull() as? Map<*, *>
+                ?: return@register JSCDispatchOutcome.Error("INVALID_ARGS", "ws.open expects {sid, url, protocols?}")
+            val sid = req["sid"] as? String
+                ?: return@register JSCDispatchOutcome.Error("INVALID_ARGS", "ws.open: missing sid")
+            val url = req["url"] as? String
+                ?: return@register JSCDispatchOutcome.Error("INVALID_ARGS", "ws.open: missing url")
+            val protocols = (req["protocols"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+            val builder = Request.Builder().url(url)
+            if (protocols.isNotEmpty()) {
+                builder.header("Sec-WebSocket-Protocol", protocols.joinToString(", "))
+            }
+            val listener = object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
+                    val proto = response.header("Sec-WebSocket-Protocol")
+                    val payload = if (proto.isNullOrEmpty()) emptyMap<String, Any?>() else mapOf("protocol" to proto)
+                    deliverEvent(runtime, packageName, sid, "open", payload)
+                }
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    deliverEvent(runtime, packageName, sid, "message", mapOf("kind" to "text", "data" to text))
+                }
+                override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                    val b64 = Base64.encodeToString(bytes.toByteArray(), Base64.NO_WRAP)
+                    deliverEvent(runtime, packageName, sid, "message", mapOf("kind" to "binary", "data" to b64))
+                }
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    webSocket.close(code, reason)
+                }
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    val rec = sockets.remove(sid) ?: return
+                    if (!rec.closedSent) {
+                        rec.closedSent = true
+                        deliverEvent(runtime, packageName, sid, "close", mapOf("code" to code, "reason" to reason))
+                    }
+                }
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) {
+                    deliverEvent(runtime, packageName, sid, "error", mapOf("message" to (t.message ?: "ws error")))
+                    val rec = sockets.remove(sid) ?: return
+                    if (!rec.closedSent) {
+                        rec.closedSent = true
+                        deliverEvent(runtime, packageName, sid, "close", mapOf("code" to 1006, "reason" to (t.message ?: "")))
+                    }
+                }
+            }
+            val socket = httpClient.newWebSocket(builder.build(), listener)
+            sockets[sid] = OkSocketRecord(packageName, socket)
+            JSCDispatchOutcome.Sync("null")
+        }
+
+        runtime.dispatcher.register("ws", "send") { _, args, _ ->
+            val req = args.firstOrNull() as? Map<*, *>
+                ?: return@register JSCDispatchOutcome.Error("INVALID_ARGS", "ws.send expects {sid, kind, payload}")
+            val sid = req["sid"] as? String
+                ?: return@register JSCDispatchOutcome.Error("INVALID_ARGS", "ws.send: missing sid")
+            val kind = req["kind"] as? String
+                ?: return@register JSCDispatchOutcome.Error("INVALID_ARGS", "ws.send: missing kind")
+            val payload = req["payload"] as? String
+                ?: return@register JSCDispatchOutcome.Error("INVALID_ARGS", "ws.send: missing payload")
+            val rec = sockets[sid]
+                ?: return@register JSCDispatchOutcome.Error("INVALID_ARGS", "ws.send: unknown sid")
+            val ok = when (kind) {
+                "text" -> rec.socket.send(payload)
+                "binary" -> {
+                    val bytes = try {
+                        Base64.decode(payload, Base64.DEFAULT)
+                    } catch (e: IllegalArgumentException) {
+                        return@register JSCDispatchOutcome.Error("INVALID_ARGS", "ws.send: bad base64")
+                    }
+                    rec.socket.send(bytes.toByteString())
+                }
+                else -> return@register JSCDispatchOutcome.Error("INVALID_ARGS", "ws.send: kind must be text|binary")
+            }
+            if (!ok) {
+                Log.w(TAG, "ws.send returned false for sid=$sid (queue full?)")
+            }
+            JSCDispatchOutcome.Sync("null")
+        }
+
+        runtime.dispatcher.register("ws", "close") { _, args, _ ->
+            val req = args.firstOrNull() as? Map<*, *>
+                ?: return@register JSCDispatchOutcome.Error("INVALID_ARGS", "ws.close expects {sid, code?, reason?}")
+            val sid = req["sid"] as? String
+                ?: return@register JSCDispatchOutcome.Error("INVALID_ARGS", "ws.close: missing sid")
+            val rec = sockets[sid] ?: return@register JSCDispatchOutcome.Sync("null")
+            val code = (req["code"] as? Number)?.toInt() ?: 1000
+            val reason = (req["reason"] as? String) ?: ""
+            rec.socket.close(code, reason)
+            JSCDispatchOutcome.Sync("null")
+        }
+    }
+
+    private fun deliverEvent(
+        runtime: JSCRuntime,
+        packageName: String,
+        sid: String,
+        wsType: String,
+        payload: Map<String, Any?>,
+    ) {
+        val envelope = JSONObject().apply {
+            put("kind", "ws-event")
+            put("sid", sid)
+            put("wsType", wsType)
+            put("payload", JSONObject(payload as Map<*, *>))
+        }
+        runtime.dispatchToJs(packageName, envelope.toString())
     }
 
     private fun installFetch(runtime: JSCRuntime) {

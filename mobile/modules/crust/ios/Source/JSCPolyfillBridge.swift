@@ -25,6 +25,7 @@ public enum JSCPolyfillBridge {
 
     public static func install(into dispatcher: JSCDispatcher) {
         installFetch(dispatcher)
+        installWebSocket(dispatcher)
     }
 
     private static func installFetch(_ dispatcher: JSCDispatcher) {
@@ -101,5 +102,223 @@ public enum JSCPolyfillBridge {
             task.resume()
             return .async
         }
+    }
+
+    // MARK: - WebSocket
+
+    /// Per-sid map of active socket tasks. The wrapper holds the
+    /// URLSessionWebSocketTask and pumps inbound frames back via __deliver.
+    private static var sockets: [String: WebSocketTaskWrapper] = [:]
+    private static let socketsLock = NSLock()
+
+    private final class WebSocketTaskWrapper {
+        let sid: String
+        let packageName: String
+        let task: URLSessionWebSocketTask
+        var closedSent = false
+
+        init(sid: String, packageName: String, request: URLRequest, session: URLSession) {
+            self.sid = sid
+            self.packageName = packageName
+            self.task = session.webSocketTask(with: request)
+        }
+
+        func resume() {
+            task.resume()
+            readNext()
+        }
+
+        func send(text: String, completion: @escaping (Error?) -> Void) {
+            task.send(.string(text), completionHandler: completion)
+        }
+
+        func send(binary: Data, completion: @escaping (Error?) -> Void) {
+            task.send(.data(binary), completionHandler: completion)
+        }
+
+        func close(code: URLSessionWebSocketTask.CloseCode, reason: String?) {
+            let data = reason?.data(using: .utf8)
+            task.cancel(with: code, reason: data)
+        }
+
+        private func readNext() {
+            task.receive { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .success(let msg):
+                    switch msg {
+                    case .string(let text):
+                        JSCPolyfillBridge.deliverWebSocketEvent(
+                            packageName: self.packageName,
+                            sid: self.sid,
+                            wsType: "message",
+                            payload: ["kind": "text", "data": text],
+                        )
+                    case .data(let data):
+                        let b64 = data.base64EncodedString()
+                        JSCPolyfillBridge.deliverWebSocketEvent(
+                            packageName: self.packageName,
+                            sid: self.sid,
+                            wsType: "message",
+                            payload: ["kind": "binary", "data": b64],
+                        )
+                    @unknown default:
+                        break
+                    }
+                    self.readNext()
+                case .failure(let error):
+                    JSCPolyfillBridge.deliverWebSocketEvent(
+                        packageName: self.packageName,
+                        sid: self.sid,
+                        wsType: "error",
+                        payload: ["message": error.localizedDescription],
+                    )
+                    if !self.closedSent {
+                        self.closedSent = true
+                        JSCPolyfillBridge.deliverWebSocketEvent(
+                            packageName: self.packageName,
+                            sid: self.sid,
+                            wsType: "close",
+                            payload: ["code": 1006, "reason": error.localizedDescription],
+                        )
+                        JSCPolyfillBridge.dropSocket(sid: self.sid)
+                    }
+                }
+            }
+        }
+    }
+
+    private static func installWebSocket(_ dispatcher: JSCDispatcher) {
+        dispatcher.register(iface: "ws", method: "open") { packageName, args, _ in
+            guard let req = args.first as? [String: Any],
+                  let sid = req["sid"] as? String,
+                  let urlString = req["url"] as? String,
+                  let url = URL(string: urlString) else {
+                return .error(code: "INVALID_ARGS", message: "ws.open expects {sid, url, protocols?}")
+            }
+            var urlRequest = URLRequest(url: url)
+            if let protocols = req["protocols"] as? [String], !protocols.isEmpty {
+                urlRequest.setValue(protocols.joined(separator: ", "), forHTTPHeaderField: "Sec-WebSocket-Protocol")
+            }
+            let wrapper = WebSocketTaskWrapper(
+                sid: sid,
+                packageName: packageName,
+                request: urlRequest,
+                session: session,
+            )
+            socketsLock.lock()
+            sockets[sid] = wrapper
+            socketsLock.unlock()
+            wrapper.resume()
+            // Fire an immediate `open` event. URLSessionWebSocketTask
+            // accepts send() before the TCP handshake completes (it queues
+            // internally), so JS code racing send-before-open just works.
+            DispatchQueue.global().asyncAfter(deadline: .now() + 0.001) {
+                JSCPolyfillBridge.deliverWebSocketEvent(
+                    packageName: packageName,
+                    sid: sid,
+                    wsType: "open",
+                    payload: [:],
+                )
+            }
+            return .sync(NSNull())
+        }
+
+        dispatcher.register(iface: "ws", method: "send") { _, args, _ in
+            guard let req = args.first as? [String: Any],
+                  let sid = req["sid"] as? String,
+                  let kind = req["kind"] as? String,
+                  let payload = req["payload"] as? String else {
+                return .error(code: "INVALID_ARGS", message: "ws.send expects {sid, kind, payload}")
+            }
+            socketsLock.lock()
+            let wrapper = sockets[sid]
+            socketsLock.unlock()
+            guard let wrapper else {
+                return .error(code: "INVALID_ARGS", message: "ws.send: unknown sid")
+            }
+            let pkg = wrapper.packageName
+            if kind == "text" {
+                wrapper.send(text: payload) { error in
+                    if let error {
+                        JSCPolyfillBridge.deliverWebSocketEvent(
+                            packageName: pkg,
+                            sid: sid,
+                            wsType: "error",
+                            payload: ["message": error.localizedDescription],
+                        )
+                    }
+                }
+            } else if kind == "binary" {
+                guard let data = Data(base64Encoded: payload) else {
+                    return .error(code: "INVALID_ARGS", message: "ws.send: bad base64")
+                }
+                wrapper.send(binary: data) { error in
+                    if let error {
+                        JSCPolyfillBridge.deliverWebSocketEvent(
+                            packageName: pkg,
+                            sid: sid,
+                            wsType: "error",
+                            payload: ["message": error.localizedDescription],
+                        )
+                    }
+                }
+            } else {
+                return .error(code: "INVALID_ARGS", message: "ws.send: kind must be text|binary")
+            }
+            return .sync(NSNull())
+        }
+
+        dispatcher.register(iface: "ws", method: "close") { _, args, _ in
+            guard let req = args.first as? [String: Any],
+                  let sid = req["sid"] as? String else {
+                return .error(code: "INVALID_ARGS", message: "ws.close expects {sid, code?, reason?}")
+            }
+            socketsLock.lock()
+            let wrapper = sockets[sid]
+            socketsLock.unlock()
+            guard let wrapper else {
+                return .sync(NSNull())
+            }
+            let rawCode = (req["code"] as? Int) ?? 1000
+            let code = URLSessionWebSocketTask.CloseCode(rawValue: rawCode) ?? .goingAway
+            wrapper.close(code: code, reason: req["reason"] as? String)
+            if !wrapper.closedSent {
+                wrapper.closedSent = true
+                JSCPolyfillBridge.deliverWebSocketEvent(
+                    packageName: wrapper.packageName,
+                    sid: sid,
+                    wsType: "close",
+                    payload: ["code": rawCode, "reason": (req["reason"] as? String) ?? ""],
+                )
+                socketsLock.lock()
+                sockets[sid] = nil
+                socketsLock.unlock()
+            }
+            return .sync(NSNull())
+        }
+    }
+
+    /// Push a ws-event envelope to the JS side. The polyfill bundle's
+    /// __deliver dispatches kind="ws-event" to the matching socket.
+    fileprivate static func deliverWebSocketEvent(
+        packageName: String,
+        sid: String,
+        wsType: String,
+        payload: [String: Any],
+    ) {
+        let envelope: [String: Any] = [
+            "kind": "ws-event",
+            "sid": sid,
+            "wsType": wsType,
+            "payload": payload,
+        ]
+        JSCRuntime.shared.dispatchToJs(packageName: packageName, envelope: envelope)
+    }
+
+    fileprivate static func dropSocket(sid: String) {
+        socketsLock.lock()
+        sockets[sid] = nil
+        socketsLock.unlock()
     }
 }

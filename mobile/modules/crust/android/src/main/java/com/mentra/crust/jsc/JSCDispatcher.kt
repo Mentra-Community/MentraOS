@@ -33,19 +33,43 @@ sealed class JSCDispatchOutcome {
 
 data class InstalledMiniappManifest(val permissions: Set<String>)
 
-class PermissionStore {
+/**
+ * Permission grant store. Backed by a single SharedPreferences file
+ * (`MentraJSPermissions`) so grants survive host process restarts. Reads
+ * are served from an in-memory cache so the dispatcher hot path avoids
+ * disk I/O on every __dispatch call.
+ *
+ * Key layout: `<packageName>::<permission> = true` (or absent).
+ */
+class PermissionStore(private val appContext: Context) {
+    private val prefs: SharedPreferences =
+        appContext.getSharedPreferences("MentraJSPermissions", Context.MODE_PRIVATE)
     private val granted = mutableMapOf<String, MutableSet<String>>()
     private val lock = Any()
+
+    init {
+        // Read-through cache populated once at construction.
+        for ((key, _) in prefs.all) {
+            val parts = key.split("::")
+            if (parts.size == 2) {
+                granted.getOrPut(parts[0]) { mutableSetOf() }.add(parts[1])
+            }
+        }
+    }
+
+    private fun diskKey(packageName: String, permission: String) = "$packageName::$permission"
 
     fun grant(packageName: String, permission: String) {
         synchronized(lock) {
             granted.getOrPut(packageName) { mutableSetOf() }.add(permission)
+            prefs.edit().putBoolean(diskKey(packageName, permission), true).apply()
         }
     }
 
     fun revoke(packageName: String, permission: String) {
         synchronized(lock) {
             granted[packageName]?.remove(permission)
+            prefs.edit().remove(diskKey(packageName, permission)).apply()
         }
     }
 
@@ -57,7 +81,26 @@ class PermissionStore {
 
     fun setGrants(packageName: String, permissions: Set<String>) {
         synchronized(lock) {
+            val existing = granted[packageName]
+            val editor = prefs.edit()
+            if (existing != null) {
+                for (p in existing) editor.remove(diskKey(packageName, p))
+            }
             granted[packageName] = permissions.toMutableSet()
+            for (p in permissions) editor.putBoolean(diskKey(packageName, p), true)
+            editor.apply()
+        }
+    }
+
+    fun clearPackage(packageName: String) {
+        synchronized(lock) {
+            val existing = granted[packageName]
+            if (existing != null) {
+                val editor = prefs.edit()
+                for (p in existing) editor.remove(diskKey(packageName, p))
+                editor.apply()
+            }
+            granted.remove(packageName)
         }
     }
 }
@@ -67,7 +110,7 @@ class JSCDispatcher(private val appContext: Context) {
         private const val TAG = "MentraJS.Dispatcher"
     }
 
-    val permissionStore: PermissionStore = PermissionStore()
+    val permissionStore: PermissionStore = PermissionStore(appContext)
     private val routes = mutableMapOf<String, Handler>()
     private val manifests = mutableMapOf<String, InstalledMiniappManifest>()
     private val implicitGrants = setOf("STORAGE", "DISPLAY", "BUTTONS")

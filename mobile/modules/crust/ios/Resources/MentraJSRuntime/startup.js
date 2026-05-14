@@ -232,6 +232,15 @@
         }
         return;
       }
+      if (env.kind === "ws-event") {
+        const wsHook = g.__mentraDeliverWebSocketEvent;
+        const sid = env.sid;
+        const wsType = env.wsType;
+        if (typeof wsHook === "function" && typeof sid === "string" && typeof wsType === "string") {
+          wsHook(sid, wsType, env.payload ?? {});
+        }
+        return;
+      }
       if (env.kind === "bridge" && typeof env.raw === "string") {
         const deliver = g.__mentraDeliverBridgeRaw;
         if (typeof deliver === "function") {
@@ -525,14 +534,192 @@
       };
     }
     if (typeof g.WebSocket !== "function") {
-      ;
-      g.WebSocket = class {
-        constructor() {
-          throw new Error(
-            "WebSocket polyfill not yet wired into MentraJS \u2014 fall back to fetch streaming or wait for Phase 1.5."
-          );
+      let bytesToBase642 = function(bytes) {
+        const b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let out = "";
+        let i = 0;
+        while (i < bytes.length) {
+          const c1 = bytes[i++];
+          const c2 = i < bytes.length ? bytes[i++] : NaN;
+          const c3 = i < bytes.length ? bytes[i++] : NaN;
+          const e1 = c1 >> 2;
+          const e2 = (c1 & 3) << 4 | (Number.isNaN(c2) ? 0 : c2 >> 4);
+          const e3 = Number.isNaN(c2) ? 64 : (c2 & 15) << 2 | (Number.isNaN(c3) ? 0 : c3 >> 6);
+          const e4 = Number.isNaN(c3) ? 64 : c3 & 63;
+          out += b64[e1] + b64[e2] + (e3 === 64 ? "=" : b64[e3]) + (e4 === 64 ? "=" : b64[e4]);
         }
+        return out;
+      }, base64ToBytes2 = function(s) {
+        const b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        const clean = s.replace(/=+$/, "");
+        const out = [];
+        let buf = 0;
+        let bits = 0;
+        for (let i = 0; i < clean.length; i++) {
+          const idx = b64.indexOf(clean[i]);
+          if (idx < 0) continue;
+          buf = buf << 6 | idx;
+          bits += 6;
+          if (bits >= 8) {
+            bits -= 8;
+            out.push(buf >> bits & 255);
+          }
+        }
+        return new Uint8Array(out);
+      }, queueMicrotaskSafe2 = function(fn) {
+        const q = g.queueMicrotask;
+        if (typeof q === "function") q(fn);
+        else g.Promise.resolve().then(fn);
       };
+      var bytesToBase64 = bytesToBase642, base64ToBytes = base64ToBytes2, queueMicrotaskSafe = queueMicrotaskSafe2;
+      const sockets = /* @__PURE__ */ new Map();
+      g.__mentraDeliverWebSocketEvent = (sid, type, payload) => {
+        const sock = sockets.get(sid);
+        if (!sock) return;
+        sock._deliver(type, payload ?? {});
+      };
+      class MentraWebSocket {
+        constructor(url, protocols) {
+          this.CONNECTING = 0;
+          this.OPEN = 1;
+          this.CLOSING = 2;
+          this.CLOSED = 3;
+          this.readyState = 0;
+          this.bufferedAmount = 0;
+          this.extensions = "";
+          this.protocol = "";
+          this.binaryType = "arraybuffer";
+          this.onopen = null;
+          this.onmessage = null;
+          this.onerror = null;
+          this.onclose = null;
+          this.listeners = {
+            open: /* @__PURE__ */ new Set(),
+            message: /* @__PURE__ */ new Set(),
+            error: /* @__PURE__ */ new Set(),
+            close: /* @__PURE__ */ new Set()
+          };
+          this.url = String(url);
+          const protoList = Array.isArray(protocols) ? protocols : protocols ? [protocols] : [];
+          this.sid = `ws-${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
+          sockets.set(this.sid, this);
+          try {
+            __dispatch(
+              "ws",
+              "open",
+              JSON.stringify([{ sid: this.sid, url: this.url, protocols: protoList }])
+            );
+          } catch (e) {
+            this.readyState = 3;
+            queueMicrotaskSafe2(() => this._deliver("error", { message: String(e) }));
+            queueMicrotaskSafe2(() => this._deliver("close", { code: 1006, reason: "bridge unavailable" }));
+          }
+        }
+        addEventListener(type, cb) {
+          if (!this.listeners[type]) this.listeners[type] = /* @__PURE__ */ new Set();
+          this.listeners[type].add(cb);
+        }
+        removeEventListener(type, cb) {
+          this.listeners[type]?.delete(cb);
+        }
+        send(data) {
+          if (this.readyState === 3) {
+            throw new Error("WebSocket is already in CLOSING or CLOSED state.");
+          }
+          let kind;
+          let payload;
+          if (typeof data === "string") {
+            kind = "text";
+            payload = data;
+          } else {
+            kind = "binary";
+            const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+            payload = bytesToBase642(bytes);
+          }
+          try {
+            __dispatch("ws", "send", JSON.stringify([{ sid: this.sid, kind, payload }]));
+          } catch (e) {
+            this._deliver("error", { message: String(e) });
+          }
+        }
+        close(code, reason) {
+          if (this.readyState === 2 || this.readyState === 3) return;
+          this.readyState = 2;
+          try {
+            __dispatch(
+              "ws",
+              "close",
+              JSON.stringify([{ sid: this.sid, code: code ?? 1e3, reason: reason ?? "" }])
+            );
+          } catch (e) {
+            this.readyState = 3;
+            this._deliver("close", { code: 1006, reason: String(e) });
+          }
+        }
+        /** @internal — called by __deliver via the global hook. */
+        _deliver(type, ev) {
+          if (type === "open") {
+            this.readyState = 1;
+            if (typeof ev.protocol === "string") this.protocol = ev.protocol;
+          } else if (type === "close") {
+            this.readyState = 3;
+            sockets.delete(this.sid);
+          }
+          const synth = { type, target: this, ...ev };
+          if (type === "message" && ev.kind === "binary" && typeof ev.data === "string") {
+            synth.data = base64ToBytes2(ev.data).buffer;
+          } else if (type === "message" && ev.kind === "text") {
+            synth.data = ev.data;
+          }
+          const propMap = {
+            open: "onopen",
+            message: "onmessage",
+            error: "onerror",
+            close: "onclose"
+          };
+          const prop = propMap[type];
+          const handler = this[prop];
+          if (handler) {
+            try {
+              handler(synth);
+            } catch (e) {
+              try {
+                __hostError(
+                  JSON.stringify({
+                    message: e instanceof Error ? e.message : String(e),
+                    source: `WebSocket.${prop}`
+                  })
+                );
+              } catch {
+              }
+            }
+          }
+          const set = this.listeners[type];
+          if (set) {
+            for (const cb of set) {
+              try {
+                cb(synth);
+              } catch (e) {
+                try {
+                  __hostError(
+                    JSON.stringify({
+                      message: e instanceof Error ? e.message : String(e),
+                      source: `WebSocket.addEventListener("${type}")`
+                    })
+                  );
+                } catch {
+                }
+              }
+            }
+          }
+        }
+      }
+      MentraWebSocket.CONNECTING = 0;
+      MentraWebSocket.OPEN = 1;
+      MentraWebSocket.CLOSING = 2;
+      MentraWebSocket.CLOSED = 3;
+      ;
+      g.WebSocket = MentraWebSocket;
     }
     try {
       __dispatch("__runtime", "ready", JSON.stringify([]));

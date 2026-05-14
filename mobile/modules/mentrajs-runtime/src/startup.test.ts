@@ -346,3 +346,180 @@ describe("startup bundle", () => {
     ).not.toThrow()
   })
 })
+
+describe("startup bundle — WebSocket", () => {
+  test("installs a real WebSocket constructor (not the placeholder)", () => {
+    const sandbox = evalBundle()
+    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (
+      url: string,
+    ) => unknown
+    expect(typeof WS).toBe("function")
+    expect((WS as unknown as {CONNECTING: number}).CONNECTING).toBe(0)
+    expect((WS as unknown as {OPEN: number}).OPEN).toBe(1)
+    expect((WS as unknown as {CLOSED: number}).CLOSED).toBe(3)
+  })
+
+  test("constructor calls __dispatch('ws', 'open', ...) with a synthesized sid", () => {
+    const stubs = freshStubs()
+    const sandbox = evalBundle(stubs)
+    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (
+      url: string,
+    ) => unknown
+    new WS("wss://example.com/socket")
+    const openCall = stubs.dispatchCalls.find((c) => c.iface === "ws" && c.method === "open")
+    expect(openCall).toBeDefined()
+    const args = JSON.parse(openCall!.argsJson)
+    expect(typeof args[0].sid).toBe("string")
+    expect(args[0].url).toBe("wss://example.com/socket")
+  })
+
+  test("send(text) calls __dispatch('ws', 'send', [{kind: 'text', ...}])", () => {
+    const stubs = freshStubs()
+    const sandbox = evalBundle(stubs)
+    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (
+      url: string,
+    ) => Record<string, unknown>
+    const ws = new WS("wss://example.com/socket") as Record<string, unknown> & {
+      send: (data: string) => void
+    }
+    ws.send("hello")
+    const sendCall = stubs.dispatchCalls.find((c) => c.iface === "ws" && c.method === "send")
+    expect(sendCall).toBeDefined()
+    const args = JSON.parse(sendCall!.argsJson)
+    expect(args[0].kind).toBe("text")
+    expect(args[0].payload).toBe("hello")
+  })
+
+  test("send(ArrayBuffer) base64-encodes the binary payload", () => {
+    const stubs = freshStubs()
+    const sandbox = evalBundle(stubs)
+    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (
+      url: string,
+    ) => Record<string, unknown>
+    const ws = new WS("wss://example.com/socket") as {send: (data: ArrayBuffer) => void}
+    const bytes = new Uint8Array([0xff, 0x00, 0x42])
+    ws.send(bytes.buffer)
+    const sendCall = stubs.dispatchCalls.find((c) => c.iface === "ws" && c.method === "send")
+    const args = JSON.parse(sendCall!.argsJson)
+    expect(args[0].kind).toBe("binary")
+    expect(typeof args[0].payload).toBe("string")
+    // base64 of [0xff, 0x00, 0x42] = "/wBC"
+    expect(args[0].payload).toBe("/wBC")
+  })
+
+  test("ws-event 'open' envelope fires the socket's onopen handler", () => {
+    const stubs = freshStubs()
+    const sandbox = evalBundle(stubs)
+    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (
+      url: string,
+    ) => Record<string, unknown> & {onopen: ((ev: unknown) => void) | null}
+    const ws = new WS("wss://example.com/socket")
+    const opens: unknown[] = []
+    ws.onopen = (ev) => opens.push(ev)
+    const openCall = stubs.dispatchCalls.find((c) => c.iface === "ws" && c.method === "open")
+    const sid = JSON.parse(openCall!.argsJson)[0].sid as string
+    ;(sandbox.__deliver as (j: string) => void)(
+      JSON.stringify({kind: "ws-event", sid, wsType: "open", payload: {}}),
+    )
+    expect(opens).toHaveLength(1)
+    expect((opens[0] as {type: string}).type).toBe("open")
+    expect((ws as {readyState: number}).readyState).toBe(1)
+  })
+
+  test("ws-event 'message' (text) routes through onmessage with string data", () => {
+    const stubs = freshStubs()
+    const sandbox = evalBundle(stubs)
+    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (
+      url: string,
+    ) => Record<string, unknown> & {onmessage: ((ev: unknown) => void) | null}
+    const ws = new WS("wss://example.com/socket")
+    const got: unknown[] = []
+    ws.onmessage = (ev) => got.push(ev)
+    const sid = JSON.parse(
+      stubs.dispatchCalls.find((c) => c.iface === "ws" && c.method === "open")!.argsJson,
+    )[0].sid
+    ;(sandbox.__deliver as (j: string) => void)(
+      JSON.stringify({kind: "ws-event", sid, wsType: "message", payload: {kind: "text", data: "hi"}}),
+    )
+    expect((got[0] as {data: unknown}).data).toBe("hi")
+  })
+
+  test("ws-event 'message' (binary) reconstructs an ArrayBuffer", () => {
+    const stubs = freshStubs()
+    const sandbox = evalBundle(stubs)
+    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (
+      url: string,
+    ) => Record<string, unknown> & {onmessage: ((ev: unknown) => void) | null}
+    const ws = new WS("wss://example.com/socket")
+    const got: unknown[] = []
+    ws.onmessage = (ev) => got.push(ev)
+    const sid = JSON.parse(
+      stubs.dispatchCalls.find((c) => c.iface === "ws" && c.method === "open")!.argsJson,
+    )[0].sid
+    ;(sandbox.__deliver as (j: string) => void)(
+      JSON.stringify({kind: "ws-event", sid, wsType: "message", payload: {kind: "binary", data: "/wBC"}}),
+    )
+    const data = (got[0] as {data: ArrayBuffer}).data
+    expect(data instanceof ArrayBuffer).toBe(true)
+    expect(Array.from(new Uint8Array(data))).toEqual([0xff, 0x00, 0x42])
+  })
+
+  test("ws-event 'close' transitions to CLOSED + fires onclose", () => {
+    const stubs = freshStubs()
+    const sandbox = evalBundle(stubs)
+    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (
+      url: string,
+    ) => Record<string, unknown> & {
+      onclose: ((ev: unknown) => void) | null
+      readyState: number
+    }
+    const ws = new WS("wss://example.com/socket")
+    const closes: unknown[] = []
+    ws.onclose = (ev) => closes.push(ev)
+    const sid = JSON.parse(
+      stubs.dispatchCalls.find((c) => c.iface === "ws" && c.method === "open")!.argsJson,
+    )[0].sid
+    ;(sandbox.__deliver as (j: string) => void)(
+      JSON.stringify({kind: "ws-event", sid, wsType: "close", payload: {code: 1000, reason: "bye"}}),
+    )
+    expect(closes).toHaveLength(1)
+    expect(ws.readyState).toBe(3)
+  })
+
+  test("close() transitions to CLOSING and calls __dispatch('ws', 'close', ...)", () => {
+    const stubs = freshStubs()
+    const sandbox = evalBundle(stubs)
+    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (
+      url: string,
+    ) => Record<string, unknown> & {readyState: number; close: () => void}
+    const ws = new WS("wss://example.com/socket")
+    ws.close()
+    expect(ws.readyState).toBe(2)
+    const closeCall = stubs.dispatchCalls.find((c) => c.iface === "ws" && c.method === "close")
+    expect(closeCall).toBeDefined()
+  })
+
+  test("addEventListener('message', ...) receives events alongside the onmessage prop", () => {
+    const stubs = freshStubs()
+    const sandbox = evalBundle(stubs)
+    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (
+      url: string,
+    ) => Record<string, unknown> & {
+      addEventListener: (t: string, cb: (ev: unknown) => void) => void
+      onmessage: ((ev: unknown) => void) | null
+    }
+    const ws = new WS("wss://example.com/socket")
+    const propGot: unknown[] = []
+    const lstGot: unknown[] = []
+    ws.onmessage = (ev) => propGot.push(ev)
+    ws.addEventListener("message", (ev) => lstGot.push(ev))
+    const sid = JSON.parse(
+      stubs.dispatchCalls.find((c) => c.iface === "ws" && c.method === "open")!.argsJson,
+    )[0].sid
+    ;(sandbox.__deliver as (j: string) => void)(
+      JSON.stringify({kind: "ws-event", sid, wsType: "message", payload: {kind: "text", data: "yo"}}),
+    )
+    expect(propGot).toHaveLength(1)
+    expect(lstGot).toHaveLength(1)
+  })
+})

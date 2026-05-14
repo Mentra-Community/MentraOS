@@ -343,6 +343,17 @@ declare const __nativeClearTimer: (token: number) => void
       }
       return
     }
+    if (env.kind === "ws-event") {
+      const wsHook = (g as Record<string, unknown>).__mentraDeliverWebSocketEvent as
+        | ((sid: string, type: string, payload: Record<string, unknown>) => void)
+        | undefined
+      const sid = (env as {sid?: string}).sid
+      const wsType = (env as {wsType?: string}).wsType
+      if (typeof wsHook === "function" && typeof sid === "string" && typeof wsType === "string") {
+        wsHook(sid, wsType, (env as unknown as {payload?: Record<string, unknown>}).payload ?? {})
+      }
+      return
+    }
     if (env.kind === "bridge" && typeof (env as {raw?: unknown}).raw === "string") {
       // Phase 2: host pushes a raw SDK envelope (DISPLAY / SUBSCRIBE /
       // STATE_FOR_BRIDGE / etc.) to be delivered into DispatchTransport's
@@ -697,18 +708,238 @@ declare const __nativeClearTimer: (token: number) => void
     }
   }
 
-  // ---------- WebSocket placeholder ----------------------------------------
-  // Real WebSocket needs an event-target shim + native bridge. Phase 1
-  // skeleton ships a placeholder that throws on use so the miniapp gets a
-  // clear error rather than silently dropping connections.
+  // ---------- WebSocket ----------------------------------------------------
+  // Native bridge over URLSessionWebSocketTask (iOS) / OkHttp WebSocket
+  // (Android). The JS shim is an EventTarget-shaped wrapper that opens a
+  // session id via `__dispatch("ws", "open", [{url, protocols, headers}])`
+  // and routes inbound `{kind: "ws-event", sid, ...}` envelopes from
+  // __deliver into the matching socket's listeners.
+  //
+  // RFC 6455 readyState constants: 0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED.
   if (typeof (g as Record<string, unknown>).WebSocket !== "function") {
-    ;(g as Record<string, unknown>).WebSocket = class {
-      constructor() {
-        throw new Error(
-          "WebSocket polyfill not yet wired into MentraJS — fall back to fetch streaming or wait for Phase 1.5.",
-        )
+    type WSListener = (ev: Record<string, unknown>) => void
+
+    const sockets = new Map<string, MentraWebSocket>()
+
+    // __deliver fans out ws-event envelopes here. Installed once; the
+    // existing __deliver dispatcher (event/response/bridge/init) walks
+    // its kind-switch and falls through to this hook for ws-event.
+    ;(g as Record<string, unknown>).__mentraDeliverWebSocketEvent = (
+      sid: string,
+      type: "open" | "message" | "error" | "close",
+      payload: Record<string, unknown> | undefined,
+    ) => {
+      const sock = sockets.get(sid)
+      if (!sock) return
+      sock._deliver(type, payload ?? {})
+    }
+
+    class MentraWebSocket {
+      static readonly CONNECTING = 0
+      static readonly OPEN = 1
+      static readonly CLOSING = 2
+      static readonly CLOSED = 3
+
+      readonly CONNECTING = 0
+      readonly OPEN = 1
+      readonly CLOSING = 2
+      readonly CLOSED = 3
+
+      url: string
+      readyState: number = 0
+      bufferedAmount = 0
+      extensions = ""
+      protocol = ""
+      binaryType: "blob" | "arraybuffer" = "arraybuffer"
+
+      onopen: WSListener | null = null
+      onmessage: WSListener | null = null
+      onerror: WSListener | null = null
+      onclose: WSListener | null = null
+
+      private listeners: Record<string, Set<WSListener>> = {
+        open: new Set(),
+        message: new Set(),
+        error: new Set(),
+        close: new Set(),
+      }
+      private sid: string
+
+      constructor(url: string, protocols?: string | string[]) {
+        this.url = String(url)
+        const protoList = Array.isArray(protocols) ? protocols : protocols ? [protocols] : []
+        // Allocate a session id JS-side so the dispatcher's response is a
+        // simple ack rather than carrying the sid we then have to wait for.
+        this.sid = `ws-${Date.now()}-${Math.floor(Math.random() * 1e9)}`
+        sockets.set(this.sid, this)
+        try {
+          __dispatch(
+            "ws",
+            "open",
+            JSON.stringify([{sid: this.sid, url: this.url, protocols: protoList}]),
+          )
+        } catch (e) {
+          // Native bridge unavailable — synthesize an immediate failure.
+          this.readyState = 3
+          queueMicrotaskSafe(() => this._deliver("error", {message: String(e)}))
+          queueMicrotaskSafe(() => this._deliver("close", {code: 1006, reason: "bridge unavailable"}))
+        }
+      }
+
+      addEventListener(type: string, cb: WSListener): void {
+        if (!this.listeners[type]) this.listeners[type] = new Set()
+        this.listeners[type].add(cb)
+      }
+
+      removeEventListener(type: string, cb: WSListener): void {
+        this.listeners[type]?.delete(cb)
+      }
+
+      send(data: string | ArrayBuffer | ArrayBufferView): void {
+        if (this.readyState === 3) {
+          throw new Error("WebSocket is already in CLOSING or CLOSED state.")
+        }
+        let kind: "text" | "binary"
+        let payload: string
+        if (typeof data === "string") {
+          kind = "text"
+          payload = data
+        } else {
+          kind = "binary"
+          // Base64-encode binary frames so the JSON bridge can carry them.
+          const bytes =
+            data instanceof ArrayBuffer
+              ? new Uint8Array(data)
+              : new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+          payload = bytesToBase64(bytes)
+        }
+        try {
+          __dispatch("ws", "send", JSON.stringify([{sid: this.sid, kind, payload}]))
+        } catch (e) {
+          this._deliver("error", {message: String(e)})
+        }
+      }
+
+      close(code?: number, reason?: string): void {
+        if (this.readyState === 2 || this.readyState === 3) return
+        this.readyState = 2
+        try {
+          __dispatch(
+            "ws",
+            "close",
+            JSON.stringify([{sid: this.sid, code: code ?? 1000, reason: reason ?? ""}]),
+          )
+        } catch (e) {
+          // Treat native failure as immediate close.
+          this.readyState = 3
+          this._deliver("close", {code: 1006, reason: String(e)})
+        }
+      }
+
+      /** @internal — called by __deliver via the global hook. */
+      _deliver(type: "open" | "message" | "error" | "close", ev: Record<string, unknown>): void {
+        if (type === "open") {
+          this.readyState = 1
+          if (typeof ev.protocol === "string") this.protocol = ev.protocol
+        } else if (type === "close") {
+          this.readyState = 3
+          sockets.delete(this.sid)
+        }
+        const synth: Record<string, unknown> = {type, target: this, ...ev}
+        // Reconstitute binary frames into ArrayBuffer for arraybuffer
+        // binaryType (the default we ship; no Blob shim yet).
+        if (type === "message" && ev.kind === "binary" && typeof ev.data === "string") {
+          synth.data = base64ToBytes(ev.data).buffer
+        } else if (type === "message" && ev.kind === "text") {
+          synth.data = ev.data
+        }
+        const propMap: Record<string, "onopen" | "onmessage" | "onerror" | "onclose"> = {
+          open: "onopen",
+          message: "onmessage",
+          error: "onerror",
+          close: "onclose",
+        }
+        const prop = propMap[type]
+        const handler = (this as Record<string, unknown>)[prop] as WSListener | null
+        if (handler) {
+          try {
+            handler(synth)
+          } catch (e) {
+            try {
+              __hostError(
+                JSON.stringify({
+                  message: e instanceof Error ? e.message : String(e),
+                  source: `WebSocket.${prop}`,
+                }),
+              )
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+        const set = this.listeners[type]
+        if (set) {
+          for (const cb of set) {
+            try {
+              cb(synth)
+            } catch (e) {
+              try {
+                __hostError(
+                  JSON.stringify({
+                    message: e instanceof Error ? e.message : String(e),
+                    source: `WebSocket.addEventListener("${type}")`,
+                  }),
+                )
+              } catch {
+                /* ignore */
+              }
+            }
+          }
+        }
       }
     }
+
+    function bytesToBase64(bytes: Uint8Array): string {
+      const b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+      let out = ""
+      let i = 0
+      while (i < bytes.length) {
+        const c1 = bytes[i++]!
+        const c2 = i < bytes.length ? bytes[i++]! : NaN
+        const c3 = i < bytes.length ? bytes[i++]! : NaN
+        const e1 = c1 >> 2
+        const e2 = ((c1 & 3) << 4) | (Number.isNaN(c2) ? 0 : c2 >> 4)
+        const e3 = Number.isNaN(c2) ? 64 : ((c2 & 15) << 2) | (Number.isNaN(c3) ? 0 : c3 >> 6)
+        const e4 = Number.isNaN(c3) ? 64 : c3 & 63
+        out += b64[e1]! + b64[e2]! + (e3 === 64 ? "=" : b64[e3]!) + (e4 === 64 ? "=" : b64[e4]!)
+      }
+      return out
+    }
+    function base64ToBytes(s: string): Uint8Array {
+      const b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+      const clean = s.replace(/=+$/, "")
+      const out: number[] = []
+      let buf = 0
+      let bits = 0
+      for (let i = 0; i < clean.length; i++) {
+        const idx = b64.indexOf(clean[i]!)
+        if (idx < 0) continue
+        buf = (buf << 6) | idx
+        bits += 6
+        if (bits >= 8) {
+          bits -= 8
+          out.push((buf >> bits) & 0xff)
+        }
+      }
+      return new Uint8Array(out)
+    }
+    function queueMicrotaskSafe(fn: () => void): void {
+      const q = (g as Record<string, unknown>).queueMicrotask as ((cb: () => void) => void) | undefined
+      if (typeof q === "function") q(fn)
+      else g.Promise.resolve().then(fn)
+    }
+
+    ;(g as Record<string, unknown>).WebSocket = MentraWebSocket
   }
 
   // ---------- signal ready --------------------------------------------------

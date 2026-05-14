@@ -16,10 +16,12 @@ import {
   webviewBridge as miniComms,
   miniappRunningRegistry,
   buildMiniappGlobalsScript,
+  buildMentraUiShim,
   getDeviceTierBackgroundSlots,
   getDeviceTierLabel,
   selectMiniappsToEvict,
   UNLIMITED_BACKGROUND_SLOTS,
+  type MentraUIRouter as MentraUIRouterType,
 } from "@mentra/island"
 
 const BEFORE_EVICT_TIMEOUT_MS = 500
@@ -68,6 +70,15 @@ interface MountedMiniapp {
    * during the mount lifetime.
    */
   wasEvicted: boolean
+  /**
+   * Phase 3: two-layer miniapp shape. When `kind === "ui-only"`, the
+   * WebView is bound to a background JSContext via MentraJSRouter +
+   * MentraUIRouter — it does NOT talk to LocalMiniappRuntime directly
+   * and is destroyed on closeUI() (no persistent off-screen state).
+   * Legacy single-bundle miniapps use `kind: "legacy"` (the existing
+   * persistent off-screen WebView path).
+   */
+  kind: "legacy" | "ui-only"
   appName?: string
   iconUrl?: string
   onClose?: () => void
@@ -100,10 +111,36 @@ export type MountDevManifest = {
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
 }
 
+type MiniappOpenUIOptions = {
+  /** Source URI for the UI bundle (file:// or http://). */
+  uiUri: string
+  appName?: string
+  iconUrl?: string
+  developerMode?: boolean
+  onClose?: () => void
+  onBack?: () => void
+}
+
 type MiniappHostAPI = {
   mount(packageName: string, bundleUri: string, options?: MiniappMountOptions): void
   mountDev(packageName: string, devUrl: string, options?: MiniappMountOptions): Promise<MountDevManifest | undefined>
   unmount(packageName: string): void
+  /**
+   * Phase 3 — open a fresh WebView for a two-layer miniapp's UI half.
+   * The background JSContext is assumed to already be spawned by the
+   * caller (via MentraJSRouter.spawnAndRegister). The router's
+   * `uiRouter` field MUST be wired before openUI is called so UI
+   * messages route to the bound JSContext.
+   *
+   * Calls bindWebView on the MentraUIRouter when the WebView's ref
+   * settles. closeUI tears it back down — there's no off-screen
+   * holder; the WebView is created cold per open and destroyed on
+   * exit. This is the Phase 3 lifecycle inversion that obsoletes
+   * Phase 0's eviction for two-layer miniapps.
+   */
+  openUI(packageName: string, options: MiniappOpenUIOptions): void
+  /** Phase 3 — destroy the UI WebView. JSContext (if any) is left alive. */
+  closeUI(packageName: string): void
   setForeground(packageName: string, callbacks?: {onClose?: () => void; onBack?: () => void}): void
   setBackground(packageName: string): void
   isRunning(packageName: string): boolean
@@ -115,6 +152,12 @@ type MiniappHostAPI = {
   subscribeCanGoBack(packageName: string, listener: CanGoBackListener): () => void
   /** Reload a mounted miniapp's WebView (used by dev server bridge). */
   reload(packageName: string): void
+  /**
+   * Install a MentraUIRouter binding so openUI'd WebViews route
+   * mentra.send through to the bound JSContext. Called once by the
+   * host's bootstrap effect after the router singleton is constructed.
+   */
+  attachUIRouter(router: import("@mentra/island").MentraUIRouter): void
 }
 
 // Stubs that get replaced once the React component mounts.
@@ -129,6 +172,12 @@ export const miniappHost: MiniappHostAPI = {
   unmount: () => {
     console.warn("MiniappHost: unmount() called before component mounted")
   },
+  openUI: () => {
+    console.warn("MiniappHost: openUI() called before component mounted")
+  },
+  closeUI: () => {
+    console.warn("MiniappHost: closeUI() called before component mounted")
+  },
   setForeground: () => {
     console.warn("MiniappHost: setForeground() called before component mounted")
   },
@@ -141,6 +190,9 @@ export const miniappHost: MiniappHostAPI = {
   subscribeCanGoBack: () => () => {},
   reload: () => {
     console.warn("MiniappHost: reload() called before component mounted")
+  },
+  attachUIRouter: () => {
+    console.warn("MiniappHost: attachUIRouter() called before component mounted")
   },
 }
 
@@ -215,6 +267,7 @@ export default function MiniappHost() {
           isLoaded: false,
           mountKey: (prevEntry?.mountKey ?? 0) + 1,
           wasEvicted,
+          kind: "legacy",
         })
         return next
       })
@@ -290,6 +343,7 @@ export default function MiniappHost() {
           isLoaded: false,
           mountKey: (prevEntry?.mountKey ?? 0) + 1,
           wasEvicted,
+          kind: "legacy",
         })
         return next
       })
@@ -597,6 +651,79 @@ export default function MiniappHost() {
     }
   }, [])
 
+  // Phase 3 — two-layer UI half (on-demand WebView). The router (when
+  // attached) routes WebView messages to the bound JSContext and
+  // UI_SEND from background back to the WebView. Stored in a ref so
+  // openUI/closeUI can hand the latest router to the WebView ref
+  // callback without re-rendering when the router instance changes.
+  const uiRouterRef = useRef<MentraUIRouterType | null>(null)
+
+  const attachUIRouter = useCallback((router: MentraUIRouterType) => {
+    uiRouterRef.current = router
+  }, [])
+
+  const openUI = useCallback(
+    (packageName: string, options: MiniappOpenUIOptions) => {
+      setApps((prev) => {
+        const next = new Map(prev)
+        const prevEntry = next.get(packageName)
+        next.set(packageName, {
+          packageName,
+          source: {uri: options.uiUri},
+          developerMode: options.developerMode ?? false,
+          appName: options.appName,
+          iconUrl: options.iconUrl,
+          // Two-layer UIs spawn already-foregrounded — there's no
+          // off-screen state to invert from.
+          isForeground: true,
+          isLoaded: false,
+          mountKey: (prevEntry?.mountKey ?? 0) + 1,
+          wasEvicted: false,
+          kind: "ui-only",
+          onClose: options.onClose,
+          onBack: options.onBack,
+        })
+        // Demote any other foreground app (mirrors the setForeground guard).
+        for (const [name, e] of next) {
+          if (name !== packageName && e.isForeground) {
+            next.set(name, {...e, isForeground: false})
+          }
+        }
+        return next
+      })
+      foregroundPackageRef.current = packageName
+      webViewRefs.current.delete(packageName)
+      canGoBackMap.current.delete(packageName)
+    },
+    [],
+  )
+
+  const closeUI = useCallback((packageName: string) => {
+    // Notify the router so it can flush UI_CLOSE to the JSContext.
+    const router = uiRouterRef.current
+    if (router) {
+      router.unbindWebView(packageName)
+    }
+    if (foregroundPackageRef.current === packageName) {
+      foregroundPackageRef.current = null
+    }
+    setApps((prev) => {
+      if (!prev.has(packageName)) return prev
+      const next = new Map(prev)
+      next.delete(packageName)
+      return next
+    })
+    webViewRefs.current.delete(packageName)
+    canGoBackMap.current.delete(packageName)
+    canGoBackListeners.current.delete(packageName)
+    setCanGoBackState((m) => {
+      if (!m.has(packageName)) return m
+      const next = new Map(m)
+      next.delete(packageName)
+      return next
+    })
+  }, [])
+
   // Phase 0: keep the enforceCapacity ref in sync with the latest callback
   // identity. Mount/mountDev (defined above enforceCapacity) reach it
   // through this ref to avoid a forward-reference cycle.
@@ -613,6 +740,9 @@ export default function MiniappHost() {
     miniappHost.mount = mount
     miniappHost.mountDev = mountDev
     miniappHost.unmount = unmount
+    miniappHost.openUI = openUI
+    miniappHost.closeUI = closeUI
+    miniappHost.attachUIRouter = attachUIRouter
     miniappHost.setForeground = setForeground
     miniappHost.setBackground = setBackground
     miniappHost.isRunning = isRunning
@@ -635,6 +765,9 @@ export default function MiniappHost() {
         return undefined
       }
       miniappHost.unmount = () => console.warn("MiniappHost: unmount() called after unmount")
+      miniappHost.openUI = () => console.warn("MiniappHost: openUI() called after unmount")
+      miniappHost.closeUI = () => console.warn("MiniappHost: closeUI() called after unmount")
+      miniappHost.attachUIRouter = () => console.warn("MiniappHost: attachUIRouter() called after unmount")
       miniappHost.setForeground = () => console.warn("MiniappHost: setForeground() called after unmount")
       miniappHost.setBackground = () => console.warn("MiniappHost: setBackground() called after unmount")
       miniappHost.isRunning = () => false
@@ -647,6 +780,9 @@ export default function MiniappHost() {
     mount,
     mountDev,
     unmount,
+    openUI,
+    closeUI,
+    attachUIRouter,
     setForeground,
     setBackground,
     isRunning,
@@ -658,10 +794,29 @@ export default function MiniappHost() {
 
   // -- WebView event handlers -----------------------------------------------
 
-  const handleMessage = useCallback((packageName: string, event: WebViewMessageEvent) => {
-    const data = event.nativeEvent.data
-    localMiniappRuntime.handleRawMessage(packageName, data)
-  }, [])
+  const handleMessage = useCallback(
+    (packageName: string, event: WebViewMessageEvent) => {
+      const data = event.nativeEvent.data
+      const entry = apps.get(packageName)
+      if (entry?.kind === "ui-only") {
+        // Phase 3 two-layer path: route through MentraUIRouter to the
+        // bound JSContext. The router handles JSON parsing + envelope
+        // wrapping; we just forward the raw postMessage string.
+        const router = uiRouterRef.current
+        if (router) {
+          router.routeFromWebView(packageName, data)
+        } else {
+          console.warn(
+            `MiniappHost: ui-only WebView for ${packageName} received message but no MentraUIRouter is attached.`,
+          )
+        }
+        return
+      }
+      // Legacy path: forward to LocalMiniappRuntime.
+      localMiniappRuntime.handleRawMessage(packageName, data)
+    },
+    [apps],
+  )
 
   const handleTerminate = useCallback(
     async (packageName: string) => {
@@ -758,7 +913,7 @@ export default function MiniappHost() {
         // Build the window.MentraOS globals for this miniapp. The miniapp reads
         // window.MentraOS.safeAreaInsets + .capsuleMenu to avoid painting under
         // the status bar / capsule menu.
-        const injectedJS = buildMiniappGlobalsScript({
+        const globalsScript = buildMiniappGlobalsScript({
           packageName: app.packageName,
           miniappLocal: true,
           miniappDeveloperMode: app.developerMode,
@@ -771,15 +926,30 @@ export default function MiniappHost() {
           webviewFillsStatusBar: true,
           colorScheme,
         })
+        // Phase 3: two-layer ui-only WebViews ALSO inject the
+        // mentraUiShim, which installs window.mentra (send/on/ready)
+        // ahead of the page's own bundle. Legacy single-bundle WebViews
+        // continue to get only the MentraOS globals.
+        const uiShim = app.kind === "ui-only" ? buildMentraUiShim({packageName: app.packageName}) : ""
+        const injectedJS = uiShim ? `${globalsScript}\n${uiShim}` : globalsScript
 
+        // Phase 3 ui-only WebViews live ONLY when foregrounded — there's
+        // no off-screen holder; closeUI tears them out of the apps map.
+        const renderOffscreen = app.kind === "legacy" && !isFg
         return (
           <View
             key={app.packageName}
             // Off-screen holder for backgrounded WebViews — keeps them mounted
-            // without affecting layout or receiving touches.
-            className={isFg ? "flex-1 absolute inset-0" : "absolute -left-[10000px] -top-[10000px] w-px h-px opacity-0"}
-            style={isFg ? fgPadding : undefined}
-            pointerEvents={isFg ? "auto" : "none"}>
+            // without affecting layout or receiving touches. ui-only WebViews
+            // are always foregrounded; they're removed from `apps` on
+            // closeUI(), not backgrounded.
+            className={
+              renderOffscreen
+                ? "absolute -left-[10000px] -top-[10000px] w-px h-px opacity-0"
+                : "flex-1 absolute inset-0"
+            }
+            style={!renderOffscreen ? fgPadding : undefined}
+            pointerEvents={!renderOffscreen ? "auto" : "none"}>
             <WebView
               // Remount on every mount/mountDev (mountKey bumps) so a QR
               // re-scan reloads the dev miniapp from scratch instead of
@@ -788,6 +958,26 @@ export default function MiniappHost() {
               ref={(ref) => {
                 if (ref) {
                   webViewRefs.current.set(app.packageName, ref)
+                  // Phase 3: bind the MentraUIRouter as soon as the
+                  // ref settles so background-side UI_SEND envelopes can
+                  // route in via injectJavaScript. The router's
+                  // unbindWebView fires UI_CLOSE to background — called
+                  // from closeUI() above when the WebView tears down.
+                  if (app.kind === "ui-only") {
+                    const router = uiRouterRef.current
+                    if (router) {
+                      router.bindWebView(app.packageName, (js: string) => {
+                        try {
+                          ref.injectJavaScript(js)
+                        } catch (e) {
+                          console.warn(
+                            `MiniappHost: ui-only inject failed for ${app.packageName}:`,
+                            e,
+                          )
+                        }
+                      })
+                    }
+                  }
                 }
               }}
               source={app.source}

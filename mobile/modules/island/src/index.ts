@@ -27,6 +27,7 @@ export {
   type RouterLogger as MentraJSRouterLogger,
 } from "./services/MentraJSRouter"
 export {buildMentraUiShim, type MentraUiShimOptions} from "./services/mentraUiShim"
+export {MentraUIRouter, type MentraUICrustBinding} from "./services/MentraUIRouter"
 export {
   MentraJSCrashController,
   type CrashState,

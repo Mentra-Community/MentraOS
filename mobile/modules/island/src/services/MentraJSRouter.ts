@@ -42,6 +42,8 @@
 import type {EventSubscription} from "expo-modules-core"
 
 import type localMiniappRuntime from "./LocalMiniappRuntime"
+import type {MentraJSCrashController} from "./MentraJSCrashController"
+import type {MentraUIRouter} from "./MentraUIRouter"
 
 /** The runtime's runtime instance type — the singleton exported from
  * LocalMiniappRuntime.ts (the file's `export default` is the instance,
@@ -92,9 +94,40 @@ const defaultLogger: RouterLogger = {
   error: (m, p) => console.error(`[MentraJSRouter] ${m}`, p ?? ""),
 }
 
+interface SpawnCache {
+  miniappJs: string
+  permissions: string[]
+}
+
 export class MentraJSRouter {
   private subscription: EventSubscription | null = null
   private readonly registered: Set<string> = new Set()
+  /** Cached spawn arguments so the crash controller can respawn after a backoff. */
+  private readonly spawnCache: Map<string, SpawnCache> = new Map()
+  /** Active respawn timers (so unregister() can cancel a pending respawn). */
+  private readonly respawnTimers: Map<string, ReturnType<typeof setTimeout>> = new Map()
+
+  /**
+   * Optional crash controller. When wired, every `__error` frame from a
+   * JSContext drives the state machine; an Outcome with
+   * scheduleRespawnAfterMs queues a setTimeout that re-spawns the
+   * miniapp's last-known JS source after the backoff delay.
+   */
+  crashController: MentraJSCrashController | null = null
+
+  /** Hook called when a package transitions to CRASHLOOP_DISABLED. */
+  onCrashloop: ((packageName: string, reason: string) => void) | null = null
+  /** Hook called on the 2nd-within-window crash (toast UX). */
+  onRestartToast: ((packageName: string, reason: string) => void) | null = null
+
+  /**
+   * Optional UI router — when wired, `__bridge.send` envelopes whose
+   * inner payload type is `UI_SEND` get routed to the bound WebView
+   * instead of through LocalMiniappRuntime. Two-layer miniapps set
+   * this; legacy single-bundle WebView miniapps don't and the bridge
+   * frames pass through unchanged.
+   */
+  uiRouter: MentraUIRouter | null = null
 
   constructor(
     private readonly runtime: LocalMiniappRuntime,
@@ -176,7 +209,73 @@ export class MentraJSRouter {
       await this.crust.mentraJsSetManifest(packageName, options.permissions)
     }
     this.registerApp(packageName)
+    // Cache spawn arguments so the crash controller can respawn the
+    // same code after a backoff. permissions are also cached because
+    // setManifest is reset on every spawn (the native side stores
+    // them on the dispatcher's manifest map).
+    this.spawnCache.set(packageName, {miniappJs, permissions: options?.permissions ?? []})
+    this.crashController?.onSpawn(packageName)
     return true
+  }
+
+  /**
+   * Crash-controller integration. Called from the `__error` frame
+   * handler. The controller returns an outcome that tells us whether
+   * to respawn (with delay) or leave the context dead.
+   */
+  private handleCrash(packageName: string, reason: string): void {
+    const controller = this.crashController
+    if (!controller) return
+    const cached = this.spawnCache.get(packageName)
+    if (!cached) {
+      this.logger.warn(`crash for ${packageName} but no cached spawn args — cannot respawn`)
+      controller.onCrash(packageName, reason)
+      return
+    }
+    const outcome = controller.onCrash(packageName, reason)
+    if (outcome.surfaceCrashloopBanner) {
+      this.onCrashloop?.(packageName, reason)
+      return
+    }
+    if (outcome.showRestartToast) {
+      this.onRestartToast?.(packageName, reason)
+    }
+    if (outcome.scheduleRespawnAfterMs == null) return
+    // Cancel any prior pending respawn before scheduling a new one.
+    const existing = this.respawnTimers.get(packageName)
+    if (existing) clearTimeout(existing)
+    const timer = setTimeout(() => {
+      this.respawnTimers.delete(packageName)
+      void (async () => {
+        try {
+          await this.crust.mentraJsKill?.(packageName)
+        } catch {
+          /* native may have already torn down */
+        }
+        const ok = await this.crust.mentraJsSpawn?.(
+          packageName,
+          this.crust.mentraJsLoadPolyfillBundle?.() ?? "",
+          cached.miniappJs,
+        )
+        if (!ok) {
+          this.logger.error(`crash respawn failed for ${packageName}`)
+          return
+        }
+        if (cached.permissions.length > 0) {
+          await this.crust.mentraJsSetManifest(packageName, cached.permissions)
+        }
+        controller.onSpawn(packageName)
+        this.logger.log(`respawned ${packageName} after crash`)
+      })()
+    }, outcome.scheduleRespawnAfterMs)
+    this.respawnTimers.set(packageName, timer)
+  }
+
+  private summarizeReason(payload: unknown, method: string): string {
+    if (payload && typeof payload === "object" && "message" in (payload as Record<string, unknown>)) {
+      return `${method}: ${(payload as {message: string}).message}`
+    }
+    return method
   }
 
   /**
@@ -186,6 +285,15 @@ export class MentraJSRouter {
    */
   async unregister(packageName: string): Promise<void> {
     if (!this.registered.has(packageName)) return
+    // Cancel any pending crash-respawn before tearing down — we don't
+    // want a stale timer to re-spawn a miniapp the user just disabled.
+    const pending = this.respawnTimers.get(packageName)
+    if (pending) {
+      clearTimeout(pending)
+      this.respawnTimers.delete(packageName)
+    }
+    this.spawnCache.delete(packageName)
+    this.crashController?.onKill(packageName)
     this.runtime.unregisterApp(packageName)
     this.registered.delete(packageName)
     if (this.crust.mentraJsKill) {
@@ -222,6 +330,16 @@ export class MentraJSRouter {
         this.logger.warn(`__bridge.send had no raw payload`, msg)
         return
       }
+      // Phase 3 interception: if the payload is a UI_SEND envelope,
+      // route it to the bound WebView instead of LocalMiniappRuntime.
+      // session.ui.send → DispatchTransport.send → here.
+      if (this.uiRouter) {
+        const innerPayload = this.peekBridgePayloadType(raw)
+        if (innerPayload?.type === "UI_SEND") {
+          this.uiRouter.routeFromBackground(packageName, innerPayload)
+          return
+        }
+      }
       this.runtime.handleRawMessage(packageName, raw)
       return
     }
@@ -236,10 +354,23 @@ export class MentraJSRouter {
       return
     }
 
-    // 3) Error / unhandled rejection frames — surface as warnings.
+    // 3) Error / unhandled rejection frames — surface as warnings AND
+    //    drive the crash state machine when one is attached. The
+    //    controller's outcome may schedule a respawn after a backoff;
+    //    if it doesn't (CRASHLOOP_DISABLED), we leave the JSContext
+    //    dead and let the host surface a "tap to retry" banner.
     if (iface === "__error") {
       const payload = this.tryParseArgs(msg.argsJson)
       this.logger.error(`[${packageName}] ${method}`, payload)
+      if (this.crashController) {
+        // Only treat "exception" + "unhandledRejection" + "uncaught" as
+        // crash signals. `console.error` calls also flow through the
+        // log path — those don't end the JSContext.
+        const isCrash = method === "exception" || method === "unhandledRejection" || method === "uncaught"
+        if (isCrash) {
+          this.handleCrash(packageName, this.summarizeReason(payload, method))
+        }
+      }
       return
     }
 
@@ -260,6 +391,23 @@ export class MentraJSRouter {
    *   - `msg.argsJson` (iOS path that ships the string verbatim).
    * Cover both shapes here.
    */
+  /**
+   * Parse a raw bridge envelope just enough to peek at the inner
+   * payload's `type` field. Used by the Phase 3 UI_SEND interception
+   * path. Returns null if the envelope isn't a valid bridge frame.
+   */
+  private peekBridgePayloadType(raw: string): {type: string; [k: string]: unknown} | null {
+    try {
+      const env = JSON.parse(raw) as {payload?: {type?: string}}
+      if (env && typeof env.payload === "object" && env.payload && typeof env.payload.type === "string") {
+        return env.payload as {type: string; [k: string]: unknown}
+      }
+    } catch {
+      return null
+    }
+    return null
+  }
+
   private coerceArgsToBridgeRaw(msg: OutboundMessagePayload): string | null {
     if (Array.isArray(msg.args)) {
       const v = msg.args[0]

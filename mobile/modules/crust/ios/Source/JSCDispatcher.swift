@@ -45,36 +45,86 @@ public struct InstalledMiniappManifest {
     }
 }
 
-/// In-memory permission grant store. Phase 1 ships an in-memory map so the
-/// dispatcher can be exercised end-to-end without SQLite; a follow-up
-/// task swaps in a SQLite-backed store that survives host restarts.
-/// (Carrying the existing in-memory shape forward keeps the API the same.)
+/// Permission grant store. Backed by NSUserDefaults (same lightweight
+/// key-value store the polyfill already uses for `localStorage`) so
+/// grants survive host process restarts — a user who grants MICROPHONE
+/// once shouldn't be re-prompted on every cold boot.
+///
+/// Storage layout: one UserDefaults suite per host-internal namespace,
+/// keyed under `MentraJSPermissions`. Inside the suite each granted
+/// permission is stored under the composite key `<packageName>::<permission>`
+/// as a Bool. Cache the read-through map in memory for hot-path access
+/// (the dispatcher hits this on every __dispatch call).
 public final class PermissionStore {
-    private var granted: [String: Set<String>] = [:]
+    private let defaults: UserDefaults?
+    private let suiteName: String
+    private var cache: [String: Set<String>] = [:]
     private let lock = NSLock()
 
-    public init() {}
+    public init(suiteName: String = "MentraJSPermissions") {
+        self.suiteName = suiteName
+        self.defaults = UserDefaults(suiteName: suiteName)
+        self.loadFromDisk()
+    }
+
+    private func loadFromDisk() {
+        guard let defaults else { return }
+        // Walk every key in the suite and bucket by packageName.
+        for (key, _) in defaults.dictionaryRepresentation() {
+            let parts = key.components(separatedBy: "::")
+            guard parts.count == 2 else { continue }
+            cache[parts[0], default: []].insert(parts[1])
+        }
+    }
+
+    private func diskKey(_ packageName: String, _ permission: String) -> String {
+        return "\(packageName)::\(permission)"
+    }
 
     public func grant(packageName: String, permission: String) {
         lock.withLock {
-            granted[packageName, default: []].insert(permission)
+            cache[packageName, default: []].insert(permission)
+            defaults?.set(true, forKey: diskKey(packageName, permission))
         }
     }
 
     public func revoke(packageName: String, permission: String) {
         lock.withLock {
-            granted[packageName]?.remove(permission)
+            cache[packageName]?.remove(permission)
+            defaults?.removeObject(forKey: diskKey(packageName, permission))
         }
     }
 
     public func isGranted(packageName: String, permission: String) -> Bool {
-        lock.withLock { granted[packageName]?.contains(permission) ?? false }
+        lock.withLock { cache[packageName]?.contains(permission) ?? false }
     }
 
     /// For tests / dev: bulk-set the grants for a package.
     public func setGrants(packageName: String, permissions: Set<String>) {
         lock.withLock {
-            granted[packageName] = permissions
+            // Remove all stale entries for this package on disk before
+            // writing the new set, so the on-disk view stays canonical.
+            if let existing = cache[packageName] {
+                for perm in existing {
+                    defaults?.removeObject(forKey: diskKey(packageName, perm))
+                }
+            }
+            cache[packageName] = permissions
+            for perm in permissions {
+                defaults?.set(true, forKey: diskKey(packageName, perm))
+            }
+        }
+    }
+
+    /// Drop every grant for a package (called on uninstall).
+    public func clearPackage(packageName: String) {
+        lock.withLock {
+            if let existing = cache[packageName] {
+                for perm in existing {
+                    defaults?.removeObject(forKey: diskKey(packageName, perm))
+                }
+            }
+            cache.removeValue(forKey: packageName)
         }
     }
 }
