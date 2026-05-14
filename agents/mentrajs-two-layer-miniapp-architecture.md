@@ -352,6 +352,12 @@ in Phase 1.** Add to the spike-results folder when done.
 iOS/Android native interface for the SDK — adding a JSC runtime is a
 few hundred lines of Swift in there. Don't fragment the module set.
 
+**Rule:** any native code written for the miniapp SDK belongs in
+`crust`. That includes the JS runtime, the dispatcher, the polyfill
+bridge, and capability natives (nav, heading, future sensors). The
+2026-05 navigation merge already follows this pattern. We don't
+spin up new Expo modules per capability.
+
 ```
 mobile/modules/crust/
 ├── ios/
@@ -609,6 +615,38 @@ engine is **background-only** by construction: it consumes
 position/route events and registers session callbacks, never touches
 the DOM, and has nothing to expose to a WebView.
 
+**Canonical pivot consumer pattern.** A miniapp subscribes to
+pivots from `background/index.ts`:
+
+```typescript
+// background/index.ts
+export function init(session: MiniappSession): void {
+  session.navigation.onPivot((event) => {
+    // event = { phase: "approaching" | "entered" | "exited", pivot }
+    if (event.phase === "approaching") {
+      session.display.showTextWall(formatManeuver(event.pivot))
+    }
+    // If the UI half also wants pivots, forward them — never
+    // re-import the pivot engine on the WebView side. The engine
+    // runs once, in background. The WebView is a renderer of what
+    // background has already computed.
+    session.ui.send("pivot", event)
+  })
+}
+```
+
+WebView side reads `mentra.on("pivot", ...)`. Same rule as every
+other capability: native sensors → background event handler →
+optional `session.ui.send(...)` → WebView re-renders. Running
+geometry twice (once in background for glasses, once in WebView for
+the map) is an anti-pattern — pick one canonical source and
+broadcast.
+
+`session.location.getOnce()` exists for the seed case — at app
+mount, before the continuous `onUpdate` stream warms up, a single
+fresh fix is useful so the UI has coords to render immediately. The
+streaming subscription supersedes it once events start arriving.
+
 Three new session modules are added by this proposal — flagged here
 so readers don't assume they exist today.
 
@@ -855,6 +893,15 @@ If we let the WebView call BLE directly:
 The WebView is an "input device with a screen." All logic lives in
 background. Same as WeChat, same as VS Code extensions.
 
+**Note: ordinary browser APIs still work in the WebView.** The
+restriction above is only on host-native APIs (glasses, mic,
+storage, etc.). The WebView still has `fetch`, `WebSocket`,
+`localStorage`, `IndexedDB`, the DOM, and so on — it's a normal
+browser context. Calling a third-party HTTPS endpoint (Google
+Places, your own backend, a tile server) directly from the WebView
+is fine and expected. The rule is: anything that needs to reach the
+device — BLE, sensors, files — goes through background.
+
 ---
 
 ## Source layout for a miniapp
@@ -1097,6 +1144,7 @@ lift verbatim since they're pure TS over `__dispatch`-shaped calls.)
 | `mobile/modules/island/src/services/LocalMiniappRuntime.ts` | 2,217 | **Skeleton survives:** per-app registry, refcounted streams, ping loop, **33 dispatch arms in `handleRawMessage`'s switch + 3 arms in `handleCloudMessage`'s switch**. Eight of the main arms are NAVIGATION_* added in the 2026-05 nav SDK merge (START, STOP, DEVIATE, SET_WRONG_SIDEWALK, SET_SKIP_CROSSINGS, GET_STATE, COMPUTE_ROUTE, REQUEST_PERMISSION); each routes through the host's `NavigationService` singleton via the `RuntimeHooks.navigation` adapter — the JSC port keeps that adapter shape unchanged. The runtime also owns: `location_stream` rate aggregation (strictest across all connected apps, with downgrade-to-`off` on unregister), `recomputeHeadingSubscription` (ref-counted compass sub), and a per-app nav event forwarder that survives mini-app UI close so active trips keep running. Handler bodies don't know they're talking to a WebView — they take `(packageName, payload)` and dispatch to native. **Rewrite:** front door (`handleRawMessage` → `__dispatch`); per-app `sendMessage` (postMessage → `JSContext.evaluateScript`); HMAC/local-token code goes away. `gracefullyUnregisterApp`'s 50 ms `WILL_DISCONNECT` window also goes away — JSC kill doesn't need a transport-flush grace; replace with synchronous teardown. |
 | `mobile/modules/island/src/services/AppRegistry.ts` | 675 | Manifest normalization + zip pipeline survive. **Add:** `background/index.js` discovery alongside `index.html`; recognize new manifest fields; sdkVersion/minHostVersion compatibility check on spawn. (Signature verification deferred to store-ship spec — all current bundles are LAN-sideloaded and unsigned.) |
 | `sdk/create-mentra-miniapp/bin/index.ts` + template | ~150 + template | Scaffolder logic survives (clack prompts, validation, template substitution). **Template files rewrite:** scaffold `src/background/index.ts`, `src/ui/`, `src/shared/channels.ts` instead of single React SPA. |
+| `mobile/src/components/miniapp/MiniappHost.tsx` | 627 | **Skeleton survives:** the `mount/unmount/setForeground/setBackground` public API stays the same shape — callers don't change. **Semantics invert in Phase 3:** today mounts a persistent off-screen `<WebView>` at `-left-[10000px]` and toggles classes; new world spawns a fresh WebView when the user navigates to a miniapp's UI route and tears it down on exit. Phase 0's LRU eviction branch in `setBackground` becomes dead code and gets removed (the policy tests survive into Phase 3 as policy-only unit tests). The 50 ms `gracefullyUnregisterApp` wait added by the 2026-05 nav merge also goes away — no transport handshake to flush in the JSC world. |
 
 ### Replace entirely
 
@@ -1190,7 +1238,7 @@ JS (in `mobile/modules/miniapp/src/`):
   `error(err, ctx)` for structured telemetry.
 - **`session.permissions.query`** — returns `granted | denied | prompt`.
 - **`session.permissions.request`** — host-rendered modal prompt
-  (existing `permissions.ts:17–19` explicitly defers `request()` —
+  (existing `modules/permissions.ts` explicitly defers `request()` —
   this is the implementation.)
 - **`window.mentra` shim** — typed `send`/`on`/`ready` injected into
   the WebView side via `injectedJavaScriptBeforeContentLoaded`.
@@ -1416,6 +1464,27 @@ Same lesson Chrome MV3 service workers had to teach.
 3. Drop `session.storage` namespace for that miniapp (with user
    confirmation).
 
+### Tear-down order inside a miniapp
+
+When `session.onBeforeDisconnect` fires in background, the miniapp
+gets one synchronous chance to wind down. **Order matters:**
+
+1. Stop ongoing work that uses the SDK (`session.navigation.stop()`,
+   `session.mic.stop()`, `session.stream.stop()`, etc.) — these
+   send one-shot requests through the still-open transport.
+2. Clear any glasses state the user shouldn't see frozen
+   (`session.display.clear()`).
+3. Release internal subscriptions and timers.
+4. Do NOT call `session.disconnect()` from inside this handler —
+   the host is already tearing the session down. Calling it again
+   double-fires the cleanup and can race with the host's own
+   teardown.
+
+Reversing 1 and 2 (clearing the display before stopping nav) is
+visible: the next nav-update tick repaints the glasses before the
+stop request lands, and the display stays stuck until the next
+session.
+
 ---
 
 ## What we explicitly forbid
@@ -1522,8 +1591,8 @@ Counted in Phase 1's 3-week iOS budget.
 ### Unpermitted call returns
 
 The existing SDK already defines a `PERMISSION_NOT_DECLARED` error
-code in `mobile/modules/miniapp/src/protocol.ts:172` (sugar accessor
-in `modules/permissions.ts:67-77`) —
+code in `mobile/modules/miniapp/src/protocol.ts` (sugar accessor
+in `modules/permissions.ts`'s `onPermissionError`) —
 fired when a miniapp calls an API for a permission its manifest
 didn't declare. Reuse it. Add one new code, `PERMISSION_DENIED`,
 for the case where the manifest declared the permission but the
@@ -2160,9 +2229,11 @@ Tasks:
   invisible).
 - Tests: `MiniappRunningRegistry` has none today; LRU policy needs
   a real test suite. **Keep tests focused on the eviction policy,
-  not the persistent-WebView wiring** — Phase 3 deletes the wiring
-  and the policy-only tests will survive into the new architecture
-  unchanged.
+  not the persistent-WebView wiring** — Phase 3 deletes the
+  *implementation* (persistent WebViews go away, so there's nothing
+  left to evict), but the *policy-only* tests (LRU selection,
+  capacity-per-tier) survive into Phase 3 as plain unit tests
+  against the policy function.
 
 **Android:** explicitly out of scope for Phase 0. Android doesn't
 hit the same jetsam wall — multiple WebViews share one renderer
@@ -2429,7 +2500,8 @@ Implementation strategy for the bootstrap shim:
   (`postMessage` from JS to native) for bidirectional comms.
 - **Bootstrap-before-page-load is the only thing that differs by
   platform.** iOS uses `injectedJavaScriptBeforeContentLoaded`
-  (reliable, see `MiniappHost.tsx:584`, `webview.tsx:500`).
+  (reliable; today's `MiniappHost.tsx` and `webview.tsx` both
+  already pass this prop).
   Android must use `injectedJavaScriptObject` instead, with a small
   inline `<script>` in the WebView's `index.html` that reads
   `window.ReactNativeWebView.injectedObjectJson()` and installs
@@ -2467,8 +2539,9 @@ Tasks:
 - New `session.ui` module in
   `mobile/modules/miniapp/src/modules/ui.ts`. Surface:
   `send/on/onOpen/onClose/isOpen`. Wire into
-  `mobile/modules/miniapp/src/session.ts:203-218` alongside existing
-  modules.
+  `mobile/modules/miniapp/src/session.ts`'s module-instantiation
+  block (where `display`, `glasses`, `heading`, `navigation`, etc.
+  are constructed) alongside the existing modules.
 - Heartbeat: WebView sends `__heartbeat__` every 5s; background
   considers WebView gone after 15s silence.
 - Sequence numbers + dedup window so message-bus replays during
@@ -2539,6 +2612,26 @@ LAN HTTP + QR code (already implemented).
   folders mirror the `src/` layout 1:1. Document the new layout in
   the function's TSDoc and add a unit test asserting both folders
   are present in the zip.
+- **Build-time env vars for miniapps.** Adopt the same
+  `MENTRA_PUBLIC_*` (or similar) prefix convention the host uses
+  for `EXPO_PUBLIC_*` — values from the developer's shell env (and
+  miniapp-local `.env`) get inlined into both `dist/background/`
+  and `dist/ui/` bundles at build time via the bundler's `define`
+  option. Document that anything inlined into the UI bundle is
+  visible in the WebView's network requests and source maps — keys
+  that need to stay secret must live behind the developer's own
+  backend, not in `MENTRA_PUBLIC_*`. The host's `mentra-miniapp dev`
+  command picks up the miniapp's `.env` automatically (Bun loads
+  `.env` from cwd; nothing special required).
+- **Two-output build tooling.** The default scaffolded project
+  ships two bundler configs (e.g. `build.background.ts` + 
+  `build.ui.ts`) or one config with two entries. The background
+  config **must not** pull DOM/CSS plugins (Tailwind, PostCSS, HTML
+  imports) — the JSContext has no DOM. The UI config is a normal
+  browser bundle. Phase 5's scaffolder template establishes the
+  canonical shape; Phase 4's bundler contract just needs to accept
+  whatever layout produces `dist/background/index.js` +
+  `dist/ui/index.html`.
 
 **Android within Phase 4.** `AppRegistry.ts` is platform-agnostic
 TypeScript — the install path / unzip / on-disk layout (under
@@ -2714,21 +2807,86 @@ That's its own work track and its own spec — not part of this one.
 
 ### Migration path for existing miniapps
 
-Greenfield — `sdk/example-miniapp/` is the only existing miniapp
-and its rewrite is scheduled in Phase 5 per Appendix A. No
-compatibility shims, no auto-migration command, no legacy single-
-bundle support. The `EditMiniApp.tsx` flow in console targets
-cloud miniapps (server-hosted), which is a separate product not
-affected by this architecture change.
+Greenfield from the SDK's perspective — there's no shipping
+installed base on the new SDK yet. Two miniapps live in this repo:
+
+- **`sdk/example-miniapp/`** — the canonical fixture. Rewrite in
+  Phase 5 per Appendix A; this rewrite is the integration
+  acceptance gate for the entire architecture.
+- **`sdk/Navigation/`** — a serious second miniapp (Google Maps,
+  Places, multi-page React UI, ~3,000 LoC). **Out of scope for the
+  refactor itself** — see "Out-of-scope: porting `sdk/Navigation/`"
+  below. The SDK calls Nav consumes (`session.navigation.*`,
+  `session.heading.*`, `location_stream` rates, pivots,
+  `computeRoute`) ARE in scope — Phase 1's dispatcher routes them
+  through the same `RuntimeHooks.navigation` adapter that
+  `LocalMiniappRuntime` uses today.
+
+No compatibility shims, no auto-migration command, no legacy
+single-bundle support. The `EditMiniApp.tsx` flow in console
+targets cloud miniapps (server-hosted), which is a separate product
+not affected by this architecture change.
+
+### Out-of-scope: porting `sdk/Navigation/`
+
+The Navigation miniapp is a real consumer of the SDK and will need
+its own two-layer port — but **not as part of this refactor**.
+Reasoning:
+
+- The example miniapp is the integration gate. If both halves of
+  the architecture work for it, they work. Nav doesn't validate
+  anything new at the runtime layer.
+- Nav is ~3,000 LoC of frontend + 9 managers + Google Maps + Places.
+  Porting it adds ~1 engineer-week of calendar risk for no
+  architectural payoff.
+- Nav's structure is closer to the target shape than the example
+  app's — most of its managers are already thin SDK wrappers.
+  Whichever patterns Appendix A establishes will apply directly
+  when Nav is ported later.
+
+**What Phase 1 still must support for Nav to eventually work:**
+- `session.navigation.{start, stop, onUpdate, onRoute, onPivot,
+  computeRoute, getSnapshot, getPivots, getActivePivot,
+  getUpcomingPivot, requestPermission}` and the dev toggles
+  (`simulateDeviation`, `setWrongSidewalkOffset`, `setSkipCrossings`).
+- `session.heading.onUpdate`.
+- `session.location.getOnce` and `session.location.onUpdate` with
+  the rate-bearing `location_stream` form.
+- The pivot engine running in the background JSContext (pure TS, no
+  DOM — lifts verbatim per the Reuse table above).
+
+All of those are already in the SDK and already routed by
+`LocalMiniappRuntime`'s 8 NAVIGATION_* arms + heading sub +
+location-rate aggregation. Phase 2's `MentraJSRouter` rewrite
+preserves them; Phase 1's dispatcher must route the corresponding
+ifaces. Nothing new for the JS runtime — just the same
+"`__dispatch` calls the host adapter" pattern.
+
+**When Nav gets ported (post-merge):** follow Appendix A's recipe,
+plus three Nav-specific moves:
+1. `User` singleton + reactive store moves to `background/User.ts`
+   without the React-glue layer; UI side gets `useTripState`,
+   `useCoords`, `useHeading` hooks reading pushed snapshots.
+2. `GoogleMapsManager`, `ManeuverFormatter`, and `places.ts` stay
+   WebView-side (DOM-bound, CSS-bound, fine to keep as ordinary
+   browser code).
+3. The 919-LoC `NavigationPage.tsx` swaps every `user.navigation.*`
+   call for `mentra.send("trip:*", ...)`. The page becomes a pure
+   renderer of state pushed from background.
+
+Estimated ~1 engineer-week. Standalone PR after Phase 5 lands.
 
 ---
 
 ## Appendix A — `sdk/example-miniapp/` migration, file by file
 
-The only existing miniapp in the repo. Migration here is the
-acceptance gate for "the SDK split is real" — if `bun mentra-miniapp
-dev` from the new template produces a working two-layer build of
-this app, the migration story works. Concrete file map below.
+The canonical fixture. Migration here is the acceptance gate for
+"the SDK split is real" — if `bun mentra-miniapp dev` from the new
+template produces a working two-layer build of this app, the
+migration story works. (`sdk/Navigation/` is the only other miniapp
+in the repo and is explicitly out of scope for this refactor — see
+"Out-of-scope: porting `sdk/Navigation/`" above.) Concrete file map
+below.
 
 ### Today's structure (single React SPA, runs inside one WebView)
 
@@ -2871,8 +3029,9 @@ WebView-local zustand cache that the new entry hydrates from
 
 **`src/pages/tester/*Page.tsx` (15 files including `_TesterRow.tsx`
 and `TesterMenu.tsx`).** Each tester page today calls `session.*`
-directly (per the explicit exception in `GlassesController.ts:15`).
-After migration, **none of them can.** Three options per page:
+directly (per the explicit "tester pages are an exception" comment
+at the top of `GlassesController.ts`). After migration, **none of
+them can.** Three options per page:
 
 - **(a) Mostly read-only testers** (Permissions, Storage,
   Transcription, IMU, Location, Microphone, System): page sends a
@@ -3048,6 +3207,30 @@ calls an agent will face are:
    `sdkVersion`. Host refuses to spawn miniapps targeting an SDK
    version it doesn't support. Bump when we change the bridge
    contract.
+7. **Should the SDK provide a typed RPC helper over the UI bus?**
+   The raw bus today is `mentra.send(channel, payload)` +
+   `session.ui.on(channel, cb)` with a `shared/channels.ts` registry
+   for types. Authors who want request/response semantics
+   (`await ui.rpc.startTrip(args)` → background returns a result)
+   re-implement the correlation by hand: send with a `requestId`,
+   listen for a `response:<requestId>` channel, race a timeout.
+   Three options:
+   - **(a) Raw bus only (today).** Simple, transparent, lots of
+     boilerplate. Authors who want RPC build it themselves.
+   - **(b) Add a thin typed RPC helper.** SDK ships
+     `session.ui.rpc.handle("startTrip", async (args) => ...)` and
+     `mentra.rpc.call("startTrip", args)` with built-in correlation,
+     errors, timeouts. Less boilerplate; introduces a second
+     contract surface alongside `Channels`.
+   - **(c) Reactive stores.** SDK syncs a per-channel store between
+     halves (`session.ui.publishStore("trip", state)` +
+     `useStore("trip")` in UI). Closest to Nav's `useUser` shape.
+     More magical, harder to debug.
+   
+   Start with (a). If the same boilerplate shows up in 3+ miniapps,
+   promote it into (b). (c) only if a future use case actually wants
+   it. Decide post-Phase-5 when we have one real miniapp's worth of
+   data.
 
 ---
 
