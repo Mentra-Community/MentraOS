@@ -1,15 +1,22 @@
-# Native API Reference
+# API Reference
 
-The Mentra Bluetooth SDK exposes typed native APIs for Android and iOS. Use these APIs as the primary integration path for native mobile apps. React Native and Expo integrations are optional for partners who have explicit access to that integration path.
+The Mentra Bluetooth SDK exposes the same core glasses lifecycle across Android, iOS, and React Native:
 
-## Package Names
+- Scan for a supported glasses model.
+- Connect to a discovered `Device` or an app-restored default device.
+- Read typed glasses/Bluetooth status.
+- Subscribe to typed events.
+- Send display, camera, stream, audio, Wi-Fi, LED, settings, OTA, and diagnostic commands where supported by the connected model.
 
-| Platform | Package |
-| --- | --- |
-| Android | `com.mentra.core` |
-| iOS | `MentraBluetoothSDK` |
+## Packages And Imports
 
-## Base Lifecycle
+| Platform | Install package | Import |
+| --- | --- | --- |
+| Android | `com.mentra:bluetooth-sdk` | `import com.mentra.core.*` |
+| iOS | `MentraBluetoothSDK` CocoaPod | `import MentraBluetoothSDK` |
+| React Native / Expo | `@mentra/bluetooth-sdk` | `import BluetoothSdk from '@mentra/bluetooth-sdk'` |
+
+## Lifecycle
 
 Android:
 
@@ -32,60 +39,110 @@ sdk.delegate = delegate
 sdk.invalidate()
 ```
 
-Keep one SDK instance per app session. The SDK owns Bluetooth connection state, the current in-memory default device target, hardware event delivery, foreground-service coordination on Android, and cleanup. Your app owns whether that default device target is persisted across app restarts.
+React Native:
+
+```ts
+const removeGlasses = BluetoothSdk.onGlassesStatus((status) => {
+  console.log(status);
+});
+
+const removeCore = BluetoothSdk.onCoreStatus((status) => {
+  console.log(status);
+});
+
+removeGlasses();
+removeCore();
+```
+
+Keep one SDK instance per active app session. The SDK owns Bluetooth connection state, native event delivery, and cleanup. Your app owns user identity, UI state, and whether a default device record is persisted across app restarts.
 
 ## Permissions
 
-Your app owns user-facing permission prompts and explanation copy. Request Bluetooth permissions before scanning and microphone permission before enabling audio or transcription features.
+Your app owns user-facing permission prompts and copy. Request Bluetooth permission before scanning and microphone permission before enabling audio or transcription features.
 
-On Android, request the platform permissions required for your target SDK, such as `BLUETOOTH_SCAN`, `BLUETOOTH_CONNECT`, `ACCESS_FINE_LOCATION`, `RECORD_AUDIO`, and `POST_NOTIFICATIONS` where applicable. Some Android 12+ devices still require runtime location permission and Location services before they deliver BLE scan callbacks, even when Nearby Devices permissions are granted.
+Android apps commonly need:
 
-On iOS, include the Bluetooth and microphone usage descriptions in your app `Info.plist`.
+```xml
+<uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+<uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<uses-permission android:name="android.permission.RECORD_AUDIO" />
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+```
+
+Some Android 12+ devices still require runtime location permission and Location services before BLE scan callbacks arrive, even when Nearby Devices permissions are granted.
+
+iOS apps commonly need:
+
+```xml
+<key>NSBluetoothAlwaysUsageDescription</key>
+<string>This app connects to your smart glasses over Bluetooth.</string>
+<key>NSMicrophoneUsageDescription</key>
+<string>This app uses the microphone when you enable audio features.</string>
+```
+
+Expo apps configure those permissions in `app.json`; see `examples/react-native/app.json`.
 
 ## Connection
 
 Android:
 
 ```kotlin
-sdk.startScan(MentraDeviceModel.MENTRA_LIVE)
+sdk.startScan(DeviceModel.MENTRA_LIVE)
 sdk.stopScan()
+
 sdk.connect(device)
-sdk.connectByName(MentraDeviceModel.MENTRA_LIVE, "Mentra Live 1234")
-sdk.setDefaultDevice(MentraPairedDevice(MentraDeviceModel.MENTRA_LIVE, "Mentra_Live_E7FA"))
+sdk.setDefaultDevice(Device(model = DeviceModel.MENTRA_LIVE, name = "Mentra_Live_E7FA"))
 val defaultDevice = sdk.getDefaultDevice()
 sdk.connectDefault()
 sdk.clearDefaultDevice()
-sdk.connectSimulated()
+
+sdk.cancelConnectionAttempt()
 sdk.disconnect()
 sdk.forget()
+sdk.connectSimulated()
 ```
 
 iOS:
 
 ```swift
-sdk.startScan(model: .mentraLive)
+try sdk.startScan(model: .mentraLive)
 sdk.stopScan()
-sdk.connect(to: device)
-sdk.connect(model: .mentraLive, name: "Mentra Live 1234")
-sdk.setDefaultDevice(MentraPairedDevice(model: .mentraLive, name: "Mentra_Live_E7FA"))
+
+try sdk.connect(to: device)
+sdk.setDefaultDevice(Device(model: .mentraLive, name: "Mentra_Live_E7FA"))
 let defaultDevice = sdk.getDefaultDevice()
-sdk.connectDefault()
+try sdk.connectDefault()
 sdk.clearDefaultDevice()
-sdk.connectSimulated()
+
+sdk.cancelConnectionAttempt()
 sdk.disconnect()
 sdk.forget()
+sdk.connectSimulated()
 ```
 
 React Native:
 
 ```ts
-await BluetoothSdk.setDefaultDevice({model: "Mentra Live", name: "Mentra_Live_E7FA"})
-const defaultDevice = BluetoothSdk.getDefaultDevice()
-await BluetoothSdk.connectDefault()
-await BluetoothSdk.clearDefaultDevice()
+await BluetoothSdk.startScan({model: 'Mentra Live'});
+
+await BluetoothSdk.connect(device);
+await BluetoothSdk.setDefaultDevice({
+  id: 'Mentra Live:Mentra_Live_E7FA',
+  model: 'Mentra Live',
+  name: 'Mentra_Live_E7FA',
+});
+const defaultDevice = await BluetoothSdk.getDefaultDevice();
+await BluetoothSdk.connectDefault();
+await BluetoothSdk.clearDefaultDevice();
+
+await BluetoothSdk.cancelConnectionAttempt();
+await BluetoothSdk.disconnect();
+await BluetoothSdk.forget();
+await BluetoothSdk.connectSimulated();
 ```
 
-Prefer connecting to a `MentraDiscoveredDevice` returned by the SDK. Use name/default connection helpers for simple pairing UIs. If your app wants `connectDefault()` to work after an app restart, persist a small default-device record in app storage and restore it with `setDefaultDevice()` during startup before calling `connectDefault()`.
+Prefer connecting to a `Device` returned by SDK scan callbacks. If your app wants `connectDefault()` to work after restart, persist a small default-device record in app storage and restore it with `setDefaultDevice()` before calling `connectDefault()`.
 
 ## Status
 
@@ -103,68 +160,37 @@ let glasses = sdk.glassesStatus
 let bluetooth = sdk.bluetoothStatus
 ```
 
+React Native:
+
+```ts
+const glasses = await BluetoothSdk.getGlassesStatus();
+const core = await BluetoothSdk.getCoreStatus();
+```
+
 Status snapshots are safe to read at any time. Treat command success as "command accepted"; keep UI state derived from status callbacks.
 
 ### Version Fields
 
 Call `requestVersionInfo()` after connection when your app wants the glasses to refresh version metadata. Updated values arrive through the normal glasses-status callback and are also available in the next status snapshot.
 
-Common glasses-status version fields:
-
 | Field | Meaning |
 | --- | --- |
 | `fwVersion` / `firmwareVersion` | Generic glasses firmware version when the connected model reports one. |
 | `deviceFirmwareVersion` | Device firmware version for models that report device info as a structured payload. |
 | `leftFirmwareVersion` / `rightFirmwareVersion` | Per-side firmware versions for glasses that report left/right firmware separately. |
-| `besFwVersion` | Mentra Live BES firmware version. This is the version shown as the primary firmware value in the example apps when available. |
+| `besFwVersion` | Mentra Live BES firmware version. |
 | `mtkFwVersion` | Mentra Live MTK/system OTA firmware version. |
-| `appVersion` | Version of the glasses-side companion app. On Mentra Live this is the ASG client APK version, not firmware. |
+| `appVersion` | Glasses-side companion app version. On Mentra Live this is the ASG client APK version, not firmware. |
 | `androidVersion` | Android OS version on Android-based glasses. This is not firmware. |
 
-Different glasses models expose different version fields, so partner apps should prefer the generic firmware field when present, then fall back to model-specific firmware fields, and keep app/OS versions visibly labeled as app/OS versions.
-
-## Optional Arguments And Defaults
-
-When an SDK API exposes an optional argument, do not rely on absence meaning "best effort" or "auto" unless it is documented that way. The behavior is:
-
-| API | Optional argument | If omitted |
-| --- | --- | --- |
-| Android `MentraBluetoothSdk.create` | `config` | Uses `MentraBluetoothSdkConfig()` with callbacks delivered on the Android main thread. |
-| Android `MentraBluetoothSdkConfig` | `deliverCallbacksOnMainThread` | Defaults to `true`. Set `false` only if your app is prepared to receive listener callbacks on the SDK/event thread. |
-| iOS `MentraBluetoothSDK` | `configuration` | Uses `.default`. |
-| `MentraDisplayTextRequest` | `x`, `y` | Places the text at `0, 0`. |
-| `MentraDisplayTextRequest` | `size` | Uses text size `24`. |
-| `MentraDashboardMenuItem` | `values` | Sends only `title` and `packageName`. |
-| `setBrightness` | `autoMode` | Leaves the current auto-brightness setting unchanged and applies only the brightness level. |
-| `MentraMicConfig` / `MentraMicConfiguration` | `sendLc3Data` | Defaults to `false`; LC3 audio callbacks are not requested. |
-| `MentraPhotoRequest` | `webhookUrl` | iOS and React Native allow `nil` / `null`; no webhook upload is requested. Android requires a URL. |
-| `MentraPhotoRequest` | `authToken` | No bearer token is added to the webhook upload request. |
-| `MentraPhotoRequest` | `compress` | Android defaults to `MentraPhotoCompression.MEDIUM`. iOS `nil` requests the device default, which is currently no extra compression on Mentra Live. React Native requires an explicit `"none"`, `"medium"`, or `"heavy"` value. Pass an explicit value for cross-platform consistency. |
-| `MentraPhotoRequest` | `flash` | Android defaults to `false`. iOS and React Native require an explicit value. |
-| `MentraPhotoRequest` | `sound` | Android defaults to `true`. iOS and React Native require an explicit value. |
-| `MentraStreamRequest` | `streamId` | Sends an empty stream id. Provide your own id if you plan to manage keep-alives or correlate stream status. |
-| `MentraStreamRequest` | `keepAlive` | Defaults to `true`. You still need to call `keepStreamAlive` every ~15 seconds while the stream is active. |
-| `MentraStreamRequest` | `keepAliveIntervalSeconds` | Defaults to `15`, matching the recommended heartbeat cadence. |
-| `MentraStreamRequest` | `flash`, `sound` | Default to `true`, enabling the camera indicator and start/stop sounds where supported. |
-| `MentraStreamRequest` | `video`, `audio` | Omitted means the glasses use their streaming defaults. |
-| `MentraRgbLedRequest` | `packageName` | Sends the LED command without app/package attribution. |
-| `MentraRgbLedRequest` | `color` | Ignored for `OFF`. For `ON`, pass one of the valid colors; Mentra Live falls back to red if the color is omitted. |
-| `sendIncidentId` | `apiBaseUrl` | Uses `https://api.mentra.glass`. |
+Different glasses models expose different version fields, so partner apps should prefer the generic firmware field when present, then fall back to model-specific firmware fields. Keep app and OS versions visibly labeled as app/OS versions.
 
 ## Display
 
 Android:
 
 ```kotlin
-sdk.displayText(
-    MentraDisplayTextRequest(
-        text = "Pickup at gate B12",
-        x = 0,
-        y = 0,
-        size = 24,
-    )
-)
-
+sdk.displayText(DisplayTextRequest(text = "Pickup at gate B12", x = 0, y = 0, size = 24))
 sdk.clearDisplay()
 sdk.showDashboard()
 ```
@@ -172,24 +198,22 @@ sdk.showDashboard()
 iOS:
 
 ```swift
-try await sdk.displayText(
-    MentraDisplayTextRequest(
-        text: "Pickup at gate B12",
-        x: 0,
-        y: 0,
-        size: 24
-    )
-)
-
+try await sdk.displayText(DisplayTextRequest(text: "Pickup at gate B12", x: 0, y: 0, size: 24))
 try await sdk.clearDisplay()
 sdk.showDashboard()
 ```
 
+React Native:
+
+```ts
+await BluetoothSdk.displayText({text: 'Pickup at gate B12', x: 0, y: 0, size: 24});
+await BluetoothSdk.clearDisplay();
+await BluetoothSdk.showDashboard();
+```
+
 Use `displayText` for normal glanceable UI. Use `displayEvent` only for advanced display payloads that require lower-level rendering control.
 
-## Core Hardware Settings
-
-The SDK exposes typed settings methods for hardware configuration. Use these methods instead of custom key/value payloads.
+## Hardware Settings
 
 Android:
 
@@ -197,25 +221,54 @@ Android:
 sdk.setBrightness(level = 60)
 sdk.setBrightness(level = 60, autoMode = false)
 sdk.setAutoBrightness(enabled = true)
-sdk.setDashboardPosition(
-    MentraDashboardPositionRequest(height = 4, depth = 6)
-)
+sdk.setDashboardPosition(DashboardPositionRequest(height = 4, depth = 6))
 sdk.setHeadUpAngle(angleDegrees = 20)
 sdk.setScreenDisabled(false)
-sdk.setGalleryMode(MentraGalleryMode.AUTO)
-sdk.setButtonPhotoSettings(MentraButtonPhotoSettings(size = MentraButtonPhotoSize.MEDIUM))
-sdk.setButtonVideoRecordingSettings(
-    MentraButtonVideoRecordingSettings(width = 1280, height = 720, fps = 30)
-)
+sdk.setGalleryMode(GalleryMode.AUTO)
+sdk.setButtonPhotoSettings(ButtonPhotoSettings(size = ButtonPhotoSize.MEDIUM))
+sdk.setButtonVideoRecordingSettings(ButtonVideoRecordingSettings(width = 1280, height = 720, fps = 30))
 sdk.setButtonCameraLed(enabled = true)
 sdk.setButtonMaxRecordingTime(minutes = 3)
-sdk.setCameraFov(MentraCameraFov.WIDE)
+sdk.setCameraFov(CameraFov.WIDE)
+```
+
+iOS:
+
+```swift
+try await sdk.setBrightness(60)
+try await sdk.setBrightness(60, autoMode: false)
+try await sdk.setAutoBrightness(enabled: true)
+try await sdk.setDashboardPosition(DashboardPositionRequest(height: 4, depth: 6))
+try await sdk.setHeadUpAngle(20)
+try await sdk.setScreenDisabled(false)
+try await sdk.setGalleryMode(.auto)
+try await sdk.setButtonPhotoSettings(ButtonPhotoSettings(size: .medium))
+try await sdk.setButtonVideoRecordingSettings(ButtonVideoRecordingSettings(width: 1280, height: 720, fps: 30))
+try await sdk.setButtonCameraLed(enabled: true)
+try await sdk.setButtonMaxRecordingTime(minutes: 3)
+try await sdk.setCameraFov(.wide)
+```
+
+React Native:
+
+```ts
+await BluetoothSdk.setGalleryMode('auto');
+await BluetoothSdk.setGalleryMode('manual');
+```
+
+`setGalleryMode('auto')` lets the glasses button save photos/videos locally. `setGalleryMode('manual')` reports button and touch events to the host app without triggering local gallery capture. Button presses are always reported as SDK events.
+
+## RGB LED
+
+Android:
+
+```kotlin
 sdk.rgbLedControl(
-    MentraRgbLedRequest(
+    RgbLedRequest(
         requestId = "led-${System.currentTimeMillis()}",
         packageName = "com.example.assistant",
-        action = MentraRgbLedAction.ON,
-        color = MentraRgbLedColor.GREEN,
+        action = RgbLedAction.ON,
+        color = RgbLedColor.GREEN,
         ontime = 500,
         offtime = 500,
         count = 3,
@@ -226,26 +279,8 @@ sdk.rgbLedControl(
 iOS:
 
 ```swift
-try await sdk.setBrightness(60)
-try await sdk.setBrightness(60, autoMode: false)
-try await sdk.setAutoBrightness(enabled: true)
-try await sdk.setDashboardPosition(
-    MentraDashboardPositionRequest(height: 4, depth: 6)
-)
-try await sdk.setHeadUpAngle(20)
-try await sdk.setScreenDisabled(false)
-try await sdk.setGalleryMode(.auto)
-try await sdk.setButtonPhotoSettings(
-    MentraButtonPhotoSettings(size: .medium)
-)
-try await sdk.setButtonVideoRecordingSettings(
-    MentraButtonVideoRecordingSettings(width: 1280, height: 720, fps: 30)
-)
-try await sdk.setButtonCameraLed(enabled: true)
-try await sdk.setButtonMaxRecordingTime(minutes: 3)
-try await sdk.setCameraFov(.wide)
 sdk.rgbLedControl(
-    MentraRgbLedRequest(
+    RgbLedRequest(
         requestId: "led-\(Date().timeIntervalSince1970)",
         packageName: "com.example.assistant",
         action: .on,
@@ -257,43 +292,30 @@ sdk.rgbLedControl(
 )
 ```
 
-React Native / Expo partners with access to that integration path can use the same gallery-mode control through the package API:
+React Native:
 
 ```ts
-await BluetoothSdk.setGalleryMode("auto")
-await BluetoothSdk.setGalleryMode("manual")
+await BluetoothSdk.rgbLedControl(
+  `led-${Date.now()}`,
+  'com.example.assistant',
+  'on',
+  'green',
+  500,
+  500,
+  3,
+);
 ```
 
-RGB LED parameters:
-
-| Parameter | Valid values | Meaning |
-| --- | --- | --- |
-| `action` | Android: `MentraRgbLedAction.ON` / `MentraRgbLedAction.OFF`; iOS: `.on` / `.off`; React Native: `"on"` / `"off"` | Turns the LED command on or off. When the action is off, `color`, `ontime`, `offtime`, and `count` are ignored. |
-| `color` | Android: `MentraRgbLedColor.RED` / `GREEN` / `BLUE` / `ORANGE` / `WHITE`; iOS: `.red` / `.green` / `.blue` / `.orange` / `.white`; React Native: `"red"` / `"green"` / `"blue"` / `"orange"` / `"white"` | Named LED color. This is not a hex color. Required for `ON`; use `null` / `nil` for `OFF`. |
-| `ontime` | Non-negative integer milliseconds | How long the LED stays on during each cycle. For a solid light, use a long `ontime`, `offtime = 0`, and `count = 1`. |
-| `offtime` | Non-negative integer milliseconds | How long the LED stays off between cycles. Use `0` for a solid light; use a positive value for blink or pulse patterns. |
-| `count` | Positive integer for `ON`; `0` for `OFF` | Number of on/off cycles to run. For example, `count = 3`, `ontime = 500`, `offtime = 500` blinks three times. |
-
-RGB LEDs are hardware-dependent; unsupported glasses should report an SDK error or capability status.
-
-Unsupported settings should fail through a typed error or capability status, not silently succeed.
-
-`setGalleryMode` maps to the Mentra Live `save_in_gallery_mode` command. Use `.auto` / `MentraGalleryMode.AUTO` / `"auto"` to let the glasses button save photos/videos locally. Use `.manual` / `MentraGalleryMode.MANUAL` / `"manual"` when you want button and touch events reported to the host app without triggering local gallery capture. Button presses are always reported as SDK events; when local capture is enabled, a short press captures a photo and a long press starts or stops video recording. Use `setButtonPhotoSettings` and `setButtonVideoRecordingSettings` to configure those captures.
+RGB LED support is hardware-dependent. Unsupported glasses should report an SDK error or capability status.
 
 ## Microphone And Audio
 
 Android:
 
 ```kotlin
-sdk.setPreferredMic(MentraMicPreference.AUTO)
+sdk.setPreferredMic(MicPreference.AUTO)
 sdk.setOwnAppAudioPlaying(false)
-sdk.setMicState(
-    MentraMicConfig(
-        sendPcmData = true,
-        sendTranscript = true,
-        bypassVad = false,
-    )
-)
+sdk.setMicState(MicConfig(sendPcmData = true, sendTranscript = true, bypassVad = false))
 ```
 
 iOS:
@@ -301,45 +323,49 @@ iOS:
 ```swift
 sdk.setPreferredMic(.auto)
 sdk.setOwnAppAudioPlaying(false)
-sdk.setMicState(
-    MentraMicConfiguration(
-        sendPcmData: true,
-        sendTranscript: true,
-        bypassVad: false
-    )
-)
+sdk.setMicState(MicConfiguration(sendPcmData: true, sendTranscript: true, bypassVad: false))
+```
+
+React Native:
+
+```ts
+await BluetoothSdk.setOwnAppAudioPlaying(false);
+await BluetoothSdk.setMicState(true, true, false);
 ```
 
 Raw audio and local transcription are advanced capabilities. Gate them behind explicit user permission and in-app controls.
 
 Phone-originated playback is routed by the OS, not by the BLE command channel. On Android, Mentra Live initiates Bluetooth Classic bonding after BLE connects; accept the system pairing dialog so media audio can route to the glasses. On iOS, users must pair/connect the glasses from Settings > Bluetooth and select them as the audio output because apps cannot initiate Bluetooth Classic audio pairing.
 
-Mentra Live also supports a BLE-controlled media step volume. This controls the glasses volume, not the phone output route. Phone hardware volume buttons change the active Android/iOS media stream; they do not automatically change this BLE-reported glasses volume:
+Mentra Live also supports a BLE-controlled media step volume. This controls the glasses volume, not the phone output route:
 
 ```kotlin
 val volume = sdk.getGlassesMediaVolume()
 sdk.setGlassesMediaVolume(8)
 ```
 
-`getGlassesMediaVolume()` returns a `volume` in the `0..15` range when the glasses report one, or `null` if the response did not include a readable volume field. `setGlassesMediaVolume(level)` requires `0..15`. Both calls throw SDK errors when the connected device does not support the command, the glasses are disconnected, or the glasses do not respond before the command timeout.
+```ts
+const volume = await BluetoothSdk.getGlassesMediaVolume();
+await BluetoothSdk.setGlassesMediaVolume(8);
+```
+
+Volume values are in the `0..15` range.
 
 ## Camera Photo Upload
 
-Use `requestPhoto` when your app needs the glasses to capture a photo and upload it to your backend. The phone sends the command to the glasses over Bluetooth, then the photo is delivered to the `webhookUrl` you provide. Depending on device connectivity and firmware, delivery may happen directly from the glasses or through a supported SDK relay path.
+Use photo requests when your app needs the glasses to capture a photo and upload it to your backend. The phone sends the command over Bluetooth, then the photo is delivered to the `webhookUrl`.
 
 Android:
 
 ```kotlin
-val requestId = "assistant-${System.currentTimeMillis()}"
-
 sdk.requestPhoto(
-    MentraPhotoRequest(
-        requestId = requestId,
+    PhotoRequest(
+        requestId = "assistant-${System.currentTimeMillis()}",
         appId = "com.example.assistant",
-        size = MentraPhotoSize.MEDIUM,
+        size = PhotoSize.MEDIUM,
         webhookUrl = "https://api.example.com/mentra/photo",
         authToken = "optional-token",
-        compress = MentraPhotoCompression.MEDIUM,
+        compress = PhotoCompression.MEDIUM,
         flash = false,
         sound = true,
     )
@@ -349,11 +375,9 @@ sdk.requestPhoto(
 iOS:
 
 ```swift
-let requestId = "assistant-\(Date().timeIntervalSince1970)"
-
 sdk.requestPhoto(
-    MentraPhotoRequest(
-        requestId: requestId,
+    PhotoRequest(
+        requestId: "assistant-\(Date().timeIntervalSince1970)",
         appId: "com.example.assistant",
         size: .medium,
         webhookUrl: "https://api.example.com/mentra/photo",
@@ -365,25 +389,28 @@ sdk.requestPhoto(
 )
 ```
 
-Your webhook should accept multipart form data. Mentra Live sends:
+React Native:
 
-| Field | Description |
-| --- | --- |
-| `photo` | JPEG image file |
-| `requestId` | Your request identifier |
-| `source` | Optional source hint, such as `ble_transfer` |
-| `type` | Optional upload type, such as `photo_upload` |
-| `success` | Optional success marker |
+```ts
+await BluetoothSdk.photoRequest(
+  `assistant-${Date.now()}`,
+  'com.example.assistant',
+  'medium',
+  'https://api.example.com/mentra/photo',
+  'optional-token',
+  'medium',
+  false,
+  true,
+);
+```
 
-If you include `authToken`, the uploader adds it as `Authorization: Bearer <token>` on the webhook request. If you omit it, no `Authorization` header is added.
+Your webhook should accept multipart form data with a `photo` file and `requestId`. If you include `authToken`, the uploader adds `Authorization: Bearer <token>` on the webhook request.
 
-Photo size values are typed because app-requested photos and button-gallery photos do not expose exactly the same tiers on Mentra Live. `MentraPhotoSize` supports `SMALL`, `MEDIUM`, `LARGE`, and `FULL` for app-requested uploads. `MentraButtonPhotoSize` supports `SMALL`, `MEDIUM`, and `LARGE` for hardware-button captures saved to gallery. Compression is also typed: `NONE` uploads the captured JPEG as-is, `MEDIUM` applies the balanced compression path, and `HEAVY` applies stronger downscaling/compression.
-
-For local development, run the companion server in `examples/photo-webhook-server` and use the printed LAN URL, such as `http://192.168.1.42:8787/upload`. Do not use `localhost`: keep the glasses, phone, and computer on a network where the uploader can reach the computer. The Android, iOS, and React Native examples demonstrate this by polling `GET /uploads/<requestId>.json` and displaying the returned `photoUrl`.
+For local development, run `python3 examples/local-demo-cloud/server.py` from the repo root and use the printed LAN `/upload` URL. Do not use `localhost`.
 
 ## Streaming
 
-Use `startStream` when your app needs Mentra Live to stream camera video to an RTMP, SRT, or WHIP endpoint. The SDK selects the protocol from the URL prefix.
+Use streaming requests when your app needs Mentra Live to stream camera video to an RTMP, SRT, or WHIP endpoint. The SDK selects the protocol from the URL prefix.
 
 | URL prefix | Protocol |
 | --- | --- |
@@ -394,56 +421,34 @@ Use `startStream` when your app needs Mentra Live to stream camera video to an R
 Android:
 
 ```kotlin
-val streamUrl = "http://192.168.1.42:8889/mentra-live/whip"
 val streamId = "stream-${System.currentTimeMillis()}"
 
-sdk.startStream(
-    MentraStreamRequest(
-        streamUrl = streamUrl,
-        streamId = streamId,
-        keepAlive = true,
-        keepAliveIntervalSeconds = 15,
-    )
-)
-
-// Call while streaming if you manage the lifecycle yourself.
-sdk.keepStreamAlive(
-    MentraStreamKeepAliveRequest(
-        streamId = streamId,
-        ackId = "ack-${System.currentTimeMillis()}",
-    )
-)
-
+sdk.startStream(StreamRequest(streamUrl = streamUrl, streamId = streamId))
+sdk.keepStreamAlive(StreamKeepAliveRequest(streamId = streamId, ackId = "ack-${System.currentTimeMillis()}"))
 sdk.stopStream()
 ```
 
 iOS:
 
 ```swift
-let streamUrl = "http://192.168.1.42:8889/mentra-live/whip"
 let streamId = "stream-\(Int(Date().timeIntervalSince1970 * 1000))"
 
-sdk.startStream(
-    MentraStreamRequest(
-        streamUrl: streamUrl,
-        streamId: streamId,
-        keepAlive: true,
-        keepAliveIntervalSeconds: 15
-    )
-)
-
-// Call while streaming if you manage the lifecycle yourself.
-sdk.keepStreamAlive(
-    MentraStreamKeepAliveRequest(
-        streamId: streamId,
-        ackId: "ack-\(Int(Date().timeIntervalSince1970 * 1000))"
-    )
-)
-
+sdk.startStream(StreamRequest(streamUrl: streamUrl, streamId: streamId))
+sdk.keepStreamAlive(StreamKeepAliveRequest(streamId: streamId, ackId: "ack-\(Int(Date().timeIntervalSince1970 * 1000))"))
 sdk.stopStream()
 ```
 
-For local streaming development, run the companion local demo cloud in `examples/local-demo-cloud`. For RTMP, use the printed RTMP publish URL, such as `rtmp://192.168.1.42:1935/live/mentra-live`, in the example app. The RTMP path must include both the application and stream key segments, for example `/live/mentra-live`; a single path segment such as `/mentra-live` is rejected by the Mentra Live RTMP client. The native iOS example derives the HLS preview URL, such as `http://192.168.1.42:8888/live/mentra-live`, and embeds it while RTMP is live; you can also open the printed HLS URL on your computer. For WebRTC, use the printed WHIP URL, such as `http://192.168.1.42:8889/mentra-live/whip`, in the example app and open the printed WebRTC preview URL, such as `http://192.168.1.42:8889/mentra-live`. Do not use `localhost`: keep the glasses, phone, and computer on a network where the glasses and phone can reach the computer.
+React Native:
+
+```ts
+const streamId = `stream-${Date.now()}`;
+
+await BluetoothSdk.startStream({type: 'start_stream', streamUrl, streamId});
+await BluetoothSdk.keepStreamAlive({type: 'keep_stream_alive', streamId, ackId: `ack-${Date.now()}`});
+await BluetoothSdk.stopStream();
+```
+
+When `keepAlive` is enabled, call `keepStreamAlive` about every 15 seconds while the stream is active. For local streaming development, use `examples/local-demo-cloud` and paste the printed RTMP, SRT, or WHIP publish URL into the example app.
 
 ## Wi-Fi And Hotspot
 
@@ -465,91 +470,130 @@ sdk.forgetWifiNetwork(ssid: "Office WiFi")
 sdk.setHotspotState(enabled: true)
 ```
 
-## Advanced Capabilities
+React Native:
 
-Advanced APIs are capability-gated because support differs by glasses model and firmware.
+```ts
+await BluetoothSdk.requestWifiScan();
+await BluetoothSdk.sendWifiCredentials('Office WiFi', 'secret');
+await BluetoothSdk.forgetWifiNetwork('Office WiFi');
+await BluetoothSdk.setHotspotState(true);
+```
 
-| Area | Examples |
-| --- | --- |
-| Camera/gallery | `requestPhoto`, `queryGalleryStatus`, `photo_response`, `gallery_status` |
-| Streaming | `startStream`, `keepStreamAlive`, `stopStream`, `stream_status` |
-| Video | `startVideoRecording`, `stopVideoRecording` |
-| Maintenance | `requestVersionInfo`, `sendOtaStart`, `sendShutdown`, `sendReboot` |
-| Local STT | model validation, transcription restart, `local_transcription` |
-| Diagnostics | partner-approved device diagnostic context |
+## OTA, Maintenance, And Diagnostics
 
-Expose advanced controls only when SDK status/capabilities say the connected device supports them.
+| Area | Android | iOS | React Native |
+| --- | --- | --- | --- |
+| Version info | `requestVersionInfo()` | `requestVersionInfo()` | `requestVersionInfo()` |
+| OTA start/status | `sendOtaStart()`, `sendOtaQueryStatus()` | `sendOtaStart()`, `sendOtaQueryStatus()` | `sendOtaStart()`, `sendOtaQueryStatus()` |
+| Stream status | `onStreamStatus` | `BluetoothEvent.streamStatus` | `stream_status` listener |
+| Incident id | `sendIncidentId(id, apiBaseUrl)` | `sendIncidentId(id, apiBaseUrl:)` | `sendIncidentId(id, apiBaseUrl)` |
+| Shutdown/reboot | `sendShutdown()`, `sendReboot()` | `sendShutdown()`, `sendReboot()` | Not exposed in the React Native API |
+
+Expose advanced controls only when SDK status/capability signals say the connected device supports them.
 
 ## Android Listener
 
 ```kotlin
 interface MentraBluetoothSdkListener {
-    fun onGlassesStatusChanged(status: MentraGlassesStatusUpdate) {}
-    fun onBluetoothStatusChanged(status: MentraBluetoothStatusUpdate) {}
-    fun onDeviceDiscovered(device: MentraDiscoveredDevice) {}
-    fun onScanStopped(reason: MentraScanStopReason) {}
-    fun onButtonPress(event: MentraButtonPressEvent) {}
-    fun onTouch(event: MentraTouchEvent) {}
-    fun onSwipe(event: MentraSwipeEvent) {}
+    fun onGlassesStatusChanged(status: GlassesStatusUpdate) {}
+    fun onBluetoothStatusChanged(status: BluetoothStatusUpdate) {}
+    fun onDeviceDiscovered(device: Device) {}
+    fun onScanStopped(reason: ScanStopReason) {}
+    fun onButtonPress(event: ButtonPressEvent) {}
+    fun onTouch(event: TouchEvent) {}
+    fun onSwipe(event: SwipeEvent) {}
     fun onHeadUpChanged(headUp: Boolean) {}
-    fun onBatteryStatus(event: MentraBatteryStatusEvent) {}
-    fun onWifiStatusChanged(event: MentraWifiStatusEvent) {}
-    fun onHotspotStatusChanged(event: MentraHotspotStatusEvent) {}
-    fun onHotspotError(event: MentraHotspotErrorEvent) {}
-    fun onGalleryStatus(event: MentraGalleryStatusEvent) {}
-    fun onPhotoResponse(event: MentraPhotoResponseEvent) {}
-    fun onStreamStatus(event: MentraStreamStatusEvent) {}
+    fun onBatteryStatus(event: BatteryStatusEvent) {}
+    fun onWifiStatusChanged(event: WifiStatusEvent) {}
+    fun onHotspotStatusChanged(event: HotspotStatusEvent) {}
+    fun onHotspotError(event: HotspotErrorEvent) {}
+    fun onGalleryStatus(event: GalleryStatusEvent) {}
+    fun onPhotoResponse(event: PhotoResponseEvent) {}
+    fun onStreamStatus(event: StreamStatusEvent) {}
+    fun onKeepAliveAck(event: KeepAliveAckEvent) {}
     fun onMicPcm(frame: ByteArray) {}
     fun onMicLc3(frame: ByteArray) {}
-    fun onLocalTranscription(event: MentraLocalTranscriptionEvent) {}
-    fun onDefaultDeviceChanged(device: MentraPairedDevice?) {}
+    fun onLocalTranscription(event: LocalTranscriptionEvent) {}
+    fun onDefaultDeviceChanged(device: Device?) {}
     fun onLog(message: String) {}
-    fun onError(error: MentraBluetoothError) {}
+    fun onError(error: BluetoothError) {}
+    fun onRawEvent(eventName: String, values: Map<String, Any>) {}
 }
 ```
 
-Callbacks are delivered on the Android main thread by default.
+Callbacks are delivered on the Android main thread by default. Set `MentraBluetoothSdkConfig(deliverCallbacksOnMainThread = false)` only if your app is prepared to receive callbacks on the SDK/event thread.
 
 ## iOS Delegate
 
 ```swift
 @MainActor
 public protocol MentraBluetoothSDKDelegate: AnyObject {
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateGlassesStatus status: MentraGlassesStatusUpdate)
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateBluetoothStatus status: MentraBluetoothStatusUpdate)
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didDiscover device: MentraDiscoveredDevice)
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didStopScan reason: MentraScanStopReason)
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: MentraBluetoothEvent)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateGlassesStatus status: GlassesStatusUpdate)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateBluetoothStatus status: BluetoothStatusUpdate)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didDiscover device: Device)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didStopScan reason: ScanStopReason)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: BluetoothEvent)
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicPcm frame: Data)
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicLc3 frame: Data)
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didChangeDefaultDevice device: MentraPairedDevice?)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didChangeDefaultDevice device: Device?)
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didLog message: String)
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didFail error: MentraBluetoothError)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didFail error: BluetoothError)
 }
 ```
 
-Delegates are the primary v1 integration path for Swift apps.
+Delegate methods have default empty implementations, so Swift apps can implement only the callbacks they need.
+
+## React Native Events
+
+React Native uses Expo module event listeners:
+
+```ts
+const subscriptions = [
+  BluetoothSdk.addListener('button_press', (event) => console.log(event)),
+  BluetoothSdk.addListener('touch_event', (event) => console.log(event)),
+  BluetoothSdk.addListener('photo_response', (event) => console.log(event)),
+  BluetoothSdk.addListener('stream_status', (event) => console.log(event)),
+  BluetoothSdk.addListener('mic_pcm', (event) => console.log(event.pcm)),
+];
+
+subscriptions.forEach((subscription) => subscription.remove());
+```
+
+Common event names include `button_press`, `touch_event`, `head_up`, `battery_status`, `wifi_status_change`, `hotspot_status_change`, `photo_response`, `gallery_status`, `stream_status`, `keep_alive_ack`, `mic_pcm`, `mic_lc3`, `local_transcription`, `rgb_led_control_response`, `audio_connected`, `audio_disconnected`, `log`, `send_command_to_ble`, and `receive_command_from_ble`.
 
 ## Core Models
 
-| Model | Purpose |
+| Model | Android | iOS | React Native | Purpose |
+| --- | --- | --- | --- | --- |
+| Device model | `DeviceModel` | `DeviceModel` | `model: string` | Supported family such as Mentra Live, Mentra Nex, G1, G2, Mach1, Z100, Frame, simulated, or R1. |
+| Discovered device | `Device` | `Device` | `Device` | Scan result containing model, name, address/identifier, RSSI, and id. |
+| Glasses status | `GlassesStatus` / `GlassesStatusUpdate` | `GlassesStatus` / `GlassesStatusUpdate` | `GlassesStatus` | Connected device snapshot: model, firmware, serial, battery, Wi-Fi, hotspot, head-up, controller, and readiness. |
+| Bluetooth/core status | `BluetoothStatus` / `BluetoothStatusUpdate` | `BluetoothStatus` / `BluetoothStatusUpdate` | `CoreStatus` | Scanning state, discovered devices, Wi-Fi scan results, mic state, settings, and logs. |
+| SDK error | `BluetoothException` / `BluetoothError` | `BluetoothError` | rejected promise or `log`/typed event | Permission, connection, unsupported-capability, command, or native failure. |
+
+## Defaults
+
+| API | Default behavior |
 | --- | --- |
-| `MentraDeviceModel` | Supported glasses family such as Mentra Live, Mentra Nex, G1, G2, Mach1, Z100, simulated, or R1 |
-| `MentraDiscoveredDevice` | Scan result containing model, name, identifier/address, and RSSI |
-| `MentraGlassesStatus` | Connected device snapshot: model, firmware, serial, battery, Wi-Fi, hotspot, head-up, controller, and readiness |
-| `MentraBluetoothStatus` | Bluetooth subsystem snapshot: scanning state, discovered devices, Wi-Fi scan results, mic state, permissions, and logs |
-| `MentraBluetoothError` | Typed command, permission, connection, unsupported-capability, or native failure |
+| Android `MentraBluetoothSdk.create` | Uses `MentraBluetoothSdkConfig()` with callbacks delivered on the Android main thread. |
+| iOS `MentraBluetoothSDK()` | Uses `.default` configuration. |
+| `connect` / `connectDefault` | `connect` saves connected glasses as default and cancels existing connection attempts unless options override that behavior. `connectDefault` uses the app-restored default device. |
+| `DisplayTextRequest` / `displayText` | Defaults to `x = 0`, `y = 0`, `size = 24` when supported by the platform call. |
+| `MicConfig` / `MicConfiguration` | `sendLc3Data` defaults to `false`. |
+| `PhotoRequest` / `photoRequest` | Pass explicit size, compression, flash, and sound for cross-platform consistency. |
+| `StreamRequest` / `startStream` | `keepAlive = true`, `keepAliveIntervalSeconds = 15`, `flash = true`, and `sound = true` by default in native SDK calls. |
+| `sendIncidentId` | Uses `https://api.mentra.glass` if `apiBaseUrl` is omitted. |
 
 ## Error Handling
 
 Use SDK errors for user-recoverable behavior:
 
-- Permission missing
-- Bluetooth off or unavailable
-- Device not discovered
-- Device disconnected
-- Capability unsupported on the connected model
-- Command rejected by glasses
-- Native subsystem failed
+- Permission missing.
+- Bluetooth off or unavailable.
+- Device not discovered.
+- Device disconnected.
+- Capability unsupported on the connected model.
+- Command rejected by glasses.
+- Native subsystem failed.
 
-Do not infer connected state from exceptions alone. Always reconcile with status callbacks.
+Do not infer connected state from exceptions alone. Always reconcile with the latest status callback or snapshot.

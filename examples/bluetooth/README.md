@@ -1,44 +1,55 @@
 # Mentra Bluetooth SDK Partner Kit
 
-Private documentation and partner enablement materials for the Mentra Bluetooth SDK.
+Partner documentation and example apps for integrating Mentra smart glasses directly into mobile apps over Bluetooth.
 
-This repo is for licensed partners building native mobile apps that connect directly to supported Mentra smart glasses over Bluetooth. It contains Android and iOS integration guides, API reference material, production checklists, hardware notes, and example apps.
+The SDK is available in three first-class forms:
 
-## SDK Access
+| Platform | Package | Example |
+| --- | --- | --- |
+| Android | `com.mentra:bluetooth-sdk` | [`examples/android`](examples/android/README.md) |
+| iOS | `MentraBluetoothSDK` CocoaPod | [`examples/ios`](examples/ios/README.md) |
+| React Native / Expo | `@mentra/bluetooth-sdk` | [`examples/react-native`](examples/react-native/README.md) |
 
-Use the SDK version, Maven repository, CocoaPods source, and release notes supplied by Mentra for your partner program.
-
-The public SDK API exposes typed native commands and typed native events. Partner apps should integrate through those documented Android and iOS APIs.
+Use the SDK version and repository access supplied by Mentra for your release. Once those package repositories are available, this repo can be cloned and used without any local path to the MentraOS source tree.
 
 ## Start Here
 
-1. Read [Getting Started](docs/getting-started.md).
-2. Review [API Reference](docs/api-reference.md).
-3. Run the [Android example](examples/android/README.md).
-4. Run the [iOS example](examples/ios/README.md).
-5. Use the [Production Checklist](docs/production-checklist.md) before shipping.
+1. Read [Getting Started](docs/getting-started.md) for install, permissions, and minimal connection flows.
+2. Run the example that matches your app stack:
+   - [Android Kotlin / Jetpack Compose](examples/android/README.md)
+   - [iOS SwiftUI](examples/ios/README.md)
+   - [React Native / Expo](examples/react-native/README.md)
+3. Keep [API Reference](docs/api-reference.md), [Display Guide](docs/display-guide.md), [Audio Guide](docs/audio-guide.md), and [Hardware Integration Notes](docs/hardware-integration.md) nearby while building.
+4. Use [Troubleshooting](docs/troubleshooting.md) and the [Production Checklist](docs/production-checklist.md) before shipping.
 
-## What This Repo Covers
+## What The Examples Demonstrate
 
-- Installing the SDK in bare Android Kotlin or Java apps
-- Installing the SDK in bare iOS Swift apps
-- Scanning for compatible glasses
-- Connecting, disconnecting, and tracking connection state
-- Displaying text and clearing the display
-- Applying typed hardware controls such as display settings, microphone routing, RGB LED color/pattern, Wi-Fi, streaming, and gallery-button behavior
-- Handling hardware events such as button presses, touch gestures, head-up state, battery, Wi-Fi, and audio events
-- Using microphone, PCM, LC3, local transcription, camera, gallery, streaming, OTA, and diagnostic features where supported
-- Production validation and troubleshooting
+- Scanning for supported Mentra glasses, connecting, disconnecting, and reconnecting to a saved/default device.
+- Reading typed glasses and Bluetooth status snapshots.
+- Displaying text, clearing the display, and opening the dashboard where supported.
+- Handling button, touch, swipe, head-up, battery, Wi-Fi, hotspot, stream, photo, audio, and diagnostic events.
+- Controlling brightness, dashboard position, head-up angle, gallery-button behavior, button photo/video settings, RGB LED patterns, Wi-Fi, hotspot, microphone, camera, and streaming.
+- Running local photo upload and RTMP/SRT/WebRTC streaming demos from a fresh clone.
 
-## Examples
+## Repository Map
 
-- `examples/android`: bare Android Kotlin app using `com.mentra:bluetooth-sdk`
-- `examples/ios`: bare iOS SwiftUI app using the `MentraBluetoothSDK` CocoaPod
-- `examples/react-native`: optional React Native/Expo example for partners who have explicit access to that integration path
-- `examples/local-demo-cloud`: recommended local companion service for photo upload and streaming demos
-- `examples/photo-webhook-server`: local photo upload receiver for camera demos
-- `examples/local-webrtc-server`: lower-level MediaMTX helper for local streaming demos
+- `docs/getting-started.md`: package install and first connection for Android, iOS, and React Native.
+- `docs/api-reference.md`: public API shape, command/event lifecycle, and cross-platform model names.
+- `docs/display-guide.md`: text, dashboard, and display-related settings.
+- `docs/audio-guide.md`: microphone events, LC3/PCM, local transcription, playback route, and glasses media volume.
+- `docs/hardware-integration.md`: model differences and capability gating.
+- `docs/production-checklist.md`: release-readiness checklist.
+- `docs/troubleshooting.md`: build, permission, scan, stream, and React Native issues.
+- `examples/local-demo-cloud`: recommended local helper for photo upload and stream preview.
+- `examples/photo-webhook-server`: focused photo webhook server.
+- `examples/local-webrtc-server`: lower-level MediaMTX helper.
 
-## Access Model
+## Local SDK Development
 
-This repository is private because it contains partner-facing implementation guidance, integration playbooks, and production support material. Do not copy these docs into public repos or public package READMEs without product approval.
+Published package installs are the normal partner path. Local overrides are only for SDK development before a release is published:
+
+- Android: publish `com.mentra:bluetooth-sdk` and its companion artifacts to Maven local, then build the example with `mavenLocal()` enabled.
+- iOS: set `MENTRA_BLUETOOTH_SDK_LOCAL_PATH` to a local SDK checkout before `pod install`.
+- React Native: install a local `@mentra/bluetooth-sdk` package path and set `MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` so Metro and native builds resolve the same package.
+
+The example READMEs document each override explicitly. Do not bake machine-specific paths into committed app config.

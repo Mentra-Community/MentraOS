@@ -28,6 +28,14 @@ Check that your iOS deployment target is at least `15.1` and that your Podfile i
 
 If your app also uses Firebase with static frameworks, Firebase modular header configuration belongs in your app, not in the Bluetooth SDK.
 
+## React Native Native Module Is Missing
+
+- Confirm you are running a development build or production native build. Expo Go cannot load `@mentra/bluetooth-sdk`.
+- Run `npx expo prebuild` after adding the SDK plugin to `app.json`.
+- Confirm `@mentra/bluetooth-sdk` is installed in the app that is being prebuilt.
+- On iOS, run `pod install` inside the generated `ios/` directory or rerun `npx expo run:ios`.
+- If you are testing a local SDK package, set `MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` to the same package path you installed with npm.
+
 ## Bluetooth Permission Problems
 
 - Android 12+ requires runtime Bluetooth scan/connect permissions.
@@ -41,7 +49,7 @@ If your app also uses Firebase with static frameworks, Firebase modular header c
 - Confirm the glasses are charged and in pairing mode.
 - Confirm OS Bluetooth permissions are granted.
 - On Android, confirm location permission is granted and device Location services are enabled.
-- Confirm the selected `MentraDeviceModel` matches the target glasses family.
+- Confirm the selected `DeviceModel` matches the target glasses family.
 - Stop and restart scanning from the UI instead of scanning indefinitely.
 - Try pairing from a clean Bluetooth state after forgetting the device.
 
@@ -64,4 +72,8 @@ If your app also uses Firebase with static frameworks, Firebase modular header c
 
 ## React Native Or Expo Apps
 
-React Native and Expo integrations are available only for partners who have explicit access to that integration path. If you are integrating the SDK into React Native, use the React Native package and development builds. For native apps, start with the Android and iOS examples in this repo.
+React Native and Expo apps use the `@mentra/bluetooth-sdk` package and must run as development builds or production native builds. Expo Go cannot load the native SDK. Start from `examples/react-native` for Expo, `examples/android` for bare Android, or `examples/ios` for bare iOS.
+
+If Android prebuild succeeds but native linking fails, confirm the generated project includes `:lc3Lib` in `android/settings.gradle`. The SDK plugin adds this module automatically during prebuild.
+
+If iOS builds fail with missing Expo adapter symbols, rerun `npx expo prebuild` so the SDK plugin can configure the Podfile for Expo module registration.

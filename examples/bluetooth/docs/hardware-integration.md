@@ -8,15 +8,15 @@ The SDK presents a common native API over multiple glasses models. Capabilities 
 2. Start a scan for that model.
 3. Present typed discovered devices from SDK callbacks.
 4. Connect using the discovered device or default-device helper.
-5. Read `MentraGlassesStatus`, firmware fields, and capability-related status before enabling advanced features.
+5. Read `GlassesStatus`, firmware fields, and capability-related status before enabling advanced features.
 6. Keep app UI derived from SDK status rather than from command success alone.
 
 Android:
 
 ```kotlin
-sdk.startScan(MentraDeviceModel.MENTRA_LIVE)
+sdk.startScan(DeviceModel.MENTRA_LIVE)
 
-override fun onDeviceDiscovered(device: MentraDiscoveredDevice) {
+override fun onDeviceDiscovered(device: Device) {
     sdk.connect(device)
 }
 ```
@@ -26,9 +26,22 @@ iOS:
 ```swift
 sdk.startScan(model: .mentraLive)
 
-func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didDiscover device: MentraDiscoveredDevice) {
-    sdk.connect(to: device)
+func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didDiscover device: Device) {
+    try? sdk.connect(to: device)
 }
+```
+
+React Native:
+
+```ts
+const removeCore = BluetoothSdk.onCoreStatus((status) => {
+  const device = status.searchResults?.[0];
+  if (device) {
+    void BluetoothSdk.connect(device);
+  }
+});
+
+await BluetoothSdk.startScan({model: "Mentra Live"});
 ```
 
 ## Capability Areas

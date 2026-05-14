@@ -1,85 +1,117 @@
-# React Native Example
+# React Native / Expo Example
 
-This example is a minimal Expo development-build app for partners who have explicit access to the React Native integration path.
+Expo development-build reference app for the Mentra Bluetooth SDK.
 
-Start with `examples/android` or `examples/ios` unless your partner agreement explicitly includes React Native support.
+This example installs the SDK as `@mentra/bluetooth-sdk` and is intended to run from a fresh clone once the npm package is available. It demonstrates the same Device, Camera, Stream, System, and Console flows as the native Android and iOS examples.
 
-## Run
+Expo Go cannot load the SDK because the package contains native Android and iOS code. Use `npx expo run:ios`, `npx expo run:android`, EAS development builds, or production native builds.
 
-```sh
+## Requirements
+
+- Node.js 20+.
+- Xcode 15+ and CocoaPods for iOS builds.
+- Android Studio / Android SDK and Java 17 for Android builds.
+- A physical phone for Bluetooth, camera, microphone, direct phone photo, and direct phone WebRTC testing.
+- Mentra smart glasses with Bluetooth enabled.
+
+## Install
+
+```bash
+cd examples/react-native
 npm install
-MENTRA_BLUETOOTH_SDK_INCLUDE_EXPO_ADAPTER=1 npx expo prebuild
-MENTRA_BLUETOOTH_SDK_INCLUDE_EXPO_ADAPTER=1 npx expo run:ios
 ```
 
-or:
+The example depends on:
 
-```sh
-npm install
-MENTRA_BLUETOOTH_SDK_INCLUDE_EXPO_ADAPTER=1 npx expo prebuild
-MENTRA_BLUETOOTH_SDK_INCLUDE_EXPO_ADAPTER=1 npx expo run:android
+```json
+"@mentra/bluetooth-sdk": "0.1.0"
 ```
 
-For local photo preview and RTMP/SRT/WebRTC testing, run the local demo cloud from the
-repo root:
+Use the SDK version supplied by Mentra for your release.
 
-```sh
+## Run On iOS
+
+```bash
+cd examples/react-native
+npx expo prebuild
+npx expo run:ios
+```
+
+Run on a physical iPhone for Bluetooth testing. Simulators are useful only for UI and compile checks.
+
+## Run On Android
+
+```bash
+cd examples/react-native
+npx expo prebuild
+npx expo run:android
+```
+
+Run on a physical Android phone for Bluetooth testing. Some Android devices require both Nearby Devices and Location permission before BLE scan callbacks are delivered.
+
+## SDK Plugin Configuration
+
+The example's `app.json` already includes the Mentra SDK plugin:
+
+```json
+[
+  "@mentra/bluetooth-sdk",
+  {
+    "node": true
+  }
+]
+```
+
+The plugin configures the native project so Expo can register the SDK module. The example also uses `expo-build-properties` to set Android `minSdkVersion` to `28` and add native library `pickFirst` rules for `libc++_shared.so`, `libonnxruntime.so`, and `libonnxruntime4j_jni.so`.
+
+## Local SDK Override
+
+Use this only when developing the SDK before an npm release is published:
+
+```bash
+cd examples/react-native
+npm install --no-save /path/to/MentraOS/mobile/modules/bluetooth-sdk
+
+MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk npx expo run:ios
+# or
+MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk npx expo run:android
+```
+
+`MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` makes Metro and the generated native projects resolve the same local package. Keep it in your shell or CI environment, not in committed project settings.
+
+## App Walkthrough
+
+The example has five tabs:
+
+- **Device**: scan for Mentra Live glasses, connect, disconnect, reconnect to the saved/default device, and inspect battery, firmware, Wi-Fi, RSSI, and discovered-device state.
+- **Camera**: request photo upload to the local demo cloud or directly to this Android phone, then preview the received JPEG. Direct phone photo is implemented in the companion local native module.
+- **Stream**: start RTMP, SRT, or WebRTC streams, send 15-second keep-alives, and preview HLS/WebRTC output. Android can receive WebRTC directly on the phone through the app-hosted GStreamer WHIP receiver.
+- **System**: scan/connect/forget Wi-Fi, toggle hotspot, change save-in-gallery mode, receive microphone PCM, and send RGB LED controls.
+- **Console**: watch button, touch, swipe, BLE, TX, STORE, hotspot, stream, photo, microphone, and raw SDK events.
+
+## Local Photo And Streaming Helper
+
+From the repo root:
+
+```bash
 python3 examples/local-demo-cloud/server.py
 ```
 
-Paste the printed LAN `/upload` URL into the Camera screen. Paste the printed
-RTMP publish URL into the Stream screen's RTMP field, the printed SRT publish
-URL into the SRT field, or the printed WHIP URL into the WebRTC field. If Docker
-is not installed or not running, the command
-still starts the photo webhook and skips streaming with a
-warning.
+Paste the printed LAN `/upload` URL into the Camera screen. Paste the printed RTMP, SRT, or WHIP publish URL into the Stream screen. If Docker is not installed or not running, the helper still starts the photo webhook and skips streaming with a warning.
 
-You can also prefill the field when starting the Expo development build:
+You can also prefill the photo webhook URL when starting a development build:
 
-```sh
+```bash
 EXPO_PUBLIC_MENTRA_PHOTO_WEBHOOK_URL=http://<computer-ip>:8787/upload npx expo run:ios
 ```
 
-The Stream screen embeds the derived RTMP/SRT HLS playlist preview and WebRTC
-preview while the stream is live. You can also open the printed HLS or WebRTC
-browser preview URL on your computer.
-See [`examples/local-demo-cloud`](../local-demo-cloud/README.md) for details.
+Do not use `localhost` in the app. The glasses, phone, and computer must be on a network where the glasses can reach the printed LAN address.
 
-When testing from a local SDK package before the npm package is published,
-install that package path and let Metro know where it lives:
+## Key Files
 
-```sh
-npm install --no-save /path/to/local/bluetooth-sdk-package
-MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/local/bluetooth-sdk-package \
-  EXPO_PUBLIC_MENTRA_PHOTO_WEBHOOK_URL=http://<computer-ip>:8787/upload \
-  MENTRA_BLUETOOTH_SDK_INCLUDE_EXPO_ADAPTER=1 \
-  npx expo run:ios
-```
-
-Use `npx expo run:android` instead of `npx expo run:ios` for the Android development build.
-
-## Android Permissions
-
-The example requests Nearby Devices, Bluetooth, camera, microphone, and fine
-location permissions before scanning. Some Android 12+ devices still require
-runtime location permission before they deliver BLE scan results, even when
-`BLUETOOTH_SCAN` and `BLUETOOTH_CONNECT` are already granted.
-
-If scanning starts but finds no devices, confirm that location permission is
-granted for the app and that device Location services are enabled.
-
-## What It Demonstrates
-
-- Showing the same Device, Camera, Stream, System, and Console design as the native examples
-- Subscribing to glasses and Bluetooth status
-- Scanning for compatible glasses
-- Connecting to discovered or saved/default glasses
-- Displaying text and clearing the display when the connected glasses support a display
-- Requesting a Mentra Live photo upload to a local webhook server with size, compression, and flash controls
-- Polling the local server with cache-busted status requests and displaying the uploaded photo preview
-- Starting and stopping RTMP/SRT/WebRTC stream requests with 15-second keep-alive calls and embedded previews
-- Requesting Wi-Fi scans, opening a password modal for secured networks, connecting to open networks directly, forgetting the current network, and toggling hotspot state
-- Enabling microphone PCM delivery and showing received frame and byte counts
-- Sending RGB LED color and pattern requests
-- Showing button, touch, swipe, BLE, TX, STORE, hotspot, and raw status events in the console
-- Changing save-in-gallery mode, which controls whether the glasses button saves photos/videos locally or only reports button/touch events to the host app
+- `src/useMentraSdk.ts`: SDK lifecycle, event subscriptions, scan/connect, camera, stream, Wi-Fi, microphone, and LED commands.
+- `src/screens/`: Device, Camera, Stream, System, and Console screens.
+- `src/sdkFormat.ts`: shared status/event formatting.
+- `app.json`: permissions, SDK plugin, and Android native-library packaging rules.
+- `metro.config.js`: package resolution for published installs and local SDK overrides.
+- `modules/mentra-direct-receiver`: local Android native module used by this example for direct phone photo/WebRTC demos.

@@ -4,14 +4,14 @@ Use this checklist before shipping a partner app with the Mentra Bluetooth SDK.
 
 ## App Setup
 
-- Bare Android and/or bare iOS native builds are configured.
+- Android, iOS, and/or React Native native builds are configured for the app stack you ship.
 - iOS deployment target is `15.1` or newer.
 - Android min SDK is `28` or newer.
 - Android builds use Java 17.
 - Android native packaging includes the SDK ONNX Runtime `pickFirst` rule.
 - Bluetooth permission copy is user-friendly and specific.
 - Microphone, camera, local network, notification, and location permissions are requested only when needed.
-- The app integrates through the documented typed Android or iOS SDK APIs.
+- The app integrates through the documented Android, iOS, or React Native SDK APIs.
 
 ## SDK Integration
 
@@ -19,6 +19,7 @@ Use this checklist before shipping a partner app with the Mentra Bluetooth SDK.
 - App handles disconnect, reconnect, scan stopped, and pair failure states.
 - App does not assume every model supports every feature.
 - App cleans up SDK listeners/delegates and calls `close()` / `invalidate()` when sessions end.
+- React Native apps remove every SDK event subscription when screens/session owners unmount.
 - App avoids sending rapid display updates without debouncing.
 - App uses typed settings APIs for brightness, dashboard, gallery-button behavior, camera, LED, Wi-Fi, streaming, and microphone settings.
 - Advanced controls are gated behind SDK capability/status checks.
@@ -35,8 +36,10 @@ Use this checklist before shipping a partner app with the Mentra Bluetooth SDK.
 
 - Fresh bare Android app install using the published Maven artifact.
 - Fresh bare iOS app install using the published CocoaPod.
+- Fresh React Native development or production build using the published npm package, if shipping React Native.
 - Android sample app in this Partner Kit builds.
 - iOS sample app in this Partner Kit runs `pod install` and builds.
+- React Native sample app in this Partner Kit runs `npm install`, `npx expo prebuild`, and at least one native platform build.
 - Fresh install test on iOS.
 - Fresh install test on Android.
 - Pairing test with each supported glasses model.

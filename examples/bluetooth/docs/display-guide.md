@@ -8,7 +8,7 @@ Android:
 
 ```kotlin
 sdk.displayText(
-    MentraDisplayTextRequest(
+    DisplayTextRequest(
         text = "Turn left in 100 ft",
         x = 0,
         y = 0,
@@ -21,13 +21,24 @@ iOS:
 
 ```swift
 try await sdk.displayText(
-    MentraDisplayTextRequest(
+    DisplayTextRequest(
         text: "Turn left in 100 ft",
         x: 0,
         y: 0,
         size: 24
     )
 )
+```
+
+React Native:
+
+```ts
+await BluetoothSdk.displayText({
+  text: "Turn left in 100 ft",
+  x: 0,
+  y: 0,
+  size: 24,
+});
 ```
 
 ## Clear Display
@@ -44,6 +55,12 @@ iOS:
 try await sdk.clearDisplay()
 ```
 
+React Native:
+
+```ts
+await BluetoothSdk.clearDisplay();
+```
+
 ## Dashboard
 
 Android:
@@ -58,6 +75,12 @@ iOS:
 sdk.showDashboard()
 ```
 
+React Native:
+
+```ts
+await BluetoothSdk.showDashboard();
+```
+
 Dashboard support depends on the connected glasses model and firmware.
 
 ## Settings That Affect Display
@@ -67,7 +90,7 @@ Android:
 ```kotlin
 sdk.setBrightness(60)
 sdk.setAutoBrightness(true)
-sdk.setDashboardPosition(MentraDashboardPositionRequest(height = 4, depth = 6))
+sdk.setDashboardPosition(DashboardPositionRequest(height = 4, depth = 6))
 sdk.setHeadUpAngle(20)
 sdk.setScreenDisabled(false)
 ```
@@ -77,10 +100,13 @@ iOS:
 ```swift
 try await sdk.setBrightness(60)
 try await sdk.setAutoBrightness(enabled: true)
-try await sdk.setDashboardPosition(MentraDashboardPositionRequest(height: 4, depth: 6))
+try await sdk.setDashboardPosition(DashboardPositionRequest(height: 4, depth: 6))
 try await sdk.setHeadUpAngle(20)
 try await sdk.setScreenDisabled(false)
 ```
+
+React Native currently exposes the display command path directly through `displayText`, `clearDisplay`, and `showDashboard`. For app UIs that need brightness, dashboard position, head-up angle, or screen-disable controls, confirm those controls are exported in the package version you are integrating before exposing them in production UI.
+
 
 ## Guidelines
 

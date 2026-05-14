@@ -25,16 +25,25 @@ println("Glasses media volume: ${result.volume} / 15")
 sdk.setGlassesMediaVolume(8)
 ```
 
-`getGlassesMediaVolume()` returns `volume = null` if the device responded without a readable `vol` field. Unsupported devices throw an SDK error. `setGlassesMediaVolume(level)` requires `0..15`; unsupported devices or disconnected glasses throw an SDK error.
+React Native:
+
+```ts
+const result = await BluetoothSdk.getGlassesMediaVolume();
+console.log(`Glasses media volume: ${result.vol} / 15`);
+
+await BluetoothSdk.setGlassesMediaVolume(8);
+```
+
+`getGlassesMediaVolume()` returns `volume` on Android and `vol` in React Native. Android may return `volume = null` if the glasses respond without a readable volume. Unsupported devices throw an SDK error. `setGlassesMediaVolume(level)` requires `0..15`; unsupported devices or disconnected glasses throw an SDK error.
 
 ## Enable Microphone Events
 
 Android:
 
 ```kotlin
-sdk.setPreferredMic(MentraMicPreference.AUTO)
+sdk.setPreferredMic(MicPreference.AUTO)
 sdk.setMicState(
-    MentraMicConfig(
+    MicConfig(
         sendPcmData = true,
         sendTranscript = true,
         bypassVad = false,
@@ -47,12 +56,19 @@ iOS:
 ```swift
 sdk.setPreferredMic(.auto)
 sdk.setMicState(
-    MentraMicConfiguration(
+    MicConfiguration(
         sendPcmData: true,
         sendTranscript: true,
         bypassVad: false
     )
 )
+```
+
+React Native:
+
+```ts
+await BluetoothSdk.setOwnAppAudioPlaying(false);
+await BluetoothSdk.setMicState(true, true, false);
 ```
 
 ## PCM Audio
@@ -73,6 +89,14 @@ func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicPcm frame: Data)
 }
 ```
 
+React Native:
+
+```ts
+const sub = BluetoothSdk.addListener('mic_pcm', (event) => {
+  // Forward event.pcm to your audio pipeline.
+});
+```
+
 ## LC3 Audio
 
 Android:
@@ -91,12 +115,20 @@ func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicLc3 frame: Data)
 }
 ```
 
+React Native:
+
+```ts
+const sub = BluetoothSdk.addListener('mic_lc3', (event) => {
+  // Decode or forward event.lc3 depending on your pipeline.
+});
+```
+
 ## Local Transcription
 
 Android:
 
 ```kotlin
-override fun onLocalTranscription(event: MentraLocalTranscriptionEvent) {
+override fun onLocalTranscription(event: LocalTranscriptionEvent) {
     Log.d("Mentra", "${event.text} final=${event.isFinal}")
 }
 ```
@@ -104,11 +136,19 @@ override fun onLocalTranscription(event: MentraLocalTranscriptionEvent) {
 iOS:
 
 ```swift
-func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: MentraBluetoothEvent) {
+func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: BluetoothEvent) {
     if case let .localTranscription(transcription) = event {
         print("\(transcription.text) final=\(transcription.isFinal)")
     }
 }
+```
+
+React Native:
+
+```ts
+const sub = BluetoothSdk.addListener('local_transcription', (event) => {
+  console.log(`${event.text} final=${event.isFinal}`);
+});
 ```
 
 ## Production Notes
