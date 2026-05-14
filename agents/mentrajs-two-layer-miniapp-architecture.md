@@ -3185,52 +3185,48 @@ calls an agent will face are:
 
 ## Open questions
 
+Each entry has a parked answer for now. The two that are genuinely
+unresolved are flagged **UNRESOLVED** — both are deferred until we
+have data from the example miniapp running end-to-end.
+
 1. **CPU/memory quotas per miniapp?** Neither JSC nor QuickJS ships
-   built-in quotas. We can add a watchdog timer in the dispatcher
-   (Swift on iOS, Kotlin on Android) that aborts a miniapp's
-   evaluation if it blocks the JS thread for >N seconds. QuickJS
-   exposes `JS_SetInterruptHandler` for clean preemption; iOS-JSC
-   has `JSContextGroupSetExecutionTimeLimit`. Defer until it bites.
-2. **Multiple simultaneous WebViews?** Out of scope. Product is "user
-   looks at one miniapp's settings at a time."
-3. **Notification scheduling from the WebView?** All scheduling goes
-   through background. WebView never schedules anything directly.
+   built-in quotas. We could add a watchdog in the dispatcher
+   (`JSContextGroupSetExecutionTimeLimit` on iOS-JSC,
+   `JS_SetInterruptHandler` on QuickJS) that aborts a miniapp
+   blocking the JS thread for >N seconds. **Decision: defer until
+   it bites.** Don't build now.
+2. **Multiple simultaneous WebViews?** **One WebView at a time.**
+   The product is "user looks at one miniapp's settings at a time."
+   Not negotiable in V1.
+3. **Notification scheduling from the WebView?** **All scheduling
+   goes through background.** WebView never schedules anything
+   directly — same as every other native API.
 4. **What does the JS context do during the iOS suspension window?**
-   Nothing — JS execution is paused with the host process. When the
-   host wakes (BLE event arrives), JS resumes mid-task. State is
-   preserved. The dev sees `setInterval` callbacks firing slightly
-   irregularly when host was paused. Document this.
-5. **Inter-miniapp communication?** Out of scope. If miniapp A needs
-   to wake miniapp B, it goes through the host (notification, then
-   user opens B). No direct miniapp-to-miniapp messaging.
-6. **Versioning the bridge.** Every `miniapp.json` declares
+   In principle, JS pauses with the host process and resumes
+   mid-task on wake; `setInterval` callbacks fire irregularly
+   during suspension. **In practice we don't hit this path:** when
+   glasses are connected we hold the `bluetooth-central` background
+   mode, which keeps the host process alive and JSContexts
+   continuously running. Suspension is a theoretical edge case for
+   the "no glasses connected, app backgrounded" scenario, which
+   is also when nothing important is happening. Document the
+   theoretical behavior; don't engineer around it.
+5. **Bridge contract versioning.** Every `miniapp.json` declares
    `sdkVersion`. Host refuses to spawn miniapps targeting an SDK
-   version it doesn't support. Bump when we change the bridge
-   contract.
-7. **Should the SDK provide a typed RPC helper over the UI bus?**
+   version it doesn't support. Bump on contract changes.
+   **UNRESOLVED — out of scope for now.** We need a real
+   policy here (what's a breaking change? semver? marketing-version
+   for the host?) before the SDK ships to external developers.
+   Decide before the store opens.
+6. **Should the SDK provide a typed RPC helper over the UI bus?**
    The raw bus today is `mentra.send(channel, payload)` +
    `session.ui.on(channel, cb)` with a `shared/channels.ts` registry
    for types. Authors who want request/response semantics
-   (`await ui.rpc.startTrip(args)` → background returns a result)
-   re-implement the correlation by hand: send with a `requestId`,
-   listen for a `response:<requestId>` channel, race a timeout.
-   Three options:
-   - **(a) Raw bus only (today).** Simple, transparent, lots of
-     boilerplate. Authors who want RPC build it themselves.
-   - **(b) Add a thin typed RPC helper.** SDK ships
-     `session.ui.rpc.handle("startTrip", async (args) => ...)` and
-     `mentra.rpc.call("startTrip", args)` with built-in correlation,
-     errors, timeouts. Less boilerplate; introduces a second
-     contract surface alongside `Channels`.
-   - **(c) Reactive stores.** SDK syncs a per-channel store between
-     halves (`session.ui.publishStore("trip", state)` +
-     `useStore("trip")` in UI). Closest to Nav's `useUser` shape.
-     More magical, harder to debug.
-   
-   Start with (a). If the same boilerplate shows up in 3+ miniapps,
-   promote it into (b). (c) only if a future use case actually wants
-   it. Decide post-Phase-5 when we have one real miniapp's worth of
-   data.
+   re-implement the correlation by hand. **Decision: keep the raw
+   bus for now (option A).** If the same boilerplate shows up in
+   3+ miniapps, revisit and consider adding a thin typed RPC
+   helper. **UNRESOLVED — revisit post-Phase-5** when we have one
+   real miniapp's worth of data.
 
 ---
 
