@@ -142,6 +142,36 @@ class CrustModule : Module() {
       true
     }
 
+    // MARK: - Device Memory (Phase 0 LRU eviction)
+
+    // Returns the device's total physical RAM in bytes. The Phase 0 LRU
+    // eviction policy is a no-op on Android — multiple WebViews share a
+    // single renderer process, so the jetsam wall doesn't apply. We still
+    // expose a real value (via ActivityManager.MemoryInfo.totalMem) so JS
+    // can log the tier label for diagnostics, but the eviction policy
+    // wired in MiniappHost short-circuits to "unlimited" when this number
+    // is 0. Returning 0 (== unknown) is the safe default in case the
+    // ActivityManager lookup fails or isn't available.
+    Function("getPhysicalMemoryBytes") {
+      val ctx = appContext.reactContext ?: appContext.currentActivity
+      if (ctx == null) {
+        return@Function 0.0
+      }
+      try {
+        val am =
+                ctx.getSystemService(android.content.Context.ACTIVITY_SERVICE)
+                        as? android.app.ActivityManager
+                        ?: return@Function 0.0
+        val mi = android.app.ActivityManager.MemoryInfo()
+        am.getMemoryInfo(mi)
+        // mi.totalMem is bytes (Long). Convert to Double for the JS bridge.
+        return@Function mi.totalMem.toDouble()
+      } catch (e: Throwable) {
+        Log.w(TAG, "getPhysicalMemoryBytes: failed", e)
+        return@Function 0.0
+      }
+    }
+
     // MARK: - Build Environment
 
     AsyncFunction("isBetaBuild") { false }

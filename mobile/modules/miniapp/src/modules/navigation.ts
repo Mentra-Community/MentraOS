@@ -1,3 +1,9 @@
+// Minimal node-style process declaration so the file builds without a
+// dependency on `@types/node`. The `dev` gate reads `process.env.NODE_ENV`,
+// which is universally inlined by bundlers (esbuild / vite / metro) at
+// build time, so the runtime never actually evaluates the property access.
+declare const process: {env: {NODE_ENV?: string}}
+
 /**
  * @fileoverview NavigationModule — turn-by-turn navigation for miniapps.
  *

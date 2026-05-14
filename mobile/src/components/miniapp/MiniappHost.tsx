@@ -2,6 +2,8 @@ import {useEffect, useState, useCallback, useRef} from "react"
 import {View, Alert, Platform} from "react-native"
 import {useSafeAreaInsets} from "react-native-safe-area-context"
 import {WebView, WebViewMessageEvent} from "react-native-webview"
+import * as Sentry from "@sentry/react-native"
+import CrustModule from "crust"
 
 import LeftEdgeBackSwipe from "@/components/miniapp/LeftEdgeBackSwipe"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
@@ -14,9 +16,32 @@ import {
   webviewBridge as miniComms,
   miniappRunningRegistry,
   buildMiniappGlobalsScript,
+  getDeviceTierBackgroundSlots,
+  getDeviceTierLabel,
+  selectMiniappsToEvict,
+  UNLIMITED_BACKGROUND_SLOTS,
 } from "@mentra/island"
 
 const BEFORE_EVICT_TIMEOUT_MS = 500
+
+/**
+ * Phase 0 LRU eviction — device's total RAM in bytes. Sampled once on
+ * first read and memoized; never changes at runtime. On Android (and the
+ * web/test fallback) the native shim returns 0, which the policy treats
+ * as "unlimited" → eviction is disabled where it shouldn't apply.
+ */
+let cachedPhysicalMemoryBytes: number | null = null
+function readPhysicalMemoryBytes(): number {
+  if (cachedPhysicalMemoryBytes !== null) return cachedPhysicalMemoryBytes
+  try {
+    const fn = (CrustModule as unknown as {getPhysicalMemoryBytes?: () => number}).getPhysicalMemoryBytes
+    const v = typeof fn === "function" ? fn.call(CrustModule) : 0
+    cachedPhysicalMemoryBytes = typeof v === "number" && Number.isFinite(v) ? v : 0
+  } catch {
+    cachedPhysicalMemoryBytes = 0
+  }
+  return cachedPhysicalMemoryBytes
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -35,6 +60,14 @@ interface MountedMiniapp {
    * reuses the WebView and `source` prop changes don't trigger a reload.
    */
   mountKey: number
+  /**
+   * Phase 0 LRU eviction: true when THIS mount session was kicked off after
+   * a previous eviction (i.e. the user came back to a miniapp we had
+   * dropped). Drives the "Restoring…" splash label. Set by mount/mountDev
+   * when the evictedPackages set names this package; never re-evaluated
+   * during the mount lifetime.
+   */
+  wasEvicted: boolean
   appName?: string
   iconUrl?: string
   onClose?: () => void
@@ -120,6 +153,22 @@ export default function MiniappHost() {
   const webViewRefs = useRef<Map<string, WebView>>(new Map())
   const canGoBackMap = useRef<Map<string, boolean>>(new Map())
   const canGoBackListeners = useRef<Map<string, Set<CanGoBackListener>>>(new Map())
+  // Phase 0: name of the package currently in the foreground (or null when no
+  // miniapp is foregrounded). Tracked separately from `apps` because setApps
+  // is asynchronous and the eviction policy needs an authoritative read.
+  // setForeground/setBackground/unmount keep this in sync; the registry's
+  // markForeground() reads through it for the "last foregrounded" timestamp.
+  const foregroundPackageRef = useRef<string | null>(null)
+  // Phase 0: packages that were LRU-evicted in this session. When such a
+  // package gets re-mounted, we render the "Restoring…" splash label so the
+  // user understands the WebView is rehydrating from session.storage. Cleared
+  // for that package on the next mount/mountDev (consumed once).
+  const [evictedPackages, setEvictedPackages] = useState<Set<string>>(new Set())
+  // Phase 0: enforceCapacity is defined further down (it needs to call
+  // sendBeforeEvict + unmount, which are defined below mount/mountDev). The
+  // ref lets mount/mountDev call enforceCapacity without a forward-reference
+  // cycle. Set in an effect after enforceCapacity stabilises.
+  const enforceCapacityRef = useRef<((protect?: string | null) => void) | null>(null)
   const insets = useSafeAreaInsets()
   const {theme} = useAppTheme()
   const colorScheme = theme.isDark ? "dark" : "light"
@@ -142,6 +191,17 @@ export default function MiniappHost() {
 
   const mount = useCallback(
     (packageName: string, bundleUri: string, options?: MiniappMountOptions) => {
+      // Phase 0: read the eviction flag from the set BEFORE we mutate it.
+      // The flag rides into the mounted entry so the splash sees "Restoring…"
+      // even after we clear the set.
+      let wasEvicted = false
+      setEvictedPackages((prev) => {
+        if (!prev.has(packageName)) return prev
+        wasEvicted = true
+        const next = new Set(prev)
+        next.delete(packageName)
+        return next
+      })
       setApps((prev) => {
         const next = new Map(prev)
         const prevEntry = next.get(packageName)
@@ -154,6 +214,7 @@ export default function MiniappHost() {
           isForeground: false,
           isLoaded: false,
           mountKey: (prevEntry?.mountKey ?? 0) + 1,
+          wasEvicted,
         })
         return next
       })
@@ -168,6 +229,10 @@ export default function MiniappHost() {
         })
       }
       localDisplayManager.onMount(packageName, options?.appName ?? packageName)
+      // Phase 0: a new mount can push us over the tier cap. Protect the
+      // just-mounted package so it isn't evicted before it gets a chance to
+      // foreground (its lastForegroundAt is 0 by definition).
+      enforceCapacityRef.current?.(packageName)
     },
     [registerRuntime],
   )
@@ -201,6 +266,14 @@ export default function MiniappHost() {
         }
       }
 
+      let wasEvicted = false
+      setEvictedPackages((prev) => {
+        if (!prev.has(packageName)) return prev
+        wasEvicted = true
+        const next = new Set(prev)
+        next.delete(packageName)
+        return next
+      })
       setApps((prev) => {
         const next = new Map(prev)
         const prevEntry = next.get(packageName)
@@ -216,6 +289,7 @@ export default function MiniappHost() {
           isForeground: false,
           isLoaded: false,
           mountKey: (prevEntry?.mountKey ?? 0) + 1,
+          wasEvicted,
         })
         return next
       })
@@ -228,6 +302,7 @@ export default function MiniappHost() {
         hardwareRequirements: manifest?.hardwareRequirements,
       })
       localDisplayManager.onMount(packageName, options?.appName ?? packageName)
+      enforceCapacityRef.current?.(packageName)
       return manifest
     },
     [registerRuntime],
@@ -244,12 +319,43 @@ export default function MiniappHost() {
     })
   }, [])
 
+  /**
+   * Send a beforeevict envelope to the miniapp and wait up to 500ms for it to
+   * flush state to session.storage. Best-effort — if the WebView is already
+   * dead the inject will fail silently and we proceed to unmount.
+   *
+   * Defined above unmount so the LRU eviction helper (which calls both) can
+   * reference both stable callbacks. The wire format mirrors the existing
+   * miniapp_color_scheme_change envelope: a JSON `payload` shipped via a
+   * synthesized `message` event so the SDK's window.onmessage handler picks
+   * it up the same way it does cloud-relayed events.
+   */
+  const sendBeforeEvict = useCallback(async (packageName: string): Promise<void> => {
+    const ref = webViewRefs.current.get(packageName)
+    if (!ref) return
+    try {
+      const envelope = JSON.stringify({
+        payload: {type: "miniapp_before_evict"},
+      })
+      ref.injectJavaScript(
+        `window.dispatchEvent(new MessageEvent('message', {data: ${JSON.stringify(envelope)}})); true;`,
+      )
+      // Give the miniapp up to BEFORE_EVICT_TIMEOUT_MS to persist state
+      await new Promise((resolve) => setTimeout(resolve, BEFORE_EVICT_TIMEOUT_MS))
+    } catch {
+      // WebView may already be dead — proceed to unmount
+    }
+  }, [])
+
   const unmount = useCallback((packageName: string) => {
     // Graceful path: notify the miniapp first so its `beforeDisconnect`
     // handlers can flush a final message (e.g. `display.clear()`),
     // wait the 50ms grace, then tear the WebView down. Sync teardown
     // would race the heads-up out the door before the miniapp could
     // respond on its still-open transport.
+    if (foregroundPackageRef.current === packageName) {
+      foregroundPackageRef.current = null
+    }
     void localMiniappRuntime.gracefullyUnregisterApp(packageName, "miniapp unmounted").finally(() => {
       setApps((prev) => {
         const next = new Map(prev)
@@ -274,6 +380,98 @@ export default function MiniappHost() {
       devServerBridge.disconnect(packageName)
     })
   }, [])
+
+  /**
+   * Phase 0 LRU eviction — when total mounted miniapps exceeds the device
+   * tier's background-slot capacity, evict the oldest backgrounded WebViews
+   * (oldest by `lastForegroundAt`). The foreground app is never a candidate.
+   *
+   * Fires after every membership / foreground change: mount, mountDev,
+   * setForeground (in case capacity changed and the previously-foreground
+   * app is now the freshly-stamped one), and setBackground. The
+   * `additionalProtectedPackage` arg lets callers exclude a just-mounted
+   * package that hasn't been foregrounded yet — without it, a freshly
+   * sideloaded miniapp could be selected as the oldest and evicted right
+   * after install (lastForegroundAt = 0).
+   *
+   * Phase 3 deletes the wiring here; the pure `selectMiniappsToEvict`
+   * helper in `@mentra/island` survives as a unit-testable building block.
+   */
+  const enforceCapacity = useCallback(
+    (additionalProtectedPackage?: string | null) => {
+      const physMem = readPhysicalMemoryBytes()
+      const capacity = getDeviceTierBackgroundSlots(physMem)
+      if (capacity === UNLIMITED_BACKGROUND_SLOTS) return
+
+      // foregroundPackageRef is the only authoritative source — apps state
+      // may be lagging a setApps batch. additionalProtectedPackage covers
+      // the just-mounted-not-yet-foregrounded edge case.
+      const fg = foregroundPackageRef.current
+      const protectedSet = new Set<string>()
+      if (fg) protectedSet.add(fg)
+      if (additionalProtectedPackage) protectedSet.add(additionalProtectedPackage)
+
+      const snapshot = miniappRunningRegistry.getAllWithTimestamps()
+      // We model `protectedSet` as a virtual foreground app for the policy:
+      // bump every protected entry's timestamp to Infinity so they sort last.
+      const adjusted = snapshot.map((e) => {
+        if (protectedSet.has(e.packageName)) {
+          return {...e, lastForegroundAt: Number.POSITIVE_INFINITY}
+        }
+        return e
+      })
+      const targets = selectMiniappsToEvict({
+        entries: adjusted,
+        foregroundPackage: fg ?? null,
+        capacity,
+      })
+      if (targets.length === 0) return
+
+      const tierLabel = getDeviceTierLabel(physMem)
+      console.log(
+        `MiniappHost: LRU evicting ${targets.length} miniapp(s) (capacity=${capacity}, tier=${tierLabel}): ${targets.join(", ")}`,
+      )
+      setEvictedPackages((prev) => {
+        const next = new Set(prev)
+        for (const t of targets) next.add(t)
+        return next
+      })
+      for (const victim of targets) {
+        try {
+          Sentry.addBreadcrumb({
+            category: "miniapp.evicted",
+            level: "info",
+            message: `Evicted ${victim} (capacity=${capacity}, tier=${tierLabel})`,
+            data: {
+              packageName: victim,
+              capacity,
+              tier: tierLabel,
+              physicalMemoryBytes: physMem,
+              totalRunning: snapshot.length,
+            },
+          })
+        } catch {
+          // Sentry may not be initialized in dev; we still log to console above.
+        }
+        useStressTestStore.getState().recordEvent({
+          packageName: victim,
+          at: Date.now(),
+          kind: "evicted",
+        })
+        // Eviction is async: best-effort beforeevict envelope, then unmount.
+        // Fire-and-forget — we don't await the chain because the caller is
+        // setForeground / mount and shouldn't block on N teardown windows.
+        void (async () => {
+          try {
+            await sendBeforeEvict(victim)
+          } finally {
+            unmount(victim)
+          }
+        })()
+      }
+    },
+    [sendBeforeEvict, unmount],
+  )
 
   const goBackInWebView = useCallback((packageName: string): boolean => {
     const ref = webViewRefs.current.get(packageName)
@@ -325,18 +523,39 @@ export default function MiniappHost() {
   }, [])
 
   const setForeground = useCallback((packageName: string, callbacks?: {onClose?: () => void; onBack?: () => void}) => {
+    foregroundPackageRef.current = packageName
+    // Phase 0: stamp lastForegroundAt so the LRU policy treats this package
+    // as the freshest. Idempotent — safe to call even if the package isn't
+    // registered yet (registry no-ops on unknown packages).
+    miniappRunningRegistry.markForeground(packageName)
     setApps((prev) => {
       const next = new Map(prev)
       const entry = next.get(packageName)
       if (entry) {
         next.set(packageName, {...entry, isForeground: true, onClose: callbacks?.onClose, onBack: callbacks?.onBack})
       }
+      // Demote any other app that was holding the foreground flag — only one
+      // foreground at a time. (Callers typically setBackground() the previous
+      // foreground first, but this is a belt-and-suspenders guard against
+      // double-foreground state desync.)
+      for (const [name, e] of next) {
+        if (name !== packageName && e.isForeground) {
+          next.set(name, {...e, isForeground: false})
+        }
+      }
       return next
     })
     localDisplayManager.onCoreAppChange(packageName)
+    // No eviction here — setForeground refreshes the timestamp, which only
+    // protects the foregrounded app from eviction. enforceCapacity is fired
+    // from mount/mountDev/setBackground where membership / fg state actually
+    // changes in ways that could push us over cap.
   }, [])
 
   const setBackground = useCallback((packageName: string) => {
+    if (foregroundPackageRef.current === packageName) {
+      foregroundPackageRef.current = null
+    }
     setApps((prev) => {
       const next = new Map(prev)
       const entry = next.get(packageName)
@@ -351,6 +570,11 @@ export default function MiniappHost() {
       }
       return next
     })
+    // Phase 0: backgrounding can put us in over-capacity state when the
+    // user has been swapping between many apps. The newly-backgrounded app
+    // is fresh (timestamp just stamped on its previous setForeground) so the
+    // policy will pick the *oldest* of the backgrounded set.
+    enforceCapacityRef.current?.()
   }, [])
 
   const isRunning = useCallback(
@@ -372,6 +596,16 @@ export default function MiniappHost() {
       console.warn(`MiniappHost: reload(${packageName}) failed:`, e)
     }
   }, [])
+
+  // Phase 0: keep the enforceCapacity ref in sync with the latest callback
+  // identity. Mount/mountDev (defined above enforceCapacity) reach it
+  // through this ref to avoid a forward-reference cycle.
+  useEffect(() => {
+    enforceCapacityRef.current = enforceCapacity
+    return () => {
+      enforceCapacityRef.current = null
+    }
+  }, [enforceCapacity])
 
   // -- wire up the module-level singleton on mount --------------------------
 
@@ -427,28 +661,6 @@ export default function MiniappHost() {
   const handleMessage = useCallback((packageName: string, event: WebViewMessageEvent) => {
     const data = event.nativeEvent.data
     localMiniappRuntime.handleRawMessage(packageName, data)
-  }, [])
-
-  /**
-   * Send a beforeevict envelope to the miniapp and wait up to 500ms for it to
-   * flush state to session.storage. Best-effort — if the WebView is already
-   * dead the inject will fail silently and we proceed to unmount.
-   */
-  const sendBeforeEvict = useCallback(async (packageName: string): Promise<void> => {
-    const ref = webViewRefs.current.get(packageName)
-    if (!ref) return
-    try {
-      const envelope = JSON.stringify({
-        payload: {type: "miniapp_before_evict"},
-      })
-      ref.injectJavaScript(
-        `window.dispatchEvent(new MessageEvent('message', {data: ${JSON.stringify(envelope)}})); true;`,
-      )
-      // Give the miniapp up to BEFORE_EVICT_TIMEOUT_MS to persist state
-      await new Promise((resolve) => setTimeout(resolve, BEFORE_EVICT_TIMEOUT_MS))
-    } catch {
-      // WebView may already be dead — proceed to unmount
-    }
   }, [])
 
   const handleTerminate = useCallback(
@@ -624,7 +836,14 @@ export default function MiniappHost() {
               webviewDebuggingEnabled={__DEV__}
               style={{flex: 1, backgroundColor: theme.colors.background}}
             />
-            {isFg && <MiniappSplash iconUrl={app.iconUrl} bgColor={theme.colors.background} isLoaded={app.isLoaded} />}
+            {isFg && (
+              <MiniappSplash
+                iconUrl={app.iconUrl}
+                bgColor={theme.colors.background}
+                isLoaded={app.isLoaded}
+                restoring={app.wasEvicted}
+              />
+            )}
             {isFg && <LeftEdgeBackSwipe packageName={app.packageName} onBack={app.onBack} />}
           </View>
         )

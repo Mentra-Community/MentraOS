@@ -177,6 +177,22 @@ public class CrustModule: Module {
             return false
         }
 
+        // MARK: - Device Memory (Phase 0 LRU eviction)
+
+        // Returns the device's total physical RAM in bytes. iOS uses
+        // ProcessInfo.processInfo.physicalMemory. Read once at startup and
+        // cached by callers — this number does not change at runtime.
+        //
+        // Used by MiniappHost to bucket the device into a tier
+        // (3/4/6/8/8+ GB) and decide how many backgrounded WebViews to
+        // keep warm before LRU-evicting the oldest. Phase 3 deletes the
+        // eviction wiring; this function survives as a generic accessor.
+        Function("getPhysicalMemoryBytes") { () -> Double in
+            // UInt64 → Double is lossy past 2^53 but every shipping iPhone is
+            // far below that. Double keeps the return value JS-number-friendly.
+            return Double(ProcessInfo.processInfo.physicalMemory)
+        }
+
         // MARK: - Build Environment
 
         AsyncFunction("isBetaBuild") { () -> Bool in

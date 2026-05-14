@@ -27,6 +27,9 @@ class CrustModule extends NativeModule<CrustModuleEvents> {
   async isBetaBuild() {
     return false
   }
+  getPhysicalMemoryBytes() {
+    return 0
+  }
 }
 
 export default registerWebModule(CrustModule, "CrustModule")
