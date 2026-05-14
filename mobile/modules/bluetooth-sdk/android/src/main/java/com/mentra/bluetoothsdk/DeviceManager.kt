@@ -1391,7 +1391,7 @@ class CoreManager {
                     }
                 }
         Bridge.log(
-                "MAN: onPhotoRequest: $requestId, $appId, $size, compress=$compress, flash=$flash, sound=$sound, exposureTimeNs=$exposureNs"
+                "MAN: PHOTO PIPELINE [DeviceManager] onPhotoRequest requestId=$requestId appId=$appId size=$size compress=$compress flash=$flash sound=$sound exposureTimeNs=$exposureNs"
         )
         sgc?.requestPhoto(requestId, appId, size, webhookUrl, authToken, compress, flash, sound, exposureNs)
     }
