@@ -7,6 +7,7 @@ import {shallow} from "zustand/shallow"
 
 import audioPlaybackService from "@/services/AudioPlaybackService"
 import headingService from "@/services/HeadingService"
+import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import miniSockets from "@/services/MiniSockets"
 import navigationService from "@/services/NavigationService"
 import {requestMiniappSdkPhoto} from "@/services/miniapp/MiniappSdkPhotoHandler"
@@ -269,6 +270,15 @@ class MantleManager {
 
     // Initialize local miniapp runtime
     localMiniappRuntime.initialize()
+
+    // Bootstrap MentraJS — wires MentraJSRouter + MentraUIRouter +
+    // MentraJSCrashController and attaches the UI router to MiniappHost
+    // so two-layer miniapps' WebViews route through to their JSContext.
+    try {
+      bootstrapMentraJS()
+    } catch (e) {
+      console.warn("mentraJsBootstrap failed:", e)
+    }
 
     // Start MiniSockets conditionally (only if user has local miniapps)
     if (localApps.length > 0) {
