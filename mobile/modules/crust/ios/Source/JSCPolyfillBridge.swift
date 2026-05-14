@@ -17,22 +17,22 @@ import os.log
 /// Hooks the network polyfill routes into a JSCDispatcher. Call once on
 /// host boot, after the dispatcher is created. Idempotent.
 public enum JSCPolyfillBridge {
-    /// Shared URLSession for HTTP fetch (no delegate — default config).
-    private static let session: URLSession = URLSession(configuration: .default)
-
-    /// Separate URLSession for WebSocket tasks, with a delegate that
-    /// catches the real handshake-complete event so we fire `open` only
-    /// after the server has accepted (matches RFC 6455 + the browser
-    /// WebSocket spec). Without this the JS-side onopen could fire
-    /// before the server has actually upgraded.
-    private static let webSocketSession: URLSession = {
-        let session = URLSession(
-            configuration: .default,
-            delegate: WebSocketSessionDelegate.shared,
-            delegateQueue: nil,
-        )
-        return session
-    }()
+    /// Single URLSession shared by fetch (closure-based dataTasks) and
+    /// WebSocket (delegate-driven). Apple's URLSession supports mixing:
+    /// dataTasks with completion handlers bypass the delegate for data
+    /// callbacks, while WebSocket-specific delegate methods still fire
+    /// for `webSocketTask(with:)`. One session = one connection pool =
+    /// one place to configure TLS, proxies, timeouts.
+    ///
+    /// The delegate is required so we fire JS-side `open` only after the
+    /// server has accepted the handshake (matches RFC 6455 + the browser
+    /// WebSocket spec). Without it, onopen could fire before the server
+    /// has actually upgraded.
+    private static let session: URLSession = URLSession(
+        configuration: .default,
+        delegate: WebSocketSessionDelegate.shared,
+        delegateQueue: nil,
+    )
 
     fileprivate final class WebSocketSessionDelegate: NSObject, URLSessionWebSocketDelegate {
         static let shared = WebSocketSessionDelegate()
@@ -264,7 +264,7 @@ public enum JSCPolyfillBridge {
                 sid: sid,
                 packageName: packageName,
                 request: urlRequest,
-                session: webSocketSession,
+                session: session,
             )
             socketsLock.lock()
             sockets[sid] = wrapper

@@ -238,16 +238,6 @@ public class CrustModule: Module {
             )
         }
 
-        /// Test/dev-only: directly grant or revoke a permission for a
-        /// package. Production grant flow goes through the JIT modal.
-        AsyncFunction("mentraJsGrantPermission") { (packageName: String, permission: String, granted: Bool) -> Void in
-            if granted {
-                JSCRuntime.shared.dispatcherTable.permissionStore.grant(packageName: packageName, permission: permission)
-            } else {
-                JSCRuntime.shared.dispatcherTable.permissionStore.revoke(packageName: packageName, permission: permission)
-            }
-        }
-
         /// Diagnostic: list all live packageNames.
         Function("mentraJsAlivePackages") { () -> [String] in
             return JSCRuntime.shared.alivePackages()
@@ -266,22 +256,6 @@ public class CrustModule: Module {
         /// every JSContext starts with the same polyfill ABI.
         Function("mentraJsLoadPolyfillBundle") { () -> String in
             return JSCRuntime.loadPolyfillBundle()
-        }
-
-        // MARK: - Device Memory (Phase 0 LRU eviction)
-
-        // Returns the device's total physical RAM in bytes. iOS uses
-        // ProcessInfo.processInfo.physicalMemory. Read once at startup and
-        // cached by callers — this number does not change at runtime.
-        //
-        // Used by MiniappHost to bucket the device into a tier
-        // (3/4/6/8/8+ GB) and decide how many backgrounded WebViews to
-        // keep warm before LRU-evicting the oldest. Phase 3 deletes the
-        // eviction wiring; this function survives as a generic accessor.
-        Function("getPhysicalMemoryBytes") { () -> Double in
-            // UInt64 → Double is lossy past 2^53 but every shipping iPhone is
-            // far below that. Double keeps the return value JS-number-friendly.
-            return Double(ProcessInfo.processInfo.physicalMemory)
         }
 
         // MARK: - Build Environment

@@ -93,15 +93,6 @@ describe("buildMentraUiShim", () => {
     expect(got).toEqual(["hello"])
   })
 
-  test("recv dedups repeated seq numbers", () => {
-    const g = evalShim()
-    const got: unknown[] = []
-    g.mentra!.on("ch", (p) => got.push(p))
-    g.__mentra!.recv({type: "msg", channel: "ch", payload: "a", seq: 7})
-    g.__mentra!.recv({type: "msg", channel: "ch", payload: "b", seq: 7})
-    expect(got).toEqual(["a"])
-  })
-
   test("recv 'close' fires onClose handlers", () => {
     const g = evalShim()
     const closes: number[] = []

@@ -649,25 +649,17 @@
           }
           let kind;
           let payload;
-          let byteSize;
           if (typeof data === "string") {
             kind = "text";
             payload = data;
-            byteSize = data.length;
           } else {
             kind = "binary";
             const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
             payload = bytesToBase642(bytes);
-            byteSize = bytes.byteLength;
           }
-          this.bufferedAmount += byteSize;
           try {
             __dispatch("ws", "send", JSON.stringify([{ sid: this.sid, kind, payload }]));
-            queueMicrotaskSafe2(() => {
-              this.bufferedAmount = Math.max(0, this.bufferedAmount - byteSize);
-            });
           } catch (e) {
-            this.bufferedAmount = Math.max(0, this.bufferedAmount - byteSize);
             this._deliver("error", { message: String(e) });
           }
         }

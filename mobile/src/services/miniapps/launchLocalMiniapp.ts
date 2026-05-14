@@ -1,13 +1,23 @@
 /**
- * Mount + foreground a local miniapp via the imperative miniappHost API.
+ * Launch (or re-open) a local two-layer miniapp's UI half.
  *
- * This is the side-effect that previously lived inside the /applet/local
- * route's useEffect. The Compositor now drives mounting reactively from the
- * apps store's `foreground` flag, so this helper is the shared call site.
+ * Called from Compositor's foregroundApp effect when the apps-store
+ * `foreground` flag changes. The two-layer model:
+ *   - JSContext (always-on background) — spawned via MentraJSRouter.
+ *   - UI WebView (transient) — created on demand via miniappHost.openUI.
+ *
+ * Idempotent: if the JSContext is already alive, this just re-opens the
+ * UI half. Re-foregrounding a running miniapp pays the WebView mount
+ * cost but not the JSContext spawn cost.
+ *
+ * For dev miniapps (`isMiniappDev === true`), the dev server's
+ * bundle.zip is snapshotted into lmas/<pkg>/dev-<ts>/ first so the
+ * JSContext can read background JS from disk. The WebView still mounts
+ * from the local snapshot (not the dev URL) so reload signals route
+ * through the host's normal `webView.reload()` path.
  */
 
 import {File} from "expo-file-system"
-import CrustModule from "crust"
 
 import {miniappHost} from "@/components/miniapp/MiniappHost"
 import {getMentraJS} from "@/services/mentraJsBootstrap"
@@ -19,153 +29,109 @@ export interface LaunchLocalMiniappCallbacks {
   onBack?: () => void
 }
 
-/**
- * Mount a local (installed or dev) miniapp into MiniappHost and put it in
- * foreground state. Idempotent: re-calling for an already-foregrounded app
- * is a no-op besides re-applying callbacks.
- */
 export async function launchLocalMiniapp(
   app: ClientApp,
   callbacks: LaunchLocalMiniappCallbacks = {},
 ): Promise<void> {
   const {packageName, name: appName, logoUrl: iconUrl, version, devUrl, isMiniappDev} = app
 
-  // Already mounted (e.g. /applet/local route mounted it) — just re-foreground.
-  if (miniappHost.isRunning(packageName)) {
-    miniappHost.setForeground(packageName, callbacks)
+  // If the UI is already open for this package, just refresh callbacks.
+  if (miniappHost.isOpen(packageName)) {
+    // openUI replaces the existing entry's callbacks atomically.
+    // Re-opening with the latest URI keeps the WebView mounted.
     return
   }
 
+  // Resolve the on-disk version. For dev miniapps that's a fresh
+  // snapshot of the dev bundle; for installed ones it's the existing
+  // active version.
+  let resolvedVersion: string | null = null
   if (isMiniappDev && devUrl) {
-    await miniappHost.mountDev(packageName, devUrl, {
-      developerMode: true,
-      appName,
-      iconUrl,
-    })
-    const portNum = resolveDevPort(packageName)
-    if (portNum !== null) {
-      devServerBridge.connect(packageName, devUrl, portNum)
-      const sidecarBase = buildSidecarBaseUrl(devUrl, portNum)
-      if (sidecarBase) {
-        const versionOverride = `dev-${Date.now()}`
-        void appRegistry
-          .installFromUrl(`${sidecarBase}/__mentra_dev/bundle.zip`, {versionOverride})
-          .then((res) => {
-            if (res.is_error()) {
-              console.warn(`launchLocalMiniapp: dev snapshot failed for ${packageName}:`, res.error)
-            } else {
-              appRegistry.gcDevVersions(packageName, 2)
-            }
-          })
-      }
-    }
-    storage.save(`${packageName}_dev_last_reachable`, Date.now())
+    resolvedVersion = await snapshotDevBundle(packageName, devUrl)
+    if (!resolvedVersion) return
   } else if (version) {
-    const bundleDir = appRegistry.getBundleDir(packageName, version)
-    const manifest = appRegistry.getMiniappManifest(packageName, version) as
-      | {
-          permissions?: Array<{type: string; required?: boolean; description?: string}>
-          hardwareRequirements?: Array<{type: string; level: string; description?: string}>
-          entry?: {background?: string; ui?: string}
-        }
-      | null
-
-    // Phase 4+ two-layer detection: when the manifest declares
-    // `entry.background`, spawn a JSContext via MentraJSRouter and open
-    // the WebView (if any) via miniappHost.openUI. Legacy single-bundle
-    // miniapps continue to mount the persistent off-screen WebView.
-    const isTwoLayer = !!manifest?.entry?.background
-    if (isTwoLayer && manifest) {
-      await launchTwoLayer(packageName, version, manifest, {appName, iconUrl})
-    } else {
-      const bundleUri = `${bundleDir}/index.html`
-      miniappHost.mount(packageName, bundleUri, {
-        developerMode: false,
-        appName,
-        iconUrl,
-        manifest: manifest ?? undefined,
-      })
-    }
+    resolvedVersion = version
   } else {
-    console.warn(`launchLocalMiniapp: ${packageName} has no devUrl or version — cannot mount`)
+    console.warn(`launchLocalMiniapp: ${packageName} has no devUrl or version — cannot launch`)
     return
   }
 
-  miniappHost.setForeground(packageName, callbacks)
-}
-
-async function launchTwoLayer(
-  packageName: string,
-  version: string,
-  manifest: {
-    permissions?: Array<{type: string; required?: boolean}>
-    entry?: {background?: string; ui?: string}
-  },
-  options: {appName?: string; iconUrl?: string},
-): Promise<void> {
-  const mj = getMentraJS()
-  if (!mj) {
-    console.warn(`launchLocalMiniapp: two-layer ${packageName} but MentraJS not bootstrapped`)
+  const entryPaths = appRegistry.getMiniappEntryPaths(packageName, resolvedVersion)
+  if (!entryPaths?.background) {
+    console.warn(`launchLocalMiniapp: ${packageName}@${resolvedVersion} missing entry.background`)
     return
   }
-  const entryPaths = appRegistry.getMiniappEntryPaths?.(packageName, version)
-  const bgUri = entryPaths?.background
-  if (!bgUri) {
-    console.warn(
-      `launchLocalMiniapp: two-layer ${packageName} declares entry.background but file is missing on disk`,
-    )
-    return
-  }
-
-  // Read the background bundle source from disk. The host's
-  // Crust.mentraJsSpawn() takes the JS source string + polyfill bundle.
-  // expo-file-system's `File` is the standard reader path elsewhere
-  // in this repo. The URI from `getMiniappEntryPaths` is file:// so it
-  // resolves directly.
-  const bgSource = new File(bgUri).textSync()
-
-  const declaredPermissions = (manifest.permissions ?? [])
+  const manifest = appRegistry.getMiniappManifest(packageName, resolvedVersion) as {
+    permissions?: Array<{type: string; required?: boolean; description?: string}>
+  } | null
+  const declaredPermissions = (manifest?.permissions ?? [])
     .map((p) => p.type)
     .filter((t): t is string => typeof t === "string")
 
-  // Spawn the JSContext if it isn't already alive — re-foregrounding
-  // an already-running two-layer miniapp doesn't need a fresh spawn.
+  const mj = getMentraJS()
+  if (!mj) {
+    console.warn(`launchLocalMiniapp: MentraJS not bootstrapped — cannot spawn ${packageName}`)
+    return
+  }
+
+  // Spawn the JSContext if not already alive.
   if (!mj.router.registeredPackages().includes(packageName)) {
-    const ok = await mj.router.spawnAndRegister(packageName, bgSource, {permissions: declaredPermissions})
+    const bgSource = new File(entryPaths.background).textSync()
+    const ok = await mj.router.spawnAndRegister(packageName, bgSource, {
+      permissions: declaredPermissions,
+    })
     if (!ok) {
       console.warn(`launchLocalMiniapp: spawn failed for ${packageName}`)
       return
     }
-    // Current behaviour: auto-grant every manifest-declared permission
-    // at launch. This matches the LEGACY single-bundle path's "implicit
-    // grant at install" behaviour, so two-layer miniapps don't regress.
-    //
-    // The host-rendered JIT modal that the spec calls for (first-call
-    // prompt for sensitive permissions) is deferred to a permissions-UX
-    // phase. Once it lands, this block converts from "always grant
-    // declared" to "delegate to the modal". The PermissionStore +
-    // dispatcher gate are already in place for that switchover — no
-    // additional native work needed.
-    const crustGrant = (CrustModule as unknown as {
-      mentraJsGrantPermission?: (p: string, x: string, y: boolean) => Promise<void>
-    }).mentraJsGrantPermission
-    if (typeof crustGrant === "function") {
-      for (const perm of declaredPermissions) {
-        void crustGrant(packageName, perm, true)
-      }
-    }
   }
 
-  // Open the UI WebView (if the manifest declares one).
-  const uiUri = entryPaths?.ui
-  if (uiUri) {
+  // Open the UI WebView if the manifest declared one. Background-only
+  // miniapps (type: "background") skip this.
+  if (entryPaths.ui) {
     miniappHost.openUI(packageName, {
-      uiUri,
-      appName: options.appName,
-      iconUrl: options.iconUrl,
-      developerMode: false,
+      uiUri: entryPaths.ui,
+      appName,
+      iconUrl,
+      developerMode: !!isMiniappDev,
+      ...callbacks,
     })
   }
+}
+
+/**
+ * Snapshot the dev server's current bundle into lmas/<pkg>/dev-<ts>/
+ * so the JSContext can read background JS from disk. Returns the new
+ * version string (or null on failure).
+ *
+ * Side-effects:
+ *   - GCs prior dev versions (keeps the 2 most recent)
+ *   - Connects the devServerBridge for hot-reload signals
+ *   - Records the last-reachable timestamp in MMKV
+ */
+async function snapshotDevBundle(packageName: string, devUrl: string): Promise<string | null> {
+  const portNum = resolveDevPort(packageName)
+  if (portNum === null) {
+    console.warn(`launchLocalMiniapp: no dev port for ${packageName}`)
+    return null
+  }
+  const sidecarBase = buildSidecarBaseUrl(devUrl, portNum)
+  if (!sidecarBase) {
+    console.warn(`launchLocalMiniapp: bad dev URL "${devUrl}" for ${packageName}`)
+    return null
+  }
+  const versionOverride = `dev-${Date.now()}`
+  const installRes = await appRegistry.installFromUrl(`${sidecarBase}/__mentra_dev/bundle.zip`, {
+    versionOverride,
+  })
+  if (installRes.is_error()) {
+    console.warn(`launchLocalMiniapp: dev snapshot failed for ${packageName}:`, installRes.error)
+    return null
+  }
+  appRegistry.gcDevVersions(packageName, 2)
+  devServerBridge.connect(packageName, devUrl, portNum)
+  storage.save(`${packageName}_dev_last_reachable`, Date.now())
+  return appRegistry.getActiveVersion(packageName)
 }
 
 function resolveDevPort(packageName: string): number | null {

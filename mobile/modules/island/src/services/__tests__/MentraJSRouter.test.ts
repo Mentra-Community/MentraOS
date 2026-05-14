@@ -18,14 +18,12 @@ function buildMockCrust(): {
   killCalls: string[]
   dispatchCalls: Array<{packageName: string; envelope: Record<string, unknown>}>
   setManifestCalls: Array<{packageName: string; permissions: string[]}>
-  grantCalls: Array<{packageName: string; permission: string; granted: boolean}>
 } {
   const listeners = new Map<string, Set<CrustListener>>()
   const spawnCalls: Array<{packageName: string; polyfill: string; miniappJs: string}> = []
   const killCalls: string[] = []
   const dispatchCalls: Array<{packageName: string; envelope: Record<string, unknown>}> = []
   const setManifestCalls: Array<{packageName: string; permissions: string[]}> = []
-  const grantCalls: Array<{packageName: string; permission: string; granted: boolean}> = []
 
   const binding: MentraJSCrustBinding = {
     mentraJsSpawn(packageName, polyfill, miniappJs) {
@@ -40,9 +38,6 @@ function buildMockCrust(): {
     },
     mentraJsSetManifest(packageName, permissions) {
       setManifestCalls.push({packageName, permissions})
-    },
-    mentraJsGrantPermission(packageName, permission, granted) {
-      grantCalls.push({packageName, permission, granted})
     },
     mentraJsLoadPolyfillBundle() {
       return "/* polyfill */"
@@ -75,7 +70,6 @@ function buildMockCrust(): {
     killCalls,
     dispatchCalls,
     setManifestCalls,
-    grantCalls,
   }
 }
 

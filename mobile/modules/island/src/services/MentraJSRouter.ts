@@ -45,6 +45,7 @@ import type localMiniappRuntime from "./LocalMiniappRuntime"
 import type {MentraJSCrashController} from "./MentraJSCrashController"
 import {MentraJSLogRingBuffer, MentraJSLogThrottle, redactSecrets} from "./MentraJSLogRedactor"
 import type {MentraUIRouter} from "./MentraUIRouter"
+import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 
 /** The runtime's runtime instance type — the singleton exported from
  * LocalMiniappRuntime.ts (the file's `export default` is the instance,
@@ -63,7 +64,6 @@ export interface MentraJSCrustBinding {
   mentraJsLoadPolyfillBundle?: () => string
   mentraJsSpawn?: (packageName: string, polyfill: string, miniappJs: string) => Promise<boolean> | boolean
   mentraJsKill?: (packageName: string) => Promise<void> | void
-  mentraJsGrantPermission?: (packageName: string, permission: string, granted: boolean) => Promise<void> | void
   mentraJsAlivePackages?: () => string[]
   addListener: (event: string, handler: (payload: Record<string, unknown>) => void) => EventSubscription
 }
@@ -190,6 +190,10 @@ export class MentraJSRouter {
       this.dispatchBridgeRaw(packageName, raw)
     })
     this.registered.add(packageName)
+    // JSContext is the source-of-truth for "miniapp running". The
+    // home tile / tray reads this registry to project the `running`
+    // flag — UI WebView open/close is separate.
+    miniappRunningRegistry.add(packageName)
   }
 
   /**
@@ -310,6 +314,8 @@ export class MentraJSRouter {
     this.crashController?.onKill(packageName)
     this.runtime.unregisterApp(packageName)
     this.registered.delete(packageName)
+    // JSContext torn down → miniapp is no longer "running".
+    miniappRunningRegistry.remove(packageName)
     if (this.crust.mentraJsKill) {
       try {
         await this.crust.mentraJsKill(packageName)

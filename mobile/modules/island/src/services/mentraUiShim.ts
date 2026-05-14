@@ -53,9 +53,11 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
       : null;
   } catch (e) { rnPost = null; }
 
+  // Outbound seq number — purely a log-correlation aid (the host's
+  // router doesn't dedup anymore since reconnect can't happen in the
+  // post-Phase-3 lifecycle: one WebView, foreground-only, destroyed
+  // on close → fresh shim on next open).
   var outboundSeq = 1;
-  var dedupRing = new Array(64);
-  var dedupHead = 0;
   var ready = false;
   var channelHandlers = Object.create(null);
   var openHandlers = [];
@@ -138,15 +140,6 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
 
   function recv(envelope) {
     if (!envelope || typeof envelope !== 'object') return;
-    // Sequence dedup — drop duplicate seqs seen within the last 64
-    // inbound messages so a reconnect-replay doesn't double-fire handlers.
-    if (typeof envelope.seq === 'number') {
-      for (var i = 0; i < dedupRing.length; i++) {
-        if (dedupRing[i] === envelope.seq) return;
-      }
-      dedupRing[dedupHead] = envelope.seq;
-      dedupHead = (dedupHead + 1) % dedupRing.length;
-    }
     var type = envelope.type;
     if (type === 'msg' && typeof envelope.channel === 'string') {
       fireChannel(envelope.channel, envelope.payload);

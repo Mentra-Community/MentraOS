@@ -5,7 +5,6 @@ import android.content.SharedPreferences
 import android.util.Log
 import java.security.SecureRandom
 import org.json.JSONArray
-import org.json.JSONObject
 
 /**
  * MentraJS dispatch table + permission gate for the per-miniapp
@@ -33,84 +32,11 @@ sealed class JSCDispatchOutcome {
 
 data class InstalledMiniappManifest(val permissions: Set<String>)
 
-/**
- * Permission grant store. Backed by a single SharedPreferences file
- * (`MentraJSPermissions`) so grants survive host process restarts. Reads
- * are served from an in-memory cache so the dispatcher hot path avoids
- * disk I/O on every __dispatch call.
- *
- * Key layout: `<packageName>::<permission> = true` (or absent).
- */
-class PermissionStore(private val appContext: Context) {
-    private val prefs: SharedPreferences =
-        appContext.getSharedPreferences("MentraJSPermissions", Context.MODE_PRIVATE)
-    private val granted = mutableMapOf<String, MutableSet<String>>()
-    private val lock = Any()
-
-    init {
-        // Read-through cache populated once at construction.
-        for ((key, _) in prefs.all) {
-            val parts = key.split("::")
-            if (parts.size == 2) {
-                granted.getOrPut(parts[0]) { mutableSetOf() }.add(parts[1])
-            }
-        }
-    }
-
-    private fun diskKey(packageName: String, permission: String) = "$packageName::$permission"
-
-    fun grant(packageName: String, permission: String) {
-        synchronized(lock) {
-            granted.getOrPut(packageName) { mutableSetOf() }.add(permission)
-            prefs.edit().putBoolean(diskKey(packageName, permission), true).apply()
-        }
-    }
-
-    fun revoke(packageName: String, permission: String) {
-        synchronized(lock) {
-            granted[packageName]?.remove(permission)
-            prefs.edit().remove(diskKey(packageName, permission)).apply()
-        }
-    }
-
-    fun isGranted(packageName: String, permission: String): Boolean {
-        synchronized(lock) {
-            return granted[packageName]?.contains(permission) == true
-        }
-    }
-
-    fun setGrants(packageName: String, permissions: Set<String>) {
-        synchronized(lock) {
-            val existing = granted[packageName]
-            val editor = prefs.edit()
-            if (existing != null) {
-                for (p in existing) editor.remove(diskKey(packageName, p))
-            }
-            granted[packageName] = permissions.toMutableSet()
-            for (p in permissions) editor.putBoolean(diskKey(packageName, p), true)
-            editor.apply()
-        }
-    }
-
-    fun clearPackage(packageName: String) {
-        synchronized(lock) {
-            val existing = granted[packageName]
-            if (existing != null) {
-                val editor = prefs.edit()
-                for (p in existing) editor.remove(diskKey(packageName, p))
-                editor.apply()
-            }
-            granted.remove(packageName)
-        }
-    }
-}
-
 class JSCDispatcher(private val appContext: Context) {
     companion object {
         private const val TAG = "MentraJS.Dispatcher"
     }
 
-    val permissionStore: PermissionStore = PermissionStore(appContext)
     private val routes = mutableMapOf<String, Handler>()
     private val manifests = mutableMapOf<String, InstalledMiniappManifest>()
     private val implicitGrants = setOf("STORAGE", "DISPLAY", "BUTTONS")
@@ -166,16 +92,20 @@ class JSCDispatcher(private val appContext: Context) {
         }
     }
 
-    /** Main entry. Called from QuickJs glue script's __dispatch trampoline. */
+    /**
+     * Main entry. Called from QuickJs glue script's __dispatch trampoline.
+     *
+     * Permission gate: bridge-internal calls (`__runtime`, `__log`, crypto,
+     * localStorage) are exempt — they don't touch OS sensors. For everything
+     * else, only the manifest declaration matters. There is no JIT prompt;
+     * install is the consent step (matches the cloud-WebView lifecycle).
+     */
     fun handle(packageName: String, iface: String, method: String, args: List<Any?>, reqId: String?): JSCDispatchOutcome {
         val required = permissionRequirements[iface]
         if (required != null && required !in implicitGrants) {
             val declared = manifest(packageName)?.permissions ?: emptySet()
             if (required !in declared) {
                 return JSCDispatchOutcome.Error("PERMISSION_NOT_DECLARED", required)
-            }
-            if (!permissionStore.isGranted(packageName, required)) {
-                return JSCDispatchOutcome.Error("PERMISSION_DENIED", required)
             }
         }
         val handler = synchronized(routes) { routes["$iface.$method"] }

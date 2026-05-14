@@ -17,6 +17,7 @@ import {
 
 import {DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
 import {miniappHost} from "@/components/miniapp/MiniappHost"
+import {getMentraJS} from "@/services/mentraJsBootstrap"
 import {showAlert} from "@/contexts/ModalContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
@@ -227,7 +228,9 @@ class MiniappCatalog {
 
   private async beforeStop(app: ClientApp): Promise<void> {
     if (app.isMiniappDev) {
-      miniappHost.unmount(app.packageName)
+      // Two-layer teardown: close any open UI WebView + kill the JSContext.
+      miniappHost.closeUI(app.packageName)
+      await getMentraJS()?.router.unregister(app.packageName)
       return
     }
 

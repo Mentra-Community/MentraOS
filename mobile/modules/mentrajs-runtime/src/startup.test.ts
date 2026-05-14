@@ -287,10 +287,10 @@ describe("startup bundle", () => {
         kind: "response",
         reqId: captured,
         ok: false,
-        error: {code: "PERMISSION_DENIED", message: "MICROPHONE"},
+        error: {code: "PERMISSION_NOT_DECLARED", message: "MICROPHONE"},
       }),
     )
-    await expect(p).rejects.toMatchObject({code: "PERMISSION_DENIED"})
+    await expect(p).rejects.toMatchObject({code: "PERMISSION_NOT_DECLARED"})
   })
 
   test("__mentraSubscribe + event envelope fan-out", () => {

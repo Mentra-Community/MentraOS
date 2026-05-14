@@ -47,8 +47,6 @@ export interface MentraUICrustBinding {
 
 interface BoundWebView {
   inject: MentraUIInjectFn
-  /** Sequence numbers seen inbound (from WebView). Used for dedup. */
-  seenSeqs: Set<number>
 }
 
 /**
@@ -86,7 +84,7 @@ export class MentraUIRouter {
    * practice because only one WebView is open at a time).
    */
   bindWebView(packageName: string, injectFn: MentraUIInjectFn): void {
-    this.bindings.set(packageName, {inject: injectFn, seenSeqs: new Set()})
+    this.bindings.set(packageName, {inject: injectFn})
   }
 
   /**
@@ -138,22 +136,6 @@ export class MentraUIRouter {
       return
     }
     if (env.type === "msg" && typeof env.channel === "string") {
-      // Dedup: drop if we've seen this seq already on this binding.
-      const binding = this.bindings.get(packageName)
-      const seq = typeof env.seq === "number" ? env.seq : null
-      if (binding && seq != null) {
-        if (binding.seenSeqs.has(seq)) return
-        binding.seenSeqs.add(seq)
-        // Trim the dedup set to a bounded size — the WebView shim's
-        // own 64-entry ring on the inbound side caps replays
-        // similarly; the outbound deduper just needs to be big
-        // enough to catch a few seconds of replays.
-        if (binding.seenSeqs.size > 256) {
-          const arr = Array.from(binding.seenSeqs)
-          binding.seenSeqs.clear()
-          for (const s of arr.slice(-128)) binding.seenSeqs.add(s)
-        }
-      }
       this.deliverToBackground(packageName, {
         type: "UI_MESSAGE",
         channel: env.channel,

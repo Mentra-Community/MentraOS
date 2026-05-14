@@ -4,16 +4,17 @@
  * Subscribes to the island apps store's `foreground` flag (set by the press
  * path's MiniappCatalog.navigateForApp). When an app becomes foreground the
  * Compositor:
- *   1. Calls launchLocalMiniapp() to mount + setForeground on MiniappHost
+ *   1. Calls launchLocalMiniapp() to spawn the JSContext (idempotent) and
+ *      openUI() the WebView half via MiniappHost
  *   2. Renders MiniappHost inside an Animated.View overlay above /home
  *   3. Renders <CapsuleMenu forceShow /> for the active miniapp
  *   4. Owns the iOS-style left-edge swipe-to-back gesture; on commit, clears
- *      foreground (host overlay slides off, miniapp keeps running in
- *      background — same as the old setBackground behavior)
+ *      foreground (host overlay slides off, JSContext stays alive — only
+ *      the WebView is torn down)
  *
- * MiniappHost continues to handle WebView lifecycle (mount/mountDev/unmount,
- * runtime registration, splash). The route at /applet/local is now legacy —
- * the press path doesn't push it; only the QR scanner still uses it.
+ * MiniappHost owns WebView lifecycle (openUI/closeUI, splash). The
+ * always-on JSContext is owned by MentraJSRouter; the WebView is only
+ * mounted while the miniapp is foreground.
  */
 
 import {useEffect, useRef} from "react"
@@ -56,13 +57,13 @@ export default function Compositor() {
     // during the fade. When switching directly to a new app, background the
     // previous one immediately (the new app is foregrounding right now).
     if (prev && prev !== next && next != null) {
-      miniappHost.setBackground(prev)
+      miniappHost.closeUI(prev)
     } else if (prev && next == null) {
       const prevPkg = prev
       setTimeout(() => {
-        // Only background if no new foreground app reclaimed this slot.
+        // Only close if no new foreground app reclaimed this slot.
         if (lastForegroundPkgRef.current === null) {
-          miniappHost.setBackground(prevPkg)
+          miniappHost.closeUI(prevPkg)
         }
       }, FADE_OUT_DURATION_MS)
     }

@@ -834,14 +834,9 @@ declare const __nativeClearTimer: (token: number) => void
         }
         let kind: "text" | "binary"
         let payload: string
-        let byteSize: number
         if (typeof data === "string") {
           kind = "text"
           payload = data
-          // RFC 6455 frame uses UTF-8; close-enough size for the
-          // bufferedAmount counter is the string length (ASCII fast
-          // path, off-by-a-few on multi-byte chars).
-          byteSize = data.length
         } else {
           kind = "binary"
           const bytes =
@@ -849,22 +844,14 @@ declare const __nativeClearTimer: (token: number) => void
               ? new Uint8Array(data)
               : new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
           payload = bytesToBase64(bytes)
-          byteSize = bytes.byteLength
         }
-        // Track the queued byte count locally. The dispatch call is
-        // synchronous (Swift block / Zipline bound method) so by the
-        // time we return the native side has accepted the frame; we
-        // decrement on the next event-loop turn to give miniapp code
-        // an opportunity to observe a non-zero bufferedAmount within
-        // a single tick (matches browser-WebSocket timing).
-        this.bufferedAmount += byteSize
+        // bufferedAmount is intentionally a static 0 — native owns the
+        // real queue (URLSessionWebSocketTask / OkHttp); reading it
+        // accurately from JS requires a synchronous round-trip we
+        // don't expose. No production miniapp surveyed observes it.
         try {
           __dispatch("ws", "send", JSON.stringify([{sid: this.sid, kind, payload}]))
-          queueMicrotaskSafe(() => {
-            this.bufferedAmount = Math.max(0, this.bufferedAmount - byteSize)
-          })
         } catch (e) {
-          this.bufferedAmount = Math.max(0, this.bufferedAmount - byteSize)
           this._deliver("error", {message: String(e)})
         }
       }

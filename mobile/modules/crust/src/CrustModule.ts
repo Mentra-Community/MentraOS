@@ -126,19 +126,6 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
   startHeading(): Promise<{ok: boolean; error?: string}>
   stopHeading(): Promise<{ok: boolean; error?: string}>
 
-  // Device memory (Phase 0 LRU eviction)
-  /**
-   * Returns the device's total physical RAM in bytes. Synchronous — read
-   * once at startup and cache. The value never changes at runtime.
-   *
-   * iOS: backed by `ProcessInfo.processInfo.physicalMemory`.
-   * Android: backed by `ActivityManager.MemoryInfo.totalMem`. Returns 0 if
-   * the lookup fails; callers should treat 0 as "unknown" and disable
-   * eviction (Android doesn't need it — multiple WebViews share one
-   * renderer process and don't hit the iOS jetsam wall).
-   */
-  getPhysicalMemoryBytes(): number
-
   // MentraJS Runtime (Phase 1) — per-miniapp JSContext lifecycle.
   /**
    * Spawn a per-miniapp JS context. Re-spawn is allowed: a live context
@@ -160,7 +147,6 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
    */
   mentraJsDispatchToJs(packageName: string, envelope: Record<string, unknown>): Promise<void>
   mentraJsSetManifest(packageName: string, permissions: string[]): Promise<void>
-  mentraJsGrantPermission(packageName: string, permission: string, granted: boolean): Promise<void>
   /** Diagnostic — returns the packageNames of every live JSContext. */
   mentraJsAlivePackages(): string[]
   /** Diagnostic — force a GC cycle on the named context. */

@@ -57,19 +57,6 @@ describe("MentraUIRouter — routeFromWebView", () => {
     })
   })
 
-  test("duplicate seq is deduped", () => {
-    bindCapture(router, "com.foo")
-    router.routeFromWebView(
-      "com.foo",
-      JSON.stringify({type: "msg", seq: 7, channel: "x", payload: 1}),
-    )
-    router.routeFromWebView(
-      "com.foo",
-      JSON.stringify({type: "msg", seq: 7, channel: "x", payload: 2}),
-    )
-    expect(crust.dispatchCalls).toHaveLength(1)
-  })
-
   test("heartbeat envelope is silently consumed (no dispatch)", () => {
     bindCapture(router, "com.foo")
     router.routeFromWebView("com.foo", JSON.stringify({type: "heartbeat", seq: 1}))

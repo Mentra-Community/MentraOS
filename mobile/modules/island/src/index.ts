@@ -1,15 +1,6 @@
 // Services
 export {default as webviewBridge} from "./services/WebviewBridge"
-export {miniappRunningRegistry, type RegistryEntry as MiniappRegistryEntry} from "./services/MiniappRunningRegistry"
-export {
-  DEVICE_TIERS,
-  UNLIMITED_BACKGROUND_SLOTS,
-  getDeviceTierBackgroundSlots,
-  getDeviceTierLabel,
-  selectMiniappsToEvict,
-  type DeviceTier,
-  type EvictionInput,
-} from "./services/MiniappEvictionPolicy"
+export {miniappRunningRegistry} from "./services/MiniappRunningRegistry"
 export {
   default as appRegistry,
   normalizeManifestPermissions,

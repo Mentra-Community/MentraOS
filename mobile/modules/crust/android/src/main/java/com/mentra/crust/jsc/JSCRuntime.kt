@@ -12,10 +12,10 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Thrown from the bridge's dispatch() method to propagate a structured
- * MentraJS dispatch failure (PERMISSION_NOT_DECLARED / PERMISSION_DENIED
- * / INVALID_ARGS / etc.) back to the calling JS frame. Zipline surfaces
- * Kotlin exceptions from bound methods as JS-side throws, so the SDK's
- * send-request Promise correctly rejects with a real Error.
+ * MentraJS dispatch failure (PERMISSION_NOT_DECLARED / INVALID_ARGS /
+ * etc.) back to the calling JS frame. Zipline surfaces Kotlin exceptions
+ * from bound methods as JS-side throws, so the SDK's send-request
+ * Promise correctly rejects with a real Error.
  */
 class MentraJSDispatchError(val code: String, message: String) : RuntimeException("$code: $message")
 

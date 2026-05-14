@@ -8,14 +8,8 @@ export interface JetsamEvent {
   packageName: string
   /** ms since epoch */
   at: number
-  /**
-   * "terminate" = WebView Web Content Process kill (jetsam from OS).
-   * "memwarn"   = JS memoryWarning event from RN AppState.
-   * "error"     = WebView fired onError (DOM-level failure).
-   * "evicted"   = Phase 0 LRU eviction — we proactively unmounted a
-   *               backgrounded WebView to stay under the device tier cap.
-   */
-  kind: "terminate" | "memwarn" | "error" | "evicted"
+  /** "terminate" = WebView Web Content Process kill, "memwarn" = JS memoryWarning event */
+  kind: "terminate" | "memwarn" | "error"
 }
 
 interface StressTestState {
