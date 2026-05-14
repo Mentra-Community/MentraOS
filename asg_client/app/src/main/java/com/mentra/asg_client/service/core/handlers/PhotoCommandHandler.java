@@ -176,7 +176,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                                       String requestId, String webhookUrl, String authToken, String bleImgId,
                                       boolean save, String size, String transferMethod, boolean flash, boolean sound, String compress,
                                       Long exposureTimeNs) {
-        Log.d(TAG, "789789Processing photo capture with transfer method: " + transferMethod);
+        Log.d(TAG, "Processing photo capture with transfer method: " + transferMethod);
         switch (transferMethod) {
             case "ble":
                 captureService.takePhotoForBleTransfer(photoFilePath, requestId, bleImgId, save, size, flash, sound, exposureTimeNs);
