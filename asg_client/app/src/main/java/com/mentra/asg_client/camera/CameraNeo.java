@@ -75,6 +75,7 @@ import java.util.concurrent.TimeUnit;
 
 public class CameraNeo extends LifecycleService {
     private static final String TAG = "CameraNeo";
+
     private static final String CHANNEL_ID = "CameraNeoServiceChannel";
     private static final int NOTIFICATION_ID = 1;
 
@@ -154,8 +155,16 @@ public class CameraNeo extends LifecycleService {
     /** Cached for per-request manual still capture (not persisted). */
     private boolean manualSensorSupported;
     private Range<Long> sensorExposureTimeRange;
+    private Long sensorMaxFrameDurationNs;
     private Range<Integer> sensorSensitivityRange;
     private volatile Integer mLastMeteredIso;
+    private volatile Long mLastMeteredExposureNs;
+    // #region agent log
+    // Sensor timestamp of the last still-capture frame as reported by the HAL
+    // in onCaptureCompleted. Used in onImageAvailable to verify that the
+    // ImageReader actually delivered the still frame (not a leftover preview).
+    private volatile Long mLastStillSensorTimestampNs;
+    // #endregion
 
     // Autofocus capabilities
     private int[] availableAfModes;
@@ -1170,6 +1179,25 @@ public class CameraNeo extends LifecycleService {
                 // Process the captured JPEG (only when in SHOOTING state)
                 Log.d(TAG, "Processing photo capture...");
                 try (Image image = reader.acquireLatestImage()) {
+                    // #region agent log
+                    // Verify that the frame we are about to save matches the
+                    // still capture's SENSOR_TIMESTAMP. If they differ, we are
+                    // saving a stale preview frame instead of the manual still.
+                    try {
+                        long imgTs = (image != null) ? image.getTimestamp() : -1L;
+                        Long stillTs = mLastStillSensorTimestampNs;
+                        long deltaMs = (stillTs != null && imgTs > 0) ? (stillTs - imgTs) / 1_000_000L : -1L;
+                        boolean match = (stillTs != null && imgTs > 0 && stillTs == imgTs);
+                        android.util.Log.i("MentraDbg",
+                            "{\"sessionId\":\"d2b1f4\",\"hypothesisId\":\"H6\",\"location\":\"CameraNeo:onImageAvailable:savedFrame\",\"timestamp\":" + System.currentTimeMillis()
+                            + ",\"message\":\"saved frame timestamp vs still capture timestamp\",\"data\":{"
+                            + "\"image_timestamp_ns\":" + imgTs
+                            + ",\"still_SENSOR_TIMESTAMP_ns\":" + stillTs
+                            + ",\"timestamps_match\":" + match
+                            + ",\"delta_ms_still_minus_image\":" + deltaMs
+                            + "}}");
+                    } catch (Throwable t) { /* never let logging crash capture */ }
+                    // #endregion
                     if (image == null) {
                         Log.e(TAG, "Acquired image is null");
                         if (!mHdrBurstActive) {
@@ -2334,9 +2362,11 @@ public class CameraNeo extends LifecycleService {
             }
         }
         sensorExposureTimeRange = characteristics.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE);
+        sensorMaxFrameDurationNs = characteristics.get(CameraCharacteristics.SENSOR_INFO_MAX_FRAME_DURATION);
         sensorSensitivityRange = characteristics.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE);
         Log.d(TAG, "Manual sensor: supported=" + manualSensorSupported
                 + ", exposureNsRange=" + sensorExposureTimeRange
+                + ", maxFrameDurationNs=" + sensorMaxFrameDurationNs
                 + ", isoRange=" + sensorSensitivityRange);
     }
 
@@ -2440,9 +2470,9 @@ public class CameraNeo extends LifecycleService {
             aeStartTimeNs = System.nanoTime();
 
             // Check if ZSL is enabled
-            boolean zslEnabled = (mCameraSettings != null && mCameraSettings.isZslSupported() && 
+            boolean zslEnabled = (mCameraSettings != null && mCameraSettings.isZslSupported() &&
                                  mCameraSettings.mAsgSettings.isZslEnabled());
-            
+
             Log.d(TAG, "🔍 DIAGNOSTIC: startPrecaptureSequence() called");
             Log.d(TAG, "🔍 ZSL enabled: " + zslEnabled);
             Log.d(TAG, "🔍 Current shot state: " + shotState);
@@ -2483,6 +2513,10 @@ public class CameraNeo extends LifecycleService {
             Integer sensEarly = result.get(CaptureResult.SENSOR_SENSITIVITY);
             if (sensEarly != null && sensEarly > 0) {
                 mLastMeteredIso = sensEarly;
+            }
+            Long exposureEarly = result.get(CaptureResult.SENSOR_EXPOSURE_TIME);
+            if (exposureEarly != null && exposureEarly > 0) {
+                mLastMeteredExposureNs = exposureEarly;
             }
             
             // Log first few callbacks to verify it's being invoked
@@ -2533,7 +2567,7 @@ public class CameraNeo extends LifecycleService {
                     Log.i(TAG, "🔍 ✅ AE LOCKED in " + totalElapsedMs + "ms total! State: " + getAeStateName(aeState) + ", capturing photo");
                     mAeLockRequested = false;
                     mWaitingForAeConvergence = false;
-                    shotState = ShotState.SHOOTING;
+                    // Let capturePhoto() set SHOOTING after passing re-entrancy guard
                     capturePhoto();
                 } else if (callbackCount % 10 == 0) {
                     Log.d(TAG, "🔍 Waiting for AE lock... State: " + getAeStateName(aeState));
@@ -2557,7 +2591,6 @@ public class CameraNeo extends LifecycleService {
                     // Add delay to allow exposure to stabilize before capture
                     backgroundHandler.postDelayed(() -> {
                         Log.i(TAG, "🔍 Exposure stabilization complete, capturing photo");
-                        shotState = ShotState.SHOOTING;
                         capturePhoto();
                     }, EXPOSURE_STABILIZATION_DELAY_MS);
                 } else {
@@ -2675,18 +2708,55 @@ public class CameraNeo extends LifecycleService {
     }
 
     private boolean shouldUseManualExposure() {
+        boolean decision;
+        String reason;
         if (pendingExposureTimeNs == null || pendingExposureTimeNs <= 0) {
-            return false;
+            decision = false;
+            reason = "no/invalid pendingExposureTimeNs";
+        } else if (!manualSensorSupported) {
+            Log.w(TAG, "Manual exposure requested but MANUAL_SENSOR not supported; using auto exposure");
+            decision = false;
+            reason = "MANUAL_SENSOR unsupported";
+        } else if (sensorExposureTimeRange == null || sensorSensitivityRange == null) {
+            Log.w(TAG, "Manual exposure requested but sensor ranges unavailable; using auto exposure");
+            decision = false;
+            reason = "sensor ranges null";
+        } else {
+            decision = true;
+            reason = "manual path engaged";
+        }
+        // #region agent log
+        try {
+            android.util.Log.i("MentraDbg",
+                "{\"sessionId\":\"d2b1f4\",\"hypothesisId\":\"H0\",\"location\":\"CameraNeo:shouldUseManualExposure\",\"timestamp\":" + System.currentTimeMillis()
+                + ",\"message\":\"manual exposure decision\",\"data\":{"
+                + "\"decision\":" + decision
+                + ",\"reason\":\"" + reason + "\""
+                + ",\"pendingExposureTimeNs\":" + pendingExposureTimeNs
+                + ",\"manualSensorSupported\":" + manualSensorSupported
+                + "}}");
+        } catch (Throwable t) { /* never let logging crash capture */ }
+        // #endregion
+        return decision;
+    }
+
+    /**
+     * Explains why the still capture path uses auto exposure ({@link #capturePhoto}), for a single INFO line in logcat.
+     */
+    private String describeAutoExposureStillPath() {
+        if (pendingExposureTimeNs == null) {
+            return "no pending exposureNs (auto AE)";
+        }
+        if (pendingExposureTimeNs <= 0) {
+            return "pending exposureNs invalid (" + pendingExposureTimeNs + ")";
         }
         if (!manualSensorSupported) {
-            Log.w(TAG, "Manual exposure requested but MANUAL_SENSOR not supported; using auto exposure");
-            return false;
+            return "manual requested but MANUAL_SENSOR unsupported";
         }
         if (sensorExposureTimeRange == null || sensorSensitivityRange == null) {
-            Log.w(TAG, "Manual exposure requested but sensor ranges unavailable; using auto exposure");
-            return false;
+            return "manual requested but sensor ranges unavailable";
         }
-        return true;
+        return "auto AE path";
     }
 
     private long clampExposureTimeNs(long requestedNs) {
@@ -2698,13 +2768,52 @@ public class CameraNeo extends LifecycleService {
         return Math.max(lo, Math.min(hi, requestedNs));
     }
 
-    private int pickSensitivityForManualCapture() {
+    private int pickSensitivityForManualCapture(long targetExposureNs) {
         Integer last = mLastMeteredIso;
         int iso = (last != null && last > 0) ? last.intValue() : 400;
+        int isoBeforeScale = iso;
+        Long meteredExposureNs = mLastMeteredExposureNs;
+        double evScaleApplied = 1.0;
+        if (meteredExposureNs != null && meteredExposureNs > 0 && targetExposureNs > 0 && iso > 0) {
+            // Keep exposure value approximately stable when shutter changes:
+            // ISO_target ~= ISO_metered * (t_metered / t_target)
+            double evScale = (double) meteredExposureNs / (double) targetExposureNs;
+            evScaleApplied = evScale;
+            iso = (int) Math.round(iso * evScale);
+        }
+        int isoAfterScale = iso;
         if (sensorSensitivityRange != null) {
             iso = Math.max(sensorSensitivityRange.getLower(), Math.min(sensorSensitivityRange.getUpper(), iso));
         }
+        // #region agent log
+        try {
+            Integer isoLow = (sensorSensitivityRange != null) ? sensorSensitivityRange.getLower() : null;
+            Integer isoHigh = (sensorSensitivityRange != null) ? sensorSensitivityRange.getUpper() : null;
+            android.util.Log.i("MentraDbg",
+                "{\"sessionId\":\"d2b1f4\",\"hypothesisId\":\"H1\",\"location\":\"CameraNeo:pickSensitivityForManualCapture\",\"timestamp\":" + System.currentTimeMillis()
+                + ",\"message\":\"manual ISO computation\",\"data\":{"
+                + "\"meteredIso\":" + last
+                + ",\"meteredExposureNs\":" + meteredExposureNs
+                + ",\"targetExposureNs\":" + targetExposureNs
+                + ",\"evScale\":" + String.format(java.util.Locale.US, "%.4f", evScaleApplied)
+                + ",\"isoBeforeScale\":" + isoBeforeScale
+                + ",\"isoAfterScale\":" + isoAfterScale
+                + ",\"isoFinalClamped\":" + iso
+                + ",\"sensorIsoLow\":" + isoLow
+                + ",\"sensorIsoHigh\":" + isoHigh
+                + ",\"xyCamera2WouldUseIso\":400"
+                + "}}");
+        } catch (Throwable t) { /* never let logging crash capture */ }
+        // #endregion
         return iso;
+    }
+
+    private long pickFrameDurationForManualCapture(long exposureNs) {
+        long frameDurationNs = exposureNs + 1_000_000L; // +1ms guard band
+        if (sensorMaxFrameDurationNs != null && sensorMaxFrameDurationNs > 0L) {
+            frameDurationNs = Math.min(frameDurationNs, sensorMaxFrameDurationNs);
+        }
+        return Math.max(frameDurationNs, exposureNs);
     }
 
     /**
@@ -2741,17 +2850,59 @@ public class CameraNeo extends LifecycleService {
             stillBuilder.addTarget(imageReader.getSurface());
 
             boolean useManual = shouldUseManualExposure();
+
+            long manualClampedNs = 0L;
+            int manualIso = 0;
+            long manualFrameDurationNs = 0L;
+
             if (useManual) {
-                long clampedNs = clampExposureTimeNs(pendingExposureTimeNs);
-                int iso = pickSensitivityForManualCapture();
+                // ---------------------------------------------------------------
+                // ISOLATE manual still capture from the AE-driven preview stream.
+                //
+                // The repeating preview request also targets imageReader.getSurface().
+                // Without isolation, preview frames land in the same JPEG buffer as the
+                // still capture and acquireLatestImage() can return a preview frame.
+                //
+                // For AUTO + ZSL/MFNR we must NOT stop the repeating request here — it
+                // clears the ZSL buffer needed for multi-frame merge.
+                // ---------------------------------------------------------------
+                try {
+                    if (cameraCaptureSession != null) {
+                        cameraCaptureSession.stopRepeating();
+                        cameraCaptureSession.abortCaptures();
+                    }
+                } catch (Exception stopEx) {
+                    Log.w(TAG, "stopRepeating/abortCaptures before still capture failed: " + stopEx.getMessage());
+                }
+                int drained = 0;
+                while (true) {
+                    Image stale = null;
+                    try {
+                        stale = imageReader.acquireLatestImage();
+                    } catch (Exception acqEx) {
+                        break;
+                    }
+                    if (stale == null) break;
+                    try { stale.close(); } catch (Exception ignore) {}
+                    drained++;
+                    if (drained > 16) break; // safety
+                }
+                if (drained > 0) {
+                    Log.d(TAG, "Drained " + drained + " stale preview frame(s) from still ImageReader before capture");
+                }
+
+                manualClampedNs = clampExposureTimeNs(pendingExposureTimeNs);
+                manualIso = pickSensitivityForManualCapture(manualClampedNs);
+                manualFrameDurationNs = pickFrameDurationForManualCapture(manualClampedNs);
                 Log.i(TAG, "Using manual exposure time for still capture: SENSOR_EXPOSURE_TIME="
-                        + clampedNs + " ns, SENSOR_SENSITIVITY=" + iso
+                        + manualClampedNs + " ns, SENSOR_SENSITIVITY=" + manualIso
+                        + ", SENSOR_FRAME_DURATION=" + manualFrameDurationNs
                         + " (requestedNs=" + pendingExposureTimeNs + "; AE disabled; ZSL/MFNR vendor path skipped)");
                 stillBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF);
-                stillBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, clampedNs);
-                stillBuilder.set(CaptureRequest.SENSOR_SENSITIVITY, iso);
+                stillBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, manualClampedNs);
+                stillBuilder.set(CaptureRequest.SENSOR_SENSITIVITY, manualIso);
+                stillBuilder.set(CaptureRequest.SENSOR_FRAME_DURATION, manualFrameDurationNs);
                 stillBuilder.set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO);
-                stillBuilder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, selectedFpsRange);
             } else {
                 Log.d(TAG, "Using auto exposure / AE lock path");
                 // Copy settings from preview — auto exposure / AE lock path
@@ -2797,24 +2948,66 @@ public class CameraNeo extends LifecycleService {
             Log.d(TAG, "Capturing photo with JPEG orientation: " + jpegOrientation + " for display orientation: " + displayOrientation);
 
             // Apply ZSL + MFNR settings for photo capture (if supported) — skipped for manual exposure
-            if (!useManual && mCameraSettings != null && mCameraSettings.isMfnrSupported()) {
+            if (!useManual && mCameraSettings != null
+                    && (mCameraSettings.mAsgSettings.isZslEnabled()
+                        || mCameraSettings.mAsgSettings.isMfnrEnabled())) {
                 mCameraSettings.configureCaptureBuilder(stillBuilder);
             }
 
             // Capture the photo immediately
-            // CRITICAL: Do NOT call stopRepeating() before capture - this would clear the ZSL buffer
+            // CRITICAL: Do NOT call stopRepeating() before capture — this would clear the ZSL buffer
             // ZSL buffer is required for MFNR to access historical frames for multi-frame merging
             // The repeating request must continue running to maintain the circular buffer
             // Build the capture request
             CaptureRequest captureRequest = stillBuilder.build();
-            
-            // Verify ZSL is actually configured in the request
-            Boolean zslEnabled = captureRequest.get(CaptureRequest.CONTROL_ENABLE_ZSL);
-            if (zslEnabled != null && zslEnabled) {
+
+            // Verify ZSL is actually configured in the request (when enabled via settings)
+            Boolean zslInCapture = captureRequest.get(CaptureRequest.CONTROL_ENABLE_ZSL);
+            if (zslInCapture != null && zslInCapture) {
                 Log.d(TAG, "✓ ZSL verified in capture request: CONTROL_ENABLE_ZSL = true");
             } else {
-                Log.w(TAG, "⚠ ZSL NOT enabled in capture request (CONTROL_ENABLE_ZSL = " + zslEnabled + ")");
+                Log.w(TAG, "⚠ ZSL NOT enabled in capture request (CONTROL_ENABLE_ZSL = " + zslInCapture + ")");
             }
+
+            if (useManual) {
+                Log.i(TAG, "📸 SHOT firing: MANUAL exposureTimeNs=" + manualClampedNs
+                        + " (requested=" + pendingExposureTimeNs + ") iso=" + manualIso
+                        + " frameDurationNs=" + manualFrameDurationNs);
+            } else {
+                Log.i(TAG, "📸 SHOT firing: AUTO — " + describeAutoExposureStillPath());
+            }
+
+            // #region agent log
+            try {
+                Long reqExp = captureRequest.get(CaptureRequest.SENSOR_EXPOSURE_TIME);
+                Integer reqIso = captureRequest.get(CaptureRequest.SENSOR_SENSITIVITY);
+                Long reqFrameDur = captureRequest.get(CaptureRequest.SENSOR_FRAME_DURATION);
+                Integer reqAeMode = captureRequest.get(CaptureRequest.CONTROL_AE_MODE);
+                Integer reqNrMode = captureRequest.get(CaptureRequest.NOISE_REDUCTION_MODE);
+                Integer reqEdgeMode = captureRequest.get(CaptureRequest.EDGE_MODE);
+                Integer reqAfMode = captureRequest.get(CaptureRequest.CONTROL_AF_MODE);
+                Boolean reqZsl = captureRequest.get(CaptureRequest.CONTROL_ENABLE_ZSL);
+                Boolean reqAeLock = captureRequest.get(CaptureRequest.CONTROL_AE_LOCK);
+                Range<Integer> reqFps = captureRequest.get(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE);
+                Integer reqExpComp = captureRequest.get(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION);
+                android.util.Log.i("MentraDbg",
+                    "{\"sessionId\":\"d2b1f4\",\"hypothesisId\":\"H1+H2+H3+H4\",\"location\":\"CameraNeo:capturePhoto:beforeCapture\",\"timestamp\":" + System.currentTimeMillis()
+                    + ",\"message\":\"still request keys (what HAL will see)\",\"data\":{"
+                    + "\"useManual\":" + useManual
+                    + ",\"req_SENSOR_EXPOSURE_TIME_ns\":" + reqExp
+                    + ",\"req_SENSOR_SENSITIVITY\":" + reqIso
+                    + ",\"req_SENSOR_FRAME_DURATION_ns\":" + reqFrameDur
+                    + ",\"req_CONTROL_AE_MODE\":" + reqAeMode
+                    + ",\"req_NOISE_REDUCTION_MODE\":" + reqNrMode
+                    + ",\"req_EDGE_MODE\":" + reqEdgeMode
+                    + ",\"req_CONTROL_AF_MODE\":" + reqAfMode
+                    + ",\"req_CONTROL_ENABLE_ZSL\":" + reqZsl
+                    + ",\"req_CONTROL_AE_LOCK\":" + reqAeLock
+                    + ",\"req_CONTROL_AE_EXPOSURE_COMPENSATION\":" + reqExpComp
+                    + ",\"req_CONTROL_AE_TARGET_FPS_RANGE\":\"" + reqFps + "\""
+                    + "}}");
+            } catch (Throwable t) { /* never let logging crash capture */ }
+            // #endregion
 
             cameraCaptureSession.capture(captureRequest, new CameraCaptureSession.CaptureCallback() {
                 @Override
@@ -2839,6 +3032,70 @@ public class CameraNeo extends LifecycleService {
                             + " exposure=" + String.format("%.2f", captureExposureMs) + "ms"
                             + " NR_MODE=" + captureNrMode
                             + " MFNR_likely=" + mfnrLikelyTriggered);
+
+                    // #region agent log
+                    // Remember the SENSOR_TIMESTAMP of THIS still frame so the
+                    // ImageReader callback can verify it received the same frame.
+                    try {
+                        Long stillSensorTs = result.get(CaptureResult.SENSOR_TIMESTAMP);
+                        mLastStillSensorTimestampNs = stillSensorTs;
+                        android.util.Log.i("MentraDbg",
+                            "{\"sessionId\":\"d2b1f4\",\"hypothesisId\":\"H6\",\"location\":\"CameraNeo:onCaptureCompleted:stillTs\",\"timestamp\":" + System.currentTimeMillis()
+                            + ",\"message\":\"still capture sensor timestamp recorded\",\"data\":{"
+                            + "\"still_SENSOR_TIMESTAMP_ns\":" + stillSensorTs
+                            + ",\"exp_ms\":" + String.format(java.util.Locale.US, "%.2f", captureExposureMs)
+                            + ",\"iso\":" + captureIso
+                            + "}}");
+                    } catch (Throwable t) { /* never let logging crash capture */ }
+                    // #endregion
+
+                    // #region agent log
+                    try {
+                        Long reqExp2 = request.get(CaptureRequest.SENSOR_EXPOSURE_TIME);
+                        Integer reqIso2 = request.get(CaptureRequest.SENSOR_SENSITIVITY);
+                        Integer reqAeMode2 = request.get(CaptureRequest.CONTROL_AE_MODE);
+                        Integer reqNrMode2 = request.get(CaptureRequest.NOISE_REDUCTION_MODE);
+                        Integer reqEdgeMode2 = request.get(CaptureRequest.EDGE_MODE);
+                        Boolean reqZsl2 = request.get(CaptureRequest.CONTROL_ENABLE_ZSL);
+                        Integer resAeMode = result.get(CaptureResult.CONTROL_AE_MODE);
+                        Integer resAeState = result.get(CaptureResult.CONTROL_AE_STATE);
+                        Integer resEdgeMode = result.get(CaptureResult.EDGE_MODE);
+                        Long resFrameDur = result.get(CaptureResult.SENSOR_FRAME_DURATION);
+                        Boolean isManualAttempt = (reqAeMode2 != null && reqAeMode2 == CaptureRequest.CONTROL_AE_MODE_OFF);
+                        // Compute total light proxy (relative): exposure_ms * iso
+                        double totalLightProxy = -1;
+                        if (captureExposureNs != null && captureIso != null) {
+                            totalLightProxy = (captureExposureNs / 1_000_000.0) * captureIso.doubleValue();
+                        }
+                        // Compute what XyCamera2 would have produced for same exposure
+                        double xyCam2TotalLight = -1;
+                        if (reqExp2 != null) {
+                            xyCam2TotalLight = (reqExp2 / 1_000_000.0) * 400.0;
+                        }
+                        android.util.Log.i("MentraDbg",
+                            "{\"sessionId\":\"d2b1f4\",\"hypothesisId\":\"H1+H2+H3+H5\",\"location\":\"CameraNeo:onCaptureCompleted\",\"timestamp\":" + System.currentTimeMillis()
+                            + ",\"message\":\"actual HAL-applied values vs requested\",\"data\":{"
+                            + "\"isManualAttempt\":" + isManualAttempt
+                            + ",\"req_exp_ns\":" + reqExp2
+                            + ",\"actual_exp_ns\":" + captureExposureNs
+                            + ",\"exp_match\":" + (reqExp2 != null && captureExposureNs != null && reqExp2.equals(captureExposureNs))
+                            + ",\"req_iso\":" + reqIso2
+                            + ",\"actual_iso\":" + captureIso
+                            + ",\"iso_match\":" + (reqIso2 != null && captureIso != null && reqIso2.equals(captureIso))
+                            + ",\"req_AE_MODE\":" + reqAeMode2
+                            + ",\"actual_AE_MODE\":" + resAeMode
+                            + ",\"actual_AE_STATE\":" + resAeState
+                            + ",\"req_NR_MODE\":" + reqNrMode2
+                            + ",\"actual_NR_MODE\":" + captureNrMode
+                            + ",\"req_EDGE_MODE\":" + reqEdgeMode2
+                            + ",\"actual_EDGE_MODE\":" + resEdgeMode
+                            + ",\"req_ZSL\":" + reqZsl2
+                            + ",\"actual_FRAME_DUR_ns\":" + resFrameDur
+                            + ",\"totalLightProxy_actual\":" + String.format(java.util.Locale.US, "%.1f", totalLightProxy)
+                            + ",\"totalLightProxy_xyCamera2_at400ISO\":" + String.format(java.util.Locale.US, "%.1f", xyCam2TotalLight)
+                            + "}}");
+                    } catch (Throwable t) { /* never let logging crash capture */ }
+                    // #endregion
 
                     // XyCamera2 pattern: Restore preview after capture (unlock AE, restore repeating request)
                     restorePreview(session);
@@ -2939,8 +3196,10 @@ public class CameraNeo extends LifecycleService {
                 int jpegOrientation = JPEG_ORIENTATION.get(displayOrientation, 90);
                 builder.set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation);
 
-                // Apply ZSL/MFNR if available
-                if (mCameraSettings != null && mCameraSettings.isMfnrSupported()) {
+                // Apply ZSL/MFNR if enabled in settings
+                if (mCameraSettings != null
+                        && (mCameraSettings.mAsgSettings.isZslEnabled()
+                            || mCameraSettings.mAsgSettings.isMfnrEnabled())) {
                     mCameraSettings.configureCaptureBuilder(builder);
                 }
 
