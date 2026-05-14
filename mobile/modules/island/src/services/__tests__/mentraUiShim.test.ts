@@ -26,7 +26,7 @@ function evalShim(packageName = "com.test"): ShimGlobals {
   sandbox.window = sandbox
   sandbox.console = console
   // No timers needed — the shim no longer schedules anything (heartbeat
-  // removed when Phase 3 made WebViews foreground-only).
+  // removed since WebViews are foreground-only).
   sandbox.setInterval = (() => 0) as typeof setInterval
   sandbox.clearInterval = (() => {}) as typeof clearInterval
   sandbox.Date = Date

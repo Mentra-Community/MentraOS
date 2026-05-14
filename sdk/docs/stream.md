@@ -8,9 +8,9 @@ stream and hand back HLS / DASH / WebRTC URLs.
 The phone-side daemon (LocalMiniappRuntime → cloud streaming extensions) owns
 the stream lifecycle. The SDK module is a thin pass-through over the bridge.
 
-> **Status:** Deferred in v1 Phases 1–4 — methods bridge to the runtime but
-> the daemon path is wired up in Phase 5. Calls return shape-correct
-> placeholders until then.
+> **Status:** Deferred in v1 — methods bridge to the runtime but the
+> daemon path isn't live yet. Calls return shape-correct placeholders
+> until then.
 
 Source: [mobile/modules/miniapp/src/modules/stream.ts](../../mobile/modules/miniapp/src/modules/stream.ts)
 
@@ -131,7 +131,7 @@ itself does not subscribe.
 
 | Code | Where | Meaning |
 | --- | --- | --- |
-| `NOT_IMPLEMENTED` | `startUnmanaged`, `startManaged`, `stop` (rejected Promise) | Runtime hasn't wired up Phase 5 streaming on this build. |
+| `NOT_IMPLEMENTED` | `startUnmanaged`, `startManaged`, `stop` (rejected Promise) | Runtime hasn't wired up streaming on this build. |
 | `INTERNAL` | any method (rejected Promise) | Phone-side path threw. Check `message`. |
 
 This module declares no synchronous throws and does not gate on a manifest

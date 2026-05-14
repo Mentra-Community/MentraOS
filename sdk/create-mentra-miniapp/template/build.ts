@@ -1,7 +1,7 @@
 /**
  * Production build script — two-output bundle.
  *
- * Phase 4+ miniapps ship TWO bundles in one zip:
+ * Two-layer miniapps ship TWO bundles in one zip:
  *   - dist/background/index.js     — JSContext entry, no DOM
  *   - dist/ui/index.html + assets  — WebView entry, full DOM
  *

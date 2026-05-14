@@ -44,7 +44,7 @@ class JSCRuntime private constructor(private val appContext: Context) {
     companion object {
         private const val TAG = "MentraJS"
 
-        // Phase 1 NACK cold-start timeout (15s — covers polyfill + init on slow devices).
+        // NACK cold-start timeout (15s — covers polyfill + init on slow devices).
         const val COLD_START_NACK_TIMEOUT_MS: Long = 15_000
         // Steady-state NACK — wedged-JSContext detection.
         const val STEADY_STATE_NACK_TIMEOUT_MS: Long = 3_000

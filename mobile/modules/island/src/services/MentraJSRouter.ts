@@ -3,12 +3,12 @@
  * JS contexts (iOS-JSC and Android-QuickJS via Zipline) into the existing
  * {@link LocalMiniappRuntime} handler set.
  *
- * Phase 2 strategy: rather than re-implement the 33 dispatch arms inline,
- * the router consumes Crust's `mentrajs_message` Expo event and forwards
- * its `__bridge.send(raw)` payloads to
- * {@link LocalMiniappRuntime.handleRawMessage}. The SDK envelope shape
- * (`{type: "DISPLAY", ...}` etc.) is unchanged from the WebView path, so
- * every existing handler runs verbatim. What changes is the *transport*:
+ * Rather than re-implement the 33 dispatch arms inline, the router
+ * consumes Crust's `mentrajs_message` Expo event and forwards its
+ * `__bridge.send(raw)` payloads to {@link LocalMiniappRuntime.handleRawMessage}.
+ * The SDK envelope shape (`{type: "DISPLAY", ...}` etc.) is unchanged from
+ * the WebView path, so every existing handler runs verbatim. What changes
+ * is the *transport*:
  *
  *   - **Inbound** (background JS → host): `__dispatch("__bridge", "send",
  *     [rawJsonString])` → `mentrajs_message` event → router →
@@ -21,11 +21,7 @@
  *     {@link DispatchTransport.onMessage} handler.
  *
  * Host-side handler bodies (display fan-out, mic state, transcription,
- * navigation, etc.) live untouched in `LocalMiniappRuntime.ts`. Phase 3
- * inverts the WebView lifecycle and at that point the old per-WebView
- * path can be retired; until then both routes coexist (a miniapp running
- * inside a WebView still works through the postMessage path; one running
- * inside a JSContext flows through here).
+ * navigation, etc.) live untouched in `LocalMiniappRuntime.ts`.
  *
  * Cloud-message routing (`phone_photo_ready`, `phone_stream_status`,
  * `phone_managed_stream_status`) goes straight through
@@ -122,11 +118,11 @@ export class MentraJSRouter {
   onRestartToast: ((packageName: string, reason: string) => void) | null = null
 
   /**
-   * Phase 6 logging plumbing. Every `__log` frame passes through
-   * `redactSecrets` (token/password/etc. scrubbed), then the throttle
-   * (100/min sustained per pkg, 500 burst), then lands in the ring
-   * buffer + the host logger. The ring buffer holds the last 200
-   * lines/pkg so a crash report can attach "last words" context.
+   * Logging plumbing. Every `__log` frame passes through `redactSecrets`
+   * (token/password/etc. scrubbed), then the throttle (100/min sustained
+   * per pkg, 500 burst), then lands in the ring buffer + the host
+   * logger. The ring buffer holds the last 200 lines/pkg so a crash
+   * report can attach "last words" context.
    *
    * Replace with new instances in tests; production code uses the
    * defaults.
@@ -200,10 +196,9 @@ export class MentraJSRouter {
    * Convenience: spawn a JSContext via Crust, register the app, and
    * set its declared permissions. Returns true on successful spawn.
    *
-   * The host's miniapp launch path (PR #2779 wired through
-   * `mobile/src/services/miniapps/launchLocalMiniapp.ts`) should call
-   * this once per JSContext mount instead of the WebView mount path
-   * once Phase 3 ships.
+   * The host's miniapp launch path
+   * (`mobile/src/services/miniapps/launchLocalMiniapp.ts`) calls this
+   * once per JSContext mount.
    */
   async spawnAndRegister(
     packageName: string,
@@ -350,8 +345,8 @@ export class MentraJSRouter {
         this.logger.warn(`__bridge.send had no raw payload`, msg)
         return
       }
-      // Phase 3 interception: if the payload is a UI_SEND envelope,
-      // route it to the bound WebView instead of LocalMiniappRuntime.
+      // If the payload is a UI_SEND envelope, route it to the bound
+      // WebView instead of LocalMiniappRuntime.
       // session.ui.send → DispatchTransport.send → here.
       if (this.uiRouter) {
         const innerPayload = this.peekBridgePayloadType(raw)
@@ -422,11 +417,11 @@ export class MentraJSRouter {
       return
     }
 
-    // 4) Anything else is a `forwardToRn` from the dispatcher — that's a
-    //    handler the native dispatcher didn't know about. In Phase 2 we
-    //    don't have inline handlers for any of these; the runtime's
-    //    existing path treats them as legacy WebView envelopes by
-    //    falling through. Log so unknown ifaces surface in dev.
+    // 4) Anything else is a `forwardToRn` from the dispatcher — a
+    //    handler the native dispatcher didn't know about. We don't have
+    //    inline handlers for any of these; the runtime's existing path
+    //    treats them as legacy WebView envelopes by falling through.
+    //    Log so unknown ifaces surface in dev.
     this.logger.log(`unhandled iface=${iface} method=${method} from ${packageName}`)
   }
 
@@ -441,8 +436,8 @@ export class MentraJSRouter {
    */
   /**
    * Parse a raw bridge envelope just enough to peek at the inner
-   * payload's `type` field. Used by the Phase 3 UI_SEND interception
-   * path. Returns null if the envelope isn't a valid bridge frame.
+   * payload's `type` field. Used by the UI_SEND interception path.
+   * Returns null if the envelope isn't a valid bridge frame.
    */
   private peekBridgePayloadType(raw: string): {type: string; [k: string]: unknown} | null {
     try {

@@ -1,6 +1,6 @@
 /**
  * session.ui — message bus between a background JSContext miniapp and
- * its on-demand UI WebView (Phase 3).
+ * its on-demand UI WebView.
  *
  * Asymmetry with the WebView-side `mentra` global:
  *   - `mentra.send` (WebView → background) BUFFERS until `mentra.ready()`
@@ -28,7 +28,7 @@
  * No request/response correlator at the SDK level — the bus is
  * fire-and-forget. Authors who need request/response semantics
  * implement it themselves using two channels (one for request, one
- * for reply). Decision parked under Phase 5 open questions.
+ * for reply).
  */
 
 import type {MiniappSession} from "../session"

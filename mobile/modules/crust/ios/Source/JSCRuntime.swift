@@ -62,8 +62,8 @@ public final class JSCRuntime: NSObject {
         var pendingTimers: [Int: DispatchSourceTimer] = [:]
         /// Monotonic per-context counter for native-issued reqIds.
         var nextTimerToken: Int = 1
-        /// Phase 1 signalReady NACK timer. Armed at spawn (15s cold-start)
-        /// and on every dispatchToJs (3s steady-state). Disarmed when the
+        /// signalReady NACK timer. Armed at spawn (15s cold-start) and
+        /// on every dispatchToJs (3s steady-state). Disarmed when the
         /// polyfill calls __runtime.ready or when the call completes.
         var readyNackTimer: DispatchSourceTimer?
         /// True once the polyfill has signalled ready. Cleared on respawn.
@@ -80,8 +80,8 @@ public final class JSCRuntime: NSObject {
         }
     }
 
-    /// Phase 1 NACK timeout constants — cold-start vs steady-state.
-    /// Spec: 15s on first message after spawn (covers polyfill + init
+    /// NACK timeout constants — cold-start vs steady-state.
+    /// 15s on first message after spawn (covers polyfill + init
     /// evaluating on slow Android devices), 3s for steady-state delivery.
     public static let coldStartNackTimeoutSeconds: TimeInterval = 15
     public static let steadyStateNackTimeoutSeconds: TimeInterval = 3
@@ -178,7 +178,7 @@ public final class JSCRuntime: NSObject {
         let record = Context(packageName: packageName, virtualMachine: vm, context: ctx, queue: queue)
         lock.withLock { contexts[packageName] = record }
 
-        // Phase 1 cold-start NACK timer: armed BEFORE the first eval so it
+        // Cold-start NACK timer: armed BEFORE the first eval so it
         // catches a wedged polyfill. The polyfill's __dispatch("__runtime",
         // "ready", []) flips the record's readyAcked flag (see
         // markReady). If we never see the ack, the timer logs a hung
@@ -304,7 +304,7 @@ public final class JSCRuntime: NSObject {
             os_log("MentraJS: bad envelope, drop", log: Self.log, type: .error)
             return
         }
-        // Phase 1 steady-state NACK: re-arm the timer so a wedged JSContext
+        // Steady-state NACK: re-arm the timer so a wedged JSContext
         // surfaces a __error/ready_nack frame after 3s instead of silently
         // swallowing the delivery. Only fires if a cold-start ack already
         // landed — otherwise the cold-start timer is still ticking.

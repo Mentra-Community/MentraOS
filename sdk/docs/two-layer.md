@@ -1,8 +1,8 @@
 # Two-layer miniapp architecture
 
-This page documents the **Phase 4+ two-layer miniapp model**. If you're
-writing a new miniapp, use this layout. The older single-bundle WebView
-pattern still works but is being phased out.
+This page documents the **two-layer miniapp model**. If you're writing
+a new miniapp, use this layout. The older single-bundle WebView pattern
+still works but is being phased out.
 
 ## Why two layers
 

@@ -1,5 +1,5 @@
 /**
- * Production build script — two-output bundle (Phase 4+ Appendix A).
+ * Production build script — two-output bundle.
  *
  * Emits two bundles under ./dist:
  *   dist/background/index.js  — the JSContext entry (no DOM, externalises

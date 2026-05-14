@@ -6,7 +6,7 @@ events fire, and the error shapes to expect.
 
 ## Architecture
 
-- [two-layer.md](./two-layer.md) — Phase 4+ two-layer miniapp model
+- [two-layer.md](./two-layer.md) — two-layer miniapp model
   (background JSContext + on-demand UI WebView). Read first if you're
   writing a new miniapp.
 - [ui.md](./ui.md) — `session.ui` message bus + the `mentra` global on
@@ -30,7 +30,7 @@ events fire, and the error shapes to expect.
 | `session.glasses` | [glasses.md](./glasses.md) | No manifest gate. |
 | `session.led` | [led.md](./led.md) | All methods are fire-and-forget despite `Promise<void>` signatures. |
 | `session.storage` | [storage.md](./storage.md) | No manifest gate. |
-| `session.stream` | [stream.md](./stream.md) | Phase-5 stub — wire path bridged but daemon side not live in v1. |
+| `session.stream` | [stream.md](./stream.md) | Wire path bridged but daemon side not live in v1. |
 | `session.system` | [system.md](./system.md) | Share / download helpers. |
 | `session.translation` | [translation.md](./translation.md) | Smallest module — 1 subscribe + `stop()` + permission getter. |
 | `session.transcription` | [transcription.md](./transcription.md) | MICROPHONE-gated but rejects async via session error event, not sync throw. |

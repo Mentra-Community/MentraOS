@@ -164,7 +164,7 @@ export class MiniappSession {
   public readonly transcription: TranscriptionModule
   public readonly translation: TranslationModule
   /**
-   * Phase 3 — UI message bus to the bound WebView (when one is open).
+   * UI message bus to the bound WebView (when one is open).
    * Background-only API surface; mirrors the WebView's `mentra` global
    * with inverted buffering policy (background drops when no WebView is
    * bound; the WebView buffers until ready).

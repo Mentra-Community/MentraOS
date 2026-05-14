@@ -309,10 +309,10 @@ class AppRegistry {
    * Resolve the two-layer entry paths for an installed miniapp version.
    * Returns absolute file:// URIs for `background` and (when present) `ui`.
    *
-   * Pre-Phase-4 single-layer bundles (no `entry` object in manifest) fall
-   * back to the legacy `index.html` discovery so the WebView host keeps
-   * working unchanged. New two-layer bundles ship `entry.background` and
-   * optional `entry.ui` paths relative to the bundle root.
+   * Legacy single-layer bundles (no `entry` object in manifest) fall back
+   * to `index.html` discovery so the WebView host keeps working unchanged.
+   * Two-layer bundles ship `entry.background` and optional `entry.ui`
+   * paths relative to the bundle root.
    *
    * Returns null if neither shape resolves to existing files on disk.
    */
@@ -349,7 +349,7 @@ class AppRegistry {
    * with the current host. Delegates to the pure
    * {@link checkManifestVersions} helper — same shape, no React Native
    * imports, unit-testable. Manifests missing either field pass
-   * through unchanged (the legacy / pre-Phase-4 path).
+   * through unchanged (legacy single-layer path).
    */
   public checkManifestVersions(
     manifest: {sdkVersion?: string; minHostVersion?: string} | null,

@@ -1,8 +1,7 @@
 /**
  * @fileoverview StreamModule -- video streaming from glasses.
  *
- * Deferred in v1 Phases 1-4 (noop). Phase 5 wires these to cloud streaming
- * extensions via the __phone__ subscriber path.
+ * Wires to cloud streaming extensions via the __phone__ subscriber path.
  */
 
 import {MiniappRequestType} from "../protocol"

@@ -176,8 +176,8 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
   // `src/background/` requires killing + re-spawning the JSContext, while a
   // touch under `src/ui/` only needs to reload the WebView.
   //
-  // Pre-Phase-4 single-layer projects (no `src/background/` folder) still
-  // fall back to the legacy `{type: "reload"}` for any source change. The
+  // Legacy single-layer projects (no `src/background/` folder) still fall
+  // back to the legacy `{type: "reload"}` for any source change. The
   // host's WebView reload path is unchanged.
   let reloadTimer: ReturnType<typeof setTimeout> | null = null
   let pendingType: "reload" | "respawn-bg" | null = null
@@ -265,12 +265,11 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
 export function listProjectFiles(rootDir: string): string[] {
   const MAX_DEPTH = 5
   const MAX_FILES = 500
-  // Phase 4+ note: `dist/` is INCLUDED in the dev snapshot zip so the
-  // phone-side install pipeline can pick up the two-layer
-  // `dist/background/index.js` + `dist/ui/index.html` outputs. Pre-
-  // Phase-4 single-bundle miniapps didn't ship dist/ in the zip
-  // because the WebView loaded directly from the dev URL; new
-  // two-layer miniapps install the dist/ snapshot for the
+  // `dist/` is INCLUDED in the dev snapshot zip so the phone-side install
+  // pipeline can pick up the two-layer `dist/background/index.js` +
+  // `dist/ui/index.html` outputs. Legacy single-bundle miniapps didn't
+  // ship dist/ in the zip because the WebView loaded directly from the
+  // dev URL; new two-layer miniapps install the dist/ snapshot for the
   // background JSContext to read from disk.
   const EXCLUDED_DIRS = new Set([
     "node_modules",

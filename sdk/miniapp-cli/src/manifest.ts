@@ -56,7 +56,7 @@ export interface ManifestHardwareRequirement {
 
 export interface ManifestEntry {
   /** Path to the background bundle entry, relative to the project root.
-   * Required for Phase 4+ two-layer bundles. */
+   * Required for two-layer bundles. */
   background: string;
   /** Path to the UI HTML entry. Optional — pure-background miniapps
    * don't include a WebView. */
@@ -76,7 +76,7 @@ export interface MiniappManifestV1 {
   sdkVersion?: string;
   /** Lowest MentraOS Manager host version that can run this bundle. */
   minHostVersion?: string;
-  /** Two-layer bundle entry points (Phase 4+). */
+  /** Two-layer bundle entry points. */
   entry?: ManifestEntry;
   /** Miniapp shape — defaults to "standard" (background + on-demand UI). */
   type?: "standard" | "background";
@@ -173,7 +173,7 @@ export function validateManifest(manifest: unknown): { valid: boolean; errors: s
     });
   }
 
-  // Phase 4: optional sdkVersion / minHostVersion (semver-coercible strings).
+  // Optional sdkVersion / minHostVersion (semver-coercible strings).
   // We don't enforce strict semver — many real-world manifests use a
   // shorthand like "0.2" that semver.coerce normalises to "0.2.0". Reject
   // only if the field is present and not a non-empty string.
@@ -184,7 +184,7 @@ export function validateManifest(manifest: unknown): { valid: boolean; errors: s
     errors.push('minHostVersion must be a non-empty string when set');
   }
 
-  // Phase 4: optional entry object. When set, entry.background is required.
+  // Optional entry object. When set, entry.background is required.
   if (m.entry !== undefined) {
     if (typeof m.entry !== 'object' || m.entry === null || Array.isArray(m.entry)) {
       errors.push('entry must be an object like {"background": "dist/background/index.js", "ui": "dist/ui/index.html"}');

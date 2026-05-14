@@ -355,7 +355,7 @@ declare const __nativeClearTimer: (token: number) => void
       return
     }
     if (env.kind === "bridge" && typeof (env as {raw?: unknown}).raw === "string") {
-      // Phase 2: host pushes a raw SDK envelope (DISPLAY / SUBSCRIBE /
+      // Host pushes a raw SDK envelope (DISPLAY / SUBSCRIBE /
       // STATE_FOR_BRIDGE / etc.) to be delivered into DispatchTransport's
       // onMessage handler. The transport installs this hook on open().
       const deliver = (g as Record<string, unknown>).__mentraDeliverBridgeRaw as ((raw: string) => void) | undefined

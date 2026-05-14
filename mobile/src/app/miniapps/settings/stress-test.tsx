@@ -1,13 +1,10 @@
 // Test/benchmark infrastructure. Reachable only via Super Settings →
 // Stress Test, which is itself gated behind Super Mode.
 //
-// Pre-Phase-3 this screen drove the WebView jetsam experiment that
-// settled the architecture decision (persistent off-screen WebViews
-// don't survive on iPhone SE2 — see
-// agents/spike-results/jsc-spike-iphone15-release-50ctx.log). Now that
-// the architecture is two-layer JSContext + on-demand foreground
-// WebView, the WebView-jetsam path is gone. What remains is the JSC
-// memory-spike harness for ongoing measurements on new hardware tiers.
+// JSC memory-spike harness for ongoing measurements on new hardware
+// tiers (the WebView-jetsam experiment that settled the architecture
+// decision lived here previously — see
+// agents/spike-results/jsc-spike-iphone15-release-50ctx.log).
 
 import {useEffect} from "react"
 import {ScrollView, View, Text} from "react-native"

@@ -153,7 +153,7 @@ For host implementors — request/response message types this module emits:
 | `setFov` | `CAMERA_FOV` (`{horizontal, vertical}`, one-shot) | — |
 | `takePhoto` | `PHOTO` (`{size, compress, sound, saveToGallery}`) | `REQUEST_RESULT` with `data: PhotoTaken` |
 
-This module subscribes to no streams. The Phase 5 `PHOTO_TAKEN` stream is
+This module subscribes to no streams. The `PHOTO_TAKEN` stream is
 not surfaced through `CameraModule` in v1.
 
 ---

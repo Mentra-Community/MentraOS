@@ -32,7 +32,7 @@ public class CrustModule: Module {
             "onHeading",
             // MentraJS — fires whenever a per-miniapp JSContext calls
             // __dispatch(iface, method, args). RN-side MentraJSRouter
-            // (Phase 2) subscribes to route by packageName.
+            // subscribes to route by packageName.
             "mentrajs_message"
         )
 
@@ -195,7 +195,7 @@ public class CrustModule: Module {
             return false
         }
 
-        // MARK: - MentraJS Runtime (Phase 1)
+        // MARK: - MentraJS Runtime
 
         /// Spawn a per-miniapp JS context. Re-spawn is allowed: a live
         /// context with the same packageName is killed first.
@@ -223,7 +223,7 @@ public class CrustModule: Module {
         }
 
         /// Push an event / response envelope into the named context's
-        /// globalThis.__deliver. Used by MentraJSRouter (Phase 2) for
+        /// globalThis.__deliver. Used by MentraJSRouter for
         /// glasses-status broadcasts and request/response correlation.
         AsyncFunction("mentraJsDispatchToJs") { (packageName: String, envelope: [String: Any]) -> Void in
             JSCRuntime.shared.dispatchToJs(packageName: packageName, envelope: envelope)

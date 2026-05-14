@@ -1,6 +1,6 @@
 /**
  * MentraUIRouter — bidirectional bus between a per-miniapp UI WebView
- * and its bound background JSContext (Phase 3).
+ * and its bound background JSContext.
  *
  * The flow:
  *
@@ -50,17 +50,12 @@ interface BoundWebView {
 }
 
 /**
- * NOTE: the WebView ↔ host heartbeat was removed when Phase 3's
- * lifecycle inversion landed. The pre-inversion world had persistent
- * off-screen WebViews that could be wedged invisibly (motivating the
- * spec's 5s send / 15s timeout watchdog). The post-inversion world has
- * **at most one WebView at a time, always foreground, spawn-cold-per-open**
- * (same shape as the cloud-WebView miniapps). User navigation closes it
- * explicitly; `onContentProcessDidTerminate` catches OS-level crashes;
- * there's no scenario left where we'd silently leak a wedged WebView.
- * Keeping the heartbeat for that environment would be defensive
- * over-engineering with a real cost (`setInterval` runs every 5s for the
- * lifetime of every open WebView).
+ * NOTE: the WebView ↔ host heartbeat was removed when the lifecycle
+ * inversion landed. The current model is **at most one WebView at a
+ * time, always foreground, spawn-cold-per-open** (same shape as the
+ * cloud-WebView miniapps). User navigation closes it explicitly;
+ * `onContentProcessDidTerminate` catches OS-level crashes; there's no
+ * scenario where we'd silently leak a wedged WebView.
  */
 
 export class MentraUIRouter {
@@ -129,7 +124,7 @@ export class MentraUIRouter {
     }
     if (env.type === "heartbeat") {
       // Legacy envelope from older shims — silently consumed. The
-      // post-Phase-3 WebView lifecycle (foreground-only, short-lived,
+      // current WebView lifecycle (foreground-only, short-lived,
       // teardown via user navigation or onContentProcessDidTerminate)
       // doesn't need a liveness watchdog. Kept here so old polyfill
       // bundles in already-installed miniapps don't generate noise.

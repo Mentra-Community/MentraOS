@@ -3,8 +3,7 @@
  *
  * Imported from a miniapp's `src/ui/main.tsx` (or equivalent) to access
  * the `mentra` WebView global, React hooks, and the `MentraProvider`
- * wrapper. This is the **on-demand WebView side** of a Phase 4+ two-layer
- * miniapp.
+ * wrapper. This is the **on-demand WebView side** of a two-layer miniapp.
  *
  * What's NOT in this entry point:
  *   - `MiniappSession` — background-only.

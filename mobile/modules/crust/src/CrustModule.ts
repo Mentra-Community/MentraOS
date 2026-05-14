@@ -126,7 +126,7 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
   startHeading(): Promise<{ok: boolean; error?: string}>
   stopHeading(): Promise<{ok: boolean; error?: string}>
 
-  // MentraJS Runtime (Phase 1) — per-miniapp JSContext lifecycle.
+  // MentraJS Runtime — per-miniapp JSContext lifecycle.
   /**
    * Spawn a per-miniapp JS context. Re-spawn is allowed: a live context
    * with the same packageName is killed first. Returns true if the

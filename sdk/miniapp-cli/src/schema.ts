@@ -71,7 +71,7 @@ export function generateSchema(): Record<string, unknown> {
       },
       entry: {
         type: 'object',
-        description: 'Two-layer bundle entry points (Phase 4+). Background is the always-running JSContext entry; UI is the on-demand WebView entry.',
+        description: 'Two-layer bundle entry points. Background is the always-running JSContext entry; UI is the on-demand WebView entry.',
         additionalProperties: false,
         required: ['background'],
         properties: {

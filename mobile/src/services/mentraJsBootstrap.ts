@@ -88,11 +88,6 @@ export function bootstrapMentraJS() {
   // route mentra.send / mentra.on through the bound JSContext.
   miniappHost.attachUIRouter(uiRouter)
 
-  // (WebView heartbeat watchdog removed — Phase 3+ WebViews are
-  // foreground-only and short-lived, so the spec's pre-inversion
-  // 5s/15s liveness check is overengineering. WebView crashes are
-  // caught by onContentProcessDidTerminate; user close is explicit.)
-
   // Wire up the dev server's "respawn-bg" signal so a touch under
   // src/background/ kills + re-spawns the JSContext with the latest
   // bundle. The WebView reload path stays separate (devServerBridge.onReload).

@@ -2,7 +2,7 @@
 
 Dashboard widget surface for miniapps.
 
-> **Deferred in v1 (per Phase 2.14).** The cloud `DashboardManager` owns
+> **Deferred in v1.** The cloud `DashboardManager` owns
 > widget rendering in OS-ranked rotation. The API shape is preserved so
 > miniapps compile, but calls currently noop on the phone side. The first
 > call from a given module logs a one-shot `console.warn` and the request

@@ -1,5 +1,5 @@
 /**
- * Compile-time test for the Phase 5 SDK split.
+ * Compile-time test for the two-layer SDK split.
  *
  * The package exports two sub-paths with distinct type-roots:
  *   - `@mentra/miniapp/background` exposes `MiniappSession` + module

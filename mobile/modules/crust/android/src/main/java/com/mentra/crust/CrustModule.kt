@@ -87,7 +87,7 @@ class CrustModule : Module() {
       "onNavOffRoute",
       "onHeading",
       // MentraJS — per-miniapp JSContext outbound message bus.
-      // Phase 2's MentraJSRouter subscribes via Crust.addListener.
+      // MentraJSRouter subscribes via Crust.addListener.
       "mentrajs_message",
     )
 
@@ -162,7 +162,7 @@ class CrustModule : Module() {
       true
     }
 
-    // MARK: - MentraJS Runtime (Phase 1)
+    // MARK: - MentraJS Runtime
 
     AsyncFunction("mentraJsSpawn") { packageName: String, polyfillBundle: String, miniappJs: String ->
       val ctx =

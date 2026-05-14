@@ -190,9 +190,9 @@ class LocalMiniappRuntime {
   /** Pending cloud requests: requestId → packageName that originated the request. */
   private pendingCloudRequests: Map<string, {packageName: string; envelopeRequestId?: string}> = new Map()
 
-  // Browser fallback token auth (Phase 4)
-  // HMAC-signed blob with a phone-local secret. Both issuer and verifier are
-  // the same process, so the secret never leaves the device.
+  // Browser fallback token auth — HMAC-signed blob with a phone-local
+  // secret. Both issuer and verifier are the same process, so the
+  // secret never leaves the device.
   private localSecret = `miniapp_${Date.now()}_${Math.random().toString(36).slice(2, 14)}`
   private usedTokens = new Set<string>()
 
@@ -681,7 +681,7 @@ class LocalMiniappRuntime {
         this.handleDownload(packageName, payload, requestId)
         break
 
-      // Phase 5 — cloud-coordinated features
+      // Cloud-coordinated features
       case MiniappRequestType.PHOTO:
         this.handlePhoto(packageName, payload, requestId)
         break
@@ -1724,7 +1724,7 @@ class LocalMiniappRuntime {
   }
 
   // ===========================================================================
-  // Phase 5: Photo + streaming handlers (cloud-coordinated)
+  // Photo + streaming handlers (cloud-coordinated)
   // ===========================================================================
 
   private async handlePhoto(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {

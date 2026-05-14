@@ -32,7 +32,7 @@
 
 export interface MentraUiShimOptions {
   packageName: string
-  /** @deprecated No longer used — heartbeat removed in Phase 3 (foreground-only WebViews). */
+  /** @deprecated No longer used — heartbeat removed since WebViews are foreground-only. */
   heartbeatIntervalMs?: number
 }
 
@@ -54,9 +54,9 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
   } catch (e) { rnPost = null; }
 
   // Outbound seq number — purely a log-correlation aid (the host's
-  // router doesn't dedup anymore since reconnect can't happen in the
-  // post-Phase-3 lifecycle: one WebView, foreground-only, destroyed
-  // on close → fresh shim on next open).
+  // router doesn't dedup anymore since reconnect can't happen: one
+  // WebView, foreground-only, destroyed on close → fresh shim on
+  // next open).
   var outboundSeq = 1;
   var ready = false;
   var channelHandlers = Object.create(null);

@@ -13,8 +13,8 @@
  *
  * What this transport does:
  *   - send(raw) — calls __dispatch("__bridge", "send", [raw]). The host
- *     side `MentraJSRouter` (Phase 2) consumes the raw string verbatim,
- *     same shape as PostMessageTransport's wire payload.
+ *     side `MentraJSRouter` consumes the raw string verbatim, same shape
+ *     as PostMessageTransport's wire payload.
  *   - The polyfill bundle (`startup.ts`) wires __deliver({kind:'bridge',raw})
  *     back into this transport's message handler so the host can push
  *     unsolicited events (mic_pcm, transcription, button events, etc.)
@@ -76,7 +76,7 @@ export class DispatchTransport implements Transport {
       return
     }
     // Wire format: stringify the args array as a single-element array
-    // containing the raw envelope. The Phase 2 router unwraps it.
+    // containing the raw envelope. The router unwraps it.
     try {
       g.__dispatch("__bridge", "send", JSON.stringify([raw]))
     } catch (e) {

@@ -86,10 +86,10 @@ export enum MiniappRequestType {
 
   // ----- Deferred in v1 -----
 
-  /** Dashboard content update. Noops in v1 — see Phase 2.14 of the plan. */
+  /** Dashboard content update. Noop in v1. */
   DASHBOARD_CONTENT_UPDATE = "miniapp_dashboard_content_update",
 
-  // ----- Phase 5 (photos, streaming) -----
+  // ----- Photos, streaming -----
   PHOTO = "miniapp_photo",
   STREAM_START = "miniapp_stream_start",
   STREAM_STOP = "miniapp_stream_stop",
@@ -189,7 +189,7 @@ export enum MiniappStreamType {
   PHONE_NOTIFICATION_DISMISSED = "phone_notification_dismissed",
   CALENDAR_EVENT = "calendar_event",
 
-  // Phase 5
+  // Photos, streaming
   PHOTO_TAKEN = "photo_taken",
   STREAM_STATUS = "stream_status",
 }
@@ -202,7 +202,7 @@ export enum MiniappErrorCode {
   /** The miniapp subscribed to a stream whose required permission wasn't in its manifest. */
   PERMISSION_NOT_DECLARED = "PERMISSION_NOT_DECLARED",
 
-  /** Request routed to a method that isn't supported yet (e.g. Phase 5 noop). */
+  /** Request routed to a method that isn't supported yet. */
   NOT_IMPLEMENTED = "NOT_IMPLEMENTED",
 
   /** Request timed out or the session was torn down before it could complete. */

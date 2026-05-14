@@ -17,7 +17,7 @@ import org.json.JSONArray
  *  - `crypto.getRandomBytes`        — SecureRandom
  *
  * Everything else returns [JSCDispatchOutcome.ForwardToRn]; the RN-side
- * router (Phase 2 [MentraJSRouter]) is the actual handler.
+ * [MentraJSRouter] is the actual handler.
  */
 sealed class JSCDispatchOutcome {
     /** Local sync handler returns a JSON string (or null for void). */

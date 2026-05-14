@@ -209,9 +209,9 @@ class DevServerBridge {
         return
       }
 
-      // Phase 4+ two-layer dev signal: filesystem changes under
-      // src/background/ trigger a full JSContext kill + respawn (not
-      // just a WebView reload). The host's MentraJSRouter listens here.
+      // Two-layer dev signal: filesystem changes under src/background/
+      // trigger a full JSContext kill + respawn (not just a WebView
+      // reload). The host's MentraJSRouter listens here.
       if (parsed.type === "respawn-bg") {
         console.log(`${LOG_TAG}: ${packageName} received respawn-bg signal`)
         this.globalRespawnBackgroundHandler?.(packageName)

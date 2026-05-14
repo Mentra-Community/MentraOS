@@ -806,7 +806,7 @@ class SocketComms {
       case "phone_photo_ready":
       case "phone_stream_status":
       case "phone_managed_stream_status":
-        // Forward Phase 5 messages to LocalMiniappRuntime
+        // Forward photo / streaming messages to LocalMiniappRuntime
         localMiniappRuntime.handleCloudMessage(msg)
         break
 

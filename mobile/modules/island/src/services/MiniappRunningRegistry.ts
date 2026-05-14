@@ -6,7 +6,7 @@
  * host process. The UI WebView open/close state is separate — that's
  * tracked by MentraUIRouter.isBound(). A miniapp can be "running"
  * (JSContext alive, processing glasses events) without any WebView
- * mounted, which is the steady-state post-Phase-3 model.
+ * mounted, which is the steady-state.
  *
  * MentraJSRouter is the single writer: `spawnAndRegister` adds,
  * `unregister` removes. Home tile / tray reads from here to project the

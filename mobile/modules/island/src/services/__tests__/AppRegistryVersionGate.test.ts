@@ -5,10 +5,10 @@ import {describe, expect, test} from "bun:test"
 import {checkManifestVersions} from "../manifestVersionGate"
 
 /**
- * Phase 4 acceptance gate — `checkManifestVersions` accepts/rejects
- * manifests based on sdkVersion + minHostVersion. The helper is pure
- * (no disk I/O, no React Native deps); AppRegistry's method delegates
- * to it.
+ * Manifest version acceptance gate — `checkManifestVersions`
+ * accepts/rejects manifests based on sdkVersion + minHostVersion.
+ * The helper is pure (no disk I/O, no React Native deps);
+ * AppRegistry's method delegates to it.
  */
 describe("checkManifestVersions", () => {
   const supportedSdkRange = "^0.3.0"

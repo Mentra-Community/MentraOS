@@ -1,9 +1,9 @@
 # session.ui — WebView message bus
 
-Phase 3+ addition. `session.ui` is the background-side half of the
-typed message bus a miniapp uses to talk to its on-demand UI WebView.
-Inverse of the `mentra` global on the WebView side: same channel
-names + payload shapes, opposite buffering policy.
+`session.ui` is the background-side half of the typed message bus a
+miniapp uses to talk to its on-demand UI WebView. Inverse of the
+`mentra` global on the WebView side: same channel names + payload
+shapes, opposite buffering policy.
 
 The bus exists ONLY in two-layer miniapps (those whose `miniapp.json`
 declares an `entry.background`). Legacy single-bundle miniapps never

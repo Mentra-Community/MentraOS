@@ -24,7 +24,7 @@ export interface CreateTransportOptions {
  *
  * 1. **DispatchTransport** — when running in a per-miniapp JSContext
  *    (no DOM, but `__dispatch` is installed on `globalThis` by the
- *    MentraJS runtime). This is the production path post-Phase-1.
+ *    MentraJS runtime). This is the production path.
  * 2. **PostMessageTransport** — inside a MentraOS WebView
  *    (`window.ReactNativeWebView` defined). This is the existing UI
  *    layer path and the only transport miniapp UI bundles need.

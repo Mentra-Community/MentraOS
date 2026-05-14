@@ -129,7 +129,7 @@ public final class JSCDispatcher {
         }
 
         // No local route → forward to RN. The RN-side MentraJSRouter
-        // (Phase 2) is the destination.
+        // is the destination.
         return .forwardToRn([
             "args": args,
         ])

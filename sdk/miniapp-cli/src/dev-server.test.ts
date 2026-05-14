@@ -8,7 +8,7 @@ import JSZip from "jszip"
 
 import {buildProjectZip, listProjectFiles} from "./dev-server"
 
-describe("listProjectFiles — Phase 4 dist/ inclusion", () => {
+describe("listProjectFiles — dist/ inclusion", () => {
   let root: string
 
   beforeEach(() => {
@@ -60,7 +60,7 @@ describe("listProjectFiles — Phase 4 dist/ inclusion", () => {
   })
 })
 
-describe("buildProjectZip — Phase 4 two-output bundle contract", () => {
+describe("buildProjectZip — two-output bundle contract", () => {
   let root: string
 
   beforeEach(() => {

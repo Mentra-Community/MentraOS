@@ -3,8 +3,8 @@
  *
  * Imported from a miniapp's `src/background/index.ts` to access the
  * per-miniapp `MiniappSession` and its typed `session.*` module
- * wrappers. This is the **always-running JSContext side** of a Phase 4+
- * two-layer miniapp.
+ * wrappers. This is the **always-running JSContext side** of a two-layer
+ * miniapp.
  *
  * What's NOT in this entry point:
  *   - `mentra` WebView global (UI-only — import from `@mentra/miniapp/ui`).

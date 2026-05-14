@@ -161,8 +161,8 @@ describe('validateManifest', () => {
     });
   });
 
-  describe('Phase 4 fields (sdkVersion / minHostVersion / entry / type)', () => {
-    test('accepts a two-layer manifest with full Phase 4 fields', () => {
+  describe('Two-layer fields (sdkVersion / minHostVersion / entry / type)', () => {
+    test('accepts a two-layer manifest with full two-layer fields', () => {
       const {valid, errors} = validateManifest({
         ...minimalValid,
         sdkVersion: '0.2.0',
@@ -212,7 +212,7 @@ describe('validateManifest', () => {
       expect(valid).toBe(true);
     });
 
-    test('manifests without Phase 4 fields still validate (legacy single-layer)', () => {
+    test('manifests without two-layer fields still validate (legacy single-layer)', () => {
       const {valid, errors} = validateManifest(minimalValid);
       expect(errors).toEqual([]);
       expect(valid).toBe(true);

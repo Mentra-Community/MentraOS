@@ -1,5 +1,5 @@
 /**
- * MentraJSCrashController — Phase 6 crash recovery state machine for the
+ * MentraJSCrashController — crash recovery state machine for the
  * per-miniapp JSContexts owned by MentraJSRouter.
  *
  *   RUNNING
@@ -115,9 +115,8 @@ export class MentraJSCrashController {
 
   /**
    * Record a crash and return the policy outcome. Caller is responsible for
-   * scheduling the respawn (we don't own a setTimeout reference — Phase 0's
-   * lesson was that timer ownership belongs at the orchestration layer that
-   * holds the host context).
+   * scheduling the respawn (timer ownership belongs at the orchestration
+   * layer that holds the host context, not here).
    */
   onCrash(packageName: string, reason: string): CrashOutcome {
     const at = this.now()

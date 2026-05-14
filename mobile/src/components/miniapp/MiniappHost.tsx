@@ -17,12 +17,10 @@ import {
 // ---------------------------------------------------------------------------
 // Two-layer UI host
 //
-// MentraOS used to mount each miniapp as a persistent off-screen WebView
-// and rely on Phase-0 LRU eviction to stay under jetsam. Phase-3 inverted
-// that — UI WebViews now live ONLY when the user is looking at them. The
-// always-on half (glasses events, BLE, transcription) runs in the
-// miniapp's background JSContext owned by MentraJSRouter; this component
-// only renders the optional UI WebView.
+// UI WebViews live ONLY when the user is looking at them. The always-on
+// half (glasses events, BLE, transcription) runs in the miniapp's
+// background JSContext owned by MentraJSRouter; this component only
+// renders the optional UI WebView.
 //
 // Lifecycle:
 //   openUI(pkg, opts)  → create a fresh WebView pointed at opts.uiUri,
@@ -323,7 +321,7 @@ export default function MiniappHost() {
           ref={(ref) => {
             if (ref) {
               webViewRef.current = ref
-              // Phase 3 bind: route mentra.send/on through to the JSContext
+              // Bind: route mentra.send/on through to the JSContext
               // via injectJavaScript. The router unbinds on closeUI.
               uiRouterRef.current?.bindWebView(app.packageName, (js: string) => {
                 try {

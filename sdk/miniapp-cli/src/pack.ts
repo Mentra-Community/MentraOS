@@ -51,11 +51,11 @@ export async function pack(opts: PackOptions = {}): Promise<string> {
     process.exit(1);
   }
 
-  // Phase 4: enforce two-layer bundle contract when manifest.entry is set.
+  // Enforce two-layer bundle contract when manifest.entry is set.
   // `entry.background` (required for two-layer) must resolve to a file under
   // dist/. `entry.ui` (optional, for UI-bearing miniapps) likewise. Legacy
   // single-bundle manifests without an `entry` object skip this check —
-  // pack still zips dist/ verbatim, matching the pre-Phase-4 behaviour.
+  // pack still zips dist/ verbatim.
   const entry = manifest.entry as {background?: string; ui?: string} | undefined;
   if (entry) {
     const checkRelative = (label: string, rel: string | undefined, required: boolean) => {
