@@ -18,6 +18,16 @@ bridge, a polyfill bundle, and a WebView-↔-JSContext message bus.
   the canonical fixture and integration test fixture.
 - **Appendix B** — SDK + CLI migration checklist.
 
+**Pre-refactor merges to keep in mind:**
+- **2026-05 navigation + heading SDK** (PR #2779, merged into
+  `mentra-miniapp-sdk-2`). Adds `session.navigation`,
+  `session.heading`, a pivot engine, the `location_stream` rate
+  alias, and ref-counted singleton services in `crust`. Most of
+  this lifts verbatim into the JSC world — the reuse tables below
+  reflect the post-merge surface. The pieces that need careful
+  forwarding into the JSC port are flagged inline (Phase 2's
+  acceptance gates cover them).
+
 ---
 
 ## Why this exists
@@ -304,6 +314,20 @@ realistic fetch/WebSocket shims holding NSURLSession instances,
 budget ~3-5 MB per context. Even on iPhone SE 2 (3 GB RAM, ~600 MB
 jetsam ceiling), 50+ background miniapps fit comfortably.
 
+**Caveat — navigation-active miniapps are heavy and process-singleton.**
+A miniapp calling `session.navigation.start` activates the Google
+Nav SDK in `crust`, which on iOS holds a hidden `GMSMapView`,
+`GMSNavigator`, `GMSRoadSnappedLocationProvider`, plus
+`CoreLocation`/`CoreMotion` state — easily ~30-50 MB of process
+state on top of the per-JSContext baseline. The Nav SDK is also
+**process-singleton**: only one trip can be in flight at a time
+across all miniapps, because `NavigationManager` (Swift + Kotlin)
+is built around a single `Navigator`. N>1 *contexts* still run
+fine; the constraint is N=1 *active trips*. The host enforces this
+already via `activeNavApps`/`navListeners` accounting in
+`LocalMiniappRuntime`; carry that bookkeeping into the
+`MentraJSRouter` rewrite.
+
 Raw log: `agents/spike-results/jsc-spike-iphone15-release-50ctx.log`.
 Reproducible via `xcrun devicectl device process launch -e
 '{"MENTRA_RUN_JSC_BENCH":"1"}' com.mentra.mentra` then
@@ -470,7 +494,7 @@ Cloud server sends "phone_photo_ready" / "phone_stream_status" /
   "phone_managed_stream_status" to mobile via existing cloud socket
   ↓
 MentraJSRouter.handleCloudMessage(msg) (lifted from
-  LocalMiniappRuntime.ts:284-365, 3 inline switch arms)
+  LocalMiniappRuntime.ts's handleCloudMessage — 3 inline switch arms)
   ↓
 Looks up the pending request in pendingCloudRequests Map (matching
   packageName + requestId)
@@ -563,15 +587,27 @@ to native code. The SDK wraps it into the typed `MiniappSession` API
 that miniapps actually use.
 
 **The SDK API surface already exists** in `mobile/modules/miniapp/src/`.
-We do NOT redesign it. The 17 module wrappers (`session.glasses`,
+We do NOT redesign it. The 19 module wrappers (`session.glasses`,
 `session.display`, `session.input`, `session.transcription`,
 `session.translation`, `session.mic`, `session.speaker`,
 `session.camera`, `session.dashboard`, `session.led`,
 `session.location`, `session.imu`, `session.phone`,
 `session.permissions`, `session.storage`, `session.stream`,
-`session.system`) all wrap a constructor-injected `session` and call
-`session.sendOneShot` / `session.sendRequest` / `session._subscribe`.
-Transport-agnostic.
+`session.system`, `session.heading`, `session.navigation`) all wrap
+a constructor-injected `session` and call `session.sendOneShot` /
+`session.sendRequest` / `session._subscribe`. Transport-agnostic.
+
+`session.navigation` and `session.heading` were added by the 2026-05
+navigation SDK merge. Native sits in `crust` (Google Nav SDK on iOS
+via `GoogleNavigation` pod, on Android via the
+`com.google.android.libraries.navigation:navigation` AAR — see Phase
+1 native scope below); the JS module is pure `__dispatch`-shaped
+calls and lifts verbatim. `session.navigation` also ships a built-in
+pivot engine (`modules/pivots/`) — pure-TS polyline-simplification +
+crosswalk detection that synthesizes `CROSS_STREET` maneuvers. The
+engine is **background-only** by construction: it consumes
+position/route events and registers session callbacks, never touches
+the DOM, and has nothing to expose to a WebView.
 
 Three new session modules are added by this proposal — flagged here
 so readers don't assume they exist today.
@@ -986,11 +1022,12 @@ which handles the actual `session.display.showTextWall(...)` call.
 
 ## Reuse from the existing local SDK
 
-About **half** of the existing local-miniapp SDK code (~5,500 of
-~11,300 LoC) lifts into the new architecture with zero or near-zero
-changes. Another ~3,000 LoC keeps its shape and gets new internals.
-Only ~2,800 LoC is genuinely replaced. **This is mostly a
-refactor + add, not a rewrite.**
+About **half** of the existing local-miniapp SDK code (~7,500 of
+~14,000 LoC after the 2026-05 navigation+heading merge) lifts into
+the new architecture with zero or near-zero changes. Another
+~3,500 LoC keeps its shape and gets new internals. Only ~2,800 LoC
+is genuinely replaced. **This is mostly a refactor + add, not a
+rewrite.**
 
 ### Lift verbatim (zero changes)
 
@@ -1017,15 +1054,25 @@ These files have no DOM dependency and no WebView assumption:
 | `mobile/modules/miniapp/src/modules/phone.ts` | 120 | Same |
 | `mobile/modules/miniapp/src/modules/permissions.ts` | 84 | Same |
 | `mobile/modules/miniapp/src/modules/speaker.ts` | 144 | Same |
+| `mobile/modules/miniapp/src/modules/heading.ts` | 23 | Same (compass stream) |
+| `mobile/modules/miniapp/src/modules/navigation.ts` | 801 | Turn-by-turn API + pivot subscriptions; pure `sendOneShot`/`sendRequest`/`_subscribe` |
+| `mobile/modules/miniapp/src/modules/pivots/engine.ts` | 554 | Pure-TS pivot engine; consumes route + position events, emits synthetic `CROSS_STREET` maneuvers. Background-only (WebView never sees it). |
+| `mobile/modules/miniapp/src/modules/pivots/geometry.ts` | 409 | Pure-TS polyline geometry (haversine, bearing, RDP, pivot extraction, crosswalk detection) |
 | `mobile/modules/miniapp/src/transport/types.ts` | 26 | Transport interface fits `__dispatch` |
 | `mobile/modules/island/src/services/MicStateCoordinator.ts` | 113 | No WebView |
 | `mobile/modules/island/src/services/LocalSttFallbackCoordinator.ts` | 98 | No WebView |
 | `mobile/modules/island/src/services/LocalDisplayManager.ts` | 538 | Per-app display arbitration keyed on `packageName` |
 | `mobile/modules/island/src/services/DisplayProcessor.ts` | 714 | Pure compute |
 | `mobile/modules/island/src/services/MiniappRunningRegistry.ts` | 63 | Just update writers |
+| `mobile/src/services/HeadingService.ts` | 98 | Singleton with ref-counted native compass subs + late-subscriber replay |
+| `mobile/src/services/LocationManager.ts` | 177 | Foreground GPS wrapper (`expo-location`) — separate from background-task path in MantleManager |
+| `mobile/src/services/NavigationService.ts` | 548 | Singleton wrapping `crust`'s Google Nav SDK; ref-counted listeners, route/maneuver/location event fan-out, Routes API REST path |
+| `mobile/src/services/navigation/routesApiCodec.ts` | 52 | Pure decoders (`decodePolyline`, `parseDurationSeconds`). Has unit tests in sibling `.test.ts`. |
 
-**~3,000 LoC of typed API surface and infrastructure that survives
-unchanged.**
+**~5,000 LoC of typed API surface and infrastructure that survives
+unchanged.** (Bumped from ~3,000 after the navigation/heading PR
+merged in 2026-05: nav SDK + pivot engine + Routes API codec all
+lift verbatim since they're pure TS over `__dispatch`-shaped calls.)
 
 ### Reuse with minor changes
 
@@ -1038,6 +1085,7 @@ unchanged.**
 | `mobile/modules/miniapp/src/transport/auto.ts` | 125 | Add 4th branch: if `__dispatch` global → return `DispatchTransport`. |
 | `mobile/modules/miniapp/src/dev-reload.ts` | 60 | Keep for WebView; add sibling for JSContext respawn. |
 | `mobile/modules/island/src/services/DevServerBridge.ts` | 288 | Same protocol, two delivery sinks (WebView reload + JSContext respawn). |
+| `mobile/src/services/MantleManager.ts` | ~1,060 | Runtime-hook adapter that wires `NavigationService`/`HeadingService`/`setLocationTier` into the island runtime. Adapter shape carries forward — point it at the new `MentraJSRouter` instead of `LocalMiniappRuntime`. |
 | `sdk/miniapp-cli/src/manifest*.ts` (4 non-test files) | ~712 | Add `sdkVersion`, `minHostVersion`, `entry` (object) schema fields. (Signature schema deferred to store-ship spec.) |
 | `sdk/miniapp-cli/src/dev.ts` + `dev-server.ts` | ~480 | Bundle `dist/background/index.js` + `dist/ui/`; add `{type:"respawn-bg"}` message alongside `{type:"reload"}`. Today's `dev.ts` spawns a single dev server fronting the WebView; new flow orchestrates two bundlers (background + UI) plus the dev-server WebSocket. |
 | `sdk/miniapp-cli/src/pack.ts` + `release.ts` | ~380 | Two-output bundle. (Signing pipeline deferred to store-ship spec.) |
@@ -1046,7 +1094,7 @@ unchanged.**
 
 | File | LoC | What survives, what changes |
 |---|---|---|
-| `mobile/modules/island/src/services/LocalMiniappRuntime.ts` | 1,752 | **Skeleton survives:** per-app registry, refcounted streams, ping loop, **25 dispatch arms in `handleRawMessage`'s switch (`:516-595`) + 3 arms in `handleCloudMessage`'s switch (`:303-365`)**. Of the 25 main arms, 11 delegate to `private handle*` methods; the remaining 14 (including SPEAK, LOCATION_POLL, STORAGE_*, SHARE, OPEN_URL, COPY_CLIPBOARD, DOWNLOAD, PHOTO, PING/PONG, etc.) are implemented inline. Handler bodies don't know they're talking to a WebView — they take `(packageName, payload)` and dispatch to native. **Rewrite:** front door (`handleRawMessage` → `__dispatch`); per-app `sendMessage` (postMessage → `JSContext.evaluateScript`); HMAC/local-token code goes away. |
+| `mobile/modules/island/src/services/LocalMiniappRuntime.ts` | 2,217 | **Skeleton survives:** per-app registry, refcounted streams, ping loop, **33 dispatch arms in `handleRawMessage`'s switch + 3 arms in `handleCloudMessage`'s switch**. Eight of the main arms are NAVIGATION_* added in the 2026-05 nav SDK merge (START, STOP, DEVIATE, SET_WRONG_SIDEWALK, SET_SKIP_CROSSINGS, GET_STATE, COMPUTE_ROUTE, REQUEST_PERMISSION); each routes through the host's `NavigationService` singleton via the `RuntimeHooks.navigation` adapter — the JSC port keeps that adapter shape unchanged. The runtime also owns: `location_stream` rate aggregation (strictest across all connected apps, with downgrade-to-`off` on unregister), `recomputeHeadingSubscription` (ref-counted compass sub), and a per-app nav event forwarder that survives mini-app UI close so active trips keep running. Handler bodies don't know they're talking to a WebView — they take `(packageName, payload)` and dispatch to native. **Rewrite:** front door (`handleRawMessage` → `__dispatch`); per-app `sendMessage` (postMessage → `JSContext.evaluateScript`); HMAC/local-token code goes away. `gracefullyUnregisterApp`'s 50 ms `WILL_DISCONNECT` window also goes away — JSC kill doesn't need a transport-flush grace; replace with synchronous teardown. |
 | `mobile/modules/island/src/services/AppRegistry.ts` | 675 | Manifest normalization + zip pipeline survive. **Add:** `background/index.js` discovery alongside `index.html`; recognize new manifest fields; sdkVersion/minHostVersion compatibility check on spawn. (Signature verification deferred to store-ship spec — all current bundles are LAN-sideloaded and unsigned.) |
 | `sdk/create-mentra-miniapp/bin/index.ts` + template | ~150 + template | Scaffolder logic survives (clack prompts, validation, template substitution). **Template files rewrite:** scaffold `src/background/index.ts`, `src/ui/`, `src/shared/channels.ts` instead of single React SPA. |
 
@@ -1298,6 +1346,22 @@ signature verification kicks in. Same install flow otherwise.
    freed.
 4. Background JSContext is unaffected.
 
+**Aside — `beforeDisconnect` is for the WebView-only world.** The
+2026-05 SDK ships `session.onBeforeDisconnect(handler)` plus a
+`WILL_DISCONNECT` push + 50 ms grace window for the *current*
+single-tier architecture, so a miniapp can fire one last
+`display.clear()` before the WebView transport closes (see
+`LocalMiniappRuntime.gracefullyUnregisterApp`). In the two-layer
+world, the WebView teardown above is just a `session.ui.onClose`
+event — the JSContext-side `MiniappSession` doesn't disconnect,
+because it never had a transport tied to the WebView in the first
+place. `onBeforeDisconnect` still fires, but only on JSContext kill
+(disabled / uninstalled / process death), and the grace window
+becomes unnecessary because there's no transport handshake to flush
+through. **Migration note:** keep the SDK API for compat, drop the
+50 ms wait in `LocalMiniappRuntime` when its front door swaps to
+`__dispatch`.
+
 ### Host app backgrounded by user (screen off, in pocket)
 
 **iOS:** Host process stays alive while we hold the
@@ -1337,9 +1401,13 @@ Same lesson Chrome MV3 service workers had to teach.
 
 ### Miniapp disabled by user
 
-1. Host calls `JSCRuntime.kill(packageName)`.
-2. Marks miniapp inactive in installed-apps state.
-3. In-memory state is gone. Storage remains until uninstall.
+1. Host fires `session.onBeforeDisconnect` handlers in the
+   JSContext synchronously (so e.g. `session.display.clear()` lands
+   before kill). No grace timer — runs synchronously on the JS
+   thread before kill.
+2. Host calls `JSCRuntime.kill(packageName)`.
+3. Marks miniapp inactive in installed-apps state.
+4. In-memory state is gone. Storage remains until uninstall.
 
 ### Miniapp uninstalled
 
@@ -2135,6 +2203,16 @@ Native (Swift):
   `mentrajs_message`. Verify the new module registers cleanly via
   `bun expo prebuild` (note: per `mobile/AGENTS.md`, never use
   `--clean` or `--clear` flags).
+- **`crust` already owns the native nav + heading + EvenHub-style
+  protocol surfaces** after the 2026-05 nav merge (Google Nav SDK
+  on iOS via `GoogleNavigation` pod + `NavigationManager.swift` 811
+  LoC + `HeadingManager.swift` 74 LoC; on Android the equivalent
+  Kotlin lives under `crust/android/.../navigation/` and
+  `.../heading/` for 1500+150 LoC plus the `NavInfoReceiverService`
+  manifest entry). The Phase 1 dispatcher's `iface: "navigation"`
+  and `iface: "heading"` routes call straight into those existing
+  singletons — no new native code, just `__dispatch` glue +
+  permission gate.
 - Pebble-inherited pieces all in scope: `JSManagedValue`,
   `evalCatching`, `console.*` rewiring, `window.onerror` /
   `onunhandledrejection`, `signalReady` with 15s cold-start /
@@ -2230,50 +2308,67 @@ Phase 2's window — but **don't ship the SDK as iOS-only at GA**.
 
 ### Phase 2 — Refactor `LocalMiniappRuntime` → `MentraJSRouter` (~3 weeks)
 
-**Goal:** All 25 dispatch arms from `LocalMiniappRuntime.ts`
+**Goal:** All 33 dispatch arms from `LocalMiniappRuntime.ts`
 survive, front door swaps from postMessage to `__dispatch`.
 
-- Move all 25 dispatch arms in `handleRawMessage`'s switch
-  (`LocalMiniappRuntime.ts:516-595`) to a new `MentraJSRouter` class
-  taking `(packageName, payload)` from `__dispatch` events. Of these,
-  11 currently delegate to `private handle*` methods
-  (`handleConnect`, `handleSubscribe`, `handleDisplay`,
+- Move all 33 dispatch arms in `handleRawMessage`'s switch to a new
+  `MentraJSRouter` class taking `(packageName, payload)` from
+  `__dispatch` events. Of these, 19 delegate to `private handle*`
+  methods (`handleConnect`, `handleSubscribe`, `handleDisplay`,
   `handlePlayAudio`, `handleStopAudio`, `handleRgbLed`,
   `handleCameraFov`, `handleStreamStart`, `handleStreamStop`,
-  `handleManagedStreamStart`, `handleManagedStreamStop`); the
-  remaining 14 (SPEAK, LOCATION_POLL, STORAGE_GET/SET/DELETE/LIST,
-  SHARE, OPEN_URL, COPY_CLIPBOARD, DOWNLOAD, PHOTO, PING, PONG, and
-  the DASHBOARD_CONTENT_UPDATE stub) are inline `case` blocks. Lift
-  both shapes verbatim — keep the inline ones inline in the new
-  router unless they grow.
-- Public `handlePong` (`:1714`) and inline PING handler stay; both
-  are wired into the existing ping/keepalive loop.
-- Front door: replace `handleRawMessage(packageName, raw)` (current
-  signature at `LocalMiniappRuntime.ts:474`) with the new
-  `__dispatch`-driven entry point.
-- Per-app `sendMessage` (currently `app.sendMessage(serialized)` at
-  `LocalMiniappRuntime.ts:1626`, registered in `registerApp()` at
-  `:379-408`, wired in `MiniappHost.tsx:136-140` via
-  `webview.injectJavaScript("window.receiveNativeMessage(...)")`)
+  `handleManagedStreamStart`, `handleManagedStreamStop`, plus the
+  eight `handleNavigation*` methods added in the 2026-05 nav
+  merge); the remaining ~14 (SPEAK, LOCATION_POLL,
+  STORAGE_GET/SET/DELETE/LIST, SHARE, OPEN_URL, COPY_CLIPBOARD,
+  DOWNLOAD, PHOTO, PING, PONG, DASHBOARD_CONTENT_UPDATE) are inline
+  `case` blocks. Lift both shapes verbatim — keep the inline ones
+  inline in the new router unless they grow.
+- **Carry forward the navigation accounting too.** The handler set
+  is more than the eight cases: the runtime holds a `navListeners`
+  Map (per-app forwarder unsub functions) and an `activeNavApps`
+  Set (apps with an active trip). These get reattached on each
+  `NAVIGATION_START`, detached on `unregisterApp`, and cleared on
+  `arrived`/`error`/`NAVIGATION_STOP`. All of that bookkeeping
+  belongs on `MentraJSRouter` — verbatim except for the front-door
+  swap.
+- **`location_stream` rate aggregation.** `LocalMiniappRuntime`
+  tracks each connected app's `requestedLocationRate` and
+  recomputes the *strictest* across all apps after every SUBSCRIBE
+  and unregister (`recomputeLocationTier`); downgrades to `"off"`
+  when no app is asking. The aggregate hits `MantleManager` via
+  `RuntimeHooks.locationTier`. Bug surface here is real — keep the
+  unit-testable algorithm intact in the rewrite and verify the
+  downgrade path in tests.
+- **`recomputeHeadingSubscription`.** Sensor stream is ref-counted
+  on the `heading_update` subscriber set. Same shape as mic; lift
+  verbatim.
+- Public `handlePong` and inline PING handler stay; both are wired
+  into the existing ping/keepalive loop.
+- Front door: replace `handleRawMessage(packageName, raw)`
+  (`public handleRawMessage` in `LocalMiniappRuntime.ts`) with the
+  new `__dispatch`-driven entry point.
+- Per-app `sendMessage` (currently `app.sendMessage(serialized)`,
+  registered in `public registerApp()`, wired in `MiniappHost.tsx`
+  via `webview.injectJavaScript("window.receiveNativeMessage(...)")`)
   becomes `JSCRuntime.dispatchToJs(...)`.
-- **Cloud message routing:** preserve `handleCloudMessage(msg)` at
-  `LocalMiniappRuntime.ts:284` — it routes cloud-relayed responses
-  (`phone_photo_ready`, `phone_stream_status`,
-  `phone_managed_stream_status`) via the `pendingCloudRequests` Map.
-  This is a separate inbound path the spec didn't initially flag.
+- **Cloud message routing:** preserve `public handleCloudMessage(msg)`
+  — it routes cloud-relayed responses (`phone_photo_ready`,
+  `phone_stream_status`, `phone_managed_stream_status`) via the
+  `pendingCloudRequests` Map. This is a separate inbound path the
+  spec didn't initially flag.
 - **Collapse parallel registries:** today
-  `WebviewBridge.setWebViewMessageHandler` (`WebviewBridge.ts:30`)
-  and `MiniappHost.tsx:483` maintain a parallel registry on top of
-  `LocalMiniappRuntime`'s own. New router has ONE registry.
+  `WebviewBridge.setWebViewMessageHandler` and `MiniappHost.tsx`
+  maintain a parallel registry on top of `LocalMiniappRuntime`'s
+  own. New router has ONE registry.
 - **Carry forward** infrastructure that's not a handler but lives
-  in this file: `dev_log` console-tap (`:498-512`), stream fan-out
-  subscribers (`streamSubscribers` Map at `:160`),
-  `recomputeMicRequirements`, `updateCloudSubscriptions`,
-  `installedManifest` permission gating (`:671-700+` — `declaredTypes`
-  set, `permissionForStream` helper, gating loop, reject branch),
-  `setInstalledManifest` (`:415`), `unregisterApp` (`:432`),
-  `PERMISSION_NOT_DECLARED` once-per-session dedup (`:104-150`,
-  `warnedPermission` Set + `logPermissionNotDeclared` helper).
+  in this file: `dev_log` console-tap, stream fan-out subscribers
+  (`streamSubscribers` Map), `recomputeMicRequirements`,
+  `updateCloudSubscriptions`, `installedManifest` permission
+  gating (`declaredTypes` set, `permissionForStream` helper, gating
+  loop, reject branch), `setInstalledManifest`, `unregisterApp`,
+  `PERMISSION_NOT_DECLARED` once-per-session dedup
+  (`warnedPermission` Set + `logPermissionNotDeclared` helper).
 - **HMAC/local-token code removal:** verify nothing outside
   `LocalMiniappRuntime.ts` calls `generateLocalToken`/
   `validateLocalToken` (grep before deletion). Currently exposed
@@ -2294,10 +2389,21 @@ done, Phase 2 lights up on Android automatically.
   `__dispatch` event input and asserted native call.
 - Unit: `MentraJSRouter` routes `__dispatch` to the correct handler
   by `iface`/`method` keys.
+- Unit: `recomputeLocationTier` aggregates the strictest rate
+  across N connected apps; downgrades to `"off"` on
+  unregister-of-strictest. Cover the `LOCATION_RATE_PRIORITY`
+  ordering explicitly.
+- Unit: `recomputeHeadingSubscription` starts the sensor only on
+  the first `heading_update` subscriber and stops on the last.
+- Unit: per-app nav forwarder unsubscribes on `NAVIGATION_STOP` and
+  on natural `arrived`/`error` events but survives mini-app UI
+  close (mirrors the `activeNavApps`/`navListeners` discipline in
+  the current runtime).
 - Integration: install the example miniapp; verify every existing
   `session.*` call (display, transcription, mic, camera, speaker,
-  LED, location, IMU, button events) round-trips correctly by
-  observing the existing tester pages still work end-to-end.
+  LED, location, IMU, button events, navigation, heading)
+  round-trips correctly by observing the existing tester pages
+  still work end-to-end.
 - Grep: zero references to `generateLocalToken`/`validateLocalToken`
   outside the deletion site.
 - Grep: zero references to `app.sendMessage(...)` (replaced by
