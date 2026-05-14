@@ -1,44 +1,47 @@
-import {useEffect, useRef} from "react"
+import {useEffect, useRef, useState} from "react"
 import {useNavigate} from "react-router-dom"
-import {
-  MiniappHeader,
-  useCapabilities,
-  useConnected,
-  useVisibility,
-} from "@mentra/miniapp/react"
+import {MiniappHeader, useVisibility} from "@mentra/miniapp/ui"
 
-import {getGlassesController} from "../controller/GlassesController"
-import {useAppStore} from "../store/appStore"
-import {Button} from "../ui/button"
-import {Card, CardContent, CardHeader, CardTitle} from "../ui/card"
-import {Label} from "../ui/label"
-import {Switch} from "../ui/switch"
+import "../../shared/channels"
+import {useChannel} from "../hooks/useChannel"
+import {Button} from "../components/button"
+import {Card, CardContent, CardHeader, CardTitle} from "../components/card"
+import {Label} from "../components/label"
+import {Switch} from "../components/switch"
 import {Shell} from "./Shell"
 
 /**
- * CaptionsPage — viewer for the GlassesController's app state.
+ * CaptionsPage — renders the GlassesController's pushed state.
  *
- * Does NOT subscribe to session events. Reads from `useAppStore`; calls
- * imperative methods on the GlassesController for things the user
- * triggers (clear, speak summary, mirror toggle).
+ * Does NOT subscribe to glasses events directly (no `session.*` in the
+ * WebView). Background pushes a `captions:snapshot` envelope on each
+ * `session.ui.onOpen`, then hot updates on transcription / button /
+ * settings changes. The page just renders what background has sent.
  *
- * Closing this page does NOT stop transcription on the glasses — the
- * controller keeps running. Tester pages (src/pages/tester/) are the
- * only place in this example where inline-subscribe to `session.*` is
- * acceptable, because they're diagnostic surfaces by design.
+ * User input flows the other direction via `mentra.send`:
+ *   - mirror toggle  → "captions:set-mirror"
+ *   - "Speak Summary" → "captions:speak-summary"
+ *   - "Clear"        → "captions:clear"
  */
 export default function CaptionsPage() {
-  const connected = useConnected()
-  const caps = useCapabilities()
   const visibility = useVisibility()
   const navigate = useNavigate()
 
-  // Read from the controller-driven store — no session subscriptions.
-  const liveTranscript = useAppStore((s) => s.liveTranscript)
-  const history = useAppStore((s) => s.history)
-  const lastButton = useAppStore((s) => s.lastButton)
-  const mirrorToGlasses = useAppStore((s) => s.mirrorToGlasses)
-  const setMirrorToGlasses = useAppStore((s) => s.setMirrorToGlasses)
+  const snapshot = useChannel("captions:snapshot")
+  const liveUpdate = useChannel("captions:live-transcript")
+  const historyUpdate = useChannel("captions:history-update")
+  const lastButtonUpdate = useChannel("captions:last-button")
+  const settingsUpdate = useChannel("captions:settings-update")
+
+  // Resolve a single render-time view of state, preferring hot updates
+  // over the (older) snapshot. The hot-update channels arrive on every
+  // change; the snapshot only on WebView open.
+  const liveTranscript = liveUpdate?.text ?? snapshot?.liveTranscript ?? ""
+  const history = historyUpdate?.history ?? snapshot?.history ?? []
+  const lastButton = lastButtonUpdate?.label ?? snapshot?.lastButton ?? ""
+  const mirrorToGlasses = settingsUpdate?.mirrorToGlasses ?? snapshot?.settings?.mirrorToGlasses ?? true
+  const capabilities = snapshot?.capabilities
+  const connected = snapshot?.connection?.connected ?? false
 
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -46,16 +49,19 @@ export default function CaptionsPage() {
     scrollRef.current?.scrollTo({top: scrollRef.current.scrollHeight, behavior: "smooth"})
   }, [history])
 
-  const hasCamera = !!(caps && (caps as Record<string, unknown>).hasCamera)
-  const hasMic = !!(caps && (caps as Record<string, unknown>).hasMicrophone)
-  const hasDisplay = !!(caps && (caps as Record<string, unknown>).hasDisplay)
-  const hasSpeaker = !!(caps && (caps as Record<string, unknown>).hasSpeaker)
-  const hasWifi = !!(caps && (caps as Record<string, unknown>).hasWifi)
-  const modelName = (caps as Record<string, unknown>)?.modelName as string | undefined
+  const hasCamera = !!capabilities?.hasCamera
+  const hasMic = !!capabilities?.hasMicrophone
+  const hasDisplay = !!capabilities?.hasDisplay
+  const hasSpeaker = !!capabilities?.hasSpeaker
+  const hasWifi = !!capabilities?.hasWifi
+  const modelName = capabilities?.modelName
 
-  // Imperative actions — delegate to the controller.
-  const onClear = () => getGlassesController().clearGlasses()
-  const onSpeak = () => getGlassesController().speakSummary()
+  const [pendingMirror, setPendingMirror] = useState<boolean | null>(null)
+  const setMirror = (v: boolean) => {
+    setPendingMirror(v)
+    mentra.send("captions:set-mirror", {mirrorToGlasses: v})
+  }
+  const mirrorChecked = pendingMirror ?? mirrorToGlasses
 
   return (
     <Shell>
@@ -68,7 +74,6 @@ export default function CaptionsPage() {
         title="Live Captions"
       />
 
-      {/* Capabilities bar */}
       <div className="flex flex-wrap gap-1.5 border-b border-border px-5 pb-3 pt-2">
         <Chip label="Camera" on={hasCamera} />
         <Chip label="Mic" on={hasMic} />
@@ -77,7 +82,6 @@ export default function CaptionsPage() {
         <Chip label="WiFi" on={hasWifi} />
       </div>
 
-      {/* Device info row (replaces old header badge) */}
       <div className="flex items-center justify-between px-5 py-2 text-[11px] text-muted-foreground">
         <span>
           Device: <span className="font-mono text-foreground/80">{modelName || "no glasses"}</span>
@@ -87,7 +91,6 @@ export default function CaptionsPage() {
         </Button>
       </div>
 
-      {/* Live transcript */}
       <Card className="mx-5 mt-1 gap-2 py-4">
         <CardHeader className="gap-0 px-4">
           <CardTitle className="text-[10px] font-bold tracking-[0.15em] text-mentra-green">
@@ -101,30 +104,31 @@ export default function CaptionsPage() {
         </CardContent>
       </Card>
 
-      {/* Controls */}
       <div className="flex items-center justify-between gap-3 px-5 py-3">
         <div className="flex items-center gap-2">
-          <Switch id="mirror" checked={mirrorToGlasses} onCheckedChange={setMirrorToGlasses} />
+          <Switch id="mirror" checked={mirrorChecked} onCheckedChange={setMirror} />
           <Label htmlFor="mirror" className="text-sm text-muted-foreground">
             Mirror to glasses
           </Label>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={onSpeak}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => mentra.send("captions:speak-summary", {})}>
             Speak Summary
           </Button>
-          <Button variant="destructive" size="sm" onClick={onClear}>
+          <Button variant="destructive" size="sm" onClick={() => mentra.send("captions:clear", {})}>
             Clear
           </Button>
         </div>
       </div>
 
-      {/* Transcript history */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 pb-5">
         {history.length === 0 ? (
           <p className="mt-10 text-center text-sm leading-relaxed text-muted-foreground">
             Transcribed sentences appear here as you speak.
-            {mirrorToGlasses && " They also show on your glasses in real time."}
+            {mirrorChecked && " They also show on your glasses in real time."}
           </p>
         ) : (
           history.map((line, i) => (
@@ -136,7 +140,6 @@ export default function CaptionsPage() {
         )}
       </div>
 
-      {/* Footer */}
       <footer className="flex justify-between border-t border-border px-5 py-2.5 text-[11px] text-muted-foreground">
         {lastButton ? <span>Button: {lastButton}</span> : <span />}
         <span>

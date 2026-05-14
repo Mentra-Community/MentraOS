@@ -5,7 +5,7 @@
 // src/controller/GlassesController.ts.
 
 import {useNavigate} from "react-router-dom"
-import {MiniappHeader, useCapabilities} from "@mentra/miniapp/react"
+import {MiniappHeader, useCapabilities} from "@mentra/miniapp/ui"
 
 import {Shell} from "../Shell"
 

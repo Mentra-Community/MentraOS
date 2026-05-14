@@ -5,9 +5,9 @@
 // src/controller/GlassesController.ts.
 
 import {useNavigate} from "react-router-dom"
-import {MiniappHeader} from "@mentra/miniapp/react"
+import {MiniappHeader} from "@mentra/miniapp/ui"
 
-import {Button} from "../../ui/button"
+import {Button} from "../../components/button"
 import {Shell} from "../Shell"
 
 const ITEMS: Array<{emoji: string; title: string; subtitle: string}> = [

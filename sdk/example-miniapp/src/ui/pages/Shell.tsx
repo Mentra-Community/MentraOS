@@ -1,5 +1,5 @@
 import type {ReactNode} from "react"
-import {useSafeArea} from "@mentra/miniapp/react"
+import {useSafeArea} from "@mentra/miniapp/ui"
 
 /**
  * Page shell: applies safe-area padding around a scrollable content area.

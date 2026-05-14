@@ -4,10 +4,19 @@ Per-module reference for the `@mentra/miniapp` SDK. Each page documents one
 module on `session.<module>`: what the methods take, what they return, what
 events fire, and the error shapes to expect.
 
+## Architecture
+
+- [two-layer.md](./two-layer.md) — Phase 4+ two-layer miniapp model
+  (background JSContext + on-demand UI WebView). Read first if you're
+  writing a new miniapp.
+- [ui.md](./ui.md) — `session.ui` message bus + the `mentra` global on
+  the WebView side.
+
 ## Modules
 
 | Module | Doc | Notes |
 | --- | --- | --- |
+| `session.ui` | [ui.md](./ui.md) | Two-layer message bus to the bound UI WebView. Background-only. |
 | `session.navigation` | [navigation.md](./navigation.md) | Turn-by-turn + pivots. Android only. Largest surface. |
 | `session.location` | [location.md](./location.md) | 1 getter + 2 methods. Manifest-gated. |
 | `session.display` | [display.md](./display.md) | 6 fire-and-forget methods. No permission gating, no responses. |

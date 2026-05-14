@@ -72,6 +72,7 @@ export {
   MentraProvider,
   type MentraProviderProps,
 } from "../react/MentraProvider"
+export {MiniappHeader} from "../react/MiniappHeader"
 export {useSession} from "../react/useSession"
 export {useColorScheme} from "../react/useColorScheme"
 export {useCapabilities} from "../react/useCapabilities"
