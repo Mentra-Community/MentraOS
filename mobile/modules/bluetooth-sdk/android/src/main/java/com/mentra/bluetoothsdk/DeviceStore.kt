@@ -82,6 +82,8 @@ object GlassesStore {
         store.set("glasses", "hotspotPassword", "")
         store.set("glasses", "hotspotGatewayIp", "")
         store.set("glasses", "bluetoothName", "")
+        store.set("glasses", "signalStrength", -1)
+        store.set("glasses", "signalStrengthUpdatedAt", 0L)
         store.set("glasses", "controllerConnected", false)
         store.set("glasses", "controllerFullyBooted", false)
         store.set("glasses", "controllerMacAddress", "")
@@ -120,7 +122,6 @@ object GlassesStore {
         store.set("core", "contextual_dashboard", true)
         store.set("core", "gallery_mode", false)
         store.set("core", "screen_disabled", false)
-        store.set("core", "button_mode", "photo")
         store.set("core", "button_photo_size", "medium")
         store.set("core", "button_camera_led", true)
         store.set("core", "button_max_recording_time", 10)
@@ -248,9 +249,6 @@ object GlassesStore {
                         CoreManager.getInstance().sgc?.clearDisplay()
                     }
                 }
-            }
-            "core" to "button_mode" -> {
-                CoreManager.getInstance().sgc?.sendButtonModeSetting()
             }
             "core" to "button_photo_size" -> {
                 CoreManager.getInstance().sgc?.sendButtonPhotoSettings()

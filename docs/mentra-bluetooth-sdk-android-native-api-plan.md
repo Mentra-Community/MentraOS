@@ -70,7 +70,6 @@ class MentraBluetoothSdk private constructor(
     fun setHeadUpAngle(angleDegrees: Int)
     fun setScreenDisabled(disabled: Boolean)
     fun setGalleryMode(mode: MentraGalleryMode)
-    fun setButtonMode(mode: MentraButtonMode)
     fun setButtonPhotoSettings(settings: MentraButtonPhotoSettings)
     fun setButtonVideoRecordingSettings(settings: MentraButtonVideoRecordingSettings)
     fun setButtonCameraLed(enabled: Boolean)
@@ -80,6 +79,8 @@ class MentraBluetoothSdk private constructor(
     fun setMicState(config: MentraMicConfig)
     fun setPreferredMic(preferredMic: MentraMicPreference)
     fun setOwnAppAudioPlaying(playing: Boolean)
+    fun getGlassesMediaVolume(): MentraGlassesMediaVolumeGetResult
+    fun setGlassesMediaVolume(level: Int): MentraGlassesMediaVolumeSetResult
 
     fun requestWifiScan()
     fun sendWifiCredentials(ssid: String, password: String)
@@ -141,7 +142,7 @@ interface MentraBluetoothSdkListener {
     fun onTouch(event: MentraTouchEvent) {}
     fun onHeadUpChanged(headUp: Boolean) {}
     fun onBatteryStatus(event: MentraBatteryStatusEvent) {}
-    fun onWifiStatusChanged(event: MentraWifiStatusEvent) {}
+    fun onWifiStatusChanged(event: WifiStatusEvent) {}
     fun onGalleryStatus(event: MentraGalleryStatusEvent) {}
     fun onPhotoResponse(event: MentraPhotoResponseEvent) {}
     fun onStreamStatus(event: MentraStreamStatusEvent) {}
@@ -166,8 +167,9 @@ Add typed public models before exposing the facade:
 - `MentraDiscoveredDevice`: `model`, `name`, optional `address`, optional `rssi`.
 - `MentraGlassesStatus`: current snapshot of connected, fully booted, battery, charging, model, firmware, serial, Wi-Fi, hotspot, head-up, controller, and signal state.
 - `MentraBluetoothStatus`: current snapshot of searching, mic, current mic, search results, Wi-Fi scan results, permission availability, and audio availability.
-- `MentraDisplayTextRequest`, `MentraDisplayEventRequest`, `MentraDashboardPositionRequest`, `MentraDashboardMenuItem`, `MentraPhotoRequest`, `MentraStreamRequest`, `MentraVideoRecordingRequest`, `MentraMicConfig`, `MentraBluetoothError`.
-- Settings models/enums for values currently routed through `DeviceStore.apply()`: `MentraGalleryMode`, `MentraButtonMode`, `MentraButtonPhotoSettings`, `MentraButtonVideoRecordingSettings`, `MentraCameraFov`, and `MentraMicPreference`.
+- `MentraDisplayTextRequest`, `MentraDisplayEventRequest`, `MentraDashboardPositionRequest`, `MentraDashboardMenuItem`, `MentraPhotoRequest`, `MentraStreamRequest`, `MentraStreamKeepAliveRequest`, `MentraVideoRecordingRequest`, `MentraMicConfig`, `MentraBluetoothError`.
+- Settings models/enums for values currently routed through `DeviceStore.apply()`: `MentraGalleryMode`, `MentraButtonPhotoSettings`, `MentraButtonPhotoSize`, `MentraButtonVideoRecordingSettings`, `MentraCameraFov`, and `MentraMicPreference`.
+- Typed value enums should reflect device-specific capability boundaries rather than raw string payloads: `MentraPhotoSize` includes `FULL` for app-requested uploads, `MentraButtonPhotoSize` intentionally does not; `MentraPhotoCompression` is `NONE` / `MEDIUM` / `HEAVY`; `MentraRgbLedAction` and `MentraRgbLedColor` represent the Mentra Live/K900 RGB ring surface; stream request fields are typed while the actual streaming protocol is selected from the URL prefix.
 
 For Java ergonomics, models with many optional fields should have builders instead of huge constructors.
 
@@ -243,7 +245,7 @@ Current implementation status:
 - `MentraBluetoothSdk` owns native event/store fanout through `Bridge.addEventSink` and `DeviceStore.store.addListener`.
 - `BluetoothSdkModule.kt` now owns a `MentraBluetoothSdk` instance and maps listener callbacks back to the existing Expo event names.
 - The Android facade exposes a raw-event fallback for MentraOS compatibility so legacy events such as `save_setting`, OTA progress, BLE command traces, and other adapter-only events are still delivered while typed callbacks are added incrementally.
-- Adapter-only commands such as controller pairing, debug helpers, media volume, RGB LED control, STT utilities, permission/settings intents, and raw `update(...)` compatibility still call the current internals until the public facade grows those APIs.
+- Adapter-only commands such as controller pairing, debug helpers, STT utilities, permission/settings intents, and raw `update(...)` compatibility still call the current internals until the public facade grows those APIs.
 - `:mentra-bluetooth-sdk:compileDebugKotlin` passes with the Expo adapter using the facade for shared commands and event forwarding.
 
 ## Extraction Plan

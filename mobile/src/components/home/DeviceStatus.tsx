@@ -72,7 +72,7 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
   const caseOpen = useGlassesStore((state) => state.caseOpen)
   const batteryLevel = useGlassesStore((state) => state.batteryLevel)
   const charging = useGlassesStore((state) => state.charging)
-  const wifiConnected = useGlassesStore((state) => state.wifiConnected)
+  const wifiConnected = useGlassesStore((state) => state.wifi.state === "connected")
   const searching = useCoreStore((state) => state.searching)
   const [showGlassesBooting, setShowGlassesBooting] = useState(false)
 
@@ -129,11 +129,11 @@ export const GlassesStatus = ({style}: {style?: ViewStyle}) => {
       if (!requirementsCheck) {
         return
       }
+      await CoreModule.connectDefault()
     } catch (error) {
       console.error("connect to glasses error:", error)
       showAlert("Connection Error", "Failed to connect to glasses. Please try again.", [{text: "OK"}])
     }
-    await CoreModule.connectDefault()
   }
 
   const handleConnectOrDisconnect = async () => {

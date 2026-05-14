@@ -1458,6 +1458,13 @@ struct ViewState {
         sgc?.findCompatibleDevices()
     }
 
+    func stopScan() {
+        controller?.stopScan()
+        sgc?.stopScan()
+        GlassesStore.shared.apply("core", "searching", false)
+        GlassesStore.shared.apply("core", "searchingController", false)
+    }
+
     func cleanup() {
         // Clean up transcriber resources
         transcriber?.shutdown()

@@ -1377,7 +1377,7 @@ class CoreManager {
             appId: String,
             size: String,
             webhookUrl: String,
-            authToken: String,
+            authToken: String?,
             compress: String,
             flash: Boolean,
             sound: Boolean
@@ -1580,6 +1580,13 @@ class CoreManager {
         initSGC(pendingWearable)
         Bridge.log("MAN: sgc initialized, calling findCompatibleDevices")
         sgc?.findCompatibleDevices()
+    }
+
+    fun stopScan() {
+        controller?.stopScan()
+        sgc?.stopScan()
+        GlassesStore.apply("core", "searching", false)
+        GlassesStore.apply("core", "searchingController", false)
     }
 
     // MARK: Cleanup

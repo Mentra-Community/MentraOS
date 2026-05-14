@@ -59,7 +59,6 @@ public final class MentraBluetoothSDK {
     public func setHeadUpAngle(_ angleDegrees: Int) async throws
     public func setScreenDisabled(_ disabled: Bool) async throws
     public func setGalleryMode(_ mode: MentraGalleryMode) async throws
-    public func setButtonMode(_ mode: MentraButtonMode) async throws
     public func setButtonPhotoSettings(_ settings: MentraButtonPhotoSettings) async throws
     public func setButtonVideoRecordingSettings(_ settings: MentraButtonVideoRecordingSettings) async throws
     public func setButtonCameraLed(enabled: Bool) async throws
@@ -152,8 +151,9 @@ Add typed public models before exposing the facade:
 - `MentraDiscoveredDevice`: `model`, `name`, optional `identifier`, optional `rssi`.
 - `MentraGlassesStatus`: current snapshot of connected, fully booted, battery, charging, model, firmware, serial, Wi-Fi, hotspot, head-up, controller, and signal state.
 - `MentraBluetoothStatus`: current snapshot of searching, mic, current mic, search results, Wi-Fi scan results, permission availability, and audio availability.
-- `MentraDisplayTextRequest`, `MentraDisplayEventRequest`, `MentraDashboardPositionRequest`, `MentraDashboardMenuItem`, `MentraPhotoRequest`, `MentraStreamRequest`, `MentraVideoRecordingRequest`, `MentraMicConfiguration`, `MentraBluetoothError`.
-- Settings models/enums for values currently routed through `DeviceStore.apply()`: `MentraGalleryMode`, `MentraButtonMode`, `MentraButtonPhotoSettings`, `MentraButtonVideoRecordingSettings`, `MentraCameraFov`, and `MentraMicPreference`.
+- `MentraDisplayTextRequest`, `MentraDisplayEventRequest`, `MentraDashboardPositionRequest`, `MentraDashboardMenuItem`, `MentraPhotoRequest`, `MentraStreamRequest`, `MentraStreamKeepAliveRequest`, `MentraVideoRecordingRequest`, `MentraMicConfiguration`, `MentraBluetoothError`.
+- Settings models/enums for values currently routed through `DeviceStore.apply()`: `MentraGalleryMode`, `MentraButtonPhotoSettings`, `MentraButtonPhotoSize`, `MentraButtonVideoRecordingSettings`, `MentraCameraFov`, and `MentraMicPreference`.
+- Typed value enums should reflect device-specific capability boundaries rather than raw string payloads: `MentraPhotoSize` includes `full` for app-requested uploads, `MentraButtonPhotoSize` intentionally does not; `MentraPhotoCompression` is `none` / `medium` / `heavy`; `MentraRgbLedAction` and `MentraRgbLedColor` represent the Mentra Live/K900 RGB ring surface; stream request fields are typed while the actual streaming protocol is selected from the URL prefix.
 
 Prefer Swift structs and enums with clear defaults. Objective-C compatibility is not a v1 requirement unless a customer asks for it.
 

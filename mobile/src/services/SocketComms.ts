@@ -1,22 +1,30 @@
 import CoreModule from "@mentra/bluetooth-sdk"
+import {
+  displayProcessor,
+  localMiniappRuntime,
+  localSttFallbackCoordinator,
+  micStateCoordinator,
+  throttle,
+} from "@mentra/island"
 
-import {useNavigationStore} from "@/stores/navigation"
 import audioPlaybackService from "@/services/AudioPlaybackService"
-import {displayProcessor} from "@mentra/island"
-import {localMiniappRuntime} from "@mentra/island"
-import {localSttFallbackCoordinator} from "@mentra/island"
 import mantle from "@/services/MantleManager"
-import {micStateCoordinator} from "@mentra/island"
+import restComms from "@/services/RestComms"
+import {
+  normalizePhotoCompression,
+  normalizePhotoSize,
+  normalizeRgbLedAction,
+  normalizeRgbLedColor,
+} from "@/services/SocketComms.normalizers"
 import udp from "@/services/UdpManager"
 import ws from "@/services/WebSocketManager"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {useDisplayStore} from "@/stores/display"
 import {useGlassesStore} from "@/stores/glasses"
-import {useSettingsStore, SETTINGS} from "@/stores/settings"
+import {useNavigationStore} from "@/stores/navigation"
+import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
-import restComms from "@/services/RestComms"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
-import {throttle} from "@mentra/island"
 
 class SocketComms {
   private static instance: SocketComms | null = null
@@ -109,9 +117,10 @@ class SocketComms {
     const glassesInfo = useGlassesStore.getState()
 
     // Always include WiFi info - null means "unknown", false means "explicitly disconnected"
+    const wifi = glassesInfo.wifi
     const wifiInfo = {
-      connected: glassesInfo.wifiConnected ?? null,
-      ssid: glassesInfo.wifiSsid ?? null,
+      connected: glassesInfo.wifiStatusKnown ? wifi.state === "connected" : null,
+      ssid: wifi.state === "connected" ? wifi.ssid : null,
     }
 
     const connected = glassesInfo.connected
@@ -541,9 +550,9 @@ class SocketComms {
     const requestId = msg.requestId ?? ""
     const appId = msg.appId ?? ""
     const webhookUrl = msg.webhookUrl ?? ""
-    const size = msg.size ?? "medium"
-    const authToken = msg.authToken ?? ""
-    const compress = msg.compress ?? "none"
+    const size = normalizePhotoSize(msg.size)
+    const authToken = typeof msg.authToken === "string" && msg.authToken.length > 0 ? msg.authToken : null
+    const compress = normalizePhotoCompression(msg.compress)
     const flash = msg.flash ?? true
     const sound = msg.sound ?? true
     console.log(
@@ -604,8 +613,8 @@ class SocketComms {
     CoreModule.rgbLedControl(
       msg.requestId,
       msg.packageName ?? null,
-      msg.action ?? "off",
-      msg.color ?? null,
+      normalizeRgbLedAction(msg.action),
+      normalizeRgbLedColor(msg.color),
       coerceNumber(msg.ontime, 1000),
       coerceNumber(msg.offtime, 0),
       coerceNumber(msg.count, 1),

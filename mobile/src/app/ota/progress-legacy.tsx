@@ -67,7 +67,7 @@ export default function OtaProgressScreen() {
   const otaProgress = useGlassesStore((state) => state.otaProgress)
   const otaUpdateAvailable = useGlassesStore((state) => state.otaUpdateAvailable)
   const glassesConnected = useGlassesStore((state) => state.connected)
-  const wifiConnected = useGlassesStore((state) => state.wifiConnected)
+  const wifiConnected = useGlassesStore((state) => state.wifi.state === "connected")
   const wifiStatusKnown = useGlassesStore((state) => state.wifiStatusKnown)
   const buildNumber = useGlassesStore((state) => state.buildNumber)
   const besFwVersion = useGlassesStore((state) => state.besFwVersion)

@@ -61,7 +61,7 @@ describe("otaStatus store field", () => {
 
 describe("wifiStatusKnown reset on disconnect", () => {
   it("resets wifiStatusKnown when connected becomes false", () => {
-    useGlassesStore.getState().setGlassesInfo({connected: true, wifiConnected: true})
+    useGlassesStore.getState().setGlassesInfo({connected: true, wifi: {state: "connected", ssid: "TestNetwork"}})
     expect(useGlassesStore.getState().wifiStatusKnown).toBe(true)
 
     useGlassesStore.getState().setGlassesInfo({connected: false})
@@ -72,11 +72,46 @@ describe("wifiStatusKnown reset on disconnect", () => {
     useGlassesStore.getState().setGlassesInfo({connected: true})
     useGlassesStore.getState().setGlassesInfo({wifiConnected: true, wifiSsid: "TestNetwork"})
     expect(useGlassesStore.getState().wifiStatusKnown).toBe(true)
+    expect(useGlassesStore.getState().wifi).toEqual({state: "connected", ssid: "TestNetwork"})
   })
 
   it("does not set wifiStatusKnown for non-wifi updates", () => {
     useGlassesStore.getState().setGlassesInfo({batteryLevel: 80})
     expect(useGlassesStore.getState().wifiStatusKnown).toBe(false)
+  })
+
+  it("keeps local IP optional for connected WiFi status", () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connected: true,
+      wifiConnected: true,
+      wifiSsid: "Mentra",
+    })
+
+    expect(useGlassesStore.getState().wifi).toEqual({state: "connected", ssid: "Mentra"})
+  })
+})
+
+describe("hotspot status store shape", () => {
+  it("maps complete legacy hotspot fields to the typed enabled state", () => {
+    useGlassesStore.getState().setGlassesInfo({
+      hotspotEnabled: true,
+      hotspotSsid: "Mentra Hotspot",
+      hotspotPassword: "password",
+      hotspotGatewayIp: "192.168.43.1",
+    })
+
+    expect(useGlassesStore.getState().hotspot).toEqual({
+      state: "enabled",
+      ssid: "Mentra Hotspot",
+      password: "password",
+      localIp: "192.168.43.1",
+    })
+  })
+
+  it("does not manufacture an unknown hotspot state from incomplete enabled fields", () => {
+    useGlassesStore.getState().setGlassesInfo({hotspotEnabled: true})
+
+    expect(useGlassesStore.getState().hotspot).toEqual({state: "disabled"})
   })
 })
 

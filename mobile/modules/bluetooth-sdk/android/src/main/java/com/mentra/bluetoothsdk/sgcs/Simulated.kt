@@ -64,10 +64,6 @@ class Simulated : SGCManager() {
         Bridge.log("sendButtonPhotoSettings")
     }
 
-    override fun sendButtonModeSetting() {
-        Bridge.log("sendButtonModeSetting")
-    }
-
     override fun sendButtonVideoRecordingSettings() {
         Bridge.log("sendButtonVideoRecordingSettings")
     }
@@ -163,6 +159,10 @@ class Simulated : SGCManager() {
 
     override fun findCompatibleDevices() {
         Bridge.log("findCompatibleDevices")
+    }
+
+    override fun stopScan() {
+        Bridge.log("stopScan")
     }
 
     override fun connectById(id: String) {

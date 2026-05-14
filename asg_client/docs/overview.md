@@ -36,11 +36,10 @@ Physical hardware → BES MCU (UART) → AsgClientService → BLE → Phone app 
 
 1. User presses the camera button on the glasses.
 2. BES MCU sends `cs_pho` (short press) or `cs_vdo` (long press) over UART.
-3. `K900CommandHandler.processK900Command` routes by button mode:
-   - **PHOTO mode** — `MediaCaptureService.takePhoto()` runs locally; the result is queued for sync.
-   - **APPS mode** — a `button_press` event is forwarded to the phone, which routes it to subscribed apps.
-4. If photo capture happened, it lands in the gallery and is exposed via the [camera web server](features/camera-web-server.md) for the phone to download.
-5. The phone uploads the photo to MentraOS Cloud over its own connection.
+3. `K900CommandHandler.processK900Command` forwards every press to the phone as a `button_press` event.
+4. The gallery/save-mode gate decides whether ASG Client also captures locally.
+5. If local capture happened, it lands in the gallery and is exposed via the [camera web server](features/camera-web-server.md) for the phone to download.
+6. The phone uploads the photo/video to MentraOS Cloud over its own connection.
 
 ## Key components
 

@@ -54,7 +54,7 @@ import {MINIMUM_OTA_STATUS_BUILD, OtaProgressMessages} from "@/app/ota/otaProgre
 
 const sb = (n: number) => String(n)
 
-const CoreModule = require("core").default
+const CoreModule = require("@mentra/bluetooth-sdk").default
 
 beforeEach(() => {
   jest.useFakeTimers()

@@ -1,6 +1,6 @@
 import CoreModule from "@mentra/bluetooth-sdk"
+import {displayProcessor as MockDisplayProcessor} from "@mentra/island"
 
-import MockDisplayProcessor from "@/services/DisplayProcessor"
 import {useDisplayStore} from "@/stores/display"
 
 jest.mock("@mentra/bluetooth-sdk", () => {
@@ -36,27 +36,9 @@ jest.mock("@/services/RestComms", () => ({
   },
 }))
 
-jest.mock("@/services/DisplayProcessor", () => ({
-  __esModule: true,
-  default: {
-    processDisplayEvent: jest.fn((msg) => ({
-      ...msg,
-      _processed: true,
-      _profile: "test",
-    })),
-  },
-}))
-
 jest.mock("@/services/AudioPlaybackService", () => ({__esModule: true, default: {}}))
 jest.mock("@/services/MantleManager", () => ({__esModule: true, default: {}}))
 jest.mock("@/services/UdpManager", () => ({__esModule: true, default: {cleanup: jest.fn()}}))
-jest.mock("@/stores/applets", () => ({
-  useAppletStatusStore: {
-    getState: () => ({
-      refreshApplets: jest.fn(),
-    }),
-  },
-}))
 jest.mock("@/utils/PermissionsUtils", () => ({
   PermissionFeatures: {MICROPHONE: "microphone"},
   checkFeaturePermissions: jest.fn(() => Promise.resolve(true)),

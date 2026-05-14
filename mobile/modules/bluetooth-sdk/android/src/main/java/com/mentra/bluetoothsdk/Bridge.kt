@@ -183,14 +183,44 @@ public class Bridge private constructor() {
 
         /** Send discovered device */
         @JvmStatic
-        fun sendDiscoveredDevice(deviceModel: String, deviceName: String) {
+        @JvmOverloads
+        fun sendDiscoveredDevice(
+                deviceModel: String,
+                deviceName: String,
+                deviceAddress: String = "",
+                rssi: Int? = null
+        ) {
             val searchResults =
-                    GlassesStore.store.getCategory("core")["searchResults"] as?
-                            List<Map<String, String>>
+                    (GlassesStore.store.getCategory("core")["searchResults"] as? List<*>)
+                            ?.mapNotNull { result ->
+                                (result as? Map<*, *>)?.entries
+                                        ?.mapNotNull { (key, value) ->
+                                            if (key is String && value != null) key to value else null
+                                        }
+                                        ?.toMap()
+                            }
                             ?: emptyList()
-            val newResult = mapOf("deviceModel" to deviceModel, "deviceName" to deviceName)
+            val id = "$deviceModel:$deviceName"
+            val newResult =
+                    buildMap<String, Any> {
+                        put("id", id)
+                        put("model", deviceModel)
+                        put("name", deviceName)
+                        if (deviceAddress.isNotBlank()) {
+                            put("address", deviceAddress)
+                        }
+                        rssi?.let { put("rssi", it) }
+                    }
             val allResults = searchResults + newResult
-            val uniqueResults = allResults.associateBy { it["deviceName"] }.values.toList()
+            val uniqueResults =
+                    allResults
+                            .asReversed()
+                            .distinctBy {
+                                val model = it["model"] ?: it["deviceModel"] ?: deviceModel
+                                val name = it["name"] ?: it["deviceName"] ?: return@distinctBy null
+                                "$model:$name"
+                            }
+                            .asReversed()
             GlassesStore.set("core", "searchResults", uniqueResults)
         }
 
@@ -257,9 +287,8 @@ public class Bridge private constructor() {
         fun sendPhotoError(requestId: String, errorCode: String, errorMessage: String) {
             val event = HashMap<String, Any>()
             event["type"] = "photo_response"
+            event["state"] = "error"
             event["requestId"] = requestId
-            event["photoUrl"] = ""
-            event["success"] = false
             event["errorCode"] = errorCode
             event["errorMessage"] = errorMessage
             event["timestamp"] = System.currentTimeMillis()
@@ -273,8 +302,10 @@ public class Bridge private constructor() {
             try {
                 val body = HashMap<String, Any>()
                 body["requestId"] = requestId
-                body["success"] = success
-                error?.let { body["error"] = it }
+                body["state"] = if (success) "success" else "error"
+                if (!success) {
+                    body["errorCode"] = error ?: "unknown_error"
+                }
                 sendTypedMessage("rgb_led_control_response", body)
             } catch (e: Exception) {
                 log("Bridge: Error sending rgb_led_control_response: $e")
@@ -341,11 +372,8 @@ public class Bridge private constructor() {
         /** Send WiFi status change */
         @JvmStatic
         fun sendWifiStatusChange(connected: Boolean, ssid: String?, localIp: String?) {
-            val event = HashMap<String, Any?>()
-            event["connected"] = connected
-            event["ssid"] = ssid
-            event["local_ip"] = localIp
-            sendTypedMessage("wifi_status_change", event as Map<String, Any>)
+            val status = WifiStatus.fromStoreFields(connected, ssid, localIp) ?: return
+            sendTypedMessage("wifi_status_change", status.toMap())
         }
 
         /** Send WiFi scan results */
@@ -391,13 +419,8 @@ public class Bridge private constructor() {
                 password: String,
                 gatewayIp: String
         ) {
-            val eventBody = HashMap<String, Any>()
-            eventBody["enabled"] = enabled
-            eventBody["ssid"] = ssid
-            eventBody["password"] = password
-            eventBody["local_ip"] = gatewayIp // Using gateway IP for consistency with iOS
-
-            sendTypedMessage("hotspot_status_change", eventBody as Map<String, Any>)
+            val status = HotspotStatus.fromStoreFields(enabled, ssid, password, gatewayIp) ?: return
+            sendTypedMessage("hotspot_status_change", status.toMap())
         }
 
         /** Send hotspot error - notifies React Native of hotspot failures */

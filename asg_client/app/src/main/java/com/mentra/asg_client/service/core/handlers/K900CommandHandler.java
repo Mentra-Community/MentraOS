@@ -146,6 +146,13 @@ public class K900CommandHandler {
                     handleShutdownCommand();
                     break;
 
+                case "android_control_led":
+                case "cs_swit":
+                case "cs_fbvol":
+                case "cs_batv":
+                    Log.d(TAG, "📦 Ignoring mirrored K900 command: " + command);
+                    break;
+
                 default:
                     Log.d(TAG, "📦 Unknown K900 command: " + command);
                     break;
@@ -1193,4 +1200,4 @@ public class K900CommandHandler {
             default: return "unknown";
         }
     }
-} 
+}

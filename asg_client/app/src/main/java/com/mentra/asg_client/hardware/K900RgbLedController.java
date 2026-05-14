@@ -146,11 +146,6 @@ public class K900RgbLedController {
                 getColorName(ledIndex), ontime, offtime, count, brightness));
 
         try {
-            // Set brightness first if not at max
-            if (brightness < 255) {
-                setBrightness(brightness);
-            }
-
             // Build K900 protocol command
             JSONObject k900Command = new JSONObject();
             k900Command.put("C", K900_CMD_RGB_LED_ON);
@@ -240,11 +235,6 @@ public class K900RgbLedController {
         }
 
         try {
-            // Set brightness first if not at max
-            if (brightness < 255) {
-                setBrightness(brightness);
-            }
-
             // Build K900 protocol command for white flash
             JSONObject k900Command = new JSONObject();
             k900Command.put("C", K900_CMD_RGB_LED_ON);
@@ -298,11 +288,6 @@ public class K900RgbLedController {
         }
 
         try {
-            // Set brightness first if not at max
-            if (brightness < 255) {
-                setBrightness(brightness);
-            }
-
             // Build K900 protocol command for solid white LED
             JSONObject k900Command = new JSONObject();
             k900Command.put("C", K900_CMD_RGB_LED_ON);

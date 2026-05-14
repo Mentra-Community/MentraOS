@@ -5,6 +5,7 @@
     "": {
       "name": "mentraos",
       "dependencies": {
+        "@babel/runtime": "^7.28.6",
         "@config-plugins/react-native-webrtc": "^13.0.0",
         "@douglowder/expo-av-route-picker-view": "^0.0.5",
         "@dr.pogodin/react-native-fs": "^2.37.0",

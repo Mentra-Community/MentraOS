@@ -82,7 +82,7 @@ searchResults, wifiScanResults, micRanking, lastLog
 default_wearable, pending_wearable, device_name, device_address
 brightness, auto_brightness, dashboard_height, dashboard_depth
 head_up_angle, preferred_mic, lc3_frame_size
-button_mode, button_photo_size, button_camera_led
+button_photo_size, button_camera_led
 button_max_recording_time, button_video_width, button_video_height
 button_video_fps, gallery_mode, screen_disabled, sensing_enabled
 ```
@@ -310,7 +310,6 @@ Remove MentraOS-specific side effects from Bluetooth SDK. The `apply()` function
 "bluetooth" to "dashboard_menu_apps" -> sgc?.setDashboardMenu(...)
 "bluetooth" to "gallery_mode" -> sgc?.sendGalleryMode()
 "bluetooth" to "screen_disabled" -> sgc?.exit()/clearDisplay()
-"bluetooth" to "button_mode" -> sgc?.sendButtonModeSetting()
 "bluetooth" to "button_photo_size" -> sgc?.sendButtonPhotoSettings()
 "bluetooth" to "button_camera_led" -> sgc?.sendButtonCameraLedSetting()
 "bluetooth" to "button_max_recording_time" -> sgc?.sendButtonMaxRecordingTime()
@@ -888,7 +887,7 @@ Create a stable Kotlin/Java facade, as detailed in the Android native API plan. 
 - Public callers use typed commands and typed callbacks, not `DeviceManager`, `DeviceStore`, `Bridge`, raw categories, or `update("bluetooth", ...)`.
 - The base v1 API should cover scan/connect/disconnect/forget, status snapshots, display text/event/clear/dashboard, core display settings, mic state, and permission helpers.
 - Advanced features such as camera/gallery, media streaming, OTA, local STT, RGB LEDs, controller pairing, and diagnostics should be clearly grouped behind capability APIs or advanced methods.
-- Settings currently driven by `DeviceStore.apply()` need typed methods or typed settings objects before blob sync can be removed: brightness, auto brightness, dashboard height/depth/menu, head-up angle, screen disabled, gallery mode, button mode, button photo settings, button video settings, button camera LED, button max recording time, camera FOV, preferred mic, mic routing, and offline caption/STT flags.
+- Settings currently driven by `DeviceStore.apply()` need typed methods or typed settings objects before blob sync can be removed: brightness, auto brightness, dashboard height/depth/menu, head-up angle, screen disabled, gallery mode, button photo settings, button video settings, button camera LED, button max recording time, camera FOV, preferred mic, mic routing, and offline caption/STT flags.
 
 Android extraction tasks:
 
@@ -910,7 +909,7 @@ Create a stable Swift facade, as detailed in the iOS native API plan. At this le
 - Public callers use Swift structs/enums and delegate callbacks, not `DeviceManager`, `DeviceStore`, `Bridge`, raw categories, or `update("bluetooth", ...)`.
 - The base v1 API should cover scan/connect/disconnect/forget, status snapshots, display text/event/clear/dashboard, core display settings, mic state, and permission/capability helpers.
 - Advanced features such as camera/gallery, media streaming, OTA, local STT, RGB LEDs, controller pairing, and diagnostics should be clearly grouped behind capability APIs or advanced methods.
-- Settings currently driven by `DeviceStore.apply()` need typed methods or typed settings objects before blob sync can be removed: brightness, auto brightness, dashboard height/depth/menu, head-up angle, screen disabled, gallery mode, button mode, button photo settings, button video settings, button camera LED, button max recording time, camera FOV, preferred mic, mic routing, and offline caption/STT flags.
+- Settings currently driven by `DeviceStore.apply()` need typed methods or typed settings objects before blob sync can be removed: brightness, auto brightness, dashboard height/depth/menu, head-up angle, screen disabled, gallery mode, button photo settings, button video settings, button camera LED, button max recording time, camera FOV, preferred mic, mic routing, and offline caption/STT flags.
 
 iOS extraction tasks:
 
