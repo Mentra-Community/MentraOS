@@ -165,7 +165,7 @@ export class MockTransport implements Transport {
 
   private log(...args: unknown[]): void {
     if (this.silent) return
-    // eslint-disable-next-line no-console
+
     console.log(LOG_PREFIX, ...args)
   }
 }
@@ -185,7 +185,9 @@ function syntheticDataFor(requestType: string): unknown {
       }
 
     case MiniappRequestType.LOCATION_POLL:
-      return {lat: 0, lng: 0, accuracy: 0, timestamp: Date.now()}
+      // San Francisco fallback — using 0,0 puts dev sessions in the
+      // Atlantic, which makes maps/navigation unusable in the WebView.
+      return {lat: 37.7956, lng: -122.3933, accuracy: 0, timestamp: Date.now()}
 
     case MiniappRequestType.STORAGE_GET:
       return {value: null}

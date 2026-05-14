@@ -39,6 +39,23 @@ export enum MiniappRequestType {
   /** One-shot location poll. */
   LOCATION_POLL = "miniapp_location_poll",
 
+  /** Start a turn-by-turn navigation trip. Android only. */
+  NAVIGATION_START = "miniapp_navigation_start",
+  /** Stop the active navigation trip (if any). */
+  NAVIGATION_STOP = "miniapp_navigation_stop",
+  /** Dev-only: nudge the simulator off-route to test rerouting. Android sim only. */
+  NAVIGATION_DEVIATE = "miniapp_navigation_deviate",
+  /** Dev-only: lock simulated locations to the wrong sidewalk for pivot-trigger testing. */
+  NAVIGATION_SET_WRONG_SIDEWALK = "miniapp_navigation_set_wrong_sidewalk",
+  /** Dev-only: take over the simulator and walk a polyline with crossings stripped. */
+  NAVIGATION_SET_SKIP_CROSSINGS = "miniapp_navigation_set_skip_crossings",
+  /** Snapshot of the active trip (or null). Lets a miniapp opening mid-trip hydrate. */
+  NAVIGATION_GET_STATE = "miniapp_navigation_get_state",
+  /** Compute a route without starting a trip. Replaces hand-rolled Directions calls. */
+  NAVIGATION_COMPUTE_ROUTE = "miniapp_navigation_compute_route",
+  /** Trigger the Google Nav SDK T&C dialog up-front so start() doesn't have to. */
+  NAVIGATION_REQUEST_PERMISSION = "miniapp_navigation_request_permission",
+
   /** Phone-local simple storage. */
   STORAGE_GET = "miniapp_storage_get",
   STORAGE_SET = "miniapp_storage_set",
@@ -120,6 +137,14 @@ export enum MiniappResponseType {
   /** Reply to PING. SDK auto-handles this; developers never see it. */
   PONG = "miniapp_pong",
 
+  /**
+   * Push: phone is about to tear down the miniapp's session. Gives the SDK
+   * a brief window (~50ms grace on the phone side) to fire one last
+   * `sendOneShot` before the transport closes — used to flush final
+   * cleanup like `display.clear()`. Synchronous handlers only.
+   */
+  WILL_DISCONNECT = "miniapp_will_disconnect",
+
   /** Async error not tied to a specific request. */
   ERROR = "miniapp_error",
 }
@@ -147,6 +172,12 @@ export enum MiniappStreamType {
 
   // Phone sensors
   LOCATION_UPDATE = "location_update",
+  /** Compass heading in degrees (0=N, 90=E). Android only. */
+  HEADING_UPDATE = "heading_update",
+  /** Turn-by-turn navigation event (maneuver / rerouting / arrived / error). */
+  NAVIGATION_UPDATE = "navigation_update",
+  /** Active navigation route polyline — full path, fired once per route build. */
+  NAVIGATION_ROUTE = "navigation_route",
   PHONE_NOTIFICATION = "phone_notification",
   /**
    * A previously-posted notification was dismissed by the user.

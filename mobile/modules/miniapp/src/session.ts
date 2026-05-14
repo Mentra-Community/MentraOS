@@ -14,12 +14,7 @@
 
 import {EventEmitter} from "eventemitter3"
 
-import {
-  makeRequestId,
-  MiniappEnvelope,
-  parseEnvelope,
-  serializeEnvelope,
-} from "./envelope"
+import {makeRequestId, MiniappEnvelope, parseEnvelope, serializeEnvelope} from "./envelope"
 import {getMentraOSGlobals, MiniappColorScheme} from "./globals"
 import {MiniappErrorCode, MiniappRequestType, MiniappResponseType} from "./protocol"
 import {createTransport, CreateTransportOptions} from "./transport/auto"
@@ -29,11 +24,13 @@ import {DashboardAPI} from "./modules/dashboard"
 import {DisplayManager} from "./modules/display"
 import {EventManager, type UnsubscribeFn} from "./modules/events"
 import {GlassesModule} from "./modules/glasses"
+import {HeadingModule} from "./modules/heading"
 import {ImuModule} from "./modules/imu"
 import {InputModule} from "./modules/input"
 import {LedModule} from "./modules/led"
 import {LocationModule} from "./modules/location"
 import {MicModule} from "./modules/mic"
+import {NavigationModule} from "./modules/navigation"
 import {PermissionsModule} from "./modules/permissions"
 import {PhoneModule} from "./modules/phone"
 import {TranscriptionModule} from "./modules/transcription"
@@ -120,6 +117,14 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 10_000
 type SessionEmitterEvents = {
   ready: () => void
   error: (error: Error) => void
+  /**
+   * Last-chance hook before the transport closes. Fires when the phone
+   * sends WILL_DISCONNECT, or when this session calls `disconnect()`
+   * locally. Handlers run synchronously and may issue one final
+   * `sendOneShot` (e.g. `display.clear()`); async work won't complete
+   * before the socket closes.
+   */
+  beforeDisconnect: (reason: string) => void
   disconnect: (reason: string) => void
   visibility: (v: MiniappVisibility) => void
   capabilities: (cap: GlassesCapabilities | null) => void
@@ -143,11 +148,13 @@ export class MiniappSession {
   public readonly camera: CameraModule
   public readonly dashboard: DashboardAPI
   public readonly glasses: GlassesModule
+  public readonly heading: HeadingModule
   public readonly imu: ImuModule
   public readonly input: InputModule
   public readonly led: LedModule
   public readonly location: LocationModule
   public readonly mic: MicModule
+  public readonly navigation: NavigationModule
   public readonly permissions: PermissionsModule
   public readonly phone: PhoneModule
   public readonly storage: SimpleStorage
@@ -205,11 +212,13 @@ export class MiniappSession {
     this.dashboard = new DashboardAPI(this)
     this.display = new DisplayManager(this)
     this.glasses = new GlassesModule(this)
+    this.heading = new HeadingModule(this)
     this.imu = new ImuModule(this)
     this.input = new InputModule(this)
     this.led = new LedModule(this)
     this.location = new LocationModule(this)
     this.mic = new MicModule(this)
+    this.navigation = new NavigationModule(this)
     this.permissions = new PermissionsModule(this)
     this.phone = new PhoneModule(this)
     this.storage = new SimpleStorage(this)
@@ -320,6 +329,14 @@ export class MiniappSession {
   disconnect(): void {
     if (this.disposed) return
     this.disposed = true
+    // Give listeners one synchronous chance to flush final messages
+    // (e.g. display.clear()) before we tear down the transport.
+    try {
+      this.emitter.emit("beforeDisconnect", "disconnect called")
+    } catch (err) {
+      // A throwing handler must not block teardown.
+      console.warn("[MiniappSession] beforeDisconnect handler threw:", err)
+    }
     this.failAllPending({code: MiniappErrorCode.REQUEST_ABORTED, message: "Session disconnected"})
     try {
       this.transport.close()
@@ -371,6 +388,18 @@ export class MiniappSession {
 
   off<K extends keyof SessionEmitterEvents>(event: K, handler: SessionEmitterEvents[K]): void {
     this.emitter.off(event, handler as (...args: unknown[]) => void)
+  }
+
+  /**
+   * Last-chance hook before the transport closes. Fires either when the
+   * phone notifies the session of an imminent disconnect (~50ms grace
+   * window before the socket is torn down) or when this session's
+   * `disconnect()` is called locally. Use it to flush final cleanup
+   * messages — e.g. `display.clear()` — synchronously. Async work
+   * started here will not complete before the socket closes.
+   */
+  onBeforeDisconnect(handler: (reason: string) => void): () => void {
+    return this.on("beforeDisconnect", handler)
   }
 
   onVisibilityChange(handler: (v: MiniappVisibility) => void): () => void {
@@ -448,13 +477,7 @@ export class MiniappSession {
       }
 
       case MiniappResponseType.SPEAKER_STATE: {
-        const state = payload.state as
-          | "idle"
-          | "loading"
-          | "playing"
-          | "stopped"
-          | "error"
-          | undefined
+        const state = payload.state as "idle" | "loading" | "playing" | "stopped" | "error" | undefined
         if (!state) return
         const event = {
           state,
@@ -528,6 +551,16 @@ export class MiniappSession {
           pending.reject(err)
         } else {
           pending.resolve(payload.data ?? null)
+        }
+        return
+      }
+
+      case MiniappResponseType.WILL_DISCONNECT: {
+        const reason = (payload.reason as string | undefined) ?? "phone unregistering"
+        try {
+          this.emitter.emit("beforeDisconnect", reason)
+        } catch (err) {
+          console.warn("[MiniappSession] beforeDisconnect handler threw:", err)
         }
         return
       }

@@ -7,10 +7,14 @@ import LeftEdgeBackSwipe from "@/components/miniapp/LeftEdgeBackSwipe"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useStressTestStore} from "@/stores/stressTest"
-import {devServerBridge} from "@mentra/island"
-import {localDisplayManager} from "@mentra/island"
-import {localMiniappRuntime} from "@mentra/island"
-import {webviewBridge as miniComms, miniappRunningRegistry, buildMiniappGlobalsScript} from "@mentra/island"
+import {
+  devServerBridge,
+  localDisplayManager,
+  localMiniappRuntime,
+  webviewBridge as miniComms,
+  miniappRunningRegistry,
+  buildMiniappGlobalsScript,
+} from "@mentra/island"
 
 const BEFORE_EVICT_TIMEOUT_MS = 500
 
@@ -65,11 +69,7 @@ export type MountDevManifest = {
 
 type MiniappHostAPI = {
   mount(packageName: string, bundleUri: string, options?: MiniappMountOptions): void
-  mountDev(
-    packageName: string,
-    devUrl: string,
-    options?: MiniappMountOptions,
-  ): Promise<MountDevManifest | undefined>
+  mountDev(packageName: string, devUrl: string, options?: MiniappMountOptions): Promise<MountDevManifest | undefined>
   unmount(packageName: string): void
   setForeground(packageName: string, callbacks?: {onClose?: () => void; onBack?: () => void}): void
   setBackground(packageName: string): void
@@ -188,12 +188,17 @@ export default function MiniappHost() {
       //
       // Returns the parsed manifest (if fetch succeeded) so callers can feed
       // hardwareRequirements into the applets store for compatibility checks.
-      let manifest: MountDevManifest | undefined
-      try {
-        const res = await fetch(`${devUrl.replace(/\/$/, "")}/miniapp.json`)
-        manifest = (await res.json()) as MountDevManifest
-      } catch (err) {
-        console.warn(`MiniappHost: failed to fetch ${devUrl}/miniapp.json`, err)
+      let manifest: MountDevManifest | undefined = options?.manifest
+      if (!manifest) {
+        try {
+          const controller = new AbortController()
+          const timer = setTimeout(() => controller.abort(), 1500)
+          const res = await fetch(`${devUrl.replace(/\/$/, "")}/miniapp.json`, {signal: controller.signal})
+          clearTimeout(timer)
+          manifest = (await res.json()) as MountDevManifest
+        } catch (err) {
+          console.warn(`MiniappHost: failed to fetch ${devUrl}/miniapp.json`, err)
+        }
       }
 
       setApps((prev) => {
@@ -240,25 +245,34 @@ export default function MiniappHost() {
   }, [])
 
   const unmount = useCallback((packageName: string) => {
-    setApps((prev) => {
-      const next = new Map(prev)
-      next.delete(packageName)
-      return next
+    // Graceful path: notify the miniapp first so its `beforeDisconnect`
+    // handlers can flush a final message (e.g. `display.clear()`),
+    // wait the 50ms grace, then tear the WebView down. Sync teardown
+    // would race the heads-up out the door before the miniapp could
+    // respond on its still-open transport.
+    void localMiniappRuntime.gracefullyUnregisterApp(packageName, "miniapp unmounted").finally(() => {
+      setApps((prev) => {
+        const next = new Map(prev)
+        next.delete(packageName)
+        return next
+      })
+      webViewRefs.current.delete(packageName)
+      canGoBackMap.current.delete(packageName)
+      canGoBackListeners.current.delete(packageName)
+      setCanGoBackState((m) => {
+        if (!m.has(packageName)) return m
+        const next = new Map(m)
+        next.delete(packageName)
+        return next
+      })
+      miniComms.setWebViewMessageHandler(packageName, undefined)
+      miniappRunningRegistry.remove(packageName)
+      // Display teardown is handled inside gracefullyUnregisterApp →
+      // unregisterApp → localDisplayManager.onUnmount; calling it
+      // again here would re-push the saved coreAppDisplay snapshot
+      // and cause a flicker.
+      devServerBridge.disconnect(packageName)
     })
-    webViewRefs.current.delete(packageName)
-    canGoBackMap.current.delete(packageName)
-    canGoBackListeners.current.delete(packageName)
-    setCanGoBackState((m) => {
-      if (!m.has(packageName)) return m
-      const next = new Map(m)
-      next.delete(packageName)
-      return next
-    })
-    miniComms.setWebViewMessageHandler(packageName, undefined)
-    localMiniappRuntime.unregisterApp(packageName)
-    miniappRunningRegistry.remove(packageName)
-    localDisplayManager.onUnmount(packageName)
-    devServerBridge.disconnect(packageName)
   }, [])
 
   const goBackInWebView = useCallback((packageName: string): boolean => {
@@ -610,13 +624,7 @@ export default function MiniappHost() {
               webviewDebuggingEnabled={__DEV__}
               style={{flex: 1, backgroundColor: theme.colors.background}}
             />
-            {isFg && (
-              <MiniappSplash
-                iconUrl={app.iconUrl}
-                bgColor={theme.colors.background}
-                isLoaded={app.isLoaded}
-              />
-            )}
+            {isFg && <MiniappSplash iconUrl={app.iconUrl} bgColor={theme.colors.background} isLoaded={app.isLoaded} />}
             {isFg && <LeftEdgeBackSwipe packageName={app.packageName} onBack={app.onBack} />}
           </View>
         )
@@ -624,4 +632,3 @@ export default function MiniappHost() {
     </View>
   )
 }
-

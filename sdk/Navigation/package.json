@@ -1,0 +1,25 @@
+{
+  "name": "navigation-miniapp",
+  "private": true,
+  "version": "1.0.6",
+  "scripts": {
+    "dev": "mentra-miniapp dev",
+    "build": "bun run build.ts",
+    "release": "mentra-miniapp release",
+    "pack": "mentra-miniapp pack",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@mentra/miniapp": "workspace:*",
+    "liquid-glass-react": "^1.1.1",
+    "lucide-react": "^0.511.0",
+    "motion": "^12.38.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@mentra/miniapp-cli": "workspace:*",
+    "bun-plugin-tailwind": "^0.1.2",
+    "tailwindcss": "^4.2.4"
+  }
+}

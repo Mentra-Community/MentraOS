@@ -154,6 +154,14 @@ class LocalDisplayManager {
     if (prevCore) {
       this.pendingThrottledByApp.delete(prevCore)
     }
+
+    // No core app means no saved frame to restore on the next unmount.
+    // Without this, the previous core's last frame can flicker back onto
+    // the glasses when the user-initiated clear is followed by an
+    // onUnmount that still finds a populated coreAppDisplay.
+    if (packageName === null) {
+      this.coreAppDisplay = null
+    }
   }
 
   /**
@@ -347,7 +355,9 @@ class LocalDisplayManager {
     const rawEvent: Record<string, unknown> = {
       view: payload.view ?? "main",
       layout: payload.layout,
-      durationMs: payload.durationMs,
+    }
+    if (payload.durationMs !== undefined) {
+      rawEvent.durationMs = payload.durationMs
     }
     const expiresAt = payload.durationMs ? this.now() + payload.durationMs : null
     this.sendToNative(packageName, rawEvent, expiresAt)

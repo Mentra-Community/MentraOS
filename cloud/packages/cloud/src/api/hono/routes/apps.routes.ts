@@ -363,7 +363,7 @@ async function startApp(c: AppContext) {
 
     // Broadcast state change
     try {
-      userSession.appManager.broadcastAppState();
+      userSession.appManager.scheduleBroadcastAppState();
     } catch (e) {
       logger.warn({ e }, "Failed to broadcast app state");
     }
@@ -468,7 +468,7 @@ async function installApp(c: AppContext) {
     // Broadcast state change if session exists
     if (userSession) {
       try {
-        userSession.appManager.broadcastAppState();
+        userSession.appManager.scheduleBroadcastAppState({ refreshInstalledApps: true });
       } catch (e) {
         logger.warn({ e }, "Failed to broadcast app state");
       }
@@ -507,12 +507,12 @@ async function uninstallApp(c: AppContext) {
     user.installedApps = user.installedApps.filter((a: { packageName: string }) => a.packageName !== packageName);
     await user.save();
 
-    // Stop the app if running
-    // NOTE: stopApp() already calls broadcastAppState() internally,
-    // so we do NOT call it again here to avoid duplicate APP_STATE_CHANGE messages.
+    // Stop the app if running, then refresh the installed-app cache because
+    // uninstall changes the app list, not just running state.
     if (userSession) {
       try {
         await userSession.appManager.stopApp(packageName);
+        userSession.appManager.scheduleBroadcastAppState({ refreshInstalledApps: true });
       } catch (e) {
         logger.warn(e, "Error stopping app during uninstall");
       }

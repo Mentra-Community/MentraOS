@@ -1,5 +1,7 @@
 import AVKit
+import CoreLocation
 import ExpoModulesCore
+import GoogleNavigation
 import Photos
 
 /// User-visible album in Apple Photos for glasses sync (matches dedicated-folder behavior on Android).
@@ -19,7 +21,15 @@ public class CrustModule: Module {
             "onChange",
             "phone_notification",
             "phone_notification_dismissed",
-            "captions_tester_incident"
+            "captions_tester_incident",
+            "onNavManeuver",
+            "onNavRerouting",
+            "onNavArrived",
+            "onNavError",
+            "onNavOffRoute",
+            "onNavLocation",
+            "onNavRoute",
+            "onHeading"
         )
 
         Function("hello") {
@@ -30,6 +40,101 @@ public class CrustModule: Module {
             self.sendEvent("onChange", [
                 "value": value,
             ])
+        }
+
+        AsyncFunction("requestNavigationPermission") { () -> [String: Any] in
+            await withCheckedContinuation { continuation in
+                NavigationManager.shared.requestPermission { accepted in
+                    continuation.resume(returning: ["ok": true, "accepted": accepted])
+                }
+            }
+        }
+
+        AsyncFunction("startNavigation") { (lat: Double, lng: Double, options: [String: Any]?) -> [String: Any] in
+            let simulate = options?["simulate"] as? Bool ?? false
+            let speedMultiplier = options?["speedMultiplier"] as? Double ?? 1.0
+            let mode = options?["mode"] as? String ?? "driving"
+            // Opt-in: when > 0, the NavigationManager forces a reroute as
+            // soon as the user is this many meters past a pivot they
+            // didn't take. nil disables the check entirely.
+            let missedTurnRerouteMeters: Double? = {
+                if let d = options?["missedTurnRerouteMeters"] as? Double { return d > 0 ? d : nil }
+                if let i = options?["missedTurnRerouteMeters"] as? Int { return i > 0 ? Double(i) : nil }
+                return nil
+            }()
+
+            var stops: [(lat: Double, lng: Double)] = []
+            if let stopsArr = options?["stops"] as? [[String: Double]] {
+                stops = stopsArr.compactMap { s in
+                    guard let slat = s["lat"], let slng = s["lng"] else { return nil }
+                    return (lat: slat, lng: slng)
+                }
+            }
+            if stops.isEmpty { stops = [(lat: lat, lng: lng)] }
+
+            return await withCheckedContinuation { continuation in
+                NavigationManager.shared.start(
+                    stops: stops,
+                    mode: mode,
+                    simulate: simulate,
+                    speedMultiplier: speedMultiplier,
+                    missedTurnRerouteMeters: missedTurnRerouteMeters,
+                    onEvent: { [weak self] payload in
+                        guard let self else { return }
+                        let kind = payload["kind"] as? String ?? ""
+                        switch kind {
+                        case "maneuver": self.sendEvent("onNavManeuver", payload)
+                        case "rerouting": self.sendEvent("onNavRerouting", payload)
+                        case "arrived": self.sendEvent("onNavArrived", payload)
+                        case "off_route": self.sendEvent("onNavOffRoute", payload)
+                        case "error": self.sendEvent("onNavError", payload)
+                        default: break
+                        }
+                    },
+                    onLocation: { [weak self] payload in
+                        self?.sendEvent("onNavLocation", payload)
+                    },
+                    onRoute: { [weak self] payload in
+                        self?.sendEvent("onNavRoute", payload)
+                    }
+                ) { ok, error in
+                    var result: [String: Any] = ["ok": ok]
+                    if let error { result["error"] = error }
+                    continuation.resume(returning: result)
+                }
+            }
+        }
+
+        AsyncFunction("stopNavigation") { () -> [String: Any] in
+            NavigationManager.shared.stop()
+            return ["ok": true]
+        }
+
+        AsyncFunction("simulateDeviation") { (offsetMeters: Double?) -> [String: Any] in
+            NavigationManager.shared.simulateDeviation(offsetMeters: offsetMeters ?? 50)
+            return ["ok": true]
+        }
+
+        // iOS doesn't implement the dev toggles yet. Return an explicit
+        // error so the JS side can surface "not supported" instead of
+        // silently believing the call succeeded.
+        AsyncFunction("setWrongSidewalkOffset") { (_: Bool) -> [String: Any] in
+            return ["ok": false, "error": "Not implemented on iOS"]
+        }
+        AsyncFunction("setSkipCrossings") { (_: Bool) -> [String: Any] in
+            return ["ok": false, "error": "Not implemented on iOS"]
+        }
+
+        AsyncFunction("startHeading") { () -> [String: Any] in
+            HeadingManager.shared.start { [weak self] degrees in
+                self?.sendEvent("onHeading", ["degrees": degrees])
+            }
+            return ["ok": true]
+        }
+
+        AsyncFunction("stopHeading") { () -> [String: Any] in
+            HeadingManager.shared.stop()
+            return ["ok": true]
         }
 
         // Location:
@@ -290,6 +395,7 @@ public class CrustModule: Module {
             NSLog("CrustModule: Successfully saved to gallery with proper creation date")
             return ["success": true, "identifier": assetIdentifier ?? ""]
         }
+
     }
 }
 

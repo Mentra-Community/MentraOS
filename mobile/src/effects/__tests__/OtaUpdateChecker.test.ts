@@ -4,7 +4,8 @@ import {
   checkVersionUpdateAvailable,
   getLatestVersionInfo,
   mergeOtaCheckWithGlasses,
-} from "../OtaUpdateChecker"
+  shouldShowCacheReadyPrompt,
+} from "@/effects/OtaUpdateChecker"
 
 describe("findMatchingMtkPatch", () => {
   const patches = [
@@ -48,9 +49,9 @@ describe("checkBesUpdate", () => {
     expect(checkBesUpdate(undefined, "17.26.1.14")).toBe(false)
   })
 
-  it("returns true when current version is unknown", () => {
-    expect(checkBesUpdate(firmware, undefined)).toBe(true)
-    expect(checkBesUpdate(firmware, "")).toBe(true)
+  it("returns false when current version is unknown", () => {
+    expect(checkBesUpdate(firmware, undefined)).toBe(false)
+    expect(checkBesUpdate(firmware, "")).toBe(false)
   })
 
   it("returns true when server version is newer", () => {
@@ -194,5 +195,66 @@ describe("mergeOtaCheckWithGlasses", () => {
     expect(merged.updateAvailable).toBe(true)
     expect(merged.updates.sort()).toEqual(["apk", "bes"].sort())
     expect(merged.latestVersionInfo?.versionCode).toBe(38)
+  })
+})
+
+describe("shouldShowCacheReadyPrompt", () => {
+  const cacheReady = {
+    available: true,
+    versionCode: 100,
+    versionName: "1.0",
+    updates: ["apk"],
+    totalSize: 5_000_000,
+    cacheReady: true,
+  }
+
+  const baseArgs = {
+    pathname: "/home",
+    glassesConnected: true,
+    glassesWifiConnected: true,
+    otaUpdateAvailable: cacheReady,
+  }
+
+  it("returns true when glasses report a cache-ready update on /home with WiFi", () => {
+    expect(shouldShowCacheReadyPrompt(baseArgs)).toBe(true)
+  })
+
+  it("returns false off the /home route", () => {
+    expect(shouldShowCacheReadyPrompt({...baseArgs, pathname: "/settings"})).toBe(false)
+    expect(shouldShowCacheReadyPrompt({...baseArgs, pathname: null})).toBe(false)
+  })
+
+  it("returns false when glasses are not connected", () => {
+    expect(shouldShowCacheReadyPrompt({...baseArgs, glassesConnected: false})).toBe(false)
+  })
+
+  it("returns false when glasses WiFi is offline", () => {
+    expect(shouldShowCacheReadyPrompt({...baseArgs, glassesWifiConnected: false})).toBe(false)
+  })
+
+  it("returns false when otaUpdateAvailable is null/undefined", () => {
+    expect(shouldShowCacheReadyPrompt({...baseArgs, otaUpdateAvailable: null})).toBe(false)
+    expect(shouldShowCacheReadyPrompt({...baseArgs, otaUpdateAvailable: undefined})).toBe(false)
+  })
+
+  it("returns false when available is false", () => {
+    expect(shouldShowCacheReadyPrompt({...baseArgs, otaUpdateAvailable: {...cacheReady, available: false}})).toBe(false)
+  })
+
+  it("returns false when updates list is empty", () => {
+    expect(shouldShowCacheReadyPrompt({...baseArgs, otaUpdateAvailable: {...cacheReady, updates: []}})).toBe(false)
+  })
+
+  // The most important case: this is exactly the in-flow write produced by
+  // check-for-updates.tsx. Without the cacheReady gate it would resurrect the popup
+  // on the next return to /home (e.g. after a completed update + a re-check that
+  // found nothing).
+  it("returns false when cacheReady is not strictly true (in-flow check-for-updates write)", () => {
+    expect(shouldShowCacheReadyPrompt({...baseArgs, otaUpdateAvailable: {...cacheReady, cacheReady: false}})).toBe(
+      false,
+    )
+    expect(shouldShowCacheReadyPrompt({...baseArgs, otaUpdateAvailable: {...cacheReady, cacheReady: undefined}})).toBe(
+      false,
+    )
   })
 })

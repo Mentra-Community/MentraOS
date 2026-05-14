@@ -91,6 +91,7 @@ public class CoreModule: Module {
         AsyncFunction("update") { (category: String, values: [String: Any]) in
             await MainActor.run {
                 for (key, value) in values {
+                    if value is NSNull { continue }
                     GlassesStore.shared.apply(category, key, value)
                 }
             }

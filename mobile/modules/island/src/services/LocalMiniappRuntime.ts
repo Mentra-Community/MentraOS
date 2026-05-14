@@ -36,6 +36,7 @@ import type {DisplayPayload} from "./LocalDisplayManager"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
 import {getRuntimeHooks, ISLAND_SETTINGS_KEYS} from "../runtime/config"
+import type {NavUpdate, NavLocation, NavRoute} from "../runtime/config"
 
 // =============================================================================
 // Types
@@ -55,6 +56,32 @@ interface ConnectedMiniapp {
   installedManifest?: InstalledMiniappManifest
   /** Last speaker state pushed to this app. Used to dedup SPEAKER_STATE pushes. */
   speakerState: SpeakerStateValue
+  /**
+   * Location-tier rate this app is currently asking for via its
+   * `location_stream` subscription, or null if it hasn't asked for
+   * one. The aggregate tier handed to the host is the strictest
+   * (highest-accuracy) rate across all currently connected apps —
+   * see {@link LOCATION_RATE_PRIORITY}.
+   */
+  requestedLocationRate: string | null
+}
+
+/**
+ * Strictness ordering for `location_stream` rate values. Higher index =
+ * higher accuracy and higher power cost. The aggregate tier applied to
+ * the OS is the max of every connected miniapp's requested rate;
+ * miniapps that didn't ask for `location_stream` contribute nothing.
+ *
+ * If a miniapp passes a value we don't recognize, we treat it like the
+ * weakest known rate ("passive") rather than blanket-overwriting an
+ * active stronger request from another app.
+ */
+const LOCATION_RATE_PRIORITY = ["off", "passive", "low", "high", "realtime"] as const
+type LocationRate = (typeof LOCATION_RATE_PRIORITY)[number]
+function locationRateRank(rate: string | null | undefined): number {
+  if (!rate) return -1
+  const i = LOCATION_RATE_PRIORITY.indexOf(rate as LocationRate)
+  return i >= 0 ? i : LOCATION_RATE_PRIORITY.indexOf("passive")
 }
 
 const LOG_TAG = "LOCAL_MINIAPP"
@@ -90,9 +117,7 @@ const ALL_CANONICAL_PERMISSIONS = ["location", "microphone", "camera", "notifica
  * Build the {location, microphone, camera, notifications, calendar} record the
  * SDK's session.permissions module reads from. Missing types are false.
  */
-function computeDeclaredPermissionRecord(
-  manifest: InstalledMiniappManifest | undefined,
-): Record<string, boolean> {
+function computeDeclaredPermissionRecord(manifest: InstalledMiniappManifest | undefined): Record<string, boolean> {
   const record: Record<string, boolean> = {}
   for (const k of ALL_CANONICAL_PERMISSIONS) record[k] = false
   for (const perm of manifest?.permissions ?? []) {
@@ -403,7 +428,12 @@ class LocalMiniappRuntime {
       lastPongAt: Date.now(),
       installedManifest,
       speakerState: "idle",
+      requestedLocationRate: null,
     })
+    // If we just clobbered an existing entry, its requestedLocationRate is
+    // now gone — recompute so the aggregate doesn't include a stale rate.
+    // The WebView will re-SUBSCRIBE shortly and the rate will reappear.
+    this.recomputeLocationTier()
     this.ensurePingLoop()
   }
 
@@ -412,10 +442,7 @@ class LocalMiniappRuntime {
    * Used when the manifest is fetched asynchronously (dev miniapps) after the
    * miniapp has already CONNECTed — preserves existing subscriptions.
    */
-  public setInstalledManifest(
-    packageName: string,
-    installedManifest: InstalledMiniappManifest,
-  ): void {
+  public setInstalledManifest(packageName: string, installedManifest: InstalledMiniappManifest): void {
     const app = this.connectedApps.get(packageName)
     if (!app) return
     app.installedManifest = installedManifest
@@ -427,6 +454,31 @@ class LocalMiniappRuntime {
       type: MiniappResponseType.PERMISSIONS_UPDATE,
       permissions: computeDeclaredPermissionRecord(installedManifest),
     })
+  }
+
+  /**
+   * Graceful version of {@link unregisterApp}: notify the miniapp via
+   * `WILL_DISCONNECT`, wait ~50ms so its `beforeDisconnect` handlers can
+   * fire one last `sendOneShot` (e.g. `display.clear()`), then run the
+   * normal teardown. Use this for any disconnect path where the socket
+   * is still open. For ungraceful paths (transport already closed),
+   * call {@link unregisterApp} directly — the heads-up would be
+   * undeliverable anyway.
+   */
+  public async gracefullyUnregisterApp(packageName: string, reason = "unregistering"): Promise<void> {
+    const app = this.connectedApps.get(packageName)
+    if (!app) return
+
+    console.log(`${LOG_TAG}: gracefullyUnregisterApp(${packageName}) — sending WILL_DISCONNECT`)
+    this.sendToMiniapp(packageName, {
+      type: MiniappResponseType.WILL_DISCONNECT,
+      reason,
+    })
+    // 50 ms: imperceptible to the user, plenty of time for the SDK's
+    // synchronous `beforeDisconnect` handlers to flush a final
+    // sendOneShot through the still-open transport.
+    await new Promise<void>((resolve) => setTimeout(resolve, 50))
+    this.unregisterApp(packageName)
   }
 
   public unregisterApp(packageName: string): void {
@@ -451,12 +503,43 @@ class LocalMiniappRuntime {
     // Stop audio for this app
     getRuntimeHooks().audioPlayback?.stopForApp(packageName)
 
+    // Detach the per-app nav event forwarder but leave the native nav session
+    // running. The user may have just closed the mini-app UI and will reopen
+    // it; stopping the session here would kill an active trip mid-route.
+    // Navigation is only stopped when the mini-app explicitly calls
+    // navigation.stop() or when the trip arrives/errors naturally.
+    const navUnsub = this.navListeners.get(packageName)
+    if (navUnsub) {
+      navUnsub()
+      this.navListeners.delete(packageName)
+    }
+    // Keep activeNavApps entry intact so that if the app reconnects it can
+    // reattach listeners and resume. Entry is cleared by handleNavigationStop
+    // or naturally on arrived/error events.
+
+    // Recompute heading subscription — if this app was the last subscriber,
+    // the sensor will stop.
+    this.recomputeHeadingSubscription()
+
+    // Drop this app's location-tier request before recomputing so the
+    // aggregate falls back down if it was the strictest. Done before
+    // `connectedApps.delete` below so it doesn't matter that the iter
+    // in `recomputeLocationTier` is over connectedApps — clearing the
+    // field is enough.
+    app.requestedLocationRate = null
+    this.recomputeLocationTier()
+
     // Clean up any pending cloud requests from this app
     for (const [reqId, pending] of this.pendingCloudRequests) {
       if (pending.packageName === packageName) {
         this.pendingCloudRequests.delete(reqId)
       }
     }
+
+    // Release any display real estate this app held — if it owned the
+    // current on-glasses frame, this clears the glasses (or restores the
+    // core app's saved frame).
+    localDisplayManager.onUnmount(packageName)
 
     this.connectedApps.delete(packageName)
     this.recomputeMicRequirements()
@@ -537,6 +620,30 @@ class LocalMiniappRuntime {
       case MiniappRequestType.LOCATION_POLL:
         this.handleLocationPoll(packageName, requestId)
         break
+      case MiniappRequestType.NAVIGATION_START:
+        this.handleNavigationStart(packageName, payload, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_STOP:
+        this.handleNavigationStop(packageName, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_DEVIATE:
+        this.handleNavigationDeviate(packageName, payload, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_SET_WRONG_SIDEWALK:
+        this.handleNavigationSetWrongSidewalk(packageName, payload, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_SET_SKIP_CROSSINGS:
+        this.handleNavigationSetSkipCrossings(packageName, payload, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_GET_STATE:
+        this.handleNavigationGetState(packageName, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_COMPUTE_ROUTE:
+        this.handleNavigationComputeRoute(packageName, payload, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_REQUEST_PERMISSION:
+        this.handleNavigationRequestPermission(packageName, requestId)
+        break
       case MiniappRequestType.STORAGE_GET:
         this.handleStorageGet(packageName, payload, requestId)
         break
@@ -612,7 +719,7 @@ class LocalMiniappRuntime {
   private handleConnect(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
     console.log(`${LOG_TAG}: CONNECT from ${packageName}`)
 
-    const userId = (getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken)) || ""
+    const userId = getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken) || ""
 
     // Register if not already
     const existing = this.connectedApps.get(packageName)
@@ -625,9 +732,7 @@ class LocalMiniappRuntime {
     existing.lastPongAt = Date.now()
 
     // Read current glasses capabilities from the settings store
-    const defaultWearable = getRuntimeHooks().settings?.getSetting<DeviceTypes>(
-      ISLAND_SETTINGS_KEYS.defaultWearable,
-    )
+    const defaultWearable = getRuntimeHooks().settings?.getSetting<DeviceTypes>(ISLAND_SETTINGS_KEYS.defaultWearable)
     const capabilities = getModelCapabilities(defaultWearable || DeviceTypes.NONE)
 
     // Build the declared-permission record for the SDK's session.permissions
@@ -654,7 +759,26 @@ class LocalMiniappRuntime {
     const app = this.connectedApps.get(packageName)
     if (!app) return
 
-    const streams = (payload.subscriptions ?? payload.streams) as string[] | undefined
+    const rawStreams = (payload.subscriptions ?? payload.streams) as
+      | (string | {stream: string; rate?: string})[]
+      | undefined
+    // Normalize: objects like {stream: "location_stream", rate: "realtime"} → extract stream name
+    // "location_stream" is the rate-bearing alias for "location_update".
+    // The strictest rate wins when multiple `location_stream` entries appear
+    // in one SUBSCRIBE — the same rule we apply across apps.
+    let requestedLocationRate: string | null = null
+    const streams = rawStreams?.map((s) => {
+      if (typeof s === "object" && s !== null) {
+        if (s.stream === "location_stream") {
+          if (s.rate && locationRateRank(s.rate) > locationRateRank(requestedLocationRate)) {
+            requestedLocationRate = s.rate
+          }
+          return "location_update"
+        }
+        return s.stream
+      }
+      return s
+    }) as string[] | undefined
     if (!Array.isArray(streams)) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
@@ -683,12 +807,7 @@ class LocalMiniappRuntime {
     for (const stream of streams) {
       const required = permissionForStream(stream)
       if (required && !declaredTypes.has(required)) {
-        logPermissionNotDeclared(
-          packageName,
-          required,
-          `to subscribe to "${stream}"`,
-          `{"type": "${required}"}`,
-        )
+        logPermissionNotDeclared(packageName, required, `to subscribe to "${stream}"`, `{"type": "${required}"}`)
         this.sendResult(packageName, requestId, false, undefined, {
           code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
           message: `${required} permission not declared in miniapp.json (required for "${stream}"). Add {"type": "${required}"} to the "permissions" array.`,
@@ -725,6 +844,12 @@ class LocalMiniappRuntime {
 
     this.recomputeMicRequirements()
     this.updateCloudSubscriptions()
+    this.recomputeHeadingSubscription()
+    // Persist this app's requested rate (or clear it if SUBSCRIBE didn't
+    // include `location_stream` this time), then ask the host for the
+    // strictest rate across all connected apps.
+    app.requestedLocationRate = requestedLocationRate
+    this.recomputeLocationTier()
     this.sendResult(packageName, requestId, true)
 
     // Fire initial snapshot values for stateful streams so miniapps don't have
@@ -984,15 +1109,17 @@ class LocalMiniappRuntime {
         return
       }
 
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      })
+      // Try the OS cache first — usually instant — and only fall back to
+      // a fresh fix if the cache is empty. Use Low accuracy on the fresh
+      // path so we get a cell/wifi-tower fix in ~1s instead of waiting
+      // for full GPS warm-up.
+      const cached = await Location.getLastKnownPositionAsync({maxAge: 60_000})
+      const location = cached ?? (await Location.getCurrentPositionAsync({accuracy: Location.Accuracy.Low}))
 
       this.sendResult(packageName, requestId, true, {
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-        altitude: location.coords.altitude,
-        accuracy: location.coords.accuracy,
+        lat: location.coords.latitude,
+        lng: location.coords.longitude,
+        accuracy: location.coords.accuracy ?? undefined,
         timestamp: location.timestamp,
       })
     } catch (err) {
@@ -1005,12 +1132,346 @@ class LocalMiniappRuntime {
   }
 
   // ---------------------------------------------------------------------------
+  // Navigation
+  // ---------------------------------------------------------------------------
+
+  /** packageName → unsubscribe fn for that app's nav event forwarder. */
+  private navListeners = new Map<string, () => void>()
+  /** Set of packageNames that have called navigation.start() and not yet stop(). */
+  private activeNavApps = new Set<string>()
+
+  /**
+   * Heading is a sensor stream — start the native compass when any mini
+   * app is subscribed to "heading_update", stop it when none are.
+   */
+  private headingUnsub: (() => void) | null = null
+  private recomputeHeadingSubscription(): void {
+    const wantsHeading = this.streamSubscribers.has(MiniappStreamType.HEADING_UPDATE)
+    if (wantsHeading && !this.headingUnsub) {
+      // Heading is host-supplied via runtime hooks; if the host hasn't wired
+      // it the subscription is a no-op and no events fire.
+      const heading = getRuntimeHooks().heading
+      if (heading) {
+        this.headingUnsub = heading.addListener((degrees: number) => {
+          this.forwardEvent(MiniappStreamType.HEADING_UPDATE, {degrees})
+        })
+      }
+    } else if (!wantsHeading && this.headingUnsub) {
+      this.headingUnsub()
+      this.headingUnsub = null
+    }
+  }
+
+  /**
+   * Last rate we asked the host for. Lets us skip the cross-process call
+   * when nothing actually changed (most SUBSCRIBE / unregister churn
+   * leaves the aggregate unchanged) and tracks state for the no-active-
+   * subscribers → tell host to back off case.
+   */
+  private lastAppliedLocationRate: LocationRate | null = null
+
+  /**
+   * Recompute the aggregate location tier across every connected
+   * miniapp and push the result to the host. The aggregate is the
+   * STRICTEST rate any single app has requested — see
+   * {@link LOCATION_RATE_PRIORITY} — because the GPS sample rate is a
+   * shared OS-level setting that we can't bias per-app.
+   *
+   * Called after every SUBSCRIBE and every unregister so that when a
+   * realtime-requesting app goes away the tier falls back down. If no
+   * connected app is asking for a location rate, we tell the host
+   * "off" so it can drop GPS power.
+   */
+  private recomputeLocationTier(): void {
+    let bestRank = -1
+    for (const app of this.connectedApps.values()) {
+      const r = app.requestedLocationRate
+      if (!r) continue
+      const rank = locationRateRank(r)
+      if (rank > bestRank) {
+        bestRank = rank
+      }
+    }
+    // When no app is asking, downgrade to "off". Without this we'd
+    // leak the last-known-strictest rate forever (the original bug).
+    const next: LocationRate = bestRank >= 0 ? LOCATION_RATE_PRIORITY[bestRank] : "off"
+    if (next === this.lastAppliedLocationRate) return
+    this.lastAppliedLocationRate = next
+    console.log(`[LOCATION] aggregate tier → ${next}`)
+    getRuntimeHooks().locationTier?.setLocationTier(next)
+  }
+
+  private async handleNavigationStart(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    console.log(`${LOG_TAG}: handleNavigationStart from ${packageName}`, JSON.stringify(payload))
+
+    // v2 wire shape sends `stops`; v1 shape sends bare lat/lng. Accept both.
+    const rawStops = payload.stops as Array<{lat?: unknown; lng?: unknown}> | undefined
+    const stops: Array<{lat: number; lng: number}> = []
+    if (Array.isArray(rawStops)) {
+      for (const s of rawStops) {
+        const sLat = Number(s?.lat)
+        const sLng = Number(s?.lng)
+        if (Number.isFinite(sLat) && Number.isFinite(sLng)) stops.push({lat: sLat, lng: sLng})
+      }
+    }
+    if (stops.length === 0) {
+      const lat = Number(payload.lat)
+      const lng = Number(payload.lng)
+      if (Number.isFinite(lat) && Number.isFinite(lng)) stops.push({lat, lng})
+    }
+    if (stops.length === 0) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: "stops or lat/lng required",
+      })
+      return
+    }
+    const lat = stops[0].lat
+    const lng = stops[0].lng
+    const simulate = payload.simulate === true
+    const speedNum = Number(payload.speedMultiplier)
+    const speedMultiplier = Number.isFinite(speedNum) && speedNum > 0 ? speedNum : 5
+    const mode = typeof payload.mode === "string" ? payload.mode : "driving"
+    const avoidRaw = payload.avoid as Record<string, unknown> | undefined
+    const avoid = avoidRaw
+      ? {
+          highways: avoidRaw.highways === true,
+          tolls: avoidRaw.tolls === true,
+          ferries: avoidRaw.ferries === true,
+        }
+      : undefined
+    const missedRaw = Number(payload.missedTurnRerouteMeters)
+    const missedTurnRerouteMeters = Number.isFinite(missedRaw) && missedRaw > 0 ? missedRaw : undefined
+
+    const navigation = getRuntimeHooks().navigation
+    if (!navigation) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: "navigation adapter not configured on host",
+      })
+      return
+    }
+
+    // Reattach the per-app event forwarder (it may have been detached when the
+    // mini-app closed its UI without stopping the trip).
+    if (!this.navListeners.has(packageName)) {
+      const unsubNav = navigation.addListener((update: NavUpdate) => {
+        this.sendToMiniapp(packageName, {
+          type: MiniappResponseType.EVENT,
+          streamType: MiniappStreamType.NAVIGATION_UPDATE,
+          data: update,
+        })
+        // Trip ended naturally — keep the forwarder alive (miniapp may
+        // restart nav) but remove from active set so stop() accounting
+        // stays accurate.
+        if (update.kind === "arrived" || update.kind === "error") {
+          this.activeNavApps.delete(packageName)
+        }
+      })
+      // Forward the nav-SDK's road-snapped GPS fixes as a location_update
+      // stream, so the miniapp's existing session.events.onLocation(...) just
+      // works while a trip is active.
+      const unsubLoc = navigation.addLocationListener((loc: NavLocation) => {
+        this.sendToMiniapp(packageName, {
+          type: MiniappResponseType.EVENT,
+          streamType: MiniappStreamType.LOCATION_UPDATE,
+          data: {
+            lat: loc.lat,
+            lng: loc.lng,
+            accuracy: loc.accuracy ?? undefined,
+            timestamp: loc.timestamp,
+          },
+        })
+      })
+      const unsubRoute = navigation.addRouteListener((route: NavRoute) => {
+        this.sendToMiniapp(packageName, {
+          type: MiniappResponseType.EVENT,
+          streamType: MiniappStreamType.NAVIGATION_ROUTE,
+          data: route,
+        })
+      })
+      this.navListeners.set(packageName, () => {
+        unsubNav()
+        unsubLoc()
+        unsubRoute()
+      })
+    }
+
+    // If a trip is already active for this app (user closed the UI and came
+    // back), reuse the running session — replay current snapshot and return
+    // ok without restarting the native navigator.
+    if (this.activeNavApps.has(packageName) && navigation.getState() !== "idle") {
+      console.log(`${LOG_TAG}: resuming existing nav session for ${packageName}`)
+      const snapshot = navigation.getSnapshot()
+      this.sendResult(packageName, requestId, true, {ok: true, resumed: true, snapshot})
+      return
+    }
+
+    try {
+      const result = await navigation.start(
+        {lat, lng},
+        {simulate, speedMultiplier, stops, mode, avoid, missedTurnRerouteMeters},
+      )
+      if (result.ok) {
+        this.activeNavApps.add(packageName)
+      }
+      this.sendResult(packageName, requestId, result.ok, result, undefined)
+    } catch (err) {
+      console.error(`${LOG_TAG}: navigation start error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "navigation start error",
+      })
+    }
+  }
+
+  private async handleNavigationStop(packageName: string, requestId?: string): Promise<void> {
+    try {
+      const unsub = this.navListeners.get(packageName)
+      if (unsub) {
+        unsub()
+        this.navListeners.delete(packageName)
+      }
+      this.activeNavApps.delete(packageName)
+      // Only stop the native trip when no other miniapp is still navigating.
+      if (this.activeNavApps.size === 0) {
+        const navigation = getRuntimeHooks().navigation
+        const result = navigation ? await navigation.stop() : {ok: true}
+        this.sendResult(packageName, requestId, result.ok, result, undefined)
+      } else {
+        this.sendResult(packageName, requestId, true, {ok: true}, undefined)
+      }
+    } catch (err) {
+      console.error(`${LOG_TAG}: navigation stop error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "navigation stop error",
+      })
+    }
+  }
+
+  private async handleNavigationDeviate(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const offsetNum = Number(payload.offsetMeters)
+      const offsetMeters = Number.isFinite(offsetNum) && offsetNum > 0 ? offsetNum : 20
+      const navigation = getRuntimeHooks().navigation
+      const result = navigation
+        ? await navigation.simulateDeviation(offsetMeters)
+        : {ok: false, error: "navigation adapter not configured"}
+      this.sendResult(packageName, requestId, result.ok, result, undefined)
+    } catch (err) {
+      console.error(`${LOG_TAG}: navigation deviate error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "navigation deviate error",
+      })
+    }
+  }
+
+  private async handleNavigationSetWrongSidewalk(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const enabled = payload.enabled === true
+      const navigation = getRuntimeHooks().navigation
+      const result = navigation
+        ? await navigation.setWrongSidewalkOffset(enabled)
+        : {ok: false, error: "navigation adapter not configured"}
+      this.sendResult(packageName, requestId, result.ok, result, undefined)
+    } catch (err) {
+      console.error(`${LOG_TAG}: navigation setWrongSidewalkOffset error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "navigation setWrongSidewalkOffset error",
+      })
+    }
+  }
+
+  private async handleNavigationSetSkipCrossings(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const enabled = payload.enabled === true
+      const navigation = getRuntimeHooks().navigation
+      const result = navigation
+        ? await navigation.setSkipCrossings(enabled)
+        : {ok: false, error: "navigation adapter not configured"}
+      this.sendResult(packageName, requestId, result.ok, result, undefined)
+    } catch (err) {
+      console.error(`${LOG_TAG}: navigation setSkipCrossings error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "navigation setSkipCrossings error",
+      })
+    }
+  }
+
+  private handleNavigationGetState(packageName: string, requestId?: string): void {
+    const snapshot = getRuntimeHooks().navigation?.getSnapshot() ?? null
+    this.sendResult(packageName, requestId, true, {state: snapshot})
+  }
+
+  private async handleNavigationRequestPermission(packageName: string, requestId?: string): Promise<void> {
+    try {
+      const navigation = getRuntimeHooks().navigation
+      const result = navigation
+        ? await navigation.requestPermission()
+        : {ok: false, accepted: false, error: "navigation adapter not configured"}
+      this.sendResult(packageName, requestId, true, result)
+    } catch (err) {
+      console.error(`${LOG_TAG}: navigation requestPermission error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "navigation requestPermission error",
+      })
+    }
+  }
+
+  private async handleNavigationComputeRoute(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const navigation = getRuntimeHooks().navigation
+      const result = navigation
+        ? await navigation.computeRoute(payload)
+        : {ok: false as const, error: "navigation adapter not configured"}
+      if (result.ok === false) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INTERNAL,
+          message: result.error ?? "computeRoute failed",
+        })
+      } else {
+        this.sendResult(packageName, requestId, true, result)
+      }
+    } catch (err) {
+      console.error(`${LOG_TAG}: navigation computeRoute error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "navigation computeRoute error",
+      })
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Storage helpers
   // ---------------------------------------------------------------------------
 
   private getStorageKeyPrefix(packageName: string): string {
-    const userId =
-      getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken) || "anonymous"
+    const userId = getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken) || "anonymous"
     return `mentraos_localstorage_${userId}_${packageName}_`
   }
 
@@ -1130,11 +1591,7 @@ class LocalMiniappRuntime {
       const roiStr = (payload.roiPosition as string) ?? "center"
       const numericRoi = ROI_MAP[roiStr] ?? 0
       console.log(`${LOG_TAG}: camera_fov_set fov=${fov} roi=${roiStr} (${numericRoi})`)
-      getRuntimeHooks().settings?.setSetting(
-        ISLAND_SETTINGS_KEYS.cameraFov,
-        {fov, roi_position: numericRoi},
-        false,
-      )
+      getRuntimeHooks().settings?.setSetting(ISLAND_SETTINGS_KEYS.cameraFov, {fov, roi_position: numericRoi}, false)
       this.sendResult(packageName, requestId, true)
     } catch (err) {
       console.error(`${LOG_TAG}: camera_fov error:`, err)
@@ -1516,6 +1973,14 @@ class LocalMiniappRuntime {
     if (matchedSubs.size === 0 && !perGestureStream) return
 
     for (const packageName of matchedSubs) {
+      // While a nav trip is active the Nav SDK's road-snapped fixes are
+      // already being forwarded via addLocationListener (see NAV_START handler).
+      // Suppress the raw background-GPS forward for that miniapp so the two
+      // streams don't interleave and cause the position to jump back to the
+      // real-phone location during simulation.
+      if (normalizedStream === MiniappStreamType.LOCATION_UPDATE && this.activeNavApps.has(packageName)) {
+        continue
+      }
       this.sendToMiniapp(packageName, {
         type: MiniappResponseType.EVENT,
         streamType: normalizedStream,

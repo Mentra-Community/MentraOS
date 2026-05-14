@@ -1,3 +1,5 @@
+<<<<<<< HEAD
+=======
 # AGENTS.md
 
 Repository implementation guidelines for coding agents working with MentraOS.
@@ -166,3 +168,4 @@ export MENTRA_AGENT_API_KEY=your-api-key
 
 - Architecture specs and design docs: `/docs/`
 - Module-specific implementation details: See module-specific `AGENTS.md` files
+>>>>>>> dev

@@ -19,13 +19,15 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
+  s.dependency 'GoogleNavigation'
 
-  # iOS frameworks required for media processing
-  s.frameworks = 'AVFoundation', 'Photos', 'CoreImage', 'CoreGraphics', 'UIKit'
+  # iOS frameworks required for media processing + navigation + heading
+  s.frameworks = 'AVFoundation', 'Photos', 'CoreImage', 'CoreGraphics', 'UIKit', 'CoreLocation', 'CoreMotion'
 
   # Swift/Objective-C compatibility
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
+    'FRAMEWORK_SEARCH_PATHS' => '$(inherited) $(PODS_ROOT)/GoogleNavigation/Frameworks $(PODS_ROOT)/GoogleMaps/Maps/Frameworks',
   }
 
   s.source_files = "**/*.{h,m,mm,swift,hpp,cpp}"

@@ -12,6 +12,7 @@ import Toast from "react-native-toast-message"
 
 // import {ErrorBoundary} from "@/components/error"
 import {Text} from "@/components/ignite"
+import MiniappHost from "@/components/miniapp/MiniappHost"
 import {AppStoreProvider} from "@/contexts/AppStoreContext"
 import {AuthProvider} from "@/contexts/AuthContext"
 import {DeeplinkProvider} from "@/contexts/DeeplinkContext"
@@ -26,7 +27,6 @@ import {SaferAreaProvider, useSaferAreaInsets} from "@/contexts/SaferAreaContext
 import CoreStatusBar from "@/components/dev/CoreStatusBar"
 import {useShallow} from "zustand/shallow"
 import {useNavigationStore} from "@/stores/navigation"
-import { getAnimation, JsStack, woltScreenOptions } from "@/components/navigation/JsStack"
 // JsStack imports commented out - were used for Android-specific navigation (currently disabled)
 // import {getAnimation, JsStack, woltScreenOptions} from "@/components/navigation/JsStack"
 
@@ -199,6 +199,7 @@ export const AllProviders = withWrappers(
       <>
         {props.children}
         <Stack screenOptions={screenOptions} />
+        <MiniappHost />
       </>
     )
 

@@ -1,0 +1,14 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.mentra.navigation",
+  "version": "1.0.2",
+  "name": "Mentra Map",
+  "description": "Turn-by-turn walking navigation with compass and Google Maps.",
+  "icon": "icon.png",
+  "permissions": [
+    {"type": "LOCATION", "description": "Used for live position, compass heading, and turn-by-turn directions"}
+  ],
+  "hardwareRequirements": [
+    {"type": "DISPLAY", "level": "REQUIRED", "description": "Shows next maneuver and distance on glasses"}
+  ]
+}

@@ -85,8 +85,13 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
     }
     console.log(`Building with ${pm} run build...`)
     const buildStart = Date.now()
+    // Tell the build script this is a production release. Build scripts
+    // read process.env.NODE_ENV and substitute it via Bun.build's
+    // `define`, which tree-shakes any `if (NODE_ENV === "development")`
+    // branches (dev panels, debug overlays) out of the production bundle.
     const buildProc = Bun.spawn([pm, 'run', 'build'], {
       cwd,
+      env: {...process.env, NODE_ENV: 'production'},
       stdout: 'inherit',
       stderr: 'inherit',
     })

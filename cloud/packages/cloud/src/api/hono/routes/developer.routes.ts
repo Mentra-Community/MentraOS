@@ -14,6 +14,7 @@ import { OrganizationService } from "../../../services/core/organization.service
 import { isMentraAdmin } from "../../../services/core/admin.utils";
 import App from "../../../models/app.model";
 import { appCache } from "../../../services/core/app-cache.service";
+import UserSession from "../../../services/session/UserSession";
 import type { AppEnv, AppContext } from "../../../types/hono";
 
 const logger = rootLogger.child({ service: "developer.routes" });
@@ -128,6 +129,7 @@ async function autoInstallAppForDeveloper(email: string, packageName: string): P
         installedDate: new Date(),
       });
       await user.save();
+      UserSession.getById(email)?.appManager.scheduleBroadcastAppState({ refreshInstalledApps: true });
       logger.info({ email, packageName }, "Auto-installed app for developer");
     }
   } catch (error) {

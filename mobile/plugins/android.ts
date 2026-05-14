@@ -6,7 +6,7 @@ import {
   ConfigPlugin,
   withAppBuildGradle,
   withProjectBuildGradle,
-  // withSettingsGradle,
+  withSettingsGradle,
   withGradleProperties,
   withAndroidManifest,
 } from "@expo/config-plugins"
@@ -22,7 +22,7 @@ const withAndroidWorkingConfig: ConfigPlugin = (config) => {
   config = withAndroidManifestModifications(config)
   config = withXmlResourceFiles(config)
   config = withGradlePropertiesModifications(config)
-  // config = withSettingsGradleModifications(config)
+  config = withSettingsGradleModifications(config)
 
   return config
 }
@@ -126,8 +126,8 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
       )
     }
 
-    // 2. Update versionName to 2.10.0
-    buildGradle = buildGradle.replace(/versionName\s+["'][^"']*["']/, 'versionName "2.10.0"')
+    // 2. Update versionName to 2.11.0
+    buildGradle = buildGradle.replace(/versionName\s+["'][^"']*["']/, 'versionName "2.11.0"')
 
     // 3. Add externalNativeBuild configuration in defaultConfig
     if (!buildGradle.includes("externalNativeBuild")) {
@@ -142,6 +142,30 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
                 cppFlags "-std=c++20"
             }
         }`,
+      )
+    }
+
+    // 4a. Enable Core Library Desugaring (required by :crust → Google Nav SDK).
+    if (!buildGradle.includes("coreLibraryDesugaringEnabled")) {
+      buildGradle = buildGradle.replace(
+        /(namespace\s+['"]com\.mentra\.mentra['"])/,
+        `$1
+    compileOptions {
+        coreLibraryDesugaringEnabled true
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }`,
+      )
+    }
+
+    // 4b. Add desugar_jdk_libs dependency (paired with coreLibraryDesugaringEnabled).
+    if (!buildGradle.includes("coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs")) {
+      buildGradle = buildGradle.replace(
+        /(implementation\("com\.facebook\.react:react-android"\))/,
+        `$1
+
+    // Required by :crust (Google Navigation SDK uses Java 8+ APIs).
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'`,
       )
     }
 
@@ -325,9 +349,7 @@ function withAndroidManifestModifications(config: any) {
       manifest.permission = []
     }
     const customPermName = `${pkg}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`
-    const customPermExists = manifest.permission.find(
-      (p: any) => p.$["android:name"] === customPermName,
-    )
+    const customPermExists = manifest.permission.find((p: any) => p.$["android:name"] === customPermName)
     if (!customPermExists) {
       manifest.permission.push({
         $: {
@@ -344,6 +366,43 @@ function withAndroidManifestModifications(config: any) {
       }
       if (!app.$["android:enableOnBackInvokedCallback"]) {
         app.$["android:enableOnBackInvokedCallback"] = "true"
+      }
+
+      // Inject Google Navigation SDK API key from env. Read at build time.
+      // The Nav SDK reads this meta-data tag from the merged manifest at runtime.
+      //
+      // If the key is missing, navigation is broken at runtime with a
+      // cryptic Google SDK error. Fail loudly in CI/EAS so the broken
+      // build never ships; warn (don't fail) in local-dev so new
+      // contributors who aren't touching nav can still build.
+      const navApiKey = process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY ?? ""
+      if (!navApiKey) {
+        const isCiOrEas =
+          process.env.CI === "true" ||
+          process.env.CI === "1" ||
+          process.env.EAS_BUILD === "true" ||
+          process.env.NODE_ENV === "production"
+        const msg =
+          "EXPO_PUBLIC_GOOGLE_NAV_API_KEY is not set. Navigation will fail at runtime — " +
+          "set it in mobile/.env (see mobile/.env.example) before building."
+        if (isCiOrEas) {
+          throw new Error(msg)
+        }
+        console.warn(`[mobile/plugins/android] ${msg}`)
+      }
+      if (!app["meta-data"]) {
+        app["meta-data"] = []
+      }
+      const existing = app["meta-data"].find((m: any) => m.$["android:name"] === "com.google.android.geo.API_KEY")
+      if (existing) {
+        existing.$["android:value"] = navApiKey
+      } else {
+        app["meta-data"].push({
+          $: {
+            "android:name": "com.google.android.geo.API_KEY",
+            "android:value": navApiKey,
+          },
+        })
       }
     }
 
@@ -506,23 +565,28 @@ function withGradlePropertiesModifications(config: any) {
 }
 
 /**
- * Modify settings.gradle to include lc3Lib module
+ * Modify settings.gradle to include lc3Lib module.
+ *
+ * The native LC3 codec lives inside `modules/bluetooth-sdk/android/lc3Lib`
+ * (it moved from the legacy `core` module during the bluetooth-sdk refactor).
+ * The bluetooth-sdk's build.gradle references `implementation project(':lc3Lib')`,
+ * so we have to register that gradle subproject pointing at the right path —
+ * Expo prebuild doesn't generate this on its own.
  */
-// function withSettingsGradleModifications(config: any) {
-//   return withSettingsGradle(config, config => {
-//     let settingsGradle = config.modResults.contents
+function withSettingsGradleModifications(config: any) {
+  return withSettingsGradle(config, (config) => {
+    let settingsGradle = config.modResults.contents
 
-//     // Add lc3Lib module if not present
-//     if (!settingsGradle.includes("include ':lc3Lib'")) {
-//       settingsGradle += `
-// include ':lc3Lib'
-// project(':lc3Lib').projectDir = new File(rootDir, '../modules/bluetooth-sdk/android/lc3Lib')
-// `
-//     }
+    if (!settingsGradle.includes("include ':lc3Lib'")) {
+      settingsGradle += `
+include ':lc3Lib'
+project(':lc3Lib').projectDir = new File(rootDir, '../modules/bluetooth-sdk/android/lc3Lib')
+`
+    }
 
-//     config.modResults.contents = settingsGradle
-//     return config
-//   })
-// }
+    config.modResults.contents = settingsGradle
+    return config
+  })
+}
 
 export default withAndroidWorkingConfig

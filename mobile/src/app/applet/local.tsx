@@ -4,8 +4,7 @@ import {View} from "react-native"
 import {Text} from "@/components/ignite"
 import {miniappHost} from "@/components/miniapp/MiniappHost"
 import {useNavigationStore} from "@/stores/navigation"
-import {appRegistry, useAppStatusStore} from "@mentra/island"
-import {devServerBridge} from "@mentra/island"
+import {appRegistry, devServerBridge, useAppStatusStore} from "@mentra/island"
 import {storage} from "@/utils/storage/storage"
 
 /**
@@ -16,13 +15,14 @@ import {storage} from "@/utils/storage/storage"
  * never flash this route on the way there.
  */
 export default function LocalMiniAppPage() {
-  const {appName, packageName, version, devUrl, iconUrl, devPort} = useLocalSearchParams<{
+  const {appName, packageName, version, devUrl, iconUrl, devPort, manifestJson} = useLocalSearchParams<{
     appName: string
     packageName: string
     version?: string
     devUrl?: string
     iconUrl?: string
     devPort?: string
+    manifestJson?: string
   }>()
   const {goBack, setForceGestureEnabled} = useNavigationStore.getState()
 
@@ -53,75 +53,82 @@ export default function LocalMiniAppPage() {
       }
     }
 
-    let cancelled = false
-    ;(async () => {
-      const isDev = !!devUrl
-
-      if (isDev) {
-        // Reachability was pre-flighted by the entry point. Mount live.
-        await miniappHost.mountDev(packageName, devUrl, {
+    if (devUrl) {
+      // Parse the pre-fetched manifest from route params so mountDev
+      // doesn't need a second network round-trip to get permissions.
+      let parsedManifest:
+        | {permissions?: Array<{type: string}>; hardwareRequirements?: Array<{type: string; level: string}>}
+        | undefined
+      if (manifestJson) {
+        try {
+          parsedManifest = JSON.parse(manifestJson)
+        } catch {
+          /* ignore */
+        }
+      }
+      // Reachability was pre-flighted by the entry point. Mount live.
+      // setForeground is called synchronously before the async mount so a
+      // re-render during the manifest fetch can't set cancelled=true and
+      // prevent the miniapp from ever becoming visible.
+      miniappHost
+        .mountDev(packageName, devUrl, {
           developerMode: true,
           appName,
           iconUrl,
+          manifest: parsedManifest,
         })
-        const portNum = resolveDevPort(devPort, packageName)
-        if (portNum !== null) {
-          devServerBridge.connect(packageName, devUrl, portNum)
-          // Background snapshot via the AppRegistry install pipeline:
-          // fetches the dev server's bundle.zip, unpacks into
-          // lmas/<pkg>/dev-<timestamp>/, then GCs older dev-* dirs.
-          // refreshApplets fires automatically (via the registry's subscribe
-          // notification) so the new dev-<ts> directory surfaces in the applet
-          // store on next render — that's what populates the home tray +
-          // switcher entry.
-          const sidecarBase = buildSidecarBaseUrl(devUrl, portNum)
-          if (sidecarBase) {
-            const versionOverride = `dev-${Date.now()}`
-            void appRegistry
-              .installFromUrl(`${sidecarBase}/__mentra_dev/bundle.zip`, {versionOverride})
-              .then((res) => {
-                if (res.is_error()) {
-                  console.warn(`Dev miniapp snapshot failed for ${packageName}:`, res.error)
-                } else {
-                  appRegistry.gcDevVersions(packageName, 2)
-                }
-              })
+        .then(() => {
+          const portNum = resolveDevPort(devPort, packageName)
+          if (portNum !== null) {
+            devServerBridge.connect(packageName, devUrl, portNum)
+            const sidecarBase = buildSidecarBaseUrl(devUrl, portNum)
+            if (sidecarBase) {
+              const versionOverride = `dev-${Date.now()}`
+              void appRegistry
+                .installFromUrl(`${sidecarBase}/__mentra_dev/bundle.zip`, {versionOverride})
+                .then((res) => {
+                  if (res.is_error()) {
+                    console.warn(`Dev miniapp snapshot failed for ${packageName}:`, res.error)
+                  } else {
+                    appRegistry.gcDevVersions(packageName, 2)
+                  }
+                })
+            }
           }
-        }
-        storage.save(`${packageName}_dev_last_reachable`, Date.now())
-      } else if (version) {
-        const bundleDir = appRegistry.getBundleDir(packageName, version)
-        const bundleUri = `${bundleDir}/index.html`
-        // Read the bundle's manifest from disk so the runtime can gate
-        // SUBSCRIBE / one-shot calls against declared permissions. The
-        // mountDev path fetches this from the live server; the installed
-        // path reads from the unzipped bundle.
-        const manifest = appRegistry.getMiniappManifest(packageName, version) as
-          | {permissions?: Array<{type: string; required?: boolean; description?: string}>; hardwareRequirements?: Array<{type: string; level: string; description?: string}>}
-          | null
-        miniappHost.mount(packageName, bundleUri, {
-          developerMode: false,
-          appName,
-          iconUrl,
-          manifest: manifest ?? undefined,
+          storage.save(`${packageName}_dev_last_reachable`, Date.now())
         })
-      }
-
-      if (cancelled) return
       miniappHost.setForeground(packageName, {onClose: handleClose, onBack: handleBack})
       // Mirror to the apps store so Compositor's CapsuleMenu/forceShow + swipe
       // overlay activate (the press path sets foreground via the store; the
       // scanner-driven route path needs to do it manually).
       useAppStatusStore.getState().setForeground(packageName)
-    })()
+    } else if (version) {
+      const bundleDir = appRegistry.getBundleDir(packageName, version)
+      const bundleUri = `${bundleDir}/index.html`
+      // Read the bundle's manifest from disk so the runtime can gate
+      // SUBSCRIBE / one-shot calls against declared permissions. The
+      // mountDev path fetches this from the live server; the installed
+      // path reads from the unzipped bundle.
+      const manifest = appRegistry.getMiniappManifest(packageName, version) as {
+        permissions?: Array<{type: string; required?: boolean; description?: string}>
+        hardwareRequirements?: Array<{type: string; level: string; description?: string}>
+      } | null
+      miniappHost.mount(packageName, bundleUri, {
+        developerMode: false,
+        appName,
+        iconUrl,
+        manifest: manifest ?? undefined,
+      })
+      miniappHost.setForeground(packageName, {onClose: handleClose, onBack: handleBack})
+      useAppStatusStore.getState().setForeground(packageName)
+    }
 
     return () => {
-      cancelled = true
       // Background on navigate away, don't unmount — keep it alive
       miniappHost.setBackground(packageName)
       useAppStatusStore.getState().clearForeground()
     }
-  }, [packageName, version, devUrl, devPort, appName, iconUrl])
+  }, [packageName, version, devUrl, devPort, appName, iconUrl, manifestJson])
 
   // Track WebView navigation state so we know whether "back" should pop the
   // WebView stack or exit the miniapp.
@@ -149,7 +156,7 @@ export default function LocalMiniAppPage() {
   // The actual WebView + CapsuleMenu render inside MiniappHost at app root so
   // they survive navigation. This route is just a hook for setForeground /
   // setBackground as the user navigates in/out.
-  return <View style={{flex: 1, backgroundColor: "transparent"}} pointerEvents="box-none" />
+  return <View style={{flex: 1, backgroundColor: "transparent"}} pointerEvents="none" />
 }
 
 /**

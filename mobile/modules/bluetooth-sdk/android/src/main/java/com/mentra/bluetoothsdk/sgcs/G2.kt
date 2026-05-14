@@ -2773,7 +2773,18 @@ class G2 : SGCManager() {
                 }
 
         scanCallback = callback
-        scanner.startScan(null, settings, callback)
+        try {
+            scanner.startScan(null, settings, callback)
+        } catch (e: SecurityException) {
+            // Auto-reconnect paths may fire before BLUETOOTH_SCAN is granted on Android 12+
+            Bridge.log("G2: startScan SecurityException — bluetooth permission missing: ${e.message}")
+            scanCallback = null
+            return false
+        } catch (e: Exception) {
+            Bridge.log("G2: startScan failed: ${e.message}")
+            scanCallback = null
+            return false
+        }
         return true
     }
 

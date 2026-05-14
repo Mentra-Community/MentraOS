@@ -7,6 +7,7 @@ import { isMentraAdmin } from "../core/admin.utils";
 import { slackService } from "../notifications/slack.service";
 import { logger as rootLogger } from "../logging/pino-logger";
 import { appCache } from "../core/app-cache.service";
+import UserSession from "../session/UserSession";
 const logger = rootLogger.child({ service: "console.apps.service" });
 
 const DEFAULT_MICROPHONE_PERMISSION = {
@@ -28,6 +29,7 @@ async function autoInstallAppForDeveloper(packageName: string, user: UserI): Pro
     }
     user.installedApps.push({ packageName, installedDate: new Date() });
     await user.save();
+    UserSession.getById(user.email)?.appManager.scheduleBroadcastAppState({ refreshInstalledApps: true });
     logger.info({ packageName, email: user.email }, "Auto-installed app for developer");
   } catch (error) {
     logger.error({ error, packageName, email: user.email }, "Error auto-installing app for developer");

@@ -2310,11 +2310,12 @@ class G2: NSObject, SGCManager {
         if currentEnabled && enabled {
             // if already enabled, set to disabled, then send enabled after 500ms:
             GlassesStore.shared.apply("glasses", "micEnabled", true)
-            let msg = EvenHubProto.audioControlMessage(false)
+            let msg = EvenHubProto.audioControlMessage(enable: false)
             sendEvenHubCommand(msg)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                let msg = EvenHubProto.audioControlMessage(true)
-                sendEvenHubCommand(msg)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self = self else { return }
+                let msg = EvenHubProto.audioControlMessage(enable: true)
+                self.sendEvenHubCommand(msg)
             }
             return
         }

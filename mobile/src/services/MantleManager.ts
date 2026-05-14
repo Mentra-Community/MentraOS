@@ -1,4 +1,4 @@
-import CoreModule, {ButtonPressEvent, CoreStatus, GlassesStatus, OtaStatus, OtaProgress, OtaUpdateInfo} from "@mentra/bluetooth-sdk"
+import CoreModule, {ButtonPressEvent, CoreStatus, GlassesStatus, OtaStatus} from "@mentra/bluetooth-sdk"
 import CrustModule from "crust"
 import * as Calendar from "expo-calendar"
 import * as Location from "expo-location"
@@ -6,7 +6,9 @@ import * as TaskManager from "expo-task-manager"
 import {shallow} from "zustand/shallow"
 
 import audioPlaybackService from "@/services/AudioPlaybackService"
+import headingService from "@/services/HeadingService"
 import miniSockets from "@/services/MiniSockets"
+import navigationService from "@/services/NavigationService"
 import {requestMiniappSdkPhoto} from "@/services/miniapp/MiniappSdkPhotoHandler"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {migrate} from "@/services/Migrations"
@@ -20,6 +22,8 @@ import {
   localMiniappRuntime,
   localSttFallbackCoordinator,
   micStateCoordinator,
+  BgTimer,
+  useAppStatusStore,
 } from "@mentra/island"
 import {useDisplayStore} from "@/stores/display"
 import {useGlassesStore, getGlasesInfoPartial} from "@/stores/glasses"
@@ -28,7 +32,6 @@ import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import TranscriptProcessor from "@/utils/TranscriptProcessor"
 import {useCoreStore} from "@/stores/core"
 import udp from "@/services/UdpManager"
-import {BgTimer} from "@mentra/island"
 import {
   legacyOtaProgressFromOtaStatusEvent,
   normalizeOtaStatusEvent,
@@ -37,7 +40,6 @@ import {
 import {useDebugStore} from "@/stores/debug"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
 import {logE2EMetric} from "@/utils/e2eMetrics"
-import {useAppStatusStore} from "@mentra/island"
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
 
 const LOCATION_TASK_NAME = "handleLocationUpdates"
@@ -160,6 +162,29 @@ class MantleManager {
       },
       setDisplayEvent: (event) => useDisplayStore.getState().setDisplayEvent(event),
       requestMiniappSdkPhoto: (params) => requestMiniappSdkPhoto(params),
+      // Google Nav SDK adapter — the island runtime fan-outs nav events to
+      // miniapps subscribed to navigation_*. Delegates straight to the host's
+      // singleton NavigationService.
+      navigation: {
+        getState: () => navigationService.getState(),
+        getSnapshot: () => navigationService.getSnapshot(),
+        addListener: (l) => navigationService.addListener(l),
+        addLocationListener: (l) => navigationService.addLocationListener(l),
+        addRouteListener: (l) => navigationService.addRouteListener(l),
+        start: (coords, options) => navigationService.start(coords, options),
+        stop: () => navigationService.stop(),
+        simulateDeviation: (offsetMeters) => navigationService.simulateDeviation(offsetMeters),
+        setWrongSidewalkOffset: (enabled) => navigationService.setWrongSidewalkOffset(enabled),
+        setSkipCrossings: (enabled) => navigationService.setSkipCrossings(enabled),
+        requestPermission: () => navigationService.requestPermission(),
+        computeRoute: (payload) => navigationService.computeRoute(payload),
+      },
+      heading: {
+        addListener: (l) => headingService.addListener(l),
+      },
+      locationTier: {
+        setLocationTier: (rate) => this.setLocationTier(rate),
+      },
     })
 
     // Register the offline-app catalog with island's AppRegistry before
@@ -270,9 +295,12 @@ class MantleManager {
   private async setupPeriodicTasks() {
     this.sendCalendarEvents()
     // Calendar sync every hour
-    this.calendarSyncTimer = BgTimer.setInterval(() => {
-      this.sendCalendarEvents()
-    }, 60 * 60 * 1000) // 1 hour
+    this.calendarSyncTimer = BgTimer.setInterval(
+      () => {
+        this.sendCalendarEvents()
+      },
+      60 * 60 * 1000,
+    ) // 1 hour
 
     try {
       // only start location updates if we have the location permission:
@@ -478,8 +506,8 @@ class MantleManager {
 
       this.subs.push(
         CoreModule.addListener("switch_status", (event) => {
-          const switchType = typeof event.switch_type === "number" ? event.switch_type : event.switchType ?? -1
-          const switchValue = typeof event.switch_value === "number" ? event.switch_value : event.switchValue ?? -1
+          const switchType = typeof event.switch_type === "number" ? event.switch_type : (event.switchType ?? -1)
+          const switchValue = typeof event.switch_value === "number" ? event.switch_value : (event.switchValue ?? -1)
           const timestamp = typeof event.timestamp === "number" ? event.timestamp : Date.now()
           socketComms.sendSwitchStatus(switchType, switchValue, timestamp)
           // TODO: remove
@@ -976,14 +1004,24 @@ class MantleManager {
 
   public async setLocationTier(tier: string) {
     console.log("MANTLE: setLocationTier()", tier)
-    // restComms.sendLocationData({tier})
     try {
+      const isRegistered = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false)
+      if (isRegistered) {
+        await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME)
+      }
+      // "off" means no app is asking for location — leave the task
+      // stopped so the OS can power GPS down. Anything else: restart
+      // the task at the matching accuracy.
+      if (tier === "off") {
+        console.log("MANTLE: setLocationTier() stopped — no active subscribers")
+        return
+      }
       const accuracy = this.getLocationAccuracy(tier)
-      await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME)
       await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-        accuracy: accuracy,
+        accuracy,
         pausesUpdatesAutomatically: false,
       })
+      console.log("MANTLE: setLocationTier() success —", tier)
     } catch (error) {
       console.log("MANTLE: Error setting location tier", error)
     }

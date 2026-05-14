@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "state": {
+    "active": true,
+    "mode": "walking",
+    "stops": [{"lat": 1, "lng": 2}],
+    "currentStopIndex": 0,
+    "distanceToDestinationMeters": 1200,
+    "timeToDestinationSeconds": 600,
+    "currentSpeedMps": 1.4,
+    "speedLimitMps": null
+  }
+}

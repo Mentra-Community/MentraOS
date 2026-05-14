@@ -280,6 +280,8 @@ struct ViewState {
     var lc3Converter: PcmConverter?
     /// Audio output format - defaults to LC3 for bandwidth savings
     private var audioOutputFormat: AudioOutputFormat = .lc3
+    /// Last time we received an LC3 frame from the glasses (used by the mic
+    /// inactivity watchdog).
     private var lastLc3Event: Date?
     private var micReinitTimer: Timer?
 

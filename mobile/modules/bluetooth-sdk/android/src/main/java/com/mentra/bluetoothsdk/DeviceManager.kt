@@ -314,7 +314,9 @@ class CoreManager {
             return
         }
 
-        val timeSinceLastLc3Event = System.currentTimeMillis() - (lastLc3Event ?: System.currentTimeMillis())
+        // When no frame has ever been received, treat elapsed as "forever" so we
+        // actually attempt recovery (was 0 before, which made the watchdog a no-op).
+        val timeSinceLastLc3Event = System.currentTimeMillis() - (lastLc3Event ?: 0L)
         if (timeSinceLastLc3Event > 5000) {
             Bridge.log("MAN: No audio activity in the last 5 seconds from glasses, reinitializing glasses mic")
             sgc?.setMicEnabled(true)
@@ -412,14 +414,23 @@ class CoreManager {
 
     private fun checkBluetoothPermission(context: Context): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            ContextCompat.checkSelfPermission(
+            val connect = ContextCompat.checkSelfPermission(
                     context,
                     android.Manifest.permission.BLUETOOTH_CONNECT
             ) == PackageManager.PERMISSION_GRANTED
+            val scan = ContextCompat.checkSelfPermission(
+                    context,
+                    android.Manifest.permission.BLUETOOTH_SCAN
+            ) == PackageManager.PERMISSION_GRANTED
+            connect && scan
         } else {
             ContextCompat.checkSelfPermission(context, android.Manifest.permission.BLUETOOTH) ==
                     PackageManager.PERMISSION_GRANTED
         }
+    }
+
+    private fun hasBluetoothPermissions(): Boolean {
+        return checkBluetoothPermission(Bridge.getContext())
     }
 
     private fun checkMicrophonePermission(context: Context): Boolean {
@@ -1399,6 +1410,13 @@ class CoreManager {
             Bridge.log("MAN: No device name, returning")
             return
         }
+        if (!hasBluetoothPermissions()) {
+            // Auto-reconnect paths (boot, BT toggle, app launch before perm flow)
+            // may fire before user has granted runtime Bluetooth permissions on Android 12+.
+            // Bail out instead of crashing with SecurityException on startScan / getRemoteName.
+            Bridge.log("MAN: connectDefault skipped — bluetooth runtime permissions not granted")
+            return
+        }
         initSGC(defaultWearable)
         searching = true
         sgc?.connectById(deviceName)
@@ -1412,6 +1430,10 @@ class CoreManager {
         }
         if (controllerDeviceName.isEmpty()) {
             Bridge.log("MAN: No controller device name, returning")
+            return
+        }
+        if (!hasBluetoothPermissions()) {
+            Bridge.log("MAN: connectDefaultController skipped — bluetooth runtime permissions not granted")
             return
         }
         initController(defaultController)
