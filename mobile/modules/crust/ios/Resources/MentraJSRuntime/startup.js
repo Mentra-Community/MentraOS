@@ -232,6 +232,13 @@
         }
         return;
       }
+      if (env.kind === "bridge" && typeof env.raw === "string") {
+        const deliver = g.__mentraDeliverBridgeRaw;
+        if (typeof deliver === "function") {
+          deliver(env.raw);
+        }
+        return;
+      }
       if (env.kind === "init" && typeof env.sessionId === "string") {
         ;
         g.__mentraSessionId = env.sessionId;

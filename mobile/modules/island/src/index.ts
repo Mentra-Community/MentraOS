@@ -20,6 +20,12 @@ export {default as devServerBridge} from "./services/DevServerBridge"
 export {default as displayProcessor} from "./services/DisplayProcessor"
 export {default as localDisplayManager, type DisplayPayload} from "./services/LocalDisplayManager"
 export {default as localMiniappRuntime, type InstalledMiniappManifest} from "./services/LocalMiniappRuntime"
+export {
+  MentraJSRouter,
+  type MentraJSCrustBinding,
+  type OutboundMessagePayload as MentraJSOutboundMessage,
+  type RouterLogger as MentraJSRouterLogger,
+} from "./services/MentraJSRouter"
 export {default as localSttFallbackCoordinator} from "./services/LocalSttFallbackCoordinator"
 export {default as micStateCoordinator} from "./services/MicStateCoordinator"
 

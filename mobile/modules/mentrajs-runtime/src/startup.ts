@@ -343,6 +343,16 @@ declare const __nativeClearTimer: (token: number) => void
       }
       return
     }
+    if (env.kind === "bridge" && typeof (env as {raw?: unknown}).raw === "string") {
+      // Phase 2: host pushes a raw SDK envelope (DISPLAY / SUBSCRIBE /
+      // STATE_FOR_BRIDGE / etc.) to be delivered into DispatchTransport's
+      // onMessage handler. The transport installs this hook on open().
+      const deliver = (g as Record<string, unknown>).__mentraDeliverBridgeRaw as ((raw: string) => void) | undefined
+      if (typeof deliver === "function") {
+        deliver((env as {raw: string}).raw)
+      }
+      return
+    }
     if (env.kind === "init" && typeof env.sessionId === "string") {
       // Stamp the global; the SDK's session factory consumes this to build
       // the typed MiniappSession.

@@ -328,4 +328,21 @@ describe("startup bundle", () => {
     expect(() => (sandbox.__deliver as (j: string) => void)("not-json")).not.toThrow()
     expect(stubs.hostErrorCalls.length).toBeGreaterThan(0)
   })
+
+  test("kind=bridge envelope forwards raw payload to __mentraDeliverBridgeRaw", () => {
+    const sandbox = evalBundle()
+    const received: string[] = []
+    ;(sandbox as Record<string, unknown>).__mentraDeliverBridgeRaw = (raw: string) => received.push(raw)
+    ;(sandbox.__deliver as (j: string) => void)(
+      JSON.stringify({kind: "bridge", raw: '{"type":"DISPLAY","text":"hi"}'}),
+    )
+    expect(received).toEqual(['{"type":"DISPLAY","text":"hi"}'])
+  })
+
+  test("kind=bridge silently drops when __mentraDeliverBridgeRaw is not installed", () => {
+    const sandbox = evalBundle()
+    expect(() =>
+      (sandbox.__deliver as (j: string) => void)(JSON.stringify({kind: "bridge", raw: "x"})),
+    ).not.toThrow()
+  })
 })
