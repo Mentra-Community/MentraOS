@@ -1214,7 +1214,8 @@ public class MediaCaptureService {
                 size,
                 enableFlash,
                 false,  // isFromSdk - button photo, use high quality resolution
-                null,  // exposureTimeNs — local/button photos use auto exposure
+                // 100_000_000L,  // exposureTimeNs — 100ms manual exposure for button photos
+                null,  // exposureTimeNs — auto exposure for button photos
                 new CameraNeo.PhotoCaptureCallback() {
                     @Override
                     public void onPhotoCaptured(String filePath) {
