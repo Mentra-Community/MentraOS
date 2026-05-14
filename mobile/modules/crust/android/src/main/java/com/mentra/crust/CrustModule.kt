@@ -8,6 +8,9 @@ import java.net.URL
 
 import com.mentra.crust.navigation.NavigationManager
 import com.mentra.crust.heading.HeadingManager
+import com.mentra.crust.jsc.JSCRuntime
+import com.mentra.crust.jsc.InstalledMiniappManifest
+import com.mentra.crust.jsc.JSCPolyfillBridge
 
 class CrustModule : Module() {
   companion object {
@@ -83,9 +86,26 @@ class CrustModule : Module() {
       "onNavRoute",
       "onNavOffRoute",
       "onHeading",
+      // MentraJS — per-miniapp JSContext outbound message bus.
+      // Phase 2's MentraJSRouter subscribes via Crust.addListener.
+      "mentrajs_message",
     )
 
-    OnCreate { eventEmitter = { eventName, data -> sendEvent(eventName, data) } }
+    OnCreate {
+      eventEmitter = { eventName, data -> sendEvent(eventName, data) }
+      val ctx =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+      if (ctx != null) {
+        val runtime = JSCRuntime.shared(ctx)
+        runtime.onOutbound = { msg ->
+          sendEvent("mentrajs_message", msg.payload)
+        }
+        JSCPolyfillBridge.install(runtime)
+      } else {
+        Log.w(TAG, "MentraJS: no context yet — runtime install deferred")
+      }
+    }
 
     Function("hello") {
       "Hello world! 👋"
@@ -140,6 +160,89 @@ class CrustModule : Module() {
                               ?: throw IllegalStateException("No context available")
       NotificationListener.getInstance(context).openNotificationListenerSettings()
       true
+    }
+
+    // MARK: - MentraJS Runtime (Phase 1)
+
+    AsyncFunction("mentraJsSpawn") { packageName: String, polyfillBundle: String, miniappJs: String ->
+      val ctx =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+                              ?: throw IllegalStateException("MentraJS: no context")
+      JSCRuntime.shared(ctx).spawn(
+          packageName = packageName,
+          polyfillBundleOverride = polyfillBundle.takeIf { it.isNotEmpty() },
+          miniappJs = miniappJs,
+      )
+    }
+
+    AsyncFunction("mentraJsEvaluate") { packageName: String, source: String ->
+      val ctx =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+                              ?: throw IllegalStateException("MentraJS: no context")
+      JSCRuntime.shared(ctx).evaluate(packageName, source)
+    }
+
+    AsyncFunction("mentraJsKill") { packageName: String ->
+      val ctx =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+                              ?: throw IllegalStateException("MentraJS: no context")
+      JSCRuntime.shared(ctx).kill(packageName)
+    }
+
+    AsyncFunction("mentraJsDispatchToJs") { packageName: String, envelope: Map<String, Any?> ->
+      val ctx =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+                              ?: throw IllegalStateException("MentraJS: no context")
+      val json = org.json.JSONObject(envelope as Map<*, *>).toString()
+      JSCRuntime.shared(ctx).dispatchToJs(packageName, json)
+    }
+
+    AsyncFunction("mentraJsSetManifest") { packageName: String, permissions: List<String> ->
+      val ctx =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+                              ?: throw IllegalStateException("MentraJS: no context")
+      JSCRuntime.shared(ctx).dispatcher.setManifest(
+          packageName,
+          InstalledMiniappManifest(permissions.toSet()),
+      )
+    }
+
+    AsyncFunction("mentraJsGrantPermission") { packageName: String, permission: String, granted: Boolean ->
+      val ctx =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+                              ?: throw IllegalStateException("MentraJS: no context")
+      val runtime = JSCRuntime.shared(ctx)
+      if (granted) {
+        runtime.dispatcher.permissionStore.grant(packageName, permission)
+      } else {
+        runtime.dispatcher.permissionStore.revoke(packageName, permission)
+      }
+    }
+
+    Function("mentraJsAlivePackages") {
+      val ctx =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+      if (ctx == null) {
+        return@Function emptyList<String>()
+      }
+      JSCRuntime.shared(ctx).alivePackages()
+    }
+
+    Function("mentraJsLoadPolyfillBundle") {
+      val ctx =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+      if (ctx == null) {
+        return@Function ""
+      }
+      JSCRuntime.shared(ctx).loadPolyfillBundle()
     }
 
     // MARK: - Device Memory (Phase 0 LRU eviction)

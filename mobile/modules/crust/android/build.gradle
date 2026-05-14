@@ -71,3 +71,24 @@ dependencies {
   implementation 'com.google.android.gms:play-services-location:21.0.1'
   implementation 'com.google.android.gms:play-services-base:18.2.0'
 }
+
+dependencies {
+  // MentraJS — QuickJS (via Cash App's Zipline) for per-miniapp JS contexts.
+  // We only use Zipline's low-level QuickJs wrapper; the typed bridge / hot-
+  // reload / source-map features ride on a Zipline Gradle plugin we don't
+  // wire up here. ~1.2 MB Zipline + QuickJS native lib per ABI.
+  implementation 'app.cash.zipline:zipline-android:1.27.0'
+
+  // OkHttp for fetch / WebSocket — already used elsewhere in MentraOS;
+  // pinned here so the gradle plugin doesn't downgrade us.
+  implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+  // Tink for X25519 (Android stdlib X25519 is API 33+ only; minSdk is 24).
+  // ~1.2 MB AAR. Crypto.subtle's SHA / AES-GCM / HMAC stay on javax.crypto
+  // which ships on the platform.
+  implementation 'com.google.crypto.tink:tink-android:1.14.1'
+
+  // Kotlin coroutines for the Zipline bridge + suspending polyfill shims.
+  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1'
+  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
+}
