@@ -136,10 +136,16 @@ async function launchTwoLayer(
       console.warn(`launchLocalMiniapp: spawn failed for ${packageName}`)
       return
     }
-    // Best-effort: auto-grant declared permissions in dev (the JIT
-    // modal flow runs in production-grade builds). This mirrors the
-    // existing "implicit grant at install" behaviour the spec calls
-    // out for non-OS-sensitive types.
+    // Current behaviour: auto-grant every manifest-declared permission
+    // at launch. This matches the LEGACY single-bundle path's "implicit
+    // grant at install" behaviour, so two-layer miniapps don't regress.
+    //
+    // The host-rendered JIT modal that the spec calls for (first-call
+    // prompt for sensitive permissions) is deferred to a permissions-UX
+    // phase. Once it lands, this block converts from "always grant
+    // declared" to "delegate to the modal". The PermissionStore +
+    // dispatcher gate are already in place for that switchover — no
+    // additional native work needed.
     const crustGrant = (CrustModule as unknown as {
       mentraJsGrantPermission?: (p: string, x: string, y: boolean) => Promise<void>
     }).mentraJsGrantPermission

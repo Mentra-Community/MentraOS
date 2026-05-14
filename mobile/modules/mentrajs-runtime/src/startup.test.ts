@@ -233,6 +233,16 @@ describe("startup bundle", () => {
     expect(dec.decode(enc.encode("héllo 🌍"))).toBe("héllo 🌍")
   })
 
+  test("crypto.subtle is installed as a clear-error stub (not silently undefined)", () => {
+    const sandbox = evalBundle()
+    const subtle = (sandbox.crypto as {subtle: unknown}).subtle as Record<string, unknown>
+    expect(subtle).toBeDefined()
+    // Every property reads as a function that throws a clear error.
+    const fn = subtle.digest as () => unknown
+    expect(typeof fn).toBe("function")
+    expect(() => fn()).toThrow(/not yet implemented/)
+  })
+
   test("atob / btoa round-trip ASCII", () => {
     const sandbox = evalBundle()
     const btoa = sandbox.btoa as (s: string) => string
@@ -497,6 +507,24 @@ describe("startup bundle — WebSocket", () => {
     expect(ws.readyState).toBe(2)
     const closeCall = stubs.dispatchCalls.find((c) => c.iface === "ws" && c.method === "close")
     expect(closeCall).toBeDefined()
+  })
+
+  test("bufferedAmount increments on send + decrements on next microtask", async () => {
+    const stubs = freshStubs()
+    const sandbox = evalBundle(stubs)
+    const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (
+      url: string,
+    ) => Record<string, unknown> & {bufferedAmount: number; send: (s: string) => void}
+    const ws = new WS("wss://example.com/socket")
+    expect(ws.bufferedAmount).toBe(0)
+    ws.send("hello")
+    // After send, bufferedAmount carries the byte count until the
+    // microtask drains.
+    expect(ws.bufferedAmount).toBe(5)
+    // Yield to the microtask queue (Promise.resolve drains microtasks).
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(ws.bufferedAmount).toBe(0)
   })
 
   test("addEventListener('message', ...) receives events alongside the onmessage prop", () => {

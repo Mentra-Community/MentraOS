@@ -274,11 +274,20 @@ public final class JSCRuntime: NSObject {
         guard let record = lock.withLock({ contexts[packageName] }) else { return nil }
         var result: Any?
         record.queue.sync {
-            guard self.evaluateCatching(record: record, label: "evaluate", source: source) else {
+            // evaluateCatching runs the script AND returns whether it
+            // threw. We want both the result + the exception capture, so
+            // inline the same dance here instead of re-evaluating
+            // (which would run any side effects twice).
+            record.context.exception = nil
+            let raw = record.context.evaluateScript(source)
+            if let exception = record.context.exception {
+                os_log("MentraJS [%{public}@] evaluate threw: %{public}@",
+                       log: Self.log, type: .error,
+                       record.packageName, exception.toString() ?? "unknown")
+                record.context.exception = nil
                 result = nil
                 return
             }
-            let raw = record.context.evaluateScript(source)
             result = raw?.toObject()
         }
         return result

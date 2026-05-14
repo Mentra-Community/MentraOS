@@ -505,6 +505,26 @@ declare const __nativeClearTimer: (token: number) => void
       return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
     }
   }
+  // crypto.subtle is deferred to a follow-up (SHA / AES-GCM / HMAC /
+  // X25519 over CryptoKit on iOS + javax.crypto + Tink on Android).
+  // Until then, miniapps that reach for it get a clear runtime error
+  // pointing at the SDK gap instead of an "undefined is not a function"
+  // from the engine. Cheaper than silent failures for early authors.
+  if (!cryptoNs.subtle) {
+    const notImplemented = () => {
+      throw new Error(
+        "crypto.subtle is not yet implemented in MentraJS — see " +
+          "agents/mentrajs-two-layer-miniapp-architecture.md (Polyfill " +
+          "strategy section). Use a pure-JS hash/encrypt library for now.",
+      )
+    }
+    cryptoNs.subtle = new Proxy(
+      {},
+      {
+        get: () => notImplemented,
+      },
+    )
+  }
   ;(g as Record<string, unknown>).crypto = cryptoNs
 
   // ---------- TextEncoder / TextDecoder ------------------------------------
@@ -697,7 +717,20 @@ declare const __nativeClearTimer: (token: number) => void
           return bodyText
         }
         async json(): Promise<unknown> {
-          return JSON.parse(bodyText)
+          try {
+            return JSON.parse(bodyText)
+          } catch (e) {
+            // Match the browser fetch().json() behaviour — a SyntaxError
+            // is thrown that names the response in its message so the
+            // miniapp author can tell which call failed.
+            const err = new Error(
+              `Failed to parse JSON response from ${url}: ${
+                e instanceof Error ? e.message : String(e)
+              }`,
+            )
+            ;(err as Error & {name: string}).name = "SyntaxError"
+            throw err
+          }
         }
         async arrayBuffer(): Promise<ArrayBuffer> {
           const enc = new (g as unknown as {TextEncoder: new () => TextEncoder}).TextEncoder()
@@ -801,21 +834,37 @@ declare const __nativeClearTimer: (token: number) => void
         }
         let kind: "text" | "binary"
         let payload: string
+        let byteSize: number
         if (typeof data === "string") {
           kind = "text"
           payload = data
+          // RFC 6455 frame uses UTF-8; close-enough size for the
+          // bufferedAmount counter is the string length (ASCII fast
+          // path, off-by-a-few on multi-byte chars).
+          byteSize = data.length
         } else {
           kind = "binary"
-          // Base64-encode binary frames so the JSON bridge can carry them.
           const bytes =
             data instanceof ArrayBuffer
               ? new Uint8Array(data)
               : new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
           payload = bytesToBase64(bytes)
+          byteSize = bytes.byteLength
         }
+        // Track the queued byte count locally. The dispatch call is
+        // synchronous (Swift block / Zipline bound method) so by the
+        // time we return the native side has accepted the frame; we
+        // decrement on the next event-loop turn to give miniapp code
+        // an opportunity to observe a non-zero bufferedAmount within
+        // a single tick (matches browser-WebSocket timing).
+        this.bufferedAmount += byteSize
         try {
           __dispatch("ws", "send", JSON.stringify([{sid: this.sid, kind, payload}]))
+          queueMicrotaskSafe(() => {
+            this.bufferedAmount = Math.max(0, this.bufferedAmount - byteSize)
+          })
         } catch (e) {
+          this.bufferedAmount = Math.max(0, this.bufferedAmount - byteSize)
           this._deliver("error", {message: String(e)})
         }
       }

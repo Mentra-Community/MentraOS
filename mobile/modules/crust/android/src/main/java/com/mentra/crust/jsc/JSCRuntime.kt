@@ -11,6 +11,15 @@ import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
 /**
+ * Thrown from the bridge's dispatch() method to propagate a structured
+ * MentraJS dispatch failure (PERMISSION_NOT_DECLARED / PERMISSION_DENIED
+ * / INVALID_ARGS / etc.) back to the calling JS frame. Zipline surfaces
+ * Kotlin exceptions from bound methods as JS-side throws, so the SDK's
+ * send-request Promise correctly rejects with a real Error.
+ */
+class MentraJSDispatchError(val code: String, message: String) : RuntimeException("$code: $message")
+
+/**
  * MentraJS — per-miniapp QuickJS (via Cash App's Zipline) runtime host on Android.
  *
  * Owns N QuickJs instances keyed by packageName. Each context gets:
@@ -359,18 +368,14 @@ class JSCRuntime private constructor(private val appContext: Context) {
                 is JSCDispatchOutcome.Sync -> outcome.json
                 is JSCDispatchOutcome.Async -> null
                 is JSCDispatchOutcome.Error -> {
-                    // Inject a JS throw so the polyfill's send-request path
-                    // rejects with a proper Error object.
-                    val msg = (outcome.message ?: outcome.code).replace("\"", "\\\"")
-                    val throwScript = "(function(){ var e = new Error(\"$msg\"); e.code = \"${outcome.code}\"; throw e; })()"
-                    try {
-                        record.executor.submit {
-                            record.quickJs.evaluate(throwScript, "mentrajs:dispatch-error.js")
-                        }
-                    } catch (_: Throwable) {
-                        /* ignore — error already surfaced via return */
-                    }
-                    null
+                    // Throw a real Kotlin RuntimeException so Zipline
+                    // propagates it as a JS-side throw — the polyfill's
+                    // send-request promise then rejects with a real
+                    // Error object whose .code field the SDK can read.
+                    // Previously we submitted an async evaluate which
+                    // never reached the calling __dispatch's JS frame.
+                    val errorMessage = outcome.message ?: outcome.code
+                    throw MentraJSDispatchError(outcome.code, errorMessage)
                 }
                 is JSCDispatchOutcome.ForwardToRn -> {
                     val payload = HashMap<String, Any?>(outcome.payload)

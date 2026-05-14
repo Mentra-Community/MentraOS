@@ -357,6 +357,19 @@
         return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
       };
     }
+    if (!cryptoNs.subtle) {
+      const notImplemented = () => {
+        throw new Error(
+          "crypto.subtle is not yet implemented in MentraJS \u2014 see agents/mentrajs-two-layer-miniapp-architecture.md (Polyfill strategy section). Use a pure-JS hash/encrypt library for now."
+        );
+      };
+      cryptoNs.subtle = new Proxy(
+        {},
+        {
+          get: () => notImplemented
+        }
+      );
+    }
     ;
     g.crypto = cryptoNs;
     if (typeof g.TextEncoder !== "function") {
@@ -523,7 +536,15 @@
             return bodyText;
           }
           async json() {
-            return JSON.parse(bodyText);
+            try {
+              return JSON.parse(bodyText);
+            } catch (e) {
+              const err = new Error(
+                `Failed to parse JSON response from ${url}: ${e instanceof Error ? e.message : String(e)}`
+              );
+              err.name = "SyntaxError";
+              throw err;
+            }
           }
           async arrayBuffer() {
             const enc = new g.TextEncoder();
@@ -628,17 +649,25 @@
           }
           let kind;
           let payload;
+          let byteSize;
           if (typeof data === "string") {
             kind = "text";
             payload = data;
+            byteSize = data.length;
           } else {
             kind = "binary";
             const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
             payload = bytesToBase642(bytes);
+            byteSize = bytes.byteLength;
           }
+          this.bufferedAmount += byteSize;
           try {
             __dispatch("ws", "send", JSON.stringify([{ sid: this.sid, kind, payload }]));
+            queueMicrotaskSafe2(() => {
+              this.bufferedAmount = Math.max(0, this.bufferedAmount - byteSize);
+            });
           } catch (e) {
+            this.bufferedAmount = Math.max(0, this.bufferedAmount - byteSize);
             this._deliver("error", { message: String(e) });
           }
         }
