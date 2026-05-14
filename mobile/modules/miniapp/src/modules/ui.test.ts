@@ -1,0 +1,150 @@
+/// <reference types="bun-types" />
+
+import {afterEach, beforeEach, describe, expect, test} from "bun:test"
+
+import type {MiniappSession} from "../session"
+import {UIModuleImpl} from "./ui"
+
+type InboundHandler = (data: unknown) => void
+
+function mockSession() {
+  let inboundHandler: InboundHandler | null = null
+  const oneShotCalls: unknown[] = []
+  const session = {
+    _subscribe(streamType: string, handler: (data: unknown) => void) {
+      if (streamType === "_ui") inboundHandler = handler
+      return () => {
+        if (inboundHandler === handler) inboundHandler = null
+      }
+    },
+    sendOneShot(payload: object) {
+      oneShotCalls.push(payload)
+    },
+  } as unknown as MiniappSession
+  return {
+    session,
+    deliver(env: unknown) {
+      if (!inboundHandler) throw new Error("inboundHandler not bound")
+      inboundHandler(env)
+    },
+    oneShotCalls,
+  }
+}
+
+describe("UIModuleImpl", () => {
+  let mock: ReturnType<typeof mockSession>
+  let ui: UIModuleImpl
+
+  beforeEach(() => {
+    mock = mockSession()
+    ui = new UIModuleImpl(mock.session)
+  })
+
+  afterEach(() => {
+    // nothing — Map clears on next construction
+  })
+
+  test("starts in closed state", () => {
+    expect(ui.isOpen()).toBe(false)
+  })
+
+  test("UI_OPEN flips isOpen to true and fires onOpen handlers", () => {
+    const calls: number[] = []
+    ui.onOpen(() => calls.push(1))
+    ui.onOpen(() => calls.push(2))
+    mock.deliver({type: "UI_OPEN"})
+    expect(ui.isOpen()).toBe(true)
+    expect(calls).toEqual([1, 2])
+  })
+
+  test("UI_CLOSE flips isOpen to false and fires onClose handlers", () => {
+    const closes: number[] = []
+    ui.onClose(() => closes.push(1))
+    mock.deliver({type: "UI_OPEN"})
+    mock.deliver({type: "UI_CLOSE"})
+    expect(ui.isOpen()).toBe(false)
+    expect(closes).toEqual([1])
+  })
+
+  test("onOpen registered AFTER UI_OPEN fires immediately for late subscribers", () => {
+    mock.deliver({type: "UI_OPEN"})
+    const calls: number[] = []
+    ui.onOpen(() => calls.push(1))
+    expect(calls).toEqual([1])
+  })
+
+  test("send() drops silently when no WebView is bound", () => {
+    ui.send("state", {notes: []})
+    expect(mock.oneShotCalls).toHaveLength(0)
+  })
+
+  test("send() emits UI_SEND envelope when bound", () => {
+    mock.deliver({type: "UI_OPEN"})
+    ui.send("state", {notes: ["a"]})
+    expect(mock.oneShotCalls).toHaveLength(1)
+    const sent = mock.oneShotCalls[0] as {type: string; channel: string; payload: unknown; seq: number}
+    expect(sent.type).toBe("UI_SEND")
+    expect(sent.channel).toBe("state")
+    expect(sent.payload).toEqual({notes: ["a"]})
+    expect(sent.seq).toBe(1)
+  })
+
+  test("seq counter monotonically increases per bind, resets on rebind", () => {
+    mock.deliver({type: "UI_OPEN"})
+    ui.send("a", 1)
+    ui.send("a", 2)
+    ui.send("a", 3)
+    expect((mock.oneShotCalls as Array<{seq: number}>).map((c) => c.seq)).toEqual([1, 2, 3])
+    mock.deliver({type: "UI_CLOSE"})
+    mock.deliver({type: "UI_OPEN"})
+    ui.send("a", 4)
+    expect((mock.oneShotCalls[3] as {seq: number}).seq).toBe(1)
+  })
+
+  test("UI_MESSAGE fans out to channel subscribers", () => {
+    const got: unknown[] = []
+    ui.on("foo", (p) => got.push(p))
+    mock.deliver({type: "UI_OPEN"})
+    mock.deliver({type: "UI_MESSAGE", channel: "foo", payload: {x: 1}, seq: 1})
+    expect(got).toEqual([{x: 1}])
+  })
+
+  test("UI_MESSAGE to unsubscribed channel is silently dropped", () => {
+    mock.deliver({type: "UI_OPEN"})
+    expect(() =>
+      mock.deliver({type: "UI_MESSAGE", channel: "unknown", payload: {}, seq: 1}),
+    ).not.toThrow()
+  })
+
+  test("unsubscribe removes the handler", () => {
+    const got: unknown[] = []
+    const off = ui.on("foo", (p) => got.push(p))
+    mock.deliver({type: "UI_OPEN"})
+    mock.deliver({type: "UI_MESSAGE", channel: "foo", payload: 1, seq: 1})
+    off()
+    mock.deliver({type: "UI_MESSAGE", channel: "foo", payload: 2, seq: 2})
+    expect(got).toEqual([1])
+  })
+
+  test("handler throwing does not break fan-out to subsequent subscribers", () => {
+    const got: number[] = []
+    ui.on("foo", () => {
+      throw new Error("boom")
+    })
+    ui.on("foo", () => got.push(2))
+    mock.deliver({type: "UI_OPEN"})
+    mock.deliver({type: "UI_MESSAGE", channel: "foo", payload: null, seq: 1})
+    expect(got).toEqual([2])
+  })
+
+  test("onClose handler throwing does not stop subsequent close handlers", () => {
+    const got: number[] = []
+    ui.onClose(() => {
+      throw new Error("boom")
+    })
+    ui.onClose(() => got.push(2))
+    mock.deliver({type: "UI_OPEN"})
+    mock.deliver({type: "UI_CLOSE"})
+    expect(got).toEqual([2])
+  })
+})

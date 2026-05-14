@@ -35,6 +35,7 @@ import {PermissionsModule} from "./modules/permissions"
 import {PhoneModule} from "./modules/phone"
 import {TranscriptionModule} from "./modules/transcription"
 import {TranslationModule} from "./modules/translation"
+import {UIModuleImpl, type UIModule} from "./modules/ui"
 import {SimpleStorage} from "./modules/storage"
 import {SpeakerModule} from "./modules/speaker"
 import {StreamModule} from "./modules/stream"
@@ -162,6 +163,13 @@ export class MiniappSession {
   public readonly system: SystemModule
   public readonly transcription: TranscriptionModule
   public readonly translation: TranslationModule
+  /**
+   * Phase 3 — UI message bus to the bound WebView (when one is open).
+   * Background-only API surface; mirrors the WebView's `mentra` global
+   * with inverted buffering policy (background drops when no WebView is
+   * bound; the WebView buffers until ready).
+   */
+  public readonly ui: UIModule
 
   /** Phone-declared glasses capabilities. Null until CONNECT_ACK arrives. */
   public capabilities: GlassesCapabilities | null = null
@@ -226,6 +234,7 @@ export class MiniappSession {
     this.system = new SystemModule(this)
     this.transcription = new TranscriptionModule(this)
     this.translation = new TranslationModule(this)
+    this.ui = new UIModuleImpl(this)
   }
 
   /**

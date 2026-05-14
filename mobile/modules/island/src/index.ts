@@ -26,6 +26,7 @@ export {
   type OutboundMessagePayload as MentraJSOutboundMessage,
   type RouterLogger as MentraJSRouterLogger,
 } from "./services/MentraJSRouter"
+export {buildMentraUiShim, type MentraUiShimOptions} from "./services/mentraUiShim"
 export {default as localSttFallbackCoordinator} from "./services/LocalSttFallbackCoordinator"
 export {default as micStateCoordinator} from "./services/MicStateCoordinator"
 
