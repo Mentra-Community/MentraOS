@@ -167,11 +167,6 @@ public class Mach1 extends SGCManager {
     }
 
     @Override
-    public void sendButtonModeSetting() {
-
-    }
-
-    @Override
     public void sendButtonVideoRecordingSettings() {
 
     }
@@ -320,6 +315,11 @@ public class Mach1 extends SGCManager {
     public void findCompatibleDevices() {
         Bridge.log("Mach1: findCompatibleDevices()");
         findCompatibleDeviceNames();
+    }
+
+    @Override
+    public void stopScan() {
+        Bridge.log("Mach1: stopScan() - no active BLE scanner owned by Mach1");
     }
 
     @Override

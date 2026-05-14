@@ -344,6 +344,14 @@ class GallerySyncService {
 
     const store = useGallerySyncStore.getState()
     const glassesStore = useGlassesStore.getState()
+    const glassesHotspot =
+      glassesStore.hotspot.state === "enabled"
+        ? {
+            ssid: glassesStore.hotspot.ssid,
+            password: glassesStore.hotspot.password,
+            ip: glassesStore.hotspot.localIp,
+          }
+        : null
 
     // Reset processing queue for new sync session
     mediaProcessingQueue.reset()
@@ -377,7 +385,7 @@ class GallerySyncService {
     console.log("[GallerySyncService] ✅ Pre-flight check passed - BT enabled, Glasses connected")
     console.log("[GallerySyncService] 📊 Glasses info:", {
       connected: glassesStore.connected,
-      hotspotEnabled: glassesStore.hotspotEnabled,
+      hotspotEnabled: glassesHotspot !== null,
     })
 
     // Request all permissions upfront so user isn't interrupted during WiFi/download
@@ -590,18 +598,18 @@ class GallerySyncService {
     // not just that the glasses reported hotspot is enabled (which persists across app restarts)
     console.log("[GallerySyncService] 🔌 Step 3/6: Checking hotspot connection status...")
     let isAlreadyConnected = false
-    if (glassesStore.hotspotEnabled && glassesStore.hotspotGatewayIp && glassesStore.hotspotSsid) {
+    if (glassesHotspot) {
       console.log("[GallerySyncService]   📊 Glasses hotspot status:")
-      console.log(`[GallerySyncService]      - Enabled: ${glassesStore.hotspotEnabled}`)
-      console.log(`[GallerySyncService]      - SSID: ${glassesStore.hotspotSsid}`)
-      console.log(`[GallerySyncService]      - IP: ${glassesStore.hotspotGatewayIp}`)
+      console.log("[GallerySyncService]      - Enabled: true")
+      console.log(`[GallerySyncService]      - SSID: ${glassesHotspot.ssid}`)
+      console.log(`[GallerySyncService]      - IP: ${glassesHotspot.ip}`)
 
       try {
         const currentSSID = await WifiManager.getCurrentWifiSSID()
         console.log(`[GallerySyncService]   📱 Phone current WiFi SSID: "${currentSSID}"`)
-        console.log(`[GallerySyncService]   🔍 Comparing with glasses hotspot SSID: "${glassesStore.hotspotSsid}"`)
+        console.log(`[GallerySyncService]   🔍 Comparing with glasses hotspot SSID: "${glassesHotspot.ssid}"`)
 
-        isAlreadyConnected = currentSSID === glassesStore.hotspotSsid
+        isAlreadyConnected = currentSSID === glassesHotspot.ssid
         if (isAlreadyConnected) {
           console.log("[GallerySyncService]   ✅ Phone is already connected to glasses hotspot!")
         } else if (currentSSID) {
@@ -620,13 +628,9 @@ class GallerySyncService {
       console.log("[GallerySyncService]   ➡️ Will request hotspot activation")
     }
 
-    if (isAlreadyConnected) {
+    if (isAlreadyConnected && glassesHotspot) {
       console.log("[GallerySyncService] 🚀 Skipping hotspot request - already connected!")
-      const hotspotInfo: HotspotInfo = {
-        ssid: glassesStore.hotspotSsid,
-        password: glassesStore.hotspotPassword,
-        ip: glassesStore.hotspotGatewayIp,
-      }
+      const hotspotInfo: HotspotInfo = glassesHotspot
       store.setHotspotInfo(hotspotInfo)
       store.setSyncState("connecting_wifi")
       await this.startFileDownload(hotspotInfo)

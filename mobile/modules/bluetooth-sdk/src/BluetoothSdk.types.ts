@@ -55,18 +55,32 @@ export type LogEvent = {
   message: string
 }
 
-export type WifiStatusChangeEvent = {
-  type: "wifi_status_change"
-  connected: boolean
-  ssid: string
+export type WifiStatus =
+  | {state: "disconnected"}
+  | {state: "connected"; ssid: string; localIp?: string}
+
+export type ConnectedWifiStatus = Extract<WifiStatus, {state: "connected"}>
+
+export function isConnectedWifiStatus(status: WifiStatus): status is ConnectedWifiStatus {
+  return status.state === "connected"
 }
 
-export type HotspotStatusChangeEvent = {
+export type WifiStatusChangeEvent = WifiStatus & {
+  type: "wifi_status_change"
+}
+
+export type HotspotStatus =
+  | {state: "disabled"}
+  | {state: "enabled"; ssid: string; password: string; localIp: string}
+
+export type EnabledHotspotStatus = Extract<HotspotStatus, {state: "enabled"}>
+
+export function isEnabledHotspotStatus(status: HotspotStatus): status is EnabledHotspotStatus {
+  return status.state === "enabled"
+}
+
+export type HotspotStatusChangeEvent = HotspotStatus & {
   type: "hotspot_status_change"
-  enabled: boolean
-  ssid: string
-  password: string
-  local_ip: string
 }
 
 export type HotspotErrorEvent = {
@@ -75,15 +89,22 @@ export type HotspotErrorEvent = {
   timestamp: number
 }
 
-export type PhotoResponseEvent = {
-  type: "photo_response"
-  requestId: string
-  photoUrl: string
-  timestamp: number
-  success: boolean
-  errorCode?: string
-  errorMessage?: string
-}
+export type PhotoResponseEvent =
+  | {
+      type: "photo_response"
+      state: "success"
+      requestId: string
+      photoUrl: string
+      timestamp: number
+    }
+  | {
+      type: "photo_response"
+      state: "error"
+      requestId: string
+      timestamp: number
+      errorCode?: string
+      errorMessage: string
+    }
 
 export type GalleryStatusEvent = {
   type: "gallery_status"
@@ -128,11 +149,57 @@ export type SwitchStatusEvent = {
   timestamp: number
 }
 
-export type RgbLedControlResponseEvent = {
-  type: "rgb_led_control_response"
-  requestId: string
-  success: boolean
-  error?: string
+export type RgbLedControlResponseEvent =
+  | {
+      type: "rgb_led_control_response"
+      state: "success"
+      requestId: string
+    }
+  | {
+      type: "rgb_led_control_response"
+      state: "error"
+      requestId: string
+      errorCode: string
+    }
+
+export type RgbLedAction = "on" | "off"
+export type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"
+/** `"auto"` enables local button photo/video capture; `"manual"` reports button events without local gallery capture. */
+export type GalleryMode = "auto" | "manual"
+export type PhotoSize = "small" | "medium" | "large" | "full"
+export type ButtonPhotoSize = "small" | "medium" | "large"
+export type PhotoCompression = "none" | "medium" | "heavy"
+
+export type StreamVideoConfig = {
+  width?: number
+  height?: number
+  bitrate?: number
+  frameRate?: number
+}
+
+export type StreamAudioConfig = {
+  bitrate?: number
+  sampleRate?: number
+  echoCancellation?: boolean
+  noiseSuppression?: boolean
+}
+
+export type StreamStartRequest = {
+  type?: "start_stream"
+  streamUrl: string
+  streamId?: string
+  keepAlive?: boolean
+  keepAliveIntervalSeconds?: number
+  flash?: boolean
+  sound?: boolean
+  video?: StreamVideoConfig
+  audio?: StreamAudioConfig
+}
+
+export type StreamKeepAliveRequest = {
+  type?: "keep_stream_alive"
+  streamId: string
+  ackId: string
 }
 
 export type PairFailureEvent = {
@@ -180,14 +247,68 @@ export type MicLc3Event = {
   lc3: ArrayBuffer
 }
 
-export type StreamStatusEvent = {
-  type: "stream_status"
-  [key: string]: any
-}
+export type StreamStatusLifecycleState = "initializing" | "streaming" | "stopping" | "stopped"
+export type StreamStatusReconnectState = "reconnecting" | "reconnected" | "reconnect_failed"
+export type StreamStatusState = StreamStatusLifecycleState | StreamStatusReconnectState | "error"
+
+export type StreamStatusEvent =
+  | {
+      type: "stream_status"
+      kind: "lifecycle"
+      status: StreamStatusLifecycleState
+      streamId?: string
+      timestamp?: number
+    }
+  | {
+      type: "stream_status"
+      kind: "reconnect"
+      status: "reconnecting"
+      streamId?: string
+      attempt: number
+      maxAttempts: number
+      reason: string
+      timestamp?: number
+    }
+  | {
+      type: "stream_status"
+      kind: "reconnect"
+      status: "reconnected"
+      streamId?: string
+      attempt: number
+      timestamp?: number
+    }
+  | {
+      type: "stream_status"
+      kind: "reconnect"
+      status: "reconnect_failed"
+      streamId?: string
+      maxAttempts: number
+      timestamp?: number
+    }
+  | {
+      type: "stream_status"
+      kind: "error"
+      status: "error"
+      streamId?: string
+      errorDetails: string
+      timestamp?: number
+    }
+  | {
+      type: "stream_status"
+      kind: "snapshot"
+      status: "streaming" | "reconnecting" | "stopped"
+      streaming: boolean
+      reconnecting: boolean
+      streamId?: string
+      attempt?: number
+      timestamp?: number
+    }
 
 export type KeepAliveAckEvent = {
   type: "keep_alive_ack"
-  [key: string]: any
+  streamId: string
+  ackId: string
+  timestamp?: number
 }
 
 export type MtkUpdateCompleteEvent = {
@@ -254,6 +375,8 @@ export type CoreModuleEvents = {
   glasses_status: (changed: Partial<GlassesStatus>) => void
   core_status: (changed: Partial<CoreStatus>) => void
   log: (event: LogEvent) => void
+  device_discovered: (device: Device) => void
+  default_device_changed: (event: {device?: Device}) => void
   // Individual event handlers
   glasses_not_ready: (event: GlassesNotReadyEvent) => void
   button_press: (event: ButtonPressEvent) => void
@@ -338,6 +461,8 @@ export interface GlassesStatus {
   connectionState: string
   btcConnected: boolean
   signalStrength: number
+  /** Milliseconds since epoch when signalStrength was last refreshed by the phone BLE stack. */
+  signalStrengthUpdatedAt: number
   // device info
   deviceModel: string
   androidVersion: string
@@ -355,9 +480,7 @@ export interface GlassesStatus {
   style: string
   color: string
   // wifi info
-  wifiConnected: boolean
-  wifiSsid: string
-  wifiLocalIp: string
+  wifi: WifiStatus
   // battery info
   batteryLevel: number
   charging: boolean
@@ -366,10 +489,7 @@ export interface GlassesStatus {
   caseOpen: boolean
   caseRemoved: boolean
   // hotspot info
-  hotspotEnabled: boolean
-  hotspotSsid: string
-  hotspotPassword: string
-  hotspotGatewayIp: string
+  hotspot: HotspotStatus
   // OTA update info
   otaUpdateAvailable: OtaUpdateInfo | null
   otaProgress: OtaProgress | null
@@ -394,10 +514,21 @@ export interface CoreSettings {
 
 export type MicRanking = "auto" | "phone" | "glasses" | "bluetooth"
 
-export interface DeviceSearchResult {
-  deviceModel: string
-  deviceName: string
-  deviceAddress?: string
+export interface Device {
+  id: string
+  model: string
+  name: string
+  address?: string
+  rssi?: number
+}
+
+export interface DeviceScanRequest {
+  model: string
+}
+
+export interface ConnectOptions {
+  saveAsDefault?: boolean
+  cancelExistingConnectionAttempt?: boolean
 }
 
 export interface WifiSearchResult {
@@ -412,11 +543,16 @@ export interface CoreStatus {
   // state:
   searching: boolean
   searchingController: boolean
+  default_wearable?: string
+  device_name?: string
+  device_address?: string
   systemMicUnavailable: boolean
   micRanking: MicRanking[]
   currentMic: MicRanking | null
-  searchResults: DeviceSearchResult[]
+  searchResults: Device[]
   wifiScanResults: WifiSearchResult[]
   lastLog: string[]
   otherBtConnected: boolean
+  // desired settings the SDK sends to compatible connected glasses:
+  gallery_mode: boolean
 }

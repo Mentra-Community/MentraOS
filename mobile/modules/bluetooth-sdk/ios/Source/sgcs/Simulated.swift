@@ -105,10 +105,6 @@ class Simulated: SGCManager {
         Bridge.log("sendButtonPhotoSettings")
     }
 
-    func sendButtonModeSetting() {
-        Bridge.log("sendButtonModeSetting")
-    }
-
     func sendButtonVideoRecordingSettings() {
         Bridge.log("sendButtonVideoRecordingSettings")
     }
@@ -197,6 +193,10 @@ class Simulated: SGCManager {
 
     func findCompatibleDevices() {
         Bridge.log("findCompatibleDevices")
+    }
+
+    func stopScan() {
+        Bridge.log("stopScan")
     }
 
     func connectById(_: String) {

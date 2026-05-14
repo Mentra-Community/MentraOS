@@ -2623,7 +2623,6 @@ class G2: NSObject, SGCManager {
     func sendStreamKeepAlive(_: [String: Any]) {}
     func stopVideoRecording(requestId _: String) {}
     func sendButtonPhotoSettings() {}
-    func sendButtonModeSetting() {}
     func sendButtonVideoRecordingSettings() {}
     func sendButtonMaxRecordingTime() {}
     func sendButtonCameraLedSetting() {}
@@ -2723,7 +2722,7 @@ class G2: NSObject, SGCManager {
         return true
     }
 
-    private func stopScan() {
+    func stopScan() {
         centralManager?.stopScan()
     }
 

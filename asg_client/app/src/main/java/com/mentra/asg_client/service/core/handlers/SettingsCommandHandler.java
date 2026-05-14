@@ -250,8 +250,8 @@ public class SettingsCommandHandler implements ICommandHandler {
             
             Log.d(TAG, "📱 Received button mode setting: " + mode);
             
-            // For now, we'll just log the setting since AsgSettings doesn't have a specific
-            // button mode field. This can be extended later if needed.
+            // Deprecated/reserved command. Button capture behavior is controlled by
+            // save_in_gallery_mode plus the photo/video capture settings.
             Log.d(TAG, "✅ Button mode setting received: " + mode);
             
             // Send acknowledgment response
@@ -264,4 +264,4 @@ public class SettingsCommandHandler implements ICommandHandler {
             return false;
         }
     }
-} 
+}

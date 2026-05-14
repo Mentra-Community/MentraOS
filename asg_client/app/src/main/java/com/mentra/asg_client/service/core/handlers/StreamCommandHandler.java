@@ -335,13 +335,27 @@ public class StreamCommandHandler implements ICommandHandler {
                     || WhipStreamingService.isReconnecting();
 
             JSONObject status = new JSONObject();
+            status.put("kind", "snapshot");
+            status.put("status", isReconnecting ? "reconnecting" : (isStreaming ? "streaming" : "stopped"));
             status.put("streaming", isStreaming);
+            status.put("reconnecting", isReconnecting);
+
+            String streamId = null;
+            if (RtmpStreamingService.isStreaming() || RtmpStreamingService.isReconnecting()) {
+                streamId = RtmpStreamingService.getCurrentStreamId();
+            } else if (SrtStreamingService.isStreaming() || SrtStreamingService.isReconnecting()) {
+                streamId = SrtStreamingService.getCurrentStreamId();
+            } else if (WhipStreamingService.isStreaming() || WhipStreamingService.isReconnecting()) {
+                streamId = WhipStreamingService.getCurrentStreamId();
+            }
+            if (streamId != null && !streamId.isEmpty()) {
+                status.put("streamId", streamId);
+            }
 
             if (isReconnecting) {
-                status.put("reconnecting", true);
                 if (RtmpStreamingService.isReconnecting()) {
                     status.put("attempt", RtmpStreamingService.getReconnectAttempt());
-                } else {
+                } else if (SrtStreamingService.isReconnecting()) {
                     status.put("attempt", SrtStreamingService.getReconnectAttempt());
                 }
             }

@@ -105,19 +105,33 @@ class Bridge {
         Bridge.sendTypedMessage("battery_status", body: body)
     }
 
-    static func sendDiscoveredDevice(_ deviceModel: String, _ deviceName: String) {
+    static func sendDiscoveredDevice(
+        _ deviceModel: String,
+        _ deviceName: String,
+        deviceAddress: String = "",
+        rssi: Int? = nil
+    ) {
         Task {
             await MainActor.run {
                 let searchResults = GlassesStore.shared.get("core", "searchResults") as? [[String: Any]] ?? []
-                let newResult: [String: Any] = [
-                    "deviceModel": deviceModel,
-                    "deviceName": deviceName,
+                let id = "\(deviceModel):\(deviceName)"
+                var newResult: [String: Any] = [
+                    "id": id,
+                    "model": deviceModel,
+                    "name": deviceName,
                 ]
+                if !deviceAddress.isEmpty {
+                    newResult["address"] = deviceAddress
+                }
+                if let rssi {
+                    newResult["rssi"] = rssi
+                }
                 let allResults = searchResults + [newResult]
                 var seen = Set<String>()
                 let uniqueResults = allResults.reversed().filter {
-                    guard let name = $0["deviceName"] as? String else { return false }
-                    return seen.insert(name).inserted
+                    let model = $0["model"] as? String ?? $0["deviceModel"] as? String ?? deviceModel
+                    guard let name = $0["name"] as? String ?? $0["deviceName"] as? String else { return false }
+                    return seen.insert("\(model):\(name)").inserted
                 }.reversed()
                 GlassesStore.shared.set("core", "searchResults", Array(uniqueResults))
             }
@@ -170,10 +184,10 @@ class Bridge {
         guard !requestId.isEmpty else { return }
         var body: [String: Any] = [
             "requestId": requestId,
-            "success": success,
+            "state": success ? "success" : "error",
         ]
-        if let error {
-            body["error"] = error
+        if !success {
+            body["errorCode"] = error ?? "unknown_error"
         }
         Bridge.sendTypedMessage("rgb_led_control_response", body: body)
     }
@@ -181,9 +195,8 @@ class Bridge {
     static func sendPhotoError(requestId: String, errorCode: String, errorMessage: String) {
         var event: [String: Any] = [
             "type": "photo_response",
+            "state": "error",
             "requestId": requestId,
-            "success": false,
-            "photoUrl": "",
             "timestamp": Int(Date().timeIntervalSince1970 * 1000),
         ]
         if !errorCode.isEmpty {
@@ -230,12 +243,14 @@ class Bridge {
     }
 
     static func sendWifiStatusChange(connected: Bool, ssid: String?, localIp: String?) {
-        let event: [String: Any] = [
-            "connected": connected,
-            "ssid": ssid,
-            "local_ip": localIp,
-        ]
-        Bridge.sendTypedMessage("wifi_status_change", body: event)
+        guard let status = WifiStatus.fromStoreFields(
+            connected: connected,
+            ssid: ssid,
+            localIp: localIp
+        ) else {
+            return
+        }
+        Bridge.sendTypedMessage("wifi_status_change", body: status.values)
     }
 
     static func updateWifiScanResults(_ networks: [[String: Any]]) {

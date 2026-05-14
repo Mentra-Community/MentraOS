@@ -31,7 +31,6 @@ protocol ControllerManager {
     // MARK: - Button Settings
 
     func sendButtonPhotoSettings()
-    func sendButtonModeSetting()
     func sendButtonVideoRecordingSettings()
     func sendButtonMaxRecordingTime()
     func sendButtonCameraLedSetting()
@@ -64,6 +63,7 @@ protocol ControllerManager {
     func disconnect()
     func forget()
     func findCompatibleDevices()
+    func stopScan()
     func connectById(_ id: String)
     func getConnectedBluetoothName() -> String?
     func cleanup()

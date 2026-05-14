@@ -330,7 +330,7 @@ export async function checkForOtaUpdate(
 //   const glassesModel = useGlassesStore(state => state.deviceModel)
 //   const otaVersionUrl = useGlassesStore(state => state.otaVersionUrl)
 //   const currentBuildNumber = useGlassesStore(state => state.buildNumber)
-//   const glassesWifiConnected = useGlassesStore(state => state.wifiConnected)
+//   const glassesWifiConnected = useGlassesStore(state => state.wifi.state === "connected")
 
 //   useEffect(() => {
 //     // Only check for glasses that support WiFi self OTA updates
@@ -389,7 +389,7 @@ export function OtaUpdateChecker() {
   const [superMode] = useSetting(SETTINGS.super_mode.key)
   const glassesConnected = useGlassesStore((state) => state.connected)
   const buildNumber = useGlassesStore((state) => state.buildNumber)
-  const glassesWifiConnected = useGlassesStore((state) => state.wifiConnected)
+  const glassesWifiConnected = useGlassesStore((state) => state.wifi.state === "connected")
   const mtkFwVersion = useGlassesStore((state) => state.mtkFwVersion)
   const besFwVersion = useGlassesStore((state) => state.besFwVersion)
   const otaUpdateAvailable = useGlassesStore((state) => state.otaUpdateAvailable)
@@ -660,7 +660,7 @@ export function OtaUpdateChecker() {
           // Cache the result as a fallback in case the prefetch fails silently — if it does,
           // pendingUpdate is populated and the next home-screen visit will surface the alert.
           // The install alert itself is driven by the cache-ready signal (existing effect above).
-          if (useGlassesStore.getState().wifiConnected) {
+          if (useGlassesStore.getState().wifi.state === "connected") {
             pendingUpdate.current = {latestVersionInfo, updates: filteredUpdates}
             console.log("OTA: Update found, glasses on WiFi - cached as fallback for silent prefetch failure")
             // Start a 3-minute fallback timer. If the glasses never send the cache-ready signal

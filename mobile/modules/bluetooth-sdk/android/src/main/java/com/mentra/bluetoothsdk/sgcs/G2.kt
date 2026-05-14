@@ -2339,7 +2339,7 @@ class G2 : SGCManager() {
     override fun setMicEnabled(enabled: Boolean) {
         Bridge.log("G2: setMicEnabled($enabled)")
         val currentEnabled = GlassesStore.get("glasses", "micEnabled") as? Boolean ?: false
-        
+
         // if already enabled, set to disabled, then send enabled after 500ms:
         if (currentEnabled && enabled) {
             GlassesStore.apply("glasses", "micEnabled", true)
@@ -2402,10 +2402,6 @@ class G2 : SGCManager() {
     // Button Settings
     override fun sendButtonPhotoSettings() {
         Bridge.log("G2: sendButtonPhotoSettings")
-    }
-
-    override fun sendButtonModeSetting() {
-        Bridge.log("G2: sendButtonModeSetting")
     }
 
     override fun sendButtonVideoRecordingSettings() {
@@ -2788,7 +2784,7 @@ class G2 : SGCManager() {
         return true
     }
 
-    private fun stopScan() {
+    override fun stopScan() {
         scanCallback?.let { cb -> bluetoothAdapter?.bluetoothLeScanner?.stopScan(cb) }
         scanCallback = null
     }

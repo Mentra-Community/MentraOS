@@ -1382,7 +1382,8 @@ public class G1 extends SGCManager {
         // handler.postDelayed(() -> stopScan(), 10000);
     }
 
-    private void stopScan() {
+    @Override
+    public void stopScan() {
         BluetoothLeScanner scanner = bluetoothAdapter.getBluetoothLeScanner();
         if (scanner != null) {
             scanner.stopScan(modernScanCallback);
@@ -1560,11 +1561,6 @@ public class G1 extends SGCManager {
 
     @Override
     public void sendButtonPhotoSettings() {
-
-    }
-
-    @Override
-    public void sendButtonModeSetting() {
 
     }
 
