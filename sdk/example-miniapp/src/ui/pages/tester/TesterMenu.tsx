@@ -1,8 +1,7 @@
 // Tester page — diagnostic surface, ephemeral by design.
-// This is the ONLY place in the example where inline-subscribing to
-// `session.*` (or imperative one-shot calls in response to user input)
-// is acceptable. User-facing glasses logic must live in
-// src/controller/GlassesController.ts.
+// Tester pages call into background via `mentra.send` to the
+// TesterController; user-facing glasses logic lives in
+// src/background/controllers/GlassesController.ts.
 
 import {useNavigate} from "react-router-dom"
 import {MiniappHeader, useCapabilities} from "@mentra/miniapp/ui"
