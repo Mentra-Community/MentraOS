@@ -2,7 +2,8 @@
 // user's miniapp server (default `userPort + 1`). Hosts the `__mentra_dev`
 // WebSocket multiplexed channel:
 //
-//   laptop → phone : {type: "reload"}                 (filesystem watcher fired)
+//   laptop → phone : {type: "reload"}                 (UI WebView reload — filesystem watcher fired in src/ui)
+//   laptop → phone : {type: "respawn-bg"}              (background JSContext respawn — filesystem watcher fired in src/background)
 //   phone  → laptop: {type: "log", level, args, ...}  (forwarded console calls)
 //
 // Plus a hello handshake (`{type: "hello", protocol: "mentra-dev/1"}` →
@@ -169,8 +170,17 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
     },
   })
 
-  // Filesystem watcher → broadcast reload.
+  // Filesystem watcher → broadcast reload or respawn-bg depending on which
+  // layer changed. Two-layer projects keep their background code under
+  // `src/background/` and their UI code under `src/ui/`; a touch under
+  // `src/background/` requires killing + re-spawning the JSContext, while a
+  // touch under `src/ui/` only needs to reload the WebView.
+  //
+  // Pre-Phase-4 single-layer projects (no `src/background/` folder) still
+  // fall back to the legacy `{type: "reload"}` for any source change. The
+  // host's WebView reload path is unchanged.
   let reloadTimer: ReturnType<typeof setTimeout> | null = null
+  let pendingType: "reload" | "respawn-bg" | null = null
   const watcher = watch(options.watchDir, {recursive: true}, (_event, filename) => {
     if (!filename) return
     // Skip noisy directories — most projects don't want to reload on
@@ -180,10 +190,24 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
     if (filename.startsWith("dist/")) return
     if (filename.startsWith(".next/")) return
 
+    // Decide which layer the change touched. Order matters: a single batch
+    // may hit both layers; if so, respawn-bg wins (it implies a full reload
+    // anyway on the WebView side because background drives the UI state).
+    const touchedBackground =
+      filename.startsWith("src/background/") || filename.includes("/src/background/")
+    const nextType: "reload" | "respawn-bg" = touchedBackground ? "respawn-bg" : "reload"
+    if (pendingType === "respawn-bg") {
+      // already locked in to the heavier signal — leave it
+    } else {
+      pendingType = nextType
+    }
+
     if (reloadTimer) clearTimeout(reloadTimer)
     reloadTimer = setTimeout(() => {
       reloadTimer = null
-      const msg = JSON.stringify({type: "reload"})
+      const type = pendingType ?? "reload"
+      pendingType = null
+      const msg = JSON.stringify({type})
       let count = 0
       for (const s of sockets) {
         try {
@@ -194,7 +218,7 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
         }
       }
       if (count > 0) {
-        log(`${COLOR.cyan}[__mentra_dev]${COLOR.reset} reload → ${count} client(s) (${filename})`)
+        log(`${COLOR.cyan}[__mentra_dev]${COLOR.reset} ${type} → ${count} client(s) (${filename})`)
       }
     }, RELOAD_DEBOUNCE_MS)
   })

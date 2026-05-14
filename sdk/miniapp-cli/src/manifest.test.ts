@@ -160,4 +160,62 @@ describe('validateManifest', () => {
       expect(valid).toBe(true);
     });
   });
+
+  describe('Phase 4 fields (sdkVersion / minHostVersion / entry / type)', () => {
+    test('accepts a two-layer manifest with full Phase 4 fields', () => {
+      const {valid, errors} = validateManifest({
+        ...minimalValid,
+        sdkVersion: '0.2.0',
+        minHostVersion: '1.42.0',
+        entry: {background: 'dist/background/index.js', ui: 'dist/ui/index.html'},
+        type: 'standard',
+      });
+      expect(errors).toEqual([]);
+      expect(valid).toBe(true);
+    });
+
+    test('sdkVersion must be a non-empty string when set', () => {
+      const {errors} = validateManifest({...minimalValid, sdkVersion: ''});
+      expect(errors.some((e) => e.includes('sdkVersion'))).toBe(true);
+    });
+
+    test('minHostVersion must be a non-empty string when set', () => {
+      const {errors} = validateManifest({...minimalValid, minHostVersion: 42});
+      expect(errors.some((e) => e.includes('minHostVersion'))).toBe(true);
+    });
+
+    test('entry.background is required when entry is set', () => {
+      const {errors} = validateManifest({...minimalValid, entry: {ui: 'dist/ui/index.html'}});
+      expect(errors.some((e) => e.includes('entry.background'))).toBe(true);
+    });
+
+    test('entry.ui must be a string when set', () => {
+      const {errors} = validateManifest({
+        ...minimalValid,
+        entry: {background: 'dist/background/index.js', ui: 42},
+      });
+      expect(errors.some((e) => e.includes('entry.ui'))).toBe(true);
+    });
+
+    test('entry must be an object (not array, not string)', () => {
+      const {errors} = validateManifest({...minimalValid, entry: 'dist/index.js'});
+      expect(errors.some((e) => e.includes('entry'))).toBe(true);
+    });
+
+    test('type must be "standard" or "background" when set', () => {
+      const {errors} = validateManifest({...minimalValid, type: 'weird'});
+      expect(errors.some((e) => e.includes('type'))).toBe(true);
+    });
+
+    test('type accepts "background" miniapps', () => {
+      const {valid} = validateManifest({...minimalValid, type: 'background'});
+      expect(valid).toBe(true);
+    });
+
+    test('manifests without Phase 4 fields still validate (legacy single-layer)', () => {
+      const {valid, errors} = validateManifest(minimalValid);
+      expect(errors).toEqual([]);
+      expect(valid).toBe(true);
+    });
+  });
 });

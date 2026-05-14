@@ -54,6 +54,15 @@ export interface ManifestHardwareRequirement {
   description?: string;
 }
 
+export interface ManifestEntry {
+  /** Path to the background bundle entry, relative to the project root.
+   * Required for Phase 4+ two-layer bundles. */
+  background: string;
+  /** Path to the UI HTML entry. Optional — pure-background miniapps
+   * don't include a WebView. */
+  ui?: string;
+}
+
 export interface MiniappManifestV1 {
   packageName: string;
   version: string;
@@ -63,6 +72,14 @@ export interface MiniappManifestV1 {
   port?: number;
   permissions?: ManifestPermission[];
   hardwareRequirements: ManifestHardwareRequirement[];
+  /** Semver of the @mentra/miniapp SDK ABI this bundle targets. */
+  sdkVersion?: string;
+  /** Lowest MentraOS Manager host version that can run this bundle. */
+  minHostVersion?: string;
+  /** Two-layer bundle entry points (Phase 4+). */
+  entry?: ManifestEntry;
+  /** Miniapp shape — defaults to "standard" (background + on-demand UI). */
+  type?: "standard" | "background";
 }
 
 export function validateManifest(manifest: unknown): { valid: boolean; errors: string[] } {
@@ -154,6 +171,38 @@ export function validateManifest(manifest: unknown): { valid: boolean; errors: s
         errors.push(`hardwareRequirements[${i}].description must be a string if set`);
       }
     });
+  }
+
+  // Phase 4: optional sdkVersion / minHostVersion (semver-coercible strings).
+  // We don't enforce strict semver — many real-world manifests use a
+  // shorthand like "0.2" that semver.coerce normalises to "0.2.0". Reject
+  // only if the field is present and not a non-empty string.
+  if (m.sdkVersion !== undefined && (typeof m.sdkVersion !== 'string' || !m.sdkVersion)) {
+    errors.push('sdkVersion must be a non-empty string when set');
+  }
+  if (m.minHostVersion !== undefined && (typeof m.minHostVersion !== 'string' || !m.minHostVersion)) {
+    errors.push('minHostVersion must be a non-empty string when set');
+  }
+
+  // Phase 4: optional entry object. When set, entry.background is required.
+  if (m.entry !== undefined) {
+    if (typeof m.entry !== 'object' || m.entry === null || Array.isArray(m.entry)) {
+      errors.push('entry must be an object like {"background": "dist/background/index.js", "ui": "dist/ui/index.html"}');
+    } else {
+      const e = m.entry as Record<string, unknown>;
+      if (typeof e.background !== 'string' || !e.background) {
+        errors.push('entry.background is required and must be a non-empty string path');
+      }
+      if (e.ui !== undefined && (typeof e.ui !== 'string' || !e.ui)) {
+        errors.push('entry.ui must be a non-empty string path when set');
+      }
+    }
+  }
+
+  if (m.type !== undefined) {
+    if (m.type !== 'standard' && m.type !== 'background') {
+      errors.push('type must be "standard" or "background" when set');
+    }
   }
 
   return { valid: errors.length === 0, errors };

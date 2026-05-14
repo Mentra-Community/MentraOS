@@ -305,6 +305,85 @@ class AppRegistry {
   }
 
   /**
+   * Resolve the two-layer entry paths for an installed miniapp version.
+   * Returns absolute file:// URIs for `background` and (when present) `ui`.
+   *
+   * Pre-Phase-4 single-layer bundles (no `entry` object in manifest) fall
+   * back to the legacy `index.html` discovery so the WebView host keeps
+   * working unchanged. New two-layer bundles ship `entry.background` and
+   * optional `entry.ui` paths relative to the bundle root.
+   *
+   * Returns null if neither shape resolves to existing files on disk.
+   */
+  public getMiniappEntryPaths(
+    packageName: string,
+    version: string,
+  ): {background: string | null; ui: string | null} | null {
+    const manifest = this.getMiniappManifest(packageName, version) as {
+      entry?: {background?: string; ui?: string}
+    } | null
+    const bundleDir = this.getBundleDir(packageName, version)
+    const resolve = (rel: string): string | null => {
+      const trimmed = rel.replace(/^\.?\/+/, "")
+      const file = new File(new Directory(bundleDir.replace(/^file:\/\//, "")), trimmed)
+      return file.exists ? file.uri : null
+    }
+    if (manifest?.entry) {
+      const bg = manifest.entry.background ? resolve(manifest.entry.background) : null
+      const ui = manifest.entry.ui ? resolve(manifest.entry.ui) : null
+      if (bg || ui) {
+        return {background: bg, ui: ui}
+      }
+    }
+    // Legacy single-bundle fallback — `index.html` at the bundle root.
+    const legacy = new File(new Directory(bundleDir.replace(/^file:\/\//, "")), "index.html")
+    return {
+      background: null,
+      ui: legacy.exists ? legacy.uri : null,
+    }
+  }
+
+  /**
+   * Verify a manifest declares an SDK / host version range compatible
+   * with the current host. Returns `{ok: true}` on success or
+   * `{ok: false, reason}` with a user-facing string on failure.
+   *
+   * `sdkVersion` is the SDK ABI the miniapp was built against — the host
+   * refuses to spawn a miniapp targeting a major version it doesn't know.
+   * `minHostVersion` is the floor the miniapp requires; the host runs
+   * the gate on every install AND after host upgrades.
+   *
+   * Either field is optional — manifests without them get a free pass
+   * (the legacy / pre-Phase-4 path).
+   */
+  public checkManifestVersions(
+    manifest: {sdkVersion?: string; minHostVersion?: string} | null,
+    options: {hostVersion: string; supportedSdkRange: string},
+  ): {ok: true} | {ok: false; reason: string} {
+    if (!manifest) return {ok: true}
+    if (manifest.minHostVersion) {
+      const cleanHost = semver.valid(semver.coerce(options.hostVersion) ?? options.hostVersion)
+      const cleanMin = semver.valid(semver.coerce(manifest.minHostVersion) ?? manifest.minHostVersion)
+      if (cleanHost && cleanMin && semver.lt(cleanHost, cleanMin)) {
+        return {
+          ok: false,
+          reason: `Requires MentraOS ${manifest.minHostVersion}+; this host is ${options.hostVersion}.`,
+        }
+      }
+    }
+    if (manifest.sdkVersion) {
+      const cleanSdk = semver.valid(semver.coerce(manifest.sdkVersion) ?? manifest.sdkVersion)
+      if (cleanSdk && !semver.satisfies(cleanSdk, options.supportedSdkRange)) {
+        return {
+          ok: false,
+          reason: `Built for SDK ${manifest.sdkVersion}; host supports ${options.supportedSdkRange}.`,
+        }
+      }
+    }
+    return {ok: true}
+  }
+
+  /**
    * Read and parse the miniapp manifest (miniapp.json with app.json fallback)
    * from a given bundle directory.
    */
