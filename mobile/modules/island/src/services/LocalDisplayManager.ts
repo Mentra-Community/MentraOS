@@ -211,9 +211,6 @@ class LocalDisplayManager {
    * traffic on the local path.
    */
   public request(packageName: string, payload: DisplayPayload): void {
-    console.log(
-      `${LOG_TAG}: request from ${packageName} view=${payload.view ?? "main"} layoutType=${(payload.layout as {layoutType?: string} | undefined)?.layoutType} coreApp=${this.coreApp} bootingApp=${this.bootingApp?.packageName ?? "null"} bgLock=${this.backgroundLock?.packageName ?? "null"}`,
-    )
     // Dashboard view: pass straight through (no throttle/arbitration). Local
     // dashboard rendering is currently a stub on the phone anyway.
     if (payload.view === "dashboard") {
@@ -224,7 +221,6 @@ class LocalDisplayManager {
     // During boot, any app's requests go into the queue. If the booting app
     // itself makes its first display call, end boot early and drain.
     if (this.bootingApp) {
-      console.log(`${LOG_TAG}: request QUEUED during boot (bootingApp=${this.bootingApp.packageName})`)
       this.bootQueue.set(packageName, payload)
       if (this.bootingApp.packageName === packageName) {
         this.endBoot(/* triggeredByFirstDisplay */ true)
@@ -248,9 +244,6 @@ class LocalDisplayManager {
     }
 
     const isCore = packageName === this.coreApp
-    console.log(
-      `${LOG_TAG}: arbitrate ${packageName} isCore=${isCore} (coreApp=${this.coreApp}) bgLock=${this.backgroundLock?.packageName ?? "null"} currentDisplay=${this.currentDisplay?.packageName ?? "null"}`,
-    )
 
     if (isCore) {
       // Save so we can restore later.
@@ -268,9 +261,6 @@ class LocalDisplayManager {
         this.currentDisplay &&
         this.currentDisplay.packageName === this.backgroundLock.packageName
       if (bgHoldsAndDisplays) {
-        console.log(
-          `${LOG_TAG}: DROP core ${packageName} — bg lock (${this.backgroundLock?.packageName}) is on glasses`,
-        )
         return
       }
 
@@ -287,7 +277,6 @@ class LocalDisplayManager {
     // Non-core: this is a background app.
     if (this.backgroundLock && this.backgroundLock.packageName !== packageName) {
       // Another bg app already holds the lock — drop.
-      console.log(`${LOG_TAG}: DROP non-core ${packageName} — bg lock held by ${this.backgroundLock.packageName}`)
       return
     }
 
@@ -394,7 +383,6 @@ class LocalDisplayManager {
     }
 
     try {
-      console.log(`${LOG_TAG}: → CoreModule.displayEvent`, JSON.stringify(processedEvent))
       CoreModule.displayEvent(processedEvent)
       getRuntimeHooks().setDisplayEvent?.(JSON.stringify(processedEvent))
     } catch (err) {

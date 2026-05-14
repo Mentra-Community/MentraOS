@@ -56,6 +56,32 @@ interface ConnectedMiniapp {
   installedManifest?: InstalledMiniappManifest
   /** Last speaker state pushed to this app. Used to dedup SPEAKER_STATE pushes. */
   speakerState: SpeakerStateValue
+  /**
+   * Location-tier rate this app is currently asking for via its
+   * `location_stream` subscription, or null if it hasn't asked for
+   * one. The aggregate tier handed to the host is the strictest
+   * (highest-accuracy) rate across all currently connected apps —
+   * see {@link LOCATION_RATE_PRIORITY}.
+   */
+  requestedLocationRate: string | null
+}
+
+/**
+ * Strictness ordering for `location_stream` rate values. Higher index =
+ * higher accuracy and higher power cost. The aggregate tier applied to
+ * the OS is the max of every connected miniapp's requested rate;
+ * miniapps that didn't ask for `location_stream` contribute nothing.
+ *
+ * If a miniapp passes a value we don't recognize, we treat it like the
+ * weakest known rate ("passive") rather than blanket-overwriting an
+ * active stronger request from another app.
+ */
+const LOCATION_RATE_PRIORITY = ["off", "passive", "low", "high", "realtime"] as const
+type LocationRate = (typeof LOCATION_RATE_PRIORITY)[number]
+function locationRateRank(rate: string | null | undefined): number {
+  if (!rate) return -1
+  const i = LOCATION_RATE_PRIORITY.indexOf(rate as LocationRate)
+  return i >= 0 ? i : LOCATION_RATE_PRIORITY.indexOf("passive")
 }
 
 const LOG_TAG = "LOCAL_MINIAPP"
@@ -402,7 +428,12 @@ class LocalMiniappRuntime {
       lastPongAt: Date.now(),
       installedManifest,
       speakerState: "idle",
+      requestedLocationRate: null,
     })
+    // If we just clobbered an existing entry, its requestedLocationRate is
+    // now gone — recompute so the aggregate doesn't include a stale rate.
+    // The WebView will re-SUBSCRIBE shortly and the rate will reappear.
+    this.recomputeLocationTier()
     this.ensurePingLoop()
   }
 
@@ -489,6 +520,14 @@ class LocalMiniappRuntime {
     // Recompute heading subscription — if this app was the last subscriber,
     // the sensor will stop.
     this.recomputeHeadingSubscription()
+
+    // Drop this app's location-tier request before recomputing so the
+    // aggregate falls back down if it was the strictest. Done before
+    // `connectedApps.delete` below so it doesn't matter that the iter
+    // in `recomputeLocationTier` is over connectedApps — clearing the
+    // field is enough.
+    app.requestedLocationRate = null
+    this.recomputeLocationTier()
 
     // Clean up any pending cloud requests from this app
     for (const [reqId, pending] of this.pendingCloudRequests) {
@@ -724,12 +763,16 @@ class LocalMiniappRuntime {
       | (string | {stream: string; rate?: string})[]
       | undefined
     // Normalize: objects like {stream: "location_stream", rate: "realtime"} → extract stream name
-    // "location_stream" is the rate-bearing alias for "location_update"
+    // "location_stream" is the rate-bearing alias for "location_update".
+    // The strictest rate wins when multiple `location_stream` entries appear
+    // in one SUBSCRIBE — the same rule we apply across apps.
     let requestedLocationRate: string | null = null
     const streams = rawStreams?.map((s) => {
       if (typeof s === "object" && s !== null) {
         if (s.stream === "location_stream") {
-          if (s.rate) requestedLocationRate = s.rate
+          if (s.rate && locationRateRank(s.rate) > locationRateRank(requestedLocationRate)) {
+            requestedLocationRate = s.rate
+          }
           return "location_update"
         }
         return s.stream
@@ -802,10 +845,11 @@ class LocalMiniappRuntime {
     this.recomputeMicRequirements()
     this.updateCloudSubscriptions()
     this.recomputeHeadingSubscription()
-    if (requestedLocationRate) {
-      console.log(`[LOCATION] miniapp ${packageName} requested rate: ${requestedLocationRate}`)
-      getRuntimeHooks().locationTier?.setLocationTier(requestedLocationRate)
-    }
+    // Persist this app's requested rate (or clear it if SUBSCRIBE didn't
+    // include `location_stream` this time), then ask the host for the
+    // strictest rate across all connected apps.
+    app.requestedLocationRate = requestedLocationRate
+    this.recomputeLocationTier()
     this.sendResult(packageName, requestId, true)
 
     // Fire initial snapshot values for stateful streams so miniapps don't have
@@ -1118,6 +1162,45 @@ class LocalMiniappRuntime {
     }
   }
 
+  /**
+   * Last rate we asked the host for. Lets us skip the cross-process call
+   * when nothing actually changed (most SUBSCRIBE / unregister churn
+   * leaves the aggregate unchanged) and tracks state for the no-active-
+   * subscribers → tell host to back off case.
+   */
+  private lastAppliedLocationRate: LocationRate | null = null
+
+  /**
+   * Recompute the aggregate location tier across every connected
+   * miniapp and push the result to the host. The aggregate is the
+   * STRICTEST rate any single app has requested — see
+   * {@link LOCATION_RATE_PRIORITY} — because the GPS sample rate is a
+   * shared OS-level setting that we can't bias per-app.
+   *
+   * Called after every SUBSCRIBE and every unregister so that when a
+   * realtime-requesting app goes away the tier falls back down. If no
+   * connected app is asking for a location rate, we tell the host
+   * "off" so it can drop GPS power.
+   */
+  private recomputeLocationTier(): void {
+    let bestRank = -1
+    for (const app of this.connectedApps.values()) {
+      const r = app.requestedLocationRate
+      if (!r) continue
+      const rank = locationRateRank(r)
+      if (rank > bestRank) {
+        bestRank = rank
+      }
+    }
+    // When no app is asking, downgrade to "off". Without this we'd
+    // leak the last-known-strictest rate forever (the original bug).
+    const next: LocationRate = bestRank >= 0 ? LOCATION_RATE_PRIORITY[bestRank] : "off"
+    if (next === this.lastAppliedLocationRate) return
+    this.lastAppliedLocationRate = next
+    console.log(`[LOCATION] aggregate tier → ${next}`)
+    getRuntimeHooks().locationTier?.setLocationTier(next)
+  }
+
   private async handleNavigationStart(
     packageName: string,
     payload: Record<string, unknown>,
@@ -1176,9 +1259,7 @@ class LocalMiniappRuntime {
     // Reattach the per-app event forwarder (it may have been detached when the
     // mini-app closed its UI without stopping the trip).
     if (!this.navListeners.has(packageName)) {
-      console.log(`${LOG_TAG}: attaching nav forwarder for ${packageName}`)
       const unsubNav = navigation.addListener((update: NavUpdate) => {
-        console.log(`${LOG_TAG}: forwarding nav update to ${packageName}: ${update.kind}`)
         this.sendToMiniapp(packageName, {
           type: MiniappResponseType.EVENT,
           streamType: MiniappStreamType.NAVIGATION_UPDATE,
@@ -1207,7 +1288,6 @@ class LocalMiniappRuntime {
         })
       })
       const unsubRoute = navigation.addRouteListener((route: NavRoute) => {
-        console.log(`${LOG_TAG}: forwarding nav route to ${packageName}: ${route.points.length} pts`)
         this.sendToMiniapp(packageName, {
           type: MiniappResponseType.EVENT,
           streamType: MiniappStreamType.NAVIGATION_ROUTE,
@@ -1219,8 +1299,6 @@ class LocalMiniappRuntime {
         unsubLoc()
         unsubRoute()
       })
-    } else {
-      console.log(`${LOG_TAG}: forwarder already exists for ${packageName}`)
     }
 
     // If a trip is already active for this app (user closed the UI and came

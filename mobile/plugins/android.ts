@@ -370,7 +370,26 @@ function withAndroidManifestModifications(config: any) {
 
       // Inject Google Navigation SDK API key from env. Read at build time.
       // The Nav SDK reads this meta-data tag from the merged manifest at runtime.
+      //
+      // If the key is missing, navigation is broken at runtime with a
+      // cryptic Google SDK error. Fail loudly in CI/EAS so the broken
+      // build never ships; warn (don't fail) in local-dev so new
+      // contributors who aren't touching nav can still build.
       const navApiKey = process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY ?? ""
+      if (!navApiKey) {
+        const isCiOrEas =
+          process.env.CI === "true" ||
+          process.env.CI === "1" ||
+          process.env.EAS_BUILD === "true" ||
+          process.env.NODE_ENV === "production"
+        const msg =
+          "EXPO_PUBLIC_GOOGLE_NAV_API_KEY is not set. Navigation will fail at runtime — " +
+          "set it in mobile/.env (see mobile/.env.example) before building."
+        if (isCiOrEas) {
+          throw new Error(msg)
+        }
+        console.warn(`[mobile/plugins/android] ${msg}`)
+      }
       if (!app["meta-data"]) {
         app["meta-data"] = []
       }

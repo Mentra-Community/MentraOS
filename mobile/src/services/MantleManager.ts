@@ -64,9 +64,6 @@ TaskManager.defineTask(LOCATION_TASK_NAME, ({data: {locations}, error}) => {
 
   // Direct forward to local miniapps. Cloud path (relayMessageToApps) never
   // reaches __phone__, so local miniapps rely on this direct push.
-  console.log(
-    `[LOCATION] lat=${first.coords.latitude.toFixed(6)} lng=${first.coords.longitude.toFixed(6)} acc=${first.coords.accuracy?.toFixed(1)}m`,
-  )
   localMiniappRuntime.forwardEvent("location_update", {
     lat: first.coords.latitude,
     lng: first.coords.longitude,
@@ -1008,11 +1005,18 @@ class MantleManager {
   public async setLocationTier(tier: string) {
     console.log("MANTLE: setLocationTier()", tier)
     try {
-      const accuracy = this.getLocationAccuracy(tier)
       const isRegistered = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false)
       if (isRegistered) {
         await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME)
       }
+      // "off" means no app is asking for location — leave the task
+      // stopped so the OS can power GPS down. Anything else: restart
+      // the task at the matching accuracy.
+      if (tier === "off") {
+        console.log("MANTLE: setLocationTier() stopped — no active subscribers")
+        return
+      }
+      const accuracy = this.getLocationAccuracy(tier)
       await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
         accuracy,
         pausesUpdatesAutomatically: false,

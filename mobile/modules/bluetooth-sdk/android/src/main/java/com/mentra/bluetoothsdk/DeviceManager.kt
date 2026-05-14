@@ -814,9 +814,8 @@ class CoreManager {
 
     fun sendCurrentState() {
         val hUp = GlassesStore.get("glasses", "headUp") as? Boolean ?: false
-        Bridge.log("MAN: sendCurrentState ENTER hUp=$hUp screenDisabled=$screenDisabled sgcType=${sgc?.type} fullyBooted=${sgc?.fullyBooted}")
+        // Bridge.log("MAN: sendCurrentState(): $isHeadUp")
         if (screenDisabled) {
-            Bridge.log("MAN: sendCurrentState BAIL screenDisabled")
             return
         }
 
@@ -834,7 +833,6 @@ class CoreManager {
 
         if (sgc?.type?.contains(DeviceTypes.SIMULATED) == true) {
             // dont send the event to glasses that aren't there:
-            Bridge.log("MAN: sendCurrentState BAIL simulated glasses")
             return
         }
 
@@ -843,7 +841,6 @@ class CoreManager {
             Bridge.log("MAN: CoreManager.sendCurrentState(): sgc not ready")
             return
         }
-        Bridge.log("MAN: sendCurrentState dispatch layoutType=${currentViewState.layoutType} text='${currentViewState.text.take(40)}' top='${currentViewState.topText.take(40)}' bottom='${currentViewState.bottomText.take(40)}'")
 
         // Cancel any pending clear display work item
         // sendStateWorkItem?.let { mainHandler.removeCallbacks(it) }
@@ -1168,21 +1165,16 @@ class CoreManager {
     }
 
     fun displayEvent(event: Map<String, Any>) {
-        Bridge.log("MAN: displayEvent ENTER view=${event["view"]} layoutType=${(event["layout"] as? Map<*, *>)?.get("layoutType")}")
         val view = event["view"] as? String
         if (view == null) {
-            Bridge.log("MAN: displayEvent BAIL invalid view")
+            Bridge.log("MAN: Invalid view")
             return
         }
 
         val isDashboard = view == "dashboard"
         val stateIndex = if (isDashboard) 1 else 0
 
-        @Suppress("UNCHECKED_CAST") val layout = event["layout"] as? Map<String, Any>
-        if (layout == null) {
-            Bridge.log("MAN: displayEvent BAIL no layout")
-            return
-        }
+        @Suppress("UNCHECKED_CAST") val layout = event["layout"] as? Map<String, Any> ?: return
 
         val layoutType = layout["layoutType"] as? String
         val text = parsePlaceholders(layout.getString("text", " "))
@@ -1196,23 +1188,16 @@ class CoreManager {
         val currentState = viewStates[stateIndex]
 
         if (statesEqual(currentState, newViewState)) {
-            Bridge.log("MAN: displayEvent BAIL dedupe (state unchanged for stateIndex=$stateIndex)")
             return
         }
 
         viewStates[stateIndex] = newViewState
-        val hUpRaw = headUp
-        val hUp = hUpRaw && contextualDashboard
-        Bridge.log("MAN: displayEvent gate stateIndex=$stateIndex headUp=$hUpRaw contextualDashboard=$contextualDashboard hUp=$hUp")
+        val hUp = headUp && contextualDashboard
         // send the state we just received if the user is currently in that state:
         if (stateIndex == 0 && !hUp) {
-            Bridge.log("MAN: displayEvent → sendCurrentState (main, !hUp)")
             sendCurrentState()
         } else if (stateIndex == 1 && hUp) {
-            Bridge.log("MAN: displayEvent → sendCurrentState (dashboard, hUp)")
             sendCurrentState()
-        } else {
-            Bridge.log("MAN: displayEvent SKIP send — gate did not match (stateIndex=$stateIndex hUp=$hUp)")
         }
     }
 
