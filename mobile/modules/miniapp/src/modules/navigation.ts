@@ -528,12 +528,12 @@ export class NavigationModule {
    *   }
    */
   get dev(): NavigationDev {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error(
-        "navigation.dev is unavailable in production builds. " +
-          "Gate dev calls behind `if (process.env.NODE_ENV !== \"production\")`.",
-      )
-    }
+    // if (process.env.NODE_ENV === "production") {
+    //   throw new Error(
+    //     "navigation.dev is unavailable in production builds. " +
+    //       "Gate dev calls behind `if (process.env.NODE_ENV !== \"production\")`.",
+    //   )
+    // }
     return {
       /**
        * Nudge the simulator ~`offsetMeters` perpendicular to the route
