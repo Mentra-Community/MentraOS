@@ -43,6 +43,7 @@ import type {EventSubscription} from "expo-modules-core"
 
 import type localMiniappRuntime from "./LocalMiniappRuntime"
 import type {MentraJSCrashController} from "./MentraJSCrashController"
+import {MentraJSLogRingBuffer, MentraJSLogThrottle, redactSecrets} from "./MentraJSLogRedactor"
 import type {MentraUIRouter} from "./MentraUIRouter"
 
 /** The runtime's runtime instance type — the singleton exported from
@@ -119,6 +120,19 @@ export class MentraJSRouter {
   onCrashloop: ((packageName: string, reason: string) => void) | null = null
   /** Hook called on the 2nd-within-window crash (toast UX). */
   onRestartToast: ((packageName: string, reason: string) => void) | null = null
+
+  /**
+   * Phase 6 logging plumbing. Every `__log` frame passes through
+   * `redactSecrets` (token/password/etc. scrubbed), then the throttle
+   * (100/min sustained per pkg, 500 burst), then lands in the ring
+   * buffer + the host logger. The ring buffer holds the last 200
+   * lines/pkg so a crash report can attach "last words" context.
+   *
+   * Replace with new instances in tests; production code uses the
+   * defaults.
+   */
+  logThrottle: MentraJSLogThrottle = new MentraJSLogThrottle()
+  logRing: MentraJSLogRingBuffer = new MentraJSLogRingBuffer()
 
   /**
    * Optional UI router — when wired, `__bridge.send` envelopes whose
@@ -346,11 +360,39 @@ export class MentraJSRouter {
 
     // 2) Log frames — console.* rewired through host. We tag with the
     //    packageName so Sentry breadcrumbs can be filtered downstream.
+    //    Pipeline:
+    //      raw args → redactSecrets → throttle decision → ring buffer
+    //               → host logger (which surfaces to dev console / Sentry)
     if (iface === "__log") {
-      const args = this.tryParseArgs(msg.argsJson)
+      const rawArgs = this.tryParseArgs(msg.argsJson)
+      const safeArgs = redactSecrets(rawArgs)
+      const decision = this.logThrottle.consume(packageName)
       const tag = `[${packageName}]`
-      const fn = method === "warn" ? this.logger.warn : method === "error" ? this.logger.error : this.logger.log
-      fn(`${tag} console.${method}`, args)
+      const fn =
+        method === "warn"
+          ? this.logger.warn
+          : method === "error" || method === "fatal"
+            ? this.logger.error
+            : this.logger.log
+      // Emit a synthetic "[throttled N]" line in place of the next
+      // would-be-allowed log to summarise drops.
+      if (!decision.allowed) {
+        if (decision.throttledLine) {
+          fn(`${tag} ${decision.throttledLine}`)
+          this.logRing.push(packageName, `${decision.throttledLine}`)
+        }
+        return
+      }
+      const formatted = `${tag} console.${method}`
+      fn(formatted, safeArgs)
+      // Stringify into the ring buffer for crash-report attachment.
+      let line: string
+      try {
+        line = `${method}: ${JSON.stringify(safeArgs)}`
+      } catch {
+        line = `${method}: <unserializable>`
+      }
+      this.logRing.push(packageName, line)
       return
     }
 

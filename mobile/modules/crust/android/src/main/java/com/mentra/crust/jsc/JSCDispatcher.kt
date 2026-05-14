@@ -186,7 +186,8 @@ class JSCDispatcher(private val appContext: Context) {
     }
 
     private fun installBuiltinRoutes() {
-        register("__runtime", "ready") { _, _, _ ->
+        register("__runtime", "ready") { packageName, _, _ ->
+            JSCRuntime.shared(appContext).markReady(packageName)
             JSCDispatchOutcome.Sync("null")
         }
 

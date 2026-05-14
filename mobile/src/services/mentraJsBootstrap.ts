@@ -6,6 +6,7 @@
  * Idempotent — multiple calls return the same singletons.
  */
 
+import {Platform} from "react-native"
 import * as Sentry from "@sentry/react-native"
 import CrustModule from "crust"
 
@@ -13,10 +14,16 @@ import {
   MentraJSCrashController,
   MentraJSRouter,
   MentraUIRouter,
+  appRegistry,
+  devServerBridge,
   localMiniappRuntime,
 } from "@mentra/island"
+import {File} from "expo-file-system"
 
 import {miniappHost} from "@/components/miniapp/MiniappHost"
+
+const MENTRA_JS_ENGINE = Platform.OS === "ios" ? "jsc" : "quickjs"
+const MENTRA_OS_VERSION = process.env.EXPO_PUBLIC_MENTRAOS_VERSION ?? "unknown"
 
 let bootstrapped: {
   router: MentraJSRouter
@@ -43,16 +50,22 @@ export function bootstrapMentraJS() {
   router.uiRouter = uiRouter
 
   // Surface crashloop transitions as Sentry events tagged with the
-  // miniapp packageName so on-call can see them in the dashboard.
+  // miniapp packageName + engine + host version + platform so on-call
+  // can filter the dashboard. Per spec — every miniapp event ships
+  // the same tag set.
+  const baseTags = (packageName: string) => ({
+    "miniapp.packageName": packageName,
+    "miniapp.engine": MENTRA_JS_ENGINE,
+    "miniapp.sdk_version": "0.3.0",
+    "miniapp.host_version": MENTRA_OS_VERSION,
+    "device.platform": Platform.OS,
+  })
   router.onCrashloop = (packageName: string, reason: string) => {
     try {
       Sentry.captureMessage(`MentraJS crashloop disabled: ${packageName}`, {
         level: "error",
-        tags: {
-          "miniapp.packageName": packageName,
-          "miniapp.engine": "jsc",
-        },
-        extra: {reason},
+        tags: baseTags(packageName),
+        extra: {reason, lastLogLines: router.logRing.snapshot(packageName)},
       })
     } catch {
       /* Sentry not initialized in dev */
@@ -64,7 +77,7 @@ export function bootstrapMentraJS() {
         category: "miniapp.respawn",
         level: "warning",
         message: `Respawned ${packageName}`,
-        data: {reason},
+        data: {reason, ...baseTags(packageName)},
       })
     } catch {
       /* ignore */
@@ -74,6 +87,38 @@ export function bootstrapMentraJS() {
   // Attach the UI router to MiniappHost so two-layer miniapps' WebViews
   // route mentra.send / mentra.on through the bound JSContext.
   miniappHost.attachUIRouter(uiRouter)
+
+  // WebView heartbeat watchdog — when 15s pass without a heartbeat from
+  // a bound WebView, MentraUIRouter fires this hook so MiniappHost
+  // tears down the WebView. The JSContext stays alive; only the UI
+  // half goes. Background's session.ui.onClose handlers already fire
+  // from the router's synthetic UI_CLOSE.
+  uiRouter.onHeartbeatTimeout = (packageName) => {
+    try {
+      miniappHost.closeUI(packageName)
+    } catch (e) {
+      console.warn(`MentraJS: closeUI(${packageName}) threw on heartbeat timeout:`, e)
+    }
+  }
+
+  // Wire up the dev server's "respawn-bg" signal so a touch under
+  // src/background/ kills + re-spawns the JSContext with the latest
+  // bundle. The WebView reload path stays separate (devServerBridge.onReload).
+  devServerBridge.onRespawnBackground(async (packageName) => {
+    try {
+      const version = await appRegistry.getActiveVersion(packageName)
+      if (!version) return
+      const entry = appRegistry.getMiniappEntryPaths(packageName, version)
+      const bgUri = entry?.background
+      if (!bgUri) return
+      const bgSource = new File(bgUri).textSync()
+      await router.unregister(packageName)
+      const ok = await router.spawnAndRegister(packageName, bgSource)
+      if (!ok) console.warn(`MentraJS: respawn-bg failed for ${packageName}`)
+    } catch (e) {
+      console.warn(`MentraJS: respawn-bg threw for ${packageName}:`, e)
+    }
+  })
 
   router.start()
 

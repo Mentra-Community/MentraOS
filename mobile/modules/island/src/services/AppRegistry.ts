@@ -25,6 +25,7 @@ import type {AppletPermission, AppPermissionType, ClientApp} from "../types/appl
 import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
+import {checkManifestVersions} from "./manifestVersionGate"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 
 const ALLOWED_PERMISSION_TYPES: ReadonlySet<AppPermissionType> = new Set<AppPermissionType>([
@@ -345,42 +346,16 @@ class AppRegistry {
 
   /**
    * Verify a manifest declares an SDK / host version range compatible
-   * with the current host. Returns `{ok: true}` on success or
-   * `{ok: false, reason}` with a user-facing string on failure.
-   *
-   * `sdkVersion` is the SDK ABI the miniapp was built against — the host
-   * refuses to spawn a miniapp targeting a major version it doesn't know.
-   * `minHostVersion` is the floor the miniapp requires; the host runs
-   * the gate on every install AND after host upgrades.
-   *
-   * Either field is optional — manifests without them get a free pass
-   * (the legacy / pre-Phase-4 path).
+   * with the current host. Delegates to the pure
+   * {@link checkManifestVersions} helper — same shape, no React Native
+   * imports, unit-testable. Manifests missing either field pass
+   * through unchanged (the legacy / pre-Phase-4 path).
    */
   public checkManifestVersions(
     manifest: {sdkVersion?: string; minHostVersion?: string} | null,
     options: {hostVersion: string; supportedSdkRange: string},
   ): {ok: true} | {ok: false; reason: string} {
-    if (!manifest) return {ok: true}
-    if (manifest.minHostVersion) {
-      const cleanHost = semver.valid(semver.coerce(options.hostVersion) ?? options.hostVersion)
-      const cleanMin = semver.valid(semver.coerce(manifest.minHostVersion) ?? manifest.minHostVersion)
-      if (cleanHost && cleanMin && semver.lt(cleanHost, cleanMin)) {
-        return {
-          ok: false,
-          reason: `Requires MentraOS ${manifest.minHostVersion}+; this host is ${options.hostVersion}.`,
-        }
-      }
-    }
-    if (manifest.sdkVersion) {
-      const cleanSdk = semver.valid(semver.coerce(manifest.sdkVersion) ?? manifest.sdkVersion)
-      if (cleanSdk && !semver.satisfies(cleanSdk, options.supportedSdkRange)) {
-        return {
-          ok: false,
-          reason: `Built for SDK ${manifest.sdkVersion}; host supports ${options.supportedSdkRange}.`,
-        }
-      }
-    }
-    return {ok: true}
+    return checkManifestVersions(manifest, options)
   }
 
   /**

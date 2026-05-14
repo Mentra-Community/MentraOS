@@ -253,6 +253,13 @@ public class CrustModule: Module {
             return JSCRuntime.shared.alivePackages()
         }
 
+        /// Diagnostic: force a JSC garbage collection cycle on the named
+        /// context. Used by memory-leak hunts + tests. Returns false when
+        /// the context is dead.
+        AsyncFunction("mentraJsDebugForceGC") { (packageName: String) -> Bool in
+            return JSCRuntime.shared.debugForceGC(packageName: packageName)
+        }
+
         /// Read the bundled MentraJS polyfill (startup.js) from the iOS
         /// pod's resource bundle. The host calls this once on app boot,
         /// caches the string, and passes it to every mentraJsSpawn so

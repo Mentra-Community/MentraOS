@@ -51,6 +51,9 @@ class CrustModule extends NativeModule<CrustModuleEvents> {
   mentraJsAlivePackages() {
     return []
   }
+  async mentraJsDebugForceGC(_pkg: string) {
+    return false
+  }
   mentraJsLoadPolyfillBundle() {
     return ""
   }

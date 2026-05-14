@@ -7,6 +7,7 @@
  */
 
 import {createRoot} from "react-dom/client"
+import {MentraProvider} from "@mentra/miniapp/ui"
 import "../shared/channels"
 import {App} from "./App"
 import "./styles.css"
@@ -16,7 +17,13 @@ if (!root) {
   throw new Error("Missing #root element in index.html")
 }
 
-createRoot(root).render(<App />)
+// MentraProvider syncs <html class="dark"> with the host color scheme.
+// Purely a CSS theme bridge — does NOT construct a MiniappSession.
+createRoot(root).render(
+  <MentraProvider>
+    <App />
+  </MentraProvider>,
+)
 
 // MUST call mentra.ready() on bootstrap so the host knows the WebView is
 // mounted and can flush any buffered `session.ui.send` calls.

@@ -180,6 +180,59 @@ describe("MentraJSRouter", () => {
     expect(logger.warn.mock.calls[0]![0]).toContain("com.foo")
   })
 
+  test("__log frame redacts secret-looking values + appends to ring buffer", () => {
+    router.start()
+    crust.emit("mentrajs_message", {
+      packageName: "com.foo",
+      iface: "__log",
+      method: "log",
+      argsJson: JSON.stringify([{apiKey: "secret123", name: "alex"}]),
+    })
+    expect(logger.log).toHaveBeenCalledTimes(1)
+    // Second arg is the redacted args list.
+    const args = logger.log.mock.calls[0]![1] as Array<{apiKey: string; name: string}>
+    expect(args[0]!.apiKey).toBe("[REDACTED]")
+    expect(args[0]!.name).toBe("alex")
+    // Ring buffer should have a stringified entry.
+    const ring = router.logRing.snapshot("com.foo")
+    expect(ring).toHaveLength(1)
+    expect(ring[0]).toContain("[REDACTED]")
+  })
+
+  test("__log frames over the throttle threshold drop silently + emit a [throttled N] summary", () => {
+    // Override throttle to a tighter budget for the test.
+    const {MentraJSLogThrottle} = require("../MentraJSLogRedactor")
+    let clock = 0
+    router.logThrottle = new MentraJSLogThrottle({
+      tokensPerSecond: 10,
+      bucketCapacity: 3,
+      now: () => clock,
+    })
+    router.start()
+    for (let i = 0; i < 5; i++) {
+      crust.emit("mentrajs_message", {
+        packageName: "com.foo",
+        iface: "__log",
+        method: "log",
+        argsJson: JSON.stringify([`line ${i}`]),
+      })
+    }
+    // First 3 are allowed; #4 and #5 are silent drops.
+    expect(logger.log).toHaveBeenCalledTimes(3)
+    // Advance the clock so the bucket refills, then a 6th call shows
+    // the "[throttled 2]" summary.
+    clock += 1_000
+    crust.emit("mentrajs_message", {
+      packageName: "com.foo",
+      iface: "__log",
+      method: "log",
+      argsJson: JSON.stringify(["line 6"]),
+    })
+    // The 4th `logger.log` call carries the synthetic throttled line.
+    const tag = logger.log.mock.calls[3]![0] as string
+    expect(tag).toContain("[throttled 2]")
+  })
+
   test("__error frame logs at error level", () => {
     router.start()
     crust.emit("mentrajs_message", {

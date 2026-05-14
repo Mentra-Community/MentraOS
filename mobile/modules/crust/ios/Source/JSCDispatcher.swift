@@ -226,7 +226,8 @@ public final class JSCDispatcher {
     private func installBuiltinRoutes() {
         // __runtime.ready — the polyfill bundle's signal-ready callback.
         // JSCRuntime watches for this to clear the cold-start NACK timer.
-        register(iface: "__runtime", method: "ready") { _, _, _ in
+        register(iface: "__runtime", method: "ready") { packageName, _, _ in
+            JSCRuntime.shared.markReady(packageName: packageName)
             return .sync(NSNull())
         }
 

@@ -262,12 +262,18 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
  * names. The phone-side unpacker (Composer.installMiniApp) needs them
  * exactly that way to reconstruct the directory tree on disk.
  */
-function listProjectFiles(rootDir: string): string[] {
+export function listProjectFiles(rootDir: string): string[] {
   const MAX_DEPTH = 5
   const MAX_FILES = 500
+  // Phase 4+ note: `dist/` is INCLUDED in the dev snapshot zip so the
+  // phone-side install pipeline can pick up the two-layer
+  // `dist/background/index.js` + `dist/ui/index.html` outputs. Pre-
+  // Phase-4 single-bundle miniapps didn't ship dist/ in the zip
+  // because the WebView loaded directly from the dev URL; new
+  // two-layer miniapps install the dist/ snapshot for the
+  // background JSContext to read from disk.
   const EXCLUDED_DIRS = new Set([
     "node_modules",
-    "dist",
     ".git",
     ".next",
     "build",
@@ -327,7 +333,7 @@ function listProjectFiles(rootDir: string): string[] {
  * — the unpacker can fail loudly if the zip is malformed instead of
  * tolerating multiple shapes.
  */
-async function buildProjectZip(rootDir: string): Promise<Uint8Array> {
+export async function buildProjectZip(rootDir: string): Promise<Uint8Array> {
   const zip = new JSZip()
   for (const rel of listProjectFiles(rootDir)) {
     const abs = join(rootDir, rel)

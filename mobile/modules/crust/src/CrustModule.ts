@@ -163,6 +163,8 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
   mentraJsGrantPermission(packageName: string, permission: string, granted: boolean): Promise<void>
   /** Diagnostic — returns the packageNames of every live JSContext. */
   mentraJsAlivePackages(): string[]
+  /** Diagnostic — force a GC cycle on the named context. */
+  mentraJsDebugForceGC(packageName: string): Promise<boolean>
   /**
    * Read the bundled MentraJS polyfill (startup.js) shipped inside the
    * host binary. Synchronous — host RN code calls this once on app boot

@@ -35,6 +35,14 @@ class JSCRuntime private constructor(private val appContext: Context) {
     companion object {
         private const val TAG = "MentraJS"
 
+        // Phase 1 NACK cold-start timeout (15s — covers polyfill + init on slow devices).
+        const val COLD_START_NACK_TIMEOUT_MS: Long = 15_000
+        // Steady-state NACK — wedged-JSContext detection.
+        const val STEADY_STATE_NACK_TIMEOUT_MS: Long = 3_000
+        // Soft watchdog warn / kill thresholds (matches iOS).
+        const val WATCHDOG_WARN_MS: Long = 5_000
+        const val WATCHDOG_KILL_MS: Long = 30_000
+
         @Volatile
         private var instance: JSCRuntime? = null
 
@@ -75,7 +83,64 @@ class JSCRuntime private constructor(private val appContext: Context) {
         val quickJs: QuickJs,
         val executor: java.util.concurrent.ExecutorService,
         val pendingTimers: MutableMap<Int, ScheduledFuture<*>> = ConcurrentHashMap(),
+        @Volatile var readyAcked: Boolean = false,
+        @Volatile var readyNackTimer: ScheduledFuture<*>? = null,
+        @Volatile var watchdogTimer: ScheduledFuture<*>? = null,
     )
+
+    /**
+     * Called from the dispatcher's __runtime.ready route when the polyfill
+     * finishes installing. Clears the cold-start NACK timer.
+     */
+    fun markReady(packageName: String) {
+        val record = contexts[packageName] ?: return
+        record.readyAcked = true
+        record.readyNackTimer?.cancel(false)
+        record.readyNackTimer = null
+    }
+
+    private fun armReadyNackTimer(record: ContextRecord, timeoutMs: Long, cold: Boolean) {
+        record.readyNackTimer?.cancel(false)
+        val future = timerScheduler.schedule({
+            val phase = if (cold) "cold-start" else "steady-state"
+            Log.e(
+                TAG,
+                "NACK: ${record.packageName} $phase ready signal not received in ${timeoutMs}ms",
+            )
+            onOutbound?.invoke(
+                OutboundMessage(
+                    record.packageName,
+                    mapOf(
+                        "packageName" to record.packageName,
+                        "iface" to "__error",
+                        "method" to "ready_nack",
+                        "argsJson" to org.json.JSONObject(
+                            mapOf("phase" to phase, "timeoutMs" to timeoutMs) as Map<*, *>,
+                        ).toString(),
+                    ),
+                )
+            )
+            record.readyNackTimer = null
+        }, timeoutMs, TimeUnit.MILLISECONDS)
+        record.readyNackTimer = future
+    }
+
+    /**
+     * Diagnostic: ask QuickJS to GC. Returns false when the context is dead.
+     */
+    fun debugForceGC(packageName: String): Boolean {
+        val record = contexts[packageName] ?: return false
+        try {
+            record.executor.submit {
+                try {
+                    record.quickJs.gc()
+                } catch (_: Throwable) { /* ignore */ }
+            }
+        } catch (_: Throwable) {
+            return false
+        }
+        return true
+    }
 
     fun isAlive(packageName: String): Boolean = contexts.containsKey(packageName)
 
@@ -120,6 +185,11 @@ class JSCRuntime private constructor(private val appContext: Context) {
         }
         val record = ContextRecord(packageName, quickJs, executor)
         contexts[packageName] = record
+
+        // Arm cold-start NACK before the first eval — catches a wedged
+        // polyfill or miniapp init. Cleared by markReady() when the
+        // polyfill bundle's __dispatch("__runtime", "ready") lands.
+        armReadyNackTimer(record, COLD_START_NACK_TIMEOUT_MS, cold = true)
 
         val bundle = polyfillBundleOverride ?: polyfillBundle
 
@@ -175,12 +245,48 @@ class JSCRuntime private constructor(private val appContext: Context) {
      */
     fun dispatchToJs(packageName: String, envelopeJson: String) {
         val record = contexts[packageName] ?: return
+        // Steady-state NACK — re-arm so a wedged QuickJS context surfaces
+        // an __error/ready_nack frame after 3s instead of silently
+        // swallowing the delivery. Skipped during cold-start (timer
+        // still ticking from spawn).
+        if (record.readyAcked) {
+            armReadyNackTimer(record, STEADY_STATE_NACK_TIMEOUT_MS, cold = false)
+        }
         record.executor.submit {
+            // Soft watchdog around evaluate: warn at 5s, kill at 30s.
+            val warn = timerScheduler.schedule({
+                Log.i(TAG, "watchdog: $packageName __deliver blocked >${WATCHDOG_WARN_MS}ms")
+            }, WATCHDOG_WARN_MS, TimeUnit.MILLISECONDS)
+            val killTimer = timerScheduler.schedule({
+                Log.e(TAG, "watchdog: $packageName blocked >${WATCHDOG_KILL_MS}ms, killing")
+                onOutbound?.invoke(
+                    OutboundMessage(
+                        packageName,
+                        mapOf(
+                            "packageName" to packageName,
+                            "iface" to "__error",
+                            "method" to "watchdog_kill",
+                            "argsJson" to org.json.JSONObject(
+                                mapOf("thresholdMs" to WATCHDOG_KILL_MS) as Map<*, *>,
+                            ).toString(),
+                        ),
+                    )
+                )
+                kill(packageName)
+            }, WATCHDOG_KILL_MS, TimeUnit.MILLISECONDS)
+            record.watchdogTimer = killTimer
             try {
                 val source = "globalThis.__deliver(${jsStringLiteral(envelopeJson)});"
                 record.quickJs.evaluate(source, "mentrajs:deliver.js")
+                // Successful delivery — context is responsive.
+                record.readyNackTimer?.cancel(false)
+                record.readyNackTimer = null
             } catch (e: Throwable) {
                 Log.w(TAG, "dispatchToJs threw in $packageName: ${e.message}")
+            } finally {
+                warn.cancel(false)
+                killTimer.cancel(false)
+                if (record.watchdogTimer === killTimer) record.watchdogTimer = null
             }
         }
     }
@@ -188,11 +294,17 @@ class JSCRuntime private constructor(private val appContext: Context) {
     fun kill(packageName: String) {
         val record = contexts.remove(packageName) ?: return
         // Cancel timers first so no scheduled fire-callback grabs the
-        // QuickJs after it's closed.
+        // QuickJs after it's closed. Order matches the iOS teardown:
+        // setTimeout/setInterval → NACK watchdog → soft watchdog →
+        // close(quickJs) → executor.shutdown.
         for ((_, future) in record.pendingTimers) {
             future.cancel(false)
         }
         record.pendingTimers.clear()
+        record.readyNackTimer?.cancel(false)
+        record.readyNackTimer = null
+        record.watchdogTimer?.cancel(false)
+        record.watchdogTimer = null
         try {
             record.executor.submit {
                 try {

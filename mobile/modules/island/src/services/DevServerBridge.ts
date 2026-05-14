@@ -48,6 +48,7 @@ interface BridgeEntry {
 class DevServerBridge {
   private entries = new Map<string, BridgeEntry>()
   private globalReloadHandler: ((packageName: string) => void) | null = null
+  private globalRespawnBackgroundHandler: ((packageName: string) => void) | null = null
 
   /**
    * Register a global reload handler. MiniappHost calls this once at boot. The
@@ -56,6 +57,17 @@ class DevServerBridge {
    */
   public onReload(handler: (packageName: string) => void): void {
     this.globalReloadHandler = handler
+  }
+
+  /**
+   * Register a global background-respawn handler. Fires when the dev
+   * server sends `{type: "respawn-bg"}` — emitted on filesystem changes
+   * under `src/background/`. The host (MentraJSRouter via the
+   * bootstrap) should kill + respawn the JSContext to pick up the
+   * change. WebView reload is separate (see `onReload`).
+   */
+  public onRespawnBackground(handler: (packageName: string) => void): void {
+    this.globalRespawnBackgroundHandler = handler
   }
 
   /** Open (or re-open) a bridge to the given dev server. */
@@ -194,6 +206,15 @@ class DevServerBridge {
       if (parsed.type === "reload") {
         console.log(`${LOG_TAG}: ${packageName} received reload signal`)
         this.globalReloadHandler?.(packageName)
+        return
+      }
+
+      // Phase 4+ two-layer dev signal: filesystem changes under
+      // src/background/ trigger a full JSContext kill + respawn (not
+      // just a WebView reload). The host's MentraJSRouter listens here.
+      if (parsed.type === "respawn-bg") {
+        console.log(`${LOG_TAG}: ${packageName} received respawn-bg signal`)
+        this.globalRespawnBackgroundHandler?.(packageName)
         return
       }
     }

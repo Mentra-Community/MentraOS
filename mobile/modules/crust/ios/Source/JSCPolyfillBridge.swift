@@ -17,10 +17,70 @@ import os.log
 /// Hooks the network polyfill routes into a JSCDispatcher. Call once on
 /// host boot, after the dispatcher is created. Idempotent.
 public enum JSCPolyfillBridge {
-    /// Shared URLSession — uses default config so we get the usual HTTP/2,
-    /// connection reuse, TLS cache. A custom delegate would let us
-    /// intercept redirect / auth challenges; for v1 the default works.
+    /// Shared URLSession for HTTP fetch (no delegate — default config).
     private static let session: URLSession = URLSession(configuration: .default)
+
+    /// Separate URLSession for WebSocket tasks, with a delegate that
+    /// catches the real handshake-complete event so we fire `open` only
+    /// after the server has accepted (matches RFC 6455 + the browser
+    /// WebSocket spec). Without this the JS-side onopen could fire
+    /// before the server has actually upgraded.
+    private static let webSocketSession: URLSession = {
+        let session = URLSession(
+            configuration: .default,
+            delegate: WebSocketSessionDelegate.shared,
+            delegateQueue: nil,
+        )
+        return session
+    }()
+
+    fileprivate final class WebSocketSessionDelegate: NSObject, URLSessionWebSocketDelegate {
+        static let shared = WebSocketSessionDelegate()
+
+        func urlSession(
+            _ session: URLSession,
+            webSocketTask: URLSessionWebSocketTask,
+            didOpenWithProtocol protocol_: String?,
+        ) {
+            // Look up the wrapper for this task and fire the JS-side open.
+            JSCPolyfillBridge.socketsLock.lock()
+            let wrapper = JSCPolyfillBridge.sockets.values.first { $0.task === webSocketTask }
+            JSCPolyfillBridge.socketsLock.unlock()
+            guard let wrapper else { return }
+            var payload: [String: Any] = [:]
+            if let proto = protocol_, !proto.isEmpty {
+                payload["protocol"] = proto
+            }
+            JSCPolyfillBridge.deliverWebSocketEvent(
+                packageName: wrapper.packageName,
+                sid: wrapper.sid,
+                wsType: "open",
+                payload: payload,
+            )
+        }
+
+        func urlSession(
+            _ session: URLSession,
+            webSocketTask: URLSessionWebSocketTask,
+            didCloseWith closeCode: URLSessionWebSocketTask.CloseCode,
+            reason: Data?,
+        ) {
+            JSCPolyfillBridge.socketsLock.lock()
+            let wrapper = JSCPolyfillBridge.sockets.values.first { $0.task === webSocketTask }
+            JSCPolyfillBridge.socketsLock.unlock()
+            guard let wrapper else { return }
+            if wrapper.closedSent { return }
+            wrapper.closedSent = true
+            let reasonStr = reason.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            JSCPolyfillBridge.deliverWebSocketEvent(
+                packageName: wrapper.packageName,
+                sid: wrapper.sid,
+                wsType: "close",
+                payload: ["code": closeCode.rawValue, "reason": reasonStr],
+            )
+            JSCPolyfillBridge.dropSocket(sid: wrapper.sid)
+        }
+    }
     private static let log = OSLog(subsystem: "com.mentra.mentra", category: "MentraJS.fetch")
 
     public static func install(into dispatcher: JSCDispatcher) {
@@ -204,23 +264,17 @@ public enum JSCPolyfillBridge {
                 sid: sid,
                 packageName: packageName,
                 request: urlRequest,
-                session: session,
+                session: webSocketSession,
             )
             socketsLock.lock()
             sockets[sid] = wrapper
             socketsLock.unlock()
             wrapper.resume()
-            // Fire an immediate `open` event. URLSessionWebSocketTask
-            // accepts send() before the TCP handshake completes (it queues
-            // internally), so JS code racing send-before-open just works.
-            DispatchQueue.global().asyncAfter(deadline: .now() + 0.001) {
-                JSCPolyfillBridge.deliverWebSocketEvent(
-                    packageName: packageName,
-                    sid: sid,
-                    wsType: "open",
-                    payload: [:],
-                )
-            }
+            // `open` is fired by the URLSessionWebSocketDelegate's
+            // didOpenWithProtocol callback once the server has accepted
+            // the handshake — not synthesized here. JS code that calls
+            // send() before that fires is queued internally by
+            // URLSessionWebSocketTask (it's safe to call pre-open).
             return .sync(NSNull())
         }
 

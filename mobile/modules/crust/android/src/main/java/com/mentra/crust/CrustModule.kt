@@ -235,6 +235,14 @@ class CrustModule : Module() {
       JSCRuntime.shared(ctx).alivePackages()
     }
 
+    AsyncFunction("mentraJsDebugForceGC") { packageName: String ->
+      val ctx =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+                              ?: return@AsyncFunction false
+      JSCRuntime.shared(ctx).debugForceGC(packageName)
+    }
+
     Function("mentraJsLoadPolyfillBundle") {
       val ctx =
               appContext.reactContext
