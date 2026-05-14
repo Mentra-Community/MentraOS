@@ -26,6 +26,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mentra.core.DeviceModel
 import com.mentra.core.GlassesStatus
 import com.mentra.examples.android.MentraExampleController
 import com.mentra.examples.android.R
@@ -36,6 +37,7 @@ import com.mentra.examples.android.canConnectTarget
 import com.mentra.examples.android.connectionLabel
 import com.mentra.examples.android.connectionTargetLabel
 import com.mentra.examples.android.connectedWifiStatus
+import com.mentra.examples.android.deviceModelLabel
 import com.mentra.examples.android.deviceLabel
 import com.mentra.examples.android.discoveredDeviceKey
 import com.mentra.examples.android.firmwareLabel
@@ -47,6 +49,7 @@ import com.mentra.examples.android.rssiLabel
 import com.mentra.examples.android.rssiUpdatedLabel
 import com.mentra.examples.android.savedConnectionTargetDetail
 import com.mentra.examples.android.savedConnectionTargetName
+import com.mentra.examples.android.scanModelOptions
 import com.mentra.examples.android.supportsDisplay
 import com.mentra.examples.android.targetDeviceDetail
 import com.mentra.examples.android.wifiLabel
@@ -127,6 +130,8 @@ fun DeviceScreen(controller: MentraExampleController) {
                 Eyebrow("SDK", color = AppColor.inkAlt.copy(alpha = 0.4f), mono = true)
             }
             Spacer(Modifier.height(16.dp))
+            ScanModelPicker(controller, connected)
+            Spacer(Modifier.height(12.dp))
             TargetPicker(controller, connected, glasses)
             Spacer(Modifier.height(12.dp))
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -256,6 +261,61 @@ private fun glassesImageRes(values: GlassesStatus?): Int {
         "vuzix" in model || "z100" in model -> R.drawable.vuzix_z100
         "unknown" in model -> R.drawable.unknown_wearable
         else -> R.drawable.mentra_live
+    }
+}
+
+@Composable
+private fun ScanModelPicker(controller: MentraExampleController, connected: Boolean) {
+    val selectedModel = controller.state.selectedScanModel
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Eyebrow("SCAN MODEL", color = AppColor.muted, mono = true)
+            if (connected) {
+                Text("Disconnect to change", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            scanModelOptions.forEach { model ->
+                ScanModelChip(
+                    model = model,
+                    active = selectedModel == model,
+                    enabled = !connected,
+                    modifier = Modifier.weight(1f),
+                    onClick = { controller.selectScanModel(model) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScanModelChip(
+    model: DeviceModel,
+    active: Boolean,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val alpha = if (enabled) 1f else 0.45f
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(if (active) AppColor.greenPrimary.copy(alpha = 0.10f * alpha) else Color.White.copy(alpha = 0.72f * alpha))
+            .border(
+                1.dp,
+                if (active) AppColor.greenPrimary.copy(alpha = 0.32f * alpha) else AppColor.hairline,
+                RoundedCornerShape(999.dp),
+            )
+            .clickable(enabled = enabled) { onClick() }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            deviceModelLabel(model),
+            color = if (active) AppColor.greenInk else AppColor.muted,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+        )
     }
 }
 

@@ -1634,20 +1634,31 @@ extension String {
 }
 
 func connectionLabel(_ status: GlassesStatus?) -> String {
-    status?.connectionState.nonEmpty ?? (isGlassesConnected(status) ? "CONNECTED" : "WAITING")
+    status?.connectionState.rawValue ?? (isGlassesConnected(status) ? "CONNECTED" : "WAITING")
 }
 
 func isGlassesConnected(_ status: GlassesStatus?) -> Bool {
-    if let state = status?.connectionState.lowercased(), !state.isEmpty {
-        if state == "connected" { return true }
-        if state == "disconnected" { return false }
+    guard let status else { return false }
+    switch status.connectionState {
+    case .connected:
+        return true
+    case .disconnected:
+        return false
+    default:
+        return status.connected
     }
-    return status?.connected == true
 }
 
 func isDisconnectedStatus(_ status: GlassesStatusUpdate) -> Bool {
-    if let state = status.connectionState?.lowercased() {
-        return state == "disconnected"
+    if let state = status.connectionState {
+        switch state {
+        case .disconnected:
+            return true
+        case .connected:
+            return false
+        default:
+            break
+        }
     }
     return status.connected == false
 }
@@ -1694,7 +1705,7 @@ func batteryLevel(_ status: GlassesStatus?) -> Int? {
 
 func batteryLabel(_ status: GlassesStatus?) -> String {
     guard let level = batteryLevel(status) else {
-        return status?.connected == false || status?.connectionState.lowercased() == "disconnected" ? "Not connected" : "Waiting for status"
+        return status?.connected == false || status?.connectionState == .disconnected ? "Not connected" : "Waiting for status"
     }
     return "\(level)%\(status?.charging == true ? " charging" : "")"
 }
@@ -1855,7 +1866,7 @@ func summarize(_ status: GlassesStatusUpdate) -> String {
         return "RSSI updated: \(DateFormatter.exampleEventTime.string(from: date))"
     }
     let parts = [
-        status.connectionState.map { "connectionState: \($0)" },
+        status.connectionState.map { "connectionState: \($0.rawValue)" },
         status.connected.map { "connected: \($0)" },
         status.fullyBooted.map { "fullyBooted: \($0)" },
         status.batteryLevel.map { "batteryLevel: \($0)" },

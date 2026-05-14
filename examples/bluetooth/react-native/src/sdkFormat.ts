@@ -1,21 +1,21 @@
+import {glassesConnectionStateFromValue} from '@mentra/bluetooth-sdk';
 import type {CoreStatus, GlassesStatus, HotspotStatus, Device, WifiStatus} from '@mentra/bluetooth-sdk';
 
 export function connectionLabel(status: Partial<GlassesStatus>) {
-  if (status.connectionState) {
-    return status.connectionState;
+  const connectionState = glassesConnectionStateFromValue(status.connectionState);
+  if (connectionState) {
+    return connectionState;
   }
   return isGlassesConnected(status) ? 'CONNECTED' : 'WAITING';
 }
 
 export function isGlassesConnected(status: Partial<GlassesStatus>) {
-  if (typeof status.connectionState === 'string') {
-    const state = status.connectionState.toLowerCase();
-    if (state === 'connected') {
-      return true;
-    }
-    if (state === 'disconnected') {
-      return false;
-    }
+  const connectionState = glassesConnectionStateFromValue(status.connectionState);
+  if (connectionState === 'CONNECTED') {
+    return true;
+  }
+  if (connectionState === 'DISCONNECTED') {
+    return false;
   }
   return status.connected === true;
 }
@@ -40,14 +40,12 @@ export function isHotspotEnabled(status: Partial<GlassesStatus>, fallbackEnabled
 }
 
 export function isDisconnectedStatus(status: Partial<GlassesStatus>) {
-  if (typeof status.connectionState === 'string') {
-    const state = status.connectionState.toLowerCase();
-    if (state === 'disconnected') {
-      return true;
-    }
-    if (state === 'connected') {
-      return false;
-    }
+  const connectionState = glassesConnectionStateFromValue(status.connectionState);
+  if (connectionState === 'DISCONNECTED') {
+    return true;
+  }
+  if (connectionState === 'CONNECTED') {
+    return false;
   }
   return status.connected === false;
 }

@@ -169,6 +169,8 @@ const core = await BluetoothSdk.getCoreStatus();
 
 Status snapshots are safe to read at any time. Treat command success as "command accepted"; keep UI state derived from status callbacks.
 
+`GlassesStatus.connectionState` is typed as `GlassesConnectionState` on Android and iOS, and as the `GlassesConnectionState` string union in React Native. Valid values are `DISCONNECTED`, `SCANNING`, `CONNECTING`, `BONDING`, and `CONNECTED`. Use this field for link-layer progress, and use `connected` / `fullyBooted` for whether the glasses are ready for feature commands.
+
 ### Version Fields
 
 Call `requestVersionInfo()` after connection when your app wants the glasses to refresh version metadata. Updated values arrive through the normal glasses-status callback and are also available in the next status snapshot.
@@ -567,6 +569,7 @@ Common event names include `button_press`, `touch_event`, `head_up`, `battery_st
 | --- | --- | --- | --- | --- |
 | Device model | `DeviceModel` | `DeviceModel` | `model: string` | Supported family such as Mentra Live, Mentra Nex, G1, G2, Mach1, Z100, Frame, simulated, or R1. |
 | Discovered device | `Device` | `Device` | `Device` | Scan result containing model, name, address/identifier, RSSI, and id. |
+| Connection state | `GlassesConnectionState` | `GlassesConnectionState` | `GlassesConnectionState` | Link-layer state: disconnected, scanning, connecting, bonding, or connected. |
 | Glasses status | `GlassesStatus` / `GlassesStatusUpdate` | `GlassesStatus` / `GlassesStatusUpdate` | `GlassesStatus` | Connected device snapshot: model, firmware, serial, battery, Wi-Fi, hotspot, head-up, controller, and readiness. |
 | Bluetooth/core status | `BluetoothStatus` / `BluetoothStatusUpdate` | `BluetoothStatus` / `BluetoothStatusUpdate` | `CoreStatus` | Scanning state, discovered devices, Wi-Fi scan results, mic state, settings, and logs. |
 | SDK error | `BluetoothException` / `BluetoothError` | `BluetoothError` | rejected promise or `log`/typed event | Permission, connection, unsupported-capability, command, or native failure. |

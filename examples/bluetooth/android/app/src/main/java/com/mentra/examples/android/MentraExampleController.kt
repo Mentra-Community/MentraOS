@@ -32,6 +32,7 @@ import com.mentra.core.ButtonPressEvent
 import com.mentra.core.Device
 import com.mentra.core.DeviceModel
 import com.mentra.core.GalleryMode
+import com.mentra.core.GlassesConnectionState
 import com.mentra.core.GlassesStatus
 import com.mentra.core.GlassesStatusUpdate
 import com.mentra.core.HotspotErrorEvent
@@ -121,6 +122,7 @@ private data class GalleryServerCheck(
 )
 
 val rgbLedColorOptions = RgbLedColor.values().map { it.value }
+val scanModelOptions = listOf(DeviceModel.MENTRA_LIVE, DeviceModel.G2)
 const val MENTRA_LIVE_DEFAULT_HOTSPOT_PASSWORD = "00001111"
 
 data class MentraExampleState(
@@ -129,6 +131,7 @@ data class MentraExampleState(
     val cameraStatus: String = "Camera: phone receiver will start before capture",
     val discoveredDevices: List<Device> = emptyList(),
     val selectedDiscoveredDevice: Device? = null,
+    val selectedScanModel: DeviceModel = DeviceModel.MENTRA_LIVE,
     val events: List<ExampleEvent> = listOf(exampleEvent("LIVE", "SDK ready. Scan to discover glasses.")),
     val galleryModeAuto: Boolean = false,
     val galleryServerReachable: Boolean? = null,
@@ -288,9 +291,24 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
     }
 
-    fun startScan() = runAction("Scan") {
-        state = state.copy(discoveredDevices = emptyList(), selectedDiscoveredDevice = null)
-        mentraBluetoothSdk.startScan(DeviceModel.MENTRA_LIVE)
+    fun startScan() {
+        val model = state.selectedScanModel
+        runAction("Scan ${deviceModelLabel(model)}") {
+            state = state.copy(discoveredDevices = emptyList(), selectedDiscoveredDevice = null)
+            mentraBluetoothSdk.startScan(model)
+        }
+    }
+
+    fun selectScanModel(model: DeviceModel) {
+        if (state.selectedScanModel == model) {
+            return
+        }
+        state = state.copy(
+            discoveredDevices = emptyList(),
+            selectedDiscoveredDevice = null,
+            selectedScanModel = model,
+            lastAction = "Selected scan model: ${deviceModelLabel(model)}",
+        )
     }
 
     fun connect() = runAction("Connect") {
@@ -1957,7 +1975,7 @@ fun rgbLedColorFor(color: String): RgbLedColor =
 fun disconnectedGlassesStatus(status: GlassesStatus?): GlassesStatus? =
     status?.copy(
         connected = false,
-        connectionState = "DISCONNECTED",
+        connectionState = GlassesConnectionState.DISCONNECTED,
         fullyBooted = false,
         batteryLevel = -1,
         charging = false,
@@ -2240,7 +2258,7 @@ fun summarize(values: Map<String, Any>): String =
 
 fun summarize(status: GlassesStatusUpdate): String =
     listOfNotNull(
-        status.connectionState?.let { "connectionState: $it" },
+        status.connectionState?.let { "connectionState: ${it.value}" },
         status.connected?.let { "connected: $it" },
         status.fullyBooted?.let { "fullyBooted: $it" },
         status.batteryLevel?.let { "batteryLevel: $it" },
@@ -2362,21 +2380,21 @@ fun boolValue(values: Map<String, Any>, key: String): Boolean? = values[key] as?
 fun galleryModeAuto(status: BluetoothStatus?): Boolean = status?.galleryModeAuto ?: false
 
 fun connectionLabel(status: GlassesStatus?): String =
-    status?.connectionState?.takeIf { it.isNotBlank() }
+    status?.connectionState?.value
         ?: if (isGlassesConnected(status)) "CONNECTED" else "WAITING"
 
 fun isGlassesConnected(status: GlassesStatus?): Boolean {
-    return when (status?.connectionState?.lowercase()) {
-        "connected" -> true
-        "disconnected" -> false
+    return when (status?.connectionState) {
+        GlassesConnectionState.CONNECTED -> true
+        GlassesConnectionState.DISCONNECTED -> false
         else -> status?.connected == true
     }
 }
 
 fun isDisconnectedStatus(update: GlassesStatusUpdate): Boolean {
-    return when (update.connectionState?.lowercase()) {
-        "disconnected" -> true
-        "connected" -> false
+    return when (update.connectionState) {
+        GlassesConnectionState.DISCONNECTED -> true
+        GlassesConnectionState.CONNECTED -> false
         else -> update.connected == false
     }
 }
@@ -2421,7 +2439,7 @@ fun batteryLevel(status: GlassesStatus?): Int? {
 
 fun batteryLabel(status: GlassesStatus?): String =
     batteryLevel(status)?.let { "$it%${if (status?.charging == true) " charging" else ""}" }
-        ?: if (status?.connected == false || status?.connectionState?.lowercase() == "disconnected") "Not connected" else "Waiting for status"
+        ?: if (status?.connected == false || status?.connectionState == GlassesConnectionState.DISCONNECTED) "Not connected" else "Waiting for status"
 
 fun wifiLabel(status: GlassesStatus?): String =
     when (val wifi = status?.wifi) {
@@ -2511,6 +2529,19 @@ fun bluetoothSearchLabel(status: BluetoothStatus?): String {
 
 fun discoveredDeviceKey(device: Device): String =
     device.id
+
+fun deviceModelLabel(model: DeviceModel): String =
+    when (model) {
+        DeviceModel.MENTRA_LIVE -> "Mentra Live"
+        DeviceModel.G2 -> "Even G2"
+        DeviceModel.G1 -> "Even G1"
+        DeviceModel.MENTRA_NEX -> "Mentra Nex"
+        DeviceModel.MACH1 -> "Mach1"
+        DeviceModel.Z100 -> "Z100"
+        DeviceModel.FRAME -> "Frame"
+        DeviceModel.R1 -> "R1"
+        DeviceModel.SIMULATED -> "Simulated"
+    }
 
 fun targetDeviceDetail(device: Device): String =
     device.rssi?.let { "${device.model.deviceType} · $it dBm" } ?: device.model.deviceType
