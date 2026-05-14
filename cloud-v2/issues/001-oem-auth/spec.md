@@ -203,25 +203,20 @@ No JWT signing.
 
 **Mentra does.** Verify API credentials, mint session.
 
-**Verdict.** Secondary path. Functionally equivalent outcome to
-Option 5 (a Mentra-issued session token on the wire), without
-requiring the OEM to do JWT crypto.
+**Verdict.** Deferred. Functionally equivalent outcome to Option 5 (a
+Mentra-issued session token on the wire) without requiring the OEM to
+do JWT crypto. After team discussion we decided to ship a single
+integration path for v2 (Option 5) and revisit the API-key option
+later if there's real demand from OEMs that don't want to handle
+signing.
 
-**Why have both Option 5 and Option 6.** Some OEMs already do JWT
-signing for their own systems and Option 5 fits their habits. Others
-are smaller or want the path of least resistance and prefer Option 6.
-The trust model is similar. Both require the OEM to keep a secret on
-their backend; only the secret format differs (signing key vs API
-key). The mobile SDK and Mentra services downstream see the same
-Mentra-issued tokens either way.
-
-Bespoke instead of standardized, but the protocol is small enough that
-this is acceptable.
+Trust model is similar to Option 5 either way: both require the OEM
+to keep a secret on their backend; the secret format is the only
+difference (signing key vs API key).
 
 ### Proposal
 
-**Option 5 as primary integration path. Option 6 as secondary for
-OEMs that prefer it.** OEM picks one at onboarding.
+**Option 5 for v2.** Single integration path. Option 6 deferred.
 
 Reasoning:
 
@@ -229,17 +224,13 @@ Reasoning:
   independence, Mentra-defined claims) and is standardized via RFC
   8693, so OEMs that already do JWT signing have an off-the-shelf
   integration.
-- Option 6 covers OEMs that don't want to handle keys or signing. The
-  outcome on Mentra's side is identical (Mentra-issued session
-  token); only the input form differs.
 - Options 1, 2, 3 don't fit the architectural shape. We don't have a
   user-facing UI to redirect from.
 - Option 4 is viable but has worse operational properties for our
   use case (revocation, refresh dependence).
-
-Both Option 5 and Option 6 produce the same Mentra-issued session
-token on the wire, so downstream Mentra services don't need to
-distinguish them.
+- Option 6 is a viable simpler alternative, but supporting two paths
+  on day one doubles the surface area for limited benefit. Ship one,
+  revisit the second if there's real demand.
 
 ---
 
