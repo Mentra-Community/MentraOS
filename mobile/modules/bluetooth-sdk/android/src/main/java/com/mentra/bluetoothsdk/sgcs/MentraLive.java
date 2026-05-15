@@ -736,7 +736,15 @@ public class MentraLive extends SGCManager {
      * Starts BLE scanning for Mentra Live glasses
      */
     private void startScan() {
-        if (bluetoothAdapter == null || isScanning) {
+        if (bluetoothAdapter == null) {
+            return;
+        }
+
+        if (isScanning) {
+            if (!isReconnecting) {
+                updateConnectionState(ConnTypes.SCANNING);
+                emitBondedMentraLiveDevices();
+            }
             return;
         }
 
@@ -779,6 +787,10 @@ public class MentraLive extends SGCManager {
             }
             
             isScanning = true;
+            if (!isReconnecting && !isConnecting && !isConnected) {
+                updateConnectionState(ConnTypes.SCANNING);
+            }
+            emitBondedMentraLiveDevices();
             bluetoothScanner.startScan(filters, settings, scanCallback);
 
             // Set a timeout to stop scanning
@@ -839,6 +851,64 @@ public class MentraLive extends SGCManager {
         }
     }
 
+    private boolean isCompatibleMentraLiveDeviceName(String deviceName) {
+        if (deviceName == null || deviceName.isEmpty()) {
+            return false;
+        }
+
+        String normalizedName = deviceName.toLowerCase(Locale.US);
+        return deviceName.equals("Xy_A") ||
+                deviceName.startsWith("XyBLE_") ||
+                deviceName.startsWith("MENTRA_LIVE_BLE") ||
+                deviceName.startsWith("MENTRA_LIVE_BT") ||
+                normalizedName.startsWith("mentra_live") ||
+                normalizedName.startsWith("mentra live");
+    }
+
+    private void emitBondedMentraLiveDevices() {
+        if (bluetoothAdapter == null || !hasPermissions()) {
+            return;
+        }
+
+        Set<BluetoothDevice> bondedDevices;
+        try {
+            bondedDevices = bluetoothAdapter.getBondedDevices();
+        } catch (SecurityException e) {
+            Bridge.log("LIVE: Missing permission to read bonded devices: " + e.getMessage());
+            return;
+        } catch (Exception e) {
+            Log.w(TAG, "Unable to read bonded devices", e);
+            return;
+        }
+
+        if (bondedDevices == null || bondedDevices.isEmpty()) {
+            return;
+        }
+
+        int compatibleCount = 0;
+        for (BluetoothDevice bondedDevice : bondedDevices) {
+            String deviceName = safeDeviceName(bondedDevice);
+            if (!isCompatibleMentraLiveDeviceName(deviceName)) {
+                continue;
+            }
+
+            String deviceAddress = "";
+            try {
+                deviceAddress = bondedDevice.getAddress();
+            } catch (Exception e) {
+                Log.w(TAG, "Unable to read bonded device address", e);
+            }
+
+            Bridge.sendDiscoveredDevice(DeviceTypes.LIVE, deviceName, deviceAddress);
+            compatibleCount++;
+        }
+
+        if (compatibleCount > 0) {
+            Bridge.log("LIVE: Found " + compatibleCount + " already paired Mentra Live device" +
+                    (compatibleCount == 1 ? "" : "s"));
+        }
+    }
+
     private void emitStopScanEvent() {
         Map<String, Object> body = new HashMap<>();
         body.put("device_model", DeviceTypes.LIVE);
@@ -891,7 +961,7 @@ public class MentraLive extends SGCManager {
 
             // Post the discovered device to the event bus ONLY
             // Don't automatically connect - wait for explicit connect request from UI
-            if (deviceName.equals("Xy_A") || deviceName.startsWith("XyBLE_") || deviceName.startsWith("MENTRA_LIVE_BLE") || deviceName.startsWith("MENTRA_LIVE_BT") || deviceName.toLowerCase().startsWith("mentra_live")) {
+            if (isCompatibleMentraLiveDeviceName(deviceName)) {
                 String glassType = deviceName.equals("Xy_A") ? "Standard" : "K900";
                 Bridge.log("LIVE: Found compatible " + glassType + " glasses device: " + deviceName);
                 // EventBus.getDefault().post(new GlassesBluetoothSearchDiscoverEvent(
@@ -3880,6 +3950,15 @@ public class MentraLive extends SGCManager {
         
         // Clear reconnection mode when user manually scans
         isReconnecting = false;
+        if (!isConnected) {
+            isConnecting = false;
+            if (connectionTimeoutRunnable != null) {
+                connectionTimeoutHandler.removeCallbacks(connectionTimeoutRunnable);
+                connectionTimeoutRunnable = null;
+            }
+            closeGattQuietly(true);
+            updateConnectionState(ConnTypes.SCANNING);
+        }
 
         if (bluetoothAdapter == null) {
             Log.e(TAG, "Bluetooth not available");
