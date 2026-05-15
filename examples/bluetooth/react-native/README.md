@@ -33,11 +33,20 @@ Use the latest SDK version published by Mentra.
 
 ```bash
 cd examples/react-native
+npm run ios:setup
 npx expo prebuild
 npx expo run:ios
 ```
 
 Run on a physical iPhone for Bluetooth testing. Simulators are useful only for UI and compile checks.
+
+The React Native example uses the companion `mentra-direct-receiver` native module for direct phone WebRTC preview. On iOS that receiver needs the GStreamer iOS SDK. `npm run ios:setup` downloads the GStreamer package from `gstreamer.freedesktop.org`, verifies the published SHA-256 checksum, and installs it to `~/Library/Developer/GStreamer/iPhone.sdk`. The CocoaPods podspec also runs the same setup automatically during `pod install` when the SDK is missing from the default location, so `npx expo run:ios` can recover from a fresh clone.
+
+If your GStreamer SDK is installed somewhere else, set `GSTREAMER_ROOT_IOS` before prebuild or run:
+
+```bash
+GSTREAMER_ROOT_IOS=/path/to/iPhone.sdk npx expo run:ios
+```
 
 ## Run On Android
 

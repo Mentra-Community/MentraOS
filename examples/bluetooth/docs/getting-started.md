@@ -333,11 +333,14 @@ open MentraExample.xcworkspace
 ```bash
 cd examples/react-native
 npm install
+npm run ios:setup
 npx expo prebuild
 npx expo run:ios
 # or
 npm run android:dev
 ```
+
+`npm run ios:setup` installs the GStreamer iOS SDK used by the React Native example's direct phone WebRTC preview. If the SDK is missing, the iOS podspec also attempts the same setup during `pod install`, so `npx expo run:ios` can recover from a fresh clone.
 
 For photo upload and RTMP/SRT/WebRTC demos, start the local helper from the repo root:
 
