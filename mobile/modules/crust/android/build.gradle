@@ -15,6 +15,11 @@ useExpoPublishing()
 // is its prerequisite — it provides the @Serializable code generator that
 // Zipline's adapter relies on.
 buildscript {
+  repositories {
+    google()
+    mavenCentral()
+    gradlePluginPortal()
+  }
   dependencies {
     classpath 'app.cash.zipline:zipline-gradle-plugin:1.27.0'
   }
