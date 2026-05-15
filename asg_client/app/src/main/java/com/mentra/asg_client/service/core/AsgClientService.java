@@ -204,7 +204,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             Log.d(TAG, "✅ EventBus registration successful");
 
             // EIS is toggled on/off at point of use:
-            // - Enabled before video recording (CameraNeo)
+            // - Enabled before video recording (CameraNeoService)
             // - Disabled before streaming (StreamCommandHandler)
             SysControl.setEisEnable(this, false);
 
