@@ -1,4 +1,4 @@
-package com.mentra.asg_client.camera;
+package com.mentra.asg_client.camera.policy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -11,7 +11,7 @@ import org.robolectric.annotation.Config;
 
 /**
  * Unit tests for {@link AeStateMachine} pure AE step + AE state naming. Behavior must match the
- * historical inline order in {@code CameraNeo.SimplifiedAeCallback.onCaptureCompleted}.
+ * historical inline order in {@code CameraNeoService.SimplifiedAeCallback.onCaptureCompleted}.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
@@ -26,7 +26,7 @@ public class AeStateMachineTest {
 
     @Test
     public void evaluate_waitingNullAe_returnsBeforeTimeout() {
-        // Even with huge elapsed, null AE must win (matches historical CameraNeo order).
+        // Even with huge elapsed, null AE must win (matches historical CameraNeoService order).
         assertThat(AeStateMachine.evaluateRepeatingRequestAeStep(
                 true, false, null, Long.MAX_VALUE))
                 .isEqualTo(AeStateMachine.AeRepeatCaptureDecision.CONTINUE_WAITING_NULL_AE);
@@ -36,7 +36,7 @@ public class AeStateMachineTest {
     public void evaluate_timeout_returnsCaptureTimeout() {
         assertThat(AeStateMachine.evaluateRepeatingRequestAeStep(
                 true, false, CaptureResult.CONTROL_AE_STATE_SEARCHING,
-                AeStateMachine.AE_WAIT_NS + 1))
+                AeStateMachine.AE_WAIT_MAX_NS + 1))
                 .isEqualTo(AeStateMachine.AeRepeatCaptureDecision.CAPTURE_NOW_TIMEOUT);
     }
 
@@ -101,5 +101,51 @@ public class AeStateMachineTest {
                         AeStateMachine.ShotState.WAITING_AE,
                         AeStateMachine.ShotState.WAITING_AE_LOCK,
                         AeStateMachine.ShotState.SHOOTING);
+    }
+
+    @Test
+    public void beginWaitingForAe_setsWaitStateAndElapsedTimer() {
+        AeStateMachine stateMachine = new AeStateMachine();
+
+        stateMachine.beginWaitingForAe();
+
+        assertThat(stateMachine.waitingForAeConvergence()).isTrue();
+        assertThat(stateMachine.aeLockRequested()).isFalse();
+        assertThat(stateMachine.elapsedNsSinceAeStart()).isGreaterThanOrEqualTo(0L);
+    }
+
+    @Test
+    public void markAeLockRequested_setsLockFlagWhileWaiting() {
+        AeStateMachine stateMachine = new AeStateMachine();
+        stateMachine.beginWaitingForAe();
+
+        stateMachine.markAeLockRequested();
+
+        assertThat(stateMachine.waitingForAeConvergence()).isTrue();
+        assertThat(stateMachine.aeLockRequested()).isTrue();
+    }
+
+    @Test
+    public void clearWaitFlags_clearsWaitingAndLockFlags() {
+        AeStateMachine stateMachine = new AeStateMachine();
+        stateMachine.beginWaitingForAe();
+        stateMachine.markAeLockRequested();
+
+        stateMachine.clearWaitFlags();
+
+        assertThat(stateMachine.waitingForAeConvergence()).isFalse();
+        assertThat(stateMachine.aeLockRequested()).isFalse();
+    }
+
+    @Test
+    public void skipAeForManualCapture_clearsWaitingAndLockFlags() {
+        AeStateMachine stateMachine = new AeStateMachine();
+        stateMachine.beginWaitingForAe();
+        stateMachine.markAeLockRequested();
+
+        stateMachine.skipAeForManualCapture();
+
+        assertThat(stateMachine.waitingForAeConvergence()).isFalse();
+        assertThat(stateMachine.aeLockRequested()).isFalse();
     }
 }
