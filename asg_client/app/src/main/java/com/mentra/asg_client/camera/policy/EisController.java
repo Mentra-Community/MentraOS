@@ -27,6 +27,8 @@ public final class EisController {
 
             if (enabled) {
                 Log.d(TAG, "📹 Enabling EIS - Setting SPORTS scene mode");
+                // Scene mode is honored only when CONTROL_MODE is USE_SCENE_MODE (not AUTO).
+                builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_USE_SCENE_MODE);
                 builder.set(CaptureRequest.CONTROL_SCENE_MODE, CaptureRequest.CONTROL_SCENE_MODE_SPORTS);
                 if (eisEnableKey != null) {
                     builder.set(eisEnableKey, 1);
@@ -35,6 +37,7 @@ public final class EisController {
             } else {
                 Log.d(TAG, "📹 Disabling EIS - Setting DISABLED scene mode");
                 builder.set(CaptureRequest.CONTROL_SCENE_MODE, CaptureRequest.CONTROL_SCENE_MODE_DISABLED);
+                builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO);
                 if (eisEnableKey != null) {
                     builder.set(eisEnableKey, 0);
                     Log.d(TAG, "📹 EIS hardware feature disabled");

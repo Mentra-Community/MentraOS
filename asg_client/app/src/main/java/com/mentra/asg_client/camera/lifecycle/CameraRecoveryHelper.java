@@ -19,6 +19,21 @@ public final class CameraRecoveryHelper {
     private CameraRecoveryHelper() {}
 
     /**
+     * Returns the first camera id in {@code cameraIds} that differs from {@code currentId}, or null if none.
+     */
+    static String pickAlternateCameraId(String currentId, String[] cameraIds) {
+        if (currentId == null || cameraIds == null || cameraIds.length <= 1) {
+            return null;
+        }
+        for (String id : cameraIds) {
+            if (id != null && !id.equals(currentId)) {
+                return id;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Matches historical {@code CameraNeoService.releaseCameraResources}: full {@code closeCamera()} plus an
      * extra {@code closeDeviceAndSession} nudge on Android P+.
      */
@@ -59,9 +74,11 @@ public final class CameraRecoveryHelper {
                 if (manager != null) {
                     try {
                         String[] cameraIds = manager.getCameraIdList();
-                        if (cameraIds.length > 1 && "0".equals(cameraIdGetter.get())) {
-                            cameraIdSetter.accept("1");
-                            Log.d(TAG, "Switching to alternate camera ID: " + cameraIdGetter.get());
+                        String alternate =
+                                pickAlternateCameraId(cameraIdGetter.get(), cameraIds);
+                        if (alternate != null) {
+                            cameraIdSetter.accept(alternate);
+                            Log.d(TAG, "Switching to alternate camera ID: " + alternate);
                         }
                     } catch (CameraAccessException e) {
                         Log.e(TAG, "Error accessing camera during retry", e);

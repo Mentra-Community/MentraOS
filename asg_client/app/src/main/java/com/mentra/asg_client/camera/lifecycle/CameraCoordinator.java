@@ -22,7 +22,7 @@ public final class CameraCoordinator {
     private CameraDevice device;
     private CameraCaptureSession session;
     private Timer keepAliveTimer;
-    private boolean cameraKeptAlive;
+    private volatile boolean cameraKeptAlive;
     private final Semaphore openCloseLock = new Semaphore(1);
 
     public Handler startBackgroundThread(String name) {
