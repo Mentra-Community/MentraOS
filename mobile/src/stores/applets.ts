@@ -70,6 +70,7 @@ export interface ClientAppletInterface extends AppletInterface {
 interface AppStatusState {
   apps: ClientAppletInterface[]
   refreshApplets: () => Promise<void>
+  clearAppletLoading: (packageName: string) => void
   retryStartApp: (packageName: string) => Promise<void>
   startApplet: (applet: ClientAppletInterface, options?: {skipNavigation?: boolean}) => Promise<void>
   stopApplet: (packageName: string) => Promise<void>
@@ -691,6 +692,12 @@ const syncMenuAppsRunningState = async () => {
 export const useAppletStatusStore = create<AppStatusState>()(
   subscribeWithSelector((set, get) => ({
     apps: [],
+
+    clearAppletLoading: (packageName: string) => {
+      set((state) => ({
+        apps: state.apps.map((a) => (a.packageName === packageName ? {...a, loading: false} : a)),
+      }))
+    },
 
     retryStartApp: async (packageName: string) => {
       // Re-send start request and set up polling (used by error screen retry)

@@ -18,6 +18,9 @@ import {MiniAppCapsuleMenu} from "@/components/miniapps/CapsuleMenu"
 import AppIcon from "@/components/home/AppIcon"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {BgTimer} from "@/utils/timers"
+
+const MINIAPP_LOAD_TIMEOUT_MS = 30_000
 
 export default function AppWebView() {
   const {webviewURL, appName, packageName} = useLocalSearchParams()
@@ -34,6 +37,7 @@ export default function AppWebView() {
 
   // Track if the server-side app start failed
   const [appStartFailed, setAppStartFailed] = useState(false)
+  const [loadingTimedOut, setLoadingTimedOut] = useState(false)
 
   // Track whether the WebView has back navigation history
   const [webViewCanGoBack, setWebViewCanGoBack] = useState(false)
@@ -159,6 +163,26 @@ export default function AppWebView() {
   }, [isWebViewReady])
 
   useEffect(() => {
+    if (isWebViewReady) {
+      setLoadingTimedOut(false)
+      return
+    }
+
+    const timer = BgTimer.setTimeout(() => {
+      const applet = useAppletStatusStore.getState().apps.find((a) => a.packageName === packageName)
+      if (applet?.loading) {
+        useAppletStatusStore.getState().clearAppletLoading(packageName)
+      }
+      void useAppletStatusStore.getState().refreshApplets()
+      setLoadingTimedOut(true)
+    }, MINIAPP_LOAD_TIMEOUT_MS)
+
+    return () => {
+      BgTimer.clearTimeout(timer)
+    }
+  }, [packageName, isWebViewReady, retryTrigger])
+
+  useEffect(() => {
     const generateTokenAndSetUrl = async () => {
       console.log("WEBVIEW: generateTokenAndSetUrl()")
       setIsLoadingToken(true)
@@ -202,6 +226,7 @@ export default function AppWebView() {
         res = await restComms.hashWithApiKey(cloudApiUrl, packageName)
         if (res.is_error()) {
           console.error("Error hashing cloud API URL:", res.error)
+          setTokenError(`Couldn't securely connect to ${appName}. Please try again.`)
           setIsLoadingToken(false)
           return
         }
@@ -338,11 +363,13 @@ export default function AppWebView() {
     )
   }
 
-  // Show error screen if: server-side start failed, token generation failed, or webview failed to load
-  const showError = appStartFailed || (tokenError && !isLoadingToken) || hasError
-  const errorMessage = appStartFailed
-    ? `${appName} couldn't be started. The miniapp may be temporarily unavailable.`
-    : tokenError || `Unable to load ${appName}. Please check your connection and try again.`
+  // Show error screen if: server-side start failed, load timed out, token generation failed, or webview failed to load
+  const showError = appStartFailed || loadingTimedOut || (tokenError && !isLoadingToken) || hasError
+  const errorMessage = loadingTimedOut
+    ? `${appName} is taking too long to load. Please check your connection and try again.`
+    : appStartFailed
+      ? `${appName} couldn't be started. The miniapp may be temporarily unavailable.`
+      : tokenError || `Unable to load ${appName}. Please check your connection and try again.`
 
   if (showError) {
     return (
@@ -355,6 +382,7 @@ export default function AppWebView() {
             message={errorMessage}
             onRetry={() => {
               setAppStartFailed(false)
+              setLoadingTimedOut(false)
               setHasError(false)
               setTokenError(null)
               setFinalUrl(null)
@@ -362,7 +390,7 @@ export default function AppWebView() {
               setIsServerConfirmed(false)
               webViewOpacity.value = 0
               loadingOpacity.value = 1
-              // Re-send the start request and poll for confirmation
+              useAppletStatusStore.getState().clearAppletLoading(packageName)
               useAppletStatusStore.getState().retryStartApp(packageName as string)
               setRetryTrigger((prev) => prev + 1)
             }}
