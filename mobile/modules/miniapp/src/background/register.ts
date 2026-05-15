@@ -26,6 +26,12 @@ export type MiniappInitHandler = (session: MiniappSession) => void | Promise<voi
 
 interface InitGlobals {
   __mentraInitCallback?: (sessionId: string) => void
+  /**
+   * Polyfill-injected host bridge for surfacing structured errors to the
+   * host's MentraJSRouter (which feeds them into MentraJSCrashController).
+   * Optional because tests / pure-Node environments don't have it.
+   */
+  __hostError?: (payloadJson: string) => void
 }
 
 /**
@@ -65,6 +71,18 @@ export function registerMiniapp(
     session.connect().catch((err: unknown) => {
       // eslint-disable-next-line no-console
       console.error("[mentra-miniapp] session.connect() rejected:", err)
+      // Surface to the host's crash controller as a structured uncaught
+      // error so the existing backoff + crashloop machinery handles it.
+      // Repeated connect failures eventually flip the miniapp to
+      // CRASHLOOP_DISABLED, which the host turns into a user-facing
+      // alert + automatic incident report.
+      try {
+        const message = err instanceof Error ? err.message : String(err)
+        const stack = err instanceof Error && err.stack ? err.stack : ""
+        g.__hostError?.(JSON.stringify({message: `session.connect() failed: ${message}`, stack}))
+      } catch {
+        /* host bridge missing in tests — ignore */
+      }
     })
   }
 }

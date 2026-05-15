@@ -17,8 +17,13 @@ import {
   appRegistry,
   devServerBridge,
   localMiniappRuntime,
+  useAppStatusStore,
 } from "@mentra/island"
 import {File} from "expo-file-system"
+
+import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
+import {useNavigationStore} from "@/stores/navigation"
+import showAlert from "@/utils/AlertUtils"
 
 const MENTRA_JS_ENGINE = Platform.OS === "ios" ? "jsc" : "quickjs"
 const MENTRA_OS_VERSION = process.env.EXPO_PUBLIC_MENTRAOS_VERSION ?? "unknown"
@@ -59,15 +64,62 @@ export function bootstrapMentraJS() {
     "device.platform": Platform.OS,
   })
   router.onCrashloop = (packageName: string, reason: string) => {
+    // Sentry first (best-effort) so we don't lose telemetry if the rest
+    // of the chain throws.
+    const lastLogLines = router.logRing.snapshot(packageName)
     try {
       Sentry.captureMessage(`MentraJS crashloop disabled: ${packageName}`, {
         level: "error",
         tags: baseTags(packageName),
-        extra: {reason, lastLogLines: router.logRing.snapshot(packageName)},
+        extra: {reason, lastLogLines},
       })
     } catch {
       /* Sentry not initialized in dev */
     }
+
+    // Look up the miniapp's display name for the alert + incident.
+    const app = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)
+    const appName = app?.name ?? packageName
+
+    // Pop the /applet/local route if the user is currently looking at
+    // this miniapp's UI. The JSContext is already torn down — leaving
+    // the WebView mounted means it's talking to nothing.
+    try {
+      const navState = useNavigationStore.getState()
+      const top = navState.history.length - 1
+      const topPath = navState.history[top]
+      const topParams = navState.historyParams[top] as {packageName?: string} | undefined
+      if (topPath === "/applet/local" && topParams?.packageName === packageName) {
+        navState.goBack()
+      }
+    } catch {
+      /* navigation singleton may not be ready in early-boot crashes */
+    }
+
+    // File an automatic incident. Dedupe so a flapping miniapp doesn't
+    // generate one incident per crashloop transition.
+    void submitAutomaticBugIncident({
+      categorization: {
+        submissionMode: "AUTOMATIC",
+        triggerArea: "miniapp_crashloop",
+        triggerReason: "mentrajs_crashloop_disabled",
+        sourceAppletPackageName: packageName,
+        sourceAppletName: appName,
+      },
+      expectedBehavior: `${appName} should run without crashing.`,
+      actualBehavior: JSON.stringify({reason, lastLogLines}, null, 2),
+      severityRating: 7,
+      dedupeKey: `mentrajs_crashloop:${packageName}`,
+      logTag: "MentraJSCrashloop",
+    })
+
+    // User-facing alert. Last so even if Sentry/incident fail the user
+    // still sees something.
+    showAlert(
+      `${appName} stopped working`,
+      "We've filed an incident report. Try opening it again later — if the issue persists, please send us feedback.",
+      [{text: "OK"}],
+    )
   }
   router.onRestartToast = (packageName: string, reason: string) => {
     try {
