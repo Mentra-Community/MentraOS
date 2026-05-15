@@ -91,23 +91,25 @@ struct CameraScreen: View {
                     .frame(height: 160)
                     .clipShape(RoundedRectangle(cornerRadius: 22))
                 }
-                Circle().fill(Color.white.opacity(0.55)).frame(width: 80, height: 80).blur(radius: 6).offset(x: 200, y: -30)
-                LinearGradient(colors: [.clear, .black.opacity(0.3)], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 90).clipShape(RoundedRectangle(cornerRadius: 22)).offset(y: 70)
-                HStack {
-                    HStack(spacing: 6) {
-                        Circle().fill(AppColor.greenSoft).frame(width: 5, height: 5)
-                        Text(model.photoPreviewUrl == nil && model.photoPreviewImage == nil ? "JPEG · waiting" : "JPEG · uploaded")
-                            .font(.system(size: 10, weight: .semibold)).foregroundColor(.white).tracking(0.5)
+                if model.photoPreviewUrl == nil && model.photoPreviewImage == nil {
+                    Circle().fill(Color.white.opacity(0.55)).frame(width: 80, height: 80).blur(radius: 6).offset(x: 200, y: -30)
+                    LinearGradient(colors: [.clear, .black.opacity(0.3)], startPoint: .top, endPoint: .bottom)
+                        .frame(height: 90).clipShape(RoundedRectangle(cornerRadius: 22)).offset(y: 70)
+                    HStack {
+                        HStack(spacing: 6) {
+                            Circle().fill(AppColor.greenSoft).frame(width: 5, height: 5)
+                            Text("JPEG · waiting")
+                                .font(.system(size: 10, weight: .semibold)).foregroundColor(.white).tracking(0.5)
+                        }
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(Color.black.opacity(0.35))
+                        .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
+                        .clipShape(Capsule())
+                        Spacer()
+                        Text("ready").font(.system(size: 10, weight: .medium)).foregroundColor(Color.white.opacity(0.85))
                     }
-                    .padding(.horizontal, 10).padding(.vertical, 5)
-                    .background(Color.black.opacity(0.35))
-                    .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
-                    .clipShape(Capsule())
-                    Spacer()
-                    Text(model.photoPreviewUrl == nil && model.photoPreviewImage == nil ? "ready" : "latest").font(.system(size: 10, weight: .medium)).foregroundColor(Color.white.opacity(0.85))
+                    .padding(.horizontal, 14).padding(.bottom, 14)
                 }
-                .padding(.horizontal, 14).padding(.bottom, 14)
             }
 
             Button {
