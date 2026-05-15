@@ -316,7 +316,7 @@ final class NavigationManager: NSObject {
       // stream.
       self.deviateTimer?.invalidate()
       self.deviateTimer = nil
-      sim.pause()
+      sim.paused = true
 
       // Pace the walk to match the user's normal sim speed. Walking
       // baseline is ~1.4 m/s; speedMultiplier scales that. At a 0.4s
@@ -342,7 +342,7 @@ final class NavigationManager: NSObject {
           // wanted everything to stop after the deviation window.
           t.invalidate()
           self.deviateTimer = nil
-          self.navigator?.simulator?.pause()
+          self.navigator?.simulator?.paused = true
           print("[NavigationManager] simulateDeviation: done; simulator frozen")
           return
         }
