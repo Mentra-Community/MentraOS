@@ -25,10 +25,36 @@ private struct GalleryServerCheck {
 }
 
 private let defaultPhotoUploadUrl = "http://<computer-ip>:8787/upload"
+let scanModelOptions: [DeviceModel] = [.mentraLive, .g2]
 
 enum PhotoDestination {
     case macBookServer
     case thisPhone
+}
+
+func deviceModelLabel(_ model: DeviceModel) -> String {
+    switch model {
+    case .mentraLive:
+        return "Mentra Live"
+    case .g2:
+        return "Even G2"
+    case .g1:
+        return "Even G1"
+    case .mentraNex:
+        return "Mentra Nex"
+    case .mach1:
+        return "Mach1"
+    case .z100:
+        return "Z100"
+    case .frame:
+        return "Frame"
+    case .r1:
+        return "R1"
+    case .simulated:
+        return "Simulated"
+    @unknown default:
+        return model.rawValue
+    }
 }
 
 enum ExampleStreamProtocol: String, CaseIterable {
@@ -60,6 +86,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var bluetoothValues: BluetoothStatus?
     @Published private(set) var discoveredDevices: [Device] = []
     @Published private(set) var selectedDiscoveredDevice: Device?
+    @Published private(set) var selectedScanModel: DeviceModel = .mentraLive
     @Published private(set) var events: [ExampleEvent] = [ExampleEvent.make(tag: "LIVE", text: "SDK ready. Scan to discover glasses.")]
     @Published private(set) var activeAction: String?
     @Published private(set) var lastAction = "No actions yet."
@@ -195,10 +222,11 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func startScan() {
-        runAction("Scan") {
+        let model = selectedScanModel
+        runAction("Scan \(deviceModelLabel(model))") {
             discoveredDevices.removeAll()
             selectedDiscoveredDevice = nil
-            try mentraBluetoothSdk.startScan(model: .mentraLive)
+            try mentraBluetoothSdk.startScan(model: model)
         }
     }
 
@@ -217,6 +245,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func selectDiscoveredDevice(_ device: Device) {
         selectedDiscoveredDevice = device
         lastAction = "Selected: \(device.name)"
+    }
+
+    func selectScanModel(_ model: DeviceModel) {
+        guard selectedScanModel != model else { return }
+        discoveredDevices.removeAll()
+        selectedDiscoveredDevice = nil
+        selectedScanModel = model
+        lastAction = "Selected scan model: \(deviceModelLabel(model))"
     }
 
     func connect(_ device: Device) {

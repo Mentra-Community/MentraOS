@@ -116,6 +116,9 @@ struct DeviceScreen: View {
             }
             .padding(.bottom, 16)
 
+            scanModelPicker
+                .padding(.bottom, 12)
+
             targetPicker
                 .padding(.bottom, 12)
 
@@ -147,6 +150,36 @@ struct DeviceScreen: View {
                 }
                 if connected && !supportsDisplay(model.glassesValues) {
                     DisplayCapabilityNotice(text: "\(modelLabel(model.glassesValues)) has no display, so display commands are disabled.")
+                }
+            }
+        }
+    }
+
+    private var scanModelPicker: some View {
+        let connected = model.glassesConnected
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("SCAN MODEL")
+                    .font(.system(size: 10, weight: .semibold).monospaced())
+                    .tracking(1.4)
+                    .foregroundColor(AppColor.inkAlt.opacity(0.45))
+                Spacer()
+                if connected {
+                    Text("Disconnect to change")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(AppColor.muted)
+                }
+            }
+
+            HStack(spacing: 8) {
+                ForEach(scanModelOptions, id: \.self) { scanModel in
+                    ScanModelChip(
+                        model: scanModel,
+                        active: model.selectedScanModel == scanModel,
+                        enabled: !connected
+                    ) {
+                        model.selectScanModel(scanModel)
+                    }
                 }
             }
         }
@@ -298,9 +331,9 @@ private func glassesAssetName(_ values: GlassesStatus?) -> String {
 
 private func targetDeviceDetail(_ device: Device) -> String {
     if let rssi = device.rssi {
-        return "\(device.model.rawValue) · \(rssi) dBm"
+        return "\(deviceModelLabel(device.model)) · \(rssi) dBm"
     }
-    return device.model.rawValue
+    return deviceModelLabel(device.model)
 }
 
 @MainActor
@@ -320,6 +353,33 @@ private func connectionTargetLabel(model: BluetoothViewModel) -> String {
 @MainActor
 private func canConnectTarget(model: BluetoothViewModel) -> Bool {
     model.selectedDiscoveredDevice != nil || !model.discoveredDevices.isEmpty || hasSavedConnectionTarget(model.bluetoothValues)
+}
+
+struct ScanModelChip: View {
+    let model: DeviceModel
+    let active: Bool
+    let enabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(deviceModelLabel(model))
+                .font(.system(size: 12, weight: .bold))
+                .foregroundColor(active ? AppColor.greenInk : AppColor.muted)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(active ? AppColor.greenPrimary.opacity(0.10) : Color.white.opacity(0.72))
+                .overlay(
+                    Capsule()
+                        .stroke(active ? AppColor.greenPrimary.opacity(0.32) : AppColor.hairline, lineWidth: 1)
+                )
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
+    }
 }
 
 struct TargetDeviceRow: View {

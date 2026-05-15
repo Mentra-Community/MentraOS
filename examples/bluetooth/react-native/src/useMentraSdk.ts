@@ -49,6 +49,7 @@ type RgbLedAction = 'on' | 'off';
 export type LedColor = 'red' | 'green' | 'blue' | 'orange' | 'white';
 export type PhotoSize = 'small' | 'medium' | 'large' | 'full';
 export type PhotoCompression = 'none' | 'medium' | 'heavy';
+export type ScanModel = 'Mentra Live' | 'Even Realities G2';
 type BluetoothSdkWithGalleryMode = typeof BluetoothSdk & {
   setGalleryMode(mode: 'auto' | 'manual'): Promise<void>;
 };
@@ -68,6 +69,7 @@ type PersistedDefaultDevice = Device & {
 export const RGB_LED_COLORS: LedColor[] = ['red', 'green', 'blue', 'orange', 'white'];
 export const PHOTO_SIZES: PhotoSize[] = ['small', 'medium', 'large', 'full'];
 export const PHOTO_COMPRESSIONS: PhotoCompression[] = ['none', 'medium', 'heavy'];
+export const SCAN_MODELS: ScanModel[] = ['Mentra Live', 'Even Realities G2'];
 
 export const STREAM_DEFAULT_URLS: Record<StreamProtocol, string> = {
   rtmp: 'rtmp://<computer-ip>:1935/live/mentra-live',
@@ -140,6 +142,7 @@ export type MentraSdkState = {
   photoSize: PhotoSize;
   rawJsonExpanded: boolean;
   selectedDiscoveredDevice: Device | null;
+  selectedScanModel: ScanModel;
   directStreamReceiverRunning: boolean;
   directStreamWhipUrl: string | null;
   streamCloudServerEnabled: boolean;
@@ -169,6 +172,7 @@ export type MentraSdkActions = {
   requestWifiScan: () => Promise<void>;
   playMicRecording: () => Promise<void>;
   selectDiscoveredDevice: (device: Device) => void;
+  selectScanModel: (model: ScanModel) => void;
   selectLedColor: (color: LedColor) => Promise<void>;
   selectLedMode: (mode: LedMode) => Promise<void>;
   selectProtocol: (protocol: StreamProtocol) => void;
@@ -212,7 +216,7 @@ declare const process: {
 
 export function useMentraSdk(): MentraSdkModel {
   const [glassesStatus, setGlassesStatus] = useState<Partial<GlassesStatus>>(
-    {},
+    () => createDisconnectedGlassesStatus(),
   );
   const [bluetoothStatus, setBluetoothStatus] = useState<
     Partial<CoreStatus> & Record<string, unknown>
@@ -222,6 +226,8 @@ export function useMentraSdk(): MentraSdkModel {
   );
   const [selectedDiscoveredDevice, setSelectedDiscoveredDevice] =
     useState<Device | null>(null);
+  const [selectedScanModel, setSelectedScanModel] =
+    useState<ScanModel>('Mentra Live');
   const [events, setEvents] = useState<SdkConsoleEvent[]>([
     event('LIVE', 'SDK ready. Scan to discover glasses.'),
   ]);
@@ -580,13 +586,14 @@ export function useMentraSdk(): MentraSdkModel {
   }
 
   async function startScan() {
-    await runAction('Scan', async () => {
+    const model = selectedScanModel;
+    await runAction(`Scan ${scanModelLabel(model)}`, async () => {
       if (!(await ensureAndroidPermissions('scan'))) {
         throw new Error('Bluetooth permissions are required to scan.');
       }
       setSelectedDiscoveredDevice(null);
       setBluetoothStatus((current) => ({...current, searchResults: []}));
-      await BluetoothSdk.startScan({model: 'Mentra Live'});
+      await BluetoothSdk.startScan({model});
     });
   }
 
@@ -641,6 +648,16 @@ export function useMentraSdk(): MentraSdkModel {
   function selectDiscoveredDevice(device: Device) {
     setSelectedDiscoveredDevice(device);
     setLastAction(`Selected: ${device.name}`);
+  }
+
+  function selectScanModel(model: ScanModel) {
+    if (selectedScanModel === model) {
+      return;
+    }
+    setSelectedScanModel(model);
+    setSelectedDiscoveredDevice(null);
+    setBluetoothStatus((current) => ({...current, searchResults: []}));
+    setLastAction(`Selected scan model: ${scanModelLabel(model)}`);
   }
 
   async function displayHello() {
@@ -1619,6 +1636,8 @@ export function useMentraSdk(): MentraSdkModel {
     selectDiscoveredDevice,
     selectLedColor,
     selectLedMode,
+    selectedScanModel,
+    selectScanModel,
     selectProtocol,
     sendWifiCredentials,
     setGalleryModeAuto: setGalleryModeAutoAction,
@@ -1645,6 +1664,10 @@ export function useMentraSdk(): MentraSdkModel {
     toggleStream,
     webhookUrl,
   };
+}
+
+export function scanModelLabel(model: ScanModel) {
+  return model === 'Even Realities G2' ? 'Even G2' : 'Mentra Live';
 }
 
 function event(tag: SdkConsoleEvent['tag'], text: string): SdkConsoleEvent {

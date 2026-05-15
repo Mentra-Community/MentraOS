@@ -23,7 +23,7 @@ import {
   wifiLabel,
   wifiSubLabel,
 } from '../sdkFormat';
-import type { MentraSdkModel } from '../useMentraSdk';
+import { SCAN_MODELS, scanModelLabel, type MentraSdkModel, type ScanModel } from '../useMentraSdk';
 
 const glassesImages = {
   evenRealitiesG1: require('../../assets/glasses/even_realities_g1.png'),
@@ -96,6 +96,7 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
           <Text style={styles.cardTitle}>Quick actions</Text>
           <Text style={styles.cardEyebrow}>SDK</Text>
         </View>
+        <ScanModelPicker sdk={sdk} connected={connected} />
         <TargetPicker sdk={sdk} connected={connected} />
         <View style={{ gap: 8 }}>
           <View style={styles.btnRow}>
@@ -239,6 +240,58 @@ function glassesImageFor(status: MentraSdkModel['glassesStatus']) {
     return glassesImages.unknownWearable;
   }
   return glassesImages.mentraLive;
+}
+
+function ScanModelPicker({ sdk, connected }: { sdk: MentraSdkModel; connected: boolean }) {
+  return (
+    <View style={styles.scanModelPicker}>
+      <View style={styles.targetHeader}>
+        <Text style={styles.targetEyebrow}>SCAN MODEL</Text>
+        {connected ? (
+          <Text style={styles.targetSummaryMuted}>Disconnect to change</Text>
+        ) : null}
+      </View>
+      <View style={styles.scanModelRow}>
+        {SCAN_MODELS.map((model) => (
+          <ScanModelChip
+            key={model}
+            active={sdk.selectedScanModel === model}
+            enabled={!connected}
+            model={model}
+            onPress={() => sdk.selectScanModel(model)}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function ScanModelChip({
+  active,
+  enabled,
+  model,
+  onPress,
+}: {
+  active: boolean;
+  enabled: boolean;
+  model: ScanModel;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      disabled={!enabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.scanModelChip,
+        active ? styles.scanModelChipActive : styles.scanModelChipIdle,
+        pressed && styles.btnPressed,
+        !enabled && styles.disabled,
+      ]}>
+      <Text style={[styles.scanModelText, active ? styles.scanModelTextActive : styles.scanModelTextIdle]}>
+        {scanModelLabel(model)}
+      </Text>
+    </Pressable>
+  );
 }
 
 function TargetPicker({ sdk, connected }: { sdk: MentraSdkModel; connected: boolean }) {
@@ -436,6 +489,28 @@ const styles = StyleSheet.create({
   targetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   targetEyebrow: { color: 'rgba(14,14,16,0.45)', fontSize: 10, fontWeight: '600', letterSpacing: 1.4, fontFamily: 'Courier' },
   targetSummary: { color: colors.greenInk, fontSize: 10, fontWeight: '600' },
+  targetSummaryMuted: { color: colors.muted, fontSize: 10, fontWeight: '600' },
+  scanModelPicker: { gap: 8 },
+  scanModelRow: { flexDirection: 'row', gap: 8 },
+  scanModelChip: {
+    flex: 1,
+    alignItems: 'center',
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  scanModelChipActive: {
+    backgroundColor: 'rgba(22,163,74,0.10)',
+    borderColor: 'rgba(22,163,74,0.32)',
+  },
+  scanModelChipIdle: {
+    backgroundColor: 'rgba(255,255,255,0.72)',
+    borderColor: colors.hairline,
+  },
+  scanModelText: { fontSize: 12, fontWeight: '700' },
+  scanModelTextActive: { color: colors.greenInk },
+  scanModelTextIdle: { color: colors.muted },
   targetRow: { flexDirection: 'row', alignItems: 'center', borderRadius: 14, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 9, gap: 10 },
   targetRowIdle: { backgroundColor: 'rgba(255,255,255,0.7)', borderColor: 'rgba(255,255,255,0.7)' },
   targetRowSelected: { backgroundColor: 'rgba(22,163,74,0.08)', borderColor: 'rgba(22,163,74,0.18)' },
