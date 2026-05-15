@@ -1,23 +1,15 @@
-import {glassesConnectionStateFromValue} from '@mentra/bluetooth-sdk';
-import type {CoreStatus, GlassesStatus, HotspotStatus, Device, WifiStatus} from '@mentra/bluetooth-sdk';
+import type {CoreStatus, GlassesConnectionStatus, GlassesStatus, HotspotStatus, Device, WifiStatus} from '@mentra/bluetooth-sdk';
 
 export function connectionLabel(status: Partial<GlassesStatus>) {
-  const connectionState = glassesConnectionStateFromValue(status.connectionState);
-  if (connectionState) {
-    return connectionState;
+  const connection = connectionStatus(status);
+  if (connection) {
+    return connection.state.toUpperCase();
   }
-  return isGlassesConnected(status) ? 'CONNECTED' : 'WAITING';
+  return 'WAITING';
 }
 
 export function isGlassesConnected(status: Partial<GlassesStatus>) {
-  const connectionState = glassesConnectionStateFromValue(status.connectionState);
-  if (connectionState === 'CONNECTED') {
-    return true;
-  }
-  if (connectionState === 'DISCONNECTED') {
-    return false;
-  }
-  return status.connected === true;
+  return connectionStatus(status)?.state === 'connected';
 }
 
 export function isGlassesWifiConnected(status: Partial<GlassesStatus>) {
@@ -40,14 +32,7 @@ export function isHotspotEnabled(status: Partial<GlassesStatus>, fallbackEnabled
 }
 
 export function isDisconnectedStatus(status: Partial<GlassesStatus>) {
-  const connectionState = glassesConnectionStateFromValue(status.connectionState);
-  if (connectionState === 'DISCONNECTED') {
-    return true;
-  }
-  if (connectionState === 'CONNECTED') {
-    return false;
-  }
-  return status.connected === false;
+  return connectionStatus(status)?.state === 'disconnected';
 }
 
 export function deviceLabel(status: Partial<GlassesStatus>) {
@@ -207,6 +192,10 @@ export function firmwareSubLabel(status: Partial<GlassesStatus>) {
 function statusString(status: Partial<GlassesStatus>, key: string) {
   const value = (status as Record<string, unknown>)[key];
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function connectionStatus(status: Partial<GlassesStatus>): GlassesConnectionStatus | null {
+  return status.connection ?? null;
 }
 
 export function rssiLabel(status: Partial<GlassesStatus>) {

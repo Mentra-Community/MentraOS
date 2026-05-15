@@ -8,6 +8,7 @@ import BluetoothSdk, {
   type ButtonPressEvent,
   type CompatibleGlassesSearchStopEvent,
   type CoreStatus,
+  createDisconnectedGlassesStatus,
   type GlassesStatus,
   type HotspotStatus,
   type HotspotStatusChangeEvent,
@@ -1513,7 +1514,7 @@ export function useMentraSdk(): MentraSdkModel {
       pollGenerationRef.current += 1;
       setCameraStatus('Disconnected before photo upload completed');
     }
-    setGlassesStatus(disconnectedGlassesStatus({connected: false}));
+    setGlassesStatus(createDisconnectedGlassesStatus());
     setStreamRequested(false);
     setDirectStreamReceiverRunning(false);
     setDirectStreamWhipUrl(null);
@@ -1825,25 +1826,6 @@ function wavBytes(pcm: Uint8Array) {
   writeUInt32(pcm.byteLength);
   bytes.set(pcm, offset);
   return bytes;
-}
-
-function disconnectedGlassesStatus(
-  changed: Partial<GlassesStatus>,
-): Partial<GlassesStatus> {
-  return {
-    ...changed,
-    batteryLevel: -1,
-    caseBatteryLevel: -1,
-    caseCharging: false,
-    caseOpen: false,
-    caseRemoved: true,
-    charging: false,
-    connected: false,
-    connectionState: 'DISCONNECTED',
-    fullyBooted: false,
-    hotspot: {state: 'disabled'},
-    wifi: {state: 'disconnected'},
-  } as Partial<GlassesStatus>;
 }
 
 function supportsDisplay(status: Partial<GlassesStatus>) {
