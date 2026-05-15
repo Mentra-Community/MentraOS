@@ -316,7 +316,7 @@ final class NavigationManager: NSObject {
       // stream.
       self.deviateTimer?.invalidate()
       self.deviateTimer = nil
-      sim.paused = true
+      sim.isPaused = true
 
       // Pace the walk to match the user's normal sim speed. Walking
       // baseline is ~1.4 m/s; speedMultiplier scales that. At a 0.4s
