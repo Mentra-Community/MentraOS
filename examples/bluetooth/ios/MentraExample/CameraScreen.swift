@@ -48,7 +48,7 @@ struct CameraScreen: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                PageHeader(title: "Camera", connected: model.glassesConnected)
+                PageHeader(title: "Camera")
                 if !model.glassesConnected {
                     OfflineNotice()
                         .padding(.horizontal, 16)

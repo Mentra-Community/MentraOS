@@ -91,7 +91,7 @@ fun SystemScreen(controller: MentraExampleController) {
     }
 
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
-        PageHeader("System", connected)
+        PageHeader("System")
         if (!connected) {
             OfflineNotice(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
         }

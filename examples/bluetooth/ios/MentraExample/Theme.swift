@@ -92,33 +92,15 @@ struct GlassCard<Content: View>: View {
 
 struct PageHeader: View {
     let title: String
-    var connected = false
 
     var body: some View {
-        HStack {
-            Circle()
-                .fill(Color.white.opacity(0.6))
-                .overlay(Circle().stroke(AppColor.border, lineWidth: 1))
-                .overlay(Image(systemName: "gearshape").foregroundColor(AppColor.ink).font(.system(size: 14, weight: .medium)))
-                .frame(width: 38, height: 38)
-                .shadow(color: Color(hex: 0x0F2A1D).opacity(0.08), radius: 14, x: 0, y: 4)
-            Spacer()
+        ZStack {
             Text(title)
                 .font(.system(size: 17, weight: .bold))
                 .foregroundColor(AppColor.ink)
                 .tracking(-0.17)
-            Spacer()
-            HStack(spacing: 6) {
-                Circle().fill(connected ? AppColor.greenAccent : AppColor.mutedSoft).frame(width: 7, height: 7)
-                Text(connected ? "Live" : "Offline").font(.system(size: 13, weight: .semibold)).foregroundColor(AppColor.ink)
-            }
-            .padding(.horizontal, 11)
-            .frame(height: 34)
-            .background(Color.white.opacity(0.6))
-            .overlay(Capsule().stroke(AppColor.border, lineWidth: 1))
-            .clipShape(Capsule())
-            .shadow(color: Color(hex: 0x0F2A1D).opacity(0.08), radius: 14, x: 0, y: 4)
         }
+        .frame(height: 38)
         .padding(.horizontal, 16)
         .padding(.bottom, 14)
     }

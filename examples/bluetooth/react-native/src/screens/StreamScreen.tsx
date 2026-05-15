@@ -80,7 +80,7 @@ export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
       keyboardShouldPersistTaps="handled"
       style={{ flex: 1, backgroundColor: colors.bg }}
       contentContainerStyle={{ paddingBottom: scrollBottomPadding }}>
-      <Header connected={connected} title="Stream" />
+      <Header title="Stream" />
       {!connected ? (
         <OfflineNotice />
       ) : wifiRequired ? (

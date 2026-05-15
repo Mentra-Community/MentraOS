@@ -60,7 +60,7 @@ fun CameraScreen(controller: MentraExampleController) {
     val sdkCall = cameraSdkCall(state.photoSize, state.photoCompression)
     val clipboardManager = LocalClipboardManager.current
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
-        PageHeader("Camera", connected)
+        PageHeader("Camera")
         if (!connected) {
             OfflineNotice(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
         } else if (wifiRequired) {

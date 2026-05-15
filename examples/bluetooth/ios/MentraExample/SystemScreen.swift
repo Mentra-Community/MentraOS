@@ -76,7 +76,7 @@ struct SystemScreen: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                PageHeader(title: "System", connected: model.glassesConnected)
+                PageHeader(title: "System")
                 if !model.glassesConnected {
                     OfflineNotice()
                         .padding(.horizontal, 16)

@@ -50,7 +50,7 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
       keyboardShouldPersistTaps="handled"
       style={{ flex: 1, backgroundColor: colors.bg }}
       contentContainerStyle={{ paddingBottom: scrollBottomPadding }}>
-      <Header connected={connected} title="Device" />
+      <Header title="Device" />
 
       {/* Hero card */}
       <LinearGradient colors={['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.55)']} style={styles.heroCard}>

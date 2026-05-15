@@ -12,7 +12,7 @@ struct ConsoleScreen: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                PageHeader(title: "Console", connected: model.glassesConnected)
+                PageHeader(title: "Console")
 
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {

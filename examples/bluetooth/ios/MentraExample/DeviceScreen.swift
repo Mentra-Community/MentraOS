@@ -8,7 +8,7 @@ struct DeviceScreen: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                PageHeader(title: "Device", connected: model.glassesConnected)
+                PageHeader(title: "Device")
 
                 heroCard
                     .padding(.horizontal, 16)

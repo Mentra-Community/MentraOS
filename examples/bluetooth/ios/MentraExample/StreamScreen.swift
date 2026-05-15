@@ -58,7 +58,7 @@ struct StreamScreen: View {
         ScrollViewReader { scrollProxy in
             ScrollView {
                 VStack(spacing: 0) {
-                    PageHeader(title: "Stream", connected: model.glassesConnected)
+                    PageHeader(title: "Stream")
                     if !model.glassesConnected {
                         OfflineNotice()
                             .padding(.horizontal, 16)

@@ -74,7 +74,7 @@ fun DeviceScreen(controller: MentraExampleController) {
     Column(
         modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())
     ) {
-        PageHeader("Device", connected)
+        PageHeader("Device")
 
         // Hero card
         GlassCard(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {

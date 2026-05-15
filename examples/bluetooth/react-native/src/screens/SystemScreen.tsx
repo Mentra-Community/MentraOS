@@ -67,7 +67,7 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
       keyboardShouldPersistTaps="handled"
       style={{ flex: 1, backgroundColor: colors.bg }}
       contentContainerStyle={{ paddingBottom: scrollBottomPadding }}>
-      <Header connected={connected} title="System" />
+      <Header title="System" />
       {!connected && <OfflineNotice />}
 
       {/* Wi-Fi card */}

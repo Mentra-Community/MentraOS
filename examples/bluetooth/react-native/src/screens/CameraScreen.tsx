@@ -52,7 +52,7 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
       keyboardShouldPersistTaps="handled"
       style={{ flex: 1, backgroundColor: colors.bg }}
       contentContainerStyle={{ paddingBottom: scrollBottomPadding }}>
-      <Header connected={connected} title="Camera" />
+      <Header title="Camera" />
       {!connected ? (
         <OfflineNotice />
       ) : wifiRequired ? (

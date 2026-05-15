@@ -116,7 +116,7 @@ fun StreamScreen(controller: MentraExampleController) {
     }
 
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(scrollState)) {
-        PageHeader("Stream", connected)
+        PageHeader("Stream")
         if (!connected) {
             OfflineNotice(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
         } else if (wifiRequired) {

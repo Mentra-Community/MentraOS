@@ -42,7 +42,7 @@ fun ConsoleScreen(controller: MentraExampleController) {
     val allEvents = state.events
     val events = if (filter == "ALL") allEvents else allEvents.filter { it.tag == filter }
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
-        PageHeader("Console", isGlassesConnected(state.glassesStatus))
+        PageHeader("Console")
 
         // Filter chips
         Row(

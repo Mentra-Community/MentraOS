@@ -26,7 +26,7 @@ export function ConsoleScreen({ sdk }: { sdk: MentraSdkModel }) {
       keyboardShouldPersistTaps="handled"
       style={{ flex: 1, backgroundColor: colors.bg }}
       contentContainerStyle={{ paddingBottom: scrollBottomPadding }}>
-      <Header connected={isGlassesConnected(sdk.glassesStatus)} title="Console" />
+      <Header title="Console" />
 
       {/* Filter chips */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 16, gap: 6 }} style={{ marginTop: 8 }}>
