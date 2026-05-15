@@ -41,6 +41,13 @@ android {
   compileOptions {
     coreLibraryDesugaringEnabled true
   }
+  // Zipline 1.27 is built with Kotlin 2.x; Expo prebuild's default
+  // Kotlin (1.9) can't read its metadata. Skip the version check so
+  // the compiler treats Zipline as a plain JVM dependency. ABI-compatible
+  // for the surface we use (QuickJs / Zipline.create / Bridge bindings).
+  kotlinOptions {
+    freeCompilerArgs += '-Xskip-metadata-version-check'
+  }
   buildTypes {
     internal {
       initWith release
