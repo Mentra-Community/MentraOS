@@ -11,7 +11,7 @@ import {
   GlassesStatus,
   Device,
   PhotoCompression,
-  PhotoSize,
+  PhotoRequestParams,
   RgbLedAction,
   RgbLedColor,
   StreamKeepAliveRequest,
@@ -69,16 +69,7 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   // Gallery Commands
   setGalleryMode(mode: GalleryMode): Promise<void>
   queryGalleryStatus(): Promise<void>
-  photoRequest(
-    requestId: string,
-    appId: string,
-    size: PhotoSize,
-    webhookUrl: string | null,
-    authToken: string | null,
-    compress: PhotoCompression,
-    flash: boolean,
-    sound: boolean,
-  ): Promise<void>
+  photoRequest(params: PhotoRequestParams): Promise<void>
 
   // OTA Commands
   sendOtaStart(): Promise<void>
