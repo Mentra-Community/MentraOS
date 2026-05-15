@@ -28,6 +28,7 @@ Pod::Spec.new do |s|
     'AudioToolbox',
     'AssetsLibrary',
     'OpenGLES',
+    'Network',
     'QuartzCore',
     'UIKit'
   ]

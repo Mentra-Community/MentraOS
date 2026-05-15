@@ -3,6 +3,7 @@ import ExpoModulesCore
 import Foundation
 
 public class MentraDirectReceiverModule: Module {
+  private var photoUploadServer: LocalPhotoUploadServer?
   private var whipReceiver: GStreamerWhipReceiver?
   private var whipProxy: WhipHeaderProxy?
   private var firstFrameSeen = false
@@ -17,10 +18,11 @@ public class MentraDirectReceiverModule: Module {
     }
 
     AsyncFunction("startPhotoReceiver") { () -> [String: Any] in
-      throw UnsupportedDirectReceiverError()
+      try startPhotoReceiver()
     }
 
     AsyncFunction("stopPhotoReceiver") {
+      stopPhotoReceiverInternal()
     }
 
     AsyncFunction("startWebRtcReceiver") { () -> [String: Any] in
@@ -32,11 +34,63 @@ public class MentraDirectReceiverModule: Module {
     }
 
     OnDestroy {
+      stopPhotoReceiverInternal()
       stopWebRtcReceiverInternal()
     }
 
     View(MentraDirectReceiverView.self) {
     }
+  }
+
+  private func startPhotoReceiver() throws -> [String: Any] {
+    guard let host = bestLocalIPv4Address() else {
+      throw DirectReceiverError("No Wi-Fi/LAN IPv4 address found for this phone.")
+    }
+
+    let server = photoUploadServer ?? LocalPhotoUploadServer(
+      onLog: { [weak self] message in
+        self?.emitStatus(kind: "photo", message: message)
+      },
+      onUpload: { [weak self] upload in
+        self?.handlePhotoUpload(upload)
+      }
+    )
+    photoUploadServer = server
+
+    var lastError: Error?
+    for port in photoPorts {
+      do {
+        let actualPort = try server.start(port: UInt16(port))
+        let uploadUrl = "http://\(host):\(actualPort)/upload"
+        emitStatus(kind: "photo", message: "Photo receiver ready at \(uploadUrl)")
+        return [
+          "uploadUrl": uploadUrl,
+          "host": host,
+          "port": actualPort,
+        ]
+      } catch {
+        lastError = error
+        emitStatus(kind: "photo", message: "Port \(port) unavailable: \(error.localizedDescription)")
+      }
+    }
+
+    throw DirectReceiverError(
+      "Could not start phone photo receiver: \(lastError?.localizedDescription ?? "all ports unavailable")"
+    )
+  }
+
+  private func stopPhotoReceiverInternal() {
+    photoUploadServer?.stop()
+    emitStatus(kind: "photo", message: "Photo receiver stopped")
+  }
+
+  private func handlePhotoUpload(_ upload: PhotoUpload) {
+    sendEvent("photoUpload", [
+      "requestId": upload.requestId as Any,
+      "fileUri": upload.photoFile.absoluteString,
+      "byteCount": upload.byteCount,
+    ])
+    emitStatus(kind: "photo", message: "Photo uploaded (\(upload.byteCount) bytes)")
   }
 
   private func startWebRtcReceiver() throws -> [String: Any] {
@@ -169,12 +223,8 @@ public class MentraDirectReceiverModule: Module {
     (publicPort: 8192, backendPort: 8193),
     (publicPort: 8194, backendPort: 8195),
   ]
-}
 
-final class UnsupportedDirectReceiverError: Exception, @unchecked Sendable {
-  override var reason: String {
-    "The React Native example direct photo receiver is implemented on Android for now."
-  }
+  private let photoPorts = [8787, 8788, 8789, 8790]
 }
 
 final class DirectReceiverError: Exception, @unchecked Sendable {
