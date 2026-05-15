@@ -34,6 +34,8 @@ func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didDiscover device: Device) {
 React Native:
 
 ```ts
+import {DeviceModels} from '@mentra/bluetooth-sdk';
+
 const removeBluetooth = BluetoothSdk.onBluetoothStatus((status) => {
   const device = status.searchResults?.[0];
   if (device) {
@@ -42,7 +44,7 @@ const removeBluetooth = BluetoothSdk.onBluetoothStatus((status) => {
   }
 });
 
-await BluetoothSdk.startScan({model: "Mentra Live"});
+await BluetoothSdk.startScan(DeviceModels.MentraLive);
 ```
 
 ## Capability Areas

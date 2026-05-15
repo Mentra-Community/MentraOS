@@ -292,7 +292,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         runAction("Display Hello") {
             try requireDisplaySupport("display text")
             Task {
-                try? await mentraBluetoothSdk.displayText(DisplayTextRequest(text: "Hello from Mentra Bluetooth SDK"))
+                try? await mentraBluetoothSdk.displayText("Hello from Mentra Bluetooth SDK")
             }
         }
     }
@@ -1292,14 +1292,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         pcmBytes = 0
         micElapsedSeconds = 0
         micStartedAt = Date()
-        mentraBluetoothSdk.setMicState(MicConfiguration(sendPcmData: true, sendTranscript: false, bypassVad: true))
+        mentraBluetoothSdk.setMicState(enabled: true, useGlassesMic: true, bypassVad: true)
         micRecording = true
         startMicElapsedTimer()
     }
 
     private func stopMicRecording() {
         if glassesConnected {
-            mentraBluetoothSdk.setMicState(MicConfiguration(sendPcmData: false, sendTranscript: false, bypassVad: true))
+            mentraBluetoothSdk.setMicState(enabled: false, bypassVad: true)
         }
         micRecording = false
         stopMicElapsedTimer()

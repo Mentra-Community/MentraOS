@@ -3,6 +3,7 @@ import {File, Paths} from 'expo-file-system';
 import {useEffect, useRef, useState} from 'react';
 import {Clipboard, Linking, PermissionsAndroid, Platform} from 'react-native';
 import BluetoothSdk, {
+  DeviceModels,
   type AudioConnectedEvent,
   type BatteryStatusEvent,
   type ButtonPressEvent,
@@ -14,6 +15,7 @@ import BluetoothSdk, {
   type HotspotStatusChangeEvent,
   type LogEvent,
   type Device,
+  type DeviceModel,
   type MicLc3Event,
   type MicPcmEvent,
   type PhotoResponseEvent,
@@ -49,10 +51,8 @@ type RgbLedAction = 'on' | 'off';
 export type LedColor = 'red' | 'green' | 'blue' | 'orange' | 'white';
 export type PhotoSize = 'small' | 'medium' | 'large' | 'full';
 export type PhotoCompression = 'none' | 'medium' | 'heavy';
-export type ScanModel = 'Mentra Live' | 'Even Realities G2';
-type BluetoothSdkWithGalleryMode = typeof BluetoothSdk & {
-  setGalleryMode(mode: 'auto' | 'manual'): Promise<void>;
-};
+export const SCAN_MODELS = [DeviceModels.MentraLive, DeviceModels.G2] as const;
+export type ScanModel = (typeof SCAN_MODELS)[number];
 type StreamStartRequest = {
   keepAlive: boolean;
   keepAliveIntervalSeconds: number;
@@ -69,7 +69,6 @@ type PersistedDefaultDevice = Device & {
 export const RGB_LED_COLORS: LedColor[] = ['red', 'green', 'blue', 'orange', 'white'];
 export const PHOTO_SIZES: PhotoSize[] = ['small', 'medium', 'large', 'full'];
 export const PHOTO_COMPRESSIONS: PhotoCompression[] = ['none', 'medium', 'heavy'];
-export const SCAN_MODELS: ScanModel[] = ['Mentra Live', 'Even Realities G2'];
 
 export const STREAM_DEFAULT_URLS: Record<StreamProtocol, string> = {
   rtmp: 'rtmp://<computer-ip>:1935/live/mentra-live',
@@ -227,7 +226,7 @@ export function useMentraSdk(): MentraSdkModel {
   const [selectedDiscoveredDevice, setSelectedDiscoveredDevice] =
     useState<Device | null>(null);
   const [selectedScanModel, setSelectedScanModel] =
-    useState<ScanModel>('Mentra Live');
+    useState<ScanModel>(DeviceModels.MentraLive);
   const [events, setEvents] = useState<SdkConsoleEvent[]>([
     event('LIVE', 'SDK ready. Scan to discover glasses.'),
   ]);
@@ -593,7 +592,7 @@ export function useMentraSdk(): MentraSdkModel {
       }
       setSelectedDiscoveredDevice(null);
       setBluetoothStatus((current) => ({...current, searchResults: []}));
-      await BluetoothSdk.startScan({model});
+      await BluetoothSdk.startScan(model);
     });
   }
 
@@ -663,12 +662,7 @@ export function useMentraSdk(): MentraSdkModel {
   async function displayHello() {
     await runAction('Display Hello', async () => {
       requireDisplaySupport('display text');
-      await BluetoothSdk.displayText({
-        size: 24,
-        text: 'Hello from Mentra Bluetooth SDK',
-        x: 0,
-        y: 0,
-      });
+      await BluetoothSdk.displayText('Hello from Mentra Bluetooth SDK', 0, 0, 24);
     });
   }
 
@@ -682,7 +676,7 @@ export function useMentraSdk(): MentraSdkModel {
   async function setGalleryModeAutoAction(enabled: boolean) {
     await runAction(enabled ? 'Save in gallery mode' : 'Report button events', async () => {
       requireConnected('change gallery mode');
-      await (BluetoothSdk as BluetoothSdkWithGalleryMode).setGalleryMode(enabled ? 'auto' : 'manual');
+      await BluetoothSdk.setGalleryMode(enabled ? 'auto' : 'manual');
       setGalleryModeAuto(enabled);
     });
   }
@@ -1303,7 +1297,7 @@ export function useMentraSdk(): MentraSdkModel {
     setMicElapsedSeconds(0);
     setPcmBytes(0);
     setPcmFrames(0);
-    await BluetoothSdk.setMicState(true, false, true);
+    await BluetoothSdk.setMicState(true, true, true);
     micRecordingRef.current = true;
     setMicRecording(true);
     startMicElapsedTimer();
@@ -1311,7 +1305,7 @@ export function useMentraSdk(): MentraSdkModel {
 
   async function stopMicRecording() {
     if (isGlassesConnected(glassesStatus)) {
-      await BluetoothSdk.setMicState(false, false, true);
+      await BluetoothSdk.setMicState(false);
     }
     micRecordingRef.current = false;
     setMicRecording(false);
@@ -1667,7 +1661,7 @@ export function useMentraSdk(): MentraSdkModel {
 }
 
 export function scanModelLabel(model: ScanModel) {
-  return model === 'Even Realities G2' ? 'Even G2' : 'Mentra Live';
+  return model === DeviceModels.G2 ? 'Even G2' : 'Mentra Live';
 }
 
 function event(tag: SdkConsoleEvent['tag'], text: string): SdkConsoleEvent {
@@ -1712,7 +1706,7 @@ function parseDefaultDevice(value: unknown): Device | null {
     return null;
   }
   const values = value as Record<string, unknown>;
-  const model = stringValue(values, 'model');
+  const model = deviceModelValue(values, 'model');
   const name = stringValue(values, 'name');
   if (!model || !name) {
     return null;
@@ -1746,7 +1740,7 @@ function clearedDefaultDeviceStatus(): Record<string, string> {
 }
 
 function defaultDeviceFromStatus(values: Record<string, unknown>): Device | null {
-  const model = stringValue(values, 'default_wearable');
+  const model = deviceModelValue(values, 'default_wearable');
   const name = stringValue(values, 'device_name');
   if (!model || !name) {
     return null;
@@ -1779,6 +1773,14 @@ function discoveredDeviceKey(device: Device) {
 function stringValue(values: Record<string, unknown>, key: string) {
   const value = values[key];
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function deviceModelValue(values: Record<string, unknown>, key: string): DeviceModel | undefined {
+  const value = stringValue(values, key);
+  if (!value) {
+    return undefined;
+  }
+  return (Object.values(DeviceModels) as string[]).includes(value) ? (value as DeviceModel) : undefined;
 }
 
 export function durationText(seconds: number) {

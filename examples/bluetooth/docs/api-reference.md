@@ -134,14 +134,11 @@ sdk.connectSimulated()
 React Native:
 
 ```ts
-await BluetoothSdk.startScan({model: 'Mentra Live'});
+import {DeviceModels} from '@mentra/bluetooth-sdk';
 
-await BluetoothSdk.connect(device);
-await BluetoothSdk.setDefaultDevice({
-  id: 'Mentra Live:Mentra_Live_E7FA',
-  model: 'Mentra Live',
-  name: 'Mentra_Live_E7FA',
-});
+const device = await BluetoothSdk.connectFirst(DeviceModels.MentraLive);
+
+await BluetoothSdk.setDefaultDevice(device);
 const defaultDevice = await BluetoothSdk.getDefaultDevice();
 await BluetoothSdk.connectDefault();
 await BluetoothSdk.clearDefaultDevice();
@@ -217,7 +214,7 @@ Mentra Live does not have a display. Use these APIs only on display-equipped mod
 Android:
 
 ```kotlin
-sdk.displayText(DisplayTextRequest(text = "Pickup at gate B12", x = 0, y = 0, size = 24))
+sdk.displayText(text = "Pickup at gate B12", x = 0, y = 0, size = 24)
 sdk.clearDisplay()
 sdk.showDashboard()
 ```
@@ -225,7 +222,7 @@ sdk.showDashboard()
 iOS:
 
 ```swift
-try await sdk.displayText(DisplayTextRequest(text: "Pickup at gate B12", x: 0, y: 0, size: 24))
+try await sdk.displayText("Pickup at gate B12", x: 0, y: 0, size: 24)
 try await sdk.clearDisplay()
 sdk.showDashboard()
 ```
@@ -233,7 +230,7 @@ sdk.showDashboard()
 React Native:
 
 ```ts
-await BluetoothSdk.displayText({text: 'Pickup at gate B12', x: 0, y: 0, size: 24});
+await BluetoothSdk.displayText('Pickup at gate B12', 0, 0, 24);
 await BluetoothSdk.clearDisplay();
 await BluetoothSdk.showDashboard();
 ```
@@ -248,12 +245,12 @@ Android:
 sdk.setBrightness(level = 60)
 sdk.setBrightness(level = 60, autoMode = false)
 sdk.setAutoBrightness(enabled = true)
-sdk.setDashboardPosition(DashboardPositionRequest(height = 4, depth = 6))
+sdk.setDashboardPosition(height = 4, depth = 6)
 sdk.setHeadUpAngle(angleDegrees = 20)
 sdk.setScreenDisabled(false)
 sdk.setGalleryMode(GalleryMode.AUTO)
-sdk.setButtonPhotoSettings(ButtonPhotoSettings(size = ButtonPhotoSize.MEDIUM))
-sdk.setButtonVideoRecordingSettings(ButtonVideoRecordingSettings(width = 1280, height = 720, fps = 30))
+sdk.setButtonPhotoSettings(size = ButtonPhotoSize.MEDIUM)
+sdk.setButtonVideoRecordingSettings(width = 1280, height = 720, fps = 30)
 sdk.setButtonCameraLed(enabled = true)
 sdk.setButtonMaxRecordingTime(minutes = 3)
 sdk.setCameraFov(CameraFov.WIDE)
@@ -265,12 +262,12 @@ iOS:
 try await sdk.setBrightness(60)
 try await sdk.setBrightness(60, autoMode: false)
 try await sdk.setAutoBrightness(enabled: true)
-try await sdk.setDashboardPosition(DashboardPositionRequest(height: 4, depth: 6))
+try await sdk.setDashboardPosition(height: 4, depth: 6)
 try await sdk.setHeadUpAngle(20)
 try await sdk.setScreenDisabled(false)
 try await sdk.setGalleryMode(.auto)
-try await sdk.setButtonPhotoSettings(ButtonPhotoSettings(size: .medium))
-try await sdk.setButtonVideoRecordingSettings(ButtonVideoRecordingSettings(width: 1280, height: 720, fps: 30))
+try await sdk.setButtonPhotoSettings(size: .medium)
+try await sdk.setButtonVideoRecordingSettings(width: 1280, height: 720, fps: 30)
 try await sdk.setButtonCameraLed(enabled: true)
 try await sdk.setButtonMaxRecordingTime(minutes: 3)
 try await sdk.setCameraFov(.wide)
@@ -279,8 +276,18 @@ try await sdk.setCameraFov(.wide)
 React Native:
 
 ```ts
+await BluetoothSdk.setBrightness(60, false);
+await BluetoothSdk.setAutoBrightness(true);
+await BluetoothSdk.setDashboardPosition(4, 6);
+await BluetoothSdk.setHeadUpAngle(20);
+await BluetoothSdk.setScreenDisabled(false);
 await BluetoothSdk.setGalleryMode('auto');
 await BluetoothSdk.setGalleryMode('manual');
+await BluetoothSdk.setButtonPhotoSettings('medium');
+await BluetoothSdk.setButtonVideoRecordingSettings(1280, 720, 30);
+await BluetoothSdk.setButtonCameraLed(true);
+await BluetoothSdk.setButtonMaxRecordingTime(3);
+await BluetoothSdk.setCameraFov('wide');
 ```
 
 `setGalleryMode('auto')` lets the glasses button save photos/videos locally. `setGalleryMode('manual')` reports button and touch events to the host app without triggering local gallery capture. Button presses are always reported as SDK events.
@@ -342,7 +349,7 @@ Android:
 ```kotlin
 sdk.setPreferredMic(MicPreference.AUTO)
 sdk.setOwnAppAudioPlaying(false)
-sdk.setMicState(MicConfig(sendPcmData = true, sendTranscript = true, bypassVad = false))
+sdk.setMicState(enabled = true, useGlassesMic = true, bypassVad = false)
 ```
 
 iOS:
@@ -350,7 +357,7 @@ iOS:
 ```swift
 sdk.setPreferredMic(.auto)
 sdk.setOwnAppAudioPlaying(false)
-sdk.setMicState(MicConfiguration(sendPcmData: true, sendTranscript: true, bypassVad: false))
+sdk.setMicState(enabled: true, useGlassesMic: true, bypassVad: false)
 ```
 
 React Native:
@@ -594,7 +601,7 @@ Common event names include `button_press`, `touch_event`, `head_up`, `battery_st
 
 | Model | Android | iOS | React Native | Purpose |
 | --- | --- | --- | --- | --- |
-| Device model | `DeviceModel` | `DeviceModel` | `model: string` | Supported family such as Mentra Live, Mentra Nex, G1, G2, Mach1, Z100, Frame, simulated, or R1. |
+| Device model | `DeviceModel` | `DeviceModel` | `DeviceModel` / `DeviceModels` | Supported family such as Mentra Live, Mentra Nex, G1, G2, Mach1, Z100, Frame, simulated, or R1. |
 | Discovered device | `Device` | `Device` | `Device` | Scan result containing model, name, address/identifier, RSSI, and id. |
 | Connection state | `GlassesConnectionState` | `GlassesConnectionState` | `GlassesConnectionStatus` | Link-layer state: disconnected, scanning, connecting, bonding, or connected. React Native uses a discriminated union where `fullyBooted` only exists on the connected state. |
 | Glasses status | `GlassesStatus` / `GlassesStatusUpdate` | `GlassesStatus` / `GlassesStatusUpdate` | `GlassesStatus` | Connected device snapshot: model, firmware, serial, battery, Wi-Fi, hotspot, head-up, controller, and readiness. |
@@ -608,8 +615,8 @@ Common event names include `button_press`, `touch_event`, `head_up`, `battery_st
 | Android `MentraBluetoothSdk.create` | Uses `MentraBluetoothSdkConfig()` with callbacks delivered on the Android main thread. |
 | iOS `MentraBluetoothSDK()` | Uses `.default` configuration. |
 | `connect` / `connectDefault` | `connect` saves connected glasses as default and cancels existing connection attempts unless options override that behavior. `connectDefault` uses the app-restored default device. |
-| `DisplayTextRequest` / `displayText` | Defaults to `x = 0`, `y = 0`, `size = 24` when supported by the platform call. |
-| `MicConfig` / `MicConfiguration` | `sendLc3Data` defaults to `false`. |
+| `displayText` | Defaults to `x = 0`, `y = 0`, `size = 24` when supported by the platform call. |
+| `setMicState` | `useGlassesMic = true`, `bypassVad = false`, `sendTranscript = false`, and `sendLc3Data = false` unless explicitly set. |
 | `PhotoRequest` / `photoRequest` | Pass explicit size, compression, flash, and sound for cross-platform consistency. |
 | `StreamRequest` / `startStream` | `keepAlive = true`, `keepAliveIntervalSeconds = 15`, `flash = true`, and `sound = true` by default in native SDK calls. |
 | `sendIncidentId` | Uses `https://api.mentra.glass` if `apiBaseUrl` is omitted. |

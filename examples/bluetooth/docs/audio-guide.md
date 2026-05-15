@@ -42,26 +42,14 @@ Android:
 
 ```kotlin
 sdk.setPreferredMic(MicPreference.AUTO)
-sdk.setMicState(
-    MicConfig(
-        sendPcmData = true,
-        sendTranscript = true,
-        bypassVad = false,
-    )
-)
+sdk.setMicState(enabled = true, useGlassesMic = true, bypassVad = false)
 ```
 
 iOS:
 
 ```swift
 sdk.setPreferredMic(.auto)
-sdk.setMicState(
-    MicConfiguration(
-        sendPcmData: true,
-        sendTranscript: true,
-        bypassVad: false
-    )
-)
+sdk.setMicState(enabled: true, useGlassesMic: true, bypassVad: false)
 ```
 
 React Native:

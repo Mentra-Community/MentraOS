@@ -38,7 +38,6 @@ import com.mentra.bluetoothsdk.GlassesStatusUpdate
 import com.mentra.bluetoothsdk.HotspotErrorEvent
 import com.mentra.bluetoothsdk.HotspotStatus
 import com.mentra.bluetoothsdk.HotspotStatusEvent
-import com.mentra.bluetoothsdk.MicConfig
 import com.mentra.bluetoothsdk.PhotoCompression
 import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.PhotoResponse
@@ -351,7 +350,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     fun displayHello() = runAction("Display Hello") {
         requireConnected("display text")
-        mentraBluetoothSdk.displayText(com.mentra.bluetoothsdk.DisplayTextRequest("Hello from Mentra Bluetooth SDK"))
+        mentraBluetoothSdk.displayText("Hello from Mentra Bluetooth SDK")
     }
 
     fun clearDisplay() = runAction("Clear Display") {
@@ -1649,13 +1648,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             lastMicDurationSeconds = null,
             micPlaybackHint = null,
         )
-        mentraBluetoothSdk.setMicState(MicConfig(sendPcmData = true, sendTranscript = false, bypassVad = true))
+        mentraBluetoothSdk.setMicState(enabled = true, useGlassesMic = true, bypassVad = true)
         startMicElapsedTimer()
     }
 
     private fun stopMicRecording() {
         if (isGlassesConnected()) {
-            mentraBluetoothSdk.setMicState(MicConfig(sendPcmData = false, sendTranscript = false, bypassVad = true))
+            mentraBluetoothSdk.setMicState(enabled = false, bypassVad = true)
         }
         stopMicElapsedTimer()
         val pcm = micPcmBuffer.toByteArray()

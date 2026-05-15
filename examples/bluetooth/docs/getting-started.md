@@ -270,32 +270,19 @@ final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
 
 ```ts
 import BluetoothSdk, {
+  DeviceModels,
   createDisconnectedGlassesStatus,
-  type Device,
   type GlassesStatus,
 } from '@mentra/bluetooth-sdk';
 
 let glassesStatus: Partial<GlassesStatus> = createDisconnectedGlassesStatus();
-
-const firstDevice = new Promise<Device>((resolve) => {
-  let removeBluetooth = () => {};
-  removeBluetooth = BluetoothSdk.onBluetoothStatus((status) => {
-    const device = status.searchResults?.[0];
-    if (device) {
-      removeBluetooth();
-      resolve(device);
-    }
-  });
-});
 
 const removeGlasses = BluetoothSdk.onGlassesStatus((status) => {
   glassesStatus = {...glassesStatus, ...status};
   console.log('Glasses status changed', status);
 });
 
-await BluetoothSdk.startScan({model: 'Mentra Live'});
-
-await BluetoothSdk.connect(await firstDevice);
+await BluetoothSdk.connectFirst(DeviceModels.MentraLive);
 await BluetoothSdk.requestVersionInfo();
 glassesStatus = await BluetoothSdk.getGlassesStatus();
 console.log('Connected glasses:', {

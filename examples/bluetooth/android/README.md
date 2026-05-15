@@ -17,7 +17,7 @@ This example installs the SDK as `com.mentra:bluetooth-sdk` and is intended to r
 The example reads the SDK version from `gradle.properties`:
 
 ```properties
-mentraSdkVersion=0.1.0
+mentraSdkVersion=0.1.1
 ```
 
 Use the latest SDK version published by Mentra. If a dedicated Mentra Maven repository is required, add it to `settings.gradle.kts` beside `google()` and `mavenCentral()`.

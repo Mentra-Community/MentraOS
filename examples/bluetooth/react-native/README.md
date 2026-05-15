@@ -24,7 +24,7 @@ npm install
 The example depends on:
 
 ```json
-"@mentra/bluetooth-sdk": "0.1.0"
+"@mentra/bluetooth-sdk": "0.1.1"
 ```
 
 Use the latest SDK version published by Mentra.

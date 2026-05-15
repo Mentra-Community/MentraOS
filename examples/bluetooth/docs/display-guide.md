@@ -9,38 +9,19 @@ Mentra Live does not have a display. Use display APIs only on display-equipped m
 Android:
 
 ```kotlin
-sdk.displayText(
-    DisplayTextRequest(
-        text = "Turn left in 100 ft",
-        x = 0,
-        y = 0,
-        size = 24,
-    )
-)
+sdk.displayText(text = "Turn left in 100 ft", x = 0, y = 0, size = 24)
 ```
 
 iOS:
 
 ```swift
-try await sdk.displayText(
-    DisplayTextRequest(
-        text: "Turn left in 100 ft",
-        x: 0,
-        y: 0,
-        size: 24
-    )
-)
+try await sdk.displayText("Turn left in 100 ft", x: 0, y: 0, size: 24)
 ```
 
 React Native:
 
 ```ts
-await BluetoothSdk.displayText({
-  text: "Turn left in 100 ft",
-  x: 0,
-  y: 0,
-  size: 24,
-});
+await BluetoothSdk.displayText("Turn left in 100 ft", 0, 0, 24);
 ```
 
 ## Clear Display
@@ -92,7 +73,7 @@ Android:
 ```kotlin
 sdk.setBrightness(60)
 sdk.setAutoBrightness(true)
-sdk.setDashboardPosition(DashboardPositionRequest(height = 4, depth = 6))
+sdk.setDashboardPosition(height = 4, depth = 6)
 sdk.setHeadUpAngle(20)
 sdk.setScreenDisabled(false)
 ```
@@ -102,12 +83,20 @@ iOS:
 ```swift
 try await sdk.setBrightness(60)
 try await sdk.setAutoBrightness(enabled: true)
-try await sdk.setDashboardPosition(DashboardPositionRequest(height: 4, depth: 6))
+try await sdk.setDashboardPosition(height: 4, depth: 6)
 try await sdk.setHeadUpAngle(20)
 try await sdk.setScreenDisabled(false)
 ```
 
-React Native currently exposes the display command path directly through `displayText`, `clearDisplay`, and `showDashboard`. For app UIs that need brightness, dashboard position, head-up angle, or screen-disable controls, confirm those controls are exported in the package version you are integrating before exposing them in production UI.
+React Native:
+
+```ts
+await BluetoothSdk.setBrightness(60, false);
+await BluetoothSdk.setAutoBrightness(true);
+await BluetoothSdk.setDashboardPosition(4, 6);
+await BluetoothSdk.setHeadUpAngle(20);
+await BluetoothSdk.setScreenDisabled(false);
+```
 
 
 ## Guidelines
