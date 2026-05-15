@@ -749,6 +749,7 @@ export function useMentraSdk(): MentraSdkModel {
         uploadUrlText,
         null,
         photoCompression,
+        false,
         true,
       );
       void pollPhotoPreview(requestId, statusUrl, pollGeneration);
@@ -781,6 +782,7 @@ export function useMentraSdk(): MentraSdkModel {
       receiver.uploadUrl,
       null,
       photoCompression,
+      false,
       true,
     );
   }

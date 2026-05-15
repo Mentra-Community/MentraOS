@@ -52,48 +52,52 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
       contentContainerStyle={{ paddingBottom: scrollBottomPadding }}>
       <Header title="Device" />
 
-      {/* Hero card */}
-      <LinearGradient colors={['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.55)']} style={styles.heroCard}>
-        <View style={styles.heroTop}>
-          <View style={{ gap: 4 }}>
-            <Text style={styles.eyebrowGreen}>{connection}</Text>
-            <Text style={styles.heroTitle}>{modelLabel(sdk.glassesStatus)}</Text>
-            <Text style={styles.heroSub}>{deviceLabel(sdk.glassesStatus)}</Text>
-          </View>
-          <Image source={glassesImageFor(sdk.glassesStatus)} style={styles.glasses} resizeMode="contain" />
-        </View>
-        <View style={styles.heroDivider} />
-        <View style={styles.batteryRow}>
-          <View style={{ gap: 4 }}>
-            <Text style={styles.eyebrow}>BATTERY</Text>
-            <View style={styles.batteryNumRow}>
-              <Text style={styles.batteryNum}>{level ?? '--'}</Text>
-              <Text style={styles.batteryPct}>%</Text>
+      {connected ? (
+        <>
+          {/* Hero card */}
+          <LinearGradient colors={['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.55)']} style={styles.heroCard}>
+            <View style={styles.heroTop}>
+              <View style={{ gap: 4 }}>
+                <Text style={styles.eyebrowGreen}>{connection}</Text>
+                <Text style={styles.heroTitle}>{modelLabel(sdk.glassesStatus)}</Text>
+                <Text style={styles.heroSub}>{deviceLabel(sdk.glassesStatus)}</Text>
+              </View>
+              <Image source={glassesImageFor(sdk.glassesStatus)} style={styles.glasses} resizeMode="contain" />
             </View>
-            <View style={styles.chargingRow}>
-              <Svg width={11} height={11} viewBox="0 0 24 24"><Path d="M13 2 3 14h7v8l10-12h-7z" fill={colors.greenAccent} /></Svg>
-              <Text style={styles.chargingText}>{sdk.glassesStatus.charging ? 'Charging' : connected ? 'Not charging' : 'Waiting'}</Text>
+            <View style={styles.heroDivider} />
+            <View style={styles.batteryRow}>
+              <View style={{ gap: 4 }}>
+                <Text style={styles.eyebrow}>BATTERY</Text>
+                <View style={styles.batteryNumRow}>
+                  <Text style={styles.batteryNum}>{level ?? '--'}</Text>
+                  <Text style={styles.batteryPct}>%</Text>
+                </View>
+                <View style={styles.chargingRow}>
+                  <Svg width={11} height={11} viewBox="0 0 24 24"><Path d="M13 2 3 14h7v8l10-12h-7z" fill={colors.greenAccent} /></Svg>
+                  <Text style={styles.chargingText}>{sdk.glassesStatus.charging ? 'Charging' : 'Not charging'}</Text>
+                </View>
+              </View>
+              <View style={styles.signalBars}>
+                {[14, 22, 30, 38, 46, 54, 62].map((h, i) => (
+                  <View key={i} style={[styles.bar, { height: h, backgroundColor: level !== null && i < Math.ceil((level / 100) * 7) ? colors.greenAccent : '#0000000F' }]} />
+                ))}
+              </View>
             </View>
-          </View>
-          <View style={styles.signalBars}>
-            {[14, 22, 30, 38, 46, 54, 62].map((h, i) => (
-              <View key={i} style={[styles.bar, { height: h, backgroundColor: level !== null && i < Math.ceil((level / 100) * 7) ? colors.greenAccent : '#0000000F' }]} />
-            ))}
-          </View>
-        </View>
-      </LinearGradient>
+          </LinearGradient>
 
-      {/* Stat row */}
-      <View style={styles.statRow}>
-        <StatCard label="FIRMWARE" value={firmwareLabel(sdk.glassesStatus)} sub={firmwareSubLabel(sdk.glassesStatus)} subColor={colors.greenAccent} />
-        <StatCard label="WI-FI" value={wifiLabel(sdk.glassesStatus)} sub={wifiSubLabel(sdk.glassesStatus)} subColor={colors.muted} bold />
-        <StatCard label="RSSI" value={rssiLabel(sdk.glassesStatus)} sub={rssiUpdatedLabel(sdk.glassesStatus)} subColor={colors.greenAccent} bold />
-      </View>
+          {/* Stat row */}
+          <View style={styles.statRow}>
+            <StatCard label="FIRMWARE" value={firmwareLabel(sdk.glassesStatus)} sub={firmwareSubLabel(sdk.glassesStatus)} subColor={colors.greenAccent} />
+            <StatCard label="WI-FI" value={wifiLabel(sdk.glassesStatus)} sub={wifiSubLabel(sdk.glassesStatus)} subColor={colors.muted} bold />
+            <StatCard label="RSSI" value={rssiLabel(sdk.glassesStatus)} sub={rssiUpdatedLabel(sdk.glassesStatus)} subColor={colors.greenAccent} bold />
+          </View>
+        </>
+      ) : null}
 
       {/* Quick actions */}
       <LinearGradient colors={['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.55)']} style={styles.bigCard}>
         <View style={styles.cardHead}>
-          <Text style={styles.cardTitle}>Quick actions</Text>
+          <Text style={styles.cardTitle}>{connected ? 'Quick actions' : 'Connect glasses'}</Text>
           <Text style={styles.cardEyebrow}>SDK</Text>
         </View>
         <ScanModelPicker sdk={sdk} connected={connected} />

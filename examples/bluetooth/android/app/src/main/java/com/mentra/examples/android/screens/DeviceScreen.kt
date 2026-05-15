@@ -76,57 +76,59 @@ fun DeviceScreen(controller: MentraExampleController) {
     ) {
         PageHeader("Device")
 
-        // Hero card
-        GlassCard(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-            Row(verticalAlignment = Alignment.Top) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Eyebrow(connectionLabel(glasses), color = AppColor.greenAccent)
-                    Text(modelLabel(glasses), color = AppColor.ink, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.7).sp)
-                    Text(currentDeviceName, color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+        if (connected) {
+            // Hero card
+            GlassCard(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                Row(verticalAlignment = Alignment.Top) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Eyebrow(connectionLabel(glasses), color = AppColor.greenAccent)
+                        Text(modelLabel(glasses), color = AppColor.ink, fontSize = 28.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.7).sp)
+                        Text(currentDeviceName, color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                    }
+                    Image(
+                        painter = painterResource(id = glassesImageRes(glasses)),
+                        contentDescription = "Connected glasses preview",
+                        modifier = Modifier.size(width = 145.dp, height = 52.dp),
+                        contentScale = ContentScale.Fit
+                    )
                 }
-                Image(
-                    painter = painterResource(id = glassesImageRes(glasses)),
-                    contentDescription = "Connected glasses preview",
-                    modifier = Modifier.size(width = 145.dp, height = 52.dp),
-                    contentScale = ContentScale.Fit
-                )
+                Spacer(Modifier.height(14.dp))
+                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(AppColor.hairline))
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Eyebrow("BATTERY")
+                        Row(verticalAlignment = Alignment.Bottom) {
+                            Text(level?.toString() ?: "--", color = AppColor.ink, fontSize = 56.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-2.2).sp)
+                            Spacer(Modifier.width(6.dp))
+                            Text("%", color = AppColor.muted, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Icon(Icons.Filled.Bolt, contentDescription = null, tint = AppColor.greenAccent, modifier = Modifier.size(11.dp))
+                            Text(if (glasses?.charging == true) "Charging" else "Not charging", color = AppColor.greenAccent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.Bottom) {
+                        val heights = listOf(14, 22, 30, 38, 46, 54, 62)
+                        heights.forEachIndexed { i, h ->
+                            Box(modifier = Modifier.size(width = 6.dp, height = h.dp).clip(RoundedCornerShape(3.dp)).background(if (level != null && i < kotlin.math.ceil(level / 100f * 7).toInt()) AppColor.greenAccent else Color(0x0F000000)))
+                        }
+                    }
+                }
             }
-            Spacer(Modifier.height(14.dp))
-            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(AppColor.hairline))
-            Spacer(Modifier.height(12.dp))
-            Row(verticalAlignment = Alignment.Bottom) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Eyebrow("BATTERY")
-                    Row(verticalAlignment = Alignment.Bottom) {
-                        Text(level?.toString() ?: "--", color = AppColor.ink, fontSize = 56.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-2.2).sp)
-                        Spacer(Modifier.width(6.dp))
-                        Text("%", color = AppColor.muted, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Icon(Icons.Filled.Bolt, contentDescription = null, tint = AppColor.greenAccent, modifier = Modifier.size(11.dp))
-                        Text(if (glasses?.charging == true) "Charging" else "Waiting", color = AppColor.greenAccent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.Bottom) {
-                    val heights = listOf(14, 22, 30, 38, 46, 54, 62)
-                    heights.forEachIndexed { i, h ->
-                        Box(modifier = Modifier.size(width = 6.dp, height = h.dp).clip(RoundedCornerShape(3.dp)).background(if (level != null && i < kotlin.math.ceil(level / 100f * 7).toInt()) AppColor.greenAccent else Color(0x0F000000)))
-                    }
-                }
-            }
-        }
 
-        // Stat row
-        Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatTile("FIRMWARE", firmwareLabel(glasses), firmwareSubLabel(glasses), AppColor.greenAccent, Modifier.weight(1f))
-            StatTile("WI-FI", wifiLabel(glasses), currentWifi?.localIp ?: "unknown", AppColor.muted, Modifier.weight(1f), bold = true)
-            StatTile("RSSI", rssiLabel(glasses), rssiUpdatedLabel(glasses), AppColor.greenAccent, Modifier.weight(1f), bold = true)
+            // Stat row
+            Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                StatTile("FIRMWARE", firmwareLabel(glasses), firmwareSubLabel(glasses), AppColor.greenAccent, Modifier.weight(1f))
+                StatTile("WI-FI", wifiLabel(glasses), currentWifi?.localIp ?: "unknown", AppColor.muted, Modifier.weight(1f), bold = true)
+                StatTile("RSSI", rssiLabel(glasses), rssiUpdatedLabel(glasses), AppColor.greenAccent, Modifier.weight(1f), bold = true)
+            }
         }
 
         // Quick actions
         GlassCard(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Quick actions", color = AppColor.inkAlt, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text(if (connected) "Quick actions" else "Connect glasses", color = AppColor.inkAlt, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 Eyebrow("SDK", color = AppColor.inkAlt.copy(alpha = 0.4f), mono = true)
             }
             Spacer(Modifier.height(16.dp))

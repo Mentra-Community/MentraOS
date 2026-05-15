@@ -10,17 +10,19 @@ struct DeviceScreen: View {
             VStack(spacing: 0) {
                 PageHeader(title: "Device")
 
-                heroCard
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
+                if model.glassesConnected {
+                    heroCard
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
 
-                statRow
-                    .padding(.horizontal, 16)
-                    .padding(.top, 12)
+                    statRow
+                        .padding(.horizontal, 16)
+                        .padding(.top, 12)
+                }
 
                 quickActions
                     .padding(.horizontal, 16)
-                    .padding(.top, 16)
+                    .padding(.top, model.glassesConnected ? 16 : 8)
 
                 liveStatus
                     .padding(.horizontal, 16)
@@ -72,7 +74,7 @@ struct DeviceScreen: View {
                     }
                     HStack(spacing: 6) {
                         Image(systemName: "bolt.fill").foregroundColor(AppColor.greenAccent).font(.system(size: 11))
-                        Text(model.glassesValues?.charging == true ? "Charging" : "Waiting").font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.greenAccent)
+                        Text(model.glassesValues?.charging == true ? "Charging" : "Not charging").font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.greenAccent)
                     }
                 }
                 Spacer()
@@ -105,7 +107,7 @@ struct DeviceScreen: View {
         let displaySupported = connected && supportsDisplay(model.glassesValues)
         return GlassCard {
             HStack {
-                Text("Quick actions")
+                Text(connected ? "Quick actions" : "Connect glasses")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundColor(AppColor.inkAlt)
                 Spacer()

@@ -19,6 +19,7 @@ await BluetoothSdk.photoRequest(
   uploadUrl,
   null,
   "${compression}",
+  false,
   true,
 )`;
   }
@@ -29,6 +30,7 @@ await BluetoothSdk.photoRequest(
   webhookUrl,
   null,
   "${compression}",
+  false,
   true,
 )`;
 }
