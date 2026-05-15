@@ -11,7 +11,7 @@ import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.media.upload.MediaUploadService;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
 import com.mentra.asg_client.io.media.interfaces.ServiceCallbackInterface;
-import com.mentra.asg_client.camera.CameraNeo;
+import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.settings.VideoSettings;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
@@ -550,7 +550,7 @@ public class MediaCaptureService {
      */
     public void startVideoRecording(VideoSettings settings, boolean enableFlash, int maxRecordingTimeMinutes, int initialBatteryLevel) {
         // Note: Removed assertMainThread() - this is called from Bluetooth worker thread via command handlers
-        // Thread safety is maintained through CameraNeo's internal threading and Handler usage
+        // Thread safety is maintained through CameraNeoService's internal threading and Handler usage
         Log.d(TAG, "startVideoRecording called with settings: " + settings + ", enableFlash: " + enableFlash + ", maxRecordingTimeMinutes: " + maxRecordingTimeMinutes + ", initialBatteryLevel: " + initialBatteryLevel);
 
         // Check if battery is too low to start recording (query current level for accuracy)
@@ -694,7 +694,7 @@ public class MediaCaptureService {
         }
         
         // Check if camera is actively in use (this will return false for kept-alive idle camera)
-        if (CameraNeo.isCameraInUse()) {
+        if (CameraNeoService.isCameraInUse()) {
             Log.e(TAG, "Cannot start video - camera actively in use");
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(requestId, "Camera busy", 
@@ -710,7 +710,7 @@ public class MediaCaptureService {
         }
 
         // Close kept-alive camera if it exists to free resources for video recording
-        CameraNeo.closeKeptAliveCamera();
+        CameraNeoService.closeKeptAliveCamera();
 
         // Save info for the current recording session
         currentVideoId = requestId;
@@ -727,8 +727,8 @@ public class MediaCaptureService {
                 triggerVideoRecordingLed(); // Trigger solid white LED for video recording duration
             }
 
-            // Start video recording using CameraNeo
-            CameraNeo.startVideoRecording(mContext, requestId, videoFilePath, settings, new CameraNeo.VideoRecordingCallback() {
+            // Start video recording using CameraNeoService
+            CameraNeoService.startVideoRecording(mContext, requestId, videoFilePath, settings, new CameraNeoService.VideoRecordingCallback() {
                 @Override
                 public void onRecordingStarted(String videoId) {
                     Log.d(TAG, "Video recording started with ID: " + videoId);
@@ -992,8 +992,8 @@ public class MediaCaptureService {
 
             stopVideoRecordingLed(); // Stop white LED when video recording stops
 
-            // Stop the recording via CameraNeo
-            CameraNeo.stopVideoRecording(mContext, currentVideoId);
+            // Stop the recording via CameraNeoService
+            CameraNeoService.stopVideoRecording(mContext, currentVideoId);
 
         } catch (Exception e) {
             Log.e(TAG, "Error stopping video recording", e);
@@ -1152,7 +1152,7 @@ public class MediaCaptureService {
             return;
         }
 
-        // Note: No need to check CameraNeo.isCameraInUse() for photos
+        // Note: No need to check CameraNeoService.isCameraInUse() for photos
         // The camera's keep-alive system handles rapid photo taking gracefully
 
         // Add milliseconds and a random component to ensure uniqueness even in rapid capture
@@ -1208,7 +1208,7 @@ public class MediaCaptureService {
 
         // Use the new enqueuePhotoRequest for thread-safe rapid capture
         // isFromSdk=false because this is a button-triggered photo (local storage, high quality)
-        CameraNeo.enqueuePhotoRequest(
+        CameraNeoService.enqueuePhotoRequest(
                 mContext,
                 photoFilePath,
                 size,
@@ -1216,7 +1216,7 @@ public class MediaCaptureService {
                 false,  // isFromSdk - button photo, use high quality resolution
                 // 100_000_000L,  // exposureTimeNs — 100ms manual exposure for button photos
                 null,  // exposureTimeNs — auto exposure for button photos
-                new CameraNeo.PhotoCaptureCallback() {
+                new CameraNeoService.PhotoCaptureCallback() {
                     @Override
                     public void onPhotoCaptured(String filePath) {
                         // Calculate end-to-end timing from request to capture
@@ -1227,7 +1227,7 @@ public class MediaCaptureService {
                         
                         Log.d(TAG, "Local photo captured successfully at: " + filePath);
                         
-                        // LED is now managed by CameraNeo and will turn off when camera closes
+                        // LED is now managed by CameraNeoService and will turn off when camera closes
                         
                         // Notify through standard capture listener if set up
                         if (mMediaCaptureListener != null) {
@@ -1243,7 +1243,7 @@ public class MediaCaptureService {
                     public void onPhotoError(String errorMessage) {
                         Log.e(TAG, "Failed to capture offline photo: " + errorMessage);
 
-                        // LED is now managed by CameraNeo and will turn off when camera closes
+                        // LED is now managed by CameraNeoService and will turn off when camera closes
 
                         if (mMediaCaptureListener != null) {
                             mMediaCaptureListener.onMediaError(requestId, errorMessage, MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
@@ -1351,7 +1351,7 @@ public class MediaCaptureService {
             mMediaCaptureListener.onPhotoCapturing(requestId);
         }
 
-        // LED control is now handled by CameraNeo tied to camera lifecycle
+        // LED control is now handled by CameraNeoService tied to camera lifecycle
 
         // TESTING: Check for fake camera capture failure
         if (PhotoCaptureTestFramework.shouldFail("CAMERA_CAPTURE")) {
@@ -1387,14 +1387,14 @@ public class MediaCaptureService {
                 Log.i(TAG, "Using manual exposure time right before picture request - ID: "
                         + requestId + ", exposureTimeNs=" + exposureTimeNs + " ns");
             }
-            CameraNeo.enqueuePhotoRequest(
+            CameraNeoService.enqueuePhotoRequest(
                     mContext,
                     photoFilePath,
                     size,
                     enableFlash,
                     true,  // isFromSdk - use optimized resolution for fast transfer
                     exposureTimeNs,
-                    new CameraNeo.PhotoCaptureCallback() {
+                    new CameraNeoService.PhotoCaptureCallback() {
                         @Override
                         public void onPhotoCaptured(String filePath) {
                             cancelCaptureSafetyTimeout();
@@ -1409,7 +1409,7 @@ public class MediaCaptureService {
 
                             Log.d(TAG, "Photo captured successfully at: " + filePath);
 
-                            // LED is now managed by CameraNeo and will turn off when camera closes
+                            // LED is now managed by CameraNeoService and will turn off when camera closes
 
                             // Notify that we've captured the photo
                             if (mMediaCaptureListener != null) {
@@ -1432,7 +1432,7 @@ public class MediaCaptureService {
 
                             Log.e(TAG, "Failed to capture photo: " + errorMessage);
 
-                            // LED is now managed by CameraNeo and will turn off when camera closes
+                            // LED is now managed by CameraNeoService and will turn off when camera closes
 
                             dumpTimings(requestId);
                             sendMediaErrorResponse(requestId, errorMessage, MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
@@ -1476,7 +1476,7 @@ public class MediaCaptureService {
 
     /**
      * Start the capture safety timeout. If the callback never fires
-     * (e.g., CameraNeo crashes, lock timeout, service destroyed),
+     * (e.g., CameraNeoService crashes, lock timeout, service destroyed),
      * force-reset isCapturingPhoto after 15 seconds to prevent permanent lockout.
      */
     private void startCaptureSafetyTimeout(String requestId) {
@@ -2322,7 +2322,7 @@ public class MediaCaptureService {
             mMediaCaptureListener.onPhotoCapturing(requestId);
         }
 
-        // LED control is now handled by CameraNeo tied to camera lifecycle
+        // LED control is now handled by CameraNeoService tied to camera lifecycle
 
         // TESTING: Check for fake camera capture failure
         if (PhotoCaptureTestFramework.shouldFail("CAMERA_CAPTURE")) {
@@ -2350,16 +2350,16 @@ public class MediaCaptureService {
         }
 
         try {
-            // Use CameraNeo for photo capture
+            // Use CameraNeoService for photo capture
             recordTiming(requestId, "enqueue_camera");
-            CameraNeo.enqueuePhotoRequest(
+            CameraNeoService.enqueuePhotoRequest(
                     mContext,
                     photoFilePath,
                     size,
                     enableFlash,
                     true,  // isFromSdk — same sizing as webhook SDK path
                     exposureTimeNs,
-                    new CameraNeo.PhotoCaptureCallback() {
+                    new CameraNeoService.PhotoCaptureCallback() {
                         @Override
                         public void onPhotoCaptured(String filePath) {
                             cancelCaptureSafetyTimeout();
@@ -2374,7 +2374,7 @@ public class MediaCaptureService {
 
                             Log.d(TAG, "Photo captured successfully for BLE transfer: " + filePath);
 
-                            // LED is now managed by CameraNeo and will turn off when camera closes
+                            // LED is now managed by CameraNeoService and will turn off when camera closes
 
                             // Notify that we've captured the photo
                             if (mMediaCaptureListener != null) {
@@ -2393,7 +2393,7 @@ public class MediaCaptureService {
 
                             Log.e(TAG, "Failed to capture photo for BLE: " + errorMessage);
 
-                            // LED is now managed by CameraNeo and will turn off when camera closes
+                            // LED is now managed by CameraNeoService and will turn off when camera closes
 
                             dumpTimings(requestId);
                             sendPhotoErrorResponse(requestId, "CAMERA_CAPTURE_FAILED", errorMessage);
