@@ -7,6 +7,7 @@ import Toast from "react-native-toast-message"
 import {WifiIcon} from "@/components/icons/WifiIcon"
 import {WifiLockedIcon} from "@/components/icons/WifiLockedIcon"
 import {WifiUnlockedIcon} from "@/components/icons/WifiUnlockedIcon"
+import {CaptivePortalWifiBanner} from "@/components/wifi/CaptivePortalWifiBanner"
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import {Badge} from "@/components/ui/Badge"
 import {Group} from "@/components/ui"
@@ -275,6 +276,9 @@ export default function WifiScanScreen() {
       )}
 
       <View className="flex-1">
+        <View className="px-5 mb-2">
+          <CaptivePortalWifiBanner />
+        </View>
         {/* Header */}
         <View className="pt-4 pb-6 items-center">
           <View className="mb-4">

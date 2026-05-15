@@ -89,6 +89,21 @@ describe("wifiStatusKnown reset on disconnect", () => {
 
     expect(useGlassesStore.getState().wifi).toEqual({state: "connected", ssid: "Mentra"})
   })
+
+  it("maps wifiCaptivePortal from legacy fields when true", () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connected: true,
+      wifiConnected: true,
+      wifiSsid: "Airport_WiFi",
+      wifiCaptivePortal: true,
+    })
+
+    expect(useGlassesStore.getState().wifi).toEqual({
+      state: "connected",
+      ssid: "Airport_WiFi",
+      captivePortal: true,
+    })
+  })
 })
 
 describe("hotspot status store shape", () => {

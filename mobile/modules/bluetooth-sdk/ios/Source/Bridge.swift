@@ -242,11 +242,12 @@ class Bridge {
         Bridge.sendTypedMessage("glasses_serial_number", body: body)
     }
 
-    static func sendWifiStatusChange(connected: Bool, ssid: String?, localIp: String?) {
+    static func sendWifiStatusChange(connected: Bool, ssid: String?, localIp: String?, captivePortal: Bool = false) {
         guard let status = WifiStatus.fromStoreFields(
             connected: connected,
             ssid: ssid,
-            localIp: localIp
+            localIp: localIp,
+            captivePortal: captivePortal
         ) else {
             return
         }

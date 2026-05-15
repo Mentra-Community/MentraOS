@@ -371,8 +371,8 @@ public class Bridge private constructor() {
 
         /** Send WiFi status change */
         @JvmStatic
-        fun sendWifiStatusChange(connected: Boolean, ssid: String?, localIp: String?) {
-            val status = WifiStatus.fromStoreFields(connected, ssid, localIp) ?: return
+        fun sendWifiStatusChange(connected: Boolean, ssid: String?, localIp: String?, captivePortal: Boolean = false) {
+            val status = WifiStatus.fromStoreFields(connected, ssid, localIp, captivePortal) ?: return
             sendTypedMessage("wifi_status_change", status.toMap())
         }
 

@@ -3,6 +3,7 @@ import {useLocalSearchParams} from "expo-router"
 import {useEffect, useRef, useState, useCallback} from "react"
 import {ActivityIndicator, View} from "react-native"
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
+import {CaptivePortalWifiBanner} from "@/components/wifi/CaptivePortalWifiBanner"
 import {usePushPrevious} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
@@ -148,6 +149,9 @@ export default function WifiConnectingScreen() {
         return (
           <View className="flex-1 w-full justify-between">
             <View className="flex-1 justify-center">
+              <View className="px-5 mb-4 w-full">
+                <CaptivePortalWifiBanner />
+              </View>
               <View className="items-center mb-6">
                 <Icon name="wifi" size={64} color={theme.colors.primary} />
               </View>

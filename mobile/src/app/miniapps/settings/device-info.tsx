@@ -1,6 +1,7 @@
 import {ScrollView, View} from "react-native"
 
 import {Header, Screen} from "@/components/ignite"
+import {CaptivePortalWifiBanner} from "@/components/wifi/CaptivePortalWifiBanner"
 import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
@@ -32,6 +33,7 @@ export default function DeviceInfoScreen() {
       <Header titleTx="deviceInfo:title" leftIcon="chevron-left" onLeftPress={goBack} />
       <ScrollView style={{marginHorizontal: -theme.spacing.s4, paddingHorizontal: theme.spacing.s4}}>
         <View className="flex flex-col gap-6 pt-6">
+          <CaptivePortalWifiBanner />
           {/* Device Identity */}
           <Group title={translate("deviceInfo:deviceIdentity")}>
             <RouteButton label={translate("deviceInfo:model")} text={deviceModel || defaultWearable || "Unknown"} />

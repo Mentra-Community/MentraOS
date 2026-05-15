@@ -491,7 +491,7 @@ data class GlassesStatusUpdate(
                 wifi =
                     if (hasAnyKey(values, "wifi")) {
                         WifiStatus.fromMap(values)
-                    } else if (hasAnyKey(values, "wifiConnected", "wifiSsid", "wifiLocalIp")) {
+                    } else if (hasAnyKey(values, "wifiConnected", "wifiSsid", "wifiLocalIp", "wifiCaptivePortal")) {
                         WifiStatus.fromStoreMap(values)
                     } else {
                         null
@@ -988,6 +988,7 @@ sealed interface WifiStatus {
                     mutableMapOf<String, Any>(
                         "state" to state,
                         "ssid" to ssid,
+                        "captivePortal" to captivePortal,
                     )
                 localIp?.let { values["localIp"] = it }
                 values
@@ -1005,6 +1006,7 @@ sealed interface WifiStatus {
     data class Connected(
         val ssid: String,
         val localIp: String?,
+        val captivePortal: Boolean = false,
     ) : WifiStatus {
         override val state: String = "connected"
     }
@@ -1021,18 +1023,25 @@ sealed interface WifiStatus {
 
         internal fun fromStoreMap(values: Map<String, Any>): WifiStatus? {
             val connected = boolValue(values, "wifiConnected") ?: return null
+            val captivePortal = boolValue(values, "wifiCaptivePortal") ?: false
             return fromStoreFields(
                 connected = connected,
                 ssid = stringValue(values, "wifiSsid"),
                 localIp = stringValue(values, "wifiLocalIp"),
+                captivePortal = captivePortal,
             )
         }
 
-        internal fun fromStoreFields(connected: Boolean, ssid: String?, localIp: String?): WifiStatus? {
+        internal fun fromStoreFields(
+            connected: Boolean,
+            ssid: String?,
+            localIp: String?,
+            captivePortal: Boolean = false,
+        ): WifiStatus? {
             if (!connected) return Disconnected
             val nonEmptySsid = ssid?.trim()?.takeIf { it.isNotEmpty() }
             val nonEmptyLocalIp = localIp?.trim()?.takeIf { it.isNotEmpty() }
-            return nonEmptySsid?.let { Connected(it, nonEmptyLocalIp) }
+            return nonEmptySsid?.let { Connected(it, nonEmptyLocalIp, captivePortal) }
         }
 
         private fun connectedFrom(values: Map<String, Any>): WifiStatus? =
@@ -1040,6 +1049,7 @@ sealed interface WifiStatus {
                 connected = true,
                 ssid = stringValue(values, "ssid"),
                 localIp = stringValue(values, "localIp"),
+                captivePortal = boolValue(values, "captivePortal") ?: false,
             )
     }
 }
@@ -1048,8 +1058,8 @@ data class WifiStatusEvent(
     val status: WifiStatus,
 ) {
     internal constructor(values: Map<String, Any>) : this(WifiStatus.fromMap(values) ?: WifiStatus.Disconnected)
-    internal constructor(connected: Boolean, ssid: String?, localIp: String?) : this(
-        WifiStatus.fromStoreFields(connected, ssid, localIp) ?: WifiStatus.Disconnected
+    internal constructor(connected: Boolean, ssid: String?, localIp: String?, captivePortal: Boolean = false) : this(
+        WifiStatus.fromStoreFields(connected, ssid, localIp, captivePortal) ?: WifiStatus.Disconnected
     )
 
     val values: Map<String, Any> get() = status.toEventMap()

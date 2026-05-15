@@ -446,7 +446,7 @@ public class MentraLive extends SGCManager {
         }
     }
 
-    // Note: WiFi state (wifiConnected, wifiSsid, wifiLocalIp) and hotspot state
+    // Note: WiFi state (wifiConnected, wifiSsid, wifiLocalIp, wifiCaptivePortal) and hotspot state
     // (isHotspotEnabled, hotspotSsid, hotspotPassword, hotspotGatewayIp)
     // are inherited from SGCManager parent class
 
@@ -2353,8 +2353,9 @@ public class MentraLive extends SGCManager {
                 boolean wifiConnectedStatus = json.optBoolean("connected", false);
                 String ssid = json.optString("ssid", "");
                 String localIp = json.optString("local_ip", "");
+                boolean captivePortal = json.optBoolean("captive_portal", false);
 
-                updateWifiStatus(wifiConnectedStatus, ssid, localIp);
+                updateWifiStatus(wifiConnectedStatus, ssid, localIp, captivePortal);
                 break;
 
             case "hotspot_status_update":
@@ -3444,16 +3445,18 @@ public class MentraLive extends SGCManager {
      * Update WiFi status and notify listeners
      * Matches iOS MentraLive.swift updateWifiStatus pattern
      */
-    private void updateWifiStatus(boolean connected, String ssid, String localIp) {
-        Bridge.log("LIVE: 🌐 Updating WiFi status - connected: " + connected + ", SSID: " + ssid);
+    private void updateWifiStatus(boolean connected, String ssid, String localIp, boolean captivePortal) {
+        Bridge.log("LIVE: 🌐 Updating WiFi status - connected: " + connected + ", SSID: " + ssid
+                + ", captivePortal: " + captivePortal);
 
         // Update parent SGCManager fields
         GlassesStore.INSTANCE.apply("glasses", "wifiConnected", connected);
         GlassesStore.INSTANCE.apply("glasses", "wifiSsid", ssid);
         GlassesStore.INSTANCE.apply("glasses", "wifiLocalIp", localIp);
+        GlassesStore.INSTANCE.apply("glasses", "wifiCaptivePortal", captivePortal);
 
         // Send event to bridge for cloud communication
-        Bridge.sendWifiStatusChange(connected, ssid, localIp);
+        Bridge.sendWifiStatusChange(connected, ssid, localIp, captivePortal);
     }
 
     /**

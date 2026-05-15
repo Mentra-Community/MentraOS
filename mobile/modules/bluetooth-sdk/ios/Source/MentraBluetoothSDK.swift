@@ -295,6 +295,7 @@ public struct GlassesStatus: CustomStringConvertible {
             "wifiConnected": false,
             "wifiSsid": "",
             "wifiLocalIp": "",
+            "wifiCaptivePortal": false,
             "signalStrength": -1,
             "signalStrengthUpdatedAt": 0,
         ]))
@@ -351,6 +352,7 @@ public struct GlassesStatus: CustomStringConvertible {
         dictionary.removeValue(forKey: "wifiConnected")
         dictionary.removeValue(forKey: "wifiSsid")
         dictionary.removeValue(forKey: "wifiLocalIp")
+        dictionary.removeValue(forKey: "wifiCaptivePortal")
         dictionary.removeValue(forKey: "hotspotEnabled")
         dictionary.removeValue(forKey: "hotspotSsid")
         dictionary.removeValue(forKey: "hotspotPassword")
@@ -361,7 +363,7 @@ public struct GlassesStatus: CustomStringConvertible {
 
     static func updateDictionary(from values: [String: Any]) -> [String: Any] {
         var dictionary = values
-        if hasAnyKey(values, "wifi", "wifiConnected", "wifiSsid", "wifiLocalIp") {
+        if hasAnyKey(values, "wifi", "wifiConnected", "wifiSsid", "wifiLocalIp", "wifiCaptivePortal") {
             let wifi = (values["wifi"] as? [String: Any]).flatMap(WifiStatus.init(values:))
                 ?? WifiStatus.fromStoreValues(values)
             if let wifi {
@@ -370,6 +372,7 @@ public struct GlassesStatus: CustomStringConvertible {
             dictionary.removeValue(forKey: "wifiConnected")
             dictionary.removeValue(forKey: "wifiSsid")
             dictionary.removeValue(forKey: "wifiLocalIp")
+            dictionary.removeValue(forKey: "wifiCaptivePortal")
         }
         if hasAnyKey(values, "hotspot") {
             if let hotspot = (values["hotspot"] as? [String: Any]).flatMap(HotspotStatus.init(values:)) {
@@ -512,7 +515,7 @@ public struct GlassesStatusUpdate: CustomStringConvertible {
         if let wifi = values["wifi"] as? [String: Any] {
             return WifiStatus(values: wifi)
         }
-        if hasAnyKey(values, "wifiConnected", "wifiSsid", "wifiLocalIp") {
+        if hasAnyKey(values, "wifiConnected", "wifiSsid", "wifiLocalIp", "wifiCaptivePortal") {
             return WifiStatus.fromStoreValues(values)
         }
         return nil
@@ -1062,9 +1065,9 @@ public enum WifiStatus: CustomStringConvertible, Equatable {
     }
 
     case disconnected
-    case connected(ssid: String, localIp: String?)
+    case connected(ssid: String, localIp: String?, captivePortal: Bool)
 
-    private init?(connected: Bool, ssid: String?, localIp: String?) {
+    private init?(connected: Bool, ssid: String?, localIp: String?, captivePortal: Bool = false) {
         if connected {
             guard
                 let ssid = ssid?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -1075,7 +1078,8 @@ public enum WifiStatus: CustomStringConvertible, Equatable {
             let trimmedLocalIp = localIp?.trimmingCharacters(in: .whitespacesAndNewlines)
             self = .connected(
                 ssid: ssid,
-                localIp: trimmedLocalIp?.isEmpty == false ? trimmedLocalIp : nil
+                localIp: trimmedLocalIp?.isEmpty == false ? trimmedLocalIp : nil,
+                captivePortal: captivePortal
             )
         } else {
             self = .disconnected
@@ -1097,7 +1101,8 @@ public enum WifiStatus: CustomStringConvertible, Equatable {
                 guard let wifi = WifiStatus(
                     connected: true,
                     ssid: nonEmptyStringValue(values, "ssid"),
-                    localIp: nonEmptyStringValue(values, "localIp")
+                    localIp: nonEmptyStringValue(values, "localIp"),
+                    captivePortal: boolValue(values, "captivePortal") ?? false
                 ) else {
                     return nil
                 }
@@ -1118,12 +1123,13 @@ public enum WifiStatus: CustomStringConvertible, Equatable {
         return fromStoreFields(
             connected: connected,
             ssid: nonEmptyStringValue(values, "wifiSsid"),
-            localIp: nonEmptyStringValue(values, "wifiLocalIp")
+            localIp: nonEmptyStringValue(values, "wifiLocalIp"),
+            captivePortal: boolValue(values, "wifiCaptivePortal") ?? false
         )
     }
 
-    static func fromStoreFields(connected: Bool, ssid: String?, localIp: String?) -> WifiStatus? {
-        WifiStatus(connected: connected, ssid: ssid, localIp: localIp)
+    static func fromStoreFields(connected: Bool, ssid: String?, localIp: String?, captivePortal: Bool = false) -> WifiStatus? {
+        WifiStatus(connected: connected, ssid: ssid, localIp: localIp, captivePortal: captivePortal)
     }
 
     public var state: State {
@@ -1146,10 +1152,11 @@ public enum WifiStatus: CustomStringConvertible, Equatable {
         switch self {
         case .disconnected:
             return ["state": State.disconnected.rawValue]
-        case let .connected(ssid, localIp):
+        case let .connected(ssid, localIp, captivePortal):
             var values: [String: Any] = [
                 "state": State.connected.rawValue,
                 "ssid": ssid,
+                "captivePortal": captivePortal,
             ]
             if let localIp = localIp {
                 values["localIp"] = localIp
@@ -1165,12 +1172,14 @@ public enum WifiStatus: CustomStringConvertible, Equatable {
                 "wifiConnected": false,
                 "wifiSsid": "",
                 "wifiLocalIp": "",
+                "wifiCaptivePortal": false,
             ]
-        case let .connected(ssid, localIp):
+        case let .connected(ssid, localIp, captivePortal):
             [
                 "wifiConnected": true,
                 "wifiSsid": ssid,
                 "wifiLocalIp": localIp ?? "",
+                "wifiCaptivePortal": captivePortal,
             ]
         }
     }
@@ -1179,8 +1188,8 @@ public enum WifiStatus: CustomStringConvertible, Equatable {
         switch self {
         case .disconnected:
             "WifiStatus(disconnected)"
-        case let .connected(ssid, localIp):
-            "WifiStatus(connected: \(ssid), localIp: \(localIp ?? "unknown"))"
+        case let .connected(ssid, localIp, captivePortal):
+            "WifiStatus(connected: \(ssid), localIp: \(localIp ?? "unknown"), captivePortal: \(captivePortal))"
         }
     }
 }
@@ -1192,8 +1201,8 @@ public struct WifiStatusEvent: CustomStringConvertible {
         self.status = status
     }
 
-    init(connected: Bool, ssid: String?, localIp: String?) {
-        self.status = WifiStatus.fromStoreFields(connected: connected, ssid: ssid, localIp: localIp) ?? .disconnected
+    init(connected: Bool, ssid: String?, localIp: String?, captivePortal: Bool = false) {
+        self.status = WifiStatus.fromStoreFields(connected: connected, ssid: ssid, localIp: localIp, captivePortal: captivePortal) ?? .disconnected
     }
 
     init(values: [String: Any]) {
@@ -2259,10 +2268,11 @@ public final class MentraBluetoothSDK {
     private func glassesStatusChanges(_ changes: [String: Any]) -> [String: Any] {
         var merged = changes
 
-        if changes.keys.contains(where: { ["wifiConnected", "wifiSsid", "wifiLocalIp"].contains($0) }) {
+        if changes.keys.contains(where: { ["wifiConnected", "wifiSsid", "wifiLocalIp", "wifiCaptivePortal"].contains($0) }) {
             merged["wifiConnected"] = GlassesStore.shared.get("glasses", "wifiConnected") as? Bool ?? false
             merged["wifiSsid"] = GlassesStore.shared.get("glasses", "wifiSsid") as? String ?? ""
             merged["wifiLocalIp"] = GlassesStore.shared.get("glasses", "wifiLocalIp") as? String ?? ""
+            merged["wifiCaptivePortal"] = GlassesStore.shared.get("glasses", "wifiCaptivePortal") as? Bool ?? false
         }
 
         if changes["signalStrengthUpdatedAt"] != nil, changes["signalStrength"] == nil {

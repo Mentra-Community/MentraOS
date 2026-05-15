@@ -77,6 +77,7 @@ object GlassesStore {
         store.set("glasses", "wifiSsid", "")
         store.set("glasses", "wifiConnected", false)
         store.set("glasses", "wifiLocalIp", "")
+        store.set("glasses", "wifiCaptivePortal", false)
         store.set("glasses", "hotspotEnabled", false)
         store.set("glasses", "hotspotSsid", "")
         store.set("glasses", "hotspotPassword", "")

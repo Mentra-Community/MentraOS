@@ -188,6 +188,9 @@ abstract class SGCManager {
     val wifiLocalIp: String
         get() = GlassesStore.get("glasses", "wifiLocalIp") as? String ?: ""
 
+    val wifiCaptivePortal: Boolean
+        get() = GlassesStore.get("glasses", "wifiCaptivePortal") as? Boolean ?: false
+
     val hotspotEnabled: Boolean
         get() = GlassesStore.get("glasses", "hotspotEnabled") as? Boolean ?: false
 

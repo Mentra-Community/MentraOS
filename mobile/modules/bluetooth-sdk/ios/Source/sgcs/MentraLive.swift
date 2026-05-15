@@ -1818,7 +1818,8 @@ class MentraLive: NSObject, SGCManager {
             let connected = json["connected"] as? Bool ?? false
             let ssid = json["ssid"] as? String ?? ""
             let ip = json["local_ip"] as? String ?? ""
-            updateWifiStatus(connected: connected, ssid: ssid, ip: ip)
+            let captivePortal = json["captive_portal"] as? Bool ?? false
+            updateWifiStatus(connected: connected, ssid: ssid, ip: ip, captivePortal: captivePortal)
 
         case "hotspot_status_update":
             let enabled = json["hotspot_enabled"] as? Bool ?? false
@@ -3508,11 +3509,12 @@ class MentraLive: NSObject, SGCManager {
         }
     }
 
-    private func updateWifiStatus(connected: Bool, ssid: String, ip: String) {
-        Bridge.log("LIVE: 🌐 Updating WiFi status - connected: \(connected), ssid: \(ssid)")
+    private func updateWifiStatus(connected: Bool, ssid: String, ip: String, captivePortal: Bool = false) {
+        Bridge.log("LIVE: 🌐 Updating WiFi status - connected: \(connected), ssid: \(ssid), captivePortal: \(captivePortal)")
         GlassesStore.shared.apply("glasses", "wifiConnected", connected)
         GlassesStore.shared.apply("glasses", "wifiSsid", ssid)
         GlassesStore.shared.apply("glasses", "wifiLocalIp", ip)
+        GlassesStore.shared.apply("glasses", "wifiCaptivePortal", captivePortal)
         emitWifiStatusChange()
     }
 
@@ -3779,7 +3781,12 @@ class MentraLive: NSObject, SGCManager {
     // }
 
     private func emitWifiStatusChange() {
-        Bridge.sendWifiStatusChange(connected: wifiConnected, ssid: wifiSsid, localIp: wifiLocalIp)
+        Bridge.sendWifiStatusChange(
+            connected: wifiConnected,
+            ssid: wifiSsid,
+            localIp: wifiLocalIp,
+            captivePortal: wifiCaptivePortal
+        )
     }
 
     private func emitHotspotStatusChange() {
@@ -3860,6 +3867,7 @@ class MentraLive: NSObject, SGCManager {
         GlassesStore.shared.apply("glasses", "wifiConnected", false)
         GlassesStore.shared.apply("glasses", "wifiSsid", "")
         GlassesStore.shared.apply("glasses", "wifiLocalIp", "")
+        GlassesStore.shared.apply("glasses", "wifiCaptivePortal", false)
         GlassesStore.shared.apply("glasses", "hotspotEnabled", false)
         GlassesStore.shared.apply("glasses", "hotspotSsid", "")
         GlassesStore.shared.apply("glasses", "hotspotPassword", "")

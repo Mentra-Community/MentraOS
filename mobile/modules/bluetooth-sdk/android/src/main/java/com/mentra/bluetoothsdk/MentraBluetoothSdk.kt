@@ -377,13 +377,14 @@ class MentraBluetoothSdk private constructor(
     private fun glassesStatusChanges(changes: Map<String, Any>): Map<String, Any> {
         var merged = changes
 
-        if (changes.keys.any { it in setOf("wifiConnected", "wifiSsid", "wifiLocalIp") }) {
+        if (changes.keys.any { it in setOf("wifiConnected", "wifiSsid", "wifiLocalIp", "wifiCaptivePortal") }) {
             merged =
                 merged +
                     mapOf(
                         "wifiConnected" to ((GlassesStore.get("glasses", "wifiConnected") as? Boolean) ?: false),
                         "wifiSsid" to ((GlassesStore.get("glasses", "wifiSsid") as? String) ?: ""),
                         "wifiLocalIp" to ((GlassesStore.get("glasses", "wifiLocalIp") as? String) ?: ""),
+                        "wifiCaptivePortal" to ((GlassesStore.get("glasses", "wifiCaptivePortal") as? Boolean) ?: false),
                     )
         }
 

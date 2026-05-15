@@ -30,6 +30,7 @@ type LegacyWifiFields = {
   wifiConnected?: boolean
   wifiSsid?: string
   wifiLocalIp?: string
+  wifiCaptivePortal?: boolean
 }
 
 type LegacyHotspotFields = {
@@ -46,7 +47,15 @@ function wifiFromLegacyFields(info: LegacyWifiFields): WifiStatus | null {
   if (info.wifiConnected === true) {
     const ssid = info.wifiSsid?.trim()
     const localIp = info.wifiLocalIp?.trim()
-    return ssid ? {state: "connected", ssid, ...(localIp ? {localIp} : {})} : null
+    const captivePortal = info.wifiCaptivePortal === true
+    return ssid
+      ? {
+          state: "connected",
+          ssid,
+          ...(localIp ? {localIp} : {}),
+          ...(captivePortal ? {captivePortal: true} : {}),
+        }
+      : null
   }
   if (info.wifiConnected === false) {
     return {state: "disconnected"}
@@ -151,6 +160,7 @@ export const useGlassesStore = create<GlassesState>()(
           wifiConnected,
           wifiSsid,
           wifiLocalIp,
+          wifiCaptivePortal,
           hotspotEnabled,
           hotspotSsid,
           hotspotPassword,
@@ -160,7 +170,8 @@ export const useGlassesStore = create<GlassesState>()(
           hotspot,
           ...sdkInfo
         } = info
-        const wifiUpdate = wifi ?? wifiFromLegacyFields({wifiConnected, wifiSsid, wifiLocalIp})
+        const wifiUpdate =
+          wifi ?? wifiFromLegacyFields({wifiConnected, wifiSsid, wifiLocalIp, wifiCaptivePortal})
         const hotspotUpdate =
           hotspot ??
           hotspotFromLegacyFields({hotspotEnabled, hotspotSsid, hotspotPassword, hotspotGatewayIp, hotspotLocalIp})
@@ -168,7 +179,8 @@ export const useGlassesStore = create<GlassesState>()(
           Object.prototype.hasOwnProperty.call(info, "wifi") ||
           Object.prototype.hasOwnProperty.call(info, "wifiConnected") ||
           Object.prototype.hasOwnProperty.call(info, "wifiSsid") ||
-          Object.prototype.hasOwnProperty.call(info, "wifiLocalIp")
+          Object.prototype.hasOwnProperty.call(info, "wifiLocalIp") ||
+          Object.prototype.hasOwnProperty.call(info, "wifiCaptivePortal")
         const next = {
           ...state,
           ...sdkInfo,
@@ -196,7 +208,9 @@ export const useGlassesStore = create<GlassesState>()(
         if (connected && !trimmedSsid) {
           return {}
         }
-        const wifi: WifiStatus = connected ? {state: "connected", ssid: trimmedSsid} : {state: "disconnected"}
+        const wifi: WifiStatus = connected
+          ? {state: "connected", ssid: trimmedSsid, captivePortal: false}
+          : {state: "disconnected"}
         return {
           wifi,
           wifiStatusKnown: true,

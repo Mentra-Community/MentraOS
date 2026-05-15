@@ -294,6 +294,9 @@ const en = {
     failedDescription: "Make sure the password was entered correctly",
     connectingDescription: "This may take up to 20 seconds",
     connectingToNetwork: "Connecting to {{network}}...",
+    captivePortalTitle: "Sign-in WiFi detected",
+    captivePortalMessage:
+      "This network needs a browser sign-in (common on flights, hotels, and cafés). Mentra Live cannot open that page, so many features will not work. Use your home WiFi or phone hotspot instead.",
   },
   ota: {
     checkingForUpdates: "Checking for updates",

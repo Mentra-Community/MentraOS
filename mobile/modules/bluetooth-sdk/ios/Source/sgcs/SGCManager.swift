@@ -225,6 +225,10 @@ extension SGCManager {
         GlassesStore.shared.get("glasses", "wifiLocalIp") as? String ?? ""
     }
 
+    var wifiCaptivePortal: Bool {
+        GlassesStore.shared.get("glasses", "wifiCaptivePortal") as? Bool ?? false
+    }
+
     var hotspotEnabled: Bool {
         GlassesStore.shared.get("glasses", "hotspotEnabled") as? Bool ?? false
     }

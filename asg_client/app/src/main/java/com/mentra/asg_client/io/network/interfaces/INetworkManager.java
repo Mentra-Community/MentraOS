@@ -40,6 +40,15 @@ public interface INetworkManager {
      * @return true if connected to WiFi, false otherwise
      */
     boolean isConnectedToWifi();
+
+    /**
+     * Whether the active Wi‑Fi network is a captive portal (sign‑in required).
+     * Mentra Live cannot complete browser-based portal flows.
+     *
+     * @return true when the OS reports {@code NET_CAPABILITY_CAPTIVE_PORTAL} on the active Wi‑Fi
+     *         network (Android 10+); false if not applicable or unknown
+     */
+    boolean isWifiCaptivePortal();
     
     /**
      * Get the SSID of the currently connected WiFi network
