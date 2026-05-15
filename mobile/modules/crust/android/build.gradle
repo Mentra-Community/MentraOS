@@ -41,13 +41,6 @@ android {
   compileOptions {
     coreLibraryDesugaringEnabled true
   }
-  // Zipline 1.27 is built with Kotlin 2.x; Expo prebuild's default
-  // Kotlin (1.9) can't read its metadata. Skip the version check so
-  // the compiler treats Zipline as a plain JVM dependency. ABI-compatible
-  // for the surface we use (QuickJs / Zipline.create / Bridge bindings).
-  kotlinOptions {
-    freeCompilerArgs += '-Xskip-metadata-version-check'
-  }
   buildTypes {
     internal {
       initWith release
@@ -84,7 +77,11 @@ dependencies {
   // We only use Zipline's low-level QuickJs wrapper; the typed bridge / hot-
   // reload / source-map features ride on a Zipline Gradle plugin we don't
   // wire up here. ~1.2 MB Zipline + QuickJS native lib per ABI.
-  implementation 'app.cash.zipline:zipline-android:1.27.0'
+  //
+  // Pinned to 1.20.0 — the last release built with Kotlin 1.9.x. Zipline
+  // 1.22+ moved to Kotlin 2.0, which the Expo prebuild host (Kotlin 1.9)
+  // can't read. Bumping requires upgrading the host Kotlin first.
+  implementation 'app.cash.zipline:zipline-android:1.20.0'
 
   // OkHttp for fetch / WebSocket — already used elsewhere in MentraOS;
   // pinned here so the gradle plugin doesn't downgrade us.
