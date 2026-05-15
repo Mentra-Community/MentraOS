@@ -9,18 +9,18 @@ import type {Channels} from "../../shared/channels"
  * WebView, no native access). Instead each page sends one of two
  * channels and the controller dispatches:
  *
- *   - `tester:start` — open a subscription for an iface (Permissions,
- *     Storage, Transcription, IMU, Location, Microphone, System,
- *     Glasses). Forwards each event back to the UI as
- *     `tester:event` with `{iface, kind, payload}`. Idempotent —
- *     repeat starts share one underlying subscription.
+ *   - `tester:start` — open a subscription for an iface (Storage,
+ *     Transcription, IMU, Location, Microphone, System, Glasses).
+ *     Forwards each event back to the UI as `tester:event` with
+ *     `{iface, kind, payload}`. Idempotent — repeat starts share one
+ *     underlying subscription.
  *   - `tester:stop` — release the subscription.
  *   - `tester:fire` — fire-and-forget action (Display, Led, Speaker,
  *     Phone, Glasses). Background dispatches to
  *     `session[iface][method](...args)`.
  *
  * Per Appendix A's tester taxonomy:
- *   read-only (a):  Permissions, Storage, Transcription, IMU,
+ *   read-only (a):  Storage, Transcription, IMU,
  *                   Location, Microphone, System
  *   fire-only (b):  Display, Led, Speaker, Phone, Glasses
  *   pure-UI  (c):   TesterMenu, _TesterRow, ComingSoon
@@ -109,8 +109,6 @@ export class TesterController {
           v()
         }
       }
-      case "permissions":
-        return this.session.permissions.onUpdate((data) => emit("update", data))
       case "storage":
         // No event surface on the storage module — UI does ad-hoc gets via
         // `tester:fire`. Keep the start handler around as a no-op so the

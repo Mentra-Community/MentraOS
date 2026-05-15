@@ -12,14 +12,14 @@ import {Shell} from "../Shell"
 import {Button} from "../../components/button"
 import {Input} from "../../components/input"
 import {Label} from "../../components/label"
-import {TableRow} from "./_TesterRow"
+import {ErrorRow, TableRow} from "./_TesterRow"
 
 export default function StoragePage() {
   const navigate = useNavigate()
-  const {log, fire} = useTester("storage")
+  const {log, fire, lastError} = useTester("storage")
   const [key, setKey] = useState("test-key")
   const [value, setValue] = useState("hello")
-  const lastResult = [...log].reverse().find((e) => e.kind === "result" || e.kind === "error")
+  const lastResult = [...log].reverse().find((e) => e.kind === "result")
   return (
     <Shell>
       <MiniappHeader title="session.storage" onBack={() => navigate("/tester")} />
@@ -44,6 +44,7 @@ export default function StoragePage() {
             label="last result"
             data={lastResult ? ((lastResult.payload as unknown) as Record<string, unknown>) : null}
           />
+          <ErrorRow event={lastError} />
         </div>
       </div>
     </Shell>

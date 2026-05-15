@@ -5,17 +5,19 @@ import {useState} from "react"
 import {useNavigate} from "react-router-dom"
 import {MiniappHeader} from "@mentra/miniapp/ui"
 
-import "../../../shared/channels"
+import {useTester} from "../../hooks/useTester"
 import {Shell} from "../Shell"
 import {Button} from "../../components/button"
 import {Input} from "../../components/input"
 import {Label} from "../../components/label"
+import {ErrorRow} from "./_TesterRow"
 
 export default function DisplayPage() {
   const navigate = useNavigate()
+  // useTester opens a (no-op) subscription so `tester:event {kind:"error"}`
+  // from a bad fire() lands in lastError and surfaces in the UI.
+  const {fire, lastError} = useTester("display")
   const [text, setText] = useState("Hello from MentraJS!")
-  const fire = (method: string, args: unknown[] = []) =>
-    mentra.send("tester:fire", {iface: "display", method, args})
   return (
     <Shell>
       <MiniappHeader title="session.display" onBack={() => navigate("/tester")} />
@@ -38,6 +40,7 @@ export default function DisplayPage() {
             clearView()
           </Button>
         </div>
+        <ErrorRow event={lastError} />
       </div>
     </Shell>
   )

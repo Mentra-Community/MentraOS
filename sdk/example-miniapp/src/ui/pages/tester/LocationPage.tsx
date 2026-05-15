@@ -6,11 +6,11 @@ import {MiniappHeader} from "@mentra/miniapp/ui"
 import {useTester} from "../../hooks/useTester"
 import {Shell} from "../Shell"
 import {Button} from "../../components/button"
-import {TableRow} from "./_TesterRow"
+import {ErrorRow, TableRow} from "./_TesterRow"
 
 export default function LocationPage() {
   const navigate = useNavigate()
-  const {latest, log, fire} = useTester("location")
+  const {latest, log, fire, lastError} = useTester("location")
   return (
     <Shell>
       <MiniappHeader title="session.location" onBack={() => navigate("/tester")} />
@@ -26,6 +26,7 @@ export default function LocationPage() {
         <Button className="mt-3" onClick={() => fire("getOnce", [])}>
           Request a one-shot fix
         </Button>
+        <ErrorRow event={lastError} />
         <p className="mt-3 text-[12px] text-muted-foreground">{log.length} event(s) seen</p>
       </div>
     </Shell>

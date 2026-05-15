@@ -4,17 +4,17 @@ import {useState} from "react"
 import {useNavigate} from "react-router-dom"
 import {MiniappHeader} from "@mentra/miniapp/ui"
 
-import "../../../shared/channels"
+import {useTester} from "../../hooks/useTester"
 import {Shell} from "../Shell"
 import {Button} from "../../components/button"
 import {Input} from "../../components/input"
 import {Label} from "../../components/label"
+import {ErrorRow} from "./_TesterRow"
 
 export default function SpeakerPage() {
   const navigate = useNavigate()
+  const {fire, lastError} = useTester("speaker")
   const [phrase, setPhrase] = useState("Hello from MentraJS")
-  const fire = (method: string, args: unknown[] = []) =>
-    mentra.send("tester:fire", {iface: "speaker", method, args})
   return (
     <Shell>
       <MiniappHeader title="session.speaker" onBack={() => navigate("/tester")} />
@@ -27,6 +27,7 @@ export default function SpeakerPage() {
             stop()
           </Button>
         </div>
+        <ErrorRow event={lastError} />
       </div>
     </Shell>
   )

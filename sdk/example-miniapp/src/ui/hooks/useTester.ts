@@ -11,17 +11,28 @@ import type {TesterEventPayload} from "../../shared/types"
  * "tester:stop", {iface})` on unmount. Background's TesterController is
  * idempotent — calling start twice yields one underlying subscription.
  *
- * `latest` is the most recent event for this iface. `log` is a sliding
- * window of the last N events (default 50). Callers that only need the
- * latest can ignore `log` and TS will elide it from output.
+ * Returned shape:
+ *   - `latest`     most recent event for this iface (any kind).
+ *   - `log`        sliding window of the last N events (default 50).
+ *   - `lastError`  most recent `kind === "error"` event. Pages should
+ *                  render this so bad fire() calls don't silently
+ *                  disappear (background dispatches `unknown method`
+ *                  errors back as `tester:event {kind:"error"}`).
+ *   - `fire`       send a `tester:fire` to this iface.
  */
 export function useTester(
   iface: string,
   options: {windowSize?: number} = {},
-): {latest: TesterEventPayload | null; log: TesterEventPayload[]; fire: (method: string, args?: unknown[]) => void} {
+): {
+  latest: TesterEventPayload | null
+  log: TesterEventPayload[]
+  lastError: TesterEventPayload | null
+  fire: (method: string, args?: unknown[]) => void
+} {
   const windowSize = options.windowSize ?? 50
   const [latest, setLatest] = useState<TesterEventPayload | null>(null)
   const [log, setLog] = useState<TesterEventPayload[]>([])
+  const [lastError, setLastError] = useState<TesterEventPayload | null>(null)
   const ifaceRef = useRef(iface)
   ifaceRef.current = iface
 
@@ -31,6 +42,7 @@ export function useTester(
       const ev = raw as TesterEventPayload
       if (ev.iface !== ifaceRef.current) return
       setLatest(ev)
+      if (ev.kind === "error") setLastError(ev)
       setLog((prev) => {
         const next = [...prev, ev]
         return next.length > windowSize ? next.slice(-windowSize) : next
@@ -46,5 +58,5 @@ export function useTester(
     mentra.send("tester:fire", {iface: ifaceRef.current, method, args})
   }
 
-  return {latest, log, fire}
+  return {latest, log, lastError, fire}
 }

@@ -20,7 +20,7 @@ interface Row {
 
 // Order mirrors the SDK module overview doc: output first (display, speaker),
 // then input (mic, transcription, translation, input, location, imu),
-// then state (glasses, phone), then misc (system, led, storage, permissions),
+// then state (glasses, phone), then misc (system, led, storage),
 // then placeholders.
 const ROWS: Row[] = [
   {emoji: "🖥️", title: "session.display", subtitle: "text walls, cards, bitmaps", path: "/tester/display"},
@@ -43,7 +43,6 @@ const ROWS: Row[] = [
     badge: "mentra-live-only",
   },
   {emoji: "📦", title: "session.storage", subtitle: "get / set / delete / list", path: "/tester/storage"},
-  {emoji: "🔐", title: "session.permissions", subtitle: "has / getAll / onUpdate / errors", path: "/tester/permissions"},
   {
     emoji: "⏳",
     title: "Coming Soon",

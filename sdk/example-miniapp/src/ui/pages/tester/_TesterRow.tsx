@@ -76,6 +76,31 @@ export function TableRow({
   )
 }
 
+/**
+ * Inline banner for the most-recent `tester:event {kind:"error"}` on a
+ * page. Pages call `useTester(...)` → render `<ErrorRow event={lastError}/>`
+ * so a misnamed iface/method or a bad arg shape surfaces in the UI
+ * instead of disappearing into a console log nobody reads.
+ */
+export function ErrorRow({event}: {event: import("../../../shared/types").TesterEventPayload | null}) {
+  if (!event) return null
+  const payload = event.payload as {method?: string; message?: string} | null
+  const method = payload?.method
+  const message = payload?.message ?? "(no error message)"
+  return (
+    <div className="mb-2 rounded-xl border border-destructive bg-destructive/10 p-3 text-destructive">
+      <div className="mb-1 flex items-center gap-2 text-[12px] font-semibold uppercase tracking-wider">
+        <span className="text-base">⚠️</span>
+        <span>last fire() error</span>
+      </div>
+      <div className="break-all text-[12px] font-mono">
+        {method ? `${event.iface}.${method}: ` : `${event.iface}: `}
+        {message}
+      </div>
+    </div>
+  )
+}
+
 function sortedEntries(obj: Record<string, unknown>): Array<[string, unknown]> {
   // Put primitives (non-empty) first, then empty-ish, then nested — readable
   // scanning order in a table.

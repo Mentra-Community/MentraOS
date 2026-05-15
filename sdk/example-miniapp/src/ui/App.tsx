@@ -9,7 +9,6 @@ import InputPage from "./pages/tester/InputPage"
 import LedPage from "./pages/tester/LedPage"
 import LocationPage from "./pages/tester/LocationPage"
 import MicrophonePage from "./pages/tester/MicrophonePage"
-import PermissionsPage from "./pages/tester/PermissionsPage"
 import PhonePage from "./pages/tester/PhonePage"
 import SpeakerPage from "./pages/tester/SpeakerPage"
 import StoragePage from "./pages/tester/StoragePage"
@@ -37,7 +36,6 @@ export default function App() {
         <Route path="/tester/system" element={<SystemPage />} />
         <Route path="/tester/led" element={<LedPage />} />
         <Route path="/tester/storage" element={<StoragePage />} />
-        <Route path="/tester/permissions" element={<PermissionsPage />} />
         <Route path="/tester/coming-soon" element={<ComingSoonPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
