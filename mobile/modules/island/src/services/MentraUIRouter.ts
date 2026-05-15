@@ -183,12 +183,15 @@ export class MentraUIRouter {
 
   /**
    * Wrap an EVENT envelope and push it to background via the bridge.
-   * Background's UIModule listens for stream `_ui`.
+   * Background's UIModule listens for stream `_ui`. The `type` is the
+   * wire value `miniapp_event` — must match `MiniappResponseType.EVENT`
+   * exactly, otherwise the SDK's session switch falls through and the
+   * `_ui` fan-out never fires (bound stays false; `ui.send` drops).
    */
   private deliverToBackground(packageName: string, data: Record<string, unknown>): void {
     const innerEnvelope = {
       payload: {
-        type: "EVENT",
+        type: "miniapp_event",
         streamType: "_ui",
         data,
       },

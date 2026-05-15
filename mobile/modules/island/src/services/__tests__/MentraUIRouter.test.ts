@@ -31,12 +31,15 @@ describe("MentraUIRouter — routeFromWebView", () => {
     router = new MentraUIRouter(crust.binding)
   })
 
-  test("ready → fires UI_OPEN to background", () => {
+  test("ready → fires UI_OPEN to background via miniapp_event envelope", () => {
     bindCapture(router, "com.foo")
     router.routeFromWebView("com.foo", JSON.stringify({type: "ready"}))
     expect(crust.dispatchCalls).toHaveLength(1)
     const env = JSON.parse(crust.dispatchCalls[0]!.envelope.raw as string)
-    expect(env.payload.type).toBe("EVENT")
+    // Wire-level type must match MiniappResponseType.EVENT exactly,
+    // else the SDK session's switch falls through and _ui fan-out
+    // never fires (bound stays false; ui.send drops).
+    expect(env.payload.type).toBe("miniapp_event")
     expect(env.payload.streamType).toBe("_ui")
     expect(env.payload.data.type).toBe("UI_OPEN")
   })
