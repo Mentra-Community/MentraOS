@@ -36,7 +36,7 @@ import type {DisplayPayload} from "./LocalDisplayManager"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
 import {getRuntimeHooks, ISLAND_SETTINGS_KEYS} from "../runtime/config"
-import type {NavUpdate, NavLocation, NavRoute} from "../runtime/config"
+import {NavigationHandlers} from "./NavigationHandlers"
 
 // =============================================================================
 // Types
@@ -518,14 +518,9 @@ class LocalMiniappRuntime {
     // it; stopping the session here would kill an active trip mid-route.
     // Navigation is only stopped when the mini-app explicitly calls
     // navigation.stop() or when the trip arrives/errors naturally.
-    const navUnsub = this.navListeners.get(packageName)
-    if (navUnsub) {
-      navUnsub()
-      this.navListeners.delete(packageName)
-    }
-    // Keep activeNavApps entry intact so that if the app reconnects it can
-    // reattach listeners and resume. Entry is cleared by handleNavigationStop
-    // or naturally on arrived/error events.
+    // (See NavigationHandlers — activeNavApps stays populated so a reconnect
+    // can reattach listeners and resume.)
+    this.navigationHandlers.onDisconnect(packageName)
 
     // Recompute heading subscription — if this app was the last subscriber,
     // the sensor will stop.
@@ -631,28 +626,28 @@ class LocalMiniappRuntime {
         this.handleLocationPoll(packageName, requestId)
         break
       case MiniappRequestType.NAVIGATION_START:
-        this.handleNavigationStart(packageName, payload, requestId)
+        this.navigationHandlers.handleStart(packageName, payload, requestId)
         break
       case MiniappRequestType.NAVIGATION_STOP:
-        this.handleNavigationStop(packageName, requestId)
+        this.navigationHandlers.handleStop(packageName, requestId)
         break
       case MiniappRequestType.NAVIGATION_DEVIATE:
-        this.handleNavigationDeviate(packageName, payload, requestId)
+        this.navigationHandlers.handleDeviate(packageName, payload, requestId)
         break
       case MiniappRequestType.NAVIGATION_SET_WRONG_SIDEWALK:
-        this.handleNavigationSetWrongSidewalk(packageName, payload, requestId)
+        this.navigationHandlers.handleSetWrongSidewalk(packageName, payload, requestId)
         break
       case MiniappRequestType.NAVIGATION_SET_SKIP_CROSSINGS:
-        this.handleNavigationSetSkipCrossings(packageName, payload, requestId)
+        this.navigationHandlers.handleSetSkipCrossings(packageName, payload, requestId)
         break
       case MiniappRequestType.NAVIGATION_GET_STATE:
-        this.handleNavigationGetState(packageName, requestId)
+        this.navigationHandlers.handleGetState(packageName, requestId)
         break
       case MiniappRequestType.NAVIGATION_COMPUTE_ROUTE:
-        this.handleNavigationComputeRoute(packageName, payload, requestId)
+        this.navigationHandlers.handleComputeRoute(packageName, payload, requestId)
         break
       case MiniappRequestType.NAVIGATION_REQUEST_PERMISSION:
-        this.handleNavigationRequestPermission(packageName, requestId)
+        this.navigationHandlers.handleRequestPermission(packageName, requestId)
         break
       case MiniappRequestType.STORAGE_GET:
         this.handleStorageGet(packageName, payload, requestId)
@@ -1145,10 +1140,17 @@ class LocalMiniappRuntime {
   // Navigation
   // ---------------------------------------------------------------------------
 
-  /** packageName → unsubscribe fn for that app's nav event forwarder. */
-  private navListeners = new Map<string, () => void>()
-  /** Set of packageNames that have called navigation.start() and not yet stop(). */
-  private activeNavApps = new Set<string>()
+  /**
+   * All navigation handlers + their state live in NavigationHandlers. The
+   * dispatcher's NAVIGATION_* cases delegate here; the rest of the runtime
+   * cross-cuts navigation through {@link NavigationHandlers.onDisconnect}
+   * (mini-app disconnect) and {@link NavigationHandlers.isTripActive}
+   * (location-stream gating during a trip).
+   */
+  private readonly navigationHandlers = new NavigationHandlers(
+    (packageName, envelope) => this.sendToMiniapp(packageName, envelope),
+    (packageName, requestId, ok, result, error) => this.sendResult(packageName, requestId, ok, result, error),
+  )
 
   /**
    * Heading is a sensor stream — start the native compass when any mini
@@ -1211,270 +1213,6 @@ class LocalMiniappRuntime {
     getRuntimeHooks().locationTier?.setLocationTier(next)
   }
 
-  private async handleNavigationStart(
-    packageName: string,
-    payload: Record<string, unknown>,
-    requestId?: string,
-  ): Promise<void> {
-    console.log(`${LOG_TAG}: handleNavigationStart from ${packageName}`, JSON.stringify(payload))
-
-    // v2 wire shape sends `stops`; v1 shape sends bare lat/lng. Accept both.
-    const rawStops = payload.stops as Array<{lat?: unknown; lng?: unknown}> | undefined
-    const stops: Array<{lat: number; lng: number}> = []
-    if (Array.isArray(rawStops)) {
-      for (const s of rawStops) {
-        const sLat = Number(s?.lat)
-        const sLng = Number(s?.lng)
-        if (Number.isFinite(sLat) && Number.isFinite(sLng)) stops.push({lat: sLat, lng: sLng})
-      }
-    }
-    if (stops.length === 0) {
-      const lat = Number(payload.lat)
-      const lng = Number(payload.lng)
-      if (Number.isFinite(lat) && Number.isFinite(lng)) stops.push({lat, lng})
-    }
-    if (stops.length === 0) {
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INTERNAL,
-        message: "stops or lat/lng required",
-      })
-      return
-    }
-    const lat = stops[0].lat
-    const lng = stops[0].lng
-    const simulate = payload.simulate === true
-    const speedNum = Number(payload.speedMultiplier)
-    const speedMultiplier = Number.isFinite(speedNum) && speedNum > 0 ? speedNum : 5
-    const mode = typeof payload.mode === "string" ? payload.mode : "driving"
-    const avoidRaw = payload.avoid as Record<string, unknown> | undefined
-    const avoid = avoidRaw
-      ? {
-          highways: avoidRaw.highways === true,
-          tolls: avoidRaw.tolls === true,
-          ferries: avoidRaw.ferries === true,
-        }
-      : undefined
-    const missedRaw = Number(payload.missedTurnRerouteMeters)
-    const missedTurnRerouteMeters = Number.isFinite(missedRaw) && missedRaw > 0 ? missedRaw : undefined
-
-    const navigation = getRuntimeHooks().navigation
-    if (!navigation) {
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INTERNAL,
-        message: "navigation adapter not configured on host",
-      })
-      return
-    }
-
-    // Reattach the per-app event forwarder (it may have been detached when the
-    // mini-app closed its UI without stopping the trip).
-    if (!this.navListeners.has(packageName)) {
-      const unsubNav = navigation.addListener((update: NavUpdate) => {
-        this.sendToMiniapp(packageName, {
-          type: MiniappResponseType.EVENT,
-          streamType: MiniappStreamType.NAVIGATION_UPDATE,
-          data: update,
-        })
-        // Trip ended naturally — keep the forwarder alive (miniapp may
-        // restart nav) but remove from active set so stop() accounting
-        // stays accurate.
-        if (update.kind === "arrived" || update.kind === "error") {
-          this.activeNavApps.delete(packageName)
-        }
-      })
-      // Forward the nav-SDK's road-snapped GPS fixes as a location_update
-      // stream, so the miniapp's existing session.events.onLocation(...) just
-      // works while a trip is active.
-      const unsubLoc = navigation.addLocationListener((loc: NavLocation) => {
-        this.sendToMiniapp(packageName, {
-          type: MiniappResponseType.EVENT,
-          streamType: MiniappStreamType.LOCATION_UPDATE,
-          data: {
-            lat: loc.lat,
-            lng: loc.lng,
-            accuracy: loc.accuracy ?? undefined,
-            timestamp: loc.timestamp,
-          },
-        })
-      })
-      const unsubRoute = navigation.addRouteListener((route: NavRoute) => {
-        this.sendToMiniapp(packageName, {
-          type: MiniappResponseType.EVENT,
-          streamType: MiniappStreamType.NAVIGATION_ROUTE,
-          data: route,
-        })
-      })
-      this.navListeners.set(packageName, () => {
-        unsubNav()
-        unsubLoc()
-        unsubRoute()
-      })
-    }
-
-    // If a trip is already active for this app (user closed the UI and came
-    // back), reuse the running session — replay current snapshot and return
-    // ok without restarting the native navigator.
-    if (this.activeNavApps.has(packageName) && navigation.getState() !== "idle") {
-      console.log(`${LOG_TAG}: resuming existing nav session for ${packageName}`)
-      const snapshot = navigation.getSnapshot()
-      this.sendResult(packageName, requestId, true, {ok: true, resumed: true, snapshot})
-      return
-    }
-
-    try {
-      const result = await navigation.start(
-        {lat, lng},
-        {simulate, speedMultiplier, stops, mode, avoid, missedTurnRerouteMeters},
-      )
-      if (result.ok) {
-        this.activeNavApps.add(packageName)
-      }
-      this.sendResult(packageName, requestId, result.ok, result, undefined)
-    } catch (err) {
-      console.error(`${LOG_TAG}: navigation start error:`, err)
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INTERNAL,
-        message: err instanceof Error ? err.message : "navigation start error",
-      })
-    }
-  }
-
-  private async handleNavigationStop(packageName: string, requestId?: string): Promise<void> {
-    try {
-      const unsub = this.navListeners.get(packageName)
-      if (unsub) {
-        unsub()
-        this.navListeners.delete(packageName)
-      }
-      this.activeNavApps.delete(packageName)
-      // Only stop the native trip when no other miniapp is still navigating.
-      if (this.activeNavApps.size === 0) {
-        const navigation = getRuntimeHooks().navigation
-        const result = navigation ? await navigation.stop() : {ok: true}
-        this.sendResult(packageName, requestId, result.ok, result, undefined)
-      } else {
-        this.sendResult(packageName, requestId, true, {ok: true}, undefined)
-      }
-    } catch (err) {
-      console.error(`${LOG_TAG}: navigation stop error:`, err)
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INTERNAL,
-        message: err instanceof Error ? err.message : "navigation stop error",
-      })
-    }
-  }
-
-  private async handleNavigationDeviate(
-    packageName: string,
-    payload: Record<string, unknown>,
-    requestId?: string,
-  ): Promise<void> {
-    try {
-      const offsetNum = Number(payload.offsetMeters)
-      const offsetMeters = Number.isFinite(offsetNum) && offsetNum > 0 ? offsetNum : 20
-      const navigation = getRuntimeHooks().navigation
-      const result = navigation
-        ? await navigation.simulateDeviation(offsetMeters)
-        : {ok: false, error: "navigation adapter not configured"}
-      this.sendResult(packageName, requestId, result.ok, result, undefined)
-    } catch (err) {
-      console.error(`${LOG_TAG}: navigation deviate error:`, err)
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INTERNAL,
-        message: err instanceof Error ? err.message : "navigation deviate error",
-      })
-    }
-  }
-
-  private async handleNavigationSetWrongSidewalk(
-    packageName: string,
-    payload: Record<string, unknown>,
-    requestId?: string,
-  ): Promise<void> {
-    try {
-      const enabled = payload.enabled === true
-      const navigation = getRuntimeHooks().navigation
-      const result = navigation
-        ? await navigation.setWrongSidewalkOffset(enabled)
-        : {ok: false, error: "navigation adapter not configured"}
-      this.sendResult(packageName, requestId, result.ok, result, undefined)
-    } catch (err) {
-      console.error(`${LOG_TAG}: navigation setWrongSidewalkOffset error:`, err)
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INTERNAL,
-        message: err instanceof Error ? err.message : "navigation setWrongSidewalkOffset error",
-      })
-    }
-  }
-
-  private async handleNavigationSetSkipCrossings(
-    packageName: string,
-    payload: Record<string, unknown>,
-    requestId?: string,
-  ): Promise<void> {
-    try {
-      const enabled = payload.enabled === true
-      const navigation = getRuntimeHooks().navigation
-      const result = navigation
-        ? await navigation.setSkipCrossings(enabled)
-        : {ok: false, error: "navigation adapter not configured"}
-      this.sendResult(packageName, requestId, result.ok, result, undefined)
-    } catch (err) {
-      console.error(`${LOG_TAG}: navigation setSkipCrossings error:`, err)
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INTERNAL,
-        message: err instanceof Error ? err.message : "navigation setSkipCrossings error",
-      })
-    }
-  }
-
-  private handleNavigationGetState(packageName: string, requestId?: string): void {
-    const snapshot = getRuntimeHooks().navigation?.getSnapshot() ?? null
-    this.sendResult(packageName, requestId, true, {state: snapshot})
-  }
-
-  private async handleNavigationRequestPermission(packageName: string, requestId?: string): Promise<void> {
-    try {
-      const navigation = getRuntimeHooks().navigation
-      const result = navigation
-        ? await navigation.requestPermission()
-        : {ok: false, accepted: false, error: "navigation adapter not configured"}
-      this.sendResult(packageName, requestId, true, result)
-    } catch (err) {
-      console.error(`${LOG_TAG}: navigation requestPermission error:`, err)
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INTERNAL,
-        message: err instanceof Error ? err.message : "navigation requestPermission error",
-      })
-    }
-  }
-
-  private async handleNavigationComputeRoute(
-    packageName: string,
-    payload: Record<string, unknown>,
-    requestId?: string,
-  ): Promise<void> {
-    try {
-      const navigation = getRuntimeHooks().navigation
-      const result = navigation
-        ? await navigation.computeRoute(payload)
-        : {ok: false as const, error: "navigation adapter not configured"}
-      if (result.ok === false) {
-        this.sendResult(packageName, requestId, false, undefined, {
-          code: MiniappErrorCode.INTERNAL,
-          message: result.error ?? "computeRoute failed",
-        })
-      } else {
-        this.sendResult(packageName, requestId, true, result)
-      }
-    } catch (err) {
-      console.error(`${LOG_TAG}: navigation computeRoute error:`, err)
-      this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INTERNAL,
-        message: err instanceof Error ? err.message : "navigation computeRoute error",
-      })
-    }
-  }
 
   // ---------------------------------------------------------------------------
   // Storage helpers
@@ -1988,7 +1726,10 @@ class LocalMiniappRuntime {
       // Suppress the raw background-GPS forward for that miniapp so the two
       // streams don't interleave and cause the position to jump back to the
       // real-phone location during simulation.
-      if (normalizedStream === MiniappStreamType.LOCATION_UPDATE && this.activeNavApps.has(packageName)) {
+      if (
+        normalizedStream === MiniappStreamType.LOCATION_UPDATE &&
+        this.navigationHandlers.isTripActive(packageName)
+      ) {
         continue
       }
       this.sendToMiniapp(packageName, {
