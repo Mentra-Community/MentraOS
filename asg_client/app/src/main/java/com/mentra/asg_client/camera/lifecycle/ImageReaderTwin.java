@@ -1,4 +1,4 @@
-package com.mentra.asg_client.camera;
+package com.mentra.asg_client.camera.lifecycle;
 
 import android.graphics.ImageFormat;
 import android.media.Image;
