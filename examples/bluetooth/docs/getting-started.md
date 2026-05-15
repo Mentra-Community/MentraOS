@@ -129,8 +129,10 @@ Then generate and run a native build:
 npx expo prebuild
 npx expo run:ios
 # or
-npx expo run:android
+npm run android:dev
 ```
+
+Use `npm run android:dev` for Android development builds. It starts Metro first, forwards the device's `localhost:8081` over USB, installs the native app, and opens the Expo dev-client URL so the first launch does not land on the blank launcher screen.
 
 For unreleased SDK development, install a local package path and set the package path for Metro/native resolution:
 
@@ -334,7 +336,7 @@ npm install
 npx expo prebuild
 npx expo run:ios
 # or
-npx expo run:android
+npm run android:dev
 ```
 
 For photo upload and RTMP/SRT/WebRTC demos, start the local helper from the repo root:
