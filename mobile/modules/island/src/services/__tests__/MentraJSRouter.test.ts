@@ -195,7 +195,7 @@ describe("MentraJSRouter", () => {
 
   test("__log frames over the throttle threshold drop silently + emit a [throttled N] summary", () => {
     // Override throttle to a tighter budget for the test.
-    const {MentraJSLogThrottle} = require("../MentraJSLogRedactor")
+    const {MentraJSLogThrottle} = require("../MentraJSLogPipeline")
     let clock = 0
     router.logThrottle = new MentraJSLogThrottle({
       tokensPerSecond: 10,

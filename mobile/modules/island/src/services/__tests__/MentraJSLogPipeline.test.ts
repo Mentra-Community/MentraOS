@@ -6,7 +6,7 @@ import {
   MentraJSLogRingBuffer,
   MentraJSLogThrottle,
   redactSecrets,
-} from "../MentraJSLogRedactor"
+} from "../MentraJSLogPipeline"
 
 describe("redactSecrets", () => {
   test("redacts strings containing 'token'", () => {

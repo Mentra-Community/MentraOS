@@ -27,11 +27,13 @@ import {
 //                        inject mentraUiShim, bind to MentraUIRouter so
 //                        mentra.send/on flows to the JSContext.
 //   closeUI(pkg)       → destroy the WebView, fire UI_CLOSE, drop refs.
-//   reload(pkg)        → WebView.reload() (dev hot-reload of UI half).
 //
 // Only one WebView is alive at a time (matches the spec's "0 or 1
 // WebView at a time" invariant). Opening a second package's UI closes
 // any prior one automatically.
+//
+// Dev hot-reload (WebView.reload()) is handled internally — wired to
+// devServerBridge.onReload — and not exposed through the singleton.
 // ---------------------------------------------------------------------------
 
 interface MountedMiniapp {
@@ -71,8 +73,6 @@ type MiniappHostAPI = {
   canGoBack(packageName: string): boolean
   /** Subscribe to canGoBack changes. Returns an unsubscribe fn. */
   subscribeCanGoBack(packageName: string, listener: CanGoBackListener): () => void
-  /** Reload the WebView (used by the dev server's reload signal). */
-  reload(packageName: string): void
   /** Wire the MentraUIRouter so mentra.send/on routes to the JSContext. */
   attachUIRouter(router: MentraUIRouter): void
 }
@@ -91,7 +91,6 @@ export const miniappHost: MiniappHostAPI = {
   goBackInWebView: () => false,
   canGoBack: () => false,
   subscribeCanGoBack: () => () => {},
-  reload: warnPreMount("reload"),
   attachUIRouter: warnPreMount("attachUIRouter"),
 }
 
@@ -203,7 +202,6 @@ export default function MiniappHost() {
     miniappHost.goBackInWebView = goBackInWebView
     miniappHost.canGoBack = canGoBack
     miniappHost.subscribeCanGoBack = subscribeCanGoBack
-    miniappHost.reload = reload
     miniappHost.attachUIRouter = attachUIRouter
 
     devServerBridge.onReload((packageName) => {
@@ -217,7 +215,6 @@ export default function MiniappHost() {
       miniappHost.goBackInWebView = () => false
       miniappHost.canGoBack = () => false
       miniappHost.subscribeCanGoBack = () => () => {}
-      miniappHost.reload = warnPreMount("reload")
       miniappHost.attachUIRouter = warnPreMount("attachUIRouter")
     }
   }, [openUI, closeUI, isOpen, goBackInWebView, canGoBack, subscribeCanGoBack, reload, attachUIRouter])

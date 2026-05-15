@@ -163,12 +163,14 @@ class JSCRuntime private constructor(private val appContext: Context) {
     fun alivePackages(): List<String> = contexts.keys.toList()
 
     /**
-     * Read the bundled MentraJS polyfill (`assets/mentrajs_startup.js`)
-     * shipped inside the host APK. Cached after first read.
+     * Read the bundled MentraJS polyfill (`assets/startup.js`) shipped
+     * inside the host APK. The file is sourced from the sibling
+     * @mentra/mentrajs-runtime module via `sourceSets.main.assets.srcDirs`
+     * in this module's build.gradle. Cached after first read.
      */
     fun loadPolyfillBundle(): String {
         try {
-            appContext.assets.open("mentrajs_startup.js").use { stream ->
+            appContext.assets.open("startup.js").use { stream ->
                 return stream.bufferedReader().readText()
             }
         } catch (e: IOException) {

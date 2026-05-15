@@ -68,6 +68,16 @@ android {
     versionName "0.1.0"
     multiDexEnabled true
   }
+  // Pull the MentraJS polyfill bundle from the sibling @mentra/mentrajs-runtime
+  // module's `assets/` directory — single committed source of truth. The
+  // file is read at runtime via `appContext.assets.open("startup.js")`.
+  // Cross-module sourceSet entry beats checking the same artifact into git
+  // multiple times.
+  sourceSets {
+    main {
+      assets.srcDirs += '../../mentrajs-runtime/assets'
+    }
+  }
   compileOptions {
     coreLibraryDesugaringEnabled true
   }

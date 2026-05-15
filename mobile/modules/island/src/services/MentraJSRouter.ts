@@ -39,7 +39,7 @@ import type {EventSubscription} from "expo-modules-core"
 
 import type localMiniappRuntime from "./LocalMiniappRuntime"
 import type {MentraJSCrashController} from "./MentraJSCrashController"
-import {MentraJSLogRingBuffer, MentraJSLogThrottle, redactSecrets} from "./MentraJSLogRedactor"
+import {MentraJSLogRingBuffer, MentraJSLogThrottle, redactSecrets} from "./MentraJSLogPipeline"
 import type {MentraUIRouter} from "./MentraUIRouter"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 

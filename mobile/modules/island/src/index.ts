@@ -30,7 +30,7 @@ export {
   MentraJSLogThrottle,
   MentraJSLogRingBuffer,
   type ThrottleOptions,
-} from "./services/MentraJSLogRedactor"
+} from "./services/MentraJSLogPipeline"
 export {default as localSttFallbackCoordinator} from "./services/LocalSttFallbackCoordinator"
 export {default as micStateCoordinator} from "./services/MicStateCoordinator"
 

@@ -1,16 +1,24 @@
 /**
- * MentraJSLogRedactor — strips obvious secrets out of miniapp log lines
- * before they reach Sentry breadcrumbs or the dev console.
+ * MentraJSLogPipeline — the three log-side utilities that
+ * MentraJSRouter's `__log` handler runs every miniapp log line through:
  *
- * Per spec (Operations → Logging architecture):
- *   - Pattern: regex strip token|password|secret|auth|key|bearer|api[_-]?key
- *   - Token bucket: 100 lines/min sustained per miniapp, burst 500.
- *   - Excess dropped with one `[throttled N]` line.
- *   - On in release builds, off in dev (caller decides — dev still gets
- *     the raw line for grep-ability).
+ *   1. redactSecrets — walks a value (string / array / object) and
+ *      replaces anything matching the secret-key regex
+ *      (token|password|secret|auth|bearer|key|api[_-]?key) with
+ *      "[REDACTED]". Conservative: over-redaction is preferable to
+ *      leaking a real secret into Sentry breadcrumbs.
  *
- * The redactor is a pure-function class so it can be unit-tested without
- * a live miniapp. MentraJSRouter wires it into the __log handler.
+ *   2. MentraJSLogThrottle — token-bucket rate limiter, 100 lines/min
+ *      sustained with a 500-line burst, per miniapp. Excess is dropped
+ *      and surfaced once as a `[throttled N]` summary. Stops a
+ *      misbehaving miniapp from drowning the host's log stream.
+ *
+ *   3. MentraJSLogRingBuffer — fixed-size circular buffer (default 200)
+ *      holding the most recent log lines per miniapp. Dumped into the
+ *      crash report so post-mortem tooling sees the miniapp's last words.
+ *
+ * All three are pure (no React Native imports) and unit-tested in
+ * MentraJSLogPipeline.test.ts.
  */
 
 const SECRET_KEY_PATTERN = /\b(token|password|secret|auth|bearer|key|api[_-]?key)\b/i

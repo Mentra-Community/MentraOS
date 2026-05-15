@@ -1,10 +1,17 @@
 #!/usr/bin/env node
 // MentraJS polyfill bundle builder.
 //
-// Reads src/startup.ts and emits a single IIFE at dist/startup.js plus a
-// copy under assets/startup.js so the iOS Expo module + Android crust
-// AssetManager can both `Bundle.module.url(...)` / `assets.open("startup.js")`
-// without having to reach into node_modules.
+// Reads src/startup.ts and emits a single IIFE at assets/startup.js.
+// That assets/ file is the *single committed source of truth* for the
+// polyfill — both native modules read it directly via cross-module
+// resource references:
+//   - iOS: crust's Podspec globs `../../mentrajs-runtime/assets/startup.js`
+//          into its `MentraJSRuntime.bundle` resource bundle.
+//   - Android: crust's build.gradle adds `../../mentrajs-runtime/assets`
+//              to `sourceSets.main.assets.srcDirs`, so AssetManager picks
+//              the file up by name.
+// A copy is also written to dist/ so tests + tooling can resolve it via
+// the package's standard exports path.
 //
 // Pure esbuild — no plugins. The polyfill must not depend on Node-only
 // modules at runtime; this is just a one-file transform-and-inline.
@@ -48,9 +55,11 @@ await build({
   },
 })
 
-// Mirror to assets/ so consumers can ship it with the host binary without
-// reaching into dist (which is gitignored in CI environments that wipe build
-// artifacts before the prebuild step).
-copyFileSync(outFile, resolve(assetsDir, "startup.js"))
+// Mirror to assets/ — the committed source of truth that the iOS pod
+// and Android assets sourceSet pick up. Keeping the dist/ copy too so
+// the package's `mentrajs-runtime/dist/startup.js` export still works
+// for tests + tooling.
+const assetsFile = resolve(assetsDir, "startup.js")
+copyFileSync(outFile, assetsFile)
 
-console.log(`✅ MentraJS startup bundle built → ${outFile}`)
+console.log(`✅ MentraJS startup bundle built → ${assetsFile}`)
