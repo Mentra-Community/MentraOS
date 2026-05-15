@@ -31,10 +31,10 @@ If your app also uses Firebase with static frameworks, Firebase modular header c
 ## React Native Native Module Is Missing
 
 - Confirm you are running a development build or production native build. Expo Go cannot load `@mentra/bluetooth-sdk`.
-- Run `npx expo prebuild` after adding the SDK plugin to `app.json`.
+- Run `bunx expo prebuild` after adding the SDK plugin to `app.json`.
 - Confirm `@mentra/bluetooth-sdk` is installed in the app that is being prebuilt.
-- On iOS, run `pod install` inside the generated `ios/` directory or rerun `npx expo run:ios`.
-- If you are testing a local SDK package, set `MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` to the same package path you installed with npm.
+- On iOS, run `pod install` inside the generated `ios/` directory or rerun `bunx expo run:ios`.
+- If you are testing a local SDK package, set `MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` to the same package path you installed with Bun.
 
 ## Bluetooth Permission Problems
 
@@ -76,4 +76,4 @@ React Native and Expo apps use the `@mentra/bluetooth-sdk` package and must run 
 
 If Android prebuild succeeds but native linking fails, confirm the generated project includes `:lc3Lib` in `android/settings.gradle`. The SDK plugin adds this module automatically during prebuild.
 
-If iOS builds fail with missing Expo adapter symbols, rerun `npx expo prebuild` so the SDK plugin can configure the Podfile for Expo module registration.
+If iOS builds fail with missing Expo adapter symbols, rerun `bunx expo prebuild` so the SDK plugin can configure the Podfile for Expo module registration.

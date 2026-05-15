@@ -13,7 +13,7 @@ const args = new Set(process.argv.slice(2))
 if (args.has("-h") || args.has("--help")) {
   console.log(`
 Usage:
-  npm run android:dev
+  bun run android:dev
 
 Starts Metro first, installs/runs the Android development build without
 spawning a second bundler, then explicitly opens the Expo dev-client URL.
@@ -130,7 +130,7 @@ async function main() {
   } else {
     console.log(`Starting Metro at ${metroUrl}`)
     metroProcess = spawn(
-      "npx",
+      "bunx",
       ["expo", "start", "--dev-client", "--localhost", "--port", String(port)],
       {
         stdio: "inherit",
@@ -152,7 +152,7 @@ async function main() {
   run("adb", ["-s", serial, "reverse", `tcp:${port}`, `tcp:${port}`])
 
   console.log("Installing and launching the Android development build")
-  run("npx", ["expo", "run:android", "--no-bundler", "--port", String(port)])
+  run("bunx", ["expo", "run:android", "--no-bundler", "--port", String(port)])
 
   console.log(`Opening Expo dev-client URL: ${devClientUrl}`)
   run("adb", [

@@ -2,9 +2,9 @@
 
 Expo development-build reference app for the Mentra Bluetooth SDK.
 
-This example installs the SDK as `@mentra/bluetooth-sdk` and is intended to run from a fresh clone once the npm package is available. It demonstrates the same Device, Camera, Stream, System, and Console flows as the native Android and iOS examples.
+This example installs the SDK as `@mentra/bluetooth-sdk` and is intended to run from a fresh clone once the package is available. It demonstrates the same Device, Camera, Stream, System, and Console flows as the native Android and iOS examples.
 
-Expo Go cannot load the SDK because the package contains native Android and iOS code. Use `npx expo run:ios`, `npm run android:dev`, EAS development builds, or production native builds.
+Expo Go cannot load the SDK because the package contains native Android and iOS code. Use `bunx expo run:ios`, `bun run android:dev`, EAS development builds, or production native builds.
 
 ## Requirements
 
@@ -18,7 +18,7 @@ Expo Go cannot load the SDK because the package contains native Android and iOS 
 
 ```bash
 cd examples/react-native
-npm install
+bun install
 ```
 
 The example depends on:
@@ -33,37 +33,37 @@ Use the latest SDK version published by Mentra.
 
 ```bash
 cd examples/react-native
-npm run ios:setup
-npx expo prebuild
-npx expo run:ios
+bun run ios:setup
+bunx expo prebuild
+bunx expo run:ios
 ```
 
 Run on a physical iPhone for Bluetooth testing. Simulators are useful only for UI and compile checks.
 
-The React Native example uses the companion `mentra-direct-receiver` native module for direct phone WebRTC preview. On iOS that receiver needs the GStreamer iOS SDK. `npm run ios:setup` downloads the GStreamer package from `gstreamer.freedesktop.org`, verifies the published SHA-256 checksum, and installs it to `~/Library/Developer/GStreamer/iPhone.sdk`. The CocoaPods podspec also runs the same setup automatically during `pod install` when the SDK is missing from the default location, so `npx expo run:ios` can recover from a fresh clone.
+The React Native example uses the companion `mentra-direct-receiver` native module for direct phone WebRTC preview. On iOS that receiver needs the GStreamer iOS SDK. `bun run ios:setup` downloads the GStreamer package from `gstreamer.freedesktop.org`, verifies the published SHA-256 checksum, and installs it to `~/Library/Developer/GStreamer/iPhone.sdk`. The CocoaPods podspec also runs the same setup automatically during `pod install` when the SDK is missing from the default location, so `bunx expo run:ios` can recover from a fresh clone.
 
 If your GStreamer SDK is installed somewhere else, set `GSTREAMER_ROOT_IOS` before prebuild or run:
 
 ```bash
-GSTREAMER_ROOT_IOS=/path/to/iPhone.sdk npx expo run:ios
+GSTREAMER_ROOT_IOS=/path/to/iPhone.sdk bunx expo run:ios
 ```
 
 ## Run On Android
 
 ```bash
 cd examples/react-native
-npx expo prebuild
-npm run android:dev
+bunx expo prebuild
+bun run android:dev
 ```
 
 Run on a physical Android phone for Bluetooth testing. Some Android devices require both Nearby Devices and Location permission before BLE scan callbacks are delivered.
 
-`npm run android:dev` starts Metro first, waits for `localhost:8081`, installs the development build without starting a second bundler, forwards the Android device's `localhost:8081` to your computer, and explicitly opens the Expo dev-client URL. This avoids the first-run blank launcher state where you have to manually tap the `localhost:8081` session.
+`bun run android:dev` starts Metro first, waits for `localhost:8081`, installs the development build without starting a second bundler, forwards the Android device's `localhost:8081` to your computer, and explicitly opens the Expo dev-client URL. This avoids the first-run blank launcher state where you have to manually tap the `localhost:8081` session.
 
 If multiple Android devices are connected, set `ANDROID_SERIAL` before running the command:
 
 ```bash
-ANDROID_SERIAL=<device-serial> npm run android:dev
+ANDROID_SERIAL=<device-serial> bun run android:dev
 ```
 
 ## SDK Plugin Configuration
@@ -83,15 +83,15 @@ The plugin configures the native project so Expo can register the SDK module. Th
 
 ## Local SDK Override
 
-Use this only when developing the SDK before an npm release is published:
+Use this only when developing the SDK before a package release is published:
 
 ```bash
 cd examples/react-native
-npm install --no-save /path/to/MentraOS/mobile/modules/bluetooth-sdk
+bun add --no-save /path/to/MentraOS/mobile/modules/bluetooth-sdk
 
-MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk npx expo run:ios
+MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk bunx expo run:ios
 # or
-MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk npm run android:dev
+MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk bun run android:dev
 ```
 
 `MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` makes Metro and the generated native projects resolve the same local package. Keep it in your shell or CI environment, not in committed project settings.
@@ -119,7 +119,7 @@ Paste the printed LAN `/upload` URL into the Camera screen. Paste the printed RT
 You can also prefill the photo webhook URL when starting a development build:
 
 ```bash
-EXPO_PUBLIC_MENTRA_PHOTO_WEBHOOK_URL=http://<computer-ip>:8787/upload npx expo run:ios
+EXPO_PUBLIC_MENTRA_PHOTO_WEBHOOK_URL=http://<computer-ip>:8787/upload bunx expo run:ios
 ```
 
 Do not use `localhost` in the app. The glasses, phone, and computer must be on a network where the glasses can reach the printed LAN address.

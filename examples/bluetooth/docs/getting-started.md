@@ -2,7 +2,7 @@
 
 This guide shows how to add the Mentra Bluetooth SDK to Android, iOS, and React Native apps, then connect to Mentra Live and read glasses status.
 
-Use the latest SDK version published by Mentra. The example apps in this repo are designed to work from a fresh clone with the Maven, CocoaPods, and npm packages, without any local MentraOS checkout.
+Use the latest SDK version published by Mentra. The example apps in this repo are designed to work from a fresh clone with the Maven, CocoaPods, and JavaScript packages, without any local MentraOS checkout.
 
 ## Requirements
 
@@ -86,11 +86,11 @@ Keep that environment variable out of committed project files.
 
 ### React Native / Expo
 
-Install the npm package and configure the Expo plugin:
+Install the package with Bun and configure the Expo plugin:
 
 ```bash
-npm install @mentra/bluetooth-sdk
-npx expo install expo-build-properties
+bun add @mentra/bluetooth-sdk
+bunx expo install expo-build-properties
 ```
 
 ```json
@@ -126,19 +126,19 @@ npx expo install expo-build-properties
 Then generate and run a native build:
 
 ```bash
-npx expo prebuild
-npx expo run:ios
+bunx expo prebuild
+bunx expo run:ios
 # or
-npm run android:dev
+bun run android:dev
 ```
 
-Use `npm run android:dev` for Android development builds. It starts Metro first, forwards the device's `localhost:8081` over USB, installs the native app, and opens the Expo dev-client URL so the first launch does not land on the blank launcher screen.
+Use `bun run android:dev` for Android development builds. It starts Metro first, forwards the device's `localhost:8081` over USB, installs the native app, and opens the Expo dev-client URL so the first launch does not land on the blank launcher screen.
 
 For unreleased SDK development, install a local package path and set the package path for Metro/native resolution:
 
 ```bash
-npm install --no-save /path/to/MentraOS/mobile/modules/bluetooth-sdk
-MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk npx expo run:ios
+bun add --no-save /path/to/MentraOS/mobile/modules/bluetooth-sdk
+MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk bunx expo run:ios
 ```
 
 ## Permissions
@@ -332,15 +332,15 @@ open MentraExample.xcworkspace
 
 ```bash
 cd examples/react-native
-npm install
-npm run ios:setup
-npx expo prebuild
-npx expo run:ios
+bun install
+bun run ios:setup
+bunx expo prebuild
+bunx expo run:ios
 # or
-npm run android:dev
+bun run android:dev
 ```
 
-`npm run ios:setup` installs the GStreamer iOS SDK used by the React Native example's direct phone WebRTC preview. If the SDK is missing, the iOS podspec also attempts the same setup during `pod install`, so `npx expo run:ios` can recover from a fresh clone.
+`bun run ios:setup` installs the GStreamer iOS SDK used by the React Native example's direct phone WebRTC preview. If the SDK is missing, the iOS podspec also attempts the same setup during `pod install`, so `bunx expo run:ios` can recover from a fresh clone.
 
 For photo upload and RTMP/SRT/WebRTC demos, start the local helper from the repo root:
 
