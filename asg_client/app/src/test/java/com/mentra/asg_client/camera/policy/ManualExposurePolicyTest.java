@@ -1,4 +1,4 @@
-package com.mentra.asg_client.camera;
+package com.mentra.asg_client.camera.policy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -11,7 +11,7 @@ import org.robolectric.annotation.Config;
 
 /**
  * Phase 2 unit tests for {@link ManualExposurePolicy}. The policy is the manual-exposure math
- * that previously lived inside CameraNeo.
+ * that previously lived inside CameraNeoService.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)

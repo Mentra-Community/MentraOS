@@ -1,21 +1,21 @@
-package com.mentra.asg_client.camera;
+package com.mentra.asg_client.camera.policy;
 
 import android.util.Range;
 
 /**
  * Phase 2: pure-logic policy that computes sensor parameters for a manual-exposure still capture.
  *
- * <p>Extracted from {@link CameraNeo} so the math is unit-testable without a real camera.
+ * <p>Extracted from {@link CameraNeoService} so the math is unit-testable without a real camera.
  * All methods are static and side-effect free; they take all inputs explicitly rather than
  * reading service-level state.
  */
-final class ManualExposurePolicy {
+public final class ManualExposurePolicy {
 
     /** Default ISO used as the baseline when no metered preview ISO is available yet. */
-    static final int DEFAULT_ISO = 400;
+    public static final int DEFAULT_ISO = 400;
 
     /** Guard band added between requested exposure and the sensor frame duration. */
-    static final long FRAME_DURATION_GUARD_NS = 1_000_000L; // 1 ms
+    public static final long FRAME_DURATION_GUARD_NS = 1_000_000L; // 1 ms
 
     private ManualExposurePolicy() {}
 
@@ -28,7 +28,7 @@ final class ManualExposurePolicy {
      *                                {@code requestedNs} unchanged).
      * @return clamped exposure time in nanoseconds.
      */
-    static long clampExposureTimeNs(long requestedNs, Range<Long> sensorExposureTimeRange) {
+    public static long clampExposureTimeNs(long requestedNs, Range<Long> sensorExposureTimeRange) {
         if (sensorExposureTimeRange == null) {
             return requestedNs;
         }
@@ -55,7 +55,7 @@ final class ManualExposurePolicy {
      * @param sensorSensitivityRange sensor-reported ISO range, or {@code null} when unknown.
      * @return ISO value to apply to the manual still capture.
      */
-    static int pickSensitivityForManualCapture(long targetExposureNs,
+    public static int pickSensitivityForManualCapture(long targetExposureNs,
                                                 Integer meteredIso,
                                                 Long meteredExposureNs,
                                                 Range<Integer> sensorSensitivityRange) {
@@ -75,7 +75,7 @@ final class ManualExposurePolicy {
      * Choose a SENSOR_FRAME_DURATION large enough to encompass the shutter time (plus guard band)
      * but no larger than the sensor's reported maximum.
      */
-    static long pickFrameDurationForManualCapture(long exposureNs, Long sensorMaxFrameDurationNs) {
+    public static long pickFrameDurationForManualCapture(long exposureNs, Long sensorMaxFrameDurationNs) {
         long frameDurationNs = exposureNs + FRAME_DURATION_GUARD_NS;
         if (sensorMaxFrameDurationNs != null && sensorMaxFrameDurationNs > 0L) {
             frameDurationNs = Math.min(frameDurationNs, sensorMaxFrameDurationNs);
