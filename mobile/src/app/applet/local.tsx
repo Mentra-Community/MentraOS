@@ -1,7 +1,7 @@
 import {useEffect, useRef, useState} from "react"
 import {useLocalSearchParams} from "expo-router"
 import {File} from "expo-file-system"
-import {View} from "react-native"
+import {ActivityIndicator, Image, View} from "react-native"
 
 import {Text} from "@/components/ignite"
 import {miniappHost} from "@/components/miniapp/MiniappHost"
@@ -39,6 +39,15 @@ export default function LocalMiniAppPage() {
   const goBackRef = useRef(goBack)
   goBackRef.current = goBack
 
+  // Phase machine: drives the loading affordance until the WebView
+  // takes over the screen. "ready" means the UI is open AND the
+  // MiniappHost WebView is mounted on top — at that point this route
+  // returns to a transparent passthrough so taps reach the WebView.
+  const [phase, setPhase] = useState<
+    "installing" | "spawning" | "opening" | "ready" | "error"
+  >(devUrl || version ? "installing" : "error")
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+
   useEffect(() => {
     if (!packageName) return
 
@@ -55,23 +64,26 @@ export default function LocalMiniAppPage() {
     }
 
     let cancelled = false
+    const fail = (msg: string) => {
+      if (cancelled) return
+      console.warn(`local.tsx: ${packageName} ${msg}`)
+      setErrorMessage(msg)
+      setPhase("error")
+    }
 
     const launch = async () => {
       let resolvedVersion: string | null = null
 
       if (devUrl) {
-        // Snapshot the live dev bundle so we have an on-disk copy of
-        // dist/background/index.js + dist/ui/index.html. The dev server
-        // serves bundle.zip from a sidecar port; resolve it from the
-        // route param or persisted MMKV key.
+        setPhase("installing")
         const portNum = resolveDevPort(devPort, packageName)
         if (portNum === null) {
-          console.warn(`local.tsx: no dev port for ${packageName}`)
+          fail("no dev port configured")
           return
         }
         const sidecarBase = buildSidecarBaseUrl(devUrl, portNum)
         if (!sidecarBase) {
-          console.warn(`local.tsx: bad dev URL "${devUrl}" for ${packageName}`)
+          fail(`bad dev URL "${devUrl}"`)
           return
         }
         const versionOverride = `dev-${Date.now()}`
@@ -80,7 +92,7 @@ export default function LocalMiniAppPage() {
           {versionOverride},
         )
         if (installRes.is_error()) {
-          console.warn(`local.tsx: dev snapshot failed for ${packageName}:`, installRes.error)
+          fail(`dev snapshot failed: ${installRes.error?.message ?? installRes.error}`)
           return
         }
         appRegistry.gcDevVersions(packageName, 2)
@@ -90,7 +102,7 @@ export default function LocalMiniAppPage() {
       } else if (version) {
         resolvedVersion = version
       } else {
-        console.warn(`local.tsx: ${packageName} has no devUrl or version — cannot launch`)
+        fail("no devUrl or version — cannot launch")
         return
       }
 
@@ -98,7 +110,7 @@ export default function LocalMiniAppPage() {
 
       const entryPaths = appRegistry.getMiniappEntryPaths(packageName, resolvedVersion)
       if (!entryPaths?.background) {
-        console.warn(`local.tsx: ${packageName}@${resolvedVersion} missing entry.background`)
+        fail(`${resolvedVersion} missing entry.background`)
         return
       }
       const manifest = appRegistry.getMiniappManifest(packageName, resolvedVersion) as {
@@ -110,9 +122,12 @@ export default function LocalMiniAppPage() {
 
       const mj = getMentraJS()
       if (!mj) {
-        console.warn(`local.tsx: MentraJS not bootstrapped — cannot spawn ${packageName}`)
+        fail("MentraJS runtime not bootstrapped")
         return
       }
+
+      if (cancelled) return
+      setPhase("spawning")
 
       // Spawn the JSContext if it isn't already alive. Re-foregrounding
       // a running miniapp just reopens the UI half without re-spawning.
@@ -122,7 +137,7 @@ export default function LocalMiniAppPage() {
           permissions: declaredPermissions,
         })
         if (!ok) {
-          console.warn(`local.tsx: spawn failed for ${packageName}`)
+          fail("spawn failed — see logs")
           return
         }
       }
@@ -132,6 +147,7 @@ export default function LocalMiniAppPage() {
         return
       }
 
+      setPhase("opening")
       if (entryPaths.ui) {
         miniappHost.openUI(packageName, {
           uiUri: entryPaths.ui,
@@ -143,6 +159,7 @@ export default function LocalMiniAppPage() {
         })
       }
       useAppStatusStore.getState().setForeground(packageName)
+      if (!cancelled) setPhase("ready")
     }
 
     void launch()
@@ -171,8 +188,59 @@ export default function LocalMiniAppPage() {
     return <Text>Missing required parameters</Text>
   }
 
+  // Loading affordance: until the WebView is mounted on top, this route
+  // is what the user sees. Without it the screen is blank for 1-10s on
+  // a fresh dev install (bundle download + JSContext spawn).
+  if (phase !== "ready") {
+    const label =
+      phase === "installing"
+        ? "Downloading…"
+        : phase === "spawning"
+          ? "Starting…"
+          : phase === "opening"
+            ? "Opening…"
+            : "Couldn't open"
+    return (
+      <View className="flex-1 items-center justify-center px-8">
+        <View className="items-center gap-4">
+          {iconUrl ? (
+            <Image
+              source={{uri: iconUrl}}
+              style={{width: 72, height: 72, borderRadius: 16}}
+              resizeMode="cover"
+            />
+          ) : (
+            <View
+              style={{
+                width: 72,
+                height: 72,
+                borderRadius: 16,
+                backgroundColor: "rgba(120,120,120,0.2)",
+              }}
+            />
+          )}
+          {appName ? (
+            <Text className="text-base font-semibold text-center" text={appName} />
+          ) : null}
+          {phase === "error" ? (
+            <Text
+              className="text-[13px] text-center text-red-500 max-w-[280px]"
+              text={errorMessage ?? "Couldn't open"}
+            />
+          ) : (
+            <View className="flex-row items-center gap-2">
+              <ActivityIndicator />
+              <Text className="text-[13px] text-muted-foreground" text={label} />
+            </View>
+          )}
+        </View>
+      </View>
+    )
+  }
+
   // MiniappHost renders the WebView at app root above the Stack so it
-  // survives navigation. This route is just a hook for openUI / closeUI.
+  // survives navigation. Once ready, this route is just a pointer-events:none
+  // pass-through so taps reach the WebView.
   return <View style={{flex: 1, backgroundColor: "transparent"}} pointerEvents="none" />
 }
 

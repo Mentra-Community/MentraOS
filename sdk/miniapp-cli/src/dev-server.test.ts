@@ -19,14 +19,14 @@ describe("listProjectFiles — dist/ inclusion", () => {
     rmSync(root, {recursive: true, force: true})
   })
 
-  function touch(rel: string) {
+  function touch(rel: string, contents = "// stub") {
     const abs = join(root, rel)
     mkdirSync(join(abs, ".."), {recursive: true})
-    writeFileSync(abs, "// stub")
+    writeFileSync(abs, contents)
   }
 
   test("includes dist/background/index.js + dist/ui/index.html so the snapshot ships both bundles", () => {
-    touch("miniapp.json")
+    touch('miniapp.json', '{"packageName":"com.test","version":"1.0.0","name":"Test"}')
     touch("dist/background/index.js")
     touch("dist/ui/index.html")
     touch("dist/ui/main.js")
@@ -38,25 +38,51 @@ describe("listProjectFiles — dist/ inclusion", () => {
     expect(listed).toContain("miniapp.json")
   })
 
-  test("excludes node_modules / .git / .next", () => {
+  test("strict allowlist: source + build config + node_modules + public are NOT shipped", () => {
+    touch('miniapp.json', '{"packageName":"com.test","version":"1.0.0","name":"Test"}')
+    touch("dist/background/index.js")
+    touch("src/background/index.ts")
+    touch("package.json")
+    touch("tsconfig.json")
+    touch("build.ts")
+    touch("bunfig.toml")
     touch("node_modules/x/index.js")
-    touch(".git/HEAD")
-    touch(".next/build/manifest.json")
-    touch("miniapp.json")
+    touch("public/fonts/big.ttf")
     const listed = listProjectFiles(root)
+    expect(listed.some((p) => p.startsWith("src/"))).toBe(false)
+    expect(listed.some((p) => p.startsWith("public/"))).toBe(false)
     expect(listed.some((p) => p.startsWith("node_modules/"))).toBe(false)
-    expect(listed.some((p) => p.startsWith(".git/"))).toBe(false)
-    expect(listed.some((p) => p.startsWith(".next/"))).toBe(false)
+    expect(listed).not.toContain("package.json")
+    expect(listed).not.toContain("tsconfig.json")
+    expect(listed).not.toContain("build.ts")
+    expect(listed).not.toContain("bunfig.toml")
     expect(listed).toContain("miniapp.json")
+    expect(listed).toContain("dist/background/index.js")
   })
 
-  test("excludes hidden .env files but allows top-level config files", () => {
-    touch(".env.local")
-    touch(".env")
-    touch("package.json")
+  test("ships the manifest-declared icon and skips unrelated images", () => {
+    touch('miniapp.json', '{"packageName":"com.test","version":"1.0.0","name":"Test","icon":"my-icon.png"}')
+    touch("my-icon.png")
+    touch("other-image.png")
+    touch("dist/background/index.js")
     const listed = listProjectFiles(root)
-    expect(listed.some((p) => p.startsWith(".env"))).toBe(false)
-    expect(listed).toContain("package.json")
+    expect(listed).toContain("my-icon.png")
+    expect(listed).not.toContain("other-image.png")
+  })
+
+  test("defaults to icon.png when manifest does not declare an icon", () => {
+    touch('miniapp.json', '{"packageName":"com.test","version":"1.0.0","name":"Test"}')
+    touch("icon.png")
+    touch("dist/background/index.js")
+    const listed = listProjectFiles(root)
+    expect(listed).toContain("icon.png")
+  })
+
+  test("skips icon if it is missing from disk (manifest may be stale)", () => {
+    touch('miniapp.json', '{"packageName":"com.test","version":"1.0.0","name":"Test","icon":"icon.png"}')
+    touch("dist/background/index.js")
+    const listed = listProjectFiles(root)
+    expect(listed).not.toContain("icon.png")
   })
 })
 

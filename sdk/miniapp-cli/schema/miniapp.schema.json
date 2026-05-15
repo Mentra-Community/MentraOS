@@ -54,6 +54,9 @@
       "type": "object",
       "description": "Two-layer bundle entry points. Background is the always-running JSContext entry; UI is the on-demand WebView entry.",
       "additionalProperties": false,
+      "required": [
+        "background"
+      ],
       "properties": {
         "background": {
           "type": "string",
@@ -63,12 +66,14 @@
           "type": "string",
           "description": "Path to the UI bundle entry HTML (e.g. dist/ui/index.html). Optional — pure-background miniapps don't need a WebView."
         }
-      },
-      "required": ["background"]
+      }
     },
     "type": {
       "type": "string",
-      "enum": ["standard", "background"],
+      "enum": [
+        "standard",
+        "background"
+      ],
       "description": "Miniapp type. 'standard' includes a UI WebView; 'background' is JSContext-only. Defaults to 'standard'."
     },
     "permissions": {

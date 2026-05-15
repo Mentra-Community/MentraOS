@@ -5,12 +5,13 @@
  *   - dist/background/index.js     — JSContext entry, no DOM
  *   - dist/ui/index.html + assets  — WebView entry, full DOM
  *
- * Bun.build() handles both. The background bundle uses target: "bun"
- * with `external: ["@mentra/miniapp/background"]` so the SDK isn't
- * re-bundled into every miniapp's background image. (The runtime
- * polyfill shipped inside the host binary owns the actual `__dispatch`
- * call; the SDK module is type-only on the wire.) The UI bundle uses
- * target: "browser" with no externals.
+ * Bun.build() handles both. The background bundle uses `format: "iife"`
+ * because JSC + Zipline/QuickJS evaluate it as a classic script — any
+ * top-level ESM `export` is a SyntaxError there. `@mentra/miniapp/background`
+ * is bundled in (not external) because the JSContext has no module
+ * resolver; the host's polyfill installs `__dispatch`/`__deliver` but
+ * does NOT provide the SDK surface. The UI bundle uses target: "browser"
+ * with no externals.
  *
  * Build-time env vars: any `MENTRA_PUBLIC_*` key in your shell or
  * miniapp-local `.env` gets inlined into both bundles via define.
@@ -46,14 +47,9 @@ for (const [k, v] of Object.entries(process.env)) {
 const backgroundResult = await Bun.build({
   entrypoints: ["./src/background/index.ts"],
   outdir: `${distDir}/background`,
-  target: "bun",
-  format: "esm",
+  target: "browser",
+  format: "iife",
   minify: false,
-  // The host's polyfill bundle provides @mentra/miniapp/background's
-  // runtime shape; bundle the import so the JSContext doesn't try to
-  // re-execute the SDK at runtime. Treat the import as external — the
-  // runtime resolves the symbols against globals injected by the polyfill.
-  external: ["@mentra/miniapp/background"],
   define,
 })
 

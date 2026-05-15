@@ -7,7 +7,8 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "bun test",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist assets/startup.js ../crust/ios/Resources/startup.js",
+    "prepare": "node scripts/build.mjs"
   },
   "files": [
     "src",

@@ -228,6 +228,16 @@ export class MentraJSRouter {
     // them on the dispatcher's manifest map).
     this.spawnCache.set(packageName, {miniappJs, permissions: options?.permissions ?? []})
     this.crashController?.onSpawn(packageName)
+
+    // Fire the `init` envelope so the polyfill's __deliver handler
+    // resolves `__mentraInitCallback(sessionId)`. The SDK's
+    // `registerMiniapp(handler)` wires that callback to construct
+    // MiniappSession and call the user's handler. Without this
+    // dispatch the user's code never runs — `registerMiniapp` just
+    // assigns to a global and waits.
+    const sessionId = `${packageName}-${Date.now().toString(36)}`
+    void this.crust.mentraJsDispatchToJs(packageName, {kind: "init", sessionId})
+
     return true
   }
 
@@ -278,6 +288,10 @@ export class MentraJSRouter {
           await this.crust.mentraJsSetManifest(packageName, cached.permissions)
         }
         controller.onSpawn(packageName)
+        // Re-fire the init envelope so the respawned context's
+        // `registerMiniapp` handler runs again.
+        const sessionId = `${packageName}-${Date.now().toString(36)}`
+        void this.crust.mentraJsDispatchToJs(packageName, {kind: "init", sessionId})
         this.logger.log(`respawned ${packageName} after crash`)
       })()
     }, outcome.scheduleRespawnAfterMs)

@@ -28,14 +28,16 @@ for (const [k, v] of Object.entries(process.env)) {
   }
 }
 
+// JSC + Zipline/QuickJS both evaluate the background bundle as a classic
+// script. ESM `export` keywords are syntax errors there, so we emit an
+// IIFE. `@mentra/miniapp/background` MUST be bundled in (not external)
+// because the JSContext has no module resolver — the polyfill installs
+// `__dispatch` / `__deliver` but it does NOT provide the SDK surface.
 const backgroundResult = await Bun.build({
   entrypoints: ["./src/background/index.ts"],
   outdir: `${distDir}/background`,
-  target: "bun",
-  format: "esm",
-  // Host polyfill bundle provides @mentra/miniapp/background's runtime
-  // shape (the typed wrappers around __dispatch). Don't bundle it.
-  external: ["@mentra/miniapp/background"],
+  target: "browser",
+  format: "iife",
   minify: false,
   define,
 })

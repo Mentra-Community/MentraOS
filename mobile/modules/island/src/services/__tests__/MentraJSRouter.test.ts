@@ -278,7 +278,7 @@ describe("MentraJSRouter", () => {
     ])
   })
 
-  test("spawnAndRegister spawns + sets manifest + registers", async () => {
+  test("spawnAndRegister spawns + sets manifest + registers + dispatches init", async () => {
     const ok = await router.spawnAndRegister("com.foo", "console.log(1)", {permissions: ["MICROPHONE"]})
     expect(ok).toBe(true)
     expect(crust.spawnCalls).toEqual([
@@ -286,6 +286,12 @@ describe("MentraJSRouter", () => {
     ])
     expect(crust.setManifestCalls).toEqual([{packageName: "com.foo", permissions: ["MICROPHONE"]}])
     expect(runtimeMock.registerCalls).toHaveLength(1)
+    // The init envelope is what fires registerMiniapp's handler inside
+    // the JSContext. Without it, the user's code never runs.
+    const initCalls = crust.dispatchCalls.filter((c) => c.envelope.kind === "init")
+    expect(initCalls).toHaveLength(1)
+    expect(initCalls[0]!.packageName).toBe("com.foo")
+    expect(typeof initCalls[0]!.envelope.sessionId).toBe("string")
   })
 
   test("spawnAndRegister returns false when native spawn fails", async () => {

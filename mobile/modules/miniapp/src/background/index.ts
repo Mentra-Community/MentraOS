@@ -16,6 +16,7 @@
  */
 
 export {MiniappSession, type MiniappSessionOptions} from "../session"
+export {registerMiniapp, type MiniappInitHandler} from "./register"
 
 // Event / data type re-exports — these are payload shapes a miniapp's
 // background-side handlers consume from session.transcription.on, etc.

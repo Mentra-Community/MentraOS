@@ -1,18 +1,19 @@
 /**
- * Background JSContext entry point. The MentraOS host spawns this file
+ * Background JSContext entry point. The MentraOS host loads this file
  * inside a per-miniapp JSContext (iOS-JSC / Android-QuickJS) and calls
- * `init(session)` once on startup. All glasses-side logic lives here.
+ * the `registerMiniapp` handler once CONNECT completes. All glasses-side
+ * logic lives in here.
  *
  * Background runs **always** while the host app process is alive — even
  * when the user hasn't opened the miniapp's UI. Register your event
- * subscriptions inside `init`; the runtime tears them down when the
+ * subscriptions inside the handler; the runtime tears them down when the
  * miniapp is disabled or uninstalled.
  */
 
-import type {MiniappSession} from "@mentra/miniapp/background"
+import {registerMiniapp} from "@mentra/miniapp/background"
 import "../shared/channels"
 
-export async function init(session: MiniappSession): Promise<void> {
+registerMiniapp(async (session) => {
   // Hydrate any persisted state from session.storage (string KV — JSON-encode
   // structured data yourself).
   // const stored = await session.storage.get("notes")
@@ -32,4 +33,4 @@ export async function init(session: MiniappSession): Promise<void> {
     const roundtripMs = Date.now() - at
     session.ui.send("pong", {at: Date.now(), roundtripMs})
   })
-}
+})

@@ -276,39 +276,64 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
  * Walk the dev project's directory tree and return a list of relative file
  * paths suitable for inclusion in the bundle zip.
  *
- * BFS-bounded:
- *   - max depth 5 (most miniapp trees are 2-3 levels deep)
- *   - max files 500 (truncates with a warning beyond that)
+ * STRICT runtime-artifact allowlist:
+ *   - miniapp.json at the root (required — unpacker fails without it)
+ *   - icon.png (or whatever `manifest.icon` points at) — used for the
+ *     home tile and the QR-scan icon preview
+ *   - dist/ — the entire two-layer build output: dist/background/*.js
+ *     and dist/ui/* (HTML, JS chunks, CSS chunks). Recursively included.
  *
- * Excludes: node_modules, dist, .git, .next, build, .cache, .turbo, .env*,
- * any hidden dotfile, and __mentra_dev paths (the sidecar's own).
+ * Source files (src/), build config (package.json, tsconfig.json,
+ * build.ts, bunfig.toml), node_modules/, public/, and stray pack
+ * artifacts (*.zip) are deliberately NOT shipped. They aren't read by
+ * the runtime and including them adds tens-to-hundreds of KB per
+ * install — slow on flaky LAN, painful for a "hot reload" loop.
  *
  * Returns paths *without* a leading slash — they're zip-internal entry
  * names. The phone-side unpacker (Composer.installMiniApp) needs them
  * exactly that way to reconstruct the directory tree on disk.
  */
 export function listProjectFiles(rootDir: string): string[] {
-  const MAX_DEPTH = 5
-  const MAX_FILES = 500
-  // `dist/` is INCLUDED in the dev snapshot zip so the phone-side install
-  // pipeline can pick up the two-layer `dist/background/index.js` +
-  // `dist/ui/index.html` outputs. Legacy single-bundle miniapps didn't
-  // ship dist/ in the zip because the WebView loaded directly from the
-  // dev URL; new two-layer miniapps install the dist/ snapshot for the
-  // background JSContext to read from disk.
-  const EXCLUDED_DIRS = new Set([
-    "node_modules",
-    ".git",
-    ".next",
-    "build",
-    ".cache",
-    ".turbo",
-  ])
-
   const out: string[] = []
-  type Frame = {dir: string; depth: number}
-  const queue: Frame[] = [{dir: rootDir, depth: 0}]
 
+  // miniapp.json (required at zip root).
+  const manifestPath = join(rootDir, "miniapp.json")
+  let manifest: Record<string, unknown> | null = null
+  try {
+    if (statSync(manifestPath).isFile()) {
+      out.push("miniapp.json")
+      manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as Record<string, unknown>
+    }
+  } catch {
+    /* no manifest yet — the dev server will refuse to start; not our
+       problem here. */
+  }
+
+  // Icon (whatever path the manifest declares; default `icon.png`).
+  const iconRel = typeof manifest?.icon === "string" ? manifest.icon : "icon.png"
+  try {
+    if (statSync(join(rootDir, iconRel)).isFile()) {
+      out.push(iconRel.replace(/^\//, ""))
+    }
+  } catch {
+    /* no icon — non-fatal, the home tile will just render the fallback. */
+  }
+
+  // dist/ — full recursive walk. `onBeforeBroadcast` in `dev.ts` runs
+  // a fresh build before each broadcast, so what we read here is
+  // current at zip time. MAX_FILES guards against pathological cases
+  // (e.g. someone copying public/ into dist/).
+  const distRoot = join(rootDir, "dist")
+  const MAX_FILES = 500
+  const MAX_DEPTH = 10
+  type Frame = {dir: string; depth: number}
+  const queue: Frame[] = []
+  try {
+    if (statSync(distRoot).isDirectory()) queue.push({dir: distRoot, depth: 0})
+  } catch {
+    /* no dist yet — initial build failed or hasn't run; ship the
+       manifest + icon and let the host log "missing entry path". */
+  }
   while (queue.length > 0 && out.length < MAX_FILES) {
     const {dir, depth} = queue.shift()!
     let entries: string[]
@@ -318,12 +343,7 @@ export function listProjectFiles(rootDir: string): string[] {
       continue
     }
     for (const entry of entries) {
-      // Skip hidden + excluded directories, .env files, and the sidecar's own paths.
-      if (entry.startsWith(".env")) continue
-      if (entry.startsWith(".") && entry !== ".") continue
-      if (EXCLUDED_DIRS.has(entry)) continue
-      if (entry === "__mentra_dev") continue
-
+      if (entry.startsWith(".")) continue
       const abs = join(dir, entry)
       let stat
       try {
@@ -338,13 +358,14 @@ export function listProjectFiles(rootDir: string): string[] {
         out.push(rel)
         if (out.length >= MAX_FILES) {
           console.warn(
-            `[__mentra_dev] file list truncated at ${MAX_FILES} entries — bundle cache may be incomplete`,
+            `[__mentra_dev] dist file list truncated at ${MAX_FILES} entries — bundle may be incomplete`,
           )
           return out
         }
       }
     }
   }
+
   return out
 }
 

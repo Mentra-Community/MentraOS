@@ -509,7 +509,7 @@ describe("startup bundle — WebSocket", () => {
     expect(closeCall).toBeDefined()
   })
 
-  test("bufferedAmount increments on send + decrements on next microtask", async () => {
+  test("bufferedAmount is a static 0 — native owns the actual queue", () => {
     const stubs = freshStubs()
     const sandbox = evalBundle(stubs)
     const WS = (sandbox as Record<string, unknown>).WebSocket as unknown as new (
@@ -518,12 +518,6 @@ describe("startup bundle — WebSocket", () => {
     const ws = new WS("wss://example.com/socket")
     expect(ws.bufferedAmount).toBe(0)
     ws.send("hello")
-    // After send, bufferedAmount carries the byte count until the
-    // microtask drains.
-    expect(ws.bufferedAmount).toBe(5)
-    // Yield to the microtask queue (Promise.resolve drains microtasks).
-    await Promise.resolve()
-    await Promise.resolve()
     expect(ws.bufferedAmount).toBe(0)
   })
 
