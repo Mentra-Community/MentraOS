@@ -1,4 +1,4 @@
-package com.mentra.asg_client.camera;
+package com.mentra.asg_client.camera.policy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -12,7 +12,7 @@ import org.robolectric.annotation.Config;
 
 /**
  * Phase 3 prep unit tests for {@link FpsRangePolicy}. The selection priorities must match the
- * inline heuristic that previously lived in {@code CameraNeo.chooseOptimalFpsRange}.
+ * inline heuristic that previously lived in {@code CameraNeoService.chooseOptimalFpsRange}.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
@@ -98,7 +98,7 @@ public class FpsRangePolicyTest {
 
     @Test
     public void defaultFpsRangeIs30Fixed() {
-        // Sanity check for the fallback constant CameraNeo uses when no characteristic is published.
+        // Sanity check for the fallback constant CameraNeoService uses when no characteristic is published.
         assertThat(FpsRangePolicy.DEFAULT_FPS_RANGE).isEqualTo(Range.create(30, 30));
     }
 

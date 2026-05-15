@@ -1,11 +1,11 @@
-package com.mentra.asg_client.camera;
+package com.mentra.asg_client.camera.policy;
 
 import android.util.Range;
 
 /**
  * Phase 3 prep: pure-logic FPS-range selection policy for photo preview.
  *
- * <p>Extracted from {@code CameraNeo.chooseOptimalFpsRange} so the heuristic is unit-testable
+ * <p>Extracted from {@code CameraNeoService.chooseOptimalFpsRange} so the heuristic is unit-testable
  * without standing up a camera service. Behavior is byte-for-byte equivalent.
  *
  * <p>Selection priority (matches the historical heuristic):
@@ -28,7 +28,7 @@ public final class FpsRangePolicy {
     /**
      * Select the optimal FPS range from a non-empty list of options.
      *
-     * <p>Pure function — does not log. {@link CameraNeo} performs its own logging using the
+     * <p>Pure function — does not log. {@link CameraNeoService} performs its own logging using the
      * returned value.
      *
      * @throws IllegalArgumentException if {@code ranges} is null or empty (use
