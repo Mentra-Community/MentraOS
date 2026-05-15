@@ -2,7 +2,15 @@ import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk"
 
 import {OtaProgressMessages} from "@/app/ota/otaProgressTimeouts"
 
-import {getOtaErrorMessage, shouldShowChangeWifiForOtaDownloadFailure} from "@/utils/otaErrorMapping"
+import {getOtaErrorMessage, otaTlsTrustUserMessage, shouldShowChangeWifiForOtaDownloadFailure} from "@/utils/otaErrorMapping"
+
+const TLS_GUIDANCE_DEFAULT =
+  "Your Mentra Live can't reach the internet. Please restart your Mentra Live.\n\n" +
+  "Mentra Live does not work on captive portal WiFi networks. Please try a different WiFi network."
+
+const TLS_GUIDANCE_CUSTOM_MODEL =
+  "Your Spectacles can't reach the internet. Please restart your Mentra Live.\n\n" +
+  "Mentra Live does not work on captive portal WiFi networks. Please try a different WiFi network."
 
 function baseOtaStatus(overrides: Partial<OtaStatus> = {}): OtaStatus {
   return {
@@ -35,8 +43,30 @@ describe("getOtaErrorMessage", () => {
     expect(getOtaErrorMessage("no_internet")).toBe("Glasses WiFi has no internet connection")
   })
 
-  it("maps ssl_error to connection message", () => {
-    expect(getOtaErrorMessage("ssl_error")).toBe("Secure connection failed — try a different WiFi network")
+  it("maps ssl_error to TLS trust guidance", () => {
+    expect(getOtaErrorMessage("ssl_error")).toBe(TLS_GUIDANCE_DEFAULT)
+  })
+
+  it("maps ssl_trust_failure to TLS trust guidance", () => {
+    expect(getOtaErrorMessage("ssl_trust_failure")).toBe(TLS_GUIDANCE_DEFAULT)
+  })
+
+  it("uses device model in TLS trust guidance when provided", () => {
+    expect(getOtaErrorMessage("ssl_error", "Spectacles")).toBe(TLS_GUIDANCE_CUSTOM_MODEL)
+  })
+
+  it("sanitizes raw JVM cert path errors from older glasses builds", () => {
+    expect(
+      getOtaErrorMessage(
+        "java.security.cert.CertPathValidatorException: Trust anchor or certification path not found.",
+        "Spectacles",
+      ),
+    ).toBe(TLS_GUIDANCE_CUSTOM_MODEL)
+  })
+
+  it("exposes otaTlsTrustUserMessage helper", () => {
+    expect(otaTlsTrustUserMessage()).toBe(TLS_GUIDANCE_DEFAULT)
+    expect(otaTlsTrustUserMessage("  Spectacles  ")).toBe(TLS_GUIDANCE_CUSTOM_MODEL)
   })
 
   it("maps download_failed to download message", () => {

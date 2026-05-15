@@ -13,6 +13,7 @@ import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {logEvent} from "@/utils/analytics"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
+import {getOtaErrorMessage} from "@/utils/otaErrorMapping"
 
 import {
   DOWNLOAD_STUCK_TIMEOUT_MS,
@@ -72,6 +73,7 @@ export default function OtaProgressScreen() {
   const buildNumber = useGlassesStore((state) => state.buildNumber)
   const besFwVersion = useGlassesStore((state) => state.besFwVersion)
   const mtkFwVersion = useGlassesStore((state) => state.mtkFwVersion)
+  const deviceModel = useGlassesStore((state) => state.deviceModel)
 
   const [progressState, setProgressState] = useState<ProgressState>("starting")
   const [retryCount, setRetryCount] = useState(0)
@@ -1905,7 +1907,10 @@ export default function OtaProgressScreen() {
           {errorMessage ? (
             <>
               <View className="h-2" />
-              <Text text={errorMessage} className="text-sm text-center text-secondary-foreground" />
+              <Text
+                text={getOtaErrorMessage(errorMessage, deviceModel)}
+                className="text-sm text-center text-secondary-foreground"
+              />
             </>
           ) : null}
           <View className="h-2" />
