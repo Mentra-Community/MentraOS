@@ -681,6 +681,24 @@ class LocalMiniappRuntime {
       case MiniappRequestType.STORAGE_LIST:
         this.handleStorageList(packageName, payload, requestId)
         break
+      case MiniappRequestType.STORAGE_CLEAR:
+        this.handleStorageClear(packageName, requestId)
+        break
+      case MiniappRequestType.STORAGE_HAS:
+        this.handleStorageHas(packageName, payload, requestId)
+        break
+      case MiniappRequestType.STORAGE_GET_ALL:
+        this.handleStorageGetAll(packageName, requestId)
+        break
+      case MiniappRequestType.STORAGE_SET_MULTIPLE:
+        this.handleStorageSetMultiple(packageName, payload, requestId)
+        break
+      case MiniappRequestType.STORAGE_FLUSH:
+        // No-op today — MMKV writes through synchronously. Reserved so
+        // a future debounced backend can honor "flush before I quit"
+        // calls without breaking the API.
+        this.sendResult(packageName, requestId, true)
+        break
       case MiniappRequestType.CAMERA_FOV:
         this.handleCameraFov(packageName, payload, requestId)
         break
@@ -1340,6 +1358,100 @@ class LocalMiniappRuntime {
     }
   }
 
+  private async handleStorageClear(packageName: string, requestId?: string): Promise<void> {
+    try {
+      const prefix = this.getStorageKeyPrefix(packageName)
+      const allKeys = mmkvStorage.getAllKeys()
+      for (const k of allKeys) {
+        if (k.startsWith(prefix)) mmkvStorage.remove(k)
+      }
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      console.error(`${LOG_TAG}: storage_clear error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Storage error",
+      })
+    }
+  }
+
+  private async handleStorageHas(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const key = payload.key as string
+      if (!key) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INTERNAL,
+          message: "storage_has requires a key",
+        })
+        return
+      }
+      const fullKey = this.getStorageKeyPrefix(packageName) + key
+      const result = mmkvStorage.load<unknown>(fullKey)
+      this.sendResult(packageName, requestId, true, {has: result.is_ok()})
+    } catch (err) {
+      console.error(`${LOG_TAG}: storage_has error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Storage error",
+      })
+    }
+  }
+
+  private async handleStorageGetAll(packageName: string, requestId?: string): Promise<void> {
+    try {
+      const prefix = this.getStorageKeyPrefix(packageName)
+      const allKeys = mmkvStorage.getAllKeys()
+      const values: Record<string, string> = {}
+      for (const k of allKeys) {
+        if (!k.startsWith(prefix)) continue
+        const r = mmkvStorage.load<unknown>(k)
+        if (r.is_ok()) {
+          const v = r.value
+          values[k.slice(prefix.length)] = typeof v === "string" ? v : String(v ?? "")
+        }
+      }
+      this.sendResult(packageName, requestId, true, {values})
+    } catch (err) {
+      console.error(`${LOG_TAG}: storage_get_all error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Storage error",
+      })
+    }
+  }
+
+  private async handleStorageSetMultiple(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const values = payload.values as Record<string, unknown> | undefined
+      if (!values || typeof values !== "object") {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INTERNAL,
+          message: "storage_set_multiple requires a values object",
+        })
+        return
+      }
+      const prefix = this.getStorageKeyPrefix(packageName)
+      for (const [key, value] of Object.entries(values)) {
+        mmkvStorage.save(prefix + key, value ?? null)
+      }
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      console.error(`${LOG_TAG}: storage_set_multiple error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Storage error",
+      })
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Camera FOV
   // ---------------------------------------------------------------------------
@@ -1706,7 +1818,16 @@ class LocalMiniappRuntime {
     // Collect all subscribers: exact match, plus wildcard matches for streams
     // that carry a language tag. A miniapp subscribed to "transcription:auto"
     // should receive any "transcription:<lang>" event (the detected language
-    // is conveyed in the event data, not the stream key). Same for translation.
+    // is conveyed in the event data, not the stream key).
+    //
+    // Translation streams support cloud v3's wildcard patterns. Incoming
+    // events are keyed `translation:<source>:<target>` and we match against
+    // any of:
+    //   translation:*:*             — all-pairs (TranslationModule.on)
+    //   translation:*:<target>      — any-source → target (TranslationModule.to)
+    //   translation:<source>:*      — source → any-target (rare)
+    //   translation:<source>:<target> — exact (TranslationModule.fromTo)
+    //   translation:auto            — back-compat alias for *:*
     const matchedSubs = new Set<string>()
     const exact = this.streamSubscribers.get(normalizedStream)
     if (exact) for (const p of exact) matchedSubs.add(p)
@@ -1715,8 +1836,26 @@ class LocalMiniappRuntime {
       const autoSubs = this.streamSubscribers.get("transcription:auto")
       if (autoSubs) for (const p of autoSubs) matchedSubs.add(p)
     } else if (normalizedStream.startsWith("translation:")) {
-      const autoSubs = this.streamSubscribers.get("translation:auto")
-      if (autoSubs) for (const p of autoSubs) matchedSubs.add(p)
+      // translation:<source>:<target> — match each wildcard variant.
+      const parts = normalizedStream.split(":")
+      // parts[0] = "translation", parts[1] = source, parts[2] = target
+      if (parts.length === 3) {
+        const [, source, target] = parts
+        const patterns = [
+          "translation:auto", // legacy alias for *:*
+          "translation:*:*", // cloud v3 "all pairs"
+          `translation:*:${target}`, // cloud v3 "to <target>"
+          `translation:${source}:*`, // cloud v3 "from <source>"
+        ]
+        for (const pat of patterns) {
+          const subs = this.streamSubscribers.get(pat)
+          if (subs) for (const p of subs) matchedSubs.add(p)
+        }
+      } else {
+        // Malformed stream key — still honor the legacy auto alias.
+        const autoSubs = this.streamSubscribers.get("translation:auto")
+        if (autoSubs) for (const p of autoSubs) matchedSubs.add(p)
+      }
     }
 
     // Touch event per-gesture fan-out. SDK-side dispatch is keyed on the

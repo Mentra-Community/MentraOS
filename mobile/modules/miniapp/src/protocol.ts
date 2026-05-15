@@ -61,6 +61,11 @@ export enum MiniappRequestType {
   STORAGE_SET = "miniapp_storage_set",
   STORAGE_DELETE = "miniapp_storage_delete",
   STORAGE_LIST = "miniapp_storage_list",
+  STORAGE_CLEAR = "miniapp_storage_clear",
+  STORAGE_HAS = "miniapp_storage_has",
+  STORAGE_GET_ALL = "miniapp_storage_get_all",
+  STORAGE_SET_MULTIPLE = "miniapp_storage_set_multiple",
+  STORAGE_FLUSH = "miniapp_storage_flush",
 
   /** Write camera FOV settings. */
   CAMERA_FOV = "miniapp_camera_fov",

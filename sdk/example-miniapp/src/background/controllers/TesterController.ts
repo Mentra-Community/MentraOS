@@ -90,11 +90,10 @@ export class TesterController {
       case "transcription":
         return this.session.transcription.on((data) => emit(data.isFinal ? "final" : "partial", data))
       case "translation":
-        // Default to en-US → es-ES; UI can re-issue tester:fire with
-        // forLanguagePair if it wants something else.
-        return this.session.translation.forLanguagePair("en-US", "es-ES", (data) =>
-          emit("event", data),
-        )
+        // Default to any-source → es-ES so the tester picks up whatever
+        // the cloud is translating. UI can re-issue tester:fire with
+        // fromTo / to if it wants a different shape.
+        return this.session.translation.to("es-ES", (data) => emit("event", data))
       case "input":
         return this.session.input.onButtonPress((data) => emit("button", data))
       case "imu":
