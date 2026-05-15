@@ -204,16 +204,28 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     // a fresh boot), the just-installed dev miniapp takes 10+ seconds
     // to show up because the local entry is held back behind the cloud
     // fetch.
+    //
+    // Pass 1 carries over the PREVIOUS snapshot's cloud apps so the
+    // tray doesn't flicker — empty cloud list on first render would
+    // blank out tiles for a frame before pass 2 re-merges them. On
+    // first-ever refresh (state.apps is empty) we skip pass 1 entirely
+    // and let pass 2 own the only emit; there are no rendered tiles to
+    // flicker yet.
+    const previousState = get()
     const localApps = await appRegistry.getInstalledMiniapps()
-    let pass1 = projectApps(get(), localApps, [])
-    if (hostHooks.postProcessApps) {
-      try {
-        pass1 = await hostHooks.postProcessApps(pass1)
-      } catch (e) {
-        console.warn("ISLAND: postProcessApps threw on local-only pass:", e)
+    const hasPriorSnapshot = previousState.apps.length > 0
+    if (hasPriorSnapshot) {
+      const previousCloudApps = previousState.apps.filter((a) => !a.local)
+      let pass1 = projectApps(previousState, localApps, previousCloudApps)
+      if (hostHooks.postProcessApps) {
+        try {
+          pass1 = await hostHooks.postProcessApps(pass1)
+        } catch (e) {
+          console.warn("ISLAND: postProcessApps threw on local-only pass:", e)
+        }
       }
+      set({apps: pass1})
     }
-    set({apps: pass1})
 
     // Pass 2: fetch cloud applets, merge, re-emit.
     let extraApps: ClientApp[] = []

@@ -20,8 +20,17 @@ class LocalSttFallbackCoordinator {
   private localActive = false
 
   private constructor() {
-    // Subscribe to flag changes if the host supports it.
     const settings = getRuntimeHooks().settings
+    // Reset the persisted activeness flag on boot. The flag is an
+    // observable mirror for native code (bluetooth-sdk reads it to
+    // decide whether to keep mic transcription on); the in-memory
+    // state in this coordinator is the source of truth. Without this
+    // reset, a value left from the prior session ("true") causes
+    // native to start the mic on next launch BEFORE any miniapp
+    // registers a transcription subscription — which is wrong.
+    settings?.setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, false)
+
+    // Subscribe to flag changes if the host supports it.
     settings?.subscribeKey?.(
       ISLAND_SETTINGS_KEYS.localSttFallbackEnabled,
       (enabled) => {
