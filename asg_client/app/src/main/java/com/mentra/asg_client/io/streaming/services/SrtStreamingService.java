@@ -29,7 +29,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.RequiresPermission;
 import androidx.core.app.NotificationCompat;
 
-import com.mentra.asg_client.camera.CameraNeo;
+import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.utils.WakeLockManager;
 import com.mentra.asg_client.reporting.domains.StreamingReporting;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
@@ -502,7 +502,7 @@ public class SrtStreamingService extends Service {
         mReconnectionSequence++;
       }
 
-      if (CameraNeo.isCameraInUse()) {
+      if (CameraNeoService.isCameraInUse()) {
         String error = "camera_busy";
         Log.e(TAG, "Cannot start SRT stream - camera is busy");
         if (sStatusCallback != null) sStatusCallback.onStreamError(error, mCurrentStreamId);
@@ -510,7 +510,7 @@ public class SrtStreamingService extends Service {
         return;
       }
 
-      CameraNeo.closeKeptAliveCamera();
+      CameraNeoService.closeKeptAliveCamera();
 
       if (mSrtUrl == null || mSrtUrl.isEmpty()) {
         String error = "SRT URL not set";
