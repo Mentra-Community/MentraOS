@@ -2,7 +2,7 @@ package com.mentra.asg_client.camera.testing;
 
 import android.hardware.camera2.CaptureRequest;
 
-import com.mentra.asg_client.camera.StillCaptureBuilder;
+import com.mentra.asg_client.camera.request.StillCaptureBuilder;
 
 import java.util.HashMap;
 import java.util.Map;

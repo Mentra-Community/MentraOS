@@ -33,7 +33,7 @@ public class CameraSettings {
   private CaptureRequest.Key<int[]> mKeyEisMode;  // EIS for video (optional)
 
   private final Context mContext;
-  public final AsgSettings mAsgSettings;  // Public for access in CameraNeo
+  public final AsgSettings mAsgSettings;  // Public for access in CameraNeoService
   private CameraCharacteristics mCharacteristics;
 
   public CameraSettings(Context context) {
