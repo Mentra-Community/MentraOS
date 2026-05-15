@@ -14,6 +14,13 @@ useExpoPublishing()
 // adapter so JS can call into it through QuickJS. The serialization plugin
 // is its prerequisite — it provides the @Serializable code generator that
 // Zipline's adapter relies on.
+//
+// Version pin: the active Kotlin compiler in this Expo SDK 55 build is
+// 2.1.20, which reads metadata up to 2.2.0. Newer Zipline releases (1.22+)
+// ship JARs with metadata 2.3.0 and their compiler plugins call IR APIs
+// that don't exist in 2.1.20. Zipline 1.20.0 is the last release whose
+// runtime metadata (1.9.x) and IR-plugin API are both compatible. Bump
+// only when the host Kotlin compiler clears 2.3.0 metadata.
 buildscript {
   repositories {
     google()
@@ -21,11 +28,11 @@ buildscript {
     gradlePluginPortal()
   }
   dependencies {
-    classpath 'app.cash.zipline:zipline-gradle-plugin:1.27.0'
-    // kotlinx.serialization ships its compiler plugin as a separate
-    // classpath artifact, even though it's part of the Kotlin org. Version
-    // must match the Kotlin gradle plugin Expo prebuild applies (2.0.21).
-    classpath 'org.jetbrains.kotlin:kotlin-serialization:2.0.21'
+    classpath 'app.cash.zipline:zipline-gradle-plugin:1.20.0'
+    // kotlinx.serialization compiler plugin — ships as a separate classpath
+    // artifact from the core Kotlin gradle plugin. Pinned to match the
+    // active Kotlin compiler so its IR-plugin API calls resolve.
+    classpath 'org.jetbrains.kotlin:kotlin-serialization:2.1.20'
   }
 }
 
@@ -100,7 +107,7 @@ dependencies {
   // The Zipline runtime exposes Kotlin objects to QuickJS through generated
   // @ZiplineService adapters; the matching Gradle plugin above produces those
   // adapters at compile time.
-  implementation 'app.cash.zipline:zipline-android:1.27.0'
+  implementation 'app.cash.zipline:zipline-android:1.20.0'
   // kotlinx.serialization runtime (Zipline's adapter generator marshals
   // bridge method args + return values as JSON across the QuickJS boundary).
   implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3'
