@@ -1,4 +1,6 @@
-package com.mentra.asg_client.camera;
+package com.mentra.asg_client.camera.model;
+
+import com.mentra.asg_client.camera.CameraNeoService;
 
 /**
  * Immutable photo work item for {@link PhotoRequestQueue}, except {@link #callback}
@@ -13,7 +15,7 @@ public final class PhotoRequest {
     /** Per-request only; null = auto exposure. */
     public final Long exposureTimeNs;
     public final long timestamp;
-    public CameraNeo.PhotoCaptureCallback callback;
+    public CameraNeoService.PhotoCaptureCallback callback;
 
     public PhotoRequest(
             String filePath,
@@ -21,7 +23,7 @@ public final class PhotoRequest {
             boolean enableLed,
             boolean isFromSdk,
             Long exposureTimeNs,
-            CameraNeo.PhotoCaptureCallback callback) {
+            CameraNeoService.PhotoCaptureCallback callback) {
         this.requestId = "photo_" + System.currentTimeMillis() + "_" + filePath.hashCode();
         this.filePath = filePath;
         this.size = size;

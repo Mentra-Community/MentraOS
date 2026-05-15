@@ -1,7 +1,9 @@
-package com.mentra.asg_client.camera;
+package com.mentra.asg_client.camera.model;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+
+import com.mentra.asg_client.camera.CameraNeoService;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -29,7 +31,7 @@ public class PhotoRequestTest {
 
     @Test
     public void allFieldsExposed() {
-        CameraNeo.PhotoCaptureCallback cb = mock(CameraNeo.PhotoCaptureCallback.class);
+        CameraNeoService.PhotoCaptureCallback cb = mock(CameraNeoService.PhotoCaptureCallback.class);
         PhotoRequest pr = new PhotoRequest("/tmp/y.jpg", "large", true, false, 200_000_000L, cb);
 
         assertThat(pr.filePath).isEqualTo("/tmp/y.jpg");

@@ -1,6 +1,8 @@
-package com.mentra.asg_client.camera;
+package com.mentra.asg_client.camera.model;
 
 import android.util.Log;
+
+import com.mentra.asg_client.camera.CameraNeoService;
 
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -15,7 +17,7 @@ public final class PhotoRequestQueue {
     private static final PhotoRequestQueue INSTANCE = new PhotoRequestQueue();
 
     private final Queue<PhotoRequest> queue = new LinkedList<>();
-    private final Map<String, CameraNeo.PhotoCaptureCallback> callbackRegistry = new HashMap<>();
+    private final Map<String, CameraNeoService.PhotoCaptureCallback> callbackRegistry = new HashMap<>();
 
     private PhotoRequestQueue() {}
 
@@ -77,7 +79,7 @@ public final class PhotoRequestQueue {
     public synchronized void failAllPending(String errorMessage) {
         PhotoRequest pr;
         while ((pr = queue.poll()) != null) {
-            CameraNeo.PhotoCaptureCallback cb = pr.callback;
+            CameraNeoService.PhotoCaptureCallback cb = pr.callback;
             if (cb == null) {
                 cb = callbackRegistry.remove(pr.requestId);
             } else {
@@ -88,7 +90,7 @@ public final class PhotoRequestQueue {
                 cb.onPhotoError(errorMessage);
             }
         }
-        for (CameraNeo.PhotoCaptureCallback orphan : callbackRegistry.values()) {
+        for (CameraNeoService.PhotoCaptureCallback orphan : callbackRegistry.values()) {
             if (orphan != null) {
                 orphan.onPhotoError(errorMessage);
             }

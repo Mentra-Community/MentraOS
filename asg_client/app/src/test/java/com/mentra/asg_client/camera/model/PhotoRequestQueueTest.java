@@ -1,10 +1,12 @@
-package com.mentra.asg_client.camera;
+package com.mentra.asg_client.camera.model;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+
+import com.mentra.asg_client.camera.CameraNeoService;
 
 import org.junit.After;
 import org.junit.Before;
@@ -76,7 +78,7 @@ public class PhotoRequestQueueTest {
     @Test
     public void callbackRegistry_attachedOnPoll_whenRequestHadCallback() {
         PhotoRequestQueue q = PhotoRequestQueue.getInstance();
-        CameraNeo.PhotoCaptureCallback cb = mock(CameraNeo.PhotoCaptureCallback.class);
+        CameraNeoService.PhotoCaptureCallback cb = mock(CameraNeoService.PhotoCaptureCallback.class);
         PhotoRequest r = new PhotoRequest("/cb", "s", false, true, null, cb);
 
         q.offer(r);
@@ -89,7 +91,7 @@ public class PhotoRequestQueueTest {
     @Test
     public void attachRegistryCallback_restoresCallbackOnPeekedRequest() {
         PhotoRequestQueue q = PhotoRequestQueue.getInstance();
-        CameraNeo.PhotoCaptureCallback cb = mock(CameraNeo.PhotoCaptureCallback.class);
+        CameraNeoService.PhotoCaptureCallback cb = mock(CameraNeoService.PhotoCaptureCallback.class);
         PhotoRequest r = new PhotoRequest("/attach", "s", false, true, null, cb);
 
         q.offer(r);
@@ -117,8 +119,8 @@ public class PhotoRequestQueueTest {
     @Test
     public void failAllPending_invokesEveryRegisteredCallback_andDrainsQueue() {
         PhotoRequestQueue q = PhotoRequestQueue.getInstance();
-        CameraNeo.PhotoCaptureCallback cb1 = mock(CameraNeo.PhotoCaptureCallback.class);
-        CameraNeo.PhotoCaptureCallback cb2 = mock(CameraNeo.PhotoCaptureCallback.class);
+        CameraNeoService.PhotoCaptureCallback cb1 = mock(CameraNeoService.PhotoCaptureCallback.class);
+        CameraNeoService.PhotoCaptureCallback cb2 = mock(CameraNeoService.PhotoCaptureCallback.class);
         q.offer(new PhotoRequest("/x", "s", false, true, null, cb1));
         q.offer(new PhotoRequest("/y", "s", false, true, null, cb2));
 
@@ -145,7 +147,7 @@ public class PhotoRequestQueueTest {
         assertThat(polled.callback).isNull();
 
         // failAllPending on empty queue must not invoke anything.
-        CameraNeo.PhotoCaptureCallback cb = mock(CameraNeo.PhotoCaptureCallback.class);
+        CameraNeoService.PhotoCaptureCallback cb = mock(CameraNeoService.PhotoCaptureCallback.class);
         q.failAllPending("ignored");
         verify(cb, never()).onPhotoError("ignored");
     }

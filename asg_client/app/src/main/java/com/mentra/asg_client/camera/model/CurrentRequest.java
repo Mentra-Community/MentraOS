@@ -1,6 +1,8 @@
-package com.mentra.asg_client.camera;
+package com.mentra.asg_client.camera.model;
 
 import java.util.Objects;
+
+import com.mentra.asg_client.camera.CameraNeoService;
 
 /**
  * Snapshot of the in-flight photo capture parameters (replaces scattered {@code pending*} fields).
@@ -13,7 +15,7 @@ public final class CurrentRequest {
     public final Long exposureTimeNs;
     public final boolean ledEnabled;
     public final long startTimeMs;
-    public final CameraNeo.PhotoCaptureCallback callback;
+    public final CameraNeoService.PhotoCaptureCallback callback;
 
     public CurrentRequest(
             String filePath,
@@ -22,7 +24,7 @@ public final class CurrentRequest {
             Long exposureTimeNs,
             boolean ledEnabled,
             long startTimeMs,
-            CameraNeo.PhotoCaptureCallback callback) {
+            CameraNeoService.PhotoCaptureCallback callback) {
         this.filePath = filePath;
         this.size = size;
         this.isFromSdk = isFromSdk;
