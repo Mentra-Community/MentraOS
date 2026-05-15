@@ -188,7 +188,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 }
             }
         )
-        if let savedDevice = loadPersistedDefaultDevice() {
+        let savedDefaultDevice = loadPersistedDefaultDevice()
+        if let savedDevice = savedDefaultDevice {
             mentraBluetoothSdk.setDefaultDevice(savedDevice)
         }
         glassesValues = mentraBluetoothSdk.glassesStatus
@@ -198,11 +199,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         if let value = ProcessInfo.processInfo.environment["MENTRA_PHOTO_WEBHOOK_URL"] {
             webhookUrl = value
         }
-        if hasSavedConnectionTarget(bluetoothValues) {
-            Task { @MainActor [weak self] in
-                await Task.yield()
-                self?.autoConnectDefaultOnStartup()
-            }
+        if savedDefaultDevice != nil {
+            scheduleAutoConnectDefaultOnStartup()
         }
     }
 
@@ -1102,6 +1100,13 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             append(tag: "TX", text: "\(label) failed: \(error.localizedDescription)")
         }
         activeAction = nil
+    }
+
+    private func scheduleAutoConnectDefaultOnStartup() {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            self?.autoConnectDefaultOnStartup()
+        }
     }
 
     private func autoConnectDefaultOnStartup() {
