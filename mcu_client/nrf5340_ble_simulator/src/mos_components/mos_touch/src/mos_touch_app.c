@@ -506,7 +506,8 @@ static void mos_touch_app_runtime_handler(uint16_t gestures, uint16_t info_flags
         mos_touch_app_emit_logical_event(chip_discrete_event, "chip");
         if (chip_discrete_event == MOS_TOUCH_LOGICAL_TRIPLE_TAP)
         {
-            mos_touch_app_request_sleep();
+            // NOTE: Disable sleep mode for now because its not stable
+            // mos_touch_app_request_sleep();
         }
         else if (chip_discrete_event == MOS_TOUCH_LOGICAL_PRESS_AND_HOLD)
         {
