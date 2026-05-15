@@ -261,7 +261,16 @@ struct SystemScreen: View {
                 Spacer()
                 Button(action: model.toggleHotspot) {
                     ZStack(alignment: model.hotspotEnabled ? .trailing : .leading) {
-                        Capsule().fill(Color.white).frame(width: 38, height: 22)
+                        Capsule()
+                            .fill(Color.white)
+                            .overlay(
+                                Capsule()
+                                    .stroke(
+                                        model.hotspotEnabled ? AppColor.greenAccent.opacity(0.72) : AppColor.ink.opacity(0.18),
+                                        lineWidth: 1.2
+                                    )
+                            )
+                            .frame(width: 38, height: 22)
                         Circle().fill(model.hotspotEnabled ? AppColor.greenAccent : AppColor.mutedSoft).frame(width: 18, height: 18).padding(2)
                     }
                 }

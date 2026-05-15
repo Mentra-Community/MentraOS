@@ -148,7 +148,11 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
           <Pressable
             disabled={!connected}
             onPress={sdk.toggleHotspot}
-            style={[styles.toggleOn, !connected && styles.disabled]}>
+            style={[
+              styles.toggleOn,
+              { borderColor: sdk.hotspotEnabled ? 'rgba(52,199,89,0.72)' : 'rgba(15,42,29,0.18)' },
+              !connected && styles.disabled,
+            ]}>
             <View style={[styles.toggleKnob, !sdk.hotspotEnabled && { backgroundColor: colors.mutedSoft, alignSelf: 'flex-start' }]} />
           </Pressable>
         </View>
@@ -607,7 +611,7 @@ const styles = StyleSheet.create({
   hotspotStatus: { fontSize: 10, lineHeight: 13, fontWeight: '600' },
   micCard: { marginHorizontal: 16, marginTop: 8, borderRadius: 22, paddingVertical: 16, paddingHorizontal: 16, gap: 10, borderWidth: 1, borderColor: colors.borderSoft },
   tileHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  toggleOn: { width: 38, height: 22, borderRadius: 999, backgroundColor: '#fff', padding: 2, alignItems: 'flex-end' },
+  toggleOn: { width: 38, height: 22, borderRadius: 999, backgroundColor: '#fff', borderWidth: 1.2, padding: 2, alignItems: 'flex-end' },
   toggleKnob: { width: 18, height: 18, borderRadius: 999, backgroundColor: colors.greenAccent },
   micControls: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   micControlButton: { width: 28, height: 28, borderRadius: 999, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', shadowColor: '#0F2A1D', shadowOpacity: 0.05, shadowOffset: { width: 0, height: 4 }, shadowRadius: 8, elevation: 1 },

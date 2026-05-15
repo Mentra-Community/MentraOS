@@ -185,6 +185,11 @@ fun SystemScreen(controller: MentraExampleController) {
                         modifier = Modifier.size(width = 38.dp, height = 22.dp)
                             .clip(RoundedCornerShape(999.dp))
                             .background(Color.White)
+                            .border(
+                                1.2.dp,
+                                if (state.hotspotEnabled) AppColor.greenAccent.copy(alpha = 0.72f) else AppColor.ink.copy(alpha = 0.18f),
+                                RoundedCornerShape(999.dp)
+                            )
                             .clickable(enabled = connected) { controller.toggleHotspot() }
                             .padding(2.dp),
                         contentAlignment = if (state.hotspotEnabled) Alignment.CenterEnd else Alignment.CenterStart
