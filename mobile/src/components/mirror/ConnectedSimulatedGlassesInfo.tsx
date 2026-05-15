@@ -3,8 +3,8 @@ import {Linking, TouchableOpacity, View, ViewStyle} from "react-native"
 
 import {Button, Icon, Text} from "@/components/ignite"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
@@ -23,7 +23,7 @@ export default function ConnectedSimulatedGlassesInfo({
 }) {
   const {theme} = useAppTheme()
   const [permission, requestPermission] = useCameraPermissions()
-  const {push} = useNavigationHistory()
+  const {push} = useNavigationStore.getState()
 
   // Function to navigate to fullscreen mode
   const navigateToFullScreen = async () => {

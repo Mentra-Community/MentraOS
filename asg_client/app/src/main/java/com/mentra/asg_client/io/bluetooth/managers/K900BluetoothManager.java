@@ -14,8 +14,11 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.Executors;
 
+import com.mentra.asg_client.service.core.AsgClientService;
 import com.mentra.asg_client.utils.smartglasses.K900ProtocolUtils;
 import com.mentra.asg_client.reporting.domains.BluetoothReporting;
+
+import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -253,7 +256,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     /**
      * Request BES firmware version and MAC address from BES chipset via UART.
-     * Sends cs_syvr command to BES, which responds with hs_syvr containing:
+     * Sends cs_syvr command to BES, which responds with sr_syvr containing:
      * - version: BES firmware version (e.g., "17.26.1.14")
      * - btaddr: Bluetooth MAC address
      * - bleaddr: BLE MAC address
@@ -307,30 +310,36 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
             Log.i(TAG, "📋 Handling sr_syvr response directly in K900BluetoothManager");
 
-            // Parse the B field which contains version info
+            // Parse the B field: prefer "version" (matches factory / hs_syvr) then "dpj"
             String bFieldStr = json.optString("B", "");
             if (bFieldStr.isEmpty()) {
-                // Try as JSONObject directly
                 org.json.JSONObject bData = json.optJSONObject("B");
-                if (bData != null) {
-                    String dpjVersion = bData.optString("dpj", "");
-                    if (!dpjVersion.isEmpty()) {
-                        cacheBesFirmwareVersion(dpjVersion);
-                    }
-                }
+                cacheBesVersionFromSyvrBField(bData);
             } else {
-                // B field is a string, parse it as JSON
                 org.json.JSONObject bData = new org.json.JSONObject(bFieldStr);
-                String dpjVersion = bData.optString("dpj", "");
-                if (!dpjVersion.isEmpty()) {
-                    cacheBesFirmwareVersion(dpjVersion);
-                }
+                cacheBesVersionFromSyvrBField(bData);
             }
 
             return true; // Handled
         } catch (Exception e) {
             Log.e(TAG, "💥 Error parsing sr_syvr response", e);
             return false; // Let it fall through to normal processing
+        }
+    }
+
+    /**
+     * Picks the display BES string from sr_syvr B payload: same semantics as {@code hs_syvr} when possible.
+     */
+    private void cacheBesVersionFromSyvrBField(JSONObject bData) {
+        if (bData == null) {
+            return;
+        }
+        String v = bData.optString("version", "");
+        if (v.isEmpty()) {
+            v = bData.optString("dpj", "");
+        }
+        if (!v.isEmpty()) {
+            cacheBesFirmwareVersion(v);
         }
     }
 
@@ -350,6 +359,16 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
             android.content.SharedPreferences prefs = context.getSharedPreferences("asg_settings", android.content.Context.MODE_PRIVATE);
             prefs.edit().putString("mcu_firmware_version", version).commit();
             Log.i(TAG, "✅ BES firmware version cached successfully: " + version);
+
+            // Re-send version chunks so phone/OTA get fresh BES (onCreate may have run before UART was up).
+            android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+            main.post(() -> {
+                AsgClientService svc = AsgClientService.getInstance();
+                if (svc != null) {
+                    Log.i(TAG, "📋 BES version updated from UART — re-sending version info to phone");
+                    svc.sendVersionInfo();
+                }
+            });
         } catch (Exception e) {
             Log.e(TAG, "💥 Failed to cache BES firmware version", e);
         }

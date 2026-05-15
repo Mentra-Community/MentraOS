@@ -367,3 +367,6 @@ mobile/ios/Packages/SherpaOnnx/sherpa-onnx.xcframework/
 # ONNX Model files (large ML models)
 mobile/ios/Packages/SherpaOnnx/Model/*
 nicelogs.txt
+
+# mentra-miniapp install cache (built+packed zips ready to serve)
+**/.mentra/

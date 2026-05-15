@@ -1,7 +1,7 @@
 // import React, {useEffect, useState} from "react"
 // import {Text, Button, View} from "react-native"
 // import {useSpeechToText, WHISPER_TINY, WHISPER_TINY_EN} from "react-native-executorch"
-// import CoreModule from "core"
+// import CoreModule from "@mentra/bluetooth-sdk"
 
 // // const decodePcm16Base64ToFloat32 = (base64: string): Float32Array => {
 // //   const binaryString = atob(base64)
@@ -59,7 +59,7 @@
 
 //     // console.log("COMPOSITOR: Is recording:", recorder.isRecording());
 
-//     await CoreModule.update("core", {
+//     await CoreModule.updateCore({
 //       should_send_pcm: true,
 //     })
 

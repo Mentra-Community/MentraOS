@@ -8,9 +8,9 @@ import org.json.JSONObject;
  */
 public class RtmpStreamConfig {
 
-    // Default values (matching current hardcoded values)
-    public static final int DEFAULT_VIDEO_WIDTH = 960;
-    public static final int DEFAULT_VIDEO_HEIGHT = 540;
+    // Default values (16:9; native crop applied when sensor mode differs)
+    public static final int DEFAULT_VIDEO_WIDTH = 854;
+    public static final int DEFAULT_VIDEO_HEIGHT = 480;
     public static final int DEFAULT_VIDEO_BITRATE = 1000000; // 1 Mbps
     public static final int DEFAULT_VIDEO_FPS = 15;
 
@@ -22,6 +22,9 @@ public class RtmpStreamConfig {
     // Video config
     private int videoWidth = DEFAULT_VIDEO_WIDTH;
     private int videoHeight = DEFAULT_VIDEO_HEIGHT;
+    /** Native camera / preview buffer size; 0 = unset (use {@link #getVideoWidth()} for surface). */
+    private int captureWidth = 0;
+    private int captureHeight = 0;
     private int videoBitrate = DEFAULT_VIDEO_BITRATE;
     private int videoFps = DEFAULT_VIDEO_FPS;
 
@@ -102,6 +105,16 @@ public class RtmpStreamConfig {
     // Getters
     public int getVideoWidth() { return videoWidth; }
     public int getVideoHeight() { return videoHeight; }
+
+    /** SurfaceTexture / camera buffer width (falls back to output width if unset). */
+    public int getCaptureSurfaceWidth() {
+        return captureWidth > 0 ? captureWidth : videoWidth;
+    }
+
+    /** SurfaceTexture / camera buffer height (falls back to output height if unset). */
+    public int getCaptureSurfaceHeight() {
+        return captureHeight > 0 ? captureHeight : videoHeight;
+    }
     public int getVideoBitrate() { return videoBitrate; }
     public int getVideoFps() { return videoFps; }
 
@@ -131,6 +144,23 @@ public class RtmpStreamConfig {
         return this;
     }
 
+    /**
+     * Sets native camera capture dimensions (from {@code CameraCharacteristics} preflight).
+     * Stored exactly as selected so preview surfaces match an advertised
+     * {@link android.graphics.SurfaceTexture} size (no clamp; modes may exceed 4096).
+     * Non-positive width or height clears capture and falls back to output size for the surface.
+     */
+    public RtmpStreamConfig setCaptureSize(int width, int height) {
+        if (width <= 0 || height <= 0) {
+            this.captureWidth = 0;
+            this.captureHeight = 0;
+            return this;
+        }
+        this.captureWidth = width;
+        this.captureHeight = height;
+        return this;
+    }
+
     public RtmpStreamConfig setAudioBitrate(int bitrate) {
         this.audioBitrate = clamp(bitrate, 32000, 320000);
         return this;
@@ -154,7 +184,9 @@ public class RtmpStreamConfig {
     @Override
     public String toString() {
         return "RtmpStreamConfig{" +
-                "video=" + videoWidth + "x" + videoHeight + "@" + videoFps + "fps, " + (videoBitrate/1000) + "kbps" +
+                "video=" + videoWidth + "x" + videoHeight
+                + (captureWidth > 0 ? " capture=" + captureWidth + "x" + captureHeight : "")
+                + "@" + videoFps + "fps, " + (videoBitrate/1000) + "kbps" +
                 ", audio=" + (audioBitrate/1000) + "kbps@" + audioSampleRate + "Hz" +
                 ", echo=" + echoCancellation + ", noise=" + noiseSuppression +
                 '}';

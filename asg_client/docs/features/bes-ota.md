@@ -37,19 +37,19 @@ UART transport is owned by `ComManager` (the K900 UART driver). When BES OTA is 
 3. **Verify.** SHA-256 of the downloaded file is checked against `version.json` metadata. Mismatch → file is deleted and update aborts.
 4. **Protocol handshake** — 11-step BES OTA exchange:
 
-   | Step | Outbound (cmd) | Inbound |
-   |------|----------------|---------|
-   | Get protocol version | `0x99` | `0x9a` |
-   | Set user | `0x97` | `0x98` |
-   | Get firmware version | `0x8e` | `0x8f` |
-   | Select side | `0x90` | `0x91` |
-   | Check breakpoint | `0x8c` | `0x8d` |
-   | Set start info | `0x80` | `0x81` |
-   | Set config | `0x86` | `0x87` |
-   | Send data (loop) | `0x85` | `0x8B` |
-   | Segment verify (every 16 KB) | `0x82` | `0x83` |
-   | Send finish | `0x88` | `0x84` |
-   | Apply (BES reboots) | `0x92` | `0x93` |
+   | Step                         | Outbound (cmd) | Inbound |
+   | ---------------------------- | -------------- | ------- |
+   | Get protocol version         | `0x99`         | `0x9a`  |
+   | Set user                     | `0x97`         | `0x98`  |
+   | Get firmware version         | `0x8e`         | `0x8f`  |
+   | Select side                  | `0x90`         | `0x91`  |
+   | Check breakpoint             | `0x8c`         | `0x8d`  |
+   | Set start info               | `0x80`         | `0x81`  |
+   | Set config                   | `0x86`         | `0x87`  |
+   | Send data (loop)             | `0x85`         | `0x8B`  |
+   | Segment verify (every 16 KB) | `0x82`         | `0x83`  |
+   | Send finish                  | `0x88`         | `0x84`  |
+   | Apply (BES reboots)          | `0x92`         | `0x93`  |
 
 5. **Progress events.** `BesOtaProgressEvent`s fire on EventBus throughout (`STARTED`, `PROGRESS`, `FINISHED`, `FAILED`).
 
@@ -90,14 +90,14 @@ Add a `bes_firmware` block alongside the existing `apps` block:
 }
 ```
 
-| Field | Description |
-|-------|-------------|
-| `versionCode` | Integer for comparison |
-| `versionName` | Human-readable string |
-| `firmwareUrl` | Direct `.bin` URL |
-| `sha256` | Hex SHA-256 of the `.bin` |
-| `fileSize` | Bytes; must be ≤ `BesOtaUtil.MAX_FILE_SIZE` (2 MB) |
-| `releaseNotes` | Free text |
+| Field          | Description                                        |
+| -------------- | -------------------------------------------------- |
+| `versionCode`  | Integer for comparison                             |
+| `versionName`  | Human-readable string                              |
+| `firmwareUrl`  | Direct `.bin` URL                                  |
+| `sha256`       | Hex SHA-256 of the `.bin`                          |
+| `fileSize`     | Bytes; must be ≤ `BesOtaUtil.MAX_FILE_SIZE` (2 MB) |
+| `releaseNotes` | Free text                                          |
 
 ## EventBus integration
 
@@ -146,9 +146,9 @@ Manual procedure:
 
 ## Logcat tags
 
-| Tag | Component |
-|-----|-----------|
-| `BesOtaManager` | Protocol state machine |
-| `BesOtaUartListener` | UART response parser |
-| `OtaHelper` | Version-check, download, sha256 |
-| `ComManager` | UART driver (especially `mbOtaUpdating` transitions) |
+| Tag                  | Component                                            |
+| -------------------- | ---------------------------------------------------- |
+| `BesOtaManager`      | Protocol state machine                               |
+| `BesOtaUartListener` | UART response parser                                 |
+| `OtaHelper`          | Version-check, download, sha256                      |
+| `ComManager`         | UART driver (especially `mbOtaUpdating` transitions) |

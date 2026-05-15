@@ -179,7 +179,6 @@ const tablerIcons = {
   "alert-triangle": 1,
   "plus": 1,
   "search": 1,
-  "menu-2": 1,
 }
 
 /**

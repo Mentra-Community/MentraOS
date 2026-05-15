@@ -5,6 +5,7 @@
     "": {
       "name": "mentraos",
       "dependencies": {
+        "@babel/runtime": "^7.28.6",
         "@config-plugins/react-native-webrtc": "^13.0.0",
         "@douglowder/expo-av-route-picker-view": "^0.0.5",
         "@dr.pogodin/react-native-fs": "^2.37.0",
@@ -12,10 +13,14 @@
         "@expo-google-fonts/space-grotesk": "^0.4.1",
         "@expo/metro-runtime": "~55.0.6",
         "@gorhom/bottom-sheet": "^5.2.8",
+        "@gorhom/portal": "^1.0.14",
         "@livekit/react-native": "^2.9.6",
         "@livekit/react-native-expo-plugin": "^1.0.1",
         "@livekit/react-native-webrtc": "^137.0.2",
+        "@mentra/bluetooth-sdk": "workspace:*",
         "@mentra/display-utils": "file:../cloud/packages/display-utils",
+        "@mentra/island": "workspace:*",
+        "@mentra/miniapp": "workspace:*",
         "@react-native-community/netinfo": "11.5.2",
         "@react-native-community/slider": "5.1.2",
         "@react-native-firebase/analytics": "^23.8.6",
@@ -29,7 +34,6 @@
         "authing-js-sdk": "^4.23.55",
         "axios": "^1.13.6",
         "babel-plugin-module-resolver": "5.0.0",
-        "core": "workspace:*",
         "crust": "workspace:*",
         "date-fns": "^4.1.0",
         "dotenv": "^17.3.1",
@@ -37,6 +41,7 @@
         "expo-application": "~55.0.8",
         "expo-asset": "~55.0.8",
         "expo-audio": "~55.0.8",
+        "expo-battery": "^55.0.13",
         "expo-blur": "~55.0.8",
         "expo-build-properties": "~55.0.9",
         "expo-calendar": "~55.0.9",
@@ -79,6 +84,7 @@
         "react-native-awesome-gallery": "^0.4.3",
         "react-native-ble-manager": "^12.4.4",
         "react-native-canvas": "^0.1.40",
+        "react-native-confetti-cannon": "^1.5.2",
         "react-native-draggable-flatlist": "^4.0.3",
         "react-native-draggable-grid": "^2.2.2",
         "react-native-draggable-masonry": "^1.3.0",
@@ -136,18 +142,18 @@
         "typescript": "~5.9.2",
       },
     },
-    "modules/core": {
-      "name": "core",
+    "modules/bluetooth-sdk": {
+      "name": "@mentra/bluetooth-sdk",
       "version": "0.1.0",
       "devDependencies": {
         "expo-module-scripts": "^55.0.2",
       },
       "peerDependencies": {
-        "@expo/config-plugins": "*",
-        "@types/react": "*",
-        "expo": "*",
-        "react": "*",
-        "react-native": "*",
+        "@expo/config-plugins": ">=8.0.0",
+        "@types/react": ">=18.0.0",
+        "expo": ">=49.0.0",
+        "react": ">=18.0.0",
+        "react-native": ">=0.72.0",
       },
     },
     "modules/crust": {
@@ -161,6 +167,56 @@
         "react": "*",
         "react-native": "*",
       },
+    },
+    "modules/island": {
+      "name": "@mentra/island",
+      "version": "0.1.0",
+      "dependencies": {
+        "@types/semver": "^7.7.1",
+        "typesafe-ts": "^1.7.1",
+      },
+      "devDependencies": {
+        "@mentra/bluetooth-sdk": "workspace:*",
+        "@mentra/miniapp": "workspace:*",
+        "expo-module-scripts": "^55.0.2",
+      },
+      "peerDependencies": {
+        "@mentra/bluetooth-sdk": "*",
+        "@mentra/miniapp": "*",
+        "@types/react": "*",
+        "expo": "*",
+        "expo-battery": "*",
+        "expo-clipboard": "*",
+        "expo-file-system": "*",
+        "expo-location": "*",
+        "react": "*",
+        "react-native": "*",
+        "react-native-mmkv": "*",
+        "react-native-nitro-bg-timer": "*",
+        "react-native-share": "*",
+        "react-native-zip-archive": "*",
+        "semver": "*",
+        "zustand": "*",
+      },
+    },
+    "modules/miniapp": {
+      "name": "@mentra/miniapp",
+      "version": "0.3.0",
+      "dependencies": {
+        "@mentra/types": "1.0.0-beta.2",
+        "eventemitter3": "^5.0.1",
+      },
+      "devDependencies": {
+        "@types/react": "^19.1.6",
+        "react": "^19.1.0",
+        "typescript": "^5.0.0",
+      },
+      "peerDependencies": {
+        "react": ">=18.0.0",
+      },
+      "optionalPeers": [
+        "react",
+      ],
     },
   },
   "trustedDependencies": [
@@ -754,7 +810,15 @@
 
     "@livekit/react-native-webrtc": ["@livekit/react-native-webrtc@137.0.2", "", { "dependencies": { "base64-js": "1.5.1", "debug": "4.3.4", "event-target-shim": "6.0.2" }, "peerDependencies": { "react-native": ">=0.60.0" } }, "sha512-0aXYATcBraOMDTteKzmfH5ICNHw8xFyMPHmhKg14+94fAGZ2hGjdHZUSkzL14+e508W486aIAmbXipuSQCCJgA=="],
 
+    "@mentra/bluetooth-sdk": ["@mentra/bluetooth-sdk@workspace:modules/bluetooth-sdk"],
+
     "@mentra/display-utils": ["@mentra/display-utils@file:../cloud/packages/display-utils", { "devDependencies": { "opentype.js": "^1.3.4", "typescript": "^5.0.0" } }],
+
+    "@mentra/island": ["@mentra/island@workspace:modules/island"],
+
+    "@mentra/miniapp": ["@mentra/miniapp@workspace:modules/miniapp"],
+
+    "@mentra/types": ["@mentra/types@1.0.0-beta.2", "", {}, "sha512-yn0H7oYId8TSOGlSDmstds4nnmZbXyDncFy3FC1h4dWpDx6o4BmBehAJd2Otp9gr1bWwIL0yEp6JK60I8TBUGw=="],
 
     "@nicolo-ribaudo/chokidar-2": ["@nicolo-ribaudo/chokidar-2@2.1.8-no-fsevents.3", "", {}, "sha512-s88O1aVtXftvp5bCPB7WnmXc5IwOZZ7YPuwNPt+GtOOXpPvad1LfbmjYv+qII7zP6RU2QGnqve27dnLycEnyEQ=="],
 
@@ -1278,8 +1342,6 @@
 
     "convert-source-map": ["convert-source-map@2.0.0", "", {}, "sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg=="],
 
-    "core": ["core@workspace:modules/core"],
-
     "core-js-compat": ["core-js-compat@3.48.0", "", { "dependencies": { "browserslist": "^4.28.1" } }, "sha512-OM4cAF3D6VtH/WkLtWvyNC56EZVXsZdU3iqaMG2B4WvYrlqU831pc4UtG5yp0sE9z8Y02wVN7PjW5Zf9Gt0f1Q=="],
 
     "cosmiconfig": ["cosmiconfig@8.3.6", "", { "dependencies": { "import-fresh": "^3.3.0", "js-yaml": "^4.1.0", "parse-json": "^5.2.0", "path-type": "^4.0.0" }, "peerDependencies": { "typescript": ">=4.9.5" }, "optionalPeers": ["typescript"] }, "sha512-kcZ6+W5QzcJ3P1Mt+83OUv/oHFqZHIx8DuxG6eZ5RGMERoLqp4BuGjhHLYGK+Kf5XVkQvqBSmAy/nGWN3qDgEA=="],
@@ -1493,6 +1555,8 @@
     "expo-asset": ["expo-asset@55.0.8", "", { "dependencies": { "@expo/image-utils": "^0.8.12", "expo-constants": "~55.0.7" }, "peerDependencies": { "expo": "*", "react": "*", "react-native": "*" } }, "sha512-yEz2svDX67R0yiW2skx6dJmcE0q7sj9ECpGMcxBExMCbctc+nMoZCnjUuhzPl5vhClUsO5HFFXS5vIGmf1bgHQ=="],
 
     "expo-audio": ["expo-audio@55.0.8", "", { "peerDependencies": { "expo": "*", "expo-asset": "*", "react": "*", "react-native": "*" } }, "sha512-X61pQSikE2rsP2ZTMFUMThOmgGyYEHcmZpGVMrKJgcYtRCFKuctB/z69dFQPoumL+zTz8qlBoGohjkHVvA9P8A=="],
+
+    "expo-battery": ["expo-battery@55.0.13", "", { "peerDependencies": { "expo": "*", "react": "*" } }, "sha512-yt2BZCs76aeM9UPbIf8pAGvZJ6AQ7UQ8qjiQcciU3o3q512ZTgsIWObfOqZlTy/abzU2njHW6OikWbtQbeyeZg=="],
 
     "expo-blur": ["expo-blur@55.0.8", "", { "peerDependencies": { "expo": "*", "react": "*", "react-native": "*" } }, "sha512-hmYhQiYFMTpHNzFaCF63jTABgnsozB5+wSEV8rCNBfNEHTdRVNFPkF+TZpbIqJpkhHfGLsKptRmR/wyZmAqREA=="],
 
@@ -2261,6 +2325,8 @@
     "react-native-ble-manager": ["react-native-ble-manager@12.4.4", "", { "peerDependencies": { "react": "*", "react-native": "*" } }, "sha512-XdDdvJsIQ+MolGIC1sozKs/bJ+IB+2xMUEjnos2Sjs3ww1qWkNBM471b3LO7x3NQSRHH0Bhjh4hpPsOCw4EsVg=="],
 
     "react-native-canvas": ["react-native-canvas@0.1.40", "", { "dependencies": { "ctx-polyfill": "^1.1.4" }, "peerDependencies": { "react-native-webview": ">=5.10.0 || >=6.1.0" } }, "sha512-VVQreUUGBYZF4qjCP09MoK8Eh5wr1LuL2XNKvQLcbd/NJ93Y8bT2pwwrZJXANCTVzAY2o/B9g+f0B7fS/vfXOA=="],
+
+    "react-native-confetti-cannon": ["react-native-confetti-cannon@1.5.2", "", {}, "sha512-IZuWjlW7QsdxEGNnvpD6W+7iKCCQhnd5BvuNvMtirU7Nxm8WS2N6LPGMBz1ZYDuusG+GRZkoXXTNCdoAAGpCTg=="],
 
     "react-native-draggable-flatlist": ["react-native-draggable-flatlist@4.0.3", "", { "dependencies": { "@babel/preset-typescript": "^7.17.12" }, "peerDependencies": { "react-native": ">=0.64.0", "react-native-gesture-handler": ">=2.0.0", "react-native-reanimated": ">=2.8.0" } }, "sha512-2F4x5BFieWdGq9SetD2nSAR7s7oQCSgNllYgERRXXtNfSOuAGAVbDb/3H3lP0y5f7rEyNwabKorZAD/SyyNbDw=="],
 

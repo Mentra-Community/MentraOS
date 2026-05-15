@@ -1,14 +1,14 @@
-import CoreModule from "core"
+import CrustModule from "crust"
 import {useState, useEffect, useCallback, useMemo, useRef} from "react"
 import {View, Platform, TextInput, FlatList, ActivityIndicator, Image} from "react-native"
 import Toast from "react-native-toast-message"
 
 import {Screen, Text, Header, Switch} from "@/components/ignite"
-import {MiniAppCapsuleMenu} from "@/components/miniapps/CapsuleMenu"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
-import {notifyPackageName} from "@/stores/applets"
+import {notifyPackageName} from "@/constants/miniapps"
 import {SETTINGS, useSetting} from "@/stores/settings"
+import {useRegisterCapsule} from "@/stores/capsule"
 
 interface InstalledApp {
   packageName: string
@@ -30,13 +30,19 @@ export default function NotificationSettingsScreen() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
 
+  useRegisterCapsule({
+    packageName: notifyPackageName,
+    viewShotRef,
+    visibleOnRoutes: ["/miniapps/settings/notifications"],
+  })
+
   useEffect(() => {
     loadInstalledApps()
   }, [])
 
   const loadInstalledApps = async () => {
     try {
-      const installedApps = await CoreModule.getInstalledApps()
+      const installedApps = await CrustModule.getInstalledApps()
 
       // Sort alphabetically by app name
       let sortedApps = installedApps.sort((a: InstalledApp, b: InstalledApp) => a.appName.localeCompare(b.appName))
@@ -190,136 +196,127 @@ export default function NotificationSettingsScreen() {
 
   if (loading) {
     return (
-      <>
-        <MiniAppCapsuleMenu packageName={notifyPackageName} viewShotRef={viewShotRef} />
-        <Screen preset="fixed" ref={viewShotRef}>
-          <Header title={translate("settings:notificationsSettings")} />
-          <View style={{flex: 1, justifyContent: "center", alignItems: "center"}}>
-            <ActivityIndicator size="large" color={theme.colors.foreground} />
-            <Text style={{color: theme.colors.textDim, marginTop: theme.spacing.s4}}>
-              {translate("settings:notificationsLoadingApps")}
-            </Text>
-          </View>
-        </Screen>
-      </>
+      <Screen preset="fixed" ref={viewShotRef}>
+        <Header title={translate("settings:notificationsSettings")} />
+        <View style={{flex: 1, justifyContent: "center", alignItems: "center"}}>
+          <ActivityIndicator size="large" color={theme.colors.foreground} />
+          <Text style={{color: theme.colors.textDim, marginTop: theme.spacing.s4}}>
+            {translate("settings:notificationsLoadingApps")}
+          </Text>
+        </View>
+      </Screen>
     )
   }
 
   // Show iOS message if on iOS
   if (Platform.OS === "ios") {
     return (
-      <>
-        <MiniAppCapsuleMenu packageName={notifyPackageName} viewShotRef={viewShotRef} />
-        <Screen preset="fixed" ref={viewShotRef}>
-          <Header title={translate("settings:notificationsSettings")} />
-          <View style={{flex: 1, justifyContent: "center", alignItems: "center", padding: theme.spacing.s6}}>
-            <Text
-              style={{
-                fontSize: 18,
-                fontWeight: "600",
-                color: theme.colors.text,
-                textAlign: "center",
-                marginBottom: theme.spacing.s4,
-              }}>
-              {translate("settings:notificationsIosTitle")}
-            </Text>
-            <Text style={{color: theme.colors.textDim, textAlign: "center", lineHeight: 22}}>
-              {translate("settings:notificationsIosMessage")}
-            </Text>
-          </View>
-        </Screen>
-      </>
+      <Screen preset="fixed" ref={viewShotRef}>
+        <Header title={translate("settings:notificationsSettings")} />
+        <View style={{flex: 1, justifyContent: "center", alignItems: "center", padding: theme.spacing.s6}}>
+          <Text
+            style={{
+              fontSize: 18,
+              fontWeight: "600",
+              color: theme.colors.text,
+              textAlign: "center",
+              marginBottom: theme.spacing.s4,
+            }}>
+            {translate("settings:notificationsIosTitle")}
+          </Text>
+          <Text style={{color: theme.colors.textDim, textAlign: "center", lineHeight: 22}}>
+            {translate("settings:notificationsIosMessage")}
+          </Text>
+        </View>
+      </Screen>
     )
   }
 
   return (
-    <>
-      <MiniAppCapsuleMenu packageName={notifyPackageName} viewShotRef={viewShotRef} />
-      <Screen preset="fixed" ref={viewShotRef}>
-        <Header title={translate("settings:notificationsSettings")} />
+    <Screen preset="fixed" ref={viewShotRef}>
+      <Header title={translate("settings:notificationsSettings")} />
 
-        {/* Explanatory Text */}
-        <View
+      {/* Explanatory Text */}
+      <View
+        style={{
+          paddingHorizontal: theme.spacing.s4,
+          paddingVertical: theme.spacing.s3,
+        }}>
+        <Text
           style={{
-            paddingHorizontal: theme.spacing.s4,
-            paddingVertical: theme.spacing.s3,
+            fontSize: 13,
+            color: theme.colors.textDim,
+            lineHeight: 18,
+            marginBottom: theme.spacing.s2,
           }}>
-          <Text
-            style={{
-              fontSize: 13,
-              color: theme.colors.textDim,
-              lineHeight: 18,
-              marginBottom: theme.spacing.s2,
-            }}>
-            {translate("settings:notificationsDescription")}
-          </Text>
-        </View>
+          {translate("settings:notificationsDescription")}
+        </Text>
+      </View>
 
-        {/* Search Bar */}
-        <View
+      {/* Search Bar */}
+      <View
+        style={{
+          paddingHorizontal: theme.spacing.s4,
+          paddingBottom: theme.spacing.s3,
+        }}>
+        <TextInput
+          placeholder={translate("settings:notificationsSearchApps")}
+          placeholderTextColor={theme.colors.textDim}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
           style={{
-            paddingHorizontal: theme.spacing.s4,
-            paddingBottom: theme.spacing.s3,
-          }}>
-          <TextInput
-            placeholder={translate("settings:notificationsSearchApps")}
-            placeholderTextColor={theme.colors.textDim}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            style={{
-              borderRadius: theme.spacing.s3,
-              paddingHorizontal: theme.spacing.s4,
-              paddingVertical: theme.spacing.s2,
-              fontSize: 15,
-              color: theme.colors.text,
-              borderWidth: 1,
-              borderColor: theme.colors.border,
-            }}
-          />
-        </View>
-
-        {/* Stats */}
-        <View
-          style={{
+            borderRadius: theme.spacing.s3,
             paddingHorizontal: theme.spacing.s4,
             paddingVertical: theme.spacing.s2,
-            borderBottomWidth: 1,
-            borderBottomColor: theme.colors.border,
-          }}>
-          <Text style={{fontSize: 12, color: theme.colors.textDim, fontWeight: "500"}}>
-            {translate("settings:notificationsAppsEnabled", {
-              enabled: filteredApps.filter((app) => !app.isBlocked).length,
-              total: filteredApps.length,
-            })}
-          </Text>
-        </View>
-
-        {/* Apps List */}
-        <FlatList
-          data={filteredApps}
-          keyExtractor={keyExtractor}
-          renderItem={renderAppItem}
-          contentContainerStyle={{paddingBottom: theme.spacing.s8}}
-          onRefresh={onRefresh}
-          refreshing={refreshing}
-          getItemLayout={getItemLayout}
-          removeClippedSubviews={false}
-          maxToRenderPerBatch={20}
-          windowSize={21}
-          initialNumToRender={20}
-          updateCellsBatchingPeriod={50}
-          maintainVisibleContentPosition={{minIndexForVisible: 0}}
-          ListEmptyComponent={
-            <View style={{flex: 1, alignItems: "center", marginTop: theme.spacing.s12}}>
-              <Text style={{color: theme.colors.textDim}}>
-                {searchQuery
-                  ? translate("settings:notificationsNoAppsFoundSearch")
-                  : translate("settings:notificationsNoAppsFound")}
-              </Text>
-            </View>
-          }
+            fontSize: 15,
+            color: theme.colors.text,
+            borderWidth: 1,
+            borderColor: theme.colors.border,
+          }}
         />
-      </Screen>
-    </>
+      </View>
+
+      {/* Stats */}
+      <View
+        style={{
+          paddingHorizontal: theme.spacing.s4,
+          paddingVertical: theme.spacing.s2,
+          borderBottomWidth: 1,
+          borderBottomColor: theme.colors.border,
+        }}>
+        <Text style={{fontSize: 12, color: theme.colors.textDim, fontWeight: "500"}}>
+          {translate("settings:notificationsAppsEnabled", {
+            enabled: filteredApps.filter((app) => !app.isBlocked).length,
+            total: filteredApps.length,
+          })}
+        </Text>
+      </View>
+
+      {/* Apps List */}
+      <FlatList
+        data={filteredApps}
+        keyExtractor={keyExtractor}
+        renderItem={renderAppItem}
+        contentContainerStyle={{paddingBottom: theme.spacing.s8}}
+        onRefresh={onRefresh}
+        refreshing={refreshing}
+        getItemLayout={getItemLayout}
+        removeClippedSubviews={false}
+        maxToRenderPerBatch={20}
+        windowSize={21}
+        initialNumToRender={20}
+        updateCellsBatchingPeriod={50}
+        maintainVisibleContentPosition={{minIndexForVisible: 0}}
+        ListEmptyComponent={
+          <View style={{flex: 1, alignItems: "center", marginTop: theme.spacing.s12}}>
+            <Text style={{color: theme.colors.textDim}}>
+              {searchQuery
+                ? translate("settings:notificationsNoAppsFoundSearch")
+                : translate("settings:notificationsNoAppsFound")}
+            </Text>
+          </View>
+        }
+      />
+    </Screen>
   )
 }

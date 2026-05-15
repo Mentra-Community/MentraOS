@@ -21,6 +21,8 @@ import {
 import { SimplePermissionChecker } from "../permissions/simple-permission-checker";
 
 import { AppSession, LocationRate } from "./AppSession";
+import type { AppLikeSession } from "./AppLikeSession";
+import { PHONE_PACKAGE_NAME } from "./PhoneSession";
 import UserSession from "./UserSession";
 
 /**
@@ -225,6 +227,17 @@ export class SubscriptionManager {
    * conditions when multiple subscription updates arrive rapidly. See Issue 008.
    */
   async updateSubscriptions(packageName: string, subscriptions: SubscriptionRequest[]): Promise<void> {
+    // ===== Synthetic phone session bypass =====
+    // The __phone__ subscriber is a PhoneSession, not an AppSession. It skips
+    // DB permission checks (phone enforces permissions locally).
+    if (packageName === PHONE_PACKAGE_NAME) {
+      const phoneSession = this.userSession.appManager.getOrCreatePhoneSession();
+      await phoneSession.enqueue(async () => {
+        await this.processPhoneSubscriptionUpdate(phoneSession, subscriptions);
+      });
+      return;
+    }
+
     const phaseTimer = createPhaseTimer();
     // Get or create AppSession for this app
     const appSession = phaseTimer.measureSync("getOrCreateAppSession", () =>
@@ -367,6 +380,66 @@ export class SubscriptionManager {
   }
 
   /**
+   * Process subscription update for the synthetic __phone__ session.
+   * Skips DB permission checks — the phone enforces permissions locally at install time.
+   */
+  private async processPhoneSubscriptionUpdate(
+    phoneSession: AppLikeSession,
+    subscriptions: SubscriptionRequest[],
+  ): Promise<void> {
+    const streamSubscriptions: ExtendedStreamType[] = [];
+    let locationRate: LocationRate | null = null;
+
+    for (const sub of subscriptions) {
+      if (
+        typeof sub === "object" &&
+        sub !== null &&
+        "stream" in sub &&
+        (sub as any).stream === StreamType.LOCATION_STREAM
+      ) {
+        locationRate = (sub as any).rate || null;
+        streamSubscriptions.push(StreamType.LOCATION_STREAM);
+      } else if (typeof sub === "string") {
+        streamSubscriptions.push(sub as ExtendedStreamType);
+      }
+    }
+
+    // Convert bare TRANSCRIPTION to language-specific stream
+    const processed: ExtendedStreamType[] = streamSubscriptions.map((sub) =>
+      sub === StreamType.TRANSCRIPTION ? createTranscriptionStream("en-US") : sub,
+    );
+
+    // Accept all subscriptions — no DB permission check for __phone__
+    const updateResult = phoneSession.updateSubscriptions(processed, locationRate);
+
+    if (!updateResult.applied) {
+      this.logger.info(
+        {
+          userId: this.userSession.userId,
+          packageName: PHONE_PACKAGE_NAME,
+          reason: updateResult.reason,
+        },
+        "Phone subscription update not applied",
+      );
+      return;
+    }
+
+    this.logger.info(
+      {
+        userId: this.userSession.userId,
+        packageName: PHONE_PACKAGE_NAME,
+        subscriptions: processed,
+        locationRate,
+      },
+      "Updated phone subscriptions for local miniapps",
+    );
+
+    // Sync downstream managers
+    await this.syncManagers();
+    this.userSession.microphoneManager?.handleSubscriptionChange();
+  }
+
+  /**
    * Remove all subscriptions for an app (delegates to AppSession)
    */
   async removeSubscriptions(packageName: string): Promise<void> {
@@ -404,9 +477,17 @@ export class SubscriptionManager {
   /**
    * Get all AppSession entries from AppManager
    */
-  private getAppSessionEntries(): [string, AppSession][] {
+  private getAppSessionEntries(): [string, AppLikeSession][] {
     const appSessions = this.userSession.appManager.getAllAppSessions();
-    return Array.from(appSessions.entries());
+    const entries: [string, AppLikeSession][] = Array.from(appSessions.entries());
+
+    // Include the synthetic phone session so stream delivery reaches __phone__
+    const phoneSession = this.userSession.appManager.getPhoneSession();
+    if (phoneSession && !phoneSession.isDisposed) {
+      entries.push([phoneSession.packageName, phoneSession]);
+    }
+
+    return entries;
   }
 
   /**

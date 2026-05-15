@@ -3,6 +3,8 @@ package com.mentra.asg_client.service.legacy.managers;
 import android.content.Context;
 import android.util.Log;
 
+import androidx.annotation.NonNull;
+
 import com.mentra.asg_client.io.bes.BesOtaManager;
 import com.mentra.asg_client.io.bluetooth.core.BluetoothManagerFactory;
 import com.mentra.asg_client.io.bluetooth.core.ComManager;
@@ -22,6 +24,7 @@ import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.settings.AsgSettings;
 
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -33,6 +36,7 @@ public class AsgClientServiceManager {
     private static final String TAG = "AsgClientServiceManager";
 
     private final Context context;
+    @NonNull
     private final AsgClientService service;
     private final ICommunicationManager communicationManager;
 
@@ -59,15 +63,17 @@ public class AsgClientServiceManager {
     // StateManager for battery monitoring (set after construction)
     private IStateManager stateManager;
 
-    public AsgClientServiceManager(Context context, AsgClientService service, ICommunicationManager communicationManager, FileManager fileManager) {
+    public AsgClientServiceManager(Context context, @NonNull AsgClientService service, ICommunicationManager communicationManager, FileManager fileManager) {
+        AsgClientService requiredService = Objects.requireNonNull(service, "service");
+
         Log.d(TAG, "🔧 AsgClientServiceManager constructor called");
         Log.d(TAG, "📋 Parameters - Context: " + (context != null ? "valid" : "null") +
-                ", Service: " + (service != null ? "valid" : "null") +
+                ", Service: valid" +
                 ", CommunicationManager: " + (communicationManager != null ? "valid" : "null") +
                 ", FileManager: " + (fileManager != null ? "valid" : "null"));
 
         this.context = context;
-        this.service = service;
+        this.service = requiredService;
         this.fileManager = fileManager;
         this.communicationManager = communicationManager;
 
@@ -292,16 +298,16 @@ public class AsgClientServiceManager {
             // Request BES system version now that BluetoothManager is ready
             // This queries sh_syvr to get firmware version and MAC addresses
             Log.d(TAG, "🔍 Checking conditions for BES system version request - isK900Device: " + isK900Device + 
-                      ", service: " + (service != null ? service.getClass().getSimpleName() : "null"));
+                      ", service: " + service.getClass().getSimpleName());
             
-            if (isK900Device && service != null && service instanceof com.mentra.asg_client.service.core.AsgClientService) {
+            if (isK900Device) {
                 Log.d(TAG, "✅ Conditions met - scheduling BES system version request");
                 // Delay slightly to ensure CommandProcessor is initialized
                 new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
                     try {
                         Log.d(TAG, "🔧 Attempting to get CommandProcessor for BES system version request");
-                        com.mentra.asg_client.service.core.processors.CommandProcessor commandProcessor = 
-                            ((com.mentra.asg_client.service.core.AsgClientService) service).getCommandProcessor();
+                        com.mentra.asg_client.service.core.processors.CommandProcessor commandProcessor =
+                            service.getCommandProcessor();
                         if (commandProcessor != null) {
                             Log.d(TAG, "🔧 Requesting BES system version via CommandProcessor");
                             commandProcessor.requestSystemVersion();
@@ -314,8 +320,7 @@ public class AsgClientServiceManager {
                 }, 1000); // 1 second delay to ensure CommandProcessor is initialized
             } else {
                 Log.d(TAG, "⚠️ Conditions not met for BES system version request - isK900Device: " + isK900Device + 
-                          ", service null: " + (service == null) + 
-                          ", is AsgClientService: " + (service != null && service instanceof com.mentra.asg_client.service.core.AsgClientService));
+                          ", service: " + service.getClass().getSimpleName());
             }
         } catch (Exception e) {
             Log.e(TAG, "💥 Error initializing bluetooth manager", e);
@@ -526,7 +531,7 @@ public class AsgClientServiceManager {
     }
 
     public IBluetoothManager getBluetoothManager() {
-        Log.d(TAG, "📶 getBluetoothManager() called - returning: " + (bluetoothManager != null ? "valid" : "null"));
+        // Log.d(TAG, "📶 getBluetoothManager() called - returning: " + (bluetoothManager != null ? "valid" : "null"));
         return bluetoothManager;
     }
 
@@ -638,14 +643,17 @@ public class AsgClientServiceManager {
      * @return true if connected to phone, false if disconnected
      */
     public boolean isConnected() {
-        if (service != null) {
-            boolean connected = service.isConnected();
-            Log.d(TAG, "🔌 Connection status: " + (connected ? "CONNECTED" : "DISCONNECTED"));
-            return connected;
-        } else {
-            Log.w(TAG, "⚠️ AsgClientService reference is null - assuming disconnected");
-            return false;
-        }
+        boolean connected = service.isConnected();
+        Log.d(TAG, "🔌 Connection status: " + (connected ? "CONNECTED" : "DISCONNECTED"));
+        return connected;
+    }
+
+    /**
+     * Mark the phone connection active after the phone_ready/glasses_ready handshake completes.
+     */
+    public void onPhoneReadyHandshakeComplete() {
+        Log.d(TAG, "📱 Phone ready handshake complete");
+        service.onPhoneReadyHandshakeComplete();
     }
 
     /**
@@ -653,12 +661,6 @@ public class AsgClientServiceManager {
      */
     public void onServiceHeartbeatReceived() {
         Log.d(TAG, "💓 Service heartbeat received from MentraLiveSGC");
-        
-        // Notify AsgClientService about the heartbeat
-        if (service != null) {
-            service.onServiceHeartbeatReceived();
-        } else {
-            Log.w(TAG, "⚠️ AsgClientService reference is null - cannot notify about heartbeat");
-        }
+        service.onServiceHeartbeatReceived();
     }
-} 
+}

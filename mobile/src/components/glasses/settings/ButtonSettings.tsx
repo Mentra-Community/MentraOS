@@ -7,13 +7,13 @@ import {AppPicker} from "@/components/settings/AppPicker"
 import ToggleSetting from "@/components/settings/ToggleSetting"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
-import {ClientAppletInterface} from "@/stores/applets"
+import type {ClientApp} from "@mentra/island"
 import {ThemedStyle} from "@/theme"
 import GlassView from "@/components/ui/GlassView"
 interface ButtonSettingsProps {
   enabled: boolean
   selectedApp: string
-  applets: ClientAppletInterface[]
+  applets: ClientApp[]
   onEnabledChange: (value: boolean) => void
   onAppChange: (packageName: string) => void
 }

@@ -101,12 +101,25 @@ const stream = await session.camera.startStream({
 
 ### Video and audio configuration
 
+Use `frameRate` (not `fps`) for the SDK field name.
+
+#### Supported video parameters
+
+When you set `video`, each field you pass must be an integer within these ranges (matching glasses-side parsing). Omitted fields use glasses defaults.
+
+- **width:** 320–1920 (default 854)
+- **height:** 240–1080 (default 480)
+- **frameRate:** 10–60 fps (default 15)
+- **bitrate:** 100_000–10_000_000 bits per second (default 1_000_000)
+
+**Behavior:** The glasses pick a native camera mode and may center-crop or downscale to your requested size without upscaling. If the camera cannot reach the resolution without upscale, stream start is rejected on the device. Out-of-range `video` values cause the SDK to throw `RangeError` before any request is sent. Portrait resolutions are not yet recommended on Mentra Live.
+
 ```typescript
 const stream = await session.camera.startStream({
   video: {
     width: 1920,
     height: 1080,
-    fps: 30,
+    frameRate: 30,
     bitrate: 4000000,
   },
   audio: {

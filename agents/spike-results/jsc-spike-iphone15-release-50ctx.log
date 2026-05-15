@@ -1,0 +1,17 @@
+[2026-05-10T04:33:31Z] 🧪 JSC-BENCH start; baseline 1020.8 MB; logFile=/var/mobile/Containers/Data/Application/5AEFEF0E-59EB-4FAC-957E-73F19B3F51D2/Documents/jsc-spike.log
+[2026-05-10T04:33:31Z] 🧪 JSCExperiment.spawn(1) starting; baseline 1020.8 MB
+[2026-05-10T04:33:31Z] 🧪 JSCExperiment: spawned 1/1 contexts; total alive 1; mem 1020.8→1021.9 MB (+1.16 MB/ctx)
+[2026-05-10T04:33:32Z] 🧪 JSC-BENCH wave: target=1 alive=1 before=1020.8MB after=1021.9MB delta=+1.2MB cumPerCtx=1.16MB
+[2026-05-10T04:33:34Z] 🧪 JSCExperiment.spawn(4) starting; baseline 1021.7 MB
+[2026-05-10T04:33:34Z] 🧪 JSCExperiment: spawned 4/4 contexts; total alive 5; mem 1021.7→1024.5 MB (+0.70 MB/ctx)
+[2026-05-10T04:33:35Z] 🧪 JSC-BENCH wave: target=5 alive=5 before=1021.7MB after=1024.5MB delta=+2.8MB cumPerCtx=0.76MB
+[2026-05-10T04:33:37Z] 🧪 JSCExperiment.spawn(5) starting; baseline 1024.5 MB
+[2026-05-10T04:33:37Z] 🧪 JSCExperiment: spawned 5/5 contexts; total alive 10; mem 1024.5→1028.0 MB (+0.72 MB/ctx)
+[2026-05-10T04:33:38Z] 🧪 JSC-BENCH wave: target=10 alive=10 before=1024.5MB after=1028.0MB delta=+3.5MB cumPerCtx=0.72MB
+[2026-05-10T04:33:40Z] 🧪 JSCExperiment.spawn(15) starting; baseline 1028.0 MB
+[2026-05-10T04:33:40Z] 🧪 JSCExperiment: spawned 15/15 contexts; total alive 25; mem 1028.0→1039.2 MB (+0.75 MB/ctx)
+[2026-05-10T04:33:41Z] 🧪 JSC-BENCH wave: target=25 alive=25 before=1028.0MB after=1039.2MB delta=+11.2MB cumPerCtx=0.74MB
+[2026-05-10T04:33:43Z] 🧪 JSCExperiment.spawn(25) starting; baseline 1039.2 MB
+[2026-05-10T04:33:43Z] 🧪 JSCExperiment: spawned 25/25 contexts; total alive 50; mem 1039.2→1058.0 MB (+0.75 MB/ctx)
+[2026-05-10T04:33:44Z] 🧪 JSC-BENCH wave: target=50 alive=50 before=1039.2MB after=1058.2MB delta=+18.9MB cumPerCtx=0.75MB
+[2026-05-10T04:33:46Z] 🧪 JSC-BENCH done; alive=50 final=1058.2MB total-delta=+37.4MB

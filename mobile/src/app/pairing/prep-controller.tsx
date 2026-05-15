@@ -4,19 +4,19 @@ import {Linking, PermissionsAndroid, Image, Platform, View} from "react-native"
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {showAlert} from "@/utils/AlertUtils"
 import {PermissionFeatures, checkConnectivityRequirementsUI, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {useState} from "react"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
-import CoreModule from "core"
+import CoreModule from "@mentra/bluetooth-sdk"
 
 export default function PairingPrepScreen() {
   const route = useRoute()
   const {deviceModel} = route.params as {deviceModel: string}
-  const {goBack, push, clearHistoryAndGoHome} = useNavigationHistory()
+  const {goBack, push, clearHistoryAndGoHome} = useNavigationStore.getState()
 
   const advanceToPairing = async () => {
     if (deviceModel == null || deviceModel == "") {
@@ -257,7 +257,7 @@ export default function PairingPrepScreen() {
       <>
         <View className="gap-4">
           <Button tx="pairing:g1Ready" onPress={advanceToPairing} />
-          <Button tx="pairing:g1NotReady" preset="secondary" onPress={() => setShowTroubleshootingModal(true)} />
+          {/* <Button tx="pairing:g1NotReady" preset="secondary" onPress={() => setShowTroubleshootingModal(true)} /> */}
         </View>
         <GlassesTroubleshootingModal
           isVisible={showTroubleshootingModal}

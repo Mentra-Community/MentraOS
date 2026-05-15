@@ -17,7 +17,7 @@
  */
 
 import socketComms from "@/services/SocketComms"
-import {BgTimer} from "@/utils/timers"
+import {BgTimer} from "@mentra/island"
 import {Buffer} from "buffer"
 
 import dgram from "react-native-udp"

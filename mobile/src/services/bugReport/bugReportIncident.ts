@@ -1,4 +1,4 @@
-import CoreModule from "core"
+import CoreModule from "@mentra/bluetooth-sdk"
 import NetInfo from "@react-native-community/netinfo"
 import Constants from "expo-constants"
 import * as ImagePicker from "expo-image-picker"
@@ -6,7 +6,7 @@ import * as Location from "expo-location"
 import {Platform} from "react-native"
 
 import restComms from "@/services/RestComms"
-import {useAppletStatusStore} from "@/stores/applets"
+import {useAppStatusStore} from "@mentra/island"
 import {useConnectionStore} from "@/stores/connection"
 import {useCoreStore} from "@/stores/core"
 import {useDebugStore} from "@/stores/debug"
@@ -27,9 +27,9 @@ export interface BuildBugReportFeedbackDataForBugParams {
 }
 
 export function buildBugReportPhoneState(): Record<string, unknown> {
-  const appletState = useAppletStatusStore.getState()
+  const appletState = useAppStatusStore.getState()
   const settingsState = useSettingsStore.getState()
-  const {setCoreInfo: _setCoreInfo, reset: _resetCore, ...coreState} = useCoreStore.getState()
+  const {setCoreInfo: _setCoreInfo, reset: _resetBluetooth, ...bluetoothState} = useCoreStore.getState()
   const {setDebugInfo: _setDebugInfo, reset: _resetDebug, ...debugState} = useDebugStore.getState()
   const {
     setStatus: _setConnectionStatus,
@@ -78,7 +78,7 @@ export function buildBugReportPhoneState(): Record<string, unknown> {
 
   return {
     glasses: filteredGlasses,
-    core: coreState,
+    core: bluetoothState,
     debug: debugState,
     connection: connectionState,
     applets: {
@@ -151,7 +151,7 @@ export async function buildBugReportFeedbackDataForBug(
     console.log("Failed to get location:", e)
   }
 
-  const apps = useAppletStatusStore.getState().apps
+  const apps = useAppStatusStore.getState().apps
   const runningApps = apps.filter((app) => app.running).map((app) => app.packageName)
 
   const glassesConnected = useGlassesStore.getState().connected
@@ -162,8 +162,11 @@ export async function buildBugReportFeedbackDataForBug(
   const appVersion = useGlassesStore.getState().appVersion
   const serialNumber = useGlassesStore.getState().serialNumber
   const androidVersion = useGlassesStore.getState().androidVersion
-  const glassesWifiConnected = useGlassesStore.getState().wifiConnected
-  const glassesWifiSsid = useGlassesStore.getState().wifiSsid
+  const glassesWifi = useGlassesStore.getState().wifi
+  const glassesWifiInfo =
+    glassesWifi.state === "connected"
+      ? {wifiConnected: true, wifiSsid: glassesWifi.ssid}
+      : {wifiConnected: false}
   const glassesBatteryLevel = useGlassesStore.getState().batteryLevel
 
   const glassesBluetoothId = glassesBluetoothName?.split("_").pop() || glassesBluetoothName
@@ -204,8 +207,7 @@ export async function buildBugReportFeedbackDataForBug(
         fwVersion: glassesFwVersion || undefined,
         appVersion: appVersion || undefined,
         androidVersion: androidVersion || undefined,
-        wifiConnected: glassesWifiConnected,
-        ...(glassesWifiConnected && glassesWifiSsid && {wifiSsid: glassesWifiSsid}),
+        ...glassesWifiInfo,
         ...(glassesBatteryLevel >= 0 && {batteryLevel: glassesBatteryLevel}),
       },
     }),

@@ -5,8 +5,8 @@ import {TouchableOpacity, View} from "react-native"
 import {SvgProps} from "react-native-svg"
 
 import {Screen, Text} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {TxKeyPath} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
@@ -32,7 +32,7 @@ const CardButton = ({
 )
 
 export default function OnboardingWelcome() {
-  const {push} = useNavigationHistory()
+  const {push} = useNavigationStore.getState()
   const [_onboarding, setOnboardingCompleted] = useSetting(SETTINGS.onboarding_completed.key)
   const {theme} = useAppTheme()
 

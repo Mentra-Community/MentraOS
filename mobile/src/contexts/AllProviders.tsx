@@ -3,7 +3,7 @@ import * as Sentry from "@sentry/react-native"
 import {Stack} from "expo-router"
 import {PostHogProvider} from "posthog-react-native"
 import {Suspense, FunctionComponent, PropsWithChildren, useMemo} from "react"
-import {View} from "react-native"
+import {Platform, View} from "react-native"
 import ErrorBoundary from "react-native-error-boundary"
 import {GestureHandlerRootView} from "react-native-gesture-handler"
 import {KeyboardProvider} from "react-native-keyboard-controller"
@@ -15,7 +15,6 @@ import {Text} from "@/components/ignite"
 import {AppStoreProvider} from "@/contexts/AppStoreContext"
 import {AuthProvider} from "@/contexts/AuthContext"
 import {DeeplinkProvider} from "@/contexts/DeeplinkContext"
-import {NavigationHistoryProvider, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {SplashLoaderProvider} from "@/contexts/SplashLoaderProvider"
 import {ThemeProvider} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
@@ -24,8 +23,10 @@ import {ModalProvider} from "@/contexts/ModalContext"
 import {KonamiCodeProvider} from "@/utils/dev/konami"
 import ConnectionOverlayProvider from "@/contexts/ConnectionOverlayContext"
 import {SaferAreaProvider, useSaferAreaInsets} from "@/contexts/SaferAreaContext"
-import {getAnimation, JsStack, NativeJsStack, woltScreenOptions} from "@/components/navigation/JsStack"
 import CoreStatusBar from "@/components/dev/CoreStatusBar"
+import {useShallow} from "zustand/shallow"
+import {useNavigationStore} from "@/stores/navigation"
+import { getAnimation, JsStack, woltScreenOptions } from "@/components/navigation/JsStack"
 // JsStack imports commented out - were used for Android-specific navigation (currently disabled)
 // import {getAnimation, JsStack, woltScreenOptions} from "@/components/navigation/JsStack"
 
@@ -81,7 +82,6 @@ export const AllProviders = withWrappers(
   KeyboardProvider,
   AuthProvider,
   AppStoreProvider,
-  NavigationHistoryProvider,
   SplashLoaderProvider,
   DeeplinkProvider,
   (props) => {
@@ -129,9 +129,11 @@ export const AllProviders = withWrappers(
   },
   KonamiCodeProvider,
   (props) => {
-    const {preventBack, getHistory} = useNavigationHistory()
+    const {preventBack, history: navHistory} = useNavigationStore(
+      useShallow((s) => ({preventBack: s.preventBack, history: s.history})),
+    )
     const [debugNavigationHistory] = useSetting(SETTINGS.debug_navigation_history.key)
-    const history = getHistory().map((item) => item.replaceAll("/", "\\"))
+    const history = navHistory.map((item) => item.replaceAll("/", "\\"))
     const {top} = useSaferAreaInsets()
     if (!debugNavigationHistory) {
       return <>{props.children}</>
@@ -165,15 +167,30 @@ export const AllProviders = withWrappers(
     )
   },
   ConnectionOverlayProvider,
+  // (props) => {
+  //   console.log(`NAV: @@@@@@@@@@@@@@@@@@@@@@@@@@@ rerendering above stack (probably a root render)`)
+  //   return <>{props.children}</>
+  // },
   (props) => {
-    const {preventBack, animation, forceGestureEnabled} = useNavigationHistory()
-
+    const {preventBack, forceGestureEnabled, animation} = useNavigationStore(
+      useShallow((s) => ({
+        preventBack: Platform.OS === "android" ? true : s.preventBack,
+        forceGestureEnabled: s.forceGestureEnabled,
+        animation: s.animation,
+      })),
+    )
+    console.log("NAV: @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@", preventBack, forceGestureEnabled, animation)
     const screenOptions = useMemo(
       () => ({
         headerShown: false,
         gestureEnabled: forceGestureEnabled || !preventBack,
         gestureDirection: "horizontal" as const,
         animation: convertToNativeAnimation(animation) as any,
+        // Load-bearing for MiniappHost: /applet/local renders a transparent
+        // passthrough View so the WebView (rendered in MiniappHost at app
+        // root) is visible. Without a transparent contentStyle the route's
+        // container paints over the MiniappHost.
+        contentStyle: {backgroundColor: "transparent"},
       }),
       [preventBack, forceGestureEnabled, animation],
     )
@@ -191,24 +208,10 @@ export const AllProviders = withWrappers(
     //     <JsStack
     //       screenOptions={{
     //         headerShown: false,
-    //         gestureEnabled: !preventBack,
-    //         gestureDirection: "horizontal",
-    //         cardStyleInterpolator: getAnimation(animation),
-    //       }}
-    //     />
-    //   </>
-    // )
-
-    // return (
-    //   <>
-    //     {props.children}
-    //     <JsStack
-    //       screenOptions={{
-    //         headerShown: false,
     //         ...woltScreenOptions,
-    //         gestureEnabled: !preventBack,
-    //         gestureDirection: "horizontal",
-    //         cardStyleInterpolator: getAnimation(animation),
+    //         gestureEnabled: screenOptions.gestureEnabled,
+    //         gestureDirection: screenOptions.gestureDirection,
+    //         cardStyleInterpolator: getAnimation(screenOptions.animation),
     //       }}
     //     />
     //   </>

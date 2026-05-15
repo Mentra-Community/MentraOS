@@ -3,14 +3,14 @@ import {ScrollView, View} from "react-native"
 import {Header, Screen} from "@/components/ignite"
 import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 
 export default function DeviceInfoScreen() {
-  const {goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
   const {theme} = useAppTheme()
 
   // Get all available device info from the glasses store
@@ -21,8 +21,7 @@ export default function DeviceInfoScreen() {
   const btMacAddress = useGlassesStore((state) => state.btMacAddress)
   const appVersion = useGlassesStore((state) => state.appVersion)
   const serialNumber = useGlassesStore((state) => state.serialNumber)
-  const wifiSsid = useGlassesStore((state) => state.wifiSsid)
-  const wifiLocalIp = useGlassesStore((state) => state.wifiLocalIp)
+  const connectedWifi = useGlassesStore((state) => (state.wifi.state === "connected" ? state.wifi : null))
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
 
   // Extract short bluetooth ID from full name (e.g., "MentraLive_664ebf" -> "664ebf")
@@ -50,8 +49,10 @@ export default function DeviceInfoScreen() {
 
           {/* Network Info - only show if connected to WiFi */}
           <Group title={translate("deviceInfo:networkInfo")}>
-            {!!wifiSsid && <RouteButton label={translate("deviceInfo:wifiNetwork")} text={wifiSsid} />}
-            {!!wifiLocalIp && <RouteButton label={translate("deviceInfo:localIpAddress")} text={wifiLocalIp} />}
+            {connectedWifi && <RouteButton label={translate("deviceInfo:wifiNetwork")} text={connectedWifi.ssid} />}
+            {connectedWifi?.localIp && (
+              <RouteButton label={translate("deviceInfo:localIpAddress")} text={connectedWifi.localIp} />
+            )}
           </Group>
         </View>
       </ScrollView>

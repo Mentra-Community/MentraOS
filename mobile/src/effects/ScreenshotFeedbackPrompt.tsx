@@ -1,19 +1,20 @@
 import {useEffect} from "react"
 import {Platform} from "react-native"
+import CrustModule from "crust"
 import * as ScreenCapture from "expo-screen-capture"
 
-import {push} from "@/contexts/NavigationHistoryContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {showAlert} from "@/contexts/ModalContext"
 import {translate} from "@/i18n"
-import CoreModule from "core"
 
 export function ScreenshotFeedbackPrompt() {
+  const {push} = useNavigationStore.getState()
   useEffect(() => {
     if (Platform.OS !== "ios") return
 
     let subscription: ReturnType<typeof ScreenCapture.addScreenshotListener> | null = null
 
-    CoreModule.isBetaBuild().then((isBeta) => {
+    CrustModule.isBetaBuild().then((isBeta) => {
       if (!isBeta) return
 
       subscription = ScreenCapture.addScreenshotListener(async () => {

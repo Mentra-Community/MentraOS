@@ -25,6 +25,7 @@ export function StatusCard({label, style, iconStart, iconEnd, textStyle, subtitl
 
   const content = (
     <GlassView
+      androidShadowSize="sm"
       className="bg-primary-foreground px-4 py-3 flex-row justify-between items-center rounded-2xl"
       style={[restStyle]}>
       <View className="flex-row items-center gap-4">
@@ -52,14 +53,6 @@ export function StatusCard({label, style, iconStart, iconEnd, textStyle, subtitl
 
   return content
 }
-
-const $statusCardContainer: ThemedStyle<ViewStyle> = () => ({
-  flexDirection: "row",
-  justifyContent: "space-between",
-  // paddingVertical: 16,
-  height: 48,
-  alignItems: "center",
-})
 
 interface RouteButtonProps {
   label: string
@@ -93,7 +86,7 @@ export function RouteButton({
       : theme.colors.secondary_foreground
 
   return (
-    <GlassView className="bg-primary-foreground px-4 rounded-2xl" style={[disabled && {opacity: 0.5}, style]}>
+    <GlassView androidShadowSize="sm" className="bg-primary-foreground px-4 rounded-2xl" style={[disabled && {opacity: 0.5}, style]}>
       <TouchableOpacity onPress={onPress} disabled={disabled || !onPress} hitSlop={4}>
         <View className="items-center py-2 flex-row">
           <View

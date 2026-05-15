@@ -3,14 +3,14 @@ import {TouchableOpacity, View, ViewStyle} from "react-native"
 import {Icon, Text} from "@/components/ignite"
 import AppIcon from "@/components/home/AppIcon"
 import {Badge} from "@/components/ui"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {useBackgroundApps} from "@/stores/applets"
+import {useBackgroundApps} from "@mentra/island"
 
 export const BackgroundAppsLink = ({style}: {style?: ViewStyle}) => {
   const {theme} = useAppTheme()
-  const {push} = useNavigationHistory()
+  const {push} = useNavigationStore.getState()
   const {active} = useBackgroundApps()
   const activeCount = active.length
 

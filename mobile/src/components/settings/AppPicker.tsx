@@ -7,17 +7,17 @@ import AppIcon from "@/components/home/AppIcon"
 import {Group} from "@/components/ui/Group"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
-import {ClientAppletInterface} from "@/stores/applets"
+import type {ClientApp} from "@mentra/island"
 import {ThemedStyle} from "@/theme"
 
 interface AppPickerProps {
   visible: boolean
   onClose: () => void
-  onSelect: (app: ClientAppletInterface) => void
-  apps: ClientAppletInterface[]
+  onSelect: (app: ClientApp) => void
+  apps: ClientApp[]
   selectedPackageName?: string
   title?: string
-  filterPredicate?: (app: ClientAppletInterface) => boolean
+  filterPredicate?: (app: ClientApp) => boolean
   showCompatibilityWarnings?: boolean
 }
 
@@ -97,7 +97,7 @@ export const AppPicker: FC<AppPickerProps> = ({
   }, [apps, searchQuery, filterPredicate])
 
   const handleAppPress = useCallback(
-    (app: ClientAppletInterface) => {
+    (app: ClientApp) => {
       onSelect(app)
       onClose()
       setSearchQuery("") // Reset search

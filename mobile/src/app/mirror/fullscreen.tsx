@@ -19,8 +19,8 @@ import Icon from "react-native-vector-icons/MaterialIcons"
 import {Text} from "@/components/ignite"
 import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
 import {SimulatedGlassesControls} from "@/components/mirror/SimulatedGlassesControls"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
@@ -42,7 +42,7 @@ export default function GlassesMirrorFullscreen() {
   const [_recordingPath, setRecordingPath] = useState<string | null>(null)
   const [recordingCount, setRecordingCount] = useState(0)
   const [isCameraOn, setIsCameraOn] = useState(true)
-  const {goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
 
   const cameraRef = useRef<CameraView | null>(null)

@@ -1,5 +1,5 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
-import CoreModule from "core"
+import CoreModule from "@mentra/bluetooth-sdk"
 import {useFocusEffect} from "expo-router"
 import {useCallback} from "react"
 import {View, TouchableOpacity, Platform, ScrollView, Image} from "react-native"
@@ -11,8 +11,8 @@ import {VuzixLogo} from "@/components/brands/VuzixLogo"
 import {Text, Header} from "@/components/ignite"
 import {Screen} from "@/components/ignite/Screen"
 import {Spacer} from "@/components/ui/Spacer"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {getGlassesImage} from "@/utils/getGlassesImage"
 import GlassView from "@/components/ui/GlassView"
@@ -20,8 +20,8 @@ import GlassView from "@/components/ui/GlassView"
 // import {useLocalSearchParams} from "expo-router"
 
 export default function SelectGlassesModelScreen() {
-  const {theme, themed} = useAppTheme()
-  const {push, goBack} = useNavigationHistory()
+  const {theme} = useAppTheme()
+  const {push, goBack} = useNavigationStore.getState()
   const [superMode] = useSetting(SETTINGS.super_mode.key)
 
   // when this screen is focused, forget any glasses that may be paired:
@@ -82,7 +82,7 @@ export default function SelectGlassesModelScreen() {
   }
 
   return (
-    <Screen preset="fixed" extraAndroidInsets>
+    <Screen preset="fixed">
       <Header
         titleTx="pairing:selectModel"
         leftIcon="chevron-left"

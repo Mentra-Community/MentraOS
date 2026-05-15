@@ -1,0 +1,16 @@
+@import "tailwindcss";
+@import "./styles/theme.css";
+
+/* Miniapp-specific base. The injected safe-area insets (via useSafeArea) are
+   applied as padding in App.tsx, not on body, so miniapp background paints
+   edge-to-edge. */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  font-family: "Red Hat Display", -apple-system, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}

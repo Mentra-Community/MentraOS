@@ -1,10 +1,10 @@
-import {ControllerTypes, DeviceTypes} from "@/../../cloud/packages/types/src"
-import CoreModule from "core"
+import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import CoreModule from "@mentra/bluetooth-sdk"
 import {ActivityIndicator, View} from "react-native"
 
-import {Button, Icon} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {Button} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
@@ -13,7 +13,7 @@ import {useCoreStore} from "@/stores/core"
 
 export const ConnectDeviceButton = () => {
   const {theme} = useAppTheme()
-  const {push} = useNavigationHistory()
+  const {push} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const glassesConnected = useGlassesStore((state) => state.connected)
   const isSearching = useCoreStore((state) => state.searching)
@@ -100,7 +100,7 @@ export const ConnectDeviceButton = () => {
 
 export const ConnectControllerButton = () => {
   const {theme} = useAppTheme()
-  const {push} = useNavigationHistory()
+  const {push} = useNavigationStore.getState()
   const [defaultController] = useSetting(SETTINGS.default_controller.key)
   const controllerConnected = useGlassesStore((state) => state.controllerConnected)
   const isSearching = useCoreStore((state) => state.searchingController)

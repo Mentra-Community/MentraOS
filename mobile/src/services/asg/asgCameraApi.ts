@@ -6,7 +6,7 @@
 import * as RNFS from "@dr.pogodin/react-native-fs"
 
 import {PhotoInfo, CaptureGroup, GalleryResponse, ServerStatus, HealthResponse} from "@/types/asg"
-import {BgTimer} from "@/utils/timers"
+import {BgTimer} from "@mentra/island"
 
 import {localStorageService} from "./localStorageService"
 

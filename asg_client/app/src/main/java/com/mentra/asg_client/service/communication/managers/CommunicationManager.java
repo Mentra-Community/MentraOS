@@ -553,26 +553,42 @@ public class CommunicationManager implements ICommunicationManager, OtaHelper.Ph
     }
 
     /**
-     * Send OTA progress update to phone.
-     * Part of OtaHelper.PhoneConnectionProvider interface.
-     * @param progress JSON with stage, status, progress, bytes_downloaded, total_bytes, etc.
+     * Send a non-session OTA control message (e.g. {@code ota_start_ack}) over BLE.
      */
     @Override
-    public void sendOtaProgress(JSONObject progress) {
-        // Less verbose logging for frequent progress updates
-        Log.d(TAG, "📱 OTA Progress: " + progress.optString("stage", "?") +
-              " " + progress.optString("status", "?") +
-              " " + progress.optInt("progress", 0) + "%");
-
-        if (isPhoneConnected()) {
-            try {
-                // Progress updates don't need reliability (frequent updates, not critical)
-                String jsonString = progress.toString();
-                serviceManager.getBluetoothManager().sendData(jsonString.getBytes(StandardCharsets.UTF_8));
-            } catch (Exception e) {
-                Log.e(TAG, "📱 💥 Error sending OTA progress", e);
-            }
+    public void sendOtaMessage(JSONObject message) {
+        if (!isPhoneConnected()) return;
+        try {
+            String jsonString = message.toString();
+            serviceManager.getBluetoothManager().sendData(jsonString.getBytes(StandardCharsets.UTF_8));
+            Log.d(TAG, "📱 OTA message sent: " + message.optString("type", "?"));
+        } catch (Exception e) {
+            Log.e(TAG, "📱 Error sending OTA message", e);
         }
-        // Don't log warning for disconnected - progress may continue even if phone disconnects
+    }
+
+    /**
+     * Send unified {@code ota_status} to the phone. Glasses send a flat JSON object (no {@code data} wrapper).
+     * Terminal {@code complete} / {@code failed} use reliable delivery.
+     */
+    @Override
+    public void sendOtaStatus(JSONObject status) {
+        if (!isPhoneConnected()) return;
+
+        String statusValue = status.optString("status", "");
+        boolean isTerminal = "complete".equals(statusValue) || "failed".equals(statusValue);
+
+        try {
+            if (isTerminal) {
+                boolean sent = reliableManager.sendMessage(status);
+                Log.i(TAG, "📱 OTA Status (reliable): " + statusValue + " sent=" + sent);
+            } else {
+                String jsonString = status.toString();
+                serviceManager.getBluetoothManager().sendData(jsonString.getBytes(StandardCharsets.UTF_8));
+                Log.d(TAG, "📱 OTA Status: " + statusValue);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "📱 Error sending OTA status", e);
+        }
     }
 } 

@@ -1,21 +1,21 @@
 import {ScrollView, View} from "react-native"
-import CoreModule from "core"
+import CoreModule from "@mentra/bluetooth-sdk"
 
 import {Header, Screen} from "@/components/ignite"
 import ToggleSetting from "@/components/settings/ToggleSetting"
 import {Group} from "@/components/ui/Group"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {RouteButton} from "@/components/ui/RouteButton"
 
 export default function SuperSettingsScreen() {
-  const {goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
   const [superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
   const [debugNavigationHistoryEnabled, setDebugNavigationHistoryEnabled] = useSetting(
     SETTINGS.debug_navigation_history.key,
   )
   const [debugCoreStatusBarEnabled, setDebugCoreStatusBarEnabled] = useSetting(SETTINGS.debug_core_status_bar.key)
-  const {push} = useNavigationHistory()
+  const {push} = useNavigationStore.getState()
 
   return (
     <Screen preset="fixed">
@@ -38,7 +38,7 @@ export default function SuperSettingsScreen() {
             />
 
             <ToggleSetting
-              label="Debug Core Status Bar"
+              label="Debug Bluetooth Status Bar"
               value={debugCoreStatusBarEnabled}
               onValueChange={(value) => setDebugCoreStatusBarEnabled(value)}
             />
@@ -47,12 +47,11 @@ export default function SuperSettingsScreen() {
           <Group title="Debug">
             <RouteButton label="dbg1()" onPress={() => CoreModule.dbg1()} />
             <RouteButton label="dbg2()" onPress={() => CoreModule.dbg2()} />
+            <RouteButton label="Stress Test (Jetsam)" onPress={() => push("/miniapps/settings/stress-test")} />
           </Group>
 
           <Group title="Mini Apps">
-            <RouteButton label="React Example" onPress={() => push("/miniapps/dev/react-example")} />
-            <RouteButton label="Local Captions Example" onPress={() => push("/miniapps/dev/local-captions")} />
-            <RouteButton label="LMA Installer" onPress={() => push("/miniapps/dev/mini-app-installer")} />
+            <RouteButton label="Miniapp Developer" onPress={() => push("/miniapps/settings/miniapp-developer")} />
           </Group>
         </View>
         <View className="flex h-16" />

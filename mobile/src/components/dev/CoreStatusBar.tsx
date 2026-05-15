@@ -1,17 +1,17 @@
-import {ScrollView, View} from "react-native"
+import {View} from "react-native"
 import {useRef, useEffect, useState} from "react"
 
-import {Icon, Text} from "@/components/ignite"
+import {Icon, IconTypes, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useConnectionStore} from "@/stores/connection"
 import {useCoreStore} from "@/stores/core"
 import {useDebugStore} from "@/stores/debug"
 import {useGlassesStore} from "@/stores/glasses"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
-import CoreModule, {TouchEvent} from "core"
-import {BgTimer} from "@/utils/timers"
+import CoreModule, {TouchEvent} from "@mentra/bluetooth-sdk"
+import {BgTimer} from "@mentra/island"
 
-function Tag({icon, label, bg}: {icon: string; label: string; bg: string}) {
+function Tag({icon, label, bg}: {icon: IconTypes; label: string; bg: string}) {
   const {theme} = useAppTheme()
   return (
     <View className={`flex-row items-center px-1.5 rounded-full ${bg} mx-0.5`}>

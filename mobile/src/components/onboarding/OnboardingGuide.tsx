@@ -5,11 +5,12 @@ import {View, ViewStyle, ActivityIndicator, Platform, Animated, ScrollView} from
 
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Text, Button, Header, Icon} from "@/components/ignite"
-import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {translate} from "@/i18n/translate"
-import {BgTimer} from "@/utils/timers"
+import {BgTimer} from "@mentra/island"
 
 interface BaseStep {
   name: string
@@ -87,7 +88,7 @@ export function OnboardingGuide({
   preventBack = false,
   requiresGlassesConnection: _requiresGlassesConnection = false,
 }: OnboardingGuideProps) {
-  const {clearHistoryAndGoHome} = useNavigationHistory()
+  const {clearHistoryAndGoHome} = useNavigationStore.getState()
   const {theme} = useAppTheme()
   const [superMode] = useSetting(SETTINGS.super_mode.key)
 

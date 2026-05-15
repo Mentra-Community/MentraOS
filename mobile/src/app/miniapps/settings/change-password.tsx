@@ -4,8 +4,8 @@ import {View, TextInput, TouchableOpacity, ActivityIndicator, ScrollView, ViewSt
 
 import {Button, Header, Screen, Text} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {ThemedStyle, spacing} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
@@ -19,7 +19,7 @@ export default function ChangePasswordScreen() {
   const [showNewPassword, setShowNewPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
 
-  const {goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
   const {theme, themed} = useAppTheme()
 
   const passwordsMatch = newPassword === confirmPassword && newPassword.length > 0

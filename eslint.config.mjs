@@ -174,6 +174,10 @@ export default defineConfig([
       "**/build/**",
       "**/coverage/**",
       "**/.vscode/**",
+      "**/.eslintrc.js",
+      "**/app.plugin.js",
+      "**/babel.config.js",
+      "**/metro.config.js",
 
       // Mobile-specific ignores
       "mobile/ios/**",

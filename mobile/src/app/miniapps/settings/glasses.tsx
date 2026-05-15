@@ -4,8 +4,8 @@ import {ConnectDeviceButton} from "@/components/glasses/ConnectDeviceButton"
 import {NotConnectedInfo} from "@/components/glasses/info/NotConnectedInfo"
 import {Header, Screen, Icon} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
@@ -14,14 +14,14 @@ import {Group} from "@/components/ui"
 import {RouteButton} from "@/components/ui/RouteButton"
 
 import {Capabilities, DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
-import CoreModule from "core"
+import CoreModule from "@mentra/bluetooth-sdk"
 
 import OtaProgressSection from "@/components/glasses/OtaProgressSection"
 import {BatteryStatus} from "@/components/glasses/info/BatteryStatus"
 import {EmptyState} from "@/components/glasses/info/EmptyState"
 import {ButtonSettings} from "@/components/glasses/settings/ButtonSettings"
 import BrightnessSetting from "@/components/settings/BrightnessSetting"
-import {useApplets, useAppletStatusStore} from "@/stores/applets"
+import {useApps} from "@mentra/island"
 // import showAlert from "@/utils/AlertUtils"
 import {showAlert} from "@/contexts/ModalContext"
 
@@ -37,11 +37,11 @@ function DeviceSettings() {
   const [defaultButtonActionApp, setDefaultButtonActionApp] = useSetting(SETTINGS.default_button_action_app.key)
   const glassesConnected = useGlassesStore((state) => state.connected)
 
-  const {push, goBack} = useNavigationHistory()
-  const applets = useApplets()
+  const {push} = useNavigationStore.getState()
+  const applets = useApps()
   const features: Capabilities = getModelCapabilities(defaultWearable)
 
-  const wifiLocalIp = useGlassesStore((state) => state.wifiSsid)
+  const wifiLocalIp = useGlassesStore((state) => (state.wifi.state === "connected" ? state.wifi.localIp : undefined))
   const bluetoothName = useGlassesStore((state) => state.bluetoothName)
   const buildNumber = useGlassesStore((state) => state.buildNumber)
   const otaProgress = useGlassesStore((state) => state.otaProgress)
@@ -239,7 +239,7 @@ function DeviceSettings() {
 export default function Glasses() {
   const {theme} = useAppTheme()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const {goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
   const glassesConnected = useGlassesStore((state) => state.connected)
 
   const formatGlassesTitle = (title: string) => title.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())
