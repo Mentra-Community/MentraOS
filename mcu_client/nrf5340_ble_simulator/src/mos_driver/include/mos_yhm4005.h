@@ -33,7 +33,7 @@
 #define MOS_YHM4005_DELAY_B1_US          6
 #define MOS_YHM4005_DELAY_BZ_US          25
 #define MOS_YHM4005_DELAY_SA_US          4
-#define MOS_YHM4005_FEED_LOW_US          1000
+#define MOS_YHM4005_FEED_LOW_US          2000
 #define MOS_YHM4005_WAIT_RELEASE_LOOPS   10000
 
 typedef enum
@@ -105,8 +105,8 @@ int mos_yhm4005_init(void);
  * @brief Read YHM4005 ID register | 读取 YHM4005 ID 寄存器
  * @param id Output pointer that receives register 0x00 value.
  * @param id 输出指针，用于接收 0x00 寄存器的值。
- * @return 0 on success, -EINVAL for null pointer, -ENODEV before init, or -EIO when ACMD communication fails.
- * @return 成功返回 0；空指针返回 -EINVAL，未初始化返回 -ENODEV，ACMD 通讯失败返回 -EIO。
+ * @return 0 on success, -EINVAL for null pointer, -ENODEV before init or invalid ID, or -EIO when ACMD communication fails.
+ * @return 成功返回 0；空指针返回 -EINVAL，未初始化或 ID 非法返回 -ENODEV，ACMD 通讯失败返回 -EIO。
  */
 int mos_yhm4005_read_id(uint8_t *id);
 
@@ -118,8 +118,8 @@ int mos_yhm4005_read_id(uint8_t *id);
  * @param diag 可选输出诊断信息，包含时序、地址、错误位置和 read-bit 错误。
  * @details Uses the confirmed YHM4005AW4T normal address 0x1A and records vendor-style error_location/read_bit_error fields for ACMD debugging.
  * @details 使用已确认的 YHM4005AW4T normal 地址 0x1A，并记录厂商风格的 error_location/read_bit_error 字段用于 ACMD 调试。
- * @return 0 on success, -EINVAL for null ID pointer, -ENODEV before init, or -EIO when ACMD communication fails.
- * @return 成功返回 0；ID 指针为空返回 -EINVAL，未初始化返回 -ENODEV，ACMD 通讯失败返回 -EIO。
+ * @return 0 on success, -EINVAL for null ID pointer, -ENODEV before init or invalid ID, or -EIO when ACMD communication fails.
+ * @return 成功返回 0；ID 指针为空返回 -EINVAL，未初始化或 ID 非法返回 -ENODEV，ACMD 通讯失败返回 -EIO。
  */
 int mos_yhm4005_read_id_diag(uint8_t *id, mos_yhm4005_diag_t *diag);
 

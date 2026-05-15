@@ -78,6 +78,17 @@ static bool yhm4005_id_is_valid(uint8_t id)
     return (id & MOS_YHM4005_ID_VALID_MASK) == MOS_YHM4005_ID_VALID_VALUE;
 }
 
+static int validate_id(uint8_t id)
+{
+    if (!yhm4005_id_is_valid(id))
+    {
+        LOG_ERR("YHM4005 ID mismatch: 0x%02x", id);
+        return -ENODEV;
+    }
+
+    return 0;
+}
+
 static int acmd_output_high(void)
 {
     /*
@@ -623,13 +634,7 @@ static int verify_id(void)
         return ret;
     }
 
-    if (!yhm4005_id_is_valid(id))
-    {
-        LOG_ERR("YHM4005 ID mismatch: 0x%02x", id);
-        return -ENODEV;
-    }
-
-    return 0;
+    return validate_id(id);
 }
 
 int mos_yhm4005_init(void)
@@ -663,6 +668,8 @@ int mos_yhm4005_init(void)
 
 int mos_yhm4005_read_id(uint8_t *id)
 {
+    int ret;
+
     if (id == NULL)
     {
         return -EINVAL;
@@ -673,7 +680,13 @@ int mos_yhm4005_read_id(uint8_t *id)
         return -ENODEV;
     }
 
-    return yhm4005_read(MOS_YHM4005_REG_ID, id, 1);
+    ret = yhm4005_read(MOS_YHM4005_REG_ID, id, 1);
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return validate_id(*id);
 }
 
 int mos_yhm4005_read_id_diag(uint8_t *id, mos_yhm4005_diag_t *diag)
@@ -692,7 +705,12 @@ int mos_yhm4005_read_id_diag(uint8_t *id, mos_yhm4005_diag_t *diag)
 
     ret = yhm4005_read_retry(MOS_YHM4005_REG_ID, id, 1, MOS_YHM4005_RETRY_COUNT, true);
     diag_copy(diag);
-    return ret;
+    if (ret != 0)
+    {
+        return ret;
+    }
+
+    return validate_id(*id);
 }
 
 int mos_yhm4005_enable(mos_yhm4005_timeout_t timeout, mos_yhm4005_reset_pulse_t reset_pulse)
@@ -794,7 +812,7 @@ int mos_yhm4005_feed(void)
     {
         return ret;
     }
-
+    LOG_INF("YHM4005 fed successfully");
     return 0;
 }
 
