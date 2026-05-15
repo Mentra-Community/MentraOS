@@ -8,7 +8,6 @@ import {create} from "zustand"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
-import {useAppStatusStore, useForegroundMiniApp} from "@mentra/island"
 import { captureScreenshot } from "@/effects/CapsuleMenu"
 
 export interface CapsuleRegistration {

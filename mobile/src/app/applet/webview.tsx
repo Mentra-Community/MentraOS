@@ -286,8 +286,8 @@ export default function AppWebView() {
   }, [colorScheme, isWebViewLoaded])
 
   const handleWebViewMessage = (event: any) => {
-    // Cloud app webviews don't send miniapp SDK envelopes.
-    // Local miniapp WebViews are routed through MiniappHost → LocalMiniappRuntime.
+    // Cloud app webviews don't send miniapp SDK envelopes; local
+    // miniapp WebViews live in /applet/local and route via MentraUIRouter.
     const _data = event.nativeEvent.data
   }
 

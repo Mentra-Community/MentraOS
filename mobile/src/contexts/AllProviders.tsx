@@ -12,7 +12,6 @@ import Toast from "react-native-toast-message"
 
 // import {ErrorBoundary} from "@/components/error"
 import {Text} from "@/components/ignite"
-import MiniappHost from "@/components/miniapp/MiniappHost"
 import {AppStoreProvider} from "@/contexts/AppStoreContext"
 import {AuthProvider} from "@/contexts/AuthContext"
 import {DeeplinkProvider} from "@/contexts/DeeplinkContext"
@@ -186,11 +185,6 @@ export const AllProviders = withWrappers(
         gestureEnabled: forceGestureEnabled || !preventBack,
         gestureDirection: "horizontal" as const,
         animation: convertToNativeAnimation(animation) as any,
-        // Load-bearing for MiniappHost: /applet/local renders a transparent
-        // passthrough View so the WebView (rendered in MiniappHost at app
-        // root) is visible. Without a transparent contentStyle the route's
-        // container paints over the MiniappHost.
-        contentStyle: {backgroundColor: "transparent"},
       }),
       [preventBack, forceGestureEnabled, animation],
     )
@@ -199,7 +193,6 @@ export const AllProviders = withWrappers(
       <>
         {props.children}
         <Stack screenOptions={screenOptions} />
-        <MiniappHost />
       </>
     )
 

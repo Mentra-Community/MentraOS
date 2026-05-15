@@ -20,8 +20,6 @@ import {
 } from "@mentra/island"
 import {File} from "expo-file-system"
 
-import {miniappHost} from "@/components/miniapp/MiniappHost"
-
 const MENTRA_JS_ENGINE = Platform.OS === "ios" ? "jsc" : "quickjs"
 const MENTRA_OS_VERSION = process.env.EXPO_PUBLIC_MENTRAOS_VERSION ?? "unknown"
 
@@ -84,9 +82,9 @@ export function bootstrapMentraJS() {
     }
   }
 
-  // Attach the UI router to MiniappHost so two-layer miniapps' WebViews
-  // route mentra.send / mentra.on through the bound JSContext.
-  miniappHost.attachUIRouter(uiRouter)
+  // The /applet/local route binds the UI router to its WebView directly
+  // via `getMentraJS().uiRouter.bindWebView(...)` — no global attach
+  // step needed. The router is reachable on the bootstrapped singleton.
 
   // Wire up the dev server's "respawn-bg" signal so a touch under
   // src/background/ kills + re-spawns the JSContext with the latest

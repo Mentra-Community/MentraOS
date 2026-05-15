@@ -272,8 +272,8 @@ class MantleManager {
     localMiniappRuntime.initialize()
 
     // Bootstrap MentraJS — wires MentraJSRouter + MentraUIRouter +
-    // MentraJSCrashController and attaches the UI router to MiniappHost
-    // so two-layer miniapps' WebViews route through to their JSContext.
+    // MentraJSCrashController. The /applet/local route binds the UI
+    // router to its inline WebView via getMentraJS().uiRouter directly.
     try {
       bootstrapMentraJS()
     } catch (e) {
