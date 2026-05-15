@@ -57,7 +57,7 @@ fun CameraScreen(controller: MentraExampleController) {
     val directPhone = !cloudServerEnabled
     val cameraStatusFailed = isCameraStatusFailure(state.cameraStatus)
     val setupHint = if (cloudServerEnabled) localCameraSetupHint(state.webhookUrl, state.cameraStatus) else null
-    val sdkCall = cameraSdkCall(state.photoSize, state.photoCompression, state.photoFlash)
+    val sdkCall = cameraSdkCall(state.photoSize, state.photoCompression)
     val clipboardManager = LocalClipboardManager.current
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
         PageHeader("Camera", connected)
@@ -293,10 +293,6 @@ fun CameraScreen(controller: MentraExampleController) {
                             controller.setPhotoCompression(compression)
                         }
                     }
-                }
-                CameraOptionGroup("flash") {
-                    OptionChip("off", !state.photoFlash) { controller.setPhotoFlash(false) }
-                    OptionChip("on", state.photoFlash) { controller.setPhotoFlash(true) }
                 }
             }
         }

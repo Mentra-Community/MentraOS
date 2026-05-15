@@ -153,7 +153,6 @@ data class MentraExampleState(
     val photoDestination: PhotoDestination = PhotoDestination.THIS_PHONE,
     val photoPreviewUrl: String? = null,
     val photoCompression: String = "medium",
-    val photoFlash: Boolean = false,
     val photoSize: String = "medium",
     val phonePhotoServerRunning: Boolean = false,
     val phonePhotoUploadUrl: String = "Phone receiver not started",
@@ -389,10 +388,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         state = state.copy(photoCompression = compression)
     }
 
-    fun setPhotoFlash(enabled: Boolean) {
-        state = state.copy(photoFlash = enabled)
-    }
-
     fun captureAndUpload() = runAction("Capture & upload") {
         requireConnected("capture photos")
         requireGlassesWifi("capture photos")
@@ -426,7 +421,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 size = PhotoSize.fromValue(state.photoSize),
                 webhookUrl = uploadUrl,
                 compress = PhotoCompression.fromValue(state.photoCompression),
-                flash = state.photoFlash,
                 sound = true,
             )
         )
@@ -458,7 +452,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 size = PhotoSize.fromValue(state.photoSize),
                 webhookUrl = uploadUrl,
                 compress = PhotoCompression.fromValue(state.photoCompression),
-                flash = state.photoFlash,
                 sound = true,
             )
         )
@@ -1988,7 +1981,6 @@ val photoCompressionOptions = listOf("none", "medium", "heavy")
 fun cameraSdkCall(
     size: String,
     compression: String,
-    flash: Boolean,
 ): String = """
 mentraBluetoothSdk.requestPhoto(
     PhotoRequest(
@@ -1997,7 +1989,6 @@ mentraBluetoothSdk.requestPhoto(
       size = PhotoSize.${size.uppercase(Locale.US)},
       webhookUrl = uploadUrl,
       compress = PhotoCompression.${compression.uppercase(Locale.US)},
-      flash = $flash,
       sound = true,
     )
 )

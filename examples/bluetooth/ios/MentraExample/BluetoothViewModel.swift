@@ -97,7 +97,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var photoDestination: PhotoDestination = .thisPhone
     @Published private(set) var photoSize: PhotoSize = .medium
     @Published private(set) var photoCompression: PhotoCompression = .medium
-    @Published private(set) var photoFlash = false
     @Published private(set) var phonePhotoServerRunning = false
     @Published private(set) var phonePhotoUploadUrl = "Phone receiver not started"
     @Published var streamProtocol: ExampleStreamProtocol = .webrtc
@@ -331,10 +330,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         photoCompression = compression
     }
 
-    func setPhotoFlash(_ enabled: Bool) {
-        photoFlash = enabled
-    }
-
     func captureAndUpload() {
         runAction("Capture & upload") {
             try requireConnected("capture photos")
@@ -367,7 +362,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                     size: photoSize,
                     webhookUrl: uploadUrl,
                     compress: photoCompression,
-                    flash: photoFlash,
                     sound: true
                 )
             )
@@ -400,7 +394,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 size: photoSize,
                 webhookUrl: uploadUrl,
                 compress: photoCompression,
-                flash: photoFlash,
                 sound: true
             )
         )

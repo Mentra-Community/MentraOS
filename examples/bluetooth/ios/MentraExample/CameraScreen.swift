@@ -5,7 +5,7 @@ import UIKit
 private let photoSizeOptions: [PhotoSize] = [.small, .medium, .large, .full]
 private let photoCompressionOptions: [PhotoCompression] = [.none, .medium, .heavy]
 
-private func cameraSdkCall(size: String, compression: String, flash: Bool) -> String {
+private func cameraSdkCall(size: String, compression: String) -> String {
     """
 mentraBluetoothSdk.requestPhoto(
     PhotoRequest(
@@ -14,7 +14,6 @@ mentraBluetoothSdk.requestPhoto(
       size: .\(size),
       webhookUrl: uploadUrl,
       compress: .\(compression),
-      flash: \(flash),
       sound: true
     )
 )
@@ -130,7 +129,7 @@ struct CameraScreen: View {
     }
 
     private var sdkCard: some View {
-        let sdkCall = cameraSdkCall(size: model.photoSize.rawValue, compression: model.photoCompression.rawValue, flash: model.photoFlash)
+        let sdkCall = cameraSdkCall(size: model.photoSize.rawValue, compression: model.photoCompression.rawValue)
         return VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
@@ -269,12 +268,6 @@ struct CameraScreen: View {
                     }
                 }
 
-                CameraOptionGroup(label: "flash") {
-                    CameraOptionChip(value: "off", highlight: !model.photoFlash)
-                        .onTapGesture { model.setPhotoFlash(false) }
-                    CameraOptionChip(value: "on", highlight: model.photoFlash)
-                        .onTapGesture { model.setPhotoFlash(true) }
-                }
             }
         }
     }

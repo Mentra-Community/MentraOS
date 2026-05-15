@@ -402,7 +402,6 @@ sdk.requestPhoto(
         webhookUrl = "https://api.example.com/mentra/photo",
         authToken = "optional-token",
         compress = PhotoCompression.MEDIUM,
-        flash = false,
         sound = true,
     )
 )
@@ -419,7 +418,6 @@ sdk.requestPhoto(
         webhookUrl: "https://api.example.com/mentra/photo",
         authToken: "optional-token",
         compress: .medium,
-        flash: false,
         sound: true
     )
 )
@@ -435,10 +433,11 @@ await BluetoothSdk.photoRequest(
   'https://api.example.com/mentra/photo',
   'optional-token',
   'medium',
-  false,
   true,
 );
 ```
+
+The camera light is always enabled for photo capture and streaming as a privacy indicator.
 
 Your webhook should accept multipart form data with a `photo` file and `requestId`. If you include `authToken`, the uploader adds `Authorization: Bearer <token>` on the webhook request.
 
@@ -617,8 +616,8 @@ Common event names include `button_press`, `touch_event`, `head_up`, `battery_st
 | `connect` / `connectDefault` | `connect` saves connected glasses as default and cancels existing connection attempts unless options override that behavior. `connectDefault` uses the app-restored default device. |
 | `displayText` | Defaults to `x = 0`, `y = 0`, `size = 24` when supported by the platform call. |
 | `setMicState` | `useGlassesMic = true`, `bypassVad = false`, `sendTranscript = false`, and `sendLc3Data = false` unless explicitly set. |
-| `PhotoRequest` / `photoRequest` | Pass explicit size, compression, flash, and sound for cross-platform consistency. |
-| `StreamRequest` / `startStream` | `keepAlive = true`, `keepAliveIntervalSeconds = 15`, `flash = true`, and `sound = true` by default in native SDK calls. |
+| `PhotoRequest` / `photoRequest` | Pass explicit size, compression, and sound. The camera light is always enabled by the SDK. |
+| `StreamRequest` / `startStream` | `keepAlive = true`, `keepAliveIntervalSeconds = 15`, and `sound = true` by default in native SDK calls. The camera light is always enabled by the SDK. |
 | `sendIncidentId` | Uses `https://api.mentra.glass` if `apiBaseUrl` is omitted. |
 
 ## Error Handling

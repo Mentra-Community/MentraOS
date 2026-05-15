@@ -9,7 +9,7 @@ import { colors } from '../components/theme';
 import { isGlassesConnected, isGlassesWifiConnected } from '../sdkFormat';
 import { PHOTO_COMPRESSIONS, PHOTO_SIZES, type MentraSdkModel, type PhotoCompression, type PhotoSize } from '../useMentraSdk';
 
-function cameraSdkCall(size: PhotoSize, compression: PhotoCompression, flash: boolean, useCloudServer: boolean) {
+function cameraSdkCall(size: PhotoSize, compression: PhotoCompression, useCloudServer: boolean) {
   if (!useCloudServer) {
     return `const { uploadUrl } = await MentraDirectReceiver.startPhotoReceiver();
 await BluetoothSdk.photoRequest(
@@ -19,7 +19,6 @@ await BluetoothSdk.photoRequest(
   uploadUrl,
   null,
   "${compression}",
-  ${flash},
   true,
 )`;
   }
@@ -30,7 +29,6 @@ await BluetoothSdk.photoRequest(
   webhookUrl,
   null,
   "${compression}",
-  ${flash},
   true,
 )`;
 }
@@ -45,7 +43,6 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
   const sdkCall = cameraSdkCall(
     sdk.photoSize,
     sdk.photoCompression,
-    sdk.photoFlash,
     sdk.photoCloudServerEnabled,
   );
 
@@ -200,10 +197,6 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
               onPress={() => sdk.setPhotoCompression(compression)}
             />
           ))}
-        </OptionGroup>
-        <OptionGroup label="flash">
-          <Chip active={!sdk.photoFlash} value="off" onPress={() => sdk.setPhotoFlash(false)} />
-          <Chip active={sdk.photoFlash} value="on" onPress={() => sdk.setPhotoFlash(true)} />
         </OptionGroup>
       </LinearGradient>
     </ScrollView>

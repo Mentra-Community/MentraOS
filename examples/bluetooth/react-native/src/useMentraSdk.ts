@@ -141,7 +141,6 @@ export type MentraSdkState = {
   phonePhotoUploadUrl: string | null;
   photoCompression: PhotoCompression;
   photoCloudServerEnabled: boolean;
-  photoFlash: boolean;
   photoPreviewUrl: string | null;
   photoSize: PhotoSize;
   rawJsonExpanded: boolean;
@@ -185,7 +184,6 @@ export type MentraSdkActions = {
   setGalleryModeAuto: (enabled: boolean) => Promise<void>;
   setPhotoCompression: (compression: PhotoCompression) => void;
   setPhotoCloudServerEnabled: (enabled: boolean) => Promise<void>;
-  setPhotoFlash: (enabled: boolean) => void;
   setPhotoSize: (size: PhotoSize) => void;
   setRawJsonExpanded: (expanded: boolean) => void;
   setStreamCloudServerEnabled: (enabled: boolean) => Promise<void>;
@@ -253,7 +251,6 @@ export function useMentraSdk(): MentraSdkModel {
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [photoSize, setPhotoSize] = useState<PhotoSize>('medium');
   const [photoCompression, setPhotoCompression] = useState<PhotoCompression>('medium');
-  const [photoFlash, setPhotoFlash] = useState(false);
   const [streamCloudServerEnabled, setStreamCloudServerEnabledState] = useState(false);
   const [directStreamReceiverRunning, setDirectStreamReceiverRunning] = useState(false);
   const [directStreamWhipUrl, setDirectStreamWhipUrl] = useState<string | null>(null);
@@ -752,7 +749,6 @@ export function useMentraSdk(): MentraSdkModel {
         uploadUrlText,
         null,
         photoCompression,
-        photoFlash,
         true,
       );
       void pollPhotoPreview(requestId, statusUrl, pollGeneration);
@@ -785,7 +781,6 @@ export function useMentraSdk(): MentraSdkModel {
       receiver.uploadUrl,
       null,
       photoCompression,
-      photoFlash,
       true,
     );
   }
@@ -1665,7 +1660,6 @@ export function useMentraSdk(): MentraSdkModel {
     phonePhotoUploadUrl,
     photoCompression,
     photoCloudServerEnabled,
-    photoFlash,
     photoPreviewUrl,
     photoSize,
     playMicRecording,
@@ -1681,7 +1675,6 @@ export function useMentraSdk(): MentraSdkModel {
     setGalleryModeAuto: setGalleryModeAutoAction,
     setPhotoCompression,
     setPhotoCloudServerEnabled: setPhotoCloudServerEnabledAction,
-    setPhotoFlash,
     setPhotoSize,
     setRawJsonExpanded,
     setStreamCloudServerEnabled: setStreamCloudServerEnabledAction,
