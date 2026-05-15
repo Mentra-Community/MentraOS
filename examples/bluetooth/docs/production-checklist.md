@@ -45,9 +45,10 @@ Use this checklist before shipping an app with the Mentra Bluetooth SDK.
 - Pairing test with each supported glasses model.
 - Reconnect test after app restart.
 - Reconnect test after Bluetooth toggle.
-- Display command test.
+- Display command test, if shipping display-equipped models such as G2.
+- Camera/gallery/streaming test, if shipping camera-equipped models such as Mentra Live.
+- Speaker playback test, if shipping speaker-equipped models such as Mentra Live.
 - Hardware settings test for brightness/dashboard where supported, save-in-gallery mode, camera options, LED color/pattern, Wi-Fi, and hotspot behavior.
 - Button/touch event test.
-- Audio/transcription test if enabled.
-- Camera/gallery/streaming test if enabled.
+- Microphone audio/transcription test if enabled.
 - OTA/status handling test if enabled.

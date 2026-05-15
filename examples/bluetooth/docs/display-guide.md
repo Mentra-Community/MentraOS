@@ -2,6 +2,8 @@
 
 The display API lets your app send glanceable, user-visible information to supported smart glasses.
 
+Mentra Live does not have a display. Use display APIs only on display-equipped models such as G2.
+
 ## Basic Text
 
 Android:

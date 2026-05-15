@@ -212,6 +212,8 @@ Different glasses models expose different version fields, so apps should prefer 
 
 ## Display
 
+Mentra Live does not have a display. Use these APIs only on display-equipped models such as G2.
+
 Android:
 
 ```kotlin
@@ -236,7 +238,7 @@ await BluetoothSdk.clearDisplay();
 await BluetoothSdk.showDashboard();
 ```
 
-Use `displayText` for normal glanceable UI. Use `displayEvent` only for advanced display payloads that require lower-level rendering control.
+Use `displayText` for normal glanceable UI on display-equipped models. Use `displayEvent` only for advanced display payloads that require lower-level rendering control.
 
 ## Hardware Settings
 
@@ -362,6 +364,8 @@ Raw audio and local transcription are advanced capabilities. Gate them behind ex
 
 Phone-originated playback is routed by the OS, not by the BLE command channel. On Android, Mentra Live initiates Bluetooth Classic bonding after BLE connects; accept the system pairing dialog so media audio can route to the glasses. On iOS, users must pair/connect the glasses from Settings > Bluetooth and select them as the audio output because apps cannot initiate Bluetooth Classic audio pairing.
 
+Mentra Live and G2 both have microphones. Mentra Live has a speaker; G2 does not. Gate speaker playback UI by the connected model.
+
 Mentra Live also supports a BLE-controlled media step volume. This controls the glasses volume, not the phone output route:
 
 ```kotlin
@@ -378,7 +382,7 @@ Volume values are in the `0..15` range.
 
 ## Camera Photo Upload
 
-Use photo requests when your app needs the glasses to capture a photo and upload it to your backend. The phone sends the command over Bluetooth, then the photo is delivered to the `webhookUrl`.
+Use photo requests when your app needs the glasses to capture a photo and upload it to your backend. Mentra Live has a camera; G2 does not. The phone sends the command over Bluetooth, then the photo is delivered to the `webhookUrl`.
 
 Android:
 
@@ -435,7 +439,7 @@ For local development, run `python3 examples/local-demo-cloud/server.py` from th
 
 ## Streaming
 
-Use streaming requests when your app needs Mentra Live to stream camera video to an RTMP, SRT, or WHIP endpoint. The SDK selects the protocol from the URL prefix.
+Use streaming requests when your app needs Mentra Live to stream camera video to an RTMP, SRT, or WHIP endpoint. G2 does not have a camera. The SDK selects the protocol from the URL prefix.
 
 | URL prefix | Protocol |
 | --- | --- |

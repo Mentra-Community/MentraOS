@@ -58,6 +58,11 @@ await BluetoothSdk.startScan({model: "Mentra Live"});
 
 Treat each advanced feature as optional. Your app should degrade gracefully if a model does not support camera, Wi-Fi, display batching, local transcription, streaming, RGB LEDs, or controller pairing.
 
+| Model | Display | Camera | Microphone | Speaker | Primary strengths |
+| --- | --- | --- | --- | --- | --- |
+| Mentra Live | No | Yes | Yes | Yes | Camera, microphone, speaker, Wi-Fi, streaming, phone-connected workflows |
+| G2 | Yes | No | Yes | No | Display and glanceable UI workflows |
+
 Treat unsupported operations as recoverable SDK errors and keep UI state aligned with the latest status callback.
 
 ## Connection Resilience

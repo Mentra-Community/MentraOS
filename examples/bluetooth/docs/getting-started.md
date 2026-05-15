@@ -1,6 +1,6 @@
 # Getting Started
 
-This guide shows how to add the Mentra Bluetooth SDK to Android, iOS, and React Native apps, then connect to glasses and send the first command.
+This guide shows how to add the Mentra Bluetooth SDK to Android, iOS, and React Native apps, then connect to Mentra Live and read glasses status.
 
 Use the latest SDK version published by Mentra. The example apps in this repo are designed to work from a fresh clone with the Maven, CocoaPods, and npm packages, without any local MentraOS checkout.
 
@@ -181,7 +181,6 @@ iOS apps should include permission copy in `Info.plist`:
 import android.content.Context
 import com.mentra.bluetoothsdk.Device
 import com.mentra.bluetoothsdk.DeviceModel
-import com.mentra.bluetoothsdk.DisplayTextRequest
 import com.mentra.bluetoothsdk.GlassesStatusUpdate
 import com.mentra.bluetoothsdk.MentraBluetoothSdk
 import com.mentra.bluetoothsdk.MentraBluetoothSdkCallback
@@ -201,8 +200,10 @@ class GlassesController(context: Context) : MentraBluetoothSdkCallback() {
         discoveredDevice?.let { sdk.connect(it) }
     }
 
-    fun showHello() {
-        sdk.displayText(DisplayTextRequest(text = "Hello from Android"))
+    fun refreshStatus() {
+        sdk.requestVersionInfo()
+        val status = sdk.getGlassesStatus()
+        println("Connected to ${status.deviceModel}, battery=${status.batteryLevel}%")
     }
 
     override fun onDeviceDiscovered(device: Device) {
@@ -211,6 +212,7 @@ class GlassesController(context: Context) : MentraBluetoothSdkCallback() {
 
     override fun onGlassesStatusChanged(status: GlassesStatusUpdate) {
         // Keep app UI derived from SDK status.
+        println("Glasses status changed: $status")
     }
 
     fun close() {
@@ -243,8 +245,10 @@ final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
         try sdk.connect(to: discoveredDevice)
     }
 
-    func showHello() async throws {
-        try await sdk.displayText(DisplayTextRequest(text: "Hello from iOS"))
+    func refreshStatus() {
+        sdk.requestVersionInfo()
+        let status = sdk.glassesStatus
+        print("Connected to \(status.deviceModel), battery=\(status.batteryLevel)%")
     }
 
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didDiscover device: Device) {
@@ -253,6 +257,7 @@ final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
 
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateGlassesStatus status: GlassesStatusUpdate) {
         // Keep app UI derived from SDK status.
+        print("Glasses status changed: \(status)")
     }
 
     deinit {
@@ -266,7 +271,6 @@ final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
 ```ts
 import BluetoothSdk, {
   createDisconnectedGlassesStatus,
-  isReadyGlassesConnectionStatus,
   type Device,
   type GlassesStatus,
 } from '@mentra/bluetooth-sdk';
@@ -292,10 +296,13 @@ const removeGlasses = BluetoothSdk.onGlassesStatus((status) => {
 await BluetoothSdk.startScan({model: 'Mentra Live'});
 
 await BluetoothSdk.connect(await firstDevice);
+await BluetoothSdk.requestVersionInfo();
 glassesStatus = await BluetoothSdk.getGlassesStatus();
-if (glassesStatus.connection && isReadyGlassesConnectionStatus(glassesStatus.connection)) {
-  await BluetoothSdk.displayText({text: 'Hello from React Native', x: 0, y: 0, size: 24});
-}
+console.log('Connected glasses:', {
+  model: glassesStatus.deviceModel,
+  batteryLevel: glassesStatus.batteryLevel,
+  appVersion: glassesStatus.appVersion,
+});
 
 removeGlasses();
 ```

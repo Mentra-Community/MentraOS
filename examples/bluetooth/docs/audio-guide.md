@@ -1,6 +1,6 @@
 # Audio Guide
 
-The SDK can emit microphone events and local transcription results on supported devices. Treat audio as an advanced feature: request permission only when the user enables it, and provide clear privacy copy.
+The SDK can emit microphone events and local transcription results on supported devices. Mentra Live and G2 both have microphones. Mentra Live has a speaker; G2 does not. Treat audio as an advanced feature: request permission only when the user enables it, and provide clear privacy copy.
 
 ## Playback Route
 
