@@ -310,6 +310,26 @@ class LocalMiniappRuntime {
   }
 
   /**
+   * Resync the cloud's view of this device's stream subscriptions to
+   * match what's actually live locally. Called by SocketComms when the
+   * WS handshake completes (on a fresh app launch or after a reconnect).
+   *
+   * Without this, the cloud retains the previous session's subscription
+   * set across app restarts: e.g. user opens dev miniapp → host sends
+   * SUBSCRIBE [transcription:auto] → user force-quits Mentra → cloud
+   * still has that sub → new launch reconnects → cloud immediately
+   * sends `mic_state_change: pcm=true` and fans transcripts even though
+   * no JSContext is alive to receive them.
+   *
+   * The runtime knows the authoritative local subscription set; this
+   * pushes that set to the cloud (commonly empty on cold boot).
+   */
+  public resyncCloudSubscriptions(): void {
+    console.log(`${LOG_TAG}: resyncCloudSubscriptions()`)
+    this.updateCloudSubscriptions()
+  }
+
+  /**
    * Handle an incoming cloud message forwarded by SocketComms
    * (phone_photo_ready, phone_stream_status, phone_managed_stream_status).
    *

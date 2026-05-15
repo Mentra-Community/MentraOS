@@ -335,6 +335,16 @@ class SocketComms {
     //   await livekit.connect()
     // }
 
+    // Resync the cloud's stream-subscription set to whatever's actually
+    // live locally. The cloud retains subscriptions across app
+    // restarts; without this push, a previous session's miniapp subs
+    // (e.g. transcription:auto from a dev miniapp that was killed when
+    // Mentra was force-quit) keep firing — cloud sends
+    // mic_state_change=pcm and fans transcripts that no JSContext is
+    // alive to receive. Common case on cold boot is "[]" which silences
+    // the cloud until a miniapp actually starts.
+    localMiniappRuntime.resyncCloudSubscriptions()
+
     // refresh the mini app list:
     restComms.getApplets()
 
