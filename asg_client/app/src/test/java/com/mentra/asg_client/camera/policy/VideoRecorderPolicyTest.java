@@ -1,4 +1,4 @@
-package com.mentra.asg_client.camera;
+package com.mentra.asg_client.camera.policy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -35,6 +35,11 @@ public class VideoRecorderPolicyTest {
     @Test
     public void videoFrameRate_fromSettings() {
         assertThat(VideoRecorderPolicy.videoFrameRate(new VideoSettings(1280, 720, 24))).isEqualTo(24);
+    }
+
+    @Test
+    public void recorderSurfaceWarmup_preservesHistoricalDelay() {
+        assertThat(VideoRecorderPolicy.RECORDER_SURFACE_WARMUP_MS).isEqualTo(900);
     }
 
     @Test
