@@ -264,7 +264,14 @@ final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
 ## React Native Basic Flow
 
 ```ts
-import BluetoothSdk, {type Device} from '@mentra/bluetooth-sdk';
+import BluetoothSdk, {
+  createDisconnectedGlassesStatus,
+  isReadyGlassesConnectionStatus,
+  type Device,
+  type GlassesStatus,
+} from '@mentra/bluetooth-sdk';
+
+let glassesStatus: Partial<GlassesStatus> = createDisconnectedGlassesStatus();
 
 const firstDevice = new Promise<Device>((resolve) => {
   let removeCore = () => {};
@@ -278,16 +285,22 @@ const firstDevice = new Promise<Device>((resolve) => {
 });
 
 const removeGlasses = BluetoothSdk.onGlassesStatus((status) => {
+  glassesStatus = {...glassesStatus, ...status};
   console.log('Glasses status changed', status);
 });
 
 await BluetoothSdk.startScan({model: 'Mentra Live'});
 
 await BluetoothSdk.connect(await firstDevice);
-await BluetoothSdk.displayText({text: 'Hello from React Native', x: 0, y: 0, size: 24});
+glassesStatus = await BluetoothSdk.getGlassesStatus();
+if (glassesStatus.connection && isReadyGlassesConnectionStatus(glassesStatus.connection)) {
+  await BluetoothSdk.displayText({text: 'Hello from React Native', x: 0, y: 0, size: 24});
+}
 
 removeGlasses();
 ```
+
+React Native status uses `glassesStatus.connection.state` for link progress. `fullyBooted` only exists when `state === 'connected'`.
 
 React Native apps should persist their own default-device record if they want `connectDefault()` to work after restart:
 

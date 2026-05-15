@@ -179,7 +179,20 @@ const core = await BluetoothSdk.getCoreStatus();
 
 Status snapshots are safe to read at any time. Treat command success as "command accepted"; keep UI state derived from status callbacks.
 
-`GlassesStatus.connectionState` is typed as `GlassesConnectionState` on Android and iOS, and as the `GlassesConnectionState` string union in React Native. Valid values are `DISCONNECTED`, `SCANNING`, `CONNECTING`, `BONDING`, and `CONNECTED`. Use this field for link-layer progress, and use `connected` / `fullyBooted` for whether the glasses are ready for feature commands.
+Android and iOS expose `GlassesStatus.connectionState` as the native `GlassesConnectionState` enum. Valid values are `DISCONNECTED`, `SCANNING`, `CONNECTING`, `BONDING`, and `CONNECTED`. Use `connectionState` for link-layer progress, and use `connected` / `fullyBooted` for whether the glasses are ready for feature commands.
+
+React Native exposes the public status shape as `GlassesStatus.connection`:
+
+```ts
+type GlassesConnectionStatus =
+  | {state: 'disconnected'}
+  | {state: 'scanning'}
+  | {state: 'connecting'}
+  | {state: 'bonding'}
+  | {state: 'connected'; fullyBooted: boolean};
+```
+
+Use `status.connection.state` for link-layer progress. `fullyBooted` only exists on the connected state, so impossible states like `{state: 'disconnected', fullyBooted: true}` are not representable in TypeScript. Use `isConnectedGlassesConnectionStatus()`, `isReadyGlassesConnectionStatus()`, and `isBusyGlassesConnectionStatus()` when you want named readiness checks. Use `createDisconnectedGlassesStatus()` when initializing React state before the first SDK snapshot arrives.
 
 ### Version Fields
 
