@@ -9,13 +9,13 @@
 #endif
 
 #if GX8002_VAD_FIRMWARE_ENABLE
-#define GX8002_VAD_FW_VERSION_STR          "v1_3"
+#define GX8002_VAD_FW_VERSION_STR          "v1_4"
 
 #if defined(GX8002_FIRMWARE_DATA_DEFINE)
 /* 只在定义固件实体的那个编译单元内展开大数组，避免重复定义。
  * Expand the blob only in the translation unit that owns the firmware data.
  */
-#include "gx8002_firmware_data_v1_3.h"
+#include "gx8002_firmware_data_v1_4.h"
 #endif
 
 /* 对外统一暴露当前固件符号，避免 shell/update 代码跟具体版本名耦合。
