@@ -40,11 +40,11 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
   const [pendingWifiPassword, setPendingWifiPassword] = useState('');
   const didAutoScanWifi = useRef(false);
   const micStatus = sdk.micRecording
-    ? `recording ${durationText(sdk.micElapsedSeconds)} · ${sdk.pcmFrames} PCM frames`
+    ? recordingMicStatus(sdk)
     : sdk.micPlaying
       ? 'playing last recording'
       : sdk.lastMicDurationSeconds !== null && sdk.lastMicBytes > 0
-        ? `last ${durationText(sdk.lastMicDurationSeconds)} · ${sdk.lastMicBytes} PCM bytes`
+        ? `last ${durationText(sdk.lastMicDurationSeconds)} · ${formatPcmBytes(sdk.lastMicBytes)}`
         : connected
           ? 'record PCM from glasses'
           : 'connect glasses to record';
@@ -426,6 +426,25 @@ function InputChip({ prefix, label }: { prefix: string; label: string }) {
       <Text numberOfLines={1} style={styles.inputChipLabel}>{label}</Text>
     </View>
   );
+}
+
+function recordingMicStatus(sdk: MentraSdkModel) {
+  if (sdk.pcmBytes <= 0) {
+    return 'recording · listening for speech';
+  }
+  return `recording · ${formatPcmBytes(sdk.pcmBytes)} captured`;
+}
+
+function formatPcmBytes(bytes: number) {
+  if (bytes < 1024) {
+    return `${bytes} B PCM`;
+  }
+  const kib = bytes / 1024;
+  if (kib < 1024) {
+    return `${kib >= 10 ? kib.toFixed(0) : kib.toFixed(1)} KB PCM`;
+  }
+  const mib = kib / 1024;
+  return `${mib >= 10 ? mib.toFixed(0) : mib.toFixed(1)} MB PCM`;
 }
 
 function recentInputChips(events: SdkConsoleEvent[]) {

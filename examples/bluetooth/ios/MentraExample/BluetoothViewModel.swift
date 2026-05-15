@@ -1310,8 +1310,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             micRecordingUrl = nil
             lastMicDurationSeconds = nil
             lastMicBytes = 0
-            micPlaybackHint = "No PCM frames captured. Replay is empty; keep the glasses connected and record again."
-            append(tag: "LIVE", text: "microphone stopped with no PCM frames")
+            micPlaybackHint = "No speech audio captured. Keep the glasses connected, speak while recording, and try again."
+            append(tag: "LIVE", text: "microphone stopped with no PCM data")
             return
         }
 

@@ -374,15 +374,34 @@ struct SystemScreen: View {
 
     private var microphoneStatusText: String {
         if model.micRecording {
-            return "recording \(durationLabel(model.micElapsedSeconds)) · \(model.pcmFrames) PCM frames"
+            return recordingMicrophoneStatusText
         }
         if model.micPlaying {
             return "playing last recording"
         }
         if let duration = model.lastMicDurationSeconds, model.lastMicBytes > 0 {
-            return "last \(durationLabel(duration)) · \(model.lastMicBytes) PCM bytes"
+            return "last \(durationLabel(duration)) · \(formatPcmBytes(model.lastMicBytes))"
         }
         return model.glassesConnected ? "record PCM from glasses" : "connect glasses to record"
+    }
+
+    private var recordingMicrophoneStatusText: String {
+        guard model.pcmBytes > 0 else {
+            return "recording · listening for speech"
+        }
+        return "recording · \(formatPcmBytes(model.pcmBytes)) captured"
+    }
+
+    private func formatPcmBytes(_ bytes: Int) -> String {
+        if bytes < 1024 {
+            return "\(bytes) B PCM"
+        }
+        let kib = Double(bytes) / 1024
+        if kib < 1024 {
+            return "\(String(format: kib >= 10 ? "%.0f" : "%.1f", kib)) KB PCM"
+        }
+        let mib = kib / 1024
+        return "\(String(format: mib >= 10 ? "%.0f" : "%.1f", mib)) MB PCM"
     }
 
     private func micControlButton(systemName: String, enabled: Bool, active: Bool, action: @escaping () -> Void) -> some View {

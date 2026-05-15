@@ -307,6 +307,7 @@ function TargetPicker({ sdk, connected }: { sdk: MentraSdkModel; connected: bool
     ? discoveredDeviceKey(sdk.selectedDiscoveredDevice)
     : null;
   const savedName = savedConnectionTargetName(sdk.bluetoothStatus) ?? sdk.defaultDevice?.name;
+  const scanning = !connected && sdk.bluetoothStatus.searching === true;
 
   return (
     <View style={styles.targetPicker}>
@@ -316,6 +317,8 @@ function TargetPicker({ sdk, connected }: { sdk: MentraSdkModel; connected: bool
           <Text style={styles.targetSummary}>
             {selectedKey ? `${sdk.discoveredDevices.length} found` : 'choose one'}
           </Text>
+        ) : scanning ? (
+          <Text style={styles.targetSummaryMuted}>scanning</Text>
         ) : null}
       </View>
 
@@ -324,6 +327,13 @@ function TargetPicker({ sdk, connected }: { sdk: MentraSdkModel; connected: bool
           name={deviceLabel(sdk.glassesStatus)}
           detail="Active BLE connection"
           selected
+          enabled={false}
+        />
+      ) : scanning && sdk.discoveredDevices.length === 0 ? (
+        <TargetDeviceRow
+          name="Scanning..."
+          detail={`Looking for ${scanModelLabel(sdk.selectedScanModel)} glasses.`}
+          selected={false}
           enabled={false}
         />
       ) : sdk.discoveredDevices.length === 0 && savedName ? (

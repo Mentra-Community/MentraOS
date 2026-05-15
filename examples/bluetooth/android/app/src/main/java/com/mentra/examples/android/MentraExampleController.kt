@@ -1671,9 +1671,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             state = state.copy(
                 lastMicBytes = 0,
                 lastMicDurationSeconds = null,
-                micPlaybackHint = "No PCM frames captured. Replay is empty; keep the glasses connected and record again.",
+                micPlaybackHint = "No speech audio captured. Keep the glasses connected, speak while recording, and try again.",
             )
-            addEvent("LIVE", "microphone stopped with no PCM frames")
+            addEvent("LIVE", "microphone stopped with no PCM data")
             return
         }
 

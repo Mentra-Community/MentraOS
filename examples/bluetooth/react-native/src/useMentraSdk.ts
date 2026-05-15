@@ -80,6 +80,11 @@ export const PHOTO_UPLOAD_DEFAULT_URL = 'http://<computer-ip>:8787/upload';
 
 const STREAM_DEFAULT_URL_VALUES = new Set(Object.values(STREAM_DEFAULT_URLS));
 
+type MicPcmChunk = {
+  data: Uint8Array;
+  index: number;
+};
+
 function wifiStatusFromEvent(event: WifiStatusChangeEvent): WifiStatus {
   switch (event.state) {
     case 'connected':
@@ -294,7 +299,9 @@ export function useMentraSdk(): MentraSdkModel {
   const lastMicFileUriRef = useRef<string | null>(null);
   const micElapsedSecondsRef = useRef(0);
   const micElapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const micPcmChunksRef = useRef<Uint8Array[]>([]);
+  const micPcmChunksRef = useRef<MicPcmChunk[]>([]);
+  const micPcmChunkIndexRef = useRef(0);
+  const micPcmStatsRef = useRef({bytes: 0, frames: 0});
   const micPlayerRef = useRef<AudioPlayer | null>(null);
   const micPlayerSubscriptionRef = useRef<{remove: () => void} | null>(null);
   const micPlayingRef = useRef(false);
@@ -479,13 +486,17 @@ export function useMentraSdk(): MentraSdkModel {
         if (!micRecordingRef.current) {
           return;
         }
-        const pcm = new Uint8Array(payload.pcm);
-        const frame = new Uint8Array(pcm.byteLength);
-        frame.set(pcm);
-        micPcmChunksRef.current.push(frame);
-        const size = payload.pcm.byteLength;
-        setPcmFrames((current) => current + 1);
-        setPcmBytes((current) => current + size);
+        const frame = copyPcmFrame(payload.pcm);
+        if (frame.byteLength === 0) {
+          return;
+        }
+        micPcmChunksRef.current.push({
+          data: frame,
+          index: micPcmChunkIndexRef.current,
+        });
+        micPcmChunkIndexRef.current += 1;
+        micPcmStatsRef.current.frames += 1;
+        micPcmStatsRef.current.bytes += frame.byteLength;
       }),
       BluetoothSdk.addListener('mic_lc3', (payload: MicLc3Event) => {
         if (micRecordingRef.current) {
@@ -1303,6 +1314,8 @@ export function useMentraSdk(): MentraSdkModel {
     requireConnected('stream microphone audio');
     await stopMicPlayback();
     micPcmChunksRef.current = [];
+    micPcmChunkIndexRef.current = 0;
+    micPcmStatsRef.current = {bytes: 0, frames: 0};
     lastMicFileUriRef.current = null;
     micElapsedSecondsRef.current = 0;
     micStartedAtRef.current = Date.now();
@@ -1312,19 +1325,28 @@ export function useMentraSdk(): MentraSdkModel {
     setMicElapsedSeconds(0);
     setPcmBytes(0);
     setPcmFrames(0);
-    await BluetoothSdk.setMicState(true, true, true);
     micRecordingRef.current = true;
     setMicRecording(true);
     startMicElapsedTimer();
+    try {
+      await BluetoothSdk.setMicState(true, true, true);
+    } catch (error) {
+      micRecordingRef.current = false;
+      setMicRecording(false);
+      stopMicElapsedTimer();
+      throw error;
+    }
   }
 
   async function stopMicRecording() {
-    if (isGlassesConnected(glassesStatus)) {
-      await BluetoothSdk.setMicState(false);
-    }
     micRecordingRef.current = false;
     setMicRecording(false);
     stopMicElapsedTimer();
+    flushMicStats();
+
+    if (isGlassesConnected(glassesStatus)) {
+      await BluetoothSdk.setMicState(false);
+    }
 
     const pcm = concatChunks(micPcmChunksRef.current);
     micPcmChunksRef.current = [];
@@ -1332,8 +1354,8 @@ export function useMentraSdk(): MentraSdkModel {
       lastMicFileUriRef.current = null;
       setLastMicBytes(0);
       setLastMicDurationSeconds(null);
-      setMicPlaybackHint('No PCM frames captured. Replay is empty; keep the glasses connected and record again.');
-      addEvent('LIVE', 'microphone stopped with no PCM frames');
+      setMicPlaybackHint('No speech audio captured. Keep the glasses connected, speak while recording, and try again.');
+      addEvent('LIVE', 'microphone stopped with no PCM data');
       return;
     }
 
@@ -1432,6 +1454,7 @@ export function useMentraSdk(): MentraSdkModel {
       const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
       micElapsedSecondsRef.current = elapsed;
       setMicElapsedSeconds(elapsed);
+      flushMicStats();
     }, 250);
   }
 
@@ -1441,6 +1464,11 @@ export function useMentraSdk(): MentraSdkModel {
       micElapsedTimerRef.current = null;
     }
     micStartedAtRef.current = null;
+  }
+
+  function flushMicStats() {
+    setPcmFrames(micPcmStatsRef.current.frames);
+    setPcmBytes(micPcmStatsRef.current.bytes);
   }
 
   async function selectLedMode(mode: LedMode) {
@@ -1813,13 +1841,26 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function concatChunks(chunks: Uint8Array[]) {
-  const totalBytes = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+function copyPcmFrame(pcm: MicPcmEvent['pcm'] | ArrayBufferView | ArrayLike<number>) {
+  const raw = pcm as unknown;
+  if (raw instanceof ArrayBuffer) {
+    return new Uint8Array(raw).slice();
+  }
+  if (ArrayBuffer.isView(raw)) {
+    const view = raw as ArrayBufferView;
+    return new Uint8Array(view.buffer, view.byteOffset, view.byteLength).slice();
+  }
+  return Uint8Array.from(raw as ArrayLike<number>);
+}
+
+function concatChunks(chunks: MicPcmChunk[]) {
+  const orderedChunks = [...chunks].sort((left, right) => left.index - right.index);
+  const totalBytes = orderedChunks.reduce((sum, chunk) => sum + chunk.data.byteLength, 0);
   const merged = new Uint8Array(totalBytes);
   let offset = 0;
-  for (const chunk of chunks) {
-    merged.set(chunk, offset);
-    offset += chunk.byteLength;
+  for (const chunk of orderedChunks) {
+    merged.set(chunk.data, offset);
+    offset += chunk.data.byteLength;
   }
   return merged;
 }

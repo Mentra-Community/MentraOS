@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mentra.examples.android.ExampleEvent
 import com.mentra.examples.android.MentraExampleController
+import com.mentra.examples.android.MentraExampleState
 import com.mentra.examples.android.connectedWifiStatus
 import com.mentra.examples.android.durationText
 import com.mentra.examples.android.galleryHotspotPasswordLabel
@@ -51,6 +52,7 @@ import com.mentra.examples.android.ui.GlassCard
 import com.mentra.examples.android.ui.OfflineNotice
 import com.mentra.examples.android.ui.PageHeader
 import com.mentra.examples.android.ui.scrollBottomPadding
+import java.util.Locale
 
 @Composable
 fun SystemScreen(controller: MentraExampleController) {
@@ -69,9 +71,9 @@ fun SystemScreen(controller: MentraExampleController) {
     var pendingWifiSsid by remember { mutableStateOf<String?>(null) }
     var pendingWifiPassword by remember { mutableStateOf("") }
     val micStatus = when {
-        state.micRecording -> "recording ${durationText(state.micElapsedSeconds)} · ${state.pcmFrames} PCM frames"
+        state.micRecording -> recordingMicStatus(state)
         state.micPlaying -> "playing last recording"
-        state.lastMicDurationSeconds != null && state.lastMicBytes > 0 -> "last ${durationText(state.lastMicDurationSeconds)} · ${state.lastMicBytes} PCM bytes"
+        state.lastMicDurationSeconds != null && state.lastMicBytes > 0 -> "last ${durationText(state.lastMicDurationSeconds)} · ${formatPcmBytes(state.lastMicBytes)}"
         connected -> "record PCM from glasses"
         else -> "connect glasses to record"
     }
@@ -659,6 +661,27 @@ private data class InputChipModel(
     val age: String,
     val label: String,
 )
+
+private fun recordingMicStatus(state: MentraExampleState): String {
+    if (state.pcmBytes <= 0) {
+        return "recording · listening for speech"
+    }
+    return "recording · ${formatPcmBytes(state.pcmBytes)} captured"
+}
+
+private fun formatPcmBytes(bytes: Int): String {
+    if (bytes < 1024) {
+        return "$bytes B PCM"
+    }
+    val kib = bytes / 1024.0
+    if (kib < 1024) {
+        val value = String.format(Locale.US, if (kib >= 10) "%.0f" else "%.1f", kib)
+        return "$value KB PCM"
+    }
+    val mib = kib / 1024.0
+    val value = String.format(Locale.US, if (mib >= 10) "%.0f" else "%.1f", mib)
+    return "$value MB PCM"
+}
 
 private fun recentInputChips(events: List<ExampleEvent>): List<InputChipModel> {
     val labels = events.mapNotNull { inputLabel(it.text) }.take(3)
