@@ -1,4 +1,4 @@
-package com.mentra.asg_client.camera;
+package com.mentra.asg_client.camera.request;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -19,7 +19,7 @@ import org.robolectric.annotation.Config;
  * Phase 2 unit tests for {@link StillCaptureBuilder}. We use {@link CaptureRequestRecorder}
  * (which implements {@link StillCaptureBuilder.Sink}) as the direct sink, bypassing the
  * {@code final} {@link CaptureRequest.Builder} altogether. Behavior must match the inline code
- * that previously lived in {@link CameraNeo#capturePhoto()}.
+ * that previously lived in {@link CameraNeoService#capturePhoto()}.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)

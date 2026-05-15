@@ -1,14 +1,16 @@
-package com.mentra.asg_client.camera;
+package com.mentra.asg_client.camera.request;
 
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.params.MeteringRectangle;
 import android.util.Range;
 import android.util.Size;
 
+import com.mentra.asg_client.camera.policy.MeteringRegions;
+
 /**
  * Phase 2c: pure-logic helper that stamps the still-capture recipe onto a {@link Sink}.
  *
- * <p>Extracted from {@link CameraNeo#capturePhoto()} so the recipe is unit-testable without
+ * <p>Extracted from {@link CameraNeoService#capturePhoto()} so the recipe is unit-testable without
  * mocking the {@code final} {@link CaptureRequest.Builder} (which Robolectric + Mockito's inline
  * mock maker cannot agree on). Production code wraps a real {@link CaptureRequest.Builder} via
  * {@link #wrap(CaptureRequest.Builder)}; tests pass any test double that implements {@link Sink}.
@@ -55,7 +57,7 @@ public final class StillCaptureBuilder {
      *
      * <p>Auto path: AE on + locked, AWB auto, user EV compensation, fixed FPS range.
      */
-    static void configureExposure(Sink sink,
+    public static void configureExposure(Sink sink,
                                    boolean useManual,
                                    long manualClampedNs,
                                    int manualIso,
@@ -83,7 +85,7 @@ public final class StillCaptureBuilder {
      * Configure autofocus mode and a center-weighted AF region (and AE region on the auto path).
      * No-op when the camera has no autofocus or the size is unknown.
      */
-    static void configureFocusAndMetering(Sink sink,
+    public static void configureFocusAndMetering(Sink sink,
                                            boolean hasAutoFocus,
                                            Size jpegSize,
                                            boolean useManual) {
@@ -92,31 +94,17 @@ public final class StillCaptureBuilder {
         }
         sink.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
 
-        int width = jpegSize.getWidth();
-        int height = jpegSize.getHeight();
-        int centerX = width / 2;
-        int centerY = height / 2;
-        int regionSize = Math.min(width, height) / 3;
-        int left = Math.max(0, centerX - regionSize / 2);
-        int top = Math.max(0, centerY - regionSize / 2);
-        int right = Math.min(width - 1, centerX + regionSize / 2);
-        int bottom = Math.min(height - 1, centerY + regionSize / 2);
-
-        MeteringRectangle centerRect = new MeteringRectangle(
-                left, top, right - left, bottom - top, MeteringRectangle.METERING_WEIGHT_MAX);
-
-        sink.set(CaptureRequest.CONTROL_AF_REGIONS, new MeteringRectangle[]{centerRect});
-
-        // AE region only applies on the auto path; manual exposure ignores AE entirely.
+        MeteringRectangle[] regions = MeteringRegions.centerWeighted(jpegSize);
+        sink.set(CaptureRequest.CONTROL_AF_REGIONS, regions);
         if (!useManual) {
-            sink.set(CaptureRequest.CONTROL_AE_REGIONS, new MeteringRectangle[]{centerRect});
+            sink.set(CaptureRequest.CONTROL_AE_REGIONS, regions);
         }
     }
 
     /**
      * Configure the post-processing pipeline keys (NR/Edge), JPEG quality, and JPEG orientation.
      */
-    static void configureQualityAndOrientation(Sink sink, int jpegQuality, int jpegOrientation) {
+    public static void configureQualityAndOrientation(Sink sink, int jpegQuality, int jpegOrientation) {
         sink.set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY);
         sink.set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_HIGH_QUALITY);
         sink.set(CaptureRequest.JPEG_QUALITY, (byte) jpegQuality);
@@ -127,7 +115,7 @@ public final class StillCaptureBuilder {
      * Convenience wrapper that applies the full still-capture recipe in one call. The caller is
      * still responsible for vendor-specific ZSL/MFNR configuration (only valid on the auto path).
      */
-    static void configure(Sink sink,
+    public static void configure(Sink sink,
                           boolean useManual,
                           long manualClampedNs,
                           int manualIso,
