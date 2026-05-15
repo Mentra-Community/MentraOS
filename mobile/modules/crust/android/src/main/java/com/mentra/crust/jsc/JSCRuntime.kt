@@ -2,13 +2,16 @@ package com.mentra.crust.jsc
 
 import android.content.Context
 import android.util.Log
-import app.cash.zipline.QuickJs
+import app.cash.zipline.Zipline
+import app.cash.zipline.ZiplineService
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.asCoroutineDispatcher
 
 /**
  * Thrown from the bridge's dispatch() method to propagate a structured
@@ -89,13 +92,17 @@ class JSCRuntime private constructor(private val appContext: Context) {
 
     private inner class ContextRecord(
         val packageName: String,
-        val quickJs: QuickJs,
-        val executor: java.util.concurrent.ExecutorService,
+        val zipline: Zipline,
+        val executor: ExecutorService,
         val pendingTimers: MutableMap<Int, ScheduledFuture<*>> = ConcurrentHashMap(),
         @Volatile var readyAcked: Boolean = false,
         @Volatile var readyNackTimer: ScheduledFuture<*>? = null,
         @Volatile var watchdogTimer: ScheduledFuture<*>? = null,
-    )
+    ) {
+        // Access underlying QuickJS for evaluate calls. Always touched from
+        // [executor]'s single thread — Zipline asserts this.
+        val quickJs get() = zipline.quickJs
+    }
 
     /**
      * Called from the dispatcher's __runtime.ready route when the polyfill
@@ -185,14 +192,17 @@ class JSCRuntime private constructor(private val appContext: Context) {
         val executor = Executors.newSingleThreadExecutor { r ->
             Thread(r, "MentraJS-$packageName").apply { isDaemon = true }
         }
-        val quickJs = try {
-            executor.submit<QuickJs> { QuickJs.create() }.get()
+        // Zipline binds Kotlin services to JS via a coroutine dispatcher.
+        // We wrap the single-thread executor so Zipline + every subsequent
+        // QuickJs call ride the same thread (Zipline asserts this).
+        val zipline = try {
+            executor.submit<Zipline> { Zipline.create(executor.asCoroutineDispatcher()) }.get()
         } catch (e: Throwable) {
-            Log.e(TAG, "QuickJs.create() failed for $packageName", e)
+            Log.e(TAG, "Zipline.create() failed for $packageName", e)
             executor.shutdownNow()
             return false
         }
-        val record = ContextRecord(packageName, quickJs, executor)
+        val record = ContextRecord(packageName, zipline, executor)
         contexts[packageName] = record
 
         // Arm cold-start NACK before the first eval — catches a wedged
@@ -202,14 +212,14 @@ class JSCRuntime private constructor(private val appContext: Context) {
 
         val bundle = polyfillBundleOverride ?: polyfillBundle
 
-        // Bind the native interface BEFORE evaluating any JS. Zipline / QuickJs
-        // bound objects show up as JS globals with the same name as the
-        // proxy interface; we declare a NativeBridge interface and set an
-        // instance of [JSCBridgeImpl] under the name `__mentraNativeBridge`.
+        // Bind the native bridge BEFORE evaluating any JS. Zipline exposes
+        // any @ZiplineService implementation as a JS global; the matching
+        // adapter is generated at build time by the Zipline Gradle plugin.
         return try {
             executor.submit<Boolean> {
                 val bridge = JSCBridgeImpl(packageName)
-                quickJs.set("__mentraNativeBridge", NativeBridge::class.java, bridge)
+                zipline.bind<NativeBridge>("__mentraNativeBridge", bridge)
+                val quickJs = zipline.quickJs
                 // Glue layer: forward globalThis.__dispatch / __hostLog / etc
                 // onto the bound object. Done in JS rather than via individual
                 // bindings to keep the surface symmetric with iOS-JSC and avoid
@@ -305,7 +315,7 @@ class JSCRuntime private constructor(private val appContext: Context) {
         // Cancel timers first so no scheduled fire-callback grabs the
         // QuickJs after it's closed. Order matches the iOS teardown:
         // setTimeout/setInterval → NACK watchdog → soft watchdog →
-        // close(quickJs) → executor.shutdown.
+        // close(zipline → quickJs) → executor.shutdown.
         for ((_, future) in record.pendingTimers) {
             future.cancel(false)
         }
@@ -317,9 +327,11 @@ class JSCRuntime private constructor(private val appContext: Context) {
         try {
             record.executor.submit {
                 try {
-                    record.quickJs.close()
+                    // Zipline.close() tears down QuickJS and its bound
+                    // services together — no need to close QuickJS first.
+                    record.zipline.close()
                 } catch (e: Throwable) {
-                    Log.w(TAG, "QuickJs.close() threw for $packageName: ${e.message}")
+                    Log.w(TAG, "Zipline.close() threw for $packageName: ${e.message}")
                 }
             }.get(2, TimeUnit.SECONDS)
         } catch (e: Throwable) {
@@ -335,10 +347,12 @@ class JSCRuntime private constructor(private val appContext: Context) {
     // ------------------------------------------------------------------
 
     /**
-     * The JS-facing surface. QuickJs binds Kotlin interfaces by reflection;
-     * methods are visible on the JS side as properties on the bound object.
+     * The JS-facing surface. Marked with [ZiplineService] so the Zipline
+     * Gradle plugin generates a serializer adapter at compile time;
+     * `zipline.bind<NativeBridge>(name, impl)` then exposes the
+     * implementation as a JS global with the same method shape.
      */
-    interface NativeBridge {
+    interface NativeBridge : ZiplineService {
         /** Synchronous dispatch — return value is a JSON string (or null). */
         fun dispatch(iface: String, method: String, argsJson: String): String?
         /** Console.* sink — `level` ∈ "log"|"info"|"warn"|"error"|... */

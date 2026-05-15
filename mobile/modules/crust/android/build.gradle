@@ -9,6 +9,20 @@ applyKotlinExpoModulesCorePlugin()
 useCoreDependencies()
 useExpoPublishing()
 
+// Zipline + kotlinx.serialization plugins. The Zipline plugin processes
+// any interface annotated `@ZiplineService` and generates a Kotlin Serializer
+// adapter so JS can call into it through QuickJS. The serialization plugin
+// is its prerequisite — it provides the @Serializable code generator that
+// Zipline's adapter relies on.
+buildscript {
+  dependencies {
+    classpath 'app.cash.zipline:zipline-gradle-plugin:1.27.0'
+  }
+}
+
+apply plugin: 'org.jetbrains.kotlin.plugin.serialization'
+apply plugin: 'app.cash.zipline'
+
 // If you want to use the managed Android SDK versions from expo-modules-core, set this to true.
 // The Android SDK versions will be bumped from time to time in SDK releases and may introduce breaking changes in your module code.
 // Most of the time, you may like to manage the Android SDK versions yourself.
@@ -74,14 +88,13 @@ dependencies {
 
 dependencies {
   // MentraJS — QuickJS (via Cash App's Zipline) for per-miniapp JS contexts.
-  // We only use Zipline's low-level QuickJs wrapper; the typed bridge / hot-
-  // reload / source-map features ride on a Zipline Gradle plugin we don't
-  // wire up here. ~1.2 MB Zipline + QuickJS native lib per ABI.
-  //
-  // Pinned to 1.20.0 — the last release built with Kotlin 1.9.x. Zipline
-  // 1.22+ moved to Kotlin 2.0, which the Expo prebuild host (Kotlin 1.9)
-  // can't read. Bumping requires upgrading the host Kotlin first.
-  implementation 'app.cash.zipline:zipline-android:1.20.0'
+  // The Zipline runtime exposes Kotlin objects to QuickJS through generated
+  // @ZiplineService adapters; the matching Gradle plugin above produces those
+  // adapters at compile time.
+  implementation 'app.cash.zipline:zipline-android:1.27.0'
+  // kotlinx.serialization runtime (Zipline's adapter generator marshals
+  // bridge method args + return values as JSON across the QuickJS boundary).
+  implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3'
 
   // OkHttp for fetch / WebSocket — already used elsewhere in MentraOS;
   // pinned here so the gradle plugin doesn't downgrade us.
