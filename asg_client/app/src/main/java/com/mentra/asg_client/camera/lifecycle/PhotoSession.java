@@ -246,6 +246,31 @@ public final class PhotoSession {
 
     // ----- Dispatch -----
 
+    /**
+     * Compares {@code request} to the active session's current request (size, SDK flag, exposure).
+     * Must be called before {@link #loadCurrentRequest(PhotoRequest)} mutates current state.
+     */
+    private boolean needsReconfigurationForPhotoRequest(PhotoRequest request) {
+        if (request == null) {
+            return true;
+        }
+        String previousSize = currentSize();
+        boolean previousIsFromSdk = currentIsFromSdk();
+        Long previousExposureNs = currentExposureTimeNs();
+
+        boolean sizeChanged = false;
+        if (previousSize != null && request.size != null) {
+            sizeChanged = !previousSize.equals(request.size);
+        } else if (previousSize == null && request.size != null) {
+            sizeChanged = true;
+        } else if (previousSize != null && request.size == null) {
+            sizeChanged = true;
+        }
+        boolean sdkFlagChanged = (previousIsFromSdk != request.isFromSdk);
+        boolean exposureChanged = !Objects.equals(previousExposureNs, request.exposureTimeNs);
+        return sizeChanged || sdkFlagChanged || exposureChanged;
+    }
+
     public void dispatchNextPhotoRequest() {
         synchronized (hooks.serviceLock()) {
             PhotoRequestQueue queue = PhotoRequestQueue.getInstance();
@@ -260,6 +285,18 @@ public final class PhotoSession {
             }
 
             if (hooks.coordinator().hasConfiguredCamera()) {
+                PhotoRequest firstRequest = queue.peek();
+                if (firstRequest == null) {
+                    hooks.startKeepAliveTimer();
+                    return;
+                }
+                queue.attachRegistryCallback(firstRequest);
+                if (needsReconfigurationForPhotoRequest(firstRequest)) {
+                    Log.d(TAG, "Configured camera needs reconfiguration for " + firstRequest.requestId
+                            + " — routing through setupCameraForPhotoRequest");
+                    setupCameraForPhotoRequest(firstRequest);
+                    return;
+                }
                 PhotoRequest request = queue.poll();
                 if (request == null) {
                     hooks.startKeepAliveTimer();
@@ -299,32 +336,15 @@ public final class PhotoSession {
 
         Log.i(TAG, "📸 PHOTO E2E: Starting photo request " + request.requestId);
 
-        String previousSize = currentSize();
-        boolean previousIsFromSdk = currentIsFromSdk();
-        Long previousExposureNs = currentExposureTimeNs();
-
-        boolean sizeChanged = false;
-        if (previousSize != null && request.size != null) {
-            sizeChanged = !previousSize.equals(request.size);
-        } else if (previousSize == null && request.size != null) {
-            sizeChanged = true;
-        } else if (previousSize != null && request.size == null) {
-            sizeChanged = true;
-        }
-        boolean sdkFlagChanged = (previousIsFromSdk != request.isFromSdk);
-        boolean exposureChanged = !Objects.equals(previousExposureNs, request.exposureTimeNs);
+        boolean needsReopen = needsReconfigurationForPhotoRequest(request);
 
         loadCurrentRequest(request);
 
         if (hooks.coordinator().isCameraKeptAlive() && hooks.coordinator().device() != null) {
             Log.d(TAG, "Camera already open, checking if reconfiguration needed");
 
-            boolean needsReopen = sizeChanged || sdkFlagChanged || exposureChanged;
-
             if (needsReopen) {
-                Log.d(TAG, "Camera config changed (sizeChanged=" + sizeChanged +
-                        ", sdkFlagChanged=" + sdkFlagChanged +
-                        ", exposureChanged=" + exposureChanged + "), reopening camera");
+                Log.d(TAG, "Camera config changed (reconfiguration required), reopening camera");
                 hooks.cancelKeepAliveTimer();
                 hooks.closeCamera();
                 hooks.openCameraInternal(request.filePath, false);

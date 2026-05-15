@@ -10,6 +10,9 @@ import static org.mockito.Mockito.when;
 
 import android.os.Handler;
 
+import android.hardware.camera2.CameraDevice;
+
+import com.mentra.asg_client.camera.model.CurrentRequest;
 import com.mentra.asg_client.camera.model.PhotoRequest;
 import com.mentra.asg_client.camera.model.PhotoRequestQueue;
 import com.mentra.asg_client.camera.policy.AeStateMachine;
@@ -35,11 +38,13 @@ public class PhotoSessionTest {
     }
 
     @Test
-    public void dispatchNextPhotoRequest_idleWithConfiguredCamera_loadsRequestAndPosts() {
+    public void dispatchNextPhotoRequest_idleWithConfiguredCamera_loadsRequestAndPosts() throws Exception {
         PhotoSession.Hooks hooks = mock(PhotoSession.Hooks.class);
         doReturn(new Object()).when(hooks).serviceLock();
         CameraCoordinator coordinator = mock(CameraCoordinator.class);
         when(coordinator.hasConfiguredCamera()).thenReturn(true);
+        when(coordinator.isCameraKeptAlive()).thenReturn(true);
+        when(coordinator.device()).thenReturn(mock(CameraDevice.class));
         when(hooks.coordinator()).thenReturn(coordinator);
         Handler handler = mock(Handler.class);
         when(hooks.backgroundHandler()).thenReturn(handler);
@@ -52,15 +57,49 @@ public class PhotoSessionTest {
         when(hooks.cameraSettings()).thenReturn(null);
         when(hooks.previewBuilder()).thenReturn(null);
 
-        PhotoRequestQueue.getInstance().offer(
-                new PhotoRequest("/tmp/p.jpg", "medium", false, true, null, null));
+        PhotoRequest same = new PhotoRequest("/tmp/p.jpg", "medium", false, true, null, null);
+        PhotoRequestQueue.getInstance().offer(same);
 
         PhotoSession session = new PhotoSession(hooks);
+        Field currentRequestField = PhotoSession.class.getDeclaredField("currentRequest");
+        currentRequestField.setAccessible(true);
+        currentRequestField.set(session, CurrentRequest.from(same));
+
         session.dispatchNextPhotoRequest();
 
         verify(hooks).cancelKeepAliveTimer();
         verify(handler).postAtFrontOfQueue(any(Runnable.class));
         assertThat(session.shotState()).isEqualTo(AeStateMachine.ShotState.WAITING_AE);
+    }
+
+    @Test
+    public void dispatchNextPhotoRequest_configuredCamera_sizeChange_routesThroughSetup() throws Exception {
+        PhotoSession.Hooks hooks = mock(PhotoSession.Hooks.class);
+        doReturn(new Object()).when(hooks).serviceLock();
+        CameraCoordinator coordinator = mock(CameraCoordinator.class);
+        when(coordinator.hasConfiguredCamera()).thenReturn(true);
+        when(coordinator.isCameraKeptAlive()).thenReturn(true);
+        when(coordinator.device()).thenReturn(mock(CameraDevice.class));
+        when(hooks.coordinator()).thenReturn(coordinator);
+        when(hooks.backgroundHandler()).thenReturn(mock(Handler.class));
+        when(hooks.capabilities()).thenReturn(null);
+        when(hooks.cameraSettings()).thenReturn(null);
+        when(hooks.previewBuilder()).thenReturn(null);
+
+        PhotoRequest prior = new PhotoRequest("/tmp/old.jpg", "small", false, true, null, null);
+        PhotoSession session = new PhotoSession(hooks);
+        Field currentRequestField = PhotoSession.class.getDeclaredField("currentRequest");
+        currentRequestField.setAccessible(true);
+        currentRequestField.set(session, CurrentRequest.from(prior));
+
+        PhotoRequestQueue.getInstance().offer(
+                new PhotoRequest("/tmp/new.jpg", "large", false, true, null, null));
+
+        session.dispatchNextPhotoRequest();
+
+        verify(hooks).cancelKeepAliveTimer();
+        verify(hooks).closeCamera();
+        verify(hooks).openCameraInternal("/tmp/new.jpg", false);
     }
 
     @Test
