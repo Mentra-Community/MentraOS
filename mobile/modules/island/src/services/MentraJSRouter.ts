@@ -38,6 +38,7 @@
 import type {EventSubscription} from "expo-modules-core"
 
 import type localMiniappRuntime from "./LocalMiniappRuntime"
+import type {InstalledMiniappManifest} from "./LocalMiniappRuntime"
 import type {MentraJSCrashController} from "./MentraJSCrashController"
 import {MentraJSLogRingBuffer, MentraJSLogThrottle, redactSecrets} from "./MentraJSLogPipeline"
 import type {MentraUIRouter} from "./MentraUIRouter"
@@ -94,6 +95,7 @@ const defaultLogger: RouterLogger = {
 interface SpawnCache {
   miniappJs: string
   permissions: string[]
+  installedManifest?: InstalledMiniappManifest
 }
 
 export class MentraJSRouter {
@@ -181,10 +183,14 @@ export class MentraJSRouter {
    * (e.g. {@link spawnAndRegister} below, or the host's miniapp launch
    * pipeline) should call this once per spawn.
    */
-  registerApp(packageName: string): void {
-    this.runtime.registerApp(packageName, (raw: string) => {
-      this.dispatchBridgeRaw(packageName, raw)
-    })
+  registerApp(packageName: string, installedManifest?: InstalledMiniappManifest): void {
+    this.runtime.registerApp(
+      packageName,
+      (raw: string) => {
+        this.dispatchBridgeRaw(packageName, raw)
+      },
+      installedManifest,
+    )
     this.registered.add(packageName)
     // JSContext is the source-of-truth for "miniapp running". The
     // home tile / tray reads this registry to project the `running`
@@ -203,7 +209,7 @@ export class MentraJSRouter {
   async spawnAndRegister(
     packageName: string,
     miniappJs: string,
-    options?: {permissions?: string[]},
+    options?: {permissions?: string[]; installedManifest?: InstalledMiniappManifest},
   ): Promise<boolean> {
     if (!this.crust.mentraJsSpawn) {
       this.logger.warn("mentraJsSpawn not available — host binding missing native function")
@@ -218,15 +224,27 @@ export class MentraJSRouter {
       this.logger.error(`spawn failed for ${packageName}`)
       return false
     }
+    // Two distinct permission gates:
+    //   1. Native dispatcher (JSContext → native bridge): `mentraJsSetManifest`
+    //      checks per-call iface, e.g. __dispatch("mic", "start", ...) requires
+    //      MICROPHONE.
+    //   2. LocalMiniappRuntime (SUBSCRIBE envelope): `registerApp(...,
+    //      installedManifest)` carries the full manifest so SUBSCRIBE's gate
+    //      can match stream → permission against declared types.
     if (options?.permissions && options.permissions.length > 0) {
       await this.crust.mentraJsSetManifest(packageName, options.permissions)
     }
-    this.registerApp(packageName)
+    this.registerApp(packageName, options?.installedManifest)
     // Cache spawn arguments so the crash controller can respawn the
-    // same code after a backoff. permissions are also cached because
-    // setManifest is reset on every spawn (the native side stores
-    // them on the dispatcher's manifest map).
-    this.spawnCache.set(packageName, {miniappJs, permissions: options?.permissions ?? []})
+    // same code after a backoff. permissions + manifest are cached too
+    // because the native side resets setManifest on every spawn and
+    // LocalMiniappRuntime's installedManifest entry is keyed by
+    // connect-time registration.
+    this.spawnCache.set(packageName, {
+      miniappJs,
+      permissions: options?.permissions ?? [],
+      installedManifest: options?.installedManifest,
+    })
     this.crashController?.onSpawn(packageName)
 
     // Fire the `init` envelope so the polyfill's __deliver handler
@@ -286,6 +304,9 @@ export class MentraJSRouter {
         }
         if (cached.permissions.length > 0) {
           await this.crust.mentraJsSetManifest(packageName, cached.permissions)
+        }
+        if (cached.installedManifest) {
+          this.runtime.setInstalledManifest(packageName, cached.installedManifest)
         }
         controller.onSpawn(packageName)
         // Re-fire the init envelope so the respawned context's

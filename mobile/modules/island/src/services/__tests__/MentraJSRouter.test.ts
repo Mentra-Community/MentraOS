@@ -74,12 +74,17 @@ function buildMockCrust(): {
 }
 
 function buildMockRuntime() {
-  const registerCalls: Array<{packageName: string; sendFn: (raw: string) => void}> = []
+  const registerCalls: Array<{
+    packageName: string
+    sendFn: (raw: string) => void
+    installedManifest?: unknown
+  }> = []
   const handleRawCalls: Array<{packageName: string; raw: string}> = []
   const unregisterCalls: string[] = []
+  const setManifestCalls: Array<{packageName: string; installedManifest: unknown}> = []
   const runtime = {
-    registerApp(packageName: string, sendFn: (raw: string) => void) {
-      registerCalls.push({packageName, sendFn})
+    registerApp(packageName: string, sendFn: (raw: string) => void, installedManifest?: unknown) {
+      registerCalls.push({packageName, sendFn, installedManifest})
     },
     handleRawMessage(packageName: string, raw: string) {
       handleRawCalls.push({packageName, raw})
@@ -87,8 +92,11 @@ function buildMockRuntime() {
     unregisterApp(packageName: string) {
       unregisterCalls.push(packageName)
     },
+    setInstalledManifest(packageName: string, installedManifest: unknown) {
+      setManifestCalls.push({packageName, installedManifest})
+    },
   } as unknown as LocalMiniappRuntime
-  return {runtime, registerCalls, handleRawCalls, unregisterCalls}
+  return {runtime, registerCalls, handleRawCalls, unregisterCalls, setManifestCalls}
 }
 
 function silentLogger() {
@@ -279,19 +287,36 @@ describe("MentraJSRouter", () => {
   })
 
   test("spawnAndRegister spawns + sets manifest + registers + dispatches init", async () => {
-    const ok = await router.spawnAndRegister("com.foo", "console.log(1)", {permissions: ["MICROPHONE"]})
+    const installedManifest = {
+      permissions: [{type: "MICROPHONE", description: "transcription"}],
+      hardwareRequirements: [{type: "DISPLAY", level: "REQUIRED"}],
+    }
+    const ok = await router.spawnAndRegister("com.foo", "console.log(1)", {
+      permissions: ["MICROPHONE"],
+      installedManifest,
+    })
     expect(ok).toBe(true)
     expect(crust.spawnCalls).toEqual([
       {packageName: "com.foo", polyfill: "/* polyfill */", miniappJs: "console.log(1)"},
     ])
     expect(crust.setManifestCalls).toEqual([{packageName: "com.foo", permissions: ["MICROPHONE"]}])
     expect(runtimeMock.registerCalls).toHaveLength(1)
+    // installedManifest threads through to LocalMiniappRuntime so the
+    // SUBSCRIBE gate matches stream→permission against declared types.
+    expect(runtimeMock.registerCalls[0]!.installedManifest).toEqual(installedManifest)
     // The init envelope is what fires registerMiniapp's handler inside
     // the JSContext. Without it, the user's code never runs.
     const initCalls = crust.dispatchCalls.filter((c) => c.envelope.kind === "init")
     expect(initCalls).toHaveLength(1)
     expect(initCalls[0]!.packageName).toBe("com.foo")
     expect(typeof initCalls[0]!.envelope.sessionId).toBe("string")
+  })
+
+  test("spawnAndRegister works without installedManifest (back-compat)", async () => {
+    const ok = await router.spawnAndRegister("com.foo", "console.log(1)")
+    expect(ok).toBe(true)
+    expect(runtimeMock.registerCalls).toHaveLength(1)
+    expect(runtimeMock.registerCalls[0]!.installedManifest).toBeUndefined()
   })
 
   test("spawnAndRegister returns false when native spawn fails", async () => {

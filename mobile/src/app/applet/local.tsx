@@ -115,10 +115,21 @@ export default function LocalMiniAppPage() {
       }
       const manifest = appRegistry.getMiniappManifest(packageName, resolvedVersion) as {
         permissions?: Array<{type: string; required?: boolean; description?: string}>
+        hardwareRequirements?: Array<{type: string; level: string; description?: string}>
       } | null
       const declaredPermissions = (manifest?.permissions ?? [])
         .map((p) => p.type)
         .filter((t): t is string => typeof t === "string")
+      // LocalMiniappRuntime.SUBSCRIBE matches stream → permission against
+      // installedManifest.permissions. Threading the full manifest (not
+      // just the permission types) preserves description / required
+      // fields that the SDK's PERMISSIONS_UPDATE response surfaces.
+      const installedManifest = manifest
+        ? {
+            permissions: manifest.permissions,
+            hardwareRequirements: manifest.hardwareRequirements,
+          }
+        : undefined
 
       const mj = getMentraJS()
       if (!mj) {
@@ -135,6 +146,7 @@ export default function LocalMiniAppPage() {
         const bgSource = new File(entryPaths.background).textSync()
         const ok = await mj.router.spawnAndRegister(packageName, bgSource, {
           permissions: declaredPermissions,
+          installedManifest,
         })
         if (!ok) {
           fail("spawn failed — see logs")
