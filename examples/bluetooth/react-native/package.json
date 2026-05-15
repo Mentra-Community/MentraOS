@@ -18,6 +18,7 @@
     "expo-file-system": "~55.0.17",
     "expo-linear-gradient": "~55.0.13",
     "expo-video": "~55.0.16",
+    "mentra-direct-receiver": "file:modules/mentra-direct-receiver",
     "react": "19.2.0",
     "react-native": "0.83.6",
     "react-native-safe-area-context": "~5.6.2",
