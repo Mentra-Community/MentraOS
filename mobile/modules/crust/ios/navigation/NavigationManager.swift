@@ -337,17 +337,28 @@ final class NavigationManager: NSObject {
           return
         }
         if ticksRemaining <= 0 {
-          // 10s elapsed — freeze the simulator and stop ticking. We
-          // intentionally do NOT resume the Google sim; the user
+          // 10s elapsed — leave the simulator paused and stop ticking.
+          // We intentionally do NOT resume the Google sim; the user
           // wanted everything to stop after the deviation window.
           t.invalidate()
           self.deviateTimer = nil
-          self.navigator?.simulator?.paused = true
           print("[NavigationManager] simulateDeviation: done; simulator frozen")
           return
         }
         cursor = self.projectCoordinate(from: cursor, distanceMeters: stepMeters, bearingDegrees: bearing)
-        self.navigator?.simulator?.setUserLocation(cursor)
+        // iOS GMSLocationSimulator has no setUserLocation API (unlike
+        // Android's GMSNavigator.simulator). Emit synthesized coords
+        // directly through onLocation, bypassing the road-snap pipeline.
+        // For an off-route walker this is fine — we WANT off-route
+        // positions to surface; road snapping would fight us.
+        self.prevReportedCoord = self.lastReportedCoord
+        self.lastReportedCoord = cursor
+        self.onLocation?([
+          "lat": cursor.latitude,
+          "lng": cursor.longitude,
+          "accuracy": 5.0,
+          "timestamp": Date().timeIntervalSince1970 * 1000,
+        ])
         ticksRemaining -= 1
       }
     }
