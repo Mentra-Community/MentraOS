@@ -22,38 +22,38 @@ import android.provider.Settings
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import com.mentra.core.BatteryStatusEvent
-import com.mentra.core.BluetoothError
-import com.mentra.core.MentraBluetoothSdk
-import com.mentra.core.MentraBluetoothSdkCallback
-import com.mentra.core.BluetoothStatus
-import com.mentra.core.BluetoothStatusUpdate
-import com.mentra.core.ButtonPressEvent
-import com.mentra.core.Device
-import com.mentra.core.DeviceModel
-import com.mentra.core.GalleryMode
-import com.mentra.core.GlassesConnectionState
-import com.mentra.core.GlassesStatus
-import com.mentra.core.GlassesStatusUpdate
-import com.mentra.core.HotspotErrorEvent
-import com.mentra.core.HotspotStatus
-import com.mentra.core.HotspotStatusEvent
-import com.mentra.core.MicConfig
-import com.mentra.core.PhotoCompression
-import com.mentra.core.PhotoRequest
-import com.mentra.core.PhotoResponse
-import com.mentra.core.PhotoSize
-import com.mentra.core.RgbLedAction
-import com.mentra.core.RgbLedColor
-import com.mentra.core.RgbLedRequest
-import com.mentra.core.StreamState
-import com.mentra.core.StreamKeepAliveRequest
-import com.mentra.core.StreamRequest
-import com.mentra.core.StreamStatus
-import com.mentra.core.TouchEvent
-import com.mentra.core.WifiScanResult
-import com.mentra.core.WifiStatus
-import com.mentra.core.WifiStatusEvent
+import com.mentra.bluetoothsdk.BatteryStatusEvent
+import com.mentra.bluetoothsdk.BluetoothError
+import com.mentra.bluetoothsdk.MentraBluetoothSdk
+import com.mentra.bluetoothsdk.MentraBluetoothSdkCallback
+import com.mentra.bluetoothsdk.BluetoothStatus
+import com.mentra.bluetoothsdk.BluetoothStatusUpdate
+import com.mentra.bluetoothsdk.ButtonPressEvent
+import com.mentra.bluetoothsdk.Device
+import com.mentra.bluetoothsdk.DeviceModel
+import com.mentra.bluetoothsdk.GalleryMode
+import com.mentra.bluetoothsdk.GlassesConnectionState
+import com.mentra.bluetoothsdk.GlassesStatus
+import com.mentra.bluetoothsdk.GlassesStatusUpdate
+import com.mentra.bluetoothsdk.HotspotErrorEvent
+import com.mentra.bluetoothsdk.HotspotStatus
+import com.mentra.bluetoothsdk.HotspotStatusEvent
+import com.mentra.bluetoothsdk.MicConfig
+import com.mentra.bluetoothsdk.PhotoCompression
+import com.mentra.bluetoothsdk.PhotoRequest
+import com.mentra.bluetoothsdk.PhotoResponse
+import com.mentra.bluetoothsdk.PhotoSize
+import com.mentra.bluetoothsdk.RgbLedAction
+import com.mentra.bluetoothsdk.RgbLedColor
+import com.mentra.bluetoothsdk.RgbLedRequest
+import com.mentra.bluetoothsdk.StreamState
+import com.mentra.bluetoothsdk.StreamKeepAliveRequest
+import com.mentra.bluetoothsdk.StreamRequest
+import com.mentra.bluetoothsdk.StreamStatus
+import com.mentra.bluetoothsdk.TouchEvent
+import com.mentra.bluetoothsdk.WifiScanResult
+import com.mentra.bluetoothsdk.WifiStatus
+import com.mentra.bluetoothsdk.WifiStatusEvent
 import com.mentra.examples.android.media.GStreamerWhipReceiver
 import com.mentra.examples.android.media.LocalPhotoUploadServer
 import com.mentra.examples.android.media.PhotoUpload
@@ -351,7 +351,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     fun displayHello() = runAction("Display Hello") {
         requireConnected("display text")
-        mentraBluetoothSdk.displayText(com.mentra.core.DisplayTextRequest("Hello from Mentra Bluetooth SDK"))
+        mentraBluetoothSdk.displayText(com.mentra.bluetoothsdk.DisplayTextRequest("Hello from Mentra Bluetooth SDK"))
     }
 
     fun clearDisplay() = runAction("Clear Display") {
@@ -1178,7 +1178,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         addEvent("TX", "hotspot error ${event.message ?: summarize(event.values)}")
     }
 
-    override fun onPhotoResponse(event: com.mentra.core.PhotoResponseEvent) {
+    override fun onPhotoResponse(event: com.mentra.bluetoothsdk.PhotoResponseEvent) {
         val response = event.response
         val requestId = response.requestId
         if (activePhotoRequestId != null && requestId != activePhotoRequestId) {
@@ -1197,7 +1197,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         addEvent("LIVE", "photo response $requestId")
     }
 
-    override fun onStreamStatus(event: com.mentra.core.StreamStatusEvent) {
+    override fun onStreamStatus(event: com.mentra.bluetoothsdk.StreamStatusEvent) {
         applyStreamStatus(event.status)
         val summary = summarize(event.values)
         val streamState = event.state

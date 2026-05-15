@@ -34,9 +34,10 @@ func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didDiscover device: Device) {
 React Native:
 
 ```ts
-const removeCore = BluetoothSdk.onCoreStatus((status) => {
+const removeBluetooth = BluetoothSdk.onBluetoothStatus((status) => {
   const device = status.searchResults?.[0];
   if (device) {
+    removeBluetooth();
     void BluetoothSdk.connect(device);
   }
 });

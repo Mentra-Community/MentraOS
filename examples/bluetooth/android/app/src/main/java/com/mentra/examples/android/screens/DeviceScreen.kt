@@ -26,8 +26,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.mentra.core.DeviceModel
-import com.mentra.core.GlassesStatus
+import com.mentra.bluetoothsdk.DeviceModel
+import com.mentra.bluetoothsdk.GlassesStatus
 import com.mentra.examples.android.MentraExampleController
 import com.mentra.examples.android.R
 import com.mentra.examples.android.batteryLabel

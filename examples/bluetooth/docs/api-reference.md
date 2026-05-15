@@ -12,7 +12,7 @@ The Mentra Bluetooth SDK exposes the same core glasses lifecycle across Android,
 
 | Platform | Install package | Import |
 | --- | --- | --- |
-| Android | `com.mentra:bluetooth-sdk` | `import com.mentra.core.*` |
+| Android | `com.mentra:bluetooth-sdk` | `import com.mentra.bluetoothsdk.*` |
 | iOS | `MentraBluetoothSDK` CocoaPod | `import MentraBluetoothSDK` |
 | React Native / Expo | `@mentra/bluetooth-sdk` | `import BluetoothSdk from '@mentra/bluetooth-sdk'` |
 
@@ -56,12 +56,12 @@ const removeGlasses = BluetoothSdk.onGlassesStatus((changed) => {
   setGlassesStatus((current) => ({...current, ...changed}));
 });
 
-const removeCore = BluetoothSdk.onCoreStatus((status) => {
+const removeBluetooth = BluetoothSdk.onBluetoothStatus((status) => {
   console.log(status);
 });
 
 removeGlasses();
-removeCore();
+removeBluetooth();
 ```
 
 Keep one SDK instance per active app session. The SDK owns Bluetooth connection state, native event delivery, and cleanup. Your app owns user identity, UI state, and whether a default device record is persisted across app restarts.
@@ -174,7 +174,7 @@ React Native:
 
 ```ts
 const glasses = await BluetoothSdk.getGlassesStatus();
-const core = await BluetoothSdk.getCoreStatus();
+const bluetooth = await BluetoothSdk.getBluetoothStatus();
 ```
 
 Status snapshots are safe to read at any time. Treat command success as "command accepted"; keep UI state derived from status callbacks.
@@ -586,7 +586,7 @@ subscriptions.forEach((subscription) => subscription.remove());
 
 Common event names include `button_press`, `touch_event`, `head_up`, `battery_status`, `wifi_status_change`, `hotspot_status_change`, `photo_response`, `gallery_status`, `stream_status`, `keep_alive_ack`, `mic_pcm`, `mic_lc3`, `local_transcription`, `rgb_led_control_response`, `audio_connected`, `audio_disconnected`, `log`, `send_command_to_ble`, and `receive_command_from_ble`.
 
-## Core Models
+## SDK Models
 
 | Model | Android | iOS | React Native | Purpose |
 | --- | --- | --- | --- | --- |
@@ -594,7 +594,7 @@ Common event names include `button_press`, `touch_event`, `head_up`, `battery_st
 | Discovered device | `Device` | `Device` | `Device` | Scan result containing model, name, address/identifier, RSSI, and id. |
 | Connection state | `GlassesConnectionState` | `GlassesConnectionState` | `GlassesConnectionStatus` | Link-layer state: disconnected, scanning, connecting, bonding, or connected. React Native uses a discriminated union where `fullyBooted` only exists on the connected state. |
 | Glasses status | `GlassesStatus` / `GlassesStatusUpdate` | `GlassesStatus` / `GlassesStatusUpdate` | `GlassesStatus` | Connected device snapshot: model, firmware, serial, battery, Wi-Fi, hotspot, head-up, controller, and readiness. |
-| Bluetooth/core status | `BluetoothStatus` / `BluetoothStatusUpdate` | `BluetoothStatus` / `BluetoothStatusUpdate` | `CoreStatus` | Scanning state, discovered devices, Wi-Fi scan results, mic state, settings, and logs. |
+| Bluetooth status | `BluetoothStatus` / `BluetoothStatusUpdate` | `BluetoothStatus` / `BluetoothStatusUpdate` | `BluetoothStatus` | Scanning state, discovered devices, Wi-Fi scan results, mic state, settings, and logs. |
 | SDK error | `BluetoothException` / `BluetoothError` | `BluetoothError` | rejected promise or `log`/typed event | Permission, connection, unsupported-capability, command, or native failure. |
 
 ## Defaults

@@ -179,12 +179,12 @@ iOS apps should include permission copy in `Info.plist`:
 
 ```kotlin
 import android.content.Context
-import com.mentra.core.Device
-import com.mentra.core.DeviceModel
-import com.mentra.core.DisplayTextRequest
-import com.mentra.core.GlassesStatusUpdate
-import com.mentra.core.MentraBluetoothSdk
-import com.mentra.core.MentraBluetoothSdkCallback
+import com.mentra.bluetoothsdk.Device
+import com.mentra.bluetoothsdk.DeviceModel
+import com.mentra.bluetoothsdk.DisplayTextRequest
+import com.mentra.bluetoothsdk.GlassesStatusUpdate
+import com.mentra.bluetoothsdk.MentraBluetoothSdk
+import com.mentra.bluetoothsdk.MentraBluetoothSdkCallback
 
 class GlassesController(context: Context) : MentraBluetoothSdkCallback() {
     private val sdk = MentraBluetoothSdk.create(
@@ -274,11 +274,11 @@ import BluetoothSdk, {
 let glassesStatus: Partial<GlassesStatus> = createDisconnectedGlassesStatus();
 
 const firstDevice = new Promise<Device>((resolve) => {
-  let removeCore = () => {};
-  removeCore = BluetoothSdk.onCoreStatus((status) => {
+  let removeBluetooth = () => {};
+  removeBluetooth = BluetoothSdk.onBluetoothStatus((status) => {
     const device = status.searchResults?.[0];
     if (device) {
-      removeCore();
+      removeBluetooth();
       resolve(device);
     }
   });
