@@ -1,4 +1,4 @@
-package com.mentra.asg_client.camera;
+package com.mentra.asg_client.camera.policy;
 
 import android.content.Context;
 import android.util.Log;
@@ -12,22 +12,22 @@ import com.mentra.asg_client.service.utils.ServiceUtils;
 /**
  * Phase 3 prep: resolves the display rotation and the JPEG EXIF orientation tag.
  *
- * <p>Split out of {@link CameraNeo} because the rotation lookup table and the device-rotation
+ * <p>Split out of {@link CameraNeoService} because the rotation lookup table and the device-rotation
  * decision are reusable utilities — both photo and video paths consult them, and they have no
  * dependency on the camera service lifecycle.
  *
  * <p>Behavior is preserved bit-for-bit: K900 devices use {@link ServiceUtils#determineDefaultRotationForDevice}
  * unconditionally; other Android devices fall back to {@link WindowManager#getDefaultDisplay()}.
  */
-final class JpegOrientationResolver {
+public final class JpegOrientationResolver {
 
     private static final String TAG = "JpegOrientationResolver";
 
     /** Default value returned by {@link #getJpegOrientation(Context)} when no entry matches. */
-    static final int DEFAULT_JPEG_ORIENTATION = 90;
+    public static final int DEFAULT_JPEG_ORIENTATION = 90;
 
     /** EXIF orientation value used by video pipelines when no display rotation is supplied. */
-    static final int DEFAULT_VIDEO_ORIENTATION = 0;
+    public static final int DEFAULT_VIDEO_ORIENTATION = 0;
 
     private static final SparseIntArray JPEG_ORIENTATION = new SparseIntArray();
 
@@ -47,7 +47,7 @@ final class JpegOrientationResolver {
      * current system display rotation. If no {@link WindowManager} is available, falls back to the
      * device default.
      */
-    static int getDisplayRotation(Context context) {
+    public static int getDisplayRotation(Context context) {
         int deviceDefaultRotation = ServiceUtils.determineDefaultRotationForDevice(context);
         String deviceType = ServiceUtils.getDeviceTypeString(context);
 
@@ -90,7 +90,7 @@ final class JpegOrientationResolver {
      * @param context service or activity context.
      * @return EXIF orientation in degrees ({@value #DEFAULT_JPEG_ORIENTATION} when no entry matches).
      */
-    static int getJpegOrientation(Context context) {
+    public static int getJpegOrientation(Context context) {
         int displayOrientation = getDisplayRotation(context);
         return JPEG_ORIENTATION.get(displayOrientation, DEFAULT_JPEG_ORIENTATION);
     }
@@ -99,7 +99,7 @@ final class JpegOrientationResolver {
      * Resolve the orientation tag used by the video path (defaults to 0° when no entry matches,
      * matching the historical {@code JPEG_ORIENTATION.get(_, 0)} call in the video setup).
      */
-    static int getVideoOrientation(Context context) {
+    public static int getVideoOrientation(Context context) {
         int displayOrientation = getDisplayRotation(context);
         return JPEG_ORIENTATION.get(displayOrientation, DEFAULT_VIDEO_ORIENTATION);
     }
@@ -111,7 +111,7 @@ final class JpegOrientationResolver {
      * @param displayRotation rotation in degrees.
      * @param defaultIfMissing fallback when the rotation isn't in the table.
      */
-    static int lookupJpegOrientation(int displayRotation, int defaultIfMissing) {
+    public static int lookupJpegOrientation(int displayRotation, int defaultIfMissing) {
         return JPEG_ORIENTATION.get(displayRotation, defaultIfMissing);
     }
 }

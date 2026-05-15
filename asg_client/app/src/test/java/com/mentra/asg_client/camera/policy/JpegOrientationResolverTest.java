@@ -1,4 +1,4 @@
-package com.mentra.asg_client.camera;
+package com.mentra.asg_client.camera.policy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -47,7 +47,7 @@ public class JpegOrientationResolverTest {
 
     @Test
     public void defaultConstants_matchHistoricalValues() {
-        // These constants are what callers in CameraNeo previously passed inline as the second
+        // These constants are what callers in CameraNeoService previously passed inline as the second
         // arg to JPEG_ORIENTATION.get(rotation, default).
         assertThat(JpegOrientationResolver.DEFAULT_JPEG_ORIENTATION).isEqualTo(90);
         assertThat(JpegOrientationResolver.DEFAULT_VIDEO_ORIENTATION).isEqualTo(0);
