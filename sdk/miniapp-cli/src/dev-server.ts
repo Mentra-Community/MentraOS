@@ -1,6 +1,6 @@
-// Sidecar dev server for `mentra-miniapp dev`. Runs on a separate port from the
-// user's miniapp server (default `userPort + 1`). Hosts the `__mentra_dev`
-// WebSocket multiplexed channel:
+// Sidecar dev server for `mentra-miniapp dev`. Runs on `userPort + 1`,
+// alongside the static file server `dev.ts` boots on `userPort`. Hosts
+// the `__mentra_dev` WebSocket multiplexed channel:
 //
 //   laptop → phone : {type: "reload"}                 (UI WebView reload — filesystem watcher fired in src/ui)
 //   laptop → phone : {type: "respawn-bg"}              (background JSContext respawn — filesystem watcher fired in src/background)
@@ -10,8 +10,11 @@
 // `{type: "hello-ack"}`) so a phone connecting to the wrong sidecar (or an
 // older one) can detect mismatch.
 //
-// Designed to coexist with whatever the user's `server.ts` is doing — we don't
-// touch their code, we just listen on a separate port.
+// Also exposes `/__mentra_dev/bundle.zip` — a flat snapshot of the
+// project (including `dist/`) the phone-side install pipeline downloads
+// and unpacks into `lmas/<pkg>/dev-<ts>/`. `onBeforeBroadcast` is the
+// hook that rebuilds `dist/` before each broadcast so the next zip
+// fetch ships current code.
 
 import {readdirSync, readFileSync, statSync, watch} from "fs"
 import {join, relative} from "path"
@@ -24,6 +27,13 @@ export interface DevServerOptions {
   watchDir: string
   /** Suppress info console.log output. Default false. */
   silent?: boolean
+  /**
+   * Hook run inside the debounced broadcast window, after the filesystem
+   * settles but before the phone is notified. Two-layer projects use this
+   * to rebuild the `dist/` snapshot so the next `bundle.zip` fetch ships
+   * fresh code. Rejection is caught + logged; the broadcast still fires.
+   */
+  onBeforeBroadcast?: (type: "reload" | "respawn-bg") => Promise<void>
 }
 
 interface ClientWsData {
@@ -171,24 +181,28 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
   })
 
   // Filesystem watcher → broadcast reload or respawn-bg depending on which
-  // layer changed. Two-layer projects keep their background code under
-  // `src/background/` and their UI code under `src/ui/`; a touch under
-  // `src/background/` requires killing + re-spawning the JSContext, while a
-  // touch under `src/ui/` only needs to reload the WebView.
-  //
-  // Legacy single-layer projects (no `src/background/` folder) still fall
-  // back to the legacy `{type: "reload"}` for any source change. The
-  // host's WebView reload path is unchanged.
+  // layer changed. Background code lives under `src/background/` and UI
+  // code under `src/ui/`; a touch under `src/background/` requires killing
+  // + re-spawning the JSContext, while a touch under `src/ui/` only needs
+  // a WebView reload. Touches anywhere else default to reload.
   let reloadTimer: ReturnType<typeof setTimeout> | null = null
   let pendingType: "reload" | "respawn-bg" | null = null
+  // True when a path either equals `name` or sits under `name/`. macOS
+  // FSEvents under `recursive: true` emits the bare directory name when
+  // the directory itself is rm-rf'd or renamed; matching only `name/`
+  // would let that event through and cause a rebuild loop.
+  const isUnder = (filename: string, name: string): boolean =>
+    filename === name || filename.startsWith(`${name}/`) || filename.includes(`/${name}/`)
+
   const watcher = watch(options.watchDir, {recursive: true}, (_event, filename) => {
     if (!filename) return
     // Skip noisy directories — most projects don't want to reload on
-    // node_modules or dist churn.
-    if (filename.startsWith("node_modules/") || filename.includes("/node_modules/")) return
-    if (filename.startsWith(".git/") || filename.includes("/.git/")) return
-    if (filename.startsWith("dist/")) return
-    if (filename.startsWith(".next/")) return
+    // node_modules or dist churn (the rebuild itself rewrites dist/,
+    // which would otherwise loop).
+    if (isUnder(filename, "node_modules")) return
+    if (isUnder(filename, ".git")) return
+    if (isUnder(filename, "dist")) return
+    if (isUnder(filename, ".next")) return
 
     // Decide which layer the change touched. Order matters: a single batch
     // may hit both layers; if so, respawn-bg wins (it implies a full reload
@@ -203,10 +217,21 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
     }
 
     if (reloadTimer) clearTimeout(reloadTimer)
-    reloadTimer = setTimeout(() => {
+    reloadTimer = setTimeout(async () => {
       reloadTimer = null
       const type = pendingType ?? "reload"
       pendingType = null
+      // Two-layer projects rebuild `dist/` here so the next bundle.zip
+      // fetch ships current code. A build failure surfaces in the
+      // terminal but does not block the broadcast — phones will install
+      // whatever the previous successful build left behind.
+      if (options.onBeforeBroadcast) {
+        try {
+          await options.onBeforeBroadcast(type)
+        } catch (err) {
+          log(`${COLOR.red}[__mentra_dev] onBeforeBroadcast failed:${COLOR.reset} ${(err as Error).message}`)
+        }
+      }
       const msg = JSON.stringify({type})
       let count = 0
       for (const s of sockets) {
