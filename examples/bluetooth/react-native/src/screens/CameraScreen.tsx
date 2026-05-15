@@ -66,14 +66,19 @@ export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
       <LinearGradient colors={['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.55)']} style={styles.card}>
         <View style={styles.previewWrap}>
           <LinearGradient colors={['#1F4A33', '#3A8A56', '#7DD89E', '#26B870', '#163A26']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.preview}>
-            {sdk.photoPreviewUrl ? <Image source={{ uri: sdk.photoPreviewUrl }} style={styles.previewImage} resizeMode="cover" /> : null}
-            {!sdk.photoPreviewUrl && <View style={styles.previewGlow} />}
-            <View style={styles.previewBottomShade} />
-            <View style={styles.previewBadge}>
-              <View style={{ width: 5, height: 5, borderRadius: 999, backgroundColor: colors.greenSoft }} />
-              <Text style={styles.previewBadgeText}>{sdk.photoPreviewUrl ? 'JPEG · uploaded' : 'JPEG · waiting'}</Text>
-            </View>
-            <Text style={styles.previewMeta}>{sdk.photoPreviewUrl ? 'latest' : 'ready'}</Text>
+            {sdk.photoPreviewUrl ? (
+              <Image source={{ uri: sdk.photoPreviewUrl }} style={styles.previewImage} resizeMode="cover" />
+            ) : (
+              <>
+                <View style={styles.previewGlow} />
+                <View style={styles.previewBottomShade} />
+                <View style={styles.previewBadge}>
+                  <View style={{ width: 5, height: 5, borderRadius: 999, backgroundColor: colors.greenSoft }} />
+                  <Text style={styles.previewBadgeText}>JPEG · waiting</Text>
+                </View>
+                <Text style={styles.previewMeta}>ready</Text>
+              </>
+            )}
           </LinearGradient>
         </View>
 
