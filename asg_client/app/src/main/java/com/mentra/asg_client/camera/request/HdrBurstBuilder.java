@@ -1,11 +1,11 @@
-package com.mentra.asg_client.camera;
+package com.mentra.asg_client.camera.request;
 
 import android.hardware.camera2.CaptureRequest;
 import android.util.Range;
 
 /**
  * Phase 2d: pure-logic helper that stamps one HDR-burst bracket onto a
- * {@link StillCaptureBuilder.Sink}. Extracted from {@link CameraNeo#captureHdrBurst()} so the
+ * {@link StillCaptureBuilder.Sink}. Extracted from {@link CameraNeoService#captureHdrBurst()} so the
  * recipe is unit-testable without standing up a real {@code CameraCaptureSession}.
  *
  * <p>The current burst recipe (matching the inline code that previously lived in
