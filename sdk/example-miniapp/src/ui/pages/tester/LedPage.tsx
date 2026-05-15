@@ -11,6 +11,10 @@ import {Input} from "../../components/input"
 import {Label} from "../../components/label"
 import {ErrorRow} from "./_TesterRow"
 
+// Mirror of `LedColor` from @mentra/miniapp/background. The UI WebView
+// deliberately doesn't import background-only types — keep this list in
+// sync with that enum (or, more robustly, type the channel payload in
+// `shared/channels.ts`).
 const LED_COLORS = ["red", "green", "blue", "orange", "white"] as const
 type LedColor = (typeof LED_COLORS)[number]
 

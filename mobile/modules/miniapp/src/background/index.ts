@@ -69,3 +69,74 @@ export type {SystemModule} from "../modules/system"
 export type {TranscriptionModule} from "../modules/transcription"
 export type {TranslationModule} from "../modules/translation"
 export type {UIModule, UIChannelHandler, UIUnsubscribe} from "../modules/ui"
+
+// Argument enums + option types — for authors writing controllers that pass
+// these into session.* method calls (or that build typed helpers around them).
+// Intentionally NOT re-exported from `@mentra/miniapp/ui` — the WebView half
+// never touches these directly. UI talks to background via mentra.send with
+// the author's own `Channels` registry; background is where these enums show
+// up as method args.
+export type {LedColor, LedControlOptions} from "../modules/led"
+export type {
+  ViewType,
+  LayoutType,
+  Layout,
+  DisplayOptions,
+  TextWall,
+  DoubleTextWall,
+  ReferenceCard,
+  DashboardCard,
+  BitmapView,
+  ClearView,
+} from "../modules/display"
+export type {DashboardMode} from "../modules/dashboard"
+export type {
+  PlayAudioOptions,
+  SpeakOptions,
+  SpeakResult,
+  SpeakerState,
+  SpeakerStateEvent,
+} from "../modules/speaker"
+export type {
+  ShareOptions,
+  ShareResult,
+  DownloadOptions,
+  DownloadResult,
+} from "../modules/system"
+export type {TranscriptionConfig} from "../modules/transcription"
+export type {PermissionErrorEvent} from "../modules/permissions"
+export type {
+  MiniappVisibility,
+  PermissionType,
+  PermissionRecord,
+  GlassesCapabilities,
+  ConnectAckPayload,
+  MiniappRequestError,
+} from "../session"
+export type {MiniappColorScheme} from "../globals"
+// Navigation — exported as a single block since the types reference each other.
+export type {
+  LatLng,
+  TravelMode,
+  ManeuverKind,
+  RouteAvoidances,
+  NavManeuver,
+  NavOffRoute,
+  NavRerouting,
+  NavArrived,
+  NavError,
+  NavUpdate,
+  NavRoute,
+  PivotOptions,
+  Pivot,
+  PivotEvent,
+  NavStep,
+  NavigationDev,
+  StartNavigationOptions,
+  NavState,
+  NavPermissionResult,
+  ComputeRouteOptions,
+  ComputedRouteStep,
+  ComputedRoute,
+  ComputeRouteResult,
+} from "../modules/navigation"
