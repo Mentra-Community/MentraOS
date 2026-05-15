@@ -114,6 +114,14 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
             </Pressable>
           </View>
           <View style={styles.btnRow}>
+            <Pressable disabled={connected} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, connected && styles.disabled]} onPress={sdk.connectFirst}>
+              <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+                <Path d="M9 17H5a3 3 0 0 1 0-6h4" /><Path d="M15 7h4a3 3 0 0 1 0 6h-4" /><Line x1={8} y1={14} x2={16} y2={10} />
+              </Svg>
+              <Text style={styles.btnTextDark}>Connect First</Text>
+            </Pressable>
+          </View>
+          <View style={styles.btnRow}>
             <Pressable disabled={!displaySupported} style={({ pressed }) => [styles.btnLight, pressed && styles.btnPressed, !displaySupported && styles.disabled]} onPress={sdk.displayHello}>
               <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.inkAlt} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
                 <Rect x={2} y={4} width={20} height={14} rx={2} /><Path d="M8 22h8" /><Path d="M12 18v4" />
