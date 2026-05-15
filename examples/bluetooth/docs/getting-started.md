@@ -2,7 +2,7 @@
 
 This guide shows how to add the Mentra Bluetooth SDK to Android, iOS, and React Native apps, then connect to glasses and send the first command.
 
-Use the SDK version and package repository access supplied by Mentra. The example apps in this repo are designed to work from a fresh clone once the Maven, CocoaPods, and npm packages are available.
+Use the latest SDK version published by Mentra. The example apps in this repo are designed to work from a fresh clone with the Maven, CocoaPods, and npm packages, without any local MentraOS checkout.
 
 ## Requirements
 
@@ -17,7 +17,7 @@ Use the SDK version and package repository access supplied by Mentra. The exampl
 
 ### Android
 
-Add the Mentra Maven repository supplied for your release and depend on the Android artifact:
+Add the Mentra Maven repository and depend on the Android artifact:
 
 ```kotlin
 // settings.gradle.kts
@@ -63,7 +63,7 @@ cd /path/to/MentraOS/mobile/android
 
 ### iOS
 
-Add the Mentra CocoaPods source supplied for your release when required by your access model, then depend on the pod:
+Add the Mentra CocoaPods source if required by the published pod, then depend on the pod:
 
 ```ruby
 platform :ios, '15.1'
@@ -317,8 +317,8 @@ if (savedDevice) {
 From a fresh clone:
 
 ```bash
-git clone <partner-kit-repo-url>
-cd Mentra-Bluetooth-SDK-Partner-Kit
+git clone <starter-kit-repo-url>
+cd <starter-kit-directory>
 ```
 
 Run one of:

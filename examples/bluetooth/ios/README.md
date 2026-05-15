@@ -2,7 +2,7 @@
 
 Native iOS reference app for the Mentra Bluetooth SDK, built with SwiftUI and CocoaPods.
 
-This example installs the SDK as the `MentraBluetoothSDK` CocoaPod and is intended to run from a fresh clone once the Mentra pod is available. No path to a local MentraOS checkout is required for normal partner use.
+This example installs the SDK as the `MentraBluetoothSDK` CocoaPod and is intended to run from a fresh clone once the Mentra pod is available. No path to a local MentraOS checkout is required for normal SDK use.
 
 ## Requirements
 
@@ -20,13 +20,13 @@ The Podfile defaults to SDK version `0.1.0`:
 mentra_sdk_version = ENV['MENTRA_BLUETOOTH_SDK_VERSION'] || '0.1.0'
 ```
 
-Use the version supplied by Mentra for your release:
+Use the latest SDK version published by Mentra:
 
 ```bash
 MENTRA_BLUETOOTH_SDK_VERSION=<version> pod install
 ```
 
-If Mentra provides a private CocoaPods source, add that source to `Podfile` above `https://cdn.cocoapods.org/`.
+If a dedicated Mentra CocoaPods source is required, add that source to `Podfile` above `https://cdn.cocoapods.org/`.
 
 ## Run
 

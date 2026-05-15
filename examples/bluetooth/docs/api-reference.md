@@ -208,7 +208,7 @@ Call `requestVersionInfo()` after connection when your app wants the glasses to 
 | `appVersion` | Glasses-side companion app version. On Mentra Live this is the ASG client APK version, not firmware. |
 | `androidVersion` | Android OS version on Android-based glasses. This is not firmware. |
 
-Different glasses models expose different version fields, so partner apps should prefer the generic firmware field when present, then fall back to model-specific firmware fields. Keep app and OS versions visibly labeled as app/OS versions.
+Different glasses models expose different version fields, so apps should prefer the generic firmware field when present, then fall back to model-specific firmware fields. Keep app and OS versions visibly labeled as app/OS versions.
 
 ## Display
 

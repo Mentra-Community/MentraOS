@@ -155,6 +155,6 @@ const sub = BluetoothSdk.addListener('local_transcription', (event) => {
 
 - Always provide a user-visible microphone permission explanation.
 - Let users disable microphone streaming.
-- Expect model availability to differ by platform, locale, and partner app configuration.
+- Expect model availability to differ by platform, locale, and app configuration.
 - Keep cloud upload and retention policies explicit in your privacy disclosures.
 - Disable raw audio callbacks when the app no longer needs them.

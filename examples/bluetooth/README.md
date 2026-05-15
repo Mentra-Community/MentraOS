@@ -1,6 +1,6 @@
 # Mentra Bluetooth SDK Starter Kit
 
-Documentation and example apps for connecting to smart glasses directly from mobile apps over Bluetooth, powered by MentraOS. Works with any MentraOS compatible glasses, including Mentra Live, Even Realities, Vuzix Z100, NIMO, and more.
+Documentation and example apps for connecting to smart glasses directly from mobile apps over Bluetooth, powered by MentraOS. This is the supported Mentra Bluetooth SDK for mobile apps and works with MentraOS compatible glasses, including Mentra Live, Even Realities, Vuzix Z100, NIMO, and more.
 
 The SDK is available in three first-class forms:
 
@@ -10,7 +10,7 @@ The SDK is available in three first-class forms:
 | iOS | `MentraBluetoothSDK` CocoaPod | [`examples/ios`](examples/ios/README.md) |
 | React Native / Expo | `@mentra/bluetooth-sdk` | [`examples/react-native`](examples/react-native/README.md) |
 
-Use the SDK version and repository access supplied by Mentra for your release. Once those package repositories are available, this repo can be cloned and used without any local path to the MentraOS source tree.
+Use the latest SDK version published by Mentra for your app. This repo can be cloned and used without any local path to the MentraOS source tree.
 
 ## Start Here
 
@@ -46,7 +46,7 @@ Use the SDK version and repository access supplied by Mentra for your release. O
 
 ## Local SDK Development
 
-Published package installs are the normal partner path. Local overrides are only for SDK development before a release is published:
+Published package installs are the normal SDK path. Local overrides are only for SDK development before a release is published:
 
 - Android: publish `com.mentra:bluetooth-sdk` and its companion artifacts to Maven local, then build the example with `mavenLocal()` enabled.
 - iOS: set `MENTRA_BLUETOOTH_SDK_LOCAL_PATH` to a local SDK checkout before `pod install`.

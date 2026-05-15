@@ -1,6 +1,6 @@
 # Hardware Integration Notes
 
-The SDK presents a common native API over multiple glasses models. Capabilities differ by model and firmware, so partner apps should treat advanced features as optional.
+The SDK presents a common native API over multiple glasses models. Capabilities differ by model and firmware, so apps should treat advanced features as optional.
 
 ## Recommended Flow
 
@@ -56,7 +56,7 @@ await BluetoothSdk.startScan({model: "Mentra Live"});
 
 ## Model Differences
 
-Treat each advanced feature as optional. A partner app should degrade gracefully if a model does not support camera, Wi-Fi, display batching, local transcription, streaming, RGB LEDs, or controller pairing.
+Treat each advanced feature as optional. Your app should degrade gracefully if a model does not support camera, Wi-Fi, display batching, local transcription, streaming, RGB LEDs, or controller pairing.
 
 Treat unsupported operations as recoverable SDK errors and keep UI state aligned with the latest status callback.
 

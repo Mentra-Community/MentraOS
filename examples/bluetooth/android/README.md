@@ -2,7 +2,7 @@
 
 Native Android reference app for the Mentra Bluetooth SDK, built with Kotlin and Jetpack Compose.
 
-This example installs the SDK as `com.mentra:bluetooth-sdk` and is intended to run from a fresh clone once the Mentra Maven package is available. No path to a local MentraOS checkout is required for normal partner use.
+This example installs the SDK as `com.mentra:bluetooth-sdk` and is intended to run from a fresh clone once the Mentra Maven package is available. No path to a local MentraOS checkout is required for normal SDK use.
 
 ## Requirements
 
@@ -20,7 +20,7 @@ The example reads the SDK version from `gradle.properties`:
 mentraSdkVersion=0.1.0
 ```
 
-Use the version supplied by Mentra for your release. If Mentra provides a private Maven repository, add it to `settings.gradle.kts` beside `google()` and `mavenCentral()`.
+Use the latest SDK version published by Mentra. If a dedicated Mentra Maven repository is required, add it to `settings.gradle.kts` beside `google()` and `mavenCentral()`.
 
 ## Run
 
@@ -57,7 +57,7 @@ Use this only when developing the SDK before a Maven release is published:
 cd /path/to/MentraOS/mobile/android
 ./gradlew :lc3Lib:publishToMavenLocal :mentra-bluetooth-sdk:publishToMavenLocal
 
-cd /path/to/Mentra-Bluetooth-SDK-Partner-Kit/examples/android
+cd /path/to/mentra-bluetooth-sdk-starter-kit/examples/android
 ./gradlew installDebug
 ```
 

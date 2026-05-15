@@ -332,7 +332,7 @@ private fun localCameraSetupHint(webhookUrl: String, status: String): String? {
     if (!needsSetup) {
         return null
     }
-    return "Cloud server setup: run python3 examples/local-demo-cloud/server.py from the Partner Kit repo root, then paste the printed Photo upload URL here. It looks like http://<computer-ip>:8787/upload."
+    return "Cloud server setup: run python3 examples/local-demo-cloud/server.py from the Starter Kit repo root, then paste the printed Photo upload URL here. It looks like http://<computer-ip>:8787/upload."
 }
 
 @Composable

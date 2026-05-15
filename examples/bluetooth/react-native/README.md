@@ -27,7 +27,7 @@ The example depends on:
 "@mentra/bluetooth-sdk": "0.1.0"
 ```
 
-Use the SDK version supplied by Mentra for your release.
+Use the latest SDK version published by Mentra.
 
 ## Run On iOS
 

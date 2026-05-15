@@ -1,6 +1,6 @@
 # Production Checklist
 
-Use this checklist before shipping a partner app with the Mentra Bluetooth SDK.
+Use this checklist before shipping an app with the Mentra Bluetooth SDK.
 
 ## App Setup
 
@@ -29,7 +29,7 @@ Use this checklist before shipping a partner app with the Mentra Bluetooth SDK.
 - Audio capture behavior is clearly disclosed.
 - Camera capture behavior is clearly disclosed.
 - Bluetooth and location permission copy explains device discovery.
-- Cloud upload behavior is documented in the partner privacy policy.
+- Cloud upload behavior is documented in the app privacy policy.
 - Logs avoid sensitive user data.
 
 ## Release Validation
@@ -37,9 +37,9 @@ Use this checklist before shipping a partner app with the Mentra Bluetooth SDK.
 - Fresh bare Android app install using the published Maven artifact.
 - Fresh bare iOS app install using the published CocoaPod.
 - Fresh React Native development or production build using the published npm package, if shipping React Native.
-- Android sample app in this Partner Kit builds.
-- iOS sample app in this Partner Kit runs `pod install` and builds.
-- React Native sample app in this Partner Kit runs `npm install`, `npx expo prebuild`, and at least one native platform build.
+- Android sample app in this Starter Kit builds.
+- iOS sample app in this Starter Kit runs `pod install` and builds.
+- React Native sample app in this Starter Kit runs `npm install`, `npx expo prebuild`, and at least one native platform build.
 - Fresh install test on iOS.
 - Fresh install test on Android.
 - Pairing test with each supported glasses model.

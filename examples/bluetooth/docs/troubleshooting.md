@@ -2,7 +2,7 @@
 
 ## Android Dependency Resolution Fails
 
-- Confirm your app has the Mentra Maven repository supplied for your partner program.
+- Confirm your app has the Mentra Maven repository configured.
 - Confirm `com.mentra:bluetooth-sdk:<version>` matches the version in your release notes.
 - Confirm your Gradle credentials are available through `gradle.properties`, environment variables, or your CI secret store.
 - If you are testing an unreleased SDK, publish the SDK and companion artifacts to `mavenLocal()` and include `mavenLocal()` in the example app repositories.
@@ -24,7 +24,7 @@ pod repo update
 pod install --repo-update
 ```
 
-Check that your iOS deployment target is at least `15.1` and that your Podfile includes the Mentra pod source supplied for your partner program.
+Check that your iOS deployment target is at least `15.1` and that your Podfile includes the Mentra pod source if one is required by the published pod.
 
 If your app also uses Firebase with static frameworks, Firebase modular header configuration belongs in your app, not in the Bluetooth SDK.
 
