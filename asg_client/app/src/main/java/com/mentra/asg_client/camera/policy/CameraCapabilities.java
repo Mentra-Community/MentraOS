@@ -1,4 +1,4 @@
-package com.mentra.asg_client.camera;
+package com.mentra.asg_client.camera.policy;
 
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraMetadata;
@@ -8,12 +8,12 @@ import android.util.Range;
 /**
  * Phase 3 prep: immutable snapshot of the autofocus + manual-sensor capabilities of a camera.
  *
- * <p>Extracted from {@link CameraNeo#queryCameraCapabilities(CameraCharacteristics)} so the
+ * <p>Extracted from {@link CameraNeoService#queryCameraCapabilities(CameraCharacteristics)} so the
  * scattered {@code manualSensorSupported}, {@code sensorExposureTimeRange},
  * {@code sensorMaxFrameDurationNs}, {@code sensorSensitivityRange}, {@code availableAfModes},
  * {@code minimumFocusDistance}, and {@code hasAutoFocus} fields collapse into one value object.
  *
- * <p>FPS / EV compensation capabilities deliberately stay in {@link CameraNeo} because they drive
+ * <p>FPS / EV compensation capabilities deliberately stay in {@link CameraNeoService} because they drive
  * a runtime *decision* (e.g. {@code chooseOptimalFpsRange}) rather than being raw capabilities.
  *
  * <p>All fields are final; the {@link #from(CameraCharacteristics)} factory does the parsing and

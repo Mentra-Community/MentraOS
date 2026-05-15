@@ -1,4 +1,4 @@
-package com.mentra.asg_client.camera;
+package com.mentra.asg_client.camera.policy;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -15,7 +15,7 @@ import org.robolectric.annotation.Config;
 
 /**
  * Phase 3 prep unit tests for {@link CameraCapabilities}. The parsing must match the historical
- * inline code in {@code CameraNeo.queryCameraCapabilities()} bit-for-bit; downstream code
+ * inline code in {@code CameraNeoService.queryCameraCapabilities()} bit-for-bit; downstream code
  * (manual exposure decision, ISO clamping, frame-duration choice) depends on those fields.
  */
 @RunWith(RobolectricTestRunner.class)
