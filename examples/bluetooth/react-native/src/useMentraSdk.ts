@@ -29,7 +29,7 @@ import MentraDirectReceiver, {
   type DirectPhotoUploadEvent,
   type DirectReceiverStatusEvent,
   type DirectStreamFirstFrameEvent,
-} from '../modules/mentra-direct-receiver';
+} from 'mentra-direct-receiver';
 import {
   galleryHotspotPasswordLabel,
   galleryHotspotSsidLabel,

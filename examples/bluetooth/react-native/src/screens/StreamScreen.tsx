@@ -4,7 +4,7 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path, Polyline, Rect } from 'react-native-svg';
 import WebView from 'react-native-webview';
-import { MentraDirectReceiverView } from '../../modules/mentra-direct-receiver';
+import { MentraDirectReceiverView } from 'mentra-direct-receiver';
 import { Header } from '../components/Header';
 import { useScrollBottomPadding } from '../components/keyboardLayout';
 import { OfflineNotice } from '../components/OfflineNotice';
