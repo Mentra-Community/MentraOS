@@ -117,16 +117,26 @@ class TTSTools {
             var config = sherpaOnnxOfflineTtsConfig(model: modelConfig, maxNumSentences: 1)
             let tts = SherpaOnnxOfflineTtsWrapper(config: &config)
 
-            let numSpeakers = max(1, tts.numSpeakers())
+            // The new wrapper dropped numSpeakers() in v1.13.2; call the C API
+            // directly. The C signature accepts the underlying OpaquePointer.
+            let numSpeakers = max(1, Int(SherpaOnnxOfflineTtsNumSpeakers(tts.tts)))
             let sid = max(0, min(speakerId, numSpeakers - 1))
             let clampedSpeed = Float(min(max(speed, 0.5), 2.0))
             let lang = languageTagToSupertonicLang(getTtsModelLanguage())
 
-            let audio = tts.generate(
-                text: text,
-                sid: sid,
+            // generate(...) no longer accepts `extra`; that field moved onto
+            // SherpaOnnxGenerationConfigSwift and is delivered via
+            // generateWithConfig(...).
+            let genConfig = SherpaOnnxGenerationConfigSwift(
                 speed: clampedSpeed,
+                sid: sid,
                 extra: ["lang": lang]
+            )
+            let audio = tts.generateWithConfig(
+                text: text,
+                config: genConfig,
+                callback: nil,
+                arg: nil
             )
             let saved = audio.save(filename: outputPath) == 1
             Bridge.log("TTS generated \(outputPath): saved=\(saved) sid=\(sid) lang=\(lang)")
