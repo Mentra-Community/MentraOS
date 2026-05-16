@@ -505,6 +505,10 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
             return TTSTools.getTtsModelPath()
         }
 
+        AsyncFunction("getTtsModelLanguage") { () -> String in
+            return TTSTools.getTtsModelLanguage()
+        }
+
         AsyncFunction("checkTtsModelAvailable") { () -> Bool in
             return TTSTools.checkTTSModelAvailable()
         }

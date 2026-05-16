@@ -131,6 +131,7 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   // TTS Commands
   setTtsModelDetails(path: string, languageCode: string): Promise<void>
   getTtsModelPath(): Promise<string>
+  getTtsModelLanguage(): Promise<string>
   checkTtsModelAvailable(): Promise<boolean>
   validateTtsModel(path: string): Promise<boolean>
   generateTtsAudio(

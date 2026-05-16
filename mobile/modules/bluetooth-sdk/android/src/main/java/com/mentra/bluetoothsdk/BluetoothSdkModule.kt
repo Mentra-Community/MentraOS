@@ -519,6 +519,14 @@ class CoreModule : Module() {
             com.mentra.core.tts.TTSTools.getTtsModelPath(context)
         }
 
+        AsyncFunction("getTtsModelLanguage") { ->
+            val context =
+                    appContext.reactContext
+                            ?: appContext.currentActivity
+                                    ?: throw IllegalStateException("No context available")
+            com.mentra.core.tts.TTSTools.getTtsModelLanguage(context)
+        }
+
         AsyncFunction("checkTtsModelAvailable") { ->
             val context =
                     appContext.reactContext

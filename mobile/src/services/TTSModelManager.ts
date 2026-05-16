@@ -184,13 +184,18 @@ class TTSModelManager {
       if (!path || path.length === 0) {
         return ""
       }
-      // We always install to the same folder, so just check the model is
-      // present and return whichever language the user previously picked
-      // (stored as currentLanguage; defaulted to "en").
-      if (await this.isModelAvailable()) {
-        return this.currentLanguage
+      if (!(await this.isModelAvailable())) {
+        return ""
       }
-      return ""
+      // The native side persists the BCP-47 tag (e.g. "fr-FR") that was passed
+      // to setTtsModelDetails. Map it back to our registry key.
+      const bcp47 = await CoreModule.getTtsModelLanguage()
+      const primary = bcp47.split("-")[0].toLowerCase()
+      const code = this.languages[primary] ? primary : ""
+      if (code) {
+        this.currentLanguage = code
+      }
+      return code
     } catch (error) {
       console.error("Error getting current TTS language from preferences:", error)
       return ""

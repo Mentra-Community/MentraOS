@@ -118,6 +118,7 @@ export const coreModuleMock = {
   extractTarBz2: jest.fn(() => Promise.resolve(true)),
   setTtsModelDetails: jest.fn(() => Promise.resolve()),
   getTtsModelPath: jest.fn(() => Promise.resolve("")),
+  getTtsModelLanguage: jest.fn(() => Promise.resolve("")),
   checkTtsModelAvailable: jest.fn(() => Promise.resolve(false)),
   validateTtsModel: jest.fn(() => Promise.resolve(true)),
   generateTtsAudio: jest.fn(() => Promise.resolve(true)),

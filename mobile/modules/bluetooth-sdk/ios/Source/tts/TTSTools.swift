@@ -67,6 +67,11 @@ class TTSTools {
                 Bridge.log("TTS model missing required file '\(name)' at: \(path)")
                 return false
             }
+            let size = (try? fileManager.attributesOfItem(atPath: filePath)[.size] as? UInt64) ?? 0
+            if size == 0 {
+                Bridge.log("TTS model file '\(name)' is empty at: \(path)")
+                return false
+            }
         }
 
         return true

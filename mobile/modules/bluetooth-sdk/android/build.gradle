@@ -6,6 +6,22 @@ apply plugin: 'signing'
 
 def packageJson = new JsonSlurper().parse(file("../package.json"))
 
+// Download Sherpa-ONNX Android AAR from the upstream GitHub release.
+// Jitpack stopped publishing for v1.13.2+ (the jitpack build step fails because
+// the AAR asset isn't present when its install-file step runs), so we fetch
+// the prebuilt AAR directly. The file is gitignored under libs/.
+def sherpaOnnxVersion = "1.13.2"
+def sherpaOnnxAar = file("libs/sherpa-onnx-${sherpaOnnxVersion}.aar")
+if (!sherpaOnnxAar.exists()) {
+  sherpaOnnxAar.parentFile.mkdirs()
+  def sherpaOnnxUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v${sherpaOnnxVersion}/sherpa-onnx-${sherpaOnnxVersion}.aar"
+  logger.lifecycle("Downloading Sherpa-ONNX AAR v${sherpaOnnxVersion} from GitHub release…")
+  new URL(sherpaOnnxUrl).withInputStream { input ->
+    sherpaOnnxAar.withOutputStream { output -> output << input }
+  }
+}
+
+
 group = 'com.mentra'
 version = packageJson.version
 
@@ -87,7 +103,9 @@ dependencies {
   implementation project(':lc3Lib')
 
   // Sherpa-ONNX for local transcription
-  implementation 'com.github.k2-fsa:sherpa-onnx:v1.13.2'
+  // The jitpack build for v1.13.2 failed upstream (missing AAR asset at build time),
+  // so we fetch the AAR directly from the GitHub release and use it as a file dep.
+  implementation files(sherpaOnnxAar)
 
   // Silero VAD (with onnxruntime exclusions to avoid conflicts with sherpa-onnx)
   implementation ('com.github.gkonovalov:android-vad:2.0.9') {

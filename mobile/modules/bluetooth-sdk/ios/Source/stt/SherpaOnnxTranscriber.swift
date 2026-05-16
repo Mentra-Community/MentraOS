@@ -96,7 +96,7 @@ class SherpaOnnxTranscriber {
                 )
                 let transducerEncoderPath = Self.firstExistingFile(
                     in: customPath,
-                    candidates: ["encoder.onnx", "encoder.int8.onnx"]
+                    candidates: ["encoder.int8.onnx", "encoder.onnx"]
                 )
 
                 tokensPath = (customPath as NSString).appendingPathComponent("tokens.txt")
@@ -147,11 +147,11 @@ class SherpaOnnxTranscriber {
 
                     let decoderPath = Self.firstExistingFile(
                         in: customPath,
-                        candidates: ["decoder.onnx", "decoder.int8.onnx"]
+                        candidates: ["decoder.int8.onnx", "decoder.onnx"]
                     )
                     let joinerPath = Self.firstExistingFile(
                         in: customPath,
-                        candidates: ["joiner.onnx", "joiner.int8.onnx"]
+                        candidates: ["joiner.int8.onnx", "joiner.onnx"]
                     )
 
                     // Verify all transducer files exist
