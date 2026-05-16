@@ -16,8 +16,20 @@ if (!sherpaOnnxAar.exists()) {
   sherpaOnnxAar.parentFile.mkdirs()
   def sherpaOnnxUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v${sherpaOnnxVersion}/sherpa-onnx-${sherpaOnnxVersion}.aar"
   logger.lifecycle("Downloading Sherpa-ONNX AAR v${sherpaOnnxVersion} from GitHub release…")
-  new URL(sherpaOnnxUrl).withInputStream { input ->
-    sherpaOnnxAar.withOutputStream { output -> output << input }
+  // Download to a .part sibling and rename on success so an interrupted
+  // download doesn't leave a half-written AAR that future builds treat as valid.
+  def partial = file("${sherpaOnnxAar.absolutePath}.part")
+  try {
+    new URL(sherpaOnnxUrl).withInputStream { input ->
+      partial.withOutputStream { output -> output << input }
+    }
+    if (!partial.renameTo(sherpaOnnxAar)) {
+      throw new GradleException("Failed to move ${partial.name} to ${sherpaOnnxAar.name}")
+    }
+  } finally {
+    if (partial.exists()) {
+      partial.delete()
+    }
   }
 }
 
