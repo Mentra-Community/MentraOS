@@ -87,7 +87,7 @@ dependencies {
   implementation project(':lc3Lib')
 
   // Sherpa-ONNX for local transcription
-  implementation 'com.github.k2-fsa:sherpa-onnx:v1.12.8'
+  implementation 'com.github.k2-fsa:sherpa-onnx:v1.13.2'
 
   // Silero VAD (with onnxruntime exclusions to avoid conflicts with sherpa-onnx)
   implementation ('com.github.gkonovalov:android-vad:2.0.9') {

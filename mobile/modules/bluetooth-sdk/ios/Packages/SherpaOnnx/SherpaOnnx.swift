@@ -910,6 +910,74 @@ func sherpaOnnxOfflineTtsKittenModelConfig(
     )
 }
 
+func sherpaOnnxOfflineTtsZipvoiceModelConfig(
+    tokens: String = "",
+    encoder: String = "",
+    decoder: String = "",
+    vocoder: String = "",
+    dataDir: String = "",
+    lexicon: String = "",
+    featScale: Float = 0.1,
+    tShift: Float = 0.5,
+    targetRms: Float = 0.1,
+    guidanceScale: Float = 1.0
+) -> SherpaOnnxOfflineTtsZipvoiceModelConfig {
+    return SherpaOnnxOfflineTtsZipvoiceModelConfig(
+        tokens: toCPointer(tokens),
+        encoder: toCPointer(encoder),
+        decoder: toCPointer(decoder),
+        vocoder: toCPointer(vocoder),
+        data_dir: toCPointer(dataDir),
+        lexicon: toCPointer(lexicon),
+        feat_scale: featScale,
+        t_shift: tShift,
+        target_rms: targetRms,
+        guidance_scale: guidanceScale
+    )
+}
+
+func sherpaOnnxOfflineTtsPocketModelConfig(
+    lmFlow: String = "",
+    lmMain: String = "",
+    encoder: String = "",
+    decoder: String = "",
+    textConditioner: String = "",
+    vocabJson: String = "",
+    tokenScoresJson: String = "",
+    voiceEmbeddingCacheCapacity: Int = 50
+) -> SherpaOnnxOfflineTtsPocketModelConfig {
+    return SherpaOnnxOfflineTtsPocketModelConfig(
+        lm_flow: toCPointer(lmFlow),
+        lm_main: toCPointer(lmMain),
+        encoder: toCPointer(encoder),
+        decoder: toCPointer(decoder),
+        text_conditioner: toCPointer(textConditioner),
+        vocab_json: toCPointer(vocabJson),
+        token_scores_json: toCPointer(tokenScoresJson),
+        voice_embedding_cache_capacity: Int32(voiceEmbeddingCacheCapacity)
+    )
+}
+
+func sherpaOnnxOfflineTtsSupertonicModelConfig(
+    durationPredictor: String = "",
+    textEncoder: String = "",
+    vectorEstimator: String = "",
+    vocoder: String = "",
+    ttsJson: String = "",
+    unicodeIndexer: String = "",
+    voiceStyle: String = ""
+) -> SherpaOnnxOfflineTtsSupertonicModelConfig {
+    return SherpaOnnxOfflineTtsSupertonicModelConfig(
+        duration_predictor: toCPointer(durationPredictor),
+        text_encoder: toCPointer(textEncoder),
+        vector_estimator: toCPointer(vectorEstimator),
+        vocoder: toCPointer(vocoder),
+        tts_json: toCPointer(ttsJson),
+        unicode_indexer: toCPointer(unicodeIndexer),
+        voice_style: toCPointer(voiceStyle)
+    )
+}
+
 func sherpaOnnxOfflineTtsModelConfig(
     vits: SherpaOnnxOfflineTtsVitsModelConfig = sherpaOnnxOfflineTtsVitsModelConfig(),
     matcha: SherpaOnnxOfflineTtsMatchaModelConfig = sherpaOnnxOfflineTtsMatchaModelConfig(),
@@ -917,7 +985,10 @@ func sherpaOnnxOfflineTtsModelConfig(
     numThreads: Int = 1,
     debug: Int = 0,
     provider: String = "cpu",
-    kitten: SherpaOnnxOfflineTtsKittenModelConfig = sherpaOnnxOfflineTtsKittenModelConfig()
+    kitten: SherpaOnnxOfflineTtsKittenModelConfig = sherpaOnnxOfflineTtsKittenModelConfig(),
+    zipvoice: SherpaOnnxOfflineTtsZipvoiceModelConfig = sherpaOnnxOfflineTtsZipvoiceModelConfig(),
+    pocket: SherpaOnnxOfflineTtsPocketModelConfig = sherpaOnnxOfflineTtsPocketModelConfig(),
+    supertonic: SherpaOnnxOfflineTtsSupertonicModelConfig = sherpaOnnxOfflineTtsSupertonicModelConfig()
 ) -> SherpaOnnxOfflineTtsModelConfig {
     return SherpaOnnxOfflineTtsModelConfig(
         vits: vits,
@@ -926,7 +997,10 @@ func sherpaOnnxOfflineTtsModelConfig(
         provider: toCPointer(provider),
         matcha: matcha,
         kokoro: kokoro,
-        kitten: kitten
+        kitten: kitten,
+        zipvoice: zipvoice,
+        pocket: pocket,
+        supertonic: supertonic
     )
 }
 
@@ -1041,11 +1115,41 @@ class SherpaOnnxOfflineTtsWrapper {
         }
     }
 
+    func numSpeakers() -> Int {
+        return Int(SherpaOnnxOfflineTtsNumSpeakers(tts))
+    }
+
     func generate(text: String, sid: Int = 0, speed: Float = 1.0) -> SherpaOnnxGeneratedAudioWrapper {
         let audio: UnsafePointer<SherpaOnnxGeneratedAudio>? = SherpaOnnxOfflineTtsGenerate(
             tts, toCPointer(text), Int32(sid), speed
         )
 
+        return SherpaOnnxGeneratedAudioWrapper(audio: audio)
+    }
+
+    /// Generate with extra options (e.g. ["lang": "en"] for Supertonic).
+    /// Routes through SherpaOnnxOfflineTtsGenerateWithConfig.
+    func generate(
+        text: String,
+        sid: Int,
+        speed: Float,
+        extra: [String: Any]
+    ) -> SherpaOnnxGeneratedAudioWrapper {
+        let extraJson = sherpaOnnxEncodeExtraJson(extra)
+        var cConfig = SherpaOnnxGenerationConfig(
+            silence_scale: 0.2,
+            speed: speed,
+            sid: Int32(sid),
+            reference_audio: nil,
+            reference_audio_len: 0,
+            reference_sample_rate: 16000,
+            reference_text: toCPointer(""),
+            num_steps: 1,
+            extra: toCPointer(extraJson)
+        )
+        let audio: UnsafePointer<SherpaOnnxGeneratedAudio>? = withUnsafePointer(to: &cConfig) { ptr in
+            SherpaOnnxOfflineTtsGenerateWithConfig(tts, toCPointer(text), ptr, nil, nil)
+        }
         return SherpaOnnxGeneratedAudioWrapper(audio: audio)
     }
 
@@ -1060,6 +1164,28 @@ class SherpaOnnxOfflineTtsWrapper {
 
         return SherpaOnnxGeneratedAudioWrapper(audio: audio)
     }
+}
+
+/// Encode an [String: Any] dictionary as a JSON string for the C-API "extra" field.
+/// Supports String, Int, Float, Double values.
+private func sherpaOnnxEncodeExtraJson(_ extra: [String: Any]) -> String {
+    if extra.isEmpty { return "" }
+    var jsonCompatible: [String: Any] = [:]
+    for (key, value) in extra {
+        switch value {
+        case let v as String: jsonCompatible[key] = v
+        case let v as Int: jsonCompatible[key] = v
+        case let v as Float: jsonCompatible[key] = v
+        case let v as Double: jsonCompatible[key] = v
+        default: continue
+        }
+    }
+    guard let data = try? JSONSerialization.data(withJSONObject: jsonCompatible, options: []),
+          let s = String(data: data, encoding: .utf8)
+    else {
+        return ""
+    }
+    return s
 }
 
 // spoken language identification

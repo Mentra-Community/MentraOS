@@ -2,18 +2,44 @@ package com.mentra.core.tts
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.k2fsa.sherpa.onnx.GenerationConfig
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
-import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsSupertonicModelConfig
 import com.mentra.core.Bridge
 import java.io.File
 
-/** Utilities for offline Sherpa-ONNX TTS model management and synthesis. */
+/**
+ * Utilities for offline Sherpa-ONNX Supertonic 3 TTS model management.
+ *
+ * Supertonic 3 is a single multilingual model bundle (31 languages) with 10
+ * preset voice styles packed into a single voice.bin. Speaker IDs are indexed
+ * alphabetically by JSON filename, so the order is F1, F2, F3, F4, F5, M1, M2,
+ * M3, M4, M5 (sids 0..9). We default to F1 (sid 0) for a female voice.
+ */
 object TTSTools {
     private const val PREFS_NAME = "MentraPrefs"
     private const val KEY_TTS_MODEL_PATH = "TTSModelPath"
     private const val KEY_TTS_MODEL_LANGUAGE = "TTSModelLanguageCode"
+
+    private const val FILE_DURATION_PREDICTOR = "duration_predictor.int8.onnx"
+    private const val FILE_TEXT_ENCODER = "text_encoder.int8.onnx"
+    private const val FILE_VECTOR_ESTIMATOR = "vector_estimator.int8.onnx"
+    private const val FILE_VOCODER = "vocoder.int8.onnx"
+    private const val FILE_TTS_JSON = "tts.json"
+    private const val FILE_UNICODE_INDEXER = "unicode_indexer.bin"
+    private const val FILE_VOICE_STYLE = "voice.bin"
+
+    private val REQUIRED_FILES = listOf(
+            FILE_DURATION_PREDICTOR,
+            FILE_TEXT_ENCODER,
+            FILE_VECTOR_ESTIMATOR,
+            FILE_VOCODER,
+            FILE_TTS_JSON,
+            FILE_UNICODE_INDEXER,
+            FILE_VOICE_STYLE,
+    )
 
     fun setTtsModelDetails(context: Context, path: String, languageCode: String) {
         val prefs = getPrefs(context)
@@ -50,34 +76,39 @@ object TTSTools {
             return false
         }
 
-        val modelFile = findVitsModelFile(modelDir)
-        if (modelFile == null) {
-            Bridge.log("TTS model missing VITS .onnx file at: $path")
-            return false
-        }
-
-        val tokensFile = File(modelDir, "tokens.txt")
-        if (!tokensFile.exists() || !tokensFile.canRead() || tokensFile.length() == 0L) {
-            Bridge.log("TTS model missing tokens.txt at: $path")
-            return false
-        }
-
-        val dataDir = File(modelDir, "espeak-ng-data")
-        if (!dataDir.exists() || !dataDir.isDirectory) {
-            Bridge.log("TTS model missing espeak-ng-data at: $path")
-            return false
+        for (name in REQUIRED_FILES) {
+            val file = File(modelDir, name)
+            if (!file.exists() || !file.canRead() || file.length() == 0L) {
+                Bridge.log("TTS model missing required file '$name' at: $path")
+                return false
+            }
         }
 
         return true
     }
 
+    private val SUPPORTED_LANGS = setOf(
+            "en", "ko", "ja", "ar", "bg", "cs", "da", "de", "el", "es", "et",
+            "fi", "fr", "hi", "hr", "hu", "id", "it", "lt", "lv", "nl", "pl",
+            "pt", "ro", "ru", "sk", "sl", "sv", "tr", "uk", "vi",
+    )
+
+    /** Convert a BCP-47 tag like "en-US" or "fr-FR" to a Supertonic 2-letter code. */
+    private fun languageTagToSupertonicLang(tag: String?): String {
+        if (tag.isNullOrBlank()) return "en"
+        val primary = tag.substringBefore('-').lowercase()
+        return if (primary in SUPPORTED_LANGS) primary else "en"
+    }
+
     fun generateTtsAudio(
+            context: Context,
             text: String,
             modelPath: String,
             outputPath: String,
             speakerId: Int,
-            speed: Float
+            speed: Float,
     ): Boolean {
+        val languageTag = getTtsModelLanguage(context)
         if (text.isBlank()) {
             Bridge.log("TTS_ERROR: text is empty")
             return false
@@ -88,31 +119,47 @@ object TTSTools {
         }
 
         val modelDir = File(modelPath)
-        val modelFile = findVitsModelFile(modelDir) ?: return false
         val outputFile = File(outputPath)
         outputFile.parentFile?.mkdirs()
 
         var tts: OfflineTts? = null
         return try {
-            val vits = OfflineTtsVitsModelConfig()
-            vits.model = modelFile.absolutePath
-            vits.tokens = File(modelDir, "tokens.txt").absolutePath
-            vits.dataDir = File(modelDir, "espeak-ng-data").absolutePath
+            val supertonic = OfflineTtsSupertonicModelConfig(
+                    durationPredictor = File(modelDir, FILE_DURATION_PREDICTOR).absolutePath,
+                    textEncoder = File(modelDir, FILE_TEXT_ENCODER).absolutePath,
+                    vectorEstimator = File(modelDir, FILE_VECTOR_ESTIMATOR).absolutePath,
+                    vocoder = File(modelDir, FILE_VOCODER).absolutePath,
+                    ttsJson = File(modelDir, FILE_TTS_JSON).absolutePath,
+                    unicodeIndexer = File(modelDir, FILE_UNICODE_INDEXER).absolutePath,
+                    voiceStyle = File(modelDir, FILE_VOICE_STYLE).absolutePath,
+            )
 
-            val modelConfig = OfflineTtsModelConfig()
-            modelConfig.vits = vits
-            modelConfig.numThreads = 1
-            modelConfig.provider = "cpu"
+            val modelConfig = OfflineTtsModelConfig(
+                    supertonic = supertonic,
+                    numThreads = 2,
+                    provider = "cpu",
+            )
 
-            val config = OfflineTtsConfig()
-            config.model = modelConfig
-            config.maxNumSentences = 1
-            config.silenceScale = 0.2f
+            val config = OfflineTtsConfig(
+                    model = modelConfig,
+                    maxNumSentences = 1,
+                    silenceScale = 0.2f,
+            )
 
             tts = OfflineTts(null, config)
-            val audio = tts.generate(text, speakerId.coerceAtLeast(0), speed.coerceIn(0.5f, 2.0f))
+
+            // sid out of range falls back to F1 (sid 0); clamp 0..9.
+            val sid = speakerId.coerceIn(0, tts.numSpeakers() - 1)
+            val clampedSpeed = speed.coerceIn(0.5f, 2.0f)
+            val lang = languageTagToSupertonicLang(languageTag)
+            val genConfig = GenerationConfig(
+                    sid = sid,
+                    speed = clampedSpeed,
+                    extra = mapOf("lang" to lang),
+            )
+            val audio = tts.generateWithConfig(text = text, config = genConfig)
             val saved = audio.save(outputFile.absolutePath)
-            Bridge.log("TTS generated ${outputFile.absolutePath}: saved=$saved")
+            Bridge.log("TTS generated ${outputFile.absolutePath}: saved=$saved sid=$sid lang=$lang")
             saved
         } catch (e: Exception) {
             Bridge.log("TTS_ERROR: ${e.javaClass.simpleName}: ${e.message}")
@@ -129,11 +176,5 @@ object TTSTools {
 
     private fun getPrefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-    }
-
-    private fun findVitsModelFile(modelDir: File): File? {
-        return modelDir.listFiles()?.firstOrNull { file ->
-            file.isFile && file.name.endsWith(".onnx") && file.canRead() && file.length() > 0
-        }
     }
 }

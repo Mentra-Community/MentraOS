@@ -1,6 +1,37 @@
 import Foundation
 
+/// Utilities for offline Sherpa-ONNX Supertonic 3 TTS.
+///
+/// Supertonic 3 is a single multilingual model bundle (31 languages) with
+/// 10 preset voice styles packed into voice.bin. Speaker IDs are indexed
+/// alphabetically by JSON filename, so the order is F1, F2, F3, F4, F5,
+/// M1, M2, M3, M4, M5 (sids 0..9). We default to F1 (sid 0) for a female
+/// voice.
 class TTSTools {
+    private static let kFileDurationPredictor = "duration_predictor.int8.onnx"
+    private static let kFileTextEncoder = "text_encoder.int8.onnx"
+    private static let kFileVectorEstimator = "vector_estimator.int8.onnx"
+    private static let kFileVocoder = "vocoder.int8.onnx"
+    private static let kFileTtsJson = "tts.json"
+    private static let kFileUnicodeIndexer = "unicode_indexer.bin"
+    private static let kFileVoiceStyle = "voice.bin"
+
+    private static let kRequiredFiles: [String] = [
+        kFileDurationPredictor,
+        kFileTextEncoder,
+        kFileVectorEstimator,
+        kFileVocoder,
+        kFileTtsJson,
+        kFileUnicodeIndexer,
+        kFileVoiceStyle,
+    ]
+
+    private static let kSupportedLangs: Set<String> = [
+        "en", "ko", "ja", "ar", "bg", "cs", "da", "de", "el", "es", "et",
+        "fi", "fr", "hi", "hr", "hu", "id", "it", "lt", "lv", "nl", "pl",
+        "pt", "ro", "ru", "sk", "sl", "sv", "tr", "uk", "vi",
+    ]
+
     static func setTtsModelDetails(_ path: String, _ languageCode: String) {
         UserDefaults.standard.set(path, forKey: "TTSModelPath")
         UserDefaults.standard.set(languageCode, forKey: "TTSModelLanguageCode")
@@ -11,6 +42,10 @@ class TTSTools {
         return UserDefaults.standard.string(forKey: "TTSModelPath") ?? ""
     }
 
+    static func getTtsModelLanguage() -> String {
+        return UserDefaults.standard.string(forKey: "TTSModelLanguageCode") ?? "en-US"
+    }
+
     static func checkTTSModelAvailable() -> Bool {
         guard let modelPath = UserDefaults.standard.string(forKey: "TTSModelPath") else {
             return false
@@ -19,23 +54,19 @@ class TTSTools {
     }
 
     static func validateTTSModel(_ path: String) -> Bool {
-        guard let _ = findVitsModelFile(in: path) else {
-            Bridge.log("TTS model missing VITS .onnx file at: \(path)")
-            return false
-        }
-
         let fileManager = FileManager.default
-        let tokensPath = (path as NSString).appendingPathComponent("tokens.txt")
-        if !fileManager.fileExists(atPath: tokensPath) {
-            Bridge.log("TTS model missing tokens.txt at: \(path)")
+        var isDirectory: ObjCBool = false
+        if !fileManager.fileExists(atPath: path, isDirectory: &isDirectory) || !isDirectory.boolValue {
+            Bridge.log("TTS model path does not exist or is not a directory: \(path)")
             return false
         }
 
-        let dataDir = (path as NSString).appendingPathComponent("espeak-ng-data")
-        var isDirectory: ObjCBool = false
-        if !fileManager.fileExists(atPath: dataDir, isDirectory: &isDirectory) || !isDirectory.boolValue {
-            Bridge.log("TTS model missing espeak-ng-data at: \(path)")
-            return false
+        for name in kRequiredFiles {
+            let filePath = (path as NSString).appendingPathComponent(name)
+            if !fileManager.fileExists(atPath: filePath) {
+                Bridge.log("TTS model missing required file '\(name)' at: \(path)")
+                return false
+            }
         }
 
         return true
@@ -52,9 +83,7 @@ class TTSTools {
             Bridge.log("TTS_ERROR: text is empty")
             return false
         }
-        guard validateTTSModel(modelPath),
-              let modelFile = findVitsModelFile(in: modelPath)
-        else {
+        guard validateTTSModel(modelPath) else {
             Bridge.log("TTS_ERROR: model is invalid: \(modelPath)")
             return false
         }
@@ -67,21 +96,35 @@ class TTSTools {
                 attributes: nil
             )
 
-            var vits = sherpaOnnxOfflineTtsVitsModelConfig(
-                model: modelFile,
-                tokens: (modelPath as NSString).appendingPathComponent("tokens.txt"),
-                dataDir: (modelPath as NSString).appendingPathComponent("espeak-ng-data")
+            let supertonic = sherpaOnnxOfflineTtsSupertonicModelConfig(
+                durationPredictor: (modelPath as NSString).appendingPathComponent(kFileDurationPredictor),
+                textEncoder: (modelPath as NSString).appendingPathComponent(kFileTextEncoder),
+                vectorEstimator: (modelPath as NSString).appendingPathComponent(kFileVectorEstimator),
+                vocoder: (modelPath as NSString).appendingPathComponent(kFileVocoder),
+                ttsJson: (modelPath as NSString).appendingPathComponent(kFileTtsJson),
+                unicodeIndexer: (modelPath as NSString).appendingPathComponent(kFileUnicodeIndexer),
+                voiceStyle: (modelPath as NSString).appendingPathComponent(kFileVoiceStyle)
             )
-            var modelConfig = sherpaOnnxOfflineTtsModelConfig(vits: vits, numThreads: 1)
+            var modelConfig = sherpaOnnxOfflineTtsModelConfig(
+                numThreads: 2,
+                supertonic: supertonic
+            )
             var config = sherpaOnnxOfflineTtsConfig(model: modelConfig, maxNumSentences: 1)
             let tts = SherpaOnnxOfflineTtsWrapper(config: &config)
+
+            let numSpeakers = max(1, tts.numSpeakers())
+            let sid = max(0, min(speakerId, numSpeakers - 1))
+            let clampedSpeed = Float(min(max(speed, 0.5), 2.0))
+            let lang = languageTagToSupertonicLang(getTtsModelLanguage())
+
             let audio = tts.generate(
                 text: text,
-                sid: max(0, speakerId),
-                speed: Float(min(max(speed, 0.5), 2.0))
+                sid: sid,
+                speed: clampedSpeed,
+                extra: ["lang": lang]
             )
             let saved = audio.save(filename: outputPath) == 1
-            Bridge.log("TTS generated \(outputPath): saved=\(saved)")
+            Bridge.log("TTS generated \(outputPath): saved=\(saved) sid=\(sid) lang=\(lang)")
             return saved
         } catch {
             Bridge.log("TTS_ERROR: \(error.localizedDescription)")
@@ -89,14 +132,9 @@ class TTSTools {
         }
     }
 
-    private static func findVitsModelFile(in directory: String) -> String? {
-        let fileManager = FileManager.default
-        guard let files = try? fileManager.contentsOfDirectory(atPath: directory) else {
-            return nil
-        }
-        return files
-            .filter { $0.hasSuffix(".onnx") }
-            .map { (directory as NSString).appendingPathComponent($0) }
-            .first { fileManager.fileExists(atPath: $0) }
+    /// Convert a BCP-47 tag (e.g. "en-US", "fr-FR") to a Supertonic 2-letter code.
+    private static func languageTagToSupertonicLang(_ tag: String) -> String {
+        let primary = tag.split(separator: "-").first.map(String.init)?.lowercased() ?? "en"
+        return kSupportedLangs.contains(primary) ? primary : "en"
     }
 }

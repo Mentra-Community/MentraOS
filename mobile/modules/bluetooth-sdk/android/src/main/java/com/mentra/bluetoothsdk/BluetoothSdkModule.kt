@@ -537,7 +537,12 @@ class CoreModule : Module() {
                 outputPath: String,
                 speakerId: Int,
                 speed: Double ->
+            val context =
+                    appContext.reactContext
+                            ?: appContext.currentActivity
+                                    ?: throw IllegalStateException("No context available")
             com.mentra.core.tts.TTSTools.generateTtsAudio(
+                    context,
                     text,
                     modelPath,
                     outputPath,
