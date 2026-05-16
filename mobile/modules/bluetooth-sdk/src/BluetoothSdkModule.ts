@@ -10,7 +10,6 @@ import {
   GlassesMediaVolumeSetResult,
   GlassesStatus,
   Device,
-  PhotoCompression,
   PhotoRequestParams,
   RgbLedAction,
   RgbLedColor,
