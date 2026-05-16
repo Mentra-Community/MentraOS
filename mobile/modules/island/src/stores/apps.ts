@@ -74,10 +74,6 @@ interface AppStatusState {
   getHiddenStatus: (packageName: string) => boolean
   /** Replace the whole apps array. Hosts use this when their extra source changes. */
   setApps: (apps: ClientApp[]) => void
-  /** Mark a single app as the foreground miniapp; clears foreground on all others. */
-  setForeground: (packageName: string) => void
-  /** Clear foreground on every app — used when the user swipes/closes the host overlay. */
-  clearForeground: () => void
 }
 
 export const DUMMY_APPLET: ClientApp = {
@@ -156,54 +152,98 @@ const startStopApp = async (app: ClientApp, status: boolean): Promise<void> => {
   }
 }
 
+/**
+ * Build the final `apps` array for the store from the two source lists
+ * (local + cloud). Pure — same inputs → same outputs. Used by `refresh`
+ * to emit twice (local-only, then merged) without duplicating the
+ * dedupe/carry-over/compat/hidden/postProcess pipeline.
+ */
+function projectApps(
+  previousState: AppStatusState,
+  localApps: ClientApp[],
+  extraApps: ClientApp[],
+): ClientApp[] {
+  // Dedupe by packageName, keep first occurrence (extra/cloud wins).
+  let apps: ClientApp[] = [...extraApps, ...localApps]
+  const byPackage = new Map<string, ClientApp>()
+  for (const app of apps) {
+    if (!byPackage.has(app.packageName)) byPackage.set(app.packageName, app)
+  }
+  apps = Array.from(byPackage.values())
+
+  // Carry over screenshots from the previous snapshot so a refresh in
+  // the middle of a launch doesn't drop the cached preview.
+  for (const oldApp of previousState.apps) {
+    const next = apps.find((a) => a.packageName === oldApp.packageName)
+    if (!next) continue
+    if (oldApp.screenshot) next.screenshot = oldApp.screenshot
+  }
+
+  // Compatibility info using host-provided capabilities.
+  const capabilities = hostHooks.getCapabilities?.() ?? getModelCapabilities(DeviceTypes.NONE)
+  for (const app of apps) {
+    app.compatibility = HardwareCompatibility.checkCompatibility(app.hardwareRequirements, capabilities)
+  }
+
+  // Hidden flag from MMKV (read via the store's getter — projectApps is
+  // called from refresh which already has the state, so we read via it).
+  for (const app of apps) {
+    app.hidden = previousState.getHiddenStatus(app.packageName)
+  }
+
+  return apps
+}
+
 export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   apps: [],
 
   refresh: async () => {
-    const state = get()
-
+    // Two-pass: local apps first (fast, no network), then merge cloud
+    // applets when they arrive. Without this the home tray waits for
+    // `loadExtraApps` to return — and when cloud is slow/503 (e.g. on
+    // a fresh boot), the just-installed dev miniapp takes 10+ seconds
+    // to show up because the local entry is held back behind the cloud
+    // fetch.
+    //
+    // Pass 1 carries over the PREVIOUS snapshot's cloud apps so the
+    // tray doesn't flicker — empty cloud list on first render would
+    // blank out tiles for a frame before pass 2 re-merges them. On
+    // first-ever refresh (state.apps is empty) we skip pass 1 entirely
+    // and let pass 2 own the only emit; there are no rendered tiles to
+    // flicker yet.
+    const previousState = get()
     const localApps = await appRegistry.getInstalledMiniapps()
-    const extraApps = (await hostHooks.loadExtraApps?.()) ?? []
+    const hasPriorSnapshot = previousState.apps.length > 0
+    if (hasPriorSnapshot) {
+      const previousCloudApps = previousState.apps.filter((a) => !a.local)
+      let pass1 = projectApps(previousState, localApps, previousCloudApps)
+      if (hostHooks.postProcessApps) {
+        try {
+          pass1 = await hostHooks.postProcessApps(pass1)
+        } catch (e) {
+          console.warn("ISLAND: postProcessApps threw on local-only pass:", e)
+        }
+      }
+      set({apps: pass1})
+    }
 
-    let apps: ClientApp[] = [...extraApps, ...localApps]
-
-    // Dedupe by packageName, keep first occurrence (extra/cloud wins over local).
-    const byPackage = new Map<string, ClientApp>()
-    for (const app of apps) {
-      if (!byPackage.has(app.packageName)) {
-        byPackage.set(app.packageName, app)
+    // Pass 2: fetch cloud applets, merge, re-emit.
+    let extraApps: ClientApp[] = []
+    try {
+      extraApps = (await hostHooks.loadExtraApps?.()) ?? []
+    } catch {
+      // Cloud failures shouldn't blow away the local list we just published.
+      extraApps = []
+    }
+    let pass2 = projectApps(get(), localApps, extraApps)
+    if (hostHooks.postProcessApps) {
+      try {
+        pass2 = await hostHooks.postProcessApps(pass2)
+      } catch (e) {
+        console.warn("ISLAND: postProcessApps threw on merged pass:", e)
       }
     }
-    apps = Array.from(byPackage.values())
-
-    // Carry over screenshots + foreground flag from the previous snapshot.
-    // refresh() rebuilds from registry+cloud sources which don't know about
-    // UI state (foreground), so preserving here keeps the Compositor's overlay
-    // from snapping off when an unrelated registry event fires mid-launch.
-    const oldApps = state.apps
-    for (const oldApp of oldApps) {
-      const next = apps.find((a) => a.packageName === oldApp.packageName)
-      if (!next) continue
-      if (oldApp.screenshot) next.screenshot = oldApp.screenshot
-      if (oldApp.foreground) next.foreground = true
-    }
-
-    // Compatibility info using host-provided capabilities.
-    const capabilities = hostHooks.getCapabilities?.() ?? getModelCapabilities(DeviceTypes.NONE)
-    for (const app of apps) {
-      app.compatibility = HardwareCompatibility.checkCompatibility(app.hardwareRequirements, capabilities)
-    }
-
-    // Hidden flag from MMKV.
-    for (const app of apps) {
-      app.hidden = state.getHiddenStatus(app.packageName)
-    }
-
-    if (hostHooks.postProcessApps) {
-      apps = await hostHooks.postProcessApps(apps)
-    }
-
-    set({apps})
+    set({apps: pass2})
   },
 
   start: async (clientApp: ClientApp, opts?: StartOptions) => {
@@ -323,19 +363,6 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   },
 
   setApps: (apps) => set({apps}),
-
-  setForeground: (packageName: string) => {
-    set((s) => ({
-      apps: s.apps.map((a) => ({...a, foreground: a.packageName === packageName})),
-    }))
-  },
-
-  clearForeground: () => {
-    set((s) => {
-      if (!s.apps.some((a) => a.foreground)) return s
-      return {apps: s.apps.map((a) => (a.foreground ? {...a, foreground: false} : a))}
-    })
-  },
 }))
 
 // Project miniappRunningRegistry membership into the store's `running` field
@@ -410,11 +437,3 @@ export const useLocalMiniApps = () => {
   return useMemo(() => apps.filter((app) => app.local), [apps])
 }
 
-/** Currently-foregrounded local miniapp, if any. The Compositor renders this. */
-export const useForegroundMiniApp = () => {
-  const apps = useApps()
-  return useMemo(() => apps.find((app) => app.local && app.foreground) ?? null, [apps])
-}
-
-export const useSetForeground = () => useAppStatusStore((state) => state.setForeground)
-export const useClearForeground = () => useAppStatusStore((state) => state.clearForeground)

@@ -1,22 +1,34 @@
 import {NativeModule, requireNativeModule} from "expo"
 
 import {
+  ConnectOptions,
   CoreModuleEvents,
   CoreStatus,
+  DeviceScanRequest,
   ExtractionProgressEvent,
+  GalleryMode,
   GlassesMediaVolumeGetResult,
   GlassesMediaVolumeSetResult,
   GlassesStatus,
+  Device,
+  PhotoCompression,
+  PhotoSize,
+  RgbLedAction,
+  RgbLedColor,
+  StreamKeepAliveRequest,
+  StreamStartRequest,
 } from "./BluetoothSdk.types"
 
 type GlassesListener = (changed: Partial<GlassesStatus>) => void
 type CoreStatusListener = (changed: Partial<CoreStatus>) => void
 type ExtractionProgressListener = (event: ExtractionProgressEvent) => void
+type MaybePromise<T> = T | Promise<T>
 
 declare class CoreModule extends NativeModule<CoreModuleEvents> {
   // Observable Store Functions (native)
-  getGlassesStatus(): GlassesStatus
-  getCoreStatus(): CoreStatus
+  getGlassesStatus(): Promise<GlassesStatus>
+  getCoreStatus(): Promise<CoreStatus>
+  getDefaultDevice(): Promise<Device | null>
   update(category: string, values: Record<string, any>): Promise<void>
 
   // Display Commands
@@ -26,16 +38,20 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
 
   // Connection Commands
   requestStatus(): Promise<void>
-  connectDefault(): Promise<void>
-  connectByName(deviceName: string): Promise<void>
-  connectDevice(deviceModel: string, deviceName: string): Promise<void>
+  connectDefault(options?: ConnectOptions): Promise<void>
+  connectDefaultWithOptions(options: Required<ConnectOptions>): Promise<void>
+  setDefaultDevice(device: Device | null): Promise<void>
+  clearDefaultDevice(): Promise<void>
+  startScan(params: DeviceScanRequest): Promise<void>
+  connect(device: Device, options?: ConnectOptions): Promise<void>
+  connectWithOptions(device: Device, options: Required<ConnectOptions>): Promise<void>
+  cancelConnectionAttempt(): Promise<void>
   connectDefaultController(): Promise<void>
   disconnectController(): Promise<void>
   connectSimulated(): Promise<void>
   disconnect(): Promise<void>
   forget(): Promise<void>
   forgetController(): Promise<void>
-  findCompatibleDevices(deviceModel: string): Promise<void>
   showDashboard(): Promise<void>
   ping(): Promise<void>
 
@@ -51,14 +67,15 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   logCurrentWifiFrequency(): Promise<void>
 
   // Gallery Commands
+  setGalleryMode(mode: GalleryMode): Promise<void>
   queryGalleryStatus(): Promise<void>
   photoRequest(
     requestId: string,
     appId: string,
-    size: string,
+    size: PhotoSize,
     webhookUrl: string | null,
     authToken: string | null,
-    compress: string,
+    compress: PhotoCompression,
     flash: boolean,
     sound: boolean,
   ): Promise<void>
@@ -75,9 +92,9 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   stopVideoRecording(requestId: string): Promise<void>
 
   // Stream Commands
-  startStream(params: Record<string, any>): Promise<void>
+  startStream(params: StreamStartRequest): Promise<void>
   stopStream(): Promise<void>
-  keepStreamAlive(params: Record<string, any>): Promise<void>
+  keepStreamAlive(params: StreamKeepAliveRequest): Promise<void>
 
   // Microphone Commands
   setMicState(sendPcmData: boolean, sendTranscript: boolean, bypassVad: boolean): Promise<void>
@@ -97,8 +114,8 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   rgbLedControl(
     requestId: string,
     packageName: string | null,
-    action: string,
-    color: string | null,
+    action: RgbLedAction,
+    color: RgbLedColor | null,
     ontime: number,
     offtime: number,
     count: number,
@@ -139,9 +156,71 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
 // NativeModule<CoreModuleEvents> already extends EventEmitter<CoreModuleEvents>
 const NativeCoreModule = requireNativeModule<CoreModule>("Core")
 
+const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
+  saveAsDefault: true,
+  cancelExistingConnectionAttempt: true,
+}
+
+function adaptGlassesUpdateToNative(values: Partial<GlassesStatus>): Record<string, any> {
+  const {wifi, hotspot, ...rest} = values
+  let update: Record<string, any> = {...rest}
+  if (wifi?.state === "connected") {
+    update = {
+      ...update,
+      wifiConnected: true,
+      wifiSsid: wifi.ssid,
+      wifiLocalIp: wifi.localIp ?? "",
+    }
+  } else if (wifi?.state === "disconnected") {
+    update = {
+      ...update,
+      wifiConnected: false,
+      wifiSsid: "",
+      wifiLocalIp: "",
+    }
+  }
+  if (hotspot?.state === "enabled") {
+    update = {
+      ...update,
+      hotspotEnabled: true,
+      hotspotSsid: hotspot.ssid,
+      hotspotPassword: hotspot.password,
+      hotspotGatewayIp: hotspot.localIp,
+    }
+  } else if (hotspot?.state === "disabled") {
+    update = {
+      ...update,
+      hotspotEnabled: false,
+      hotspotSsid: "",
+      hotspotPassword: "",
+      hotspotGatewayIp: "",
+    }
+  }
+  return update
+}
+
 // Add helper methods to the module
+const nativeGetGlassesStatus = NativeCoreModule.getGlassesStatus.bind(
+  NativeCoreModule,
+) as () => MaybePromise<GlassesStatus>
+NativeCoreModule.getGlassesStatus = function () {
+  return Promise.resolve(nativeGetGlassesStatus())
+}
+
+const nativeGetCoreStatus = NativeCoreModule.getCoreStatus.bind(NativeCoreModule) as () => MaybePromise<CoreStatus>
+NativeCoreModule.getCoreStatus = function () {
+  return Promise.resolve(nativeGetCoreStatus())
+}
+
+const nativeGetDefaultDevice = NativeCoreModule.getDefaultDevice.bind(
+  NativeCoreModule,
+) as () => MaybePromise<Device | null>
+NativeCoreModule.getDefaultDevice = function () {
+  return Promise.resolve(nativeGetDefaultDevice())
+}
+
 NativeCoreModule.updateGlasses = function (values: Partial<GlassesStatus>) {
-  return this.update("glasses", values)
+  return this.update("glasses", adaptGlassesUpdateToNative(values))
 }
 
 NativeCoreModule.updateCore = function (values: Record<string, any>) {
@@ -161,6 +240,18 @@ NativeCoreModule.onCoreStatus = function (callback: CoreStatusListener) {
 NativeCoreModule.onExtractionProgress = function (callback: ExtractionProgressListener) {
   const subscription = this.addListener("extraction_progress", callback)
   return () => subscription.remove()
+}
+
+const nativeConnectDefault = NativeCoreModule.connectDefault.bind(NativeCoreModule)
+NativeCoreModule.connectDefault = function (options?: ConnectOptions) {
+  if (!options) {
+    return nativeConnectDefault()
+  }
+  return this.connectDefaultWithOptions({...DEFAULT_CONNECT_OPTIONS, ...options})
+}
+
+NativeCoreModule.connect = function (device: Device, options?: ConnectOptions) {
+  return this.connectWithOptions(device, {...DEFAULT_CONNECT_OPTIONS, ...options})
 }
 
 export default NativeCoreModule

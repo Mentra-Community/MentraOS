@@ -23,11 +23,31 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   const androidPackage = isValidVariant ? `${baseId}.${variantName}` : baseId
   const iosBundleId = isValidVariant ? `${baseId}.${variantName}` : baseId
 
+  // Google Navigation SDK API key — required for the iOS Nav SDK to
+  // boot. Fail loudly in CI/EAS so a release build never ships without
+  // it; warn (don't fail) in local-dev so contributors who don't touch
+  // nav can still build.
+  const googleNavApiKey = process.env.EXPO_PUBLIC_GOOGLE_NAV_API_KEY ?? ""
+  if (!googleNavApiKey) {
+    const isCiOrEas =
+      process.env.CI === "true" ||
+      process.env.CI === "1" ||
+      process.env.EAS_BUILD === "true" ||
+      process.env.NODE_ENV === "production"
+    const msg =
+      "EXPO_PUBLIC_GOOGLE_NAV_API_KEY is not set. Navigation will fail at runtime — " +
+      "set it in mobile/.env (see mobile/.env.example) before building."
+    if (isCiOrEas) {
+      throw new Error(msg)
+    }
+    console.warn(`[mobile/app.config] ${msg}`)
+  }
+
   return {
     ...config,
     name: appName,
     slug: "Mentra",
-    version: process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "0.0.1",
+    version: process.env.EXPO_PUBLIC_MENTRAOS_VERSION || "2.9.1",
     scheme: "com.mentra",
     orientation: "portrait",
     userInterfaceStyle: "automatic",
@@ -41,7 +61,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       // icon: "./assets/app-icons/ic_launcher.png",
       package: androidPackage,
       googleServicesFile: "./google-services.json",
-      versionCode: 240,
+      versionCode: 244,
       adaptiveIcon: {
         foregroundImage: "./assets/app-icons/ic_launcher_foreground.png",
         // backgroundImage: "./assets/app-icons/ic_launcher.png",
@@ -79,7 +99,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       icon: "./assets/app-icons/ic_launcher.png",
       supportsTablet: false,
       requireFullScreen: true,
-      buildNumber: "240",
+      buildNumber: "244",
       bundleIdentifier: iosBundleId,
       appleTeamId: "T5XXXL6N36",
       googleServicesFile: "./GoogleService-Info.plist",
@@ -106,6 +126,12 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           "This app needs access to your notifications to provide you with notifications.",
         NSLocalNetworkUsageDescription:
           "Mentra needs to access your local network to connect to Mentra Live glasses for viewing photos and media stored on the device.",
+        // Required because miniapps subscribed to `heading_update` cause
+        // the host's HeadingService to read the device compass via
+        // CoreMotion. iOS hard-crashes any access to motion sensors
+        // without this usage string declared.
+        NSMotionUsageDescription:
+          "Mentra reads your device compass to show heading direction in navigation and similar miniapps on your glasses.",
         NSBonjourServices: ["_mentra-live._tcp", "_http._tcp"],
         NSAppTransportSecurity: {
           NSAllowsLocalNetworking: true,
@@ -125,6 +151,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           "UIInterfaceOrientationPortraitUpsideDown",
         ],
         BGTaskSchedulerPermittedIdentifiers: ["com.mentra.background-timer"],
+        GOOGLE_NAV_API_KEY: googleNavApiKey,
       },
       config: {
         usesNonExemptEncryption: false,
@@ -206,6 +233,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
             minSdkVersion: 28,
             targetSdkVersion: 35,
             compileSdkVersion: 36,
+            enableCoreLibraryDesugaring: true,
           },
           ios: {
             deploymentTarget: "15.5", // for react-native-zip-archive

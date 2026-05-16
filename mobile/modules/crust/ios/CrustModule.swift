@@ -1,5 +1,7 @@
 import AVKit
+import CoreLocation
 import ExpoModulesCore
+import GoogleNavigation
 import Photos
 
 /// User-visible album in Apple Photos for glasses sync (matches dedicated-folder behavior on Android).
@@ -19,8 +21,34 @@ public class CrustModule: Module {
             "onChange",
             "phone_notification",
             "phone_notification_dismissed",
-            "captions_tester_incident"
+            "captions_tester_incident",
+            "onNavManeuver",
+            "onNavRerouting",
+            "onNavArrived",
+            "onNavError",
+            "onNavOffRoute",
+            "onNavLocation",
+            "onNavRoute",
+            "onHeading",
+            // MentraJS — fires whenever a per-miniapp JSContext calls
+            // __dispatch(iface, method, args). RN-side MentraJSRouter
+            // subscribes to route by packageName.
+            "mentrajs_message"
         )
+
+        OnCreate {
+            // Wire the JSCRuntime's outbound event sink to the Expo
+            // event emitter. The JSCDispatcher fires `forwardToRn` for
+            // anything that isn't a built-in route (localStorage, fetch,
+            // crypto.getRandomBytes, __runtime.ready), and the runtime's
+            // exception/log/error handlers route through the same sink.
+            JSCRuntime.shared.onOutbound = { [weak self] message in
+                self?.sendEvent("mentrajs_message", message.payload)
+            }
+            // Install the polyfill bridge once, lazily on first module
+            // creation. JSCPolyfillBridge.install is idempotent.
+            JSCPolyfillBridge.install(into: JSCRuntime.shared.dispatcherTable)
+        }
 
         Function("hello") {
             "Hello world! 👋"
@@ -30,6 +58,101 @@ public class CrustModule: Module {
             self.sendEvent("onChange", [
                 "value": value,
             ])
+        }
+
+        AsyncFunction("requestNavigationPermission") { () -> [String: Any] in
+            await withCheckedContinuation { continuation in
+                NavigationManager.shared.requestPermission { accepted in
+                    continuation.resume(returning: ["ok": true, "accepted": accepted])
+                }
+            }
+        }
+
+        AsyncFunction("startNavigation") { (lat: Double, lng: Double, options: [String: Any]?) -> [String: Any] in
+            let simulate = options?["simulate"] as? Bool ?? false
+            let speedMultiplier = options?["speedMultiplier"] as? Double ?? 1.0
+            let mode = options?["mode"] as? String ?? "driving"
+            // Opt-in: when > 0, the NavigationManager forces a reroute as
+            // soon as the user is this many meters past a pivot they
+            // didn't take. nil disables the check entirely.
+            let missedTurnRerouteMeters: Double? = {
+                if let d = options?["missedTurnRerouteMeters"] as? Double { return d > 0 ? d : nil }
+                if let i = options?["missedTurnRerouteMeters"] as? Int { return i > 0 ? Double(i) : nil }
+                return nil
+            }()
+
+            var stops: [(lat: Double, lng: Double)] = []
+            if let stopsArr = options?["stops"] as? [[String: Double]] {
+                stops = stopsArr.compactMap { s in
+                    guard let slat = s["lat"], let slng = s["lng"] else { return nil }
+                    return (lat: slat, lng: slng)
+                }
+            }
+            if stops.isEmpty { stops = [(lat: lat, lng: lng)] }
+
+            return await withCheckedContinuation { continuation in
+                NavigationManager.shared.start(
+                    stops: stops,
+                    mode: mode,
+                    simulate: simulate,
+                    speedMultiplier: speedMultiplier,
+                    missedTurnRerouteMeters: missedTurnRerouteMeters,
+                    onEvent: { [weak self] payload in
+                        guard let self else { return }
+                        let kind = payload["kind"] as? String ?? ""
+                        switch kind {
+                        case "maneuver": self.sendEvent("onNavManeuver", payload)
+                        case "rerouting": self.sendEvent("onNavRerouting", payload)
+                        case "arrived": self.sendEvent("onNavArrived", payload)
+                        case "off_route": self.sendEvent("onNavOffRoute", payload)
+                        case "error": self.sendEvent("onNavError", payload)
+                        default: break
+                        }
+                    },
+                    onLocation: { [weak self] payload in
+                        self?.sendEvent("onNavLocation", payload)
+                    },
+                    onRoute: { [weak self] payload in
+                        self?.sendEvent("onNavRoute", payload)
+                    }
+                ) { ok, error in
+                    var result: [String: Any] = ["ok": ok]
+                    if let error { result["error"] = error }
+                    continuation.resume(returning: result)
+                }
+            }
+        }
+
+        AsyncFunction("stopNavigation") { () -> [String: Any] in
+            NavigationManager.shared.stop()
+            return ["ok": true]
+        }
+
+        AsyncFunction("simulateDeviation") { (offsetMeters: Double?) -> [String: Any] in
+            NavigationManager.shared.simulateDeviation(offsetMeters: offsetMeters ?? 50)
+            return ["ok": true]
+        }
+
+        // iOS doesn't implement the dev toggles yet. Return an explicit
+        // error so the JS side can surface "not supported" instead of
+        // silently believing the call succeeded.
+        AsyncFunction("setWrongSidewalkOffset") { (_: Bool) -> [String: Any] in
+            return ["ok": false, "error": "Not implemented on iOS"]
+        }
+        AsyncFunction("setSkipCrossings") { (_: Bool) -> [String: Any] in
+            return ["ok": false, "error": "Not implemented on iOS"]
+        }
+
+        AsyncFunction("startHeading") { () -> [String: Any] in
+            HeadingManager.shared.start { [weak self] degrees in
+                self?.sendEvent("onHeading", ["degrees": degrees])
+            }
+            return ["ok": true]
+        }
+
+        AsyncFunction("stopHeading") { () -> [String: Any] in
+            HeadingManager.shared.stop()
+            return ["ok": true]
         }
 
         // Location:
@@ -70,6 +193,69 @@ public class CrustModule: Module {
 
         AsyncFunction("openNotificationListenerSettings") { () -> Bool in
             return false
+        }
+
+        // MARK: - MentraJS Runtime
+
+        /// Spawn a per-miniapp JS context. Re-spawn is allowed: a live
+        /// context with the same packageName is killed first.
+        /// Returns true if the polyfill + miniapp source evaluated without
+        /// throwing. On failure the context is torn down.
+        AsyncFunction("mentraJsSpawn") { (packageName: String, polyfillBundle: String, miniappJs: String) -> Bool in
+            return JSCRuntime.shared.spawn(
+                packageName: packageName,
+                polyfillBundle: polyfillBundle,
+                miniappJs: miniappJs
+            )
+        }
+
+        /// Evaluate an arbitrary script inside the named context. Returns
+        /// the JS return value bridged to a JSON-friendly Swift type, or
+        /// nil if the context is dead / eval threw. Mostly for dev tooling
+        /// + tests; production code paths use mentraJsDispatchToJs.
+        AsyncFunction("mentraJsEvaluate") { (packageName: String, source: String) -> Any? in
+            return JSCRuntime.shared.evaluate(packageName: packageName, source: source)
+        }
+
+        /// Tear down a JS context. Cancels timers, drops refs, forces GC.
+        AsyncFunction("mentraJsKill") { (packageName: String) -> Void in
+            JSCRuntime.shared.kill(packageName: packageName)
+        }
+
+        /// Push an event / response envelope into the named context's
+        /// globalThis.__deliver. Used by MentraJSRouter for
+        /// glasses-status broadcasts and request/response correlation.
+        AsyncFunction("mentraJsDispatchToJs") { (packageName: String, envelope: [String: Any]) -> Void in
+            JSCRuntime.shared.dispatchToJs(packageName: packageName, envelope: envelope)
+        }
+
+        /// Set the installed manifest for a miniapp so the dispatcher's
+        /// permission gate can authorize sensitive `__dispatch` calls.
+        AsyncFunction("mentraJsSetManifest") { (packageName: String, permissions: [String]) -> Void in
+            JSCRuntime.shared.dispatcherTable.setManifest(
+                packageName: packageName,
+                manifest: InstalledMiniappManifest(permissions: Set(permissions))
+            )
+        }
+
+        /// Diagnostic: list all live packageNames.
+        Function("mentraJsAlivePackages") { () -> [String] in
+            return JSCRuntime.shared.alivePackages()
+        }
+
+        /// Diagnostic: force a JSC garbage collection cycle on the named
+        /// context. Used by memory-leak hunts + tests. Returns false when
+        /// the context is dead.
+        AsyncFunction("mentraJsDebugForceGC") { (packageName: String) -> Bool in
+            return JSCRuntime.shared.debugForceGC(packageName: packageName)
+        }
+
+        /// Read the bundled MentraJS polyfill (startup.js) from the iOS
+        /// pod's resource bundle. The host calls this once on app boot,
+        /// caches the string, and passes it to every mentraJsSpawn so
+        /// every JSContext starts with the same polyfill ABI.
+        Function("mentraJsLoadPolyfillBundle") { () -> String in
+            return JSCRuntime.loadPolyfillBundle()
         }
 
         // MARK: - Build Environment
@@ -290,6 +476,7 @@ public class CrustModule: Module {
             NSLog("CrustModule: Successfully saved to gallery with proper creation date")
             return ["success": true, "identifier": assetIdentifier ?? ""]
         }
+
     }
 }
 

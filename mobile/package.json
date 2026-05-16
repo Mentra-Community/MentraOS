@@ -50,6 +50,7 @@
     "dev:logs-filter": "bunx zx ./scripts/start.mjs 2>&1 | ./scripts/log-viewer.sh | grep -i"
   },
   "dependencies": {
+    "@babel/runtime": "^7.28.6",
     "@config-plugins/react-native-webrtc": "^13.0.0",
     "@douglowder/expo-av-route-picker-view": "^0.0.5",
     "@dr.pogodin/react-native-fs": "^2.37.0",
@@ -63,6 +64,7 @@
     "@livekit/react-native-webrtc": "^137.0.2",
     "@mentra/bluetooth-sdk": "workspace:*",
     "@mentra/display-utils": "file:../cloud/packages/display-utils",
+    "@mentra/island": "workspace:*",
     "@mentra/miniapp": "workspace:*",
     "@react-native-community/netinfo": "11.5.2",
     "@react-native-community/slider": "5.1.2",
@@ -78,7 +80,6 @@
     "axios": "^1.13.6",
     "babel-plugin-module-resolver": "5.0.0",
     "crust": "workspace:*",
-    "@mentra/island": "workspace:*",
     "date-fns": "^4.1.0",
     "dotenv": "^17.3.1",
     "expo": "^55.0.5",
@@ -105,6 +106,7 @@
     "expo-localization": "~55.0.8",
     "expo-location": "~55.1.2",
     "expo-media-library": "~55.0.9",
+    "expo-modules-core": "55.0.23",
     "expo-navigation-bar": "~55.0.8",
     "expo-notifications": "~55.0.11",
     "expo-router": "~55.0.4",

@@ -61,6 +61,35 @@ export function generateSchema(): Record<string, unknown> {
         maximum: 65535,
         description: 'Port the dev server listens on (default 3000)',
       },
+      sdkVersion: {
+        type: 'string',
+        description: 'Semver of the @mentra/miniapp SDK this bundle targets. Host refuses to spawn a miniapp whose sdkVersion is incompatible with the runtime it ships.',
+      },
+      minHostVersion: {
+        type: 'string',
+        description: 'Semver of the lowest MentraOS Manager host version that can run this bundle. The host re-validates this on every install and after host upgrades; bundles that no longer meet the bar are disabled (not deleted) with a clear UI.',
+      },
+      entry: {
+        type: 'object',
+        description: 'Two-layer bundle entry points. Background is the always-running JSContext entry; UI is the on-demand WebView entry.',
+        additionalProperties: false,
+        required: ['background'],
+        properties: {
+          background: {
+            type: 'string',
+            description: 'Path to the background bundle (e.g. dist/background/index.js). Required for V2+ two-layer bundles.',
+          },
+          ui: {
+            type: 'string',
+            description: "Path to the UI bundle entry HTML (e.g. dist/ui/index.html). Optional — pure-background miniapps don't need a WebView.",
+          },
+        },
+      },
+      type: {
+        type: 'string',
+        enum: ['standard', 'background'],
+        description: "Miniapp type. 'standard' includes a UI WebView; 'background' is JSContext-only. Defaults to 'standard'.",
+      },
       permissions: {
         type: 'array',
         description: 'Phone permissions the miniapp needs to declare',

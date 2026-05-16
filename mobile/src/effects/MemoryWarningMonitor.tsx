@@ -1,3 +1,9 @@
+// Test/benchmark infrastructure. Listens for iOS memoryWarning events
+// from AppState and records them in the stress-test store. Always loaded
+// but a no-op in normal flow — iOS memory warnings only fire under
+// genuine pressure, and the recorded data is only inspected via the
+// (Super-Mode-gated) stress-test screen.
+
 import {useEffect} from "react"
 import {AppState} from "react-native"
 

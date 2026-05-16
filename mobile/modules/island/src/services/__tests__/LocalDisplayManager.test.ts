@@ -5,9 +5,9 @@
  * arbitration. Uses jest fake timers + an injected clock.
  */
 
-// Override the global mock of "core" so we can capture displayEvent calls.
+// Override the global Bluetooth SDK mock so we can capture displayEvent calls.
 const displayEventMock = jest.fn()
-jest.doMock("core", () => ({
+jest.doMock("@mentra/bluetooth-sdk", () => ({
   __esModule: true,
   default: {
     displayEvent: displayEventMock,
@@ -15,7 +15,7 @@ jest.doMock("core", () => ({
 }))
 
 // DisplayProcessor: pass through unchanged so we can assert on the raw event.
-jest.doMock("@/services/DisplayProcessor", () => ({
+jest.doMock("../DisplayProcessor", () => ({
   __esModule: true,
   default: {
     processDisplayEvent: (e: Record<string, unknown>) => ({...e, _processed: true}),

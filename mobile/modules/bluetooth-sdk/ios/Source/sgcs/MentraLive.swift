@@ -61,14 +61,14 @@ class BlePhotoUploadService {
      *   - imageData: Raw image data (AVIF or JPEG)
      *   - requestId: Original request ID for tracking
      *   - webhookUrl: Destination webhook URL
-     *   - authToken: Authentication token for upload
+     *   - authToken: Optional authentication token for upload
      *   - callback: Callback for success/error
      */
     static func processAndUploadPhoto(
         imageData: Data,
         requestId: String,
         webhookUrl: String,
-        authToken: String
+        authToken: String?
     ) {
         Task {
             do {
@@ -574,7 +574,7 @@ extension MentraLive: CBCentralManagerDelegate {
         }
     }
 
-    func handleDiscoveredPeripheral(_ peripheral: CBPeripheral) {
+    func handleDiscoveredPeripheral(_ peripheral: CBPeripheral, rssi: NSNumber? = nil) {
         guard let name = peripheral.name else { return }
 
         // Check for compatible device names
@@ -587,7 +587,7 @@ extension MentraLive: CBCentralManagerDelegate {
             // Store the peripheral
             discoveredPeripherals[name] = peripheral
 
-            emitDiscoveredDevice(name)
+            emitDiscoveredDevice(name, identifier: peripheral.identifier.uuidString, rssi: rssi?.intValue)
 
             // Check if this is the device we want to connect to
             if let savedDeviceName = UserDefaults.standard.string(forKey: PREFS_DEVICE_NAME),
@@ -604,9 +604,9 @@ extension MentraLive: CBCentralManagerDelegate {
 
     func centralManager(
         _: CBCentralManager, didDiscover peripheral: CBPeripheral,
-        advertisementData _: [String: Any], rssi _: NSNumber
+        advertisementData _: [String: Any], rssi: NSNumber
     ) {
-        handleDiscoveredPeripheral(peripheral)
+        handleDiscoveredPeripheral(peripheral, rssi: rssi)
     }
 
     func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
@@ -683,10 +683,11 @@ extension MentraLive: CBCentralManagerDelegate {
 
 extension MentraLive: CBPeripheralDelegate {
     func peripheral(_: CBPeripheral, didReadRSSI RSSI: NSNumber, error: Error?) {
+        signalStrengthReadInFlight = false
         if let error {
             Bridge.log("LIVE: Error reading RSSI: \(error.localizedDescription)")
         } else {
-            Bridge.log("LIVE: RSSI: \(RSSI)")
+            updateSignalStrength(Int(truncating: RSSI))
         }
     }
 
@@ -768,7 +769,6 @@ extension MentraLive: CBPeripheralDelegate {
             updateConnectionState(ConnTypes.CONNECTING)
 
             // Request MTU size
-            peripheral.readRSSI()
             let mtuSize = peripheral.maximumWriteValueLength(for: .withResponse)
             Bridge.log("LIVE: Current MTU size: \(mtuSize + 3) bytes")
 
@@ -787,6 +787,7 @@ extension MentraLive: CBPeripheralDelegate {
             }
 
             // Start readiness check loop
+            startSignalStrengthPolling()
             startReadinessCheckLoop()
         } else {
             Bridge.log("LIVE: Required BLE characteristics not found")
@@ -913,6 +914,9 @@ class MentraLive: NSObject, SGCManager {
         // a previous pairing into the next one (would otherwise surface as wrong overall_percent
         // or stale lastBesOtaProgress on the next OTA).
         if state == ConnTypes.DISCONNECTED {
+            stopSignalStrengthPolling()
+            GlassesStore.shared.apply("glasses", "signalStrength", -1)
+            GlassesStore.shared.apply("glasses", "signalStrengthUpdatedAt", 0)
             resetOtaCache()
         }
     }
@@ -948,6 +952,7 @@ class MentraLive: NSObject, SGCManager {
         // Stop scanning first
         if isScanning {
             stopScan()
+            emitStopScanEvent()
         }
 
         // Then do full cleanup (disconnect + clear all references)
@@ -1047,6 +1052,7 @@ class MentraLive: NSObject, SGCManager {
     private let CONNECTION_TIMEOUT_MS: UInt64 = 100_000_000_000 // 100 seconds
     private let HEARTBEAT_INTERVAL_MS: TimeInterval = 30.0 // 30 seconds
     private let BATTERY_REQUEST_EVERY_N_HEARTBEATS = 10
+    private let SIGNAL_STRENGTH_READ_INTERVAL_MS: TimeInterval = 10.0
     private let MIN_SEND_DELAY_MS: UInt64 = 160_000_000 // 160ms in nanoseconds
     private let READINESS_CHECK_INTERVAL_MS: TimeInterval = 2.5 // 2.5 seconds
 
@@ -1094,6 +1100,8 @@ class MentraLive: NSObject, SGCManager {
     // Timers
     private var heartbeatTimer: Timer?
     private var heartbeatCounter = 0
+    private var signalStrengthTimer: DispatchSourceTimer?
+    private var signalStrengthReadInFlight = false
     private var readinessCheckTimer: Timer?
     private var readinessCheckCounter = 0
 
@@ -1567,16 +1575,13 @@ class MentraLive: NSObject, SGCManager {
         //    }
     }
 
-    private func stopScan() {
+    func stopScan() {
         guard isScanning else { return }
 
         centralManager?.stopScan()
         isScanning = false
         GlassesStore.shared.apply(ObservableStore.coreCategory, "searching", false)
         Bridge.log("LIVE: BLE scan stopped")
-
-        // Emit event
-        emitStopScanEvent()
     }
 
     // MARK: - Connection Management
@@ -1894,8 +1899,9 @@ class MentraLive: NSObject, SGCManager {
 
         case "rgb_led_control_response":
             let requestId = json["requestId"] as? String ?? ""
-            let success = json["success"] as? Bool ?? false
-            let error = json["error"] as? String
+            let state = json["state"] as? String
+            let success = state == "success" || json["success"] as? Bool == true
+            let error = json["errorCode"] as? String ?? json["error"] as? String
             Bridge.sendRgbLedControlResponse(requestId: requestId, success: success, error: error)
 
         case "pong":
@@ -3134,13 +3140,9 @@ class MentraLive: NSObject, SGCManager {
     private func processAndUploadBlePhoto(_ transfer: BlePhotoTransfer, imageData: Data) {
         Bridge.log("LIVE: Processing BLE photo for upload. RequestId: \(transfer.requestId)")
 
-        // authToken is optional - webhook may not require authentication
-        // If provided in transfer, use it; otherwise pass empty string (uploadToWebhook handles this)
-        let authToken: String = transfer.authToken ?? ""
-
         BlePhotoUploadService.processAndUploadPhoto(
             imageData: imageData, requestId: transfer.requestId, webhookUrl: transfer.webhookUrl,
-            authToken: authToken
+            authToken: transfer.authToken
         )
     }
 
@@ -3586,6 +3588,49 @@ class MentraLive: NSObject, SGCManager {
         heartbeatCounter = 0
     }
 
+    private func startSignalStrengthPolling() {
+        Bridge.log("LIVE: 📶 Starting RSSI polling")
+        stopSignalStrengthPolling()
+
+        requestSignalStrength()
+
+        let interval = DispatchTimeInterval.milliseconds(Int(SIGNAL_STRENGTH_READ_INTERVAL_MS * 1000))
+        signalStrengthTimer = DispatchSource.makeTimerSource(queue: bluetoothQueue)
+        signalStrengthTimer?.schedule(
+            deadline: .now() + interval,
+            repeating: interval
+        )
+        signalStrengthTimer?.setEventHandler { [weak self] in
+            self?.requestSignalStrength()
+        }
+        signalStrengthTimer?.resume()
+    }
+
+    private func stopSignalStrengthPolling() {
+        signalStrengthTimer?.cancel()
+        signalStrengthTimer = nil
+        signalStrengthReadInFlight = false
+        Bridge.log("LIVE: 📶 Stopping RSSI polling")
+    }
+
+    private func requestSignalStrength() {
+        guard let peripheral = connectedPeripheral else { return }
+        guard !signalStrengthReadInFlight else {
+            Bridge.log("LIVE: 📶 Skipping RSSI read - previous read still pending")
+            return
+        }
+
+        signalStrengthReadInFlight = true
+        peripheral.readRSSI()
+    }
+
+    private func updateSignalStrength(_ rssi: Int) {
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        GlassesStore.shared.apply("glasses", "signalStrength", rssi)
+        GlassesStore.shared.apply("glasses", "signalStrengthUpdatedAt", now)
+        Bridge.log("LIVE: 📶 RSSI: \(rssi) dBm")
+    }
+
     private func sendHeartbeat() {
         guard fullyBooted, connectionState == ConnTypes.CONNECTED else {
             Bridge.log("LIVE: Skipping heartbeat - glasses not fully booted or not connected")
@@ -3699,6 +3744,7 @@ class MentraLive: NSObject, SGCManager {
 
     private func stopAllTimers() {
         stopHeartbeat()
+        stopSignalStrengthPolling()
         stopReadinessCheckLoop()
         stopConnectionTimeout()
         stopMicBeat() // Stop LC3 audio micbeat
@@ -3710,15 +3756,8 @@ class MentraLive: NSObject, SGCManager {
 
     // MARK: - Event Emission
 
-    private func emitDiscoveredDevice(_ name: String) {
-        // Use the standardized typed message function
-        let body = [
-            "device_model": "Mentra Live",
-            "device_name": name,
-            "device_address": "",
-        ]
-        // Bridge.sendTypedMessage("compatible_glasses_search_result", body: body)
-        Bridge.sendDiscoveredDevice("Mentra Live", name)
+    private func emitDiscoveredDevice(_ name: String, identifier: String = "", rssi: Int? = nil) {
+        Bridge.sendDiscoveredDevice("Mentra Live", name, deviceAddress: identifier, rssi: rssi)
     }
 
     private func emitStopScanEvent() {
@@ -3740,22 +3779,19 @@ class MentraLive: NSObject, SGCManager {
     // }
 
     private func emitWifiStatusChange() {
-        let eventBody: [String: Any] = [
-            "connected": wifiConnected,
-            "ssid": wifiSsid,
-            "local_ip": wifiLocalIp,
-        ]
         Bridge.sendWifiStatusChange(connected: wifiConnected, ssid: wifiSsid, localIp: wifiLocalIp)
     }
 
     private func emitHotspotStatusChange() {
-        let eventBody: [String: Any] = [
-            "enabled": hotspotEnabled,
-            "ssid": hotspotSsid,
-            "password": hotspotPassword,
-            "local_ip": hotspotGatewayIp, // Using gateway IP for consistency with Android
-        ]
-        Bridge.sendTypedMessage("hotspot_status_change", body: eventBody)
+        guard let status = HotspotStatus.fromStoreFields(
+            enabled: hotspotEnabled,
+            ssid: hotspotSsid,
+            password: hotspotPassword,
+            localIp: hotspotGatewayIp
+        ) else {
+            return
+        }
+        Bridge.sendTypedMessage("hotspot_status_change", body: status.values)
     }
 
     private func emitRtmpStreamStatus(_ json: [String: Any]) {
@@ -3804,6 +3840,7 @@ class MentraLive: NSObject, SGCManager {
         // Stop scanning
         if isScanning {
             stopScan()
+            emitStopScanEvent()
         }
 
         // Stop phone audio monitor
@@ -4437,29 +4474,8 @@ extension MentraLive {
         return protocolData.subdata(in: 5 ..< (5 + length))
     }
 
-    // MARK: - Button Mode Settings
-
-    func sendButtonModeSetting() {
-        let mode = GlassesStore.shared.get("core", "button_mode") as! String
-        Bridge.log("Sending button mode setting to glasses: \(mode)")
-
-        guard connectionState == ConnTypes.CONNECTED else {
-            Bridge.log("Cannot send button mode - not connected")
-            return
-        }
-
-        let json: [String: Any] = [
-            "type": "button_mode_setting",
-            "mode": mode,
-        ]
-        sendJson(json)
-    }
-
     private func sendUserSettings() {
         Bridge.log("Sending user settings to glasses")
-
-        // Send button mode setting
-        sendButtonModeSetting()
 
         // Send button video recording settings
         sendButtonVideoRecordingSettings()

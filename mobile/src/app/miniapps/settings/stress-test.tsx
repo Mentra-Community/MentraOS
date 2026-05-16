@@ -1,39 +1,28 @@
-import {useEffect, useRef, useState} from "react"
+// Test/benchmark infrastructure. Reachable only via Super Settings →
+// Stress Test, which is itself gated behind Super Mode.
+//
+// JSC memory-spike harness for ongoing measurements on new hardware
+// tiers (the WebView-jetsam experiment that settled the architecture
+// decision lived here previously — see
+// agents/spike-results/jsc-spike-iphone15-release-50ctx.log).
+
+import {useEffect} from "react"
 import {ScrollView, View, Text} from "react-native"
+
+import CoreModule from "@mentra/bluetooth-sdk"
 
 import {Header, Screen} from "@/components/ignite"
 import {Group} from "@/components/ui"
 import {RouteButton} from "@/components/ui/RouteButton"
-import {miniappHost} from "@/components/miniapp/MiniappHost"
 import {useNavigationStore} from "@/stores/navigation"
 import {useStressTestStore} from "@/stores/stressTest"
-import {buildDummyMiniappHtml} from "@/utils/stressTest/dummyHtml"
-import CoreModule from "@mentra/bluetooth-sdk"
-import {miniappRunningRegistry} from "@mentra/island"
 
-const DUMMY_PREFIX = "com.mentra.stress.dummy."
-const DEFAULT_MB_PER_APP = 25
 const POLL_MS = 1000
-
-function dataUriFor(packageName: string, mb: number): string {
-  const html = buildDummyMiniappHtml(packageName, mb)
-  // base64 keeps things robust vs URL-encoding the % signs in the HTML
-  // eslint-disable-next-line no-undef
-  const b64 =
-    typeof btoa === "function"
-      ? btoa(unescape(encodeURIComponent(html)))
-      : Buffer.from(html, "utf8").toString("base64")
-  return `data:text/html;base64,${b64}`
-}
 
 export default function StressTest() {
   const {goBack} = useNavigationStore.getState()
-  const {active, events, residentMB, memWarnCount, start, stop, setResidentMB} = useStressTestStore()
-  const [mountedCount, setMountedCount] = useState(0)
-  const [mbPerApp, setMbPerApp] = useState(DEFAULT_MB_PER_APP)
-  const counterRef = useRef(0)
+  const {active, residentMB, memWarnCount, start, stop, setResidentMB} = useStressTestStore()
 
-  // Memory poll loop
   useEffect(() => {
     let id: ReturnType<typeof setInterval> | null = null
     const tick = () => {
@@ -41,21 +30,17 @@ export default function StressTest() {
         const mb = CoreModule.getMemoryMB()
         setResidentMB(mb)
         if (active) {
-          // Single-line structured log so the CLI driver can grep
-          // STRESS: lines out of `log stream` reliably.
           // eslint-disable-next-line no-console
           console.log(
             `STRESS: sample ${JSON.stringify({
               at: Date.now(),
               residentMB: mb,
-              mounted: mountedCount,
-              terminated: events.filter((e) => e.kind === "terminate").length,
               memwarn: memWarnCount,
             })}`,
           )
         }
       } catch {
-        // ignore — module may not be loaded on Android
+        // CoreModule may not be loaded on Android — ignore.
       }
     }
     tick()
@@ -63,44 +48,7 @@ export default function StressTest() {
     return () => {
       if (id) clearInterval(id)
     }
-  }, [active, mountedCount, events, memWarnCount, setResidentMB])
-
-  // Keep mountedCount in sync with the registry so jetsam-evicted entries
-  // are reflected in the UI.
-  useEffect(() => {
-    const refresh = () => {
-      setMountedCount(
-        miniappRunningRegistry.getAll().filter((p) => p.startsWith(DUMMY_PREFIX)).length,
-      )
-    }
-    refresh()
-    const unsub = miniappRunningRegistry.subscribe(refresh)
-    return unsub
-  }, [])
-
-  const mountOne = () => {
-    counterRef.current += 1
-    const pkg = `${DUMMY_PREFIX}${counterRef.current}`
-    miniappHost.mount(pkg, dataUriFor(pkg, mbPerApp), {
-      appName: `Dummy ${counterRef.current}`,
-    })
-    // eslint-disable-next-line no-console
-    console.log(`STRESS: mount ${JSON.stringify({pkg, mb: mbPerApp, at: Date.now()})}`)
-  }
-
-  const mountN = (n: number) => {
-    for (let i = 0; i < n; i += 1) mountOne()
-  }
-
-  const unmountAll = () => {
-    miniappRunningRegistry.getAll()
-      .filter((p) => p.startsWith(DUMMY_PREFIX))
-      .forEach((p) => miniappHost.unmount(p))
-    // eslint-disable-next-line no-console
-    console.log("STRESS: unmount-all")
-  }
-
-  const terminated = events.filter((e) => e.kind === "terminate").length
+  }, [active, memWarnCount, setResidentMB])
 
   return (
     <Screen preset="fixed">
@@ -109,12 +57,9 @@ export default function StressTest() {
         <View className="flex gap-4 mt-6">
           <Group title="State">
             <View className="px-4 py-3">
-              <Text className="text-text">Mounted dummies: {mountedCount}</Text>
               <Text className="text-text">Resident: {residentMB.toFixed(1)} MB</Text>
-              <Text className="text-text">Terminated (jetsam): {terminated}</Text>
               <Text className="text-text">Memory warnings: {memWarnCount}</Text>
               <Text className="text-text">Logging active: {active ? "yes" : "no"}</Text>
-              <Text className="text-text">MB per app: {mbPerApp}</Text>
             </View>
           </Group>
 
@@ -126,40 +71,43 @@ export default function StressTest() {
             />
           </Group>
 
-          <Group title="Per-app heap size">
-            {[5, 25, 50, 100].map((mb) => (
-              <RouteButton
-                key={mb}
-                label={`${mb} MB`}
-                subtitle={mbPerApp === mb ? "selected" : ""}
-                onPress={() => setMbPerApp(mb)}
-              />
-            ))}
-          </Group>
-
-          <Group title="Mount">
-            <RouteButton label="Mount 1" onPress={() => mountOne()} />
-            <RouteButton label="Mount 5" onPress={() => mountN(5)} />
-            <RouteButton label="Mount 10" onPress={() => mountN(10)} />
-            <RouteButton label="Mount 25" onPress={() => mountN(25)} />
-          </Group>
-
-          <Group title="Unmount">
-            <RouteButton label="Unmount all dummies" onPress={() => unmountAll()} />
-          </Group>
-
-          <Group title="Recent events">
-            <View className="px-4 py-3">
-              {events
-                .slice(-8)
-                .reverse()
-                .map((e, i) => (
-                  <Text key={i} className="text-text text-xs">
-                    {new Date(e.at).toLocaleTimeString()} {e.kind} {e.packageName}
-                  </Text>
-                ))}
-              {events.length === 0 && <Text className="text-text text-xs">no events yet</Text>}
-            </View>
+          <Group title="JSContext memory benchmark (no WebView)">
+            <RouteButton
+              label="Spawn 1 JSContext"
+              subtitle="Measures per-context memory cost"
+              onPress={() => {
+                const baseline = CoreModule.getMemoryMB()
+                const result = (CoreModule as unknown as {jscSpawnAndMeasure: (n: number, b: number) => unknown}).jscSpawnAndMeasure(1, baseline)
+                // eslint-disable-next-line no-console
+                console.log("STRESS: jsc-spike", JSON.stringify(result))
+              }}
+            />
+            <RouteButton
+              label="Spawn 10 JSContexts"
+              onPress={() => {
+                const baseline = CoreModule.getMemoryMB()
+                const result = (CoreModule as unknown as {jscSpawnAndMeasure: (n: number, b: number) => unknown}).jscSpawnAndMeasure(10, baseline)
+                // eslint-disable-next-line no-console
+                console.log("STRESS: jsc-spike", JSON.stringify(result))
+              }}
+            />
+            <RouteButton
+              label="Spawn 50 JSContexts"
+              onPress={() => {
+                const baseline = CoreModule.getMemoryMB()
+                const result = (CoreModule as unknown as {jscSpawnAndMeasure: (n: number, b: number) => unknown}).jscSpawnAndMeasure(50, baseline)
+                // eslint-disable-next-line no-console
+                console.log("STRESS: jsc-spike", JSON.stringify(result))
+              }}
+            />
+            <RouteButton
+              label="Kill all JSContexts"
+              onPress={() => {
+                ;(CoreModule as unknown as {jscKillAll: () => void}).jscKillAll()
+                // eslint-disable-next-line no-console
+                console.log("STRESS: jsc-killed-all")
+              }}
+            />
           </Group>
         </View>
       </ScrollView>

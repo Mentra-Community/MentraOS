@@ -22,12 +22,12 @@ function CapsuleButton({onMinusPress}: CapsuleButtonProps) {
 
   // On Android, GlassView is just a plain View with no blur, so the capsule
   // needs an explicit background to stay readable over arbitrary app content.
-  const androidStyle = Platform.OS === "android" ? {backgroundColor: theme.colors.card} : undefined
+  const androidStyle = Platform.OS === "android" ? {backgroundColor: theme.colors.primary_foreground} : undefined
 
   return (
     <GlassView
       transparent={true}
-      className="flex-row justify-between rounded-full h-8 w-8 items-center"
+      className="flex-row justify-between rounded-full h-10.5 w-10.5 items-center"
       style={androidStyle}>
       <Pressable
         hitSlop={10}
@@ -36,10 +36,8 @@ function CapsuleButton({onMinusPress}: CapsuleButtonProps) {
           pressed && {backgroundColor: theme.colors.input},
           {
             position: "absolute",
-            // right: 0,
-            width: 32,
-            height: 32,
-            // height: "100%",
+            width: 42,
+            height: 42,
             alignItems: "center",
             justifyContent: "center",
             borderRadius: 100,
@@ -47,7 +45,7 @@ function CapsuleButton({onMinusPress}: CapsuleButtonProps) {
             // borderBottomRightRadius: 40,
           },
         ]}>
-        <Icon name={"house"} size={16} color={theme.colors.foreground} className="mb-0.5" />
+        <Icon name={"house"} size={20} color={theme.colors.foreground} className="mb-0.5" />
       </Pressable>
     </GlassView>
   )
@@ -66,7 +64,11 @@ export default function CapsuleMenu({forceShow}: {forceShow: boolean}) {
   const pathname = usePathname()
   const insets = useSaferAreaInsets()
   const {theme} = useAppTheme()
-  const top = insets.top + theme.spacing.s2
+  let top = theme.spacing.s2
+  let right = theme.spacing.s4
+  top += active?.offsetTop ?? 0
+  right += active?.offsetRight ?? 0
+  top += insets.top
 
   if (!forceShow) {
     const isOnAllowedRoute = useMemo(() => {
@@ -81,8 +83,8 @@ export default function CapsuleMenu({forceShow}: {forceShow: boolean}) {
 
   return (
     <View
-      className="z-12 absolute right-2 items-center justify-end flex-row"
-      style={{top: top}}
+      className="z-12 absolute items-center justify-end flex-row"
+      style={{top: top, right: right}}
       pointerEvents="box-none">
       <CapsuleButton onMinusPress={() => active?.handleExit(true)} />
     </View>

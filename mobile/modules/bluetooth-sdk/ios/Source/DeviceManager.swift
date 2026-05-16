@@ -280,6 +280,10 @@ struct ViewState {
     var lc3Converter: PcmConverter?
     /// Audio output format - defaults to LC3 for bandwidth savings
     private var audioOutputFormat: AudioOutputFormat = .lc3
+    /// Last time we received an LC3 frame from the glasses (used by the mic
+    /// inactivity watchdog).
+    private var lastLc3Event: Date?
+    private var micReinitTimer: Timer?
 
     // VAD:
     private var vad: SileroVADStrategy?
@@ -345,6 +349,15 @@ struct ViewState {
         // Initialize persistent LC3 converter for unified audio encoding
         lc3Converter = PcmConverter()
         Bridge.log("LC3 converter initialized for unified audio encoding")
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.micReinitTimer = Timer.scheduledTimer(
+                withTimeInterval: 10.0, repeats: true
+            ) { [weak self] _ in
+                self?.checkAndReinitGlassesMic()
+            }
+        }
     }
 
     // MARK: - AUX Voice Data Handling
@@ -403,6 +416,7 @@ struct ViewState {
      * This matches Android behavior - glasses forward raw LC3, CoreManager handles encoding.
      */
     func handleGlassesMicData(_ lc3Data: Data, _ frameSize: Int = 20) {
+        lastLc3Event = Date()
         guard let lc3Converter = lc3Converter else {
             Bridge.log("MAN: LC3 converter not initialized")
             return
@@ -418,7 +432,6 @@ struct ViewState {
             Bridge.log("MAN: Failed to decode glasses LC3 audio")
             return
         }
-
         // Forward to handlePcm which handles VAD and encoding
         handlePcm(pcmData)
     }
@@ -799,6 +812,21 @@ struct ViewState {
         }
 
         return result
+    }
+
+    private func checkAndReinitGlassesMic() {
+        // if the glasses mic is marked as enabled (and the glasses are connected), but our last known lc3 event is from > 5 seconds ago, reinitialize the mic:
+        let glassesMicEnabled = GlassesStore.shared.get("glasses", "micEnabled") as? Bool ?? false
+        let glassesConnected = GlassesStore.shared.get("glasses", "connected") as? Bool ?? false
+        if !glassesMicEnabled || !glassesConnected {
+            return
+        }
+        
+        let timeSinceLastLc3Event = Date().timeIntervalSince(lastLc3Event ?? Date())
+        if timeSinceLastLc3Event > 5 {
+            Bridge.log("MAN: No audio activity in the last 5 seconds from glasses, reinitializing glasses mic")
+            sgc?.setMicEnabled(true)
+        }
     }
 
     func getAudioDevicePattern() -> String {
@@ -1428,6 +1456,13 @@ struct ViewState {
 
         initSGC(pendingWearable)
         sgc?.findCompatibleDevices()
+    }
+
+    func stopScan() {
+        controller?.stopScan()
+        sgc?.stopScan()
+        GlassesStore.shared.apply("core", "searching", false)
+        GlassesStore.shared.apply("core", "searchingController", false)
     }
 
     func cleanup() {

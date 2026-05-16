@@ -11,16 +11,32 @@ import Foundation
 class ObservableStore {
     private nonisolated(unsafe) var values: [String: Any] = [:]
     private var onEmit: ((String, [String: Any]) -> Void)?
+    private var listeners: [String: (String, [String: Any]) -> Void] = [:]
 
     nonisolated static let coreCategory = "core"
     private nonisolated static let legacyBluetoothCategory = "bluetooth"
+
+    nonisolated static func normalizeCategory(_ category: String) -> String {
+        category == legacyBluetoothCategory ? coreCategory : category
+    }
 
     func configure(onEmit: @escaping (String, [String: Any]) -> Void) {
         self.onEmit = onEmit
     }
 
+    func addListener(_ listener: @escaping (String, [String: Any]) -> Void) -> String {
+        let id = UUID().uuidString
+        listeners[id] = listener
+        return id
+    }
+
+    func removeListener(_ id: String) {
+        listeners.removeValue(forKey: id)
+    }
+
     func set(_ category: String, _ key: String, _ value: Any) {
-        let fullKey = "\(category).\(key)"
+        let normalizedCategory = Self.normalizeCategory(category)
+        let fullKey = "\(normalizedCategory).\(key)"
         let oldValue = values[fullKey]
 
         // Skip if unchanged
@@ -31,16 +47,20 @@ class ObservableStore {
         values[fullKey] = value
 
         // Emit immediately
-        onEmit?(category, [key: value])
+        let changes = [key: value]
+        onEmit?(normalizedCategory, changes)
+        for listener in Array(listeners.values) {
+            listener(normalizedCategory, changes)
+        }
     }
 
     nonisolated func get(_ category: String, _ key: String) -> Any? {
-        values["\(category).\(key)"]
+        values["\(Self.normalizeCategory(category)).\(key)"]
     }
 
     func getCategory(_ category: String) -> [String: Any] {
         var result: [String: Any] = [:]
-        let prefix = "\(category)."
+        let prefix = "\(Self.normalizeCategory(category))."
         for (key, value) in values where key.hasPrefix(prefix) {
             let shortKey = String(key.dropFirst(prefix.count))
             result[shortKey] = value

@@ -214,7 +214,7 @@ Use `getMentraOSGlobals()` (exported from the package) to read it with the right
 Auto-selected by `createTransport(options)`:
 
 - **`PostMessageTransport`** — used inside the MentraOS WebView. `window.ReactNativeWebView.postMessage` outbound, `window` `message` listener inbound.
-- **`LocalSocketTransport`** — fallback for laptop browsers. Default endpoint `ws://127.0.0.1:8765`. The phone-side server it talks to is Phase 4 — the in-laptop-browser dev story is currently broken; see the overview doc for status.
+- **`LocalSocketTransport`** — fallback for laptop browsers. Default endpoint `ws://127.0.0.1:8765`. The in-laptop-browser dev story is currently broken; see the overview doc for status.
 
 Both are exported for advanced uses (forced transport, tests). `MockTransport` is also exported for unit tests.
 

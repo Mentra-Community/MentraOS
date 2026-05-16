@@ -25,6 +25,7 @@ import type {AppletPermission, AppPermissionType, ClientApp} from "../types/appl
 import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
+import {checkManifestVersions} from "./manifestVersionGate"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 
 const ALLOWED_PERMISSION_TYPES: ReadonlySet<AppPermissionType> = new Set<AppPermissionType>([
@@ -302,6 +303,59 @@ class AppRegistry {
    */
   public getBundleDir(packageName: string, version: string): string {
     return `${Paths.document.uri}/lmas/${packageName}/${version}`
+  }
+
+  /**
+   * Resolve the two-layer entry paths for an installed miniapp version.
+   * Returns absolute file:// URIs for `background` and (when present) `ui`.
+   *
+   * Legacy single-layer bundles (no `entry` object in manifest) fall back
+   * to `index.html` discovery so the WebView host keeps working unchanged.
+   * Two-layer bundles ship `entry.background` and optional `entry.ui`
+   * paths relative to the bundle root.
+   *
+   * Returns null if neither shape resolves to existing files on disk.
+   */
+  public getMiniappEntryPaths(
+    packageName: string,
+    version: string,
+  ): {background: string | null; ui: string | null} | null {
+    const manifest = this.getMiniappManifest(packageName, version) as {
+      entry?: {background?: string; ui?: string}
+    } | null
+    const bundleDir = this.getBundleDir(packageName, version)
+    const resolve = (rel: string): string | null => {
+      const trimmed = rel.replace(/^\.?\/+/, "")
+      const file = new File(new Directory(bundleDir.replace(/^file:\/\//, "")), trimmed)
+      return file.exists ? file.uri : null
+    }
+    if (manifest?.entry) {
+      const bg = manifest.entry.background ? resolve(manifest.entry.background) : null
+      const ui = manifest.entry.ui ? resolve(manifest.entry.ui) : null
+      if (bg || ui) {
+        return {background: bg, ui: ui}
+      }
+    }
+    // Legacy single-bundle fallback — `index.html` at the bundle root.
+    const legacy = new File(new Directory(bundleDir.replace(/^file:\/\//, "")), "index.html")
+    return {
+      background: null,
+      ui: legacy.exists ? legacy.uri : null,
+    }
+  }
+
+  /**
+   * Verify a manifest declares an SDK / host version range compatible
+   * with the current host. Delegates to the pure
+   * {@link checkManifestVersions} helper — same shape, no React Native
+   * imports, unit-testable. Manifests missing either field pass
+   * through unchanged (legacy single-layer path).
+   */
+  public checkManifestVersions(
+    manifest: {sdkVersion?: string; minHostVersion?: string} | null,
+    options: {hostVersion: string; supportedSdkRange: string},
+  ): {ok: true} | {ok: false; reason: string} {
+    return checkManifestVersions(manifest, options)
   }
 
   /**

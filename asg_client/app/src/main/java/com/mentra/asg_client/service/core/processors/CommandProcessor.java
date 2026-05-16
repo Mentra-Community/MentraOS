@@ -203,6 +203,9 @@ public class CommandProcessor {
             // Protocol detection result
 
             if (!result.isValid()) {
+                if ("chunk_in_progress".equals(result.commandType())) {
+                    return null;
+                }
                 Log.w(TAG, "❌ Invalid protocol detected: " + result.protocolType().getDisplayName());
                 return null;
             }
@@ -500,4 +503,4 @@ public class CommandProcessor {
         
         return false;
     }
-} 
+}

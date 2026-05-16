@@ -26,7 +26,6 @@ import {SaferAreaProvider, useSaferAreaInsets} from "@/contexts/SaferAreaContext
 import CoreStatusBar from "@/components/dev/CoreStatusBar"
 import {useShallow} from "zustand/shallow"
 import {useNavigationStore} from "@/stores/navigation"
-import { getAnimation, JsStack, woltScreenOptions } from "@/components/navigation/JsStack"
 // JsStack imports commented out - were used for Android-specific navigation (currently disabled)
 // import {getAnimation, JsStack, woltScreenOptions} from "@/components/navigation/JsStack"
 
@@ -186,11 +185,6 @@ export const AllProviders = withWrappers(
         gestureEnabled: forceGestureEnabled || !preventBack,
         gestureDirection: "horizontal" as const,
         animation: convertToNativeAnimation(animation) as any,
-        // Load-bearing for MiniappHost: /applet/local renders a transparent
-        // passthrough View so the WebView (rendered in MiniappHost at app
-        // root) is visible. Without a transparent contentStyle the route's
-        // container paints over the MiniappHost.
-        contentStyle: {backgroundColor: "transparent"},
       }),
       [preventBack, forceGestureEnabled, animation],
     )

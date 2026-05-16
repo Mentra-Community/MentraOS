@@ -113,7 +113,10 @@ aiohttp/_http_writer.c
 aiohttp/_http_writer.html
 aiohttp/_websocket.c
 aiohttp/_websocket.html
+# Python virtualenv bin directories. Negation lets through real
+# `bin/` directories that ship CLI entry points (scaffolders, etc.).
 bin
+!sdk/*/bin/
 # Python build directory (specific to Python projects)
 **/python/build
 coverage.xml
@@ -370,3 +373,9 @@ nicelogs.txt
 
 # mentra-miniapp install cache (built+packed zips ready to serve)
 **/.mentra/
+
+
+issues
+
+# Local session notes
+MEMORY.md

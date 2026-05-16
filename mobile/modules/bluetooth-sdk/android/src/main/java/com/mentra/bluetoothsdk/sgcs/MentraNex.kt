@@ -299,7 +299,6 @@ class MentraNex : SGCManager() {
 
     // Button Settings: Not supported on Nex
     override fun sendButtonPhotoSettings() { Bridge.log("Nex: sendButtonPhotoSettings operation not supported") }
-    override fun sendButtonModeSetting() { Bridge.log("Nex: sendButtonModeSetting operation not supported") }
     override fun sendButtonVideoRecordingSettings() { Bridge.log("Nex: sendButtonVideoRecordingSettings operation not supported") }
     override fun sendButtonMaxRecordingTime() { Bridge.log("Nex: sendButtonMaxRecordingTime operation not supported") }
     override fun sendButtonCameraLedSetting() { Bridge.log("Nex: sendButtonCameraLedSetting operation not supported") }
@@ -432,7 +431,7 @@ class MentraNex : SGCManager() {
         Bridge.log("sendReboot - not supported on Nex")
     }
 
-    override fun sendRgbLedControl( requestId: String, packageName: String?, action: String, color: String?, ontime: Int, offtime: Int, count: Int) {
+    override fun sendRgbLedControl(requestId: String, packageName: String?, action: String, color: String?, ontime: Int, offtime: Int, count: Int) {
         Bridge.log("sendRgbLedControl - not supported on Nex");
         Bridge.sendRgbLedControlResponse(requestId, false, "device_not_supported");
     }
@@ -1173,7 +1172,7 @@ class MentraNex : SGCManager() {
         // handler.postDelayed({ stopScan() }, 10000)
     }
 
-    private fun stopScan() {
+    override fun stopScan() {
         val scanner = bluetoothAdapter.bluetoothLeScanner
         scanner?.stopScan(modernScanCallback)
         isScanning = false

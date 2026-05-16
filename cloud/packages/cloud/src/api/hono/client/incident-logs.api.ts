@@ -10,6 +10,7 @@ import { v4 as uuidv4 } from "uuid";
 import { incidentStorage, LogEntry } from "../../../services/storage/incident-storage.service";
 import { Incident } from "../../../models/incident.model";
 import appService from "../../../services/core/app.service";
+import { queueFeedbackReceipt } from "../../../services/client/feedback-receipt.service";
 import { logger as rootLogger } from "../../../services/logging/pino-logger";
 import { queueIncidentProcessing } from "../../../services/incidents/incident-processor.service";
 import type { AppEnv } from "../../../types/hono";
@@ -114,6 +115,8 @@ app.post("/", async (c) => {
     });
 
     logger.info({ incidentId, userId: userEmail }, "Created incident for bug report");
+
+    queueFeedbackReceipt(userEmail, body.feedback, { incidentId });
 
     // Queue background processing (cloud logs, Linear, notifications)
     queueIncidentProcessing(incidentId, userEmail);

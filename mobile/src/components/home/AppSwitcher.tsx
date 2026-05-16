@@ -618,7 +618,13 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
       })
     } else if (applet.local) {
       saveLastOpenTime(applet.packageName)
-      useAppStatusStore.getState().setForeground(applet.packageName)
+      push("/applet/local", {
+        packageName: applet.packageName,
+        appName: applet.name,
+        iconUrl: applet.logoUrl,
+        version: applet.version,
+        transition: "fade",
+      })
     } else {
       saveLastOpenTime(applet.packageName)
       push("/applet/settings", {

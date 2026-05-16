@@ -15,7 +15,7 @@ import * as Battery from "expo-battery"
 import * as Clipboard from "expo-clipboard"
 import {File, Paths} from "expo-file-system"
 import * as Location from "expo-location"
-import CoreModule from "@mentra/bluetooth-sdk"
+import CoreModule, {type RgbLedAction, type RgbLedColor} from "@mentra/bluetooth-sdk"
 
 import {
   MiniappErrorCode,
@@ -36,6 +36,7 @@ import type {DisplayPayload} from "./LocalDisplayManager"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
 import {getRuntimeHooks, ISLAND_SETTINGS_KEYS, type TtsSynthesisResult} from "../runtime/config"
+import {NavigationHandlers} from "./NavigationHandlers"
 
 // =============================================================================
 // Types
@@ -55,11 +56,39 @@ interface ConnectedMiniapp {
   installedManifest?: InstalledMiniappManifest
   /** Last speaker state pushed to this app. Used to dedup SPEAKER_STATE pushes. */
   speakerState: SpeakerStateValue
+  /**
+   * Location-tier rate this app is currently asking for via its
+   * `location_stream` subscription, or null if it hasn't asked for
+   * one. The aggregate tier handed to the host is the strictest
+   * (highest-accuracy) rate across all currently connected apps —
+   * see {@link LOCATION_RATE_PRIORITY}.
+   */
+  requestedLocationRate: string | null
+}
+
+/**
+ * Strictness ordering for `location_stream` rate values. Higher index =
+ * higher accuracy and higher power cost. The aggregate tier applied to
+ * the OS is the max of every connected miniapp's requested rate;
+ * miniapps that didn't ask for `location_stream` contribute nothing.
+ *
+ * If a miniapp passes a value we don't recognize, we treat it like the
+ * weakest known rate ("passive") rather than blanket-overwriting an
+ * active stronger request from another app.
+ */
+const LOCATION_RATE_PRIORITY = ["off", "passive", "low", "high", "realtime"] as const
+type LocationRate = (typeof LOCATION_RATE_PRIORITY)[number]
+function locationRateRank(rate: string | null | undefined): number {
+  if (!rate) return -1
+  const i = LOCATION_RATE_PRIORITY.indexOf(rate as LocationRate)
+  return i >= 0 ? i : LOCATION_RATE_PRIORITY.indexOf("passive")
 }
 
 const LOG_TAG = "LOCAL_MINIAPP"
 const PING_INTERVAL_MS = 5_000
 const PING_TIMEOUT_THRESHOLD = 3 // unregister after 3 missed pongs (~15s)
+const RGB_LED_ACTIONS = new Set<RgbLedAction>(["on", "off"])
+const RGB_LED_COLORS = new Set<RgbLedColor>(["red", "green", "blue", "orange", "white"])
 
 // =============================================================================
 // Declared-permission record helper (for CONNECT_ACK / PERMISSIONS_UPDATE)
@@ -84,15 +113,21 @@ const PERMISSION_TYPE_TO_CANONICAL: Record<string, string> = {
   CALENDAR: "calendar",
 }
 
+function normalizeRgbLedAction(value: unknown): RgbLedAction {
+  return typeof value === "string" && RGB_LED_ACTIONS.has(value as RgbLedAction) ? (value as RgbLedAction) : "off"
+}
+
+function normalizeRgbLedColor(value: unknown): RgbLedColor | null {
+  return typeof value === "string" && RGB_LED_COLORS.has(value as RgbLedColor) ? (value as RgbLedColor) : null
+}
+
 const ALL_CANONICAL_PERMISSIONS = ["location", "microphone", "camera", "notifications", "calendar"] as const
 
 /**
  * Build the {location, microphone, camera, notifications, calendar} record the
  * SDK's session.permissions module reads from. Missing types are false.
  */
-function computeDeclaredPermissionRecord(
-  manifest: InstalledMiniappManifest | undefined,
-): Record<string, boolean> {
+function computeDeclaredPermissionRecord(manifest: InstalledMiniappManifest | undefined): Record<string, boolean> {
   const record: Record<string, boolean> = {}
   for (const k of ALL_CANONICAL_PERMISSIONS) record[k] = false
   for (const perm of manifest?.permissions ?? []) {
@@ -165,9 +200,9 @@ class LocalMiniappRuntime {
   /** Pending cloud requests: requestId → packageName that originated the request. */
   private pendingCloudRequests: Map<string, {packageName: string; envelopeRequestId?: string}> = new Map()
 
-  // Browser fallback token auth (Phase 4)
-  // HMAC-signed blob with a phone-local secret. Both issuer and verifier are
-  // the same process, so the secret never leaves the device.
+  // Browser fallback token auth — HMAC-signed blob with a phone-local
+  // secret. Both issuer and verifier are the same process, so the
+  // secret never leaves the device.
   private localSecret = `miniapp_${Date.now()}_${Math.random().toString(36).slice(2, 14)}`
   private usedTokens = new Set<string>()
 
@@ -272,6 +307,26 @@ class LocalMiniappRuntime {
     this.initialized = true
     console.log(`${LOG_TAG}: initialize()`)
     this.ensurePingLoop()
+  }
+
+  /**
+   * Resync the cloud's view of this device's stream subscriptions to
+   * match what's actually live locally. Called by SocketComms when the
+   * WS handshake completes (on a fresh app launch or after a reconnect).
+   *
+   * Without this, the cloud retains the previous session's subscription
+   * set across app restarts: e.g. user opens dev miniapp → host sends
+   * SUBSCRIBE [transcription:auto] → user force-quits Mentra → cloud
+   * still has that sub → new launch reconnects → cloud immediately
+   * sends `mic_state_change: pcm=true` and fans transcripts even though
+   * no JSContext is alive to receive them.
+   *
+   * The runtime knows the authoritative local subscription set; this
+   * pushes that set to the cloud (commonly empty on cold boot).
+   */
+  public resyncCloudSubscriptions(): void {
+    console.log(`${LOG_TAG}: resyncCloudSubscriptions()`)
+    this.updateCloudSubscriptions()
   }
 
   /**
@@ -403,7 +458,12 @@ class LocalMiniappRuntime {
       lastPongAt: Date.now(),
       installedManifest,
       speakerState: "idle",
+      requestedLocationRate: null,
     })
+    // If we just clobbered an existing entry, its requestedLocationRate is
+    // now gone — recompute so the aggregate doesn't include a stale rate.
+    // The WebView will re-SUBSCRIBE shortly and the rate will reappear.
+    this.recomputeLocationTier()
     this.ensurePingLoop()
   }
 
@@ -412,10 +472,7 @@ class LocalMiniappRuntime {
    * Used when the manifest is fetched asynchronously (dev miniapps) after the
    * miniapp has already CONNECTed — preserves existing subscriptions.
    */
-  public setInstalledManifest(
-    packageName: string,
-    installedManifest: InstalledMiniappManifest,
-  ): void {
+  public setInstalledManifest(packageName: string, installedManifest: InstalledMiniappManifest): void {
     const app = this.connectedApps.get(packageName)
     if (!app) return
     app.installedManifest = installedManifest
@@ -427,6 +484,31 @@ class LocalMiniappRuntime {
       type: MiniappResponseType.PERMISSIONS_UPDATE,
       permissions: computeDeclaredPermissionRecord(installedManifest),
     })
+  }
+
+  /**
+   * Graceful version of {@link unregisterApp}: notify the miniapp via
+   * `WILL_DISCONNECT`, wait ~50ms so its `beforeDisconnect` handlers can
+   * fire one last `sendOneShot` (e.g. `display.clear()`), then run the
+   * normal teardown. Use this for any disconnect path where the socket
+   * is still open. For ungraceful paths (transport already closed),
+   * call {@link unregisterApp} directly — the heads-up would be
+   * undeliverable anyway.
+   */
+  public async gracefullyUnregisterApp(packageName: string, reason = "unregistering"): Promise<void> {
+    const app = this.connectedApps.get(packageName)
+    if (!app) return
+
+    console.log(`${LOG_TAG}: gracefullyUnregisterApp(${packageName}) — sending WILL_DISCONNECT`)
+    this.sendToMiniapp(packageName, {
+      type: MiniappResponseType.WILL_DISCONNECT,
+      reason,
+    })
+    // 50 ms: imperceptible to the user, plenty of time for the SDK's
+    // synchronous `beforeDisconnect` handlers to flush a final
+    // sendOneShot through the still-open transport.
+    await new Promise<void>((resolve) => setTimeout(resolve, 50))
+    this.unregisterApp(packageName)
   }
 
   public unregisterApp(packageName: string): void {
@@ -451,12 +533,38 @@ class LocalMiniappRuntime {
     // Stop audio for this app
     getRuntimeHooks().audioPlayback?.stopForApp(packageName)
 
+    // Detach the per-app nav event forwarder but leave the native nav session
+    // running. The user may have just closed the mini-app UI and will reopen
+    // it; stopping the session here would kill an active trip mid-route.
+    // Navigation is only stopped when the mini-app explicitly calls
+    // navigation.stop() or when the trip arrives/errors naturally.
+    // (See NavigationHandlers — activeNavApps stays populated so a reconnect
+    // can reattach listeners and resume.)
+    this.navigationHandlers.onDisconnect(packageName)
+
+    // Recompute heading subscription — if this app was the last subscriber,
+    // the sensor will stop.
+    this.recomputeHeadingSubscription()
+
+    // Drop this app's location-tier request before recomputing so the
+    // aggregate falls back down if it was the strictest. Done before
+    // `connectedApps.delete` below so it doesn't matter that the iter
+    // in `recomputeLocationTier` is over connectedApps — clearing the
+    // field is enough.
+    app.requestedLocationRate = null
+    this.recomputeLocationTier()
+
     // Clean up any pending cloud requests from this app
     for (const [reqId, pending] of this.pendingCloudRequests) {
       if (pending.packageName === packageName) {
         this.pendingCloudRequests.delete(reqId)
       }
     }
+
+    // Release any display real estate this app held — if it owned the
+    // current on-glasses frame, this clears the glasses (or restores the
+    // core app's saved frame).
+    localDisplayManager.onUnmount(packageName)
 
     this.connectedApps.delete(packageName)
     this.recomputeMicRequirements()
@@ -537,6 +645,30 @@ class LocalMiniappRuntime {
       case MiniappRequestType.LOCATION_POLL:
         this.handleLocationPoll(packageName, requestId)
         break
+      case MiniappRequestType.NAVIGATION_START:
+        this.navigationHandlers.handleStart(packageName, payload, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_STOP:
+        this.navigationHandlers.handleStop(packageName, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_DEVIATE:
+        this.navigationHandlers.handleDeviate(packageName, payload, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_SET_WRONG_SIDEWALK:
+        this.navigationHandlers.handleSetWrongSidewalk(packageName, payload, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_SET_SKIP_CROSSINGS:
+        this.navigationHandlers.handleSetSkipCrossings(packageName, payload, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_GET_STATE:
+        this.navigationHandlers.handleGetState(packageName, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_COMPUTE_ROUTE:
+        this.navigationHandlers.handleComputeRoute(packageName, payload, requestId)
+        break
+      case MiniappRequestType.NAVIGATION_REQUEST_PERMISSION:
+        this.navigationHandlers.handleRequestPermission(packageName, requestId)
+        break
       case MiniappRequestType.STORAGE_GET:
         this.handleStorageGet(packageName, payload, requestId)
         break
@@ -548,6 +680,24 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.STORAGE_LIST:
         this.handleStorageList(packageName, payload, requestId)
+        break
+      case MiniappRequestType.STORAGE_CLEAR:
+        this.handleStorageClear(packageName, requestId)
+        break
+      case MiniappRequestType.STORAGE_HAS:
+        this.handleStorageHas(packageName, payload, requestId)
+        break
+      case MiniappRequestType.STORAGE_GET_ALL:
+        this.handleStorageGetAll(packageName, requestId)
+        break
+      case MiniappRequestType.STORAGE_SET_MULTIPLE:
+        this.handleStorageSetMultiple(packageName, payload, requestId)
+        break
+      case MiniappRequestType.STORAGE_FLUSH:
+        // No-op today — MMKV writes through synchronously. Reserved so
+        // a future debounced backend can honor "flush before I quit"
+        // calls without breaking the API.
+        this.sendResult(packageName, requestId, true)
         break
       case MiniappRequestType.CAMERA_FOV:
         this.handleCameraFov(packageName, payload, requestId)
@@ -574,7 +724,7 @@ class LocalMiniappRuntime {
         this.handleDownload(packageName, payload, requestId)
         break
 
-      // Phase 5 — cloud-coordinated features
+      // Cloud-coordinated features
       case MiniappRequestType.PHOTO:
         this.handlePhoto(packageName, payload, requestId)
         break
@@ -612,7 +762,7 @@ class LocalMiniappRuntime {
   private handleConnect(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
     console.log(`${LOG_TAG}: CONNECT from ${packageName}`)
 
-    const userId = (getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken)) || ""
+    const userId = getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken) || ""
 
     // Register if not already
     const existing = this.connectedApps.get(packageName)
@@ -625,9 +775,7 @@ class LocalMiniappRuntime {
     existing.lastPongAt = Date.now()
 
     // Read current glasses capabilities from the settings store
-    const defaultWearable = getRuntimeHooks().settings?.getSetting<DeviceTypes>(
-      ISLAND_SETTINGS_KEYS.defaultWearable,
-    )
+    const defaultWearable = getRuntimeHooks().settings?.getSetting<DeviceTypes>(ISLAND_SETTINGS_KEYS.defaultWearable)
     const capabilities = getModelCapabilities(defaultWearable || DeviceTypes.NONE)
 
     // Build the declared-permission record for the SDK's session.permissions
@@ -654,7 +802,26 @@ class LocalMiniappRuntime {
     const app = this.connectedApps.get(packageName)
     if (!app) return
 
-    const streams = (payload.subscriptions ?? payload.streams) as string[] | undefined
+    const rawStreams = (payload.subscriptions ?? payload.streams) as
+      | (string | {stream: string; rate?: string})[]
+      | undefined
+    // Normalize: objects like {stream: "location_stream", rate: "realtime"} → extract stream name
+    // "location_stream" is the rate-bearing alias for "location_update".
+    // The strictest rate wins when multiple `location_stream` entries appear
+    // in one SUBSCRIBE — the same rule we apply across apps.
+    let requestedLocationRate: string | null = null
+    const streams = rawStreams?.map((s) => {
+      if (typeof s === "object" && s !== null) {
+        if (s.stream === "location_stream") {
+          if (s.rate && locationRateRank(s.rate) > locationRateRank(requestedLocationRate)) {
+            requestedLocationRate = s.rate
+          }
+          return "location_update"
+        }
+        return s.stream
+      }
+      return s
+    }) as string[] | undefined
     if (!Array.isArray(streams)) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
@@ -683,12 +850,7 @@ class LocalMiniappRuntime {
     for (const stream of streams) {
       const required = permissionForStream(stream)
       if (required && !declaredTypes.has(required)) {
-        logPermissionNotDeclared(
-          packageName,
-          required,
-          `to subscribe to "${stream}"`,
-          `{"type": "${required}"}`,
-        )
+        logPermissionNotDeclared(packageName, required, `to subscribe to "${stream}"`, `{"type": "${required}"}`)
         this.sendResult(packageName, requestId, false, undefined, {
           code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
           message: `${required} permission not declared in miniapp.json (required for "${stream}"). Add {"type": "${required}"} to the "permissions" array.`,
@@ -725,6 +887,12 @@ class LocalMiniappRuntime {
 
     this.recomputeMicRequirements()
     this.updateCloudSubscriptions()
+    this.recomputeHeadingSubscription()
+    // Persist this app's requested rate (or clear it if SUBSCRIBE didn't
+    // include `location_stream` this time), then ask the host for the
+    // strictest rate across all connected apps.
+    app.requestedLocationRate = requestedLocationRate
+    this.recomputeLocationTier()
     this.sendResult(packageName, requestId, true)
 
     // Fire initial snapshot values for stateful streams so miniapps don't have
@@ -1028,8 +1196,8 @@ class LocalMiniappRuntime {
     }
 
     const ledRequestId = requestId || `led_${Date.now()}`
-    const action = (payload.action as string) ?? "off"
-    const color = typeof payload.color === "string" ? payload.color : null
+    const action = normalizeRgbLedAction(payload.action)
+    const color = normalizeRgbLedColor(payload.color)
 
     CoreModule.rgbLedControl(
       ledRequestId,
@@ -1055,15 +1223,17 @@ class LocalMiniappRuntime {
         return
       }
 
-      const location = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      })
+      // Try the OS cache first — usually instant — and only fall back to
+      // a fresh fix if the cache is empty. Use Low accuracy on the fresh
+      // path so we get a cell/wifi-tower fix in ~1s instead of waiting
+      // for full GPS warm-up.
+      const cached = await Location.getLastKnownPositionAsync({maxAge: 60_000})
+      const location = cached ?? (await Location.getCurrentPositionAsync({accuracy: Location.Accuracy.Low}))
 
       this.sendResult(packageName, requestId, true, {
-        latitude: location.coords.latitude,
-        longitude: location.coords.longitude,
-        altitude: location.coords.altitude,
-        accuracy: location.coords.accuracy,
+        lat: location.coords.latitude,
+        lng: location.coords.longitude,
+        accuracy: location.coords.accuracy ?? undefined,
         timestamp: location.timestamp,
       })
     } catch (err) {
@@ -1076,12 +1246,89 @@ class LocalMiniappRuntime {
   }
 
   // ---------------------------------------------------------------------------
+  // Navigation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * All navigation handlers + their state live in NavigationHandlers. The
+   * dispatcher's NAVIGATION_* cases delegate here; the rest of the runtime
+   * cross-cuts navigation through {@link NavigationHandlers.onDisconnect}
+   * (mini-app disconnect) and {@link NavigationHandlers.isTripActive}
+   * (location-stream gating during a trip).
+   */
+  private readonly navigationHandlers = new NavigationHandlers(
+    (packageName, envelope) => this.sendToMiniapp(packageName, envelope),
+    (packageName, requestId, ok, result, error) => this.sendResult(packageName, requestId, ok, result, error),
+  )
+
+  /**
+   * Heading is a sensor stream — start the native compass when any mini
+   * app is subscribed to "heading_update", stop it when none are.
+   */
+  private headingUnsub: (() => void) | null = null
+  private recomputeHeadingSubscription(): void {
+    const wantsHeading = this.streamSubscribers.has(MiniappStreamType.HEADING_UPDATE)
+    if (wantsHeading && !this.headingUnsub) {
+      // Heading is host-supplied via runtime hooks; if the host hasn't wired
+      // it the subscription is a no-op and no events fire.
+      const heading = getRuntimeHooks().heading
+      if (heading) {
+        this.headingUnsub = heading.addListener((degrees: number) => {
+          this.forwardEvent(MiniappStreamType.HEADING_UPDATE, {degrees})
+        })
+      }
+    } else if (!wantsHeading && this.headingUnsub) {
+      this.headingUnsub()
+      this.headingUnsub = null
+    }
+  }
+
+  /**
+   * Last rate we asked the host for. Lets us skip the cross-process call
+   * when nothing actually changed (most SUBSCRIBE / unregister churn
+   * leaves the aggregate unchanged) and tracks state for the no-active-
+   * subscribers → tell host to back off case.
+   */
+  private lastAppliedLocationRate: LocationRate | null = null
+
+  /**
+   * Recompute the aggregate location tier across every connected
+   * miniapp and push the result to the host. The aggregate is the
+   * STRICTEST rate any single app has requested — see
+   * {@link LOCATION_RATE_PRIORITY} — because the GPS sample rate is a
+   * shared OS-level setting that we can't bias per-app.
+   *
+   * Called after every SUBSCRIBE and every unregister so that when a
+   * realtime-requesting app goes away the tier falls back down. If no
+   * connected app is asking for a location rate, we tell the host
+   * "off" so it can drop GPS power.
+   */
+  private recomputeLocationTier(): void {
+    let bestRank = -1
+    for (const app of this.connectedApps.values()) {
+      const r = app.requestedLocationRate
+      if (!r) continue
+      const rank = locationRateRank(r)
+      if (rank > bestRank) {
+        bestRank = rank
+      }
+    }
+    // When no app is asking, downgrade to "off". Without this we'd
+    // leak the last-known-strictest rate forever (the original bug).
+    const next: LocationRate = bestRank >= 0 ? LOCATION_RATE_PRIORITY[bestRank] : "off"
+    if (next === this.lastAppliedLocationRate) return
+    this.lastAppliedLocationRate = next
+    console.log(`[LOCATION] aggregate tier → ${next}`)
+    getRuntimeHooks().locationTier?.setLocationTier(next)
+  }
+
+
+  // ---------------------------------------------------------------------------
   // Storage helpers
   // ---------------------------------------------------------------------------
 
   private getStorageKeyPrefix(packageName: string): string {
-    const userId =
-      getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken) || "anonymous"
+    const userId = getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.coreToken) || "anonymous"
     return `mentraos_localstorage_${userId}_${packageName}_`
   }
 
@@ -1182,6 +1429,100 @@ class LocalMiniappRuntime {
     }
   }
 
+  private async handleStorageClear(packageName: string, requestId?: string): Promise<void> {
+    try {
+      const prefix = this.getStorageKeyPrefix(packageName)
+      const allKeys = mmkvStorage.getAllKeys()
+      for (const k of allKeys) {
+        if (k.startsWith(prefix)) mmkvStorage.remove(k)
+      }
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      console.error(`${LOG_TAG}: storage_clear error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Storage error",
+      })
+    }
+  }
+
+  private async handleStorageHas(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const key = payload.key as string
+      if (!key) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INTERNAL,
+          message: "storage_has requires a key",
+        })
+        return
+      }
+      const fullKey = this.getStorageKeyPrefix(packageName) + key
+      const result = mmkvStorage.load<unknown>(fullKey)
+      this.sendResult(packageName, requestId, true, {has: result.is_ok()})
+    } catch (err) {
+      console.error(`${LOG_TAG}: storage_has error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Storage error",
+      })
+    }
+  }
+
+  private async handleStorageGetAll(packageName: string, requestId?: string): Promise<void> {
+    try {
+      const prefix = this.getStorageKeyPrefix(packageName)
+      const allKeys = mmkvStorage.getAllKeys()
+      const values: Record<string, string> = {}
+      for (const k of allKeys) {
+        if (!k.startsWith(prefix)) continue
+        const r = mmkvStorage.load<unknown>(k)
+        if (r.is_ok()) {
+          const v = r.value
+          values[k.slice(prefix.length)] = typeof v === "string" ? v : String(v ?? "")
+        }
+      }
+      this.sendResult(packageName, requestId, true, {values})
+    } catch (err) {
+      console.error(`${LOG_TAG}: storage_get_all error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Storage error",
+      })
+    }
+  }
+
+  private async handleStorageSetMultiple(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const values = payload.values as Record<string, unknown> | undefined
+      if (!values || typeof values !== "object") {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INTERNAL,
+          message: "storage_set_multiple requires a values object",
+        })
+        return
+      }
+      const prefix = this.getStorageKeyPrefix(packageName)
+      for (const [key, value] of Object.entries(values)) {
+        mmkvStorage.save(prefix + key, value ?? null)
+      }
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      console.error(`${LOG_TAG}: storage_set_multiple error:`, err)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Storage error",
+      })
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Camera FOV
   // ---------------------------------------------------------------------------
@@ -1201,11 +1542,7 @@ class LocalMiniappRuntime {
       const roiStr = (payload.roiPosition as string) ?? "center"
       const numericRoi = ROI_MAP[roiStr] ?? 0
       console.log(`${LOG_TAG}: camera_fov_set fov=${fov} roi=${roiStr} (${numericRoi})`)
-      getRuntimeHooks().settings?.setSetting(
-        ISLAND_SETTINGS_KEYS.cameraFov,
-        {fov, roi_position: numericRoi},
-        false,
-      )
+      getRuntimeHooks().settings?.setSetting(ISLAND_SETTINGS_KEYS.cameraFov, {fov, roi_position: numericRoi}, false)
       this.sendResult(packageName, requestId, true)
     } catch (err) {
       console.error(`${LOG_TAG}: camera_fov error:`, err)
@@ -1338,7 +1675,7 @@ class LocalMiniappRuntime {
   }
 
   // ===========================================================================
-  // Phase 5: Photo + streaming handlers (cloud-coordinated)
+  // Photo + streaming handlers (cloud-coordinated)
   // ===========================================================================
 
   private async handlePhoto(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
@@ -1552,7 +1889,16 @@ class LocalMiniappRuntime {
     // Collect all subscribers: exact match, plus wildcard matches for streams
     // that carry a language tag. A miniapp subscribed to "transcription:auto"
     // should receive any "transcription:<lang>" event (the detected language
-    // is conveyed in the event data, not the stream key). Same for translation.
+    // is conveyed in the event data, not the stream key).
+    //
+    // Translation streams support cloud v3's wildcard patterns. Incoming
+    // events are keyed `translation:<source>:<target>` and we match against
+    // any of:
+    //   translation:*:*             — all-pairs (TranslationModule.on)
+    //   translation:*:<target>      — any-source → target (TranslationModule.to)
+    //   translation:<source>:*      — source → any-target (rare)
+    //   translation:<source>:<target> — exact (TranslationModule.fromTo)
+    //   translation:auto            — back-compat alias for *:*
     const matchedSubs = new Set<string>()
     const exact = this.streamSubscribers.get(normalizedStream)
     if (exact) for (const p of exact) matchedSubs.add(p)
@@ -1561,8 +1907,26 @@ class LocalMiniappRuntime {
       const autoSubs = this.streamSubscribers.get("transcription:auto")
       if (autoSubs) for (const p of autoSubs) matchedSubs.add(p)
     } else if (normalizedStream.startsWith("translation:")) {
-      const autoSubs = this.streamSubscribers.get("translation:auto")
-      if (autoSubs) for (const p of autoSubs) matchedSubs.add(p)
+      // translation:<source>:<target> — match each wildcard variant.
+      const parts = normalizedStream.split(":")
+      // parts[0] = "translation", parts[1] = source, parts[2] = target
+      if (parts.length === 3) {
+        const [, source, target] = parts
+        const patterns = [
+          "translation:auto", // legacy alias for *:*
+          "translation:*:*", // cloud v3 "all pairs"
+          `translation:*:${target}`, // cloud v3 "to <target>"
+          `translation:${source}:*`, // cloud v3 "from <source>"
+        ]
+        for (const pat of patterns) {
+          const subs = this.streamSubscribers.get(pat)
+          if (subs) for (const p of subs) matchedSubs.add(p)
+        }
+      } else {
+        // Malformed stream key — still honor the legacy auto alias.
+        const autoSubs = this.streamSubscribers.get("translation:auto")
+        if (autoSubs) for (const p of autoSubs) matchedSubs.add(p)
+      }
     }
 
     // Touch event per-gesture fan-out. SDK-side dispatch is keyed on the
@@ -1587,6 +1951,17 @@ class LocalMiniappRuntime {
     if (matchedSubs.size === 0 && !perGestureStream) return
 
     for (const packageName of matchedSubs) {
+      // While a nav trip is active the Nav SDK's road-snapped fixes are
+      // already being forwarded via addLocationListener (see NAV_START handler).
+      // Suppress the raw background-GPS forward for that miniapp so the two
+      // streams don't interleave and cause the position to jump back to the
+      // real-phone location during simulation.
+      if (
+        normalizedStream === MiniappStreamType.LOCATION_UPDATE &&
+        this.navigationHandlers.isTripActive(packageName)
+      ) {
+        continue
+      }
       this.sendToMiniapp(packageName, {
         type: MiniappResponseType.EVENT,
         streamType: normalizedStream,

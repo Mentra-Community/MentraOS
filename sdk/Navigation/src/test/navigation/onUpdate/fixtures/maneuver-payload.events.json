@@ -1,0 +1,12 @@
+{
+  "kind": "maneuver",
+  "maneuverType": "SHARP_RIGHT",
+  "distanceMeters": 12,
+  "fromRoad": "Fell St",
+  "nextStepRoad": "Divisadero St",
+  "distanceToDestinationMeters": 1240,
+  "timeToDestinationSeconds": 360,
+  "currentSpeedMps": 4.2,
+  "speedLimitMps": null,
+  "routeHeadingDeg": 87
+}

@@ -75,8 +75,11 @@ export default function FeedbackPage() {
   const appVersion = useGlassesStore((state) => state.appVersion)
   const serialNumber = useGlassesStore((state) => state.serialNumber)
   const androidVersion = useGlassesStore((state) => state.androidVersion)
-  const glassesWifiConnected = useGlassesStore((state) => state.wifiConnected)
-  const glassesWifiSsid = useGlassesStore((state) => state.wifiSsid)
+  const glassesWifi = useGlassesStore((state) => state.wifi)
+  const glassesWifiInfo =
+    glassesWifi.state === "connected"
+      ? {wifiConnected: true, wifiSsid: glassesWifi.ssid}
+      : {wifiConnected: false}
   const glassesBatteryLevel = useGlassesStore((state) => state.batteryLevel)
 
   const [userEmail, setUserEmail] = useState("")
@@ -263,8 +266,7 @@ export default function FeedbackPage() {
             fwVersion: glassesFwVersion || undefined,
             appVersion: appVersion || undefined,
             androidVersion: androidVersion || undefined,
-            wifiConnected: glassesWifiConnected,
-            ...(glassesWifiConnected && glassesWifiSsid && {wifiSsid: glassesWifiSsid}),
+            ...glassesWifiInfo,
             ...(glassesBatteryLevel >= 0 && {batteryLevel: glassesBatteryLevel}),
           },
         }),

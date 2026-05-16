@@ -27,6 +27,30 @@ class CrustModule extends NativeModule<CrustModuleEvents> {
   async isBetaBuild() {
     return false
   }
+  async mentraJsSpawn(_pkg: string, _polyfill: string, _miniappJs: string) {
+    return false
+  }
+  async mentraJsEvaluate(_pkg: string, _src: string) {
+    return null
+  }
+  async mentraJsKill(_pkg: string) {
+    return
+  }
+  async mentraJsDispatchToJs(_pkg: string, _env: Record<string, unknown>) {
+    return
+  }
+  async mentraJsSetManifest(_pkg: string, _perms: string[]) {
+    return
+  }
+  mentraJsAlivePackages() {
+    return []
+  }
+  async mentraJsDebugForceGC(_pkg: string) {
+    return false
+  }
+  mentraJsLoadPolyfillBundle() {
+    return ""
+  }
 }
 
 export default registerWebModule(CrustModule, "CrustModule")

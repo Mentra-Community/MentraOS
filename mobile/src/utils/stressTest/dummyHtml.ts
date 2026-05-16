@@ -1,3 +1,6 @@
+// Test/benchmark infrastructure. Used only by the (Super-Mode-gated)
+// stress-test screen to mount synthetic WebViews of a controlled size.
+
 /**
  * Generates an HTML doc for a "dummy" miniapp WebView. Allocates `mb` MB of
  * JS heap on load by holding onto a Uint8Array, plus a periodic timer that

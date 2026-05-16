@@ -8,7 +8,6 @@ import {
   DOWNLOAD_STUCK_TIMEOUT_MS,
   GLOBAL_OTA_TIMEOUT_MS,
   MAX_RETRIES,
-  MINIMUM_OTA_STATUS_BUILD,
   MTK_INSTALL_TIMEOUT_MS,
   OtaProgressMessages,
   PING_INTERVAL_MS,
@@ -76,7 +75,6 @@ export default function OtaProgressScreen() {
   const {theme} = useAppTheme()
   const {replace, push} = useNavigationStore.getState()
   const connected = useGlassesStore((s) => s.connected)
-  const currentBuildNumber = useGlassesStore((s) => s.buildNumber)
   const otaStatus = useGlassesStore((s) => s.otaStatus)
   const otaProgress = useGlassesStore((s) => s.otaProgress)
 
@@ -174,13 +172,6 @@ export default function OtaProgressScreen() {
     }
     return () => clearConfig()
   }, [isFirmwareCompleting, setConfig, clearConfig])
-
-  const buildNum = parseInt(currentBuildNumber || "0", 10)
-  useEffect(() => {
-    if (buildNum > 0 && buildNum < MINIMUM_OTA_STATUS_BUILD) {
-      replace("/ota/progress-legacy")
-    }
-  }, [buildNum, replace])
 
   // --- Timer cleanup helpers ---
 
@@ -600,6 +591,17 @@ export default function OtaProgressScreen() {
     }
   }, [displayState, clearPerStepTimers])
 
+  // Clear the cache-ready install hint when this session reaches any terminal UI state.
+  // Catches paths the MantleManager ota_status listener misses — notably BES success
+  // (which terminates as `step_complete`, not `complete`) and APK build-number fallback
+  // completions (which never produce a `complete` ota_status). Without this, a stale
+  // otaUpdateAvailable would survive into /home and trip the cache-ready popup.
+  useEffect(() => {
+    if (displayState === "complete" || displayState === "restarting" || displayState === "failed") {
+      useGlassesStore.getState().setOtaUpdateAvailable(null)
+    }
+  }, [displayState])
+
   useEffect(() => {
     return () => {
       clearAllOtaTimers()
@@ -607,6 +609,7 @@ export default function OtaProgressScreen() {
   }, [clearAllOtaTimers])
 
   const handleContinue = () => {
+    useGlassesStore.getState().setOtaUpdateAvailable(null)
     replace("/ota/check-for-updates")
   }
 
@@ -627,6 +630,7 @@ export default function OtaProgressScreen() {
   }
 
   const handleDone = () => {
+    useGlassesStore.getState().setOtaUpdateAvailable(null)
     replace("/ota/check-for-updates")
   }
 

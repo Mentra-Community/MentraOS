@@ -18,7 +18,13 @@ import {
   CameraFovSetRequest,
   CameraRoiPosition,
 } from "../../../types";
-import { VideoConfig, AudioConfig, StreamConfig, StreamStatusHandler } from "../../../types/rtmp-stream";
+import {
+  VideoConfig,
+  AudioConfig,
+  StreamConfig,
+  StreamStatusHandler,
+  validateVideoConfig,
+} from "../../../types/rtmp-stream";
 import { StreamType } from "../../../types/streams";
 import { Logger } from "pino";
 import { CameraManagedExtension, ManagedStreamOptions, ManagedStreamResult } from "./camera-managed-extension";
@@ -368,6 +374,8 @@ export class CameraModule {
     this.logger.info({ streamUrl: options.streamUrl }, `📹 Stream request starting`);
 
     cameraWarnLog(this.session.getHttpsServerUrl?.(), this.packageName, "startLocalLivestream");
+
+    validateVideoConfig(options.video);
 
     if (!options.streamUrl) {
       throw new Error("streamUrl is required");

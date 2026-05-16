@@ -72,13 +72,6 @@ export interface ClientApp extends AppletInterface {
   loading: boolean;
   local: boolean;
   hidden: boolean;
-  /**
-   * True when this miniapp is the on-screen active one. Only one local
-   * miniapp may have foreground=true at a time. Set by setForeground();
-   * reset by clearForeground() (e.g. swipe-to-back) or when another app
-   * is foregrounded.
-   */
-  foreground?: boolean;
   onStart?: () => void;
   onStop?: () => void;
   screenshot?: string;

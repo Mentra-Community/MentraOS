@@ -15,7 +15,7 @@ import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/typ
 
 export default function MiniappDeveloperScannerScreen() {
   const {theme} = useAppTheme()
-  const {goBack, replace, push, clearHistoryAndGoHome} = useNavigationStore.getState()
+  const {goBack, push, clearHistoryAndGoHome} = useNavigationStore.getState()
   const [permission, requestPermission] = useCameraPermissions()
   const [scanned, setScanned] = useState(false)
 
@@ -150,6 +150,7 @@ export default function MiniappDeveloperScannerScreen() {
         appName: name,
         iconUrl,
         ...(devPort ? {devPort} : {}),
+        ...(manifest ? {manifestJson: JSON.stringify(manifest)} : {}),
       })
     } catch (error) {
       showAlert("Error", String(error), [{text: "OK", onPress: () => setScanned(false)}])
@@ -181,10 +182,7 @@ export default function MiniappDeveloperScannerScreen() {
         />
         <View className="flex-1 justify-center px-6">
           <View className="rounded-xl bg-white dark:bg-zinc-900 p-6 items-center gap-3">
-            <Text
-              className="text-lg font-semibold text-center"
-              tx="devSettings:miniappScanPermissionTitle"
-            />
+            <Text className="text-lg font-semibold text-center" tx="devSettings:miniappScanPermissionTitle" />
             <Text
               className="text-[13px] text-muted-foreground text-center mb-2 leading-[18px]"
               tx="devSettings:miniappScanPermissionBody"
@@ -217,10 +215,7 @@ export default function MiniappDeveloperScannerScreen() {
 
       <View className="px-4 pt-2 pb-4 gap-2">
         <Text className="text-base font-semibold" tx="devSettings:miniappScanHeadline" />
-        <Text
-          className="text-[13px] leading-[18px] text-muted-foreground"
-          tx="devSettings:miniappScanBody"
-        />
+        <Text className="text-[13px] leading-[18px] text-muted-foreground" tx="devSettings:miniappScanBody" />
       </View>
 
       <View className="flex-1 mx-4 mt-4 mb-12 rounded-xl max-h-[420px] overflow-hidden bg-white">
@@ -235,10 +230,7 @@ export default function MiniappDeveloperScannerScreen() {
         </View>
 
         <View className="absolute left-0 right-0 bottom-6 items-center" pointerEvents="none">
-          <Text
-            className="text-[13px] px-3 py-1.5 rounded-full overflow-hidden"
-            tx="devSettings:miniappScanHint"
-          />
+          <Text className="text-[13px] px-3 py-1.5 rounded-full overflow-hidden" tx="devSettings:miniappScanHint" />
         </View>
       </View>
     </Screen>

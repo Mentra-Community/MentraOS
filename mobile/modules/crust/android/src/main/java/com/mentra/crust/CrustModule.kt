@@ -6,6 +6,12 @@ import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.net.URL
 
+import com.mentra.crust.navigation.NavigationManager
+import com.mentra.crust.heading.HeadingManager
+import com.mentra.crust.jsc.JSCRuntime
+import com.mentra.crust.jsc.InstalledMiniappManifest
+import com.mentra.crust.jsc.JSCPolyfillBridge
+
 class CrustModule : Module() {
   companion object {
     private const val TAG = "CrustModule"
@@ -68,15 +74,42 @@ class CrustModule : Module() {
     Constant("PI") { Math.PI }
 
     Events(
-            "onChange",
-            "phone_notification",
-            "phone_notification_dismissed",
-            "captions_tester_incident"
+      "onChange",
+      "phone_notification",
+      "phone_notification_dismissed",
+      "captions_tester_incident",
+      "onNavManeuver",
+      "onNavRerouting",
+      "onNavArrived",
+      "onNavError",
+      "onNavLocation",
+      "onNavRoute",
+      "onNavOffRoute",
+      "onHeading",
+      // MentraJS — per-miniapp JSContext outbound message bus.
+      // MentraJSRouter subscribes via Crust.addListener.
+      "mentrajs_message",
     )
 
-    OnCreate { eventEmitter = { eventName, data -> sendEvent(eventName, data) } }
+    OnCreate {
+      eventEmitter = { eventName, data -> sendEvent(eventName, data) }
+      val ctx =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+      if (ctx != null) {
+        val runtime = JSCRuntime.shared(ctx)
+        runtime.onOutbound = { msg ->
+          sendEvent("mentrajs_message", msg.payload)
+        }
+        JSCPolyfillBridge.install(runtime)
+      } else {
+        Log.w(TAG, "MentraJS: no context yet — runtime install deferred")
+      }
+    }
 
-    Function("hello") { "Hello world! 👋" }
+    Function("hello") {
+      "Hello world! 👋"
+    }
 
     AsyncFunction("setValueAsync") { value: String ->
       sendEvent("onChange", mapOf("value" to value))
@@ -127,6 +160,84 @@ class CrustModule : Module() {
                               ?: throw IllegalStateException("No context available")
       NotificationListener.getInstance(context).openNotificationListenerSettings()
       true
+    }
+
+    // MARK: - MentraJS Runtime
+
+    AsyncFunction("mentraJsSpawn") { packageName: String, polyfillBundle: String, miniappJs: String ->
+      val ctx =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+                              ?: throw IllegalStateException("MentraJS: no context")
+      JSCRuntime.shared(ctx).spawn(
+          packageName = packageName,
+          polyfillBundleOverride = polyfillBundle.takeIf { it.isNotEmpty() },
+          miniappJs = miniappJs,
+      )
+    }
+
+    AsyncFunction("mentraJsEvaluate") { packageName: String, source: String ->
+      val ctx =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+                              ?: throw IllegalStateException("MentraJS: no context")
+      JSCRuntime.shared(ctx).evaluate(packageName, source)
+    }
+
+    AsyncFunction("mentraJsKill") { packageName: String ->
+      val ctx =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+                              ?: throw IllegalStateException("MentraJS: no context")
+      JSCRuntime.shared(ctx).kill(packageName)
+    }
+
+    AsyncFunction("mentraJsDispatchToJs") { packageName: String, envelope: Map<String, Any?> ->
+      val ctx =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+                              ?: throw IllegalStateException("MentraJS: no context")
+      val json = org.json.JSONObject(envelope as Map<*, *>).toString()
+      JSCRuntime.shared(ctx).dispatchToJs(packageName, json)
+    }
+
+    AsyncFunction("mentraJsSetManifest") { packageName: String, permissions: List<String> ->
+      val ctx =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+                              ?: throw IllegalStateException("MentraJS: no context")
+      JSCRuntime.shared(ctx).dispatcher.setManifest(
+          packageName,
+          InstalledMiniappManifest(permissions.toSet()),
+      )
+    }
+
+    Function("mentraJsAlivePackages") {
+      val ctx =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+      if (ctx == null) {
+        return@Function emptyList<String>()
+      }
+      JSCRuntime.shared(ctx).alivePackages()
+    }
+
+    AsyncFunction("mentraJsDebugForceGC") { packageName: String ->
+      val ctx =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+                              ?: return@AsyncFunction false
+      JSCRuntime.shared(ctx).debugForceGC(packageName)
+    }
+
+    Function("mentraJsLoadPolyfillBundle") {
+      val ctx =
+              appContext.reactContext
+                      ?: appContext.currentActivity
+      if (ctx == null) {
+        return@Function ""
+      }
+      JSCRuntime.shared(ctx).loadPolyfillBundle()
     }
 
     // MARK: - Build Environment
@@ -479,6 +590,227 @@ class CrustModule : Module() {
         android.util.Log.e("CrustModule", "Error saving to gallery: ${e.message}", e)
         mapOf("success" to false, "error" to e.message)
       }
+    }
+
+    // MARK: - Navigation Commands (Google Navigation SDK)
+
+    AsyncFunction("startNavigation") { lat: Double, lng: Double, options: Map<String, Any?>? ->
+      val activity = appContext.currentActivity
+        ?: return@AsyncFunction mapOf("ok" to false, "error" to "no current activity (app backgrounded?)")
+      val simulate = (options?.get("simulate") as? Boolean) ?: false
+      val speed = (options?.get("speedMultiplier") as? Number)?.toFloat() ?: 5f
+      val mode = (options?.get("mode") as? String) ?: "driving"
+
+      // Prefer the v2 `stops` array when present. Fall back to lat/lng for
+      // older callers that haven't been upgraded yet.
+      val rawStops = options?.get("stops") as? List<*>
+      val stops: List<Pair<Double, Double>> = if (rawStops != null && rawStops.isNotEmpty()) {
+        rawStops.mapNotNull { item ->
+          val map = item as? Map<*, *> ?: return@mapNotNull null
+          val sLat = (map["lat"] as? Number)?.toDouble() ?: return@mapNotNull null
+          val sLng = (map["lng"] as? Number)?.toDouble() ?: return@mapNotNull null
+          sLat to sLng
+        }
+      } else {
+        listOf(lat to lng)
+      }
+      if (stops.isEmpty()) {
+        return@AsyncFunction mapOf("ok" to false, "error" to "no valid stops")
+      }
+
+      val avoidMap = options?.get("avoid") as? Map<*, *>
+      val avoidHighways = (avoidMap?.get("highways") as? Boolean) ?: false
+      val avoidTolls = (avoidMap?.get("tolls") as? Boolean) ?: false
+      val avoidFerries = (avoidMap?.get("ferries") as? Boolean) ?: false
+
+      val callbacks = object : NavigationManager.Callbacks {
+        override fun onManeuver(payload: NavigationManager.ManeuverPayload) {
+          sendEvent(
+            "onNavManeuver",
+            mapOf(
+              "maneuverType" to payload.maneuverType,
+              "distanceMeters" to payload.distanceMeters,
+              "fromRoad" to payload.fromRoad,
+              "toRoad" to payload.toRoad,
+              "nextStepRoad" to payload.nextStepRoad,
+              "distanceToDestinationMeters" to payload.distanceToDestinationMeters,
+              "timeToDestinationSeconds" to payload.timeToDestinationSeconds,
+              "currentSpeedMps" to payload.currentSpeedMps,
+              "speedLimitMps" to payload.speedLimitMps,
+              "routeHeadingDeg" to payload.routeHeadingDeg,
+            ),
+          )
+        }
+        override fun onRerouting() {
+          sendEvent("onNavRerouting", emptyMap<String, Any?>())
+        }
+        override fun onArrived() {
+          sendEvent("onNavArrived", emptyMap<String, Any?>())
+        }
+        override fun onError(message: String) {
+          sendEvent("onNavError", mapOf("message" to message))
+        }
+        override fun onLocation(payload: NavigationManager.LocationPayload) {
+          sendEvent(
+            "onNavLocation",
+            mapOf(
+              "lat" to payload.lat,
+              "lng" to payload.lng,
+              "accuracy" to payload.accuracy,
+              "timestamp" to payload.timestamp,
+            ),
+          )
+        }
+        override fun onRoute(
+          points: List<NavigationManager.RoutePoint>,
+          steps: List<NavigationManager.RouteStep>?,
+        ) {
+          val payload = HashMap<String, Any?>()
+          payload["points"] = points.map { mapOf("lat" to it.lat, "lng" to it.lng) }
+          if (steps != null) {
+            payload["steps"] = steps.map {
+              mapOf(
+                "lat" to it.lat,
+                "lng" to it.lng,
+                "routeIndex" to it.routeIndex,
+                "road" to it.road,
+                "maneuver" to it.maneuver,
+                "distanceMeters" to it.distanceMeters,
+              )
+            }
+          }
+          sendEvent("onNavRoute", payload)
+        }
+        override fun onOffRoute(perpendicularDistanceMeters: Double) {
+          sendEvent(
+            "onNavOffRoute",
+            mapOf("offRouteDistanceMeters" to perpendicularDistanceMeters),
+          )
+        }
+      }
+
+      activity.runOnUiThread {
+        // 1) Verify ACCESS_FINE_LOCATION is granted to this process. The
+        //    Google Nav SDK rejects getNavigator() with LOCATION_PERMISSION_MISSING
+        //    even if location was granted in another module's context — it
+        //    requires PackageManager.PERMISSION_GRANTED at call-time.
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+          activity,
+          android.Manifest.permission.ACCESS_FINE_LOCATION,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        if (!granted) {
+          // Request and abort this attempt. User taps Start again after granting.
+          androidx.core.app.ActivityCompat.requestPermissions(
+            activity,
+            arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION),
+            9001,
+          )
+          sendEvent(
+            "onNavError",
+            mapOf("message" to "ACCESS_FINE_LOCATION not granted — accept the prompt and tap Start again"),
+          )
+          return@runOnUiThread
+        }
+
+        // 2) NavigationManager owns the T&C flow — it shows the dialog
+        //    only on the very first run (persisted), and passes
+        //    `SKIPPED` to `getNavigator` afterward to suppress the
+        //    "Welcome to Google Maps" toast.
+        NavigationManager.start(
+          activity,
+          NavigationManager.StartOptions(
+            stops = stops,
+            mode = mode,
+            avoidHighways = avoidHighways,
+            avoidTolls = avoidTolls,
+            avoidFerries = avoidFerries,
+            simulate = simulate,
+            speedMultiplier = speed,
+          ),
+          callbacks,
+        )
+      }
+      mapOf("ok" to true)
+    }
+
+    // Eager T&C dialog. Lets a miniapp surface the Google Nav SDK terms
+    // dialog at mount time so the actual startNavigation() call later is
+    // friction-free. Idempotent — resolves immediately when the user has
+    // already accepted (in-process flag, on-disk pref, or SDK state).
+    AsyncFunction("requestNavigationPermission") { promise: expo.modules.kotlin.Promise ->
+      val activity = appContext.currentActivity
+      if (activity == null) {
+        promise.resolve(mapOf("ok" to false, "accepted" to false, "error" to "no current activity"))
+        return@AsyncFunction
+      }
+      activity.runOnUiThread {
+        NavigationManager.ensureTermsAccepted(activity) { accepted ->
+          promise.resolve(mapOf("ok" to true, "accepted" to accepted))
+        }
+      }
+    }
+
+    AsyncFunction("stopNavigation") {
+      try {
+        NavigationManager.stop()
+        mapOf("ok" to true)
+      } catch (e: Exception) {
+        android.util.Log.e("CrustModule", "stopNavigation failed", e)
+        mapOf("ok" to false, "error" to (e.message ?: "stop failed"))
+      }
+    }
+
+    // Dev-only: nudge the simulated position ~offsetMeters off-route to
+    // exercise the Nav SDK's onRerouting() pipeline without having to
+    // physically walk off the planned path. No-op on real GPS fixes.
+    AsyncFunction("simulateDeviation") { offsetMeters: Double? ->
+      try {
+        NavigationManager.simulateDeviation(offsetMeters ?: 20.0)
+        mapOf("ok" to true)
+      } catch (e: Exception) {
+        android.util.Log.e("CrustModule", "simulateDeviation failed", e)
+        mapOf("ok" to false, "error" to (e.message ?: "deviate failed"))
+      }
+    }
+
+    AsyncFunction("setWrongSidewalkOffset") { enabled: Boolean ->
+      try {
+        NavigationManager.setWrongSidewalkOffset(enabled)
+        mapOf("ok" to true)
+      } catch (e: Exception) {
+        android.util.Log.e("CrustModule", "setWrongSidewalkOffset failed", e)
+        mapOf("ok" to false, "error" to (e.message ?: "setWrongSidewalkOffset failed"))
+      }
+    }
+
+    AsyncFunction("setSkipCrossings") { enabled: Boolean ->
+      try {
+        NavigationManager.setSkipCrossings(enabled)
+        mapOf("ok" to true)
+      } catch (e: Exception) {
+        android.util.Log.e("CrustModule", "setSkipCrossings failed", e)
+        mapOf("ok" to false, "error" to (e.message ?: "setSkipCrossings failed"))
+      }
+    }
+
+    // MARK: - Heading (compass) — Android only
+
+    AsyncFunction("startHeading") {
+      val ctx = appContext.reactContext
+        ?: appContext.currentActivity
+        ?: return@AsyncFunction mapOf("ok" to false, "error" to "no context")
+      HeadingManager.start(ctx, object : HeadingManager.Callback {
+        override fun onHeading(degrees: Float) {
+          sendEvent("onHeading", mapOf("degrees" to degrees.toDouble()))
+        }
+      })
+      mapOf("ok" to true)
+    }
+
+    AsyncFunction("stopHeading") {
+      HeadingManager.stop()
+      mapOf("ok" to true)
     }
   }
 }

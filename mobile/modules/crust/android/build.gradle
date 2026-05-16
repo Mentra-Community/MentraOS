@@ -9,6 +9,36 @@ applyKotlinExpoModulesCorePlugin()
 useCoreDependencies()
 useExpoPublishing()
 
+// Zipline + kotlinx.serialization plugins. The Zipline plugin processes
+// any interface annotated `@ZiplineService` and generates a Kotlin Serializer
+// adapter so JS can call into it through QuickJS. The serialization plugin
+// is its prerequisite — it provides the @Serializable code generator that
+// Zipline's adapter relies on.
+//
+// Version pin: the active Kotlin compiler in this Expo SDK 55 build is
+// 2.1.20, which reads metadata up to 2.2.0. Newer Zipline releases (1.22+)
+// ship JARs with metadata 2.3.0 and their compiler plugins call IR APIs
+// that don't exist in 2.1.20. Zipline 1.20.0 is the last release whose
+// runtime metadata (1.9.x) and IR-plugin API are both compatible. Bump
+// only when the host Kotlin compiler clears 2.3.0 metadata.
+buildscript {
+  repositories {
+    google()
+    mavenCentral()
+    gradlePluginPortal()
+  }
+  dependencies {
+    classpath 'app.cash.zipline:zipline-gradle-plugin:1.20.0'
+    // kotlinx.serialization compiler plugin — ships as a separate classpath
+    // artifact from the core Kotlin gradle plugin. Pinned to match the
+    // active Kotlin compiler so its IR-plugin API calls resolve.
+    classpath 'org.jetbrains.kotlin:kotlin-serialization:2.1.20'
+  }
+}
+
+apply plugin: 'org.jetbrains.kotlin.plugin.serialization'
+apply plugin: 'app.cash.zipline'
+
 // If you want to use the managed Android SDK versions from expo-modules-core, set this to true.
 // The Android SDK versions will be bumped from time to time in SDK releases and may introduce breaking changes in your module code.
 // Most of the time, you may like to manage the Android SDK versions yourself.
@@ -36,6 +66,26 @@ android {
   defaultConfig {
     versionCode 1
     versionName "0.1.0"
+    multiDexEnabled true
+  }
+  // Pull the MentraJS polyfill bundle from the sibling @mentra/mentrajs-runtime
+  // module's `assets/` directory — single committed source of truth. The
+  // file is read at runtime via `appContext.assets.open("startup.js")`.
+  // Cross-module sourceSet entry beats checking the same artifact into git
+  // multiple times.
+  sourceSets {
+    main {
+      assets.srcDirs += '../../mentrajs-runtime/assets'
+    }
+  }
+  compileOptions {
+    coreLibraryDesugaringEnabled true
+  }
+  buildTypes {
+    internal {
+      initWith release
+      matchingFallbacks = ['release']
+    }
   }
   buildTypes {
     internal {
@@ -49,6 +99,39 @@ android {
 }
 
 dependencies {
+  // Google Navigation SDK for Android.
+  // Used by NavigationManager.kt to drive headless turn-by-turn nav.
+  implementation 'com.google.android.libraries.navigation:navigation:6.0.0'
+
+  // Required by Google Nav SDK (Java 8+ APIs on minSdk < 26).
+  coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
+}
+
+dependencies {
   implementation 'com.google.android.gms:play-services-location:21.0.1'
   implementation 'com.google.android.gms:play-services-base:18.2.0'
+}
+
+dependencies {
+  // MentraJS — QuickJS (via Cash App's Zipline) for per-miniapp JS contexts.
+  // The Zipline runtime exposes Kotlin objects to QuickJS through generated
+  // @ZiplineService adapters; the matching Gradle plugin above produces those
+  // adapters at compile time.
+  implementation 'app.cash.zipline:zipline-android:1.20.0'
+  // kotlinx.serialization runtime (Zipline's adapter generator marshals
+  // bridge method args + return values as JSON across the QuickJS boundary).
+  implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3'
+
+  // OkHttp for fetch / WebSocket — already used elsewhere in MentraOS;
+  // pinned here so the gradle plugin doesn't downgrade us.
+  implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+  // Tink for X25519 (Android stdlib X25519 is API 33+ only; minSdk is 24).
+  // ~1.2 MB AAR. Crypto.subtle's SHA / AES-GCM / HMAC stay on javax.crypto
+  // which ships on the platform.
+  implementation 'com.google.crypto.tink:tink-android:1.14.1'
+
+  // Kotlin coroutines for the Zipline bridge + suspending polyfill shims.
+  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1'
+  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
 }

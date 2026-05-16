@@ -1,6 +1,0 @@
-# editors
-*.swp
-*~
-
-# build
-/build*/

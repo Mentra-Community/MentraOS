@@ -61,8 +61,6 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     func sendButtonPhotoSettings() {}
 
-    func sendButtonModeSetting() {}
-
     func sendButtonVideoRecordingSettings() {}
 
     func sendButtonMaxRecordingTime() {}

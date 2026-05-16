@@ -2,7 +2,24 @@ import {execSync} from "child_process"
 import fs from "fs"
 import path from "path"
 
-import {type ConfigPlugin, withDangerousMod} from "expo/config-plugins"
+import {type ConfigPlugin, withDangerousMod, withPodfile} from "expo/config-plugins"
+
+const BLUETOOTH_SDK_EXPO_ADAPTER_ENV = "MENTRA_BLUETOOTH_SDK_INCLUDE_EXPO_ADAPTER"
+const BLUETOOTH_SDK_EXPO_ADAPTER_LINE = `ENV['${BLUETOOTH_SDK_EXPO_ADAPTER_ENV}'] ||= '1'`
+
+const ensureBluetoothSdkExpoAdapterPodEnv = (podfile: string): string => {
+  if (podfile.includes(BLUETOOTH_SDK_EXPO_ADAPTER_ENV)) {
+    return podfile
+  }
+
+  const insertion = [
+    "  # Expo apps need the SDK's Expo module adapter so autolinking can register CoreModule.",
+    `  ${BLUETOOTH_SDK_EXPO_ADAPTER_LINE}`,
+    "",
+  ].join("\n")
+
+  return podfile.replace(/(target\s+['"][^'"]+['"]\s+do\n)/, `$1${insertion}`)
+}
 
 const withXcodeEnvLocal: ConfigPlugin = (config) => {
   return withDangerousMod(config, [
@@ -38,6 +55,11 @@ const withXcodeEnvLocal: ConfigPlugin = (config) => {
 }
 
 export const withIosConfiguration: ConfigPlugin<{node?: boolean}> = (config, props) => {
+  config = withPodfile(config, (config) => {
+    config.modResults.contents = ensureBluetoothSdkExpoAdapterPodEnv(config.modResults.contents)
+    return config
+  })
+
   if (props?.node) {
     config = withXcodeEnvLocal(config)
   }

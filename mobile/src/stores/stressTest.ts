@@ -1,3 +1,7 @@
+// Test/benchmark infrastructure. Gated behind Super Mode (the stress-test
+// screen is the only writer in normal flow). Empty store with zero impact
+// on production code paths until a stress test is run.
+
 import {create} from "zustand"
 
 export interface JetsamEvent {

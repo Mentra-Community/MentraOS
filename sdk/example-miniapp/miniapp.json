@@ -5,6 +5,13 @@
   "name": "Live Captions",
   "description": "Live transcription displayed on glasses in real time. Demonstrates @mentra/miniapp SDK: transcription events, text wall display, TTS, and button events.",
   "icon": "icon.png",
+  "type": "standard",
+  "sdkVersion": "0.2.0",
+  "minHostVersion": "1.42.0",
+  "entry": {
+    "background": "dist/background/index.js",
+    "ui": "dist/ui/index.html"
+  },
   "permissions": [
     {"type": "MICROPHONE", "description": "Used for live transcription"},
     {"type": "LOCATION", "description": "Exercised by the SDK Tester page"},

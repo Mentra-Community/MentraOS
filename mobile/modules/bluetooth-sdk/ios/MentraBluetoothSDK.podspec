@@ -1,6 +1,7 @@
 require 'json'
 
 package = JSON.parse(File.read(File.join(__dir__, '..', 'package.json')))
+include_expo_adapter = ENV['MENTRA_BLUETOOTH_SDK_INCLUDE_EXPO_ADAPTER'] == '1'
 
 Pod::Spec.new do |s|
   s.name           = 'MentraBluetoothSDK'
@@ -21,7 +22,7 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   # External dependencies required by Bluetooth SDK native code
-  s.dependency 'ExpoModulesCore'
+  s.dependency 'ExpoModulesCore' if include_expo_adapter
   s.dependency 'SWCompression', '~> 4.8.0'
   s.dependency 'SwiftProtobuf', '~> 1.0'
   s.dependency 'onnxruntime-objc', '1.18.0'
@@ -56,9 +57,9 @@ Pod::Spec.new do |s|
     "Packages/SherpaOnnx/SherpaOnnx.swift",
     "Packages/SherpaOnnx/sherpa-onnx.xcframework/Headers/**/*.{h,hpp}",
     "Packages/VAD/**/*.swift",
-    "Packages/libbz2/shim.h",
-    "BluetoothSdkModule.swift"
+    "Packages/libbz2/shim.h"
   ]
+  native_source_files << "BluetoothSdkModule.swift" if include_expo_adapter
   s.source_files = native_source_files
 
   # Explicitly mark C++ headers and internal headers as private to prevent exposure in public interface

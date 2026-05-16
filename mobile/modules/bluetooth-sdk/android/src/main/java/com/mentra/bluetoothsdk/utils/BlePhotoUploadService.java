@@ -5,6 +5,8 @@ import android.graphics.BitmapFactory;
 import android.os.Build;
 import android.util.Log;
 
+import androidx.annotation.Nullable;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
@@ -32,11 +34,11 @@ public class BlePhotoUploadService {
      * @param imageData Raw image data (AVIF or JPEG)
      * @param requestId Original request ID for tracking
      * @param webhookUrl Destination webhook URL
-     * @param authToken Authentication token for upload
+     * @param authToken Optional authentication token for upload
      * @param callback Callback for success/error
      */
     public static void processAndUploadPhoto(byte[] imageData, String requestId,
-                                            String webhookUrl, String authToken,
+                                            String webhookUrl, @Nullable String authToken,
                                             UploadCallback callback) {
         new Thread(() -> {
             try {
@@ -113,11 +115,11 @@ public class BlePhotoUploadService {
      * @param jpegData JPEG image bytes
      * @param requestId Request ID for tracking
      * @param webhookUrl Destination URL
-     * @param authToken Bearer token for auth
+     * @param authToken Optional bearer token for auth
      * @throws IOException If upload fails
      */
     private static void uploadToWebhook(byte[] jpegData, String requestId,
-                                       String webhookUrl, String authToken) throws IOException {
+                                       String webhookUrl, @Nullable String authToken) throws IOException {
         OkHttpClient client = new OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
@@ -161,7 +163,7 @@ public class BlePhotoUploadService {
      * Expects already-decoded JPEG data instead of AVIF
      */
     public static void uploadJpegPhoto(byte[] jpegData, String requestId,
-                                      String webhookUrl, String authToken,
+                                      String webhookUrl, @Nullable String authToken,
                                       UploadCallback callback) {
         new Thread(() -> {
             try {

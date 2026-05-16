@@ -30,7 +30,7 @@
 
 import {EventEmitter} from "eventemitter3"
 
-import {MiniappRequestType} from "../protocol"
+import {MiniappRequestType, MiniappStreamType} from "../protocol"
 import {MiniappSession} from "../session"
 
 export type UnsubscribeFn = () => void
@@ -71,6 +71,11 @@ export interface LocationData {
   timestamp?: number
   /** Set when this event is a response to a single-location request. */
   correlationId?: string
+}
+
+export interface HeadingData {
+  /** Compass heading in degrees, 0 = north, 90 = east. */
+  degrees: number
 }
 
 export interface BatteryData {
@@ -154,16 +159,26 @@ export class EventManager {
    * suffix like `"transcription:en-US"`. Forward-compat escape hatch for new
    * event types not yet wrapped on a domain module. Most authors should use
    * typed methods on domain modules instead.
+   *
+   * Stream names beginning with `_` (e.g. `_ui` for the session.ui bus) are
+   * INTERNAL — they ride the local _forwardEvent fan-out and never appear in
+   * the outbound SUBSCRIBE list. Native already knows to deliver UI envelopes
+   * via a separate envelope `type`; the EventManager only routes them
+   * locally.
    */
   subscribe(stream: string, handler: (data: unknown) => void): UnsubscribeFn {
     this.emitter.on(stream, handler)
-    const before = this.refCounts.get(stream) ?? 0
-    this.refCounts.set(stream, before + 1)
-    if (before === 0) {
-      this.sendSubscriptionUpdate()
+    const isInternal = stream.startsWith("_")
+    if (!isInternal) {
+      const before = this.refCounts.get(stream) ?? 0
+      this.refCounts.set(stream, before + 1)
+      if (before === 0) {
+        this.sendSubscriptionUpdate()
+      }
     }
     return () => {
       this.emitter.off(stream, handler)
+      if (isInternal) return
       const current = this.refCounts.get(stream) ?? 0
       if (current <= 1) {
         this.refCounts.delete(stream)
@@ -200,9 +215,12 @@ export class EventManager {
   }
 
   private sendSubscriptionUpdate(): void {
+    const subscriptions = Array.from(this.refCounts.keys()).map((stream) =>
+      stream === MiniappStreamType.LOCATION_UPDATE ? {stream: "location_stream", rate: "realtime"} : stream,
+    )
     this.session.sendOneShot({
       type: MiniappRequestType.SUBSCRIBE,
-      subscriptions: Array.from(this.refCounts.keys()),
+      subscriptions,
     })
   }
 }

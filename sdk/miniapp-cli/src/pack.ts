@@ -51,6 +51,31 @@ export async function pack(opts: PackOptions = {}): Promise<string> {
     process.exit(1);
   }
 
+  // Enforce two-layer bundle contract when manifest.entry is set.
+  // `entry.background` (required for two-layer) must resolve to a file under
+  // dist/. `entry.ui` (optional, for UI-bearing miniapps) likewise. Legacy
+  // single-bundle manifests without an `entry` object skip this check —
+  // pack still zips dist/ verbatim.
+  const entry = manifest.entry as {background?: string; ui?: string} | undefined;
+  if (entry) {
+    const checkRelative = (label: string, rel: string | undefined, required: boolean) => {
+      if (!rel) {
+        if (required) {
+          console.error(`Error: manifest.entry.${label} is required for two-layer bundles`);
+          process.exit(1);
+        }
+        return;
+      }
+      const abs = resolve(cwd, rel);
+      if (!existsSync(abs)) {
+        console.error(`Error: manifest.entry.${label} points at "${rel}" but that file does not exist`);
+        process.exit(1);
+      }
+    };
+    checkRelative('background', entry.background, true);
+    checkRelative('ui', entry.ui, false);
+  }
+
   // Copy miniapp.json into dist/
   copyFileSync(manifestSrc, join(distDir, 'miniapp.json'));
 
