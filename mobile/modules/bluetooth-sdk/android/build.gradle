@@ -1,4 +1,5 @@
 import groovy.json.JsonSlurper
+import java.security.MessageDigest
 
 apply plugin: 'com.android.library'
 apply plugin: 'maven-publish'
@@ -10,18 +11,50 @@ def packageJson = new JsonSlurper().parse(file("../package.json"))
 // Jitpack stopped publishing for v1.13.2+ (the jitpack build step fails because
 // the AAR asset isn't present when its install-file step runs), so we fetch
 // the prebuilt AAR directly. The file is gitignored under libs/.
+// The SHA-256 is pinned (matches the upstream checksum.txt for v1.13.2) so a
+// tampered or partially-written artifact is rejected before being used.
 def sherpaOnnxVersion = "1.13.2"
+def sherpaOnnxSha256 = "aa5505c0ec4f8bdaee5f214a64ba3012be64f2aecc022e82a64f33392b8dd245"
 def sherpaOnnxAar = file("libs/sherpa-onnx-${sherpaOnnxVersion}.aar")
+
+def sha256OfFile = { File f ->
+  def digest = MessageDigest.getInstance("SHA-256")
+  f.withInputStream { input ->
+    def buf = new byte[64 * 1024]
+    int n
+    while ((n = input.read(buf)) != -1) {
+      digest.update(buf, 0, n)
+    }
+  }
+  digest.digest().collect { String.format("%02x", it & 0xff) }.join("")
+}
+
+// If a stale AAR exists with the wrong hash (e.g. from a previous failed
+// download or a version bump), drop it so we re-fetch.
+if (sherpaOnnxAar.exists() && sha256OfFile(sherpaOnnxAar) != sherpaOnnxSha256) {
+  logger.lifecycle("Sherpa-ONNX AAR checksum mismatch on disk; redownloading.")
+  sherpaOnnxAar.delete()
+}
+
 if (!sherpaOnnxAar.exists()) {
   sherpaOnnxAar.parentFile.mkdirs()
   def sherpaOnnxUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v${sherpaOnnxVersion}/sherpa-onnx-${sherpaOnnxVersion}.aar"
   logger.lifecycle("Downloading Sherpa-ONNX AAR v${sherpaOnnxVersion} from GitHub release…")
-  // Download to a .part sibling and rename on success so an interrupted
-  // download doesn't leave a half-written AAR that future builds treat as valid.
+  // Download to a .part sibling and rename only after the SHA-256 matches, so
+  // an interrupted or tampered download can't be silently accepted as valid.
   def partial = file("${sherpaOnnxAar.absolutePath}.part")
   try {
     new URL(sherpaOnnxUrl).withInputStream { input ->
       partial.withOutputStream { output -> output << input }
+    }
+    def actual = sha256OfFile(partial)
+    if (actual != sherpaOnnxSha256) {
+      throw new GradleException(
+        "Sherpa-ONNX AAR v${sherpaOnnxVersion} SHA-256 mismatch.\n" +
+        "  expected: ${sherpaOnnxSha256}\n" +
+        "  actual:   ${actual}\n" +
+        "Refusing to use the downloaded artifact."
+      )
     }
     if (!partial.renameTo(sherpaOnnxAar)) {
       throw new GradleException("Failed to move ${partial.name} to ${sherpaOnnxAar.name}")
