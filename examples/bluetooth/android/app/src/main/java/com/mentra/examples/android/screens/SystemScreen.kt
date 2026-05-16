@@ -54,6 +54,8 @@ import com.mentra.examples.android.ui.PageHeader
 import com.mentra.examples.android.ui.scrollBottomPadding
 import java.util.Locale
 
+private const val WIFI_COLLAPSED_NETWORK_LIMIT = 3
+
 @Composable
 fun SystemScreen(controller: MentraExampleController) {
     val state = controller.state
@@ -70,6 +72,10 @@ fun SystemScreen(controller: MentraExampleController) {
     val galleryHotspotPassword = galleryUrl?.let { galleryHotspotPasswordLabel(state.glassesStatus) }
     var pendingWifiSsid by remember { mutableStateOf<String?>(null) }
     var pendingWifiPassword by remember { mutableStateOf("") }
+    var wifiExpanded by remember { mutableStateOf(false) }
+    val visibleNetworks = if (wifiExpanded) networks else networks.take(WIFI_COLLAPSED_NETWORK_LIMIT)
+    val hiddenNetworkCount = (networks.size - visibleNetworks.size).coerceAtLeast(0)
+    val canToggleWifiList = networks.size > WIFI_COLLAPSED_NETWORK_LIMIT
     val micStatus = when {
         state.micRecording -> recordingMicStatus(state)
         state.micPlaying -> "playing last recording"
@@ -134,7 +140,7 @@ fun SystemScreen(controller: MentraExampleController) {
                     onActionClick = controller::forgetCurrentWifiNetwork,
                 )
             }
-            networks.forEachIndexed { index, network ->
+            visibleNetworks.forEachIndexed { index, network ->
                 val ssid = network.ssid.ifBlank { "Unknown" }
                 val requiresPassword = network.requiresPassword
                 val pending = state.wifiPendingSsid == ssid
@@ -152,12 +158,36 @@ fun SystemScreen(controller: MentraExampleController) {
                     AppColor.muted,
                     faint = true,
                     locked = requiresPassword,
-                    last = index == networks.lastIndex,
+                    last = index == visibleNetworks.lastIndex && !canToggleWifiList,
                     actionLabel = "Join",
                     actionColor = AppColor.greenDeep,
                     onActionClick = joinNetwork,
                     onClick = joinNetwork,
                 )
+            }
+            if (canToggleWifiList) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { wifiExpanded = !wifiExpanded }
+                        .padding(top = 12.dp, bottom = 2.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        if (wifiExpanded) "Show fewer networks" else "Show $hiddenNetworkCount more network${if (hiddenNetworkCount == 1) "" else "s"}",
+                        color = AppColor.greenInk,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Icon(
+                        if (wifiExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                        contentDescription = null,
+                        tint = AppColor.greenInk,
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
             }
         }
 

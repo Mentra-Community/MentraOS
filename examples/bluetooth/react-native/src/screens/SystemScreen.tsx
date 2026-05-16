@@ -26,6 +26,8 @@ import {
 } from '../sdkFormat';
 import { RGB_LED_COLORS, durationText, type LedColor, type LedMode, type MentraSdkModel, type SdkConsoleEvent } from '../useMentraSdk';
 
+const WIFI_COLLAPSED_NETWORK_LIMIT = 3;
+
 export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
   const scrollBottomPadding = useScrollBottomPadding();
   const connected = isGlassesConnected(sdk.glassesStatus);
@@ -38,7 +40,11 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
   const inputChips = recentInputChips(sdk.events);
   const [pendingWifi, setPendingWifi] = useState<{ssid: string; requiresPassword: boolean} | null>(null);
   const [pendingWifiPassword, setPendingWifiPassword] = useState('');
+  const [wifiExpanded, setWifiExpanded] = useState(false);
   const didAutoScanWifi = useRef(false);
+  const visibleNetworks = wifiExpanded ? networks : networks.slice(0, WIFI_COLLAPSED_NETWORK_LIMIT);
+  const hiddenNetworkCount = Math.max(0, networks.length - visibleNetworks.length);
+  const canToggleWifiList = networks.length > WIFI_COLLAPSED_NETWORK_LIMIT;
   const micStatus = sdk.micRecording
     ? recordingMicStatus(sdk)
     : sdk.micPlaying
@@ -99,7 +105,7 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
             subColor={colors.greenAccent}
           />
         ) : null}
-        {networks.map((network, index) => {
+        {visibleNetworks.map((network, index) => {
           const joinNetwork = () => {
             if (network.requiresPassword) {
               setPendingWifi({ssid: network.ssid, requiresPassword: true});
@@ -119,13 +125,23 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
               subColor={colors.muted}
               faint
               locked={network.requiresPassword}
-              last={index === networks.length - 1}
+              last={index === visibleNetworks.length - 1 && !canToggleWifiList}
               disabled={!connected}
               onActionPress={joinNetwork}
               onPress={joinNetwork}
             />
           );
         })}
+        {canToggleWifiList ? (
+          <Pressable style={styles.wifiExpandRow} onPress={() => setWifiExpanded((expanded) => !expanded)}>
+            <Text style={styles.wifiExpandText}>
+              {wifiExpanded ? 'Show fewer networks' : `Show ${hiddenNetworkCount} more network${hiddenNetworkCount === 1 ? '' : 's'}`}
+            </Text>
+            <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.greenInk} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+              <Path d={wifiExpanded ? 'm18 15-6-6-6 6' : 'm6 9 6 6 6-6'} />
+            </Svg>
+          </Pressable>
+        ) : null}
       </LinearGradient>
 
       {/* Hotspot */}
@@ -595,6 +611,8 @@ const styles = StyleSheet.create({
   networkSub: { fontSize: 11, fontWeight: '500' },
   networkAction: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999 },
   networkActionText: { fontSize: 11, fontWeight: '700' },
+  wifiExpandRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderTopWidth: 1, borderTopColor: 'rgba(15,42,29,0.06)', paddingTop: 12, paddingBottom: 2 },
+  wifiExpandText: { color: colors.greenInk, fontSize: 12, fontWeight: '700' },
   tileCard: { flex: 1, borderRadius: 22, paddingVertical: 16, paddingHorizontal: 16, gap: 10, borderWidth: 1, borderColor: colors.borderSoft },
   hotspotCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 22, paddingVertical: 14, paddingHorizontal: 16, gap: 10, borderWidth: 1, borderColor: colors.borderSoft },
   hotspotDivider: { height: 1, backgroundColor: 'rgba(15,42,29,0.05)' },

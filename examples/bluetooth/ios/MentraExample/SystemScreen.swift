@@ -8,6 +8,7 @@ private struct WifiNetworkSelection: Identifiable {
     var id: String { ssid }
 }
 
+private let wifiCollapsedNetworkLimit = 3
 private let ledColorOptions = ["red", "green", "blue", "orange", "white"]
 
 private struct InputChipModel: Identifiable {
@@ -72,6 +73,7 @@ struct SystemScreen: View {
     @Environment(\.keyboardVisible) private var keyboardVisible
     @State private var pendingWifiNetwork: WifiNetworkSelection?
     @State private var pendingWifiPassword = ""
+    @State private var wifiExpanded = false
 
     var body: some View {
         ScrollView {
@@ -108,11 +110,16 @@ struct SystemScreen: View {
     }
 
     private var wifiCard: some View {
-        GlassCard(padding: EdgeInsets(top: 18, leading: 18, bottom: 6, trailing: 18)) {
+        let allRows = allWifiScanResults
+        let rows = wifiExpanded ? allRows : Array(allRows.prefix(wifiCollapsedNetworkLimit))
+        let hasMoreRows = allRows.count > wifiCollapsedNetworkLimit
+        let hiddenCount = max(0, allRows.count - rows.count)
+
+        return GlassCard(padding: EdgeInsets(top: 18, leading: 18, bottom: 6, trailing: 18)) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Wi-Fi").font(.system(size: 17, weight: .bold)).tracking(-0.17).foregroundColor(AppColor.ink)
-                    Text("\(visibleWifiScanResults.count) networks nearby").font(.system(size: 10, weight: .medium)).foregroundColor(AppColor.muted)
+                    Text("\(allRows.count) networks nearby").font(.system(size: 10, weight: .medium)).foregroundColor(AppColor.muted)
                 }
                 Spacer()
                 Button {
@@ -131,7 +138,6 @@ struct SystemScreen: View {
             .padding(.bottom, 4)
 
             currentWifiRow
-            let rows = visibleWifiScanResults
             ForEach(Array(rows.enumerated()), id: \.offset) { index, network in
                 let ssid = network.ssid.isEmpty ? "Unknown" : network.ssid
                 let requiresPassword = network.requiresPassword
@@ -141,11 +147,32 @@ struct SystemScreen: View {
                     subColor: AppColor.muted,
                     faint: true,
                     locked: requiresPassword,
-                    last: index == rows.count - 1,
+                    last: index == rows.count - 1 && !hasMoreRows,
                     trailingTitle: "Join",
                     trailingColor: AppColor.greenDeep,
                     action: model.glassesConnected ? { handleWifiNetworkTap(ssid: ssid, requiresPassword: requiresPassword) } : nil
                 )
+            }
+            if hasMoreRows {
+                Button {
+                    wifiExpanded.toggle()
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(wifiExpanded ? "Show fewer networks" : "Show \(hiddenCount) more network\(hiddenCount == 1 ? "" : "s")")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(AppColor.greenInk)
+                        Image(systemName: wifiExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 12, weight: .heavy))
+                            .foregroundColor(AppColor.greenInk)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 12)
+                    .padding(.bottom, 2)
+                    .overlay(alignment: .top) {
+                        Rectangle().fill(AppColor.ink.opacity(0.06)).frame(height: 1)
+                    }
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -373,7 +400,7 @@ struct SystemScreen: View {
         .opacity(model.glassesConnected ? 1 : 0.55)
     }
 
-    private var visibleWifiScanResults: [WifiScanResult] {
+    private var allWifiScanResults: [WifiScanResult] {
         let connectedSsid = connectedWifiStatus(model.glassesValues)?.ssid
         return wifiScanResults(model.bluetoothValues).filter { network in
             guard let connectedSsid else { return true }
