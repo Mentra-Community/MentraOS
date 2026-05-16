@@ -33,7 +33,12 @@ def sha256OfFile = { File f ->
 // download or a version bump), drop it so we re-fetch.
 if (sherpaOnnxAar.exists() && sha256OfFile(sherpaOnnxAar) != sherpaOnnxSha256) {
   logger.lifecycle("Sherpa-ONNX AAR checksum mismatch on disk; redownloading.")
-  sherpaOnnxAar.delete()
+  if (!sherpaOnnxAar.delete()) {
+    throw new GradleException(
+      "Sherpa-ONNX AAR at ${sherpaOnnxAar.absolutePath} has a mismatched SHA-256 " +
+      "but could not be deleted. Refusing to continue with a potentially tampered artifact."
+    )
+  }
 }
 
 if (!sherpaOnnxAar.exists()) {
