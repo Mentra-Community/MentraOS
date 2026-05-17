@@ -327,14 +327,18 @@ export class NavigationController {
 
   private wireHUDPump(): void {
     // Prime an initial HUD render once subscriptions warm up so the
-    // welcome message shows even before the first GPS fix.
-    setTimeout(() => {
+    // welcome message shows even before the first GPS fix. Stored on
+    // an unsub so dispose() can cancel before it fires — otherwise a
+    // session that disconnects within 250ms of start would re-display
+    // "Welcome" on the glasses after dispose() has already cleared.
+    const handle = setTimeout(() => {
       try {
         this.refreshHUD()
       } catch {
         /* ignore */
       }
     }, 250)
+    this.unsubs.push(() => clearTimeout(handle))
   }
 
   private refreshHUD(): void {
