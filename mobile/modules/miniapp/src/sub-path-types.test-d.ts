@@ -4,8 +4,13 @@
  * The package exports two sub-paths with distinct type-roots:
  *   - `@mentra/miniapp/background` exposes `MiniappSession` + module
  *     types; it does NOT declare the `mentra` global.
- *   - `@mentra/miniapp/ui` exposes the `mentra` global declaration + React
- *     adapters; it does NOT export `MiniappSession`.
+ *   - `@mentra/miniapp/ui` exposes the `MentraUiGlobal` / `MentraTyped`
+ *     types + React adapters. It deliberately does NOT declare a
+ *     `var mentra` on `globalThis` — that would lock every consumer
+ *     into the SDK's default `Record<string, unknown>` channel shape
+ *     and break per-miniapp `Channels` registries via TS's `var`
+ *     declaration-merging rules. Each miniapp declares its own typed
+ *     `var mentra: MentraTyped<MyChannels>` in `shared/channels.ts`.
  *
  * Wrong-layer imports should be caught at compile time. This file is
  * type-only (`.test-d.ts`) — no runtime assertions. `bun typecheck` /
@@ -31,10 +36,9 @@ import type {MentraUiGlobal, MentraTyped} from "./ui/index"
 const _ui: MentraUiGlobal | undefined = undefined
 void _ui
 
-// ✅ The `mentra` global is declared globally by the /ui entry's
-//    `declare global { var mentra }` block. Just reference it to make
-//    sure TS picks up the type.
-export type _MentraType = typeof globalThis.mentra
+// ✅ MentraTyped<TChannels> is the canonical way to type the global.
+//    Consumers do `declare global { var mentra: MentraTyped<Channels> }`
+//    inside their own code; the SDK no longer ships the declaration.
 export type _Typed = MentraTyped<{foo: number}>
 
 // ----- compile-time guardrails ------------------------------------------

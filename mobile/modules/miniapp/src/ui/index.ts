@@ -22,13 +22,6 @@ import type {IsRpc, RpcReq, RpcRes, RpcRequestOptions} from "../modules/ui"
 export type {Rpc, IsRpc, RpcReq, RpcRes, RpcRequestOptions, RpcHandlerContext} from "../modules/ui"
 export {MentraRpcError, MentraRpcTimeoutError} from "../modules/ui"
 
-// `mentra` lives on the global scope; declare it for TS so import
-// `from "@mentra/miniapp/ui"` is enough to type-check `mentra.send(...)`.
-declare global {
-  // eslint-disable-next-line no-var
-  var mentra: MentraUiGlobal
-}
-
 export interface MentraUiGlobal<TChannels extends object = Record<string, unknown>> {
   /**
    * Broadcast a typed message to the bound background JSContext.
@@ -106,14 +99,26 @@ export {useRpc, type RpcCallable} from "../react/useRpc"
 /**
  * Type helper for declaring a typed `mentra` global inside a miniapp.
  *
- * Usage in src/shared/channels.ts (or anywhere the type lives):
+ * Every mini app should declare ONE global `mentra` typed against its
+ * own channel registry. The SDK no longer auto-declares the global so
+ * each miniapp's registry doesn't collide with the SDK's default.
+ *
+ * Usage (in your miniapp's `src/shared/channels.ts`):
  *
  * ```ts
  * import type {MentraTyped} from "@mentra/miniapp/ui"
- * export type Channels = { 'add-note': {body: string} }
+ *
+ * export interface Channels {
+ *   "live-transcript": {text: string}
+ * }
+ *
  * declare global {
+ *   // eslint-disable-next-line no-var
  *   var mentra: MentraTyped<Channels>
  * }
  * ```
+ *
+ * Both halves of the miniapp (background + UI) import this same file,
+ * so the typed shape is consistent across the bridge.
  */
 export type MentraTyped<TChannels extends object> = MentraUiGlobal<TChannels>

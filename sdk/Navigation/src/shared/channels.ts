@@ -66,5 +66,5 @@ export interface Channels {
 // Convenience: the typed shape of `window.mentra` for this miniapp.
 declare global {
   // eslint-disable-next-line no-var
-  var mentra: import("@mentra/miniapp/ui").MentraUiGlobal<Channels>
+  var mentra: import("@mentra/miniapp/ui").MentraTyped<Channels>
 }

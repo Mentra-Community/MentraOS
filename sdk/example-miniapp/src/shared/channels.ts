@@ -69,3 +69,8 @@ export interface Channels {
    */
   "tester:invoke": Rpc<TesterInvoke, TesterInvokeResult>
 }
+
+declare global {
+  // eslint-disable-next-line no-var
+  var mentra: import("@mentra/miniapp/ui").MentraTyped<Channels>
+}
