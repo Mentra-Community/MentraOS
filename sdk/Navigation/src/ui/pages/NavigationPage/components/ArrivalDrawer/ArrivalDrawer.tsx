@@ -1,4 +1,4 @@
-import {Drawer} from "@/frontend/components/Drawer/Drawer"
+import {Drawer} from "@/ui/components/Drawer/Drawer"
 
 type Props = {
   open: boolean

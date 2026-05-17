@@ -3,7 +3,7 @@ import type {PanInfo} from "motion/react"
 import {useEffect, useLayoutEffect, useRef, useState} from "react"
 import type {ReactNode} from "react"
 
-import {useDrawerOffset} from "@/frontend/components/Drawer/DrawerOffsetContext"
+import {useDrawerOffset} from "@/ui/components/Drawer/DrawerOffsetContext"
 
 /**
  * Generic bottom drawer with optional "peek" snap point.

@@ -1,12 +1,14 @@
-import {useEffect, useMemo, useRef, useState} from "react"
+import {useEffect, useRef, useState} from "react"
 import {motion} from "motion/react"
+import {useRpc} from "@mentra/miniapp/ui"
 
-import {useUser} from "@/backend/hooks/useUser"
-import {PlacesSession} from "@/backend/lib/places/places"
-import type {PlaceDetails, PlaceSuggestion} from "@/backend/lib/places/places"
+import "@/shared/channels"
+import type {Channels} from "@/shared/channels"
+import type {PlaceDetails, PlaceSuggestion} from "@/shared/types"
+import {useNavStore} from "@/ui/store/navStore"
 import {LocationInput} from "./components/LocationInput/LocationInput"
 import {SuggestionsList} from "./components/SuggestionsList/SuggestionsList"
-import { safeHeadingAddPlaces } from "@/frontend/components/SafeHeading/SafeHeading"
+import { safeHeadingAddPlaces } from "@/ui/components/SafeHeading/SafeHeading"
 
 type Props = {
   /**
@@ -22,9 +24,9 @@ type Props = {
 const DEBOUNCE_MS = 200
 
 export function AddPlacePage({presetType, onSave, onClose}: Props) {
-  const user = useUser()
-  const coords = user.coords
-  const session = useMemo(() => new PlacesSession(), [])
+  const coords = useNavStore((s) => s.coords)
+  const autocomplete = useRpc<Channels, "places:autocomplete">("places:autocomplete")
+  const details = useRpc<Channels, "places:details">("places:details")
 
   const presetName = presetType === "home" ? "Home" : presetType === "work" ? "Work" : ""
   const [customName, setCustomName] = useState(presetName)
@@ -34,7 +36,6 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
   const [searchOpen, setSearchOpen] = useState(false)
   const [focused, setFocused] = useState(false)
   const [loading, setLoading] = useState(false)
-  const abortRef = useRef<AbortController | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
@@ -47,34 +48,30 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
       return
     }
     setLoading(true)
-    const t = setTimeout(async () => {
-      abortRef.current?.abort()
-      const ctrl = new AbortController()
-      abortRef.current = ctrl
-      try {
-        const results = await session.autocomplete(trimmed, ctrl.signal)
-        if (ctrl.signal.aborted) return
-        setSuggestions(results)
-        setSearchOpen(true)
-      } catch (err) {
-        if ((err as Error).name === "AbortError") return
-        setSuggestions([])
-      } finally {
-        if (!ctrl.signal.aborted) setLoading(false)
-      }
+    const t = setTimeout(() => {
+      autocomplete({query: trimmed, near: coords ? {lat: coords.lat, lng: coords.lng} : undefined})
+        .then((results) => {
+          setSuggestions(results)
+          setSearchOpen(true)
+          setLoading(false)
+        })
+        .catch((err) => {
+          if ((err as Error)?.name === "AbortError") return
+          setSuggestions([])
+          setLoading(false)
+        })
     }, DEBOUNCE_MS)
     return () => clearTimeout(t)
-  }, [query, selectedPlace, focused, session])
+  }, [query, selectedPlace, focused, autocomplete, coords])
 
   async function pick(s: PlaceSuggestion) {
     setSearchOpen(false)
     setLoading(true)
     inputRef.current?.blur()
     try {
-      const details = await session.details(s.placeId)
-      session.reset()
-      setSelectedPlace(details)
-      setQuery(details.name || details.address)
+      const place = await details({placeId: s.placeId})
+      setSelectedPlace(place)
+      setQuery(place.name || place.address)
     } finally {
       setLoading(false)
     }

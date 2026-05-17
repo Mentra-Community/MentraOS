@@ -1,14 +1,13 @@
 import {useState} from "react"
 import {AnimatePresence} from "motion/react"
 
-import {RouterProvider, useRouter} from "@/frontend/router"
-import {NavigationPage} from "@/frontend/pages/NavigationPage/NavigationPage"
-import {AddPlacePage} from "@/frontend/pages/AddPlacePage"
-import {useUser} from "@/backend/hooks/useUser"
+import "@/shared/channels"
+import {RouterProvider, useRouter} from "@/ui/router"
+import {NavigationPage} from "@/ui/pages/NavigationPage/NavigationPage"
+import {AddPlacePage} from "@/ui/pages/AddPlacePage"
 
 function Pages() {
   const {route, pop} = useRouter()
-  const user = useUser()
   const [savedPlacesVersion, setSavedPlacesVersion] = useState(0)
 
   return (
@@ -25,7 +24,7 @@ function Pages() {
                 ...(name ? {savedName: name} : {}),
                 ...(type ? {type} : {}),
               }
-              await user.storage.addSavedPlace(saved)
+              await mentra.request("storage:add-saved", saved)
               setSavedPlacesVersion((v) => v + 1)
               pop()
             }}

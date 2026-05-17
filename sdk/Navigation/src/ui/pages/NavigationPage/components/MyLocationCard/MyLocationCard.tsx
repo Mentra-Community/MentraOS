@@ -1,4 +1,4 @@
-import type {Coords} from "@/backend/session/managers/LocationManager"
+import type {Coords} from "@/shared/types"
 
 export function MyLocationCard({coords}: {coords: Coords | null}) {
   return (

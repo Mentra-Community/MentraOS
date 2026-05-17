@@ -1,11 +1,10 @@
 import {AnimatePresence, motion} from "motion/react"
 import {useLayoutEffect, useRef} from "react"
 
-import {useDrawerOffset} from "@/frontend/components/Drawer/DrawerOffsetContext"
-import {formatDistance} from "@/backend/lib/formatDistance/formatDistance"
-import {haversineMeters} from "@/backend/lib/geometry/geometry"
-import type {LatLng} from "@/backend/lib/geometry/geometry"
-import type {PlaceDetails} from "@/backend/lib/places/places"
+import {useDrawerOffset} from "@/ui/components/Drawer/DrawerOffsetContext"
+import {formatDistance} from "@/ui/lib/formatDistance"
+import {haversineMeters} from "@/ui/lib/geometry"
+import type {LatLng, PlaceDetails} from "@/shared/types"
 
 type Props = {
   destination: PlaceDetails | null

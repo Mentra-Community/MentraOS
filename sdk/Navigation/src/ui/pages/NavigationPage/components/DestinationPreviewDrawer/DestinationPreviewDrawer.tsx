@@ -1,8 +1,7 @@
-import {Drawer} from "@/frontend/components/Drawer/Drawer"
-import {formatDistance} from "@/backend/lib/formatDistance/formatDistance"
-import {haversineMeters} from "@/backend/lib/geometry/geometry"
-import type {LatLng} from "@/backend/lib/geometry/geometry"
-import type {PlaceDetails} from "@/backend/lib/places/places"
+import {Drawer} from "@/ui/components/Drawer/Drawer"
+import {formatDistance} from "@/ui/lib/formatDistance"
+import {haversineMeters} from "@/ui/lib/geometry"
+import type {LatLng, PlaceDetails} from "@/shared/types"
 
 type Props = {
   destination: PlaceDetails | null

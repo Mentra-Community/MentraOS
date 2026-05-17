@@ -1,11 +1,13 @@
-import {useEffect, useMemo, useRef, useState} from "react"
+import {useEffect, useRef, useState} from "react"
 import {AnimatePresence, motion} from "motion/react"
 import {Loader2} from "lucide-react"
+import {useRpc} from "@mentra/miniapp/ui"
 
-import {useUser} from "@/backend/hooks/useUser"
-import {PlacesSession} from "@/backend/lib/places/places"
-import type {PlaceDetails, PlaceSuggestion} from "@/backend/lib/places/places"
-import { SafeHeading, safeHeadingSearchPill, safeHeadingSearchResults } from "@/frontend/components/SafeHeading/SafeHeading"
+import "@/shared/channels"
+import type {Channels} from "@/shared/channels"
+import type {PlaceDetails, PlaceSuggestion} from "@/shared/types"
+import {useNavStore} from "@/ui/store/navStore"
+import { safeHeadingSearchPill, safeHeadingSearchResults } from "@/ui/components/SafeHeading/SafeHeading"
 
 type Props = {
   selected: PlaceDetails | null
@@ -42,17 +44,19 @@ function PinIconOutline() {
 // ---- component --------------------------------------------------------------
 
 export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen = false, autoFocus = false, onSearchingChange, refreshKey}: Props) {
-  const user = useUser()
-  const session = useMemo(() => new PlacesSession(), [])
+  const coords = useNavStore((s) => s.coords)
+  const autocomplete = useRpc<Channels, "places:autocomplete">("places:autocomplete")
+  const details = useRpc<Channels, "places:details">("places:details")
   const [query, setQuery] = useState("")
   const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([])
   const [recentSearches, setRecentSearches] = useState<PlaceDetails[]>([])
   const [savedPlaces, setSavedPlaces] = useState<{label: string; place: PlaceDetails}[]>([])
-  const [open, setOpen] = useState(false)
+  const [, setOpen] = useState(false)
   const [focused, setFocused] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const abortRef = useRef<AbortController | null>(null)
+  const [, setError] = useState<string | null>(null)
+  // `open`/`error` are tracked via their setters above; suggestion-list
+  // visibility uses the derived `showSuggestions` instead.
   const inputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
@@ -77,16 +81,22 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
   // Fetch recent searches + saved places whenever the user focuses the empty input
   useEffect(() => {
     if (!focused || query.trim() || selected) return
-    user.storage.getRecentSearches().then(setRecentSearches)
-    user.storage.getAllSavedPlaces().then((all) => {
-      setSavedPlaces(
-        all.map((place) => ({
-          label: place.savedName || place.name || place.address,
-          place,
-        }))
-      )
-    })
-  }, [focused, query, selected, user.storage, refreshKey])
+    mentra
+      .request("storage:list-recent", undefined as never)
+      .then(setRecentSearches)
+      .catch(() => {})
+    mentra
+      .request("storage:list-saved", undefined as never)
+      .then((all) => {
+        setSavedPlaces(
+          all.map((place) => ({
+            label: place.savedName || place.name || place.address,
+            place,
+          })),
+        )
+      })
+      .catch(() => {})
+  }, [focused, query, selected, refreshKey])
 
   useEffect(() => {
     if (selected || disabled || !focused) return
@@ -98,26 +108,23 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
       return
     }
     setLoading(true)
-    const t = setTimeout(async () => {
-      abortRef.current?.abort()
-      const ctrl = new AbortController()
-      abortRef.current = ctrl
+    const t = setTimeout(() => {
       setError(null)
-      try {
-        const results = await session.autocomplete(trimmed, ctrl.signal)
-        if (ctrl.signal.aborted) return
-        setSuggestions(results)
-        setOpen(true)
-      } catch (err) {
-        if ((err as Error).name === "AbortError") return
-        setError((err as Error).message)
-        setSuggestions([])
-      } finally {
-        if (!ctrl.signal.aborted) setLoading(false)
-      }
+      autocomplete({query: trimmed, near: coords ? {lat: coords.lat, lng: coords.lng} : undefined})
+        .then((results) => {
+          setSuggestions(results)
+          setOpen(true)
+          setLoading(false)
+        })
+        .catch((err) => {
+          if ((err as Error)?.name === "AbortError") return
+          setError((err as Error).message)
+          setSuggestions([])
+          setLoading(false)
+        })
     }, DEBOUNCE_MS)
     return () => clearTimeout(t)
-  }, [query, selected, disabled, focused, session])
+  }, [query, selected, disabled, focused, autocomplete, coords])
 
   async function pick(s: PlaceSuggestion) {
     setOpen(false)
@@ -125,10 +132,9 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
     setError(null)
     inputRef.current?.blur()
     try {
-      const details = await session.details(s.placeId)
-      session.reset()
-      await user.storage.addRecentSearch(details)
-      onSelect(details)
+      const place = await details({placeId: s.placeId})
+      await mentra.request("storage:add-recent", place)
+      onSelect(place)
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -140,7 +146,7 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
     setOpen(false)
     setFocused(false)
     inputRef.current?.blur()
-    await user.storage.addRecentSearch(place)
+    await mentra.request("storage:add-recent", place)
     onSelect(place)
   }
 

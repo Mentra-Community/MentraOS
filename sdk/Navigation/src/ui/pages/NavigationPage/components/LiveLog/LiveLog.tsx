@@ -1,8 +1,10 @@
 import type {NavManeuver} from "@mentra/miniapp"
 
-import {formatDistance} from "@/backend/lib/formatDistance/formatDistance"
-import type {LogEntry, NavStatus} from "@/frontend/pages/NavigationPage/NavigationPage"
-import {useUser} from "@/backend/hooks/useUser"
+import {ManeuverFormatter} from "@/background/managers/ManeuverFormatter"
+import {formatDistance} from "@/ui/lib/formatDistance"
+import type {LogEntry, NavStatus} from "@/shared/types"
+
+const fmt = new ManeuverFormatter()
 
 export function LiveLog({
   log,
@@ -15,7 +17,6 @@ export function LiveLog({
   status: NavStatus
   maneuver: NavManeuver | null
 }) {
-  const fmt = useUser().navigation.format
   const showStatusBlock = running || maneuver || status !== "idle"
   return (
     <>

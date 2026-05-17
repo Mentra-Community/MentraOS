@@ -2,11 +2,12 @@ import type {ReactNode} from "react"
 import {AnimatePresence, motion} from "motion/react"
 import type {NavManeuver} from "@mentra/miniapp"
 
-import {useUser} from "@/backend/hooks/useUser"
-import {formatDistance} from "@/backend/lib/formatDistance/formatDistance"
-import {haversineMeters, type LatLng} from "@/backend/lib/geometry/geometry"
-import type {User} from "@/backend/session/User"
-import type {NavStatus} from "@/frontend/pages/NavigationPage/NavigationPage"
+import type {Pivot} from "@mentra/miniapp"
+
+import {useNavStore} from "@/ui/store/navStore"
+import {formatDistance} from "@/ui/lib/formatDistance"
+import {haversineMeters} from "@/ui/lib/geometry"
+import type {Coords, LatLng, NavStatus} from "@/shared/types"
 
 const SPRING = {type: "spring", stiffness: 400, damping: 32, mass: 0.6} as const
 
@@ -34,8 +35,10 @@ export function OrientationCard({
   status?: NavStatus
   onClose?: () => void
 }) {
-  const user = useUser()
-  const snap = derivePivotView(user, maneuver, status)
+  const activePivot = useNavStore((s) => s.activePivot)
+  const upcomingPivot = useNavStore((s) => s.upcomingPivot)
+  const coords = useNavStore((s) => s.coords)
+  const snap = derivePivotView(activePivot, upcomingPivot, coords, maneuver, status)
   const real = pickDisplay(snap)
 
   // HARDCODED PREVIEW STUB — overrides every dynamic field with sample
@@ -142,7 +145,13 @@ type PivotView = {
   distanceToDestinationMeters: number | null
 }
 
-function derivePivotView(user: User, maneuver: NavManeuver | null, status?: NavStatus): PivotView {
+function derivePivotView(
+  active: Pivot | null,
+  upcoming: Pivot | null,
+  coords: Coords | null,
+  maneuver: NavManeuver | null,
+  status?: NavStatus,
+): PivotView {
   if (status === "arrived") {
     return {
       arrived: true,
@@ -157,10 +166,6 @@ function derivePivotView(user: User, maneuver: NavManeuver | null, status?: NavS
       distanceToDestinationMeters: null,
     }
   }
-
-  const active = user.navigation.getActivePivot()
-  const upcoming = user.navigation.getUpcomingPivot()
-  const coords = user.coords
 
   let distanceToNextPivotMeters: number | null = null
   if (upcoming && coords) {

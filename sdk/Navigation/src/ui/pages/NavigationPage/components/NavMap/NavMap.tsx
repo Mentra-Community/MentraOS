@@ -1,12 +1,11 @@
 import {useEffect, useRef, useState} from "react"
 import {motion, useMotionValue, useTransform} from "motion/react"
 
-import {useUser} from "@/backend/hooks/useUser"
-import {useDrawerOffset} from "@/frontend/components/Drawer/DrawerOffsetContext"
-import {bearingDeg, detectCrossings, haversineMeters} from "@/backend/lib/geometry/geometry"
-import type {LatLng} from "@/backend/lib/geometry/geometry"
-import {isDev} from "@/backend/lib/env/env"
-import {rdpSmooth} from "@/backend/lib/geometry/rdpSmooth"
+import {useNavStore} from "@/ui/store/navStore"
+import {useDrawerOffset} from "@/ui/components/Drawer/DrawerOffsetContext"
+import {bearingDeg, detectCrossings, haversineMeters, rdpSmooth} from "@/ui/lib/geometry"
+import type {LatLng} from "@/shared/types"
+import {isDev} from "@/ui/lib/env"
 
 /** Pixels between the bottom of the right-rail button stack and the top
  *  of the active drawer. Tweak as the design wants. */
@@ -33,10 +32,11 @@ export function NavMap({
    */
   onLongPress?: (coord: LatLng) => void
 }) {
-  const user = useUser()
-  const ready = user.mapsReady
-  const error = user.mapsError
-  const compassHeading = user.heading
+  const ready = useNavStore((s) => s.mapsReady)
+  const compassHeading = useNavStore((s) => s.heading)
+  // mapsError is no longer tracked separately — mapsReady=false implies
+  // either still-loading or failed; the loading spinner covers both.
+  const error: string | null = null
 
   // Right-rail buttons follow the active drawer's top edge. Drawer
   // publishes its current visible-height into a shared MotionValue
@@ -536,17 +536,24 @@ export function NavMap({
 
   // Debug overlay: render a red dot at each detected pivot. Lets us
   // visually verify that the SDK placed turn points where they belong.
-  // Pivot list comes from `user.navigation.getPivots()` now (SDK-owned).
+  //
+  // The full pivot list previously came from `user.navigation.getPivots()`
+  // (background-owned). Now that the UI lives behind a channel boundary,
+  // the background only broadcasts the active + upcoming pivots — not
+  // the full list. Falling back to an empty array keeps the rest of the
+  // map rendering correctly; adding a `nav:get-pivots` RPC would restore
+  // the full debug markers.
   useEffect(() => {
     if (!isDev) return
     if (!ready || !mapRef.current) return
-    const g = window.google
-    const pivots = user.navigation.getPivots()
+    const pivots: Array<LatLng> = []
 
     // Tear down previous markers
     for (const dot of pivotDotsRef.current) dot.setMap(null)
     pivotDotsRef.current = []
 
+    if (pivots.length === 0) return
+    const g = window.google
     for (const p of pivots) {
       const dot = new g.maps.Circle({
         map: mapRef.current,
@@ -566,7 +573,7 @@ export function NavMap({
       for (const dot of pivotDotsRef.current) dot.setMap(null)
       pivotDotsRef.current = []
     }
-  }, [ready, routePoints, user.navigation])
+  }, [ready, routePoints])
 
   if (error) {
     return <div className="p-3 text-red-700 text-[13px]">Map failed to load: {error}</div>

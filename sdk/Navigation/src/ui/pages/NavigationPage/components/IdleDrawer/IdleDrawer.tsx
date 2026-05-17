@@ -1,8 +1,7 @@
 import {useEffect, useState} from "react"
-import type {LatLng} from "@/backend/lib/geometry/geometry"
-import type {PlaceDetails, SavedPlace} from "@/backend/lib/places/places"
-import {useUser} from "@/backend/hooks/useUser"
-import {Drawer} from "@/frontend/components/Drawer/Drawer"
+
+import type {LatLng, PlaceDetails, SavedPlace} from "@/shared/types"
+import {Drawer} from "@/ui/components/Drawer/Drawer"
 
 type Props = {
   me: LatLng | null
@@ -14,15 +13,20 @@ type Props = {
 }
 
 export function IdleDrawer({onSelect, onAddPlace, refreshKey}: Props) {
-  const user = useUser()
   const [expanded, setExpanded] = useState(false)
   const [savedPlaces, setSavedPlaces] = useState<SavedPlace[]>([])
   const [recents, setRecents] = useState<PlaceDetails[]>([])
 
   useEffect(() => {
-    user.storage.getAllSavedPlaces().then(setSavedPlaces)
-    user.storage.getRecentSearches().then(setRecents)
-  }, [user.storage, refreshKey])
+    mentra
+      .request("storage:list-saved", undefined as never)
+      .then(setSavedPlaces)
+      .catch(() => {})
+    mentra
+      .request("storage:list-recent", undefined as never)
+      .then(setRecents)
+      .catch(() => {})
+  }, [refreshKey])
 
   return (
     <Drawer

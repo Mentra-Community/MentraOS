@@ -1,5 +1,5 @@
 import {AnimatePresence, motion} from "motion/react"
-import type {PlaceSuggestion} from "@/backend/lib/places/places"
+import type {PlaceSuggestion} from "@/shared/types"
 
 type Props = {
   open: boolean
