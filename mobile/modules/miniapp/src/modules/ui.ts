@@ -179,18 +179,20 @@ export interface UIModule<TChannels extends Record<string, unknown> = Record<str
 
 /**
  * Wire-level envelope types. Internal — not exported.
+ *
+ * `requestId` is set on RPC frames (call, result, cancel). Broadcast
+ * `UI_MESSAGE` / `UI_SEND` frames carry no `requestId`. `UI_CANCEL`
+ * frames carry only `requestId` (no channel, no payload).
  */
-type UISendEnvelope = {
-  type: "UI_SEND"
-  channel: string
-  payload: unknown
-  seq: number
-}
+type UISendEnvelope =
+  | {type: "UI_SEND"; channel: string; payload: unknown; seq: number; requestId?: string}
+  | {type: "UI_CANCEL"; requestId: string}
 
 type UIInboundEnvelope =
-  | {type: "UI_MESSAGE"; channel: string; payload: unknown; seq: number}
+  | {type: "UI_MESSAGE"; channel: string; payload: unknown; seq: number; requestId?: string}
   | {type: "UI_OPEN"}
   | {type: "UI_CLOSE"}
+  | {type: "UI_CANCEL"; requestId: string}
 
 export class UIModuleImpl<TChannels extends Record<string, unknown> = Record<string, unknown>>
   implements UIModule<TChannels>
