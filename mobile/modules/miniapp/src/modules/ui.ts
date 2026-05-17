@@ -1,43 +1,41 @@
 /**
- * session.ui — message bus between a background JSContext miniapp and
- * its on-demand UI WebView.
+ * session.ui — bus between a background JSContext miniapp and its
+ * on-demand UI WebView. Supports two interaction patterns:
  *
- * Buffering on both sides:
- *   - `mentra.send` (WebView → background) BUFFERS until `mentra.ready()`
- *     acks. The WebView is the short-lived side and shouldn't drop user
- *     input.
- *   - `session.ui.send` (background → WebView) silently DROPS when no
- *     WebView is bound. Background is the source of truth, persisted in
- *     `session.storage`; UI state shouldn't accumulate stale updates.
- *   - When a WebView IS bound but its `mentra.on(channel, ...)` listener
- *     for a given channel hasn't attached yet (common: the controller's
- *     `ui.onOpen` handler fires a snapshot before React useEffects have
- *     run), the WebView shim buffers per-channel up to 32 payloads and
- *     drains them into the first subscriber. After that first drain the
- *     channel is "live" and sends with no listener fall back to drop —
- *     a later re-subscribe does NOT replay history.
+ *   1. **Broadcast** (fire-and-forget, either direction)
+ *      - background → UI: `session.ui.send(channel, payload)`
+ *      - UI → background: `mentra.send(channel, payload)`
+ *      - subscribe:        `session.ui.on(channel, cb)` / `mentra.on(channel, cb)`
  *
- * Channel routing is opaque to the background — names are arbitrary
- * strings on the wire. Per-miniapp `src/shared/channels.ts` declares
- * the typed channel registry at compile time; both halves of the
- * miniapp import that file so message names are type-checked.
+ *   2. **RPC** (request/response, UI → background only)
+ *      - UI side:          `await mentra.request(channel, payload, options?)`
+ *      - background side:  `session.ui.handle(channel, (payload, ctx?) => result)`
+ *      - single handler per channel; double-register throws synchronously.
+ *      - errors thrown in the handler reject the caller's promise.
+ *      - cancellation via `options.signal` aborts the handler's `ctx.signal`
+ *        and drops the eventual reply.
  *
- * The host pushes lifecycle envelopes through the existing transport:
- *   - `{type: "UI_OPEN"}` — fired by the WebView's mentra.ready() ack
- *     handler. session.ui.onOpen handlers fire here.
- *   - `{type: "UI_CLOSE"}` — fired by the host when it tears down the
- *     WebView (user navigated away or heartbeat timeout). session.ui.onClose
- *     handlers fire here.
- *   - `{type: "UI_MESSAGE", channel, payload, seq}` — WebView → background.
- *   - `{type: "UI_SEND", channel, payload, seq}` — background → WebView,
- *     sent via session.sendOneShot through the bridge.
+ * Broadcast vs. RPC is declared at the channel level: wrap a channel's
+ * payload type in `Rpc<Req, Res>` in the shared registry to make it RPC.
+ * Wrong-API-for-channel is a compile-time error.
  *
- * No request/response correlator at the SDK level — the bus is
- * fire-and-forget. Authors who need request/response semantics
- * implement it themselves using two channels (one for request, one
- * for reply).
+ * Buffering:
+ *   - `mentra.send` BUFFERS until `mentra.ready()` acks. The WebView is
+ *     the short-lived side and shouldn't drop user input.
+ *   - `session.ui.send` silently DROPS when no WebView is bound.
+ *     Background is the source of truth; UI state shouldn't accumulate.
+ *   - Per-channel inbound buffering (up to 32 payloads) covers the
+ *     `controller pushed before React attached the listener` race — see
+ *     the WebView shim for details.
+ *
+ * Wire envelopes (internal — not part of the SDK surface):
+ *   - `UI_OPEN` — WebView posted `{type:"ready"}`.
+ *   - `UI_CLOSE` — host tore down the WebView.
+ *   - `UI_MESSAGE` — WebView → background. `requestId` set on RPC calls.
+ *   - `UI_SEND` — background → WebView. `requestId` set on RPC replies.
+ *   - `UI_CANCEL` — either direction. Carries only `requestId`; aborts
+ *     the in-flight handler's signal.
  */
-
 import type {MiniappSession} from "../session"
 
 export type UIChannelHandler<T = unknown> = (payload: T) => void
