@@ -184,7 +184,7 @@ class MiniappCatalog {
           ],
         })
         if (result === 1) {
-          nav.push("/miniapps/settings/transcription")
+          nav.push("/miniapps/settings/speech")
         }
         return false
       }

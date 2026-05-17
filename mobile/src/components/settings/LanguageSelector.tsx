@@ -1,6 +1,7 @@
 import {ActivityIndicator, Pressable, TextStyle, View, ViewStyle} from "react-native"
 
 import {Icon, Text} from "@/components/ignite"
+import GlassView from "@/components/ui/GlassView"
 import {Group} from "@/components/ui/Group"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {STTModelManager} from "@/services/STTModelManager"
@@ -38,10 +39,9 @@ export default function LanguageSelector({
 
   return (
     <Group title={title}>
-      {languages.map((lang, index) => {
+      {languages.map((lang) => {
         const isActive = lang.code === currentLanguage && lang.downloaded
         const isDownloading = lang.code === downloadingLanguage
-        const isLast = index === languages.length - 1
 
         let subtitle: string
         if (isDownloading) {
@@ -59,42 +59,37 @@ export default function LanguageSelector({
         }
 
         return (
-          <Pressable
-            key={lang.code}
-            disabled={isDownloading}
-            style={[themed($row), !isLast && themed($rowDivider)]}
-            onPress={() => onPickLanguage(lang.code)}>
-            <View style={themed($rowText)}>
-              <Text text={lang.displayName} style={themed($rowTitle)} />
-              <Text text={subtitle} style={themed($rowSubtitle)} />
-            </View>
-            <View style={themed($rowIcon)}>
-              {isDownloading ? (
-                <ActivityIndicator size="small" color={theme.colors.foreground} />
-              ) : isActive ? (
-                <Icon name="check" size={22} color={theme.colors.foreground} />
-              ) : lang.downloaded ? null : (
-                <Icon name="world-download" size={20} color={theme.colors.textDim} />
-              )}
-            </View>
-          </Pressable>
+          <GlassView key={lang.code} className="bg-primary-foreground">
+            <Pressable
+              disabled={isDownloading}
+              style={themed($row)}
+              onPress={() => onPickLanguage(lang.code)}>
+              <View style={themed($rowText)}>
+                <Text text={lang.displayName} style={themed($rowTitle)} />
+                <Text text={subtitle} style={themed($rowSubtitle)} />
+              </View>
+              <View style={themed($rowIcon)}>
+                {isDownloading ? (
+                  <ActivityIndicator size="small" color={theme.colors.foreground} />
+                ) : isActive ? (
+                  <Icon name="check" size={22} color={theme.colors.foreground} />
+                ) : lang.downloaded ? null : (
+                  <Icon name="world-download" size={20} color={theme.colors.textDim} />
+                )}
+              </View>
+            </Pressable>
+          </GlassView>
         )
       })}
     </Group>
   )
 }
 
-const $row: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
+const $row: ThemedStyle<ViewStyle> = ({spacing}) => ({
   flexDirection: "row",
   alignItems: "center",
   paddingVertical: spacing.s4,
   paddingHorizontal: spacing.s4,
-  backgroundColor: colors.primary_foreground,
-})
-
-const $rowDivider: ThemedStyle<ViewStyle> = ({colors}) => ({
-  borderBottomColor: colors.border,
-  borderBottomWidth: 1,
 })
 
 const $rowText: ThemedStyle<ViewStyle> = () => ({

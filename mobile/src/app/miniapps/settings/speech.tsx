@@ -1,6 +1,6 @@
 import {useFocusEffect} from "@react-navigation/native"
 import CoreModule from "@mentra/bluetooth-sdk"
-import {useCallback, useEffect, useState} from "react"
+import {useCallback, useEffect, useRef, useState} from "react"
 import {ActivityIndicator, BackHandler, Platform, ScrollView, View} from "react-native"
 
 import {Header, Screen, Text} from "@/components/ignite"
@@ -10,15 +10,14 @@ import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
+import offlineSpeechModelService, {DownloadStatus} from "@/services/OfflineSpeechModelService"
 import STTModelManager from "@/services/STTModelManager"
 import TTSModelManager from "@/services/TTSModelManager"
 import {useStopAll} from "@mentra/island"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
 
-const RESTART_TRANSCRIPTION_DEBOUNCE_MS = 8000
-
-export default function TranscriptionSettingsScreen() {
+export default function SpeechSettingsScreen() {
   const {theme} = useAppTheme()
   const {goBack} = useNavigationStore.getState()
 
@@ -34,12 +33,26 @@ export default function TranscriptionSettingsScreen() {
   const [ttsDownloadPercent, setTtsDownloadPercent] = useState(0)
   const [ttsExtractPercent, setTtsExtractPercent] = useState(0)
 
+  // Auto-download status from the background service. Falls back to per-screen
+  // state below when the user kicks a download manually via tap.
+  const [autoStatus, setAutoStatus] = useState<DownloadStatus | null>(offlineSpeechModelService.getStatus())
+
   const [isLoading, setIsLoading] = useState(true)
   const [bypassVadForDebugging, setBypassVadForDebugging] = useSetting(SETTINGS.bypass_vad_for_debugging.key)
   const [_offlineCaptionsAppRunning, setOfflineCaptionsAppRunning] = useSetting(SETTINGS.offline_captions_running.key)
-  const [enforceLocalTranscription, setEnforceLocalTranscription] = useSetting(SETTINGS.enforce_local_transcription.key)
+  const [_enforceLocalTranscription, setEnforceLocalTranscription] = useSetting(
+    SETTINGS.enforce_local_transcription.key,
+  )
   const [offlineMode, setOfflineMode] = useSetting(SETTINGS.offline_mode.key)
-  const [lastRestartTime, setLastRestartTime] = useState(0)
+
+  // Tracks the most-recently requested language per kind. The background
+  // activation runs serialized via the chain ref; when the user taps another
+  // language mid-flight, the new tap is queued behind the in-flight one and
+  // only the final tap's selection sticks.
+  const sttDesiredRef = useRef<string | null>(null)
+  const ttsDesiredRef = useRef<string | null>(null)
+  const sttChainRef = useRef<Promise<void>>(Promise.resolve())
+  const ttsChainRef = useRef<Promise<void>>(Promise.resolve())
 
   const stopAllApps = useStopAll()
 
@@ -106,7 +119,7 @@ export default function TranscriptionSettingsScreen() {
       if (ttsPref) setTtsCurrent(ttsPref)
       await refreshLists()
     } catch (error) {
-      console.error("Error initializing transcription settings:", error)
+      console.error("Error initializing speech settings:", error)
     } finally {
       setIsLoading(false)
     }
@@ -115,6 +128,35 @@ export default function TranscriptionSettingsScreen() {
   useEffect(() => {
     initSelected()
   }, [initSelected])
+
+  useEffect(() => {
+    return offlineSpeechModelService.subscribe(setAutoStatus)
+  }, [])
+
+  // When the background auto-download completes, refresh the rows so the
+  // downloaded flag/icon updates without needing to leave + re-enter the screen.
+  useEffect(() => {
+    if (autoStatus?.stage === "complete") {
+      void refreshLists()
+      if (autoStatus.kind === "stt") {
+        setSttCurrent(STTModelManager.getCurrentLanguage())
+      } else {
+        setTtsCurrent(TTSModelManager.getCurrentLanguage())
+      }
+    }
+  }, [autoStatus?.stage, autoStatus?.kind, refreshLists])
+
+  // Merge auto-download status with the manually-driven per-screen state.
+  // Manual tap state wins when set (user is in control); otherwise surface the
+  // background service's progress on the matching row.
+  const sttAuto = autoStatus?.kind === "stt" && (autoStatus.stage === "downloading" || autoStatus.stage === "extracting")
+  const ttsAuto = autoStatus?.kind === "tts" && (autoStatus.stage === "downloading" || autoStatus.stage === "extracting")
+  const sttRowDownloading = sttDownloading ?? (sttAuto ? autoStatus!.languageCode : undefined)
+  const sttRowDownloadPercent = sttDownloading ? sttDownloadPercent : sttAuto && autoStatus!.stage === "downloading" ? autoStatus!.percent : 0
+  const sttRowExtractPercent = sttDownloading ? sttExtractPercent : sttAuto && autoStatus!.stage === "extracting" ? autoStatus!.percent : 0
+  const ttsRowDownloading = ttsDownloading ?? (ttsAuto ? autoStatus!.languageCode : undefined)
+  const ttsRowDownloadPercent = ttsDownloading ? ttsDownloadPercent : ttsAuto && autoStatus!.stage === "downloading" ? autoStatus!.percent : 0
+  const ttsRowExtractPercent = ttsDownloading ? ttsExtractPercent : ttsAuto && autoStatus!.stage === "extracting" ? autoStatus!.percent : 0
 
   const handleCancelDownload = async () => {
     try {
@@ -174,47 +216,37 @@ export default function TranscriptionSettingsScreen() {
     if (!handleBackPress()) goBack()
   }
 
-  const timeRemainingTillRestart = () => {
-    const now = Date.now()
-    return RESTART_TRANSCRIPTION_DEBOUNCE_MS - (now - lastRestartTime)
-  }
-
-  const activateAndRestartStt = async (code: string) => {
-    setLastRestartTime(Date.now())
-    await STTModelManager.activateLanguage(code)
-    await CoreModule.restartTranscriber()
-  }
-
   const handlePickStt = async (code: string) => {
-    if (sttDownloading) {
+    if (sttDownloading || sttAuto) {
       showAlert("Download in Progress", "Please wait for the current download to finish.", [
-        {text: "Cancel Download", style: "destructive", onPress: handleCancelDownload},
         {text: "OK", style: "cancel"},
       ])
-      return
-    }
-
-    const remaining = timeRemainingTillRestart()
-    if (remaining > 0 && code !== sttCurrent) {
-      showAlert(
-        "Restart in progress",
-        `A language change is in progress. Please wait ${Math.ceil(remaining / 1000)} seconds.`,
-        [{text: "OK"}],
-      )
       return
     }
 
     const info = await STTModelManager.getLanguageInfo(code)
 
     if (info.downloaded) {
-      try {
-        await activateAndRestartStt(code)
-        // Only commit the selection once the language is actually active.
-        setSttCurrent(code)
-        STTModelManager.setCurrentLanguage(code)
-      } catch (error: any) {
-        showAlert("Error", error?.message ?? "Failed to switch language", [{text: "OK"}])
-      }
+      // Optimistic: commit the UI selection immediately, then activate +
+      // restart the transcriber in the background. Subsequent taps queue
+      // behind the in-flight call so the last tap wins.
+      setSttCurrent(code)
+      STTModelManager.setCurrentLanguage(code)
+      sttDesiredRef.current = code
+
+      sttChainRef.current = sttChainRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          const target = sttDesiredRef.current
+          if (target == null) return
+          try {
+            await STTModelManager.activateLanguage(target)
+            await CoreModule.restartTranscriber()
+          } catch (error: any) {
+            console.error("STT activation failed:", error)
+            showAlert("Error", error?.message ?? "Failed to switch language", [{text: "OK"}])
+          }
+        })
       return
     }
 
@@ -228,10 +260,11 @@ export default function TranscriptionSettingsScreen() {
         (p) => setSttExtractPercent(p.percentage),
       )
       await refreshLists()
-      await activateAndRestartStt(code)
-      // Only commit the selection once the model is on disk and active.
+      await STTModelManager.activateLanguage(code)
+      await CoreModule.restartTranscriber()
       setSttCurrent(code)
       STTModelManager.setCurrentLanguage(code)
+      sttDesiredRef.current = code
       await setEnforceLocalTranscription(true)
     } catch (error: any) {
       showAlert("Download Failed", error?.message ?? "Failed to download language. Please try again.", [{text: "OK"}])
@@ -243,9 +276,8 @@ export default function TranscriptionSettingsScreen() {
   }
 
   const handlePickTts = async (code: string) => {
-    if (ttsDownloading) {
+    if (ttsDownloading || ttsAuto) {
       showAlert("Download in Progress", "Please wait for the current download to finish.", [
-        {text: "Cancel Download", style: "destructive", onPress: handleCancelDownload},
         {text: "OK", style: "cancel"},
       ])
       return
@@ -254,14 +286,23 @@ export default function TranscriptionSettingsScreen() {
     const info = await TTSModelManager.getLanguageInfo(code)
 
     if (info.downloaded) {
-      try {
-        await TTSModelManager.activateLanguage(code)
-        // Only commit the selection once the language is actually active.
-        setTtsCurrent(code)
-        TTSModelManager.setCurrentLanguage(code)
-      } catch (error: any) {
-        showAlert("Error", error?.message ?? "Failed to switch voice language", [{text: "OK"}])
-      }
+      // Optimistic: same pattern as STT.
+      setTtsCurrent(code)
+      TTSModelManager.setCurrentLanguage(code)
+      ttsDesiredRef.current = code
+
+      ttsChainRef.current = ttsChainRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          const target = ttsDesiredRef.current
+          if (target == null) return
+          try {
+            await TTSModelManager.activateLanguage(target)
+          } catch (error: any) {
+            console.error("TTS activation failed:", error)
+            showAlert("Error", error?.message ?? "Failed to switch voice language", [{text: "OK"}])
+          }
+        })
       return
     }
 
@@ -276,9 +317,9 @@ export default function TranscriptionSettingsScreen() {
       )
       await refreshLists()
       await TTSModelManager.activateLanguage(code)
-      // Only commit the selection once the model is on disk and active.
       setTtsCurrent(code)
       TTSModelManager.setCurrentLanguage(code)
+      ttsDesiredRef.current = code
     } catch (error: any) {
       showAlert("Download Failed", error?.message ?? "Failed to download voice language. Please try again.", [
         {text: "OK"},
@@ -293,7 +334,7 @@ export default function TranscriptionSettingsScreen() {
   return (
     <Screen preset="fixed">
       <Header
-        title={translate("settings:transcriptionSettings")}
+        title={translate("settings:speechSettings")}
         leftIcon="chevron-left"
         onLeftPress={handleGoBack}
         titleMode="flex"
@@ -319,12 +360,12 @@ export default function TranscriptionSettingsScreen() {
         ) : (
           <>
             <LanguageSelector
-              title="Captions Language"
+              title="Captions Language (Speech-to-Text)"
               languages={sttLanguages}
               currentLanguage={sttCurrent}
-              downloadingLanguage={sttDownloading}
-              downloadPercent={sttDownloadPercent}
-              extractionPercent={sttExtractPercent}
+              downloadingLanguage={sttRowDownloading}
+              downloadPercent={sttRowDownloadPercent}
+              extractionPercent={sttRowExtractPercent}
               onPickLanguage={handlePickStt}
               formatBytes={(b) => STTModelManager.formatBytes(b)}
             />
@@ -335,23 +376,14 @@ export default function TranscriptionSettingsScreen() {
               title="Voice Language (Text-to-Speech)"
               languages={ttsLanguages}
               currentLanguage={ttsCurrent}
-              downloadingLanguage={ttsDownloading}
-              downloadPercent={ttsDownloadPercent}
-              extractionPercent={ttsExtractPercent}
+              downloadingLanguage={ttsRowDownloading}
+              downloadPercent={ttsRowDownloadPercent}
+              extractionPercent={ttsRowExtractPercent}
               onPickLanguage={handlePickTts}
               formatBytes={(b) => TTSModelManager.formatBytes(b)}
             />
 
             <Spacer height={theme.spacing.s10} />
-
-            <Text
-              text={
-                enforceLocalTranscription
-                  ? "Captions are running locally on this device."
-                  : "Captions will run on this device when the language model is downloaded."
-              }
-              style={{color: theme.colors.textDim, fontSize: 13}}
-            />
           </>
         )}
       </ScrollView>

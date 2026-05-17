@@ -47,10 +47,10 @@ class STTModelManager {
     en: {
       code: "en",
       displayName: "English",
-      fileName: "sherpa-onnx-nemotron-speech-streaming-en-0.6b-160ms-int8-2026-04-25",
-      size: 463945198,
+      fileName: "sherpa-onnx-streaming-zipformer-en-2023-06-21-mobile",
+      size: 349 * 1024 * 1024,
       type: "transducer",
-      requiredFiles: ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"],
+      requiredFiles: ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"],
       languageCode: "en-US",
     },
     fr: {

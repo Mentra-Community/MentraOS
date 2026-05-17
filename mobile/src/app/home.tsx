@@ -7,7 +7,6 @@ import MaskedView from "@react-native-masked-view/masked-view"
 
 import {CustomBackground} from "@/components/home/CustomBackground"
 import {AppsGrid} from "@/components/home/AppsGrid"
-import OfflineModelDownloadBanner from "@/components/home/OfflineModelDownloadBanner"
 import {PairGlassesCard} from "@/components/home/PairGlassesCard"
 import {Screen} from "@/components/ignite"
 import {Group} from "@/components/ui"
@@ -81,7 +80,6 @@ export default function Homepage() {
         <Group>
           <ControllerStatus />
         </Group>
-        <OfflineModelDownloadBanner />
         <View className="h-2" />
         <AppsGrid />
       </>

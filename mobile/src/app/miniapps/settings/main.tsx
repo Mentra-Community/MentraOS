@@ -77,9 +77,9 @@ export default function MainSettingsPage() {
                 onPress={() => push("/miniapps/settings/microphone")}
               />
               <RouteButton
-                icon={<Icon name="file-type-2" size={24} color={theme.colors.secondary_foreground} />}
-                label={translate("settings:transcriptionSettings")}
-                onPress={() => push("/miniapps/settings/transcription")}
+                icon={<Icon name="volume" size={24} color={theme.colors.secondary_foreground} />}
+                label={translate("settings:speechSettings")}
+                onPress={() => push("/miniapps/settings/speech")}
               />
               <RouteButton
                 icon={<Icon name="shield-lock" size={24} color={theme.colors.secondary_foreground} />}

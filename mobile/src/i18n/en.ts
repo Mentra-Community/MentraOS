@@ -481,6 +481,7 @@ const en = {
     profileSettings: "Profile",
     privacySettings: "Permissions and Privacy",
     transcriptionSettings: "Transcription",
+    speechSettings: "Speech",
     notificationsSettings: "Notifications",
     notificationsDescription:
       "Control which apps can send notifications to Mentra. When enabled, notifications from these apps will be available to Mentra.",
