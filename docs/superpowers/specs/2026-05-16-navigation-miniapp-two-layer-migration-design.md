@@ -536,6 +536,29 @@ No new tests for the controller layer in this PR; verification is manual via the
 - Close WebView mid-trip → reopen → page shows current trip state immediately (snapshot push works).
 - Background-only persistence: stop trip via swipe-back gesture → background unsubscribes, clears display.
 
+## Documentation
+
+The SDK source comments and `agents/miniapp-sdk-overview.md` are where developers learn the surface. Both need updates as part of this PR.
+
+### Files to update
+
+1. **`agents/miniapp-sdk-overview.md`** — add a "Request/response across the bridge" subsection under the existing wire-protocol section. Cover: the two-line dev-side example (`mentra.request` + `session.ui.handle`), declaring an RPC channel with `Rpc<Req, Res>` in the shared registry, when RPC is the right tool vs. broadcast vs. stream, error semantics (`err.name === "MentraRpcError"`, `err.cause?.code`), cancellation via `AbortSignal` and the `useRpc().abort()` shortcut.
+
+2. **`mobile/modules/miniapp/src/modules/ui.ts`** — the top-of-file docstring currently says *"No request/response correlator at the SDK level — the bus is fire-and-forget. Authors who need request/response semantics implement it themselves using two channels."* That comment becomes wrong with this PR. Rewrite it to describe both `send`/`on` (broadcast) and `handle`/`request` (RPC), with the buffering rules and single-owner enforcement called out.
+
+3. **`mobile/modules/miniapp/src/ui/index.ts`** — UI-side entry. Add a short paragraph: "Use `mentra.send` for broadcasts; `mentra.request` for RPC calls. See `@mentra/miniapp/background` for the matching `session.ui.handle` registration."
+
+4. **`mobile/modules/miniapp/src/background/index.ts`** — background-side entry. Mirror paragraph: "Use `session.ui.send` for broadcasts; `session.ui.handle` for RPC handler registration. The UI calls these via `mentra.request`."
+
+5. **`sdk/example-miniapp/src/shared/channels.ts`** — the worked example. Update its docstring to describe both broadcast and RPC channel declarations. The `tester:invoke` channel (added in step 7 of sequencing) demonstrates the `Rpc<Req, Res>` pattern in context.
+
+6. **`sdk/example-miniapp/src/background/controllers/TesterController.ts`** — top-of-file docstring rewritten to explain "this is the worked example of `session.ui.handle`." Calls out that the streaming `tester:event` channel stays for subscribe-based testers (start/stop pattern) while the imperative testers now use one `tester:invoke` RPC.
+
+### What NOT to add
+
+- A standalone "RPC guide" doc. The overview + source comments + worked example is the right amount; a third doc duplicates and goes stale.
+- API reference generation. The SDK doesn't have generated docs today; not adding the burden in this PR.
+
 ## Sequencing
 
 One PR's worth of commits, ordered:
@@ -549,18 +572,19 @@ One PR's worth of commits, ordered:
 5. **`useRpc` hook** in `react/`. AbortController bound to component lifecycle; `.abort()` for cancel-previous patterns.
 6. **SDK tests** covering all the cases above.
 7. **Refactor `example-miniapp/TesterController`** to use `ui.handle("tester:invoke", ...)`. Update tester pages to use `mentra.request(...)`. Streaming `tester:event` channel stays only for the read-only testers (subscribe-based ones).
+8. **Docs pass** for the SDK changes — update the six files listed in the Documentation section above. Lands here (after the example refactor, before Navigation depends on it) so anyone reading the example sees current docs and the worked TesterController together.
 
 ### Navigation migration
 
-8. Create `src/shared/channels.ts` with the full registry.
-9. Set up `src/background/` skeleton: `index.ts` + empty `NavigationController`. Move all `client/session/managers/*.ts` files into `src/background/managers/`. Move `client/lib/places/places.ts` into `src/background/managers/PlacesManager.ts` (rewrap if needed).
-10. Implement `NavigationController.start()` — subscriptions, handlers, UI broadcasts, HUD logic, snapshot builder, dispose.
-11. Update `build.ts` to two-output. Update `miniapp.json` with `type/entry/sdkVersion`.
-12. Move `client/lib/places/places.ts` plumbing pieces that the UI needed (none — Places is fully background after rewrite). Move `GoogleMapsManager` into `src/ui/lib/googleMaps.ts`.
-13. Create `src/ui/store/navStore.ts` and `src/ui/main.tsx` (channel subscribers at root → store).
-14. Move `frontend/pages/*` and `frontend/components/*` into `src/ui/pages/` and `src/ui/components/`. Rewrite pages to read from store + send via channels.
-15. Delete `client/`, `frontend/`, `useUser.ts`, `User.ts`. Run typecheck — fix any imports.
-16. Manual device verification.
+9. Create `src/shared/channels.ts` with the full registry.
+10. Set up `src/background/` skeleton: `index.ts` + empty `NavigationController`. Move all `client/session/managers/*.ts` files into `src/background/managers/`. Move `client/lib/places/places.ts` into `src/background/managers/PlacesManager.ts` (rewrap if needed).
+11. Implement `NavigationController.start()` — subscriptions, handlers, UI broadcasts, HUD logic, snapshot builder, dispose.
+12. Update `build.ts` to two-output. Update `miniapp.json` with `type/entry/sdkVersion`.
+13. Move `client/lib/places/places.ts` plumbing pieces that the UI needed (none — Places is fully background after rewrite). Move `GoogleMapsManager` into `src/ui/lib/googleMaps.ts`.
+14. Create `src/ui/store/navStore.ts` and `src/ui/main.tsx` (channel subscribers at root → store).
+15. Move `frontend/pages/*` and `frontend/components/*` into `src/ui/pages/` and `src/ui/components/`. Rewrite pages to read from store + send via channels.
+16. Delete `client/`, `frontend/`, `useUser.ts`, `User.ts`. Run typecheck — fix any imports.
+17. Manual device verification.
 
 ## Out of scope
 
