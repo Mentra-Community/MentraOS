@@ -294,7 +294,24 @@ export class NavigationController {
     )
     this.unsubs.push(
       this.ui.on("nav:set-dev-settings", (partial) => {
-        this.devSettings = {...this.devSettings, ...partial}
+        const next = {...this.devSettings, ...partial}
+        // Forward changed dev toggles into the navigation SDK's `dev`
+        // surface so the wrongSidewalk / skipCrossings flags actually
+        // affect the trip. `simulate` and `speedMultiplier` are passed
+        // to navigation.start() via the nav:start payload — applying
+        // them mid-trip would require a stop+restart, which we don't
+        // do here.
+        try {
+          if (partial.wrongSidewalk !== undefined && partial.wrongSidewalk !== this.devSettings.wrongSidewalk) {
+            this.navigation.dev.setWrongSidewalkOffset(partial.wrongSidewalk)
+          }
+          if (partial.skipCrossings !== undefined && partial.skipCrossings !== this.devSettings.skipCrossings) {
+            this.navigation.dev.setSkipCrossings(partial.skipCrossings)
+          }
+        } catch (err) {
+          this.appendLog(`dev-settings forward failed: ${err instanceof Error ? err.message : String(err)}`)
+        }
+        this.devSettings = next
         this.ui.send("nav:dev-settings-update", this.devSettings)
       }),
     )
