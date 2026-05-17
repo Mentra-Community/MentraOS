@@ -48,7 +48,7 @@ function mergeSignals(signals: AbortSignal[]): AbortSignal {
   return ctrl.signal
 }
 
-export interface RpcCallable<TChannels extends Record<string, unknown>, C extends keyof TChannels & string> {
+export interface RpcCallable<TChannels extends object, C extends keyof TChannels & string> {
   (payload: RpcReq<TChannels[C]>, options?: RpcRequestOptions): Promise<RpcRes<TChannels[C]>>
   /** Abort the current in-flight call (if any). No-op if nothing is pending. */
   abort(): void
@@ -63,7 +63,7 @@ export interface RpcCallable<TChannels extends Record<string, unknown>, C extend
  *   autocomplete.abort()   // cancel the latest in-flight call
  */
 export function useRpc<
-  TChannels extends Record<string, unknown>,
+  TChannels extends object,
   C extends keyof TChannels & string,
 >(channel: C): RpcCallable<TChannels, C> {
   // Latest in-flight controller. Replaced on each call.

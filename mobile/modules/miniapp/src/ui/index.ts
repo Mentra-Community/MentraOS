@@ -29,7 +29,7 @@ declare global {
   var mentra: MentraUiGlobal
 }
 
-export interface MentraUiGlobal<TChannels extends Record<string, unknown> = Record<string, unknown>> {
+export interface MentraUiGlobal<TChannels extends object = Record<string, unknown>> {
   /**
    * Broadcast a typed message to the bound background JSContext.
    * Buffered until `ready()` acks; once acked, fires immediately.
@@ -116,4 +116,4 @@ export {useRpc, type RpcCallable} from "../react/useRpc"
  * }
  * ```
  */
-export type MentraTyped<TChannels extends Record<string, unknown>> = MentraUiGlobal<TChannels>
+export type MentraTyped<TChannels extends object> = MentraUiGlobal<TChannels>

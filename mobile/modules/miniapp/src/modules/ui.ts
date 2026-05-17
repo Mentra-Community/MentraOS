@@ -119,7 +119,7 @@ export class MentraRpcTimeoutError extends Error {
  * The default `Record<string, unknown>` mapping lets unannotated usage
  * compile — the SDK doesn't impose a registry of its own.
  */
-export interface UIModule<TChannels extends Record<string, unknown> = Record<string, unknown>> {
+export interface UIModule<TChannels extends object = Record<string, unknown>> {
   /** True iff a WebView is currently bound to this miniapp. */
   isOpen(): boolean
 
@@ -203,7 +203,7 @@ function rpcErrorFromUnknown(e: unknown): {message: string; code?: string} {
   return {message: String(e)}
 }
 
-export class UIModuleImpl<TChannels extends Record<string, unknown> = Record<string, unknown>>
+export class UIModuleImpl<TChannels extends object = Record<string, unknown>>
   implements UIModule<TChannels>
 {
   /** True between UI_OPEN and the matching UI_CLOSE. */

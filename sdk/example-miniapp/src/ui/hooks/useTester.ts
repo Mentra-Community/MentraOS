@@ -30,7 +30,7 @@ export function useTester(
   const [lastError, setLastError] = useState<TesterEventPayload | null>(null)
   const ifaceRef = useRef(iface)
   ifaceRef.current = iface
-  const rpcInvoke = useRpc<Channels & Record<string, unknown>, "tester:invoke">("tester:invoke")
+  const rpcInvoke = useRpc<Channels, "tester:invoke">("tester:invoke")
 
   useEffect(() => {
     mentra.send("tester:start", {iface})
