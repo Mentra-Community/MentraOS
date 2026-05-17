@@ -124,12 +124,9 @@ export class UIModuleImpl<TChannels extends Record<string, unknown> = Record<str
     this.session._subscribe("_ui", (env: unknown) => this.handleInbound(env as UIInboundEnvelope))
   }
 
-  // All public methods are arrow-property bindings so destructuring
-  // (`const {send} = session.ui` or passing `ui.send` as a callback) is
-  // safe. Otherwise `this.bound` evaluates as undefined and crashes the
-  // JSContext on the first call, which the host turns into a crashloop
-  // incident report. The footgun isn't hypothetical — the SDK tester's
-  // controller hit it before this fix landed.
+  // Arrow-property bindings make every public method safe to destructure
+  // (`const {send} = session.ui`) or pass as a bare callback — a plain
+  // method loses `this` and crashes on `this.bound`.
   isOpen = (): boolean => {
     return this.bound
   }

@@ -220,6 +220,43 @@ export interface LocationTierAdapter {
   setLocationTier: (rate: "off" | "passive" | "low" | "high" | "realtime") => void
 }
 
+/**
+ * Streaming adapter — owns RTMP/SRT/WHIP publishing on the phone for local
+ * miniapps. The runtime calls these from its stream request handlers; the
+ * host's PhoneStreamCoordinator implements them.
+ */
+export interface StreamingAdapter {
+  startUnmanaged: (
+    packageName: string,
+    opts: {
+      streamUrl: string
+      video?: unknown
+      audio?: unknown
+      flash?: boolean
+      sound?: boolean
+    },
+  ) => Promise<{streamId: string}>
+  startManaged: (
+    packageName: string,
+    opts: {restreamDestinations?: Array<string | {url: string; name?: string}>},
+  ) => Promise<{
+    streamId: string
+    liveInputId: string
+    hlsUrl: string
+    dashUrl: string
+    webrtcUrl?: string
+  }>
+  stop: (packageName: string, streamId?: string) => Promise<void>
+  /**
+   * Subscribe to status updates produced by the coordinator (BLE-originated
+   * status, Cloudflare poll, lifecycle errors). Called per-(packageName,
+   * update) pair so the runtime can fan an EVENT into the right miniapp(s).
+   */
+  setStatusSubscriber: (
+    cb: (packageName: string, update: {streamId: string; status: string; data?: Record<string, unknown>; source: string}) => void,
+  ) => void
+}
+
 export interface RuntimeHooks {
   socketComms?: SocketCommsAdapter
   audioPlayback?: AudioPlaybackAdapter
@@ -254,6 +291,8 @@ export interface RuntimeHooks {
     saveToGallery?: boolean
     sound?: boolean
   }) => Promise<{accepted: boolean; requestId: string}>
+  /** Phone-orchestrated RTMP/SRT/WHIP publishing. */
+  streaming?: StreamingAdapter
 }
 
 let hooks: RuntimeHooks = {}

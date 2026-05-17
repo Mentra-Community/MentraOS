@@ -11,6 +11,7 @@ import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import miniSockets from "@/services/MiniSockets"
 import navigationService from "@/services/NavigationService"
 import {requestMiniappSdkPhoto} from "@/services/miniapp/MiniappSdkPhotoHandler"
+import {phoneStreamCoordinator} from "@/services/streaming/PhoneStreamCoordinator"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
@@ -205,7 +206,15 @@ class MantleManager {
       locationTier: {
         setLocationTier: (rate) => this.setLocationTier(rate),
       },
+      streaming: {
+        startUnmanaged: (pkg, opts) => phoneStreamCoordinator.startUnmanaged(pkg, opts),
+        startManaged: (pkg, opts) => phoneStreamCoordinator.startManaged(pkg, opts),
+        stop: (pkg, streamId) => phoneStreamCoordinator.stop(pkg, streamId),
+        setStatusSubscriber: (cb) => phoneStreamCoordinator.setStatusSubscriber(cb),
+      },
     })
+    // Wire the runtime's status fanout now that the streaming hook is in.
+    localMiniappRuntime.wireStreamingStatusFanout()
 
     // Register the offline-app catalog with island's AppRegistry before
     // anything triggers an apps refresh.
@@ -902,6 +911,12 @@ class MantleManager {
 
       this.subs.push(
         CoreModule.addListener("stream_status", (event) => {
+          // Phone-owned streams stay on-device; cloud-SDK app streams
+          // forward so cloud's lifecycle state machine sees them.
+          if (event.streamId && phoneStreamCoordinator.owns(event.streamId)) {
+            phoneStreamCoordinator.handleGlassesStatus(event)
+            return
+          }
           console.log("MANTLE: Forwarding stream status to server:", event)
           socketComms.sendStreamStatus(event)
         }),
@@ -909,6 +924,10 @@ class MantleManager {
 
       this.subs.push(
         CoreModule.addListener("keep_alive_ack", (event) => {
+          if (event.streamId && phoneStreamCoordinator.owns(event.streamId)) {
+            phoneStreamCoordinator.handleKeepAliveAck(event)
+            return
+          }
           console.log("MANTLE: Forwarding keep-alive ACK to server:", event)
           socketComms.sendKeepAliveAck(event)
         }),

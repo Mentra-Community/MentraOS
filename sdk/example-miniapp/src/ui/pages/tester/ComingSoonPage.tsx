@@ -10,8 +10,6 @@ import {Button} from "../../components/button"
 import {Shell} from "../Shell"
 
 const ITEMS: Array<{emoji: string; title: string; subtitle: string}> = [
-  {emoji: "📸", title: "Camera — takePhoto()", subtitle: "V2: photos route via cloud upload (OS-1301)."},
-  {emoji: "🎬", title: "Streaming — startUnmanaged/startManaged", subtitle: "V2: RTMP/HLS streaming (OS-1302, OS-1303)."},
   {emoji: "📊", title: "Dashboard — updateContent()", subtitle: "Deferred in V1 per the local miniapp plan."},
 ]
 

@@ -102,6 +102,20 @@ export class TesterController {
           t()
         }
       }
+      case "stream": {
+        // Stream status (lifecycle + Cloudflare + coordinator-emitted errors)
+        // arrives as a generic `stream_status` event stream. The coordinator
+        // emits everything keyed by streamId so the UI can render a unified
+        // timeline regardless of source.
+        const s = this.session.events.subscribe("stream_status", (data) => emit("status", data))
+        return () => s()
+      }
+      case "camera": {
+        // Camera has no event stream — takePhoto() resolves via `kind:"result"`
+        // through the generic dispatchAction path. Return a no-op subscriber
+        // so the UI's "subscription open?" toggle is consistent.
+        return () => {}
+      }
       case "imu":
         return this.session.imu.onHeadPosition((data) => emit("head", data))
       case "location":

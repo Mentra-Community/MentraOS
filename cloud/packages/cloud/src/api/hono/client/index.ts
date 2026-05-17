@@ -16,3 +16,4 @@ export { default as notificationsApi } from "./notifications.api";
 export { default as miniappSdkPhotoApi } from "./miniapp-sdk-photo.api";
 export { default as photoApi } from "./photo.api";
 export { default as userSettingsApi } from "./user-settings.api";
+export { default as v2StreamsApi } from "./v2/streams.api";

@@ -16,13 +16,11 @@
  *            otherwise crash count increments)
  *
  * Retry policy: zero retries by default — the first crash escalates
- * straight to CRASHLOOP_DISABLED. This matches platform conventions
- * (Android / iOS don't silently restart crashed apps either) and avoids
- * the "why is my buggy miniapp respawning" confusion. Callers can opt
- * back into the legacy 3-retry-with-backoff policy by passing
- * `{maxRetries: 3, backoffMs: [2_000, 8_000, 30_000]}`; the BACKOFF
- * state machine and exponential delays are still implemented and
- * unit-tested for that case.
+ * straight to CRASHLOOP_DISABLED, matching how Android / iOS treat crashed
+ * apps. Callers that prefer auto-respawn opt in by passing
+ * `{maxRetries: 3, backoffMs: [2_000, 8_000, 30_000]}`; the BACKOFF state
+ * machine and exponential delays are implemented and unit-tested for that
+ * case.
  *
  * The controller is purely a policy engine — it doesn't actually call
  * mentraJsSpawn / mentraJsKill. Callers (MentraJSRouter) read the

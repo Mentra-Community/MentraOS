@@ -13,12 +13,25 @@ export interface StartUnmanagedOptions {
   audio?: boolean
 }
 
+/**
+ * Restream destination. The full stream key is part of the URL (e.g.
+ * `rtmp://yt.com/live/STREAM-KEY`). `name` is a human label that surfaces
+ * in dashboards but doesn't affect routing.
+ */
+export interface RestreamDestination {
+  url: string
+  name?: string
+}
+
 export interface StartManagedOptions {
-  restreamDestinations?: string[]
+  /** Bare URL strings or {url, name?} objects; mix freely. */
+  restreamDestinations?: Array<string | RestreamDestination>
 }
 
 export interface ManagedStreamResult {
   streamId: string
+  /** Cloudflare live input UID — useful for building hosted-player URLs. */
+  liveInputId?: string
   hlsUrl?: string
   dashUrl?: string
   webrtcUrl?: string

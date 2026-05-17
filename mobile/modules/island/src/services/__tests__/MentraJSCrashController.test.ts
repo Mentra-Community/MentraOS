@@ -146,9 +146,9 @@ describe("MentraJSCrashController", () => {
     expect(controller.stateFor("a")).toBeNull()
   })
 
-  // Default policy: zero retries. The constructor used above passes
-  // maxRetries: 3 to keep the legacy backoff-state-machine tests green;
-  // these tests cover the new default (no opts → fail-fast).
+  // No-opts construction: zero retries by default. The block above exercises
+  // the backoff-state-machine with maxRetries:3; this block exercises the
+  // fail-fast default.
   describe("default zero-retry policy", () => {
     test("first crash with no opts transitions straight to CRASHLOOP_DISABLED", () => {
       const c = new MentraJSCrashController({now: () => clock})
