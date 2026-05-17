@@ -47,6 +47,9 @@ class VadGateSpeechPolicy(private val context: Context) {
     private var bypassVadForDebugging = false
     private var bypassVadForPCM = false
 
+    /** Notified whenever the speech/silence state actually flips. */
+    var onSpeechStateChanged: ((Boolean) -> Unit)? = null
+
     // Timestamp of the last detected speech
     private var lastSpeechDetectedTime = 0L
     // Throttle timer for silence VAD checks
@@ -161,6 +164,7 @@ class VadGateSpeechPolicy(private val context: Context) {
                         "Speech detection changed to: ${if (isCurrentlySpeech) "SPEECH" else "SILENCE"}"
                 )
                 previousSpeechState = isCurrentlySpeech
+                onSpeechStateChanged?.invoke(isCurrentlySpeech)
             }
         }
     }
@@ -185,9 +189,11 @@ class VadGateSpeechPolicy(private val context: Context) {
 
     /** Reset VAD state */
     fun reset() {
+        val wasSpeaking = isCurrentlySpeech
         isCurrentlySpeech = false
         lastSpeechDetectedTime = 0
         lastVadCheckTime = 0
+        if (wasSpeaking) onSpeechStateChanged?.invoke(false)
     }
 
     /** Change bypass VAD for debugging state */
@@ -206,6 +212,7 @@ class VadGateSpeechPolicy(private val context: Context) {
     fun microphoneStateChanged(state: Boolean) {
         if (!state) {
             // Microphone turned off: force immediate silence
+            val wasSpeaking = isCurrentlySpeech
             isCurrentlySpeech = false
             lastSpeechDetectedTime = 0
             lastVadCheckTime = 0
@@ -216,6 +223,7 @@ class VadGateSpeechPolicy(private val context: Context) {
                 vadInstance.isSpeech(silentFrame)
             }
             Log.d(TAG, "Microphone turned off; forced state to SILENCE.")
+            if (wasSpeaking) onSpeechStateChanged?.invoke(false)
         }
     }
 }

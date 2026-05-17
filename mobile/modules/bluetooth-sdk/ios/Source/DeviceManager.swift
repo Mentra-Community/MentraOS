@@ -167,8 +167,11 @@ struct ViewState {
         set { GlassesStore.shared.apply("core", "sensing_enabled", newValue) }
     }
 
+    /// Phone-side VAD gating switch. Default is OFF (VAD runs) so that the
+    /// coordinator can drive per-utterance offline/online STT switching from
+    /// `vad_status` events. Set to `true` only as an emergency kill-switch.
     private var bypassVad: Bool {
-        get { GlassesStore.shared.get("core", "bypass_vad") as? Bool ?? true }
+        get { GlassesStore.shared.get("core", "bypass_vad") as? Bool ?? false }
         set { GlassesStore.shared.apply("core", "bypass_vad", newValue) }
     }
 

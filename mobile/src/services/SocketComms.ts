@@ -298,23 +298,14 @@ class SocketComms {
     ws.sendText(jsonString)
   }
 
-  public sendLocalTranscription(transcription: any) {
-    if (!ws.isConnected()) {
-      console.log("Cannot send local transcription: WebSocket not connected")
-      return
-    }
-
-    const text = transcription.text
-    if (!text || text === "") {
-      console.log("Skipping empty transcription result")
-      return
-    }
-
-    const jsonString = JSON.stringify(transcription)
-    ws.sendText(jsonString)
-
-    const isFinal = transcription.isFinal || false
-    console.log(`SOCKET: Sent ${isFinal ? "final" : "partial"} transcription: '${text}'`)
+  /**
+   * @deprecated Local transcripts no longer roundtrip to the cloud. They
+   * flow directly to subscribed local miniapps via LocalMiniappRuntime.
+   * Retained as a no-op only so external callers (if any) don't crash.
+   * Remove call sites and then delete this in a follow-up.
+   */
+  public sendLocalTranscription(_transcription: any) {
+    return
   }
 
   public sendUdpRegister(userIdHash: number) {
@@ -458,8 +449,10 @@ class SocketComms {
   }
 
   private async handle_microphone_state_change(msg: any) {
-    // const bypassVad = msg.bypassVad ?? true
-    const bypassVad = true
+    // Phone-side VAD is now driven by LocalSttFallbackCoordinator for
+    // per-utterance offline/online STT switching, so we never want to
+    // bypass it from the cloud side. The cloud's bypassVad hint is ignored.
+    const bypassVad = false
     const requiredDataStrings = msg.requiredData || []
     console.log(`SOCKET: mic_state_change: requiredData = [${requiredDataStrings}], bypassVad = ${bypassVad}`)
     let shouldSendPcmData = false

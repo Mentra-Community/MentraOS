@@ -10,14 +10,12 @@ import headingService from "@/services/HeadingService"
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import miniSockets from "@/services/MiniSockets"
 import navigationService from "@/services/NavigationService"
-import offlineSpeechModelService from "@/services/OfflineSpeechModelService"
-import STTModelManager from "@/services/STTModelManager"
-import TTSModelManager from "@/services/TTSModelManager"
 import {requestMiniappSdkPhoto} from "@/services/miniapp/MiniappSdkPhotoHandler"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
+import {WebSocketStatus} from "@/services/ws-types"
 import {gallerySyncService} from "@/services/asg/gallerySyncService"
 import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
 import {
@@ -26,9 +24,11 @@ import {
   localMiniappRuntime,
   localSttFallbackCoordinator,
   micStateCoordinator,
+  offlineSpeechModelService,
   BgTimer,
   useAppStatusStore,
 } from "@mentra/island"
+import {useConnectionStore} from "@/stores/connection"
 import {useDisplayStore} from "@/stores/display"
 import {useGlassesStore, getGlasesInfoPartial} from "@/stores/glasses"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
@@ -139,17 +139,6 @@ class MantleManager {
         play: (request, onComplete) => audioPlaybackService.play(request, onComplete),
         stopForApp: (packageName) => audioPlaybackService.stopForApp(packageName),
       },
-      tts: {
-        isAvailable: () => TTSModelManager.isModelAvailable(),
-        synthesize: ({text, voiceId, speed}) =>
-          TTSModelManager.synthesizeToFile(text, {
-            languageCode:
-              voiceId && TTSModelManager.getAvailableLanguages().some((lang) => lang.code === voiceId)
-                ? voiceId
-                : undefined,
-            speed,
-          }),
-      },
       glassesStatus: {
         get: () => {
           const s = useGlassesStore.getState()
@@ -175,7 +164,22 @@ class MantleManager {
             (value) => onChange(value as never),
           ),
       },
-      sttModelAvailable: () => STTModelManager.isModelAvailable(),
+      cloudConnection: {
+        isConnected: () => useConnectionStore.getState().status === WebSocketStatus.CONNECTED,
+        // The connection store is plain zustand (no subscribeWithSelector
+        // middleware), so we subscribe to all state changes and dedupe to
+        // the connected boolean ourselves.
+        addListener: (l) => {
+          let lastConnected = useConnectionStore.getState().status === WebSocketStatus.CONNECTED
+          return useConnectionStore.subscribe((state) => {
+            const connected = state.status === WebSocketStatus.CONNECTED
+            if (connected !== lastConnected) {
+              lastConnected = connected
+              l(connected)
+            }
+          })
+        },
+      },
       setDisplayEvent: (event) => useDisplayStore.getState().setDisplayEvent(event),
       requestMiniappSdkPhoto: (params) => requestMiniappSdkPhoto(params),
       // Google Nav SDK adapter — the island runtime fan-outs nav events to
@@ -1167,13 +1171,17 @@ class MantleManager {
       return
     }
 
+    // Local transcripts only ever flow to local miniapps. The cloud-side
+    // pipeline (cloud miniapps, cloud-relayed transcripts) is unaffected
+    // by this branch — when the cloud WS is up, cloud transcripts arrive
+    // independently via SocketComms and reach miniapps via the same
+    // forwardEvent. Coordinator's `isActive()` already covers
+    // "subscription present AND cloud is dead", so if we got here without
+    // it being active there's no consumer and we drop the transcript.
     if (localSttFallbackCoordinator.isActive()) {
       const lang = data?.transcribeLanguage ?? localSttFallbackCoordinator.getActiveLanguage() ?? "en-US"
       localMiniappRuntime.forwardEvent(`transcription:${lang}`, data)
-      return
     }
-
-    socketComms.sendLocalTranscription(data)
   }
 
   public async handle_button_press(event: ButtonPressEvent) {

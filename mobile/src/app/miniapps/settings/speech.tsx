@@ -10,10 +10,13 @@ import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import offlineSpeechModelService, {DownloadStatus} from "@/services/OfflineSpeechModelService"
-import STTModelManager from "@/services/STTModelManager"
-import TTSModelManager from "@/services/TTSModelManager"
-import {useStopAll} from "@mentra/island"
+import {
+  offlineSpeechModelService,
+  sttModelManager as STTModelManager,
+  ttsModelManager as TTSModelManager,
+  useStopAll,
+  type OfflineModelDownloadStatus as DownloadStatus,
+} from "@mentra/island"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
 

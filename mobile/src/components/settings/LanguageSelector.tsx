@@ -4,7 +4,7 @@ import {Icon, Text} from "@/components/ignite"
 import GlassView from "@/components/ui/GlassView"
 import {Group} from "@/components/ui/Group"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {STTModelManager} from "@/services/STTModelManager"
+import {STTModelManager} from "@mentra/island"
 import {ThemedStyle} from "@/theme"
 
 export type LanguageRow = {

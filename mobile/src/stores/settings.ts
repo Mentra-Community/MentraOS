@@ -458,13 +458,6 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  local_stt_fallback_enabled: {
-    key: "local_stt_fallback_enabled",
-    defaultValue: () => true,
-    writable: true,
-    saveOnServer: true,
-    persist: true,
-  },
   // Runtime flag: coordinator flips this on when cloud STT has failed and fallback is active.
   // Native GlassesStore watches it to gate PCM → Sherpa feeding. Not user-facing.
   local_stt_fallback_active: {
@@ -607,6 +600,10 @@ const CORE_SETTINGS_KEYS: string[] = [
   // offline applets:
   SETTINGS.offline_mode.key,
   SETTINGS.offline_captions_running.key,
+  // Runtime flag flipped by LocalSttFallbackCoordinator. Native reads it from
+  // GlassesStore to gate PCM → Sherpa feeding in handlePcm and to keep the
+  // mic on while local STT is the active engine.
+  SETTINGS.local_stt_fallback_active.key,
   SETTINGS.gallery_mode.key,
 ]
 

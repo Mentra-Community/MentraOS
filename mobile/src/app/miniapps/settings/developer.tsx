@@ -43,7 +43,6 @@ export default function DeveloperSettingsScreen() {
   const [_onboardingOsCompleted, setOnboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
   const [_onboardingLiveCompleted, setOnboardingLiveCompleted] = useSetting(SETTINGS.onboarding_live_completed.key)
   const [lc3FrameSize, setLc3FrameSize] = useSetting(SETTINGS.lc3_frame_size.key)
-  const [localSttFallbackEnabled, setLocalSttFallbackEnabled] = useSetting(SETTINGS.local_stt_fallback_enabled.key)
   const [navRunning, setNavRunning] = useState(false)
   const navUnsubRef = useRef<(() => void) | null>(null)
 
@@ -164,12 +163,6 @@ export default function DeveloperSettingsScreen() {
               label={translate("devSettings:miniappDevScanLabel")}
               subtitle={translate("devSettings:miniappDevScanSubtitle")}
               onPress={() => push("/miniapps/miniappdev/scanner")}
-            />
-            <ToggleSetting
-              label="Local STT Fallback"
-              subtitle="Use on-device Sherpa when cloud transcription fails (requires downloaded language pack)"
-              value={localSttFallbackEnabled}
-              onValueChange={(value) => setLocalSttFallbackEnabled(value)}
             />
           </Group>
 

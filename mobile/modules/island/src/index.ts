@@ -33,6 +33,23 @@ export {
 } from "./services/MentraJSLogPipeline"
 export {default as localSttFallbackCoordinator} from "./services/LocalSttFallbackCoordinator"
 export {default as micStateCoordinator} from "./services/MicStateCoordinator"
+export {
+  default as sttModelManager,
+  STTModelManager,
+  type LanguageInfo as SttLanguageInfo,
+  type LanguageConfig as SttLanguageConfig,
+  type DownloadProgress as SttDownloadProgress,
+  type ExtractionProgress as SttExtractionProgress,
+} from "./services/STTModelManager"
+export {
+  default as ttsModelManager,
+  TTSModelManager,
+} from "./services/TTSModelManager"
+export {
+  default as offlineSpeechModelService,
+  type DownloadStatus as OfflineModelDownloadStatus,
+  type DownloadStage as OfflineModelDownloadStage,
+} from "./services/OfflineSpeechModelService"
 
 // Runtime config (host-injected adapters)
 export {

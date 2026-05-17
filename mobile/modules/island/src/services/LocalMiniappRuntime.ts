@@ -36,6 +36,7 @@ import type {DisplayPayload} from "./LocalDisplayManager"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
 import {getRuntimeHooks, ISLAND_SETTINGS_KEYS, type TtsSynthesisResult} from "../runtime/config"
+import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
 
 // =============================================================================
@@ -1099,11 +1100,23 @@ class LocalMiniappRuntime {
       // Try offline TTS first; on synthesize failure (e.g. requested voice's
       // language model isn't downloaded) fall through to cloud TTS rather
       // than surfacing the offline error to the miniapp.
-      const tts = getRuntimeHooks().tts
+      //
+      // If the miniapp passed an explicit `voice_id` that offline TTS can't
+      // honor (e.g. an ElevenLabs voice id), skip offline entirely instead of
+      // silently substituting the default offline voice — the miniapp asked
+      // for a specific voice and we shouldn't lie about which one it got.
+      const voiceExplicit = payload.voice_id !== undefined || payload.voice !== undefined
+      const offlineSupportsVoice =
+        !voiceExplicit ||
+        voice === "default" ||
+        ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
       let offlineGenerated: TtsSynthesisResult | undefined
-      if (tts && (await tts.isAvailable())) {
+      if (offlineSupportsVoice && (await ttsModelManager.isModelAvailable())) {
         try {
-          offlineGenerated = await tts.synthesize({text, voiceId: voice, speed})
+          const languageCode = ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
+            ? voice
+            : undefined
+          offlineGenerated = await ttsModelManager.synthesizeToFile(text, {languageCode, speed})
         } catch (offlineErr) {
           console.warn(`${LOG_TAG}: offline TTS synthesize failed, falling back to cloud:`, offlineErr)
           offlineGenerated = undefined

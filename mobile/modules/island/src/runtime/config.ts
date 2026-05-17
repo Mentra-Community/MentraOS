@@ -34,6 +34,16 @@ export interface SocketCommsAdapter {
   updatePhoneSubscriptions: (subscriptions: string[]) => void
 }
 
+/**
+ * Cloud connection state surface used by LocalSttFallbackCoordinator to
+ * decide when on-device STT should take over from cloud transcription.
+ * Hosts wrap their own WebSocket-status store.
+ */
+export interface CloudConnectionAdapter {
+  isConnected: () => boolean
+  addListener: (l: (connected: boolean) => void) => () => void
+}
+
 export interface AudioPlayRequest {
   requestId: string
   audioUrl: string
@@ -57,19 +67,13 @@ export interface AudioPlaybackAdapter {
   stopForApp: (packageName: string) => void
 }
 
+/**
+ * Result of an offline TTS synthesis. The island's TTSModelManager produces
+ * this directly; the type is kept exported for hosts that wrap it.
+ */
 export interface TtsSynthesisResult {
   audioUrl: string
   cleanup?: () => Promise<void> | void
-}
-
-export interface TtsAdapter {
-  isAvailable: () => Promise<boolean> | boolean
-  synthesize: (params: {
-    text: string
-    voiceId?: string
-    speakerId?: number
-    speed?: number
-  }) => Promise<TtsSynthesisResult>
 }
 
 /**
@@ -95,7 +99,6 @@ export interface SettingsAccessor {
  * settings store keys to these names. Mobile already uses these strings.
  */
 export const ISLAND_SETTINGS_KEYS = {
-  localSttFallbackEnabled: "local_stt_fallback_enabled",
   localSttFallbackActive: "local_stt_fallback_active",
   defaultWearable: "default_wearable",
   backendUrl: "backend_url",
@@ -220,7 +223,6 @@ export interface LocationTierAdapter {
 export interface RuntimeHooks {
   socketComms?: SocketCommsAdapter
   audioPlayback?: AudioPlaybackAdapter
-  tts?: TtsAdapter
   /** Returns the connected glasses' status snapshot. */
   glassesStatus?: StoreAccessor<GlassesSnapshot>
   settings?: SettingsAccessor
@@ -230,11 +232,8 @@ export interface RuntimeHooks {
   heading?: HeadingAdapter
   /** Location-tier escalation (e.g. realtime GPS when a trip is active). */
   locationTier?: LocationTierAdapter
-  /**
-   * STT model availability check used by LocalSttFallbackCoordinator before
-   * starting the on-device transcriber.
-   */
-  sttModelAvailable?: () => Promise<boolean> | boolean
+  /** Cloud WebSocket connection state surface. */
+  cloudConnection?: CloudConnectionAdapter
   /**
    * Forward processed display events into the host's mirror store. The
    * default no-op skips the mirror — installed-only hosts (no UI mirror)
