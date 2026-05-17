@@ -292,13 +292,14 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
     if (!envelope || typeof envelope !== 'object') return;
     var type = envelope.type;
     if (type === 'msg' && typeof envelope.channel === 'string') {
-      // RPC reply: requestId set → route to the inflight resolver.
-      if (typeof envelope.requestId === 'string' && rpcInflight[envelope.requestId]) {
+      // RPC frames carry a requestId; broadcast frames don't. Treat them
+      // as disjoint — never fall through from RPC to broadcast. An orphan
+      // RPC reply (caller already aborted/timed out) is silently dropped.
+      if (typeof envelope.requestId === 'string') {
         var settle = rpcInflight[envelope.requestId];
-        settle(envelope.payload);
+        if (settle) settle(envelope.payload);
         return;
       }
-      // Broadcast: fan out via fireChannel (existing path).
       fireChannel(envelope.channel, envelope.payload);
       return;
     }

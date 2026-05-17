@@ -51,9 +51,12 @@ export interface MentraUiGlobal<TChannels extends Record<string, unknown> = Reco
 
   /**
    * Make an RPC call to the background `session.ui.handle(channel, ...)`
-   * handler. Throws `MentraRpcError` if the handler threw; throws
-   * `MentraRpcTimeoutError` if `options.timeout` elapsed; throws
-   * `AbortError` if `options.signal` aborted. No default timeout.
+   * handler. On failure, throws an `Error` whose `name` is one of:
+   *   - `"MentraRpcError"` — the handler threw. `err.cause?.code` may be set.
+   *   - `"MentraRpcTimeoutError"` — `options.timeout` elapsed.
+   *   - `"AbortError"` — `options.signal` aborted.
+   * Distinguish by `err.name`, not `instanceof` — these errors are
+   * constructed in the WebView's bare runtime scope. No default timeout.
    */
   request<C extends keyof TChannels & string>(
     channel: IsRpc<TChannels[C]> extends true ? C : never,
