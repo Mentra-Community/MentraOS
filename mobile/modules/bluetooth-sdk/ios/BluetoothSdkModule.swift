@@ -494,6 +494,39 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("extractTarBz2") { (sourcePath: String, destinationPath: String) -> Bool in
             return STTTools.extractTarBz2(sourcePath: sourcePath, destinationPath: destinationPath)
         }
+
+        // MARK: - TTS Model Management
+
+        AsyncFunction("setTtsModelDetails") { (path: String, languageCode: String) in
+            TTSTools.setTtsModelDetails(path, languageCode)
+        }
+
+        AsyncFunction("getTtsModelPath") { () -> String in
+            return TTSTools.getTtsModelPath()
+        }
+
+        AsyncFunction("getTtsModelLanguage") { () -> String in
+            return TTSTools.getTtsModelLanguage()
+        }
+
+        AsyncFunction("checkTtsModelAvailable") { () -> Bool in
+            return TTSTools.checkTTSModelAvailable()
+        }
+
+        AsyncFunction("validateTtsModel") { (path: String) -> Bool in
+            return TTSTools.validateTTSModel(path)
+        }
+
+        AsyncFunction("generateTtsAudio") {
+            (text: String, modelPath: String, outputPath: String, speakerId: Int, speed: Double) -> Bool in
+            return TTSTools.generateTtsAudio(
+                text: text,
+                modelPath: modelPath,
+                outputPath: outputPath,
+                speakerId: speakerId,
+                speed: speed
+            )
+        }
     }
 
     @MainActor

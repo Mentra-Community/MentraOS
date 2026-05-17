@@ -1,10 +1,107 @@
 import groovy.json.JsonSlurper
+import java.security.MessageDigest
 
 apply plugin: 'com.android.library'
 apply plugin: 'maven-publish'
 apply plugin: 'signing'
 
 def packageJson = new JsonSlurper().parse(file("../package.json"))
+
+// Download Sherpa-ONNX Android AAR from the upstream GitHub release and stage
+// it as a Maven artifact in a tiny on-disk repository under libs/maven/.
+// Why this shape:
+//   - Jitpack stopped publishing for v1.13.2+ (their build step fails because
+//     the AAR asset isn't present when its install-file step runs).
+//   - We can't just `implementation files("…aar")` because AGP refuses local
+//     .aar deps from library modules ("Direct local .aar file dependencies
+//     are not supported when building an AAR"). Maven-coord deps are fine.
+// The SHA-256 is pinned (matches the upstream checksum.txt for v1.13.2) so a
+// tampered or partially-written artifact is rejected before being used.
+def sherpaOnnxGroup = "com.k2fsa.sherpa.onnx"
+def sherpaOnnxArtifact = "sherpa-onnx"
+def sherpaOnnxVersion = "1.13.2"
+def sherpaOnnxSha256 = "aa5505c0ec4f8bdaee5f214a64ba3012be64f2aecc022e82a64f33392b8dd245"
+
+def sherpaOnnxMavenRoot = file("libs/maven")
+def sherpaOnnxRepoDir = new File(
+  sherpaOnnxMavenRoot,
+  "${sherpaOnnxGroup.replace('.', '/')}/${sherpaOnnxArtifact}/${sherpaOnnxVersion}"
+)
+def sherpaOnnxAar = new File(sherpaOnnxRepoDir, "${sherpaOnnxArtifact}-${sherpaOnnxVersion}.aar")
+def sherpaOnnxPom = new File(sherpaOnnxRepoDir, "${sherpaOnnxArtifact}-${sherpaOnnxVersion}.pom")
+
+def sha256OfFile = { File f ->
+  def digest = MessageDigest.getInstance("SHA-256")
+  f.withInputStream { input ->
+    def buf = new byte[64 * 1024]
+    int n
+    while ((n = input.read(buf)) != -1) {
+      digest.update(buf, 0, n)
+    }
+  }
+  digest.digest().collect { String.format("%02x", it & 0xff) }.join("")
+}
+
+// If a stale AAR exists with the wrong hash (e.g. from a previous failed
+// download or a version bump), drop it so we re-fetch.
+if (sherpaOnnxAar.exists() && sha256OfFile(sherpaOnnxAar) != sherpaOnnxSha256) {
+  logger.lifecycle("Sherpa-ONNX AAR checksum mismatch on disk; redownloading.")
+  if (!sherpaOnnxAar.delete()) {
+    throw new GradleException(
+      "Sherpa-ONNX AAR at ${sherpaOnnxAar.absolutePath} has a mismatched SHA-256 " +
+      "but could not be deleted. Refusing to continue with a potentially tampered artifact."
+    )
+  }
+}
+
+if (!sherpaOnnxAar.exists()) {
+  sherpaOnnxRepoDir.mkdirs()
+  def sherpaOnnxUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v${sherpaOnnxVersion}/${sherpaOnnxArtifact}-${sherpaOnnxVersion}.aar"
+  logger.lifecycle("Downloading Sherpa-ONNX AAR v${sherpaOnnxVersion} from GitHub release…")
+  // Download to a .part sibling and rename only after the SHA-256 matches, so
+  // an interrupted or tampered download can't be silently accepted as valid.
+  def partial = file("${sherpaOnnxAar.absolutePath}.part")
+  try {
+    new URL(sherpaOnnxUrl).withInputStream { input ->
+      partial.withOutputStream { output -> output << input }
+    }
+    def actual = sha256OfFile(partial)
+    if (actual != sherpaOnnxSha256) {
+      throw new GradleException(
+        "Sherpa-ONNX AAR v${sherpaOnnxVersion} SHA-256 mismatch.\n" +
+        "  expected: ${sherpaOnnxSha256}\n" +
+        "  actual:   ${actual}\n" +
+        "Refusing to use the downloaded artifact."
+      )
+    }
+    if (!partial.renameTo(sherpaOnnxAar)) {
+      throw new GradleException("Failed to move ${partial.name} to ${sherpaOnnxAar.name}")
+    }
+  } finally {
+    if (partial.exists()) {
+      partial.delete()
+    }
+  }
+}
+
+// Minimal POM so the Maven resolver is happy. No transitive deps — the AAR
+// ships its own native libs and we already pin onnxruntime separately below.
+if (!sherpaOnnxPom.exists()) {
+  sherpaOnnxPom.text = """<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>${sherpaOnnxGroup}</groupId>
+  <artifactId>${sherpaOnnxArtifact}</artifactId>
+  <version>${sherpaOnnxVersion}</version>
+  <packaging>aar</packaging>
+</project>
+"""
+}
+
+repositories {
+  maven { url = uri(sherpaOnnxMavenRoot) }
+}
+
 
 group = 'com.mentra'
 version = packageJson.version
@@ -86,8 +183,11 @@ dependencies {
   // LC3 audio codec library
   implementation project(':lc3Lib')
 
-  // Sherpa-ONNX for local transcription
-  implementation 'com.github.k2-fsa:sherpa-onnx:v1.12.8'
+  // Sherpa-ONNX for local transcription. Jitpack's v1.13.2 build failed
+  // upstream, so we stage the prebuilt AAR into libs/maven/ (see top of file)
+  // and consume it as a Maven coord — AGP rejects raw files() .aar deps in
+  // library modules.
+  implementation "${sherpaOnnxGroup}:${sherpaOnnxArtifact}:${sherpaOnnxVersion}@aar"
 
   // Silero VAD (with onnxruntime exclusions to avoid conflicts with sherpa-onnx)
   implementation ('com.github.gkonovalov:android-vad:2.0.9') {

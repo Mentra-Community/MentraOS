@@ -2,14 +2,13 @@ import CoreModule from "@mentra/bluetooth-sdk"
 import {Platform} from "react-native"
 import * as RNFS from "@dr.pogodin/react-native-fs"
 
-export interface ModelInfo {
-  name: string
-  version: string
+export interface LanguageInfo {
+  code: string
+  displayName: string
   size: number
   language: string
   downloaded: boolean
   path?: string
-  modelId: string
   type: "transducer" | "ctc"
 }
 
@@ -25,106 +24,80 @@ export interface ExtractionProgress {
   currentFile?: string
 }
 
-export interface ModelConfig {
-  id: string
+export interface LanguageConfig {
+  code: string
   displayName: string
   fileName: string
+  downloadUrl?: string
   size: number
   type: "transducer" | "ctc"
   requiredFiles: string[]
   languageCode: string
 }
 
+const DEFAULT_LANGUAGE = "en"
+
 class STTModelManager {
   private static instance: STTModelManager
   private downloadJobId?: number
-  private currentModelId = "sherpa-onnx-streaming-zipformer-en-2023-06-21-mobile"
+  private currentLanguage = DEFAULT_LANGUAGE
   private modelBaseUrl = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/"
 
-  private models: Record<string, ModelConfig> = {
-    "sherpa-onnx-streaming-zipformer-en-2023-06-21-mobile": {
-      id: "sherpa-onnx-streaming-zipformer-en-2023-06-21-mobile",
+  private languages: Record<string, LanguageConfig> = {
+    en: {
+      code: "en",
       displayName: "English",
       fileName: "sherpa-onnx-streaming-zipformer-en-2023-06-21-mobile",
-      size: 349 * 1024 * 1024, // 349MB
+      size: 349 * 1024 * 1024,
       type: "transducer",
       requiredFiles: ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"],
       languageCode: "en-US",
     },
-    // "sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-80ms-int8": {
-    //   id: "sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-80ms-int8",
-    //   displayName: "English (Faster)",
-    //   fileName: "sherpa-onnx-nemo-streaming-fast-conformer-ctc-en-80ms-int8",
-    //   size: 95 * 1024 * 1024, // 95MB
-    //   type: "ctc",
-    //   requiredFiles: ["model.int8.onnx", "tokens.txt"],
-    //   languageCode: "en-US",
-    // },
-    "sherpa-onnx-streaming-zipformer-zh-2025-06-30": {
-      id: "sherpa-onnx-streaming-zipformer-zh-2025-06-30",
-      displayName: "Chinese",
+    fr: {
+      code: "fr",
+      displayName: "Français",
+      fileName: "sherpa-onnx-streaming-zipformer-fr-kroko-2025-08-06",
+      size: 57 * 1024 * 1024,
+      type: "transducer",
+      requiredFiles: ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"],
+      languageCode: "fr-FR",
+    },
+    de: {
+      code: "de",
+      displayName: "Deutsch",
+      fileName: "sherpa-onnx-streaming-zipformer-de-kroko-2025-08-06",
+      size: 58 * 1024 * 1024,
+      type: "transducer",
+      requiredFiles: ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"],
+      languageCode: "de-DE",
+    },
+    es: {
+      code: "es",
+      displayName: "Español",
+      fileName: "sherpa-onnx-streaming-zipformer-es-kroko-2025-08-06",
+      size: 124 * 1024 * 1024,
+      type: "transducer",
+      requiredFiles: ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"],
+      languageCode: "es-ES",
+    },
+    zh: {
+      code: "zh",
+      displayName: "中文",
       fileName: "sherpa-onnx-streaming-zipformer-zh-2025-06-30",
-      size: 150 * 1024 * 1024, // Estimated
+      size: 150 * 1024 * 1024,
       type: "transducer",
       requiredFiles: ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"],
       languageCode: "zh-CN",
     },
-    "sherpa-onnx-streaming-zipformer-korean-2024-06-16": {
-      id: "sherpa-onnx-streaming-zipformer-korean-2024-06-16",
-      displayName: "Korean",
+    ko: {
+      code: "ko",
+      displayName: "한국어",
       fileName: "sherpa-onnx-streaming-zipformer-korean-2024-06-16",
-      size: 200 * 1024 * 1024, // Estimated
+      size: 200 * 1024 * 1024,
       type: "transducer",
       requiredFiles: ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"],
       languageCode: "ko-KR",
     },
-    // Kroko streaming zipformer models (Aug 2025) — small footprint (~60-125MB).
-    // Uncomment to expand language support. Kroko claims competitive WER vs Whisper v3
-    // on non-English languages but publishes no standardized benchmarks; test before shipping.
-    // "sherpa-onnx-streaming-zipformer-fr-kroko-2025-08-06": {
-    //   id: "sherpa-onnx-streaming-zipformer-fr-kroko-2025-08-06",
-    //   displayName: "French",
-    //   fileName: "sherpa-onnx-streaming-zipformer-fr-kroko-2025-08-06",
-    //   size: 57 * 1024 * 1024, // 57MB
-    //   type: "transducer",
-    //   requiredFiles: ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"],
-    //   languageCode: "fr-FR",
-    // },
-    // "sherpa-onnx-streaming-zipformer-de-kroko-2025-08-06": {
-    //   id: "sherpa-onnx-streaming-zipformer-de-kroko-2025-08-06",
-    //   displayName: "German",
-    //   fileName: "sherpa-onnx-streaming-zipformer-de-kroko-2025-08-06",
-    //   size: 58 * 1024 * 1024, // 58MB
-    //   type: "transducer",
-    //   requiredFiles: ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"],
-    //   languageCode: "de-DE",
-    // },
-    // "sherpa-onnx-streaming-zipformer-es-kroko-2025-08-06": {
-    //   id: "sherpa-onnx-streaming-zipformer-es-kroko-2025-08-06",
-    //   displayName: "Spanish",
-    //   fileName: "sherpa-onnx-streaming-zipformer-es-kroko-2025-08-06",
-    //   size: 124 * 1024 * 1024, // 124MB
-    //   type: "transducer",
-    //   requiredFiles: ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"],
-    //   languageCode: "es-ES",
-    // },
-    // NOTE (yash): commenting this one for now because sherpa doesn't provide the language for multilingual models. And our current cloud architecture depends on the language
-    // "sherpa-onnx-nemo-fast-conformer-ctc-be-de-en-es-fr-hr-it-pl-ru-uk-20k-int8": {
-    //   id: "sherpa-onnx-nemo-fast-conformer-ctc-be-de-en-es-fr-hr-it-pl-ru-uk-20k-int8",
-    //   displayName: "Multilingual (EN/DE/ES/FR/RU)",
-    //   fileName: "sherpa-onnx-nemo-fast-conformer-ctc-be-de-en-es-fr-hr-it-pl-ru-uk-20k-int8",
-    //   size: 102261698, // Actual size: 102MB
-    //   type: "ctc",
-    //   requiredFiles: ["model.int8.onnx", "tokens.txt"],
-    // },
-    // "sherpa-onnx-streaming-zipformer-ar-en-id-ja-ru-th-vi-zh-2025-10-17": {
-    //   id: "sherpa-onnx-streaming-zipformer-ar-en-id-ja-ru-th-vi-zh-2025-10-17",
-    //   displayName: "Multilingual",
-    //   fileName: "sherpa-onnx-streaming-zipformer-ar-en-id-ja-ru-th-vi-zh-2025-10-17",
-    //   size: 500 * 1024 * 1024, // Estimated larger size for multilingual
-    //   type: "transducer",
-    //   requiredFiles: ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"],
-    // },
   }
 
   private constructor() {}
@@ -136,36 +109,38 @@ class STTModelManager {
     return STTModelManager.instance
   }
 
-  async getCurrentModelIdFromPreferences(): Promise<string> {
+  async getCurrentLanguageFromPreferences(): Promise<string> {
     try {
-      let path = await CoreModule.getSttModelPath()
-      const modelId = path && path.length > 0 ? this.getModelIdFromPath(path) : ""
-
-      this.setCurrentModelId(modelId)
-      return modelId
+      const path = await CoreModule.getSttModelPath()
+      const code = path && path.length > 0 ? this.getLanguageFromPath(path) : ""
+      if (code && this.languages[code]) {
+        this.currentLanguage = code
+        return code
+      }
+      return ""
     } catch (error) {
-      console.error("Error getting current model id from preferences:", error)
+      console.error("Error getting current STT language from preferences:", error)
       return ""
     }
   }
 
-  getCurrentModelId(): string {
-    return this.currentModelId
+  getCurrentLanguage(): string {
+    return this.currentLanguage
   }
 
-  setCurrentModelId(modelId: string): void {
-    if (this.models[modelId]) {
-      this.currentModelId = modelId
+  setCurrentLanguage(code: string): void {
+    if (this.languages[code]) {
+      this.currentLanguage = code
     }
   }
 
-  getLanguageForModel(modelId?: string): string {
-    const id = modelId || this.currentModelId
-    return this.models[id]?.languageCode ?? "en-US"
+  getBcp47ForLanguage(code?: string): string {
+    const id = code || this.currentLanguage
+    return this.languages[id]?.languageCode ?? "en-US"
   }
 
-  getAvailableModels(): ModelConfig[] {
-    return Object.values(this.models)
+  getAvailableLanguages(): LanguageConfig[] {
+    return Object.values(this.languages)
   }
 
   getModelDirectory(): string {
@@ -173,113 +148,91 @@ class STTModelManager {
     return `${baseDir}/stt_models`
   }
 
-  getModelPath(modelId?: string): string {
-    const id = modelId || this.currentModelId
+  getModelPath(code?: string): string {
+    const id = code || this.currentLanguage
     return `${this.getModelDirectory()}/${id}`
   }
 
-  getModelIdFromPath(path: string): string {
+  /** Last path segment is the language code (the on-disk folder name). */
+  getLanguageFromPath(path: string): string {
     return path.split("/").pop() || ""
   }
 
-  async isModelAvailable(modelId?: string): Promise<boolean> {
+  async isModelAvailable(code?: string): Promise<boolean> {
     try {
-      const id = modelId || this.currentModelId
-      const model = this.models[id]
-      if (!model) return false
+      const id = code || this.currentLanguage
+      const language = this.languages[id]
+      if (!language) return false
 
       const modelPath = this.getModelPath(id)
-      const requiredFiles = model.requiredFiles
-
-      // Debug logging for multilingual model
-      if (id.includes("be-de-en-es-fr")) {
-        console.log(`Checking model at path: ${modelPath}`)
-        const dirExists = await RNFS.exists(modelPath)
-        console.log(`Directory exists: ${dirExists}`)
-
-        if (dirExists) {
-          const files = await RNFS.readDir(modelPath)
-          console.log(
-            `Files in directory:`,
-            files.map((f) => f.name),
-          )
-        }
-      }
-
-      for (const file of requiredFiles) {
+      for (const file of language.requiredFiles) {
         const filePath = `${modelPath}/${file}`
         const exists = await RNFS.exists(filePath)
         if (!exists) {
-          console.log(`Missing required file: ${file} at ${filePath}`)
+          console.log(`Missing required STT file: ${file} at ${filePath}`)
           return false
         }
       }
 
-      // Validate model with native module
-      const isValid = await CoreModule.validateSttModel(modelPath)
-      return isValid
+      return await CoreModule.validateSttModel(modelPath)
     } catch (error) {
-      console.error("Error checking model availability:", error)
+      console.error("Error checking STT model availability:", error)
       return false
     }
   }
 
-  async getModelInfo(modelId?: string): Promise<ModelInfo> {
-    const id = modelId || this.currentModelId
-    const model = this.models[id]
-    if (!model) {
-      throw new Error(`Model ${id} not found`)
+  async getLanguageInfo(code?: string): Promise<LanguageInfo> {
+    const id = code || this.currentLanguage
+    const language = this.languages[id]
+    if (!language) {
+      throw new Error(`Language ${id} not found`)
     }
 
     const downloaded = await this.isModelAvailable(id)
     const path = downloaded ? this.getModelPath(id) : undefined
 
     return {
-      name: model.displayName,
-      version: model.id,
-      size: model.size,
-      language: "English",
+      code: id,
+      displayName: language.displayName,
+      size: language.size,
+      language: language.languageCode,
       downloaded,
       path,
-      modelId: id,
-      type: model.type,
+      type: language.type,
     }
   }
 
-  async getAllModelsInfo(): Promise<ModelInfo[]> {
-    const infos = []
-    for (const modelId of Object.keys(this.models)) {
-      const info = await this.getModelInfo(modelId)
-      infos.push(info)
+  async getAllLanguageInfo(): Promise<LanguageInfo[]> {
+    const infos: LanguageInfo[] = []
+    for (const code of Object.keys(this.languages)) {
+      infos.push(await this.getLanguageInfo(code))
     }
     return infos
   }
 
   async downloadModel(
-    modelId?: string,
+    code?: string,
     onProgress?: (progress: DownloadProgress) => void,
     onExtractionProgress?: (progress: ExtractionProgress) => void,
   ): Promise<void> {
-    const id = modelId || this.currentModelId
-    const model = this.models[id]
-    if (!model) {
-      throw new Error(`Model ${id} not found`)
+    const id = code || this.currentLanguage
+    const language = this.languages[id]
+    if (!language) {
+      throw new Error(`Language ${id} not found`)
     }
 
-    const modelUrl = `${this.modelBaseUrl}${model.fileName}.tar.bz2`
-    const tempPath = `${RNFS.TemporaryDirectoryPath}/${model.fileName}.tar.bz2`
+    const modelUrl = language.downloadUrl ?? `${this.modelBaseUrl}${language.fileName}.tar.bz2`
+    const tempPath = `${RNFS.TemporaryDirectoryPath}/${language.fileName}.tar.bz2`
     const modelDir = this.getModelDirectory()
     const finalPath = this.getModelPath(id)
 
     try {
-      // Create directories
       await RNFS.mkdir(modelDir, {NSURLIsExcludedFromBackupKey: true})
 
-      // Download the model
       const downloadOptions = {
         fromUrl: modelUrl,
         toFile: tempPath,
-        progress: (res: RNFS.DownloadProgressCallbackResult) => {
+        progress: (res: RNFS.DownloadProgressCallbackResultT) => {
           const percentage = Math.round((res.bytesWritten / res.contentLength) * 100)
           onProgress?.({
             jobId: res.jobId,
@@ -288,8 +241,8 @@ class STTModelManager {
             percentage,
           })
         },
-        progressDivider: 10, // Update every 10%
-        begin: (res: RNFS.DownloadBeginCallbackResult) => {
+        progressDivider: 10,
+        begin: (res: RNFS.DownloadBeginCallbackResultT) => {
           console.log("Download started:", res)
         },
         connectionTimeout: 30000,
@@ -305,48 +258,42 @@ class STTModelManager {
         throw new Error(`Download failed with status code: ${downloadResult.statusCode}`)
       }
 
-      console.log("Download completed, extracting...")
-      console.log(`Temp file path: ${tempPath}`)
-      console.log(`Final path: ${finalPath}`)
-
-      // Extract the tar.bz2 file
       onExtractionProgress?.({percentage: 0})
 
-      console.log(`Calling native extractTarBz2 for ${Platform.OS}...`)
+      const unsubscribe = CoreModule.onExtractionProgress((event) => {
+        onExtractionProgress?.({percentage: event.percentage})
+      })
+
       try {
-        onExtractionProgress?.({percentage: 25})
         const extractionResult = await CoreModule.extractTarBz2(tempPath, finalPath)
         if (!extractionResult) {
           throw new Error("Native extraction returned failure status")
         }
-        onExtractionProgress?.({percentage: 90})
-        console.log("Native extraction completed")
       } catch (extractError) {
         console.error("Native extraction failed:", extractError)
         throw extractError
+      } finally {
+        unsubscribe()
       }
-
-      // Use native extraction on both platforms
 
       onExtractionProgress?.({percentage: 100})
 
-      // Clean up temp file
       await RNFS.unlink(tempPath)
 
-      // Set the model path in native modules if this is the current model
-      if (id === this.currentModelId) {
-        const currentModelLanguageCode = this.models[id].languageCode
-        await this.setNativeModelPath(finalPath, currentModelLanguageCode)
+      if (id === this.currentLanguage) {
+        await this.setNativeModelPath(finalPath, language.languageCode)
       }
-
-      console.log("Model downloaded and extracted successfully")
     } catch (error) {
-      // Clean up on error
-      if (await RNFS.exists(tempPath)) {
-        await RNFS.unlink(tempPath)
+      // Best-effort cleanup; never let it mask the original error.
+      try {
+        if (await RNFS.exists(tempPath)) await RNFS.unlink(tempPath)
+      } catch (cleanupError) {
+        console.warn("STTModelManager: temp cleanup failed:", cleanupError)
       }
-      if (await RNFS.exists(finalPath)) {
-        await RNFS.unlink(finalPath)
+      try {
+        if (await RNFS.exists(finalPath)) await RNFS.unlink(finalPath)
+      } catch (cleanupError) {
+        console.warn("STTModelManager: final cleanup failed:", cleanupError)
       }
       throw error
     }
@@ -359,33 +306,32 @@ class STTModelManager {
     }
   }
 
-  async deleteModel(modelId?: string): Promise<void> {
-    const id = modelId || this.currentModelId
+  async deleteModel(code?: string): Promise<void> {
+    const id = code || this.currentLanguage
     const modelPath = this.getModelPath(id)
     if (await RNFS.exists(modelPath)) {
       await RNFS.unlink(modelPath)
     }
   }
 
-  async activateModel(modelId: string): Promise<void> {
-    const model = this.models[modelId]
-    if (!model) {
-      throw new Error(`Model ${modelId} not found`)
+  async activateLanguage(code: string): Promise<void> {
+    const language = this.languages[code]
+    if (!language) {
+      throw new Error(`Language ${code} not found`)
     }
 
-    const isAvailable = await this.isModelAvailable(modelId)
+    const isAvailable = await this.isModelAvailable(code)
     if (!isAvailable) {
-      throw new Error(`Model ${modelId} is not downloaded`)
+      throw new Error(`Language ${code} model is not downloaded`)
     }
 
-    this.currentModelId = modelId
-    const modelPath = this.getModelPath(modelId)
-    await this.setNativeModelPath(modelPath, model.languageCode)
+    this.currentLanguage = code
+    const modelPath = this.getModelPath(code)
+    await this.setNativeModelPath(modelPath, language.languageCode)
   }
 
   private async setNativeModelPath(path: string, languageCode: string): Promise<void> {
     CoreModule.setSttModelDetails(path, languageCode)
-    return
   }
 
   async getStorageInfo(): Promise<{free: number; total: number}> {
@@ -397,11 +343,7 @@ class STTModelManager {
   }
 
   formatBytes(bytes: number): string {
-    if (bytes === 0) return "0 Bytes"
-    const k = 1024
-    const sizes = ["Bytes", "KB", "MB", "GB"]
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i]
+    return STTModelManager.formatBytes(bytes)
   }
 
   static formatBytes(bytes: number): string {

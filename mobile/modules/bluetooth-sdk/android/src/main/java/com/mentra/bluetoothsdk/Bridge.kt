@@ -101,6 +101,16 @@ public class Bridge private constructor() {
             sendTypedMessage("log", data as Map<String, Any>)
         }
 
+        /** Report tar.bz2 extraction progress to JavaScript. */
+        @JvmStatic
+        fun sendExtractionProgress(percentage: Int, bytesRead: Long, totalBytes: Long) {
+            val data = HashMap<String, Any>()
+            data["percentage"] = percentage
+            data["bytesRead"] = bytesRead
+            data["totalBytes"] = totalBytes
+            sendTypedMessage("extraction_progress", data as Map<String, Any>)
+        }
+
         /** Send head position event */
         @JvmStatic
         fun sendHeadUp(isUp: Boolean) {

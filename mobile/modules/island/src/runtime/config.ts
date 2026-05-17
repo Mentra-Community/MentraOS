@@ -57,6 +57,21 @@ export interface AudioPlaybackAdapter {
   stopForApp: (packageName: string) => void
 }
 
+export interface TtsSynthesisResult {
+  audioUrl: string
+  cleanup?: () => Promise<void> | void
+}
+
+export interface TtsAdapter {
+  isAvailable: () => Promise<boolean> | boolean
+  synthesize: (params: {
+    text: string
+    voiceId?: string
+    speakerId?: number
+    speed?: number
+  }) => Promise<TtsSynthesisResult>
+}
+
 /**
  * Generic store accessor. The host wraps its Zustand / Redux / etc. selector
  * so the island module never imports the host's store implementation.
@@ -205,6 +220,7 @@ export interface LocationTierAdapter {
 export interface RuntimeHooks {
   socketComms?: SocketCommsAdapter
   audioPlayback?: AudioPlaybackAdapter
+  tts?: TtsAdapter
   /** Returns the connected glasses' status snapshot. */
   glassesStatus?: StoreAccessor<GlassesSnapshot>
   settings?: SettingsAccessor

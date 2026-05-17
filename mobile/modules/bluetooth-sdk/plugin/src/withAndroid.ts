@@ -1,7 +1,12 @@
 import {execSync} from "child_process"
 import path from "path"
 
-import {type ConfigPlugin, withSettingsGradle, withGradleProperties} from "expo/config-plugins"
+import {
+  type ConfigPlugin,
+  withGradleProperties,
+  withProjectBuildGradle,
+  withSettingsGradle,
+} from "expo/config-plugins"
 
 function getBluetoothSdkRoot(): string {
   return path.dirname(require.resolve("../../package.json"))
@@ -74,8 +79,51 @@ function withGradlePropertiesModifications(config: any) {
   })
 }
 
+/**
+ * Inject a local Maven repository into the root project's allprojects block so
+ * that `:app` (and any other module that transitively pulls our deps) can
+ * resolve `com.k2fsa.sherpa.onnx:sherpa-onnx`. The AAR is downloaded at
+ * configure-time by bluetooth-sdk's own build.gradle into
+ * `android/libs/maven/`; we just need that directory exposed as a maven repo
+ * to consumers as well. AGP rejects raw local-.aar deps from library modules,
+ * so the Maven layout is the supported workaround.
+ */
+function withSherpaOnnxLocalMavenRepo(config: any) {
+  return withProjectBuildGradle(config, (config) => {
+    if (config.modResults.language !== "groovy") {
+      return config
+    }
+
+    let contents = config.modResults.contents
+    const repoDir = path.join(getBluetoothSdkRoot(), "android", "libs", "maven")
+    const marker = "// bluetooth-sdk: sherpa-onnx local maven repo"
+
+    if (contents.includes(marker)) {
+      return config
+    }
+
+    const repoBlock = `    maven {\n      ${marker}\n      url = uri(${toGroovyString(repoDir)})\n    }`
+
+    const allprojectsMatch = contents.match(/allprojects\s*\{[\s\S]*?repositories\s*\{/)
+    if (allprojectsMatch) {
+      const insertIdx = allprojectsMatch.index! + allprojectsMatch[0].length
+      contents = contents.slice(0, insertIdx) + "\n" + repoBlock + contents.slice(insertIdx)
+    } else {
+      // Fallback: append an allprojects block. Older Expo templates that don't
+      // emit allprojects {} put repositories in settings.gradle instead — but
+      // this codebase's prebuild has historically emitted allprojects, so this
+      // branch is just a safety net.
+      contents += `\nallprojects {\n  repositories {\n${repoBlock}\n  }\n}\n`
+    }
+
+    config.modResults.contents = contents
+    return config
+  })
+}
+
 export const withAndroidConfiguration: ConfigPlugin<{node?: boolean}> = (config, props) => {
   config = withSettingsGradleModifications(config)
+  config = withSherpaOnnxLocalMavenRepo(config)
 
   if (props?.node) {
     config = withGradlePropertiesModifications(config)

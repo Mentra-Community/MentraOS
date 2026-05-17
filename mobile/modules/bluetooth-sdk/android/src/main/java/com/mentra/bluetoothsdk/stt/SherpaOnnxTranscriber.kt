@@ -122,8 +122,9 @@ class SherpaOnnxTranscriber(private val context: Context) {
             val modelConfig = OnlineModelConfig()
 
             // Detect model type based on available files
-            val ctcModelFile = File(modelDir, "model.int8.onnx")
-            val transducerEncoderFile = File(modelDir, "encoder.onnx")
+            val ctcModelFile = findReadableFile(modelDir, listOf("model.int8.onnx", "model.onnx"))
+            val transducerEncoderFile =
+                    findReadableFile(modelDir, listOf("encoder.onnx", "encoder.int8.onnx"))
 
             when {
                 ctcModelFile.exists() -> {
@@ -143,8 +144,10 @@ class SherpaOnnxTranscriber(private val context: Context) {
                     modelType = "transducer"
                     Bridge.log("Detected transducer model at $modelPath")
 
-                    val decoderFile = File(modelDir, "decoder.onnx")
-                    val joinerFile = File(modelDir, "joiner.onnx")
+                    val decoderFile =
+                            findReadableFile(modelDir, listOf("decoder.onnx", "decoder.int8.onnx"))
+                    val joinerFile =
+                            findReadableFile(modelDir, listOf("joiner.onnx", "joiner.int8.onnx"))
 
                     if (!decoderFile.exists() || !joinerFile.exists()) {
                         throw IllegalStateException(
@@ -220,6 +223,12 @@ class SherpaOnnxTranscriber(private val context: Context) {
 
             running.set(false)
         }
+    }
+
+    private fun findReadableFile(modelDir: File, candidates: List<String>): File {
+        return candidates.map { File(modelDir, it) }.firstOrNull { file ->
+            file.exists() && file.canRead() && file.length() > 0
+        } ?: File(modelDir, candidates.first())
     }
 
     /**

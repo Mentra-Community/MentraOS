@@ -414,6 +414,13 @@ export type CoreModuleEvents = {
   send_command_to_ble: (event: BleCommandTraceEvent) => void
   receive_command_from_ble: (event: BleCommandTraceEvent) => void
   miniapp_selected: (event: MiniappSelectedEvent) => void
+  extraction_progress: (event: ExtractionProgressEvent) => void
+}
+
+export interface ExtractionProgressEvent {
+  percentage: number
+  bytesRead: number
+  totalBytes: number
 }
 
 export type GlassesConnectionState = "disconnected" | "connected" | "connecting"

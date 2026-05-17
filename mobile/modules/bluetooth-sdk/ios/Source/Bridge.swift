@@ -62,6 +62,16 @@ class Bridge {
         Bridge.sendTypedMessage("log", body: data)
     }
 
+    /// Report tar.bz2 extraction progress to JavaScript.
+    static func sendExtractionProgress(percentage: Int, bytesRead: Int64, totalBytes: Int64) {
+        let body: [String: Any] = [
+            "percentage": percentage,
+            "bytesRead": bytesRead,
+            "totalBytes": totalBytes,
+        ]
+        Bridge.sendTypedMessage("extraction_progress", body: body)
+    }
+
     static func sendHeadUp(_ isUp: Bool) {
         let data = ["up": isUp]
         Bridge.sendTypedMessage("head_up", body: data)

@@ -35,7 +35,7 @@ import localDisplayManager from "./LocalDisplayManager"
 import type {DisplayPayload} from "./LocalDisplayManager"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
-import {getRuntimeHooks, ISLAND_SETTINGS_KEYS} from "../runtime/config"
+import {getRuntimeHooks, ISLAND_SETTINGS_KEYS, type TtsSynthesisResult} from "../runtime/config"
 import {NavigationHandlers} from "./NavigationHandlers"
 
 // =============================================================================
@@ -1070,15 +1070,86 @@ class LocalMiniappRuntime {
     }
 
     try {
-      const backendUrl = getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.backendUrl)
       const voice = ((payload.voice_id ?? payload.voice) as string) || "default"
-      const ttsUrl = `${backendUrl}/api/tts?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(voice)}`
-
       const audioRequestId = requestId || `tts_${Date.now()}`
+      const volume = typeof payload.volume === "number" ? payload.volume : 1.0
+      const stopOtherAudio = payload.stopOtherAudio !== false
+      const voiceSettings =
+        payload.voice_settings && typeof payload.voice_settings === "object"
+          ? (payload.voice_settings as Record<string, unknown>)
+          : undefined
+      const speed = typeof voiceSettings?.speed === "number" ? voiceSettings.speed : undefined
 
       this.setSpeakerState(packageName, "loading")
-      getRuntimeHooks().audioPlayback?.play(
-        {requestId: audioRequestId, audioUrl: ttsUrl, appId: packageName, volume: 1.0, stopOtherAudio: true},
+
+      const audioPlayback = getRuntimeHooks().audioPlayback
+      if (!audioPlayback) {
+        const message = "audio playback unavailable"
+        this.setSpeakerState(packageName, "error", {
+          errorCode: MiniappErrorCode.INTERNAL,
+          errorMessage: message,
+        })
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INTERNAL,
+          message,
+        })
+        return
+      }
+
+      // Try offline TTS first; on synthesize failure (e.g. requested voice's
+      // language model isn't downloaded) fall through to cloud TTS rather
+      // than surfacing the offline error to the miniapp.
+      const tts = getRuntimeHooks().tts
+      let offlineGenerated: TtsSynthesisResult | undefined
+      if (tts && (await tts.isAvailable())) {
+        try {
+          offlineGenerated = await tts.synthesize({text, voiceId: voice, speed})
+        } catch (offlineErr) {
+          console.warn(`${LOG_TAG}: offline TTS synthesize failed, falling back to cloud:`, offlineErr)
+          offlineGenerated = undefined
+        }
+      }
+
+      if (offlineGenerated) {
+        const generated = offlineGenerated
+        audioPlayback.play(
+          {requestId: audioRequestId, audioUrl: generated.audioUrl, appId: packageName, volume, stopOtherAudio},
+          (_respId, success, error, duration) => {
+            void Promise.resolve(generated.cleanup?.()).catch((cleanupError) => {
+              console.warn(`${LOG_TAG}: offline TTS cleanup failed`, cleanupError)
+            })
+            if (success) {
+              this.setSpeakerState(packageName, "stopped", {durationMs: duration ?? undefined})
+            } else {
+              this.setSpeakerState(packageName, "error", {
+                errorCode: MiniappErrorCode.TTS_UPSTREAM_ERROR,
+                errorMessage: error ?? "offline tts playback failed",
+                durationMs: duration ?? undefined,
+              })
+            }
+            this.sendResult(
+              packageName,
+              requestId,
+              success,
+              {completed: success, duration},
+              error
+                ? {
+                    code: MiniappErrorCode.TTS_UPSTREAM_ERROR,
+                    message: error,
+                  }
+                : undefined,
+            )
+          },
+        )
+        queueMicrotask(() => this.setSpeakerState(packageName, "playing"))
+        return
+      }
+
+      const backendUrl = getRuntimeHooks().settings?.getSetting<string>(ISLAND_SETTINGS_KEYS.backendUrl)
+      const ttsUrl = `${backendUrl}/api/tts?text=${encodeURIComponent(text)}&voice=${encodeURIComponent(voice)}`
+
+      audioPlayback.play(
+        {requestId: audioRequestId, audioUrl: ttsUrl, appId: packageName, volume, stopOtherAudio},
         (_respId, success, error, duration) => {
           if (success) {
             this.setSpeakerState(packageName, "stopped", {durationMs: duration ?? undefined})
@@ -1093,7 +1164,7 @@ class LocalMiniappRuntime {
             packageName,
             requestId,
             success,
-            {duration},
+            {completed: success, duration},
             error
               ? {
                   code: MiniappErrorCode.TTS_UPSTREAM_ERROR,

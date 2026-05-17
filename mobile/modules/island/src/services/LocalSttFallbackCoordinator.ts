@@ -79,6 +79,11 @@ class LocalSttFallbackCoordinator {
 
   private async startLocalStt(): Promise<void> {
     this.log("starting local stt")
+    const modelAvailable = await getRuntimeHooks().sttModelAvailable?.()
+    if (modelAvailable === false) {
+      this.log("local stt model is not available yet")
+      return
+    }
     try {
       await CoreModule.restartTranscriber()
     } catch (err) {

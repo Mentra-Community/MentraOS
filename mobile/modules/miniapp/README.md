@@ -105,7 +105,7 @@ All event subscribers return an `UnsubscribeFn`. Subscriptions are ref-counted: 
 | Module                        | Methods                                                                                                                                  |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `session.display`             | `showTextWall`, `showDoubleTextWall`, `showReferenceCard`, `showDashboardCard`, `showBitmapView`, `clearView`                            |
-| `session.speaker`             | `play({audioUrl})`, `speak(text, {voice_id?, …})` (cloud TTS), `stop()`, `onStateChange(handler)`                                        |
+| `session.speaker`             | `play({audioUrl})`, `speak(text, {voice_id?, …})` (offline TTS when available, cloud fallback), `stop()`, `onStateChange(handler)`       |
 | `session.mic`                 | `onAudioChunk(handler)`, `onVoiceActivity(handler)`, `stop()`, `hasPermission`                                                           |
 | `session.transcription`       | `on(handler)`, `forLanguage(lang \| [langs], handler)`, `configure({languageHints, vocabulary, diarization})`, `stop()`, `hasPermission` |
 | `session.translation`         | `forLanguagePair(from, to, handler)`, `stop()`, `hasPermission`                                                                          |

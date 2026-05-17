@@ -176,6 +176,7 @@ class CoreModule : Module() {
             "receive_command_from_ble",
             "miniapp_selected",
             "captions_tester_incident",
+            "extraction_progress",
         )
 
         OnCreate {
@@ -500,6 +501,63 @@ class CoreModule : Module() {
             com.mentra.core.stt.STTTools.extractTarBz2(sourcePath, destinationPath)
         }
 
+        // MARK: - TTS Commands
+
+        AsyncFunction("setTtsModelDetails") { path: String, languageCode: String ->
+            val context =
+                    appContext.reactContext
+                            ?: appContext.currentActivity
+                                    ?: throw IllegalStateException("No context available")
+            com.mentra.core.tts.TTSTools.setTtsModelDetails(context, path, languageCode)
+        }
+
+        AsyncFunction("getTtsModelPath") { ->
+            val context =
+                    appContext.reactContext
+                            ?: appContext.currentActivity
+                                    ?: throw IllegalStateException("No context available")
+            com.mentra.core.tts.TTSTools.getTtsModelPath(context)
+        }
+
+        AsyncFunction("getTtsModelLanguage") { ->
+            val context =
+                    appContext.reactContext
+                            ?: appContext.currentActivity
+                                    ?: throw IllegalStateException("No context available")
+            com.mentra.core.tts.TTSTools.getTtsModelLanguage(context)
+        }
+
+        AsyncFunction("checkTtsModelAvailable") { ->
+            val context =
+                    appContext.reactContext
+                            ?: appContext.currentActivity
+                                    ?: throw IllegalStateException("No context available")
+            com.mentra.core.tts.TTSTools.checkTTSModelAvailable(context)
+        }
+
+        AsyncFunction("validateTtsModel") { path: String ->
+            com.mentra.core.tts.TTSTools.validateTTSModel(path)
+        }
+
+        AsyncFunction("generateTtsAudio") {
+                text: String,
+                modelPath: String,
+                outputPath: String,
+                speakerId: Int,
+                speed: Double ->
+            val context =
+                    appContext.reactContext
+                            ?: appContext.currentActivity
+                                    ?: throw IllegalStateException("No context available")
+            com.mentra.core.tts.TTSTools.generateTtsAudio(
+                    context,
+                    text,
+                    modelPath,
+                    outputPath,
+                    speakerId,
+                    speed.toFloat()
+            )
+        }
     }
 }
 

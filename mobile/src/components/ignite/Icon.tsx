@@ -179,6 +179,8 @@ const tablerIcons = {
   "alert-triangle": 1,
   "plus": 1,
   "search": 1,
+  "speakerphone": 1,
+  "volume": 1,
 }
 
 /**

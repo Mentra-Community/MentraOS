@@ -5,6 +5,7 @@ import {
   CoreModuleEvents,
   CoreStatus,
   DeviceScanRequest,
+  ExtractionProgressEvent,
   GalleryMode,
   GlassesMediaVolumeGetResult,
   GlassesMediaVolumeSetResult,
@@ -20,6 +21,7 @@ import {
 
 type GlassesListener = (changed: Partial<GlassesStatus>) => void
 type CoreStatusListener = (changed: Partial<CoreStatus>) => void
+type ExtractionProgressListener = (event: ExtractionProgressEvent) => void
 type MaybePromise<T> = T | Promise<T>
 
 declare class CoreModule extends NativeModule<CoreModuleEvents> {
@@ -126,11 +128,26 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   validateSttModel(path: string): Promise<boolean>
   extractTarBz2(sourcePath: string, destinationPath: string): Promise<boolean>
 
+  // TTS Commands
+  setTtsModelDetails(path: string, languageCode: string): Promise<void>
+  getTtsModelPath(): Promise<string>
+  getTtsModelLanguage(): Promise<string>
+  checkTtsModelAvailable(): Promise<boolean>
+  validateTtsModel(path: string): Promise<boolean>
+  generateTtsAudio(
+    text: string,
+    modelPath: string,
+    outputPath: string,
+    speakerId: number,
+    speed: number,
+  ): Promise<boolean>
+
   // Helper methods for type-safe observable store access
   updateGlasses(values: Partial<GlassesStatus>): Promise<void>
   updateCore(values: Record<string, any>): Promise<void>
   onGlassesStatus(callback: GlassesListener): () => void
   onCoreStatus(callback: CoreStatusListener): () => void
+  onExtractionProgress(callback: ExtractionProgressListener): () => void
 
   // Process resident-set-size in MB. iOS-only; Android stub returns 0.
   getMemoryMB(): number
@@ -218,6 +235,11 @@ NativeCoreModule.onGlassesStatus = function (callback: GlassesListener) {
 
 NativeCoreModule.onCoreStatus = function (callback: CoreStatusListener) {
   const subscription = this.addListener("core_status", callback)
+  return () => subscription.remove()
+}
+
+NativeCoreModule.onExtractionProgress = function (callback: ExtractionProgressListener) {
+  const subscription = this.addListener("extraction_progress", callback)
   return () => subscription.remove()
 }
 
