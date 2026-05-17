@@ -10,9 +10,6 @@ import headingService from "@/services/HeadingService"
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import miniSockets from "@/services/MiniSockets"
 import navigationService from "@/services/NavigationService"
-import offlineSpeechModelService from "@/services/OfflineSpeechModelService"
-import STTModelManager from "@/services/STTModelManager"
-import TTSModelManager from "@/services/TTSModelManager"
 import {requestMiniappSdkPhoto} from "@/services/miniapp/MiniappSdkPhotoHandler"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {migrate} from "@/services/Migrations"
@@ -27,6 +24,7 @@ import {
   localMiniappRuntime,
   localSttFallbackCoordinator,
   micStateCoordinator,
+  offlineSpeechModelService,
   BgTimer,
   useAppStatusStore,
 } from "@mentra/island"
@@ -141,17 +139,6 @@ class MantleManager {
         play: (request, onComplete) => audioPlaybackService.play(request, onComplete),
         stopForApp: (packageName) => audioPlaybackService.stopForApp(packageName),
       },
-      tts: {
-        isAvailable: () => TTSModelManager.isModelAvailable(),
-        synthesize: ({text, voiceId, speed}) =>
-          TTSModelManager.synthesizeToFile(text, {
-            languageCode:
-              voiceId && TTSModelManager.getAvailableLanguages().some((lang) => lang.code === voiceId)
-                ? voiceId
-                : undefined,
-            speed,
-          }),
-      },
       glassesStatus: {
         get: () => {
           const s = useGlassesStore.getState()
@@ -177,7 +164,6 @@ class MantleManager {
             (value) => onChange(value as never),
           ),
       },
-      sttModelAvailable: () => STTModelManager.isModelAvailable(),
       cloudConnection: {
         isConnected: () => useConnectionStore.getState().status === WebSocketStatus.CONNECTED,
         addListener: (l) =>

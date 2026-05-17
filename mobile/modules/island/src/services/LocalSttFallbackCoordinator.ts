@@ -1,6 +1,7 @@
 import CoreModule from "@mentra/bluetooth-sdk"
 
 import {getRuntimeHooks, ISLAND_SETTINGS_KEYS} from "../runtime/config"
+import sttModelManager from "./STTModelManager"
 
 /**
  * Decides whether on-device Sherpa STT should produce transcripts for local
@@ -96,8 +97,8 @@ class LocalSttFallbackCoordinator {
 
   private async startLocalStt(): Promise<void> {
     this.log("starting local stt")
-    const modelAvailable = await getRuntimeHooks().sttModelAvailable?.()
-    if (modelAvailable === false) {
+    const modelAvailable = await sttModelManager.isModelAvailable()
+    if (!modelAvailable) {
       this.log("local stt model is not available yet — skipping activation")
       return
     }

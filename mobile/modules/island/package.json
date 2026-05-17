@@ -51,6 +51,7 @@
     "expo-clipboard": "*",
     "expo-location": "*",
     "react-native-share": "*",
+    "@dr.pogodin/react-native-fs": "*",
     "@mentra/bluetooth-sdk": "*",
     "@mentra/miniapp": "*"
   }

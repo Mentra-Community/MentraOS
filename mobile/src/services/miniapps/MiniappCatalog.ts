@@ -10,6 +10,7 @@ import {
   HardwareCompatibility,
   HardwareRequirementLevel,
   HardwareType,
+  sttModelManager as STTModelManager,
   type ClientApp,
   type StartOptions,
   useAppStatusStore,
@@ -22,7 +23,6 @@ import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {submitMiniappStartFailedBugReport} from "@/services/bugReport/miniappStartBugReport"
 import restComms from "@/services/RestComms"
-import STTModelManager from "@/services/STTModelManager"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
 

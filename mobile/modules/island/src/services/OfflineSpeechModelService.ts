@@ -1,8 +1,8 @@
 import CoreModule from "@mentra/bluetooth-sdk"
 // import NetInfo from "@react-native-community/netinfo"
 
-import STTModelManager from "@/services/STTModelManager"
-import TTSModelManager from "@/services/TTSModelManager"
+import STTModelManager from "./STTModelManager"
+import TTSModelManager from "./TTSModelManager"
 
 export type DownloadStage = "idle" | "downloading" | "extracting" | "complete" | "failed"
 
