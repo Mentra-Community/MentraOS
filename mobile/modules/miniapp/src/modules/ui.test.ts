@@ -167,4 +167,20 @@ describe("UIModuleImpl", () => {
     mock.deliver({type: "UI_CLOSE"})
     expect(got).toEqual([2])
   })
+
+  test("handle() registers a handler; UI_MESSAGE with requestId triggers reply", async () => {
+    mock.deliver({type: "UI_OPEN"})
+    ui.handle("rpc:add" as never, ((p: {a: number; b: number}) => p.a + p.b) as never)
+    mock.deliver({type: "UI_MESSAGE", channel: "rpc:add", payload: {a: 2, b: 3}, seq: 1, requestId: "r1"})
+    // Reply is dispatched async (handler may be Promise). Yield once.
+    await new Promise((r) => setTimeout(r, 0))
+    const reply = mock.oneShotCalls.find(
+      (c) => (c as {requestId?: string}).requestId === "r1",
+    ) as {type: string; channel: string; payload: unknown; requestId: string} | undefined
+    expect(reply).toBeDefined()
+    expect(reply!.type).toBe("UI_SEND")
+    expect(reply!.channel).toBe("rpc:add")
+    expect(reply!.payload).toEqual({ok: true, result: 5})
+    expect(reply!.requestId).toBe("r1")
+  })
 })

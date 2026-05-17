@@ -194,6 +194,17 @@ type UIInboundEnvelope =
   | {type: "UI_CLOSE"}
   | {type: "UI_CANCEL"; requestId: string}
 
+function rpcErrorFromUnknown(e: unknown): {message: string; code?: string} {
+  if (e instanceof Error) {
+    // `cause` is ES2022; this package's lib targets ES2020 where Error
+    // has no `cause` field. Read it via a structural cast.
+    const cause = (e as Error & {cause?: unknown}).cause as {code?: string} | undefined
+    const code = cause?.code
+    return code ? {message: e.message, code} : {message: e.message}
+  }
+  return {message: String(e)}
+}
+
 export class UIModuleImpl<TChannels extends Record<string, unknown> = Record<string, unknown>>
   implements UIModule<TChannels>
 {
@@ -206,6 +217,15 @@ export class UIModuleImpl<TChannels extends Record<string, unknown> = Record<str
   private readonly closeHandlers: Set<() => void> = new Set()
   /** channel → set of subscribers. */
   private readonly channelHandlers: Map<string, Set<UIChannelHandler>> = new Map()
+
+  /** channel → single registered RPC handler. */
+  private readonly rpcHandlers: Map<
+    string,
+    (payload: unknown, ctx: RpcHandlerContext) => Promise<unknown> | unknown
+  > = new Map()
+
+  /** requestId → AbortController for in-flight RPC handler invocations. */
+  private readonly inflightRpc: Map<string, AbortController> = new Map()
 
   constructor(private readonly session: MiniappSession) {
     // The session forwards UI_OPEN / UI_CLOSE / UI_MESSAGE envelopes via
@@ -278,6 +298,26 @@ export class UIModuleImpl<TChannels extends Record<string, unknown> = Record<str
     }
   }
 
+  handle = <C extends keyof TChannels & string>(
+    channel: IsRpc<TChannels[C]> extends true ? C : never,
+    handler: (
+      payload: RpcReq<TChannels[C]>,
+      ctx?: RpcHandlerContext,
+    ) => Promise<RpcRes<TChannels[C]>> | RpcRes<TChannels[C]>,
+  ): UIUnsubscribe => {
+    const key = channel as unknown as string
+    if (this.rpcHandlers.has(key)) {
+      throw new Error(`session.ui.handle: a handler is already registered for "${key}"`)
+    }
+    this.rpcHandlers.set(
+      key,
+      handler as unknown as (payload: unknown, ctx: RpcHandlerContext) => Promise<unknown> | unknown,
+    )
+    return () => {
+      this.rpcHandlers.delete(key)
+    }
+  }
+
   /** @internal — handle UI_OPEN / UI_CLOSE / UI_MESSAGE envelopes from the host. */
   private handleInbound(env: UIInboundEnvelope): void {
     if (env.type === "UI_OPEN") {
@@ -306,6 +346,12 @@ export class UIModuleImpl<TChannels extends Record<string, unknown> = Record<str
       return
     }
     if (env.type === "UI_MESSAGE") {
+      // RPC call: requestId set → dispatch to handle() handler.
+      if (typeof env.requestId === "string") {
+        this.dispatchRpcCall(env.channel, env.payload, env.requestId)
+        return
+      }
+      // Broadcast: fan out to on() subscribers.
       const set = this.channelHandlers.get(env.channel)
       if (!set || set.size === 0) return
       for (const h of set) {
@@ -313,9 +359,80 @@ export class UIModuleImpl<TChannels extends Record<string, unknown> = Record<str
           h(env.payload)
         } catch (e) {
           // eslint-disable-next-line no-console
-        console.warn(`session.ui.on(${env.channel}) threw`, e)
+          console.warn(`session.ui.on(${env.channel}) threw`, e)
         }
       }
+      return
     }
+    if (env.type === "UI_CANCEL") {
+      const ctrl = this.inflightRpc.get(env.requestId)
+      if (ctrl) {
+        try {
+          ctrl.abort()
+        } catch {
+          /* ignore */
+        }
+      }
+      return
+    }
+  }
+
+  /** @internal — invoke a registered RPC handler and send back the reply. */
+  private dispatchRpcCall(channel: string, payload: unknown, requestId: string): void {
+    const handler = this.rpcHandlers.get(channel)
+    if (!handler) {
+      // No handler registered. Reply with a structured error so the
+      // UI's request promise rejects with a useful message.
+      this.sendRpcReply(channel, requestId, {
+        ok: false,
+        error: {message: `no handler registered for "${channel}"`},
+      })
+      return
+    }
+    const ctrl = new AbortController()
+    this.inflightRpc.set(requestId, ctrl)
+    const ctx: RpcHandlerContext = {signal: ctrl.signal}
+
+    const finish = (
+      envelope:
+        | {ok: true; result: unknown}
+        | {ok: false; error: {message: string; code?: string}},
+    ): void => {
+      this.inflightRpc.delete(requestId)
+      // If the controller already aborted (UI cancelled), drop the
+      // reply — the UI side has already removed its listener.
+      if (ctrl.signal.aborted) return
+      this.sendRpcReply(channel, requestId, envelope)
+    }
+
+    let result: unknown
+    try {
+      result = handler(payload, ctx)
+    } catch (e) {
+      finish({ok: false, error: rpcErrorFromUnknown(e)})
+      return
+    }
+    if (result && typeof (result as {then?: unknown}).then === "function") {
+      ;(result as Promise<unknown>).then(
+        (v) => finish({ok: true, result: v}),
+        (e) => finish({ok: false, error: rpcErrorFromUnknown(e)}),
+      )
+    } else {
+      finish({ok: true, result})
+    }
+  }
+
+  /** @internal — send a UI_SEND envelope tagged with a requestId. */
+  private sendRpcReply(
+    channel: string,
+    requestId: string,
+    payload:
+      | {ok: true; result: unknown}
+      | {ok: false; error: {message: string; code?: string}},
+  ): void {
+    if (!this.bound) return
+    const seq = this.nextSeq++
+    const envelope: UISendEnvelope = {type: "UI_SEND", channel, payload, seq, requestId}
+    this.session.sendOneShot(envelope)
   }
 }
