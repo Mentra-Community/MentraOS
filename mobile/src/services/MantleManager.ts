@@ -18,6 +18,7 @@ import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
+import {WebSocketStatus} from "@/services/ws-types"
 import {gallerySyncService} from "@/services/asg/gallerySyncService"
 import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
 import {
@@ -29,6 +30,7 @@ import {
   BgTimer,
   useAppStatusStore,
 } from "@mentra/island"
+import {useConnectionStore} from "@/stores/connection"
 import {useDisplayStore} from "@/stores/display"
 import {useGlassesStore, getGlasesInfoPartial} from "@/stores/glasses"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
@@ -176,6 +178,14 @@ class MantleManager {
           ),
       },
       sttModelAvailable: () => STTModelManager.isModelAvailable(),
+      cloudConnection: {
+        isConnected: () => useConnectionStore.getState().status === WebSocketStatus.CONNECTED,
+        addListener: (l) =>
+          useConnectionStore.subscribe(
+            (state) => state.status === WebSocketStatus.CONNECTED,
+            (connected) => l(connected),
+          ),
+      },
       setDisplayEvent: (event) => useDisplayStore.getState().setDisplayEvent(event),
       requestMiniappSdkPhoto: (params) => requestMiniappSdkPhoto(params),
       // Google Nav SDK adapter — the island runtime fan-outs nav events to
@@ -1167,13 +1177,17 @@ class MantleManager {
       return
     }
 
+    // Local transcripts only ever flow to local miniapps. The cloud-side
+    // pipeline (cloud miniapps, cloud-relayed transcripts) is unaffected
+    // by this branch — when the cloud WS is up, cloud transcripts arrive
+    // independently via SocketComms and reach miniapps via the same
+    // forwardEvent. Coordinator's `isActive()` already covers
+    // "subscription present AND cloud is dead", so if we got here without
+    // it being active there's no consumer and we drop the transcript.
     if (localSttFallbackCoordinator.isActive()) {
       const lang = data?.transcribeLanguage ?? localSttFallbackCoordinator.getActiveLanguage() ?? "en-US"
       localMiniappRuntime.forwardEvent(`transcription:${lang}`, data)
-      return
     }
-
-    socketComms.sendLocalTranscription(data)
   }
 
   public async handle_button_press(event: ButtonPressEvent) {

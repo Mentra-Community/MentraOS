@@ -3,41 +3,56 @@ import CoreModule from "@mentra/bluetooth-sdk"
 import {getRuntimeHooks, ISLAND_SETTINGS_KEYS} from "../runtime/config"
 
 /**
- * Test-mode coordinator: when the feature flag is on AND a local miniapp is
- * subscribed to transcription, always run local STT (no watchdog, no cloud
- * recovery logic). Meant for validating the local-STT pipeline end-to-end
- * before layering in cloud-failure detection.
+ * Decides whether on-device Sherpa STT should produce transcripts for local
+ * miniapps, instead of (or in addition to) cloud transcription. The chooser
+ * is connection-state-driven: when the WebSocket to cloud is down AND a
+ * local miniapp is subscribed to transcription, we activate on-device STT.
  *
- * Settings access is host-injected via configureRuntime({settings: ...}).
- * If the host doesn't provide a settings accessor, the flag is read as
- * "off" and the coordinator stays inactive — safe default.
+ * Activation flips `localSttFallbackActive` in the settings store, which
+ * the bluetooth-sdk native side reads to decide whether to feed PCM into
+ * the SherpaOnnxTranscriber. Local transcripts then flow back through the
+ * `local_transcription` Bridge event; the host wires that event to
+ * `localMiniappRuntime.forwardEvent`, with this coordinator providing the
+ * subscription-active gate so we never publish transcripts to miniapps
+ * that aren't asking for them.
+ *
+ * VAD is restored on the phone side independently of this coordinator;
+ * for now we treat connection state as the only switching signal. Future
+ * versions can use VAD-driven utterance boundaries for cleaner hand-off.
  */
 class LocalSttFallbackCoordinator {
   private static instance: LocalSttFallbackCoordinator
 
   private hasTranscriptionSubscription = false
   private activeLanguage: string | null = null
+  private cloudConnected = false
   private localActive = false
+  private unsubscribeCloud?: () => void
 
   private constructor() {
     const settings = getRuntimeHooks().settings
-    // Reset the persisted activeness flag on boot. The flag is an
-    // observable mirror for native code (bluetooth-sdk reads it to
-    // decide whether to keep mic transcription on); the in-memory
-    // state in this coordinator is the source of truth. Without this
-    // reset, a value left from the prior session ("true") causes
-    // native to start the mic on next launch BEFORE any miniapp
-    // registers a transcription subscription — which is wrong.
+    // Reset the persisted mirror flag on boot — the in-memory state in this
+    // coordinator is the source of truth, and a stale "true" left from the
+    // previous session would cause native to feed Sherpa before any miniapp
+    // registered a subscription.
     settings?.setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, false)
 
-    // Subscribe to flag changes if the host supports it.
-    settings?.subscribeKey?.(
-      ISLAND_SETTINGS_KEYS.localSttFallbackEnabled,
-      (enabled) => {
-        this.log(`feature flag changed: ${enabled}`)
+    // Subscribe to cloud connection state if the host provides it. We seed
+    // `cloudConnected` from the current value so reconcile() is correct on
+    // the first call.
+    const cloud = getRuntimeHooks().cloudConnection
+    if (cloud) {
+      this.cloudConnected = cloud.isConnected()
+      this.unsubscribeCloud = cloud.addListener((connected) => {
+        if (this.cloudConnected === connected) return
+        this.log(`cloud connection -> ${connected ? "up" : "down"}`)
+        this.cloudConnected = connected
         void this.reconcile()
-      },
-    )
+      })
+    } else {
+      // No cloud adapter wired: assume offline so local STT takes over.
+      this.cloudConnected = false
+    }
   }
 
   static getInstance(): LocalSttFallbackCoordinator {
@@ -62,18 +77,20 @@ class LocalSttFallbackCoordinator {
     void this.reconcile()
   }
 
-  // Kept for API compatibility; unused in test mode.
-  onVad(_isSpeaking: boolean): void {}
+  /**
+   * Called by the host when a cloud transcript arrives. Right now it's
+   * informational — the cloud-connected listener is authoritative — but
+   * the hook is kept so future VAD-driven hysteresis can use cloud-result
+   * arrival as a "cloud is healthy enough" signal.
+   */
   onCloudTranscript(): void {}
 
   private async reconcile(): Promise<void> {
-    const flag = this.flagEnabled()
-    const shouldBeActive = flag && this.hasTranscriptionSubscription
-
+    const shouldBeActive = this.hasTranscriptionSubscription && !this.cloudConnected
     if (shouldBeActive && !this.localActive) {
       await this.startLocalStt()
     } else if (!shouldBeActive && this.localActive) {
-      this.stopLocalStt("subscription gone or flag disabled")
+      this.stopLocalStt(this.hasTranscriptionSubscription ? "cloud reconnected" : "subscription gone")
     }
   }
 
@@ -81,7 +98,7 @@ class LocalSttFallbackCoordinator {
     this.log("starting local stt")
     const modelAvailable = await getRuntimeHooks().sttModelAvailable?.()
     if (modelAvailable === false) {
-      this.log("local stt model is not available yet")
+      this.log("local stt model is not available yet — skipping activation")
       return
     }
     try {
@@ -97,10 +114,6 @@ class LocalSttFallbackCoordinator {
     this.log(`stopping local stt: ${reason}`)
     getRuntimeHooks().settings?.setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, false)
     this.localActive = false
-  }
-
-  private flagEnabled(): boolean {
-    return !!getRuntimeHooks().settings?.getSetting(ISLAND_SETTINGS_KEYS.localSttFallbackEnabled)
   }
 
   private log(msg: string): void {

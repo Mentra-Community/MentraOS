@@ -132,8 +132,11 @@ class CoreManager {
         get() = GlassesStore.store.get("core", "power_saving_mode") as? Boolean ?: false
         set(value) = GlassesStore.apply("core", "power_saving_mode", value)
 
+    // Phone-side VAD gating switch. Default is OFF (VAD runs) so the
+    // coordinator can drive per-utterance offline/online STT switching from
+    // `vad_status` events. Set to `true` only as an emergency kill-switch.
     private var bypassVad: Boolean
-        get() = GlassesStore.store.get("core", "bypass_vad") as? Boolean ?: true
+        get() = GlassesStore.store.get("core", "bypass_vad") as? Boolean ?: false
         set(value) = GlassesStore.apply("core", "bypass_vad", value)
 
     private var offlineCaptionsRunning: Boolean
@@ -244,6 +247,7 @@ class CoreManager {
     // VAD
     private val vadBuffer = mutableListOf<ByteArray>()
     private var isSpeaking = false
+    private var vadPolicy: com.mentra.core.stt.VadGateSpeechPolicy? = null
 
     // STT
     private var transcriber: SherpaOnnxTranscriber? = null
@@ -292,6 +296,24 @@ class CoreManager {
             Bridge.log("Failed to initialize LC3 encoder/decoder: ${e.message}")
             lc3EncoderPtr = 0
             lc3DecoderPtr = 0
+        }
+
+        // Initialize phone-side Silero VAD. Used by handlePcm to gate audio
+        // fan-out and to drive per-utterance offline/online STT switching
+        // (see LocalSttFallbackCoordinator on the JS side).
+        try {
+            val ctx = Bridge.getContext()
+            val policy = com.mentra.core.stt.VadGateSpeechPolicy(ctx)
+            policy.init(blockSizeSamples = 512)
+            policy.onSpeechStateChanged = { speaking ->
+                isSpeaking = speaking
+                Bridge.sendVadEvent(speaking)
+            }
+            vadPolicy = policy
+            Bridge.log("VadGateSpeechPolicy initialized")
+        } catch (e: Exception) {
+            Bridge.log("Failed to initialize VadGateSpeechPolicy: ${e.message}")
+            vadPolicy = null
         }
 
         // Mic reinit check every 10 seconds
@@ -682,11 +704,27 @@ class CoreManager {
     }
 
     fun handlePcm(pcmData: ByteArray) {
-        handleSendingPcm(pcmData)
+        val policy = vadPolicy
+        if (bypassVad || policy == null) {
+            // VAD disabled (kill-switch) or failed to init — send everything.
+            handleSendingPcm(pcmData)
+            if (shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive) {
+                transcriber?.acceptAudio(pcmData)
+            }
+            return
+        }
 
-        // Send PCM to local transcriber (always needs raw PCM)
-        if (shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive) {
-            transcriber?.acceptAudio(pcmData)
+        // Run VAD. Frame size assumption: 16 kHz PCM-16LE, must be a multiple
+        // of 1024 bytes (512 samples). Glasses LC3 decodes to this shape and
+        // PhoneMic's read buffer is a multiple of it as well. The policy
+        // logs and bails on a bad size, so we don't crash on a mismatch.
+        policy.processAudioBytes(pcmData, 0, pcmData.size)
+
+        if (policy.shouldPassAudioToRecognizer()) {
+            handleSendingPcm(pcmData)
+            if (shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive) {
+                transcriber?.acceptAudio(pcmData)
+            }
         }
     }
 

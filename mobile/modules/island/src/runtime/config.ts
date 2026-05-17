@@ -34,6 +34,16 @@ export interface SocketCommsAdapter {
   updatePhoneSubscriptions: (subscriptions: string[]) => void
 }
 
+/**
+ * Cloud connection state surface used by LocalSttFallbackCoordinator to
+ * decide when on-device STT should take over from cloud transcription.
+ * Hosts wrap their own WebSocket-status store.
+ */
+export interface CloudConnectionAdapter {
+  isConnected: () => boolean
+  addListener: (l: (connected: boolean) => void) => () => void
+}
+
 export interface AudioPlayRequest {
   requestId: string
   audioUrl: string
@@ -95,7 +105,6 @@ export interface SettingsAccessor {
  * settings store keys to these names. Mobile already uses these strings.
  */
 export const ISLAND_SETTINGS_KEYS = {
-  localSttFallbackEnabled: "local_stt_fallback_enabled",
   localSttFallbackActive: "local_stt_fallback_active",
   defaultWearable: "default_wearable",
   backendUrl: "backend_url",
@@ -235,6 +244,8 @@ export interface RuntimeHooks {
    * starting the on-device transcriber.
    */
   sttModelAvailable?: () => Promise<boolean> | boolean
+  /** Cloud WebSocket connection state surface. */
+  cloudConnection?: CloudConnectionAdapter
   /**
    * Forward processed display events into the host's mirror store. The
    * default no-op skips the mirror — installed-only hosts (no UI mirror)

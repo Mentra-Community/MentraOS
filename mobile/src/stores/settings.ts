@@ -458,13 +458,6 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  local_stt_fallback_enabled: {
-    key: "local_stt_fallback_enabled",
-    defaultValue: () => true,
-    writable: true,
-    saveOnServer: true,
-    persist: true,
-  },
   // Runtime flag: coordinator flips this on when cloud STT has failed and fallback is active.
   // Native GlassesStore watches it to gate PCM → Sherpa feeding. Not user-facing.
   local_stt_fallback_active: {

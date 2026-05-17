@@ -253,18 +253,17 @@ describe("MantleManager", () => {
       timestamp: 999,
     })
 
+    // Local transcripts no longer roundtrip through the cloud. With no
+    // local-miniapp subscription and the offline-captions flag off, the
+    // transcript is dropped — `sendLocalTranscription` must not fire.
+    ;(socketComms.sendLocalTranscription as jest.Mock).mockClear()
     emitCoreModuleEvent("local_transcription", {
       text: "hello world",
       isFinal: true,
       transcribeLanguage: "en-US",
     })
     await waitFor(() => {
-      expect(socketComms.sendLocalTranscription).toHaveBeenCalledWith(
-        expect.objectContaining({
-          text: "hello world",
-          isFinal: true,
-        }),
-      )
+      expect(socketComms.sendLocalTranscription).not.toHaveBeenCalled()
     })
 
     emitCoreModuleEvent("head_up", {up: true})
