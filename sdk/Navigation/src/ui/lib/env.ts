@@ -1,7 +1,10 @@
 /**
- * Compile-time / runtime "are we in dev?" check for the UI WebView. Vite
- * injects `import.meta.env.DEV`. When the bundler tree-shakes this, dev-only
- * overlays compile out of the prod bundle.
+ * Compile-time / runtime "are we in dev?" check for the UI WebView.
+ *
+ * `build.ts` substitutes `process.env.NODE_ENV` via Bun's `define` map
+ * (the SDK's release verb sets NODE_ENV=production before invoking the
+ * build; dev builds default to "development"). So this expression
+ * resolves to a literal `true` or `false` at bundle time and dev-only
+ * overlays tree-shake out of the production bundle.
  */
-export const isDev: boolean =
-  typeof import.meta !== "undefined" && (import.meta as unknown as {env?: {DEV?: boolean}}).env?.DEV === true
+export const isDev: boolean = process.env.NODE_ENV !== "production"

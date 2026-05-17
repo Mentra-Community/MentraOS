@@ -5,9 +5,9 @@
  * storage scoped to this miniapp. Values are always strings — callers
  * JSON.stringify / JSON.parse structured data themselves.
  *
- *   const user = useUser()
- *   await user.storage.set("recentDestinations", JSON.stringify([...]))
- *   const raw = await user.storage.get("recentDestinations")
+ *   const storage = new SimpleStorageManager(session)
+ *   await storage.set("recentDestinations", JSON.stringify([...]))
+ *   const raw = await storage.get("recentDestinations")
  */
 
 import type {MiniappSession} from "@mentra/miniapp"

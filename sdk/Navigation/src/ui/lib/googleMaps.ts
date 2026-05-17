@@ -28,7 +28,11 @@ export class GoogleMapsManager {
       },
       (err: unknown) => {
         this._error = err instanceof Error ? err.message : "load failed"
-        // Don't propagate — callers poll `error` instead of catching.
+        // Re-throw so `whenReady()` rejects. Callers wire it through
+        // `.then(...).catch(...)` to set `mapsReady=false`; if we
+        // swallow here, the store flips to `mapsReady=true` even on
+        // failure and NavMap will crash trying to read window.google.
+        throw err
       },
     )
   }
