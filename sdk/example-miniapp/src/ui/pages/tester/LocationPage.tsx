@@ -10,7 +10,7 @@ import {ErrorRow, TableRow} from "./_TesterRow"
 
 export default function LocationPage() {
   const navigate = useNavigate()
-  const {latestByKind, log, fire, lastError} = useTester("location")
+  const {latestByKind, log, invoke, lastError} = useTester("location")
 
   // Both .onUpdate() (kind="update") and .getOnce() (kind="result", with
   // the same shape nested under payload.result) describe the same thing:
@@ -36,7 +36,7 @@ export default function LocationPage() {
           GPS coordinates streamed from the phone.
         </p>
         <TableRow emoji="📍" label="latest fix" data={latestFix} />
-        <Button className="mt-3" onClick={() => fire("getOnce", [])}>
+        <Button className="mt-3" onClick={() => invoke("getOnce", [])}>
           Request a one-shot fix
         </Button>
         <ErrorRow event={lastError} />

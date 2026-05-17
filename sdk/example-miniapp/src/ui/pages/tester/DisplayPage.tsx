@@ -1,5 +1,5 @@
 // Tester page — fire-and-forget actions go through the
-// `tester:fire` channel; background dispatches to session.display.*.
+// `tester:invoke` channel; background dispatches to session.display.*.
 
 import {useState} from "react"
 import {useNavigate} from "react-router-dom"
@@ -15,8 +15,8 @@ import {ErrorRow} from "./_TesterRow"
 export default function DisplayPage() {
   const navigate = useNavigate()
   // useTester opens a (no-op) subscription so `tester:event {kind:"error"}`
-  // from a bad fire() lands in lastError and surfaces in the UI.
-  const {fire, lastError} = useTester("display")
+  // from a bad invoke() lands in lastError and surfaces in the UI.
+  const {invoke, lastError} = useTester("display")
   const [text, setText] = useState("Hello from MentraJS!")
   return (
     <Shell>
@@ -29,14 +29,14 @@ export default function DisplayPage() {
         <Label htmlFor="display-text">text</Label>
         <Input id="display-text" value={text} onChange={(e) => setText(e.target.value)} />
         <div className="mt-3 flex flex-col gap-2">
-          <Button onClick={() => fire("showTextWall", [text])}>showTextWall(text)</Button>
-          <Button onClick={() => fire("showReferenceCard", ["Title", text])}>
+          <Button onClick={() => invoke("showTextWall", [text])}>showTextWall(text)</Button>
+          <Button onClick={() => invoke("showReferenceCard", ["Title", text])}>
             showReferenceCard(title, text)
           </Button>
-          <Button onClick={() => fire("showDoubleTextWall", ["Top", text])}>
+          <Button onClick={() => invoke("showDoubleTextWall", ["Top", text])}>
             showDoubleTextWall(top, bottom)
           </Button>
-          <Button variant="destructive" onClick={() => fire("clearView", [])}>
+          <Button variant="destructive" onClick={() => invoke("clearView", [])}>
             clearView()
           </Button>
         </div>

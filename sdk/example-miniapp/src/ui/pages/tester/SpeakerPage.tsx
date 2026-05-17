@@ -13,7 +13,7 @@ import {ErrorRow} from "./_TesterRow"
 
 export default function SpeakerPage() {
   const navigate = useNavigate()
-  const {fire, lastError} = useTester("speaker")
+  const {invoke, lastError} = useTester("speaker")
   const [phrase, setPhrase] = useState("Hello from MentraJS")
   return (
     <Shell>
@@ -22,8 +22,8 @@ export default function SpeakerPage() {
         <Label htmlFor="speaker-phrase">phrase</Label>
         <Input id="speaker-phrase" value={phrase} onChange={(e) => setPhrase(e.target.value)} />
         <div className="mt-3 flex gap-2">
-          <Button onClick={() => fire("speak", [phrase])}>speak(phrase)</Button>
-          <Button variant="destructive" onClick={() => fire("stop", [])}>
+          <Button onClick={() => invoke("speak", [phrase])}>speak(phrase)</Button>
+          <Button variant="destructive" onClick={() => invoke("stop", [])}>
             stop()
           </Button>
         </div>

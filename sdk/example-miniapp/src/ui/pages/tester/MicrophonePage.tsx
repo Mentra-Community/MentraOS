@@ -10,7 +10,7 @@ import {ErrorRow, Row, TableRow} from "./_TesterRow"
 
 export default function MicrophonePage() {
   const navigate = useNavigate()
-  const {log, fire, lastError} = useTester("mic")
+  const {log, invoke, lastError} = useTester("mic")
   const lastAudio = [...log].reverse().find((e) => e.kind === "audio")
   const lastVad = [...log].reverse().find((e) => e.kind === "vad")
   return (
@@ -32,7 +32,7 @@ export default function MicrophonePage() {
           label=".onAudioChunk(handler) — latest"
           data={lastAudio ? ((lastAudio.payload as unknown) as Record<string, unknown>) : null}
         />
-        <Button variant="destructive" className="mt-3" onClick={() => fire("stop", [])}>
+        <Button variant="destructive" className="mt-3" onClick={() => invoke("stop", [])}>
           stop() — release all mic subscriptions
         </Button>
         <ErrorRow event={lastError} />
