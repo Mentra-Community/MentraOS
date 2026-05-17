@@ -17,7 +17,7 @@ import type {
   Pivot,
   PivotEvent,
   StartNavigationOptions,
-} from "@mentra/miniapp"
+} from "@mentra/miniapp/background"
 
 import {ManeuverFormatter} from "./ManeuverFormatter"
 
