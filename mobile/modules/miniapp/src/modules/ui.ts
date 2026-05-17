@@ -44,9 +44,79 @@ export type UIChannelHandler<T = unknown> = (payload: T) => void
 export type UIUnsubscribe = () => void
 
 /**
+ * Brand for declaring an RPC channel in the shared Channels registry.
+ *
+ * Wrap a channel's payload type in `Rpc<Req, Res>` to mark it as
+ * request/response. The SDK's `mentra.request` / `session.ui.handle`
+ * accept only `Rpc<...>` channels; `mentra.send` / `session.ui.on`
+ * accept only non-RPC channels. Using the wrong API for the wrong
+ * channel is a compile-time error.
+ *
+ *   export interface Channels {
+ *     "live-transcript": {text: string}                    // broadcast
+ *     "compute-route":   Rpc<RouteOpts, RouteResult>       // RPC
+ *   }
+ */
+declare const __rpc_brand: unique symbol
+export type Rpc<Req, Res> = {readonly [__rpc_brand]: true; readonly req: Req; readonly res: Res}
+
+/** True if `T` is an `Rpc<...>` channel entry. */
+export type IsRpc<T> = T extends Rpc<unknown, unknown> ? true : false
+/** Request payload type of an `Rpc<Req, Res>` entry. */
+export type RpcReq<T> = T extends Rpc<infer Req, unknown> ? Req : never
+/** Response payload type of an `Rpc<Req, Res>` entry. */
+export type RpcRes<T> = T extends Rpc<unknown, infer Res> ? Res : never
+
+/** Options accepted by `mentra.request`. */
+export interface RpcRequestOptions {
+  /** Abort the in-flight call. Sends UI_CANCEL to the handler. */
+  signal?: AbortSignal
+  /** Reject with `MentraRpcTimeoutError` after this many ms. No default. */
+  timeout?: number
+}
+
+/** Context passed as the optional 2nd arg to an `ui.handle` handler. */
+export interface RpcHandlerContext {
+  /** Aborts when the UI side cancels the call (or its timeout fires). */
+  signal: AbortSignal
+}
+
+/**
+ * Error thrown by `mentra.request` when the handler threw or returned an
+ * error envelope. Plain `Error` subclass — distinguished by `err.name`.
+ * `err.cause` is `{code?: string}` if the handler attached one.
+ */
+export class MentraRpcError extends Error {
+  constructor(message: string, options?: {cause?: {code?: string}}) {
+    super(message)
+    this.name = "MentraRpcError"
+    // Assign `cause` directly: the package's tsconfig targets ES2020 lib
+    // where `Error`'s ctor is typed as 1-arity (no `ErrorOptions`).
+    // Modern JS engines still allow setting `cause` as a plain property.
+    if (options?.cause !== undefined) {
+      ;(this as Error & {cause?: unknown}).cause = options.cause
+    }
+  }
+}
+
+/** Thrown by `mentra.request` when its `{timeout}` elapses. */
+export class MentraRpcTimeoutError extends Error {
+  constructor(message = "RPC timed out") {
+    super(message)
+    this.name = "MentraRpcTimeoutError"
+  }
+}
+
+/**
  * Public surface mirrored on `session.ui`. Generic over a `Channels`
  * type-map so miniapps importing the typed `shared/channels.ts` get
  * compile-time enforcement on channel names + payload shapes.
+ *
+ * Broadcast vs. RPC channels are distinguished at the type level:
+ *   - Channel value `Rpc<Req, Res>` → only `handle()` accepts it on
+ *     background; only `mentra.request(...)` accepts it on UI.
+ *   - Channel value anything else   → only `send()`/`on()` accept it
+ *     on both sides.
  *
  * The default `Record<string, unknown>` mapping lets unannotated usage
  * compile — the SDK doesn't impose a registry of its own.
@@ -58,9 +128,7 @@ export interface UIModule<TChannels extends Record<string, unknown> = Record<str
   /**
    * Subscribe to the "WebView mounted + ready()" lifecycle event. If
    * a WebView is already mounted when subscribe() is called, the
-   * handler fires immediately for the current binding (mirrors the
-   * existing `events.on` "fire-once for late subscribers" behaviour
-   * elsewhere in the SDK).
+   * handler fires immediately for the current binding.
    */
   onOpen(cb: () => void): UIUnsubscribe
 
@@ -72,18 +140,41 @@ export interface UIModule<TChannels extends Record<string, unknown> = Record<str
   onClose(cb: () => void): UIUnsubscribe
 
   /**
-   * Send a typed message to the bound WebView. Silently drops if no
-   * WebView is bound. The host router serialises the envelope and
-   * injects it via `webview.injectJavaScript("window.__mentra.recv(...)")`.
+   * Broadcast a typed message to the bound WebView. Silently drops if
+   * no WebView is bound. Compile-error if `C` is an RPC channel.
    */
-  send<C extends keyof TChannels & string>(channel: C, payload: TChannels[C]): void
+  send<C extends keyof TChannels & string>(
+    channel: IsRpc<TChannels[C]> extends true ? never : C,
+    payload: TChannels[C],
+  ): void
 
   /**
-   * Subscribe to messages from the bound WebView. The same handler
-   * fires for every WebView open/close cycle — registering once is
-   * enough. Returns an unsubscribe fn.
+   * Subscribe to broadcast messages from the bound WebView. Returns an
+   * unsubscribe fn. Compile-error if `C` is an RPC channel — use
+   * `handle()` for RPC channels.
    */
-  on<C extends keyof TChannels & string>(channel: C, cb: UIChannelHandler<TChannels[C]>): UIUnsubscribe
+  on<C extends keyof TChannels & string>(
+    channel: IsRpc<TChannels[C]> extends true ? never : C,
+    cb: UIChannelHandler<TChannels[C]>,
+  ): UIUnsubscribe
+
+  /**
+   * Register the single handler for an RPC channel. The UI side calls
+   * `mentra.request(channel, payload, options?)`; this handler resolves
+   * the call.
+   *
+   * Throws synchronously if a handler is already registered for the
+   * channel. Returns a deregister fn that removes the handler.
+   *
+   * Compile-error if `C` is a broadcast (non-Rpc) channel.
+   */
+  handle<C extends keyof TChannels & string>(
+    channel: IsRpc<TChannels[C]> extends true ? C : never,
+    handler: (
+      payload: RpcReq<TChannels[C]>,
+      ctx?: RpcHandlerContext,
+    ) => Promise<RpcRes<TChannels[C]>> | RpcRes<TChannels[C]>,
+  ): UIUnsubscribe
 }
 
 /**
