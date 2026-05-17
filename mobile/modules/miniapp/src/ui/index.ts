@@ -101,6 +101,7 @@ export {useConnected} from "../react/useConnected"
 export {useSafeArea} from "../react/useSafeArea"
 export {useVisibility} from "../react/useVisibility"
 export {useCapsuleHeaderStyle} from "../react/useCapsuleHeaderStyle"
+export {useRpc, type RpcCallable} from "../react/useRpc"
 
 /**
  * Type helper for declaring a typed `mentra` global inside a miniapp.
