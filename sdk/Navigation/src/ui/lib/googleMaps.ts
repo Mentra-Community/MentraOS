@@ -7,6 +7,8 @@
  * `define` in build.ts; dev fetches `/api/config` from the local server.
  */
 
+import {setMapsReady} from "../store/navStore"
+
 declare global {
   interface Window {
     google?: any
@@ -105,4 +107,18 @@ export class GoogleMapsManager {
       document.head.appendChild(script)
     })
   }
+}
+
+/** Singleton — one Maps load per WebView mount. */
+let singleton: GoogleMapsManager | null = null
+
+/** Lazy initialiser. Pushes `mapsReady` into the store once the script loads. */
+export function getGoogleMaps(): GoogleMapsManager {
+  if (singleton) return singleton
+  singleton = new GoogleMapsManager()
+  singleton
+    .whenReady()
+    .then(() => setMapsReady(true))
+    .catch(() => setMapsReady(false))
+  return singleton
 }
