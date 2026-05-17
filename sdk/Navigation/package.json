@@ -15,7 +15,8 @@
     "lucide-react": "^0.511.0",
     "motion": "^12.38.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "zustand": "^5.0.13"
   },
   "devDependencies": {
     "@mentra/miniapp-cli": "workspace:*",
