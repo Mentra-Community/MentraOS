@@ -52,3 +52,14 @@ export interface CaptionsLastButton {
 export interface CaptionsSettings {
   mirrorToGlasses: boolean
 }
+
+/** Args to `tester:invoke` — the new RPC replacing the old `tester:fire`. */
+export interface TesterInvoke {
+  iface: string
+  method: string
+  args?: unknown[]
+}
+
+/** Result of `tester:invoke`. Handlers return the raw call result; errors
+ *  propagate via the RPC error path so callers see `MentraRpcError`. */
+export type TesterInvokeResult = unknown

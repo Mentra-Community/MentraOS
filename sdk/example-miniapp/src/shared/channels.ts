@@ -5,6 +5,7 @@
  * inlines the declarations so there's no runtime cross-boundary I/O.
  */
 
+import type {Rpc} from "@mentra/miniapp/ui"
 import type {
   CaptionsHistoryUpdate,
   CaptionsLastButton,
@@ -13,12 +14,23 @@ import type {
   CapabilitiesSnapshot,
   ConnectionSnapshot,
   TesterEventPayload,
+  TesterInvoke,
+  TesterInvokeResult,
 } from "./types"
 
+/**
+ * Typed channel registry — the single source of truth for every name
+ * that flows between this miniapp's background JSContext and its UI
+ * WebView. Both halves import this file at build time; the bundler
+ * inlines the declarations so there's no runtime cross-boundary I/O.
+ *
+ * Channels marked `Rpc<Req, Res>` are RPC — call them via
+ * `mentra.request(...)` on UI / `session.ui.handle(...)` on background.
+ * Everything else is broadcast — `mentra.send` / `session.ui.on`.
+ */
 export interface Channels {
   // ── background → UI ────────────────────────────────────────────────────
 
-  /** Initial snapshot — fired when session.ui.onOpen lands. */
   "captions:snapshot": {
     capabilities: CapabilitiesSnapshot
     connection: ConnectionSnapshot
@@ -27,8 +39,6 @@ export interface Channels {
     history: string[]
     lastButton: string
   }
-
-  /** Hot updates while the WebView is mounted. */
   "captions:live-transcript": CaptionsLiveTranscript
   "captions:history-update": CaptionsHistoryUpdate
   "captions:last-button": CaptionsLastButton
@@ -36,28 +46,26 @@ export interface Channels {
   "captions:capabilities-update": CapabilitiesSnapshot
   "captions:connection-update": ConnectionSnapshot
 
-  /** Per-tester stream. The tester pages subscribe to this and ignore
-   *  events whose `iface` doesn't match the page. */
+  /** Streamed tester events (subscribe-based testers only). */
   "tester:event": TesterEventPayload
 
-  // ── UI → background ────────────────────────────────────────────────────
+  // ── UI → background broadcasts ─────────────────────────────────────────
 
-  /** Captions imperative actions. */
   "captions:clear": Record<string, never>
   "captions:speak-summary": Record<string, never>
   "captions:set-mirror": {mirrorToGlasses: boolean}
-
-  /** Tester "start a subscription" — the read-only testers
-   *  (Permissions / Storage / Transcription / IMU / Location / Microphone /
-   *  System) call this with the iface they want to observe. Idempotent. */
   "tester:start": {iface: string; args?: unknown[]}
-
-  /** Tester "stop a subscription" — release any background-side listeners. */
   "tester:stop": {iface: string}
 
-  /** Tester "fire-and-forget action" — the imperative testers (Display /
-   *  Led / Speaker / Phone) call this with the exact session method to
-   *  invoke. Background dispatches to `session[iface][method](...args)`
-   *  and silently drops if the iface or method doesn't exist. */
-  "tester:fire": {iface: string; method: string; args?: unknown[]}
+  // ── UI → background RPC ────────────────────────────────────────────────
+
+  /**
+   * Invoke `session[iface][method](...args)` on the background side.
+   * Returns the method's return value (awaited). Throws via the SDK's
+   * RPC error path if the method is missing or threw.
+   *
+   * Replaces the old `tester:fire` (which muxed result/error back onto
+   * the `tester:event` stream). The new shape is plain async/await.
+   */
+  "tester:invoke": Rpc<TesterInvoke, TesterInvokeResult>
 }
