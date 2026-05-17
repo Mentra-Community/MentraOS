@@ -20,8 +20,10 @@ import {useConnectionStore} from "@/stores/connection"
 import {captureScreenshot} from "@/effects/CapsuleMenu"
 import AppIcon from "@/components/home/AppIcon"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
-import {buildMiniappGlobalsScript} from "@mentra/island"
+import {BgTimer, buildMiniappGlobalsScript} from "@mentra/island"
 import {useRegisterCapsule} from "@/stores/capsule"
+
+const MINIAPP_LOAD_TIMEOUT_MS = 30_000
 
 export default function AppWebView() {
   const {webviewURL, appName, packageName, isLocal: isLocalParam} = useLocalSearchParams()
@@ -41,6 +43,7 @@ export default function AppWebView() {
 
   // Track if the server-side app start failed
   const [appStartFailed, setAppStartFailed] = useState(false)
+  const [loadingTimedOut, setLoadingTimedOut] = useState(false)
 
   // Track whether the WebView has back navigation history
   const [webViewCanGoBack, setWebViewCanGoBack] = useState(false)
@@ -183,6 +186,26 @@ export default function AppWebView() {
   }, [isWebViewReady])
 
   useEffect(() => {
+    if (isLocal || isWebViewReady) {
+      setLoadingTimedOut(false)
+      return
+    }
+
+    const timer = BgTimer.setTimeout(() => {
+      const applet = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)
+      if (applet?.loading) {
+        useAppStatusStore.getState().clearAppletLoading(packageName as string)
+      }
+      void useAppStatusStore.getState().refresh()
+      setLoadingTimedOut(true)
+    }, MINIAPP_LOAD_TIMEOUT_MS)
+
+    return () => {
+      BgTimer.clearTimeout(timer)
+    }
+  }, [packageName, isWebViewReady, retryTrigger, isLocal])
+
+  useEffect(() => {
     // Local miniapps don't need token generation — use the URL directly.
     if (isLocal) {
       if (webviewURL) {
@@ -237,6 +260,7 @@ export default function AppWebView() {
         res = await restComms.hashWithApiKey(cloudApiUrl, packageName)
         if (res.is_error()) {
           console.error("Error hashing cloud API URL:", res.error)
+          setTokenError(`Couldn't securely connect to ${appName}. Please try again.`)
           setIsLoadingToken(false)
           return
         }
@@ -390,11 +414,13 @@ export default function AppWebView() {
     )
   }
 
-  // Show error screen if: server-side start failed, token generation failed, or webview failed to load
-  const showError = appStartFailed || (tokenError && !isLoadingToken) || hasError
-  const errorMessage = appStartFailed
-    ? `${appName} couldn't be started. The miniapp may be temporarily unavailable.`
-    : tokenError || `Unable to load ${appName}. Please check your connection and try again.`
+  // Show error screen if: server-side start failed, load timed out, token generation failed, or webview failed to load
+  const showError = appStartFailed || loadingTimedOut || (tokenError && !isLoadingToken) || hasError
+  const errorMessage = loadingTimedOut
+    ? `${appName} is taking too long to load. Please check your connection and try again.`
+    : appStartFailed
+      ? `${appName} couldn't be started. The miniapp may be temporarily unavailable.`
+      : tokenError || `Unable to load ${appName}. Please check your connection and try again.`
 
   if (showError) {
     return (
@@ -406,15 +432,18 @@ export default function AppWebView() {
             message={errorMessage}
             onRetry={() => {
               setAppStartFailed(false)
+              setLoadingTimedOut(false)
               setHasError(false)
               setTokenError(null)
               setFinalUrl(null)
               setIsWebViewLoaded(false)
-              setIsServerConfirmed(false)
+              setIsServerConfirmed(isLocal)
               webViewOpacity.value = 0
               loadingOpacity.value = 1
-              // Re-send the start request and poll for confirmation
-              void miniappCatalog.retryStart(packageName as string)
+              if (!isLocal) {
+                useAppStatusStore.getState().clearAppletLoading(packageName as string)
+                void miniappCatalog.retryStart(packageName as string)
+              }
               setRetryTrigger((prev) => prev + 1)
             }}
           />

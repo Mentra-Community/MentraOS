@@ -64,6 +64,7 @@ export function configureIsland(hooks: IslandHostHooks): void {
 interface AppStatusState {
   apps: ClientApp[]
   refresh: () => Promise<void>
+  clearAppletLoading: (packageName: string) => void
   start: (app: ClientApp, opts?: StartOptions) => Promise<void>
   stop: (packageName: string) => Promise<void>
   stopAll: () => AsyncResult<void, Error>
@@ -158,6 +159,12 @@ const startStopApp = async (app: ClientApp, status: boolean): Promise<void> => {
 
 export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   apps: [],
+
+  clearAppletLoading: (packageName: string) => {
+    set((state) => ({
+      apps: state.apps.map((a) => (a.packageName === packageName ? {...a, loading: false} : a)),
+    }))
+  },
 
   refresh: async () => {
     const state = get()
