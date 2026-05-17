@@ -18,6 +18,10 @@
  * autocomplete and compile-time errors on channel names + payloads.
  */
 
+import type {IsRpc, RpcReq, RpcRes, RpcRequestOptions} from "../modules/ui"
+export type {Rpc, IsRpc, RpcReq, RpcRes, RpcRequestOptions, RpcHandlerContext} from "../modules/ui"
+export {MentraRpcError, MentraRpcTimeoutError} from "../modules/ui"
+
 // `mentra` lives on the global scope; declare it for TS so import
 // `from "@mentra/miniapp/ui"` is enough to type-check `mentra.send(...)`.
 declare global {
@@ -27,20 +31,35 @@ declare global {
 
 export interface MentraUiGlobal<TChannels extends Record<string, unknown> = Record<string, unknown>> {
   /**
-   * Send a typed message to the bound background JSContext.
-   *
-   * Buffered until `ready()` acks; once acked, fires immediately. The
-   * SDK never drops outbound user input — the WebView is the
-   * short-lived side and may unmount before its messages flush.
+   * Broadcast a typed message to the bound background JSContext.
+   * Buffered until `ready()` acks; once acked, fires immediately.
+   * Compile-error if `C` is an RPC channel — use `request()` instead.
    */
-  send<C extends keyof TChannels & string>(channel: C, payload: TChannels[C]): void
+  send<C extends keyof TChannels & string>(
+    channel: IsRpc<TChannels[C]> extends true ? never : C,
+    payload: TChannels[C],
+  ): void
 
   /**
-   * Subscribe to messages from the background. Returns an unsubscribe
-   * function. The handler persists across WebView open/close cycles
-   * within a single mount; close-then-remount installs a fresh shim.
+   * Subscribe to broadcast messages from the background. Compile-error
+   * if `C` is an RPC channel.
    */
-  on<C extends keyof TChannels & string>(channel: C, cb: (payload: TChannels[C]) => void): () => void
+  on<C extends keyof TChannels & string>(
+    channel: IsRpc<TChannels[C]> extends true ? never : C,
+    cb: (payload: TChannels[C]) => void,
+  ): () => void
+
+  /**
+   * Make an RPC call to the background `session.ui.handle(channel, ...)`
+   * handler. Throws `MentraRpcError` if the handler threw; throws
+   * `MentraRpcTimeoutError` if `options.timeout` elapsed; throws
+   * `AbortError` if `options.signal` aborted. No default timeout.
+   */
+  request<C extends keyof TChannels & string>(
+    channel: IsRpc<TChannels[C]> extends true ? C : never,
+    payload: RpcReq<TChannels[C]>,
+    options?: RpcRequestOptions,
+  ): Promise<RpcRes<TChannels[C]>>
 
   /**
    * Fires when the bridge is open and `mentra.send` is flushable. If

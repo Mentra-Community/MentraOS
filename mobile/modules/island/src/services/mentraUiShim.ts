@@ -130,6 +130,116 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
     };
   }
 
+  // ── RPC ─────────────────────────────────────────────────────────────
+  // Outbound RPC: every mentra.request() generates a request id, sends a
+  // 'msg' envelope tagged with requestId, and stashes a one-shot resolver
+  // keyed on the id. The background-side reply is a recv('msg') with the
+  // same channel + requestId; we route it directly to the resolver.
+  //
+  // Cancellation: caller's AbortSignal triggers a 'cancel' envelope to
+  // background and rejects the local promise with a DOM-standard
+  // AbortError. The background side's UI_CANCEL handler aborts the
+  // handler's ctx.signal and drops the reply.
+  var rpcCounter = 0;
+  var rpcInflight = Object.create(null);
+
+  function makeRequestId() {
+    rpcCounter += 1;
+    return 'r' + rpcCounter + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+  }
+
+  function MentraRpcError(message, code) {
+    var e = new Error(message);
+    e.name = 'MentraRpcError';
+    if (code) {
+      try { e.cause = {code: code}; } catch (_) { /* old runtimes */ }
+    }
+    return e;
+  }
+
+  function MentraRpcTimeoutError(message) {
+    var e = new Error(message || 'RPC timed out');
+    e.name = 'MentraRpcTimeoutError';
+    return e;
+  }
+
+  function MentraAbortError() {
+    var e;
+    try { e = new DOMException('aborted', 'AbortError'); } catch (_) {
+      e = new Error('aborted');
+      e.name = 'AbortError';
+    }
+    return e;
+  }
+
+  function request(channel, payload, options) {
+    var opts = options || {};
+    var signal = opts.signal;
+    var timeoutMs = typeof opts.timeout === 'number' ? opts.timeout : null;
+    var id = makeRequestId();
+
+    return new Promise(function (resolve, reject) {
+      var done = false;
+      var timeoutHandle = null;
+      var abortListener = null;
+
+      function cleanup() {
+        if (done) return;
+        done = true;
+        delete rpcInflight[id];
+        if (timeoutHandle != null) { clearTimeout(timeoutHandle); timeoutHandle = null; }
+        if (signal && abortListener) {
+          try { signal.removeEventListener('abort', abortListener); } catch (_) {}
+        }
+      }
+
+      function settle(envelope) {
+        if (done) return;
+        cleanup();
+        if (envelope && envelope.ok === true) {
+          resolve(envelope.result);
+        } else if (envelope && envelope.ok === false) {
+          reject(MentraRpcError(envelope.error && envelope.error.message || 'RPC failed', envelope.error && envelope.error.code));
+        } else {
+          reject(MentraRpcError('malformed RPC reply'));
+        }
+      }
+
+      rpcInflight[id] = settle;
+
+      if (signal) {
+        if (signal.aborted) {
+          cleanup();
+          reject(MentraAbortError());
+          return;
+        }
+        abortListener = function () {
+          if (done) return;
+          cleanup();
+          postEnvelope({type: 'cancel', requestId: id});
+          reject(MentraAbortError());
+        };
+        try { signal.addEventListener('abort', abortListener); } catch (_) {}
+      }
+
+      if (timeoutMs != null) {
+        timeoutHandle = setTimeout(function () {
+          if (done) return;
+          cleanup();
+          postEnvelope({type: 'cancel', requestId: id});
+          reject(MentraRpcTimeoutError());
+        }, timeoutMs);
+      }
+
+      var envelope = {type: 'msg', seq: outboundSeq++, channel: String(channel), payload: payload, requestId: id};
+      if (!ready) {
+        outboundQueue.push(envelope);
+        return;
+      }
+      postEnvelope(envelope);
+    });
+  }
+
   function onOpen(cb) {
     if (typeof cb !== 'function') return function () {};
     openHandlers.push(cb);
@@ -182,12 +292,17 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
     if (!envelope || typeof envelope !== 'object') return;
     var type = envelope.type;
     if (type === 'msg' && typeof envelope.channel === 'string') {
+      // RPC reply: requestId set → route to the inflight resolver.
+      if (typeof envelope.requestId === 'string' && rpcInflight[envelope.requestId]) {
+        var settle = rpcInflight[envelope.requestId];
+        settle(envelope.payload);
+        return;
+      }
+      // Broadcast: fan out via fireChannel (existing path).
       fireChannel(envelope.channel, envelope.payload);
       return;
     }
     if (type === 'open') {
-      // Background side acknowledges the open. Fire onOpen handlers
-      // again (idempotent — same shape as ready()'s fire).
       for (var j = 0; j < openHandlers.length; j++) {
         try { openHandlers[j](); } catch (e) {}
       }
@@ -199,8 +314,12 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
       }
       return;
     }
+    if (type === 'cancel' && typeof envelope.requestId === 'string') {
+      // Background-side cancel (reserved; currently unused). If we had a
+      // future bidirectional RPC this would abort an in-flight UI handler.
+      return;
+    }
     if (type === 'ack') {
-      // Reserved — currently unused on the WebView side.
       return;
     }
   }
@@ -208,6 +327,7 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
   window.mentra = {
     send: send,
     on: on,
+    request: request,
     onOpen: onOpen,
     onClose: onClose,
     ready: readyFn,
