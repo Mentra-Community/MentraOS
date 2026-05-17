@@ -118,7 +118,7 @@ export class PlacesSession {
       }))
   }
 
-  async details(placeId: string): Promise<PlaceDetails> {
+  async details(placeId: string, signal?: AbortSignal): Promise<PlaceDetails> {
     const key = await getApiKey()
     if (!key) throw new Error("missing EXPO_PUBLIC_GOOGLE_PLACES_API_KEY")
     const url = `https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}?sessionToken=${encodeURIComponent(this.token)}`
@@ -128,6 +128,7 @@ export class PlacesSession {
         // Field mask keeps us in the cheapest pricing tier.
         "X-Goog-FieldMask": "id,location,displayName,formattedAddress",
       },
+      signal,
     })
     if (!res.ok) throw new Error(`details ${res.status}`)
     const json = (await res.json()) as {
