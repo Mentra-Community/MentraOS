@@ -12,7 +12,9 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "paths": {
       "@/*": ["./src/*"],
-      "@/backend/*": ["./src/client/*"]
+      "@/background/*": ["./src/background/*"],
+      "@/ui/*": ["./src/ui/*"],
+      "@/shared/*": ["./src/shared/*"]
     }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"]
