@@ -13,7 +13,7 @@
 
 import type {NavManeuver} from "@mentra/miniapp"
 
-import {formatDistance, formatDuration} from "@/backend/lib/formatDistance/formatDistance"
+import {formatDistance, formatDuration} from "../lib/formatDistance"
 
 /** Distance threshold below which a turn becomes the active instruction. */
 const IMMINENT_M = 30

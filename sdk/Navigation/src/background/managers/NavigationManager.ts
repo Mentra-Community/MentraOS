@@ -19,7 +19,7 @@ import type {
   StartNavigationOptions,
 } from "@mentra/miniapp"
 
-import {ManeuverFormatter} from "@/backend/session/managers/navigation/ManeuverFormatter"
+import {ManeuverFormatter} from "./ManeuverFormatter"
 
 export type NavUpdateListener = (update: NavUpdate) => void
 export type NavRouteListener = (route: NavRoute) => void

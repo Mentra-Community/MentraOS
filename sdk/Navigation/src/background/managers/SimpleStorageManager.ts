@@ -11,7 +11,7 @@
  */
 
 import type {MiniappSession} from "@mentra/miniapp"
-import type {PlaceDetails, SavedPlace} from "@/client/lib/places/places"
+import type {PlaceDetails, SavedPlace} from "../lib/places"
 
 export class SimpleStorageManager {
   constructor(private readonly session: MiniappSession) {}
