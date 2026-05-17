@@ -300,8 +300,11 @@ class CoreManager {
 
         // Initialize phone-side Silero VAD. Used by handlePcm to gate audio
         // fan-out and to drive per-utterance offline/online STT switching
-        // (see LocalSttFallbackCoordinator on the JS side).
+        // (see LocalSttFallbackCoordinator on the JS side). If a previous
+        // policy somehow exists (re-init on hot reload), stop it first to
+        // release the ONNX session.
         try {
+            vadPolicy?.stop()
             val ctx = Bridge.getContext()
             val policy = com.mentra.core.stt.VadGateSpeechPolicy(ctx)
             policy.init(blockSizeSamples = 512)
@@ -1405,7 +1408,14 @@ class CoreManager {
     fun setMicState() {
         val willSendPcm = shouldSendPcm || shouldSendLc3
         val willSendTranscript = shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive
-        micEnabled = willSendPcm || willSendTranscript
+        val nextEnabled = willSendPcm || willSendTranscript
+        // Tell VAD when the mic is shutting down so it doesn't get stuck in
+        // a stale "speaking" state and keep emitting vad_status=true after
+        // audio stops flowing.
+        if (micEnabled && !nextEnabled) {
+            vadPolicy?.microphoneStateChanged(false)
+        }
+        micEnabled = nextEnabled
         vadBuffer.clear()
         updateMicState()
     }

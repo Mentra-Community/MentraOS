@@ -26,9 +26,16 @@ class LocalSttFallbackCoordinator {
 
   private hasTranscriptionSubscription = false
   private activeLanguage: string | null = null
-  private cloudConnected = false
+  /**
+   * Default to "cloud is up" so we never accidentally activate local STT
+   * before the host has had a chance to wire `cloudConnection` via
+   * `configureRuntime`. The adapter is attached lazily on the first
+   * subscription/reconcile pass; once attached, this field reflects the
+   * real WS status.
+   */
+  private cloudConnected = true
   private localActive = false
-  private unsubscribeCloud?: () => void
+  private cloudAdapterAttached = false
 
   private constructor() {
     const settings = getRuntimeHooks().settings
@@ -37,23 +44,26 @@ class LocalSttFallbackCoordinator {
     // previous session would cause native to feed Sherpa before any miniapp
     // registered a subscription.
     settings?.setSetting(ISLAND_SETTINGS_KEYS.localSttFallbackActive, false)
+  }
 
-    // Subscribe to cloud connection state if the host provides it. We seed
-    // `cloudConnected` from the current value so reconcile() is correct on
-    // the first call.
+  /**
+   * Lazy-attach the cloud connection adapter. The coordinator is constructed
+   * at module load (singleton import), before `configureRuntime` runs on the
+   * host. We defer reading the adapter until the first place we actually
+   * need cloud state — which is reconcile().
+   */
+  private attachCloudAdapterIfReady(): void {
+    if (this.cloudAdapterAttached) return
     const cloud = getRuntimeHooks().cloudConnection
-    if (cloud) {
-      this.cloudConnected = cloud.isConnected()
-      this.unsubscribeCloud = cloud.addListener((connected) => {
-        if (this.cloudConnected === connected) return
-        this.log(`cloud connection -> ${connected ? "up" : "down"}`)
-        this.cloudConnected = connected
-        void this.reconcile()
-      })
-    } else {
-      // No cloud adapter wired: assume offline so local STT takes over.
-      this.cloudConnected = false
-    }
+    if (!cloud) return
+    this.cloudConnected = cloud.isConnected()
+    cloud.addListener((connected) => {
+      if (this.cloudConnected === connected) return
+      this.log(`cloud connection -> ${connected ? "up" : "down"}`)
+      this.cloudConnected = connected
+      void this.reconcile()
+    })
+    this.cloudAdapterAttached = true
   }
 
   static getInstance(): LocalSttFallbackCoordinator {
@@ -87,6 +97,7 @@ class LocalSttFallbackCoordinator {
   onCloudTranscript(): void {}
 
   private async reconcile(): Promise<void> {
+    this.attachCloudAdapterIfReady()
     const shouldBeActive = this.hasTranscriptionSubscription && !this.cloudConnected
     if (shouldBeActive && !this.localActive) {
       await this.startLocalStt()

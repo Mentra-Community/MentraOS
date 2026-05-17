@@ -166,11 +166,19 @@ class MantleManager {
       },
       cloudConnection: {
         isConnected: () => useConnectionStore.getState().status === WebSocketStatus.CONNECTED,
-        addListener: (l) =>
-          useConnectionStore.subscribe(
-            (state) => state.status === WebSocketStatus.CONNECTED,
-            (connected) => l(connected),
-          ),
+        // The connection store is plain zustand (no subscribeWithSelector
+        // middleware), so we subscribe to all state changes and dedupe to
+        // the connected boolean ourselves.
+        addListener: (l) => {
+          let lastConnected = useConnectionStore.getState().status === WebSocketStatus.CONNECTED
+          return useConnectionStore.subscribe((state) => {
+            const connected = state.status === WebSocketStatus.CONNECTED
+            if (connected !== lastConnected) {
+              lastConnected = connected
+              l(connected)
+            }
+          })
+        },
       },
       setDisplayEvent: (event) => useDisplayStore.getState().setDisplayEvent(event),
       requestMiniappSdkPhoto: (params) => requestMiniappSdkPhoto(params),

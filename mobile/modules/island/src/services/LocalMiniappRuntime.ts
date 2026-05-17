@@ -1100,8 +1100,18 @@ class LocalMiniappRuntime {
       // Try offline TTS first; on synthesize failure (e.g. requested voice's
       // language model isn't downloaded) fall through to cloud TTS rather
       // than surfacing the offline error to the miniapp.
+      //
+      // If the miniapp passed an explicit `voice_id` that offline TTS can't
+      // honor (e.g. an ElevenLabs voice id), skip offline entirely instead of
+      // silently substituting the default offline voice — the miniapp asked
+      // for a specific voice and we shouldn't lie about which one it got.
+      const voiceExplicit = payload.voice_id !== undefined || payload.voice !== undefined
+      const offlineSupportsVoice =
+        !voiceExplicit ||
+        voice === "default" ||
+        ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
       let offlineGenerated: TtsSynthesisResult | undefined
-      if (await ttsModelManager.isModelAvailable()) {
+      if (offlineSupportsVoice && (await ttsModelManager.isModelAvailable())) {
         try {
           const languageCode = ttsModelManager.getAvailableLanguages().some((l) => l.code === voice)
             ? voice
