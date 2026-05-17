@@ -66,6 +66,24 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
   // on ack. Buffered so user input (button taps, etc.) isn't dropped
   // when the WebView mounts faster than the host expects.
   var outboundQueue = [];
+  // Inbound payloads that arrived before any mentra.on subscriber was
+  // registered for the channel. The background side fires
+  // session.ui.onOpen handlers as soon as the WebView posts {type:'ready'},
+  // and on a fast bridge the resulting ui.send round-trips back before
+  // React useEffects have had a chance to attach listeners. Without
+  // buffering, the very first snapshot (the one a controller pushes from
+  // its ui.onOpen handler to hydrate the fresh UI) is silently dropped.
+  //
+  // Drain policy: the queue for a channel is flushed into the FIRST
+  // mentra.on(channel, ...) subscriber, then discarded. Subsequent
+  // sends with no listener fall back to the old drop-on-floor behaviour
+  // — we don't want a re-subscribe to replay stale state.
+  //
+  // Cap: 32 entries per channel, oldest dropped on overflow. Bounds the
+  // memory cost when a controller pushes to a channel that no UI page
+  // ever subscribes to.
+  var pendingByChannel = Object.create(null);
+  var PENDING_CAP_PER_CHANNEL = 32;
 
   function postEnvelope(envelope) {
     if (!rnPost) return;
@@ -91,8 +109,21 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
   function on(channel, cb) {
     if (typeof cb !== 'function') return function () {};
     var list = channelHandlers[channel];
+    var firstSubscriber = !list || list.length === 0;
     if (!list) { list = []; channelHandlers[channel] = list; }
     list.push(cb);
+    // Drain any payloads buffered before this channel had a listener.
+    // Only fired on the first subscriber for the channel — a later
+    // re-subscribe (after an unsubscribe) does NOT replay history.
+    if (firstSubscriber) {
+      var pending = pendingByChannel[channel];
+      if (pending) {
+        delete pendingByChannel[channel];
+        for (var i = 0; i < pending.length; i++) {
+          try { cb(pending[i]); } catch (e) {}
+        }
+      }
+    }
     return function () {
       var idx = list.indexOf(cb);
       if (idx >= 0) list.splice(idx, 1);
@@ -132,7 +163,16 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
 
   function fireChannel(channel, payload) {
     var list = channelHandlers[channel];
-    if (!list) return;
+    if (!list || list.length === 0) {
+      // No subscriber yet — stash for the first mentra.on(channel, ...).
+      // Bounded FIFO: drop the oldest when capped so a stuck channel
+      // can't grow unbounded.
+      var q = pendingByChannel[channel];
+      if (!q) { q = []; pendingByChannel[channel] = q; }
+      q.push(payload);
+      if (q.length > PENDING_CAP_PER_CHANNEL) q.shift();
+      return;
+    }
     for (var i = 0; i < list.length; i++) {
       try { list[i](payload); } catch (e) {}
     }

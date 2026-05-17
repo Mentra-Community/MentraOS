@@ -1,5 +1,5 @@
 /**
- * Background JSContext entry point — Example Miniapp ("Live Captions").
+ * Background JSContext entry point — Mentra Example miniapp.
  *
  * Loaded once by the MentraOS host inside a per-miniapp JSContext.
  * `registerMiniapp(...)` wires the handler to fire after CONNECT lands;

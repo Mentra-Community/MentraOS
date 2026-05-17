@@ -12,19 +12,25 @@ import type {TesterEventPayload} from "../../shared/types"
  * idempotent — calling start twice yields one underlying subscription.
  *
  * Returned shape:
- *   - `latest`     most recent event for this iface (any kind).
- *   - `log`        sliding window of the last N events (default 50).
- *   - `lastError`  most recent `kind === "error"` event. Pages should
- *                  render this so bad fire() calls don't silently
- *                  disappear (background dispatches `unknown method`
- *                  errors back as `tester:event {kind:"error"}`).
- *   - `fire`       send a `tester:fire` to this iface.
+ *   - `latest`        most recent event for this iface (any kind).
+ *   - `latestByKind`  most recent event filtered by `kind`. Pages that
+ *                     mix streamed `kind: "update"` events with one-shot
+ *                     `kind: "result"` returns (e.g. location: `.onUpdate`
+ *                     vs `.getOnce`) use this so the render shape stays
+ *                     stable across both event sources.
+ *   - `log`           sliding window of the last N events (default 50).
+ *   - `lastError`     most recent `kind === "error"` event. Pages should
+ *                     render this so bad fire() calls don't silently
+ *                     disappear (background dispatches `unknown method`
+ *                     errors back as `tester:event {kind:"error"}`).
+ *   - `fire`          send a `tester:fire` to this iface.
  */
 export function useTester(
   iface: string,
   options: {windowSize?: number} = {},
 ): {
   latest: TesterEventPayload | null
+  latestByKind: (kind: string) => TesterEventPayload | null
   log: TesterEventPayload[]
   lastError: TesterEventPayload | null
   fire: (method: string, args?: unknown[]) => void
@@ -58,5 +64,12 @@ export function useTester(
     mentra.send("tester:fire", {iface: ifaceRef.current, method, args})
   }
 
-  return {latest, log, lastError, fire}
+  const latestByKind = (kind: string): TesterEventPayload | null => {
+    for (let i = log.length - 1; i >= 0; i--) {
+      if (log[i]!.kind === kind) return log[i]!
+    }
+    return null
+  }
+
+  return {latest, latestByKind, log, lastError, fire}
 }

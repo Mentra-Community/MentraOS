@@ -2,13 +2,20 @@
  * session.ui — message bus between a background JSContext miniapp and
  * its on-demand UI WebView.
  *
- * Asymmetry with the WebView-side `mentra` global:
+ * Buffering on both sides:
  *   - `mentra.send` (WebView → background) BUFFERS until `mentra.ready()`
  *     acks. The WebView is the short-lived side and shouldn't drop user
  *     input.
  *   - `session.ui.send` (background → WebView) silently DROPS when no
  *     WebView is bound. Background is the source of truth, persisted in
  *     `session.storage`; UI state shouldn't accumulate stale updates.
+ *   - When a WebView IS bound but its `mentra.on(channel, ...)` listener
+ *     for a given channel hasn't attached yet (common: the controller's
+ *     `ui.onOpen` handler fires a snapshot before React useEffects have
+ *     run), the WebView shim buffers per-channel up to 32 payloads and
+ *     drains them into the first subscriber. After that first drain the
+ *     channel is "live" and sends with no listener fall back to drop —
+ *     a later re-subscribe does NOT replay history.
  *
  * Channel routing is opaque to the background — names are arbitrary
  * strings on the wire. Per-miniapp `src/shared/channels.ts` declares
@@ -117,11 +124,17 @@ export class UIModuleImpl<TChannels extends Record<string, unknown> = Record<str
     this.session._subscribe("_ui", (env: unknown) => this.handleInbound(env as UIInboundEnvelope))
   }
 
-  isOpen(): boolean {
+  // All public methods are arrow-property bindings so destructuring
+  // (`const {send} = session.ui` or passing `ui.send` as a callback) is
+  // safe. Otherwise `this.bound` evaluates as undefined and crashes the
+  // JSContext on the first call, which the host turns into a crashloop
+  // incident report. The footgun isn't hypothetical — the SDK tester's
+  // controller hit it before this fix landed.
+  isOpen = (): boolean => {
     return this.bound
   }
 
-  onOpen(cb: () => void): UIUnsubscribe {
+  onOpen = (cb: () => void): UIUnsubscribe => {
     this.openHandlers.add(cb)
     if (this.bound) {
       // Late subscriber — fire once for the current binding so callers
@@ -138,14 +151,14 @@ export class UIModuleImpl<TChannels extends Record<string, unknown> = Record<str
     }
   }
 
-  onClose(cb: () => void): UIUnsubscribe {
+  onClose = (cb: () => void): UIUnsubscribe => {
     this.closeHandlers.add(cb)
     return () => {
       this.closeHandlers.delete(cb)
     }
   }
 
-  send<C extends keyof TChannels & string>(channel: C, payload: TChannels[C]): void {
+  send = <C extends keyof TChannels & string>(channel: C, payload: TChannels[C]): void => {
     if (!this.bound) {
       // Per spec: drop silently when no WebView is bound. Background
       // is the source of truth — the WebView re-fetches state on next
@@ -157,7 +170,10 @@ export class UIModuleImpl<TChannels extends Record<string, unknown> = Record<str
     this.session.sendOneShot(envelope)
   }
 
-  on<C extends keyof TChannels & string>(channel: C, cb: UIChannelHandler<TChannels[C]>): UIUnsubscribe {
+  on = <C extends keyof TChannels & string>(
+    channel: C,
+    cb: UIChannelHandler<TChannels[C]>,
+  ): UIUnsubscribe => {
     let set = this.channelHandlers.get(channel as string)
     if (!set) {
       set = new Set()

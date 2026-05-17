@@ -48,6 +48,26 @@ describe("UIModuleImpl", () => {
     expect(ui.isOpen()).toBe(false)
   })
 
+  test("methods are bind-safe — destructuring or passing as a callback works", () => {
+    // Regression: TesterController destructured `ui.send` into a `Send`
+    // type and passed it as a callback. When the SDK's UIModule.send was
+    // a plain method, `this` was undefined inside the bare invocation and
+    // every send threw `undefined is not an object (evaluating 'this.bound')`.
+    // The SDK fix made every public method an auto-bound arrow property.
+    const {send, on, onOpen, onClose, isOpen} = ui
+    expect(() => isOpen()).not.toThrow()
+    expect(() => onOpen(() => {})).not.toThrow()
+    expect(() => onClose(() => {})).not.toThrow()
+    expect(() => on("ch", () => {})).not.toThrow()
+    // send returns early when !bound, but must not throw.
+    expect(() => send("ch", {x: 1})).not.toThrow()
+    // Once UI_OPEN lands, the destructured send should actually post.
+    mock.deliver({type: "UI_OPEN"})
+    send("ch", {x: 2})
+    expect(mock.oneShotCalls).toHaveLength(1)
+    expect((mock.oneShotCalls[0] as {channel: string}).channel).toBe("ch")
+  })
+
   test("UI_OPEN flips isOpen to true and fires onOpen handlers", () => {
     const calls: number[] = []
     ui.onOpen(() => calls.push(1))

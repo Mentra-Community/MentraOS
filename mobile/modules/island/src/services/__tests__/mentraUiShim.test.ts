@@ -137,4 +137,63 @@ describe("buildMentraUiShim", () => {
     const g = evalShim("com.example.app")
     expect((g.mentra as unknown as {_packageName: string})._packageName).toBe("com.example.app")
   })
+
+  // Inbound buffering — fixes the race where background fires ui.onOpen and
+  // sends a snapshot before React's useEffect has attached the listener.
+  test("recv before any subscriber buffers and delivers on first on()", () => {
+    const g = evalShim()
+    g.__mentra!.recv({type: "msg", channel: "snapshot", payload: {n: 1}, seq: 1})
+    g.__mentra!.recv({type: "msg", channel: "snapshot", payload: {n: 2}, seq: 2})
+    const got: unknown[] = []
+    g.mentra!.on("snapshot", (p) => got.push(p))
+    expect(got).toEqual([{n: 1}, {n: 2}])
+  })
+
+  test("buffered payloads only drain into the FIRST subscriber, not later ones", () => {
+    const g = evalShim()
+    g.__mentra!.recv({type: "msg", channel: "ch", payload: "buffered", seq: 1})
+    const first: unknown[] = []
+    g.mentra!.on("ch", (p) => first.push(p))
+    expect(first).toEqual(["buffered"])
+    const second: unknown[] = []
+    g.mentra!.on("ch", (p) => second.push(p))
+    expect(second).toEqual([])
+  })
+
+  test("re-subscribe after unsubscribe does NOT replay drained history", () => {
+    const g = evalShim()
+    g.__mentra!.recv({type: "msg", channel: "ch", payload: 1, seq: 1})
+    const a: unknown[] = []
+    const off = g.mentra!.on("ch", (p) => a.push(p))
+    expect(a).toEqual([1])
+    off()
+    const b: unknown[] = []
+    g.mentra!.on("ch", (p) => b.push(p))
+    expect(b).toEqual([])
+  })
+
+  test("inbound buffer is bounded at 32 entries per channel (FIFO drop-oldest)", () => {
+    const g = evalShim()
+    for (let i = 0; i < 40; i++) {
+      g.__mentra!.recv({type: "msg", channel: "ch", payload: i, seq: i})
+    }
+    const got: number[] = []
+    g.mentra!.on("ch", (p) => got.push(p as number))
+    // 40 sent, 32 cap → oldest 8 dropped → drained values are 8..39.
+    expect(got).toHaveLength(32)
+    expect(got[0]).toBe(8)
+    expect(got[got.length - 1]).toBe(39)
+  })
+
+  test("buffers are per-channel — subscribing to one doesn't drain another", () => {
+    const g = evalShim()
+    g.__mentra!.recv({type: "msg", channel: "a", payload: "alpha", seq: 1})
+    g.__mentra!.recv({type: "msg", channel: "b", payload: "beta", seq: 2})
+    const a: unknown[] = []
+    g.mentra!.on("a", (p) => a.push(p))
+    expect(a).toEqual(["alpha"])
+    const b: unknown[] = []
+    g.mentra!.on("b", (p) => b.push(p))
+    expect(b).toEqual(["beta"])
+  })
 })

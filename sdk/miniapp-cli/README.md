@@ -175,7 +175,7 @@ The published schema file ships at `node_modules/@mentra/miniapp-cli/schema/mini
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
   "packageName": "com.mentra.example",
   "version": "1.0.0",
-  "name": "Live Captions",
+  "name": "Mentra Example",
   "description": "…",
   "icon": "icon.png",
   "port": 3000,

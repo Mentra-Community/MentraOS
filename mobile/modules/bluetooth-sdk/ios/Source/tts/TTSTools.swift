@@ -127,9 +127,15 @@ class TTSTools {
             // generate(...) no longer accepts `extra`; that field moved onto
             // SherpaOnnxGenerationConfigSwift and is delivered via
             // generateWithConfig(...).
+            //
+            // numSteps controls the Supertonic flow-matching vocoder's
+            // iteration count. The Swift wrapper defaults to 1, which produces
+            // unintelligible robot audio — sherpa-onnx's actual C-side default
+            // is 5. Pin it here so we don't inherit the wrapper's bug.
             let genConfig = SherpaOnnxGenerationConfigSwift(
                 speed: clampedSpeed,
                 sid: sid,
+                numSteps: 5,
                 extra: ["lang": lang]
             )
             let audio = tts.generateWithConfig(
@@ -139,7 +145,10 @@ class TTSTools {
                 arg: nil
             )
             let saved = audio.save(filename: outputPath) == 1
-            Bridge.log("TTS generated \(outputPath): saved=\(saved) sid=\(sid) lang=\(lang)")
+            Bridge.log(
+                "TTS generated \(outputPath): saved=\(saved) sid=\(sid) lang=\(lang) " +
+                "sr=\(audio.sampleRate) samples=\(audio.n) speed=\(clampedSpeed)"
+            )
             return saved
         } catch {
             Bridge.log("TTS_ERROR: \(error.localizedDescription)")

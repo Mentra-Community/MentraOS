@@ -15,15 +15,14 @@
  *   RUNNING (and stays here on a clean 60s window;
  *            otherwise crash count increments)
  *
- * Retry policy: exponential backoff with deltas 2s, 8s, 30s. Cap at 3
- * retries inside any 5-minute window — the 4th crash escalates to
- * CRASHLOOP_DISABLED and stops auto-respawning until the user manually
- * re-launches the miniapp.
- *
- * UX tiers (caller wires these via the optional onTransition hook):
- *   1st crash:   silent respawn
- *   2nd within 5m:   toast "X restarted."
- *   3rd → CRASHLOOP_DISABLED:   persistent banner + push to dev portal
+ * Retry policy: zero retries by default — the first crash escalates
+ * straight to CRASHLOOP_DISABLED. This matches platform conventions
+ * (Android / iOS don't silently restart crashed apps either) and avoids
+ * the "why is my buggy miniapp respawning" confusion. Callers can opt
+ * back into the legacy 3-retry-with-backoff policy by passing
+ * `{maxRetries: 3, backoffMs: [2_000, 8_000, 30_000]}`; the BACKOFF
+ * state machine and exponential delays are still implemented and
+ * unit-tested for that case.
  *
  * The controller is purely a policy engine — it doesn't actually call
  * mentraJsSpawn / mentraJsKill. Callers (MentraJSRouter) read the
@@ -55,7 +54,8 @@ export interface CrashControllerOptions {
   backoffMs?: number[]
   /** Window in ms — N crashes inside this window escalates. Defaults to 5min. */
   crashWindowMs?: number
-  /** Max retries before CRASHLOOP_DISABLED. Defaults to 3. */
+  /** Max retries before CRASHLOOP_DISABLED. Defaults to 0 — first crash
+   *  escalates immediately, matching Android / iOS app conventions. */
   maxRetries?: number
   /** Clean-uptime threshold that resets the retry counter. Defaults to 60s. */
   cleanUptimeResetMs?: number
@@ -71,7 +71,7 @@ interface PackageState {
 
 const DEFAULT_BACKOFFS = [2_000, 8_000, 30_000]
 const DEFAULT_WINDOW_MS = 5 * 60_000
-const DEFAULT_MAX_RETRIES = 3
+const DEFAULT_MAX_RETRIES = 0
 const DEFAULT_CLEAN_UPTIME_RESET_MS = 60_000
 
 export class MentraJSCrashController {

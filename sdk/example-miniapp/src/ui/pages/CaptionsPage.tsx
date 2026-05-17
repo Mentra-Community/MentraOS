@@ -71,7 +71,7 @@ export default function CaptionsPage() {
             className={`h-2 w-2 rounded-full ${connected ? "bg-mentra-green shadow-[0_0_8px_var(--mentra-green-10)]" : "bg-destructive"}`}
           />
         }
-        title="Live Captions"
+        title="Mentra Example"
       />
 
       <div className="flex flex-wrap gap-1.5 border-b border-border px-5 pb-3 pt-2">

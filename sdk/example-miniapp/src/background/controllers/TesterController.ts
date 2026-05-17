@@ -94,8 +94,14 @@ export class TesterController {
         // the cloud is translating. UI can re-issue tester:fire with
         // fromTo / to if it wants a different shape.
         return this.session.translation.to("es-ES", (data) => emit("event", data))
-      case "input":
-        return this.session.input.onButtonPress((data) => emit("button", data))
+      case "input": {
+        const b = this.session.input.onButtonPress((data) => emit("button", data))
+        const t = this.session.input.onTouch((data) => emit("touch", data))
+        return () => {
+          b()
+          t()
+        }
+      }
       case "imu":
         return this.session.imu.onHeadPosition((data) => emit("head", data))
       case "location":

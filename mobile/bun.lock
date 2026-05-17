@@ -182,6 +182,7 @@
         "expo-module-scripts": "^55.0.2",
       },
       "peerDependencies": {
+        "@dr.pogodin/react-native-fs": "*",
         "@mentra/bluetooth-sdk": "*",
         "@mentra/miniapp": "*",
         "@types/react": "*",

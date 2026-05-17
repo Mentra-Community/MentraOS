@@ -145,4 +145,30 @@ describe("MentraJSCrashController", () => {
     controller.onKill("a")
     expect(controller.stateFor("a")).toBeNull()
   })
+
+  // Default policy: zero retries. The constructor used above passes
+  // maxRetries: 3 to keep the legacy backoff-state-machine tests green;
+  // these tests cover the new default (no opts → fail-fast).
+  describe("default zero-retry policy", () => {
+    test("first crash with no opts transitions straight to CRASHLOOP_DISABLED", () => {
+      const c = new MentraJSCrashController({now: () => clock})
+      c.onSpawn("com.foo")
+      const outcome = c.onCrash("com.foo", "uncaught throw")
+      expect(c.stateFor("com.foo")?.kind).toBe("CRASHLOOP_DISABLED")
+      expect(outcome.scheduleRespawnAfterMs).toBeUndefined()
+      expect(outcome.surfaceCrashloopBanner).toBe(true)
+      expect(outcome.sentryLevel).toBe("error")
+    })
+
+    test("reset() re-enables the package; the next crash again hard-disables it", () => {
+      const c = new MentraJSCrashController({now: () => clock})
+      c.onSpawn("com.foo")
+      c.onCrash("com.foo", "1")
+      c.reset("com.foo")
+      expect(c.stateFor("com.foo")?.kind).toBe("RUNNING")
+      const outcome = c.onCrash("com.foo", "2")
+      expect(c.stateFor("com.foo")?.kind).toBe("CRASHLOOP_DISABLED")
+      expect(outcome.scheduleRespawnAfterMs).toBeUndefined()
+    })
+  })
 })

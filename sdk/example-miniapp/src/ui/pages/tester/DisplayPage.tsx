@@ -28,7 +28,7 @@ export default function DisplayPage() {
         </p>
         <Label htmlFor="display-text">text</Label>
         <Input id="display-text" value={text} onChange={(e) => setText(e.target.value)} />
-        <div className="mt-3 grid grid-cols-2 gap-2">
+        <div className="mt-3 flex flex-col gap-2">
           <Button onClick={() => fire("showTextWall", [text])}>showTextWall(text)</Button>
           <Button onClick={() => fire("showReferenceCard", ["Title", text])}>
             showReferenceCard(title, text)
