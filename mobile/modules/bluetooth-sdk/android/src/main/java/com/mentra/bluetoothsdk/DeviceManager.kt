@@ -1391,9 +1391,16 @@ class CoreManager {
                     }
                 }
         Bridge.log(
-                "MAN: PHOTO PIPELINE [DeviceManager] onPhotoRequest requestId=$requestId appId=$appId size=$size compress=$compress flash=$flash sound=$sound exposureTimeNs=$exposureNs"
+                "MAN: PHOTO PIPELINE [4/6] DeviceManager.photoRequest requestId=$requestId appId=$appId size=$size compress=$compress flash=$flash sound=$sound exposureTimeNs=$exposureNs sgc=${sgc?.javaClass?.simpleName ?: "null"}"
         )
-        sgc?.requestPhoto(requestId, appId, size, webhookUrl, authToken, compress, flash, sound, exposureNs)
+        val activeSgc = sgc
+        if (activeSgc == null) {
+            Bridge.log(
+                    "MAN: PHOTO PIPELINE — sgc is null (glasses not connected); dropping requestId=$requestId"
+            )
+            return
+        }
+        activeSgc.requestPhoto(requestId, appId, size, webhookUrl, authToken, compress, flash, sound, exposureNs)
     }
 
     fun rgbLedControl(
