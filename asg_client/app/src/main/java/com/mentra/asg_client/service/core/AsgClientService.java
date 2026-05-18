@@ -961,6 +961,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                 chunk1.put("build_number", buildNumber);
                 chunk1.put("device_model", deviceModel);
                 chunk1.put("android_version", androidVersion);
+                chunk1.put("system_time_ms", System.currentTimeMillis());
 
                 Log.d(TAG, "📤 Sending version_info_1: " + chunk1.toString());
                 serviceContainer.getServiceManager().getBluetoothManager().sendData(chunk1.toString().getBytes(StandardCharsets.UTF_8));
