@@ -4101,7 +4101,7 @@ public class MentraLive extends SGCManager {
     public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean sound, Long exposureTimeNs) {
         boolean hasAuthToken = authToken != null && !authToken.isEmpty();
         Bridge.log("LIVE: Requesting photo: " + requestId + " for app: " + appId + " with size: " + size + ", webhookUrl: " + webhookUrl + ", authToken: " + (hasAuthToken ? "***" : "none") + ", compress=" + compress + ", flash=" + flash + ", sound=" + sound + ", exposureTimeNs=" + exposureTimeNs);
-        Bridge.log("LIVE: PHOTO PIPELINE [1/4] requestPhoto() entry — requestId=" + requestId + ", appId=" + appId);
+        Bridge.log("LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry — requestId=" + requestId + ", appId=" + appId);
 
         try {
             JSONObject json = new JSONObject();
@@ -4145,8 +4145,8 @@ public class MentraLive extends SGCManager {
             }
 
             Bridge.log("LIVE: Using auto transfer mode with BLE fallback ID: " + bleImgId);
-            Bridge.log("LIVE: PHOTO PIPELINE [2/4] JSON ready — " + summarizeOutgoingMessage(json.toString()) + ", wakeup=true");
-            Bridge.log("LIVE: PHOTO PIPELINE [3/4] Dispatching to sendJson()");
+            Bridge.log("LIVE: PHOTO PIPELINE [5b/6] JSON ready — " + summarizeOutgoingMessage(json.toString()) + ", wakeup=true");
+            Bridge.log("LIVE: PHOTO PIPELINE [6/6] Dispatching take_photo to sendJson()");
 
             sendJson(json, true);
         } catch (JSONException e) {

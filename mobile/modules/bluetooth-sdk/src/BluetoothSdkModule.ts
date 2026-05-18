@@ -225,4 +225,29 @@ NativeCoreModule.connect = function (device: Device, options?: ConnectOptions) {
   return this.connectWithOptions(device, {...DEFAULT_CONNECT_OPTIONS, ...options})
 }
 
+/** Expo Android bridge rejects null values in Map<String, Any> — omit optional nullish fields. */
+function photoRequestParamsForNative(params: PhotoRequestParams): Record<string, string | number | boolean> {
+  const payload: Record<string, string | number | boolean> = {
+    requestId: params.requestId,
+    appId: params.appId,
+    size: params.size,
+    webhookUrl: params.webhookUrl ?? "",
+    compress: params.compress,
+    flash: params.flash,
+    sound: params.sound,
+  }
+  if (params.authToken != null && params.authToken.length > 0) {
+    payload.authToken = params.authToken
+  }
+  if (params.exposureTimeNs != null && Number.isFinite(params.exposureTimeNs) && params.exposureTimeNs > 0) {
+    payload.exposureTimeNs = params.exposureTimeNs
+  }
+  return payload
+}
+
+const nativePhotoRequest = NativeCoreModule.photoRequest.bind(NativeCoreModule)
+NativeCoreModule.photoRequest = function (params: PhotoRequestParams) {
+  return nativePhotoRequest(photoRequestParamsForNative(params) as PhotoRequestParams)
+}
+
 export default NativeCoreModule

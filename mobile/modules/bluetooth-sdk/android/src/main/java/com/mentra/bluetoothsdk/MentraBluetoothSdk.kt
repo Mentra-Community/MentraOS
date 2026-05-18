@@ -278,6 +278,9 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun requestPhoto(request: PhotoRequest) {
+        Bridge.log(
+            "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=${request.requestId} appId=${request.appId}"
+        )
         deviceManager.photoRequest(
             request.requestId,
             request.appId,
