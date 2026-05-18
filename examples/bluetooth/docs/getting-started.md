@@ -183,9 +183,11 @@ iOS apps should include permission copy in `Info.plist`:
 import android.content.Context
 import com.mentra.bluetoothsdk.Device
 import com.mentra.bluetoothsdk.DeviceModel
+import com.mentra.bluetoothsdk.Device
 import com.mentra.bluetoothsdk.GlassesStatusUpdate
 import com.mentra.bluetoothsdk.MentraBluetoothSdk
 import com.mentra.bluetoothsdk.MentraBluetoothSdkCallback
+import com.mentra.bluetoothsdk.ScanSession
 
 class GlassesController(context: Context) : MentraBluetoothSdkCallback() {
     private val sdk = MentraBluetoothSdk.create(
@@ -193,9 +195,14 @@ class GlassesController(context: Context) : MentraBluetoothSdkCallback() {
         listener = this,
     )
     private var discoveredDevice: Device? = null
+    private var scanSession: ScanSession? = null
 
     fun scan() {
-        sdk.startScan(DeviceModel.MENTRA_LIVE)
+        scanSession?.stop()
+        scanSession = sdk.scan(DeviceModel.MENTRA_LIVE, timeoutMs = 10_000) { devices ->
+            discoveredDevice = devices.firstOrNull()
+            renderDevicePicker(devices)
+        }
     }
 
     fun connect() {
@@ -206,10 +213,6 @@ class GlassesController(context: Context) : MentraBluetoothSdkCallback() {
         sdk.requestVersionInfo()
         val status = sdk.getGlassesStatus()
         println("Connected to ${status.deviceModel}, battery=${status.batteryLevel}%")
-    }
-
-    override fun onDeviceDiscovered(device: Device) {
-        discoveredDevice = device
     }
 
     override fun onGlassesStatusChanged(status: GlassesStatusUpdate) {
@@ -232,6 +235,7 @@ import MentraBluetoothSDK
 final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
     private let sdk = MentraBluetoothSDK()
     private var discoveredDevice: Device?
+    private var scanSession: ScanSession?
 
     override init() {
         super.init()
@@ -239,7 +243,11 @@ final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
     }
 
     func scan() throws {
-        try sdk.startScan(model: .mentraLive)
+        scanSession?.stop()
+        scanSession = try sdk.scan(model: .mentraLive, timeout: 10) { [weak self] devices in
+            self?.discoveredDevice = devices.first
+            renderDevicePicker(devices)
+        }
     }
 
     func connect() throws {
@@ -251,10 +259,6 @@ final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
         sdk.requestVersionInfo()
         let status = sdk.glassesStatus
         print("Connected to \(status.deviceModel), battery=\(status.batteryLevel)%")
-    }
-
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didDiscover device: Device) {
-        discoveredDevice = device
     }
 
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateGlassesStatus status: GlassesStatusUpdate) {
@@ -284,7 +288,12 @@ const removeGlasses = BluetoothSdk.onGlassesStatus((status) => {
   console.log('Glasses status changed', status);
 });
 
-await BluetoothSdk.connectFirst(DeviceModels.MentraLive);
+const devices = await BluetoothSdk.scan(DeviceModels.MentraLive, {
+  timeoutMs: 10_000,
+  onResults: (nextDevices) => renderDevicePicker(nextDevices),
+});
+const device = await chooseDevice(devices);
+await BluetoothSdk.connect(device);
 await BluetoothSdk.requestVersionInfo();
 glassesStatus = await BluetoothSdk.getGlassesStatus();
 console.log('Connected glasses:', {
@@ -297,6 +306,8 @@ removeGlasses();
 ```
 
 React Native status uses `glassesStatus.connection.state` for link progress. `fullyBooted` only exists when `state === 'connected'`.
+
+`scan()` has two result paths on purpose: `onResults` is for live picker updates while scanning is still in progress, and the returned `devices` array is the final list after the scan timeout/completion. Use the final list for "pick one and connect" logic.
 
 React Native apps should persist their own default-device record if they want `connectDefault()` to work after restart:
 

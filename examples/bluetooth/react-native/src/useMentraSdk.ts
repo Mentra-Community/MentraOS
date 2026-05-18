@@ -601,7 +601,16 @@ export function useMentraSdk(): MentraSdkModel {
       }
       setSelectedDiscoveredDevice(null);
       setBluetoothStatus((current) => ({...current, searchResults: []}));
-      await BluetoothSdk.startScan(model);
+      const devices = await BluetoothSdk.scan(model, {
+        timeoutMs: 10_000,
+        onResults: (nextDevices) => {
+          setBluetoothStatus((current) => ({
+            ...current,
+            searchResults: nextDevices,
+          }));
+        },
+      });
+      addEvent('BLE', `scan completed with ${devices.length} result${devices.length === 1 ? '' : 's'}`);
     });
   }
 

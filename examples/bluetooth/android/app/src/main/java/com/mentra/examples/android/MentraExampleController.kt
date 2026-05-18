@@ -45,6 +45,7 @@ import com.mentra.bluetoothsdk.PhotoSize
 import com.mentra.bluetoothsdk.RgbLedAction
 import com.mentra.bluetoothsdk.RgbLedColor
 import com.mentra.bluetoothsdk.RgbLedRequest
+import com.mentra.bluetoothsdk.ScanSession
 import com.mentra.bluetoothsdk.StreamState
 import com.mentra.bluetoothsdk.StreamKeepAliveRequest
 import com.mentra.bluetoothsdk.StreamRequest
@@ -205,6 +206,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private var directStreamStartJob: Job? = null
     private var directStreamStopJob: Job? = null
     private var directStreamFirstFrameSeen = false
+    private var scanSession: ScanSession? = null
     private var lastMicFile: File? = null
     private var micElapsedJob: Job? = null
     private var micPlayer: MediaPlayer? = null
@@ -292,8 +294,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     fun startScan() {
         val model = state.selectedScanModel
         runAction("Scan ${deviceModelLabel(model)}") {
+            scanSession?.stop()
             state = state.copy(discoveredDevices = emptyList(), selectedDiscoveredDevice = null)
-            mentraBluetoothSdk.startScan(model)
+            scanSession = mentraBluetoothSdk.scan(model, 10_000L) { devices ->
+                state = state.copy(
+                    discoveredDevices = devices,
+                )
+            }
         }
     }
 
@@ -301,6 +308,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (state.selectedScanModel == model) {
             return
         }
+        scanSession?.stop()
+        scanSession = null
         state = state.copy(
             discoveredDevices = emptyList(),
             selectedDiscoveredDevice = null,
@@ -1093,11 +1102,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     override fun onDeviceDiscovered(device: Device) {
-        if (state.discoveredDevices.none { discoveredDeviceKey(it) == discoveredDeviceKey(device) }) {
-            state = state.copy(
-                discoveredDevices = state.discoveredDevices + device,
-            )
-        }
         addEvent("BLE", "discovered ${device.name}")
     }
 
@@ -1328,6 +1332,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         stopPreviewHealthPoll()
         directPhotoTimeoutJob?.cancel()
         directStreamStartJob?.cancel()
+        scanSession?.stop()
         photoUploadServer.close()
         whipHeaderProxy?.close()
         gStreamerWhipReceiver?.close()

@@ -138,6 +138,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     private var directStreamStartTask: Task<Void, Never>?
     private var directStreamStopTask: Task<Void, Never>?
     private var directStreamFirstFrameSeen = false
+    private var scanSession: ScanSession?
     private var micStartedAt: Date?
     private var micElapsedTask: Task<Void, Never>?
     private var micPcmData = Data()
@@ -213,6 +214,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         directWhipProxy.stop()
         directWhipReceiver.stop()
         photoUploadServer?.stop()
+        scanSession?.stop()
         Task { @MainActor [mentraBluetoothSdk] in
             mentraBluetoothSdk.invalidate()
         }
@@ -221,9 +223,16 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func startScan() {
         let model = selectedScanModel
         runAction("Scan \(deviceModelLabel(model))") {
+            scanSession?.stop()
             discoveredDevices.removeAll()
             selectedDiscoveredDevice = nil
-            try mentraBluetoothSdk.startScan(model: model)
+            scanSession = try mentraBluetoothSdk.scan(
+                model: model,
+                timeout: 10,
+                onResults: { [weak self] devices in
+                    self?.discoveredDevices = devices
+                }
+            )
         }
     }
 
@@ -246,6 +255,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func selectScanModel(_ model: DeviceModel) {
         guard selectedScanModel != model else { return }
+        scanSession?.stop()
+        scanSession = nil
         discoveredDevices.removeAll()
         selectedDiscoveredDevice = nil
         selectedScanModel = model
@@ -1016,12 +1027,6 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didDiscover device: Device) {
-        if !discoveredDevices.contains(where: { discoveredDeviceKey($0) == discoveredDeviceKey(device) }) {
-            discoveredDevices.append(device)
-        }
-        if selectedDiscoveredDevice == nil {
-            selectedDiscoveredDevice = device
-        }
         append(tag: "BLE", text: "discovered \(device.name)")
     }
 

@@ -5,8 +5,8 @@ The SDK presents a common native API over multiple glasses models. Capabilities 
 ## Recommended Flow
 
 1. Ask the user which glasses model they are pairing.
-2. Start a scan for that model.
-3. Present typed discovered devices from SDK callbacks.
+2. Call `scan()` for that model.
+3. Present typed discovered devices from the progressive scan results.
 4. Connect using the discovered device or default-device helper.
 5. Read `GlassesStatus`, firmware fields, and capability-related status before enabling advanced features.
 6. Keep app UI derived from SDK status rather than from command success alone.
@@ -14,21 +14,26 @@ The SDK presents a common native API over multiple glasses models. Capabilities 
 Android:
 
 ```kotlin
-sdk.startScan(DeviceModel.MENTRA_LIVE)
-
-override fun onDeviceDiscovered(device: Device) {
-    sdk.connect(device)
+val devices = mutableListOf<Device>()
+sdk.scan(DeviceModel.MENTRA_LIVE, timeoutMs = 10_000) { nextDevices ->
+    devices.clear()
+    devices.addAll(nextDevices)
+    renderDevicePicker(nextDevices)
 }
+
+sdk.connect(devices.first())
 ```
 
 iOS:
 
 ```swift
-sdk.startScan(model: .mentraLive)
-
-func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didDiscover device: Device) {
-    try? sdk.connect(to: device)
+var devices: [Device] = []
+try sdk.scan(model: .mentraLive, timeout: 10) { nextDevices in
+    devices = nextDevices
+    renderDevicePicker(nextDevices)
 }
+
+try sdk.connect(to: devices[0])
 ```
 
 React Native:
@@ -36,16 +41,15 @@ React Native:
 ```ts
 import {DeviceModels} from '@mentra/bluetooth-sdk';
 
-const removeBluetooth = BluetoothSdk.onBluetoothStatus((status) => {
-  const device = status.searchResults?.[0];
-  if (device) {
-    removeBluetooth();
-    void BluetoothSdk.connect(device);
-  }
+const devices = await BluetoothSdk.scan(DeviceModels.MentraLive, {
+  timeoutMs: 10_000,
+  onResults: (nextDevices) => renderDevicePicker(nextDevices),
 });
 
-await BluetoothSdk.startScan(DeviceModels.MentraLive);
+await BluetoothSdk.connect(await chooseDevice(devices));
 ```
+
+In these examples, the scan callback is the progressive UI path and the final returned list is the completion/control-flow path. Keep picker rendering in the callback; keep final selection or fallback behavior after scan completion.
 
 ## Capability Areas
 

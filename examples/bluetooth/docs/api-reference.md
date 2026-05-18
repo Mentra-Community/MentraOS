@@ -98,8 +98,10 @@ Expo apps configure those permissions in `app.json`; see `examples/react-native/
 Android:
 
 ```kotlin
-sdk.startScan(DeviceModel.MENTRA_LIVE)
-sdk.stopScan()
+val scanSession = sdk.scan(DeviceModel.MENTRA_LIVE, timeoutMs = 10_000) { devices ->
+    renderDevicePicker(devices)
+}
+scanSession.stop()
 
 sdk.connect(device)
 sdk.setDefaultDevice(Device(model = DeviceModel.MENTRA_LIVE, name = "Mentra_Live_E7FA"))
@@ -116,8 +118,10 @@ sdk.connectSimulated()
 iOS:
 
 ```swift
-try sdk.startScan(model: .mentraLive)
-sdk.stopScan()
+let scanSession = try sdk.scan(model: .mentraLive, timeout: 10) { devices in
+    renderDevicePicker(devices)
+}
+scanSession.stop()
 
 try sdk.connect(to: device)
 sdk.setDefaultDevice(Device(model: .mentraLive, name: "Mentra_Live_E7FA"))
@@ -136,7 +140,13 @@ React Native:
 ```ts
 import {DeviceModels} from '@mentra/bluetooth-sdk';
 
-const device = await BluetoothSdk.connectFirst(DeviceModels.MentraLive);
+const devices = await BluetoothSdk.scan(DeviceModels.MentraLive, {
+  timeoutMs: 10_000,
+  onResults: (nextDevices) => renderDevicePicker(nextDevices),
+});
+
+const device = await chooseDevice(devices);
+await BluetoothSdk.connect(device);
 
 await BluetoothSdk.setDefaultDevice(device);
 const defaultDevice = await BluetoothSdk.getDefaultDevice();
@@ -148,6 +158,8 @@ await BluetoothSdk.disconnect();
 await BluetoothSdk.forget();
 await BluetoothSdk.connectSimulated();
 ```
+
+Use `scan()` for user-facing device pickers. The progressive result callback is for UI: render the current nearby-device list every time it changes while Bluetooth is still scanning. The returned final result is for control flow: after the timeout/completion, choose a device from the last list and connect. `connectFirst()` is still available for kiosk-style flows where your app can safely connect to the first matching device without showing a picker.
 
 Prefer connecting to a `Device` returned by SDK scan callbacks. If your app wants `connectDefault()` to work after restart, persist a small default-device record in app storage and restore it with `setDefaultDevice()` before calling `connectDefault()`.
 
