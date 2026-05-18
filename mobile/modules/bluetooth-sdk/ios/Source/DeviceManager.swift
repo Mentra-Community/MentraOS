@@ -1113,8 +1113,8 @@ struct ViewState {
     }
 
     func dbg1() {
-        sgc?.disconnectController()
-        connectDefaultController()
+        // sgc?.disconnectController()
+        // connectDefaultController()
     }
 
     func dbg2() {}

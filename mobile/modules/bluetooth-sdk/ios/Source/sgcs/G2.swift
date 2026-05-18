@@ -857,6 +857,112 @@ private enum MenuProto {
     }
 }
 
+// MARK: - Dashboard Protobuf Builders (dashboard.proto, service ID 1)
+
+/// Builders for the dashboard widget service (service 0x01).
+/// Field numbers come from the extracted dashboard.proto v2.1.0_beta_v3.
+private enum DashboardProto {
+    /// eDashboardCommandId values from dashboard.proto
+    enum CommandId: Int32 {
+        case dashboardRespond = 1
+        case dashboardReceive = 2 // phone → glasses widget/config push
+        case appRespond = 3
+        case appReceive = 4
+    }
+
+    /// Build a Schedule submessage (the calendar event payload).
+    ///   f1 = scheduleId (int32, required)
+    ///   f2 = title (string, optional)
+    ///   f3 = location (string, optional)
+    ///   f4 = time (string, optional — display text e.g. "10:00 AM")
+    ///   f5 = endTimestamp (int32, presumed Unix seconds — pre-shift by TZ
+    ///        to match the time-sync hack so glasses display local time)
+    static func schedule(
+        scheduleId: Int32,
+        title: String?,
+        location: String?,
+        time: String?,
+        endTimestamp: Int32
+    ) -> Data {
+        var w = ProtobufWriter()
+        w.writeInt32Field(1, scheduleId)
+        if let title = title { w.writeStringField(2, title) }
+        if let location = location { w.writeStringField(3, location) }
+        if let time = time { w.writeStringField(4, time) }
+        w.writeInt32Field(5, endTimestamp)
+        return w.data
+    }
+
+    /// Build an rScheduleWidget wrapping a single Schedule.
+    ///   f1 = scheduleTotal, f2 = scheduleNum (0-based), f3 = Schedule, f4 = scheduleAuthority
+    static func rScheduleWidget(
+        scheduleTotal: Int32,
+        scheduleNum: Int32,
+        schedule: Data,
+        scheduleAuthority: Int32
+    ) -> Data {
+        var w = ProtobufWriter()
+        w.writeInt32Field(1, scheduleTotal)
+        w.writeInt32Field(2, scheduleNum)
+        w.writeMessageField(3, schedule)
+        w.writeInt32Field(4, scheduleAuthority)
+        return w.data
+    }
+
+    /// Build the full calendar-push DashboardDataPackage:
+    ///   DashboardDataPackage {
+    ///     commandId = Dashboard_Receive (2)
+    ///     magicRandom
+    ///     dashboardReceive = DashboardReceiveFromApp {
+    ///       packageId = 1
+    ///       bashboardConfig = DashboardContent {
+    ///         widgetComponents = rWidgetComponent {
+    ///           schedule = rScheduleWidget { ... }
+    ///         }
+    ///       }
+    ///     }
+    ///   }
+    static func calendarPush(
+        magicRandom: Int32,
+        packageId: Int32,
+        scheduleId: Int32,
+        title: String?,
+        location: String?,
+        time: String?,
+        endTimestamp: Int32,
+        scheduleAuthority: Int32
+    ) -> Data {
+        let sched = schedule(
+            scheduleId: scheduleId, title: title, location: location,
+            time: time, endTimestamp: endTimestamp
+        )
+        let rSched = rScheduleWidget(
+            scheduleTotal: 1, scheduleNum: 0,
+            schedule: sched, scheduleAuthority: scheduleAuthority
+        )
+
+        // rWidgetComponent { f3 = rScheduleWidget }
+        var rWidget = ProtobufWriter()
+        rWidget.writeMessageField(3, rSched)
+
+        // DashboardContent { f2 = rWidgetComponent }
+        var content = ProtobufWriter()
+        content.writeMessageField(2, rWidget.data)
+
+        // DashboardReceiveFromApp { f1 = packageId, f3 = DashboardContent }
+        var receive = ProtobufWriter()
+        receive.writeInt32Field(1, packageId)
+        receive.writeMessageField(3, content.data)
+
+        // DashboardDataPackage { f1 = commandId, f2 = magicRandom, f4 = dashboardReceive }
+        var pkg = ProtobufWriter()
+        pkg.writeInt32Field(1, CommandId.dashboardReceive.rawValue)
+        pkg.writeInt32Field(2, magicRandom)
+        pkg.writeMessageField(4, receive.data)
+        return pkg.data
+    }
+}
+
 // MARK: - EvenBLE Transport Layer
 
 /// Builds and splits payloads into BLE packets with the EvenHub transport framing
@@ -2248,6 +2354,40 @@ class G2: NSObject, SGCManager {
         }
     }
 
+    /// Push a calendar event to the dashboard's Schedule widget (service 0x01).
+    ///
+    /// - title: event title displayed on the widget
+    /// - location: optional location string
+    /// - time: pre-formatted display string (e.g. "10:00 AM" or "10:00 – 10:30").
+    ///         The widget shows this verbatim — format it however you want it to read.
+    /// - endDate: when the event ends. Encoded the same way as the time-sync hack:
+    ///         Unix seconds with the local TZ offset folded in, so the glasses (which
+    ///         appear to treat timestamps as already-local) read it correctly.
+    /// - scheduleId: stable per-event id. Reuse the same id when updating an event.
+    func sendCalendarEvent(
+        title: String,
+        location: String? = nil,
+        time: String? = nil,
+        endDate: Date,
+        scheduleId: Int32 = 1
+    ) {
+        Bridge.log("G2: sendCalendarEvent(\(title), endDate=\(endDate))")
+        let tzSec = Int64(TimeZone.current.secondsFromGMT())
+        let endTs = Int32(truncatingIfNeeded: Int64(endDate.timeIntervalSince1970) + tzSec)
+
+        let payload = DashboardProto.calendarPush(
+            magicRandom: sendManager.nextMagicRandom(),
+            packageId: 1,
+            scheduleId: scheduleId,
+            title: title,
+            location: location,
+            time: time,
+            endTimestamp: endTs,
+            scheduleAuthority: 1
+        )
+        sendDashboardCommand(payload)
+    }
+
     func setDashboardPosition(_ height: Int, _ depth: Int) {
         Bridge.log("G2: setDashboardPosition(height=\(height), depth=\(depth))")
         setDashboardHeightOnly(height)
@@ -2555,6 +2695,13 @@ class G2: NSObject, SGCManager {
 
     func dbg1() {
         Bridge.log("G2: dbg1()")
+        sendCalendarEvent(
+            title: "Standup",
+            location: "Office",
+            time: "10:01 AM",
+            endDate: Date().addingTimeInterval(30 * 60),
+            scheduleId: 1
+        )
     }
 
     func dbg2() {
