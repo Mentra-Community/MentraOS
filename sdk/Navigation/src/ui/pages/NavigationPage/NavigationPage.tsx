@@ -4,7 +4,7 @@ import {useRpc} from "@mentra/miniapp/ui"
 
 import "@/shared/channels"
 import type {Channels} from "@/shared/channels"
-import type {LatLng, LogEntry, NavStatus, PlaceDetails} from "@/shared/types"
+import type {LatLng, LogEntry, NavStatus, PlaceDetails, SavedPlace} from "@/shared/types"
 import {useRouter} from "@/ui/router"
 import {useNavStore} from "@/ui/store/navStore"
 import {DrawerOffsetProvider} from "@/ui/components/Drawer/DrawerOffsetContext"
@@ -59,6 +59,29 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   // ---- page-local UI state -------------------------------------------------
   const {push} = useRouter()
   const [destination, setDestination] = useState<PlaceDetails | null>(null)
+  const [savedPlaces, setSavedPlaces] = useState<SavedPlace[]>([])
+
+  // Hydrate saved places so the map can drop home / work / starred
+  // markers behind whatever destination is selected. Refetched on
+  // savedPlacesVersion change (AddPlacePage onSave bumps it after a
+  // successful `storage:add-saved`).
+  useEffect(() => {
+    let cancelled = false
+    mentra
+      .request("storage:list-saved", undefined as never)
+      .then((places) => {
+        if (cancelled) return
+        setSavedPlaces(places)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setSavedPlaces([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [savedPlacesVersion])
+
   const [simulatorMode, setSimulatorMode] = useState(false)
   const [searchFrozen, setSearchFrozen] = useState(false)
   const [isSearching, setIsSearching] = useState(false)
@@ -239,6 +262,10 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
           me={me}
           destination={activeDestination ?? (destination ? {lat: destination.lat, lng: destination.lng} : null)}
           routePoints={running ? routePoints : previewRoutePoints}
+          // Idle map shows saved-place pins so the user can see their
+          // home / work / starred locations at a glance. Hide them
+          // while running so they don't compete with the active route.
+          savedPlaces={running ? [] : savedPlaces}
           autoFollow={running}
           onLongPress={handleMapLongPress}
         />

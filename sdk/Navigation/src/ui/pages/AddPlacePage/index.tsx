@@ -92,9 +92,15 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
 
   return (
     <motion.div
+      // Slide-in from the right on enter, slide-out the same way on exit
+      // so the gesture-driven swipe-back reads as one continuous motion.
+      // Exiting via opacity caused a single-frame flicker where the
+      // already-static AddPlace card faded over the home map, briefly
+      // exposing AddPlace's white background through the home tree
+      // before the unmount actually landed.
       initial={{x: "100%"}}
       animate={{x: 0}}
-      exit={{opacity: 0}}
+      exit={{x: "100%"}}
       transition={{type: "spring", stiffness: 300, damping: 34, mass: 0.85}}
       className="[font-synthesis:none] fixed inset-0 z-50 flex flex-col bg-white antialiased overflow-hidden">
 

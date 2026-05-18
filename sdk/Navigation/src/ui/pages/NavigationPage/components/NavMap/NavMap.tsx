@@ -1,20 +1,16 @@
 import {useEffect, useRef, useState} from "react"
-import {motion, useMotionValue, useTransform} from "motion/react"
+import {motion} from "motion/react"
 
 import {useNavStore} from "@/ui/store/navStore"
-import {useDrawerOffset} from "@/ui/components/Drawer/DrawerOffsetContext"
 import {bearingDeg, detectCrossings, haversineMeters, rdpSmooth} from "@/ui/lib/geometry"
 import type {LatLng} from "@/shared/types"
 import {isDev} from "@/ui/lib/env"
-
-/** Pixels between the bottom of the right-rail button stack and the top
- *  of the active drawer. Tweak as the design wants. */
-const DRAWER_GAP_PX = 10
 
 export function NavMap({
   me,
   destination,
   routePoints,
+  savedPlaces = [],
   autoFollow = true,
   onLongPress,
 }: {
@@ -23,6 +19,9 @@ export function NavMap({
   /** Full walking-route polyline emitted by Nav SDK. If null, falls back
    *  to a straight me→destination line so the map has *something*. */
   routePoints?: Array<LatLng> | null
+  /** Stars / home / work pins to drop while the map is idle. Empty while
+   *  a trip is running so the route stays uncluttered. */
+  savedPlaces?: Array<{lat: number; lng: number; placeId: string; type?: "home" | "work"; savedName?: string}>
   autoFollow?: boolean
   /**
    * Fires when the user holds a single finger on the map for ~2s
@@ -38,20 +37,12 @@ export function NavMap({
   // either still-loading or failed; the loading spinner covers both.
   const error: string | null = null
 
-  // Right-rail buttons follow the active drawer's top edge. Drawer
-  // publishes its current visible-height into a shared MotionValue
-  // (see DrawerOffsetContext). We position the rail with bottom:0 and
-  // ride the drawer height up via a translateY — transforms are
-  // GPU-composited and always re-rasterize the layer, whereas
-  // animating `bottom` directly intermittently failed to repaint
-  // when the map container's GPU layer (it has `will-change:transform`)
-  // captured the rail and didn't invalidate on layout-prop changes.
-  // That manifested as buttons "disappearing" mid-drag and snapping
-  // back on the next interaction.
-  const drawerOffset = useDrawerOffset()
-  const fallbackOffset = useMotionValue(0)
-  const sourceOffset = drawerOffset ?? fallbackOffset
-  const rightRailTranslateY = useTransform(sourceOffset, (v) => `translateY(-${v + DRAWER_GAP_PX}px)`)
+  // Right-rail buttons are pinned vertically near the middle of the
+  // map. The drawer slides over them when it expands — z-index puts
+  // the rail BELOW the drawer (drawer is z-40) so they hide behind
+  // the panel rather than chasing its top edge. Previously the rail
+  // tracked `drawerOffset` and rode up with the drawer, which made
+  // the buttons feel attached to the panel rather than to the map.
 
   // Fallback: derive heading from successive GPS positions while moving.
   const [gpsBearing, setGpsBearing] = useState<number | null>(null)
@@ -84,6 +75,9 @@ export function NavMap({
   // thicker than the route line so it visually highlights the crossing
   // segment we'd skip when "Skip crossings" is on.
   const crossingMarkersRef = useRef<any[]>([])
+  // Saved-place markers (home / work / starred) shown while idle.
+  // Map keyed by placeId so we only churn markers whose payload changed.
+  const savedMarkersRef = useRef<Map<string, any>>(new Map())
   const isTouchingRef = useRef(false)
 
   // Follow-user mode: starts from the `autoFollow` prop, breaks when the
@@ -401,6 +395,52 @@ export function NavMap({
     }
   }, [ready, destination?.lat, destination?.lng])
 
+  // Saved-place markers (home / work / starred). Diffed against the
+  // current placeId set so we don't churn every render. Markers are
+  // hidden when a destination is selected because the destination pin
+  // visually overlaps and would compete; this keeps the idle map clean.
+  useEffect(() => {
+    if (!ready || !mapRef.current) return
+    const g = window.google
+    const map = mapRef.current
+    const showSaved = !destination && savedPlaces.length > 0
+    const current = savedMarkersRef.current
+    const wantedIds = new Set(showSaved ? savedPlaces.map((p) => p.placeId) : [])
+    // Remove any markers no longer in the wanted set.
+    for (const [id, marker] of current) {
+      if (!wantedIds.has(id)) {
+        marker.setMap(null)
+        current.delete(id)
+      }
+    }
+    if (!showSaved) return
+    for (const place of savedPlaces) {
+      const pos = new g.maps.LatLng(place.lat, place.lng)
+      const existing = current.get(place.placeId)
+      if (existing) {
+        existing.setPosition(pos)
+        continue
+      }
+      const iconSvg = renderSavedPlaceIconSvg(place.type)
+      const icon = {
+        url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(iconSvg)}`,
+        scaledSize: new g.maps.Size(32, 40),
+        anchor: new g.maps.Point(16, 40),
+      }
+      const marker = new g.maps.Marker({
+        map,
+        position: pos,
+        icon,
+        // Below the destination marker (zIndex:997) so a saved-place
+        // that happens to match the active destination still renders
+        // the destination on top.
+        zIndex: 500,
+        title: place.savedName ?? (place.type === "home" ? "Home" : place.type === "work" ? "Work" : ""),
+      })
+      current.set(place.placeId, marker)
+    }
+  }, [ready, destination, savedPlaces])
+
   // Route polyline: grey for the traveled portion, black for the remaining.
   // Finds the closest route point to `me` to determine the split index.
   useEffect(() => {
@@ -608,9 +648,11 @@ export function NavMap({
 
 
       {ready ? (
-        <motion.div
-          style={{transform: rightRailTranslateY}}
-          className="absolute right-3 bottom-0 flex flex-col gap-2">
+        <div
+          // Vertical center on the map. Drawer is z-40 and overlays the
+          // rail when expanded; we sit at z-30 so the drawer naturally
+          // hides us when it covers this region rather than chasing it.
+          className="absolute right-3 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-2">
           
 
           <button
@@ -657,8 +699,34 @@ export function NavMap({
               <path d="M12 1V4M12 20V23M1 12H4M20 12H23" stroke="#000000D9" strokeWidth="2" strokeLinecap="round" />
             </svg>
           </button>
-        </motion.div>
+        </div>
       ) : null}
     </div>
   )
+}
+
+/**
+ * Build the SVG markup for a saved-place pin. The outer teardrop matches
+ * the destination pin's silhouette (so all map pins read as the same
+ * family) and the inner glyph branches on `type` so home + work read
+ * differently from an untagged star.
+ */
+function renderSavedPlaceIconSvg(type?: "home" | "work"): string {
+  // Teardrop body — same shape as the destination pin in this file,
+  // but rendered in the saved-place accent color so the user can tell
+  // saved pins apart from the "you're going here" destination at a
+  // glance.
+  const teardrop = `<path d="M16 0C7.16 0 0 7.16 0 16c0 12 16 24 16 24s16-12 16-24C32 7.16 24.84 0 16 0z" fill="#1A8754"/>`
+  let glyph: string
+  if (type === "home") {
+    // House silhouette, scaled into the upper bulge of the teardrop.
+    glyph = `<path d="M8 17 L16 9 L24 17 L24 23 H19 V18 H13 V23 H8 Z" fill="#FFFFFF"/>`
+  } else if (type === "work") {
+    // Briefcase outline.
+    glyph = `<rect x="9" y="14" width="14" height="9" rx="1" fill="#FFFFFF"/><path d="M13 14 V11 H19 V14" stroke="#FFFFFF" stroke-width="1.6" fill="none"/>`
+  } else {
+    // Untagged saved place → 5-point star (matches the LocationSearch chip).
+    glyph = `<path d="M16 7 L18.06 11.18 L22.6 11.84 L19.3 15.04 L20.12 19.55 L16 17.4 L11.88 19.55 L12.7 15.04 L9.4 11.84 L13.94 11.18 Z" fill="#FFFFFF"/>`
+  }
+  return `<svg width="32" height="40" viewBox="0 0 32 40" fill="none" xmlns="http://www.w3.org/2000/svg">${teardrop}${glyph}</svg>`
 }
