@@ -91,7 +91,8 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
               {/* <View className="h-px bg-border my-4" /> */}
             </View>
             <View className="h-2" />
-            {isOpen && (
+            {/* we don't need to selectively render on ios because performance is much better */}
+            {(isOpen || Platform.OS === "ios") && (
               <AppsGrid
                 showAllApps={true}
                 searchQuery={searchQuery}
