@@ -33,6 +33,8 @@
  * forwards them to background via the same EVENT/_ui envelope shape.
  */
 
+import devServerBridge from "./DevServerBridge"
+
 interface MentraUIInjectFn {
   (jsSource: string): void
 }
@@ -110,7 +112,16 @@ export class MentraUIRouter {
    *   - {type: "heartbeat", seq}                     → silently ack
    */
   routeFromWebView(packageName: string, rawJson: string): void {
-    let env: {type?: string; seq?: number; channel?: string; payload?: unknown; requestId?: string}
+    let env: {
+      type?: string
+      seq?: number
+      channel?: string
+      payload?: unknown
+      requestId?: string
+      level?: string
+      args?: unknown[]
+      timestamp?: number
+    }
     try {
       env = JSON.parse(rawJson)
     } catch {
@@ -120,14 +131,6 @@ export class MentraUIRouter {
 
     if (env.type === "ready") {
       this.deliverToBackground(packageName, {type: "UI_OPEN"})
-      return
-    }
-    if (env.type === "heartbeat") {
-      // Legacy envelope from older shims — silently consumed. The
-      // current WebView lifecycle (foreground-only, short-lived,
-      // teardown via user navigation or onContentProcessDidTerminate)
-      // doesn't need a liveness watchdog. Kept here so old polyfill
-      // bundles in already-installed miniapps don't generate noise.
       return
     }
     if (env.type === "msg" && typeof env.channel === "string") {
@@ -143,6 +146,21 @@ export class MentraUIRouter {
     }
     if (env.type === "cancel" && typeof env.requestId === "string") {
       this.deliverToBackground(packageName, {type: "UI_CANCEL", requestId: env.requestId})
+      return
+    }
+    if (env.type === "log" && typeof env.level === "string" && Array.isArray(env.args)) {
+      // WebView-side `console.*` interception, forwarded to the dev
+      // sidecar so a developer sees `[UI]` lines in their
+      // `mentra-miniapp dev` terminal alongside `[MentraJS]` lines from
+      // the background JSContext. Silently dropped in prod (no bridge
+      // registered for the package).
+      devServerBridge.forwardLog(
+        packageName,
+        env.level,
+        env.args,
+        typeof env.timestamp === "number" ? env.timestamp : Date.now(),
+        "ui",
+      )
       return
     }
     // Unknown envelope — drop silently.

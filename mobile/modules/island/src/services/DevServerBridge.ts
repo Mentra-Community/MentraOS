@@ -31,6 +31,8 @@ interface BufferedLog {
   level: string
   args: unknown[]
   timestamp: number
+  /** "ui" = WebView, "background" = JSContext. Stamped at capture time. */
+  source: "ui" | "background"
   size: number
 }
 
@@ -103,11 +105,26 @@ class DevServerBridge {
     this.entries.delete(packageName)
   }
 
-  /** Forward a `dev_log` envelope. Called from LocalMiniappRuntime. */
-  public forwardLog(packageName: string, level: string, args: unknown[], timestamp: number): void {
+  /**
+   * Forward a `log` envelope to the connected dev sidecar. Called from
+   * the JSContext side (`MentraJSRouter.__log` handler) AND the WebView
+   * side (`MentraUIRouter.routeFromWebView` for `type:"log"` frames).
+   *
+   * `source` distinguishes the two halves so the CLI can prefix lines
+   * `[UI]` vs `[MentraJS]`. Logs are silently dropped when no bridge
+   * exists for the package (no `mentra-miniapp dev` running) and
+   * buffered in the per-bridge ring while disconnected.
+   */
+  public forwardLog(
+    packageName: string,
+    level: string,
+    args: unknown[],
+    timestamp: number,
+    source: "ui" | "background",
+  ): void {
     const entry = this.entries.get(packageName)
     if (!entry) return
-    const message = JSON.stringify({type: "log", level, args, packageName, timestamp})
+    const message = JSON.stringify({type: "log", level, args, packageName, timestamp, source})
     if (entry.state === "connected" && entry.ws) {
       try {
         entry.ws.send(message)
@@ -116,7 +133,7 @@ class DevServerBridge {
         // Fall through to buffer.
       }
     }
-    this.bufferLog(entry, {packageName, level, args, timestamp, size: message.length})
+    this.bufferLog(entry, {packageName, level, args, timestamp, source, size: message.length})
   }
 
   // -----------------------------------------------------------------------
@@ -278,6 +295,7 @@ class DevServerBridge {
             args: log.args,
             packageName: log.packageName,
             timestamp: log.timestamp,
+            source: log.source,
           }),
         )
       } catch {

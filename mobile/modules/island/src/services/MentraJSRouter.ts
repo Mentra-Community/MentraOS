@@ -37,6 +37,7 @@
 
 import type {EventSubscription} from "expo-modules-core"
 
+import devServerBridge from "./DevServerBridge"
 import type localMiniappRuntime from "./LocalMiniappRuntime"
 import type {InstalledMiniappManifest} from "./LocalMiniappRuntime"
 import type {MentraJSCrashController} from "./MentraJSCrashController"
@@ -429,6 +430,12 @@ export class MentraJSRouter {
         line = `${method}: <unserializable>`
       }
       this.logRing.push(packageName, line)
+      // Forward to the `mentra-miniapp dev` sidecar (if one is connected
+      // for this package). Source="background" so the CLI tags lines as
+      // [MentraJS]. The bridge silently drops when no dev server is up,
+      // which makes this safe to call unconditionally in prod.
+      const argsForBridge = Array.isArray(safeArgs) ? (safeArgs as unknown[]) : [safeArgs]
+      devServerBridge.forwardLog(packageName, method, argsForBridge, Date.now(), "background")
       return
     }
 

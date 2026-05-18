@@ -106,6 +106,54 @@ export function buildMentraUiShim(options: MentraUiShimOptions): string {
     }
   }
 
+  // ── console.* → host dev sidecar ─────────────────────────────────────
+  // Wrap every console method so a mini app author's logs surface in
+  // their \`mentra-miniapp dev\` terminal (tagged [UI]). The wrappers
+  // still call the original so Safari Web Inspector keeps working.
+  //
+  // Args are serialised to plain JSON-safe shapes here. Errors get a
+  // \`__error\` marker so the CLI can render \`.stack\`; structured
+  // values pass through; circular/exotic values fall back to \`String(v)\`.
+  // The envelope is fire-and-forget — the host's MentraUIRouter forwards
+  // to DevServerBridge, which silently drops when no dev server is up.
+  (function wrapConsole() {
+    if (typeof window === 'undefined' || !window.console) return;
+    var levels = ['log', 'info', 'debug', 'warn', 'error'];
+    var serialiseArg = function (v) {
+      if (v instanceof Error) {
+        return {__error: true, message: v.message, stack: v.stack, name: v.name};
+      }
+      if (v === null || v === undefined) return v;
+      if (typeof v === 'object') {
+        try {
+          JSON.stringify(v);
+          return v;
+        } catch (_) {
+          return String(v);
+        }
+      }
+      return v;
+    };
+    for (var li = 0; li < levels.length; li++) {
+      (function (level) {
+        var original = window.console[level];
+        window.console[level] = function () {
+          if (typeof original === 'function') {
+            try { original.apply(window.console, arguments); } catch (_) {}
+          }
+          if (!rnPost) return;
+          var args = [];
+          for (var i = 0; i < arguments.length; i++) {
+            try { args.push(serialiseArg(arguments[i])); } catch (_) { args.push(String(arguments[i])); }
+          }
+          try {
+            postEnvelope({type: 'log', level: level, args: args, timestamp: Date.now(), source: 'ui'});
+          } catch (_) {}
+        };
+      })(levels[li]);
+    }
+  })();
+
   function on(channel, cb) {
     if (typeof cb !== 'function') return function () {};
     var list = channelHandlers[channel];

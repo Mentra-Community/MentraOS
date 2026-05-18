@@ -47,13 +47,26 @@ const RELOAD_DEBOUNCE_MS = 100
 /** Inbound message from the phone. */
 type Inbound =
   | {type: "hello"; protocol: string}
-  | {type: "log"; level: string; args: unknown[]; packageName: string; timestamp: number}
+  | {
+      type: "log"
+      level: string
+      args: unknown[]
+      packageName: string
+      timestamp: number
+      /**
+       * Which half of the miniapp emitted the log. UI = WebView, background
+       * = JSContext. Lets us prefix lines so devs can tell the always-on
+       * glasses logic apart from the WebView UI when both are noisy.
+       */
+      source: "ui" | "background"
+    }
 
 const COLOR = {
   reset: "\x1b[0m",
   dim: "\x1b[2m",
   red: "\x1b[31m",
   yellow: "\x1b[33m",
+  magenta: "\x1b[35m",
   cyan: "\x1b[36m",
 }
 
@@ -104,7 +117,7 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
   const sockets = new Set<ServerWebSocket<ClientWsData>>()
   const log = options.silent ? () => {} : (...args: unknown[]) => console.log(...args)
 
-  const server = Bun.serve<ClientWsData, undefined>({
+  const server = Bun.serve<ClientWsData>({
     hostname: "0.0.0.0",
     port: options.port,
     fetch(req, srv) {
@@ -123,15 +136,18 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
         // Files are placed at the zip root (no enclosing folder). The
         // unpacker on the phone side requires miniapp.json to be at the
         // top level. Flat structure makes that contract clean.
-        return buildProjectZip(options.watchDir).then(
-          (buf) =>
-            new Response(buf, {
-              headers: {
-                "content-type": "application/zip",
-                "content-length": String(buf.length),
-              },
-            }),
-        )
+        return buildProjectZip(options.watchDir).then((buf) => {
+          // `bun-types` typed Response body as ArrayBuffer / Blob / etc.
+          // — but NOT a raw Uint8Array view. Pass the underlying buffer
+          // slice instead so the response stream gets the exact bytes.
+          const body = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
+          return new Response(body, {
+            headers: {
+              "content-type": "application/zip",
+              "content-length": String(buf.byteLength),
+            },
+          })
+        })
       }
       if (url.pathname === "/__mentra_dev") {
         const upgraded = srv.upgrade(req, {
@@ -164,10 +180,16 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
           }
           case "log": {
             const color = colorForLevel(parsed.level)
-            const tag = `[${parsed.packageName ?? "?"}] ${parsed.level}`
+            // Source-prefix lets devs tell UI ↔ background apart at a
+            // glance. UI cyan, MentraJS magenta.
+            const sourceTag =
+              parsed.source === "ui"
+                ? `${COLOR.cyan}[UI]${COLOR.reset}`
+                : `${COLOR.magenta}[MentraJS]${COLOR.reset}`
+            const tag = `${color}${parsed.level}${COLOR.reset}`
             const body = formatLogArgs(parsed.args ?? [])
             log(
-              `${COLOR.dim}${fmtTime(parsed.timestamp ?? Date.now())}${COLOR.reset} ${color}${tag}${COLOR.reset} ${body}`,
+              `${COLOR.dim}${fmtTime(parsed.timestamp ?? Date.now())}${COLOR.reset} ${sourceTag} ${tag} ${body}`,
             )
             return
           }
