@@ -184,6 +184,70 @@
       }
     }
     installTimers();
+    function installAbortController() {
+      if (typeof g.AbortController === "function") return;
+      class MentraAbortSignal {
+        constructor() {
+          this.aborted = false;
+          this.reason = void 0;
+          this.listeners = /* @__PURE__ */ new Set();
+        }
+        addEventListener(type, cb) {
+          if (type !== "abort" || typeof cb !== "function") return;
+          if (this.aborted) {
+            try {
+              cb();
+            } catch {
+            }
+            return;
+          }
+          this.listeners.add(cb);
+        }
+        removeEventListener(type, cb) {
+          if (type !== "abort") return;
+          this.listeners.delete(cb);
+        }
+        /** @internal — only invoked by the owning AbortController.abort(). */
+        __fire(reason) {
+          if (this.aborted) return;
+          this.aborted = true;
+          this.reason = reason;
+          for (const cb of this.listeners) {
+            try {
+              cb();
+            } catch {
+            }
+          }
+          this.listeners.clear();
+        }
+      }
+      class MentraAbortController {
+        constructor() {
+          this.signal = new MentraAbortSignal();
+        }
+        abort(reason) {
+          this.signal.__fire(reason ?? new Error("aborted"));
+        }
+      }
+      ;
+      MentraAbortSignal.any = (signals) => {
+        const out = new MentraAbortSignal();
+        const onAbort = (s) => {
+          if (!out.aborted) out.__fire(s.reason);
+        };
+        for (const s of signals) {
+          if (s.aborted) {
+            onAbort(s);
+            break;
+          }
+          s.addEventListener("abort", () => onAbort(s));
+        }
+        return out;
+      };
+      g.AbortController = MentraAbortController;
+      g.AbortSignal = MentraAbortSignal;
+    }
+    installAbortController();
     const pending = /* @__PURE__ */ new Map();
     let nextReqId = 1;
     g.__deliver = (envelopeJson) => {

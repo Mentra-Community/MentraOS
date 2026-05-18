@@ -33,8 +33,6 @@
  * forwards them to background via the same EVENT/_ui envelope shape.
  */
 
-import devServerBridge from "./DevServerBridge"
-
 interface MentraUIInjectFn {
   (jsSource: string): void
 }
@@ -118,9 +116,6 @@ export class MentraUIRouter {
       channel?: string
       payload?: unknown
       requestId?: string
-      level?: string
-      args?: unknown[]
-      timestamp?: number
     }
     try {
       env = JSON.parse(rawJson)
@@ -148,21 +143,12 @@ export class MentraUIRouter {
       this.deliverToBackground(packageName, {type: "UI_CANCEL", requestId: env.requestId})
       return
     }
-    if (env.type === "log" && typeof env.level === "string" && Array.isArray(env.args)) {
-      // WebView-side `console.*` interception, forwarded to the dev
-      // sidecar so a developer sees `[UI]` lines in their
-      // `mentra-miniapp dev` terminal alongside `[MentraJS]` lines from
-      // the background JSContext. Silently dropped in prod (no bridge
-      // registered for the package).
-      devServerBridge.forwardLog(
-        packageName,
-        env.level,
-        env.args,
-        typeof env.timestamp === "number" ? env.timestamp : Date.now(),
-        "ui",
-      )
-      return
-    }
+    // NOTE: console.* logs do NOT come through this router. The
+    // miniappGlobals console-tap shim posts {payload:{type:"dev_log"}}
+    // envelopes which LocalMiniappRuntime handles and forwards to the
+    // dev sidecar tagged source:"ui". Keeping that path one-way means
+    // we don't have two console-capture pipelines competing.
+    //
     // Unknown envelope — drop silently.
   }
 

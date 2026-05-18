@@ -545,3 +545,61 @@ describe("startup bundle — WebSocket", () => {
     expect(lstGot).toHaveLength(1)
   })
 })
+
+describe("AbortController polyfill", () => {
+  test("installs AbortController + AbortSignal on globalThis", () => {
+    const sandbox = evalBundle()
+    expect(typeof sandbox.AbortController).toBe("function")
+    expect(typeof sandbox.AbortSignal).toBe("function")
+  })
+
+  test("ctrl.abort() flips signal.aborted and fires abort listener", () => {
+    const sandbox = evalBundle()
+    const ctrl = new (sandbox.AbortController as new () => {
+      signal: {aborted: boolean; addEventListener: (t: string, cb: () => void) => void}
+      abort: () => void
+    })()
+    expect(ctrl.signal.aborted).toBe(false)
+    let fired = 0
+    ctrl.signal.addEventListener("abort", () => {
+      fired++
+    })
+    ctrl.abort()
+    expect(ctrl.signal.aborted).toBe(true)
+    expect(fired).toBe(1)
+    // Re-aborting is idempotent — listeners don't fire again.
+    ctrl.abort()
+    expect(fired).toBe(1)
+  })
+
+  test("addEventListener on already-aborted signal fires immediately", () => {
+    const sandbox = evalBundle()
+    const ctrl = new (sandbox.AbortController as new () => {
+      signal: {aborted: boolean; addEventListener: (t: string, cb: () => void) => void}
+      abort: () => void
+    })()
+    ctrl.abort()
+    let fired = 0
+    ctrl.signal.addEventListener("abort", () => {
+      fired++
+    })
+    expect(fired).toBe(1)
+  })
+
+  test("AbortSignal.any aborts when any input does", () => {
+    const sandbox = evalBundle()
+    const AC = sandbox.AbortController as new () => {
+      signal: {aborted: boolean; addEventListener: (t: string, cb: () => void) => void}
+      abort: () => void
+    }
+    const AS = sandbox.AbortSignal as unknown as {
+      any: (sigs: unknown[]) => {aborted: boolean; addEventListener: (t: string, cb: () => void) => void}
+    }
+    const a = new AC()
+    const b = new AC()
+    const merged = AS.any([a.signal, b.signal])
+    expect(merged.aborted).toBe(false)
+    b.abort()
+    expect(merged.aborted).toBe(true)
+  })
+})
