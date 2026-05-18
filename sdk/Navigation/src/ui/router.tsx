@@ -32,31 +32,38 @@ type RouterContextValue = {
 const RouterContext = createContext<RouterContextValue | null>(null)
 
 export function RouterProvider({children}: {children: ReactNode}) {
-  // Seed the stack with the initial route AND replace the current
-  // history entry so the bottom of the stack matches the cursor.
-  // Without replaceState the first push() would land us at history
-  // index 1 with a phantom index 0, and the first swipe back would
-  // pop to that phantom entry instead of exiting the miniapp.
-  const [stack, setStack] = useState<Route[]>(() => {
+  const [stack, setStack] = useState<Route[]>([{name: "navigation"}])
+  const route = stack[stack.length - 1]
+
+  // Seed the History API cursor on first mount. Replace (not push) so
+  // we don't add a phantom entry at depth 0. Side-effects belong in
+  // useEffect, NOT in useState's initialiser — initialisers can run
+  // multiple times in StrictMode + concurrent rendering, which would
+  // fire replaceState repeatedly and could race with later pushes.
+  useEffect(() => {
     try {
-      history.replaceState({routerStackDepth: 1}, "")
+      history.replaceState({route: "navigation"}, "")
     } catch {
       /* no-op: WebView may not allow replaceState in some sandboxes */
     }
-    return [{name: "navigation"}]
-  })
-  const route = stack[stack.length - 1]
+  }, [])
 
   const push = useCallback((r: Route) => {
-    setStack((s) => {
-      const next = [...s, r]
-      try {
-        history.pushState({routerStackDepth: next.length}, "")
-      } catch {
-        /* no-op */
-      }
-      return next
-    })
+    // history.pushState MUST run outside the setState updater. React
+    // calls the updater multiple times in StrictMode + concurrent
+    // rendering, and side-effecting inside the updater would push
+    // multiple history entries — each with its own WKWebView snapshot.
+    // The second snapshot can capture AddPlace mid-mount instead of the
+    // home map, breaking the back-swipe preview. Mutating history
+    // before the state change also means WKWebView captures the
+    // *current* viewport (home) as the snapshot for the entry we're
+    // leaving — which is exactly what we want to see on swipe-back.
+    try {
+      history.pushState({route: r.name}, "")
+    } catch {
+      /* no-op: WebView may not allow pushState in some sandboxes */
+    }
+    setStack((s) => [...s, r])
   }, [])
 
   // Programmatic pop just drives history.back(). The popstate handler
