@@ -422,7 +422,7 @@ export function useMentraSdk(): MentraSdkModel {
         addEvent('LIVE', `button ${payload.buttonId}: ${payload.pressType}`);
       }),
       BluetoothSdk.addListener('touch_event', (payload: TouchEvent) => {
-        const gesture = payload.gesture_name ?? payload.device_model ?? 'event';
+        const gesture = payload.gestureName ?? payload.deviceModel ?? 'event';
         addEvent(
           'LIVE',
           `${gesture.toLowerCase().includes('swipe') ? 'swipe' : 'touch'} ${gesture}`,
@@ -500,7 +500,7 @@ export function useMentraSdk(): MentraSdkModel {
         }
       }),
       BluetoothSdk.addListener('audio_connected', (payload: AudioConnectedEvent) => {
-        const deviceName = payload.device_name || 'Bluetooth audio';
+        const deviceName = payload.deviceName || 'Bluetooth audio';
         setMicAudioRouteStatus(`Audio output: connected to ${deviceName}`);
         setMicPlaybackHint(null);
         addEvent('LIVE', `audio connected ${deviceName}`);
@@ -516,7 +516,7 @@ export function useMentraSdk(): MentraSdkModel {
       BluetoothSdk.addListener(
         'compatible_glasses_search_stop',
         (payload: CompatibleGlassesSearchStopEvent) => {
-          addEvent('BLE', `scan stopped for ${payload.device_model ?? 'glasses'}`);
+          addEvent('BLE', `scan stopped for ${payload.deviceModel ?? 'glasses'}`);
         },
       ),
       BluetoothSdk.addListener('rgb_led_control_response', (payload: RgbLedControlResponseEvent) => {
