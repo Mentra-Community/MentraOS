@@ -508,8 +508,16 @@ interface DashboardMenuItem {
   running: boolean
 }
 
+export interface CalendarEvent {
+  title: string
+  location?: string
+  time: string
+  endDate: number
+}
+
 export interface CoreSettings {
   menu_apps: DashboardMenuItem[]
+  calendar_events: CalendarEvent[]
 }
 
 export type MicRanking = "auto" | "phone" | "glasses" | "bluetooth"

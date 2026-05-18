@@ -667,6 +667,32 @@ public struct DashboardMenuItem {
     }
 }
 
+public struct CalendarEvent {
+    public let title: String
+    public let location: String?
+    public let time: String
+    public let endDate: Date
+
+    public init(title: String, location: String? = nil, time: String, endDate: Date) {
+        self.title = title
+        self.location = location
+        self.time = time
+        self.endDate = endDate
+    }
+
+    var dictionary: [String: Any] {
+        var d: [String: Any] = [
+            "title": title,
+            "time": time,
+            "endDate": endDate.timeIntervalSince1970,
+        ]
+        if let location = location {
+            d["location"] = location
+        }
+        return d
+    }
+}
+
 public enum GalleryMode {
     case auto
     case manual
@@ -2082,6 +2108,14 @@ public final class MentraBluetoothSDK {
             ObservableStore.coreCategory,
             "menu_apps",
             items.map(\.dictionary)
+        )
+    }
+
+    public func setCalendarEvents(_ events: [CalendarEvent]) async throws {
+        GlassesStore.shared.apply(
+            ObservableStore.coreCategory,
+            "calendar_events",
+            events.map(\.dictionary)
         )
     }
 

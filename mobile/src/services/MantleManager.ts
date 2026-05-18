@@ -918,12 +918,43 @@ class MantleManager {
       console.log("MANTLE: sendCalendarEvents()")
       const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT)
       const calendarIds = calendars.map((calendar: Calendar.Calendar) => calendar.id)
-      // from 2 hours ago to 1 week from now:
+      // from 2 hours ago to 1 day from now:
       const startDate = new Date(Date.now() - 2 * 60 * 60 * 1000)
-      const endDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-      const events = await Calendar.getEventsAsync(calendarIds, startDate, endDate)
-      
-      // CoreModule.updateCore({calendar_events: events})
+      const endDate = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
+      let events = await Calendar.getEventsAsync(calendarIds, startDate, endDate)
+      console.log("MANTLE: events:", events.length)
+
+      // sort by start date (soonest first)
+      events.sort((a: Calendar.Event, b: Calendar.Event) => {
+        return new Date(a.startDate as string | Date).getTime() - new Date(b.startDate as string | Date).getTime()
+      })
+
+      // limit to first 3 events:
+      events = events.slice(0, 3)
+
+      // Shape into the {title, location?, time, endDate} contract the SDK expects.
+      // time is a pre-formatted display label; endDate is unix seconds.
+      const shapedEvents = events.map((ev: Calendar.Event) => {
+        const start = new Date(ev.startDate as string | Date)
+        const end = new Date(ev.endDate as string | Date)
+        let time = ev.allDay
+          ? "All day"
+          : start.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})
+        // add the duration of the event, i.e. "10:00AM - 11:00AM"
+        const duration = end.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})
+        time += ` - ${duration}`
+        // if the event is tomorrow, prefix with "tmr @"
+        if (start.getDate() === new Date().getDate() + 1) {
+          time = `tmr @ ${time}`
+        }
+        return {
+          title: ev.title ?? "",
+          ...(ev.location ? {location: ev.location} : {}),
+          time,
+          endDate: Math.floor(end.getTime() / 1000),
+        }
+      })
+      CoreModule.updateCore({calendar_events: shapedEvents})
       restComms.sendCalendarData({events, calendars})
 
       // Direct forward to local miniapps. Emit one event per calendar entry

@@ -215,6 +215,11 @@ class GlassesStore {
                 CoreManager.shared.sgc?.setDashboardMenu(items)
             }
 
+        case ("core", "calendar_events"):
+            if let items = value as? [[String: Any]] {
+                CoreManager.shared.sgc?.sendCalendarEvents(items)
+            }
+
         case ("core", "gallery_mode"):
             CoreManager.shared.sgc?.sendGalleryMode()
 

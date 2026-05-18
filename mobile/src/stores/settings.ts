@@ -395,6 +395,13 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  calendar_events: {
+    key: "calendar_events",
+    defaultValue: () => [],
+    writable: true,
+    saveOnServer: false,
+    persist: false,
+  },
   // button settings
   // Legacy persisted/cloud key; hardware behavior is now controlled by gallery_mode plus capture settings.
   button_mode: {key: "button_mode", defaultValue: () => "photo", writable: true, saveOnServer: true, persist: true},
@@ -602,6 +609,7 @@ const CORE_SETTINGS_KEYS: string[] = [
   SETTINGS.dashboard_height.key,
   SETTINGS.dashboard_depth.key,
   SETTINGS.menu_apps.key,
+  SETTINGS.calendar_events.key,
   SETTINGS.use_native_dashboard.key,
   // button:
   SETTINGS.button_photo_size.key,

@@ -53,6 +53,10 @@ protocol SGCManager {
 
     func setDashboardMenu(_ items: [[String: Any]])
 
+    // MARK: - Calendar Events
+
+    func sendCalendarEvents(_ events: [[String: Any]])
+
     // MARK: - Device Control
 
     func setHeadUpAngle(_ angle: Int)
@@ -126,6 +130,10 @@ extension SGCManager {
     // MARK: - Dashboard Menu (default no-op — only G2 supports this)
 
     func setDashboardMenu(_: [[String: Any]]) {}
+
+    // MARK: - Calendar Events (default no-op — only G2 supports this)
+
+    func sendCalendarEvents(_: [[String: Any]]) {}
 
     // MARK: - Default GlassesStore-backed property implementations
 

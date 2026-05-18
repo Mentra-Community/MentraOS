@@ -1606,6 +1606,10 @@ class G2: NSObject, SGCManager {
 
                     // send dashboard menu if we have stored items
                     self.sendMenuApps()
+                    
+                    // send calendar events
+                    let calendarEvents = GlassesStore.shared.get("core", "calendar_events") as? [[String: Any]] ?? []
+                    self.sendCalendarEvents(calendarEvents)
                 }
             }
         }
@@ -2388,6 +2392,27 @@ class G2: NSObject, SGCManager {
         sendDashboardCommand(payload)
     }
 
+    /// Bridge entry for `calendar_events` store updates. Each dict is expected
+    /// to match the TS `CalendarEvent` shape: { title, location?, time, endDate }
+    /// where endDate is unix seconds.
+    func sendCalendarEvents(_ events: [[String: Any]]) {
+        Bridge.log("G2: sendCalendarEvents — \(events.count) events")
+        for (i, ev) in events.enumerated() {
+            guard let title = ev["title"] as? String,
+                  let time = ev["time"] as? String,
+                  let endTs = ev["endDate"] as? Double
+            else { continue }
+            let location = ev["location"] as? String
+            sendCalendarEvent(
+                title: title,
+                location: location,
+                time: time,
+                endDate: Date(timeIntervalSince1970: endTs),
+                scheduleId: Int32(i + 1)
+            )
+        }
+    }
+
     func setDashboardPosition(_ height: Int, _ depth: Int) {
         Bridge.log("G2: setDashboardPosition(height=\(height), depth=\(depth))")
         setDashboardHeightOnly(height)
@@ -2695,13 +2720,6 @@ class G2: NSObject, SGCManager {
 
     func dbg1() {
         Bridge.log("G2: dbg1()")
-        sendCalendarEvent(
-            title: "Standup",
-            location: "Office",
-            time: "10:01 AM",
-            endDate: Date().addingTimeInterval(30 * 60),
-            scheduleId: 1
-        )
     }
 
     func dbg2() {
