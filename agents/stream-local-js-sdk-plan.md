@@ -397,7 +397,7 @@ Once Phases 1-4 land, on-device verification:
 
 Files to copy verbatim into cloud-2:
 
-- `cloud/packages/cloud/src/api/hono/routes/v2/streams.routes.ts` (+ test)
+- `cloud/packages/cloud/src/api/hono/client/v2/streams.api.ts` (+ test)
 - `cloud/packages/cloud/src/services/streaming/CloudflareStreamService.ts` (unchanged — already self-contained)
 
 Phone-side files have no cloud-1 dependency; they keep working as soon as cloud-2 serves the same `/api/v2/client/streams/managed/*` routes.
