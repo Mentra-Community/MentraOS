@@ -55,7 +55,9 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
      * Handle take photo command
      */
     private boolean handleTakePhoto(JSONObject data) {
-        Log.d(TAG, "Handling take photo command with data: " + data.toString());
+        String requestIdForLog = data.optString("requestId", "");
+        Log.i(TAG, "PHOTO PIPELINE [ASG 2/3] PhotoCommandHandler.handleTakePhoto requestId="
+                + requestIdForLog + " data=" + data);
         try {
             // Resolve package name using base class functionality
             String packageName = resolvePackageName(data);
@@ -143,9 +145,14 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             }
 
             // Process photo capture based on transfer method
+            Log.i(TAG, "PHOTO PIPELINE [ASG 3/3] Starting capture requestId=" + requestId
+                    + " transferMethod=" + transferMethod + " size=" + size);
             boolean success = processPhotoCapture(captureService, photoFilePath, requestId, webhookUrl, authToken,
                                                  bleImgId, save, size, transferMethod, flash, sound, compress, exposureTimeNs);
             logCommandResult("take_photo", success, success ? null : "Photo capture failed");
+            if (success) {
+                Log.i(TAG, "PHOTO PIPELINE [ASG 3/3] Capture accepted requestId=" + requestId);
+            }
             return success;
 
         } catch (Exception e) {
