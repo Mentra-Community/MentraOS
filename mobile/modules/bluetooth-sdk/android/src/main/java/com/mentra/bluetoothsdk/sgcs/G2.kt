@@ -496,16 +496,20 @@ private object DevSettingsProto {
         return w.toByteArray()
     }
 
+    /// DevCfgDataPackage with TIME_SYNC command.
+    /// TimeSync submessage: f1 = (Unix seconds + TZ offset seconds) as Int32, no TZ field.
+    /// Firmware appears to ignore the TZ field, so we pre-shift the timestamp itself
+    /// to make UTC interpretation read as local. Empirically confirmed via probe variants in dbg1().
     fun timeSync(magicRandom: Int): ByteArray {
         val w = ProtobufWriter()
         w.writeInt32Field(1, DevCfgCommandId.TIME_SYNC.value)
         w.writeInt32Field(2, magicRandom)
 
         val tsW = ProtobufWriter()
-        val timestamp = (System.currentTimeMillis() / 1000).toInt()
-        tsW.writeInt32Field(1, timestamp)
-        val tz = TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 3600000
-        tsW.writeInt32Field(2, tz)
+        val nowMs = System.currentTimeMillis()
+        val nowSec = nowMs / 1000
+        val tzSec = (TimeZone.getDefault().getOffset(nowMs) / 1000).toLong()
+        tsW.writeInt32Field(1, (nowSec + tzSec).toInt())
         w.writeMessageField(128, tsW.toByteArray())
         return w.toByteArray()
     }
@@ -1050,6 +1054,7 @@ class G2 : SGCManager() {
     private var leftAuthenticated: Boolean = false
     private var rightAuthenticated: Boolean = false
     private var currentBitmapBase64: String = ""
+    private var dashboardShowing = 0
 
     // Dashboard menu state
     private var menuAppIdToPackageName: MutableMap<Int, String> = mutableMapOf()
@@ -1774,6 +1779,12 @@ class G2 : SGCManager() {
     override fun sendTextWall(text: String) {
         // Bridge.log("G2: sendTextWall(${text.take(10)}...)")
 
+        // ignore events while the ER dashboard is open:
+        val useNativeDashboard = GlassesStore.get("core", "use_native_dashboard") as? Boolean ?: false
+        if (useNativeDashboard && dashboardShowing > 0) {
+            return
+        }
+
         if (text.isEmpty()) {
             clearDisplay()
             return
@@ -2058,8 +2069,23 @@ class G2 : SGCManager() {
         return tiles
     }
 
+    /// Bring the Even Realities dashboard (the OS-level home/idle screen) to
+    /// the foreground by tearing down whatever EvenHub page we currently own.
+    /// The glasses fall back to the dashboard automatically when no page is up.
     override fun showDashboard() {
-        // G2 doesn't have a native dashboard concept via EvenHub
+        Bridge.log("G2: showDashboard")
+        dashboardShowing += 2
+        val msg = EvenHubProto.shutdownMessage()
+        sendEvenHubCommand(msg)
+        pageCreated = false
+        pageHasTextContainer = false
+        currentTextContent = ""
+        currentBitmapBase64 = ""
+        mainHandler.postDelayed({
+            // activate the dashboard by setting depth to the current setting:
+            val currentDepth = GlassesStore.get("core", "dashboard_depth") as? Int ?: 0
+            setDashboardDepthOnly(currentDepth)
+        }, 500)
     }
 
     override fun setDashboardPosition(height: Int, depth: Int) {
@@ -2336,21 +2362,33 @@ class G2 : SGCManager() {
 
     // ---------- SGCManager: Audio Control ----------
 
+    fun restartMic() {
+        // if already enabled, set to disabled, then send enabled after 500ms:
+        GlassesStore.apply("glasses", "micEnabled", true)
+        val msg = EvenHubProto.audioControlMessage(false)
+        sendEvenHubCommand(msg)
+        mainHandler.postDelayed({
+            val useNativeDashboard = GlassesStore.get("core", "use_native_dashboard") as? Boolean ?: false
+            Bridge.log("G2: setMicEnabled - useNativeDashboard=$useNativeDashboard, dashboardShowing=$dashboardShowing")
+            if (useNativeDashboard && dashboardShowing > 0) {
+                return@postDelayed
+            }
+            if (!pageCreated || !pageHasTextContainer) {
+                CoreManager.getInstance().sendCurrentState() // should re-create the page if needed
+            }
+            val msg = EvenHubProto.audioControlMessage(true)
+            sendEvenHubCommand(msg)
+        }, 500)
+    }
+
     override fun setMicEnabled(enabled: Boolean) {
         Bridge.log("G2: setMicEnabled($enabled)")
         val currentEnabled = GlassesStore.get("glasses", "micEnabled") as? Boolean ?: false
-
-        // if already enabled, set to disabled, then send enabled after 500ms:
         if (currentEnabled && enabled) {
-            GlassesStore.apply("glasses", "micEnabled", true)
-            val msg = EvenHubProto.audioControlMessage(false)
-            sendEvenHubCommand(msg)
-            mainHandler.postDelayed({
-                val msg = EvenHubProto.audioControlMessage(true)
-                sendEvenHubCommand(msg)
-            }, 500)
+            restartMic()
             return
         }
+
         GlassesStore.apply("glasses", "micEnabled", enabled)
         val msg = EvenHubProto.audioControlMessage(enabled)
         sendEvenHubCommand(msg)
@@ -2611,6 +2649,14 @@ class G2 : SGCManager() {
 
     override fun sendReboot() {
         // TODO: Implement via dev_settings
+    }
+
+    /// Push the current time to the glasses. Useful after DST transitions,
+    /// time-zone travel, or a long sleep where the glasses' clock has drifted.
+    fun syncTime() {
+        Bridge.log("G2: syncTime()")
+        val msg = DevSettingsProto.timeSync(sendManager.nextMagicRandom())
+        sendDevSettingsCommand(msg)
     }
 
     override fun sendRgbLedControl(
@@ -3276,12 +3322,14 @@ class G2 : SGCManager() {
             if (eventType == OsEventType.DOUBLE_CLICK) {
                 // trigger dashboard:
                 val isHeadUp = GlassesStore.get("glasses", "headUp") as? Boolean ?: false
-                // toggle head up:
-                GlassesStore.apply("glasses", "headUp", !isHeadUp)
-                // if (isHeadUp) {
-                //     // clear the display after a delay:
-                //     mainHandler.postDelayed({ clearDisplay() }, 500)
-                // }
+
+                val useNativeDashboard = GlassesStore.get("core", "use_native_dashboard") as? Boolean ?: false
+                if (useNativeDashboard) {
+                    showDashboard()
+                } else {
+                    // toggle head up:
+                    GlassesStore.apply("glasses", "headUp", !isHeadUp)
+                }
             }
 
             // System exit: glasses killed our EvenHub page (user opened menu or another app)
@@ -3454,12 +3502,36 @@ class G2 : SGCManager() {
     private fun handleGestureCtrl(payload: ByteArray) {
         // Dashboard close detection: 08011A00 means dashboard closed
         if (payload.contentEquals(byteArrayOf(0x08, 0x01, 0x1A, 0x00))) {
-            Bridge.log("G2: gesture_ctrl response: dashboard closed")
-            // Re-send mic on / update mic state
-            GlassesStore.apply("glasses", "micEnabled", false)
-            CoreManager.getInstance().updateMicState()
-            // Reset the text container
-            sendTextWall(" ")
+            Bridge.log("G2: dashboard closed / shutdown - dashboardShowing=$dashboardShowing")
+            val useNativeDashboard = GlassesStore.get("core", "use_native_dashboard") as? Boolean ?: false
+            if (!useNativeDashboard) {
+                // make sure the container exists:
+                CoreManager.getInstance().sendCurrentState()
+                // re-send mic on / if it's enabled:
+                val micEnabled = GlassesStore.get("glasses", "micEnabled") as? Boolean ?: false
+                if (micEnabled) {
+                    restartMic()
+                }
+            } else {
+                // if we aren't trying to show the dashboard
+                // then we need to turn the mic back on and display the mentra main page:
+                if (dashboardShowing <= 1) {
+                    dashboardShowing = 0
+                    // make sure the container exists:
+                    CoreManager.getInstance().sendCurrentState()
+                    // set the mic back on if it should be on
+                    val micEnabled = GlassesStore.get("glasses", "micEnabled") as? Boolean ?: false
+                    if (micEnabled) {
+                        restartMic()
+                    }
+                    return
+                }
+                // do nothing this time since we just closed the dashboard
+                dashboardShowing -= 1
+                if (dashboardShowing < 0) {
+                    dashboardShowing = 0
+                }
+            }
         }
     }
 

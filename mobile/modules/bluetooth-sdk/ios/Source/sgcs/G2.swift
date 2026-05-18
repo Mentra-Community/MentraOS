@@ -150,6 +150,12 @@ private struct ProtobufWriter {
         }
     }
 
+    mutating func writeInt64Field(_ fieldNumber: Int, _ value: Int64) {
+        let tag = UInt64(fieldNumber << 3) | 0 // wire type 0 = varint
+        writeVarint(tag)
+        writeVarint(UInt64(bitPattern: value))
+    }
+
     mutating func writeStringField(_ fieldNumber: Int, _ value: String) {
         let tag = UInt64(fieldNumber << 3) | 2 // wire type 2 = length-delimited
         writeVarint(tag)
@@ -518,19 +524,48 @@ private enum DevSettingsProto {
         return w.data
     }
 
-    /// DevCfgDataPackage with TIME_SYNC command
+    /// DevCfgDataPackage with TIME_SYNC command.
+    /// TimeSync submessage: f1 = (Unix seconds + TZ offset seconds) as Int32, no TZ field.
+    /// Firmware appears to ignore the TZ field, so we pre-shift the timestamp itself
+    /// to make UTC interpretation read as local. Empirically confirmed via probe variants in dbg1().
     static func timeSync(magicRandom: Int32) -> Data {
         var w = ProtobufWriter()
         w.writeInt32Field(1, DevCfgCommandId.timeSync.rawValue)
         w.writeInt32Field(2, magicRandom)
 
-        // TimeSync: field 1 = timestamp (int32), field 2 = timezone (int32)
         var tsW = ProtobufWriter()
-        let timestamp = Int32(Date().timeIntervalSince1970)
-        tsW.writeInt32Field(1, timestamp)
-        let tz = Int32(TimeZone.current.secondsFromGMT() / 3600)
-        tsW.writeInt32Field(2, tz)
+        let nowSec = Int64(Date().timeIntervalSince1970)
+        let tzSec = Int64(TimeZone.current.secondsFromGMT())
+        tsW.writeInt32Field(1, Int32(truncatingIfNeeded: nowSec + tzSec))
         w.writeMessageField(128, tsW.data) // timeSync (field 128 in DevCfgDataPackage)
+        return w.data
+    }
+
+    /// Parameterized TIME_SYNC for probing the right wire format from dbg1().
+    /// - tsField:   protobuf field # for the timestamp varint (typically 1)
+    /// - tsValue:   raw timestamp varint value
+    /// - tsBits64:  encode timestamp as Int64 (true) or Int32 (false)
+    /// - tzField:   protobuf field # for TZ (nil to omit entirely)
+    /// - tzValue:   TZ value to write if tzField != nil
+    static func timeSyncVariant(
+        magicRandom: Int32,
+        tsField: Int, tsValue: Int64, tsBits64: Bool,
+        tzField: Int?, tzValue: Int32
+    ) -> Data {
+        var w = ProtobufWriter()
+        w.writeInt32Field(1, DevCfgCommandId.timeSync.rawValue)
+        w.writeInt32Field(2, magicRandom)
+
+        var tsW = ProtobufWriter()
+        if tsBits64 {
+            tsW.writeInt64Field(tsField, tsValue)
+        } else {
+            tsW.writeInt32Field(tsField, Int32(truncatingIfNeeded: tsValue))
+        }
+        if let tzField = tzField {
+            tsW.writeInt32Field(tzField, tzValue)
+        }
+        w.writeMessageField(128, tsW.data)
         return w.data
     }
 
@@ -2520,23 +2555,6 @@ class G2: NSObject, SGCManager {
 
     func dbg1() {
         Bridge.log("G2: dbg1()")
-
-        // // send a shutdown message
-        // let msg = EvenHubProto.shutdownMessage()
-        // sendEvenHubCommand(msg)
-        // pageCreated = false
-        // currentTextContent = ""
-
-        // DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-        //     guard let self = self else { return }
-        //     // self.sendShutdown()
-        //     // runAuthSequence()
-        //     runDashboardSequence()
-        // }
-
-        // connectController("1B:08:26:8E:0E:E6")
-        // connectController()
-        showDashboard()
     }
 
     func dbg2() {
@@ -2629,6 +2647,14 @@ class G2: NSObject, SGCManager {
 
     func sendReboot() {
         // TODO: Implement via dev_settings
+    }
+
+    /// Push the current time to the glasses. Useful after DST transitions,
+    /// time-zone travel, or a long sleep where the glasses' clock has drifted.
+    func syncTime() {
+        Bridge.log("G2: syncTime()")
+        let msg = DevSettingsProto.timeSync(magicRandom: sendManager.nextMagicRandom())
+        sendDevSettingsCommand(msg)
     }
 
     func sendRgbLedControl(

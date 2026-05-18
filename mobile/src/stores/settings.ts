@@ -306,6 +306,13 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  twelve_hour_time: {
+    key: "twelve_hour_time",
+    defaultValue: () => true,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   enforce_local_transcription: {
     key: "enforce_local_transcription",
     defaultValue: () => false,
