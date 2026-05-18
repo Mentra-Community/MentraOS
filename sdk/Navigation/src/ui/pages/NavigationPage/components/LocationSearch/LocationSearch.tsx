@@ -5,7 +5,7 @@ import {useRpc} from "@mentra/miniapp/ui"
 
 import "@/shared/channels"
 import type {Channels} from "@/shared/channels"
-import type {PlaceDetails, PlaceSuggestion} from "@/shared/types"
+import type {PlaceDetails, PlaceSuggestion, SavedPlace} from "@/shared/types"
 import {useNavStore} from "@/ui/store/navStore"
 import { safeHeadingSearchPill, safeHeadingSearchResults } from "@/ui/components/SafeHeading/SafeHeading"
 
@@ -50,7 +50,9 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
   const [query, setQuery] = useState("")
   const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([])
   const [recentSearches, setRecentSearches] = useState<PlaceDetails[]>([])
-  const [savedPlaces, setSavedPlaces] = useState<{label: string; place: PlaceDetails}[]>([])
+  const [savedPlaces, setSavedPlaces] = useState<
+    {label: string; place: PlaceDetails; type?: "home" | "work"}[]
+  >([])
   const [, setOpen] = useState(false)
   const [focused, setFocused] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -87,11 +89,12 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
       .catch(() => {})
     mentra
       .request("storage:list-saved", undefined as never)
-      .then((all) => {
+      .then((all: SavedPlace[]) => {
         setSavedPlaces(
           all.map((place) => ({
-            label: place.savedName || place.name || place.address,
+            label: place.savedName || (place.type === "home" ? "Home" : place.type === "work" ? "Work" : place.name) || place.address,
             place,
+            type: place.type,
           })),
         )
       })
@@ -237,7 +240,7 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
                   {/* Saved places grid */}
                   {savedPlaces.length > 0 && (
                     <div className="grid grid-cols-4 gap-3 px-4 py-4 border-b border-[#0000000A]">
-                      {savedPlaces.map(({label, place}) => (
+                      {savedPlaces.map(({label, place, type}) => (
                         <button
                           key={place.placeId + label}
                           type="button"
@@ -245,7 +248,7 @@ export function LocationSearch({selected, onSelect, onClear, disabled, devFrozen
                           onClick={() => pickRecent(place)}
                           className="flex flex-col items-center gap-2 rounded-2xl bg-[#F5F5F5] border border-[#0000000A] p-3">
                           <div className="flex items-center justify-center size-10 rounded-xl bg-[#1A1A1A] shrink-0">
-                            <SavedPlaceStarIcon />
+                            <SavedPlaceIcon type={type} />
                           </div>
                           <div className="w-full text-center">
                             <div className="text-[#000000E6] font-sans font-semibold text-[13px] leading-4 truncate">{label}</div>
@@ -345,4 +348,28 @@ function SavedPlaceStarIcon() {
       <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" fill="#FFFFFF" />
     </svg>
   )
+}
+
+function HomeIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M3 12 L12 4 L21 12 L21 20 H14 V14 H10 V20 H3 Z" fill="#FFFFFF" />
+    </svg>
+  )
+}
+
+function WorkIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="3" y="8" width="18" height="13" rx="1.5" fill="#FFFFFF" />
+      <path d="M9 8 V5 H15 V8" stroke="#FFFFFF" strokeWidth="2" fill="none" />
+    </svg>
+  )
+}
+
+/** Resolve the chip icon for a saved place by its tag ("home"/"work"/none). */
+function SavedPlaceIcon({type}: {type?: "home" | "work"}) {
+  if (type === "home") return <HomeIcon />
+  if (type === "work") return <WorkIcon />
+  return <SavedPlaceStarIcon />
 }
