@@ -1,12 +1,14 @@
 /// <reference types="bun-types" />
 import {describe, expect, test} from "bun:test"
 
-import {MiniappStreamType} from "@mentra/miniapp"
+import {MiniappStreamType, type StartNavigationOptions} from "@mentra/miniapp"
 
 import {connectedSession, pushEvent} from "../helpers"
 
-import startInput from "./fixtures/start.input.json"
+import startInputJson from "./fixtures/start.input.json"
 import routeWithTurn from "./fixtures/route-with-turn.event.json"
+
+const startInput = startInputJson as StartNavigationOptions
 
 describe("navigation.pivots", () => {
   test("getPivots is empty before any onRoute event", async () => {

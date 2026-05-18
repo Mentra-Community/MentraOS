@@ -23,13 +23,13 @@ describe("navigation.onUpdate", () => {
 
   test("preserves NavManeuver field shape end-to-end", async () => {
     const {session, transport} = await connectedSession({location: true})
-    let received: Record<string, unknown> | null = null
+    const received: Record<string, unknown>[] = []
     session.navigation.onUpdate((u) => {
-      received = u as Record<string, unknown>
+      received.push(u as Record<string, unknown>)
     })
 
     pushEvent(transport, MiniappStreamType.NAVIGATION_UPDATE, maneuverPayload)
-    expect(received).toEqual(maneuverPayload)
+    expect(received[0]).toEqual(maneuverPayload)
   })
 
   test("unsubscribe stops further deliveries", async () => {
