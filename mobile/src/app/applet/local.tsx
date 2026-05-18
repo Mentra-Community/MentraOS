@@ -380,7 +380,17 @@ export default function LocalMiniAppPage() {
         onContentProcessDidTerminate={handleTerminate}
         onError={handleError}
         onNavigationStateChange={handleNavStateChange}
-        allowsBackForwardNavigationGestures={webViewCanGoBack}
+        // ALWAYS true — matches /applet/webview. WKWebView only arms
+        // its back-forward snapshot system when this is true at
+        // *mount* time. If we wait until the SPA calls
+        // history.pushState to flip it on, the snapshot for history
+        // index 0 (the home screen) never gets captured, so a
+        // subsequent swipe-back reveals a blank screen instead of the
+        // previous route's content. The flag has no downside — when
+        // there's no in-WebView history, the gesture is a no-op and
+        // React Navigation's route-level swipe (forced on via
+        // setForceGestureEnabled below) handles exit to the parent app.
+        allowsBackForwardNavigationGestures={true}
         bounces={false}
         overScrollMode="never"
         automaticallyAdjustContentInsets={false}
