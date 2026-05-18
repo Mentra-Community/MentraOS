@@ -77,6 +77,7 @@ export class PhotoManager {
         size,
         hasCustomWebhook: !!customWebhookUrl,
         hasAuthToken: !!authToken,
+        rawExposureTimeNs: appRequest.exposureTimeNs,
       },
       "Processing App photo request.",
     );
@@ -157,7 +158,7 @@ export class PhotoManager {
           sound,
           exposureTimeNs: includeExposure ? expNs : undefined,
         },
-        `PHOTO_REQUEST command sent to glasses (flash=${flash}, sound=${sound}).`,
+        `PHOTO PIPELINE [cloud] PHOTO_REQUEST sent to phone websocket (flash=${flash}, sound=${sound}).`,
       );
 
       // If using custom webhook URL, resolve immediately since glasses won't send response back to cloud

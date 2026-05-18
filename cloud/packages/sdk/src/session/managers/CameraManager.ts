@@ -28,12 +28,12 @@ export interface PhotoOptions {
   compression?: "none" | "medium" | "heavy";
   saveToGallery?: boolean;
   sound?: boolean;
-  timeout?: number;
   /**
    * Sensor exposure time for this photo request only, in nanoseconds (Camera2 `SENSOR_EXPOSURE_TIME`).
-   * Not saved as a camera preference. Invalid or unsupported values fall back to auto exposure on device.
+   * Not saved as a camera preference. Omit for auto exposure. Invalid or unsupported values fall back to auto exposure on device.
    */
   exposureTimeNs?: number;
+  timeout?: number;
 }
 
 export interface PhotoData {

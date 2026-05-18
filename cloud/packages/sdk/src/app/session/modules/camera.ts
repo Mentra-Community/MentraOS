@@ -225,6 +225,7 @@ export class CameraModule {
             saveToGallery: options?.saveToGallery,
             hasCustomWebhook: !!options?.customWebhookUrl,
             hasAuthToken: !!options?.authToken,
+            exposureTimeNs: includeExp ? expNs : undefined,
           },
           `📸 Photo request sent`,
         );
