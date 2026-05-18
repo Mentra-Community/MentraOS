@@ -1152,8 +1152,8 @@ public class MediaCaptureService {
             return;
         }
 
-        // Note: No need to check CameraNeoService.isCameraInUse() for photos
-        // The camera's keep-alive system handles rapid photo taking gracefully
+        // Note: No isCapturingPhoto guard here — button photos enqueue into PhotoRequestQueue
+        // so rapid presses serialize through CameraNeoService burst reuse (not CAMERA_BUSY).
 
         // Add milliseconds and a random component to ensure uniqueness even in rapid capture
         String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(new Date());
@@ -1214,7 +1214,6 @@ public class MediaCaptureService {
                 size,
                 enableFlash,
                 false,  // isFromSdk - button photo, use high quality resolution
-                // 100_000_000L,  // exposureTimeNs — 100ms manual exposure for button photos
                 null,  // exposureTimeNs — auto exposure for button photos
                 new CameraNeoService.PhotoCaptureCallback() {
                     @Override

@@ -55,6 +55,14 @@ public final class PhotoSession {
 
     private volatile CurrentRequest currentRequest;
 
+    /**
+     * Last camera pipeline config (size / SDK / exposure) applied to the open session.
+     * Survives {@link #clearCurrentRequest()} so queued burst shots can reuse the session
+     * without a false-positive reconfiguration after the previous shot completes.
+     */
+    @Nullable
+    private volatile ConfiguredCameraConfig configuredCameraConfig;
+
     private volatile AeStateMachine.ShotState shotState = AeStateMachine.ShotState.IDLE;
     private final AeStateMachine aeStateMachine = new AeStateMachine();
 
@@ -216,10 +224,22 @@ public final class PhotoSession {
 
     private void loadCurrentRequest(PhotoRequest pr) {
         currentRequest = CurrentRequest.from(pr);
+        rememberConfiguredCamera(pr);
     }
 
     private void clearCurrentRequest() {
         currentRequest = null;
+    }
+
+    private void rememberConfiguredCamera(PhotoRequest pr) {
+        if (pr != null) {
+            configuredCameraConfig = ConfiguredCameraConfig.from(pr);
+        }
+    }
+
+    /** Clears the configured-camera snapshot when the HAL session is torn down. */
+    public void onCameraClosed() {
+        configuredCameraConfig = null;
     }
 
     private int getJpegQualityForSize() {
@@ -247,28 +267,22 @@ public final class PhotoSession {
     // ----- Dispatch -----
 
     /**
-     * Compares {@code request} to the active session's current request (size, SDK flag, exposure).
+     * Compares {@code request} to the active session camera config (size, SDK flag, exposure).
+     * Uses {@link #configuredCameraConfig} when {@link #currentRequest} was cleared after a shot.
      * Must be called before {@link #loadCurrentRequest(PhotoRequest)} mutates current state.
      */
     private boolean needsReconfigurationForPhotoRequest(PhotoRequest request) {
         if (request == null) {
             return true;
         }
-        String previousSize = currentSize();
-        boolean previousIsFromSdk = currentIsFromSdk();
-        Long previousExposureNs = currentExposureTimeNs();
-
-        boolean sizeChanged = false;
-        if (previousSize != null && request.size != null) {
-            sizeChanged = !previousSize.equals(request.size);
-        } else if (previousSize == null && request.size != null) {
-            sizeChanged = true;
-        } else if (previousSize != null && request.size == null) {
-            sizeChanged = true;
+        ConfiguredCameraConfig baseline = configuredCameraConfig;
+        if (baseline == null && currentRequest != null) {
+            baseline = ConfiguredCameraConfig.from(currentRequest);
         }
-        boolean sdkFlagChanged = (previousIsFromSdk != request.isFromSdk);
-        boolean exposureChanged = !Objects.equals(previousExposureNs, request.exposureTimeNs);
-        return sizeChanged || sdkFlagChanged || exposureChanged;
+        if (baseline == null) {
+            return false;
+        }
+        return baseline.differsFrom(request);
     }
 
     public void dispatchNextPhotoRequest() {
@@ -944,6 +958,41 @@ public final class PhotoSession {
 
     public int previewJpegQuality() {
         return getJpegQualityForSize();
+    }
+
+    /**
+     * Immutable snapshot of camera pipeline parameters for burst reuse decisions.
+     */
+    private static final class ConfiguredCameraConfig {
+        @Nullable
+        final String size;
+        final boolean isFromSdk;
+        @Nullable
+        final Long exposureTimeNs;
+
+        ConfiguredCameraConfig(@Nullable String size, boolean isFromSdk, @Nullable Long exposureTimeNs) {
+            this.size = size;
+            this.isFromSdk = isFromSdk;
+            this.exposureTimeNs = exposureTimeNs;
+        }
+
+        static ConfiguredCameraConfig from(PhotoRequest request) {
+            return new ConfiguredCameraConfig(request.size, request.isFromSdk, request.exposureTimeNs);
+        }
+
+        static ConfiguredCameraConfig from(CurrentRequest request) {
+            return new ConfiguredCameraConfig(request.size, request.isFromSdk, request.exposureTimeNs);
+        }
+
+        boolean differsFrom(PhotoRequest request) {
+            if (!Objects.equals(size, request.size)) {
+                return true;
+            }
+            if (isFromSdk != request.isFromSdk) {
+                return true;
+            }
+            return !Objects.equals(exposureTimeNs, request.exposureTimeNs);
+        }
     }
 
     /**
