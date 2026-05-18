@@ -121,7 +121,7 @@ fun SystemScreen(controller: MentraExampleController) {
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Icon(Icons.Outlined.Refresh, null, tint = if (connected) AppColor.ink else AppColor.red, modifier = Modifier.size(11.dp))
-                    Text(if (connected) "Scan" else "Connect first", color = if (connected) AppColor.ink else AppColor.red, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text(if (connected) "Scan" else "Connect glasses", color = if (connected) AppColor.ink else AppColor.red, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
             Spacer(Modifier.height(4.dp))

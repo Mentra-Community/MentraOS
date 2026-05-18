@@ -1294,7 +1294,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (!isGlassesConnected()) {
             state = state.copy(
                 glassesMediaVolume = null,
-                glassesVolumeStatus = "Glasses volume: connect first",
+                glassesVolumeStatus = "Glasses volume: connect glasses",
             )
             return
         }

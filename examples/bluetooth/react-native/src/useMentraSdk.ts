@@ -164,7 +164,6 @@ export type MentraSdkActions = {
   clearDisplay: () => Promise<void>;
   connect: () => Promise<void>;
   connectDevice: (device: Device) => Promise<void>;
-  connectFirst: () => Promise<void>;
   disconnect: () => Promise<void>;
   displayHello: () => Promise<void>;
   forgetCurrentWifiNetwork: () => Promise<void>;
@@ -603,7 +602,7 @@ export function useMentraSdk(): MentraSdkModel {
       setBluetoothStatus((current) => ({...current, searchResults: []}));
       const devices = await BluetoothSdk.scan(model, {
         timeoutMs: 10_000,
-        onResults: (nextDevices) => {
+        onResults: (nextDevices: Device[]) => {
           setBluetoothStatus((current) => ({
             ...current,
             searchResults: nextDevices,
@@ -631,20 +630,6 @@ export function useMentraSdk(): MentraSdkModel {
         throw new Error('Choose one of the discovered glasses first.');
       }
       throw new Error('Scan first to choose nearby glasses.');
-    });
-  }
-
-  async function connectFirst() {
-    const model = selectedScanModel;
-    await runAction(`Connect first ${scanModelLabel(model)}`, async () => {
-      if (!(await ensureAndroidPermissions('connect first'))) {
-        throw new Error('Bluetooth permissions are required to scan and connect.');
-      }
-      setSelectedDiscoveredDevice(null);
-      setBluetoothStatus((current) => ({...current, searchResults: []}));
-      const device = await BluetoothSdk.connectFirst(model);
-      setSelectedDiscoveredDevice(device);
-      addEvent('BLE', `connectFirst selected ${device.name}`);
     });
   }
 
@@ -1635,7 +1620,6 @@ export function useMentraSdk(): MentraSdkModel {
     clearDisplay,
     connect,
     connectDevice,
-    connectFirst,
     copyGalleryHotspotPassword,
     copyGalleryServerUrl,
     disconnect,
