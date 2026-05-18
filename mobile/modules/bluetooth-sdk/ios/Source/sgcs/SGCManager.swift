@@ -89,6 +89,7 @@ protocol SGCManager {
     func sendHotspotState(_ enabled: Bool)
     func sendOtaStart()
     func sendOtaQueryStatus()
+    func sendOtaRetryVersionCheck()
 
     // MARK: - User Context (for crash reporting)
 
@@ -126,6 +127,15 @@ extension SGCManager {
     // MARK: - Dashboard Menu (default no-op — only G2 supports this)
 
     func setDashboardMenu(_: [[String: Any]]) {}
+
+    /// Default no-op; Mentra Live overrides when phone detects clock skew during gallery sync.
+    func sendSetSystemTime(_: Int64) {
+        Bridge.log("SGC: sendSetSystemTime not supported")
+    }
+
+    func sendOtaRetryVersionCheck() {
+        Bridge.log("SGC: sendOtaRetryVersionCheck not supported")
+    }
 
     // MARK: - Default GlassesStore-backed property implementations
 

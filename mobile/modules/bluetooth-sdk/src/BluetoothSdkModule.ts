@@ -61,6 +61,8 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   sendWifiCredentials(ssid: string, password: string): Promise<void>
   forgetWifiNetwork(ssid: string): Promise<void>
   setHotspotState(enabled: boolean): Promise<void>
+  /** Mentra Live: set glasses system clock when phone detects skew during gallery sync. */
+  setSystemTime(timestampMs: number): Promise<void>
   /** Logs current WiFi frequency (MHz) and 5 GHz band to Android logcat. */
   logCurrentWifiFrequency(): Promise<void>
 
@@ -81,6 +83,7 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   // OTA Commands
   sendOtaStart(): Promise<void>
   sendOtaQueryStatus(): Promise<void>
+  retryOtaVersionCheck(): Promise<void>
 
   // Version Info Commands
   requestVersionInfo(): Promise<void>

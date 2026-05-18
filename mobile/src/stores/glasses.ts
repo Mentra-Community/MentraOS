@@ -9,6 +9,7 @@ export function isGlassesLinkLayerBusy(connectionState: string | undefined): boo
 }
 
 interface GlassesState extends GlassesStatus {
+  systemTimeMs: number
   wifiStatusKnown: boolean
   setGlassesInfo: (info: GlassesInfoUpdate) => void
   setBatteryInfo: (batteryLevel: number, charging: boolean, caseBatteryLevel: number, caseCharging: boolean) => void
@@ -85,6 +86,7 @@ export const getGlasesInfoPartial = (state: GlassesStatus) => {
 }
 
 interface GlassesStore extends GlassesStatus {
+  systemTimeMs: number
   mtkUpdatedThisSession: boolean
   wifiStatusKnown: boolean
   otaStatus: OtaStatus | null
@@ -107,6 +109,7 @@ const initialState: GlassesStore = {
   leftMacAddress: "",
   rightMacAddress: "",
   buildNumber: "",
+  systemTimeMs: 0,
   otaVersionUrl: "",
   appVersion: "",
   bluetoothName: "",
@@ -259,6 +262,10 @@ export const useGlassesStore = create<GlassesState>()(
     reset: () => set(initialState),
   })),
 )
+
+export function getGlassesSystemTimeMs(): number {
+  return useGlassesStore.getState().systemTimeMs ?? 0
+}
 
 export const waitForGlassesState = <K extends keyof GlassesState>(
   key: K,

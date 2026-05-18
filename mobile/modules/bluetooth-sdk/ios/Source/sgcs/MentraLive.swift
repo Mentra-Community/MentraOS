@@ -2003,6 +2003,7 @@ class MentraLive: NSObject, SGCManager {
 
             Bridge.log("LIVE: 📱 OTA status - step \(osCurrentStep)/\(osTotalSteps) \(osPhase) \(osStatus) \(osOverallPercent)%")
 
+            let glassesTimeMs = (json["glasses_time_ms"] as? NSNumber)?.int64Value ?? 0
             Bridge.sendOtaStatus(
                 sessionId: osSessionId,
                 totalSteps: osTotalSteps,
@@ -2012,7 +2013,8 @@ class MentraLive: NSObject, SGCManager {
                 stepPercent: osStepPercent,
                 overallPercent: osOverallPercent,
                 status: osStatus,
-                errorMessage: osErrorMessage
+                errorMessage: osErrorMessage,
+                glassesTimeMs: glassesTimeMs > 0 ? glassesTimeMs : nil
             )
 
         case "ota_progress":
@@ -2089,6 +2091,9 @@ class MentraLive: NSObject, SGCManager {
                 }
                 if let btMacAddress = fields["bt_mac_address"] as? String {
                     GlassesStore.shared.apply("glasses", "btMacAddress", btMacAddress)
+                }
+                if let systemTimeMs = fields["system_time_ms"] as? NSNumber {
+                    GlassesStore.shared.apply("glasses", "systemTimeMs", systemTimeMs.int64Value)
                 }
 
                 // Send fields immediately to RN - no waiting for other chunks
@@ -2387,6 +2392,17 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
+    func sendSetSystemTime(_ timestampMs: Int64) {
+        Bridge.log("LIVE: ⏰ Sending set_system_time: \(timestampMs)")
+
+        let json: [String: Any] = [
+            "type": "set_system_time",
+            "timestamp_ms": timestampMs,
+        ]
+
+        sendJson(json, wakeUp: true)
+    }
+
     func sendUserEmailToGlasses(_ email: String) {
         Bridge.log("LIVE: Sending user email to glasses for crash reporting")
 
@@ -2492,6 +2508,17 @@ class MentraLive: NSObject, SGCManager {
 
         let json: [String: Any] = [
             "type": "ota_query_status",
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+        ]
+
+        sendJson(json, wakeUp: true)
+    }
+
+    func sendOtaRetryVersionCheck() {
+        Bridge.log("LIVE: ⏰ Sending ota_retry_version_check command to glasses")
+
+        let json: [String: Any] = [
+            "type": "ota_retry_version_check",
             "timestamp": Int(Date().timeIntervalSince1970 * 1000),
         ]
 

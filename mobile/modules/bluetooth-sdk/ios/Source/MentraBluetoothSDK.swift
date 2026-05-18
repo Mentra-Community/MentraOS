@@ -2151,6 +2151,10 @@ public final class MentraBluetoothSDK {
         CoreManager.shared.setHotspotState(enabled)
     }
 
+    public func setSystemTime(timestampMs: Int64) {
+        CoreManager.shared.setSystemTime(timestampMs)
+    }
+
     public func requestPhoto(_ request: PhotoRequest) {
         CoreManager.shared.photoRequest(
             request.requestId,
@@ -2215,6 +2219,10 @@ public final class MentraBluetoothSDK {
 
     public func sendOtaQueryStatus() {
         CoreManager.shared.sendOtaQueryStatus()
+    }
+
+    public func retryOtaVersionCheck() {
+        CoreManager.shared.retryOtaVersionCheck()
     }
 
     public func sendShutdown() {

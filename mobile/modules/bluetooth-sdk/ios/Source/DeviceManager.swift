@@ -1160,6 +1160,11 @@ struct ViewState {
         sgc?.sendHotspotState(enabled)
     }
 
+    func setSystemTime(_ timestampMs: Int64) {
+        Bridge.log("MAN: Setting glasses system time: \(timestampMs)")
+        sgc?.sendSetSystemTime(timestampMs)
+    }
+
     func queryGalleryStatus() {
         Bridge.log("MAN: 📸 Querying gallery status from glasses")
         sgc?.queryGalleryStatus()
@@ -1176,6 +1181,11 @@ struct ViewState {
     func sendOtaQueryStatus() {
         Bridge.log("MAN: 📱 Sending OTA query status command to glasses")
         (sgc as? MentraLive)?.sendOtaQueryStatus()
+    }
+
+    func retryOtaVersionCheck() {
+        Bridge.log("MAN: ⏰ Retrying glasses OTA version check after clock sync")
+        (sgc as? MentraLive)?.sendOtaRetryVersionCheck()
     }
 
     /// Request version info from glasses.

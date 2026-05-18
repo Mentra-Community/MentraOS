@@ -1,5 +1,6 @@
 package com.mentra.core.sgcs
 
+import com.mentra.core.Bridge
 import com.mentra.core.GlassesStore
 import com.mentra.core.utils.ConnTypes
 
@@ -98,6 +99,11 @@ abstract class SGCManager {
     abstract fun sendWifiCredentials(ssid: String, password: String)
     abstract fun forgetWifiNetwork(ssid: String)
     abstract fun sendHotspotState(enabled: Boolean)
+
+    /** Set glasses system clock (Mentra Live only; no-op on other devices). */
+    open fun sendSetSystemTime(timestampMs: Long) {
+        Bridge.log("SGC: sendSetSystemTime not supported on $type")
+    }
 
     // User Context (for crash reporting)
     abstract fun sendUserEmailToGlasses(email: String)

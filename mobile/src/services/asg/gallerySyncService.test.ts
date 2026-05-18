@@ -79,8 +79,13 @@ jest.mock("@/services/asg/mediaProcessingQueue", () => ({
   },
 }))
 
+const mockSyncWithServer = jest.fn()
+
 jest.mock("@/services/asg/asgCameraApi", () => ({
-  asgCameraApi: {},
+  asgCameraApi: {
+    syncWithServer: (...args: unknown[]) => mockSyncWithServer(...args),
+    setServer: jest.fn(),
+  },
 }))
 
 jest.mock("@/i18n", () => ({
@@ -143,5 +148,103 @@ describe("GallerySyncService", () => {
     expect(useGallerySyncStore.getState().syncState).toBe("requesting_hotspot")
     expect(useGallerySyncStore.getState().syncServiceOpenedHotspot).toBe(true)
     expect(CoreModule.setHotspotState).toHaveBeenCalledWith(true)
+  })
+
+  describe("resolveSyncManifest (clock skew)", () => {
+    const resolveSyncManifest = (clientId: string, lastSyncTime: number) =>
+      (gallerySyncService as any).resolveSyncManifest(clientId, lastSyncTime)
+
+    beforeEach(() => {
+      mockSyncWithServer.mockReset()
+    })
+
+    it("fixes glasses clock and retries full sync when watermark is ahead of server time", async () => {
+      const phoneNow = Date.now()
+      const glassesServerTime = phoneNow - 32 * 24 * 60 * 60 * 1000
+      const futureWatermark = phoneNow
+
+      mockSyncWithServer
+        .mockResolvedValueOnce({
+          data: {server_time: glassesServerTime, changed_files: [], client_id: "c1"},
+        })
+        .mockResolvedValueOnce({
+          data: {
+            server_time: phoneNow,
+            changed_files: [{name: "IMG_1.jpg", size: 1, modified: glassesServerTime}],
+            client_id: "c1",
+          },
+        })
+
+      const resultPromise = resolveSyncManifest("c1", futureWatermark)
+      await jest.advanceTimersByTimeAsync(600)
+      const result = await resultPromise
+
+      expect(CoreModule.setSystemTime).toHaveBeenCalledTimes(1)
+      expect(mockSyncWithServer).toHaveBeenNthCalledWith(1, "c1", futureWatermark, true)
+      expect(mockSyncWithServer).toHaveBeenNthCalledWith(2, "c1", 0, true)
+      expect(result).not.toBeNull()
+      expect(result?.syncData.changed_files).toHaveLength(1)
+    })
+
+    it("does not call setSystemTime when clocks are aligned", async () => {
+      const now = Date.now()
+      mockSyncWithServer.mockResolvedValue({
+        data: {
+          server_time: now,
+          changed_files: [{name: "a.jpg", size: 1}],
+          client_id: "c1",
+        },
+      })
+
+      await resolveSyncManifest("c1", now - 1000)
+
+      expect(CoreModule.setSystemTime).not.toHaveBeenCalled()
+    })
+
+    it("retries with last_sync_time=0 when empty but glasses have content", async () => {
+      const now = Date.now()
+      useGallerySyncStore.getState().setGlassesGalleryStatus(2, 1, 3, true)
+
+      mockSyncWithServer
+        .mockResolvedValueOnce({
+          data: {server_time: now, changed_files: [], client_id: "c1"},
+        })
+        .mockResolvedValueOnce({
+          data: {server_time: now, changed_files: [{name: "b.jpg", size: 1}], client_id: "c1"},
+        })
+
+      const result = await resolveSyncManifest("c1", now - 5000)
+
+      expect(CoreModule.setSystemTime).not.toHaveBeenCalled()
+      expect(mockSyncWithServer).toHaveBeenNthCalledWith(2, "c1", 0, true)
+      expect(result?.syncData.changed_files).toHaveLength(1)
+    })
+
+    it("returns null when still empty and glasses report content", async () => {
+      const now = Date.now()
+      useGallerySyncStore.getState().setGlassesGalleryStatus(1, 0, 1, true)
+
+      mockSyncWithServer.mockResolvedValue({
+        data: {server_time: now, changed_files: [], client_id: "c1"},
+      })
+
+      const result = await resolveSyncManifest("c1", now - 5000)
+
+      expect(result).toBeNull()
+    })
+
+    it("allows legitimate empty sync when glasses have no content", async () => {
+      const now = Date.now()
+      useGallerySyncStore.getState().setGlassesGalleryStatus(0, 0, 0, false)
+
+      mockSyncWithServer.mockResolvedValue({
+        data: {server_time: now, changed_files: [], client_id: "c1"},
+      })
+
+      const result = await resolveSyncManifest("c1", now - 5000)
+
+      expect(result).not.toBeNull()
+      expect(result?.syncData.changed_files).toHaveLength(0)
+    })
   })
 })

@@ -94,6 +94,7 @@ export const coreModuleMock = {
   sendWifiCredentials: jest.fn(() => Promise.resolve()),
   forgetWifiNetwork: jest.fn(() => Promise.resolve()),
   setHotspotState: jest.fn(() => Promise.resolve()),
+  setSystemTime: jest.fn(() => Promise.resolve()),
   logCurrentWifiFrequency: jest.fn(() => Promise.resolve()),
   queryGalleryStatus: jest.fn(() => Promise.resolve()),
   photoRequest: jest.fn(() => Promise.resolve()),

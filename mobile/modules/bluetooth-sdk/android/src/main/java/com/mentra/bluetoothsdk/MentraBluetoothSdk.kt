@@ -277,6 +277,10 @@ class MentraBluetoothSdk private constructor(
         deviceManager.setHotspotState(enabled)
     }
 
+    fun setSystemTime(timestampMs: Long) {
+        deviceManager.setSystemTime(timestampMs)
+    }
+
     fun requestPhoto(request: PhotoRequest) {
         deviceManager.photoRequest(
             request.requestId,
@@ -336,6 +340,10 @@ class MentraBluetoothSdk private constructor(
 
     fun sendOtaQueryStatus() {
         deviceManager.sendOtaQueryStatus()
+    }
+
+    fun retryOtaVersionCheck() {
+        deviceManager.retryOtaVersionCheck()
     }
 
     fun sendShutdown() {

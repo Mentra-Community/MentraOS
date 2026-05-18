@@ -335,6 +335,10 @@ class CoreModule : Module() {
             sdk?.setHotspotState(enabled)
         }
 
+        AsyncFunction("setSystemTime") { timestampMs: Double ->
+            sdk?.setSystemTime(timestampMs.toLong())
+        }
+
         // MARK: - Gallery Commands
 
         AsyncFunction("setGalleryMode") { mode: String ->
@@ -377,6 +381,8 @@ class CoreModule : Module() {
         AsyncFunction("sendOtaStart") { sdk?.sendOtaStart() }
 
         AsyncFunction("sendOtaQueryStatus") { sdk?.sendOtaQueryStatus() }
+
+        AsyncFunction("retryOtaVersionCheck") { sdk?.retryOtaVersionCheck() }
 
         // MARK: - Version Info Commands
 

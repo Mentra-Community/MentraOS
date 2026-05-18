@@ -1260,6 +1260,11 @@ class CoreManager {
         sgc?.sendHotspotState(enabled)
     }
 
+    fun setSystemTime(timestampMs: Long) {
+        Bridge.log("MAN: Setting glasses system time: $timestampMs")
+        sgc?.sendSetSystemTime(timestampMs)
+    }
+
     fun queryGalleryStatus() {
         Bridge.log("MAN: Querying gallery status from glasses")
         sgc?.queryGalleryStatus()
@@ -1277,6 +1282,11 @@ class CoreManager {
     fun sendOtaQueryStatus() {
         Bridge.log("MAN: 📱 Sending OTA query status command to glasses")
         (sgc as? MentraLive)?.sendOtaQueryStatus()
+    }
+
+    fun retryOtaVersionCheck() {
+        Bridge.log("MAN: ⏰ Retrying glasses OTA version check after clock sync")
+        (sgc as? MentraLive)?.sendOtaRetryVersionCheck()
     }
 
     /**

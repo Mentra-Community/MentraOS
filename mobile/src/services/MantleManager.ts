@@ -13,6 +13,7 @@ import {migrate} from "@/services/Migrations"
 import restComms from "@/services/RestComms"
 import socketComms from "@/services/SocketComms"
 import {gallerySyncService} from "@/services/asg/gallerySyncService"
+import {handleOtaClockSkewFromGlasses} from "@/services/asg/glassesClockSync"
 import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
 import {
   appRegistry,
@@ -908,6 +909,12 @@ class MantleManager {
             useGlassesStore.getState().setOtaProgress(legacyOtaProgressFromOtaStatusEvent(normalized))
           } catch (err) {
             console.warn("MANTLE: ota_status legacy otaProgress mapping failed", err)
+          }
+
+          if (status.status === "failed") {
+            const raw = event as Record<string, unknown>
+            const glassesTimeMs = Number(raw.glasses_time_ms ?? raw.glassesTimeMs ?? 0) || undefined
+            void handleOtaClockSkewFromGlasses(normalized.error_message, glassesTimeMs)
           }
 
           if (status.status === "complete" || status.status === "failed") {
