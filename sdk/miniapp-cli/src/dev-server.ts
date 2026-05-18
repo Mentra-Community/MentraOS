@@ -161,9 +161,10 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
     websocket: {
       open(ws) {
         sockets.add(ws)
-        log(
-          `${COLOR.dim}[__mentra_dev]${COLOR.reset} client connected (${ws.data.remoteAddress})`,
-        )
+        // Quiet on connect — the `reload` line tells the dev their
+        // device is plugged into the sidecar. Otherwise normal HMR
+        // cycles (which respawn the JSContext + WebView) spam
+        // connected/disconnected pairs per filesystem change.
       },
       message(ws, message) {
         let parsed: Inbound
@@ -197,7 +198,9 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
       },
       close(ws) {
         sockets.delete(ws)
-        log(`${COLOR.dim}[__mentra_dev]${COLOR.reset} client disconnected`)
+        // Quiet on disconnect — see open(); steady-state HMR cycles
+        // through this constantly and there's nothing the dev does
+        // with the signal.
       },
     },
   })
@@ -265,7 +268,13 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
         }
       }
       if (count > 0) {
-        log(`${COLOR.cyan}[__mentra_dev]${COLOR.reset} ${type} → ${count} client(s) (${filename})`)
+        // Concise reload line — match React Native Metro's style.
+        // `reload` covers the common case; `respawn-bg` is rarer so
+        // we tag it explicitly so the dev knows the JSContext is
+        // restarting (which clears in-memory state in the
+        // controller).
+        const verb = type === "respawn-bg" ? "respawn-bg" : "reload"
+        log(`${COLOR.cyan}${verb}${COLOR.reset} ${COLOR.dim}${filename}${COLOR.reset}`)
       }
     }, RELOAD_DEBOUNCE_MS)
   })

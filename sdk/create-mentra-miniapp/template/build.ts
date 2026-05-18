@@ -74,6 +74,6 @@ if (!uiResult.success) {
   process.exit(1)
 }
 
-console.log(
-  `Built background (${backgroundResult.outputs.length}) + UI (${uiResult.outputs.length}) files into ${distDir}/`,
-)
+// Silence on success — the dev-server's `reload →` line is the
+// developer-facing confirmation. Failures already print via the
+// .success branches above.
