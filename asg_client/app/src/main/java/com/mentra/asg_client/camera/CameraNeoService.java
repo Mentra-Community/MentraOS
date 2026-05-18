@@ -977,6 +977,7 @@ public class CameraNeoService extends LifecycleService {
             }
             cameraCoordinator.closeDeviceAndSession();
             photoSession.closeImageReadersIfPresent();
+            photoSession.onCameraClosed();
             if (videoSession != null) {
                 videoSession.release();
             }
