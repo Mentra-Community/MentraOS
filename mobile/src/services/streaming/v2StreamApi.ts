@@ -18,6 +18,25 @@ export interface RestreamDestination {
 /** Caller-facing shape: either a bare URL string or the full object. */
 export type RestreamDestinationInput = string | RestreamDestination
 
+/**
+ * Mirror of CloudflareOutput in
+ * cloud/packages/cloud/src/services/streaming/CloudflareStreamService.ts.
+ * Kept structurally identical so the cloud→phone JSON round-trip type-checks.
+ */
+export interface CloudflareOutput {
+  uid: string
+  url: string
+  enabled: boolean
+  created?: string
+  modified?: string
+  status?: {
+    current?: {
+      state: "connected" | "disconnected" | "error" | null
+      lastError?: string
+    }
+  }
+}
+
 export interface ProvisionResult {
   liveInputId: string
   rtmpUrl: string
@@ -26,7 +45,7 @@ export interface ProvisionResult {
   dashUrl: string
   webrtcUrl?: string
   webrtcPublishUrl?: string
-  outputs?: Array<{id: string; url: string; status?: string}>
+  outputs?: CloudflareOutput[]
 }
 
 export interface CloudflareStatus {

@@ -19,9 +19,13 @@ Target end state: phone owns streaming orchestration end-to-end. Cloud exposes a
 
 1. **Don't touch cloud-1 streaming code.** Existing handlers, lifecycle controllers, Cloudflare service, REST routes — all stay. Cloud-SDK apps keep working.
 2. **All new mobile code lives in self-contained files** with clear names so cloud-2 port is a copy job.
-3. **One new cloud surface, and only one** — a stateless Cloudflare proxy. No registry, no timers, no WebSocket emission. Lives in `cloud/.../api/hono/routes/v2/streams.routes.ts` as one file you can lift verbatim.
+3. **One new cloud surface, and only one** — a stateless Cloudflare proxy. No registry, no timers, no WebSocket emission. Lives in `cloud/packages/cloud/src/api/hono/client/v2/streams.api.ts` as one file you can lift verbatim. Mounted at `/api/v2/client/streams/managed`.
 4. **Keep `session.stream.*` SDK surface byte-identical.** Miniapp authors don't notice the re-plumb.
 5. **Status events stay first-class.** Miniapps subscribed to `stream_status` keep receiving updates whether they came from glasses or from Cloudflare.
+
+> **Where heartbeat lives.** OS-1437 talks about keep-alive/heartbeat; in this design it lives entirely on the phone — `PhoneStreamCoordinator` instantiates a `StreamLifecycleController` per active stream and exchanges `keep_stream_alive` / `keep_alive_ack` frames with the glasses over BLE. Cloud has no heartbeat responsibility because cloud no longer owns the stream lifecycle.
+>
+> **Why provision doesn't take `packageName`.** Cloud-1 routes used `packageName` to fan responses back to the originating app via its WebSocket session. The v2 route is REST-only and the phone owns response routing: the phone tracks which `packageName`(s) are subscribed to each `liveInputId` locally. Cloud only needs to know who's authorized (via JWT email) to provision/teardown.
 
 ## Architecture
 

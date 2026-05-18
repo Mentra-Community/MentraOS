@@ -177,7 +177,7 @@ describe("PhoneStreamCoordinator", () => {
       await coord.startManaged("com.a", {})
       await expect(
         coord.startManaged("com.b", {
-          restreamDestinations: [{url: "rtmp://yt", streamKey: "yt"}],
+          restreamDestinations: [{url: "rtmp://yt/STREAM-KEY", name: "YT"}],
         }),
       ).rejects.toBeInstanceOf(StreamConflictError)
     })
@@ -266,6 +266,88 @@ describe("PhoneStreamCoordinator", () => {
       await new Promise((r) => setTimeout(r, 5))
       expect(stopStream).toHaveBeenCalled()
       expect(coord.owns(streamId)).toBe(false)
+    })
+  })
+
+  describe("concurrency / transition lock", () => {
+    test("two concurrent startManaged calls only provision once and share URLs", async () => {
+      // Make the underlying provision slow so the two callers genuinely
+      // overlap (without the lock, both would pass the precheck).
+      provisionManagedStream.mockImplementationOnce(async () => {
+        await new Promise((r) => setTimeout(r, 30))
+        return {
+          liveInputId: "cf-input-test",
+          rtmpUrl: "rtmp://ingest.test/abc",
+          srtUrl: "srt://ingest.test/abc",
+          hlsUrl: "https://playback.test/abc/manifest/video.m3u8",
+          dashUrl: "https://playback.test/abc/manifest/video.mpd",
+          webrtcUrl: "https://playback.test/abc/whep",
+          webrtcPublishUrl: "https://ingest.test/abc/whip",
+          outputs: [],
+        }
+      })
+      const coord = new PhoneStreamCoordinator({
+        hlsReadinessInitialDelayMs: 5,
+        hlsReadinessPollMs: 5,
+        cloudflareStatusPollMs: 1000,
+        keepAliveIntervalMs: 10_000,
+      })
+      const [a, b] = await Promise.all([
+        coord.startManaged("com.a", {}),
+        coord.startManaged("com.b", {}),
+      ])
+      expect(a.streamId).toBe(b.streamId)
+      expect(provisionManagedStream).toHaveBeenCalledTimes(1)
+      expect(startStream).toHaveBeenCalledTimes(1)
+    })
+
+    test("concurrent startUnmanaged calls — second rejects, first wins", async () => {
+      // Slow the first BLE start so the two callers overlap.
+      startStream.mockImplementationOnce(async () => {
+        await new Promise((r) => setTimeout(r, 30))
+      })
+      const coord = new PhoneStreamCoordinator({
+        hlsReadinessInitialDelayMs: 5,
+        hlsReadinessPollMs: 5,
+        cloudflareStatusPollMs: 1000,
+        keepAliveIntervalMs: 10_000,
+      })
+      const results = await Promise.allSettled([
+        coord.startUnmanaged("com.a", {streamUrl: "rtmp://a"}),
+        coord.startUnmanaged("com.b", {streamUrl: "rtmp://b"}),
+      ])
+      const fulfilled = results.filter((r) => r.status === "fulfilled")
+      const rejected = results.filter((r) => r.status === "rejected")
+      expect(fulfilled).toHaveLength(1)
+      expect(rejected).toHaveLength(1)
+      expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(StreamConflictError)
+      expect(startStream).toHaveBeenCalledTimes(1)
+    })
+
+    test("stop waits for an in-flight start to finish before calling stopStream", async () => {
+      // Slow the BLE start; the stop should queue behind it.
+      const order: string[] = []
+      startStream.mockImplementationOnce(async () => {
+        order.push("start-begin")
+        await new Promise((r) => setTimeout(r, 30))
+        order.push("start-end")
+      })
+      stopStream.mockImplementationOnce(async () => {
+        order.push("stop")
+      })
+      const coord = new PhoneStreamCoordinator({
+        hlsReadinessInitialDelayMs: 5,
+        hlsReadinessPollMs: 5,
+        cloudflareStatusPollMs: 1000,
+        keepAliveIntervalMs: 10_000,
+      })
+      const startP = coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+      // Fire stop before start has resolved. Without the lock, stop would
+      // immediately call CoreModule.stopStream and clear `current`, racing
+      // with the still-in-flight start.
+      const stopP = coord.stop("com.a")
+      await Promise.all([startP, stopP])
+      expect(order).toEqual(["start-begin", "start-end", "stop"])
     })
   })
 })

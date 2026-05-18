@@ -139,9 +139,35 @@ export class PhoneStreamCoordinator {
   private statusSubscriber: StatusSubscriber | null = null
   private idCounter = 0
   private readonly timings: typeof DEFAULT_TIMINGS
+  /**
+   * Serializes state transitions (start, stop, teardown). Without it, a
+   * second `start*` racing with the first can pass the `this.current === null`
+   * pre-check while the first is still awaiting its provision/BLE work, and
+   * end up provisioning two separate streams. A teardown racing with a start
+   * can clear `current` mid-stop and let the start fire BLE writes that
+   * collide with the in-flight stopStream.
+   */
+  private inFlight: Promise<void> = Promise.resolve()
 
   constructor(timings: CoordinatorTimings = {}) {
     this.timings = {...DEFAULT_TIMINGS, ...timings}
+  }
+
+  /**
+   * Run `work` under the transition lock. Each call awaits the previous
+   * transition before re-evaluating preconditions, so e.g. two concurrent
+   * `startManaged` calls are observed sequentially.
+   */
+  private async runExclusive<T>(work: () => Promise<T>): Promise<T> {
+    const prev = this.inFlight
+    let release!: () => void
+    this.inFlight = new Promise<void>((r) => (release = r))
+    try {
+      await prev
+      return await work()
+    } finally {
+      release()
+    }
   }
 
   /**
@@ -166,153 +192,175 @@ export class PhoneStreamCoordinator {
     packageName: string,
     opts: StartUnmanagedOptions,
   ): Promise<{streamId: string}> {
+    // Pre-check the obvious-bad input before queueing — the lock is for
+    // serializing state transitions, not for validating arguments.
     if (!opts.streamUrl || typeof opts.streamUrl !== "string") {
       throw new StreamConflictError("STREAM_URL_REQUIRED", "streamUrl is required")
     }
-    if (this.current) {
-      throw new StreamConflictError(
-        "STREAM_ALREADY_ACTIVE",
-        `A ${this.current.kind} stream is already active. Stop it before starting a new one.`,
-      )
-    }
+    return this.runExclusive(async () => {
+      if (this.current) {
+        throw new StreamConflictError(
+          "STREAM_ALREADY_ACTIVE",
+          `A ${this.current.kind} stream is already active. Stop it before starting a new one.`,
+        )
+      }
 
-    const streamId = this.mintId("u")
-    const entry: UnmanagedEntry = {
-      kind: "unmanaged",
-      streamId,
-      packageName,
-      streamUrl: opts.streamUrl,
-    }
-    this.current = entry
-
-    try {
-      await CoreModule.startStream({
-        type: "start_stream",
-        streamUrl: opts.streamUrl,
+      const streamId = this.mintId("u")
+      const entry: UnmanagedEntry = {
+        kind: "unmanaged",
         streamId,
-        keepAlive: true,
-        keepAliveIntervalSeconds: this.timings.keepAliveIntervalMs / 1000,
-        flash: opts.flash ?? true,
-        sound: opts.sound ?? true,
-        video: opts.video as never,
-        audio: opts.audio as never,
-      })
-    } catch (err) {
-      this.current = null
-      throw err
-    }
+        packageName,
+        streamUrl: opts.streamUrl,
+      }
+      // Claim the slot BEFORE the BLE call so a concurrent caller waiting on
+      // the lock sees the in-progress entry and rejects with the conflict.
+      this.current = entry
 
-    this.startLifecycle(streamId)
-    return {streamId}
+      try {
+        await CoreModule.startStream({
+          type: "start_stream",
+          streamUrl: opts.streamUrl,
+          streamId,
+          keepAlive: true,
+          keepAliveIntervalSeconds: this.timings.keepAliveIntervalMs / 1000,
+          flash: opts.flash ?? true,
+          sound: opts.sound ?? true,
+          video: opts.video as never,
+          audio: opts.audio as never,
+        })
+      } catch (err) {
+        this.current = null
+        throw err
+      }
+
+      this.startLifecycle(streamId)
+      return {streamId}
+    })
   }
 
   async startManaged(
     packageName: string,
     opts: StartManagedOptions,
   ): Promise<ManagedStartResult> {
-    if (this.current && this.current.kind === "unmanaged") {
-      throw new StreamConflictError(
-        "STREAM_ALREADY_ACTIVE",
-        "An unmanaged stream is already active. Stop it before starting a managed stream.",
-      )
-    }
+    // Two-phase: the entry-claim runs under the transition lock; the wait for
+    // HLS readiness happens AFTER the lock releases so a long warm-up doesn't
+    // block subsequent start/stop transitions on this coordinator.
+    type JoinDecision =
+      | {kind: "join"; entry: ManagedEntry; immediate: ManagedStartResult | null}
+      | {kind: "fresh"; entry: ManagedEntry}
 
-    // Join an existing managed stream if one is already running.
-    if (this.current && this.current.kind === "managed") {
-      const existing = this.current
-      // Restream destinations are immutable after provision — a second caller
-      // trying to dictate destinations on an already-live stream is a likely
-      // bug or a feature we don't yet support.
-      if (opts.restreamDestinations && opts.restreamDestinations.length > 0) {
+    const decision = await this.runExclusive(async (): Promise<JoinDecision> => {
+      if (this.current && this.current.kind === "unmanaged") {
         throw new StreamConflictError(
-          "STREAM_DESTINATIONS_LOCKED",
-          "Restream destinations cannot be modified on an already-running managed stream.",
+          "STREAM_ALREADY_ACTIVE",
+          "An unmanaged stream is already active. Stop it before starting a managed stream.",
         )
       }
-      existing.subscribers.add(packageName)
-      if (existing.hlsReady) {
-        return {
-          streamId: existing.streamId,
-          liveInputId: existing.liveInputId,
-          hlsUrl: existing.hlsUrl,
-          dashUrl: existing.dashUrl,
-          webrtcUrl: existing.webrtcUrl,
+
+      // Join an existing managed stream if one is already running.
+      if (this.current && this.current.kind === "managed") {
+        const existing = this.current
+        // Restream destinations are immutable after provision — a second
+        // caller trying to dictate destinations on an already-live stream
+        // is a likely bug or a feature we don't yet support.
+        if (opts.restreamDestinations && opts.restreamDestinations.length > 0) {
+          throw new StreamConflictError(
+            "STREAM_DESTINATIONS_LOCKED",
+            "Restream destinations cannot be modified on an already-running managed stream.",
+          )
         }
+        existing.subscribers.add(packageName)
+        const immediate: ManagedStartResult | null = existing.hlsReady
+          ? {
+              streamId: existing.streamId,
+              liveInputId: existing.liveInputId,
+              hlsUrl: existing.hlsUrl,
+              dashUrl: existing.dashUrl,
+              webrtcUrl: existing.webrtcUrl,
+            }
+          : null
+        return {kind: "join", entry: existing, immediate}
       }
-      // HLS not yet ready — wait for the in-flight readiness poll to land.
-      return new Promise<ManagedStartResult>((resolve, reject) => {
-        existing.hlsReadyResolvers.push(resolve)
-        existing.hlsReadyRejecters.push(reject)
-      })
-    }
 
-    // Fresh provision.
-    const provision = await provisionManagedStream(opts.restreamDestinations)
-    const streamId = this.mintId("m")
-    const ingestUrl = pickIngestUrl(provision)
+      // Fresh provision — claim slot BEFORE awaiting Cloudflare so a
+      // concurrent caller queued behind us sees a managed stream in flight
+      // and joins instead of double-provisioning.
+      const provision = await provisionManagedStream(opts.restreamDestinations)
+      const streamId = this.mintId("m")
+      const ingestUrl = pickIngestUrl(provision)
 
-    const entry: ManagedEntry = {
-      kind: "managed",
-      streamId,
-      liveInputId: provision.liveInputId,
-      ingestUrl,
-      hlsUrl: provision.hlsUrl,
-      dashUrl: provision.dashUrl,
-      webrtcUrl: provision.webrtcUrl,
-      subscribers: new Set([packageName]),
-      hlsReady: false,
-      hlsReadyResolvers: [],
-      hlsReadyRejecters: [],
-      hlsAttempts: 0,
-    }
-    this.current = entry
-
-    try {
-      await CoreModule.startStream({
-        type: "start_stream",
-        streamUrl: ingestUrl,
+      const entry: ManagedEntry = {
+        kind: "managed",
         streamId,
-        keepAlive: true,
-        keepAliveIntervalSeconds: this.timings.keepAliveIntervalMs / 1000,
-        flash: true,
-        sound: true,
-      })
-    } catch (err) {
-      this.current = null
-      await teardownManagedStream(provision.liveInputId).catch(() => undefined)
-      throw err
+        liveInputId: provision.liveInputId,
+        ingestUrl,
+        hlsUrl: provision.hlsUrl,
+        dashUrl: provision.dashUrl,
+        webrtcUrl: provision.webrtcUrl,
+        subscribers: new Set([packageName]),
+        hlsReady: false,
+        hlsReadyResolvers: [],
+        hlsReadyRejecters: [],
+        hlsAttempts: 0,
+      }
+      this.current = entry
+
+      try {
+        await CoreModule.startStream({
+          type: "start_stream",
+          streamUrl: ingestUrl,
+          streamId,
+          keepAlive: true,
+          keepAliveIntervalSeconds: this.timings.keepAliveIntervalMs / 1000,
+          flash: true,
+          sound: true,
+        })
+      } catch (err) {
+        this.current = null
+        await teardownManagedStream(provision.liveInputId).catch(() => undefined)
+        throw err
+      }
+
+      this.startLifecycle(streamId)
+      this.startCloudflareStatusPoll(entry)
+      this.startHlsReadinessPoll(entry)
+      return {kind: "fresh", entry}
+    })
+
+    if (decision.kind === "join" && decision.immediate) {
+      return decision.immediate
     }
 
-    this.startLifecycle(streamId)
-    this.startCloudflareStatusPoll(entry)
-    this.startHlsReadinessPoll(entry)
-
+    // Wait for HLS readiness OUTSIDE the lock — readiness can take ~10s and
+    // we don't want to block other transitions for that long.
     return new Promise<ManagedStartResult>((resolve, reject) => {
-      entry.hlsReadyResolvers.push(resolve)
-      entry.hlsReadyRejecters.push(reject)
+      decision.entry.hlsReadyResolvers.push(resolve)
+      decision.entry.hlsReadyRejecters.push(reject)
     })
   }
 
   async stop(packageName: string, streamId?: string): Promise<void> {
-    if (!this.current) return
+    await this.runExclusive(async () => {
+      if (!this.current) return
 
-    // If a streamId was passed but doesn't match, ignore — silent no-op
-    // matches the cloud's tolerant behavior.
-    if (streamId && this.current.streamId !== streamId) return
+      // If a streamId was passed but doesn't match, ignore — silent no-op
+      // matches the cloud's tolerant behavior.
+      if (streamId && this.current.streamId !== streamId) return
 
-    if (this.current.kind === "managed") {
-      const entry = this.current
-      entry.subscribers.delete(packageName)
-      if (entry.subscribers.size > 0) {
-        // Other miniapps still subscribed; keep the stream alive.
+      if (this.current.kind === "managed") {
+        const entry = this.current
+        entry.subscribers.delete(packageName)
+        if (entry.subscribers.size > 0) {
+          // Other miniapps still subscribed; keep the stream alive.
+          return
+        }
+      } else if (this.current.packageName !== packageName) {
+        // Unmanaged stream: only the owner can stop it.
         return
       }
-    } else if (this.current.packageName !== packageName) {
-      // Unmanaged stream: only the owner can stop it.
-      return
-    }
 
-    await this.teardown("explicit_stop")
+      await this.teardownLocked("explicit_stop")
+    })
   }
 
   /**
@@ -331,11 +379,20 @@ export class PhoneStreamCoordinator {
       data: event as unknown as Record<string, unknown>,
     })
 
-    // Glasses-reported terminal states unwind the coordinator.
+    // Glasses-reported terminal states unwind the coordinator. Queue the
+    // teardown through the transition lock so it serializes with any
+    // start/stop currently in flight.
     const isError = event.kind === "error"
     const isStopped = event.kind === "lifecycle" && event.status === "stopped"
     if (isError || isStopped) {
-      void this.teardown(isError ? "glasses_error" : "glasses_stopped")
+      const reason = isError ? "glasses_error" : "glasses_stopped"
+      const targetStreamId = this.current.streamId
+      void this.runExclusive(async () => {
+        // The stream we wanted to tear down may already be gone (e.g. another
+        // teardown won the lock and unwound it). Guard before acting.
+        if (this.current?.streamId !== targetStreamId) return
+        await this.teardownLocked(reason)
+      })
     }
   }
 
@@ -379,7 +436,11 @@ export class PhoneStreamCoordinator {
             status: "error",
             data: {reason: "keep_alive_timeout"},
           })
-          await this.teardown("keep_alive_timeout")
+          await this.runExclusive(async () => {
+            // The stream this timeout was bound to may already be gone.
+            if (this.current?.streamId !== streamId) return
+            await this.teardownLocked("keep_alive_timeout")
+          })
         },
       },
     )
@@ -458,7 +519,11 @@ export class PhoneStreamCoordinator {
           status: "error",
           data: {reason: "hls_not_ready"},
         })
-        void this.teardown("hls_not_ready")
+        const targetStreamId = entry.streamId
+        void this.runExclusive(async () => {
+          if (this.current?.streamId !== targetStreamId) return
+          await this.teardownLocked("hls_not_ready")
+        })
       }
     }
     setTimeout(() => {
@@ -483,10 +548,20 @@ export class PhoneStreamCoordinator {
     }
   }
 
-  private async teardown(reason: string): Promise<void> {
+  /**
+   * Run teardown of the currently-active stream. Caller must hold the
+   * transition lock (see {@link runExclusive}). Keeps `this.current`
+   * populated until CoreModule.stopStream resolves so a concurrent caller
+   * waiting on the lock can't claim the slot mid-stop and have its
+   * startStream BLE write collide with our in-flight stopStream.
+   */
+  private async teardownLocked(reason: string): Promise<void> {
     const entry = this.current
     if (!entry) return
-    this.current = null
+
+    // Dispose the lifecycle controller immediately so it doesn't fire one
+    // more keep-alive against a stream we're tearing down. The transition
+    // lock guarantees no new lifecycle is started concurrently.
     this.lifecycle?.dispose()
     this.lifecycle = null
 
@@ -498,6 +573,9 @@ export class PhoneStreamCoordinator {
       for (const reject of entry.hlsReadyRejecters) reject(pendingErr)
       entry.hlsReadyResolvers = []
       entry.hlsReadyRejecters = []
+      // Cloudflare DELETE is fire-and-forget — failing it doesn't undo the
+      // BLE stop we're about to do, and Cloudflare's idle-input scavenger
+      // will eventually clean up leaked inputs.
       teardownManagedStream(entry.liveInputId).catch((err) => {
         console.warn("[STREAM] teardownManagedStream failed:", err)
       })
@@ -507,6 +585,12 @@ export class PhoneStreamCoordinator {
       await CoreModule.stopStream()
     } catch (err) {
       console.warn("[STREAM] CoreModule.stopStream failed:", err)
+    } finally {
+      // Release the slot AFTER the BLE stop finished, so the next start can
+      // safely write its own start_stream without colliding with ours.
+      // Only clear if we're still the active entry (defensive — runExclusive
+      // serializes us, so this should always be true).
+      if (this.current === entry) this.current = null
     }
   }
 }

@@ -97,6 +97,35 @@ describe("v2 streams API", () => {
       expect(createLiveInput).toHaveBeenCalledTimes(1);
     });
 
+    test("provisions a live input when the body is empty", async () => {
+      const res = await app.request("http://x/provision", {
+        method: "POST",
+        headers: authHeader(),
+      });
+      expect(res.status).toBe(200);
+      expect(createLiveInput).toHaveBeenCalledTimes(1);
+    });
+
+    test("rejects malformed JSON bodies with 400 instead of provisioning", async () => {
+      const res = await app.request("http://x/provision", {
+        method: "POST",
+        headers: authHeader(),
+        body: "{not-json",
+      });
+      expect(res.status).toBe(400);
+      expect(createLiveInput).not.toHaveBeenCalled();
+    });
+
+    test("rejects non-object JSON bodies with 400", async () => {
+      const res = await app.request("http://x/provision", {
+        method: "POST",
+        headers: authHeader(),
+        body: "[]",
+      });
+      expect(res.status).toBe(400);
+      expect(createLiveInput).not.toHaveBeenCalled();
+    });
+
     test("forwards object-shape restream destinations to the Cloudflare service", async () => {
       const destinations = [{ url: "rtmp://yt", name: "YouTube" }];
       const res = await app.request("http://x/provision", {

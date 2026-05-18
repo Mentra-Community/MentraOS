@@ -30,9 +30,10 @@ interface ManagedStartResult {
   webrtcUrl?: string
 }
 
-interface UnmanagedStartResult {
-  streamId: string
-}
+// SDK returns a bare string (the streamId) from startUnmanaged(). Modeling it
+// explicitly so the type guard below — `typeof result === "string"` vs object
+// shape — is exhaustive.
+type StartResult = string | ManagedStartResult
 
 type StatusEvent = {
   streamId?: string
@@ -47,11 +48,8 @@ export default function StreamingPage() {
   const [unmanagedUrl, setUnmanagedUrl] = useState("rtmp://")
 
   const lastResultEvent = latestByKind("result")
-  const result = lastResultEvent
-    ? ((lastResultEvent.payload as {result?: unknown}).result as
-        | ManagedStartResult
-        | UnmanagedStartResult
-        | undefined)
+  const result: StartResult | undefined = lastResultEvent
+    ? ((lastResultEvent.payload as {result?: unknown}).result as StartResult | undefined)
     : undefined
 
   // Status events, newest first, capped for sanity.
@@ -65,9 +63,11 @@ export default function StreamingPage() {
     [log],
   )
 
-  // Detect a managed stream by URL presence on the most-recent result.
-  const isManaged = result && "hlsUrl" in result
-  const managed = isManaged ? (result as ManagedStartResult) : null
+  // Distinguish the two shapes: unmanaged returns a bare streamId string,
+  // managed returns a {streamId, liveInputId, hlsUrl, ...} object.
+  const managed: ManagedStartResult | null =
+    result && typeof result === "object" && "hlsUrl" in result ? result : null
+  const unmanagedStreamId: string | null = typeof result === "string" ? result : null
 
   // Cloudflare hosted-player iframe. The streamId we get back is phone-minted
   // (`phone-m-...`), so use the Cloudflare liveInputId surfaced explicitly on
@@ -107,7 +107,7 @@ export default function StreamingPage() {
           <div className="mt-3 rounded-xl border border-border bg-muted/30 px-4 py-3 text-[12px]">
             <div className="font-semibold text-foreground">latest start result</div>
             <div className="mt-1 break-all font-mono text-muted-foreground">
-              streamId: {result.streamId}
+              streamId: {managed?.streamId ?? unmanagedStreamId}
             </div>
             {managed?.hlsUrl && (
               <div className="mt-1 break-all font-mono text-muted-foreground">

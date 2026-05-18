@@ -63,8 +63,32 @@ async function handleProvision(c: AppContext) {
   const reqLogger = c.get("logger") || logger;
   const email = c.get("email")!;
 
+  // Treat an empty body as "no destinations"; treat a non-empty body that
+  // fails to parse as a client bug and surface 400. The previous
+  // .catch(() => ({})) silently coerced bad JSON to an empty object, which
+  // would provision a Cloudflare input the caller didn't really ask for.
+  let body: Record<string, unknown> = {};
+  const raw = await c.req.text();
+  if (raw.trim().length > 0) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        body = parsed as Record<string, unknown>;
+      } else {
+        return c.json(
+          { success: false, message: "Request body must be a JSON object" },
+          400,
+        );
+      }
+    } catch {
+      return c.json(
+        { success: false, message: "Request body is not valid JSON" },
+        400,
+      );
+    }
+  }
+
   try {
-    const body = await c.req.json().catch(() => ({}));
 
     // restreamDestinations accepts either plain URL strings or
     // {url, name?} objects. Strings are normalized to objects; the canonical
