@@ -473,7 +473,7 @@ export class LocalStorageService {
       } catch (error) {
         console.error(`[LocalStorage] Error clearing sync queue (attempt ${attempt}/3):`, error)
         if (attempt < 3) {
-          await new Promise((resolve) => BgTimer.setTimeout(resolve, 100))
+          await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), 100))
         }
       }
     }

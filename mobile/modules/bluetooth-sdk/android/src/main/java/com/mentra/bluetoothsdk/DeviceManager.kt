@@ -169,7 +169,7 @@ class CoreManager {
         set(value) = GlassesStore.apply("core", "dashboard_depth", value)
 
     private var galleryMode: Boolean
-        get() = GlassesStore.store.get("core", "gallery_mode") as? Boolean ?: false
+        get() = GlassesStore.store.get("core", "gallery_mode") as? Boolean ?: true
         set(value) = GlassesStore.apply("core", "gallery_mode", value)
 
     // state:

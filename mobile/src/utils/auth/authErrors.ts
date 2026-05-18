@@ -1,10 +1,10 @@
-import {translate} from "@/i18n"
+import {translate, TxKeyPath} from "@/i18n"
 
 /**
  * Supabase Auth error code to translation key mapping.
  * Based on https://supabase.com/docs/guides/auth/debugging/error-codes
  */
-const ERROR_CODE_MAP: Record<string, string> = {
+const ERROR_CODE_MAP: Record<string, TxKeyPath> = {
   // Credentials errors
   invalid_credentials: "login:errors.invalidCredentials",
   anonymous_provider_disabled: "login:errors.enterCredentials",

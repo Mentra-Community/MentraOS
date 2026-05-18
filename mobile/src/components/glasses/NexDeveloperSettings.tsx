@@ -8,7 +8,7 @@ import ToggleSetting from "@/components/settings/ToggleSetting"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {translate} from "@/i18n/translate"
+import {translate} from "@/i18n"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {ThemedStyle} from "@/theme"
@@ -364,7 +364,8 @@ export default function NexDeveloperSettings() {
 
   const onSendImageClick = async () => {
     if (glassesConnected) {
-      await CoreModule.displayImage(selectedImageType, selectedImageSize)
+      console.warn("sendDisplayImage not yet implemented in Bluetooth SDK API")
+      console.log("Would display image:", selectedImageType, selectedImageSize)
     } else {
       showAlert("Please connect to the device", "Please connect to the device", [
         {
@@ -393,7 +394,8 @@ export default function NexDeveloperSettings() {
   const onLc3AudioToggle = async (enabled: boolean) => {
     setLc3AudioEnabled(enabled)
     if (glassesConnected) {
-      await CoreModule.setLc3AudioEnabled(enabled)
+      console.log("setLc3AudioEnabled", enabled)
+      console.warn("setLc3AudioEnabled not yet implemented in Bluetooth SDK API")
     }
   }
 
@@ -671,7 +673,6 @@ export default function NexDeveloperSettings() {
                 subtitle="Play audio received from glasses through LC3 codec"
                 value={lc3AudioEnabled}
                 onValueChange={onLc3AudioToggle}
-                containerStyle={$toggleContainer}
               />
             </View>
 

@@ -23,7 +23,7 @@ export default function OtaCheckForUpdatesScreen() {
   const currentBuildNumber = useGlassesStore((state) => state.buildNumber)
   const mtkFwVersion = useGlassesStore((state) => state.mtkFwVersion)
   const besFwVersion = useGlassesStore((state) => state.besFwVersion)
-  const glassesWifiConnected = useGlassesStore((state) => state.wifiConnected)
+  const glassesWifiConnected = useGlassesStore((state) => state.wifi.state === "connected")
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const deviceName = defaultWearable || "Glasses"
   const glassesConnected = useGlassesStore((state) => state.connected)
@@ -281,7 +281,7 @@ export default function OtaCheckForUpdatesScreen() {
   }
 
   const handleUpdateNow = () => {
-    if (!useGlassesStore.getState().wifiConnected) {
+    if (useGlassesStore.getState().wifi.state !== "connected") {
       console.log("OTA: Update Now pressed but glasses not on WiFi - pushing /wifi/scan")
       push("/wifi/scan")
       return

@@ -12,7 +12,7 @@ const STORE_PACKAGE_NAME = "org.augmentos.store"
 interface AppStoreWebviewPrefetchContextType {
   appStoreUrl: string
   webviewLoading: boolean
-  webViewRef: React.RefObject<WebView>
+  webViewRef: React.RefObject<WebView | null>
   reloadWebview: () => void
 }
 

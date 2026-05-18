@@ -52,6 +52,8 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   forgetController(): Promise<void>
   showDashboard(): Promise<void>
   ping(): Promise<void>
+  dbg1(): Promise<void>
+  dbg2(): Promise<void>
 
   // Incident Reporting
   sendIncidentId(incidentId: string, apiBaseUrl?: string | null): Promise<void>

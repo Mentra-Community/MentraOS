@@ -1,6 +1,15 @@
 import {storage} from "@/utils/storage/storage"
+import {Result} from "typesafe-ts"
 
 const VALUE_OBJECT = {x: 1}
+
+function expectOk<T>(result: Result<T, Error>): T {
+  expect(result.is_ok()).toBe(true)
+  if (result.is_error()) {
+    throw result.error
+  }
+  return result.value
+}
 
 describe("MMKV Storage", () => {
   beforeEach(() => {
@@ -19,19 +28,17 @@ describe("MMKV Storage", () => {
 
   it("should load data", () => {
     const objectResult = storage.load<object>("object")
-    expect(objectResult.is_ok()).toBe(true)
-    expect(objectResult.value).toEqual(VALUE_OBJECT)
+    expect(expectOk(objectResult)).toEqual(VALUE_OBJECT)
 
     const stringResult = storage.load<string>("string")
-    expect(stringResult.is_ok()).toBe(true)
-    expect(stringResult.value).toEqual("string")
+    expect(expectOk(stringResult)).toEqual("string")
   })
 
   it("should save objects", () => {
     storage.save("object", {y: 2})
-    expect(storage.load<object>("object").value).toEqual({y: 2})
+    expect(expectOk(storage.load<object>("object"))).toEqual({y: 2})
     storage.save("object", {z: 3, also: true})
-    expect(storage.load<object>("object").value).toEqual({z: 3, also: true})
+    expect(expectOk(storage.load<object>("object"))).toEqual({z: 3, also: true})
   })
 
   it("should remove data", () => {

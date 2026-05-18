@@ -358,7 +358,7 @@ data class BluetoothStatus(
                 dashboardDepth = numberValue(values, "dashboard_depth") ?: 2,
                 headUpAngle = numberValue(values, "head_up_angle") ?: 30,
                 contextualDashboard = boolValue(values, "contextual_dashboard") ?: true,
-                galleryModeAuto = boolValue(values, "gallery_mode") ?: false,
+                galleryModeAuto = boolValue(values, "gallery_mode") ?: true,
                 buttonPhotoSize = ButtonPhotoSize.fromValue(stringValue(values, "button_photo_size")),
                 buttonCameraLed = boolValue(values, "button_camera_led") ?: true,
                 buttonMaxRecordingTime = numberValue(values, "button_max_recording_time") ?: 10,

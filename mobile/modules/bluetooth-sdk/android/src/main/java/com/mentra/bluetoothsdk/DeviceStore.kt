@@ -120,7 +120,7 @@ object GlassesStore {
         store.set("core", "dashboard_depth", 2)
         store.set("core", "head_up_angle", 30)
         store.set("core", "contextual_dashboard", true)
-        store.set("core", "gallery_mode", false)
+        store.set("core", "gallery_mode", true)
         store.set("core", "screen_disabled", false)
         store.set("core", "button_photo_size", "medium")
         store.set("core", "button_camera_led", true)

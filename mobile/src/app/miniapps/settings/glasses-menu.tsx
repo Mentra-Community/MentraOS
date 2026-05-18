@@ -126,7 +126,7 @@ export default function GlassesMenuScreen() {
             ) : (
               <View style={{width: 32, height: 32, borderRadius: 8, backgroundColor: theme.colors.border}} />
             )}
-            <Text style={{color: theme.colors.foreground}} size="sm">
+            <Text style={{color: theme.colors.foreground}}>
               {item.name}
             </Text>
           </View>
@@ -161,7 +161,7 @@ export default function GlassesMenuScreen() {
             paddingHorizontal: theme.spacing.s4,
           }}>
           <Icon name="plus" size={20} color={theme.colors.primary} />
-          <Text style={{color: theme.colors.primary}} size="sm">
+          <Text style={{color: theme.colors.primary}}>
             {translate("settings:glassesMenuAddApp")}
           </Text>
         </Pressable>
@@ -192,7 +192,7 @@ export default function GlassesMenuScreen() {
                 borderBottomColor: theme.colors.border,
               }}>
               <AppIcon app={app} style={{width: 28, height: 28, borderRadius: 6}} disableLoader />
-              <Text style={{color: theme.colors.foreground}} size="sm">
+              <Text style={{color: theme.colors.foreground}}>
                 {app.name}
               </Text>
             </Pressable>

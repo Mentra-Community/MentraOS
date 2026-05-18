@@ -93,7 +93,7 @@ function createLazyAuthClient(): AuthClient {
         const c = await ensureInit()
         const method = c[prop]
         if (typeof method === "function") {
-          return method.apply(c, args)
+          return (method as (...args: unknown[]) => unknown).apply(c, args)
         }
         return method
       }

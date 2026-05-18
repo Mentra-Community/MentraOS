@@ -4,7 +4,7 @@
     "allowSyntheticDefaultImports": true,
     "experimentalDecorators": true,
     "jsx": "react-native",
-    "module": "es2015",
+    "module": "esnext",
     "moduleResolution": "bundler",
     "strict": true,
     "noImplicitAny": true,
@@ -31,5 +31,11 @@
     }
   },
   "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"],
-  "exclude": ["node_modules", "test/**/*"]
+  "exclude": [
+    "node_modules",
+    "test/**/*",
+    "e2e-tests/ui/**/*",
+    "modules/*/src/**/*.test.ts",
+    "modules/*/src/**/__tests__/**/*"
+  ]
 }
