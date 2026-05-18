@@ -13,10 +13,10 @@ import {ErrorRow, TableRow} from "./_TesterRow"
 
 export default function SystemPage() {
   const navigate = useNavigate()
-  // We open a tester subscription so the result/error events from `fire`
+  // We open a tester subscription so the result/error events from `invoke`
   // calls flow back here as `tester:event`s. The system module itself
   // has no streamed event surface.
-  const {log, fire, lastError} = useTester("system")
+  const {log, invoke, lastError} = useTester("system")
   const lastResult = [...log].reverse().find((e) => e.kind === "result")
   const [url, setUrl] = useState("https://mentra.glass")
   const [clipText, setClipText] = useState("Hello from session.system.copyToClipboard")
@@ -31,19 +31,19 @@ export default function SystemPage() {
         <Label htmlFor="sys-url">URL</Label>
         <Input id="sys-url" value={url} onChange={(e) => setUrl(e.target.value)} />
         <div className="mt-2 flex flex-wrap gap-2">
-          <Button onClick={() => fire("openUrl", [url])}>openUrl(url)</Button>
-          <Button onClick={() => fire("share", [{url, title: "Shared from Mentra"}])}>
+          <Button onClick={() => invoke("openUrl", [url])}>openUrl(url)</Button>
+          <Button onClick={() => invoke("share", [{url, title: "Shared from Mentra"}])}>
             share({"{"}url, title{"}"})
           </Button>
         </div>
         <Label htmlFor="sys-clip" className="mt-4 block">clipboard text</Label>
         <Input id="sys-clip" value={clipText} onChange={(e) => setClipText(e.target.value)} />
         <div className="mt-2 flex gap-2">
-          <Button onClick={() => fire("copyToClipboard", [clipText])}>copyToClipboard(text)</Button>
+          <Button onClick={() => invoke("copyToClipboard", [clipText])}>copyToClipboard(text)</Button>
         </div>
         <TableRow
           emoji="📨"
-          label="last fire() result"
+          label="last invoke() result"
           data={lastResult ? ((lastResult.payload as unknown) as Record<string, unknown>) : null}
         />
         <ErrorRow event={lastError} />

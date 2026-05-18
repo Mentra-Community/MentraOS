@@ -91,7 +91,7 @@ export function ErrorRow({event}: {event: import("../../../shared/types").Tester
     <div className="mb-2 rounded-xl border border-destructive bg-destructive/10 p-3 text-destructive">
       <div className="mb-1 flex items-center gap-2 text-[12px] font-semibold uppercase tracking-wider">
         <span className="text-base">⚠️</span>
-        <span>last fire() error</span>
+        <span>last invoke() error</span>
       </div>
       <div className="break-all text-[12px] font-mono">
         {method ? `${event.iface}.${method}: ` : `${event.iface}: `}

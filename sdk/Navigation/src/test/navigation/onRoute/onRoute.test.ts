@@ -11,13 +11,13 @@ import reroute from "./fixtures/reroute.events.json"
 describe("navigation.onRoute", () => {
   test("delivers the full NavRoute payload to subscribers", async () => {
     const {session, transport} = await connectedSession({location: true})
-    let received: Record<string, unknown> | null = null
+    const received: Record<string, unknown>[] = []
     session.navigation.onRoute((r) => {
-      received = r as Record<string, unknown>
+      received.push(r as Record<string, unknown>)
     })
 
     pushEvent(transport, MiniappStreamType.NAVIGATION_ROUTE, fullRoute)
-    expect(received).toEqual(fullRoute)
+    expect(received[0]).toEqual(fullRoute)
   })
 
   test("a reroute fires onRoute again with the full new polyline", async () => {

@@ -5,6 +5,13 @@
   "name": "Mentra Map",
   "description": "Turn-by-turn walking navigation with compass and Google Maps.",
   "icon": "icon.png",
+  "type": "standard",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "1.42.0",
+  "entry": {
+    "background": "dist/background/index.js",
+    "ui": "dist/ui/index.html"
+  },
   "permissions": [
     {"type": "LOCATION", "description": "Used for live position, compass heading, and turn-by-turn directions"}
   ],

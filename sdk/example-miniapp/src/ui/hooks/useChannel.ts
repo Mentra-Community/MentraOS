@@ -22,7 +22,14 @@ export function useChannel<C extends keyof Channels & string>(
 ): Channels[C] | undefined {
   const [value, setValue] = useState<Channels[C] | undefined>(initial)
   useEffect(() => {
-    return mentra.on(channel, (payload) => setValue(payload as Channels[C]))
+    // `mentra.on` rejects RPC channels at the type level. This hook is
+    // intentionally a thin pass-through over any channel name; the cast
+    // tells TS to trust the runtime — non-broadcast channels just won't
+    // receive a payload at runtime.
+    return (mentra.on as (c: string, cb: (p: unknown) => void) => () => void)(
+      channel,
+      (payload) => setValue(payload as Channels[C]),
+    )
   }, [channel])
   return value
 }

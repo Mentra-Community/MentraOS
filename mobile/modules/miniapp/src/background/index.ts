@@ -69,6 +69,8 @@ export type {SystemModule} from "../modules/system"
 export type {TranscriptionModule} from "../modules/transcription"
 export type {TranslationModule} from "../modules/translation"
 export type {UIModule, UIChannelHandler, UIUnsubscribe} from "../modules/ui"
+export type {Rpc, IsRpc, RpcReq, RpcRes, RpcRequestOptions, RpcHandlerContext} from "../modules/ui"
+export {MentraRpcError, MentraRpcTimeoutError} from "../modules/ui"
 
 // Argument enums + option types — for authors writing controllers that pass
 // these into session.* method calls (or that build typed helpers around them).

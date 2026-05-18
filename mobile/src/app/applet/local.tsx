@@ -9,6 +9,7 @@ import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {getMentraJS} from "@/services/mentraJsBootstrap"
 import {useNavigationStore} from "@/stores/navigation"
+import {useRegisterCapsule} from "@/stores/capsule"
 import {useStressTestStore} from "@/stores/stressTest"
 import {storage} from "@/utils/storage/storage"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
@@ -56,6 +57,7 @@ export default function LocalMiniAppPage() {
   goBackRef.current = goBack
 
   const webViewRef = useRef<WebView | null>(null)
+  const viewShotRef = useRef<View | null>(null)
   const [webViewCanGoBack, setWebViewCanGoBack] = useState(false)
   const [uiUri, setUiUri] = useState<string | null>(null)
   const [uiBaseDir, setUiBaseDir] = useState<string | null>(null)
@@ -250,14 +252,27 @@ export default function LocalMiniAppPage() {
     return () => setForceGestureEnabled(false)
   }, [webViewCanGoBack, setForceGestureEnabled])
 
-  // Hardware back / capsule back: pop the WebView's history first, else
-  // pop the route. Mirrors webview.tsx's handleWebViewBack.
-  useEffect(() => {
-    if (!packageName) return
-    // Currently no capsule registration here — the route's native
-    // back-swipe gesture handles exit. If we ever need capsule wiring,
-    // hook useRegisterCapsule with a handler that calls handleBack().
-  }, [packageName])
+  // Capsule menu back press: pop the WebView's history first, else pop
+  // the route. Mirrors webview.tsx's handleWebViewBack for the two-layer
+  // path so users get the same floating-X exit affordance.
+  const handleCapsuleBack = useCallback(() => {
+    if (webViewCanGoBack && webViewRef.current) {
+      webViewRef.current.goBack()
+      return
+    }
+    if (Platform.OS === "android") {
+      goBack()
+    }
+    // iOS handles the route pop via the gesture or the capsule's own
+    // captureScreenshot+exit pipeline inside useRegisterCapsule.
+  }, [webViewCanGoBack, goBack])
+
+  useRegisterCapsule({
+    packageName: packageName ?? "",
+    viewShotRef,
+    visibleOnRoutes: ["/applet/local"],
+    onBackPress: handleCapsuleBack,
+  })
 
   // Dev hot-reload: when the dev server signals a reload for THIS
   // miniapp (e.g. a file under src/ui/ changed), refresh the WebView.
@@ -346,7 +361,10 @@ export default function LocalMiniAppPage() {
   const injectedJS = `${globalsScript}\n${uiShim}`
 
   return (
-    <View className="flex-1" style={{backgroundColor: theme.colors.background}}>
+    <View
+      ref={viewShotRef}
+      className="flex-1"
+      style={{backgroundColor: theme.colors.background}}>
       <WebView
         ref={handleRef}
         source={{uri: uiUri}}
@@ -362,7 +380,17 @@ export default function LocalMiniAppPage() {
         onContentProcessDidTerminate={handleTerminate}
         onError={handleError}
         onNavigationStateChange={handleNavStateChange}
-        allowsBackForwardNavigationGestures={webViewCanGoBack}
+        // ALWAYS true — matches /applet/webview. WKWebView only arms
+        // its back-forward snapshot system when this is true at
+        // *mount* time. If we wait until the SPA calls
+        // history.pushState to flip it on, the snapshot for history
+        // index 0 (the home screen) never gets captured, so a
+        // subsequent swipe-back reveals a blank screen instead of the
+        // previous route's content. The flag has no downside — when
+        // there's no in-WebView history, the gesture is a no-op and
+        // React Navigation's route-level swipe (forced on via
+        // setForceGestureEnabled below) handles exit to the parent app.
+        allowsBackForwardNavigationGestures={true}
         bounces={false}
         overScrollMode="never"
         automaticallyAdjustContentInsets={false}

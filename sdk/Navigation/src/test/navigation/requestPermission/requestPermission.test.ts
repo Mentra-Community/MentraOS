@@ -1,8 +1,6 @@
 /// <reference types="bun-types" />
 import {describe, expect, test} from "bun:test"
 
-import {MiniappErrorCode} from "@mentra/miniapp"
-
 import {ackLatest, connectedSession, lastEnvelope} from "../helpers"
 
 import emitRequest from "./fixtures/emit-request.expected.json"
@@ -10,15 +8,12 @@ import androidAccepted from "./fixtures/android-accepted.response.json"
 import iosNotSupported from "./fixtures/ios-not-supported.response.json"
 
 describe("navigation.requestPermission", () => {
-  test("throws PERMISSION_NOT_DECLARED synchronously when LOCATION missing", async () => {
+  test("resolves with {ok: false, accepted: false, error: ...} when LOCATION not declared", async () => {
     const {session} = await connectedSession({location: false})
-    let caught: unknown
-    try {
-      session.navigation.requestPermission()
-    } catch (e) {
-      caught = e
-    }
-    expect((caught as {code: string}).code).toBe(MiniappErrorCode.PERMISSION_NOT_DECLARED)
+    const result = await session.navigation.requestPermission()
+    expect(result.ok).toBe(false)
+    expect(result.accepted).toBe(false)
+    expect(result.error).toMatch(/LOCATION permission not declared/)
   })
 
   test("emits NAVIGATION_REQUEST_PERMISSION with a requestId", async () => {

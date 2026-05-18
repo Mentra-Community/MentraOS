@@ -18,29 +18,44 @@
  * autocomplete and compile-time errors on channel names + payloads.
  */
 
-// `mentra` lives on the global scope; declare it for TS so import
-// `from "@mentra/miniapp/ui"` is enough to type-check `mentra.send(...)`.
-declare global {
-  // eslint-disable-next-line no-var
-  var mentra: MentraUiGlobal
-}
+import type {IsRpc, RpcReq, RpcRes, RpcRequestOptions} from "../modules/ui"
+export type {Rpc, IsRpc, RpcReq, RpcRes, RpcRequestOptions, RpcHandlerContext} from "../modules/ui"
+export {MentraRpcError, MentraRpcTimeoutError} from "../modules/ui"
 
-export interface MentraUiGlobal<TChannels extends Record<string, unknown> = Record<string, unknown>> {
+export interface MentraUiGlobal<TChannels extends object = Record<string, unknown>> {
   /**
-   * Send a typed message to the bound background JSContext.
-   *
-   * Buffered until `ready()` acks; once acked, fires immediately. The
-   * SDK never drops outbound user input — the WebView is the
-   * short-lived side and may unmount before its messages flush.
+   * Broadcast a typed message to the bound background JSContext.
+   * Buffered until `ready()` acks; once acked, fires immediately.
+   * Compile-error if `C` is an RPC channel — use `request()` instead.
    */
-  send<C extends keyof TChannels & string>(channel: C, payload: TChannels[C]): void
+  send<C extends keyof TChannels & string>(
+    channel: IsRpc<TChannels[C]> extends true ? never : C,
+    payload: TChannels[C],
+  ): void
 
   /**
-   * Subscribe to messages from the background. Returns an unsubscribe
-   * function. The handler persists across WebView open/close cycles
-   * within a single mount; close-then-remount installs a fresh shim.
+   * Subscribe to broadcast messages from the background. Compile-error
+   * if `C` is an RPC channel.
    */
-  on<C extends keyof TChannels & string>(channel: C, cb: (payload: TChannels[C]) => void): () => void
+  on<C extends keyof TChannels & string>(
+    channel: IsRpc<TChannels[C]> extends true ? never : C,
+    cb: (payload: TChannels[C]) => void,
+  ): () => void
+
+  /**
+   * Make an RPC call to the background `session.ui.handle(channel, ...)`
+   * handler. On failure, throws an `Error` whose `name` is one of:
+   *   - `"MentraRpcError"` — the handler threw. `err.cause?.code` may be set.
+   *   - `"MentraRpcTimeoutError"` — `options.timeout` elapsed.
+   *   - `"AbortError"` — `options.signal` aborted.
+   * Distinguish by `err.name`, not `instanceof` — these errors are
+   * constructed in the WebView's bare runtime scope. No default timeout.
+   */
+  request<C extends keyof TChannels & string>(
+    channel: IsRpc<TChannels[C]> extends true ? C : never,
+    payload: RpcReq<TChannels[C]>,
+    options?: RpcRequestOptions,
+  ): Promise<RpcRes<TChannels[C]>>
 
   /**
    * Fires when the bridge is open and `mentra.send` is flushable. If
@@ -79,18 +94,31 @@ export {useConnected} from "../react/useConnected"
 export {useSafeArea} from "../react/useSafeArea"
 export {useVisibility} from "../react/useVisibility"
 export {useCapsuleHeaderStyle} from "../react/useCapsuleHeaderStyle"
+export {useRpc, type RpcCallable} from "../react/useRpc"
 
 /**
  * Type helper for declaring a typed `mentra` global inside a miniapp.
  *
- * Usage in src/shared/channels.ts (or anywhere the type lives):
+ * Every mini app should declare ONE global `mentra` typed against its
+ * own channel registry. The SDK no longer auto-declares the global so
+ * each miniapp's registry doesn't collide with the SDK's default.
+ *
+ * Usage (in your miniapp's `src/shared/channels.ts`):
  *
  * ```ts
  * import type {MentraTyped} from "@mentra/miniapp/ui"
- * export type Channels = { 'add-note': {body: string} }
+ *
+ * export interface Channels {
+ *   "live-transcript": {text: string}
+ * }
+ *
  * declare global {
+ *   // eslint-disable-next-line no-var
  *   var mentra: MentraTyped<Channels>
  * }
  * ```
+ *
+ * Both halves of the miniapp (background + UI) import this same file,
+ * so the typed shape is consistent across the bridge.
  */
-export type MentraTyped<TChannels extends Record<string, unknown>> = MentraUiGlobal<TChannels>
+export type MentraTyped<TChannels extends object> = MentraUiGlobal<TChannels>

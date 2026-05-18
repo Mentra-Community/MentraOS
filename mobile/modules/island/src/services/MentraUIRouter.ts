@@ -110,7 +110,13 @@ export class MentraUIRouter {
    *   - {type: "heartbeat", seq}                     → silently ack
    */
   routeFromWebView(packageName: string, rawJson: string): void {
-    let env: {type?: string; seq?: number; channel?: string; payload?: unknown}
+    let env: {
+      type?: string
+      seq?: number
+      channel?: string
+      payload?: unknown
+      requestId?: string
+    }
     try {
       env = JSON.parse(rawJson)
     } catch {
@@ -122,23 +128,27 @@ export class MentraUIRouter {
       this.deliverToBackground(packageName, {type: "UI_OPEN"})
       return
     }
-    if (env.type === "heartbeat") {
-      // Legacy envelope from older shims — silently consumed. The
-      // current WebView lifecycle (foreground-only, short-lived,
-      // teardown via user navigation or onContentProcessDidTerminate)
-      // doesn't need a liveness watchdog. Kept here so old polyfill
-      // bundles in already-installed miniapps don't generate noise.
-      return
-    }
     if (env.type === "msg" && typeof env.channel === "string") {
-      this.deliverToBackground(packageName, {
+      const out: Record<string, unknown> = {
         type: "UI_MESSAGE",
         channel: env.channel,
         payload: env.payload,
         seq: env.seq,
-      })
+      }
+      if (typeof env.requestId === "string") out.requestId = env.requestId
+      this.deliverToBackground(packageName, out)
       return
     }
+    if (env.type === "cancel" && typeof env.requestId === "string") {
+      this.deliverToBackground(packageName, {type: "UI_CANCEL", requestId: env.requestId})
+      return
+    }
+    // NOTE: console.* logs do NOT come through this router. The
+    // miniappGlobals console-tap shim posts {payload:{type:"dev_log"}}
+    // envelopes which LocalMiniappRuntime handles and forwards to the
+    // dev sidecar tagged source:"ui". Keeping that path one-way means
+    // we don't have two console-capture pipelines competing.
+    //
     // Unknown envelope — drop silently.
   }
 
@@ -153,16 +163,30 @@ export class MentraUIRouter {
    */
   routeFromBackground(
     packageName: string,
-    uiSendPayload: {type: string; channel?: string; payload?: unknown; seq?: number},
+    uiSendPayload: {
+      type: string
+      channel?: string
+      payload?: unknown
+      seq?: number
+      requestId?: string
+    },
   ): void {
     const binding = this.bindings.get(packageName)
     if (!binding) return
-    const outbound = {
+    if (uiSendPayload.type === "UI_CANCEL" && typeof uiSendPayload.requestId === "string") {
+      const cancel = {type: "cancel", requestId: uiSendPayload.requestId}
+      const literal = JSON.stringify(cancel)
+      const escaped = JSON.stringify(literal)
+      binding.inject(`if (window.__mentra && window.__mentra.recv) window.__mentra.recv(JSON.parse(${escaped})); true;`)
+      return
+    }
+    const outbound: Record<string, unknown> = {
       type: "msg",
       seq: uiSendPayload.seq ?? 0,
       channel: uiSendPayload.channel,
       payload: uiSendPayload.payload,
     }
+    if (typeof uiSendPayload.requestId === "string") outbound.requestId = uiSendPayload.requestId
     const literal = JSON.stringify(outbound)
     const escaped = JSON.stringify(literal)
     binding.inject(`if (window.__mentra && window.__mentra.recv) window.__mentra.recv(JSON.parse(${escaped})); true;`)

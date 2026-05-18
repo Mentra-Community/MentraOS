@@ -20,7 +20,7 @@ type LedColor = (typeof LED_COLORS)[number]
 
 export default function LedPage() {
   const navigate = useNavigate()
-  const {fire, lastError} = useTester("led")
+  const {invoke, lastError} = useTester("led")
   const [color, setColor] = useState<LedColor>("green")
   const [durationMs, setDurationMs] = useState("1000")
   const duration = Number(durationMs) || 1000
@@ -52,16 +52,16 @@ export default function LedPage() {
           onChange={(e) => setDurationMs(e.target.value)}
         />
         <div className="mt-3 grid grid-cols-2 gap-2">
-          <Button onClick={() => fire("turnOn", [{color, ontime: duration, count: 1}])}>
+          <Button onClick={() => invoke("turnOn", [{color, ontime: duration, count: 1}])}>
             turnOn({color}, {duration}ms)
           </Button>
-          <Button onClick={() => fire("solid", [color, duration])}>
+          <Button onClick={() => invoke("solid", [color, duration])}>
             solid({color}, {duration})
           </Button>
-          <Button onClick={() => fire("blink", [color, 250, 250, 4])}>
+          <Button onClick={() => invoke("blink", [color, 250, 250, 4])}>
             blink({color}, 250, 250, 4)
           </Button>
-          <Button variant="destructive" onClick={() => fire("turnOff", [])}>
+          <Button variant="destructive" onClick={() => invoke("turnOff", [])}>
             turnOff()
           </Button>
         </div>

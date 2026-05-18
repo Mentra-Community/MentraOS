@@ -275,6 +275,77 @@ declare const __nativeClearTimer: (token: number) => void
   }
   installTimers()
 
+  // ---------- AbortController / AbortSignal --------------------------------
+  // JSC + QuickJS don't ship the DOM AbortController. The miniapp SDK
+  // uses it for RPC cancellation (`session.ui.handle`'s ctx.signal and
+  // `mentra.request`'s options.signal). We install a minimal polyfill
+  // covering the surface that ships in the SDK:
+  //   - new AbortController()
+  //   - ctrl.signal, ctrl.abort(reason?)
+  //   - signal.aborted, signal.reason
+  //   - signal.addEventListener("abort", cb) / removeEventListener
+  //   - AbortSignal.any([...])
+  // No EventTarget inheritance — the SDK only listens for "abort" so we
+  // keep the impl simple (a `Set<cb>` per signal).
+  function installAbortController(): void {
+    if (typeof (g as Record<string, unknown>).AbortController === "function") return
+
+    type Listener = () => void
+    class MentraAbortSignal {
+      aborted = false
+      reason: unknown = undefined
+      private listeners: Set<Listener> = new Set()
+      addEventListener(type: string, cb: Listener): void {
+        if (type !== "abort" || typeof cb !== "function") return
+        if (this.aborted) {
+          try { cb() } catch { /* swallow */ }
+          return
+        }
+        this.listeners.add(cb)
+      }
+      removeEventListener(type: string, cb: Listener): void {
+        if (type !== "abort") return
+        this.listeners.delete(cb)
+      }
+      /** @internal — only invoked by the owning AbortController.abort(). */
+      __fire(reason: unknown): void {
+        if (this.aborted) return
+        this.aborted = true
+        this.reason = reason
+        for (const cb of this.listeners) {
+          try { cb() } catch { /* swallow */ }
+        }
+        this.listeners.clear()
+      }
+    }
+    class MentraAbortController {
+      readonly signal: MentraAbortSignal = new MentraAbortSignal()
+      abort(reason?: unknown): void {
+        this.signal.__fire(reason ?? new Error("aborted"))
+      }
+    }
+    // `AbortSignal.any([signals])` — composes a single signal that aborts
+    // when any input does. Used by useRpc's mergeSignals fallback.
+    ;(MentraAbortSignal as unknown as {any: (signals: MentraAbortSignal[]) => MentraAbortSignal}).any =
+      (signals: MentraAbortSignal[]): MentraAbortSignal => {
+        const out = new MentraAbortSignal()
+        const onAbort = (s: MentraAbortSignal): void => {
+          if (!out.aborted) out.__fire(s.reason)
+        }
+        for (const s of signals) {
+          if (s.aborted) {
+            onAbort(s)
+            break
+          }
+          s.addEventListener("abort", () => onAbort(s))
+        }
+        return out
+      }
+    ;(g as Record<string, unknown>).AbortController = MentraAbortController
+    ;(g as Record<string, unknown>).AbortSignal = MentraAbortSignal
+  }
+  installAbortController()
+
   // ---------- dispatch / deliver -------------------------------------------
   // Request/response correlator. SDK code calls into __dispatch through a
   // thin helper that returns a Promise; the host posts back via __deliver.

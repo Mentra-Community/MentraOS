@@ -1,29 +1,18 @@
 import {useEffect, useRef, useState} from "react"
+import {useRpc} from "@mentra/miniapp/ui"
 
 import "../../shared/channels"
+import type {Channels} from "../../shared/channels"
 import type {TesterEventPayload} from "../../shared/types"
 
 /**
- * useTester — subscribes to a specific iface's tester event stream and
- * returns the latest event log as React state.
+ * useTester — manages a subscribe-based tester (start/stop + streamed
+ * events) and exposes an `invoke(method, args)` RPC for imperative calls.
  *
- * Calls `mentra.send("tester:start", {iface})` on mount; `mentra.send(
- * "tester:stop", {iface})` on unmount. Background's TesterController is
- * idempotent — calling start twice yields one underlying subscription.
- *
- * Returned shape:
- *   - `latest`        most recent event for this iface (any kind).
- *   - `latestByKind`  most recent event filtered by `kind`. Pages that
- *                     mix streamed `kind: "update"` events with one-shot
- *                     `kind: "result"` returns (e.g. location: `.onUpdate`
- *                     vs `.getOnce`) use this so the render shape stays
- *                     stable across both event sources.
- *   - `log`           sliding window of the last N events (default 50).
- *   - `lastError`     most recent `kind === "error"` event. Pages should
- *                     render this so bad fire() calls don't silently
- *                     disappear (background dispatches `unknown method`
- *                     errors back as `tester:event {kind:"error"}`).
- *   - `fire`          send a `tester:fire` to this iface.
+ *   - `latest`, `latestByKind(kind)`, `log`, `lastError` — streamed via
+ *     `tester:event` from the background controller.
+ *   - `invoke(method, args)` — `mentra.request("tester:invoke", ...)`.
+ *     Returns the handler's return value; throws on error.
  */
 export function useTester(
   iface: string,
@@ -33,7 +22,7 @@ export function useTester(
   latestByKind: (kind: string) => TesterEventPayload | null
   log: TesterEventPayload[]
   lastError: TesterEventPayload | null
-  fire: (method: string, args?: unknown[]) => void
+  invoke: (method: string, args?: unknown[]) => Promise<unknown>
 } {
   const windowSize = options.windowSize ?? 50
   const [latest, setLatest] = useState<TesterEventPayload | null>(null)
@@ -41,6 +30,7 @@ export function useTester(
   const [lastError, setLastError] = useState<TesterEventPayload | null>(null)
   const ifaceRef = useRef(iface)
   ifaceRef.current = iface
+  const rpcInvoke = useRpc<Channels, "tester:invoke">("tester:invoke")
 
   useEffect(() => {
     mentra.send("tester:start", {iface})
@@ -60,8 +50,19 @@ export function useTester(
     }
   }, [iface, windowSize])
 
-  const fire = (method: string, args: unknown[] = []) => {
-    mentra.send("tester:fire", {iface: ifaceRef.current, method, args})
+  const invoke = async (method: string, args: unknown[] = []) => {
+    try {
+      return await rpcInvoke({iface: ifaceRef.current, method, args})
+    } catch (err) {
+      // Surface error in the existing UI error slot so pages don't need
+      // a separate try/catch boilerplate.
+      setLastError({
+        iface: ifaceRef.current,
+        kind: "error",
+        payload: {method, message: err instanceof Error ? err.message : String(err)},
+      })
+      throw err
+    }
   }
 
   const latestByKind = (kind: string): TesterEventPayload | null => {
@@ -71,5 +72,5 @@ export function useTester(
     return null
   }
 
-  return {latest, latestByKind, log, lastError, fire}
+  return {latest, latestByKind, log, lastError, invoke}
 }

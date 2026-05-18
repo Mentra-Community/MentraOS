@@ -610,7 +610,11 @@ class LocalMiniappRuntime {
       const level = (payload.level as string | undefined) ?? "log"
       const args = Array.isArray(payload.args) ? (payload.args as unknown[]) : []
       const timestamp = (payload.timestamp as number | undefined) ?? Date.now()
-      devServerBridge.forwardLog(packageName, level, args, timestamp)
+      // Source is "ui" because the single-bundle WebView console-tap
+      // shim in miniappGlobals.ts is the only thing that posts
+      // `dev_log`; the two-layer path uses a separate envelope
+      // (`{type:"log", source}`) routed by MentraUIRouter.
+      devServerBridge.forwardLog(packageName, level, args, timestamp, "ui")
 
       const tag = `[MINIAPP ${packageName}]`
       const fn = (console as unknown as Record<string, (...a: unknown[]) => void>)[level] ?? console.log

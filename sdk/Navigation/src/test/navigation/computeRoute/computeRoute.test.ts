@@ -1,8 +1,6 @@
 /// <reference types="bun-types" />
 import {describe, expect, test} from "bun:test"
 
-import {MiniappErrorCode} from "@mentra/miniapp"
-
 import {ackLatest, connectedSession, lastOutbound} from "../helpers"
 
 import defaultsInput from "./fixtures/defaults.input.json"
@@ -13,15 +11,11 @@ import primaryPlusAlts from "./fixtures/primary-plus-alternates.response.json"
 import engineFailure from "./fixtures/engine-failure.response.json"
 
 describe("navigation.computeRoute", () => {
-  test("throws PERMISSION_NOT_DECLARED when LOCATION missing", async () => {
+  test("resolves with {ok: false, error: ...} when LOCATION not declared", async () => {
     const {session} = await connectedSession({location: false})
-    let caught: unknown
-    try {
-      session.navigation.computeRoute({origin: {lat: 0, lng: 0}, stops: [{lat: 1, lng: 1}]})
-    } catch (e) {
-      caught = e
-    }
-    expect((caught as {code: string}).code).toBe(MiniappErrorCode.PERMISSION_NOT_DECLARED)
+    const result = await session.navigation.computeRoute({origin: {lat: 0, lng: 0}, stops: [{lat: 1, lng: 1}]})
+    expect(result.ok).toBe(false)
+    expect((result as {error?: string}).error).toMatch(/LOCATION permission not declared/)
   })
 
   test("defaults mode to driving and alternatives to 1", async () => {

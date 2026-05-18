@@ -1,8 +1,6 @@
 /// <reference types="bun-types" />
 import {describe, expect, test} from "bun:test"
 
-import {MiniappErrorCode} from "@mentra/miniapp"
-
 import {ackLatest, connectedSession, lastEnvelope, lastOutbound} from "../helpers"
 
 import v1ShorthandInput from "./fixtures/v1-shorthand.input.json"
@@ -21,15 +19,11 @@ import accepted from "./fixtures/accepted.response.json"
 import hostError from "./fixtures/host-error.response.json"
 
 describe("navigation.start", () => {
-  test("throws PERMISSION_NOT_DECLARED when LOCATION missing", async () => {
+  test("resolves with {ok: false, error: ...} when LOCATION not declared", async () => {
     const {session} = await connectedSession({location: false})
-    let caught: unknown
-    try {
-      session.navigation.start({lat: 1, lng: 2})
-    } catch (e) {
-      caught = e
-    }
-    expect((caught as {code: string}).code).toBe(MiniappErrorCode.PERMISSION_NOT_DECLARED)
+    const result = await session.navigation.start({lat: 1, lng: 2})
+    expect(result.ok).toBe(false)
+    expect((result as {error?: string}).error).toMatch(/LOCATION permission not declared/)
   })
 
   test("v1 {lat, lng} shorthand rewrites to a single-element stops array", async () => {

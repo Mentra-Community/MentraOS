@@ -1,12 +1,16 @@
 /// <reference types="bun-types" />
 import {describe, expect, test} from "bun:test"
 
+import type {NavState} from "@mentra/miniapp"
+
 import {ackLatest, connectedSession, lastEnvelope} from "../helpers"
 
 import requestShape from "./fixtures/request.expected.json"
 import noTrip from "./fixtures/no-trip.response.json"
 import missingState from "./fixtures/missing-state.response.json"
-import activeTrip from "./fixtures/active-trip.response.json"
+import activeTripJson from "./fixtures/active-trip.response.json"
+
+const activeTrip = activeTripJson as {ok: boolean; state: NavState}
 
 describe("navigation.getState", () => {
   test("emits NAVIGATION_GET_STATE request", async () => {
