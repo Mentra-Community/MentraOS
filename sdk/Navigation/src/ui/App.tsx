@@ -1,5 +1,4 @@
 import {useEffect, useState} from "react"
-import {AnimatePresence} from "motion/react"
 
 import "@/shared/channels"
 import {RouterProvider, useRouter} from "@/ui/router"
@@ -11,28 +10,34 @@ function Pages() {
   const {route, pop} = useRouter()
   const [savedPlacesVersion, setSavedPlacesVersion] = useState(0)
 
+  // No AnimatePresence wrapper. iOS WKWebView owns the back-swipe
+  // animation natively — its snapshot at the moment of history.pushState
+  // is the previous route (the home map), so swiping AddPlace back slides
+  // it off and reveals the home screen for free. Wrapping with
+  // AnimatePresence and adding a motion `exit` produced a double slide:
+  // iOS slid the live AddPlace off, then AnimatePresence kept AddPlace
+  // mounted long enough to play its own exit transition on top. Just
+  // mount/unmount the route — the entry slide from motion still plays
+  // on first mount.
   return (
     <>
       <NavigationPage savedPlacesVersion={savedPlacesVersion} />
-      <AnimatePresence>
-        {route.name === "add-place" ? (
-          <AddPlacePage
-            key="add-place"
-            presetType={route.presetType}
-            onSave={async (place, name, type) => {
-              const saved = {
-                ...place,
-                ...(name ? {savedName: name} : {}),
-                ...(type ? {type} : {}),
-              }
-              await mentra.request("storage:add-saved", saved)
-              setSavedPlacesVersion((v) => v + 1)
-              pop()
-            }}
-            onClose={pop}
-          />
-        ) : null}
-      </AnimatePresence>
+      {route.name === "add-place" ? (
+        <AddPlacePage
+          presetType={route.presetType}
+          onSave={async (place, name, type) => {
+            const saved = {
+              ...place,
+              ...(name ? {savedName: name} : {}),
+              ...(type ? {type} : {}),
+            }
+            await mentra.request("storage:add-saved", saved)
+            setSavedPlacesVersion((v) => v + 1)
+            pop()
+          }}
+          onClose={pop}
+        />
+      ) : null}
     </>
   )
 }

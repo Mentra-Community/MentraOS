@@ -92,15 +92,18 @@ export function AddPlacePage({presetType, onSave, onClose}: Props) {
 
   return (
     <motion.div
-      // Slide-in from the right on enter, slide-out the same way on exit
-      // so the gesture-driven swipe-back reads as one continuous motion.
-      // Exiting via opacity caused a single-frame flicker where the
-      // already-static AddPlace card faded over the home map, briefly
-      // exposing AddPlace's white background through the home tree
-      // before the unmount actually landed.
+      // Slide-in animation on enter. iOS WKWebView doesn't animate a
+      // forward history.pushState — only the back-swipe — so we provide
+      // the entry visual ourselves. The reverse direction (exit) is
+      // handled entirely by iOS's native back-swipe gesture, which
+      // animates the snapshot it captured at the moment of pushState
+      // (the home map). We deliberately omit `exit` here AND don't wrap
+      // the page in AnimatePresence — adding either causes the page to
+      // stay mounted long enough for a second motion-driven slide to
+      // play on top of the iOS one, producing the "two AddPlace cards
+      // sliding" effect.
       initial={{x: "100%"}}
       animate={{x: 0}}
-      exit={{x: "100%"}}
       transition={{type: "spring", stiffness: 300, damping: 34, mass: 0.85}}
       className="[font-synthesis:none] fixed inset-0 z-50 flex flex-col bg-white antialiased overflow-hidden">
 
