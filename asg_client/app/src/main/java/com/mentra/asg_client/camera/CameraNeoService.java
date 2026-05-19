@@ -47,8 +47,8 @@ import com.mentra.asg_client.camera.lifecycle.CameraServiceNotification;
 import com.mentra.asg_client.camera.lifecycle.ImageReaderTwin;
 import com.mentra.asg_client.camera.lifecycle.PhotoSession;
 import com.mentra.asg_client.camera.lifecycle.VideoRecordingSession;
-import com.mentra.asg_client.camera.model.PhotoRequest;
-import com.mentra.asg_client.camera.model.PhotoRequestQueue;
+import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
+import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
 import com.mentra.asg_client.camera.policy.AeStateMachine;
 import com.mentra.asg_client.camera.policy.CameraCapabilities;
 import com.mentra.asg_client.camera.policy.FpsRangePolicy;
@@ -411,11 +411,12 @@ public class CameraNeoService extends LifecycleService {
     public static void enqueuePhotoRequest(Context context, String filePath, String size, boolean enableLed, boolean isFromSdk, Long exposureTimeNs, PhotoCaptureCallback callback) {
         synchronized (SERVICE_LOCK) {
             // Create and queue the request immediately
-            PhotoRequest request = new PhotoRequest(filePath, size, enableLed, isFromSdk, exposureTimeNs, callback);
-            PhotoRequestQueue.getInstance().offer(request);
+            QueuedPhotoRequest request =
+                    new QueuedPhotoRequest(filePath, size, enableLed, isFromSdk, exposureTimeNs, callback);
+            QueuedPhotoRequestQueue.getInstance().offer(request);
             
             Log.d(TAG, "📸 Enqueued photo request: " + request.requestId + 
-                      " | Queue size: " + PhotoRequestQueue.getInstance().size() + 
+                      " | Queue size: " + QueuedPhotoRequestQueue.getInstance().size() + 
                       " | Service active: " + (sInstance != null));
             
             // Check current service state and act accordingly
@@ -558,8 +559,8 @@ public class CameraNeoService extends LifecycleService {
         photoSession.dispatchNextPhotoRequest();
     }
 
-    private void setupCameraForPhotoRequest(PhotoRequest request) {
-        photoSession.setupCameraForPhotoRequest(request);
+    private void setupCameraForQueuedRequest(QueuedPhotoRequest request) {
+        photoSession.setupCameraForQueuedRequest(request);
     }
 
     private void setupCameraAndStartRecording(String videoId, String filePath, VideoSettings settings) {
@@ -946,7 +947,7 @@ public class CameraNeoService extends LifecycleService {
             
             sInstance = null;
             
-            PhotoRequestQueue.getInstance().failAllPending("Camera service terminated unexpectedly");
+            QueuedPhotoRequestQueue.getInstance().failAllPending("Camera service terminated unexpectedly");
         }
     }
 

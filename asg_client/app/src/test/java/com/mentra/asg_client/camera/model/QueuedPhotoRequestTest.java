@@ -10,29 +10,32 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
+/**
+ * Unit tests for {@link QueuedPhotoRequest} (FIFO queue entries before capture starts).
+ */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
-public class PhotoRequestTest {
+public class QueuedPhotoRequestTest {
 
     @Test
     public void requestId_isUnique_acrossInstances_withSameMillisecondAndDifferentPath() {
-        PhotoRequest a = new PhotoRequest("/tmp/a.jpg", "medium", false, true, null, null);
-        PhotoRequest b = new PhotoRequest("/tmp/b.jpg", "medium", false, true, null, null);
+        QueuedPhotoRequest a = new QueuedPhotoRequest("/tmp/a.jpg", "medium", false, true, null, null);
+        QueuedPhotoRequest b = new QueuedPhotoRequest("/tmp/b.jpg", "medium", false, true, null, null);
         assertThat(a.requestId).isNotEqualTo(b.requestId);
     }
 
     @Test
     public void timestamp_capturedAtConstruction() {
         long before = System.currentTimeMillis();
-        PhotoRequest pr = new PhotoRequest("/tmp/x.jpg", "small", false, true, null, null);
+        QueuedPhotoRequest pr = new QueuedPhotoRequest("/tmp/x.jpg", "small", false, true, null, null);
         long after = System.currentTimeMillis();
-        assertThat(pr.timestamp).isBetween(before, after);
+        assertThat(pr.enqueuedAtMs).isBetween(before, after);
     }
 
     @Test
     public void allFieldsExposed() {
         CameraNeoService.PhotoCaptureCallback cb = mock(CameraNeoService.PhotoCaptureCallback.class);
-        PhotoRequest pr = new PhotoRequest("/tmp/y.jpg", "large", true, false, 200_000_000L, cb);
+        QueuedPhotoRequest pr = new QueuedPhotoRequest("/tmp/y.jpg", "large", true, false, 200_000_000L, cb);
 
         assertThat(pr.filePath).isEqualTo("/tmp/y.jpg");
         assertThat(pr.size).isEqualTo("large");
@@ -44,7 +47,7 @@ public class PhotoRequestTest {
 
     @Test
     public void nullExposureTimeNs_isAllowedAsAutoExposureSentinel() {
-        PhotoRequest pr = new PhotoRequest("/tmp/z.jpg", "small", false, true, null, null);
+        QueuedPhotoRequest pr = new QueuedPhotoRequest("/tmp/z.jpg", "small", false, true, null, null);
         assertThat(pr.exposureTimeNs).isNull();
     }
 }

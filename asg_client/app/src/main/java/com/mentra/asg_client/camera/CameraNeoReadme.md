@@ -15,7 +15,7 @@ This document explains how `CameraNeoService` works end-to-end and how to use it
 - **`lifecycle/`**: `CameraCoordinator`, `PhotoSession`, `VideoRecordingSession`, `HdrBurstCapture`, `ImageReaderTwin`, `CameraOpener`, `CameraRecoveryHelper`, `CameraServiceNotification`.
 - **`request/`**: `PreviewRequestConfigurator`, `StillCaptureBuilder`, `StillCaptureCallback`, `HdrBurstBuilder`, `AeCaptureCallback`, `AePreviewController`.
 - **`policy/`**: `AeStateMachine`, `ManualExposurePolicy`, `FpsRangePolicy`, `VideoRecorderPolicy`, `PhotoResolutionPolicy`, `CameraSizeSelector`, `JpegOrientationResolver`, `MeteringRegions`, `EisController`, `CameraCapabilities`.
-- **`model/`**: `CurrentRequest`, `PhotoRequest`, `PhotoRequestQueue`.
+- **`model/`**: `QueuedPhotoRequest` (FIFO waiting), `ActivePhotoCapture` (in-flight snapshot), `QueuedPhotoRequestQueue`.
 - **`diagnostics/`**: `CameraDiagnosticsLog` (structured `MentraDbg` JSON for logcat parsers).
 
 ---

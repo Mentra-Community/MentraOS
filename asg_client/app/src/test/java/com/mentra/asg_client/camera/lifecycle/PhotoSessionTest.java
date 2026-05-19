@@ -14,9 +14,8 @@ import android.os.Handler;
 
 import android.hardware.camera2.CameraDevice;
 
-import com.mentra.asg_client.camera.model.CurrentRequest;
-import com.mentra.asg_client.camera.model.PhotoRequest;
-import com.mentra.asg_client.camera.model.PhotoRequestQueue;
+import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
+import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
 import com.mentra.asg_client.camera.policy.AeStateMachine;
 
 import org.junit.After;
@@ -37,17 +36,17 @@ public class PhotoSessionTest {
     @Before
     @After
     public void drainQueue() {
-        PhotoRequestQueue.getInstance().failAllPending("test-isolation");
+        QueuedPhotoRequestQueue.getInstance().failAllPending("test-isolation");
     }
 
     @Test
     public void dispatchNextPhotoRequest_idleWithConfiguredCamera_loadsRequestAndPosts() throws Exception {
         PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
-        PhotoRequest same = new PhotoRequest("/tmp/p.jpg", "medium", false, true, null, null);
-        PhotoRequestQueue.getInstance().offer(same);
+        QueuedPhotoRequest same = new QueuedPhotoRequest("/tmp/p.jpg", "medium", false, true, null, null);
+        QueuedPhotoRequestQueue.getInstance().offer(same);
 
         PhotoSession session = new PhotoSession(hooks);
-        loadCurrentRequest(session, same);
+        activateQueuedRequest(session, same);
 
         session.dispatchNextPhotoRequest();
 
@@ -60,12 +59,12 @@ public class PhotoSessionTest {
     @Test
     public void dispatchNextPhotoRequest_configuredCamera_sizeChange_routesThroughSetup() throws Exception {
         PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
-        PhotoRequest prior = new PhotoRequest("/tmp/old.jpg", "small", false, true, null, null);
+        QueuedPhotoRequest prior = new QueuedPhotoRequest("/tmp/old.jpg", "small", false, true, null, null);
         PhotoSession session = new PhotoSession(hooks);
-        loadCurrentRequest(session, prior);
+        activateQueuedRequest(session, prior);
 
-        PhotoRequestQueue.getInstance().offer(
-                new PhotoRequest("/tmp/new.jpg", "large", false, true, null, null));
+        QueuedPhotoRequestQueue.getInstance().offer(
+                new QueuedPhotoRequest("/tmp/new.jpg", "large", false, true, null, null));
 
         session.dispatchNextPhotoRequest();
 
@@ -77,13 +76,13 @@ public class PhotoSessionTest {
     @Test
     public void dispatchNextPhotoRequest_afterShotClearsCurrent_sameConfig_reusesSession() throws Exception {
         PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
-        PhotoRequest prior = new PhotoRequest("/tmp/old.jpg", "large", false, false, null, null);
+        QueuedPhotoRequest prior = new QueuedPhotoRequest("/tmp/old.jpg", "large", false, false, null, null);
         PhotoSession session = new PhotoSession(hooks);
-        loadCurrentRequest(session, prior);
-        clearCurrentRequest(session);
+        activateQueuedRequest(session, prior);
+        clearActiveCapture(session);
 
-        PhotoRequestQueue.getInstance().offer(
-                new PhotoRequest("/tmp/new.jpg", "large", false, false, null, null));
+        QueuedPhotoRequestQueue.getInstance().offer(
+                new QueuedPhotoRequest("/tmp/new.jpg", "large", false, false, null, null));
 
         session.dispatchNextPhotoRequest();
 
@@ -96,13 +95,13 @@ public class PhotoSessionTest {
     @Test
     public void dispatchNextPhotoRequest_afterShotClearsCurrent_sdkFlagChange_reopens() throws Exception {
         PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
-        PhotoRequest prior = new PhotoRequest("/tmp/old.jpg", "large", false, false, null, null);
+        QueuedPhotoRequest prior = new QueuedPhotoRequest("/tmp/old.jpg", "large", false, false, null, null);
         PhotoSession session = new PhotoSession(hooks);
-        loadCurrentRequest(session, prior);
-        clearCurrentRequest(session);
+        activateQueuedRequest(session, prior);
+        clearActiveCapture(session);
 
-        PhotoRequestQueue.getInstance().offer(
-                new PhotoRequest("/tmp/sdk.jpg", "large", false, true, null, null));
+        QueuedPhotoRequestQueue.getInstance().offer(
+                new QueuedPhotoRequest("/tmp/sdk.jpg", "large", false, true, null, null));
 
         session.dispatchNextPhotoRequest();
 
@@ -114,15 +113,15 @@ public class PhotoSessionTest {
     @Test
     public void onCameraClosed_clearsConfiguredSnapshot() throws Exception {
         PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
-        PhotoRequest prior = new PhotoRequest("/tmp/old.jpg", "large", false, false, null, null);
+        QueuedPhotoRequest prior = new QueuedPhotoRequest("/tmp/old.jpg", "large", false, false, null, null);
         PhotoSession session = new PhotoSession(hooks);
-        loadCurrentRequest(session, prior);
-        clearCurrentRequest(session);
+        activateQueuedRequest(session, prior);
+        clearActiveCapture(session);
 
         session.onCameraClosed();
 
-        PhotoRequestQueue.getInstance().offer(
-                new PhotoRequest("/tmp/new.jpg", "large", false, false, null, null));
+        QueuedPhotoRequestQueue.getInstance().offer(
+                new QueuedPhotoRequest("/tmp/new.jpg", "large", false, false, null, null));
 
         session.dispatchNextPhotoRequest();
 
@@ -163,16 +162,16 @@ public class PhotoSessionTest {
         return hooks;
     }
 
-    private static void loadCurrentRequest(PhotoSession session, PhotoRequest request) throws Exception {
-        Method load = PhotoSession.class.getDeclaredMethod("loadCurrentRequest", PhotoRequest.class);
+    private static void activateQueuedRequest(PhotoSession session, QueuedPhotoRequest request) throws Exception {
+        Method load = PhotoSession.class.getDeclaredMethod("activateQueuedRequest", QueuedPhotoRequest.class);
         load.setAccessible(true);
         load.invoke(session, request);
     }
 
-    private static void clearCurrentRequest(PhotoSession session) throws Exception {
-        Field currentRequestField = PhotoSession.class.getDeclaredField("currentRequest");
-        currentRequestField.setAccessible(true);
-        currentRequestField.set(session, null);
+    private static void clearActiveCapture(PhotoSession session) throws Exception {
+        Field activeCaptureField = PhotoSession.class.getDeclaredField("activeCapture");
+        activeCaptureField.setAccessible(true);
+        activeCaptureField.set(session, null);
     }
 
     @Test

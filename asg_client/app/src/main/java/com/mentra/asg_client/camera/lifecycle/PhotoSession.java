@@ -19,9 +19,9 @@ import com.mentra.asg_client.camera.CameraConstants;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.CameraSettings;
 import com.mentra.asg_client.camera.diagnostics.CameraDiagnosticsLog;
-import com.mentra.asg_client.camera.model.CurrentRequest;
-import com.mentra.asg_client.camera.model.PhotoRequest;
-import com.mentra.asg_client.camera.model.PhotoRequestQueue;
+import com.mentra.asg_client.camera.model.ActivePhotoCapture;
+import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
+import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
 import com.mentra.asg_client.camera.policy.AeStateMachine;
 import com.mentra.asg_client.camera.policy.CameraCapabilities;
 import com.mentra.asg_client.camera.policy.JpegOrientationResolver;
@@ -42,6 +42,15 @@ import java.util.concurrent.Executor;
 /**
  * Owns photo capture lifecycle: queue dispatch, AE precapture, still/HDR capture, image save,
  * and metering timestamps. Bridges to {@link CameraNeoService} via {@link Hooks}.
+ *
+ * <p><b>Request model (see {@code camera.model}):</b>
+ * <ul>
+ *   <li>{@link com.mentra.asg_client.camera.model.QueuedPhotoRequest} — waiting in
+ *       {@link com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue}</li>
+ *   <li>{@link com.mentra.asg_client.camera.model.ActivePhotoCapture} — frozen snapshot in
+ *       {@link #activeCapture} while this session runs AE/capture</li>
+ * </ul>
+ * Promotion happens in {@link #activateQueuedRequest}; {@link #clearActiveCapture} runs after each shot.
  */
 public final class PhotoSession {
 
@@ -53,11 +62,15 @@ public final class PhotoSession {
     private ImageReaderTwin imageReaders;
     private Size jpegSize;
 
-    private volatile CurrentRequest currentRequest;
+    /**
+     * Non-null while a {@link QueuedPhotoRequest} is being captured (AE → still → JPEG).
+     * Cleared after each shot; see {@link #activateQueuedRequest} and {@link #clearActiveCapture}.
+     */
+    private volatile ActivePhotoCapture activeCapture;
 
     /**
      * Last camera pipeline config (size / SDK / exposure) applied to the open session.
-     * Survives {@link #clearCurrentRequest()} so queued burst shots can reuse the session
+     * Survives {@link #clearActiveCapture()} so queued burst shots can reuse the session
      * without a false-positive reconfiguration after the previous shot completes.
      */
     @Nullable
@@ -190,48 +203,53 @@ public final class PhotoSession {
     /** Called from session onConfigured after camera is ready for photo pipeline. */
     public void pollFirstQueuedRequestIntoCurrent() {
         synchronized (hooks.serviceLock()) {
-            if (!PhotoRequestQueue.getInstance().isEmpty()) {
-                Log.d(TAG, "Camera ready, processing " + PhotoRequestQueue.getInstance().size() + " queued requests");
-                PhotoRequest firstRequest = PhotoRequestQueue.getInstance().poll();
+            if (!QueuedPhotoRequestQueue.getInstance().isEmpty()) {
+                Log.d(TAG, "Camera ready, processing " + QueuedPhotoRequestQueue.getInstance().size() + " queued requests");
+                QueuedPhotoRequest firstRequest = QueuedPhotoRequestQueue.getInstance().poll();
                 if (firstRequest != null) {
-                    loadCurrentRequest(firstRequest);
+                    activateQueuedRequest(firstRequest);
                 }
             }
         }
     }
 
-    // ----- Current request helpers -----
+    // ----- Active capture helpers (read {@link #activeCapture}) -----
 
     private String currentFilePath() {
-        return currentRequest != null ? currentRequest.filePath : null;
+        return activeCapture != null ? activeCapture.filePath : null;
     }
 
     private String currentSize() {
-        return currentRequest != null ? currentRequest.size : null;
+        return activeCapture != null ? activeCapture.size : null;
     }
 
     private boolean currentIsFromSdk() {
-        return currentRequest != null && currentRequest.isFromSdk;
+        return activeCapture != null && activeCapture.isFromSdk;
     }
 
     private Long currentExposureTimeNs() {
-        return currentRequest != null ? currentRequest.exposureTimeNs : null;
+        return activeCapture != null ? activeCapture.exposureTimeNs : null;
     }
 
     private long currentStartTimeMs() {
-        return currentRequest != null ? currentRequest.startTimeMs : 0L;
+        return activeCapture != null ? activeCapture.startTimeMs : 0L;
     }
 
-    private void loadCurrentRequest(PhotoRequest pr) {
-        currentRequest = CurrentRequest.from(pr);
-        rememberConfiguredCamera(pr);
+    /**
+     * Dequeue handoff: copy the queued job into {@link #activeCapture} before AE/capture.
+     * The queue entry may still be mutated for callback binding until this runs.
+     */
+    private void activateQueuedRequest(QueuedPhotoRequest queued) {
+        activeCapture = ActivePhotoCapture.fromQueued(queued);
+        rememberConfiguredCamera(queued);
     }
 
-    private void clearCurrentRequest() {
-        currentRequest = null;
+    /** Shot finished or aborted; {@link #configuredCameraConfig} may still describe the open HAL session. */
+    private void clearActiveCapture() {
+        activeCapture = null;
     }
 
-    private void rememberConfiguredCamera(PhotoRequest pr) {
+    private void rememberConfiguredCamera(QueuedPhotoRequest pr) {
         if (pr != null) {
             configuredCameraConfig = ConfiguredCameraConfig.from(pr);
         }
@@ -268,16 +286,16 @@ public final class PhotoSession {
 
     /**
      * Compares {@code request} to the active session camera config (size, SDK flag, exposure).
-     * Uses {@link #configuredCameraConfig} when {@link #currentRequest} was cleared after a shot.
-     * Must be called before {@link #loadCurrentRequest(PhotoRequest)} mutates current state.
+     * Uses {@link #configuredCameraConfig} when {@link #activeCapture} was cleared after a shot.
+     * Must be called before {@link #activateQueuedRequest(QueuedPhotoRequest)} mutates current state.
      */
-    private boolean needsReconfigurationForPhotoRequest(PhotoRequest request) {
+    private boolean needsReconfigurationForQueued(QueuedPhotoRequest request) {
         if (request == null) {
             return true;
         }
         ConfiguredCameraConfig baseline = configuredCameraConfig;
-        if (baseline == null && currentRequest != null) {
-            baseline = ConfiguredCameraConfig.from(currentRequest);
+        if (baseline == null && activeCapture != null) {
+            baseline = ConfiguredCameraConfig.from(activeCapture);
         }
         if (baseline == null) {
             return false;
@@ -287,7 +305,7 @@ public final class PhotoSession {
 
     public void dispatchNextPhotoRequest() {
         synchronized (hooks.serviceLock()) {
-            PhotoRequestQueue queue = PhotoRequestQueue.getInstance();
+            QueuedPhotoRequestQueue queue = QueuedPhotoRequestQueue.getInstance();
             if (queue.isEmpty()) {
                 Log.d(TAG, "No photo requests in queue");
                 hooks.startKeepAliveTimer();
@@ -299,26 +317,26 @@ public final class PhotoSession {
             }
 
             if (hooks.coordinator().hasConfiguredCamera()) {
-                PhotoRequest firstRequest = queue.peek();
+                QueuedPhotoRequest firstRequest = queue.peek();
                 if (firstRequest == null) {
                     hooks.startKeepAliveTimer();
                     return;
                 }
                 queue.attachRegistryCallback(firstRequest);
-                if (needsReconfigurationForPhotoRequest(firstRequest)) {
+                if (needsReconfigurationForQueued(firstRequest)) {
                     Log.d(TAG, "Configured camera needs reconfiguration for " + firstRequest.requestId
-                            + " — routing through setupCameraForPhotoRequest");
-                    setupCameraForPhotoRequest(firstRequest);
+                            + " — routing through setupCameraForQueuedRequest");
+                    setupCameraForQueuedRequest(firstRequest);
                     return;
                 }
-                PhotoRequest request = queue.poll();
+                QueuedPhotoRequest request = queue.poll();
                 if (request == null) {
                     hooks.startKeepAliveTimer();
                     return;
                 }
                 Log.d(TAG, "Dispatching queued photo with configured camera: " + request.requestId);
                 hooks.cancelKeepAliveTimer();
-                loadCurrentRequest(request);
+                activateQueuedRequest(request);
                 shotState = AeStateMachine.ShotState.WAITING_AE;
                 // Arm AE wait on this thread so the camera Handler sees a published true
                 // immediately (Bluetooth thread is not the preview callback looper).
@@ -336,23 +354,23 @@ public final class PhotoSession {
                 return;
             }
 
-            PhotoRequest firstRequest = queue.peek();
+            QueuedPhotoRequest firstRequest = queue.peek();
             if (firstRequest != null) {
                 Log.d(TAG, "Opening camera for queued photo request: " + firstRequest.requestId);
                 queue.attachRegistryCallback(firstRequest);
-                setupCameraForPhotoRequest(firstRequest);
+                setupCameraForQueuedRequest(firstRequest);
             }
         }
     }
 
-    public void setupCameraForPhotoRequest(PhotoRequest request) {
+    public void setupCameraForQueuedRequest(QueuedPhotoRequest request) {
         if (request == null) return;
 
         Log.i(TAG, "📸 PHOTO E2E: Starting photo request " + request.requestId);
 
-        boolean needsReopen = needsReconfigurationForPhotoRequest(request);
+        boolean needsReopen = needsReconfigurationForQueued(request);
 
-        loadCurrentRequest(request);
+        activateQueuedRequest(request);
 
         if (hooks.coordinator().isCameraKeptAlive() && hooks.coordinator().device() != null) {
             Log.d(TAG, "Camera already open, checking if reconfiguration needed");
@@ -435,7 +453,7 @@ public final class PhotoSession {
                                 }
                             }
                             notifyPhotoCaptured(basePath);
-                            clearCurrentRequest();
+                            clearActiveCapture();
                             shotState = AeStateMachine.ShotState.IDLE;
                             dispatchNextPhotoRequest();
                         }
@@ -466,7 +484,7 @@ public final class PhotoSession {
 
                 notifyPhotoCaptured(targetPath);
                 Log.d(TAG, "Photo saved successfully: " + targetPath);
-                clearCurrentRequest();
+                clearActiveCapture();
             } else {
                 ImuRecorder imu = hooks.imuRecorderOrNull();
                 if (imu != null) {
@@ -486,11 +504,11 @@ public final class PhotoSession {
             }
             shotState = AeStateMachine.ShotState.IDLE;
 
-            if (!PhotoRequestQueue.getInstance().isEmpty()) {
+            if (!QueuedPhotoRequestQueue.getInstance().isEmpty()) {
                 dispatchNextPhotoRequest();
             } else {
                 hooks.cancelKeepAliveTimer();
-                clearCurrentRequest();
+                clearActiveCapture();
                 hooks.closeCamera();
                 hooks.stopService();
             }
@@ -523,14 +541,14 @@ public final class PhotoSession {
         long e2eTimeMs = (startMs > 0) ? (System.currentTimeMillis() - startMs) : -1L;
         Log.i(TAG, "📸 PHOTO E2E: Photo captured and saved in " + e2eTimeMs + "ms (e2e) | Path: " + filePath);
 
-        CameraNeoService.PhotoCaptureCallback callback = currentRequest != null ? currentRequest.callback : null;
+        CameraNeoService.PhotoCaptureCallback callback = activeCapture != null ? activeCapture.callback : null;
         if (callback != null) {
             hooks.executor().execute(() -> callback.onPhotoCaptured(filePath));
         }
     }
 
     private void notifyPhotoError(String errorMessage) {
-        CameraNeoService.PhotoCaptureCallback callback = currentRequest != null ? currentRequest.callback : null;
+        CameraNeoService.PhotoCaptureCallback callback = activeCapture != null ? activeCapture.callback : null;
         if (callback != null) {
             hooks.executor().execute(() -> callback.onPhotoError(errorMessage));
         }
@@ -638,7 +656,7 @@ public final class PhotoSession {
         String reason;
         if (exposureNs == null || exposureNs <= 0) {
             decision = false;
-            reason = "no/invalid currentRequest.exposureTimeNs";
+            reason = "no/invalid activeCapture.exposureTimeNs";
         } else if (!manualSupported) {
             Log.w(TAG, "Manual exposure requested but MANUAL_SENSOR not supported; using auto exposure");
             decision = false;
@@ -943,12 +961,12 @@ public final class PhotoSession {
     }
 
     public boolean photoRequestFromSdk() {
-        return currentRequest != null && currentRequest.isFromSdk;
+        return activeCapture != null && activeCapture.isFromSdk;
     }
 
     @Nullable
     public String photoRequestSizeTier() {
-        return currentRequest != null ? currentRequest.size : null;
+        return activeCapture != null ? activeCapture.size : null;
     }
 
     /** Called from {@link CameraNeoService} when setup/open/session errors occur before capture. */
@@ -976,15 +994,15 @@ public final class PhotoSession {
             this.exposureTimeNs = exposureTimeNs;
         }
 
-        static ConfiguredCameraConfig from(PhotoRequest request) {
+        static ConfiguredCameraConfig from(QueuedPhotoRequest request) {
             return new ConfiguredCameraConfig(request.size, request.isFromSdk, request.exposureTimeNs);
         }
 
-        static ConfiguredCameraConfig from(CurrentRequest request) {
+        static ConfiguredCameraConfig from(ActivePhotoCapture request) {
             return new ConfiguredCameraConfig(request.size, request.isFromSdk, request.exposureTimeNs);
         }
 
-        boolean differsFrom(PhotoRequest request) {
+        boolean differsFrom(QueuedPhotoRequest request) {
             if (!Objects.equals(size, request.size)) {
                 return true;
             }

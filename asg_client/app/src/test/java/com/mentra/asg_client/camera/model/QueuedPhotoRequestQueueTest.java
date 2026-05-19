@@ -18,29 +18,29 @@ import org.robolectric.annotation.Config;
 /**
  * Phase 1 unit tests for the global photo request queue + callback registry.
  *
- * <p>{@link PhotoRequestQueue} is a process-wide singleton, so {@link #drain()} clears state
+ * <p>{@link QueuedPhotoRequestQueue} is a process-wide singleton, so {@link #drain()} clears state
  * between tests to prevent leakage.
  */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
-public class PhotoRequestQueueTest {
+public class QueuedPhotoRequestQueueTest {
 
     @Before
     public void drain() {
-        PhotoRequestQueue.getInstance().failAllPending("test-isolation");
+        QueuedPhotoRequestQueue.getInstance().failAllPending("test-isolation");
     }
 
     @After
     public void cleanup() {
-        PhotoRequestQueue.getInstance().failAllPending("test-isolation");
+        QueuedPhotoRequestQueue.getInstance().failAllPending("test-isolation");
     }
 
     @Test
     public void offerAndPoll_returnsFifoOrder() {
-        PhotoRequestQueue q = PhotoRequestQueue.getInstance();
-        PhotoRequest r1 = new PhotoRequest("/1", "s", false, true, null, null);
-        PhotoRequest r2 = new PhotoRequest("/2", "s", false, true, null, null);
-        PhotoRequest r3 = new PhotoRequest("/3", "s", false, true, null, null);
+        QueuedPhotoRequestQueue q = QueuedPhotoRequestQueue.getInstance();
+        QueuedPhotoRequest r1 = new QueuedPhotoRequest("/1", "s", false, true, null, null);
+        QueuedPhotoRequest r2 = new QueuedPhotoRequest("/2", "s", false, true, null, null);
+        QueuedPhotoRequest r3 = new QueuedPhotoRequest("/3", "s", false, true, null, null);
         q.offer(r1);
         q.offer(r2);
         q.offer(r3);
@@ -53,14 +53,14 @@ public class PhotoRequestQueueTest {
 
     @Test
     public void poll_onEmptyQueue_returnsNull() {
-        assertThat(PhotoRequestQueue.getInstance().poll()).isNull();
+        assertThat(QueuedPhotoRequestQueue.getInstance().poll()).isNull();
     }
 
     @Test
     public void isEmpty_reflectsQueueState() {
-        PhotoRequestQueue q = PhotoRequestQueue.getInstance();
+        QueuedPhotoRequestQueue q = QueuedPhotoRequestQueue.getInstance();
         assertThat(q.isEmpty()).isTrue();
-        q.offer(new PhotoRequest("/a", "s", false, true, null, null));
+        q.offer(new QueuedPhotoRequest("/a", "s", false, true, null, null));
         assertThat(q.isEmpty()).isFalse();
         q.poll();
         assertThat(q.isEmpty()).isTrue();
@@ -68,8 +68,8 @@ public class PhotoRequestQueueTest {
 
     @Test
     public void peek_doesNotRemove() {
-        PhotoRequestQueue q = PhotoRequestQueue.getInstance();
-        PhotoRequest r = new PhotoRequest("/peek", "s", false, true, null, null);
+        QueuedPhotoRequestQueue q = QueuedPhotoRequestQueue.getInstance();
+        QueuedPhotoRequest r = new QueuedPhotoRequest("/peek", "s", false, true, null, null);
         q.offer(r);
         assertThat(q.peek()).isSameAs(r);
         assertThat(q.size()).isEqualTo(1);
@@ -77,26 +77,26 @@ public class PhotoRequestQueueTest {
 
     @Test
     public void callbackRegistry_attachedOnPoll_whenRequestHadCallback() {
-        PhotoRequestQueue q = PhotoRequestQueue.getInstance();
+        QueuedPhotoRequestQueue q = QueuedPhotoRequestQueue.getInstance();
         CameraNeoService.PhotoCaptureCallback cb = mock(CameraNeoService.PhotoCaptureCallback.class);
-        PhotoRequest r = new PhotoRequest("/cb", "s", false, true, null, cb);
+        QueuedPhotoRequest r = new QueuedPhotoRequest("/cb", "s", false, true, null, cb);
 
         q.offer(r);
 
         // After polling the same instance, callback is still the same.
-        PhotoRequest polled = q.poll();
+        QueuedPhotoRequest polled = q.poll();
         assertThat(polled.callback).isSameAs(cb);
     }
 
     @Test
     public void attachRegistryCallback_restoresCallbackOnPeekedRequest() {
-        PhotoRequestQueue q = PhotoRequestQueue.getInstance();
+        QueuedPhotoRequestQueue q = QueuedPhotoRequestQueue.getInstance();
         CameraNeoService.PhotoCaptureCallback cb = mock(CameraNeoService.PhotoCaptureCallback.class);
-        PhotoRequest r = new PhotoRequest("/attach", "s", false, true, null, cb);
+        QueuedPhotoRequest r = new QueuedPhotoRequest("/attach", "s", false, true, null, cb);
 
         q.offer(r);
         // Simulate the dispatcher peeking and then losing the callback reference.
-        PhotoRequest peeked = q.peek();
+        QueuedPhotoRequest peeked = q.peek();
         peeked.callback = null;
 
         q.attachRegistryCallback(peeked);
@@ -105,9 +105,9 @@ public class PhotoRequestQueueTest {
 
     @Test
     public void rapidBurst_fiveOffersAllPollableInOrder() {
-        PhotoRequestQueue q = PhotoRequestQueue.getInstance();
+        QueuedPhotoRequestQueue q = QueuedPhotoRequestQueue.getInstance();
         for (int i = 1; i <= 5; i++) {
-            q.offer(new PhotoRequest("/burst-" + i, "s", false, true, null, null));
+            q.offer(new QueuedPhotoRequest("/burst-" + i, "s", false, true, null, null));
         }
         assertThat(q.size()).isEqualTo(5);
         for (int i = 1; i <= 5; i++) {
@@ -118,11 +118,11 @@ public class PhotoRequestQueueTest {
 
     @Test
     public void failAllPending_invokesEveryRegisteredCallback_andDrainsQueue() {
-        PhotoRequestQueue q = PhotoRequestQueue.getInstance();
+        QueuedPhotoRequestQueue q = QueuedPhotoRequestQueue.getInstance();
         CameraNeoService.PhotoCaptureCallback cb1 = mock(CameraNeoService.PhotoCaptureCallback.class);
         CameraNeoService.PhotoCaptureCallback cb2 = mock(CameraNeoService.PhotoCaptureCallback.class);
-        q.offer(new PhotoRequest("/x", "s", false, true, null, cb1));
-        q.offer(new PhotoRequest("/y", "s", false, true, null, cb2));
+        q.offer(new QueuedPhotoRequest("/x", "s", false, true, null, cb1));
+        q.offer(new QueuedPhotoRequest("/y", "s", false, true, null, cb2));
 
         q.failAllPending("service destroyed");
 
@@ -134,16 +134,16 @@ public class PhotoRequestQueueTest {
     @Test
     public void failAllPending_withNoPending_doesNotThrow() {
         // Drain again on an already-empty queue.
-        PhotoRequestQueue.getInstance().failAllPending("noop");
-        assertThat(PhotoRequestQueue.getInstance().isEmpty()).isTrue();
+        QueuedPhotoRequestQueue.getInstance().failAllPending("noop");
+        assertThat(QueuedPhotoRequestQueue.getInstance().isEmpty()).isTrue();
     }
 
     @Test
     public void offer_withNullCallback_doesNotPollute_registry() {
-        PhotoRequestQueue q = PhotoRequestQueue.getInstance();
-        PhotoRequest r = new PhotoRequest("/no-cb", "s", false, true, null, null);
+        QueuedPhotoRequestQueue q = QueuedPhotoRequestQueue.getInstance();
+        QueuedPhotoRequest r = new QueuedPhotoRequest("/no-cb", "s", false, true, null, null);
         q.offer(r);
-        PhotoRequest polled = q.poll();
+        QueuedPhotoRequest polled = q.poll();
         assertThat(polled.callback).isNull();
 
         // failAllPending on empty queue must not invoke anything.

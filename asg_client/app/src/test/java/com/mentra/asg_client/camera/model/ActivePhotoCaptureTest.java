@@ -10,30 +10,33 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
+/**
+ * Unit tests for {@link ActivePhotoCapture} and {@link ActivePhotoCapture#fromQueued}.
+ */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
-public class CurrentRequestTest {
+public class ActivePhotoCaptureTest {
 
     @Test
-    public void from_copiesAllFields() {
+    public void fromQueued_copiesAllFields() {
         CameraNeoService.PhotoCaptureCallback cb = mock(CameraNeoService.PhotoCaptureCallback.class);
-        PhotoRequest pr = new PhotoRequest("/tmp/a.jpg", "medium", true, true, 100_000_000L, cb);
+        QueuedPhotoRequest pr = new QueuedPhotoRequest("/tmp/a.jpg", "medium", true, true, 100_000_000L, cb);
 
-        CurrentRequest cur = CurrentRequest.from(pr);
+        ActivePhotoCapture cur = ActivePhotoCapture.fromQueued(pr);
 
         assertThat(cur.filePath).isEqualTo("/tmp/a.jpg");
         assertThat(cur.size).isEqualTo("medium");
         assertThat(cur.ledEnabled).isTrue();
         assertThat(cur.isFromSdk).isTrue();
         assertThat(cur.exposureTimeNs).isEqualTo(100_000_000L);
-        assertThat(cur.startTimeMs).isEqualTo(pr.timestamp);
+        assertThat(cur.startTimeMs).isEqualTo(pr.enqueuedAtMs);
         assertThat(cur.callback).isSameAs(cb);
     }
 
     @Test
     public void nullExposureTimeNs_meansAuto() {
-        PhotoRequest pr = new PhotoRequest("/tmp/auto.jpg", "small", false, true, null, null);
-        CurrentRequest cur = CurrentRequest.from(pr);
+        QueuedPhotoRequest pr = new QueuedPhotoRequest("/tmp/auto.jpg", "small", false, true, null, null);
+        ActivePhotoCapture cur = ActivePhotoCapture.fromQueued(pr);
         assertThat(cur.exposureTimeNs).isNull();
     }
 
@@ -41,26 +44,26 @@ public class CurrentRequestTest {
     public void equals_isReflexive_andCompares_allFields() {
         long t = 42L;
         CameraNeoService.PhotoCaptureCallback cb = mock(CameraNeoService.PhotoCaptureCallback.class);
-        CurrentRequest a = new CurrentRequest("/p", "s", true, 1L, false, t, cb);
-        CurrentRequest b = new CurrentRequest("/p", "s", true, 1L, false, t, cb);
+        ActivePhotoCapture a = new ActivePhotoCapture("/p", "s", true, 1L, false, t, cb);
+        ActivePhotoCapture b = new ActivePhotoCapture("/p", "s", true, 1L, false, t, cb);
         assertThat(a).isEqualTo(b).hasSameHashCodeAs(b);
     }
 
     @Test
     public void equals_distinguishesEachFieldDifference() {
         long t = 42L;
-        CurrentRequest base = new CurrentRequest("/p", "s", true, 1L, false, t, null);
-        assertThat(base).isNotEqualTo(new CurrentRequest("/q", "s", true, 1L, false, t, null));
-        assertThat(base).isNotEqualTo(new CurrentRequest("/p", "x", true, 1L, false, t, null));
-        assertThat(base).isNotEqualTo(new CurrentRequest("/p", "s", false, 1L, false, t, null));
-        assertThat(base).isNotEqualTo(new CurrentRequest("/p", "s", true, 2L, false, t, null));
-        assertThat(base).isNotEqualTo(new CurrentRequest("/p", "s", true, 1L, true, t, null));
-        assertThat(base).isNotEqualTo(new CurrentRequest("/p", "s", true, 1L, false, t + 1, null));
+        ActivePhotoCapture base = new ActivePhotoCapture("/p", "s", true, 1L, false, t, null);
+        assertThat(base).isNotEqualTo(new ActivePhotoCapture("/q", "s", true, 1L, false, t, null));
+        assertThat(base).isNotEqualTo(new ActivePhotoCapture("/p", "x", true, 1L, false, t, null));
+        assertThat(base).isNotEqualTo(new ActivePhotoCapture("/p", "s", false, 1L, false, t, null));
+        assertThat(base).isNotEqualTo(new ActivePhotoCapture("/p", "s", true, 2L, false, t, null));
+        assertThat(base).isNotEqualTo(new ActivePhotoCapture("/p", "s", true, 1L, true, t, null));
+        assertThat(base).isNotEqualTo(new ActivePhotoCapture("/p", "s", true, 1L, false, t + 1, null));
     }
 
     @Test
     public void allFieldsAreFinal() throws Exception {
-        for (java.lang.reflect.Field f : CurrentRequest.class.getDeclaredFields()) {
+        for (java.lang.reflect.Field f : ActivePhotoCapture.class.getDeclaredFields()) {
             if (java.lang.reflect.Modifier.isStatic(f.getModifiers())) {
                 continue;
             }

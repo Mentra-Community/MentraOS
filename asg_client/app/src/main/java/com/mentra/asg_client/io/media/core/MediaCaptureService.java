@@ -1152,7 +1152,7 @@ public class MediaCaptureService {
             return;
         }
 
-        // Note: No isCapturingPhoto guard here — button photos enqueue into PhotoRequestQueue
+        // Note: No isCapturingPhoto guard here — button photos enqueue into QueuedPhotoRequestQueue
         // so rapid presses serialize through CameraNeoService burst reuse (not CAMERA_BUSY).
 
         // Add milliseconds and a random component to ensure uniqueness even in rapid capture
