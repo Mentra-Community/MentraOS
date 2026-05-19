@@ -129,11 +129,11 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                 return false;
             }
 
-            // CAPTURE CHECK: Reject if another photo capture is already in progress
-            if (captureService.isCapturingPhoto()) {
-                Log.w(TAG, "🚫 Photo request rejected - capture already in progress");
-                logCommandResult("take_photo", false, "Photo capture in progress - request rejected");
-                captureService.sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another photo capture is in progress");
+            // PHOTO JOB CHECK: Reject if any photo job (capture or upload/BLE-handoff) is in flight
+            if (captureService.isPhotoJobInFlight()) {
+                Log.w(TAG, "🚫 Photo request rejected - photo job already in flight");
+                logCommandResult("take_photo", false, "Photo job in flight - request rejected");
+                captureService.sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another photo job is in progress");
                 return false;
             }
 
