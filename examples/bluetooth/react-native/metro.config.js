@@ -33,8 +33,15 @@ function redirectedSdkModuleName(moduleName) {
   if (moduleName === "@mentra/bluetooth-sdk") {
     return sdkRoot;
   }
+  if (moduleName === "@mentra/bluetooth-sdk/react") {
+    return path.join(sdkRoot, "src", "react");
+  }
   if (moduleName.startsWith("@mentra/bluetooth-sdk/")) {
-    return path.join(sdkRoot, moduleName.slice("@mentra/bluetooth-sdk/".length));
+    return path.join(
+      sdkRoot,
+      "src",
+      moduleName.slice("@mentra/bluetooth-sdk/".length),
+    );
   }
   return null;
 }

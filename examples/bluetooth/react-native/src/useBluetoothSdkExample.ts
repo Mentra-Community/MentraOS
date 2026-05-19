@@ -121,6 +121,7 @@ export type BluetoothSdkExampleState = {
   photoPreviewUrl: string | null;
   photoSize: PhotoSize;
   rawJsonExpanded: boolean;
+  scanActive: boolean;
   selectedDiscoveredDevice: Device | null;
   selectedScanModel: ScanModel;
   directStreamReceiverRunning: boolean;
@@ -288,6 +289,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   const glasses = bluetooth.glasses;
   const glassesConnected = glasses.connected;
   const phone = bluetooth.sdk;
+  const scanActive = bluetooth.scan.active;
   const galleryModeAuto = phone.galleryMode.desired === 'auto';
   const hotspotEnabled = enabledHotspotStatus(glasses) !== null;
   const selectedDiscoveredDevice = bluetooth.scan.selectedDevice;
@@ -1524,6 +1526,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     playMicRecording,
     rawJsonExpanded,
     requestWifiScan,
+    scanActive,
     selectDiscoveredDevice,
     selectLedColor,
     selectLedMode,

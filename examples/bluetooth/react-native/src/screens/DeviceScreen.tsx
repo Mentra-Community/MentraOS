@@ -300,7 +300,7 @@ function TargetPicker({ sdk, connected }: { sdk: BluetoothSdkExampleModel; conne
     ? discoveredDeviceKey(sdk.selectedDiscoveredDevice)
     : null;
   const savedName = sdk.defaultDevice?.name;
-  const scanning = !connected && sdk.phone.searching === true;
+  const scanning = !connected && sdk.scanActive;
 
   return (
     <View style={styles.targetPicker}>
