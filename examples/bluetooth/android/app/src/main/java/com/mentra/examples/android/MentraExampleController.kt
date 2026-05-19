@@ -106,8 +106,8 @@ data class ExampleEvent(
 private data class RgbLedPattern(
     val action: RgbLedAction,
     val color: RgbLedColor?,
-    val ontime: Int,
-    val offtime: Int,
+    val onDurationMs: Int,
+    val offDurationMs: Int,
     val count: Int,
 )
 
@@ -1041,8 +1041,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 packageName = "com.mentra.examples.android",
                 action = request.action,
                 color = request.color,
-                ontime = request.ontime,
-                offtime = request.offtime,
+                onDurationMs = request.onDurationMs,
+                offDurationMs = request.offDurationMs,
                 count = request.count,
             )
         )
@@ -1311,7 +1311,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         scope.launch {
             try {
                 val result = withContext(Dispatchers.IO) { mentraBluetoothSdk.getGlassesMediaVolume() }
-                val volume = result.volume
+                val volume = result.level
                 state = state.copy(
                     glassesMediaVolume = volume,
                     glassesVolumeStatus = if (volume != null) {
@@ -2285,7 +2285,7 @@ fun GlassesStatus.applyUpdate(update: GlassesStatusUpdate): GlassesStatus =
         connected = update.connected ?: connected,
         micEnabled = update.micEnabled ?: micEnabled,
         connectionState = update.connectionState ?: connectionState,
-        btcConnected = update.btcConnected ?: btcConnected,
+        bluetoothClassicConnected = update.bluetoothClassicConnected ?: bluetoothClassicConnected,
         signalStrength = update.signalStrength ?: signalStrength,
         signalStrengthUpdatedAt = update.signalStrengthUpdatedAt ?: signalStrengthUpdatedAt,
         deviceModel = update.deviceModel ?: deviceModel,
@@ -2293,7 +2293,7 @@ fun GlassesStatus.applyUpdate(update: GlassesStatusUpdate): GlassesStatus =
         firmwareVersion = update.firmwareVersion ?: firmwareVersion,
         besFirmwareVersion = update.besFirmwareVersion ?: besFirmwareVersion,
         mtkFirmwareVersion = update.mtkFirmwareVersion ?: mtkFirmwareVersion,
-        btMacAddress = update.btMacAddress ?: btMacAddress,
+        bluetoothMacAddress = update.bluetoothMacAddress ?: bluetoothMacAddress,
         leftMacAddress = update.leftMacAddress ?: leftMacAddress,
         rightMacAddress = update.rightMacAddress ?: rightMacAddress,
         macAddress = update.macAddress ?: macAddress,
@@ -2356,7 +2356,7 @@ fun BluetoothStatus.applyUpdate(update: BluetoothStatusUpdate): BluetoothStatus 
         buttonMaxRecordingTime = update.buttonMaxRecordingTime ?: buttonMaxRecordingTime,
         buttonVideoWidth = update.buttonVideoWidth ?: buttonVideoWidth,
         buttonVideoHeight = update.buttonVideoHeight ?: buttonVideoHeight,
-        buttonVideoFps = update.buttonVideoFps ?: buttonVideoFps,
+        buttonVideoFrameRate = update.buttonVideoFrameRate ?: buttonVideoFrameRate,
         shouldSendPcm = update.shouldSendPcm ?: shouldSendPcm,
         shouldSendLc3 = update.shouldSendLc3 ?: shouldSendLc3,
         shouldSendTranscript = update.shouldSendTranscript ?: shouldSendTranscript,
