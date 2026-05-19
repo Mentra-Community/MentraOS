@@ -166,9 +166,7 @@ export function checkBesUpdate(besFirmware: BesFirmware | undefined, currentVers
   }
 
   if (!currentVersion) {
-    console.log(
-      `📱 BES current version unknown - assuming update needed (server: ${besFirmware.version})`,
-    )
+    console.log(`📱 BES current version unknown - assuming update needed (server: ${besFirmware.version})`)
     return true
   }
   // BES does not require sequential updates - can install any newer version directly
@@ -634,7 +632,9 @@ export function OtaUpdateChecker() {
       hasCheckedOta.current = true // Mark as checked to prevent duplicate checks
 
       const systemTimeMs = getGlassesSystemTimeMs()
-      await maybeFixGlassesClockFromVersionInfo(systemTimeMs > 0 ? systemTimeMs : undefined)
+      await maybeFixGlassesClockFromVersionInfo(systemTimeMs > 0 ? systemTimeMs : undefined).catch((error) => {
+        console.warn("OTA: clock fix attempt failed; continuing OTA check", error)
+      })
 
       checkForOtaUpdate(OTA_VERSION_URL_PROD, buildNumber, latestMtkFwVersion, latestBesFwVersion)
         .then(({updateAvailable, latestVersionInfo, updates}) => {

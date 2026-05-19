@@ -1,12 +1,12 @@
 import CoreModule from "@mentra/bluetooth-sdk"
 
-import {detectClockSkew} from "../gallerySyncClock"
+import {detectClockSkew} from "@/services/asg/gallerySyncClock"
 import {
   fixGlassesClockIfSkewed,
   handleOtaClockSkewFromGlasses,
   maybeFixGlassesClockFromVersionInfo,
   resetOtaClockFixCooldownForTests,
-} from "../glassesClockSync"
+} from "@/services/asg/glassesClockSync"
 
 jest.mock("@mentra/bluetooth-sdk", () => ({
   __esModule: true,
@@ -74,6 +74,13 @@ describe("glassesClockSync", () => {
     const fixed = await handleOtaClockSkewFromGlasses("ssl_error", glassesTime)
     expect(fixed).toBe(true)
     expect(mockRetryOta).toHaveBeenCalled()
+  })
+
+  it("handleOtaClockSkewFromGlasses ignores ssl_error without glasses time", async () => {
+    const fixed = await handleOtaClockSkewFromGlasses("ssl_error")
+    expect(fixed).toBe(false)
+    expect(mockSetSystemTime).not.toHaveBeenCalled()
+    expect(mockRetryOta).not.toHaveBeenCalled()
   })
 
   it("maybeFixGlassesClockFromVersionInfo retries OTA when WiFi connected", async () => {

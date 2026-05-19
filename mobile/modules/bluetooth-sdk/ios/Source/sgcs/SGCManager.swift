@@ -89,6 +89,7 @@ protocol SGCManager {
     func sendHotspotState(_ enabled: Bool)
     func sendOtaStart()
     func sendOtaQueryStatus()
+    func sendSetSystemTime(_ timestampMs: Int64)
     func sendOtaRetryVersionCheck()
 
     // MARK: - User Context (for crash reporting)

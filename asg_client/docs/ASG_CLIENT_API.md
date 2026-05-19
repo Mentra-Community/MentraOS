@@ -321,7 +321,7 @@ Response:
 
 #### `set_system_time`
 
-Sets the glasses system clock from the phone. Sent only when the phone detects clock skew during gallery sync (not on every BLE connect).
+Sets the glasses system clock from the phone. Sent only when the phone detects clock skew during gallery sync or OTA version checks (not on every BLE connect).
 
 ```json
 {"type": "set_system_time", "timestamp_ms": 1710000000000}

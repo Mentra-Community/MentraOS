@@ -291,8 +291,19 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
         }
 
         AsyncFunction("setSystemTime") { (timestampMs: Double) in
+            let maxTimestamp = Double(Int64.max).nextDown
+            guard timestampMs.isFinite,
+                  timestampMs >= Double(Int64.min),
+                  timestampMs <= maxTimestamp
+            else {
+                throw BluetoothError(
+                    code: "invalid_timestamp",
+                    message: "setSystemTime timestampMs must be a finite Int64 millisecond timestamp."
+                )
+            }
+            let timestamp = Int64(timestampMs)
             await MainActor.run {
-                self.bluetoothSdk().setSystemTime(timestampMs: Int64(timestampMs))
+                self.bluetoothSdk().setSystemTime(timestampMs: timestamp)
             }
         }
 

@@ -26,10 +26,7 @@ function delay(ms: number): Promise<void> {
 /**
  * Set glasses system clock from phone when skew is detected.
  */
-export async function fixGlassesClockIfSkewed(
-  glassesServerTime: number,
-  lastSyncTime = 0,
-): Promise<boolean> {
+export async function fixGlassesClockIfSkewed(glassesServerTime: number, lastSyncTime = 0): Promise<boolean> {
   const {skewed, reason} = detectClockSkew(Date.now(), glassesServerTime, lastSyncTime)
   if (!skewed) {
     return false
@@ -51,11 +48,13 @@ export async function handleOtaClockSkewFromGlasses(
     return false
   }
 
-  const glassesTime =
-    typeof glassesTimeMs === "number" && glassesTimeMs > 0 ? glassesTimeMs : Date.now() - 86_400_000
+  const hasGlassesTime = typeof glassesTimeMs === "number" && Number.isFinite(glassesTimeMs) && glassesTimeMs > 0
 
   if (errorCode === "ssl_error") {
-    const {skewed} = detectClockSkew(Date.now(), glassesTime, 0)
+    if (!hasGlassesTime) {
+      return false
+    }
+    const {skewed} = detectClockSkew(Date.now(), glassesTimeMs, 0)
     if (!skewed) {
       return false
     }
@@ -63,6 +62,8 @@ export async function handleOtaClockSkewFromGlasses(
   } else if (errorCode !== "clock_skew") {
     return false
   }
+
+  const glassesTime = hasGlassesTime ? glassesTimeMs : Date.now() - 86_400_000
 
   const fixed = await fixGlassesClockIfSkewed(glassesTime, 0)
   if (!fixed) {

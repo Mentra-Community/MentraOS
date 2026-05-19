@@ -1,4 +1,4 @@
-import CoreModule, {ButtonPressEvent, CoreStatus, GlassesStatus, OtaStatus, OtaProgress, OtaUpdateInfo} from "@mentra/bluetooth-sdk"
+import CoreModule, {ButtonPressEvent, CoreStatus, OtaStatus} from "@mentra/bluetooth-sdk"
 import CrustModule from "crust"
 import * as Calendar from "expo-calendar"
 import * as Location from "expo-location"
@@ -271,9 +271,12 @@ class MantleManager {
   private async setupPeriodicTasks() {
     this.sendCalendarEvents()
     // Calendar sync every hour
-    this.calendarSyncTimer = BgTimer.setInterval(() => {
-      this.sendCalendarEvents()
-    }, 60 * 60 * 1000) // 1 hour
+    this.calendarSyncTimer = BgTimer.setInterval(
+      () => {
+        this.sendCalendarEvents()
+      },
+      60 * 60 * 1000,
+    ) // 1 hour
 
     try {
       // only start location updates if we have the location permission:
@@ -491,8 +494,8 @@ class MantleManager {
 
       this.subs.push(
         CoreModule.addListener("switch_status", (event) => {
-          const switchType = typeof event.switch_type === "number" ? event.switch_type : event.switchType ?? -1
-          const switchValue = typeof event.switch_value === "number" ? event.switch_value : event.switchValue ?? -1
+          const switchType = typeof event.switch_type === "number" ? event.switch_type : (event.switchType ?? -1)
+          const switchValue = typeof event.switch_value === "number" ? event.switch_value : (event.switchValue ?? -1)
           const timestamp = typeof event.timestamp === "number" ? event.timestamp : Date.now()
           socketComms.sendSwitchStatus(switchType, switchValue, timestamp)
           // TODO: remove
@@ -914,7 +917,15 @@ class MantleManager {
           if (status.status === "failed") {
             const raw = event as Record<string, unknown>
             const glassesTimeMs = Number(raw.glasses_time_ms ?? raw.glassesTimeMs ?? 0) || undefined
-            void handleOtaClockSkewFromGlasses(normalized.error_message, glassesTimeMs)
+            const errorCode = normalized.error_message
+            if (
+              errorCode === "clock_skew" ||
+              (errorCode === "ssl_error" && typeof glassesTimeMs === "number" && Number.isFinite(glassesTimeMs))
+            ) {
+              handleOtaClockSkewFromGlasses(errorCode, glassesTimeMs).catch((err) => {
+                console.warn("MANTLE: OTA clock skew auto-fix failed", err)
+              })
+            }
           }
 
           if (status.status === "complete" || status.status === "failed") {

@@ -36,7 +36,9 @@ describe("getOtaErrorMessage", () => {
   })
 
   it("maps clock_skew to time-sync message", () => {
-    expect(getOtaErrorMessage("clock_skew")).toContain("clock")
+    expect(getOtaErrorMessage("clock_skew")).toBe(
+      "Glasses clock is wrong — syncing time from your phone, then retrying update check",
+    )
   })
 
   it("maps ssl_error to connection message", () => {
