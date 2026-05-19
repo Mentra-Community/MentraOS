@@ -438,7 +438,7 @@ sdk.requestPhoto(
 React Native:
 
 ```ts
-await BluetoothSdk.photoRequest(
+await BluetoothSdk.requestPhoto(
   `assistant-${Date.now()}`,
   'com.example.assistant',
   'medium',
@@ -630,7 +630,7 @@ React Native event payload fields use camelCase. For example, `touch_event` incl
 | `connect` / `connectDefault` | `connect` saves connected glasses as default and cancels existing connection attempts unless options override that behavior. `connectDefault` uses the app-restored default device. |
 | `displayText` | Defaults to `x = 0`, `y = 0`, `size = 24` when supported by the platform call. |
 | `setMicState` | `useGlassesMic = true`, `bypassVad = false`, `sendTranscript = false`, and `sendLc3Data = false` unless explicitly set. |
-| `PhotoRequest` / `photoRequest` | Pass explicit size, compression, and sound. The camera light is always enabled by the SDK. |
+| `PhotoRequest` / `requestPhoto` | Pass explicit size, compression, and sound. The camera light is always enabled by the SDK. |
 | `StreamRequest` / `startStream` | `keepAlive = true`, `keepAliveIntervalSeconds = 15`, and `sound = true` by default in native SDK calls. The camera light is always enabled by the SDK. |
 | `sendIncidentId` | Uses `https://api.mentra.glass` if `apiBaseUrl` is omitted. |
 

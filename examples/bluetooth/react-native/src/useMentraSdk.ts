@@ -736,14 +736,13 @@ export function useMentraSdk(): MentraSdkModel {
 
       setPhotoPreviewUrl(null);
       setCameraStatus(`Camera: webhook upload requested (${requestId})`);
-      await BluetoothSdk.photoRequest(
+      await BluetoothSdk.requestPhoto(
         requestId,
         PHOTO_APP_ID,
         photoSize,
         uploadUrlText,
         null,
         photoCompression,
-        false,
         true,
       );
       void pollPhotoPreview(requestId, statusUrl, pollGeneration);
@@ -769,14 +768,13 @@ export function useMentraSdk(): MentraSdkModel {
       }
     }, DIRECT_PHOTO_UPLOAD_TIMEOUT_MS);
 
-    await BluetoothSdk.photoRequest(
+    await BluetoothSdk.requestPhoto(
       requestId,
       PHOTO_APP_ID,
       photoSize,
       receiver.uploadUrl,
       null,
       photoCompression,
-      false,
       true,
     );
   }
