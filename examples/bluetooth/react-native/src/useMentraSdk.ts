@@ -5,14 +5,10 @@ import {Clipboard, Linking, PermissionsAndroid, Platform} from 'react-native';
 import BluetoothSdk, {
   DeviceModels,
   type AudioConnectedEvent,
-  type BatteryStatusEvent,
   type ButtonPressEvent,
   type CompatibleGlassesSearchStopEvent,
   type BluetoothStatus,
-  createDisconnectedGlassesStatus,
   type GlassesStatus,
-  type HotspotStatus,
-  type HotspotStatusChangeEvent,
   type LogEvent,
   type Device,
   type DeviceModel,
@@ -22,9 +18,8 @@ import BluetoothSdk, {
   type RgbLedControlResponseEvent,
   type StreamStatusEvent,
   type TouchEvent,
-  type WifiStatus,
-  type WifiStatusChangeEvent,
 } from '@mentra/bluetooth-sdk';
+import {useMentraBluetooth, type DefaultDeviceStorage} from '@mentra/bluetooth-sdk/react';
 import MentraDirectReceiver, {
   type DirectPhotoUploadEvent,
   type DirectReceiverStatusEvent,
@@ -84,27 +79,6 @@ type MicPcmChunk = {
   data: Uint8Array;
   index: number;
 };
-
-function wifiStatusFromEvent(event: WifiStatusChangeEvent): WifiStatus {
-  switch (event.state) {
-    case 'connected':
-      return {state: 'connected', ssid: event.ssid, localIp: event.localIp};
-    case 'disconnected':
-      return {state: 'disconnected'};
-  }
-}
-
-function hotspotStatusFromEvent(event: HotspotStatusChangeEvent): HotspotStatus {
-  if (event.state === 'enabled') {
-    return {
-      state: 'enabled',
-      ssid: event.ssid,
-      password: event.password,
-      localIp: event.localIp,
-    };
-  }
-  return {state: event.state};
-}
 
 export type SdkConsoleEvent = {
   tag: 'LIVE' | 'STORE' | 'BLE' | 'TX';
@@ -209,6 +183,11 @@ const DEFAULT_DEVICE_FILE = 'mentra-default-device.json';
 const IOS_AUDIO_ROUTE_HINT =
   'Audio output: iOS cannot pair audio from the app. Open Settings > Bluetooth and connect/select the glasses before playback.';
 
+const defaultDeviceStorage: DefaultDeviceStorage = {
+  load: loadPersistedDefaultDevice,
+  save: savePersistedDefaultDevice,
+};
+
 declare const process: {
   env?: {
     EXPO_PUBLIC_MENTRA_PHOTO_WEBHOOK_URL?: string;
@@ -217,17 +196,6 @@ declare const process: {
 };
 
 export function useMentraSdk(): MentraSdkModel {
-  const [glassesStatus, setGlassesStatus] = useState<Partial<GlassesStatus>>(
-    () => createDisconnectedGlassesStatus(),
-  );
-  const [bluetoothStatus, setBluetoothStatus] = useState<Partial<BluetoothStatus>>({});
-  const [defaultDevice, setDefaultDevice] = useState<Device | null>(
-    null,
-  );
-  const [selectedDiscoveredDevice, setSelectedDiscoveredDevice] =
-    useState<Device | null>(null);
-  const [selectedScanModel, setSelectedScanModel] =
-    useState<ScanModel>(DeviceModels.MentraLive);
   const [events, setEvents] = useState<SdkConsoleEvent[]>([
     event('LIVE', 'SDK ready. Scan to discover glasses.'),
   ]);
@@ -260,7 +228,6 @@ export function useMentraSdk(): MentraSdkModel {
   const [streamRequested, setStreamRequested] = useState(false);
   const [streamPreviewReady, setStreamPreviewReady] = useState(false);
   const [streamStatus, setStreamStatus] = useState('Ready to stream WebRTC to phone');
-  const [hotspotEnabled, setHotspotEnabled] = useState(false);
   const [micRecording, setMicRecording] = useState(false);
   const [micPlaying, setMicPlaying] = useState(false);
   const [micElapsedSeconds, setMicElapsedSeconds] = useState(0);
@@ -278,7 +245,6 @@ export function useMentraSdk(): MentraSdkModel {
   const [galleryServerStatus, setGalleryServerStatus] = useState(
     'Gallery server: enable hotspot to check',
   );
-  const [galleryModeAuto, setGalleryModeAuto] = useState(false);
   const [ledColor, setLedColor] = useState<LedColor>('green');
   const [ledMode, setLedMode] = useState<LedMode>('Off');
   const [rawJsonExpanded, setRawJsonExpanded] = useState(false);
@@ -302,69 +268,26 @@ export function useMentraSdk(): MentraSdkModel {
   const micRecordingRef = useRef(false);
   const micStartedAtRef = useRef<number | null>(null);
   const didAutoConnectDefaultRef = useRef(false);
+  const wasConnectedRef = useRef(false);
 
-  const discoveredDevices = bluetoothStatus.searchResults ?? [];
-  const glassesConnected = isGlassesConnected(glassesStatus);
+  const bluetooth = useMentraBluetooth({
+    defaultDeviceStorage,
+    defaultModel: DeviceModels.MentraLive,
+    onError: (error: unknown) => {
+      addEvent('TX', `SDK lifecycle error: ${formatError(error)}`);
+    },
+    scanTimeoutMs: 10_000,
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-
-    void Promise.all([
-      BluetoothSdk.getGlassesStatus(),
-      BluetoothSdk.getBluetoothStatus(),
-      BluetoothSdk.getDefaultDevice(),
-    ])
-      .then(([initialGlassesStatus, initialBluetoothStatus, initialDefaultDevice]) => {
-        if (cancelled) {
-          return;
-        }
-        setGlassesStatus(initialGlassesStatus);
-        setBluetoothStatus(initialBluetoothStatus);
-        setHotspotEnabled(enabledHotspotStatus(initialGlassesStatus) !== null);
-        setGalleryModeAuto(initialBluetoothStatus.galleryModeAuto ?? false);
-        setDefaultDevice(initialDefaultDevice);
-      })
-      .catch((error) => {
-        addEvent('TX', `initial SDK status load failed: ${formatError(error)}`);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!selectedDiscoveredDevice) {
-      return;
-    }
-    const stillAvailable = discoveredDevices.some(
-      (device) => discoveredDeviceKey(device) === discoveredDeviceKey(selectedDiscoveredDevice),
-    );
-    if (!stillAvailable) {
-      setSelectedDiscoveredDevice(null);
-    }
-  }, [discoveredDevices, selectedDiscoveredDevice]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    void loadPersistedDefaultDevice()
-      .then(async (device) => {
-        if (cancelled || !device) {
-          return;
-        }
-        await BluetoothSdk.setDefaultDevice(device);
-        setDefaultDevice(device);
-        addEvent('BLE', `restored default ${device.name}`);
-      })
-      .catch((error) => {
-        addEvent('TX', `default device restore failed: ${formatError(error)}`);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const bluetoothStatus = bluetooth.sdk.status;
+  const defaultDevice = bluetooth.defaultDevice;
+  const discoveredDevices = bluetooth.scan.devices;
+  const glassesStatus = bluetooth.glasses.status;
+  const glassesConnected = bluetooth.glasses.connected;
+  const galleryModeAuto = bluetooth.sdk.galleryMode.desired === 'auto';
+  const hotspotEnabled = enabledHotspotStatus(glassesStatus) !== null;
+  const selectedDiscoveredDevice = bluetooth.scan.selectedDevice;
+  const selectedScanModel = scanModelFromDeviceModel(bluetooth.scan.model);
 
   useEffect(() => {
     if (didAutoConnectDefaultRef.current || glassesConnected) {
@@ -378,40 +301,20 @@ export function useMentraSdk(): MentraSdkModel {
       if (!(await ensureAndroidPermissions('connect'))) {
         throw new Error('Bluetooth permissions are required to connect.');
       }
-      await BluetoothSdk.connectDefault();
+      await bluetooth.connectDefault();
     });
   }, [defaultDevice, glassesConnected]);
 
   useEffect(() => {
     const removeGlasses = BluetoothSdk.onGlassesStatus((changed) => {
-      if (changed.hotspot) {
-        setHotspotEnabled(changed.hotspot.state === 'enabled');
-      }
-      if (isDisconnectedStatus(changed)) {
-        applyDisconnectedState('Disconnected');
-      } else {
-        setGlassesStatus((current) => ({...current, ...changed}));
-      }
       addEvent('STORE', summarizeMap(changed));
     });
 
     const removeBluetooth = BluetoothSdk.onBluetoothStatus((changed) => {
-      setBluetoothStatus((current) => ({...current, ...changed}));
-      if (changed.galleryModeAuto !== undefined) {
-        setGalleryModeAuto(changed.galleryModeAuto);
-      }
       addEvent('BLE', summarizeMap(changed));
     });
 
     const subscriptions = [
-      BluetoothSdk.addListener('default_device_changed', (payload) => {
-        const device = payload.device ?? null;
-        setDefaultDevice(device);
-        void savePersistedDefaultDevice(device).catch((error) => {
-          addEvent('TX', `default device save failed: ${formatError(error)}`);
-        });
-        addEvent('BLE', device ? `default device ${device.name}` : 'default device cleared');
-      }),
       BluetoothSdk.addListener('button_press', (payload: ButtonPressEvent) => {
         addEvent('LIVE', `button ${payload.buttonId}: ${payload.pressType}`);
       }),
@@ -422,43 +325,24 @@ export function useMentraSdk(): MentraSdkModel {
           `${gesture.toLowerCase().includes('swipe') ? 'swipe' : 'touch'} ${gesture}`,
         );
       }),
-      BluetoothSdk.addListener('battery_status', (payload: BatteryStatusEvent) => {
-        setGlassesStatus((current) => ({
-          ...current,
-          batteryLevel: payload.level,
-          charging: payload.charging,
-        }));
+      BluetoothSdk.addListener('battery_status', (payload) => {
         addEvent('STORE', `battery ${payload.level}%${payload.charging ? ' charging' : ''}`);
       }),
-      BluetoothSdk.addListener('wifi_status_change', (payload: WifiStatusChangeEvent) => {
-        const wifi = wifiStatusFromEvent(payload);
-        setGlassesStatus((current) => ({
-          ...current,
-          wifi,
-        }));
-        addEvent('STORE', `Wi-Fi ${wifi.state === 'connected' ? wifi.ssid : wifi.state}`);
+      BluetoothSdk.addListener('wifi_status_change', (payload) => {
+        addEvent('STORE', `Wi-Fi ${payload.state === 'connected' ? payload.ssid : payload.state}`);
       }),
-      BluetoothSdk.addListener('hotspot_status_change', (payload: HotspotStatusChangeEvent) => {
-        const hotspot = hotspotStatusFromEvent(payload);
-        const enabled = hotspot.state === 'enabled';
-        setHotspotEnabled(enabled);
+      BluetoothSdk.addListener('hotspot_status_change', (payload) => {
         setGalleryServerReachable(null);
-        setGlassesStatus((current) => {
-          const nextStatus = {...current, hotspot};
-          setGalleryServerStatus(
-            enabled
-              ? `Gallery server: ${galleryServerUrl(nextStatus, enabled)}`
-              : 'Gallery server: hotspot off',
-          );
-          return nextStatus;
-        });
+        setGalleryServerStatus(
+          payload.state === 'enabled'
+            ? `Gallery server: http://${payload.localIp}:8089`
+            : 'Gallery server: hotspot off',
+        );
         addEvent('STORE', `hotspot ${summarizeMap(payload)}`);
       }),
       BluetoothSdk.addListener('hotspot_error', (payload) => {
-        setHotspotEnabled(false);
         setGalleryServerReachable(false);
         setGalleryServerStatus('Gallery server: hotspot error');
-        setGlassesStatus((current) => ({...current, hotspot: {state: 'disabled'}}));
         addEvent('TX', `hotspot error ${summarizeMap(payload)}`);
       }),
       MentraDirectReceiver.addListener('photoUpload', handleDirectPhotoUpload),
@@ -544,6 +428,17 @@ export function useMentraSdk(): MentraSdkModel {
     };
   }, []);
 
+  useEffect(() => {
+    if (glassesConnected) {
+      wasConnectedRef.current = true;
+      return;
+    }
+    if (wasConnectedRef.current && isDisconnectedStatus(glassesStatus)) {
+      wasConnectedRef.current = false;
+      applyDisconnectedState('Disconnected');
+    }
+  }, [glassesConnected, glassesStatus]);
+
   function addEvent(tag: SdkConsoleEvent['tag'], text: string) {
     setEvents((current) => [event(tag, text), ...current].slice(0, 30));
   }
@@ -592,17 +487,8 @@ export function useMentraSdk(): MentraSdkModel {
       if (!(await ensureAndroidPermissions('scan'))) {
         throw new Error('Bluetooth permissions are required to scan.');
       }
-      setSelectedDiscoveredDevice(null);
-      setBluetoothStatus((current) => ({...current, searchResults: []}));
-      const devices = await BluetoothSdk.scan(model, {
-        timeoutMs: 10_000,
-        onResults: (nextDevices: Device[]) => {
-          setBluetoothStatus((current) => ({
-            ...current,
-            searchResults: nextDevices,
-          }));
-        },
-      });
+      bluetooth.scan.selectDevice(null);
+      const devices = await bluetooth.scan.start(model);
       addEvent('BLE', `scan completed with ${devices.length} result${devices.length === 1 ? '' : 's'}`);
     });
   }
@@ -613,11 +499,11 @@ export function useMentraSdk(): MentraSdkModel {
         throw new Error('Bluetooth permissions are required to connect.');
       }
       if (selectedDiscoveredDevice) {
-        await BluetoothSdk.connect(selectedDiscoveredDevice);
+        await bluetooth.connect(selectedDiscoveredDevice);
         return;
       }
       if (discoveredDevices.length === 0 && defaultDevice) {
-        await BluetoothSdk.connectDefault();
+        await bluetooth.connectDefault();
         return;
       }
       if (discoveredDevices.length > 0) {
@@ -628,34 +514,31 @@ export function useMentraSdk(): MentraSdkModel {
   }
 
   async function connectDevice(device: Device) {
-    setSelectedDiscoveredDevice(device);
+    bluetooth.scan.selectDevice(device);
     await runAction(`Connect ${device.name}`, async () => {
       if (!(await ensureAndroidPermissions('connect'))) {
         throw new Error('Bluetooth permissions are required to connect.');
       }
-      await BluetoothSdk.connect(device);
+      await bluetooth.connect(device);
     });
   }
 
   async function disconnect() {
     await runAction('Disconnect', async () => {
       stopKeepAlive();
-      await BluetoothSdk.disconnect();
+      await bluetooth.disconnect();
       applyDisconnectedState('Disconnected');
     });
   }
 
   async function clearDefaultDevice() {
     await runAction('Clear default', async () => {
-      await BluetoothSdk.clearDefaultDevice();
-      setDefaultDevice(null);
-      setSelectedDiscoveredDevice(null);
-      await savePersistedDefaultDevice(null);
+      await bluetooth.clearDefaultDevice();
     });
   }
 
   function selectDiscoveredDevice(device: Device) {
-    setSelectedDiscoveredDevice(device);
+    bluetooth.scan.selectDevice(device);
     setLastAction(`Selected: ${device.name}`);
   }
 
@@ -663,9 +546,7 @@ export function useMentraSdk(): MentraSdkModel {
     if (selectedScanModel === model) {
       return;
     }
-    setSelectedScanModel(model);
-    setSelectedDiscoveredDevice(null);
-    setBluetoothStatus((current) => ({...current, searchResults: []}));
+    bluetooth.scan.setModel(model);
     setLastAction(`Selected scan model: ${scanModelLabel(model)}`);
   }
 
@@ -686,8 +567,7 @@ export function useMentraSdk(): MentraSdkModel {
   async function setGalleryModeAutoAction(enabled: boolean) {
     await runAction(enabled ? 'Save in gallery mode' : 'Report button events', async () => {
       requireConnected('change gallery mode');
-      await BluetoothSdk.setGalleryMode(enabled ? 'auto' : 'manual');
-      setGalleryModeAuto(enabled);
+      await bluetooth.setGalleryMode(enabled ? 'auto' : 'manual');
     });
   }
 
@@ -1550,14 +1430,12 @@ export function useMentraSdk(): MentraSdkModel {
       pollGenerationRef.current += 1;
       setCameraStatus('Disconnected before photo upload completed');
     }
-    setGlassesStatus(createDisconnectedGlassesStatus());
     setStreamRequested(false);
     setDirectStreamReceiverRunning(false);
     setDirectStreamWhipUrl(null);
     setStreamPreviewReady(false);
     setStreamStartedAt(null);
     setStreamStatus(status);
-    setHotspotEnabled(false);
     setGalleryServerReachable(null);
     setGalleryServerStatus('Gallery server: connect glasses first');
     setMicRecording(false);
@@ -1689,6 +1567,12 @@ export function useMentraSdk(): MentraSdkModel {
 
 export function scanModelLabel(model: ScanModel) {
   return model === DeviceModels.G2 ? 'Even G2' : 'Mentra Live';
+}
+
+function scanModelFromDeviceModel(model: DeviceModel): ScanModel {
+  return SCAN_MODELS.includes(model as ScanModel)
+    ? (model as ScanModel)
+    : DeviceModels.MentraLive;
 }
 
 function event(tag: SdkConsoleEvent['tag'], text: string): SdkConsoleEvent {
