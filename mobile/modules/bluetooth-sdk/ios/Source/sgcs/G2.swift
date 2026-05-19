@@ -53,6 +53,7 @@ private enum G2BLE {
 private enum ServiceID: UInt8 {
     case dashboard = 1 // 0x01 - UI_BACKGROUND_DASHBOARD_APP_ID
     case menu = 3 // 0x03 - UI_FOREGROUND_MEUN_ID (typo is intentional — matches Even's proto)
+    case notification = 4 // 0x04 - UI_FOREGROUND_NOTIFICATION_ID
     case evenAI = 7 // 0x07 - UI_FOREGROUND_EVEN_AI_ID
     case g2Setting = 9 // 0x09 - UI_SETTING_APP_ID
     case gestureCtrl = 13 // 0x0D - gesture_ctrl lifecycle signals
@@ -772,14 +773,17 @@ private enum EvenAIProto {
     /// skillId values (per even_ai.proto):
     ///   0 SKILL_NONE, 1 BRIGHTNESS, 2 TRANSLATE_CTRL, 3 NOTIFICATION,
     ///   4 TELEPROMPT, 5 NAVIGATE, 6 CONVERSATE, 7 QUICKLIST, 8 AUTO_BRIGHTNESS
-    static func triggerSkill(magicRandom: Int32, skillId: Int32, skillParam: Int32 = 0) -> Data {
+    static func triggerSkill(
+        magicRandom: Int32, skillId: Int32, skillParam: Int32 = 0,
+        text: String = "", streamEnable: Int32 = 1, fTextEnd: Int32 = 1
+    ) -> Data {
         // EvenAISkillInfo
         var skillW = ProtobufWriter()
-        skillW.writeInt32Field(1, 0) // streamEnable
+        skillW.writeInt32Field(1, streamEnable) // streamEnable
         skillW.writeInt32Field(2, skillId) // skillId
         skillW.writeInt32Field(3, skillParam) // skillParam — for NOTIFICATION skill this is a NotificationType enum
-        // f4 (text) intentionally omitted — empty for UI-launch skills
-        skillW.writeInt32Field(6, 0) // fTextEnd
+        skillW.writeBytesField(4, Data(text.utf8)) // text (utterance / payload)
+        skillW.writeInt32Field(6, fTextEnd) // fTextEnd — 1 signals "this is the final/complete packet"
 
         // EvenAIDataPackage
         var w = ProtobufWriter()
@@ -797,6 +801,7 @@ private enum NotificationProto {
     /// `NotificationIOS { appID, displayName }`. We saw the glasses emit this
     /// inbound after "Hey Even, show notifications" with appID="com.burbn.instagram";
     /// trying the same shape outbound to see if the glasses display it.
+    /// (Returned errorCode=8 NOT_SUPPORT in testing — Service 4 doesn't accept this outbound.)
     static func iosNotification(magicRandom: Int32, appID: String, displayName: String) -> Data {
         var iosW = ProtobufWriter()
         iosW.writeBytesField(1, Data(appID.utf8)) // appID
@@ -806,6 +811,31 @@ private enum NotificationProto {
         w.writeInt32Field(1, 2) // commandId = NOTIFICATION_IOS
         w.writeInt32Field(2, magicRandom)
         w.writeMessageField(4, iosW.data) // IOS (field 4)
+        return w.data
+    }
+
+    /// NotificationDataPackage with commandId=NOTIFICATION_CTRL (1), carrying
+    /// `NotificationControl { notifEnable, autoDispEnable, dispTime, avoidDisturbEnable }`.
+    /// Per Flutter `ProtoNotificationExt.settingNotification` this is how the
+    /// official app configures notification behavior on the glasses. Worth
+    /// testing whether toggling notifEnable also opens the notification panel.
+    static func notificationCtrl(
+        magicRandom: Int32,
+        notifEnable: Int32 = 1,
+        autoDispEnable: Int32 = 1,
+        dispTime: Int32 = 5,
+        avoidDisturbEnable: Int32 = 0
+    ) -> Data {
+        var ctrlW = ProtobufWriter()
+        ctrlW.writeInt32Field(1, notifEnable) // notifEnable
+        ctrlW.writeInt32Field(2, autoDispEnable) // autoDispEnable
+        ctrlW.writeInt32Field(3, dispTime) // dispTime (seconds)
+        ctrlW.writeInt32Field(5, avoidDisturbEnable) // avoidDisturbEnable
+
+        var w = ProtobufWriter()
+        w.writeInt32Field(1, 1) // commandId = NOTIFICATION_CTRL
+        w.writeInt32Field(2, magicRandom)
+        w.writeMessageField(3, ctrlW.data) // ctrl (field 3)
         return w.data
     }
 }
@@ -1407,6 +1437,15 @@ class G2: NSObject, SGCManager {
     private func sendEvenAICommand(_ payload: Data) {
         let packets = sendManager.buildPackets(
             serviceId: ServiceID.evenAI.rawValue,
+            payload: payload,
+            reserveFlag: true
+        )
+        sendToGlasses(packets)
+    }
+
+    private func sendNotificationCommand(_ payload: Data) {
+        let packets = sendManager.buildPackets(
+            serviceId: ServiceID.notification.rawValue,
             payload: payload,
             reserveFlag: true
         )
@@ -2751,52 +2790,58 @@ class G2: NSObject, SGCManager {
     /// Fire an EvenAI skill — the same path "Hey Even, show X" uses. Triggers a
     /// built-in glasses UI (notification list, navigation, teleprompter, etc).
     /// See `EvenAIProto.triggerSkill` for the skillId table.
-    func triggerSkill(_ skillId: Int32, skillParam: Int32 = 0) {
-        Bridge.log("G2: triggerSkill(\(skillId), skillParam=\(skillParam))")
+    func triggerSkill(
+        _ skillId: Int32, skillParam: Int32 = 0,
+        text: String = "", streamEnable: Int32 = 1, fTextEnd: Int32 = 1
+    ) {
+        Bridge.log("G2: triggerSkill(\(skillId), skillParam=\(skillParam), text=\"\(text)\", streamEnable=\(streamEnable), fTextEnd=\(fTextEnd))")
         let payload = EvenAIProto.triggerSkill(
             magicRandom: sendManager.nextMagicRandom(),
             skillId: skillId,
-            skillParam: skillParam
+            skillParam: skillParam,
+            text: text,
+            streamEnable: streamEnable,
+            fTextEnd: fTextEnd
         )
         sendEvenAICommand(payload)
     }
 
-    /// Open the notification list — same effect as "Hey Even, show notifications".
-    /// Per Flutter binary RE: `sendSkillNotification` writes
-    /// `EvenAISkillInfo { skillId = eEvenAISkill.NOTIFICATION (3), skillParam = NotificationType.show (1) }`.
-    /// The previous sweep used skillId=2 (TRANSLATE_CTRL) per a stale firmware-RE
-    /// doc — wrong skill, hence the silent ACKs.
+    /// ENTER + SKILL(NOTIFICATION, show) with streamEnable=1, fTextEnd=1,
+    /// text="show notifications" — matching the full shape the official app
+    /// sends after cloud ASR resolves the voice command. Previous attempt with
+    /// streamEnable=0, empty text, fTextEnd=0 was ACKed but ignored.
     func dbg1() {
-        Bridge.log("G2: dbg1() — show notification list (skillId=3, skillParam=1)")
-        triggerSkill(3, skillParam: 1)
+        Bridge.log("G2: dbg1() — ENTER + SKILL(NOTIFICATION, show, text)")
+        let enterPayload = EvenAIProto.aiCtrl(
+            magicRandom: sendManager.nextMagicRandom(),
+            status: 2 // EVEN_AI_ENTER
+        )
+        sendEvenAICommand(enterPayload)
+
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard let self = self else { return }
+            self.triggerSkill(
+                3, skillParam: 1,
+                text: "show notifications",
+                streamEnable: 1, fTextEnd: 1
+            )
+        }
     }
 
+    /// Send NotificationControl on Service 4 — same proto shape as the official
+    /// app's `settingNotification`. Worth checking if toggling notifEnable
+    /// opens the notification panel as a side effect.
     func dbg2() {
-        Bridge.log("G2: dbg2()")
-
-        // createPageWithText("test1")
-
-        // let tc = EvenHubProto.textContainerProperty(
-        //     x: 0, y: 0, width: 576, height: 288,
-        //     borderWidth: 0, borderColor: 0, borderRadius: 0,
-        //     paddingLength: 4, containerID: textContainerID,
-        //     containerName: "text-main2", isEventCapture: true,
-        //     content: "test-dbg1"
-        // )
-
-        // let msg: Data
-        // Bridge.log("G2: dbg2 - sending createPageMessage()")
-        // msg = EvenHubProto.createPageMessage(
-        //     textContainers: [tc], magicRandom: sendManager.nextMagicRandom(),
-        //     appId: nil)
-
-        // sendEvenHubCommand(msg)
-
-        // // update the text
-        // Bridge.log("G2: sendTextWall() - updating text container")
-        // updateText("test2")
-        let currentDepth = GlassesStore.shared.get("core", "dashboard_depth") as? Int ?? 0
-        setDashboardDepthOnly(currentDepth)
+        Bridge.log("G2: dbg2() — NotificationControl(enable=1, autoDisp=1)")
+        let payload = NotificationProto.notificationCtrl(
+            magicRandom: sendManager.nextMagicRandom(),
+            notifEnable: 1,
+            autoDispEnable: 1,
+            dispTime: 5,
+            avoidDisturbEnable: 0
+        )
+        sendNotificationCommand(payload)
     }
 
     // MARK: - SGCManager: Device Control
