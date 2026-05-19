@@ -297,6 +297,8 @@ React Native status uses `mentra.glasses.connection.state` for link progress. `f
 
 `scan()` has two result paths on purpose: `onResults` is for live picker updates while scanning is still in progress, and the returned `devices` array is the final list after the scan timeout/completion. Use the final list for "pick one and connect" logic.
 
+Use `Device.id` as the stable app-facing key for scan rows, selected devices, and persisted default devices. Do not parse it for model, name, or address information; use the typed `model`, `name`, `address` / `identifier`, and `rssi` fields instead. Android commonly uses a Bluetooth address when available, iOS commonly uses a CoreBluetooth identifier when available, and the SDK falls back to `model:name` when no platform identifier is available.
+
 React Native apps should persist their own default-device record if they want `connectDefault()` to work after restart:
 
 ```ts

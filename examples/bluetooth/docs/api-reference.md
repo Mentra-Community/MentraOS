@@ -156,6 +156,8 @@ Use `scan()` for user-facing device pickers. The progressive result callback is 
 
 Prefer connecting to a `Device` returned by SDK scan callbacks. If your app wants `connectDefault()` to work after restart, persist a small default-device record in app storage and restore it with `setDefaultDevice()` before calling `connectDefault()`.
 
+`Device.id` is the stable app-facing key for a scan result, within the limits of the platform identifier available to the SDK. Use it as a list key, selected-device key, and persisted default-device key. Do not parse `id` for model, name, or address information; use the typed fields instead. Android commonly uses a Bluetooth address when available, iOS commonly uses a CoreBluetooth identifier when available, and the SDK falls back to `model:name` when no platform identifier is available.
+
 ## Status
 
 Android:
@@ -355,7 +357,7 @@ Android:
 ```kotlin
 sdk.setPreferredMic(MicPreference.AUTO)
 sdk.setOwnAppAudioPlaying(false)
-sdk.setMicState(enabled = true, useGlassesMic = true, bypassVad = false)
+sdk.setMicState(enabled = true)
 ```
 
 iOS:
@@ -363,17 +365,19 @@ iOS:
 ```swift
 sdk.setPreferredMic(.auto)
 sdk.setOwnAppAudioPlaying(false)
-sdk.setMicState(enabled: true, useGlassesMic: true, bypassVad: false)
+sdk.setMicState(enabled: true)
 ```
 
 React Native:
 
 ```ts
 await BluetoothSdk.setOwnAppAudioPlaying(false);
-await BluetoothSdk.setMicState(true, true, false);
+await BluetoothSdk.setMicState(true);
 ```
 
-Raw audio and local transcription are advanced capabilities. Gate them behind explicit user permission and in-app controls.
+Microphone audio events and local transcription are advanced capabilities. Gate them behind explicit user permission and in-app controls.
+
+`setMicState(enabled)` defaults to glasses microphone audio with `bypassVad=true`. VAD means Voice Activity Detection: the SDK speech detector that can gate microphone audio to detected speech. Keep the default for continuous PCM into external STT, WAV writing, recording, or playback. Pass `bypassVad=false` only when your app intentionally wants VAD-gated microphone events.
 
 Phone-originated playback is routed by the OS, not by the BLE command channel. On Android, Mentra Live initiates Bluetooth Classic bonding after BLE connects; accept the system pairing dialog so media audio can route to the glasses. On iOS, users must pair/connect the glasses from Settings > Bluetooth and select them as the audio output because apps cannot initiate Bluetooth Classic audio pairing.
 
@@ -612,7 +616,7 @@ React Native event payload fields use camelCase. For example, `touch_event` incl
 | Model | Android | iOS | React Native | Purpose |
 | --- | --- | --- | --- | --- |
 | Device model | `DeviceModel` | `DeviceModel` | `DeviceModel` / `DeviceModels` | Supported family such as Mentra Live, Mentra Nex, G1, G2, Mach1, Z100, Frame, simulated, or R1. |
-| Discovered device | `Device` | `Device` | `Device` | Scan result containing model, name, address/identifier, RSSI, and id. |
+| Discovered device | `Device` | `Device` | `Device` | Scan result containing typed model, name, platform address/identifier, optional RSSI, and stable id. Do not parse `id`; use the typed fields. |
 | Connection state | `GlassesConnectionState` | `GlassesConnectionState` | `GlassesConnectionStatus` | Link-layer state: disconnected, scanning, connecting, bonding, or connected. React Native uses a discriminated union where `fullyBooted` only exists on the connected state. |
 | Glasses status | `GlassesStatus` / `GlassesStatusUpdate` | `GlassesStatus` / `GlassesStatusUpdate` | `useMentraBluetooth().glasses` | Connected device snapshot: model, firmware, serial, battery, Wi-Fi, hotspot, head-up, controller, and readiness. |
 | SDK status | `BluetoothStatus` / `BluetoothStatusUpdate` | `BluetoothStatus` / `BluetoothStatusUpdate` | `useMentraBluetooth().sdk` | Scanning state, discovered devices, Wi-Fi scan results, mic state, settings, and logs. |
@@ -626,7 +630,7 @@ React Native event payload fields use camelCase. For example, `touch_event` incl
 | iOS `MentraBluetoothSDK()` | Uses `.default` configuration. |
 | `connect` / `connectDefault` | `connect` saves connected glasses as default and cancels existing connection attempts unless options override that behavior. `connectDefault` uses the app-restored default device. |
 | `displayText` | Defaults to `x = 0`, `y = 0`, `size = 24` when supported by the platform call. |
-| `setMicState` | `useGlassesMic = true`, `bypassVad = false`, `sendTranscript = false`, and `sendLc3Data = false` unless explicitly set. |
+| `setMicState` | `useGlassesMic = true`, `bypassVad = true`, `sendTranscript = false`, and `sendLc3Data = false` unless explicitly set. |
 | `PhotoRequest` / `requestPhoto` | Pass explicit size, compression, and sound. The camera light is always enabled by the SDK. |
 | `StreamRequest` / `startStream` | `keepAlive = true`, `keepAliveIntervalSeconds = 15`, and `sound = true` by default in native SDK calls. The camera light is always enabled by the SDK. |
 | `sendIncidentId` | Uses `https://api.mentra.glass` if `apiBaseUrl` is omitted. |

@@ -42,22 +42,24 @@ Android:
 
 ```kotlin
 sdk.setPreferredMic(MicPreference.AUTO)
-sdk.setMicState(enabled = true, useGlassesMic = true, bypassVad = false)
+sdk.setMicState(enabled = true)
 ```
 
 iOS:
 
 ```swift
 sdk.setPreferredMic(.auto)
-sdk.setMicState(enabled: true, useGlassesMic: true, bypassVad: false)
+sdk.setMicState(enabled: true)
 ```
 
 React Native:
 
 ```ts
 await BluetoothSdk.setOwnAppAudioPlaying(false);
-await BluetoothSdk.setMicState(true, true, false);
+await BluetoothSdk.setMicState(true);
 ```
+
+`setMicState(enabled)` defaults to glasses microphone audio with `bypassVad=true`. VAD means Voice Activity Detection: the SDK speech detector that can gate microphone audio to detected speech. Keep the default for continuous PCM into external STT, WAV writing, recording, or playback. Pass `bypassVad=false` only when your app intentionally wants VAD-gated microphone events.
 
 ## PCM Audio
 
