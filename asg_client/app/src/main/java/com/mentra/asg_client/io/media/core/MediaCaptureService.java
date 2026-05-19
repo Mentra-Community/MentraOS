@@ -45,6 +45,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import android.net.ConnectivityManager;
 import android.net.NetworkCapabilities;
@@ -297,7 +298,7 @@ public class MediaCaptureService {
     // Set on entry to takePhotoAndUpload / takePhotoForBleTransfer; cleared only at terminal
     // exits (success or failure) of the full pipeline, NOT on the capture→upload transition.
     // Concurrent SDK photo requests are rejected with CAMERA_BUSY while this is true.
-    private final AtomicBoolean isPhotoJobInFlight = new AtomicBoolean(false);
+    private final AtomicReference<String> activePhotoJobRequestId = new AtomicReference<>(null);
     private final AtomicBoolean isCleaningUp = new AtomicBoolean(false);
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     /** Exclude these capture directory names from Wi‑Fi sync until integrity check finishes. */
@@ -311,7 +312,9 @@ public class MediaCaptureService {
     // slow webhook upload on flaky WiFi so we don't prematurely free the flag while the upload
     // is still grinding. Force-resets isPhotoJobInFlight if no terminal callback fires.
     private static final long CAPTURE_SAFETY_TIMEOUT_MS = 45000; // 45 seconds
+    private final Object captureSafetyTimeoutLock = new Object();
     private Runnable captureSafetyTimeout;
+    private String captureSafetyTimeoutRequestId;
 
     // Per-request timing instrumentation (gated by ENABLE_PHOTO_TIMING_LOGS)
     private final Map<String, Map<String, Long>> photoTimings = new HashMap<>();
@@ -1313,7 +1316,7 @@ public class MediaCaptureService {
 
         // Single-flight guard: reject if any photo job (capture or upload) is already in progress.
         // The flag stays set across capture → upload; cleared only at terminal exits below.
-        if (!isPhotoJobInFlight.compareAndSet(false, true)) {
+        if (!acquirePhotoJob(requestId)) {
             Log.w(TAG, "🚫 Photo job in flight - rejecting concurrent request: " + requestId);
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another photo job is in progress");
             return;
@@ -1339,8 +1342,7 @@ public class MediaCaptureService {
 
         // TESTING: Check for fake camera capture failure
         if (PhotoCaptureTestFramework.shouldFail("CAMERA_CAPTURE")) {
-            cancelCaptureSafetyTimeout();
-            isPhotoJobInFlight.set(false);
+            releasePhotoJob(requestId);
             Log.e(TAG, "TESTING: Simulating camera capture failure");
             sendPhotoErrorResponse(requestId, PhotoCaptureTestFramework.getErrorCode(),
                 PhotoCaptureTestFramework.getErrorMessage());
@@ -1405,15 +1407,13 @@ public class MediaCaptureService {
                                 uploadPhotoToWebhook(filePath, requestId, webhookUrl, authToken, compress);
                             } else {
                                 // No webhook → no upload phase to run. Job ends here.
-                                cancelCaptureSafetyTimeout();
-                                isPhotoJobInFlight.set(false);
+                                releasePhotoJob(requestId);
                             }
                         }
 
                         @Override
                         public void onPhotoError(String errorMessage) {
-                            cancelCaptureSafetyTimeout();
-                            isPhotoJobInFlight.set(false);
+                            releasePhotoJob(requestId);
 
                             Log.e(TAG, "Failed to capture photo: " + errorMessage);
 
@@ -1429,8 +1429,7 @@ public class MediaCaptureService {
                     }
             );
         } catch (Exception e) {
-            cancelCaptureSafetyTimeout();
-            isPhotoJobInFlight.set(false);
+            releasePhotoJob(requestId);
             Log.e(TAG, "Error taking photo", e);
             sendMediaErrorResponse(requestId, "Error taking photo: " + e.getMessage(), MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
 
@@ -1446,7 +1445,20 @@ public class MediaCaptureService {
      * Used to reject concurrent SDK photo requests with CAMERA_BUSY.
      */
     public boolean isPhotoJobInFlight() {
-        return isPhotoJobInFlight.get();
+        return activePhotoJobRequestId.get() != null;
+    }
+
+    private boolean acquirePhotoJob(String requestId) {
+        return activePhotoJobRequestId.compareAndSet(null, requestId);
+    }
+
+    private void releasePhotoJob(String requestId) {
+        if (activePhotoJobRequestId.compareAndSet(requestId, null)) {
+            cancelCaptureSafetyTimeout(requestId);
+        } else {
+            Log.w(TAG, "Ignoring stale photo job release for " + requestId +
+                "; active job is " + activePhotoJobRequestId.get());
+        }
     }
 
     /**
@@ -1456,9 +1468,18 @@ public class MediaCaptureService {
      * permanent lockout. Sized to outlast a slow webhook upload.
      */
     private void startCaptureSafetyTimeout(String requestId) {
-        cancelCaptureSafetyTimeout();
-        captureSafetyTimeout = () -> {
-            if (isPhotoJobInFlight.compareAndSet(true, false)) {
+        Runnable timeout = new Runnable() {
+            @Override
+            public void run() {
+                if (!activePhotoJobRequestId.compareAndSet(requestId, null)) {
+                    return;
+                }
+                synchronized (captureSafetyTimeoutLock) {
+                    if (captureSafetyTimeout == this) {
+                        captureSafetyTimeout = null;
+                        captureSafetyTimeoutRequestId = null;
+                    }
+                }
                 Log.e(TAG, "⚠️ SAFETY TIMEOUT: isPhotoJobInFlight force-reset after " +
                     CAPTURE_SAFETY_TIMEOUT_MS + "ms - no terminal callback fired for " + requestId);
                 dumpTimings(requestId);
@@ -1466,16 +1487,23 @@ public class MediaCaptureService {
                     "Photo job timed out on glasses - no terminal callback fired");
             }
         };
-        mainHandler.postDelayed(captureSafetyTimeout, CAPTURE_SAFETY_TIMEOUT_MS);
+        synchronized (captureSafetyTimeoutLock) {
+            captureSafetyTimeout = timeout;
+            captureSafetyTimeoutRequestId = requestId;
+        }
+        mainHandler.postDelayed(timeout, CAPTURE_SAFETY_TIMEOUT_MS);
     }
 
     /**
      * Cancel the capture safety timeout (called when callback fires normally).
      */
-    private void cancelCaptureSafetyTimeout() {
-        if (captureSafetyTimeout != null) {
-            mainHandler.removeCallbacks(captureSafetyTimeout);
-            captureSafetyTimeout = null;
+    private void cancelCaptureSafetyTimeout(String requestId) {
+        synchronized (captureSafetyTimeoutLock) {
+            if (captureSafetyTimeout != null && requestId.equals(captureSafetyTimeoutRequestId)) {
+                mainHandler.removeCallbacks(captureSafetyTimeout);
+                captureSafetyTimeout = null;
+                captureSafetyTimeoutRequestId = null;
+            }
         }
     }
 
@@ -1521,8 +1549,7 @@ public class MediaCaptureService {
     private void uploadPhotoToWebhook(String photoFilePath, String requestId, String webhookUrl, String authToken, String compress) {
         // TESTING: Check for fake upload failure
         if (PhotoCaptureTestFramework.shouldFail("UPLOAD")) {
-            cancelCaptureSafetyTimeout();
-            isPhotoJobInFlight.set(false);
+            releasePhotoJob(requestId);
             Log.e(TAG, "TESTING: Simulating upload failure");
             sendPhotoErrorResponse(requestId, PhotoCaptureTestFramework.getErrorCode(),
                 PhotoCaptureTestFramework.getErrorMessage());
@@ -1820,8 +1847,7 @@ public class MediaCaptureService {
                     }
 
                     // Terminal success — release the photo job.
-                    cancelCaptureSafetyTimeout();
-                    isPhotoJobInFlight.set(false);
+                    releasePhotoJob(requestId);
                     Log.d(TAG, "✅ Photo job complete - system available: " + requestId);
                 } else {
                     String errorMessage = "Upload failed with status: " + response.code();
@@ -1884,8 +1910,7 @@ public class MediaCaptureService {
                     }
 
                     // Terminal failure (no BLE fallback) — release the photo job.
-                    cancelCaptureSafetyTimeout();
-                    isPhotoJobInFlight.set(false);
+                    releasePhotoJob(requestId);
                     Log.d(TAG, "❌ Photo job failed - system available: " + requestId);
                 }
 
@@ -1953,8 +1978,7 @@ public class MediaCaptureService {
                 }
 
                 // Terminal exception (no BLE fallback) — release the photo job.
-                cancelCaptureSafetyTimeout();
-                isPhotoJobInFlight.set(false);
+                releasePhotoJob(requestId);
                 Log.d(TAG, "💥 Photo job exception - system available: " + requestId);
             }
         }).start();
@@ -2275,7 +2299,7 @@ public class MediaCaptureService {
 
         // Single-flight guard: reject if any photo job (capture or upload/BLE-handoff) is in flight.
         // Flag stays set through capture → BLE compression → BLE handoff; cleared at terminal exits.
-        if (!isPhotoJobInFlight.compareAndSet(false, true)) {
+        if (!acquirePhotoJob(requestId)) {
             Log.w(TAG, "🚫 Photo job in flight - rejecting concurrent BLE request: " + requestId);
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another photo job is in progress");
             return;
@@ -2295,8 +2319,7 @@ public class MediaCaptureService {
 
         // TESTING: Check for fake camera capture failure
         if (PhotoCaptureTestFramework.shouldFail("CAMERA_CAPTURE")) {
-            cancelCaptureSafetyTimeout();
-            isPhotoJobInFlight.set(false);
+            releasePhotoJob(requestId);
             Log.e(TAG, "TESTING: Simulating camera capture failure for BLE transfer - " +
                 PhotoCaptureTestFramework.getErrorCode() + ": " + PhotoCaptureTestFramework.getErrorMessage());
             sendPhotoErrorResponse(requestId, PhotoCaptureTestFramework.getErrorCode(),
@@ -2354,8 +2377,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(String errorMessage) {
-                            cancelCaptureSafetyTimeout();
-                            isPhotoJobInFlight.set(false);
+                            releasePhotoJob(requestId);
 
                             Log.e(TAG, "Failed to capture photo for BLE: " + errorMessage);
 
@@ -2372,8 +2394,7 @@ public class MediaCaptureService {
                     size
             );
         } catch (Exception e) {
-            cancelCaptureSafetyTimeout();
-            isPhotoJobInFlight.set(false);
+            releasePhotoJob(requestId);
             Log.e(TAG, "Error taking photo for BLE", e);
             sendMediaErrorResponse(requestId, "Error taking photo: " + e.getMessage(), MediaUploadQueueManager.MEDIA_TYPE_PHOTO);
 
@@ -2393,6 +2414,11 @@ public class MediaCaptureService {
         if (RtmpStreamingService.isStreaming() || SrtStreamingService.isStreaming() || WhipStreamingService.isStreaming()) {
             Log.e(TAG, "Cannot transfer photo via BLE - streaming active");
             sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Camera busy with streaming");
+            photoSaveFlags.remove(requestId);
+            photoBleIds.remove(requestId);
+            photoOriginalPaths.remove(requestId);
+            photoRequestedSizes.remove(requestId);
+            releasePhotoJob(requestId);
             return;
         }
 
@@ -2423,8 +2449,7 @@ public class MediaCaptureService {
 
             // TESTING: Check for fake compression failure
             if (PhotoCaptureTestFramework.shouldFail("COMPRESSION")) {
-                cancelCaptureSafetyTimeout();
-                isPhotoJobInFlight.set(false);
+                releasePhotoJob(requestId);
                 Log.e(TAG, "TESTING: Simulating compression failure");
                 sendPhotoErrorResponse(requestId, PhotoCaptureTestFramework.getErrorCode(),
                     PhotoCaptureTestFramework.getErrorMessage());
@@ -2530,8 +2555,7 @@ public class MediaCaptureService {
                 // BLE compress + handoff (or its failure) ends our authority over the photo
                 // job. From here, mServiceCallback.isBleTransferInProgress() is the active
                 // gate against new requests (enforced by PhotoCommandHandler).
-                cancelCaptureSafetyTimeout();
-                isPhotoJobInFlight.set(false);
+                releasePhotoJob(requestId);
                 Log.d(TAG, "📡 BLE handoff complete - photo job released: " + requestId);
             }
         }).start();
