@@ -107,7 +107,7 @@ struct ConsoleScreen: View {
                         .font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.muted)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Typed SDK status").font(.system(size: 13, weight: .semibold)).foregroundColor(AppColor.ink)
-                        Text("glassesStatus, bluetoothStatus").font(.system(size: 10)).foregroundColor(AppColor.muted)
+                        Text("glasses, sdk").font(.system(size: 10)).foregroundColor(AppColor.muted)
                     }
                     Spacer()
                     Image(systemName: "chevron.down").font(.system(size: 12, weight: .heavy)).foregroundColor(AppColor.ink)
@@ -118,7 +118,7 @@ struct ConsoleScreen: View {
                 .clipShape(RoundedRectangle(cornerRadius: 18))
             }
             if model.rawJsonExpanded {
-                Text("glassesStatus=\(String(describing: model.glassesValues))\nbluetoothStatus=\(String(describing: model.bluetoothValues))")
+                Text("glasses=\(String(describing: model.glassesValues))\nsdk=\(String(describing: model.bluetoothValues))")
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundColor(AppColor.consoleText)
                     .frame(maxWidth: .infinity, alignment: .leading)

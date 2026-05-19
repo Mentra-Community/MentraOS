@@ -27,15 +27,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mentra.bluetoothsdk.DeviceModel
-import com.mentra.bluetoothsdk.GlassesStatus
+import com.mentra.bluetoothsdk.GlassesRuntimeState
 import com.mentra.examples.android.MentraExampleController
 import com.mentra.examples.android.R
+import com.mentra.examples.android.battery
 import com.mentra.examples.android.batteryLabel
 import com.mentra.examples.android.batteryLevel
 import com.mentra.examples.android.bluetoothSearchLabel
 import com.mentra.examples.android.canConnectTarget
 import com.mentra.examples.android.connectionLabel
 import com.mentra.examples.android.connectionTargetLabel
+import com.mentra.examples.android.connectedGlassesInfo
 import com.mentra.examples.android.connectedWifiStatus
 import com.mentra.examples.android.deviceModelLabel
 import com.mentra.examples.android.deviceLabel
@@ -105,7 +107,7 @@ fun DeviceScreen(controller: MentraExampleController) {
                         }
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             Icon(Icons.Filled.Bolt, contentDescription = null, tint = AppColor.greenAccent, modifier = Modifier.size(11.dp))
-                            Text(if (glasses?.charging == true) "Charging" else "Not charging", color = AppColor.greenAccent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text(if (glasses?.battery?.charging == true) "Charging" else "Not charging", color = AppColor.greenAccent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.Bottom) {
@@ -250,10 +252,11 @@ fun DeviceScreen(controller: MentraExampleController) {
     }
 }
 
-private fun glassesImageRes(values: GlassesStatus?): Int {
+private fun glassesImageRes(values: GlassesRuntimeState?): Int {
+    val device = connectedGlassesInfo(values)
     val model = listOfNotNull(
-        values?.deviceModel,
-        values?.bluetoothName,
+        device?.deviceModel?.deviceType,
+        device?.bluetoothName,
     ).joinToString(" ").lowercase()
 
     return when {
@@ -322,7 +325,7 @@ private fun ScanModelChip(
 }
 
 @Composable
-private fun TargetPicker(controller: MentraExampleController, connected: Boolean, glasses: GlassesStatus?) {
+private fun TargetPicker(controller: MentraExampleController, connected: Boolean, glasses: GlassesRuntimeState?) {
     val state = controller.state
     Column(
         modifier = Modifier

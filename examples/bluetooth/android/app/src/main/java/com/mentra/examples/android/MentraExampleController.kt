@@ -23,23 +23,23 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.mentra.bluetoothsdk.BatteryStatusEvent
+import com.mentra.bluetoothsdk.BluetoothScanState
 import com.mentra.bluetoothsdk.BluetoothError
 import com.mentra.bluetoothsdk.MentraBluetoothSdk
 import com.mentra.bluetoothsdk.MentraBluetoothSdkCallback
 import com.mentra.bluetoothsdk.MicLc3Event
 import com.mentra.bluetoothsdk.MicPcmEvent
-import com.mentra.bluetoothsdk.BluetoothStatus
-import com.mentra.bluetoothsdk.BluetoothStatusUpdate
 import com.mentra.bluetoothsdk.ButtonPressEvent
+import com.mentra.bluetoothsdk.GlassesBatteryState
 import com.mentra.bluetoothsdk.Device
 import com.mentra.bluetoothsdk.DeviceModel
 import com.mentra.bluetoothsdk.GalleryMode
 import com.mentra.bluetoothsdk.GlassesConnectionState
-import com.mentra.bluetoothsdk.GlassesStatus
-import com.mentra.bluetoothsdk.GlassesStatusUpdate
+import com.mentra.bluetoothsdk.GlassesRuntimeState
 import com.mentra.bluetoothsdk.HotspotErrorEvent
 import com.mentra.bluetoothsdk.HotspotStatus
 import com.mentra.bluetoothsdk.HotspotStatusEvent
+import com.mentra.bluetoothsdk.PhoneSdkRuntimeState
 import com.mentra.bluetoothsdk.PhotoCompression
 import com.mentra.bluetoothsdk.PhotoRequest
 import com.mentra.bluetoothsdk.PhotoResponse
@@ -129,7 +129,7 @@ const val MENTRA_LIVE_DEFAULT_HOTSPOT_PASSWORD = "00001111"
 
 data class MentraExampleState(
     val activeAction: String? = null,
-    val bluetoothStatus: BluetoothStatus? = null,
+    val bluetoothStatus: PhoneSdkRuntimeState? = null,
     val cameraStatus: String = "Camera: phone receiver will start before capture",
     val discoveredDevices: List<Device> = emptyList(),
     val selectedDiscoveredDevice: Device? = null,
@@ -138,7 +138,7 @@ data class MentraExampleState(
     val galleryModeAuto: Boolean = false,
     val galleryServerReachable: Boolean? = null,
     val galleryServerStatus: String = "Gallery server: enable hotspot to check",
-    val glassesStatus: GlassesStatus? = null,
+    val glassesStatus: GlassesRuntimeState? = null,
     val glassesMediaVolume: Int? = null,
     val glassesVolumeStatus: String = "Glasses volume: not checked",
     val hotspotEnabled: Boolean = false,
@@ -277,13 +277,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     init {
         val savedDefaultDevice = loadPersistedDefaultDevice()
         savedDefaultDevice?.let { mentraBluetoothSdk.setDefaultDevice(it) }
-        val initialGlassesStatus = mentraBluetoothSdk.getGlassesStatus()
-        val initialBluetoothStatus = mentraBluetoothSdk.getBluetoothStatus()
+        val initialState = mentraBluetoothSdk.getState()
         state = state.copy(
-            glassesStatus = initialGlassesStatus,
-            bluetoothStatus = initialBluetoothStatus,
-            galleryModeAuto = galleryModeAuto(initialBluetoothStatus),
-            hotspotEnabled = enabledHotspotStatus(initialGlassesStatus) != null,
+            glassesStatus = initialState.glasses,
+            bluetoothStatus = initialState.sdk,
+            discoveredDevices = initialState.scan.devices,
+            galleryModeAuto = galleryModeAuto(initialState.sdk),
+            hotspotEnabled = enabledHotspotStatus(initialState.glasses) != null,
             phoneAudioRoute = currentAudioOutputRouteLabel(),
         )
         registerAudioStateObservers()
@@ -353,7 +353,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     fun clearDefaultDevice() = runAction("Clear default") {
         mentraBluetoothSdk.clearDefaultDevice()
         state = state.copy(
-            bluetoothStatus = state.bluetoothStatus?.withDefaultDevice(null),
+            bluetoothStatus = state.bluetoothStatus?.copy(defaultDevice = null),
             selectedDiscoveredDevice = null,
         )
     }
@@ -1079,28 +1079,30 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
     }
 
-    override fun onGlassesStatusChanged(status: GlassesStatusUpdate) {
+    override fun onGlassesChanged(glasses: GlassesRuntimeState) {
         val wasConnected = isGlassesConnected()
-        val nextStatus = state.glassesStatus?.applyUpdate(status) ?: mentraBluetoothSdk.getGlassesStatus()
-        state = state.copy(glassesStatus = nextStatus)
-        status.hotspot?.let { hotspot ->
-            state = state.copy(hotspotEnabled = hotspot is HotspotStatus.Enabled)
-        }
-        if (isDisconnectedStatus(status)) {
+        state = state.copy(
+            glassesStatus = glasses,
+            hotspotEnabled = enabledHotspotStatus(glasses) != null,
+        )
+        if (!glasses.connected) {
             applyDisconnectedState("Disconnected")
         } else if (!wasConnected && isGlassesConnected()) {
             refreshGlassesMediaVolume()
         }
-        addEvent("STORE", summarize(status))
+        addEvent("STORE", summarize(glasses))
     }
 
-    override fun onBluetoothStatusChanged(status: BluetoothStatusUpdate) {
-        val nextStatus = state.bluetoothStatus?.applyUpdate(status) ?: mentraBluetoothSdk.getBluetoothStatus()
+    override fun onSdkStateChanged(sdk: PhoneSdkRuntimeState) {
         state = state.copy(
-            bluetoothStatus = nextStatus,
-            galleryModeAuto = status.galleryModeAuto ?: state.galleryModeAuto,
+            bluetoothStatus = sdk,
+            galleryModeAuto = galleryModeAuto(sdk),
         )
-        addEvent("BLE", summarize(status))
+        addEvent("BLE", summarize(sdk))
+    }
+
+    override fun onScanChanged(scan: BluetoothScanState) {
+        state = state.copy(discoveredDevices = scan.devices)
     }
 
     override fun onDeviceDiscovered(device: Device) {
@@ -1109,7 +1111,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     override fun onDefaultDeviceChanged(device: Device?) {
         savePersistedDefaultDevice(device)
-        state = state.copy(bluetoothStatus = state.bluetoothStatus?.withDefaultDevice(device))
+        state = state.copy(bluetoothStatus = state.bluetoothStatus?.copy(defaultDevice = device))
         if (device != null) {
             addEvent("BLE", "saved default ${device.name}")
         }
@@ -1125,10 +1127,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     override fun onBatteryStatus(event: BatteryStatusEvent) {
+        val glasses = state.glassesStatus as? GlassesRuntimeState.Connected
         state = state.copy(
-            glassesStatus = state.glassesStatus?.copy(
-                batteryLevel = event.level ?: -1,
-                charging = event.charging ?: false,
+            glassesStatus = glasses?.copy(
+                battery = GlassesBatteryState(
+                    charging = event.charging ?: false,
+                    level = event.level?.takeUnless { it < 0 },
+                ),
             )
         )
         addEvent("STORE", "battery ${event.level ?: "--"}%")
@@ -1136,8 +1141,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     override fun onWifiStatusChanged(event: WifiStatusEvent) {
         val status = event.status
+        val glasses = state.glassesStatus as? GlassesRuntimeState.Connected
         state = state.copy(
-            glassesStatus = state.glassesStatus?.copy(wifi = status),
+            glassesStatus = glasses?.copy(wifi = status),
             wifiPendingSsid = null,
         )
         val label = when (status) {
@@ -1150,9 +1156,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     override fun onHotspotStatusChanged(event: HotspotStatusEvent) {
         val status = event.status
         val enabled = status is HotspotStatus.Enabled
-        val nextGlassesStatus = state.glassesStatus?.copy(
-            hotspot = status,
-        )
+        val nextGlassesStatus = (state.glassesStatus as? GlassesRuntimeState.Connected)?.copy(hotspot = status)
         state = state.copy(
             hotspotEnabled = enabled,
             galleryServerReachable = null,
@@ -1167,11 +1171,12 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     override fun onHotspotError(event: HotspotErrorEvent) {
+        val glasses = state.glassesStatus as? GlassesRuntimeState.Connected
         state = state.copy(
             hotspotEnabled = false,
             galleryServerReachable = false,
             galleryServerStatus = "Gallery server: hotspot error",
-            glassesStatus = state.glassesStatus?.copy(hotspot = HotspotStatus.Disabled),
+            glassesStatus = glasses?.copy(hotspot = HotspotStatus.Disabled),
         )
         addEvent("TX", "hotspot error ${event.message ?: summarize(event.values)}")
     }
@@ -1844,13 +1849,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     private fun currentTargetAddress(): String? =
         state.selectedDiscoveredDevice?.address
-            ?: state.bluetoothStatus?.deviceAddress?.takeIf { it.isNotBlank() }
+            ?: state.bluetoothStatus?.defaultDevice?.address
 
     private fun currentTargetName(): String? =
         state.selectedDiscoveredDevice?.name
-            ?: state.bluetoothStatus?.deviceName?.takeIf { it.isNotBlank() }
-            ?: state.glassesStatus?.bluetoothName?.takeIf { it.isNotBlank() }
-            ?: state.glassesStatus?.serialNumber?.takeIf { it.isNotBlank() }
+            ?: state.bluetoothStatus?.defaultDevice?.name
+            ?: connectedGlassesInfo(state.glassesStatus)?.bluetoothName
+            ?: connectedGlassesInfo(state.glassesStatus)?.serialNumber
 
     private fun bluetoothDeviceLabel(device: BluetoothDevice): String =
         bluetoothDeviceName(device)
@@ -1975,16 +1980,8 @@ fun exampleEvent(tag: String, text: String): ExampleEvent =
 fun rgbLedColorFor(color: String): RgbLedColor =
     RgbLedColor.fromValue(color) ?: RgbLedColor.RED
 
-fun disconnectedGlassesStatus(status: GlassesStatus?): GlassesStatus? =
-    status?.copy(
-        connected = false,
-        connectionState = GlassesConnectionState.DISCONNECTED,
-        fullyBooted = false,
-        batteryLevel = -1,
-        charging = false,
-        hotspot = HotspotStatus.Disabled,
-        wifi = WifiStatus.Disconnected,
-    )
+fun disconnectedGlassesStatus(status: GlassesRuntimeState?): GlassesRuntimeState? =
+    status?.let { GlassesRuntimeState.Disconnected() }
 
 val photoSizeOptions = listOf("small", "medium", "large", "full")
 val photoCompressionOptions = listOf("none", "medium", "heavy")
@@ -2257,114 +2254,24 @@ fun rtmpPathSegmentCount(streamUrl: String): Int? {
 fun summarize(values: Map<String, Any>): String =
     values.entries.take(3).joinToString(", ") { "${it.key}: ${it.value}" }.ifBlank { "empty update" }
 
-fun summarize(status: GlassesStatusUpdate): String =
+fun summarize(status: GlassesRuntimeState): String =
     listOfNotNull(
-        status.connectionState?.let { "connectionState: ${it.value}" },
-        status.connected?.let { "connected: $it" },
-        status.fullyBooted?.let { "fullyBooted: $it" },
-        status.batteryLevel?.let { "batteryLevel: $it" },
+        "connection: ${status.connection.value}",
+        "ready: ${status.ready}",
+        status.battery?.level?.let { "batteryLevel: $it" },
         status.wifi?.let { "wifi: ${wifiSummary(it)}" },
         status.hotspot?.let { "hotspot: ${hotspotSummary(it)}" },
-        status.signalStrength?.let { "signalStrength: $it" },
-        status.signalStrengthUpdatedAt?.let { "RSSI updated: ${formatTime(it)}" },
-    ).take(3).joinToString(", ").ifBlank { "empty update" }
+        status.signal?.strengthDbm?.let { "signalStrength: $it" },
+        status.signal?.updatedAt?.let { "RSSI updated: ${formatTime(it)}" },
+    ).take(3).joinToString(", ")
 
-fun summarize(status: BluetoothStatusUpdate): String =
+fun summarize(status: PhoneSdkRuntimeState): String =
     listOfNotNull(
-        status.searching?.let { "searching: $it" },
-        status.searchResults?.let { "searchResults: ${it.size}" },
-        status.wifiScanResults?.let { "wifiScanResults: ${it.size}" },
-        status.galleryModeAuto?.let { "galleryModeAuto: $it" },
-        status.defaultWearable?.let { "defaultWearable: $it" },
-        status.deviceName?.let { "deviceName: $it" },
-    ).take(3).joinToString(", ").ifBlank { "empty update" }
-
-fun GlassesStatus.applyUpdate(update: GlassesStatusUpdate): GlassesStatus =
-    copy(
-        fullyBooted = update.fullyBooted ?: fullyBooted,
-        connected = update.connected ?: connected,
-        micEnabled = update.micEnabled ?: micEnabled,
-        connectionState = update.connectionState ?: connectionState,
-        bluetoothClassicConnected = update.bluetoothClassicConnected ?: bluetoothClassicConnected,
-        signalStrength = update.signalStrength ?: signalStrength,
-        signalStrengthUpdatedAt = update.signalStrengthUpdatedAt ?: signalStrengthUpdatedAt,
-        deviceModel = update.deviceModel ?: deviceModel,
-        androidVersion = update.androidVersion ?: androidVersion,
-        firmwareVersion = update.firmwareVersion ?: firmwareVersion,
-        besFirmwareVersion = update.besFirmwareVersion ?: besFirmwareVersion,
-        mtkFirmwareVersion = update.mtkFirmwareVersion ?: mtkFirmwareVersion,
-        bluetoothMacAddress = update.bluetoothMacAddress ?: bluetoothMacAddress,
-        leftMacAddress = update.leftMacAddress ?: leftMacAddress,
-        rightMacAddress = update.rightMacAddress ?: rightMacAddress,
-        macAddress = update.macAddress ?: macAddress,
-        buildNumber = update.buildNumber ?: buildNumber,
-        otaVersionUrl = update.otaVersionUrl ?: otaVersionUrl,
-        appVersion = update.appVersion ?: appVersion,
-        bluetoothName = update.bluetoothName ?: bluetoothName,
-        serialNumber = update.serialNumber ?: serialNumber,
-        style = update.style ?: style,
-        color = update.color ?: color,
-        wifi = update.wifi ?: wifi,
-        batteryLevel = update.batteryLevel ?: batteryLevel,
-        charging = update.charging ?: charging,
-        caseBatteryLevel = update.caseBatteryLevel ?: caseBatteryLevel,
-        caseCharging = update.caseCharging ?: caseCharging,
-        caseOpen = update.caseOpen ?: caseOpen,
-        caseRemoved = update.caseRemoved ?: caseRemoved,
-        hotspot = update.hotspot ?: hotspot,
-        headUp = update.headUp ?: headUp,
-        controllerConnected = update.controllerConnected ?: controllerConnected,
-        controllerFullyBooted = update.controllerFullyBooted ?: controllerFullyBooted,
-        controllerMacAddress = update.controllerMacAddress ?: controllerMacAddress,
-        controllerBatteryLevel = update.controllerBatteryLevel ?: controllerBatteryLevel,
-        controllerSignalStrength = update.controllerSignalStrength ?: controllerSignalStrength,
-        ringSignalStrength = update.ringSignalStrength ?: ringSignalStrength,
-    )
-
-fun BluetoothStatus.applyUpdate(update: BluetoothStatusUpdate): BluetoothStatus =
-    copy(
-        searching = update.searching ?: searching,
-        searchingController = update.searchingController ?: searchingController,
-        systemMicUnavailable = update.systemMicUnavailable ?: systemMicUnavailable,
-        micEnabled = update.micEnabled ?: micEnabled,
-        currentMic = update.currentMic ?: currentMic,
-        micRanking = update.micRanking ?: micRanking,
-        searchResults = update.searchResults ?: searchResults,
-        wifiScanResults = update.wifiScanResults ?: wifiScanResults,
-        lastLog = update.lastLog ?: lastLog,
-        otherBtConnected = update.otherBtConnected ?: otherBtConnected,
-        defaultWearable = update.defaultWearable ?: defaultWearable,
-        pendingWearable = update.pendingWearable ?: pendingWearable,
-        deviceName = update.deviceName ?: deviceName,
-        deviceAddress = update.deviceAddress ?: deviceAddress,
-        defaultController = update.defaultController ?: defaultController,
-        pendingController = update.pendingController ?: pendingController,
-        controllerDeviceName = update.controllerDeviceName ?: controllerDeviceName,
-        screenDisabled = update.screenDisabled ?: screenDisabled,
-        preferredMic = update.preferredMic ?: preferredMic,
-        sensingEnabled = update.sensingEnabled ?: sensingEnabled,
-        powerSavingMode = update.powerSavingMode ?: powerSavingMode,
-        brightness = update.brightness ?: brightness,
-        autoBrightness = update.autoBrightness ?: autoBrightness,
-        dashboardHeight = update.dashboardHeight ?: dashboardHeight,
-        dashboardDepth = update.dashboardDepth ?: dashboardDepth,
-        headUpAngle = update.headUpAngle ?: headUpAngle,
-        contextualDashboard = update.contextualDashboard ?: contextualDashboard,
-        galleryModeAuto = update.galleryModeAuto ?: galleryModeAuto,
-        buttonPhotoSize = update.buttonPhotoSize ?: buttonPhotoSize,
-        buttonCameraLed = update.buttonCameraLed ?: buttonCameraLed,
-        buttonMaxRecordingTime = update.buttonMaxRecordingTime ?: buttonMaxRecordingTime,
-        buttonVideoWidth = update.buttonVideoWidth ?: buttonVideoWidth,
-        buttonVideoHeight = update.buttonVideoHeight ?: buttonVideoHeight,
-        buttonVideoFrameRate = update.buttonVideoFrameRate ?: buttonVideoFrameRate,
-        shouldSendPcm = update.shouldSendPcm ?: shouldSendPcm,
-        shouldSendLc3 = update.shouldSendLc3 ?: shouldSendLc3,
-        shouldSendTranscript = update.shouldSendTranscript ?: shouldSendTranscript,
-        bypassVad = update.bypassVad ?: bypassVad,
-        offlineCaptionsRunning = update.offlineCaptionsRunning ?: offlineCaptionsRunning,
-        localSttFallbackActive = update.localSttFallbackActive ?: localSttFallbackActive,
-        shouldSendBootingMessage = update.shouldSendBootingMessage ?: shouldSendBootingMessage,
-    )
+        "searching: ${status.searching}",
+        "wifiScanResults: ${status.wifiScanResults.size}",
+        "galleryMode: ${status.galleryMode.desired}",
+        status.defaultDevice?.let { "defaultDevice: ${it.name}" },
+    ).take(3).joinToString(", ")
 
 fun stringValue(values: Map<String, Any>, key: String): String? =
     (values[key] as? String)?.takeIf { it.isNotBlank() }
@@ -2378,38 +2285,42 @@ fun intValue(values: Map<String, Any>, key: String): Int? =
 
 fun boolValue(values: Map<String, Any>, key: String): Boolean? = values[key] as? Boolean
 
-fun galleryModeAuto(status: BluetoothStatus?): Boolean = status?.galleryModeAuto ?: false
+fun galleryModeAuto(status: PhoneSdkRuntimeState?): Boolean = status?.galleryMode?.desired == GalleryMode.AUTO
 
-fun connectionLabel(status: GlassesStatus?): String =
-    status?.connectionState?.value
+fun connectionLabel(status: GlassesRuntimeState?): String =
+    status?.connection?.value
         ?: if (isGlassesConnected(status)) "CONNECTED" else "WAITING"
 
-fun isGlassesConnected(status: GlassesStatus?): Boolean {
-    return when (status?.connectionState) {
-        GlassesConnectionState.CONNECTED -> true
-        GlassesConnectionState.DISCONNECTED -> false
-        else -> status?.connected == true
-    }
-}
+fun isGlassesConnected(status: GlassesRuntimeState?): Boolean = status?.connected == true
 
-fun isDisconnectedStatus(update: GlassesStatusUpdate): Boolean {
-    return when (update.connectionState) {
-        GlassesConnectionState.DISCONNECTED -> true
-        GlassesConnectionState.CONNECTED -> false
-        else -> update.connected == false
-    }
-}
+val GlassesRuntimeState.battery: GlassesBatteryState?
+    get() = (this as? GlassesRuntimeState.Connected)?.battery
 
-fun deviceLabel(status: GlassesStatus?): String =
-    status?.bluetoothName?.takeIf { it.isNotBlank() }
-        ?: status?.serialNumber?.takeIf { it.isNotBlank() }
-        ?: status?.deviceModel?.takeIf { it.isNotBlank() }
+val GlassesRuntimeState.firmware
+    get() = (this as? GlassesRuntimeState.Connected)?.firmware
+
+val GlassesRuntimeState.hotspot: HotspotStatus?
+    get() = (this as? GlassesRuntimeState.Connected)?.hotspot
+
+val GlassesRuntimeState.signal
+    get() = (this as? GlassesRuntimeState.Connected)?.signal
+
+val GlassesRuntimeState.wifi: WifiStatus?
+    get() = (this as? GlassesRuntimeState.Connected)?.wifi
+
+fun connectedGlassesInfo(status: GlassesRuntimeState?) =
+    (status as? GlassesRuntimeState.Connected)?.device
+
+fun deviceLabel(status: GlassesRuntimeState?): String =
+    connectedGlassesInfo(status)?.bluetoothName
+        ?: connectedGlassesInfo(status)?.serialNumber
+        ?: connectedGlassesInfo(status)?.deviceModel?.let { deviceModelLabel(it) }
         ?: "Mentra Live"
 
-fun supportsDisplay(status: GlassesStatus?): Boolean {
+fun supportsDisplay(status: GlassesRuntimeState?): Boolean {
     val model = listOfNotNull(
-        status?.deviceModel,
-        status?.bluetoothName,
+        connectedGlassesInfo(status)?.deviceModel?.deviceType,
+        connectedGlassesInfo(status)?.bluetoothName,
     ).joinToString(" ").lowercase()
 
     if (
@@ -2430,19 +2341,19 @@ fun supportsDisplay(status: GlassesStatus?): Boolean {
     return false
 }
 
-fun modelLabel(status: GlassesStatus?): String =
-    status?.deviceModel?.takeIf { it.isNotBlank() } ?: "Mentra Live"
+fun modelLabel(status: GlassesRuntimeState?): String =
+    connectedGlassesInfo(status)?.deviceModel?.let { deviceModelLabel(it) } ?: "Mentra Live"
 
-fun batteryLevel(status: GlassesStatus?): Int? {
-    val level = status?.batteryLevel ?: return null
+fun batteryLevel(status: GlassesRuntimeState?): Int? {
+    val level = status?.battery?.level ?: return null
     return if (level < 0 || !isGlassesConnected(status)) null else level.coerceAtMost(100)
 }
 
-fun batteryLabel(status: GlassesStatus?): String =
-    batteryLevel(status)?.let { "$it%${if (status?.charging == true) " charging" else ""}" }
-        ?: if (status?.connected == false || status?.connectionState == GlassesConnectionState.DISCONNECTED) "Not connected" else "Waiting for status"
+fun batteryLabel(status: GlassesRuntimeState?): String =
+    batteryLevel(status)?.let { "$it%${if (status?.battery?.charging == true) " charging" else ""}" }
+        ?: if (status?.connected == false || status?.connection == GlassesConnectionState.DISCONNECTED) "Not connected" else "Waiting for status"
 
-fun wifiLabel(status: GlassesStatus?): String =
+fun wifiLabel(status: GlassesRuntimeState?): String =
     when (val wifi = status?.wifi) {
         is WifiStatus.Connected -> wifi.ssid
         WifiStatus.Disconnected -> if (isGlassesConnected(status)) "Not connected" else "Unknown"
@@ -2461,16 +2372,16 @@ fun hotspotSummary(hotspot: HotspotStatus): String =
         HotspotStatus.Disabled -> "disabled"
     }
 
-fun isGlassesWifiConnected(status: GlassesStatus?): Boolean =
+fun isGlassesWifiConnected(status: GlassesRuntimeState?): Boolean =
     connectedWifiStatus(status) != null
 
-fun connectedWifiStatus(status: GlassesStatus?): WifiStatus.Connected? =
+fun connectedWifiStatus(status: GlassesRuntimeState?): WifiStatus.Connected? =
     status?.wifi as? WifiStatus.Connected
 
-fun enabledHotspotStatus(status: GlassesStatus?): HotspotStatus.Enabled? =
+fun enabledHotspotStatus(status: GlassesRuntimeState?): HotspotStatus.Enabled? =
     status?.hotspot as? HotspotStatus.Enabled
 
-fun hotspotLabel(status: GlassesStatus?, fallbackEnabled: Boolean): String {
+fun hotspotLabel(status: GlassesRuntimeState?, fallbackEnabled: Boolean): String {
     val hotspot = enabledHotspotStatus(status)
     if (hotspot != null) {
         return "${hotspot.ssid} · ${hotspot.localIp}"
@@ -2478,7 +2389,7 @@ fun hotspotLabel(status: GlassesStatus?, fallbackEnabled: Boolean): String {
     return if (status == null && fallbackEnabled) "waiting for SSID" else "disabled"
 }
 
-fun galleryServerUrl(status: GlassesStatus?, fallbackEnabled: Boolean): String? {
+fun galleryServerUrl(status: GlassesRuntimeState?, fallbackEnabled: Boolean): String? {
     val hotspot = enabledHotspotStatus(status)
     if (hotspot == null && !(status == null && fallbackEnabled)) {
         return null
@@ -2487,45 +2398,42 @@ fun galleryServerUrl(status: GlassesStatus?, fallbackEnabled: Boolean): String? 
     return "http://$gateway:8089"
 }
 
-fun galleryHotspotSsidLabel(status: GlassesStatus?): String {
+fun galleryHotspotSsidLabel(status: GlassesRuntimeState?): String {
     val ssid = enabledHotspotStatus(status)?.ssid
     return if (ssid == null) "the glasses hotspot" else "Wi-Fi $ssid"
 }
 
-fun galleryHotspotPasswordLabel(status: GlassesStatus?): String =
+fun galleryHotspotPasswordLabel(status: GlassesRuntimeState?): String =
     enabledHotspotStatus(status)?.password
         ?: MENTRA_LIVE_DEFAULT_HOTSPOT_PASSWORD
 
-fun firmwareLabel(status: GlassesStatus?): String =
-    status?.firmwareVersion?.takeIf { it.isNotBlank() }
-        ?: status?.besFirmwareVersion?.takeIf { it.isNotBlank() }
-        ?: status?.mtkFirmwareVersion?.takeIf { it.isNotBlank() }
-        ?: "Unknown"
+fun firmwareLabel(status: GlassesRuntimeState?): String =
+    status?.firmware?.version ?: "Unknown"
 
-fun firmwareSubLabel(status: GlassesStatus?): String {
-    val appVersion = status?.appVersion?.takeIf { it.isNotBlank() }
+fun firmwareSubLabel(status: GlassesRuntimeState?): String {
+    val firmware = status?.firmware
+    val appVersion = firmware?.appVersion
     return when {
-        !status?.firmwareVersion.isNullOrBlank() -> "reported"
-        !status?.besFirmwareVersion.isNullOrBlank() -> "BES firmware"
-        !status?.mtkFirmwareVersion.isNullOrBlank() -> "MTK firmware"
+        firmware?.source?.name == "FIRMWARE" -> "reported"
+        firmware?.source?.name == "BES" -> "BES firmware"
+        firmware?.source?.name == "MTK" -> "MTK firmware"
         appVersion != null -> "ASG app $appVersion"
         else -> "not reported"
     }
 }
 
-fun rssiLabel(status: GlassesStatus?): String =
-    status?.signalStrength?.takeIf { it != -1 }?.let { "$it dBm" } ?: "Unknown"
+fun rssiLabel(status: GlassesRuntimeState?): String =
+    status?.signal?.strengthDbm?.let { "$it dBm" } ?: "Unknown"
 
-fun rssiUpdatedLabel(status: GlassesStatus?): String =
-    status?.signalStrengthUpdatedAt?.takeIf { it > 0 }?.let { "updated ${formatTime(it)}" } ?: "signal"
+fun rssiUpdatedLabel(status: GlassesRuntimeState?): String =
+    status?.signal?.updatedAt?.let { "updated ${formatTime(it)}" } ?: "signal"
 
 private fun formatTime(timestampMs: Long): String =
     SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(timestampMs))
 
-fun bluetoothSearchLabel(status: BluetoothStatus?): String {
+fun bluetoothSearchLabel(status: PhoneSdkRuntimeState?): String {
     val searching = status?.searching == true
-    val count = status?.searchResults?.size ?: 0
-    return "${if (searching) "Scanning" else "Idle"} · $count result${if (count == 1) "" else "s"}"
+    return if (searching) "Scanning" else "Idle"
 }
 
 fun discoveredDeviceKey(device: Device): String =
@@ -2547,9 +2455,9 @@ fun deviceModelLabel(model: DeviceModel): String =
 fun targetDeviceDetail(device: Device): String =
     device.rssi?.let { "${device.model.deviceType} · $it dBm" } ?: device.model.deviceType
 
-fun connectionTargetLabel(state: MentraExampleState, status: GlassesStatus?): String =
+fun connectionTargetLabel(state: MentraExampleState, status: GlassesRuntimeState?): String =
     when {
-        isGlassesConnected(status) -> state.bluetoothStatus?.deviceName?.takeIf { it.isNotBlank() } ?: deviceLabel(status)
+        isGlassesConnected(status) -> state.bluetoothStatus?.defaultDevice?.name ?: deviceLabel(status)
         state.selectedDiscoveredDevice != null -> state.selectedDiscoveredDevice.name
         state.discoveredDevices.isEmpty() && hasSavedConnectionTarget(state.bluetoothStatus) -> savedConnectionTargetName(state.bluetoothStatus)
         state.discoveredDevices.isNotEmpty() -> "Choose a discovered device"
@@ -2560,25 +2468,18 @@ fun canConnectTarget(state: MentraExampleState): Boolean =
     state.selectedDiscoveredDevice != null ||
         (state.discoveredDevices.isEmpty() && hasSavedConnectionTarget(state.bluetoothStatus))
 
-fun hasSavedConnectionTarget(status: BluetoothStatus?): Boolean =
-    !status?.defaultWearable.isNullOrBlank() && !status?.deviceName.isNullOrBlank()
+fun hasSavedConnectionTarget(status: PhoneSdkRuntimeState?): Boolean =
+    status?.defaultDevice != null
 
-fun BluetoothStatus.withDefaultDevice(device: Device?): BluetoothStatus =
-    copy(
-        defaultWearable = device?.model?.deviceType ?: "",
-        deviceName = device?.name ?: "",
-        deviceAddress = device?.address ?: "",
-    )
+fun savedConnectionTargetName(status: PhoneSdkRuntimeState?): String =
+    status?.defaultDevice?.name ?: "Saved glasses"
 
-fun savedConnectionTargetName(status: BluetoothStatus?): String =
-    status?.deviceName?.takeIf { it.isNotBlank() } ?: "Saved glasses"
-
-fun savedConnectionTargetDetail(status: BluetoothStatus?): String {
-    val model = status?.defaultWearable?.takeIf { it.isNotBlank() } ?: "Saved model"
+fun savedConnectionTargetDetail(status: PhoneSdkRuntimeState?): String {
+    val model = status?.defaultDevice?.model?.deviceType ?: "Saved model"
     return "$model · mentraBluetoothSdk.connectDefault()"
 }
 
-fun wifiScanResults(status: BluetoothStatus?): List<WifiScanResult> =
+fun wifiScanResults(status: PhoneSdkRuntimeState?): List<WifiScanResult> =
     status?.wifiScanResults ?: emptyList()
 
 fun elapsedText(startedAt: Long?): String {

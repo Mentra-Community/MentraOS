@@ -82,8 +82,8 @@ enum ExampleStreamProtocol: String, CaseIterable {
 
 @MainActor
 final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDelegate, AVAudioPlayerDelegate {
-    @Published private(set) var glassesValues: GlassesStatus?
-    @Published private(set) var bluetoothValues: BluetoothStatus?
+    @Published private(set) var glassesValues: GlassesRuntimeState?
+    @Published private(set) var bluetoothValues: PhoneSdkRuntimeState?
     @Published private(set) var discoveredDevices: [Device] = []
     @Published private(set) var selectedDiscoveredDevice: Device?
     @Published private(set) var selectedScanModel: DeviceModel = .mentraLive
@@ -193,10 +193,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         if let savedDevice = savedDefaultDevice {
             mentraBluetoothSdk.setDefaultDevice(savedDevice)
         }
-        glassesValues = mentraBluetoothSdk.glassesStatus
+        glassesValues = mentraBluetoothSdk.glasses
         hotspotEnabled = enabledHotspotStatus(glassesValues) != nil
         refreshGalleryServerStatusForCurrentHotspot(defaultStatus: "Gallery server: enable hotspot to check")
-        applyBluetoothStatus(mentraBluetoothSdk.bluetoothStatus)
+        applySdkState(mentraBluetoothSdk.sdkState)
         if let value = ProcessInfo.processInfo.environment["MENTRA_PHOTO_WEBHOOK_URL"] {
             webhookUrl = value
         }
@@ -292,7 +292,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func clearDefaultDevice() {
         runAction("Clear default") {
             mentraBluetoothSdk.clearDefaultDevice()
-            bluetoothValues = bluetoothValues?.withDefaultDevice(nil)
+            bluetoothValues = mentraBluetoothSdk.sdkState
             selectedDiscoveredDevice = nil
         }
     }
@@ -1010,21 +1010,23 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateGlassesStatus status: GlassesStatusUpdate) {
-        glassesValues = glassesValues?.applying(status) ?? mentraBluetoothSdk.glassesStatus
-        if let hotspot = status.hotspot {
-            hotspotEnabled = enabledHotspotStatus(hotspot) != nil
-            refreshGalleryServerStatusForCurrentHotspot(defaultStatus: "Gallery server: hotspot off")
-        }
-        if isDisconnectedStatus(status) {
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateGlasses glasses: GlassesRuntimeState) {
+        glassesValues = glasses
+        hotspotEnabled = enabledHotspotStatus(glasses) != nil
+        if !glasses.connected {
             applyDisconnectedState(status: "Disconnected")
         }
-        append(tag: "STORE", text: summarize(status))
+        refreshGalleryServerStatusForCurrentHotspot(defaultStatus: hotspotEnabled ? galleryServerStatus : "Gallery server: hotspot off")
+        append(tag: "STORE", text: summarize(glasses))
     }
 
-    func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateBluetoothStatus status: BluetoothStatusUpdate) {
-        applyBluetoothStatus(status)
-        append(tag: "BLE", text: summarize(status))
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateSdkState sdkState: PhoneSdkRuntimeState) {
+        applySdkState(sdkState)
+        append(tag: "BLE", text: summarize(sdkState))
+    }
+
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateScan scan: BluetoothScanState) {
+        discoveredDevices = scan.devices
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didDiscover device: Device) {
@@ -1033,7 +1035,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didChangeDefaultDevice device: Device?) {
         savePersistedDefaultDevice(device)
-        bluetoothValues = bluetoothValues?.withDefaultDevice(device)
+        bluetoothValues = mentraBluetoothSdk.sdkState
         if let device {
             append(tag: "BLE", text: "saved default \(device.name)")
         }
@@ -1063,7 +1065,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     private func applyWifiStatus(_ event: WifiStatusEvent) {
-        glassesValues = glassesValues?.withWifi(event.status) ?? mentraBluetoothSdk.glassesStatus
+        glassesValues = glassesValues?.withWifi(event.status) ?? mentraBluetoothSdk.glasses
         let label: String
         switch event.status {
         case let .connected(ssid, _):
@@ -1220,16 +1222,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    private func applyBluetoothStatus(_ status: BluetoothStatus) {
+    private func applySdkState(_ status: PhoneSdkRuntimeState) {
         bluetoothValues = status
-        galleryModeAuto = status.galleryModeAuto
-    }
-
-    private func applyBluetoothStatus(_ status: BluetoothStatusUpdate) {
-        bluetoothValues = bluetoothValues?.applying(status) ?? mentraBluetoothSdk.bluetoothStatus
-        if let galleryMode = status.galleryModeAuto {
-            galleryModeAuto = galleryMode
-        }
+        galleryModeAuto = status.galleryMode.desired == .auto
     }
 
     private func loadPersistedDefaultDevice() -> Device? {
@@ -1267,7 +1262,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     private func applyDisconnectedState(status: String) {
-        glassesValues = glassesValues?.disconnected() ?? mentraBluetoothSdk.glassesStatus.disconnected()
+        glassesValues = .disconnected(connection: .disconnected)
         stopKeepAlive()
         stopPreviewHealthPoll()
         activeStreamId = nil
@@ -1677,51 +1672,35 @@ extension String {
     }
 }
 
-func connectionLabel(_ status: GlassesStatus?) -> String {
-    status?.connectionState.rawValue ?? (isGlassesConnected(status) ? "CONNECTED" : "WAITING")
+func connectionLabel(_ status: GlassesRuntimeState?) -> String {
+    status?.connection.rawValue ?? (isGlassesConnected(status) ? "CONNECTED" : "WAITING")
 }
 
-func isGlassesConnected(_ status: GlassesStatus?) -> Bool {
-    guard let status else { return false }
-    switch status.connectionState {
-    case .connected:
-        return true
-    case .disconnected:
-        return false
-    default:
-        return status.connected
-    }
+func isGlassesConnected(_ status: GlassesRuntimeState?) -> Bool {
+    status?.connected == true
 }
 
-func isDisconnectedStatus(_ status: GlassesStatusUpdate) -> Bool {
-    if let state = status.connectionState {
-        switch state {
-        case .disconnected:
-            return true
-        case .connected:
-            return false
-        default:
-            break
-        }
-    }
-    return status.connected == false
+func connectedGlassesInfo(_ status: GlassesRuntimeState?) -> ConnectedGlassesInfo? {
+    status?.device
 }
 
-func modelLabel(_ status: GlassesStatus?) -> String {
-    status?.deviceModel.nonEmpty ?? "Mentra Live"
+func modelLabel(_ status: GlassesRuntimeState?) -> String {
+    connectedGlassesInfo(status)?.deviceModel.map(deviceModelLabel) ?? "Mentra Live"
 }
 
-func deviceLabel(_ status: GlassesStatus?) -> String {
-    if let value = status?.bluetoothName, !value.isEmpty { return value }
-    if let value = status?.serialNumber, !value.isEmpty { return value }
-    if let value = status?.deviceModel, !value.isEmpty { return value }
+func deviceLabel(_ status: GlassesRuntimeState?) -> String {
+    let device = connectedGlassesInfo(status)
+    if let value = device?.bluetoothName, !value.isEmpty { return value }
+    if let value = device?.serialNumber, !value.isEmpty { return value }
+    if let value = device?.deviceModel { return deviceModelLabel(value) }
     return "Mentra Live"
 }
 
-func supportsDisplay(_ status: GlassesStatus?) -> Bool {
+func supportsDisplay(_ status: GlassesRuntimeState?) -> Bool {
+    let device = connectedGlassesInfo(status)
     let model = [
-        status?.deviceModel,
-        status?.bluetoothName,
+        device?.deviceModel?.deviceType,
+        device?.bluetoothName,
     ]
     .compactMap { $0 }
     .joined(separator: " ")
@@ -1742,19 +1721,19 @@ func discoveredDeviceKey(_ device: Device) -> String {
     device.id
 }
 
-func batteryLevel(_ status: GlassesStatus?) -> Int? {
-    guard isGlassesConnected(status), let level = status?.batteryLevel, level >= 0 else { return nil }
+func batteryLevel(_ status: GlassesRuntimeState?) -> Int? {
+    guard isGlassesConnected(status), let level = status?.battery?.level, level >= 0 else { return nil }
     return min(level, 100)
 }
 
-func batteryLabel(_ status: GlassesStatus?) -> String {
+func batteryLabel(_ status: GlassesRuntimeState?) -> String {
     guard let level = batteryLevel(status) else {
-        return status?.connected == false || status?.connectionState == .disconnected ? "Not connected" : "Waiting for status"
+        return status?.connected == false || status?.connection == .disconnected ? "Not connected" : "Waiting for status"
     }
-    return "\(level)%\(status?.charging == true ? " charging" : "")"
+    return "\(level)%\(status?.battery?.charging == true ? " charging" : "")"
 }
 
-func wifiLabel(_ status: GlassesStatus?) -> String {
+func wifiLabel(_ status: GlassesRuntimeState?) -> String {
     switch status?.wifi {
     case let .connected(ssid, _):
         return ssid
@@ -1765,7 +1744,7 @@ func wifiLabel(_ status: GlassesStatus?) -> String {
     }
 }
 
-func connectedWifiStatus(_ status: GlassesStatus?) -> (ssid: String, localIp: String?)? {
+func connectedWifiStatus(_ status: GlassesRuntimeState?) -> (ssid: String, localIp: String?)? {
     guard case let .connected(ssid, localIp) = status?.wifi else {
         return nil
     }
@@ -1779,14 +1758,14 @@ func enabledHotspotStatus(_ hotspot: HotspotStatus) -> (ssid: String, password: 
     return (ssid, password, localIp)
 }
 
-func enabledHotspotStatus(_ status: GlassesStatus?) -> (ssid: String, password: String, localIp: String)? {
+func enabledHotspotStatus(_ status: GlassesRuntimeState?) -> (ssid: String, password: String, localIp: String)? {
     guard let hotspot = status?.hotspot else {
         return nil
     }
     return enabledHotspotStatus(hotspot)
 }
 
-func hotspotLabel(_ status: GlassesStatus?, fallbackEnabled: Bool) -> String {
+func hotspotLabel(_ status: GlassesRuntimeState?, fallbackEnabled: Bool) -> String {
     if let hotspot = enabledHotspotStatus(status) {
         return "\(hotspot.ssid) · \(hotspot.localIp)"
     }
@@ -1795,7 +1774,7 @@ func hotspotLabel(_ status: GlassesStatus?, fallbackEnabled: Bool) -> String {
 
 private let mentraLiveDefaultHotspotPassword = "00001111"
 
-func galleryServerUrl(_ status: GlassesStatus?, fallbackEnabled: Bool) -> String? {
+func galleryServerUrl(_ status: GlassesRuntimeState?, fallbackEnabled: Bool) -> String? {
     let hotspot = enabledHotspotStatus(status)
     guard hotspot != nil || (status == nil && fallbackEnabled) else { return nil }
 
@@ -1803,73 +1782,120 @@ func galleryServerUrl(_ status: GlassesStatus?, fallbackEnabled: Bool) -> String
     return "http://\(gateway):8089"
 }
 
-func galleryHotspotSsidLabel(_ status: GlassesStatus?) -> String {
+func galleryHotspotSsidLabel(_ status: GlassesRuntimeState?) -> String {
     guard let ssid = enabledHotspotStatus(status)?.ssid else {
         return "the glasses hotspot"
     }
     return "Wi-Fi \(ssid)"
 }
 
-func galleryHotspotPasswordLabel(_ status: GlassesStatus?) -> String {
+func galleryHotspotPasswordLabel(_ status: GlassesRuntimeState?) -> String {
     enabledHotspotStatus(status)?.password ?? mentraLiveDefaultHotspotPassword
 }
 
-func firmwareLabel(_ status: GlassesStatus?) -> String {
-    if let value = status?.firmwareVersion, !value.isEmpty { return value }
-    if let value = status?.besFirmwareVersion, !value.isEmpty { return value }
-    if let value = status?.mtkFirmwareVersion, !value.isEmpty { return value }
-    return "Unknown"
+func firmwareLabel(_ status: GlassesRuntimeState?) -> String {
+    status?.firmware?.version ?? "Unknown"
 }
 
-func firmwareSubLabel(_ status: GlassesStatus?) -> String {
-    if status?.firmwareVersion.isEmpty == false {
+func firmwareSubLabel(_ status: GlassesRuntimeState?) -> String {
+    guard let firmware = status?.firmware else {
+        return "not reported"
+    }
+    switch firmware.source {
+    case .firmware:
         return "reported"
-    }
-    if status?.besFirmwareVersion.isEmpty == false {
+    case .bes:
         return "BES firmware"
-    }
-    if status?.mtkFirmwareVersion.isEmpty == false {
+    case .mtk:
         return "MTK firmware"
-    }
-    if let appVersion = status?.appVersion, !appVersion.isEmpty {
+    case .app:
+        guard let appVersion = firmware.appVersion else { return "not reported" }
         return "ASG app \(appVersion)"
+    case .unknown:
+        return "not reported"
     }
-    return "not reported"
 }
 
-func rssiLabel(_ status: GlassesStatus?) -> String {
-    guard let signal = status?.signalStrength, signal != -1 else { return "Unknown" }
+func rssiLabel(_ status: GlassesRuntimeState?) -> String {
+    guard let signal = status?.signal?.strengthDbm else { return "Unknown" }
     return "\(signal) dBm"
 }
 
-func rssiUpdatedLabel(_ status: GlassesStatus?) -> String {
-    guard let updatedAt = status?.signalStrengthUpdatedAt, updatedAt > 0 else { return "signal" }
+func rssiUpdatedLabel(_ status: GlassesRuntimeState?) -> String {
+    guard let updatedAt = status?.signal?.updatedAt, updatedAt > 0 else { return "signal" }
     let date = Date(timeIntervalSince1970: TimeInterval(updatedAt) / 1000)
     return "updated \(DateFormatter.exampleEventTime.string(from: date))"
 }
 
-func bluetoothSearchLabel(_ status: BluetoothStatus?) -> String {
-    let count = status?.searchResults.count ?? 0
-    return "\(status?.searching == true ? "Scanning" : "Idle") · \(count) result\(count == 1 ? "" : "s")"
+func bluetoothSearchLabel(_ status: PhoneSdkRuntimeState?) -> String {
+    status?.searching == true ? "Scanning" : "Idle"
 }
 
-func hasSavedConnectionTarget(_ status: BluetoothStatus?) -> Bool {
-    guard let model = status?.defaultWearable, !model.isEmpty else { return false }
-    guard let name = status?.deviceName, !name.isEmpty else { return false }
-    return true
+func hasSavedConnectionTarget(_ status: PhoneSdkRuntimeState?) -> Bool {
+    status?.defaultDevice != nil
 }
 
-func savedConnectionTargetName(_ status: BluetoothStatus?) -> String {
-    status?.deviceName.nonEmpty ?? "Saved glasses"
+func savedConnectionTargetName(_ status: PhoneSdkRuntimeState?) -> String {
+    status?.defaultDevice?.name ?? "Saved glasses"
 }
 
-func savedConnectionTargetDetail(_ status: BluetoothStatus?) -> String {
-    let model = status?.defaultWearable.nonEmpty ?? "Saved model"
+func savedConnectionTargetDetail(_ status: PhoneSdkRuntimeState?) -> String {
+    let model = status?.defaultDevice?.model.deviceType ?? "Saved model"
     return "\(model) · mentraBluetoothSdk.connectDefault()"
 }
 
-func wifiScanResults(_ status: BluetoothStatus?) -> [WifiScanResult] {
+func wifiScanResults(_ status: PhoneSdkRuntimeState?) -> [WifiScanResult] {
     status?.wifiScanResults ?? []
+}
+
+extension GlassesRuntimeState {
+    func withBattery(level: Int, charging: Bool) -> GlassesRuntimeState {
+        guard case let .connected(_, connection, device, firmware, hotspot, ready, signal, wifi) = self else {
+            return self
+        }
+        return .connected(
+            battery: GlassesBatteryState(charging: charging, level: level >= 0 ? level : nil),
+            connection: connection,
+            device: device,
+            firmware: firmware,
+            hotspot: hotspot,
+            ready: ready,
+            signal: signal,
+            wifi: wifi
+        )
+    }
+
+    func withWifi(_ wifi: WifiStatus) -> GlassesRuntimeState {
+        guard case let .connected(battery, connection, device, firmware, hotspot, ready, signal, _) = self else {
+            return self
+        }
+        return .connected(
+            battery: battery,
+            connection: connection,
+            device: device,
+            firmware: firmware,
+            hotspot: hotspot,
+            ready: ready,
+            signal: signal,
+            wifi: wifi
+        )
+    }
+
+    func withHotspot(_ hotspot: HotspotStatus) -> GlassesRuntimeState {
+        guard case let .connected(battery, connection, device, firmware, _, ready, signal, wifi) = self else {
+            return self
+        }
+        return .connected(
+            battery: battery,
+            connection: connection,
+            device: device,
+            firmware: firmware,
+            hotspot: hotspot,
+            ready: ready,
+            signal: signal,
+            wifi: wifi
+        )
+    }
 }
 
 func elapsedText(_ date: Date?) -> String {
@@ -1888,50 +1914,33 @@ func summarize(_ values: [String: Any]) -> String {
     return parts.isEmpty ? "empty update" : parts.joined(separator: ", ")
 }
 
-func summarize(_ status: GlassesStatusUpdate) -> String {
-    let wifiSummary: String? = status.wifi.map { wifi in
-        switch wifi {
-        case let .connected(ssid, _):
-            return "wifi: \(ssid)"
-        case .disconnected:
-            return "wifi: disconnected"
-        }
-    }
-    let hotspotSummary: String? = status.hotspot.map { hotspot in
-        switch hotspot {
-        case let .enabled(ssid, _, localIp):
-            return "hotspot: \(ssid) · \(localIp)"
-        case .disabled:
-            return "hotspot: disabled"
-        }
-    }
-    let signalStrengthUpdatedSummary = status.signalStrengthUpdatedAt.map { timestamp in
-        let date = Date(timeIntervalSince1970: TimeInterval(timestamp) / 1000)
-        return "RSSI updated: \(DateFormatter.exampleEventTime.string(from: date))"
-    }
+func summarize(_ status: GlassesRuntimeState) -> String {
     let parts = [
-        status.connectionState.map { "connectionState: \($0.rawValue)" },
-        status.connected.map { "connected: \($0)" },
-        status.fullyBooted.map { "fullyBooted: \($0)" },
-        status.batteryLevel.map { "batteryLevel: \($0)" },
-        wifiSummary,
-        hotspotSummary,
-        status.signalStrength.map { "signalStrength: \($0)" },
-        signalStrengthUpdatedSummary,
+        "connection: \(status.connection.rawValue)",
+        "ready: \(status.ready)",
+        status.battery?.level.map { "battery: \($0)%" },
+        status.wifi.map { _ in "wifi: \(wifiLabel(status))" },
+        status.hotspot.map { hotspot -> String in
+            switch hotspot {
+            case let .enabled(ssid, _, localIp):
+                return "hotspot: \(ssid) · \(localIp)"
+            case .disabled:
+                return "hotspot: disabled"
+            }
+        },
+        status.signal?.strengthDbm.map { "signal: \($0) dBm" },
     ].compactMap { $0 }.prefix(3)
-    return parts.isEmpty ? "empty update" : parts.joined(separator: ", ")
+    return parts.joined(separator: ", ")
 }
 
-func summarize(_ status: BluetoothStatusUpdate) -> String {
+func summarize(_ status: PhoneSdkRuntimeState) -> String {
     let parts = [
-        status.searching.map { "searching: \($0)" },
-        status.searchResults.map { "searchResults: \($0.count)" },
-        status.wifiScanResults.map { "wifiScanResults: \($0.count)" },
-        status.galleryModeAuto.map { "galleryModeAuto: \($0)" },
-        status.defaultWearable.map { "defaultWearable: \($0)" },
-        status.deviceName.map { "deviceName: \($0)" },
+        "searching: \(status.searching)",
+        "wifiScanResults: \(status.wifiScanResults.count)",
+        "galleryMode: \(status.galleryMode.desired)",
+        status.defaultDevice.map { "defaultDevice: \($0.name)" },
     ].compactMap { $0 }.prefix(3)
-    return parts.isEmpty ? "empty update" : parts.joined(separator: ", ")
+    return parts.joined(separator: ", ")
 }
 
 func photoStatusUrl(_ uploadUrlText: String, requestId: String) -> URL? {

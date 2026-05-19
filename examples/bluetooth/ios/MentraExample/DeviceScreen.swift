@@ -74,7 +74,7 @@ struct DeviceScreen: View {
                     }
                     HStack(spacing: 6) {
                         Image(systemName: "bolt.fill").foregroundColor(AppColor.greenAccent).font(.system(size: 11))
-                        Text(model.glassesValues?.charging == true ? "Charging" : "Not charging").font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.greenAccent)
+                        Text(model.glassesValues?.battery?.charging == true ? "Charging" : "Not charging").font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.greenAccent)
                     }
                 }
                 Spacer()
@@ -304,10 +304,11 @@ struct DeviceScreen: View {
     }
 }
 
-private func glassesAssetName(_ values: GlassesStatus?) -> String {
+private func glassesAssetName(_ values: GlassesRuntimeState?) -> String {
+    let device = connectedGlassesInfo(values)
     let model = [
-        values?.deviceModel,
-        values?.bluetoothName,
+        device?.deviceModel?.deviceType,
+        device?.bluetoothName,
     ]
     .compactMap { $0 }
     .joined(separator: " ")
