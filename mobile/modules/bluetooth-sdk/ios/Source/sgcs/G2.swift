@@ -751,6 +751,63 @@ private enum EvenAIProto {
         w.writeMessageField(13, configW.data) // config (field 13)
         return w.data
     }
+
+    /// EvenAIDataPackage with CTRL command — used to put glasses into / out of
+    /// an AI session. Mirrors Flutter `sendWakeupResp`, which sends
+    /// `EvenAIControl { status = EVEN_AI_ENTER }` after the glasses send WAKE_UP.
+    /// status: 1 WAKE_UP, 2 ENTER, 3 EXIT
+    static func aiCtrl(magicRandom: Int32, status: Int32) -> Data {
+        var ctrlW = ProtobufWriter()
+        ctrlW.writeInt32Field(1, status) // status
+
+        var w = ProtobufWriter()
+        w.writeInt32Field(1, 1) // commandId = CTRL
+        w.writeInt32Field(2, magicRandom)
+        w.writeMessageField(3, ctrlW.data) // ctrl (field 3)
+        return w.data
+    }
+
+    /// EvenAIDataPackage with SKILL command — triggers a built-in glasses UI
+    /// the same way the "Hey Even, show X" voice command does.
+    /// skillId values (per even_ai.proto):
+    ///   0 SKILL_NONE, 1 BRIGHTNESS, 2 TRANSLATE_CTRL, 3 NOTIFICATION,
+    ///   4 TELEPROMPT, 5 NAVIGATE, 6 CONVERSATE, 7 QUICKLIST, 8 AUTO_BRIGHTNESS
+    static func triggerSkill(magicRandom: Int32, skillId: Int32, skillParam: Int32 = 0) -> Data {
+        // EvenAISkillInfo
+        var skillW = ProtobufWriter()
+        skillW.writeInt32Field(1, 0) // streamEnable
+        skillW.writeInt32Field(2, skillId) // skillId
+        skillW.writeInt32Field(3, skillParam) // skillParam — for NOTIFICATION skill this is a NotificationType enum
+        // f4 (text) intentionally omitted — empty for UI-launch skills
+        skillW.writeInt32Field(6, 0) // fTextEnd
+
+        // EvenAIDataPackage
+        var w = ProtobufWriter()
+        w.writeInt32Field(1, 6) // commandId = SKILL
+        w.writeInt32Field(2, magicRandom)
+        w.writeMessageField(8, skillW.data) // skillInfo (field 8)
+        return w.data
+    }
+}
+
+// MARK: - Notification Protobuf Builders (notification.proto, service ID 4)
+
+private enum NotificationProto {
+    /// NotificationDataPackage with commandId=NOTIFICATION_IOS (2), carrying
+    /// `NotificationIOS { appID, displayName }`. We saw the glasses emit this
+    /// inbound after "Hey Even, show notifications" with appID="com.burbn.instagram";
+    /// trying the same shape outbound to see if the glasses display it.
+    static func iosNotification(magicRandom: Int32, appID: String, displayName: String) -> Data {
+        var iosW = ProtobufWriter()
+        iosW.writeBytesField(1, Data(appID.utf8)) // appID
+        iosW.writeBytesField(2, Data(displayName.utf8)) // displayName
+
+        var w = ProtobufWriter()
+        w.writeInt32Field(1, 2) // commandId = NOTIFICATION_IOS
+        w.writeInt32Field(2, magicRandom)
+        w.writeMessageField(4, iosW.data) // IOS (field 4)
+        return w.data
+    }
 }
 
 // MARK: - Menu Protobuf Builders (menu.proto, service ID 3)
@@ -930,14 +987,16 @@ private enum DashboardProto {
         location: String?,
         time: String?,
         endTimestamp: Int32,
-        scheduleAuthority: Int32
+        scheduleAuthority: Int32,
+        scheduleTotal: Int32 = 1,
+        scheduleNum: Int32 = 0
     ) -> Data {
         let sched = schedule(
             scheduleId: scheduleId, title: title, location: location,
             time: time, endTimestamp: endTimestamp
         )
         let rSched = rScheduleWidget(
-            scheduleTotal: 1, scheduleNum: 0,
+            scheduleTotal: scheduleTotal, scheduleNum: scheduleNum,
             schedule: sched, scheduleAuthority: scheduleAuthority
         )
 
@@ -1493,45 +1552,50 @@ class G2: NSObject, SGCManager {
                         )
 
                         // 3. teleprompter (0x10) — config (cmd=1, field3={1:4})
-                        var teleW = ProtobufWriter()
-                        teleW.writeInt32Field(1, 1)
-                        teleW.writeInt32Field(2, self.sendManager.nextMagicRandom())
-                        teleW.writeMessageField(3, Data([0x08, 0x04])) // {1:4}
-                        self.sendToGlasses(
-                            self.sendManager.buildPackets(
-                                serviceId: 0x10, payload: teleW.data, reserveFlag: true
-                            )
-                        )
+                        // var teleW = ProtobufWriter()
+                        // teleW.writeInt32Field(1, 1)
+                        // teleW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+                        // teleW.writeMessageField(3, Data([0x08, 0x04])) // {1:4}
+                        // self.sendToGlasses(
+                        //     self.sendManager.buildPackets(
+                        //         serviceId: 0x10, payload: teleW.data, reserveFlag: true
+                        //     )
+                        // )
 
-                        // 4. EvenHub CTRL on service 0x81 (cmd=1, empty field3)
-                        var ehCtrlW = ProtobufWriter()
-                        ehCtrlW.writeInt32Field(1, 1)
-                        ehCtrlW.writeInt32Field(2, self.sendManager.nextMagicRandom())
-                        ehCtrlW.writeMessageField(3, Data())
-                        self.sendEvenHubCtrlCommand(ehCtrlW.data)
+                        // // 4. EvenHub CTRL on service 0x81 (cmd=1, empty field3)
+                        // var ehCtrlW = ProtobufWriter()
+                        // ehCtrlW.writeInt32Field(1, 1)
+                        // ehCtrlW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+                        // ehCtrlW.writeMessageField(3, Data())
+                        // self.sendEvenHubCtrlCommand(ehCtrlW.data)
 
-                        // 5. calendar (0x04) — config
-                        var calW = ProtobufWriter()
-                        calW.writeInt32Field(1, 1)
-                        calW.writeInt32Field(2, self.sendManager.nextMagicRandom())
-                        calW.writeMessageField(
-                            3, Data([0x08, 0x01, 0x10, 0x01, 0x18, 0x05, 0x28, 0x01])
-                        )
-                        self.sendToGlasses(
-                            self.sendManager.buildPackets(
-                                serviceId: 0x04, payload: calW.data, reserveFlag: true
-                            )
-                        )
+                        // // 5. calendar (0x04) — config
+                        // var calW = ProtobufWriter()
+                        // calW.writeInt32Field(1, 1)
+                        // calW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+                        // calW.writeMessageField(
+                        //     3, Data([0x08, 0x01, 0x10, 0x01, 0x18, 0x05, 0x28, 0x01])
+                        // )
+                        // self.sendToGlasses(
+                        //     self.sendManager.buildPackets(
+                        //         serviceId: 0x04, payload: calW.data, reserveFlag: true
+                        //     )
+                        // )
 
                         // 6. Dashboard init (0x01) — display settings
+                        // halfDayFormat: 1 = 12h, 0 = 24h
+                        // temperatureUnit: 1 = Celsius (metric), 2 = Fahrenheit (imperial)
+                        let twelveHour = GlassesStore.shared.get("core", "twelve_hour_time") as? Bool ?? true
+                        let metric = GlassesStore.shared.get("core", "metric_system") as? Bool ?? false
                         var dashDisplayW = ProtobufWriter()
                         dashDisplayW.writeInt32Field(1, 4) // displayMode
                         dashDisplayW.writeInt32Field(2, 3) // statusDisplayCount
                         dashDisplayW.writeMessageField(3, Data([1, 2, 3])) // statusDisplayOrder
                         dashDisplayW.writeInt32Field(4, 4) // widgetDisplayCount
-                        dashDisplayW.writeMessageField(5, Data([1, 3, 2, 2])) // widgetDisplayOrder
-                        dashDisplayW.writeInt32Field(6, 1) // halfDayFormat
-                        dashDisplayW.writeInt32Field(7, 1) // temperatureUnit
+                        // WidgetType: 1=News, 2=Stock, 3=Schedule, 4=Quicklist, 5=Health
+                        dashDisplayW.writeMessageField(5, Data([3, 1, 2, 4, 5])) // widgetDisplayOrder: Schedule, News, Stock, Quicklist
+                        dashDisplayW.writeInt32Field(6, twelveHour ? 1 : 0) // halfDayFormat
+                        dashDisplayW.writeInt32Field(7, metric ? 1 : 2) // temperatureUnit
 
                         var dashRecvW = ProtobufWriter()
                         dashRecvW.writeMessageField(2, dashDisplayW.data)
@@ -1543,32 +1607,32 @@ class G2: NSObject, SGCManager {
                         self.sendDashboardCommand(dashPkgW.data)
 
                         // 7. Dashboard REQUEST_NEWS_INFO (cmd=5, field7={1:1})
-                        var dashNewsReqW = ProtobufWriter()
-                        dashNewsReqW.writeInt32Field(1, 5) // REQUEST_NEWS_INFO
-                        dashNewsReqW.writeInt32Field(2, self.sendManager.nextMagicRandom())
-                        dashNewsReqW.writeMessageField(7, Data([0x08, 0x01])) // {1:1}
-                        self.sendDashboardCommand(dashNewsReqW.data)
+                        // var dashNewsReqW = ProtobufWriter()
+                        // dashNewsReqW.writeInt32Field(1, 5) // REQUEST_NEWS_INFO
+                        // dashNewsReqW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+                        // dashNewsReqW.writeMessageField(7, Data([0x08, 0x01])) // {1:1}
+                        // self.sendDashboardCommand(dashNewsReqW.data)
 
-                        // 8. Gesture control list via g2_setting
-                        var gestListW = ProtobufWriter()
-                        gestListW.writeInt32Field(1, 1) // DeviceReceiveInfo
-                        gestListW.writeInt32Field(2, self.sendManager.nextMagicRandom())
-                        // field 3 with field 10 (gestureControlList): 3 items, all app_unable
-                        let gestureCtrlPayload = Data([
-                            0x52, 0x18, // field 10, length 24
-                            0x0A, 0x06, 0x08, 0x00, 0x10, 0x00, 0x18, 0x00, // item 1
-                            0x0A, 0x06, 0x08, 0x00, 0x10, 0x01, 0x18, 0x00, // item 2
-                            0x0A, 0x06, 0x08, 0x00, 0x10, 0x02, 0x18, 0x00, // item 3
-                        ])
-                        gestListW.writeMessageField(3, gestureCtrlPayload)
-                        self.sendG2SettingCommand(gestListW.data)
+                        // // 8. Gesture control list via g2_setting
+                        // var gestListW = ProtobufWriter()
+                        // gestListW.writeInt32Field(1, 1) // DeviceReceiveInfo
+                        // gestListW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+                        // // field 3 with field 10 (gestureControlList): 3 items, all app_unable
+                        // let gestureCtrlPayload = Data([
+                        //     0x52, 0x18, // field 10, length 24
+                        //     0x0A, 0x06, 0x08, 0x00, 0x10, 0x00, 0x18, 0x00, // item 1
+                        //     0x0A, 0x06, 0x08, 0x00, 0x10, 0x01, 0x18, 0x00, // item 2
+                        //     0x0A, 0x06, 0x08, 0x00, 0x10, 0x02, 0x18, 0x00, // item 3
+                        // ])
+                        // gestListW.writeMessageField(3, gestureCtrlPayload)
+                        // self.sendG2SettingCommand(gestListW.data)
 
-                        // 9. Dashboard APP_REQUEST_NEWS_INFO (cmd=7, field9={1:1})
-                        var dashAppNewsW = ProtobufWriter()
-                        dashAppNewsW.writeInt32Field(1, 7) // APP_REQUEST_NEWS_INFO
-                        dashAppNewsW.writeInt32Field(2, self.sendManager.nextMagicRandom())
-                        dashAppNewsW.writeMessageField(9, Data([0x08, 0x01])) // {1:1}
-                        self.sendDashboardCommand(dashAppNewsW.data)
+                        // // 9. Dashboard APP_REQUEST_NEWS_INFO (cmd=7, field9={1:1})
+                        // var dashAppNewsW = ProtobufWriter()
+                        // dashAppNewsW.writeInt32Field(1, 7) // APP_REQUEST_NEWS_INFO
+                        // dashAppNewsW.writeInt32Field(2, self.sendManager.nextMagicRandom())
+                        // dashAppNewsW.writeMessageField(9, Data([0x08, 0x01])) // {1:1}
+                        // self.sendDashboardCommand(dashAppNewsW.data)
 
                         Bridge.log("G2: Sent full Even-compatible init sequence")
                     }
@@ -1612,52 +1676,6 @@ class G2: NSObject, SGCManager {
                     self.sendCalendarEvents(calendarEvents)
                 }
             }
-        }
-    }
-
-    private func runDashboardSequence() {
-        Bridge.log("G2: Running dashboard sequence")
-
-        // send the shutdown command to the glasses:
-        let msg = EvenHubProto.shutdownMessage()
-        sendEvenHubCommand(msg)
-        pageCreated = false
-        currentTextContent = ""
-
-        // // Auth to left side
-        // if leftPeripheral != nil && leftWriteChar != nil {
-        //     let authL = DevSettingsProto.authCmd(magicRandom: sendManager.nextMagicRandom())
-        //     sendDevSettingsCommand(authL, left: true, right: false)
-        // }
-
-        // // Small delay then auth right + pipe role change + time sync
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-            guard let self = self else { return }
-            // 1. gesture_ctrl init (field1=0, field2=magicRandom)
-            var gestureInitW = ProtobufWriter()
-            gestureInitW.writeInt32Field(1, 0)
-            gestureInitW.writeInt32Field(2, self.sendManager.nextMagicRandom())
-            self.sendGestureCtrlCommand(gestureInitW.data)
-
-            // 6. Dashboard init (0x01) — display settings
-            var dashDisplayW = ProtobufWriter()
-            dashDisplayW.writeInt32Field(1, 4) // displayMode
-            dashDisplayW.writeInt32Field(2, 3) // statusDisplayCount
-            dashDisplayW.writeMessageField(3, Data([1, 2, 3])) // statusDisplayOrder
-            dashDisplayW.writeInt32Field(4, 4) // widgetDisplayCount
-            dashDisplayW.writeMessageField(5, Data([1, 3, 2, 2])) // widgetDisplayOrder
-            dashDisplayW.writeInt32Field(6, 1) // halfDayFormat
-            dashDisplayW.writeInt32Field(7, 1) // temperatureUnit
-
-            var dashRecvW = ProtobufWriter()
-            dashRecvW.writeMessageField(2, dashDisplayW.data)
-
-            var dashPkgW = ProtobufWriter()
-            dashPkgW.writeInt32Field(1, 2) // Dashboard_Receive
-            dashPkgW.writeInt32Field(2, self.sendManager.nextMagicRandom())
-            dashPkgW.writeMessageField(4, dashRecvW.data)
-            self.sendDashboardCommand(dashPkgW.data)
-            Bridge.log("G2: Sent full Even-compatible init sequence")
         }
     }
 
@@ -2373,7 +2391,9 @@ class G2: NSObject, SGCManager {
         location: String? = nil,
         time: String? = nil,
         endDate: Date,
-        scheduleId: Int32 = 1
+        scheduleId: Int32 = 1,
+        scheduleTotal: Int32 = 1,
+        scheduleNum: Int32 = 0
     ) {
         Bridge.log("G2: sendCalendarEvent(\(title), endDate=\(endDate))")
         let tzSec = Int64(TimeZone.current.secondsFromGMT())
@@ -2387,7 +2407,9 @@ class G2: NSObject, SGCManager {
             location: location,
             time: time,
             endTimestamp: endTs,
-            scheduleAuthority: 1
+            scheduleAuthority: 1,
+            scheduleTotal: scheduleTotal,
+            scheduleNum: scheduleNum
         )
         sendDashboardCommand(payload)
     }
@@ -2395,8 +2417,14 @@ class G2: NSObject, SGCManager {
     /// Bridge entry for `calendar_events` store updates. Each dict is expected
     /// to match the TS `CalendarEvent` shape: { title, location?, time, endDate }
     /// where endDate is unix seconds.
+    ///
+    /// Sends one BLE push per event, with `scheduleTotal` set to the batch size
+    /// and `scheduleNum` set to this event's 0-based slot. The widget pages
+    /// through them on the glasses — without paging info the firmware overwrites
+    /// slot 0 on each push and only the last event survives.
     func sendCalendarEvents(_ events: [[String: Any]]) {
         Bridge.log("G2: sendCalendarEvents — \(events.count) events")
+        let total = Int32(events.count)
         for (i, ev) in events.enumerated() {
             guard let title = ev["title"] as? String,
                   let time = ev["time"] as? String,
@@ -2408,7 +2436,9 @@ class G2: NSObject, SGCManager {
                 location: location,
                 time: time,
                 endDate: Date(timeIntervalSince1970: endTs),
-                scheduleId: Int32(i + 1)
+                scheduleId: Int32(i + 1),
+                scheduleTotal: total,
+                scheduleNum: Int32(i)
             )
         }
     }
@@ -2718,8 +2748,27 @@ class G2: NSObject, SGCManager {
         Bridge.log("G2: Sent RING_DISCONNECT_INFO for MAC \(mac)")
     }
 
+    /// Fire an EvenAI skill — the same path "Hey Even, show X" uses. Triggers a
+    /// built-in glasses UI (notification list, navigation, teleprompter, etc).
+    /// See `EvenAIProto.triggerSkill` for the skillId table.
+    func triggerSkill(_ skillId: Int32, skillParam: Int32 = 0) {
+        Bridge.log("G2: triggerSkill(\(skillId), skillParam=\(skillParam))")
+        let payload = EvenAIProto.triggerSkill(
+            magicRandom: sendManager.nextMagicRandom(),
+            skillId: skillId,
+            skillParam: skillParam
+        )
+        sendEvenAICommand(payload)
+    }
+
+    /// Open the notification list — same effect as "Hey Even, show notifications".
+    /// Per Flutter binary RE: `sendSkillNotification` writes
+    /// `EvenAISkillInfo { skillId = eEvenAISkill.NOTIFICATION (3), skillParam = NotificationType.show (1) }`.
+    /// The previous sweep used skillId=2 (TRANSLATE_CTRL) per a stale firmware-RE
+    /// doc — wrong skill, hence the silent ACKs.
     func dbg1() {
-        Bridge.log("G2: dbg1()")
+        Bridge.log("G2: dbg1() — show notification list (skillId=3, skillParam=1)")
+        triggerSkill(3, skillParam: 1)
     }
 
     func dbg2() {

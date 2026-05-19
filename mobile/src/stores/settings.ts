@@ -611,6 +611,8 @@ const CORE_SETTINGS_KEYS: string[] = [
   SETTINGS.menu_apps.key,
   SETTINGS.calendar_events.key,
   SETTINGS.use_native_dashboard.key,
+  SETTINGS.twelve_hour_time.key,
+  SETTINGS.metric_system.key,
   // button:
   SETTINGS.button_photo_size.key,
   // Legacy MentraLive native code reads the object form when syncing video settings.

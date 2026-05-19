@@ -922,7 +922,6 @@ class MantleManager {
       const startDate = new Date(Date.now() - 2 * 60 * 60 * 1000)
       const endDate = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
       let events = await Calendar.getEventsAsync(calendarIds, startDate, endDate)
-      console.log("MANTLE: events:", events.length)
 
       // sort by start date (soonest first)
       events.sort((a: Calendar.Event, b: Calendar.Event) => {
@@ -937,15 +936,17 @@ class MantleManager {
       const shapedEvents = events.map((ev: Calendar.Event) => {
         const start = new Date(ev.startDate as string | Date)
         const end = new Date(ev.endDate as string | Date)
-        let time = ev.allDay
-          ? "All day"
-          : start.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})
+        let time;
+        
+        if (ev.allDay) {
+          time = "All day"
+        } else {
+          time = start.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})
+        }
         // add the duration of the event, i.e. "10:00AM - 11:00AM"
         const duration = end.toLocaleTimeString([], {hour: "numeric", minute: "2-digit"})
-        time += ` - ${duration}`
-        // if the event is tomorrow, prefix with "tmr @"
-        if (start.getDate() === new Date().getDate() + 1) {
-          time = `tmr @ ${time}`
+        if (!ev.allDay) {
+          time += ` - ${duration}`
         }
         return {
           title: ev.title ?? "",
