@@ -312,13 +312,14 @@ private fun ScanModelChip(
                 RoundedCornerShape(999.dp),
             )
             .clickable(enabled = enabled) { onClick() }
+            .heightIn(min = 44.dp)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             deviceModelLabel(model),
             color = if (active) AppColor.greenInk else AppColor.muted,
-            fontSize = 12.sp,
+            fontSize = 13.sp,
             fontWeight = FontWeight.Bold,
         )
     }
@@ -401,7 +402,8 @@ private fun TargetDeviceRow(
                 RoundedCornerShape(14.dp),
             )
             .clickable(enabled = enabled) { onClick() }
-            .padding(horizontal = 10.dp, vertical = 9.dp),
+            .heightIn(min = 48.dp)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -418,8 +420,8 @@ private fun TargetDeviceRow(
             }
         }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(name, color = AppColor.inkAlt, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            Text(detail, color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+            Text(name, color = AppColor.inkAlt, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text(detail, color = AppColor.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
         }
     }
 }
@@ -435,8 +437,8 @@ private fun StatTile(label: String, value: String, sub: String, subColor: Color,
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         Eyebrow(label)
-        Text(value, color = AppColor.ink, fontSize = 14.sp, fontWeight = if (bold) FontWeight.Bold else FontWeight.SemiBold)
-        Text(sub, color = subColor, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+        Text(value, color = AppColor.ink, fontSize = 15.sp, fontWeight = if (bold) FontWeight.Bold else FontWeight.SemiBold)
+        Text(sub, color = subColor, fontSize = 12.sp, fontWeight = FontWeight.Medium)
     }
 }
 
@@ -447,12 +449,13 @@ private fun DarkBtn(title: String, icon: ImageVector, bg: Color, modifier: Modif
             .clip(RoundedCornerShape(14.dp))
             .background(bg.copy(alpha = if (enabled) 1f else 0.45f))
             .clickable(enabled = enabled) { onClick() }
+            .heightIn(min = 48.dp)
             .padding(vertical = 14.dp),
         contentAlignment = Alignment.Center
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(icon, null, tint = Color.White, modifier = Modifier.size(14.dp))
-            Text(title, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text(title, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -465,12 +468,13 @@ private fun LightBtn(title: String, icon: ImageVector, modifier: Modifier, enabl
             .background(Color.White.copy(alpha = if (enabled) 1f else 0.45f))
             .border(1.dp, Color(0xFFDBDBDB), RoundedCornerShape(14.dp))
             .clickable(enabled = enabled) { onClick() }
+            .heightIn(min = 48.dp)
             .padding(vertical = 14.dp),
         contentAlignment = Alignment.Center
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(icon, null, tint = AppColor.inkAlt.copy(alpha = if (enabled) 1f else 0.45f), modifier = Modifier.size(14.dp))
-            Text(title, color = AppColor.inkAlt.copy(alpha = if (enabled) 1f else 0.45f), fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text(title, color = AppColor.inkAlt.copy(alpha = if (enabled) 1f else 0.45f), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }

@@ -55,8 +55,8 @@ const styles = StyleSheet.create({
   text: {
     color: colors.muted,
     flex: 1,
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600',
-    lineHeight: 15,
+    lineHeight: 16,
   },
 });

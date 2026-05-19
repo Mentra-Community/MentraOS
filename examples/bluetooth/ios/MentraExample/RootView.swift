@@ -65,14 +65,15 @@ struct TabBarView: View {
                 } label: {
                     VStack(spacing: 4) {
                         Image(systemName: iconName(t))
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(.system(size: 18, weight: .semibold))
                             .foregroundColor(active == t ? .white : AppColor.muted)
                         Text(t.label)
-                            .font(.system(size: 10, weight: active == t ? .semibold : .medium))
+                            .font(.system(size: 11, weight: active == t ? .semibold : .medium))
                             .foregroundColor(active == t ? .white : AppColor.muted)
                     }
                     .padding(.vertical, 10)
                     .padding(.horizontal, 8)
+                    .frame(minHeight: 58)
                     .frame(maxWidth: .infinity)
                     .background(
                         Group {

@@ -220,11 +220,12 @@ struct StreamScreen: View {
                         UIPasteboard.general.string = streamSdkCall
                     } label: {
                         HStack(spacing: 4) {
-                            Image(systemName: "doc.on.doc").font(.system(size: 9)).foregroundColor(AppColor.consoleText)
-                            Text("Copy").font(.system(size: 10, weight: .semibold)).foregroundColor(AppColor.consoleText)
+                            Image(systemName: "doc.on.doc").font(.system(size: 11)).foregroundColor(AppColor.consoleText)
+                            Text("Copy").font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.consoleText)
                         }
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(Color.white.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius: 6))
+                        .frame(minHeight: 36)
+                        .padding(.horizontal, 10).padding(.vertical, 7)
+                        .background(Color.white.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius: 9))
                     }
                     .buttonStyle(.plain)
                 }
@@ -242,8 +243,8 @@ struct StreamScreen: View {
                     Circle().fill(AppColor.red).frame(width: 8, height: 8)
                 }
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(model.streamStatus).font(.system(size: 11, weight: .semibold)).foregroundColor(AppColor.ink)
-                    Text("uptime \(elapsedText(model.streamStartedAt)) · keep-alive 15s").font(.system(size: 10, weight: .medium)).foregroundColor(AppColor.muted)
+                    Text(model.streamStatus).font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.ink)
+                    Text("uptime \(elapsedText(model.streamStartedAt)) · keep-alive 15s").font(.system(size: 11, weight: .medium)).foregroundColor(AppColor.muted)
                 }
             }
             .padding(.vertical, 12).padding(.horizontal, 16)
@@ -262,11 +263,12 @@ struct StreamScreen: View {
                 }
             )) {
                 Text("Use cloud server")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(AppColor.ink)
             }
             .toggleStyle(SwitchToggleStyle(tint: AppColor.greenAccent))
             .padding(.horizontal, 12)
+            .frame(minHeight: 44)
             .padding(.vertical, 10)
             .background(AppColor.ink.opacity(0.04))
             .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -326,7 +328,7 @@ struct StreamScreen: View {
 
             if cloudServerEnabled, let setupHint {
                 Text(setupHint)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(AppColor.muted)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12)
@@ -363,9 +365,10 @@ struct ProtocolTab: View {
             action()
         } label: {
             Text(title)
-                .font(.system(size: 12, weight: active ? .bold : .medium))
+                .font(.system(size: 13, weight: active ? .bold : .medium))
                 .foregroundColor(active ? AppColor.ink : AppColor.muted)
                 .frame(maxWidth: .infinity)
+                .frame(minHeight: 44)
                 .padding(.vertical, 10)
                 .background(active ? Color.white : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: 10))

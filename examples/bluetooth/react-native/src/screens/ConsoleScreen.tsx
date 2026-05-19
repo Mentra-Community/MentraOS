@@ -109,13 +109,13 @@ function FilterChip({ color, labelColor, label, count, onPress }: { color: strin
 }
 
 const styles = StyleSheet.create({
-  chip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.6)', borderWidth: 1, borderColor: colors.border, paddingVertical: 7, paddingHorizontal: 12, borderRadius: 999 },
+  chip: { flexDirection: 'row', alignItems: 'center', minHeight: 36, gap: 6, backgroundColor: 'rgba(255,255,255,0.6)', borderWidth: 1, borderColor: colors.border, paddingVertical: 8, paddingHorizontal: 13, borderRadius: 999 },
   chipDark: { borderWidth: 0 },
   chipDarkText: { color: '#fff', fontSize: 11, fontWeight: '700', letterSpacing: 0.5 },
   chipDarkCount: { color: 'rgba(255,255,255,0.5)', fontSize: 10, fontWeight: '500' },
   chipDot: { width: 6, height: 6, borderRadius: 999 },
-  chipLabel: { fontSize: 11, fontWeight: '600', letterSpacing: 0.5 },
-  chipCount: { color: colors.muted, fontSize: 10, fontWeight: '500' },
+  chipLabel: { fontSize: 12, fontWeight: '600', letterSpacing: 0.5 },
+  chipCount: { color: colors.muted, fontSize: 11, fontWeight: '500' },
 
   consoleCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 24, paddingVertical: 18, paddingHorizontal: 18, gap: 12, backgroundColor: 'rgba(20,22,21,0.92)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)', shadowColor: '#0F2A1D', shadowOpacity: 0.18, shadowOffset: { width: 0, height: 12 }, shadowRadius: 40, elevation: 8 },
   consoleHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingBottom: 6, borderBottomWidth: 1, borderColor: 'rgba(255,255,255,0.06)' },
@@ -129,7 +129,7 @@ const styles = StyleSheet.create({
   eventTime: { width: 50, color: 'rgba(255,255,255,0.4)', fontSize: 10, fontWeight: '500', fontFamily: 'Courier', paddingTop: 2 },
   eventTag: { width: 50, alignItems: 'center', paddingVertical: 3, paddingHorizontal: 6, borderRadius: 5 },
   eventTagText: { fontSize: 9, fontWeight: '700', letterSpacing: 0.5 },
-  eventText: { flex: 1, color: colors.consoleText, fontSize: 11, lineHeight: 16, fontFamily: 'Courier' },
+  eventText: { flex: 1, color: colors.consoleText, fontSize: 12, lineHeight: 17, fontFamily: 'Courier' },
 
   jsonCard: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14, paddingHorizontal: 16, borderRadius: 18, borderWidth: 1, borderColor: colors.borderSoft },
   jsonTitle: { color: colors.ink, fontSize: 13, fontWeight: '600' },

@@ -53,12 +53,13 @@ fun ConsoleScreen(controller: MentraExampleController) {
                 modifier = Modifier.clip(RoundedCornerShape(999.dp))
                     .background(Brush.verticalGradient(listOf(Color(0xFF28473A), Color(0xFF1F3A2A))))
                     .clickable { filter = "ALL" }
-                    .padding(horizontal = 12.dp, vertical = 7.dp),
+                    .heightIn(min = 36.dp)
+                    .padding(horizontal = 13.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Text("ALL", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
-                Text(allEvents.size.toString(), color = Color.White.copy(alpha = 0.5f), fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                Text("ALL", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
+                Text(allEvents.size.toString(), color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp, fontWeight = FontWeight.Medium)
             }
             FilterChip(Color(0xFF00C7BE), Color(0xFF00807B), "LIVE", allEvents.count { it.tag == "LIVE" }.toString(), filter == "LIVE") { filter = "LIVE" }
             FilterChip(Color(0xFF84B5E8), Color(0xFF3478B8), "BLE", allEvents.count { it.tag == "BLE" }.toString(), filter == "BLE") { filter = "BLE" }
@@ -114,7 +115,7 @@ fun ConsoleScreen(controller: MentraExampleController) {
                         ) {
                             Text(e.tag, color = tagColor, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
                         }
-                        Text(e.text, color = AppColor.consoleText, fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.weight(1f))
+                        Text(e.text, color = AppColor.consoleText, fontSize = 12.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.weight(1f))
                     }
                 }
             }
@@ -171,12 +172,13 @@ private fun FilterChip(dot: Color, labelColor: Color, label: String, count: Stri
             .background(if (active) dot.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.6f))
             .border(1.dp, if (active) dot.copy(alpha = 0.35f) else AppColor.border, RoundedCornerShape(999.dp))
             .clickable { onClick() }
-            .padding(horizontal = 12.dp, vertical = 7.dp),
+            .heightIn(min = 36.dp)
+            .padding(horizontal = 13.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(dot))
-        Text(label, color = labelColor, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
-        Text(count, color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+        Text(label, color = labelColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
+        Text(count, color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
     }
 }

@@ -119,17 +119,18 @@ struct SystemScreen: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Wi-Fi").font(.system(size: 17, weight: .bold)).tracking(-0.17).foregroundColor(AppColor.ink)
-                    Text("\(allRows.count) networks nearby").font(.system(size: 10, weight: .medium)).foregroundColor(AppColor.muted)
+                    Text("\(allRows.count) networks nearby").font(.system(size: 12, weight: .medium)).foregroundColor(AppColor.muted)
                 }
                 Spacer()
                 Button {
                     model.requestWifiScan()
                 } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: "arrow.clockwise").font(.system(size: 10, weight: .heavy)).foregroundColor(AppColor.ink)
-                        Text("Scan").font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.ink)
+                        Image(systemName: "arrow.clockwise").font(.system(size: 13, weight: .heavy)).foregroundColor(AppColor.ink)
+                        Text("Scan").font(.system(size: 13, weight: .semibold)).foregroundColor(AppColor.ink)
                     }
-                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .frame(minHeight: 44)
+                    .padding(.horizontal, 14).padding(.vertical, 9)
                     .background(AppColor.ink.opacity(0.05)).clipShape(Capsule())
                 }
                 .disabled(!model.glassesConnected)
@@ -279,7 +280,7 @@ struct SystemScreen: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Hotspot").font(.system(size: 16, weight: .bold)).foregroundColor(AppColor.ink)
                         Text(model.glassesConnected ? hotspotLabel(model.glassesValues, fallbackEnabled: model.hotspotEnabled) : "connect glasses to toggle")
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.system(size: 12, weight: .medium))
                             .foregroundColor(model.hotspotEnabled ? AppColor.greenAccent : AppColor.muted)
                             .lineLimit(2)
                             .minimumScaleFactor(0.8)
@@ -300,6 +301,7 @@ struct SystemScreen: View {
                             .frame(width: 38, height: 22)
                         Circle().fill(model.hotspotEnabled ? AppColor.greenAccent : AppColor.mutedSoft).frame(width: 18, height: 18).padding(2)
                     }
+                    .frame(minWidth: 44, minHeight: 44)
                 }
                 .buttonStyle(.plain)
                 .disabled(!model.glassesConnected)
@@ -312,13 +314,13 @@ struct SystemScreen: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Gallery server").font(.system(size: 13, weight: .bold)).foregroundColor(AppColor.ink)
                     Text(galleryUrl ?? "Enable hotspot to expose local gallery access")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundColor(galleryUrl == nil ? AppColor.muted : AppColor.greenAccent)
                         .lineLimit(2)
                         .minimumScaleFactor(0.8)
                     if let galleryHotspotPassword {
                         Text("Join \(galleryHotspotSsidLabel(model.glassesValues)) · password \(galleryHotspotPassword)")
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.system(size: 11, weight: .medium))
                             .foregroundColor(AppColor.muted)
                             .lineLimit(2)
                             .minimumScaleFactor(0.8)
@@ -340,7 +342,7 @@ struct SystemScreen: View {
             }
 
             Text(model.galleryServerStatus)
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundColor(model.galleryServerReachable == true ? AppColor.greenAccent : model.galleryServerReachable == false ? AppColor.red : AppColor.muted)
                 .lineLimit(2)
                 .minimumScaleFactor(0.8)
@@ -372,16 +374,17 @@ struct SystemScreen: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Microphone").font(.system(size: 16, weight: .bold)).foregroundColor(AppColor.ink)
                 Text(microphoneStatusText)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(model.micRecording || model.micPlaying ? AppColor.greenAccent : AppColor.muted)
                     .lineLimit(2)
                     .minimumScaleFactor(0.8)
                 Button(action: model.openBluetoothSettings) {
                     Text("Bluetooth settings")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: 12, weight: .bold))
                         .foregroundColor(AppColor.greenDeep)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
+                        .frame(minHeight: 40)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
                         .background(AppColor.greenAccent.opacity(0.14))
                         .clipShape(Capsule())
                 }
@@ -389,7 +392,7 @@ struct SystemScreen: View {
                 .padding(.top, 4)
                 if let hint = model.micPlaybackHint {
                     Text(hint)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundColor(AppColor.red)
                         .lineLimit(3)
                         .minimumScaleFactor(0.8)
@@ -445,10 +448,10 @@ struct SystemScreen: View {
             ZStack {
                 Circle()
                     .fill(active ? AppColor.greenInk : Color.white)
-                    .frame(width: 28, height: 28)
+                    .frame(width: 44, height: 44)
                     .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 4)
                 Image(systemName: systemName)
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: 15, weight: .bold))
                     .foregroundColor(active ? .white : AppColor.greenInk)
             }
         }
@@ -582,12 +585,12 @@ struct NetworkRowV: View {
                     .frame(width: 28)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(name).font(.system(size: 15, weight: .bold)).foregroundColor(AppColor.ink)
-                    Text(sub).font(.system(size: 11, weight: .medium)).foregroundColor(subColor)
+                    Text(sub).font(.system(size: 12, weight: .medium)).foregroundColor(subColor)
                 }
                 Spacer()
                 if let rssi = rssi {
                     HStack(spacing: 4) {
-                        Text(rssi).font(.system(size: 11, weight: .semibold)).foregroundColor(AppColor.ink)
+                        Text(rssi).font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.ink)
                         if check { Image(systemName: "checkmark").font(.system(size: 10, weight: .heavy)).foregroundColor(AppColor.ink) }
                     }
                 }
@@ -596,15 +599,17 @@ struct NetworkRowV: View {
                 }
                 if let trailingTitle {
                     Text(trailingTitle)
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: 12, weight: .bold))
                         .foregroundColor(trailingColor)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
+                        .frame(minWidth: 64, minHeight: 40)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
                         .background(trailingColor.opacity(0.10))
                         .clipShape(Capsule())
                 }
                 if locked { Image(systemName: "lock.fill").font(.system(size: 11)).foregroundColor(AppColor.ink) }
             }
+            .frame(minHeight: 48)
             .padding(.vertical, 14)
             if !last { Rectangle().fill(AppColor.ink.opacity(0.04)).frame(height: 1) }
         }
@@ -618,15 +623,16 @@ struct InputChip: View {
     let prefix: String; let label: String
     var body: some View {
         HStack(spacing: 6) {
-            Text(prefix).font(.system(size: 10, weight: .semibold)).foregroundColor(AppColor.muted)
+            Text(prefix).font(.system(size: 11, weight: .semibold)).foregroundColor(AppColor.muted)
             Text(label)
-                .font(.system(size: 11, weight: .bold))
+                .font(.system(size: 12, weight: .bold))
                 .foregroundColor(AppColor.ink)
                 .lineLimit(1)
                 .minimumScaleFactor(0.86)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 10).padding(.vertical, 7)
+        .frame(minHeight: 40)
+        .padding(.horizontal, 10).padding(.vertical, 9)
         .background(AppColor.ink.opacity(0.04))
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
@@ -641,10 +647,11 @@ struct GalleryModeChip: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 12, weight: active ? .bold : .medium))
+                .font(.system(size: 13, weight: active ? .bold : .medium))
                 .foregroundColor(active ? AppColor.greenInk : AppColor.muted)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
+                .frame(minHeight: 44)
                 .background(active ? AppColor.greenAccent.opacity(0.16) : AppColor.ink.opacity(0.04))
                 .overlay(Capsule().stroke(active ? AppColor.greenAccent.opacity(0.32) : AppColor.ink.opacity(0.05), lineWidth: 1))
                 .clipShape(Capsule())
@@ -663,10 +670,11 @@ struct HotspotActionChip: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: 12, weight: .bold))
                 .foregroundColor(enabled ? AppColor.greenDeep : AppColor.muted)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 6)
+                .frame(minWidth: 72, minHeight: 40)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 8)
                 .background(enabled ? AppColor.greenAccent.opacity(0.14) : AppColor.ink.opacity(0.04))
                 .clipShape(Capsule())
         }
@@ -687,7 +695,7 @@ struct LedTab: View {
                 Image(systemName: systemImage).font(.system(size: 16, weight: active ? .bold : .medium)).foregroundColor(active ? AppColor.ink : AppColor.muted)
                 Text(label).font(.system(size: 12, weight: active ? .semibold : .medium)).foregroundColor(active ? AppColor.ink : AppColor.muted)
             }
-            .frame(maxWidth: .infinity).padding(.vertical, 10)
+            .frame(maxWidth: .infinity, minHeight: 44).padding(.vertical, 10)
             .background(active ? Color.white : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
@@ -710,13 +718,14 @@ struct LedColorChip: View {
                     .frame(width: 9, height: 9)
                     .overlay(Circle().stroke(AppColor.ink.opacity(colorName == "white" ? 0.16 : 0), lineWidth: 1))
                 Text(colorName.capitalized)
-                    .font(.system(size: 10, weight: active ? .semibold : .medium))
+                    .font(.system(size: 11, weight: active ? .semibold : .medium))
                     .foregroundColor(active ? AppColor.ink : AppColor.muted)
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity)
+            .frame(minHeight: 40)
             .padding(.horizontal, 8)
-            .padding(.vertical, 7)
+            .padding(.vertical, 9)
             .background(active ? Color.white : AppColor.ink.opacity(0.04))
             .overlay(Capsule().stroke(ledChipBorderColor(colorName, active: active), lineWidth: 1))
             .clipShape(Capsule())

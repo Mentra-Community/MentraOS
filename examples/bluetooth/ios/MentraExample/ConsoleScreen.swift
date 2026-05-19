@@ -18,10 +18,11 @@ struct ConsoleScreen: View {
                     HStack(spacing: 6) {
                         Button { filter = "ALL" } label: {
                             HStack(spacing: 6) {
-                                Text("ALL").font(.system(size: 11, weight: .bold)).tracking(0.5).foregroundColor(.white)
-                                Text("\(model.events.count)").font(.system(size: 10, weight: .medium)).foregroundColor(Color.white.opacity(0.5))
+                                Text("ALL").font(.system(size: 12, weight: .bold)).tracking(0.5).foregroundColor(.white)
+                                Text("\(model.events.count)").font(.system(size: 11, weight: .medium)).foregroundColor(Color.white.opacity(0.5))
                             }
-                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .frame(minHeight: 36)
+                            .padding(.horizontal, 13).padding(.vertical, 8)
                             .background(LinearGradient(colors: [Color(hex: 0x28473A), Color(hex: 0x1F3A2A)], startPoint: .top, endPoint: .bottom))
                             .clipShape(Capsule())
                         }
@@ -83,7 +84,7 @@ struct ConsoleScreen: View {
                             .background(tagColor(e.tag).opacity(0.16))
                             .clipShape(RoundedRectangle(cornerRadius: 5))
                         Text(e.text)
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(.system(size: 12, design: .monospaced))
                             .foregroundColor(AppColor.consoleText)
                         Spacer()
                     }
@@ -148,10 +149,11 @@ struct FilterChip: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Circle().fill(color).frame(width: 6, height: 6)
-                Text(label).font(.system(size: 11, weight: .semibold)).tracking(0.5).foregroundColor(labelColor)
-                Text(count).font(.system(size: 10, weight: .medium)).foregroundColor(AppColor.muted)
+                Text(label).font(.system(size: 12, weight: .semibold)).tracking(0.5).foregroundColor(labelColor)
+                Text(count).font(.system(size: 11, weight: .medium)).foregroundColor(AppColor.muted)
             }
-            .padding(.horizontal, 12).padding(.vertical, 7)
+            .frame(minHeight: 36)
+            .padding(.horizontal, 13).padding(.vertical, 8)
             .background(active ? color.opacity(0.14) : Color.white.opacity(0.6))
             .overlay(Capsule().stroke(active ? color.opacity(0.35) : Color.white.opacity(0.75), lineWidth: 1))
             .clipShape(Capsule())

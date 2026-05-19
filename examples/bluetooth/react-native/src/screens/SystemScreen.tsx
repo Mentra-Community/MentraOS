@@ -87,7 +87,7 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             disabled={!connected}
             style={[styles.scanBtn, !connected && styles.disabled]}
             onPress={sdk.requestWifiScan}>
-            <Svg width={11} height={11} viewBox="0 0 24 24" fill="none" stroke={colors.ink} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+            <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.ink} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
               <Polyline points="23 4 23 10 17 10" />
               <Path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
             </Svg>
@@ -163,6 +163,7 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           </View>
           <Pressable
             disabled={!connected}
+            hitSlop={10}
             onPress={sdk.toggleHotspot}
             style={[
               styles.toggleOn,
@@ -550,7 +551,7 @@ function MicControlButton({ active, children, disabled, onPress }: { active: boo
 
 function RecordIcon() {
   return (
-    <Svg width={13} height={13} viewBox="0 0 24 24">
+    <Svg width={16} height={16} viewBox="0 0 24 24">
       <Circle cx={12} cy={12} r={7} fill={colors.greenInk} />
     </Svg>
   );
@@ -558,7 +559,7 @@ function RecordIcon() {
 
 function StopIcon({ active }: { active?: boolean }) {
   return (
-    <Svg width={13} height={13} viewBox="0 0 24 24">
+    <Svg width={16} height={16} viewBox="0 0 24 24">
       <Rect x={7} y={7} width={10} height={10} rx={2} fill={active ? '#fff' : colors.greenInk} />
     </Svg>
   );
@@ -566,7 +567,7 @@ function StopIcon({ active }: { active?: boolean }) {
 
 function PlayIcon() {
   return (
-    <Svg width={13} height={13} viewBox="0 0 24 24">
+    <Svg width={16} height={16} viewBox="0 0 24 24">
       <Path d="M8 5v14l11-7z" fill={colors.greenInk} />
     </Svg>
   );
@@ -600,17 +601,17 @@ const styles = StyleSheet.create({
   wifiHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   iconTileSm: { width: 32, height: 32, borderRadius: 10, backgroundColor: 'rgba(125,216,158,0.18)', borderWidth: 1, borderColor: 'rgba(52,199,89,0.22)', alignItems: 'center', justifyContent: 'center' },
   wifiTitle: { color: colors.ink, fontSize: 17, fontWeight: '700', letterSpacing: -0.17 },
-  wifiSub: { color: colors.muted, fontSize: 10, fontWeight: '500' },
-  scanBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(15,42,29,0.06)', paddingVertical: 7, paddingHorizontal: 12, borderRadius: 999 },
+  wifiSub: { color: colors.muted, fontSize: 12, fontWeight: '500' },
+  scanBtn: { flexDirection: 'row', alignItems: 'center', minHeight: 44, gap: 7, backgroundColor: 'rgba(15,42,29,0.06)', paddingVertical: 9, paddingHorizontal: 14, borderRadius: 999 },
   disabled: { opacity: 0.45 },
-  scanText: { color: colors.ink, fontSize: 12, fontWeight: '600' },
+  scanText: { color: colors.ink, fontSize: 13, fontWeight: '600' },
   networkRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, gap: 12 },
   networkBorder: { borderBottomWidth: 1, borderColor: 'rgba(15,42,29,0.06)' },
   networkIcon: { width: 28, alignItems: 'center', justifyContent: 'center' },
   networkName: { color: colors.ink, fontSize: 15, fontWeight: '700' },
-  networkSub: { fontSize: 11, fontWeight: '500' },
-  networkAction: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999 },
-  networkActionText: { fontSize: 11, fontWeight: '700' },
+  networkSub: { fontSize: 12, fontWeight: '500' },
+  networkAction: { minHeight: 40, minWidth: 64, alignItems: 'center', justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999 },
+  networkActionText: { fontSize: 12, fontWeight: '700' },
   wifiExpandRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, borderTopWidth: 1, borderTopColor: 'rgba(15,42,29,0.06)', paddingTop: 12, paddingBottom: 2 },
   wifiExpandText: { color: colors.greenInk, fontSize: 12, fontWeight: '700' },
   tileCard: { flex: 1, borderRadius: 22, paddingVertical: 16, paddingHorizontal: 16, gap: 10, borderWidth: 1, borderColor: colors.borderSoft },
@@ -618,39 +619,39 @@ const styles = StyleSheet.create({
   hotspotDivider: { height: 1, backgroundColor: 'rgba(15,42,29,0.05)' },
   hotspotGalleryRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
   hotspotGalleryTitle: { color: colors.ink, fontSize: 13, fontWeight: '700' },
-  hotspotGalleryUrl: { fontSize: 10, fontWeight: '600', lineHeight: 13 },
-  hotspotGalleryHint: { color: colors.muted, fontSize: 10, fontWeight: '500', lineHeight: 13, marginTop: 2 },
+  hotspotGalleryUrl: { fontSize: 11, fontWeight: '600', lineHeight: 15 },
+  hotspotGalleryHint: { color: colors.muted, fontSize: 11, fontWeight: '500', lineHeight: 15, marginTop: 2 },
   hotspotActions: { alignItems: 'flex-end', gap: 6 },
   hotspotActionRow: { flexDirection: 'row', gap: 6 },
-  hotspotActionChip: { paddingVertical: 6, paddingHorizontal: 9, borderRadius: 999, backgroundColor: 'rgba(52,199,89,0.14)' },
+  hotspotActionChip: { minHeight: 40, minWidth: 72, alignItems: 'center', justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 11, borderRadius: 999, backgroundColor: 'rgba(52,199,89,0.14)' },
   hotspotActionChipDisabled: { backgroundColor: 'rgba(15,42,29,0.04)' },
-  hotspotActionText: { color: colors.greenDeep, fontSize: 10, fontWeight: '700' },
+  hotspotActionText: { color: colors.greenDeep, fontSize: 12, fontWeight: '700' },
   hotspotActionTextDisabled: { color: colors.muted },
-  hotspotStatus: { fontSize: 10, lineHeight: 13, fontWeight: '600' },
+  hotspotStatus: { fontSize: 12, lineHeight: 16, fontWeight: '600' },
   micCard: { marginHorizontal: 16, marginTop: 8, borderRadius: 22, paddingVertical: 16, paddingHorizontal: 16, gap: 10, borderWidth: 1, borderColor: colors.borderSoft },
   tileHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   toggleOn: { width: 38, height: 22, borderRadius: 999, backgroundColor: '#fff', borderWidth: 1.2, paddingHorizontal: 2, alignItems: 'flex-end', justifyContent: 'center' },
   toggleKnob: { width: 18, height: 18, borderRadius: 999, backgroundColor: colors.greenAccent },
-  micControls: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  micControlButton: { width: 28, height: 28, borderRadius: 999, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', shadowColor: '#0F2A1D', shadowOpacity: 0.05, shadowOffset: { width: 0, height: 4 }, shadowRadius: 8, elevation: 1 },
+  micControls: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  micControlButton: { width: 44, height: 44, borderRadius: 999, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', shadowColor: '#0F2A1D', shadowOpacity: 0.05, shadowOffset: { width: 0, height: 4 }, shadowRadius: 8, elevation: 1 },
   micControlButtonActive: { backgroundColor: colors.greenInk },
-  micSettingsButton: { alignSelf: 'flex-start', marginTop: 6, backgroundColor: 'rgba(52,199,89,0.14)', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 5 },
-  micSettingsText: { color: colors.greenDeep, fontSize: 10, fontWeight: '700' },
-  micRouteText: { color: colors.muted, fontSize: 10, fontWeight: '600', lineHeight: 13, marginTop: 4 },
-  micWarning: { color: colors.red, fontSize: 10, fontWeight: '500', lineHeight: 13, marginTop: 4 },
+  micSettingsButton: { alignSelf: 'flex-start', minHeight: 40, marginTop: 6, backgroundColor: 'rgba(52,199,89,0.14)', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, justifyContent: 'center' },
+  micSettingsText: { color: colors.greenDeep, fontSize: 12, fontWeight: '700' },
+  micRouteText: { color: colors.muted, fontSize: 12, fontWeight: '600', lineHeight: 16, marginTop: 4 },
+  micWarning: { color: colors.red, fontSize: 12, fontWeight: '500', lineHeight: 16, marginTop: 4 },
   tileTitle: { color: colors.ink, fontSize: 16, fontWeight: '700', letterSpacing: -0.16 },
-  tileSub: { color: colors.muted, fontSize: 10, fontWeight: '500' },
+  tileSub: { color: colors.muted, fontSize: 12, fontWeight: '500' },
   livePill2: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(52,199,89,0.16)', borderWidth: 1, borderColor: 'rgba(52,199,89,0.3)', paddingVertical: 4, paddingHorizontal: 9, borderRadius: 999 },
   livePill2Text: { color: colors.greenDeep, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
   inputChips: { flexDirection: 'row', gap: 8 },
-  inputChip: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(15,42,29,0.04)', paddingVertical: 7, paddingHorizontal: 10, borderRadius: 12 },
-  inputChipPrefix: { color: colors.muted, fontSize: 10, fontWeight: '600' },
-  inputChipLabel: { flex: 1, color: colors.ink, fontSize: 11, fontWeight: '700' },
+  inputChip: { flex: 1, flexDirection: 'row', alignItems: 'center', minHeight: 40, gap: 6, backgroundColor: 'rgba(15,42,29,0.04)', paddingVertical: 9, paddingHorizontal: 10, borderRadius: 12 },
+  inputChipPrefix: { color: colors.muted, fontSize: 11, fontWeight: '600' },
+  inputChipLabel: { flex: 1, color: colors.ink, fontSize: 12, fontWeight: '700' },
   galleryModeBlock: { gap: 6, marginTop: 12 },
   galleryModeTitle: { color: colors.ink, fontSize: 14, fontWeight: '700' },
   galleryModeBody: { color: colors.muted, fontSize: 11, fontWeight: '500', lineHeight: 15 },
   galleryModeChips: { flexDirection: 'row', gap: 8, marginTop: 2 },
-  galleryModeChip: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(15,42,29,0.04)', borderWidth: 1, borderColor: 'rgba(15,42,29,0.05)' },
+  galleryModeChip: { minHeight: 44, justifyContent: 'center', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999, backgroundColor: 'rgba(15,42,29,0.04)', borderWidth: 1, borderColor: 'rgba(15,42,29,0.05)' },
   galleryModeChipActive: { backgroundColor: 'rgba(52,199,89,0.16)', borderColor: 'rgba(52,199,89,0.32)' },
   galleryModeChipText: { color: colors.muted, fontSize: 12, fontWeight: '500' },
   galleryModeChipTextActive: { color: colors.greenInk, fontWeight: '700' },
@@ -665,19 +666,19 @@ const styles = StyleSheet.create({
   modalConfirm: { flex: 1, alignItems: 'center', backgroundColor: colors.greenPrimary, borderRadius: 16, paddingVertical: 14 },
   modalConfirmText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   ledTitle: { color: colors.ink, fontSize: 18, fontWeight: '700', letterSpacing: -0.18 },
-  onPill: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(15,42,29,0.06)', paddingVertical: 6, paddingHorizontal: 11, borderRadius: 999 },
-  onText: { color: colors.ink, fontSize: 11, fontWeight: '600' },
+  onPill: { flexDirection: 'row', alignItems: 'center', minHeight: 36, gap: 6, backgroundColor: 'rgba(15,42,29,0.06)', paddingVertical: 7, paddingHorizontal: 12, borderRadius: 999 },
+  onText: { color: colors.ink, fontSize: 12, fontWeight: '600' },
   ledTabs: { flexDirection: 'row', gap: 4, backgroundColor: 'rgba(15,42,29,0.05)', borderRadius: 14, padding: 4 },
   ledTab: { flex: 1, paddingVertical: 12, paddingHorizontal: 6, alignItems: 'center', gap: 6, borderRadius: 10 },
   ledTabActive: { backgroundColor: '#fff' },
   ledTabText: { color: colors.muted, fontSize: 12, fontWeight: '500' },
   ledTabTextActive: { color: colors.ink, fontWeight: '600' },
   ledColorRow: { flexDirection: 'row', gap: 6 },
-  ledColorChip: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 7, paddingHorizontal: 8, borderRadius: 999, backgroundColor: 'rgba(15,42,29,0.04)', borderWidth: 1, borderColor: 'rgba(15,42,29,0.05)' },
+  ledColorChip: { flex: 1, minWidth: 0, minHeight: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, paddingVertical: 9, paddingHorizontal: 8, borderRadius: 999, backgroundColor: 'rgba(15,42,29,0.04)', borderWidth: 1, borderColor: 'rgba(15,42,29,0.05)' },
   ledColorChipActive: { backgroundColor: '#fff' },
   ledColorDot: { width: 9, height: 9, borderRadius: 999 },
   ledColorDotWhite: { borderWidth: 1, borderColor: 'rgba(15,42,29,0.16)' },
-  ledColorText: { color: colors.muted, fontSize: 10, fontWeight: '500' },
+  ledColorText: { color: colors.muted, fontSize: 11, fontWeight: '500' },
   ledColorTextActive: { color: colors.ink, fontWeight: '600' },
   ledNote: { color: colors.muted, fontSize: 11, lineHeight: 16, fontWeight: '500' },
 });

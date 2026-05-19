@@ -147,15 +147,16 @@ fun CameraScreen(controller: MentraExampleController) {
                     Text("SDK CALL", color = AppColor.greenAccent, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
                     Row(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
+                            .clip(RoundedCornerShape(9.dp))
                             .background(Color.White.copy(alpha = 0.06f))
                             .clickable { clipboardManager.setText(AnnotatedString(sdkCall)) }
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                            .heightIn(min = 36.dp)
+                            .padding(horizontal = 10.dp, vertical = 7.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Icon(Icons.Outlined.ContentCopy, null, tint = AppColor.consoleText, modifier = Modifier.size(10.dp))
-                        Text("Copy", color = AppColor.consoleText, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                        Icon(Icons.Outlined.ContentCopy, null, tint = AppColor.consoleText, modifier = Modifier.size(12.dp))
+                        Text("Copy", color = AppColor.consoleText, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
                 Spacer(Modifier.height(8.dp))
@@ -184,7 +185,7 @@ fun CameraScreen(controller: MentraExampleController) {
                     )
                 }
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                    Text(state.cameraStatus, color = AppColor.ink, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    Text(state.cameraStatus, color = AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     Text(
                         when {
                             state.photoPreviewUrl != null && directPhone -> "Preview loaded from phone receiver"
@@ -194,7 +195,7 @@ fun CameraScreen(controller: MentraExampleController) {
                             else -> "Waiting for capture"
                         },
                         color = AppColor.muted,
-                        fontSize = 10.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Medium
                     )
                 }
@@ -271,7 +272,7 @@ fun CameraScreen(controller: MentraExampleController) {
                 Text(
                     setupHint,
                     color = AppColor.muted,
-                    fontSize = 11.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -338,6 +339,7 @@ private fun CloudServerToggle(enabled: Boolean, onEnabledChange: (Boolean) -> Un
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(AppColor.ink.copy(alpha = 0.04f))
+            .heightIn(min = 44.dp)
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
@@ -345,7 +347,7 @@ private fun CloudServerToggle(enabled: Boolean, onEnabledChange: (Boolean) -> Un
         Text(
             "Use cloud server",
             color = AppColor.ink,
-            fontSize = 13.sp,
+            fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,
         )
         Switch(checked = enabled, onCheckedChange = onEnabledChange)
@@ -358,7 +360,7 @@ private fun CameraOptionGroup(label: String, content: @Composable RowScope.() ->
         Text(
             label.uppercase(),
             color = AppColor.muted,
-            fontSize = 10.sp,
+            fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold,
             letterSpacing = 1.1.sp,
             maxLines = 1
@@ -383,10 +385,11 @@ private fun OptionChip(value: String, active: Boolean, onClick: () -> Unit) {
                 RoundedCornerShape(999.dp)
             )
             .clickable { onClick() }
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .heightIn(min = 44.dp)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Text(value, color = if (active) AppColor.greenAccent else AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(value, color = if (active) AppColor.greenAccent else AppColor.ink, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
     }
 }

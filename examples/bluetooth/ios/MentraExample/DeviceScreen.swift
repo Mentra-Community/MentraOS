@@ -367,9 +367,10 @@ struct ScanModelChip: View {
     var body: some View {
         Button(action: action) {
             Text(deviceModelLabel(model))
-                .font(.system(size: 12, weight: .bold))
+                .font(.system(size: 13, weight: .bold))
                 .foregroundColor(active ? AppColor.greenInk : AppColor.muted)
                 .frame(maxWidth: .infinity)
+                .frame(minHeight: 44)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
                 .background(active ? AppColor.greenPrimary.opacity(0.10) : Color.white.opacity(0.72))
@@ -407,14 +408,15 @@ struct TargetDeviceRow: View {
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(name)
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: 14, weight: .bold))
                         .foregroundColor(AppColor.inkAlt)
                     Text(detail)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 12, weight: .medium))
                         .foregroundColor(AppColor.muted)
                 }
                 Spacer()
             }
+            .frame(minHeight: 48)
             .padding(.horizontal, 10)
             .padding(.vertical, 9)
             .background(selected ? AppColor.greenPrimary.opacity(0.08) : Color.white.opacity(0.7))
@@ -456,9 +458,9 @@ struct StatTile: View {
     var bold: Bool = false
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.system(size: 9, weight: .semibold)).tracking(1.1).foregroundColor(AppColor.muted)
-            Text(value).font(.system(size: 14, weight: bold ? .bold : .semibold)).foregroundColor(AppColor.ink)
-            Text(sub).font(.system(size: 11, weight: .medium)).foregroundColor(subColor)
+            Text(label).font(.system(size: 10, weight: .semibold)).tracking(1.1).foregroundColor(AppColor.muted)
+            Text(value).font(.system(size: 15, weight: bold ? .bold : .semibold)).foregroundColor(AppColor.ink)
+            Text(sub).font(.system(size: 12, weight: .medium)).foregroundColor(subColor)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
@@ -480,9 +482,9 @@ struct DarkActionButton: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: icon).foregroundColor(.white).font(.system(size: 14, weight: .bold))
-                Text(title).foregroundColor(.white).font(.system(size: 13, weight: .semibold))
+                Text(title).foregroundColor(.white).font(.system(size: 14, weight: .semibold))
             }
-            .frame(maxWidth: .infinity).padding(.vertical, 14)
+            .frame(maxWidth: .infinity, minHeight: 48).padding(.vertical, 14)
             .background(bg).clipShape(RoundedRectangle(cornerRadius: 14))
         }
         .disabled(!enabled)
@@ -500,9 +502,9 @@ struct LightActionButton: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: icon).foregroundColor(AppColor.inkAlt).font(.system(size: 14, weight: .bold))
-                Text(title).foregroundColor(AppColor.inkAlt).font(.system(size: 13, weight: .semibold))
+                Text(title).foregroundColor(AppColor.inkAlt).font(.system(size: 14, weight: .semibold))
             }
-            .frame(maxWidth: .infinity).padding(.vertical, 14)
+            .frame(maxWidth: .infinity, minHeight: 48).padding(.vertical, 14)
             .background(Color.white)
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(hex: 0xDBDBDB), lineWidth: 1))
             .clipShape(RoundedRectangle(cornerRadius: 14))

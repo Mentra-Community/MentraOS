@@ -139,11 +139,12 @@ struct CameraScreen: View {
                         UIPasteboard.general.string = sdkCall
                     } label: {
                         HStack(spacing: 4) {
-                            Image(systemName: "doc.on.doc").font(.system(size: 9)).foregroundColor(AppColor.consoleText)
-                            Text("Copy").font(.system(size: 10, weight: .semibold)).foregroundColor(AppColor.consoleText)
+                            Image(systemName: "doc.on.doc").font(.system(size: 11)).foregroundColor(AppColor.consoleText)
+                            Text("Copy").font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.consoleText)
                         }
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(Color.white.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius: 6))
+                        .frame(minHeight: 36)
+                        .padding(.horizontal, 10).padding(.vertical, 7)
+                        .background(Color.white.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius: 9))
                     }
                     .buttonStyle(.plain)
                 }
@@ -165,8 +166,8 @@ struct CameraScreen: View {
                         .foregroundColor(cameraStatusFailed ? AppColor.red : AppColor.greenAccent)
                 }
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(model.cameraStatus).font(.system(size: 11, weight: .semibold)).foregroundColor(AppColor.ink)
-                    Text(model.photoPreviewUrl == nil && model.photoPreviewImage == nil ? "Waiting for capture" : directPhone ? "Preview loaded from phone receiver" : "Preview loaded from cloud server").font(.system(size: 10, weight: .medium)).foregroundColor(AppColor.muted)
+                    Text(model.cameraStatus).font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.ink)
+                    Text(model.photoPreviewUrl == nil && model.photoPreviewImage == nil ? "Waiting for capture" : directPhone ? "Preview loaded from phone receiver" : "Preview loaded from cloud server").font(.system(size: 11, weight: .medium)).foregroundColor(AppColor.muted)
                 }
             }
             .padding(.vertical, 12).padding(.horizontal, 16)
@@ -199,11 +200,12 @@ struct CameraScreen: View {
                 }
             )) {
                 Text("Use cloud server")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(AppColor.ink)
             }
             .toggleStyle(SwitchToggleStyle(tint: AppColor.greenAccent))
             .padding(.horizontal, 12)
+            .frame(minHeight: 44)
             .padding(.vertical, 10)
             .background(AppColor.ink.opacity(0.04))
             .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -243,7 +245,7 @@ struct CameraScreen: View {
 
             if let setupHint {
                 Text(setupHint)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(AppColor.muted)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12)
@@ -316,7 +318,7 @@ struct CameraOptionGroup<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label.uppercased())
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .tracking(1.1)
                 .foregroundColor(AppColor.muted)
                 .lineLimit(1)
@@ -336,12 +338,13 @@ struct CameraOptionChip: View {
         HStack(spacing: 6) {
             if highlight { Image(systemName: "bolt.fill").font(.system(size: 9)).foregroundColor(AppColor.amber) }
             Text(value)
-                .font(.system(size: 12, weight: .bold))
+                .font(.system(size: 13, weight: .bold))
                 .foregroundColor(highlight ? AppColor.greenAccent : AppColor.ink)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
+        .frame(minHeight: 44)
+        .padding(.horizontal, 14).padding(.vertical, 10)
         .background(highlight ? Color(hex: 0x7DD89E).opacity(0.16) : Color.white.opacity(0.6))
         .overlay(Capsule().stroke(highlight ? AppColor.greenAccent.opacity(0.32) : AppColor.ink.opacity(0.06), lineWidth: 1))
         .clipShape(Capsule())

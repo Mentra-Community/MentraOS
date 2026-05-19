@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -62,6 +63,7 @@ fun TabBar(active: Tab, onChange: (Tab) -> Unit, modifier: Modifier = Modifier) 
                     .clickable {
                         onChange(t)
                     }
+                    .heightIn(min = 58.dp)
                     .padding(vertical = 10.dp, horizontal = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -70,12 +72,12 @@ fun TabBar(active: Tab, onChange: (Tab) -> Unit, modifier: Modifier = Modifier) 
                     imageVector = t.icon,
                     contentDescription = t.label,
                     tint = if (isActive) Color.White else AppColor.muted,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(20.dp)
                 )
                 Text(
                     text = t.label,
                     color = if (isActive) Color.White else AppColor.muted,
-                    fontSize = 10.sp,
+                    fontSize = 11.sp,
                     fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Medium
                 )
             }

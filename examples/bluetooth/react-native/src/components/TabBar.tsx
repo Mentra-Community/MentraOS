@@ -11,7 +11,7 @@ const tabs: { key: TabKey; label: string; icon: (active: boolean) => React.React
     key: 'device',
     label: 'Device',
     icon: (active) => (
-      <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={active ? '#fff' : colors.muted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={active ? '#fff' : colors.muted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
         <Path d="m6.5 6.5 11 11L12 23V1l5.5 5.5-11 11" />
       </Svg>
     ),
@@ -20,7 +20,7 @@ const tabs: { key: TabKey; label: string; icon: (active: boolean) => React.React
     key: 'camera',
     label: 'Camera',
     icon: (active) => (
-      <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={active ? '#fff' : colors.muted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={active ? '#fff' : colors.muted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
         <Path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
         <Circle cx={12} cy={13} r={4} />
       </Svg>
@@ -30,7 +30,7 @@ const tabs: { key: TabKey; label: string; icon: (active: boolean) => React.React
     key: 'stream',
     label: 'Stream',
     icon: (active) => (
-      <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={active ? '#fff' : colors.muted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={active ? '#fff' : colors.muted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
         <Circle cx={12} cy={12} r={2} />
         <Path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.48M20.49 4.93a10 10 0 0 1 0 14.14M3.51 19.07a10 10 0 0 1 0-14.14" />
       </Svg>
@@ -40,7 +40,7 @@ const tabs: { key: TabKey; label: string; icon: (active: boolean) => React.React
     key: 'system',
     label: 'System',
     icon: (active) => (
-      <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={active ? '#fff' : colors.muted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={active ? '#fff' : colors.muted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
         <Rect x={3} y={3} width={7} height={7} rx={1.5} />
         <Rect x={14} y={3} width={7} height={7} rx={1.5} />
         <Rect x={3} y={14} width={7} height={7} rx={1.5} />
@@ -52,7 +52,7 @@ const tabs: { key: TabKey; label: string; icon: (active: boolean) => React.React
     key: 'console',
     label: 'Console',
     icon: (active) => (
-      <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={active ? '#fff' : colors.muted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={active ? '#fff' : colors.muted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
         <Polyline points="4 17 10 11 4 5" />
         <Line x1={12} y1={19} x2={20} y2={19} />
       </Svg>
@@ -108,8 +108,9 @@ const styles = StyleSheet.create({
     shadowRadius: 44,
     elevation: 12,
   },
-  tabWrap: { flex: 1 },
+  tabWrap: { flex: 1, minHeight: 60 },
   tab: {
+    minHeight: 58,
     paddingVertical: 10,
     paddingHorizontal: 8,
     alignItems: 'center',
@@ -121,6 +122,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#28473A',
   },
   gradientTab: {
+    minHeight: 58,
     paddingVertical: 10,
     paddingHorizontal: 8,
     alignItems: 'center',
@@ -129,7 +131,7 @@ const styles = StyleSheet.create({
     borderRadius: 22,
   },
   label: {
-    fontSize: 10,
-    lineHeight: 12,
+    fontSize: 11,
+    lineHeight: 13,
   },
 });

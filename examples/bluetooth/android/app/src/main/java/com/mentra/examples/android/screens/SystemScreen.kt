@@ -110,18 +110,19 @@ fun SystemScreen(controller: MentraExampleController) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
                     Text("Wi-Fi", color = AppColor.ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                    Text("${networks.size} networks nearby", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                    Text("${networks.size} networks nearby", color = AppColor.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                 }
                 Row(
                     modifier = Modifier.clip(RoundedCornerShape(999.dp))
                         .background(if (connected) AppColor.ink.copy(alpha = 0.05f) else AppColor.red.copy(alpha = 0.08f))
                         .clickable(enabled = connected) { controller.requestWifiScan() }
-                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                        .heightIn(min = 44.dp)
+                        .padding(horizontal = 14.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Icon(Icons.Outlined.Refresh, null, tint = if (connected) AppColor.ink else AppColor.red, modifier = Modifier.size(11.dp))
-                    Text(if (connected) "Scan" else "Connect glasses", color = if (connected) AppColor.ink else AppColor.red, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Icon(Icons.Outlined.Refresh, null, tint = if (connected) AppColor.ink else AppColor.red, modifier = Modifier.size(14.dp))
+                    Text(if (connected) "Scan" else "Connect glasses", color = if (connected) AppColor.ink else AppColor.red, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
             Spacer(Modifier.height(4.dp))
@@ -206,25 +207,32 @@ fun SystemScreen(controller: MentraExampleController) {
                             Text(
                                 if (connected) hotspotLabel(state.glassesStatus, state.hotspotEnabled) else "connect glasses to toggle",
                                 color = if (state.hotspotEnabled) AppColor.greenAccent else AppColor.muted,
-                                fontSize = 10.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
                             )
                         }
                     }
                     Box(
-                        modifier = Modifier.size(width = 38.dp, height = 22.dp)
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(Color.White)
-                            .border(
-                                1.2.dp,
-                                if (state.hotspotEnabled) AppColor.greenAccent.copy(alpha = 0.72f) else AppColor.ink.copy(alpha = 0.18f),
-                                RoundedCornerShape(999.dp)
-                            )
-                            .clickable(enabled = connected) { controller.toggleHotspot() }
-                            .padding(2.dp),
-                        contentAlignment = if (state.hotspotEnabled) Alignment.CenterEnd else Alignment.CenterStart
+                        modifier = Modifier
+                            .size(width = 48.dp, height = 44.dp)
+                            .clickable(enabled = connected) { controller.toggleHotspot() },
+                        contentAlignment = Alignment.Center
                     ) {
-                        Box(modifier = Modifier.size(18.dp).clip(CircleShape).background(if (state.hotspotEnabled) AppColor.greenAccent else AppColor.mutedSoft))
+                        Box(
+                            modifier = Modifier
+                                .size(width = 44.dp, height = 26.dp)
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(Color.White)
+                                .border(
+                                    1.2.dp,
+                                    if (state.hotspotEnabled) AppColor.greenAccent.copy(alpha = 0.72f) else AppColor.ink.copy(alpha = 0.18f),
+                                    RoundedCornerShape(999.dp)
+                                )
+                                .padding(horizontal = 3.dp),
+                            contentAlignment = if (state.hotspotEnabled) Alignment.CenterEnd else Alignment.CenterStart
+                        ) {
+                            Box(modifier = Modifier.size(20.dp).clip(CircleShape).background(if (state.hotspotEnabled) AppColor.greenAccent else AppColor.mutedSoft))
+                        }
                     }
                 }
                 Spacer(Modifier.height(12.dp))
@@ -236,16 +244,16 @@ fun SystemScreen(controller: MentraExampleController) {
                         Text(
                             galleryUrl ?: "Enable hotspot to expose local gallery access",
                             color = if (galleryUrl != null) AppColor.greenAccent else AppColor.muted,
-                            fontSize = 10.sp,
-                            lineHeight = 13.sp,
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
                             fontWeight = FontWeight.Medium,
                         )
                         if (galleryHotspotPassword != null) {
                             Text(
                                 "Join ${galleryHotspotSsidLabel(state.glassesStatus)} · password $galleryHotspotPassword",
                                 color = AppColor.muted,
-                                fontSize = 10.sp,
-                                lineHeight = 13.sp,
+                                fontSize = 11.sp,
+                                lineHeight = 15.sp,
                             )
                         }
                     }
@@ -268,8 +276,8 @@ fun SystemScreen(controller: MentraExampleController) {
                         false -> AppColor.red
                         null -> AppColor.muted
                     },
-                    fontSize = 10.sp,
-                    lineHeight = 13.sp,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
                     fontWeight = FontWeight.Medium,
                 )
             }
@@ -286,7 +294,7 @@ fun SystemScreen(controller: MentraExampleController) {
                     IconTile(Icons.Outlined.Mic)
                     Column {
                         Text("Microphone", color = AppColor.ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        Text(micStatus, color = if (state.micRecording || state.micPlaying) AppColor.greenAccent else AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                        Text(micStatus, color = if (state.micRecording || state.micPlaying) AppColor.greenAccent else AppColor.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -342,16 +350,16 @@ fun SystemScreen(controller: MentraExampleController) {
                 Text(
                     state.micPlaybackHint,
                     color = AppColor.red,
-                    fontSize = 10.sp,
-                    lineHeight = 13.sp,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
                 )
             } else if (!state.audioMediaConnected) {
                 Spacer(Modifier.height(10.dp))
                 Text(
                     "Playback needs Bluetooth media connected. Android usually asks to pair after BLE connects; use Settings if it is not connected.",
                     color = AppColor.red,
-                    fontSize = 10.sp,
-                    lineHeight = 13.sp,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -381,7 +389,7 @@ fun SystemScreen(controller: MentraExampleController) {
                     IconTile(Icons.Outlined.RadioButtonChecked)
                     Column {
                         Text("Inputs", color = AppColor.ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        Text("button · touch · swipe", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                        Text("button · touch · swipe", color = AppColor.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                     }
                 }
                 Row(
@@ -392,7 +400,7 @@ fun SystemScreen(controller: MentraExampleController) {
                     horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     Box(modifier = Modifier.size(5.dp).clip(CircleShape).background(if (connected) AppColor.greenAccent else AppColor.mutedSoft))
-                    Text(if (connected) "LIVE" else "OFF", color = AppColor.greenDeep, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
+                    Text(if (connected) "LIVE" else "OFF", color = AppColor.greenDeep, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
                 }
             }
             Spacer(Modifier.height(10.dp))
@@ -417,8 +425,8 @@ fun SystemScreen(controller: MentraExampleController) {
                     "Off: button and touch events are reported to the phone."
                 },
                 color = AppColor.muted,
-                fontSize = 11.sp,
-                lineHeight = 15.sp,
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
             )
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -549,7 +557,7 @@ private fun IconTile(icon: ImageVector, big: Boolean = false) {
 @Composable
 private fun MicControlButton(icon: ImageVector, enabled: Boolean, active: Boolean, onClick: () -> Unit) {
     Box(
-        modifier = Modifier.size(28.dp)
+        modifier = Modifier.size(44.dp)
             .clip(CircleShape)
             .background(if (active) AppColor.greenInk else Color.White)
             .clickable(enabled = enabled) { onClick() },
@@ -559,7 +567,7 @@ private fun MicControlButton(icon: ImageVector, enabled: Boolean, active: Boolea
             icon,
             null,
             tint = if (active) Color.White else AppColor.greenInk.copy(alpha = if (enabled) 1f else 0.38f),
-            modifier = Modifier.size(13.dp)
+            modifier = Modifier.size(16.dp)
         )
     }
 }
@@ -580,7 +588,7 @@ private fun AudioStatusLine(label: String, value: String, good: Boolean? = null)
                 false -> AppColor.red
                 null -> AppColor.ink
             },
-            fontSize = 10.sp,
+            fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
             maxLines = 2,
             textAlign = TextAlign.End,
@@ -593,8 +601,8 @@ private fun DisabledHint(message: String) {
     Text(
         message,
         color = AppColor.red,
-        fontSize = 10.sp,
-        lineHeight = 13.sp,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
         fontWeight = FontWeight.Medium,
         modifier = Modifier
             .fillMaxWidth()
@@ -609,13 +617,15 @@ private fun HotspotActionChip(label: String, enabled: Boolean, onClick: () -> Un
     Text(
         label,
         color = if (enabled) AppColor.greenInk else AppColor.muted,
-        fontSize = 10.sp,
+        fontSize = 12.sp,
         fontWeight = FontWeight.Bold,
         modifier = Modifier
             .clip(RoundedCornerShape(999.dp))
             .background(if (enabled) AppColor.greenAccent.copy(alpha = 0.14f) else AppColor.ink.copy(alpha = 0.04f))
             .clickable(enabled = enabled) { onClick() }
-            .padding(horizontal = 9.dp, vertical = 6.dp),
+            .widthIn(min = 72.dp)
+            .heightIn(min = 40.dp)
+            .padding(horizontal = 11.dp, vertical = 8.dp),
     )
 }
 
@@ -636,7 +646,7 @@ private fun NetworkRow(
 ) {
     Column {
         Row(
-            modifier = Modifier.fillMaxWidth().clickable(enabled = onClick != null) { onClick?.invoke() }.padding(vertical = 14.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).clickable(enabled = onClick != null) { onClick?.invoke() }.padding(vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -645,11 +655,11 @@ private fun NetworkRow(
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(name, color = AppColor.ink, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                Text(sub, color = subColor, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                Text(sub, color = subColor, fontSize = 12.sp, fontWeight = FontWeight.Medium)
             }
             if (rssi != null) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(rssi, color = AppColor.ink, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    Text(rssi, color = AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     if (check) Icon(Icons.Filled.Check, null, tint = AppColor.ink, modifier = Modifier.size(14.dp))
                 }
             }
@@ -657,13 +667,15 @@ private fun NetworkRow(
                 Text(
                     actionLabel,
                     color = actionColor,
-                    fontSize = 11.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier
                         .clip(RoundedCornerShape(999.dp))
                         .background(actionColor.copy(alpha = 0.10f))
                         .clickable(enabled = onActionClick != null) { onActionClick?.invoke() }
-                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                        .widthIn(min = 64.dp)
+                        .heightIn(min = 40.dp)
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
                 )
             }
             if (locked) Icon(Icons.Outlined.Lock, null, tint = AppColor.ink, modifier = Modifier.size(14.dp))
@@ -677,7 +689,7 @@ private fun GalleryModeChip(label: String, active: Boolean, enabled: Boolean, on
     Text(
         label,
         color = if (active) AppColor.greenInk else AppColor.muted,
-        fontSize = 12.sp,
+        fontSize = 13.sp,
         fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
         modifier = Modifier
             .clip(RoundedCornerShape(999.dp))
@@ -688,7 +700,8 @@ private fun GalleryModeChip(label: String, active: Boolean, enabled: Boolean, on
                 RoundedCornerShape(999.dp)
             )
             .clickable(enabled = enabled) { onClick() }
-            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .heightIn(min = 44.dp)
+            .padding(horizontal = 14.dp, vertical = 10.dp)
     )
 }
 
@@ -775,15 +788,16 @@ private fun InputChip(prefix: String, label: String, modifier: Modifier = Modifi
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .background(AppColor.ink.copy(alpha = 0.04f))
-            .padding(horizontal = 10.dp, vertical = 7.dp),
+            .heightIn(min = 40.dp)
+            .padding(horizontal = 10.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Text(prefix, color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+        Text(prefix, color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
         Text(
             label,
             color = AppColor.ink,
-            fontSize = 11.sp,
+            fontSize = 12.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -798,6 +812,7 @@ private fun LedTab(icon: ImageVector, label: String, active: Boolean, modifier: 
             .clip(RoundedCornerShape(10.dp))
             .background(if (active) Color.White else Color.Transparent)
             .clickable(enabled = enabled) { onClick() }
+            .heightIn(min = 44.dp)
             .padding(vertical = 10.dp, horizontal = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -815,7 +830,8 @@ private fun LedColorChip(colorName: String, active: Boolean, enabled: Boolean, m
             .background(if (active) Color.White else AppColor.ink.copy(alpha = 0.04f))
             .border(1.dp, ledChipBorderColor(colorName, active), RoundedCornerShape(999.dp))
             .clickable(enabled = enabled) { onClick() }
-            .padding(horizontal = 8.dp, vertical = 7.dp),
+            .heightIn(min = 40.dp)
+            .padding(horizontal = 8.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp)
     ) {
@@ -828,7 +844,7 @@ private fun LedColorChip(colorName: String, active: Boolean, enabled: Boolean, m
         Text(
             colorName.replaceFirstChar { it.uppercase() },
             color = if (active) AppColor.ink else AppColor.muted,
-            fontSize = 10.sp,
+            fontSize = 11.sp,
             fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
             maxLines = 1,
         )

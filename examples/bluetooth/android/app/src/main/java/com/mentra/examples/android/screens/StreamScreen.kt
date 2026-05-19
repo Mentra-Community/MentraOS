@@ -178,7 +178,7 @@ fun StreamScreen(controller: MentraExampleController) {
                         "Ready · enter stream URL"
                     },
                     color = Color.White.copy(alpha = 0.85f),
-                    fontSize = 11.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.align(Alignment.BottomStart).padding(14.dp)
                 )
@@ -234,15 +234,16 @@ fun StreamScreen(controller: MentraExampleController) {
                     Text("SDK CALL", color = AppColor.greenAccent, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
                     Row(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
+                            .clip(RoundedCornerShape(9.dp))
                             .background(Color.White.copy(alpha = 0.06f))
                             .clickable { clipboardManager.setText(AnnotatedString(streamSdkCall)) }
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                            .heightIn(min = 36.dp)
+                            .padding(horizontal = 10.dp, vertical = 7.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Icon(Icons.Outlined.ContentCopy, null, tint = AppColor.consoleText, modifier = Modifier.size(10.dp))
-                        Text("Copy", color = AppColor.consoleText, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                        Icon(Icons.Outlined.ContentCopy, null, tint = AppColor.consoleText, modifier = Modifier.size(12.dp))
+                        Text("Copy", color = AppColor.consoleText, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
                 Spacer(Modifier.height(8.dp))
@@ -260,8 +261,8 @@ fun StreamScreen(controller: MentraExampleController) {
                     Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(streamIndicatorColor))
                 }
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                    Text(state.streamStatus, color = AppColor.ink, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                    Text("uptime $uptime · keep-alive 15s", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                    Text(state.streamStatus, color = AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text("uptime $uptime · keep-alive 15s", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                 }
             }
         }
@@ -330,7 +331,7 @@ fun StreamScreen(controller: MentraExampleController) {
                 Text(
                     setupHint,
                     color = AppColor.muted,
-                    fontSize = 11.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -524,6 +525,7 @@ private fun CloudServerToggle(enabled: Boolean, onEnabledChange: (Boolean) -> Un
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(AppColor.ink.copy(alpha = 0.04f))
+            .heightIn(min = 44.dp)
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
@@ -531,7 +533,7 @@ private fun CloudServerToggle(enabled: Boolean, onEnabledChange: (Boolean) -> Un
         Text(
             "Use cloud server",
             color = AppColor.ink,
-            fontSize = 13.sp,
+            fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,
         )
         Switch(checked = enabled, onCheckedChange = onEnabledChange)
@@ -545,9 +547,10 @@ private fun ProtocolTab(title: String, active: Boolean, modifier: Modifier, onCl
             .clip(RoundedCornerShape(10.dp))
             .background(if (active) Color.White else Color.Transparent)
             .clickable { onClick() }
+            .heightIn(min = 44.dp)
             .padding(vertical = 10.dp, horizontal = 8.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(title, color = if (active) AppColor.ink else AppColor.muted, fontSize = 12.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Medium)
+        Text(title, color = if (active) AppColor.ink else AppColor.muted, fontSize = 13.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Medium)
     }
 }
