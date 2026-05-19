@@ -29,6 +29,16 @@ const appPackageRoots = Object.fromEntries(
 const config = getDefaultConfig(projectRoot);
 const defaultResolveRequest = config.resolver.resolveRequest;
 
+function redirectedSdkModuleName(moduleName) {
+  if (moduleName === "@mentra/bluetooth-sdk") {
+    return sdkRoot;
+  }
+  if (moduleName.startsWith("@mentra/bluetooth-sdk/")) {
+    return path.join(sdkRoot, moduleName.slice("@mentra/bluetooth-sdk/".length));
+  }
+  return null;
+}
+
 config.watchFolders = Array.from(
   new Set([...(config.watchFolders || []), sdkRoot]),
 );
@@ -39,9 +49,7 @@ config.resolver.extraNodeModules = {
 };
 config.resolver.resolveRequest = (context, moduleName, platform) => {
   const redirectedModuleName =
-    moduleName === "@mentra/bluetooth-sdk"
-      ? sdkRoot
-      : appPackageRoots[moduleName] ?? moduleName;
+    redirectedSdkModuleName(moduleName) ?? appPackageRoots[moduleName] ?? moduleName;
 
   if (defaultResolveRequest) {
     return defaultResolveRequest(context, redirectedModuleName, platform);
