@@ -2,7 +2,7 @@ platform :ios, '16.0'
 
 source 'https://cdn.cocoapods.org/'
 
-mentra_sdk_version = ENV['MENTRA_BLUETOOTH_SDK_VERSION'] || '0.1.2'
+mentra_sdk_version = ENV['MENTRA_BLUETOOTH_SDK_VERSION'] || '0.1.5'
 local_sdk_path = ENV['MENTRA_BLUETOOTH_SDK_LOCAL_PATH']
 
 target 'MentraExample' do
