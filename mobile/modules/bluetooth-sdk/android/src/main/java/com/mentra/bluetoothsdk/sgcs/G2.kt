@@ -680,6 +680,69 @@ private object EvenAIProto {
         w.writeMessageField(13, configW.toByteArray()) // config (field 13)
         return w.toByteArray()
     }
+
+    /**
+     * EvenAIDataPackage with CTRL — used to put glasses into / out of an AI session.
+     * Mirrors Flutter `sendWakeupResp` which sends EvenAIControl{status=ENTER}.
+     * status: 1 WAKE_UP, 2 ENTER, 3 EXIT
+     */
+    fun aiCtrl(magicRandom: Int, status: Int): ByteArray {
+        val ctrlW = ProtobufWriter()
+        ctrlW.writeInt32Field(1, status) // status
+
+        val w = ProtobufWriter()
+        w.writeInt32Field(1, 1) // commandId = CTRL
+        w.writeInt32Field(2, magicRandom)
+        w.writeMessageField(3, ctrlW.toByteArray()) // ctrl (field 3)
+        return w.toByteArray()
+    }
+
+    /**
+     * EvenAIDataPackage with ASK — what the phone sends after cloud ASR resolves the
+     * user's audio into text. Mirrors Flutter `sendAsr`: EvenAIAskInfo{text, streamEnable=0}.
+     */
+    fun aiAsk(magicRandom: Int, text: String, streamEnable: Int = 0): ByteArray {
+        val askW = ProtobufWriter()
+        askW.writeInt32Field(2, streamEnable) // streamEnable
+        askW.writeBytesField(4, text.toByteArray(Charsets.UTF_8)) // text
+
+        val w = ProtobufWriter()
+        w.writeInt32Field(1, 3) // commandId = ASK
+        w.writeInt32Field(2, magicRandom)
+        w.writeMessageField(5, askW.toByteArray()) // askInfo (field 5)
+        return w.toByteArray()
+    }
+
+    /**
+     * EvenAIDataPackage with SKILL — triggers a built-in glasses UI the same way
+     * "Hey Even, show X" voice command does.
+     * skillId values (per even_ai.proto):
+     *   0 SKILL_NONE, 1 BRIGHTNESS, 2 TRANSLATE_CTRL, 3 NOTIFICATION,
+     *   4 TELEPROMPT, 5 NAVIGATE, 6 CONVERSATE, 7 QUICKLIST, 8 AUTO_BRIGHTNESS
+     */
+    fun triggerSkill(
+        magicRandom: Int,
+        skillId: Int,
+        skillParam: Int = 0,
+        text: String = "",
+        streamEnable: Int = 1,
+        fTextEnd: Int = 1
+    ): ByteArray {
+        // EvenAISkillInfo
+        val skillW = ProtobufWriter()
+        skillW.writeInt32Field(1, streamEnable) // streamEnable
+        skillW.writeInt32Field(2, skillId) // skillId
+        skillW.writeInt32Field(3, skillParam) // skillParam — for NOTIFICATION skill this is a NotificationType enum
+        skillW.writeBytesField(4, text.toByteArray(Charsets.UTF_8)) // text
+        skillW.writeInt32Field(6, fTextEnd) // fTextEnd — 1 signals "this is the final/complete packet"
+
+        // EvenAIDataPackage
+        val w = ProtobufWriter()
+        w.writeInt32Field(1, 6) // commandId = SKILL
+        w.writeInt32Field(2, magicRandom)
+        w.writeMessageField(8, skillW.toByteArray()) // skillInfo (field 8)
+        return w.toByteArray()
+    }
 }
 
 // ---------- Menu Protobuf Builders (menu.proto, service ID 3) ----------
@@ -2126,6 +2189,45 @@ class G2 : SGCManager() {
         sendMenuCommand(msg)
     }
 
+    /**
+     * Open the on-glasses notification panel — same effect as the user saying
+     * "Hey Even, show notifications". Replicates the official-app voice flow:
+     *   1. CTRL{status=ENTER}     — puts glasses in AI session
+     *   2. ASK{text=" "}          — minimal ASR transcript to seed session context
+     *   3. SKILL{skillId=NOTIFICATION, skillParam=show, ...} — dispatches the intent
+     * The SKILL step alone is ignored by firmware; the preceding ENTER+ASK
+     * supply the session context that lets the glasses act on the SKILL.
+     */
+    override fun showNotificationsPanel() {
+        Bridge.log("G2: showNotificationsPanel()")
+        val enterPayload = EvenAIProto.aiCtrl(
+                magicRandom = sendManager.nextMagicRandom(),
+                status = 2 // EVEN_AI_ENTER
+        )
+        sendEvenAICommand(enterPayload)
+
+        mainHandler.postDelayed({
+            val askPayload = EvenAIProto.aiAsk(
+                    magicRandom = sendManager.nextMagicRandom(),
+                    text = " ",
+                    streamEnable = 0
+            )
+            sendEvenAICommand(askPayload)
+
+            mainHandler.postDelayed({
+                val skillPayload = EvenAIProto.triggerSkill(
+                        magicRandom = sendManager.nextMagicRandom(),
+                        skillId = 3, // NOTIFICATION
+                        skillParam = 1, // show
+                        text = " ",
+                        streamEnable = 1,
+                        fTextEnd = 1
+                )
+                sendEvenAICommand(skillPayload)
+            }, 400)
+        }, 400)
+    }
+
     override fun setBrightness(level: Int, autoMode: Boolean) {
         Bridge.log("G2: setBrightness($level, auto=$autoMode)")
         val msg =
@@ -2551,7 +2653,7 @@ class G2 : SGCManager() {
     }
 
     override fun dbg1() {
-        connectController()
+        showNotificationsPanel()
     }
     override fun dbg2() {
         disconnectController()

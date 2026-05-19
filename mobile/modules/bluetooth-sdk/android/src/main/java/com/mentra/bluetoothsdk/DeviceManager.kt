@@ -1205,6 +1205,10 @@ class CoreManager {
         sgc?.showDashboard()
     }
 
+    fun showNotificationsPanel() {
+        sgc?.showNotificationsPanel()
+    }
+
     fun ping() {
         sgc?.ping()
     }
