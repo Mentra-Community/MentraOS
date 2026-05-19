@@ -96,8 +96,8 @@ struct StreamScreen: View {
                     } else {
                         Image(systemName: "play.fill")
                             .foregroundColor(.white)
-                            .font(.system(size: 13, weight: .bold))
-                            .frame(width: 12, height: 12)
+                            .font(.system(size: 18, weight: .bold))
+                            .frame(width: 18, height: 18)
                     }
                     Text(!model.glassesConnected && !streamActive ? "Connect glasses first" : !model.glassesWifiConnected && !streamActive ? "Connect glasses to Wi-Fi" : streamActive ? "End stream" : "Start stream").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
                 }

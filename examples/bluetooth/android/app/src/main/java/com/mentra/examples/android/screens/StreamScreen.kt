@@ -203,7 +203,7 @@ fun StreamScreen(controller: MentraExampleController) {
                     if (streamActive) {
                         Box(modifier = Modifier.size(12.dp).clip(RoundedCornerShape(3.dp)).background(Color.White))
                     } else {
-                        Icon(Icons.Outlined.PlayArrow, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Outlined.PlayArrow, null, tint = Color.White, modifier = Modifier.size(20.dp))
                     }
                     Text(
                         if (!connected && !streamActive) {
