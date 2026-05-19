@@ -1108,6 +1108,10 @@ struct ViewState {
         sgc?.showDashboard()
     }
 
+    func showNotificationsPanel() {
+        sgc?.showNotificationsPanel()
+    }
+
     func ping() {
         sgc?.ping()
     }

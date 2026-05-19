@@ -753,6 +753,22 @@ private enum EvenAIProto {
         return w.data
     }
 
+    /// EvenAIDataPackage with ASK command — what the phone sends after cloud
+    /// ASR resolves the user's audio into text. Mirrors Flutter `sendAsr`:
+    /// `EvenAIAskInfo { text, streamEnable=0 }`. Used to inject an ASR result
+    /// into the glasses' AI session so the following SKILL packet has context.
+    static func aiAsk(magicRandom: Int32, text: String, streamEnable: Int32 = 0) -> Data {
+        var askW = ProtobufWriter()
+        askW.writeInt32Field(2, streamEnable) // streamEnable
+        askW.writeBytesField(4, Data(text.utf8)) // text
+
+        var w = ProtobufWriter()
+        w.writeInt32Field(1, 3) // commandId = ASK
+        w.writeInt32Field(2, magicRandom)
+        w.writeMessageField(5, askW.data) // askInfo (field 5)
+        return w.data
+    }
+
     /// EvenAIDataPackage with CTRL command — used to put glasses into / out of
     /// an AI session. Mirrors Flutter `sendWakeupResp`, which sends
     /// `EvenAIControl { status = EVEN_AI_ENTER }` after the glasses send WAKE_UP.
@@ -2806,42 +2822,47 @@ class G2: NSObject, SGCManager {
         sendEvenAICommand(payload)
     }
 
-    /// ENTER + SKILL(NOTIFICATION, show) with streamEnable=1, fTextEnd=1,
-    /// text="show notifications" — matching the full shape the official app
-    /// sends after cloud ASR resolves the voice command. Previous attempt with
-    /// streamEnable=0, empty text, fTextEnd=0 was ACKed but ignored.
-    func dbg1() {
-        Bridge.log("G2: dbg1() — ENTER + SKILL(NOTIFICATION, show, text)")
-        let enterPayload = EvenAIProto.aiCtrl(
-            magicRandom: sendManager.nextMagicRandom(),
-            status: 2 // EVEN_AI_ENTER
-        )
-        sendEvenAICommand(enterPayload)
-
+    /// Open the on-glasses notification panel — same effect as the user saying
+    /// "Hey Even, show notifications". Replicates the official-app voice flow:
+    ///   1. CTRL{status=ENTER}     — puts glasses in AI session
+    ///   2. ASK{text=" "}          — minimal ASR transcript to seed session context
+    ///   3. SKILL{skillId=NOTIFICATION, skillParam=show, ...} — dispatches the intent
+    /// The SKILL step alone is ignored by firmware; the preceding ENTER+ASK
+    /// supply the session context that lets the glasses act on the SKILL.
+    func showNotificationsPanel() {
+        Bridge.log("G2: showNotificationsPanel()")
         Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 500_000_000)
             guard let self = self else { return }
+
+            let enterPayload = EvenAIProto.aiCtrl(
+                magicRandom: self.sendManager.nextMagicRandom(),
+                status: 2 // EVEN_AI_ENTER
+            )
+            self.sendEvenAICommand(enterPayload)
+
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            let askPayload = EvenAIProto.aiAsk(
+                magicRandom: self.sendManager.nextMagicRandom(),
+                text: " ",
+                streamEnable: 0
+            )
+            self.sendEvenAICommand(askPayload)
+
+            try? await Task.sleep(nanoseconds: 400_000_000)
             self.triggerSkill(
-                3, skillParam: 1,
-                text: "show notifications",
+                3, skillParam: 1, // NOTIFICATION, show
+                text: " ",
                 streamEnable: 1, fTextEnd: 1
             )
         }
     }
 
-    /// Send NotificationControl on Service 4 — same proto shape as the official
-    /// app's `settingNotification`. Worth checking if toggling notifEnable
-    /// opens the notification panel as a side effect.
+    func dbg1() {
+        showNotificationsPanel()
+    }
+
     func dbg2() {
-        Bridge.log("G2: dbg2() — NotificationControl(enable=1, autoDisp=1)")
-        let payload = NotificationProto.notificationCtrl(
-            magicRandom: sendManager.nextMagicRandom(),
-            notifEnable: 1,
-            autoDispEnable: 1,
-            dispTime: 5,
-            avoidDisturbEnable: 0
-        )
-        sendNotificationCommand(payload)
+        Bridge.log("G2: dbg2()")
     }
 
     // MARK: - SGCManager: Device Control

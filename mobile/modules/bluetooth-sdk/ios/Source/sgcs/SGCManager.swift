@@ -53,6 +53,10 @@ protocol SGCManager {
 
     func setDashboardMenu(_ items: [[String: Any]])
 
+    // MARK: - Notification Panel
+
+    func showNotificationsPanel()
+
     // MARK: - Calendar Events
 
     func sendCalendarEvents(_ events: [[String: Any]])
@@ -130,6 +134,10 @@ extension SGCManager {
     // MARK: - Dashboard Menu (default no-op — only G2 supports this)
 
     func setDashboardMenu(_: [[String: Any]]) {}
+
+    // MARK: - Notification Panel (default no-op — only G2 supports this)
+
+    func showNotificationsPanel() {}
 
     // MARK: - Calendar Events (default no-op — only G2 supports this)
 

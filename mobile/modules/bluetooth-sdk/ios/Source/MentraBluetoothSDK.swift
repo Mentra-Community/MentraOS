@@ -2087,6 +2087,10 @@ public final class MentraBluetoothSDK {
         CoreManager.shared.showDashboard()
     }
 
+    public func showNotificationsPanel() {
+        CoreManager.shared.showNotificationsPanel()
+    }
+
     public func setBrightness(_ level: Int, autoMode: Bool? = nil) async throws {
         if let autoMode {
             GlassesStore.shared.apply(ObservableStore.coreCategory, "auto_brightness", autoMode)
