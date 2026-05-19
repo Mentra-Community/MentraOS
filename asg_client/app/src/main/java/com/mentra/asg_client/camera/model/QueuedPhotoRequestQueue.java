@@ -105,12 +105,21 @@ public final class QueuedPhotoRequestQueue {
             }
             if (cb != null) {
                 Log.w(TAG, "Failing pending request: " + queued.requestId);
-                cb.onPhotoError(errorMessage);
+                try {
+                    cb.onPhotoError(errorMessage);
+                } catch (Exception e) {
+                    // Guard so one bad listener can't strand the rest of the queue.
+                    Log.e(TAG, "Pending-failure callback threw for " + queued.requestId, e);
+                }
             }
         }
         for (CameraNeoService.PhotoCaptureCallback orphan : callbackRegistry.values()) {
             if (orphan != null) {
-                orphan.onPhotoError(errorMessage);
+                try {
+                    orphan.onPhotoError(errorMessage);
+                } catch (Exception e) {
+                    Log.e(TAG, "Orphan-registry callback threw", e);
+                }
             }
         }
         callbackRegistry.clear();

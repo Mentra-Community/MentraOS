@@ -34,7 +34,9 @@ public final class ImageReaderTwin {
                 reader -> {
                     try (Image image = reader.acquireLatestImage()) {
                         // discard — keeps preview buffers from stalling
-                    } catch (Throwable ignored) {
+                    } catch (IllegalStateException ignored) {
+                        // Expected when the reader is closed mid-callback; swallow so we don't
+                        // mask genuinely fatal errors with a blanket Throwable.
                     }
                 },
                 backgroundHandler);

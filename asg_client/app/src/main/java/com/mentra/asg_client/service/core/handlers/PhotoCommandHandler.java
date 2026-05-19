@@ -56,8 +56,9 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
      */
     private boolean handleTakePhoto(JSONObject data) {
         String requestIdForLog = data.optString("requestId", "");
+        // Do not log the raw `data` payload — it carries the user's authToken.
         Log.i(TAG, "PHOTO PIPELINE [ASG 2/3] PhotoCommandHandler.handleTakePhoto requestId="
-                + requestIdForLog + " data=" + data);
+                + requestIdForLog);
         try {
             // Resolve package name using base class functionality
             String packageName = resolvePackageName(data);

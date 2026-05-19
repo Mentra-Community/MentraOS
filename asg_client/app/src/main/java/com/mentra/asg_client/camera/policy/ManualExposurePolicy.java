@@ -62,7 +62,8 @@ public final class ManualExposurePolicy {
         int iso = (meteredIso != null && meteredIso > 0) ? meteredIso : DEFAULT_ISO;
         if (meteredExposureNs != null && meteredExposureNs > 0 && targetExposureNs > 0 && iso > 0) {
             double evScale = (double) meteredExposureNs / (double) targetExposureNs;
-            iso = (int) Math.round(iso * evScale);
+            // Floor at 1 — Math.round can return 0 for very small ratios, which is an invalid ISO.
+            iso = Math.max(1, (int) Math.round(iso * evScale));
         }
         if (sensorSensitivityRange != null) {
             iso = Math.max(sensorSensitivityRange.getLower(),

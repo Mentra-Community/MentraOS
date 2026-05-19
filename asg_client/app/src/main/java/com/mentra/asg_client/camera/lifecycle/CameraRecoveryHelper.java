@@ -68,26 +68,32 @@ public final class CameraRecoveryHelper {
             Log.d(TAG, "Camera service restart attempt made - waiting for system to release camera");
 
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                Log.d(TAG, "Attempting camera restart with delayed retry");
+                // The outer try/catch does NOT cover this delayed body — guard it explicitly so a
+                // throwing recovery runnable can't crash the main thread.
+                try {
+                    Log.d(TAG, "Attempting camera restart with delayed retry");
 
-                CameraManager manager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
-                if (manager != null) {
-                    try {
-                        String[] cameraIds = manager.getCameraIdList();
-                        String alternate =
-                                pickAlternateCameraId(cameraIdGetter.get(), cameraIds);
-                        if (alternate != null) {
-                            cameraIdSetter.accept(alternate);
-                            Log.d(TAG, "Switching to alternate camera ID: " + alternate);
+                    CameraManager manager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
+                    if (manager != null) {
+                        try {
+                            String[] cameraIds = manager.getCameraIdList();
+                            String alternate =
+                                    pickAlternateCameraId(cameraIdGetter.get(), cameraIds);
+                            if (alternate != null) {
+                                cameraIdSetter.accept(alternate);
+                                Log.d(TAG, "Switching to alternate camera ID: " + alternate);
+                            }
+                        } catch (CameraAccessException e) {
+                            Log.e(TAG, "Error accessing camera during retry", e);
                         }
-                    } catch (CameraAccessException e) {
-                        Log.e(TAG, "Error accessing camera during retry", e);
                     }
-                }
 
-                wakeUpScreen.run();
-                closeDeviceAndSessionOnly.run();
-                System.gc();
+                    wakeUpScreen.run();
+                    closeDeviceAndSessionOnly.run();
+                    System.gc();
+                } catch (Exception e) {
+                    Log.e(TAG, "Error in delayed camera restart retry", e);
+                }
             }, 1000);
         } catch (Exception e) {
             Log.e(TAG, "Error in camera service restart", e);
