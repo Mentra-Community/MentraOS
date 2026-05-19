@@ -64,16 +64,18 @@ await BluetoothSdk.setMicState(true, true, false);
 Android:
 
 ```kotlin
-override fun onMicPcm(frame: ByteArray) {
-    // Forward to your audio pipeline.
+override fun onMicPcm(event: MicPcmEvent) {
+    // Forward event.pcm to your audio pipeline.
+    // event.sampleRate == 16000, event.bitsPerSample == 16, event.channels == 1.
 }
 ```
 
 iOS:
 
 ```swift
-func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicPcm frame: Data) {
-    // Forward to your audio pipeline.
+func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicPcm event: MicPcmEvent) {
+    // Forward event.pcm to your audio pipeline.
+    // event.sampleRate == 16000, event.bitsPerSample == 16, event.channels == 1.
 }
 ```
 
@@ -82,6 +84,7 @@ React Native:
 ```ts
 const sub = BluetoothSdk.addListener('mic_pcm', (event) => {
   // Forward event.pcm to your audio pipeline.
+  console.log(event.sampleRate, event.bitsPerSample, event.channels, event.encoding, event.vadGated);
 });
 ```
 
@@ -90,16 +93,18 @@ const sub = BluetoothSdk.addListener('mic_pcm', (event) => {
 Android:
 
 ```kotlin
-override fun onMicLc3(frame: ByteArray) {
-    // Decode or forward depending on your pipeline.
+override fun onMicLc3(event: MicLc3Event) {
+    // Decode or forward event.lc3 depending on your pipeline.
+    // event.frameDurationMs, event.frameSizeBytes, and event.bitrate describe the frame.
 }
 ```
 
 iOS:
 
 ```swift
-func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicLc3 frame: Data) {
-    // Decode or forward depending on your pipeline.
+func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicLc3 event: MicLc3Event) {
+    // Decode or forward event.lc3 depending on your pipeline.
+    // event.frameDurationMs, event.frameSizeBytes, and event.bitrate describe the frame.
 }
 ```
 
@@ -108,6 +113,7 @@ React Native:
 ```ts
 const sub = BluetoothSdk.addListener('mic_lc3', (event) => {
   // Decode or forward event.lc3 depending on your pipeline.
+  console.log(event.frameDurationMs, event.frameSizeBytes, event.bitrate, event.vadGated);
 });
 ```
 

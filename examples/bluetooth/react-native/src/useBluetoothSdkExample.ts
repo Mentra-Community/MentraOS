@@ -362,6 +362,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
         if (frame.byteLength === 0) {
           return;
         }
+        const isFirstFrame = micPcmStatsRef.current.frames === 0;
         micPcmChunksRef.current.push({
           data: frame,
           index: micPcmChunkIndexRef.current,
@@ -369,10 +370,13 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
         micPcmChunkIndexRef.current += 1;
         micPcmStatsRef.current.frames += 1;
         micPcmStatsRef.current.bytes += frame.byteLength;
+        if (isFirstFrame) {
+          addEvent('LIVE', `recording ${formatMicPcmMetadata(payload)}`);
+        }
       }),
       BluetoothSdk.addListener('mic_lc3', (payload: MicLc3Event) => {
         if (micRecordingRef.current) {
-          addEvent('LIVE', `received LC3 mic frame while PCM recording is enabled (${payload.lc3.byteLength} bytes)`);
+          addEvent('LIVE', `received LC3 mic frame while PCM recording is enabled (${formatMicLc3Metadata(payload)})`);
         }
       }),
       BluetoothSdk.addListener('audio_connected', (payload: AudioConnectedEvent) => {
@@ -1669,6 +1673,16 @@ function copyPcmFrame(pcm: MicPcmEvent['pcm'] | ArrayBufferView | ArrayLike<numb
     return new Uint8Array(view.buffer, view.byteOffset, view.byteLength).slice();
   }
   return Uint8Array.from(raw as ArrayLike<number>);
+}
+
+function formatMicPcmMetadata(event: MicPcmEvent) {
+  const vad = event.vadGated ? 'VAD-gated' : 'continuous';
+  return `${event.sampleRate}Hz ${event.bitsPerSample}-bit ${event.channels}ch ${event.encoding} ${vad}`;
+}
+
+function formatMicLc3Metadata(event: MicLc3Event) {
+  const vad = event.vadGated ? 'VAD-gated' : 'continuous';
+  return `${event.lc3.byteLength} bytes, ${event.frameDurationMs}ms, ${event.sampleRate}Hz ${event.channels}ch, ${event.bitrate}bps, ${vad}`;
 }
 
 function concatChunks(chunks: MicPcmChunk[]) {

@@ -552,8 +552,8 @@ interface MentraBluetoothSdkListener {
     fun onPhotoResponse(event: PhotoResponseEvent) {}
     fun onStreamStatus(event: StreamStatusEvent) {}
     fun onKeepAliveAck(event: KeepAliveAckEvent) {}
-    fun onMicPcm(frame: ByteArray) {}
-    fun onMicLc3(frame: ByteArray) {}
+    fun onMicPcm(event: MicPcmEvent) {}
+    fun onMicLc3(event: MicLc3Event) {}
     fun onLocalTranscription(event: LocalTranscriptionEvent) {}
     fun onDefaultDeviceChanged(device: Device?) {}
     fun onLog(message: String) {}
@@ -574,8 +574,8 @@ public protocol MentraBluetoothSDKDelegate: AnyObject {
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didDiscover device: Device)
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didStopScan reason: ScanStopReason)
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: BluetoothEvent)
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicPcm frame: Data)
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicLc3 frame: Data)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicPcm event: MicPcmEvent)
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicLc3 event: MicLc3Event)
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didChangeDefaultDevice device: Device?)
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didLog message: String)
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didFail error: BluetoothError)
@@ -594,7 +594,10 @@ const subscriptions = [
   BluetoothSdk.addListener('touch_event', (event) => console.log(event)),
   BluetoothSdk.addListener('photo_response', (event) => console.log(event)),
   BluetoothSdk.addListener('stream_status', (event) => console.log(event)),
-  BluetoothSdk.addListener('mic_pcm', (event) => console.log(event.pcm)),
+  BluetoothSdk.addListener('mic_pcm', (event) => {
+    console.log(event.sampleRate, event.bitsPerSample, event.channels, event.encoding);
+    console.log(event.pcm);
+  }),
 ];
 
 subscriptions.forEach((subscription) => subscription.remove());
@@ -602,7 +605,7 @@ subscriptions.forEach((subscription) => subscription.remove());
 
 Common event names include `button_press`, `touch_event`, `head_up`, `battery_status`, `wifi_status_change`, `hotspot_status_change`, `photo_response`, `gallery_status`, `stream_status`, `keep_alive_ack`, `mic_pcm`, `mic_lc3`, `local_transcription`, `rgb_led_control_response`, `audio_connected`, `audio_disconnected`, `log`, `send_command_to_ble`, and `receive_command_from_ble`.
 
-React Native event payload fields use camelCase. For example, `touch_event` includes `deviceModel` and `gestureName`, successful `photo_response` events include `uploadUrl`, hotspot errors include `errorMessage`, and `gallery_status` includes `hasContent` and `cameraBusy`.
+React Native event payload fields use camelCase. For example, `touch_event` includes `deviceModel` and `gestureName`, successful `photo_response` events include `uploadUrl`, hotspot errors include `errorMessage`, and `gallery_status` includes `hasContent` and `cameraBusy`. `mic_pcm` includes `sampleRate`, `bitsPerSample`, `channels`, `encoding`, and `vadGated`; `mic_lc3` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, `packetizedFromGlasses`, and `vadGated`. Android and iOS receive the same microphone metadata in `MicPcmEvent` and `MicLc3Event`.
 
 ## SDK Models
 

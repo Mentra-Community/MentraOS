@@ -1073,16 +1073,20 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         append(tag: "STORE", text: "Wi-Fi \(label)")
     }
 
-    func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceiveMicPcm frame: Data) {
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceiveMicPcm event: MicPcmEvent) {
         guard micRecording else { return }
+        let frame = event.pcm
         micPcmData.append(frame)
         pcmFrames += 1
         pcmBytes += frame.count
     }
 
-    func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceiveMicLc3 frame: Data) {
+    func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceiveMicLc3 event: MicLc3Event) {
         guard micRecording else { return }
-        append(tag: "LIVE", text: "received LC3 mic frame while PCM recording is enabled (\(frame.count) bytes)")
+        append(
+            tag: "LIVE",
+            text: "received LC3 mic frame while PCM recording is enabled (\(event.lc3.count) bytes, \(event.frameDurationMs)ms)"
+        )
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didLog message: String) {

@@ -26,6 +26,8 @@ import com.mentra.bluetoothsdk.BatteryStatusEvent
 import com.mentra.bluetoothsdk.BluetoothError
 import com.mentra.bluetoothsdk.MentraBluetoothSdk
 import com.mentra.bluetoothsdk.MentraBluetoothSdkCallback
+import com.mentra.bluetoothsdk.MicLc3Event
+import com.mentra.bluetoothsdk.MicPcmEvent
 import com.mentra.bluetoothsdk.BluetoothStatus
 import com.mentra.bluetoothsdk.BluetoothStatusUpdate
 import com.mentra.bluetoothsdk.ButtonPressEvent
@@ -1217,15 +1219,19 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         addEvent("LIVE", "stream ${summarize(event.values)}")
     }
 
-    override fun onMicPcm(frame: ByteArray) {
+    override fun onMicPcm(event: MicPcmEvent) {
         if (!state.micRecording) return
+        val frame = event.pcm
         micPcmBuffer.write(frame)
         state = state.copy(pcmFrames = state.pcmFrames + 1, pcmBytes = state.pcmBytes + frame.size)
     }
 
-    override fun onMicLc3(frame: ByteArray) {
+    override fun onMicLc3(event: MicLc3Event) {
         if (!state.micRecording) return
-        addEvent("LIVE", "received LC3 mic frame while PCM recording is enabled")
+        addEvent(
+            "LIVE",
+            "received LC3 mic frame while PCM recording is enabled (${event.lc3.size} bytes, ${event.frameDurationMs}ms)",
+        )
     }
 
     override fun onRawEvent(eventName: String, values: Map<String, Any>) {
