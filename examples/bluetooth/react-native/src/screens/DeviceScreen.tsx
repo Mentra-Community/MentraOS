@@ -39,7 +39,7 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
   const level = batteryLevel(sdk.glassesStatus);
   const connected = isGlassesConnected(sdk.glassesStatus);
   const canConnect = !connected && hasConnectionTarget(sdk);
-  const hasDefaultTarget = Boolean(sdk.defaultDevice || savedConnectionTargetName(sdk.bluetoothStatus));
+  const hasDefaultTarget = Boolean(sdk.defaultDevice);
   const displaySupported = connected && supportsDisplay(sdk.glassesStatus);
   const connection = connectionLabel(sdk.glassesStatus);
   const latestEvent = sdk.events[0];
@@ -203,7 +203,7 @@ function hasConnectionTarget(sdk: MentraSdkModel) {
   if (sdk.discoveredDevices.length > 0) {
     return false;
   }
-  return Boolean(sdk.defaultDevice || savedConnectionTargetName(sdk.bluetoothStatus));
+  return Boolean(sdk.defaultDevice);
 }
 
 function connectionTargetLabel(sdk: MentraSdkModel) {
@@ -216,12 +216,7 @@ function connectionTargetLabel(sdk: MentraSdkModel) {
   if (sdk.discoveredDevices.length > 0) {
     return 'Choose a discovered device';
   }
-  return savedConnectionTargetName(sdk.bluetoothStatus) ?? sdk.defaultDevice?.name ?? 'Scan required';
-}
-
-function savedConnectionTargetName(values: Record<string, unknown>) {
-  const name = values.device_name;
-  return typeof name === 'string' && name.length > 0 ? name : null;
+  return sdk.defaultDevice?.name ?? 'Scan required';
 }
 
 function glassesImageFor(status: MentraSdkModel['glassesStatus']) {
@@ -302,7 +297,7 @@ function TargetPicker({ sdk, connected }: { sdk: MentraSdkModel; connected: bool
   const selectedKey = sdk.selectedDiscoveredDevice
     ? discoveredDeviceKey(sdk.selectedDiscoveredDevice)
     : null;
-  const savedName = savedConnectionTargetName(sdk.bluetoothStatus) ?? sdk.defaultDevice?.name;
+  const savedName = sdk.defaultDevice?.name;
   const scanning = !connected && sdk.bluetoothStatus.searching === true;
 
   return (
@@ -407,17 +402,12 @@ function targetDeviceDetail(device: MentraSdkModel['discoveredDevices'][number])
 }
 
 function savedConnectionTargetDetail(sdk: MentraSdkModel) {
-  const model = stringValue(sdk.bluetoothStatus, 'default_wearable') ?? sdk.defaultDevice?.model ?? 'Saved model';
+  const model = sdk.defaultDevice?.model ?? 'Saved model';
   return `${model} · BluetoothSdk.connectDefault()`;
 }
 
 function discoveredDeviceKey(device: MentraSdkModel['discoveredDevices'][number]) {
   return device.id;
-}
-
-function stringValue(values: Record<string, unknown>, key: string) {
-  const value = values[key];
-  return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
 function StatCard({ label, value, sub, subColor, bold }: { label: string; value: string; sub: string; subColor: string; bold?: boolean }) {

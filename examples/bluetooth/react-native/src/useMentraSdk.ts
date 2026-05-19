@@ -304,16 +304,17 @@ export function useMentraSdk(): MentraSdkModel {
   const didAutoConnectDefaultRef = useRef(false);
 
   const discoveredDevices = bluetoothStatus.searchResults ?? [];
-  const defaultWearable = stringValue(bluetoothStatus, 'default_wearable');
-  const defaultDeviceName = stringValue(bluetoothStatus, 'device_name');
-  const defaultDeviceAddress = stringValue(bluetoothStatus, 'device_address');
   const glassesConnected = isGlassesConnected(glassesStatus);
 
   useEffect(() => {
     let cancelled = false;
 
-    void Promise.all([BluetoothSdk.getGlassesStatus(), BluetoothSdk.getBluetoothStatus()])
-      .then(([initialGlassesStatus, initialBluetoothStatus]) => {
+    void Promise.all([
+      BluetoothSdk.getGlassesStatus(),
+      BluetoothSdk.getBluetoothStatus(),
+      BluetoothSdk.getDefaultDevice(),
+    ])
+      .then(([initialGlassesStatus, initialBluetoothStatus, initialDefaultDevice]) => {
         if (cancelled) {
           return;
         }
@@ -321,7 +322,7 @@ export function useMentraSdk(): MentraSdkModel {
         setBluetoothStatus(initialBluetoothStatus);
         setHotspotEnabled(enabledHotspotStatus(initialGlassesStatus) !== null);
         setGalleryModeAuto(initialBluetoothStatus.galleryModeAuto ?? false);
-        setDefaultDevice(defaultDeviceFromStatus(initialBluetoothStatus));
+        setDefaultDevice(initialDefaultDevice);
       })
       .catch((error) => {
         addEvent('TX', `initial SDK status load failed: ${formatError(error)}`);
@@ -354,7 +355,6 @@ export function useMentraSdk(): MentraSdkModel {
         }
         await BluetoothSdk.setDefaultDevice(device);
         setDefaultDevice(device);
-        setBluetoothStatus((current) => ({...current, ...defaultDeviceStatus(device)}));
         addEvent('BLE', `restored default ${device.name}`);
       })
       .catch((error) => {
@@ -367,21 +367,10 @@ export function useMentraSdk(): MentraSdkModel {
   }, []);
 
   useEffect(() => {
-    if (!hasDefaultDeviceStatus(bluetoothStatus)) {
-      return;
-    }
-    const device = defaultDeviceFromStatus(bluetoothStatus);
-    setDefaultDevice(device);
-    void savePersistedDefaultDevice(device).catch((error) => {
-      addEvent('TX', `default device save failed: ${formatError(error)}`);
-    });
-  }, [defaultDeviceAddress, defaultDeviceName, defaultWearable]);
-
-  useEffect(() => {
     if (didAutoConnectDefaultRef.current || glassesConnected) {
       return;
     }
-    if (!defaultDevice && !hasSavedConnectionTarget(bluetoothStatus)) {
+    if (!defaultDevice) {
       return;
     }
     didAutoConnectDefaultRef.current = true;
@@ -391,7 +380,7 @@ export function useMentraSdk(): MentraSdkModel {
       }
       await BluetoothSdk.connectDefault();
     });
-  }, [defaultDevice, defaultDeviceAddress, defaultDeviceName, defaultWearable, glassesConnected]);
+  }, [defaultDevice, glassesConnected]);
 
   useEffect(() => {
     const removeGlasses = BluetoothSdk.onGlassesStatus((changed) => {
@@ -415,6 +404,14 @@ export function useMentraSdk(): MentraSdkModel {
     });
 
     const subscriptions = [
+      BluetoothSdk.addListener('default_device_changed', (payload) => {
+        const device = payload.device ?? null;
+        setDefaultDevice(device);
+        void savePersistedDefaultDevice(device).catch((error) => {
+          addEvent('TX', `default device save failed: ${formatError(error)}`);
+        });
+        addEvent('BLE', device ? `default device ${device.name}` : 'default device cleared');
+      }),
       BluetoothSdk.addListener('button_press', (payload: ButtonPressEvent) => {
         addEvent('LIVE', `button ${payload.buttonId}: ${payload.pressType}`);
       }),
@@ -619,7 +616,7 @@ export function useMentraSdk(): MentraSdkModel {
         await BluetoothSdk.connect(selectedDiscoveredDevice);
         return;
       }
-      if (discoveredDevices.length === 0 && (defaultDevice || hasSavedConnectionTarget(bluetoothStatus))) {
+      if (discoveredDevices.length === 0 && defaultDevice) {
         await BluetoothSdk.connectDefault();
         return;
       }
@@ -653,7 +650,6 @@ export function useMentraSdk(): MentraSdkModel {
       await BluetoothSdk.clearDefaultDevice();
       setDefaultDevice(null);
       setSelectedDiscoveredDevice(null);
-      setBluetoothStatus((current) => ({...current, ...clearedDefaultDeviceStatus()}));
       await savePersistedDefaultDevice(null);
     });
   }
@@ -1749,52 +1745,6 @@ function parseDefaultDevice(value: unknown): Device | null {
     name,
     ...(address ? {address} : {}),
   };
-}
-
-function defaultDeviceStatus(device: Device | null): Partial<BluetoothStatus> {
-  if (!device) {
-    return clearedDefaultDeviceStatus();
-  }
-  return {
-    default_wearable: device.model,
-    device_address: device.address ?? '',
-    device_name: device.name,
-  };
-}
-
-function clearedDefaultDeviceStatus(): Partial<BluetoothStatus> {
-  return {
-    default_wearable: '',
-    device_address: '',
-    device_name: '',
-  };
-}
-
-function defaultDeviceFromStatus(values: Partial<BluetoothStatus>): Device | null {
-  const model = deviceModelValue(values, 'default_wearable');
-  const name = stringValue(values, 'device_name');
-  if (!model || !name) {
-    return null;
-  }
-  const address = stringValue(values, 'device_address');
-  return {
-    id: address ?? `${model}:${name}`,
-    model,
-    name,
-    ...(address ? {address} : {}),
-  };
-}
-
-function hasDefaultDeviceStatus(values: Partial<BluetoothStatus>) {
-  return (
-    Object.prototype.hasOwnProperty.call(values, 'default_wearable') ||
-    Object.prototype.hasOwnProperty.call(values, 'device_name') ||
-    Object.prototype.hasOwnProperty.call(values, 'device_address')
-  );
-}
-
-function hasSavedConnectionTarget(values: Partial<BluetoothStatus>) {
-  return Boolean(stringValue(values, 'default_wearable') && stringValue(values, 'device_name'));
 }
 
 function discoveredDeviceKey(device: Device) {
