@@ -214,8 +214,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         directWhipProxy.stop()
         directWhipReceiver.stop()
         photoUploadServer?.stop()
-        scanSession?.stop()
+        let scanSession = scanSession
         Task { @MainActor [mentraBluetoothSdk] in
+            scanSession?.stop()
             mentraBluetoothSdk.invalidate()
         }
     }
@@ -988,14 +989,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 packageName: "com.mentra.examples.ios",
                 action: request.action,
                 color: request.color,
-                ontime: request.ontime,
-                offtime: request.offtime,
+                onDurationMs: request.onDurationMs,
+                offDurationMs: request.offDurationMs,
                 count: request.count
             )
         )
     }
 
-    private func rgbLedRequest(for mode: String, color: String) -> (action: RgbLedAction, color: RgbLedColor?, ontime: Int, offtime: Int, count: Int) {
+    private func rgbLedRequest(for mode: String, color: String) -> (action: RgbLedAction, color: RgbLedColor?, onDurationMs: Int, offDurationMs: Int, count: Int) {
         let ledColor = RgbLedColor(rawValue: color) ?? .red
         switch mode {
         case "Solid":
