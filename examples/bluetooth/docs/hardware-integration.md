@@ -21,7 +21,7 @@ sdk.scan(DeviceModel.MENTRA_LIVE, timeoutMs = 10_000) { nextDevices ->
     renderDevicePicker(nextDevices)
 }
 
-sdk.connect(devices.first())
+sdk.connect(chooseDevice(devices))
 ```
 
 iOS:
@@ -33,7 +33,7 @@ try sdk.scan(model: .mentraLive, timeout: 10) { nextDevices in
     renderDevicePicker(nextDevices)
 }
 
-try sdk.connect(to: devices[0])
+try sdk.connect(to: chooseDevice(devices))
 ```
 
 React Native:
@@ -50,6 +50,8 @@ await BluetoothSdk.connect(await chooseDevice(devices));
 ```
 
 In these examples, the scan callback is the progressive UI path and the final returned list is the completion/control-flow path. Keep picker rendering in the callback; keep final selection or fallback behavior after scan completion.
+
+In multi-device environments, keep the picker explicit. Do not auto-connect to the first scan result; let the user choose the glasses they expect.
 
 ## Capability Areas
 

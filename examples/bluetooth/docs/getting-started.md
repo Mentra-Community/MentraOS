@@ -194,19 +194,18 @@ class GlassesController(context: Context) : MentraBluetoothSdkCallback() {
         context = context.applicationContext,
         listener = this,
     )
-    private var discoveredDevice: Device? = null
+    private var selectedDevice: Device? = null
     private var scanSession: ScanSession? = null
 
     fun scan() {
         scanSession?.stop()
         scanSession = sdk.scan(DeviceModel.MENTRA_LIVE, timeoutMs = 10_000) { devices ->
-            discoveredDevice = devices.firstOrNull()
-            renderDevicePicker(devices)
+            renderDevicePicker(devices, onSelect = { selectedDevice = it })
         }
     }
 
     fun connect() {
-        discoveredDevice?.let { sdk.connect(it) }
+        selectedDevice?.let { sdk.connect(it) }
     }
 
     fun refreshStatus() {
@@ -218,6 +217,10 @@ class GlassesController(context: Context) : MentraBluetoothSdkCallback() {
     override fun onGlassesStatusChanged(status: GlassesStatusUpdate) {
         // Keep app UI derived from SDK status.
         println("Glasses status changed: $status")
+    }
+
+    private fun renderDevicePicker(devices: List<Device>, onSelect: (Device) -> Unit) {
+        // Render devices in SDK-provided order and call onSelect with the user's choice.
     }
 
     fun close() {
@@ -234,7 +237,7 @@ import MentraBluetoothSDK
 @MainActor
 final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
     private let sdk = MentraBluetoothSDK()
-    private var discoveredDevice: Device?
+    private var selectedDevice: Device?
     private var scanSession: ScanSession?
 
     override init() {
@@ -245,14 +248,15 @@ final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
     func scan() throws {
         scanSession?.stop()
         scanSession = try sdk.scan(model: .mentraLive, timeout: 10) { [weak self] devices in
-            self?.discoveredDevice = devices.first
-            renderDevicePicker(devices)
+            self?.renderDevicePicker(devices) { device in
+                self?.selectedDevice = device
+            }
         }
     }
 
     func connect() throws {
-        guard let discoveredDevice else { return }
-        try sdk.connect(to: discoveredDevice)
+        guard let selectedDevice else { return }
+        try sdk.connect(to: selectedDevice)
     }
 
     func refreshStatus() {
@@ -264,6 +268,10 @@ final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
     func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateGlassesStatus status: GlassesStatusUpdate) {
         // Keep app UI derived from SDK status.
         print("Glasses status changed: \(status)")
+    }
+
+    private func renderDevicePicker(_ devices: [Device], onSelect: @escaping (Device) -> Void) {
+        // Render devices in SDK-provided order and call onSelect with the user's choice.
     }
 
     deinit {
@@ -295,9 +303,11 @@ function DeviceStatus() {
 
 React Native status uses `mentra.glasses.connection.state` for link progress. `fullyBooted` only exists when `state === 'connected'`.
 
-`scan()` has two result paths on purpose: `onResults` is for live picker updates while scanning is still in progress, and the returned `devices` array is the final list after the scan timeout/completion. Use the final list for "pick one and connect" logic.
+`scan()` has two result paths on purpose: `onResults` is for live picker updates while scanning is still in progress, and the returned `devices` array is the final list after the scan timeout/completion. Use the final list for "pick one and connect" logic. In rooms with multiple pairs of glasses, present an explicit picker instead of auto-connecting to the first nearby device.
 
 Use `Device.id` as the stable app-facing key for scan rows, selected devices, and persisted default devices. Do not parse it for model, name, or address information; use the typed `model`, `name`, `address` / `identifier`, and `rssi` fields instead. Android commonly uses a Bluetooth address when available, iOS commonly uses a CoreBluetooth identifier when available, and the SDK falls back to `model:name` when no platform identifier is available.
+
+`Device.rssi` is optional. A device can appear in scan results before the platform reports RSSI, so picker UI should handle `undefined` and avoid reordering rows just because RSSI metadata arrives later.
 
 React Native apps should persist their own default-device record if they want `connectDefault()` to work after restart:
 

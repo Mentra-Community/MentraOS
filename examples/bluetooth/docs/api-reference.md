@@ -88,11 +88,15 @@ Expo apps configure those permissions in `app.json`; see `examples/react-native/
 Android:
 
 ```kotlin
-val scanSession = sdk.scan(DeviceModel.MENTRA_LIVE, timeoutMs = 10_000) { devices ->
-    renderDevicePicker(devices)
+val devices = mutableListOf<Device>()
+val scanSession = sdk.scan(DeviceModel.MENTRA_LIVE, timeoutMs = 10_000) { nextDevices ->
+    devices.clear()
+    devices.addAll(nextDevices)
+    renderDevicePicker(nextDevices)
 }
 scanSession.stop()
 
+val device = chooseDevice(devices)
 sdk.connect(device)
 sdk.setDefaultDevice(Device(model = DeviceModel.MENTRA_LIVE, name = "Mentra_Live_E7FA"))
 val defaultDevice = sdk.getDefaultDevice()
@@ -108,11 +112,14 @@ sdk.connectSimulated()
 iOS:
 
 ```swift
-let scanSession = try sdk.scan(model: .mentraLive, timeout: 10) { devices in
-    renderDevicePicker(devices)
+var devices: [Device] = []
+let scanSession = try sdk.scan(model: .mentraLive, timeout: 10) { nextDevices in
+    devices = nextDevices
+    renderDevicePicker(nextDevices)
 }
 scanSession.stop()
 
+let device = chooseDevice(devices)
 try sdk.connect(to: device)
 sdk.setDefaultDevice(Device(model: .mentraLive, name: "Mentra_Live_E7FA"))
 let defaultDevice = sdk.getDefaultDevice()
@@ -149,11 +156,13 @@ await BluetoothSdk.forget();
 await BluetoothSdk.connectSimulated();
 ```
 
-Use `scan()` for user-facing device pickers. The progressive result callback is for UI: render the current nearby-device list every time it changes while Bluetooth is still scanning. The returned final result is for control flow: after the timeout/completion, choose a device from the last list and connect.
+Use `scan()` for user-facing device pickers. The progressive result callback is for UI: render the current nearby-device list every time it changes while Bluetooth is still scanning. The returned final result is for control flow: after the timeout/completion, choose a device from the last list and connect. In multi-device environments, do not auto-connect to the first nearby glasses; present an explicit picker.
 
 Prefer connecting to a `Device` returned by SDK scan callbacks. If your app wants `connectDefault()` to work after restart, persist a small default-device record in app storage and restore it with `setDefaultDevice()` before calling `connectDefault()`.
 
 `Device.id` is the stable app-facing key for a scan result, within the limits of the platform identifier available to the SDK. Use it as a list key, selected-device key, and persisted default-device key. Do not parse `id` for model, name, or address information; use the typed fields instead. Android commonly uses a Bluetooth address when available, iOS commonly uses a CoreBluetooth identifier when available, and the SDK falls back to `model:name` when no platform identifier is available.
+
+`Device.rssi` is optional. A device can appear in scan results before the platform reports RSSI, so picker UI should handle `undefined` and avoid reordering rows just because RSSI metadata arrives later.
 
 ## Status
 
@@ -617,7 +626,7 @@ React Native event payload fields use camelCase. For example, `touch_event` incl
 | Model | Android | iOS | React Native | Purpose |
 | --- | --- | --- | --- | --- |
 | Device model | `DeviceModel` | `DeviceModel` | `DeviceModel` / `DeviceModels` | Supported family such as Mentra Live, Mentra Nex, G1, G2, Mach1, Z100, Frame, simulated, or R1. |
-| Discovered device | `Device` | `Device` | `Device` | Scan result containing typed model, name, platform address/identifier, optional RSSI, and stable id. Do not parse `id`; use the typed fields. |
+| Discovered device | `Device` | `Device` | `Device` | Scan result containing typed model, name, platform address/identifier, optional RSSI, and stable id. RSSI may be undefined at first discovery. Do not parse `id`; use the typed fields. |
 | Connection state | `GlassesConnectionState` | `GlassesConnectionState` | `GlassesConnectionStatus` | Link-layer state: disconnected, scanning, connecting, bonding, or connected. React Native uses a discriminated union where `fullyBooted` only exists on the connected state. |
 | Glasses status | `GlassesStatus` / `GlassesStatusUpdate` | `GlassesStatus` / `GlassesStatusUpdate` | `useMentraBluetooth().glasses` | Connected device snapshot: model, firmware, serial, battery, Wi-Fi, hotspot, head-up, controller, and readiness. |
 | SDK status | `BluetoothStatus` / `BluetoothStatusUpdate` | `BluetoothStatus` / `BluetoothStatusUpdate` | `useMentraBluetooth().sdk` | Scanning state, discovered devices, Wi-Fi scan results, mic state, settings, and logs. |
