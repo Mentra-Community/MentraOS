@@ -23,7 +23,7 @@ import {
   wifiLabel,
   wifiSubLabel,
 } from '../sdkFormat';
-import { SCAN_MODELS, scanModelLabel, type MentraSdkModel, type ScanModel } from '../useMentraSdk';
+import { SCAN_MODELS, scanModelLabel, type BluetoothSdkExampleModel, type ScanModel } from '../useBluetoothSdkExample';
 
 const glassesImages = {
   evenRealitiesG1: require('../../assets/glasses/even_realities_g1.png'),
@@ -34,14 +34,15 @@ const glassesImages = {
   vuzixZ100: require('../../assets/glasses/vuzix_z100.png'),
 };
 
-export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
+export function DeviceScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   const scrollBottomPadding = useScrollBottomPadding();
-  const level = batteryLevel(sdk.glassesStatus);
-  const connected = isGlassesConnected(sdk.glassesStatus);
+  const level = batteryLevel(sdk.glasses);
+  const connected = isGlassesConnected(sdk.glasses);
+  const charging = sdk.glasses.connected && sdk.glasses.battery.charging;
   const canConnect = !connected && hasConnectionTarget(sdk);
   const hasDefaultTarget = Boolean(sdk.defaultDevice);
-  const displaySupported = connected && supportsDisplay(sdk.glassesStatus);
-  const connection = connectionLabel(sdk.glassesStatus);
+  const displaySupported = connected && supportsDisplay(sdk.glasses);
+  const connection = connectionLabel(sdk.glasses);
   const latestEvent = sdk.events[0];
 
   return (
@@ -59,10 +60,10 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
             <View style={styles.heroTop}>
               <View style={{ gap: 4 }}>
                 <Text style={styles.eyebrowGreen}>{connection}</Text>
-                <Text style={styles.heroTitle}>{modelLabel(sdk.glassesStatus)}</Text>
-                <Text style={styles.heroSub}>{deviceLabel(sdk.glassesStatus)}</Text>
+                <Text style={styles.heroTitle}>{modelLabel(sdk.glasses)}</Text>
+                <Text style={styles.heroSub}>{deviceLabel(sdk.glasses)}</Text>
               </View>
-              <Image source={glassesImageFor(sdk.glassesStatus)} style={styles.glasses} resizeMode="contain" />
+              <Image source={glassesImageFor(sdk.glasses)} style={styles.glasses} resizeMode="contain" />
             </View>
             <View style={styles.heroDivider} />
             <View style={styles.batteryRow}>
@@ -74,7 +75,7 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
                 </View>
                 <View style={styles.chargingRow}>
                   <Svg width={11} height={11} viewBox="0 0 24 24"><Path d="M13 2 3 14h7v8l10-12h-7z" fill={colors.greenAccent} /></Svg>
-                  <Text style={styles.chargingText}>{sdk.glassesStatus.charging ? 'Charging' : 'Not charging'}</Text>
+                  <Text style={styles.chargingText}>{charging ? 'Charging' : 'Not charging'}</Text>
                 </View>
               </View>
               <View style={styles.signalBars}>
@@ -87,9 +88,9 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
 
           {/* Stat row */}
           <View style={styles.statRow}>
-            <StatCard label="FIRMWARE" value={firmwareLabel(sdk.glassesStatus)} sub={firmwareSubLabel(sdk.glassesStatus)} subColor={colors.greenAccent} />
-            <StatCard label="WI-FI" value={wifiLabel(sdk.glassesStatus)} sub={wifiSubLabel(sdk.glassesStatus)} subColor={colors.muted} bold />
-            <StatCard label="RSSI" value={rssiLabel(sdk.glassesStatus)} sub={rssiUpdatedLabel(sdk.glassesStatus)} subColor={colors.greenAccent} bold />
+            <StatCard label="FIRMWARE" value={firmwareLabel(sdk.glasses)} sub={firmwareSubLabel(sdk.glasses)} subColor={colors.greenAccent} />
+            <StatCard label="WI-FI" value={wifiLabel(sdk.glasses)} sub={wifiSubLabel(sdk.glasses)} subColor={colors.muted} bold />
+            <StatCard label="RSSI" value={rssiLabel(sdk.glasses)} sub={rssiUpdatedLabel(sdk.glasses)} subColor={colors.greenAccent} bold />
           </View>
         </>
       ) : null}
@@ -149,7 +150,7 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
           </View>
           {connected && !displaySupported ? (
             <Text style={styles.quickNote}>
-              {modelLabel(sdk.glassesStatus)} has no display, so display commands are disabled.
+              {modelLabel(sdk.glasses)} has no display, so display commands are disabled.
             </Text>
           ) : null}
         </View>
@@ -171,15 +172,15 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
             <Text style={[styles.statusValue, { color: colors.greenInk, fontWeight: '600' }]}>{connection}</Text>
           </View>} />
           <StatusRow label="TARGET" value={connectionTargetLabel(sdk)} mono />
-          <StatusRow label="DEVICE" value={deviceLabel(sdk.glassesStatus)} mono />
+          <StatusRow label="DEVICE" value={deviceLabel(sdk.glasses)} mono />
           <StatusRow label="BATTERY" custom={<View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text style={[styles.statusValue, { fontWeight: '600' }]}>{batteryLabel(sdk.glassesStatus)}</Text>
-            {sdk.glassesStatus.charging ? <View style={styles.chargingPill}>
+            <Text style={[styles.statusValue, { fontWeight: '600' }]}>{batteryLabel(sdk.glasses)}</Text>
+            {charging ? <View style={styles.chargingPill}>
               <Svg width={10} height={10} viewBox="0 0 24 24"><Path d="M13 2 4.09 12.97a1 1 0 0 0 .77 1.63H10v7l8.91-10.97a1 1 0 0 0-.77-1.63H13z" fill={colors.greenPrimary} /></Svg>
               <Text style={styles.chargingPillText}>charging</Text>
             </View> : null}
           </View>} />
-          <StatusRow label="BLUETOOTH" value={bluetoothSearchLabel(sdk.bluetoothStatus)} />
+          <StatusRow label="BLUETOOTH" value={bluetoothSearchLabel(sdk.phone, sdk.discoveredDevices.length)} />
           <StatusRow label="DISCOVERED" value={discoveredLabel(sdk.discoveredDevices)} mono />
           <StatusRow label="PERMISSIONS" value={sdk.permissionStatus} />
           <StatusRow label="CAMERA" value={sdk.cameraStatus} />
@@ -196,7 +197,7 @@ export function DeviceScreen({ sdk }: { sdk: MentraSdkModel }) {
   );
 }
 
-function hasConnectionTarget(sdk: MentraSdkModel) {
+function hasConnectionTarget(sdk: BluetoothSdkExampleModel) {
   if (sdk.selectedDiscoveredDevice) {
     return true;
   }
@@ -206,9 +207,9 @@ function hasConnectionTarget(sdk: MentraSdkModel) {
   return Boolean(sdk.defaultDevice);
 }
 
-function connectionTargetLabel(sdk: MentraSdkModel) {
-  if (isGlassesConnected(sdk.glassesStatus)) {
-    return deviceLabel(sdk.glassesStatus);
+function connectionTargetLabel(sdk: BluetoothSdkExampleModel) {
+  if (isGlassesConnected(sdk.glasses)) {
+    return deviceLabel(sdk.glasses);
   }
   if (sdk.selectedDiscoveredDevice) {
     return sdk.selectedDiscoveredDevice.name;
@@ -219,9 +220,10 @@ function connectionTargetLabel(sdk: MentraSdkModel) {
   return sdk.defaultDevice?.name ?? 'Scan required';
 }
 
-function glassesImageFor(status: MentraSdkModel['glassesStatus']) {
-  const rawStatus = status as Record<string, unknown>;
-  const model = [status.deviceModel, status.bluetoothName, rawStatus.defaultWearable].filter(Boolean).join(' ').toLowerCase();
+function glassesImageFor(status: BluetoothSdkExampleModel['glasses']) {
+  const model = status.connected
+    ? [status.device.deviceModel, status.device.bluetoothName].filter(Boolean).join(' ').toLowerCase()
+    : '';
 
   if (model.includes('even') && model.includes('g2')) {
     return glassesImages.evenRealitiesG2;
@@ -241,7 +243,7 @@ function glassesImageFor(status: MentraSdkModel['glassesStatus']) {
   return glassesImages.mentraLive;
 }
 
-function ScanModelPicker({ sdk, connected }: { sdk: MentraSdkModel; connected: boolean }) {
+function ScanModelPicker({ sdk, connected }: { sdk: BluetoothSdkExampleModel; connected: boolean }) {
   return (
     <View style={styles.scanModelPicker}>
       <View style={styles.targetHeader}>
@@ -293,12 +295,12 @@ function ScanModelChip({
   );
 }
 
-function TargetPicker({ sdk, connected }: { sdk: MentraSdkModel; connected: boolean }) {
+function TargetPicker({ sdk, connected }: { sdk: BluetoothSdkExampleModel; connected: boolean }) {
   const selectedKey = sdk.selectedDiscoveredDevice
     ? discoveredDeviceKey(sdk.selectedDiscoveredDevice)
     : null;
   const savedName = sdk.defaultDevice?.name;
-  const scanning = !connected && sdk.bluetoothStatus.searching === true;
+  const scanning = !connected && sdk.phone.searching === true;
 
   return (
     <View style={styles.targetPicker}>
@@ -315,7 +317,7 @@ function TargetPicker({ sdk, connected }: { sdk: MentraSdkModel; connected: bool
 
       {connected ? (
         <TargetDeviceRow
-          name={deviceLabel(sdk.glassesStatus)}
+          name={deviceLabel(sdk.glasses)}
           detail="Active BLE connection"
           selected
           enabled={false}
@@ -395,18 +397,18 @@ function TargetDeviceRow({
   );
 }
 
-function targetDeviceDetail(device: MentraSdkModel['discoveredDevices'][number]) {
+function targetDeviceDetail(device: BluetoothSdkExampleModel['discoveredDevices'][number]) {
   return device.address
     ? `${device.model} · ${device.address}`
     : device.model;
 }
 
-function savedConnectionTargetDetail(sdk: MentraSdkModel) {
+function savedConnectionTargetDetail(sdk: BluetoothSdkExampleModel) {
   const model = sdk.defaultDevice?.model ?? 'Saved model';
   return `${model} · BluetoothSdk.connectDefault()`;
 }
 
-function discoveredDeviceKey(device: MentraSdkModel['discoveredDevices'][number]) {
+function discoveredDeviceKey(device: BluetoothSdkExampleModel['discoveredDevices'][number]) {
   return device.id;
 }
 

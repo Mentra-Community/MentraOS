@@ -7,7 +7,7 @@ import { useScrollBottomPadding } from '../components/keyboardLayout';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { colors } from '../components/theme';
 import { isGlassesConnected, isGlassesWifiConnected } from '../sdkFormat';
-import { PHOTO_COMPRESSIONS, PHOTO_SIZES, type MentraSdkModel, type PhotoCompression, type PhotoSize } from '../useMentraSdk';
+import { PHOTO_COMPRESSIONS, PHOTO_SIZES, type BluetoothSdkExampleModel, type PhotoCompression, type PhotoSize } from '../useBluetoothSdkExample';
 
 function cameraSdkCall(size: PhotoSize, compression: PhotoCompression, useCloudServer: boolean) {
   if (!useCloudServer) {
@@ -33,10 +33,10 @@ await BluetoothSdk.requestPhoto(
 )`;
 }
 
-export function CameraScreen({ sdk }: { sdk: MentraSdkModel }) {
+export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   const scrollBottomPadding = useScrollBottomPadding();
-  const connected = isGlassesConnected(sdk.glassesStatus);
-  const glassesWifiConnected = isGlassesWifiConnected(sdk.glassesStatus);
+  const connected = isGlassesConnected(sdk.glasses);
+  const glassesWifiConnected = isGlassesWifiConnected(sdk.glasses);
   const wifiRequired = connected && !glassesWifiConnected;
   const cameraStatusFailed = isCameraStatusFailure(sdk.cameraStatus);
   const setupHint = sdk.photoCloudServerEnabled ? localCameraSetupHint(sdk.webhookUrl, sdk.cameraStatus) : null;

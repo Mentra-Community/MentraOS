@@ -13,10 +13,10 @@ import { isGlassesConnected, isGlassesWifiConnected, streamUptime } from '../sdk
 import {
   STREAM_DEFAULT_URLS,
   streamPreviewTarget,
-  type MentraSdkModel,
+  type BluetoothSdkExampleModel,
   type StreamPreviewTarget,
   type StreamProtocol,
-} from '../useMentraSdk';
+} from '../useBluetoothSdkExample';
 
 const bars = [18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40];
 function streamSdkCall(useCloudServer: boolean) {
@@ -41,12 +41,12 @@ await BluetoothSdk.startStream({
 })`;
 }
 
-export function StreamScreen({ sdk }: { sdk: MentraSdkModel }) {
+export function StreamScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   const scrollRef = React.useRef<React.ElementRef<typeof ScrollView>>(null);
   const streamUrlInputRef = React.useRef<React.ElementRef<typeof TextInput>>(null);
   const scrollBottomPadding = useScrollBottomPadding();
-  const connected = isGlassesConnected(sdk.glassesStatus);
-  const glassesWifiConnected = isGlassesWifiConnected(sdk.glassesStatus);
+  const connected = isGlassesConnected(sdk.glasses);
+  const glassesWifiConnected = isGlassesWifiConnected(sdk.glasses);
   const streamActive = sdk.streamRequested || sdk.streamStartedAt !== null;
   const wifiRequired = connected && !glassesWifiConnected && !streamActive;
   const previewReady = streamActive && sdk.streamPreviewReady;

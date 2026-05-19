@@ -275,18 +275,8 @@ final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
 ## React Native Basic Flow
 
 ```ts
-import BluetoothSdk, {
-  DeviceModels,
-  createDisconnectedGlassesStatus,
-  type GlassesStatus,
-} from '@mentra/bluetooth-sdk';
-
-let glassesStatus: Partial<GlassesStatus> = createDisconnectedGlassesStatus();
-
-const removeGlasses = BluetoothSdk.onGlassesStatus((status) => {
-  glassesStatus = {...glassesStatus, ...status};
-  console.log('Glasses status changed', status);
-});
+import BluetoothSdk, {DeviceModels} from '@mentra/bluetooth-sdk';
+import {useMentraBluetooth} from '@mentra/bluetooth-sdk/react';
 
 const devices = await BluetoothSdk.scan(DeviceModels.MentraLive, {
   timeoutMs: 10_000,
@@ -295,17 +285,15 @@ const devices = await BluetoothSdk.scan(DeviceModels.MentraLive, {
 const device = await chooseDevice(devices);
 await BluetoothSdk.connect(device);
 await BluetoothSdk.requestVersionInfo();
-glassesStatus = await BluetoothSdk.getGlassesStatus();
-console.log('Connected glasses:', {
-  model: glassesStatus.deviceModel,
-  batteryLevel: glassesStatus.batteryLevel,
-  appVersion: glassesStatus.appVersion,
-});
 
-removeGlasses();
+function DeviceStatus() {
+  const mentra = useMentraBluetooth();
+  console.log('Connection:', mentra.glasses.connection.state);
+  console.log('Battery:', mentra.glasses.connected ? mentra.glasses.battery.level : null);
+}
 ```
 
-React Native status uses `glassesStatus.connection.state` for link progress. `fullyBooted` only exists when `state === 'connected'`.
+React Native status uses `mentra.glasses.connection.state` for link progress. `fullyBooted` only exists when `state === 'connected'`.
 
 `scan()` has two result paths on purpose: `onResults` is for live picker updates while scanning is still in progress, and the returned `devices` array is the final list after the scan timeout/completion. Use the final list for "pick one and connect" logic.
 

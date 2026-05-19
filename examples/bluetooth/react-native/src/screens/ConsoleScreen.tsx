@@ -6,9 +6,9 @@ import { Header } from '../components/Header';
 import { useScrollBottomPadding } from '../components/keyboardLayout';
 import { colors } from '../components/theme';
 import { isGlassesConnected } from '../sdkFormat';
-import type { MentraSdkModel, SdkConsoleEvent } from '../useMentraSdk';
+import type { BluetoothSdkExampleModel, SdkConsoleEvent } from '../useBluetoothSdkExample';
 
-export function ConsoleScreen({ sdk }: { sdk: MentraSdkModel }) {
+export function ConsoleScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   const scrollBottomPadding = useScrollBottomPadding();
   const [filter, setFilter] = useState<'ALL' | SdkConsoleEvent['tag']>('ALL');
   const events = filter === 'ALL' ? sdk.events : sdk.events.filter((item) => item.tag === filter);
@@ -79,8 +79,8 @@ export function ConsoleScreen({ sdk }: { sdk: MentraSdkModel }) {
             <Polyline points="8 6 2 12 8 18" />
           </Svg>
           <View style={{ flex: 1 }}>
-            <Text style={styles.jsonTitle}>Raw status JSON</Text>
-            <Text style={styles.jsonSub}>{Object.keys(sdk.glassesStatus).length + Object.keys(sdk.bluetoothStatus).length} keys · glassesStatus, bluetoothStatus</Text>
+            <Text style={styles.jsonTitle}>SDK state JSON</Text>
+            <Text style={styles.jsonSub}>{Object.keys(sdk.glasses).length + Object.keys(sdk.phone).length} keys · glasses, phone</Text>
           </View>
           <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.ink} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
             <Polyline points="6 9 12 15 18 9" />
@@ -89,7 +89,7 @@ export function ConsoleScreen({ sdk }: { sdk: MentraSdkModel }) {
       </Pressable>
       {sdk.rawJsonExpanded ? (
         <Text style={styles.rawJson}>
-          {JSON.stringify({ glassesStatus: sdk.glassesStatus, bluetoothStatus: sdk.bluetoothStatus }, null, 2)}
+          {JSON.stringify({ glasses: sdk.glasses, phone: sdk.phone }, null, 2)}
         </Text>
       ) : null}
     </ScrollView>

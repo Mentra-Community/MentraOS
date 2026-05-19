@@ -56,7 +56,7 @@ If your app also uses Firebase with static frameworks, Firebase modular header c
 ## Connected But No Events
 
 - Subscribe before connecting.
-- Log `getGlassesStatus()` / `glassesStatus` and `getBluetoothStatus()` / `bluetoothStatus` after connection.
+- In React Native, render `useMentraBluetooth()` state for connection, battery, Wi-Fi, hotspot, scan, and SDK state. In native Android/iOS apps, log the native status snapshots.
 - Confirm the hardware feature is available on the connected model.
 - Watch SDK log callbacks for native diagnostics.
 

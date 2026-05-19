@@ -1,59 +1,46 @@
-import type {BluetoothStatus, GlassesConnectionStatus, GlassesStatus, HotspotStatus, Device, WifiStatus} from '@mentra/bluetooth-sdk';
+import type {Device, HotspotStatus, WifiStatus} from '@mentra/bluetooth-sdk';
+import type {GlassesRuntimeState, PhoneSdkRuntimeState} from '@mentra/bluetooth-sdk/react';
 
-export function connectionLabel(status: Partial<GlassesStatus>) {
-  const connection = connectionStatus(status);
-  if (connection) {
-    return connection.state.toUpperCase();
+export function connectionLabel(glasses: GlassesRuntimeState) {
+  return glasses.connection.state.toUpperCase();
+}
+
+export function isGlassesConnected(glasses: GlassesRuntimeState) {
+  return glasses.connected;
+}
+
+export function isGlassesWifiConnected(glasses: GlassesRuntimeState) {
+  return glasses.connected && glasses.wifi.state === 'connected';
+}
+
+export function connectedWifiStatus(glasses: GlassesRuntimeState): Extract<WifiStatus, {state: 'connected'}> | null {
+  return glasses.connected && glasses.wifi.state === 'connected' ? glasses.wifi : null;
+}
+
+export function enabledHotspotStatus(glasses: GlassesRuntimeState): Extract<HotspotStatus, {state: 'enabled'}> | null {
+  return glasses.connected && glasses.hotspot.state === 'enabled' ? glasses.hotspot : null;
+}
+
+export function isHotspotEnabled(glasses: GlassesRuntimeState, fallbackEnabled: boolean) {
+  return glasses.connected ? glasses.hotspot.state === 'enabled' : fallbackEnabled;
+}
+
+export function isDisconnectedStatus(glasses: GlassesRuntimeState) {
+  return glasses.connection.state === 'disconnected';
+}
+
+export function deviceLabel(glasses: GlassesRuntimeState) {
+  if (!glasses.connected) {
+    return 'Mentra Live';
   }
-  return 'WAITING';
+  return glasses.device.bluetoothName || glasses.device.serialNumber || glasses.device.deviceModel || 'Mentra Live';
 }
 
-export function isGlassesConnected(status: Partial<GlassesStatus>) {
-  return connectionStatus(status)?.state === 'connected';
-}
-
-export function isGlassesWifiConnected(status: Partial<GlassesStatus>) {
-  return status.wifi?.state === 'connected';
-}
-
-export function connectedWifiStatus(status: Partial<GlassesStatus>): Extract<WifiStatus, {state: 'connected'}> | null {
-  return status.wifi?.state === 'connected' ? status.wifi : null;
-}
-
-export function enabledHotspotStatus(status: Partial<GlassesStatus>): Extract<HotspotStatus, {state: 'enabled'}> | null {
-  return status.hotspot?.state === 'enabled' ? status.hotspot : null;
-}
-
-export function isHotspotEnabled(status: Partial<GlassesStatus>, fallbackEnabled: boolean) {
-  if (status.hotspot) {
-    return status.hotspot.state === 'enabled';
-  }
-  return fallbackEnabled;
-}
-
-export function isDisconnectedStatus(status: Partial<GlassesStatus>) {
-  return connectionStatus(status)?.state === 'disconnected';
-}
-
-export function deviceLabel(status: Partial<GlassesStatus>) {
-  return status.bluetoothName || status.serialNumber || status.deviceModel || 'Mentra Live';
-}
-
-export function supportsDisplay(status: Partial<GlassesStatus>) {
-  const values = status as Record<string, unknown>;
-  for (const key of ['supportsDisplay', 'hasDisplay', 'displaySupported', 'display']) {
-    if (typeof values[key] === 'boolean') {
-      return values[key] as boolean;
-    }
-  }
-  for (const key of ['features', 'deviceFeatures', 'capabilities']) {
-    const nested = values[key];
-    if (nested && typeof nested === 'object' && typeof (nested as Record<string, unknown>).display === 'boolean') {
-      return (nested as Record<string, boolean>).display;
-    }
-  }
-
-  const model = [status.deviceModel, status.bluetoothName, values.defaultWearable]
+export function supportsDisplay(glasses: GlassesRuntimeState) {
+  const model = [
+    glasses.connected ? glasses.device.deviceModel : undefined,
+    glasses.connected ? glasses.device.bluetoothName : undefined,
+  ]
     .filter(Boolean)
     .join(' ')
     .toLowerCase();
@@ -76,52 +63,45 @@ export function supportsDisplay(status: Partial<GlassesStatus>) {
   return false;
 }
 
-export function modelLabel(status: Partial<GlassesStatus>) {
-  return status.deviceModel || 'Mentra Live';
+export function modelLabel(glasses: GlassesRuntimeState) {
+  return glasses.connected ? glasses.device.deviceModel || 'Mentra Live' : 'Mentra Live';
 }
 
-export function batteryLevel(status: Partial<GlassesStatus>) {
-  if (
-    !isGlassesConnected(status) ||
-    typeof status.batteryLevel !== 'number' ||
-    status.batteryLevel < 0
-  ) {
-    return null;
-  }
-  return Math.min(status.batteryLevel, 100);
+export function batteryLevel(glasses: GlassesRuntimeState) {
+  return glasses.connected && glasses.battery.level !== null ? Math.min(glasses.battery.level, 100) : null;
 }
 
-export function batteryLabel(status: Partial<GlassesStatus>) {
-  const level = batteryLevel(status);
+export function batteryLabel(glasses: GlassesRuntimeState) {
+  const level = batteryLevel(glasses);
   if (level === null) {
-    return isDisconnectedStatus(status) ? 'Not connected' : 'Waiting for status';
+    return isDisconnectedStatus(glasses) ? 'Not connected' : 'Waiting for status';
   }
-  return `${level}%${status.charging ? ' charging' : ''}`;
+  return `${level}%${glasses.connected && glasses.battery.charging ? ' charging' : ''}`;
 }
 
-export function wifiLabel(status: Partial<GlassesStatus>) {
-  if (status.wifi?.state === 'connected') {
-    return status.wifi.ssid;
+export function wifiLabel(glasses: GlassesRuntimeState) {
+  if (glasses.connected && glasses.wifi.state === 'connected') {
+    return glasses.wifi.ssid;
   }
-  if (status.wifi?.state === 'disconnected') {
-    return isGlassesConnected(status) ? 'Not connected' : 'Unknown';
+  if (glasses.connected && glasses.wifi.state === 'disconnected') {
+    return 'Not connected';
   }
   return 'Unknown';
 }
 
-export function wifiSubLabel(status: Partial<GlassesStatus>) {
-  if (status.wifi?.state === 'connected') {
-    return status.wifi.localIp ?? 'connected';
+export function wifiSubLabel(glasses: GlassesRuntimeState) {
+  if (glasses.connected && glasses.wifi.state === 'connected') {
+    return glasses.wifi.localIp ?? 'connected';
   }
   return 'not connected';
 }
 
-export function hotspotLabel(status: Partial<GlassesStatus>, fallbackEnabled: boolean) {
-  const hotspot = enabledHotspotStatus(status);
+export function hotspotLabel(glasses: GlassesRuntimeState, fallbackEnabled: boolean) {
+  const hotspot = enabledHotspotStatus(glasses);
   if (hotspot) {
     return hotspot.localIp ? `${hotspot.ssid} · ${hotspot.localIp}` : hotspot.ssid;
   }
-  if (!isHotspotEnabled(status, fallbackEnabled)) {
+  if (!isHotspotEnabled(glasses, fallbackEnabled)) {
     return 'disabled';
   }
   return 'waiting for SSID';
@@ -129,95 +109,55 @@ export function hotspotLabel(status: Partial<GlassesStatus>, fallbackEnabled: bo
 
 const MENTRA_LIVE_DEFAULT_HOTSPOT_PASSWORD = '00001111';
 
-export function galleryServerUrl(status: Partial<GlassesStatus>, fallbackEnabled: boolean) {
-  const hotspot = enabledHotspotStatus(status);
+export function galleryServerUrl(glasses: GlassesRuntimeState, fallbackEnabled: boolean) {
+  const hotspot = enabledHotspotStatus(glasses);
   if (hotspot) {
     return `http://${hotspot.localIp}:8089`;
   }
-  if (!isHotspotEnabled(status, fallbackEnabled)) {
+  if (!isHotspotEnabled(glasses, fallbackEnabled)) {
     return null;
   }
   return 'http://192.168.43.1:8089';
 }
 
-export function galleryHotspotSsidLabel(status: Partial<GlassesStatus>) {
-  const hotspot = enabledHotspotStatus(status);
+export function galleryHotspotSsidLabel(glasses: GlassesRuntimeState) {
+  const hotspot = enabledHotspotStatus(glasses);
   return hotspot ? `Wi-Fi ${hotspot.ssid}` : 'the glasses hotspot';
 }
 
-export function galleryHotspotPasswordLabel(status: Partial<GlassesStatus>) {
-  const hotspot = enabledHotspotStatus(status);
+export function galleryHotspotPasswordLabel(glasses: GlassesRuntimeState) {
+  const hotspot = enabledHotspotStatus(glasses);
   return hotspot?.password || MENTRA_LIVE_DEFAULT_HOTSPOT_PASSWORD;
 }
 
-export function firmwareLabel(status: Partial<GlassesStatus>) {
-  return (
-    statusString(status, 'fwVersion') ||
-    statusString(status, 'firmwareVersion') ||
-    statusString(status, 'deviceFirmwareVersion') ||
-    statusString(status, 'rightFirmwareVersion') ||
-    statusString(status, 'leftFirmwareVersion') ||
-    statusString(status, 'besFirmwareVersion') ||
-    statusString(status, 'mtkFirmwareVersion') ||
-    'Unknown'
-  );
+export function firmwareLabel(glasses: GlassesRuntimeState) {
+  return glasses.connected ? glasses.firmware.version ?? 'Unknown' : 'Unknown';
 }
 
-export function firmwareSubLabel(status: Partial<GlassesStatus>) {
-  if (statusString(status, 'fwVersion') || statusString(status, 'firmwareVersion')) {
-    return 'reported by glasses';
+export function firmwareSubLabel(glasses: GlassesRuntimeState) {
+  if (!glasses.connected || glasses.firmware.source === 'unknown') {
+    return 'not reported';
   }
-  if (statusString(status, 'deviceFirmwareVersion')) {
-    return 'device firmware';
+  if (glasses.firmware.source === 'app') {
+    return `ASG app ${glasses.firmware.version}`;
   }
-  if (statusString(status, 'rightFirmwareVersion')) {
-    return 'right firmware';
-  }
-  if (statusString(status, 'leftFirmwareVersion')) {
-    return 'left firmware';
-  }
-  if (statusString(status, 'besFirmwareVersion')) {
-    return 'BES firmware';
-  }
-  if (statusString(status, 'mtkFirmwareVersion')) {
-    return 'MTK firmware';
-  }
-  const appVersion = statusString(status, 'appVersion');
-  if (appVersion) {
-    return `ASG app ${appVersion}`;
-  }
-  return 'not reported';
+  return `${glasses.firmware.source} firmware`;
 }
 
-function statusString(status: Partial<GlassesStatus>, key: string) {
-  const value = (status as Record<string, unknown>)[key];
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
-function connectionStatus(status: Partial<GlassesStatus>): GlassesConnectionStatus | null {
-  return status.connection ?? null;
-}
-
-export function rssiLabel(status: Partial<GlassesStatus>) {
-  const signal = statusNumber(status, 'signalStrength');
+export function rssiLabel(glasses: GlassesRuntimeState) {
+  const signal = glasses.connected ? glasses.signal.strengthDbm : null;
   return typeof signal === 'number' && signal !== -1 ? `${signal} dBm` : 'Unknown';
 }
 
-export function rssiUpdatedLabel(status: Partial<GlassesStatus>) {
-  const updatedAt = statusNumber(status, 'signalStrengthUpdatedAt');
+export function rssiUpdatedLabel(glasses: GlassesRuntimeState) {
+  const updatedAt = glasses.connected ? glasses.signal.updatedAt : null;
   if (typeof updatedAt !== 'number' || updatedAt <= 0) {
     return 'signal';
   }
   return `updated ${eventTime.format(new Date(updatedAt))}`;
 }
 
-function statusNumber(status: Partial<GlassesStatus>, key: string) {
-  const value = (status as Record<string, unknown>)[key];
-  return typeof value === 'number' ? value : undefined;
-}
-
-export function bluetoothSearchLabel(status: Partial<BluetoothStatus>) {
-  const count = status.searchResults?.length ?? 0;
+export function bluetoothSearchLabel(status: PhoneSdkRuntimeState, count: number) {
   return `${status.searching ? 'Scanning' : 'Idle'} · ${count} result${count === 1 ? '' : 's'}`;
 }
 

@@ -42,26 +42,19 @@ sdk.invalidate()
 React Native:
 
 ```ts
-import {useState} from 'react';
-import BluetoothSdk, {
-  createDisconnectedGlassesStatus,
-  type GlassesStatus,
-} from '@mentra/bluetooth-sdk';
+import BluetoothSdk from '@mentra/bluetooth-sdk';
+import {useMentraBluetooth} from '@mentra/bluetooth-sdk/react';
 
-const [glassesStatus, setGlassesStatus] = useState<Partial<GlassesStatus>>(
-  () => createDisconnectedGlassesStatus(),
-);
+function DeviceScreen() {
+  const mentra = useMentraBluetooth();
+  console.log(mentra.glasses.connection.state);
+}
 
-const removeGlasses = BluetoothSdk.onGlassesStatus((changed) => {
-  setGlassesStatus((current) => ({...current, ...changed}));
+const subscription = BluetoothSdk.addListener('button_press', (event) => {
+  console.log(event.buttonId, event.pressType);
 });
 
-const removeBluetooth = BluetoothSdk.onBluetoothStatus((status) => {
-  console.log(status);
-});
-
-removeGlasses();
-removeBluetooth();
+subscription.remove();
 ```
 
 Keep one SDK instance per active app session. The SDK owns Bluetooth connection state, native event delivery, and cleanup. Your app owns user identity, UI state, and whether a default device record is persisted across app restarts.
@@ -182,15 +175,16 @@ let bluetooth = sdk.bluetoothStatus
 React Native:
 
 ```ts
-const glasses = await BluetoothSdk.getGlassesStatus();
-const bluetooth = await BluetoothSdk.getBluetoothStatus();
+import {useMentraBluetooth} from '@mentra/bluetooth-sdk/react';
+
+const mentra = useMentraBluetooth();
 ```
 
 Status snapshots are safe to read at any time. Treat command success as "command accepted"; keep UI state derived from status callbacks.
 
 Android and iOS expose `GlassesStatus.connectionState` as the native `GlassesConnectionState` enum. Valid values are `DISCONNECTED`, `SCANNING`, `CONNECTING`, `BONDING`, and `CONNECTED`. Use `connectionState` for link-layer progress, and use `connected` / `fullyBooted` for whether the glasses are ready for feature commands.
 
-React Native exposes the public status shape as `GlassesStatus.connection`:
+React Native exposes `mentra.glasses.connection` through `useMentraBluetooth()`:
 
 ```ts
 type GlassesConnectionStatus =
@@ -201,7 +195,7 @@ type GlassesConnectionStatus =
   | {state: 'connected'; fullyBooted: boolean};
 ```
 
-Use `status.connection.state` for link-layer progress. `fullyBooted` only exists on the connected state, so impossible states like `{state: 'disconnected', fullyBooted: true}` are not representable in TypeScript. Use `isConnectedGlassesConnectionStatus()`, `isReadyGlassesConnectionStatus()`, and `isBusyGlassesConnectionStatus()` when you want named readiness checks. Use `createDisconnectedGlassesStatus()` when initializing React state before the first SDK snapshot arrives.
+Use `mentra.glasses.connection.state` for link-layer progress. `fullyBooted` only exists on the connected state, so impossible states like `{state: 'disconnected', fullyBooted: true}` are not representable in TypeScript. Use `isConnectedGlassesConnectionStatus()`, `isReadyGlassesConnectionStatus()`, and `isBusyGlassesConnectionStatus()` when you want named readiness checks.
 
 ### Version Fields
 
@@ -617,8 +611,8 @@ React Native event payload fields use camelCase. For example, `touch_event` incl
 | Device model | `DeviceModel` | `DeviceModel` | `DeviceModel` / `DeviceModels` | Supported family such as Mentra Live, Mentra Nex, G1, G2, Mach1, Z100, Frame, simulated, or R1. |
 | Discovered device | `Device` | `Device` | `Device` | Scan result containing model, name, address/identifier, RSSI, and id. |
 | Connection state | `GlassesConnectionState` | `GlassesConnectionState` | `GlassesConnectionStatus` | Link-layer state: disconnected, scanning, connecting, bonding, or connected. React Native uses a discriminated union where `fullyBooted` only exists on the connected state. |
-| Glasses status | `GlassesStatus` / `GlassesStatusUpdate` | `GlassesStatus` / `GlassesStatusUpdate` | `GlassesStatus` | Connected device snapshot: model, firmware, serial, battery, Wi-Fi, hotspot, head-up, controller, and readiness. |
-| Bluetooth status | `BluetoothStatus` / `BluetoothStatusUpdate` | `BluetoothStatus` / `BluetoothStatusUpdate` | `BluetoothStatus` | Scanning state, discovered devices, Wi-Fi scan results, mic state, settings, and logs. |
+| Glasses status | `GlassesStatus` / `GlassesStatusUpdate` | `GlassesStatus` / `GlassesStatusUpdate` | `useMentraBluetooth().glasses` | Connected device snapshot: model, firmware, serial, battery, Wi-Fi, hotspot, head-up, controller, and readiness. |
+| SDK status | `BluetoothStatus` / `BluetoothStatusUpdate` | `BluetoothStatus` / `BluetoothStatusUpdate` | `useMentraBluetooth().sdk` | Scanning state, discovered devices, Wi-Fi scan results, mic state, settings, and logs. |
 | SDK error | `BluetoothException` / `BluetoothError` | `BluetoothError` | rejected promise or `log`/typed event | Permission, connection, unsupported-capability, command, or native failure. |
 
 ## Defaults

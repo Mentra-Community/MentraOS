@@ -7,8 +7,6 @@ import BluetoothSdk, {
   type AudioConnectedEvent,
   type ButtonPressEvent,
   type CompatibleGlassesSearchStopEvent,
-  type BluetoothStatus,
-  type GlassesStatus,
   type LogEvent,
   type Device,
   type DeviceModel,
@@ -19,7 +17,12 @@ import BluetoothSdk, {
   type StreamStatusEvent,
   type TouchEvent,
 } from '@mentra/bluetooth-sdk';
-import {useMentraBluetooth, type DefaultDeviceStorage} from '@mentra/bluetooth-sdk/react';
+import {
+  useMentraBluetooth,
+  type DefaultDeviceStorage,
+  type GlassesRuntimeState,
+  type PhoneSdkRuntimeState,
+} from '@mentra/bluetooth-sdk/react';
 import MentraDirectReceiver, {
   type DirectPhotoUploadEvent,
   type DirectReceiverStatusEvent,
@@ -34,6 +37,7 @@ import {
   isDisconnectedStatus,
   isGlassesConnected,
   isGlassesWifiConnected,
+  supportsDisplay,
 } from './sdkFormat';
 
 export type StreamProtocol = 'rtmp' | 'srt' | 'webrtc';
@@ -86,9 +90,8 @@ export type SdkConsoleEvent = {
   time: string;
 };
 
-export type MentraSdkState = {
+export type BluetoothSdkExampleState = {
   activeAction: string | null;
-  bluetoothStatus: Partial<BluetoothStatus>;
   cameraStatus: string;
   defaultDevice: Device | null;
   discoveredDevices: Device[];
@@ -96,7 +99,7 @@ export type MentraSdkState = {
   galleryModeAuto: boolean;
   galleryServerReachable: boolean | null;
   galleryServerStatus: string;
-  glassesStatus: Partial<GlassesStatus>;
+  glasses: GlassesRuntimeState;
   hotspotEnabled: boolean;
   lastAction: string;
   lastMicBytes: number;
@@ -130,9 +133,10 @@ export type MentraSdkState = {
   streamStatus: string;
   streamUrl: string;
   webhookUrl: string;
+  phone: PhoneSdkRuntimeState;
 };
 
-export type MentraSdkActions = {
+export type BluetoothSdkExampleActions = {
   captureAndUpload: () => Promise<void>;
   clearDefaultDevice: () => Promise<void>;
   clearDisplay: () => Promise<void>;
@@ -169,7 +173,7 @@ export type MentraSdkActions = {
   toggleStream: () => Promise<void>;
 };
 
-export type MentraSdkModel = MentraSdkState & MentraSdkActions;
+export type BluetoothSdkExampleModel = BluetoothSdkExampleState & BluetoothSdkExampleActions;
 
 const PHOTO_APP_ID = 'com.mentra.examples.reactnative';
 const PHOTO_POLL_ATTEMPTS = 45;
@@ -195,7 +199,7 @@ declare const process: {
   };
 };
 
-export function useMentraSdk(): MentraSdkModel {
+export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   const [events, setEvents] = useState<SdkConsoleEvent[]>([
     event('LIVE', 'SDK ready. Scan to discover glasses.'),
   ]);
@@ -279,13 +283,13 @@ export function useMentraSdk(): MentraSdkModel {
     scanTimeoutMs: 10_000,
   });
 
-  const bluetoothStatus = bluetooth.sdk.status;
   const defaultDevice = bluetooth.defaultDevice;
   const discoveredDevices = bluetooth.scan.devices;
-  const glassesStatus = bluetooth.glasses.status;
-  const glassesConnected = bluetooth.glasses.connected;
-  const galleryModeAuto = bluetooth.sdk.galleryMode.desired === 'auto';
-  const hotspotEnabled = enabledHotspotStatus(glassesStatus) !== null;
+  const glasses = bluetooth.glasses;
+  const glassesConnected = glasses.connected;
+  const phone = bluetooth.sdk;
+  const galleryModeAuto = phone.galleryMode.desired === 'auto';
+  const hotspotEnabled = enabledHotspotStatus(glasses) !== null;
   const selectedDiscoveredDevice = bluetooth.scan.selectedDevice;
   const selectedScanModel = scanModelFromDeviceModel(bluetooth.scan.model);
 
@@ -306,14 +310,6 @@ export function useMentraSdk(): MentraSdkModel {
   }, [defaultDevice, glassesConnected]);
 
   useEffect(() => {
-    const removeGlasses = BluetoothSdk.onGlassesStatus((changed) => {
-      addEvent('STORE', summarizeMap(changed));
-    });
-
-    const removeBluetooth = BluetoothSdk.onBluetoothStatus((changed) => {
-      addEvent('BLE', summarizeMap(changed));
-    });
-
     const subscriptions = [
       BluetoothSdk.addListener('button_press', (payload: ButtonPressEvent) => {
         addEvent('LIVE', `button ${payload.buttonId}: ${payload.pressType}`);
@@ -412,8 +408,6 @@ export function useMentraSdk(): MentraSdkModel {
     void ensureAndroidPermissions('startup');
 
     return () => {
-      removeGlasses();
-      removeBluetooth();
       subscriptions.forEach((subscription) => subscription.remove());
       clearPhotoUploadTimeout();
       stopKeepAlive();
@@ -433,11 +427,11 @@ export function useMentraSdk(): MentraSdkModel {
       wasConnectedRef.current = true;
       return;
     }
-    if (wasConnectedRef.current && isDisconnectedStatus(glassesStatus)) {
+    if (wasConnectedRef.current && isDisconnectedStatus(glasses)) {
       wasConnectedRef.current = false;
       applyDisconnectedState('Disconnected');
     }
-  }, [glassesConnected, glassesStatus]);
+  }, [glassesConnected, glasses]);
 
   function addEvent(tag: SdkConsoleEvent['tag'], text: string) {
     setEvents((current) => [event(tag, text), ...current].slice(0, 30));
@@ -941,7 +935,7 @@ export function useMentraSdk(): MentraSdkModel {
     stopKeepAlive();
     stopPreviewHealthPoll();
     activeStreamIdRef.current = null;
-    if (isGlassesConnected(glassesStatus)) {
+    if (isGlassesConnected(glasses)) {
       await BluetoothSdk.stopStream();
     }
     await MentraDirectReceiver.stopWebRtcReceiver().catch(() => undefined);
@@ -1063,7 +1057,7 @@ export function useMentraSdk(): MentraSdkModel {
   async function forgetCurrentWifiNetwork() {
     await runAction('Forget current Wi-Fi', async () => {
       requireConnected('forget Wi-Fi network');
-      const wifi = connectedWifiStatus(glassesStatus);
+      const wifi = connectedWifiStatus(glasses);
       if (!wifi) {
         throw new Error('No connected Wi-Fi network to forget.');
       }
@@ -1074,20 +1068,17 @@ export function useMentraSdk(): MentraSdkModel {
   async function toggleHotspot() {
     await runAction(hotspotEnabled ? 'Disable hotspot' : 'Enable hotspot', async () => {
       requireConnected('toggle hotspot');
-      const current = glassesStatus.hotspot
-        ? enabledHotspotStatus(glassesStatus) !== null
-        : hotspotEnabled;
-      const next = !current;
+      const next = !hotspotEnabled;
       await BluetoothSdk.setHotspotState(next);
     });
   }
 
   async function openGalleryServer() {
     await runAction('Open gallery server', async () => {
-      const baseUrl = requireGalleryServerUrl(glassesStatus, hotspotEnabled);
+      const baseUrl = requireGalleryServerUrl(glasses, hotspotEnabled);
       setGalleryServerReachable(null);
       setGalleryServerStatus(`Gallery server: checking ${baseUrl}`);
-      const result = await checkGalleryServerReachability(baseUrl, glassesStatus);
+      const result = await checkGalleryServerReachability(baseUrl, glasses);
       setGalleryServerReachable(result.reachable);
       setGalleryServerStatus(result.status);
       addEvent(result.eventTag, result.eventText);
@@ -1099,7 +1090,7 @@ export function useMentraSdk(): MentraSdkModel {
 
   async function copyGalleryServerUrl() {
     await runAction('Copy gallery URL', async () => {
-      const baseUrl = requireGalleryServerUrl(glassesStatus, hotspotEnabled);
+      const baseUrl = requireGalleryServerUrl(glasses, hotspotEnabled);
       Clipboard.setString(baseUrl);
       setGalleryServerStatus(`Gallery server: copied ${baseUrl}`);
     });
@@ -1107,7 +1098,7 @@ export function useMentraSdk(): MentraSdkModel {
 
   async function copyGalleryHotspotPassword() {
     await runAction('Copy hotspot password', async () => {
-      const password = galleryHotspotPasswordLabel(glassesStatus);
+      const password = galleryHotspotPasswordLabel(glasses);
       Clipboard.setString(password);
       setGalleryServerStatus(`Hotspot password copied: ${password}`);
     });
@@ -1124,7 +1115,7 @@ export function useMentraSdk(): MentraSdkModel {
           return;
         }
       }
-      const ssid = galleryHotspotSsidLabel(glassesStatus);
+      const ssid = galleryHotspotSsidLabel(glasses);
       setGalleryServerStatus(`Join ${ssid} from system Wi-Fi settings, then tap Open.`);
       addEvent('LIVE', `Join ${ssid} from system Wi-Fi settings, then tap Open.`);
     });
@@ -1206,7 +1197,7 @@ export function useMentraSdk(): MentraSdkModel {
     stopMicElapsedTimer();
     flushMicStats();
 
-    if (isGlassesConnected(glassesStatus)) {
+    if (isGlassesConnected(glasses)) {
       await BluetoothSdk.setMicState(false);
     }
 
@@ -1382,7 +1373,7 @@ export function useMentraSdk(): MentraSdkModel {
   }
 
   function requireConnected(feature: string) {
-    if (isGlassesConnected(glassesStatus)) {
+    if (isGlassesConnected(glasses)) {
       return;
     }
     const message = `Connect glasses first to ${feature}.`;
@@ -1397,7 +1388,7 @@ export function useMentraSdk(): MentraSdkModel {
   }
 
   function requireGlassesWifi(feature: string) {
-    if (isGlassesWifiConnected(glassesStatus)) {
+    if (isGlassesWifiConnected(glasses)) {
       return;
     }
     const message = `Connect the glasses to Wi-Fi from the System tab before you ${feature}.`;
@@ -1413,7 +1404,7 @@ export function useMentraSdk(): MentraSdkModel {
 
   function requireDisplaySupport(feature: string) {
     requireConnected(feature);
-    if (!supportsDisplay(glassesStatus)) {
+    if (!supportsDisplay(glasses)) {
       throw new Error('This glasses model has no display, so display commands are unavailable.');
     }
   }
@@ -1486,7 +1477,7 @@ export function useMentraSdk(): MentraSdkModel {
 
   return {
     activeAction,
-    bluetoothStatus,
+    phone,
     cameraStatus,
     captureAndUpload,
     clearDefaultDevice,
@@ -1506,7 +1497,7 @@ export function useMentraSdk(): MentraSdkModel {
     galleryModeAuto,
     galleryServerReachable,
     galleryServerStatus,
-    glassesStatus,
+    glasses,
     hotspotEnabled,
     lastAction,
     lastMicBytes,
@@ -1635,13 +1626,13 @@ function discoveredDeviceKey(device: Device) {
   return device.id;
 }
 
-function stringValue(values: Partial<BluetoothStatus> | Record<string, unknown>, key: string) {
+function stringValue(values: Record<string, unknown>, key: string) {
   const value = (values as Record<string, unknown>)[key];
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
 function deviceModelValue(
-  values: Partial<BluetoothStatus> | Record<string, unknown>,
+  values: Record<string, unknown>,
   key: string,
 ): DeviceModel | undefined {
   const value = stringValue(values, key);
@@ -1732,47 +1723,6 @@ function wavBytes(pcm: Uint8Array) {
   writeUInt32(pcm.byteLength);
   bytes.set(pcm, offset);
   return bytes;
-}
-
-function supportsDisplay(status: Partial<GlassesStatus>) {
-  const values = status as Record<string, unknown>;
-  for (const key of ['supportsDisplay', 'hasDisplay', 'displaySupported', 'display']) {
-    if (typeof values[key] === 'boolean') {
-      return values[key] as boolean;
-    }
-  }
-  for (const key of ['features', 'deviceFeatures', 'capabilities']) {
-    const nested = values[key];
-    if (nested && typeof nested === 'object' && typeof (nested as Record<string, unknown>).display === 'boolean') {
-      return (nested as Record<string, boolean>).display;
-    }
-  }
-
-  const model = [
-    status.deviceModel,
-    status.bluetoothName,
-    values.defaultWearable,
-  ]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
-
-  if (
-    model.includes('g1') ||
-    model.includes('g2') ||
-    model.includes('nex') ||
-    model.includes('mach') ||
-    model.includes('z100') ||
-    model.includes('vuzix') ||
-    model.includes('display') ||
-    model.includes('frame')
-  ) {
-    return true;
-  }
-  if (model.includes('live') || model.includes('r1') || model.includes('ring')) {
-    return false;
-  }
-  return false;
 }
 
 function photoStatusUrl(uploadUrlText: string, requestId: string) {
@@ -2046,7 +1996,7 @@ function cacheBustedUrl(url: string) {
   return `${url}${url.includes('?') ? '&' : '?'}poll=${Date.now()}`;
 }
 
-function requireGalleryServerUrl(status: Partial<GlassesStatus>, fallbackEnabled: boolean) {
+function requireGalleryServerUrl(status: GlassesRuntimeState, fallbackEnabled: boolean) {
   const baseUrl = galleryServerUrl(status, fallbackEnabled);
   if (!baseUrl) {
     throw new Error('Enable the glasses hotspot first.');
@@ -2056,7 +2006,7 @@ function requireGalleryServerUrl(status: Partial<GlassesStatus>, fallbackEnabled
 
 async function checkGalleryServerReachability(
   baseUrl: string,
-  status: Partial<GlassesStatus>,
+  status: GlassesRuntimeState,
 ) {
   try {
     const response = await fetch(cacheBustedUrl(`${baseUrl}/api/status`), {

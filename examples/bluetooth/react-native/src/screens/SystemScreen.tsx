@@ -24,19 +24,19 @@ import {
   wifiLabel,
   wifiSubLabel,
 } from '../sdkFormat';
-import { RGB_LED_COLORS, durationText, type LedColor, type LedMode, type MentraSdkModel, type SdkConsoleEvent } from '../useMentraSdk';
+import { RGB_LED_COLORS, durationText, type LedColor, type LedMode, type BluetoothSdkExampleModel, type SdkConsoleEvent } from '../useBluetoothSdkExample';
 
 const WIFI_COLLAPSED_NETWORK_LIMIT = 3;
 
-export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
+export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   const scrollBottomPadding = useScrollBottomPadding();
-  const connected = isGlassesConnected(sdk.glassesStatus);
-  const currentWifi = connectedWifiStatus(sdk.glassesStatus);
-  const networks = (sdk.bluetoothStatus.wifiScanResults ?? []).filter(
+  const connected = isGlassesConnected(sdk.glasses);
+  const currentWifi = connectedWifiStatus(sdk.glasses);
+  const networks = (sdk.phone.wifiScanResults ?? []).filter(
     (network) => !connected || !currentWifi || network.ssid !== currentWifi.ssid,
   );
-  const galleryUrl = galleryServerUrl(sdk.glassesStatus, sdk.hotspotEnabled);
-  const galleryHotspotPassword = galleryUrl ? galleryHotspotPasswordLabel(sdk.glassesStatus) : null;
+  const galleryUrl = galleryServerUrl(sdk.glasses, sdk.hotspotEnabled);
+  const galleryHotspotPassword = galleryUrl ? galleryHotspotPasswordLabel(sdk.glasses) : null;
   const inputChips = recentInputChips(sdk.events);
   const [pendingWifi, setPendingWifi] = useState<{ssid: string; requiresPassword: boolean} | null>(null);
   const [pendingWifiPassword, setPendingWifiPassword] = useState('');
@@ -99,9 +99,9 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
             actionLabel="Forget"
             actionColor={colors.red}
             check
-            name={wifiLabel(sdk.glassesStatus)}
+            name={wifiLabel(sdk.glasses)}
             onActionPress={sdk.forgetCurrentWifiNetwork}
-            sub={wifiSubLabel(sdk.glassesStatus)}
+            sub={wifiSubLabel(sdk.glasses)}
             subColor={colors.greenAccent}
           />
         ) : null}
@@ -157,7 +157,7 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
             <View>
               <Text style={styles.tileTitle}>Hotspot</Text>
               <Text style={[styles.tileSub, { color: sdk.hotspotEnabled ? colors.greenAccent : colors.muted }]}>
-                {connected ? hotspotLabel(sdk.glassesStatus, sdk.hotspotEnabled) : 'connect glasses to toggle'}
+                {connected ? hotspotLabel(sdk.glasses, sdk.hotspotEnabled) : 'connect glasses to toggle'}
               </Text>
             </View>
           </View>
@@ -181,7 +181,7 @@ export function SystemScreen({ sdk }: { sdk: MentraSdkModel }) {
             </Text>
             {galleryHotspotPassword ? (
               <Text style={styles.hotspotGalleryHint}>
-                Join {galleryHotspotSsidLabel(sdk.glassesStatus)} · password {galleryHotspotPassword}
+                Join {galleryHotspotSsidLabel(sdk.glasses)} · password {galleryHotspotPassword}
               </Text>
             ) : null}
           </View>
@@ -448,7 +448,7 @@ function InputChip({ prefix, label }: { prefix: string; label: string }) {
   );
 }
 
-function recordingMicStatus(sdk: MentraSdkModel) {
+function recordingMicStatus(sdk: BluetoothSdkExampleModel) {
   if (sdk.pcmBytes <= 0) {
     return 'recording · listening for speech';
   }

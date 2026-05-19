@@ -8,12 +8,12 @@ import { CameraScreen } from './screens/CameraScreen';
 import { StreamScreen } from './screens/StreamScreen';
 import { SystemScreen } from './screens/SystemScreen';
 import { ConsoleScreen } from './screens/ConsoleScreen';
-import { useMentraSdk } from './useMentraSdk';
+import { useBluetoothSdkExample } from './useBluetoothSdkExample';
 
 export default function App() {
   const [tab, setTab] = useState<TabKey>('device');
   const [keyboardVisible, setKeyboardVisible] = useState(false);
-  const sdk = useMentraSdk();
+  const sdk = useBluetoothSdkExample();
 
   useEffect(() => {
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';

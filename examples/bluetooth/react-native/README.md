@@ -126,7 +126,7 @@ Do not use `localhost` in the app. The glasses, phone, and computer must be on a
 
 ## Key Files
 
-- `src/useMentraSdk.ts`: SDK lifecycle, event subscriptions, scan/connect, camera, stream, Wi-Fi, microphone, and LED commands.
+- `src/useBluetoothSdkExample.ts`: example-app orchestration for SDK lifecycle, event subscriptions, scan/connect, camera, stream, Wi-Fi, microphone, and LED commands.
 - `src/screens/`: Device, Camera, Stream, System, and Console screens.
 - `src/sdkFormat.ts`: shared status/event formatting.
 - `app.json`: permissions, SDK plugin, and Android native-library packaging rules.
