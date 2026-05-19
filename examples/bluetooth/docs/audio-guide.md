@@ -83,11 +83,17 @@ func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicPcm event: MicPc
 
 React Native:
 
-```ts
-const sub = BluetoothSdk.addListener('mic_pcm', (event) => {
-  // Forward event.pcm to your audio pipeline.
-  console.log(event.sampleRate, event.bitsPerSample, event.channels, event.encoding, event.vadGated);
-});
+```tsx
+import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
+
+export function MicPcmLogger() {
+  useBluetoothEvent('mic_pcm', (event) => {
+    // Forward event.pcm to your audio pipeline.
+    console.log(event.sampleRate, event.bitsPerSample, event.channels, event.encoding, event.vadGated);
+  });
+
+  return null;
+}
 ```
 
 ## LC3 Audio
@@ -112,11 +118,17 @@ func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicLc3 event: MicLc
 
 React Native:
 
-```ts
-const sub = BluetoothSdk.addListener('mic_lc3', (event) => {
-  // Decode or forward event.lc3 depending on your pipeline.
-  console.log(event.frameDurationMs, event.frameSizeBytes, event.bitrate, event.vadGated);
-});
+```tsx
+import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
+
+export function MicLc3Logger() {
+  useBluetoothEvent('mic_lc3', (event) => {
+    // Decode or forward event.lc3 depending on your pipeline.
+    console.log(event.frameDurationMs, event.frameSizeBytes, event.bitrate, event.vadGated);
+  });
+
+  return null;
+}
 ```
 
 ## Local Transcription
@@ -141,10 +153,16 @@ func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: BluetoothEv
 
 React Native:
 
-```ts
-const sub = BluetoothSdk.addListener('local_transcription', (event) => {
-  console.log(`${event.text} final=${event.isFinal}`);
-});
+```tsx
+import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
+
+export function TranscriptLogger() {
+  useBluetoothEvent('local_transcription', (event) => {
+    console.log(`${event.text} final=${event.isFinal}`);
+  });
+
+  return null;
+}
 ```
 
 ## Production Notes
