@@ -91,7 +91,14 @@ struct StreamScreen: View {
                 model.toggleStream()
             } label: {
                 HStack(spacing: 10) {
-                    RoundedRectangle(cornerRadius: 3).fill(Color.white).frame(width: 12, height: 12)
+                    if streamActive {
+                        RoundedRectangle(cornerRadius: 3).fill(Color.white).frame(width: 12, height: 12)
+                    } else {
+                        Image(systemName: "play.fill")
+                            .foregroundColor(.white)
+                            .font(.system(size: 13, weight: .bold))
+                            .frame(width: 12, height: 12)
+                    }
                     Text(!model.glassesConnected && !streamActive ? "Connect glasses first" : !model.glassesWifiConnected && !streamActive ? "Connect glasses to Wi-Fi" : streamActive ? "End stream" : "Start stream").foregroundColor(.white).font(.system(size: 15, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity).padding(.vertical, 16)

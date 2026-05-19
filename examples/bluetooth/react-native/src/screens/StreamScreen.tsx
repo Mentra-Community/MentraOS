@@ -119,7 +119,7 @@ export function StreamScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
 
         <Pressable disabled={(!connected || !glassesWifiConnected) && !streamActive} onPress={handleStreamPress}>
           <LinearGradient colors={streamActive ? ['#DE3A30', '#C43B30'] : ['#26473A', '#1F3A2A']} style={[styles.endBtn, (!connected || !glassesWifiConnected) && !streamActive && styles.disabled]}>
-            <View style={styles.stopSquare} />
+            {streamActive ? <View style={styles.stopSquare} /> : <StreamPlayIcon />}
             <Text style={styles.endText}>
               {!connected && !streamActive
                 ? 'Connect glasses first'
@@ -327,6 +327,14 @@ function localStreamSetupHint(protocol: StreamProtocol, streamUrl: string, statu
     return 'Local SRT setup: run python3 examples/local-demo-cloud/server.py, paste the printed SRT publish URL here, then start streaming. The app previews the derived HLS URL; the printed SRT ffplay command is optional for debugging.';
   }
   return 'Local WebRTC setup: run python3 examples/local-demo-cloud/server.py, paste the printed WHIP publish URL here, then start streaming. The app previews the MediaMTX WebRTC page.';
+}
+
+function StreamPlayIcon() {
+  return (
+    <Svg width={13} height={13} viewBox="0 0 24 24">
+      <Path d="M8 5v14l11-7z" fill="#fff" />
+    </Svg>
+  );
 }
 
 const styles = StyleSheet.create({
