@@ -212,8 +212,8 @@ Call `requestVersionInfo()` after connection when your app wants the glasses to 
 | `fwVersion` / `firmwareVersion` | Generic glasses firmware version when the connected model reports one. |
 | `deviceFirmwareVersion` | Device firmware version for models that report device info as a structured payload. |
 | `leftFirmwareVersion` / `rightFirmwareVersion` | Per-side firmware versions for glasses that report left/right firmware separately. |
-| `besFwVersion` | Mentra Live BES firmware version. |
-| `mtkFwVersion` | Mentra Live MTK/system OTA firmware version. |
+| `besFirmwareVersion` | Mentra Live BES firmware version. |
+| `mtkFirmwareVersion` | Mentra Live MTK/system OTA firmware version. |
 | `appVersion` | Glasses-side companion app version. On Mentra Live this is the ASG client APK version, not firmware. |
 | `androidVersion` | Android OS version on Android-based glasses. This is not firmware. |
 

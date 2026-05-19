@@ -1,6 +1,7 @@
 package com.mentra.examples.android.media
 
 import java.io.ByteArrayOutputStream
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
@@ -19,8 +20,9 @@ class WhipHeaderProxy(private val onLog: (String) -> Unit) : AutoCloseable {
     fun start(listenPort: Int, backendPort: Int) {
         stop()
         this.backendPort = backendPort
-        val server = ServerSocket(listenPort)
+        val server = ServerSocket()
         server.reuseAddress = true
+        server.bind(InetSocketAddress("0.0.0.0", listenPort))
         val executor = Executors.newCachedThreadPool()
         serverSocket = server
         workers = executor

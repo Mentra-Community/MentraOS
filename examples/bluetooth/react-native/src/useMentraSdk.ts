@@ -114,7 +114,7 @@ export type SdkConsoleEvent = {
 
 export type MentraSdkState = {
   activeAction: string | null;
-  bluetoothStatus: Partial<BluetoothStatus> & Record<string, unknown>;
+  bluetoothStatus: Partial<BluetoothStatus>;
   cameraStatus: string;
   defaultDevice: Device | null;
   discoveredDevices: Device[];
@@ -220,9 +220,7 @@ export function useMentraSdk(): MentraSdkModel {
   const [glassesStatus, setGlassesStatus] = useState<Partial<GlassesStatus>>(
     () => createDisconnectedGlassesStatus(),
   );
-  const [bluetoothStatus, setBluetoothStatus] = useState<
-    Partial<BluetoothStatus> & Record<string, unknown>
-  >({});
+  const [bluetoothStatus, setBluetoothStatus] = useState<Partial<BluetoothStatus>>({});
   const [defaultDevice, setDefaultDevice] = useState<Device | null>(
     null,
   );
@@ -319,12 +317,11 @@ export function useMentraSdk(): MentraSdkModel {
         if (cancelled) {
           return;
         }
-        const bluetoothStatus = initialBluetoothStatus as Partial<BluetoothStatus> & Record<string, unknown>;
         setGlassesStatus(initialGlassesStatus);
-        setBluetoothStatus(bluetoothStatus);
+        setBluetoothStatus(initialBluetoothStatus);
         setHotspotEnabled(enabledHotspotStatus(initialGlassesStatus) !== null);
-        setGalleryModeAuto(galleryModeAutoFrom(bluetoothStatus));
-        setDefaultDevice(defaultDeviceFromStatus(bluetoothStatus));
+        setGalleryModeAuto(initialBluetoothStatus.galleryModeAuto ?? false);
+        setDefaultDevice(defaultDeviceFromStatus(initialBluetoothStatus));
       })
       .catch((error) => {
         addEvent('TX', `initial SDK status load failed: ${formatError(error)}`);
@@ -411,8 +408,8 @@ export function useMentraSdk(): MentraSdkModel {
 
     const removeBluetooth = BluetoothSdk.onBluetoothStatus((changed) => {
       setBluetoothStatus((current) => ({...current, ...changed}));
-      if ('gallery_mode' in changed) {
-        setGalleryModeAuto(galleryModeAutoFrom(changed));
+      if (changed.galleryModeAuto !== undefined) {
+        setGalleryModeAuto(changed.galleryModeAuto);
       }
       addEvent('BLE', summarizeMap(changed));
     });
@@ -1586,7 +1583,11 @@ export function useMentraSdk(): MentraSdkModel {
       }
       setStreamRequested(true);
       setStreamStartedAt((current) => current ?? Date.now());
-      if (keepAliveTimerRef.current === null && activeStreamIdRef.current) {
+      if (
+        (status === 'streaming' || status === 'reconnecting' || status === 'reconnected') &&
+        keepAliveTimerRef.current === null &&
+        activeStreamIdRef.current
+      ) {
         startKeepAlive(activeStreamIdRef.current);
       }
       return;
@@ -1750,7 +1751,7 @@ function parseDefaultDevice(value: unknown): Device | null {
   };
 }
 
-function defaultDeviceStatus(device: Device | null): Record<string, string> {
+function defaultDeviceStatus(device: Device | null): Partial<BluetoothStatus> {
   if (!device) {
     return clearedDefaultDeviceStatus();
   }
@@ -1761,7 +1762,7 @@ function defaultDeviceStatus(device: Device | null): Record<string, string> {
   };
 }
 
-function clearedDefaultDeviceStatus(): Record<string, string> {
+function clearedDefaultDeviceStatus(): Partial<BluetoothStatus> {
   return {
     default_wearable: '',
     device_address: '',
@@ -1769,7 +1770,7 @@ function clearedDefaultDeviceStatus(): Record<string, string> {
   };
 }
 
-function defaultDeviceFromStatus(values: Record<string, unknown>): Device | null {
+function defaultDeviceFromStatus(values: Partial<BluetoothStatus>): Device | null {
   const model = deviceModelValue(values, 'default_wearable');
   const name = stringValue(values, 'device_name');
   if (!model || !name) {
@@ -1784,7 +1785,7 @@ function defaultDeviceFromStatus(values: Record<string, unknown>): Device | null
   };
 }
 
-function hasDefaultDeviceStatus(values: Record<string, unknown>) {
+function hasDefaultDeviceStatus(values: Partial<BluetoothStatus>) {
   return (
     Object.prototype.hasOwnProperty.call(values, 'default_wearable') ||
     Object.prototype.hasOwnProperty.call(values, 'device_name') ||
@@ -1792,7 +1793,7 @@ function hasDefaultDeviceStatus(values: Record<string, unknown>) {
   );
 }
 
-function hasSavedConnectionTarget(values: Record<string, unknown>) {
+function hasSavedConnectionTarget(values: Partial<BluetoothStatus>) {
   return Boolean(stringValue(values, 'default_wearable') && stringValue(values, 'device_name'));
 }
 
@@ -1800,12 +1801,15 @@ function discoveredDeviceKey(device: Device) {
   return device.id;
 }
 
-function stringValue(values: Record<string, unknown>, key: string) {
-  const value = values[key];
+function stringValue(values: Partial<BluetoothStatus> | Record<string, unknown>, key: string) {
+  const value = (values as Record<string, unknown>)[key];
   return typeof value === 'string' && value.length > 0 ? value : undefined;
 }
 
-function deviceModelValue(values: Record<string, unknown>, key: string): DeviceModel | undefined {
+function deviceModelValue(
+  values: Partial<BluetoothStatus> | Record<string, unknown>,
+  key: string,
+): DeviceModel | undefined {
   const value = stringValue(values, key);
   if (!value) {
     return undefined;
@@ -2276,14 +2280,15 @@ function androidRuntimePermissions() {
   return permissions;
 }
 
-function summarizeMap(values: Record<string, unknown>) {
-  const keys = Object.keys(values);
+function summarizeMap(values: object) {
+  const record = values as Record<string, unknown>;
+  const keys = Object.keys(record);
   if (keys.length === 0) {
     return 'empty update';
   }
   return keys
     .slice(0, 3)
-    .map((key) => `${key}: ${String(values[key])}`)
+    .map((key) => `${key}: ${String(record[key])}`)
     .join(', ');
 }
 
@@ -2291,23 +2296,6 @@ function delay(ms: number) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
-}
-
-function galleryModeAutoFrom(values: unknown) {
-  const galleryMode =
-    values && typeof values === 'object'
-      ? (values as {gallery_mode?: unknown}).gallery_mode
-      : undefined;
-  if (typeof galleryMode === 'boolean') {
-    return galleryMode;
-  }
-  if (galleryMode === 'auto') {
-    return true;
-  }
-  if (galleryMode === 'manual') {
-    return false;
-  }
-  return false;
 }
 
 function formatError(error: unknown) {

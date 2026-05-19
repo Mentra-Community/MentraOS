@@ -152,7 +152,7 @@ async function main() {
   run("adb", ["-s", serial, "reverse", `tcp:${port}`, `tcp:${port}`])
 
   console.log("Installing and launching the Android development build")
-  run("bunx", ["expo", "run:android", "--no-bundler", "--port", String(port)])
+  run("bunx", ["expo", "run:android", "--no-bundler"])
 
   console.log(`Opening Expo dev-client URL: ${devClientUrl}`)
   run("adb", [

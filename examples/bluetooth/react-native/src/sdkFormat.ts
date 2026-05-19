@@ -157,8 +157,8 @@ export function firmwareLabel(status: Partial<GlassesStatus>) {
     statusString(status, 'deviceFirmwareVersion') ||
     statusString(status, 'rightFirmwareVersion') ||
     statusString(status, 'leftFirmwareVersion') ||
-    statusString(status, 'besFwVersion') ||
-    statusString(status, 'mtkFwVersion') ||
+    statusString(status, 'besFirmwareVersion') ||
+    statusString(status, 'mtkFirmwareVersion') ||
     'Unknown'
   );
 }
@@ -176,10 +176,10 @@ export function firmwareSubLabel(status: Partial<GlassesStatus>) {
   if (statusString(status, 'leftFirmwareVersion')) {
     return 'left firmware';
   }
-  if (statusString(status, 'besFwVersion')) {
+  if (statusString(status, 'besFirmwareVersion')) {
     return 'BES firmware';
   }
-  if (statusString(status, 'mtkFwVersion')) {
+  if (statusString(status, 'mtkFirmwareVersion')) {
     return 'MTK firmware';
   }
   const appVersion = statusString(status, 'appVersion');
