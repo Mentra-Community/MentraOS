@@ -1,4 +1,4 @@
-import {TouchableOpacity, View} from "react-native"
+import {TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 
 import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"

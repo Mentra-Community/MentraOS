@@ -3,6 +3,10 @@ import * as RNFS from "@dr.pogodin/react-native-fs"
 import Tar from "tar-js"
 
 export class TarBz2Extractor {
+  private static formatError(error: unknown): string {
+    return error instanceof Error ? error.message : String(error)
+  }
+
   static async extract(
     sourcePath: string,
     destinationPath: string,
@@ -44,7 +48,7 @@ export class TarBz2Extractor {
         console.log(`Decompression complete in ${totalTime} seconds, got ${decompressedString.length} characters`)
       } catch (bz2Error) {
         console.error("Bzip2 decompression error:", bz2Error)
-        throw new Error(`Bzip2 decompression failed: ${bz2Error.message || bz2Error}`)
+        throw new Error(`Bzip2 decompression failed: ${TarBz2Extractor.formatError(bz2Error)}`)
       }
 
       // Convert decompressed string back to Uint8Array
@@ -133,7 +137,7 @@ export class TarBz2Extractor {
       }
     } catch (error) {
       console.error("TarBz2Extractor error:", error)
-      throw new Error(`Extraction failed: ${error.message || error}`)
+      throw new Error(`Extraction failed: ${TarBz2Extractor.formatError(error)}`)
     }
   }
 }

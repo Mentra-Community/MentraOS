@@ -160,7 +160,6 @@ const $fontWeightStyles = Object.entries(typography.primary).reduce((acc, [weigh
 }, {}) as Record<Weights, TextStyle>
 
 const $baseStyle: ThemedStyle<TextStyle> = (theme) => ({
-  ...$sizeStyles.sm,
   ...$fontWeightStyles.normal,
   color: theme.colors.secondary_foreground,
 })
@@ -177,6 +176,6 @@ const $presets: Record<Presets, ThemedStyleArray<TextStyle>> = {
   ],
   subheading: [$baseStyle, {...$sizeStyles.lg, ...$fontWeightStyles.medium}],
   formLabel: [$baseStyle, {...$fontWeightStyles.medium}],
-  formHelper: [$baseStyle, {...$sizeStyles.sm, ...$fontWeightStyles.normal}],
+  formHelper: [$baseStyle, {...$fontWeightStyles.normal}],
 }
 const $rtlStyle: TextStyle = isRTL ? {writingDirection: "rtl"} : {}

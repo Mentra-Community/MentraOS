@@ -1,7 +1,7 @@
 import {useEffect, useRef, useState} from "react"
 import {TouchableOpacity, View} from "react-native"
 
-import {Icon, Text} from "@/components/ignite"
+import {Icon, Text, type IconTypes} from "@/components/ignite"
 import {translate} from "@/i18n"
 import {WebSocketStatus} from "@/services/WebSocketManager"
 import {useRefresh} from "@mentra/island"
@@ -13,7 +13,7 @@ import {useNavigationStore} from "@/stores/navigation"
 
 type DisplayStatus = "connected" | "warning" | "disconnected"
 
-const STATUS_CONFIG: Record<DisplayStatus, {icon: string; label: () => string; bgClass: string; iconColor: string}> = {
+const STATUS_CONFIG: Record<DisplayStatus, {icon: IconTypes; label: () => string; bgClass: string; iconColor: string}> = {
   connected: {
     icon: "wifi",
     label: () => translate("connection:connected"),

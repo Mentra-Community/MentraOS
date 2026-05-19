@@ -447,7 +447,7 @@ public struct BluetoothStatus: CustomStringConvertible {
     public var dashboardDepth: Int { intValue(values["dashboard_depth"]) ?? 2 }
     public var headUpAngle: Int { intValue(values["head_up_angle"]) ?? 30 }
     public var contextualDashboard: Bool { boolValue(values, "contextual_dashboard") ?? true }
-    public var galleryModeAuto: Bool { boolValue(values, "gallery_mode") ?? false }
+    public var galleryModeAuto: Bool { boolValue(values, "gallery_mode") ?? true }
     public var buttonPhotoSize: ButtonPhotoSize {
         ButtonPhotoSize(rawValue: stringValue(values, "button_photo_size") ?? "") ?? .medium
     }

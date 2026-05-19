@@ -115,7 +115,7 @@ export default function GlassesMirrorFullscreen() {
   useEffect(() => {
     if (isRecording) {
       // Start a timer that updates every second
-      recordingTimerRef.current = setInterval(() => {
+      recordingTimerRef.current = window.setInterval(() => {
         setRecordingTime((prev) => prev + 1)
       }, 1000)
     } else {

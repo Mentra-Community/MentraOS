@@ -206,7 +206,7 @@ class GallerySyncService {
 
       for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
         try {
-          await new Promise((resolve) => BgTimer.setTimeout(resolve, RETRY_DELAY_MS))
+          await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), RETRY_DELAY_MS))
 
           const netState = await NetInfo.fetch()
           console.log(
@@ -882,7 +882,7 @@ class GallerySyncService {
 
               // Don't wait after last attempt
               if (i < maxVerifyAttempts - 1) {
-                await new Promise((resolve) => BgTimer.setTimeout(resolve, 500))
+                await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), 500))
               }
             }
 
@@ -977,7 +977,7 @@ class GallerySyncService {
 
               // Wait 500ms before next probe (unless this was the last attempt)
               if (probeNum < maxProbeAttempts) {
-                await new Promise((resolve) => BgTimer.setTimeout(resolve, 500))
+                await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), 500))
               }
             }
 
@@ -1110,7 +1110,7 @@ class GallerySyncService {
             console.log(`[GallerySyncService] 🔄 Preparing retry ${attempt + 1}/${TIMING.IOS_WIFI_MAX_RETRIES}`)
             console.log(`[GallerySyncService] ⏱️ Waiting ${TIMING.IOS_WIFI_RETRY_DELAY_MS}ms (${reason})`)
             console.log(`[GallerySyncService] 📱 App currently: ${AppState.currentState}`)
-            await new Promise((resolve) => BgTimer.setTimeout(resolve, TIMING.IOS_WIFI_RETRY_DELAY_MS))
+            await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), TIMING.IOS_WIFI_RETRY_DELAY_MS))
             console.log(`[GallerySyncService] ⏱️ Wait complete - starting retry`)
           } else {
             console.error("[GallerySyncService] 🚫 No more retry attempts available")

@@ -11,6 +11,7 @@ import {RouteButton} from "@/components/ui/RouteButton"
 export default function SuperSettingsScreen() {
   const {goBack} = useNavigationStore.getState()
   const [superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
+  const [useNativeDashboard, setUseNativeDashboard] = useSetting(SETTINGS.use_native_dashboard.key)
   const [debugNavigationHistoryEnabled, setDebugNavigationHistoryEnabled] = useSetting(
     SETTINGS.debug_navigation_history.key,
   )
@@ -41,6 +42,12 @@ export default function SuperSettingsScreen() {
               label="Debug Bluetooth Status Bar"
               value={debugCoreStatusBarEnabled}
               onValueChange={(value) => setDebugCoreStatusBarEnabled(value)}
+            />
+
+            <ToggleSetting
+              label="Use Native G2 Dashboard"
+              value={useNativeDashboard}
+              onValueChange={(value) => setUseNativeDashboard(value)}
             />
           </Group>
 
