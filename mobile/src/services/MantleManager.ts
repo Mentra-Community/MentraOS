@@ -10,7 +10,7 @@ import headingService from "@/services/HeadingService"
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import miniSockets from "@/services/MiniSockets"
 import navigationService from "@/services/NavigationService"
-import {requestMiniappSdkPhoto} from "@/services/miniapp/MiniappSdkPhotoHandler"
+import {phonePhotoCoordinator} from "@/services/photo/PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "@/services/streaming/PhoneStreamCoordinator"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {migrate} from "@/services/Migrations"
@@ -182,7 +182,9 @@ class MantleManager {
         },
       },
       setDisplayEvent: (event) => useDisplayStore.getState().setDisplayEvent(event),
-      requestMiniappSdkPhoto: (params) => requestMiniappSdkPhoto(params),
+      photo: {
+        takePhoto: (pkg, opts) => phonePhotoCoordinator.takePhoto(pkg, opts),
+      },
       // Google Nav SDK adapter — the island runtime fan-outs nav events to
       // miniapps subscribed to navigation_*. Delegates straight to the host's
       // singleton NavigationService.
@@ -500,6 +502,33 @@ class MantleManager {
 
       this.subs.push(
         CoreModule.addListener("photo_response", (event) => {
+          // Local miniapps' photos are tracked by phonePhotoCoordinator. If
+          // glasses report an error (BATTERY_LOW, CAMERA_BUSY, ...) for a
+          // phone-owned requestId, short-circuit the in-flight long-poll
+          // with the typed error. Cloud-app photos (third-party SDK) still
+          // forward to cloud's PhotoManager.
+          //
+          // Note: glasses only emit photo_response on ERROR (verified in
+          // asg_client/.../MediaCaptureService.java — only sendPhotoErrorResponse
+          // emits this event). Successful uploads land directly on cloud's
+          // /api/v2/client/photo/upload and the coordinator learns via its
+          // long-poll. So the state === "success" branch is unreachable for
+          // phone-owned requestIds.
+          //
+          // Caveat: BLE-fallback upload failures on the phone-side
+          // BlePhotoUploadService only log (no photo_response is emitted),
+          // so the coordinator falls back to the 30s long-poll timeout in
+          // that path. Pre-existing v1 behavior; not regressed here.
+          if (event.requestId && phonePhotoCoordinator.owns(event.requestId)) {
+            if (event.state === "error") {
+              phonePhotoCoordinator.handlePhotoError(
+                event.requestId,
+                event.errorCode ?? "GLASSES_ERROR",
+                event.errorMessage ?? "Glasses reported an error",
+              )
+            }
+            return
+          }
           restComms.sendPhotoResponse(event)
         }),
       )

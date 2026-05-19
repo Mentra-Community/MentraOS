@@ -277,22 +277,33 @@ export interface RuntimeHooks {
    * can leave this unset.
    */
   setDisplayEvent?: (event: string) => void
-  /**
-   * Cloud-coordinated photo request. The host posts to its own backend
-   * (mobile manager hits /api/client/miniapp-sdk-photo/request) and
-   * resolves once the cloud accepts the request. The phone_photo_ready
-   * response arrives later via SocketComms → handleCloudMessage.
-   */
-  requestMiniappSdkPhoto?: (params: {
-    requestId: string
-    packageName: string
-    size?: string
-    compress?: string
-    saveToGallery?: boolean
-    sound?: boolean
-  }) => Promise<{accepted: boolean; requestId: string}>
+  /** Phone-orchestrated photo capture (session.camera.takePhoto). */
+  photo?: PhotoAdapter
   /** Phone-orchestrated RTMP/SRT/WHIP publishing. */
   streaming?: StreamingAdapter
+}
+
+/**
+ * Photo adapter — end-to-end takePhoto(). The runtime calls `takePhoto`
+ * from its handlePhoto handler; the host's PhonePhotoCoordinator implements
+ * it (mints upload token via the v2 cloud route, drives glasses over BLE,
+ * long-polls for the download URL).
+ */
+export interface PhotoAdapter {
+  takePhoto: (
+    packageName: string,
+    opts: {
+      size?: "small" | "medium" | "large"
+      compress?: "none" | "low" | "medium" | "high"
+      sound?: boolean
+      saveToGallery?: boolean
+    },
+  ) => Promise<{
+    photoUrl: string
+    mimeType: string
+    size: number
+    requestId: string
+  }>
 }
 
 let hooks: RuntimeHooks = {}

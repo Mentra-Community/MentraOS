@@ -332,7 +332,7 @@ class LocalMiniappRuntime {
 
   /**
    * Handle an incoming cloud message forwarded by SocketComms
-   * (phone_photo_ready, phone_stream_status, phone_managed_stream_status).
+   * (phone_stream_status, phone_managed_stream_status).
    *
    * Routes the response back to the originating miniapp via the requestId
    * that was stored when the miniapp first made the request.
@@ -357,22 +357,6 @@ class LocalMiniappRuntime {
     this.pendingCloudRequests.delete(requestId)
 
     switch (msgType) {
-      case "phone_photo_ready": {
-        if (msg.error) {
-          this.sendResult(pending.packageName, pending.envelopeRequestId, false, undefined, {
-            code: msg.error as string,
-            message: `Photo capture failed: ${msg.error}`,
-          })
-        } else {
-          this.sendResult(pending.packageName, pending.envelopeRequestId, true, {
-            photoUrl: msg.photoUrl,
-            mimeType: msg.mimeType,
-            size: msg.size,
-          })
-        }
-        break
-      }
-
       case "phone_stream_status": {
         // Unreachable for phone-orchestrated streams (the coordinator owns
         // their lifecycle and never registers a pending cloud request).
@@ -1698,7 +1682,7 @@ class LocalMiniappRuntime {
   // ===========================================================================
 
   private async handlePhoto(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
-    // Check CAMERA permission
+    // Manifest CAMERA permission gate.
     const app = this.connectedApps.get(packageName)
     const hasCameraPermission = app?.installedManifest?.permissions?.some((p) => p.type === "CAMERA")
     if (!hasCameraPermission) {
@@ -1712,33 +1696,26 @@ class LocalMiniappRuntime {
       return
     }
 
-    try {
-      const requestMiniappSdkPhoto = getRuntimeHooks().requestMiniappSdkPhoto
-      if (!requestMiniappSdkPhoto) {
-        this.sendResult(packageName, requestId, false, undefined, {
-          code: MiniappErrorCode.NOT_IMPLEMENTED,
-          message: "Photo capture is not configured on this host",
-        })
-        return
-      }
-      const photoRequestId = requestId || `photo_${Date.now()}`
-
-      // Register so handleCloudMessage can route phone_photo_ready back
-      this.registerPendingCloudRequest(photoRequestId, packageName, requestId)
-
-      await requestMiniappSdkPhoto({
-        requestId: photoRequestId,
-        packageName,
-        size: (payload.size as string) || "medium",
-        compress: (payload.compress as string) || "none",
-        saveToGallery: payload.saveToGallery as boolean | undefined,
-        sound: payload.sound as boolean | undefined,
-      })
-      // Don't sendResult here — we wait for phone_photo_ready via handleCloudMessage
-    } catch (err) {
-      this.pendingCloudRequests.delete(requestId || "")
+    const photo = getRuntimeHooks().photo
+    if (!photo) {
       this.sendResult(packageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INTERNAL,
+        code: MiniappErrorCode.NOT_IMPLEMENTED,
+        message: "Photo capture is not configured on this host",
+      })
+      return
+    }
+
+    try {
+      const result = await photo.takePhoto(packageName, {
+        size: payload.size as "small" | "medium" | "large" | undefined,
+        compress: payload.compress as "none" | "low" | "medium" | "high" | undefined,
+        sound: payload.sound as boolean | undefined,
+        saveToGallery: payload.saveToGallery as boolean | undefined,
+      })
+      this.sendResult(packageName, requestId, true, result)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: (err as {code?: string}).code || MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Photo request failed",
       })
     }
