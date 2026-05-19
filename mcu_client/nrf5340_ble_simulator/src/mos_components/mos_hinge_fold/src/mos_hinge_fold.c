@@ -6,8 +6,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
-#include "mos_lsm6dsv16x.h"
 #include "mos_display.h"
+#include "mos_imu.h"
 
 LOG_MODULE_REGISTER(mos_hinge_fold, LOG_LEVEL_INF);
 #define MOS_HINGE_THREAD_STACK_SIZE 4096
@@ -185,7 +185,7 @@ int mos_hinge_fold_update(mos_hinge_state_t *state, mos_hinge_event_t *event, fl
         *event = MOS_HINGE_EVENT_NONE;
     }
 
-    ret = lsm6dsv16x_read_all(&accel_x, &accel_y, &accel_z, &gyro_x, &gyro_y, &gyro_z);
+    ret = mos_imu_read_accel_gyro(&accel_x, &accel_y, &accel_z, &gyro_x, &gyro_y, &gyro_z);
     if (ret != 0)
     {
         return ret;

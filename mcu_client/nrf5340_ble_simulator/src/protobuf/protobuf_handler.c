@@ -977,22 +977,7 @@ void protobuf_process_mic_state_config(const mentraos_ble_MicStateConfig *mic_st
     }
     else
     {
-        int vad_disable_ret = mos_gx8002_vad_int_disable();
-        int stop_ret = gx8002_i2s_stop();
-        if (stop_ret == 0 || stop_ret == -EALREADY)
-        {
-            vad_interrupt_handler_notify_i2s_stopped();
-        }
-        (void)mos_gx8002_disable_i2s();
-        if (vad_disable_ret != 0)
-        {
-            ret = vad_disable_ret;
-        }
-        else if (stop_ret != 0)
-        {
-            ret = stop_ret;
-        }
-        /* Do not treat GX8002 I2C disable failure as fatal: local pipeline is already stopped */
+        ret = vad_interrupt_handler_apply_mic_off();
     }
 
     if (ret == 0 || ret == -EALREADY)

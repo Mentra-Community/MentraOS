@@ -1,13 +1,16 @@
 #include "a6n.h"
 
+#include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <zephyr/device.h>
+#include <zephyr/devicetree.h>
 #include <zephyr/drivers/display.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/pm/device.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/util.h>
 #include <zephyr/types.h>
 
 #define LOG_MODULE_NAME CUSTOM_A6N
@@ -55,6 +58,45 @@ static volatile int8_t s_software_depth_offset = 0;
  * ====================================================================
  */
 #define MAX_LINES_PER_WRITE 204  // 每批最多写入 204 行（65,280B 像素数据）| Max 204 rows per write batch (65,280B payload)
+
+
+#if DT_NODE_EXISTS(DT_NODELABEL(spi4)) && IS_ENABLED(CONFIG_PM_DEVICE)
+static void a6n_spi4_bus_hang(void)
+{
+    const struct device *spi = DEVICE_DT_GET(DT_NODELABEL(spi4)); // SPI4 is the bus used for A6N display
+
+    if (!device_is_ready(spi))
+    {
+        return;
+    }
+
+    int ret = pm_device_action_run(spi, PM_DEVICE_ACTION_SUSPEND);
+
+    if (ret != 0 && ret != -EALREADY)
+    {
+        LOG_WRN("SPI4 bus suspend failed: %d", ret);
+    }
+}
+
+static void a6n_spi4_bus_resume(void)
+{
+    const struct device *spi = DEVICE_DT_GET(DT_NODELABEL(spi4));// SPI4 is the bus used for A6N display
+
+
+    if (!device_is_ready(spi))
+    {
+        return;
+    }
+
+    int ret = pm_device_action_run(spi, PM_DEVICE_ACTION_RESUME);
+
+    if (ret != 0 && ret != -EALREADY)
+    {
+        LOG_WRN("SPI4 bus resume failed: %d", ret);
+    }
+}
+#endif
+
 void a6n_init_sem_give(void)
 {
     k_sem_give(&a6n_init_sem);
@@ -1260,7 +1302,8 @@ void a6n_power_on(void)
 {
     LOG_INF("bsp_lcd_power_on");
     const a6n_config *cfg = (a6n_config *)dev_a6n->config;
-    pm_device_action_run(dev_a6n, PM_DEVICE_ACTION_RESUME);
+
+    a6n_spi4_bus_resume();
     k_msleep(50);
     // gpio_pin_set_dt(&cfg->v1_8, 1); // v1.8 high
     gpio_pin_set_dt(&cfg->v0_9, 1);  // v1.8 high
@@ -1339,7 +1382,7 @@ void a6n_power_off(void)
     // spi_release_dt(&cfg->spi);
     gpio_pin_set_dt(&cfg->left_cs, 1);
     gpio_pin_set_dt(&cfg->right_cs, 1);
-    pm_device_action_run(dev_a6n, PM_DEVICE_ACTION_SUSPEND);
+    a6n_spi4_bus_hang();
 
     gpio_pin_set_dt(&cfg->vcom, 0);
     k_msleep(10);

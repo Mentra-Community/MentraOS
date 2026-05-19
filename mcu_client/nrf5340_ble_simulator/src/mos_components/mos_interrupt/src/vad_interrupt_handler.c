@@ -324,6 +324,35 @@ bool vad_interrupt_handler_is_i2s_active(void)
     return i2s_reception_active;
 }
 
+int vad_interrupt_handler_apply_mic_off(void)
+{
+    int ret = 0;
+    int vad_disable_ret;
+    int stop_ret;
+
+    vad_interrupt_handler_set_enabled(false);
+
+    vad_disable_ret = mos_gx8002_vad_int_disable();
+    stop_ret = gx8002_i2s_stop();
+    if (stop_ret == 0 || stop_ret == -EALREADY)
+    {
+        vad_interrupt_handler_notify_i2s_stopped();
+    }
+
+    (void)mos_gx8002_disable_i2s();
+
+    if (vad_disable_ret != 0)
+    {
+        ret = vad_disable_ret;
+    }
+    else if (stop_ret != 0)
+    {
+        ret = stop_ret;
+    }
+
+    return ret;
+}
+
 void vad_interrupt_handler_notify_i2s_stopped(void)
 {
     vad_interrupt_handler_update_i2s_state(false);

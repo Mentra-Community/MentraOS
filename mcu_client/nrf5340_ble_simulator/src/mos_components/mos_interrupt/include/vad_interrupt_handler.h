@@ -43,6 +43,18 @@ int vad_interrupt_handler_re_enable(void);
 bool vad_interrupt_handler_is_i2s_active(void);
 
 /**
+ * @brief Apply the shared MicState-OFF local shutdown sequence.
+ *
+ * Disables VAD-driven capture, disables the VAD IRQ, stops the nRF I2S slave
+ * if active, updates handler state, and sends the GX8002 I2C disable command.
+ *
+ * @return 0 on success.
+ * @return -EALREADY when the local pipeline was already stopped.
+ * @return Other negative error code from VAD IRQ disable or nRF I2S stop.
+ */
+int vad_interrupt_handler_apply_mic_off(void);
+
+/**
  * @brief Notify handler that I2S reception has stopped.
  *
  * Resets internal I2S-active state and timeout-related state.

@@ -1,4 +1,3 @@
-#include <zephyr/dt-bindings/sensor/lsm6dsv16x.h>
 #include "npm1300_config.overlay"
 
 / {
@@ -13,7 +12,7 @@
     aliases {
         opt3006 = &opt3006; // OPT3006 device node
         iqs7211e = &iqs7211e; // IQS7211E node
-        lsm6dsv16x = &lsm6dsv16x;  // LSM6DSV16X IMU sensor node
+        icm45608 = &icm45608;  // ICM-45608 IMU sensor node
     };
 
     zephyr_user: zephyr,user {
@@ -107,6 +106,14 @@
                     <NRF_PSEL(I2S_LRCK_S, 1, 6)>;
         };
     };
+    i2s0_sleep: i2s0_sleep {
+        group1 {
+            psels = <NRF_PSEL(I2S_SDIN, 1, 9)>,
+                    <NRF_PSEL(I2S_SCK_S, 1, 8)>,
+                    <NRF_PSEL(I2S_LRCK_S, 1, 6)>;
+            low-power-enable;
+        };
+    };
 };
 
 &spi3 {
@@ -164,15 +171,11 @@
     pinctrl-1 = <&i2c2_sleep>;
     pinctrl-names = "default", "sleep";
 
-    lsm6dsv16x: lsm6dsv16x@6a {
-        compatible = "st,lsm6dsv16x";
-        reg = <0x6a>; /* AD0 = GND */
+    icm45608: icm45608@68 {
+        compatible = "i2c-device";
+        reg = <0x68>;
         status = "okay";
-        int1-gpios = <&gpio1 15 GPIO_ACTIVE_HIGH>; /* P1.15 INT1 */
-        accel-odr = <LSM6DSV16X_DT_ODR_AT_60Hz>;
-        gyro-odr = <LSM6DSV16X_DT_ODR_AT_60Hz>;
-        accel-range = <LSM6DSV16X_DT_FS_4G>;
-        gyro-range = <LSM6DSV16X_DT_FS_500DPS>;
+        /* ICT1531x magnetometer is behind the IMU; host only handles ICM-45608 I2C2 pins here. */
     };
 };
 
@@ -217,7 +220,8 @@ zephyr_udc0: &usbd {
     compatible = "nordic,nrf-i2s";
     status = "okay";
     pinctrl-0 = <&i2s0_default>;
-    pinctrl-names = "default";
+    pinctrl-1 = <&i2s0_sleep>;
+    pinctrl-names = "default", "sleep";
     // clock-source = "ACLK";
 };
 /delete-node/ &mx25r64;

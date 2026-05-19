@@ -1,56 +1,50 @@
 #include "mos_opt3006.h"
 
-#include <hal/nrf_gpio.h>
 #include <zephyr/device.h>
+#include <zephyr/devicetree.h>
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/pm/device.h>
+#include <zephyr/sys/util.h>
+
+#include <errno.h>
 
 LOG_MODULE_REGISTER(mos_opt3006, LOG_LEVEL_INF);
 
 #define OPT3006_NODE DT_ALIAS(opt3006)
 #define I2C_NODE DT_PARENT(OPT3006_NODE)
 
-/* i2c3 pinout (OPT3006 bus): P1.04 = SDA, P1.05 = SCL | i2c3 引脚（OPT3006 总线）：P1.04=SDA, P1.05=SCL */
-#define I2C3_SDA_PIN 4
-#define I2C3_SCL_PIN 5
-
 // Global I2C device pointer | 全局I2C设备指针
 static const struct device* i2c_dev = NULL;
 
 /**
- * @brief Suspend i2c3 (OPT3006 bus) via PM, then pull P1.04 (SDA) and P1.05 (SCL) low for sleep.
- * 挂起 i2c3（OPT3006 总线）外设（PM），再将 P1.04（SDA）、P1.05（SCL）拉低，用于休眠。
+ * @brief Suspend i2c3 (OPT3006 + IQS7211E bus) via PM so pins use DT sleep pinctrl (high-Z).
+ * 挂起 i2c3（OPT3006 与 IQS7211E 共用总线），引脚由设备树 sleep 状态释放，避免推挽拉低顶外部上拉。
  */
 void opt3006_prepare_for_sleep(void)
 {
+#if DT_NODE_EXISTS(DT_NODELABEL(i2c3)) && IS_ENABLED(CONFIG_PM_DEVICE)
     const struct device* i2c3 = DEVICE_DT_GET(DT_NODELABEL(i2c3));
 
-    /* 1. Suspend i2c3 peripheral via PM | 通过 PM 挂起 i2c3 外设 */
     if (device_is_ready(i2c3))
     {
         int ret = pm_device_action_run(i2c3, PM_DEVICE_ACTION_SUSPEND);
-        if (ret == 0)
+
+        if (ret == 0 || ret == -EALREADY)
         {
-            LOG_INF("i2c3 suspended via PM");
+            LOG_INF("i2c3 suspended via PM (touch/ALS bus, sleep pinctrl)");
         }
         else
         {
-            LOG_WRN("i2c3 PM suspend failed: %d (continuing to pull GPIOs low)", ret);
+            LOG_WRN("i2c3 PM suspend failed: %d", ret);
         }
     }
     else
     {
         LOG_WRN("i2c3 not ready, skipping PM suspend");
     }
-
-    /* 2. Pull P1.04 (SDA) and P1.05 (SCL) low | 将 P1.04（SDA）、P1.05（SCL）拉低 */
-    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(1, I2C3_SDA_PIN));
-    nrf_gpio_pin_write(NRF_GPIO_PIN_MAP(1, I2C3_SDA_PIN), 0);
-    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(1, I2C3_SCL_PIN));
-    nrf_gpio_pin_write(NRF_GPIO_PIN_MAP(1, I2C3_SCL_PIN), 0);
-    LOG_INF("i2c3 pins (P1.04 SDA, P1.05 SCL) pulled low for sleep");
+#endif
 }
 
 // Read 16-bit register from OPT3006 | 从OPT3006读取16位寄存器
