@@ -13,7 +13,7 @@ class BluetoothSdkModule : Module() {
                     sendEvent(
                             "glasses_status",
                             sdk?.getRawGlassesStatus()?.toMap()
-                                    ?: GlassesStatus.fromMap(DeviceStore.store.getCategory("glasses")).toMap()
+                                    ?: GlassesStatus.fromStoreMap(DeviceStore.store.getCategory("glasses")).toMap()
                     )
                 }
 
@@ -205,7 +205,7 @@ class BluetoothSdkModule : Module() {
 
         Function("getGlassesStatus") {
             sdk?.getRawGlassesStatus()?.toMap()
-                    ?: GlassesStatus.fromMap(DeviceStore.store.getCategory("glasses")).toMap()
+                    ?: GlassesStatus.fromStoreMap(DeviceStore.store.getCategory("glasses")).toMap()
         }
 
         Function("getBluetoothStatus") {
