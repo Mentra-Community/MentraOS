@@ -15,7 +15,7 @@ Use this checklist before shipping an app with the Mentra Bluetooth SDK.
 
 ## SDK Integration
 
-- App subscribes to typed glasses and Bluetooth status callbacks.
+- App subscribes to typed runtime/status callbacks or React hook state.
 - App handles disconnect, reconnect, scan stopped, and pair failure states.
 - App does not assume every model supports every feature.
 - App cleans up SDK listeners/delegates and calls `close()` / `invalidate()` when sessions end.
@@ -51,4 +51,4 @@ Use this checklist before shipping an app with the Mentra Bluetooth SDK.
 - Hardware settings test for brightness/dashboard where supported, save-in-gallery mode, camera options, LED color/pattern, Wi-Fi, and hotspot behavior.
 - Button/touch event test.
 - Microphone audio/transcription test if enabled.
-- OTA/status handling test if enabled.
+- Version/status handling test if enabled.

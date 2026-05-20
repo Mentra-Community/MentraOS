@@ -2,16 +2,15 @@
 
 ## Android Dependency Resolution Fails
 
-- Confirm your app has the Mentra Maven repository configured.
+- Confirm your app has the required Maven repositories configured, including `mavenCentral()` and `maven("https://www.jitpack.io")`.
 - Confirm `com.mentra:bluetooth-sdk:<version>` matches the version in your release notes.
-- Confirm your Gradle credentials are available through `gradle.properties`, environment variables, or your CI secret store.
 - If you are testing an unreleased SDK, publish the SDK and companion artifacts to `mavenLocal()` and include `mavenLocal()` in the example app repositories.
 
 ## Android Build Fails On Native Libraries
 
 - Confirm Android min SDK is at least `28`.
 - Confirm Java 17 is used by Gradle.
-- Confirm your app includes `pickFirsts += "lib/**/libonnxruntime.so"` under `android.packaging.jniLibs`.
+- Confirm your app includes `pickFirsts += "**/libonnxruntime.so"` under `android.packaging.jniLibs`.
 - Confirm no app-level packaging rule excludes `libc++_shared.so`, ONNX runtime, or SDK native libraries.
 - Clean only the example build output first. Do not delete SDK source artifacts unless you are intentionally resetting your workspace.
 

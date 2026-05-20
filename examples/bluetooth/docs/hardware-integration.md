@@ -8,7 +8,7 @@ The SDK presents a common native API over multiple glasses models. Capabilities 
 2. Call `scan()` for that model.
 3. Present typed discovered devices from the progressive scan results.
 4. Connect using the discovered device or default-device helper.
-5. Read `GlassesStatus`, firmware fields, and capability-related status before enabling advanced features.
+5. Read grouped runtime state, firmware fields, and capability-related status before enabling advanced features.
 6. Keep app UI derived from SDK status rather than from command success alone.
 
 Android:
@@ -60,7 +60,7 @@ In multi-device environments, keep the picker explicit. Do not auto-connect to t
 - Audio: PCM, LC3, audio pairing, preferred microphone, and local transcription.
 - Camera: photo, gallery, video recording, and streaming.
 - Network: Wi-Fi scan, credentials, and hotspot state.
-- Maintenance: version info, OTA availability, OTA progress, shutdown, and restart flows.
+- Maintenance: version info, diagnostics, and reconnect/recovery flows.
 
 ## Model Differences
 

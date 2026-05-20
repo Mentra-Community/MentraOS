@@ -20,7 +20,7 @@ Android:
 
 ```kotlin
 val result = sdk.getGlassesMediaVolume()
-println("Glasses media volume: ${result.volume} / 15")
+println("Glasses media volume: ${result.level ?: "unknown"} / 15")
 
 sdk.setGlassesMediaVolume(8)
 ```
@@ -29,12 +29,12 @@ React Native:
 
 ```ts
 const result = await BluetoothSdk.getGlassesMediaVolume();
-console.log(`Glasses media volume: ${result.vol} / 15`);
+console.log(`Glasses media volume: ${result.level} / 15`);
 
 await BluetoothSdk.setGlassesMediaVolume(8);
 ```
 
-`getGlassesMediaVolume()` returns `volume` on Android and `vol` in React Native. Android may return `volume = null` if the glasses respond without a readable volume. Unsupported devices throw an SDK error. `setGlassesMediaVolume(level)` requires `0..15`; unsupported devices or disconnected glasses throw an SDK error.
+`getGlassesMediaVolume()` returns `level`, plus a `statusCode` when the glasses provide one. Native platforms may return `level = null` if the glasses respond without a readable volume. Unsupported devices throw an SDK error. `setGlassesMediaVolume(level)` requires `0..15`; unsupported devices or disconnected glasses throw an SDK error.
 
 ## Enable Microphone Events
 

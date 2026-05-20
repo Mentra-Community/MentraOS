@@ -25,9 +25,9 @@ Use the latest SDK version published by Mentra for your app. This repo can be cl
 ## What The Examples Demonstrate
 
 - Scanning for supported Mentra glasses, connecting, disconnecting, and reconnecting to a saved/default device.
-- Reading typed glasses and Bluetooth status snapshots.
+- Reading typed lifecycle state for glasses, SDK runtime, and scan progress.
 - Displaying text, clearing the display, and opening the dashboard on display-equipped models such as G2.
-- Handling button, touch, swipe, head-up, battery, Wi-Fi, hotspot, stream, photo, audio, and diagnostic events.
+- Handling button, touch, swipe, head-up, battery, Wi-Fi, hotspot, stream, photo, audio, and SDK diagnostic events.
 - Controlling model-supported features such as brightness, dashboard position, head-up angle, gallery-button behavior, button photo/video settings, speaker playback, RGB LED patterns, Wi-Fi, hotspot, microphone, camera, and streaming.
 - Running local photo upload and RTMP/SRT/WebRTC streaming demos from a fresh clone.
 

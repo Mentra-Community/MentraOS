@@ -20,7 +20,7 @@ The example reads the SDK version from `gradle.properties`:
 mentraSdkVersion=0.1.5
 ```
 
-Use the latest SDK version published by Mentra. If a dedicated Mentra Maven repository is required, add it to `settings.gradle.kts` beside `google()` and `mavenCentral()`.
+Use the latest SDK version published by Mentra. If a future release note lists an additional Maven repository, add it to `settings.gradle.kts` beside `google()` and `mavenCentral()`.
 
 ## Run
 
@@ -71,7 +71,7 @@ The example has five tabs:
 - **Camera**: request photo upload to the local demo cloud or directly to this phone, then preview the received JPEG.
 - **Stream**: start RTMP, SRT, or WebRTC streams, send 15-second keep-alives, and preview HLS/WebRTC output. WebRTC can be received directly on the phone through the app-hosted GStreamer WHIP receiver.
 - **System**: scan/connect/forget Wi-Fi, toggle hotspot, change save-in-gallery mode, receive microphone PCM, and send RGB LED controls.
-- **Console**: watch button, touch, swipe, BLE, TX, STORE, hotspot, stream, photo, microphone, and raw SDK events.
+- **Console**: watch button, touch, swipe, BLE, TX, STORE, hotspot, stream, photo, microphone, and SDK diagnostic events.
 
 ## Local Photo And Streaming Helper
 

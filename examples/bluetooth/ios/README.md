@@ -45,6 +45,8 @@ export GSTREAMER_ROOT_IOS=/path/to/iPhone.sdk
 open MentraExample.xcworkspace
 ```
 
+For production iOS apps that need BLE or microphone behavior while backgrounded or locked, see [Background Operation On iOS](../../docs/getting-started.md#background-operation-on-ios).
+
 ## Local SDK Override
 
 Use this only when developing the SDK before a CocoaPods release is published:
@@ -65,7 +67,7 @@ The example has five tabs:
 - **Camera**: request photo upload to the local demo cloud or directly to this iPhone, then preview the received JPEG.
 - **Stream**: start RTMP, SRT, or WebRTC streams, send 15-second keep-alives, and preview HLS/WebRTC output. WebRTC can be received directly on the iPhone through the app-hosted GStreamer WHIP receiver.
 - **System**: scan/connect/forget Wi-Fi, toggle hotspot, change save-in-gallery mode, receive microphone PCM, and send RGB LED controls.
-- **Console**: watch button, touch, swipe, BLE, TX, STORE, hotspot, stream, photo, microphone, and raw SDK events.
+- **Console**: watch button, touch, swipe, BLE, TX, STORE, hotspot, stream, photo, microphone, and SDK diagnostic events.
 
 ## Local Photo And Streaming Helper
 

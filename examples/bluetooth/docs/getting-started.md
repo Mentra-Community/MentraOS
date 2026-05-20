@@ -17,7 +17,7 @@ Use the latest SDK version published by Mentra. The example apps in this repo ar
 
 ### Android
 
-Add the Mentra Maven repository and depend on the Android artifact:
+Depend on the Android artifact from your app module:
 
 ```kotlin
 // settings.gradle.kts
@@ -27,7 +27,6 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven("https://www.jitpack.io")
-        maven("https://<mentra-maven-repository>")
     }
 }
 ```
@@ -129,10 +128,10 @@ Then generate and run a native build:
 bunx expo prebuild
 bunx expo run:ios
 # or
-bun run android:dev
+bunx expo run:android
 ```
 
-Use `bun run android:dev` for Android development builds. It starts Metro first, forwards the device's `localhost:8081` over USB, installs the native app, and opens the Expo dev-client URL so the first launch does not land on the blank launcher screen.
+The React Native starter example also includes `bun run android:dev`, which starts Metro first, forwards the device's `localhost:8081` over USB, installs the native app, and opens the Expo dev-client URL so the first launch does not land on the blank launcher screen.
 
 For unreleased SDK development, install a local package path and set the package path for Metro/native resolution:
 
@@ -166,6 +165,45 @@ iOS apps should include permission copy in `Info.plist`:
 <string>This app connects to local photo and streaming helpers during development.</string>
 ```
 
+## Background Operation On iOS
+
+If your iOS app needs BLE to keep running while the phone is locked or the app is backgrounded, enable Core Bluetooth background mode:
+
+```xml
+<key>UIBackgroundModes</key>
+<array>
+  <string>bluetooth-central</string>
+</array>
+```
+
+If your app also keeps microphone capture or an audio session active in the background, add `audio` too:
+
+```xml
+<key>UIBackgroundModes</key>
+<array>
+  <string>bluetooth-central</string>
+  <string>audio</string>
+</array>
+```
+
+Configure your audio session before starting continuous microphone or playback work. For Expo / React Native apps, install `expo-audio` if needed and call `setAudioModeAsync` during startup or before enabling the microphone:
+
+```ts
+import {setAudioModeAsync} from 'expo-audio';
+
+await setAudioModeAsync({
+  allowsRecording: true,
+  allowsBackgroundRecording: true,
+  shouldPlayInBackground: true,
+  playsInSilentMode: true,
+  interruptionMode: 'duckOthers',
+});
+```
+
+Start continuous microphone capture while the app is foregrounded. iOS background mode lets an active session continue, but the SDK does not start the phone microphone from the background.
+
+This SDK version does not enable terminated-app Core Bluetooth state restoration with `CBCentralManagerOptionRestoreIdentifierKey`. If iOS terminates the app, relaunch the app and reconnect from your normal startup flow.
+
 ## Minimal Lifecycle
 
 1. Request OS-level Bluetooth permissions before scanning.
@@ -183,11 +221,9 @@ iOS apps should include permission copy in `Info.plist`:
 import android.content.Context
 import com.mentra.bluetoothsdk.Device
 import com.mentra.bluetoothsdk.DeviceModel
-import com.mentra.bluetoothsdk.Device
-import com.mentra.bluetoothsdk.GlassesStatusUpdate
+import com.mentra.bluetoothsdk.GlassesRuntimeState
 import com.mentra.bluetoothsdk.MentraBluetoothSdk
 import com.mentra.bluetoothsdk.MentraBluetoothSdkCallback
-import com.mentra.bluetoothsdk.ScanSession
 
 class GlassesController(context: Context) : MentraBluetoothSdkCallback() {
     private val sdk = MentraBluetoothSdk.create(
@@ -195,11 +231,9 @@ class GlassesController(context: Context) : MentraBluetoothSdkCallback() {
         listener = this,
     )
     private var selectedDevice: Device? = null
-    private var scanSession: ScanSession? = null
 
     fun scan() {
-        scanSession?.stop()
-        scanSession = sdk.scan(DeviceModel.MENTRA_LIVE, timeoutMs = 10_000) { devices ->
+        sdk.scan(DeviceModel.MENTRA_LIVE, timeoutMs = 10_000) { devices ->
             renderDevicePicker(devices, onSelect = { selectedDevice = it })
         }
     }
@@ -210,13 +244,17 @@ class GlassesController(context: Context) : MentraBluetoothSdkCallback() {
 
     fun refreshStatus() {
         sdk.requestVersionInfo()
-        val status = sdk.getGlassesStatus()
-        println("Connected to ${status.deviceModel}, battery=${status.batteryLevel}%")
+        val glasses = sdk.getGlasses()
+        if (glasses is GlassesRuntimeState.Connected) {
+            val model = glasses.device.deviceModel?.deviceType ?: "glasses"
+            val battery = glasses.battery.level?.toString() ?: "unknown"
+            println("Connected to $model, battery=$battery%")
+        }
     }
 
-    override fun onGlassesStatusChanged(status: GlassesStatusUpdate) {
+    override fun onGlassesChanged(glasses: GlassesRuntimeState) {
         // Keep app UI derived from SDK status.
-        println("Glasses status changed: $status")
+        println("Glasses changed: $glasses")
     }
 
     private fun renderDevicePicker(devices: List<Device>, onSelect: (Device) -> Unit) {
@@ -238,7 +276,6 @@ import MentraBluetoothSDK
 final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
     private let sdk = MentraBluetoothSDK()
     private var selectedDevice: Device?
-    private var scanSession: ScanSession?
 
     override init() {
         super.init()
@@ -246,8 +283,7 @@ final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
     }
 
     func scan() throws {
-        scanSession?.stop()
-        scanSession = try sdk.scan(model: .mentraLive, timeout: 10) { [weak self] devices in
+        try sdk.scan(model: .mentraLive, timeout: 10) { [weak self] devices in
             self?.renderDevicePicker(devices) { device in
                 self?.selectedDevice = device
             }
@@ -261,13 +297,16 @@ final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
 
     func refreshStatus() {
         sdk.requestVersionInfo()
-        let status = sdk.glassesStatus
-        print("Connected to \(status.deviceModel), battery=\(status.batteryLevel)%")
+        let glasses = sdk.glasses
+        if let device = glasses.device {
+            let battery = glasses.battery?.level.map(String.init) ?? "unknown"
+            print("Connected to \(device.deviceModel?.deviceType ?? "glasses"), battery=\(battery)%")
+        }
     }
 
-    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateGlassesStatus status: GlassesStatusUpdate) {
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateGlasses glasses: GlassesRuntimeState) {
         // Keep app UI derived from SDK status.
-        print("Glasses status changed: \(status)")
+        print("Glasses changed: \(glasses)")
     }
 
     private func renderDevicePicker(_ devices: [Device], onSelect: @escaping (Device) -> Void) {
