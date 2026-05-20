@@ -11,6 +11,7 @@ class CrustModule extends NativeModule<CrustModuleEvents> {
     return "Hello world! 👋"
   }
   showAVRoutePicker(_tintColor?: string | null) {}
+  async setDeferredSystemGestures(_edges: string[]): Promise<void> {}
   async setNotificationConfig(_enabled: boolean, _blocklist: string[]): Promise<void> {}
   async getInstalledApps() {
     return []

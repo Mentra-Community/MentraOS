@@ -119,6 +119,12 @@ class CrustModule : Module() {
       // iOS-only; Android uses system Bluetooth settings / Crust where appropriate.
     }
 
+    AsyncFunction("setDeferredSystemGestures") { _: List<String> ->
+      // iOS-only: maps to preferredScreenEdgesDeferringSystemGestures.
+      // Android has no equivalent — system gestures are user-configurable
+      // at the OS level, not per-app.
+    }
+
     // MARK: - MentraOS Notification Commands
 
     AsyncFunction("setNotificationConfig") { enabled: Boolean, blocklist: List<String> ->

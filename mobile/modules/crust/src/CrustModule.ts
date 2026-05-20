@@ -8,6 +8,19 @@ declare class CrustModule extends NativeModule<CrustModuleEvents> {
   setValueAsync(value: string): Promise<void>
   showAVRoutePicker(tintColor?: string | null): void
 
+  /**
+   * iOS: configure `preferredScreenEdgesDeferringSystemGestures`. When an
+   * edge is deferred, the first swipe across that edge is consumed by the
+   * app and the system gesture (Control Center, Notification Center, Home
+   * indicator) only fires on a second swipe — i.e. a two-swipe-to-exit UX.
+   *
+   * Pass `[]` to restore default behavior. Android: no-op (Android has no
+   * per-app equivalent; system gestures are configured at the OS level).
+   */
+  setDeferredSystemGestures(
+    edges: Array<"top" | "bottom" | "left" | "right" | "all">,
+  ): Promise<void>
+
   // MentraOS Notification Commands
   setNotificationConfig(enabled: boolean, blocklist: string[]): Promise<void>
   getInstalledApps(): Promise<InstalledApp[]>

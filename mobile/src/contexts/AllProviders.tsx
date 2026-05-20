@@ -185,6 +185,7 @@ export const AllProviders = withWrappers(
         gestureEnabled: forceGestureEnabled || !preventBack,
         gestureDirection: "horizontal" as const,
         animation: convertToNativeAnimation(animation) as any,
+        autoHideHomeIndicator: false,
       }),
       [preventBack, forceGestureEnabled, animation],
     )
