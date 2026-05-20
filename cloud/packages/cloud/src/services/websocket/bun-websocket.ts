@@ -30,6 +30,7 @@ import { isShuttingDown } from "../shutdown";
 import { metricsService } from "../metrics";
 import { PosthogService } from "../logging/posthog.service";
 import UserSession from "../session/UserSession";
+import { parseLegacySessionId } from "./legacy-session-id";
 import {
   buildAppWsCloseTelemetry,
   cascadeDiagnostics,
@@ -1032,27 +1033,22 @@ function isV3Sdk(version?: string): boolean {
 }
 
 function parsePackageNameFromLegacySessionId(sessionId?: string): string | undefined {
-  if (!sessionId) {
-    return undefined;
-  }
-
-  const separator = sessionId.indexOf("-");
-  if (separator === -1 || separator === sessionId.length - 1) {
-    return undefined;
-  }
-
-  return sessionId.slice(separator + 1);
+  return parseLegacySessionId(sessionId, isActiveUserId)?.packageName;
 }
 
 function parseUserIdFromLegacySessionId(sessionId?: string): string | undefined {
-  if (!sessionId) {
-    return undefined;
-  }
-
-  const separator = sessionId.indexOf("-");
-  if (separator <= 0) {
-    return undefined;
-  }
-
-  return sessionId.slice(0, separator);
+  return parseLegacySessionId(sessionId, isActiveUserId)?.userId;
 }
+
+function isActiveUserId(userId: string): boolean {
+  return UserSession.getById(userId) !== undefined;
+}
+
+// Exported for integration tests only. Verifies the production wiring of the
+// parser against the live UserSession.getById lookup. Not part of the module's
+// public API.
+/** @internal */
+export const __forTesting = {
+  parseUserIdFromLegacySessionId,
+  parsePackageNameFromLegacySessionId,
+};
