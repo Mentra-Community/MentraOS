@@ -5,7 +5,7 @@
     "": {
       "name": "mentra-bluetooth-sdk-example",
       "dependencies": {
-        "@mentra/bluetooth-sdk": "0.1.5",
+        "@mentra/bluetooth-sdk": "0.1.6",
         "expo": "~55.0.24",
         "expo-audio": "~55.0.14",
         "expo-build-properties": "~55.0.14",
@@ -298,7 +298,7 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@mentra/bluetooth-sdk": ["@mentra/bluetooth-sdk@0.1.5", "", { "peerDependencies": { "@expo/config-plugins": ">=8.0.0", "@types/react": ">=18.0.0", "expo": ">=49.0.0", "react": ">=18.0.0", "react-native": ">=0.72.0" } }, "sha512-hQzvYISHxvVdsjDeng939ODyxSZsGujcf2EA/myOR94Aw0yaJVPwOyxt4FOxxzgFENDeqmGdVpF/yptgp3Nrbw=="],
+    "@mentra/bluetooth-sdk": ["@mentra/bluetooth-sdk@0.1.6", "", { "peerDependencies": { "@expo/config-plugins": ">=8.0.0", "@types/react": ">=18.0.0", "expo": ">=49.0.0", "react": ">=18.0.0", "react-native": ">=0.72.0" } }, "sha512-fCko7p+sW5K85YZxeAaZM5+lYGpJETKXa8O1Sn68q81Pxckm6vYmyo/6PQIBMz9Bop2lIOHjO1fbAIc2xdAWWg=="],
 
     "@react-native/assets-registry": ["@react-native/assets-registry@0.83.6", "", {}, "sha512-iljb4ue1yWJ3EhySz7EjV6CzSVrI2uNtR8BI2jzP5+QS5E4Cl3fdIJRmVwDEx1pu8uE97PGEusGRHnoaZ9Q3jg=="],
 

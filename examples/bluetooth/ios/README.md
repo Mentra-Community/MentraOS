@@ -14,10 +14,10 @@ This example installs the SDK as the `MentraBluetoothSDK` CocoaPod and is intend
 
 ## SDK Version
 
-The Podfile defaults to SDK version `0.1.5`:
+The Podfile defaults to SDK version `0.1.6`:
 
 ```ruby
-mentra_sdk_version = ENV['MENTRA_BLUETOOTH_SDK_VERSION'] || '0.1.5'
+mentra_sdk_version = ENV['MENTRA_BLUETOOTH_SDK_VERSION'] || '0.1.6'
 ```
 
 Use the latest SDK version published by Mentra:
