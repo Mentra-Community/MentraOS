@@ -646,6 +646,7 @@ struct GalleryModeChip: View {
                 .foregroundColor(active ? AppColor.greenInk : AppColor.muted)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
+                .frame(minHeight: 36)
                 .background(active ? AppColor.greenAccent.opacity(0.16) : AppColor.ink.opacity(0.04))
                 .overlay(Capsule().stroke(active ? AppColor.greenAccent.opacity(0.32) : AppColor.ink.opacity(0.05), lineWidth: 1))
                 .clipShape(Capsule())
@@ -664,10 +665,11 @@ struct HotspotActionChip: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 10, weight: .bold))
+                .font(.system(size: 11, weight: .bold))
                 .foregroundColor(enabled ? AppColor.greenDeep : AppColor.muted)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 6)
+                .frame(minHeight: 32)
                 .background(enabled ? AppColor.greenAccent.opacity(0.14) : AppColor.ink.opacity(0.04))
                 .clipShape(Capsule())
         }
@@ -720,6 +722,7 @@ struct LedColorChip: View {
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 6)
             .padding(.vertical, 7)
+            .frame(minHeight: 34)
             .background(active ? Color.white : AppColor.ink.opacity(0.04))
             .overlay(Capsule().stroke(ledChipBorderColor(colorName, active: active), lineWidth: 1))
             .clipShape(Capsule())

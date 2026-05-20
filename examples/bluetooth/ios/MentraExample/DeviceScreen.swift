@@ -367,11 +367,12 @@ struct ScanModelChip: View {
     var body: some View {
         Button(action: action) {
             Text(deviceModelLabel(model))
-                .font(.system(size: 12, weight: .bold))
+                .font(.system(size: 13, weight: .bold))
                 .foregroundColor(active ? AppColor.greenInk : AppColor.muted)
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.vertical, 9)
+                .frame(minHeight: 40)
                 .background(active ? AppColor.greenPrimary.opacity(0.10) : Color.white.opacity(0.72))
                 .overlay(
                     Capsule()
