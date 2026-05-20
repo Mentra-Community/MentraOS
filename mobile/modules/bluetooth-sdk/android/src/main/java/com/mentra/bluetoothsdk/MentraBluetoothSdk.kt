@@ -72,10 +72,10 @@ class MentraBluetoothSdk private constructor(
         getState().scan
 
     internal fun getRawGlassesStatus(): GlassesStatus =
-        GlassesStatus.fromMap(DeviceStore.store.getCategory("glasses"))
+        GlassesStatus.fromStoreMap(DeviceStore.store.getCategory("glasses"))
 
     internal fun getRawBluetoothStatus(): BluetoothStatus =
-        BluetoothStatus.fromMap(DeviceStore.store.getCategory(ObservableStore.BLUETOOTH_CATEGORY))
+        BluetoothStatus.fromStoreMap(DeviceStore.store.getCategory(ObservableStore.BLUETOOTH_CATEGORY))
 
     fun getDefaultDevice(): Device? = currentDefaultDevice()
 
