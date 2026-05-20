@@ -55,7 +55,10 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
      * Handle take photo command
      */
     private boolean handleTakePhoto(JSONObject data) {
-        Log.d(TAG, "Handling take photo command with data: " + data.toString());
+        String requestIdForLog = data.optString("requestId", "");
+        // Do not log the raw `data` payload — it carries the user's authToken.
+        Log.i(TAG, "PHOTO PIPELINE [ASG 2/3] PhotoCommandHandler.handleTakePhoto requestId="
+                + requestIdForLog);
         try {
             // Resolve package name using base class functionality
             String packageName = resolvePackageName(data);
@@ -76,9 +79,18 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             String compress = data.optString("compress", "none"); // Default to none (no compression)
             boolean flash = data.optBoolean("flash", true);
             boolean sound = data.optBoolean("sound", true);
+            Long exposureTimeNs = PhotoExposureTimeNs.parse(data);
+            if (exposureTimeNs != null) {
+                Log.i(TAG, "Mentra Live using manual exposure time for take_photo request "
+                        + requestId + ": " + exposureTimeNs + " ns");
+            }
 
-            // Generate file path with capture directory using base class functionality
-            String photoFilePath = generateCaptureFilePath(packageName, "IMG_", ".jpg");
+            // Route SDK no-save captures into the sync-hidden _sdk_pending area so an in-flight
+            // upload cannot be picked up by gallery_status or AsgCameraServer between capture and
+            // post-upload delete. Permanent (save=true) captures keep their original layout.
+            String photoFilePath = save
+                    ? generateCaptureFilePath(packageName, "IMG_", ".jpg")
+                    : generateTransientCaptureFilePath(packageName, "IMG_", ".jpg");
             if (photoFilePath == null) {
                 logCommandResult("take_photo", false, "Failed to generate file path");
                 return false;
@@ -129,18 +141,23 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
                 return false;
             }
 
-            // CAPTURE CHECK: Reject if another photo capture is already in progress
-            if (captureService.isCapturingPhoto()) {
-                Log.w(TAG, "🚫 Photo request rejected - capture already in progress");
-                logCommandResult("take_photo", false, "Photo capture in progress - request rejected");
-                captureService.sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another photo capture is in progress");
+            // PHOTO JOB CHECK: Reject if any photo job (capture or upload/BLE-handoff) is in flight
+            if (captureService.isPhotoJobInFlight()) {
+                Log.w(TAG, "🚫 Photo request rejected - photo job already in flight");
+                logCommandResult("take_photo", false, "Photo job in flight - request rejected");
+                captureService.sendPhotoErrorResponse(requestId, "CAMERA_BUSY", "Another photo job is in progress");
                 return false;
             }
 
             // Process photo capture based on transfer method
+            Log.i(TAG, "PHOTO PIPELINE [ASG 3/3] Starting capture requestId=" + requestId
+                    + " transferMethod=" + transferMethod + " size=" + size);
             boolean success = processPhotoCapture(captureService, photoFilePath, requestId, webhookUrl, authToken,
-                                                 bleImgId, save, size, transferMethod, flash, sound, compress);
+                                                 bleImgId, save, size, transferMethod, flash, sound, compress, exposureTimeNs);
             logCommandResult("take_photo", success, success ? null : "Photo capture failed");
+            if (success) {
+                Log.i(TAG, "PHOTO PIPELINE [ASG 3/3] Capture accepted requestId=" + requestId);
+            }
             return success;
 
         } catch (Exception e) {
@@ -169,21 +186,22 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
      */
     private boolean processPhotoCapture(MediaCaptureService captureService, String photoFilePath,
                                       String requestId, String webhookUrl, String authToken, String bleImgId,
-                                      boolean save, String size, String transferMethod, boolean flash, boolean sound, String compress) {
-        Log.d(TAG, "789789Processing photo capture with transfer method: " + transferMethod);
+                                      boolean save, String size, String transferMethod, boolean flash, boolean sound, String compress,
+                                      Long exposureTimeNs) {
+        Log.d(TAG, "Processing photo capture with transfer method: " + transferMethod);
         switch (transferMethod) {
             case "ble":
-                captureService.takePhotoForBleTransfer(photoFilePath, requestId, bleImgId, save, size, flash, sound);
+                captureService.takePhotoForBleTransfer(photoFilePath, requestId, bleImgId, save, size, flash, sound, exposureTimeNs);
                 return true;
             case "auto":
                 if (bleImgId.isEmpty()) {
                     Log.e(TAG, "Auto mode requires bleImgId for fallback");
                     return false;
                 }
-                captureService.takePhotoAutoTransfer(photoFilePath, requestId, webhookUrl, authToken, bleImgId, save, size, flash, sound, compress);
+                captureService.takePhotoAutoTransfer(photoFilePath, requestId, webhookUrl, authToken, bleImgId, save, size, flash, sound, compress, exposureTimeNs);
                 return true;
             default:
-                captureService.takePhotoAndUpload(photoFilePath, requestId, webhookUrl, authToken, save, size, flash, sound, compress);
+                captureService.takePhotoAndUpload(photoFilePath, requestId, webhookUrl, authToken, save, size, flash, sound, compress, exposureTimeNs);
                 return true;
         }
     }

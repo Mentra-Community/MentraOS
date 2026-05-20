@@ -20,7 +20,7 @@ protocol SGCManager {
 
     func requestPhoto(
         _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, flash: Bool, sound: Bool
+        compress: String?, flash: Bool, sound: Bool, exposureTimeNs: Double?
     )
     func startStream(_ message: [String: Any])
     func stopStream()

@@ -21,7 +21,8 @@ abstract class SGCManager {
             authToken: String?,
             compress: String?,
             flash: Boolean,
-            sound: Boolean
+            sound: Boolean,
+            exposureTimeNs: Long?,
     )
     abstract fun startStream(message: MutableMap<String, Any>)
     abstract fun stopStream()

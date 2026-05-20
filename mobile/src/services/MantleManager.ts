@@ -44,6 +44,8 @@ import {useDebugStore} from "@/stores/debug"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
 import {logE2EMetric} from "@/utils/e2eMetrics"
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
+import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
+import mentraAuth from "@/utils/auth/authClient"
 
 const LOCATION_TASK_NAME = "handleLocationUpdates"
 
@@ -225,6 +227,11 @@ class MantleManager {
       await useSettingsStore.getState().setManyLocally(loadedSettings) // write settings to local storage
     } else {
       console.error("MANTLE: No settings received from server")
+    }
+
+    const userRes = await mentraAuth.getUser()
+    if (userRes.is_ok()) {
+      await ensureDevModeForUser(userRes.value.email)
     }
 
     // Send device timezone to cloud (used for calendar/time display)

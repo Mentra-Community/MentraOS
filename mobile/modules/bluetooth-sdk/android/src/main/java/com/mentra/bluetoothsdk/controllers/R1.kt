@@ -863,7 +863,8 @@ class R1 : ControllerManager() {
     override fun sendJson(jsonOriginal: Map<String, Any>, wakeUp: Boolean, requireAck: Boolean) {}
     override fun requestPhoto(
         requestId: String, appId: String, size: String?, webhookUrl: String?,
-        authToken: String?, compress: String?, flash: Boolean, sound: Boolean
+        authToken: String?, compress: String?, flash: Boolean, sound: Boolean,
+        exposureTimeNs: Long?,
     ) {}
     override fun startVideoRecording(requestId: String, save: Boolean, flash: Boolean, sound: Boolean) {}
     override fun stopVideoRecording(requestId: String) {}

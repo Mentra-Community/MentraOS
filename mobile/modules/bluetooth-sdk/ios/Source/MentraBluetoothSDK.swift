@@ -760,6 +760,8 @@ public struct PhotoRequest {
     public let compress: PhotoCompression?
     public let flash: Bool
     public let sound: Bool
+    /// Sensor exposure time for this capture only (ns), or nil for auto exposure
+    public let exposureTimeNs: Double?
 
     public init(
         requestId: String,
@@ -769,7 +771,8 @@ public struct PhotoRequest {
         authToken: String? = nil,
         compress: PhotoCompression? = nil,
         flash: Bool,
-        sound: Bool
+        sound: Bool,
+        exposureTimeNs: Double? = nil
     ) {
         self.requestId = requestId
         self.appId = appId
@@ -779,6 +782,7 @@ public struct PhotoRequest {
         self.compress = compress
         self.flash = flash
         self.sound = sound
+        self.exposureTimeNs = exposureTimeNs
     }
 }
 
@@ -2152,6 +2156,9 @@ public final class MentraBluetoothSDK {
     }
 
     public func requestPhoto(_ request: PhotoRequest) {
+        Bridge.log(
+            "NATIVE: PHOTO PIPELINE [3b/6] MentraBluetoothSdk.requestPhoto requestId=\(request.requestId) appId=\(request.appId)"
+        )
         CoreManager.shared.photoRequest(
             request.requestId,
             request.appId,
@@ -2160,7 +2167,8 @@ public final class MentraBluetoothSDK {
             request.authToken,
             request.compress?.rawValue,
             request.flash,
-            request.sound
+            request.sound,
+            exposureTimeNs: request.exposureTimeNs
         )
     }
 
