@@ -119,18 +119,17 @@ struct SystemScreen: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Wi-Fi").font(.system(size: 17, weight: .bold)).tracking(-0.17).foregroundColor(AppColor.ink)
-                    Text("\(allRows.count) networks nearby").font(.system(size: 12, weight: .medium)).foregroundColor(AppColor.muted)
+                    Text("\(allRows.count) networks nearby").font(.system(size: 10, weight: .medium)).foregroundColor(AppColor.muted)
                 }
                 Spacer()
                 Button {
                     model.requestWifiScan()
                 } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: "arrow.clockwise").font(.system(size: 13, weight: .heavy)).foregroundColor(AppColor.ink)
-                        Text("Scan").font(.system(size: 13, weight: .semibold)).foregroundColor(AppColor.ink)
+                        Image(systemName: "arrow.clockwise").font(.system(size: 10, weight: .heavy)).foregroundColor(AppColor.ink)
+                        Text("Scan").font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.ink)
                     }
-                    .frame(minHeight: 44)
-                    .padding(.horizontal, 14).padding(.vertical, 9)
+                    .padding(.horizontal, 12).padding(.vertical, 7)
                     .background(AppColor.ink.opacity(0.05)).clipShape(Capsule())
                 }
                 .disabled(!model.glassesConnected)
@@ -301,7 +300,7 @@ struct SystemScreen: View {
                             .frame(width: 38, height: 22)
                         Circle().fill(model.hotspotEnabled ? AppColor.greenAccent : AppColor.mutedSoft).frame(width: 18, height: 18).padding(2)
                     }
-                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .disabled(!model.glassesConnected)
@@ -380,11 +379,10 @@ struct SystemScreen: View {
                     .minimumScaleFactor(0.8)
                 Button(action: model.openBluetoothSettings) {
                     Text("Bluetooth settings")
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundColor(AppColor.greenDeep)
-                        .frame(minHeight: 40)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
                         .background(AppColor.greenAccent.opacity(0.14))
                         .clipShape(Capsule())
                 }
@@ -599,17 +597,15 @@ struct NetworkRowV: View {
                 }
                 if let trailingTitle {
                     Text(trailingTitle)
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.system(size: 11, weight: .bold))
                         .foregroundColor(trailingColor)
-                        .frame(minWidth: 64, minHeight: 40)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
                         .background(trailingColor.opacity(0.10))
                         .clipShape(Capsule())
                 }
                 if locked { Image(systemName: "lock.fill").font(.system(size: 11)).foregroundColor(AppColor.ink) }
             }
-            .frame(minHeight: 48)
             .padding(.vertical, 14)
             if !last { Rectangle().fill(AppColor.ink.opacity(0.04)).frame(height: 1) }
         }
@@ -631,8 +627,7 @@ struct InputChip: View {
                 .minimumScaleFactor(0.86)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(minHeight: 40)
-        .padding(.horizontal, 10).padding(.vertical, 9)
+        .padding(.horizontal, 10).padding(.vertical, 7)
         .background(AppColor.ink.opacity(0.04))
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
@@ -647,11 +642,10 @@ struct GalleryModeChip: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 13, weight: active ? .bold : .medium))
+                .font(.system(size: 12, weight: active ? .bold : .medium))
                 .foregroundColor(active ? AppColor.greenInk : AppColor.muted)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .frame(minHeight: 44)
                 .background(active ? AppColor.greenAccent.opacity(0.16) : AppColor.ink.opacity(0.04))
                 .overlay(Capsule().stroke(active ? AppColor.greenAccent.opacity(0.32) : AppColor.ink.opacity(0.05), lineWidth: 1))
                 .clipShape(Capsule())
@@ -670,11 +664,10 @@ struct HotspotActionChip: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 12, weight: .bold))
+                .font(.system(size: 10, weight: .bold))
                 .foregroundColor(enabled ? AppColor.greenDeep : AppColor.muted)
-                .frame(minWidth: 72, minHeight: 40)
-                .padding(.horizontal, 11)
-                .padding(.vertical, 8)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
                 .background(enabled ? AppColor.greenAccent.opacity(0.14) : AppColor.ink.opacity(0.04))
                 .clipShape(Capsule())
         }
@@ -695,7 +688,7 @@ struct LedTab: View {
                 Image(systemName: systemImage).font(.system(size: 16, weight: active ? .bold : .medium)).foregroundColor(active ? AppColor.ink : AppColor.muted)
                 Text(label).font(.system(size: 12, weight: active ? .semibold : .medium)).foregroundColor(active ? AppColor.ink : AppColor.muted)
             }
-            .frame(maxWidth: .infinity, minHeight: 44).padding(.vertical, 10)
+            .frame(maxWidth: .infinity).padding(.vertical, 8)
             .background(active ? Color.white : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
@@ -712,20 +705,21 @@ struct LedColorChip: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 5) {
+            HStack(spacing: 4) {
                 Circle()
                     .fill(ledSwatchColor(colorName))
-                    .frame(width: 9, height: 9)
+                    .frame(width: 8, height: 8)
                     .overlay(Circle().stroke(AppColor.ink.opacity(colorName == "white" ? 0.16 : 0), lineWidth: 1))
                 Text(colorName.capitalized)
-                    .font(.system(size: 11, weight: active ? .semibold : .medium))
+                    .font(.system(size: 10, weight: active ? .semibold : .medium))
                     .foregroundColor(active ? AppColor.ink : AppColor.muted)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                    .allowsTightening(true)
             }
             .frame(maxWidth: .infinity)
-            .frame(minHeight: 40)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 9)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 7)
             .background(active ? Color.white : AppColor.ink.opacity(0.04))
             .overlay(Capsule().stroke(ledChipBorderColor(colorName, active: active), lineWidth: 1))
             .clipShape(Capsule())

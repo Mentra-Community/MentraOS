@@ -220,12 +220,11 @@ struct StreamScreen: View {
                         UIPasteboard.general.string = streamSdkCall
                     } label: {
                         HStack(spacing: 4) {
-                            Image(systemName: "doc.on.doc").font(.system(size: 11)).foregroundColor(AppColor.consoleText)
-                            Text("Copy").font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.consoleText)
+                            Image(systemName: "doc.on.doc").font(.system(size: 9)).foregroundColor(AppColor.consoleText)
+                            Text("Copy").font(.system(size: 10, weight: .semibold)).foregroundColor(AppColor.consoleText)
                         }
-                        .frame(minHeight: 36)
-                        .padding(.horizontal, 10).padding(.vertical, 7)
-                        .background(Color.white.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius: 9))
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Color.white.opacity(0.06)).clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                     .buttonStyle(.plain)
                 }
@@ -263,12 +262,11 @@ struct StreamScreen: View {
                 }
             )) {
                 Text("Use cloud server")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(AppColor.ink)
             }
             .toggleStyle(SwitchToggleStyle(tint: AppColor.greenAccent))
             .padding(.horizontal, 12)
-            .frame(minHeight: 44)
             .padding(.vertical, 10)
             .background(AppColor.ink.opacity(0.04))
             .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -365,10 +363,9 @@ struct ProtocolTab: View {
             action()
         } label: {
             Text(title)
-                .font(.system(size: 13, weight: active ? .bold : .medium))
+                .font(.system(size: 12, weight: active ? .bold : .medium))
                 .foregroundColor(active ? AppColor.ink : AppColor.muted)
                 .frame(maxWidth: .infinity)
-                .frame(minHeight: 44)
                 .padding(.vertical, 10)
                 .background(active ? Color.white : Color.clear)
                 .clipShape(RoundedRectangle(cornerRadius: 10))

@@ -367,12 +367,11 @@ struct ScanModelChip: View {
     var body: some View {
         Button(action: action) {
             Text(deviceModelLabel(model))
-                .font(.system(size: 13, weight: .bold))
+                .font(.system(size: 12, weight: .bold))
                 .foregroundColor(active ? AppColor.greenInk : AppColor.muted)
                 .frame(maxWidth: .infinity)
-                .frame(minHeight: 44)
                 .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+                .padding(.vertical, 8)
                 .background(active ? AppColor.greenPrimary.opacity(0.10) : Color.white.opacity(0.72))
                 .overlay(
                     Capsule()
@@ -408,17 +407,16 @@ struct TargetDeviceRow: View {
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(name)
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundColor(AppColor.inkAlt)
                     Text(detail)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundColor(AppColor.muted)
                 }
                 Spacer()
             }
-            .frame(minHeight: 48)
             .padding(.horizontal, 10)
-            .padding(.vertical, 9)
+            .padding(.vertical, 8)
             .background(selected ? AppColor.greenPrimary.opacity(0.08) : Color.white.opacity(0.7))
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(selected ? AppColor.greenPrimary.opacity(0.18) : Color.white.opacity(0.7), lineWidth: 1))
             .clipShape(RoundedRectangle(cornerRadius: 14))
@@ -482,9 +480,9 @@ struct DarkActionButton: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: icon).foregroundColor(.white).font(.system(size: 14, weight: .bold))
-                Text(title).foregroundColor(.white).font(.system(size: 14, weight: .semibold))
+                Text(title).foregroundColor(.white).font(.system(size: 13, weight: .semibold))
             }
-            .frame(maxWidth: .infinity, minHeight: 48).padding(.vertical, 14)
+            .frame(maxWidth: .infinity).padding(.vertical, 14)
             .background(bg).clipShape(RoundedRectangle(cornerRadius: 14))
         }
         .disabled(!enabled)
@@ -502,9 +500,9 @@ struct LightActionButton: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: icon).foregroundColor(AppColor.inkAlt).font(.system(size: 14, weight: .bold))
-                Text(title).foregroundColor(AppColor.inkAlt).font(.system(size: 14, weight: .semibold))
+                Text(title).foregroundColor(AppColor.inkAlt).font(.system(size: 13, weight: .semibold))
             }
-            .frame(maxWidth: .infinity, minHeight: 48).padding(.vertical, 14)
+            .frame(maxWidth: .infinity).padding(.vertical, 14)
             .background(Color.white)
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color(hex: 0xDBDBDB), lineWidth: 1))
             .clipShape(RoundedRectangle(cornerRadius: 14))

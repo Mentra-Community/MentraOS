@@ -501,6 +501,7 @@ const styles = StyleSheet.create({
   scanModelChip: {
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
     borderRadius: 999,
     borderWidth: 1,
     paddingHorizontal: 12,
