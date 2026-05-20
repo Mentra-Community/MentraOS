@@ -13,12 +13,7 @@ import {useRegisterCapsule} from "@/stores/capsule"
 import {useStressTestStore} from "@/stores/stressTest"
 import {storage} from "@/utils/storage/storage"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
-import {
-  appRegistry,
-  buildMentraUiShim,
-  buildMiniappGlobalsScript,
-  devServerBridge,
-} from "@mentra/island"
+import {appRegistry, buildMentraUiShim, buildMiniappGlobalsScript, devServerBridge} from "@mentra/island"
 
 /**
  * Mount destination for a dev or installed local miniapp.
@@ -66,9 +61,9 @@ export default function LocalMiniAppPage() {
   // Phase machine for the pre-WebView affordance. "ready" means we have a
   // uiUri and the WebView is mounted; the loading card is rendered for
   // every phase prior so the user always sees something happening.
-  const [phase, setPhase] = useState<
-    "installing" | "spawning" | "opening" | "ready" | "error"
-  >(devUrl || version ? "installing" : "error")
+  const [phase, setPhase] = useState<"installing" | "spawning" | "opening" | "ready" | "error">(
+    devUrl || version ? "installing" : "error",
+  )
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   useEffect(() => {
@@ -98,10 +93,7 @@ export default function LocalMiniAppPage() {
           return
         }
         const versionOverride = `dev-${Date.now()}`
-        const installRes = await appRegistry.installFromUrl(
-          `${sidecarBase}/__mentra_dev/bundle.zip`,
-          {versionOverride},
-        )
+        const installRes = await appRegistry.installFromUrl(`${sidecarBase}/__mentra_dev/bundle.zip`, {versionOverride})
         if (installRes.is_error()) {
           fail(`dev snapshot failed: ${installRes.error?.message ?? installRes.error}`)
           return
@@ -175,7 +167,7 @@ export default function LocalMiniAppPage() {
       if (!cancelled) setPhase("ready")
     }
 
-    void launch()
+    launch()
 
     return () => {
       cancelled = true
@@ -291,30 +283,33 @@ export default function LocalMiniAppPage() {
   }, [packageName, devUrl])
 
   if (!packageName) {
-    return <Text>Missing required parameters</Text>
+    return <Text text="Missing required parameters" />
   }
 
   // Loading affordance: the WebView only mounts once entry resolution +
   // JSContext spawn complete. The splash covers the early frames where
   // the WebView is mounted but hasn't painted yet.
   if (phase !== "ready" || !uiUri) {
-    const label =
-      phase === "installing"
-        ? "Downloading…"
-        : phase === "spawning"
-          ? "Starting…"
-          : phase === "opening"
-            ? "Opening…"
-            : "Couldn't open"
+    let label
+    switch (phase) {
+      case "installing":
+        label = "Downloading..."
+        break
+      case "spawning":
+        label = "Starting…"
+        break
+      case "opening":
+        label = "Opening…"
+        break
+      default:
+        label = "Couldn't open"
+        break
+    }
     return (
-      <View className="flex-1 items-center justify-center px-8">
+      <View className="flex-1 items-center justify-center px-8 bg-background">
         <View className="items-center gap-4">
           {iconUrl ? (
-            <Image
-              source={{uri: iconUrl}}
-              style={{width: 72, height: 72, borderRadius: 16}}
-              resizeMode="cover"
-            />
+            <Image source={{uri: iconUrl}} style={{width: 72, height: 72, borderRadius: 16}} resizeMode="cover" />
           ) : (
             <View
               style={{
@@ -325,9 +320,7 @@ export default function LocalMiniAppPage() {
               }}
             />
           )}
-          {appName ? (
-            <Text className="text-base font-semibold text-center" text={appName} />
-          ) : null}
+          {appName ? <Text className="text-base font-semibold text-center" text={appName} /> : null}
           {phase === "error" ? (
             <Text
               className="text-[13px] text-center text-red-500 max-w-[280px]"
@@ -361,10 +354,7 @@ export default function LocalMiniAppPage() {
   const injectedJS = `${globalsScript}\n${uiShim}`
 
   return (
-    <View
-      ref={viewShotRef}
-      className="flex-1"
-      style={{backgroundColor: theme.colors.background}}>
+    <View ref={viewShotRef} className="flex-1 bg-background">
       <WebView
         ref={handleRef}
         source={{uri: uiUri}}
@@ -401,11 +391,7 @@ export default function LocalMiniAppPage() {
         webviewDebuggingEnabled={__DEV__}
         style={{flex: 1, backgroundColor: theme.colors.background}}
       />
-      <MiniappSplash
-        iconUrl={iconUrl}
-        bgColor={theme.colors.background}
-        isLoaded={isLoaded}
-      />
+      <MiniappSplash iconUrl={iconUrl} bgColor={theme.colors.background} isLoaded={isLoaded} />
     </View>
   )
 }
