@@ -215,7 +215,7 @@ object STTTools {
                             if (total > 0) ((read * 99L) / total).coerceIn(0L, 99L).toInt() else 0
                     Bridge.sendExtractionProgress(pct, read, total)
                 }.use { progress ->
-                BufferedInputStream(progress).use { bis ->
+                BufferedInputStream(progress, 65536).use { bis ->
                     Bridge.log("Opening bz2 decompression stream...")
                     BZip2CompressorInputStream(bis).use { bzIn ->
                         Bridge.log("Opening tar archive stream...")
@@ -226,31 +226,25 @@ object STTTools {
                             while (entry != null) {
                                 try {
                                     val outputFile = File(destDir, entry.name)
-                                    Bridge.log(
-                                            "Processing entry: ${entry.name} (${entry.size} bytes, isDir=${entry.isDirectory})"
-                                    )
 
                                     if (entry.isDirectory) {
-                                        // Create directory
                                         if (!outputFile.exists()) {
                                             outputFile.mkdirs()
                                         }
                                     } else {
-                                        // Create parent directories if needed
                                         outputFile.parentFile?.let { parent ->
                                             if (!parent.exists()) {
                                                 parent.mkdirs()
                                             }
                                         }
 
-                                        // Extract file with buffered output for better performance
                                         FileOutputStream(outputFile).use { fos ->
-                                            BufferedOutputStream(fos).use { bos ->
-                                                val buffer =
-                                                        ByteArray(
-                                                                4096
-                                                        ) // Use 4KB buffer like original
-                                                // implementation
+                                            BufferedOutputStream(fos, 65536).use { bos ->
+                                                // 64KB buffer matches iOS path and cuts JNI/stream
+                                                // overhead ~16x vs. the prior 4KB. The per-read
+                                                // progress hook is already 200ms-throttled by
+                                                // ProgressInputStream, so we don't log per-chunk.
+                                                val buffer = ByteArray(65536)
                                                 var len: Int
                                                 var fileBytes = 0L
                                                 val fileSizeMB = entry.size / 1024 / 1024
@@ -261,16 +255,13 @@ object STTTools {
                                                     fileBytes += len
                                                     bytesExtracted += len
 
-                                                    // For large files (>10MB), log progress every
-                                                    // 10MB
                                                     if (fileSizeMB > 10) {
                                                         val currentMB = fileBytes / 1024 / 1024
                                                         if (currentMB >= lastProgressMB + 10) {
                                                             lastProgressMB = currentMB
                                                             val percent =
                                                                     if (entry.size > 0)
-                                                                            (fileBytes * 100 /
-                                                                                    entry.size)
+                                                                            (fileBytes * 100 / entry.size)
                                                                     else 0
                                                             Bridge.log(
                                                                     "  Extracting ${entry.name}: ${currentMB}MB / ${fileSizeMB}MB (${percent}%)"
@@ -280,21 +271,11 @@ object STTTools {
                                                 }
 
                                                 fileCount++
-
-                                                // Log progress every file for debugging
-                                                val mbExtracted = bytesExtracted / 1024 / 1024
-                                                Bridge.log(
-                                                        "Extracted file $fileCount (${mbExtracted}MB total) - ${entry.name}"
-                                                )
                                             }
                                         }
                                     }
 
-                                    Bridge.log("Getting next entry...")
                                     entry = tarIn.nextEntry
-                                    Bridge.log(
-                                            "Next entry received: ${entry?.name ?: "null (end of archive)"}"
-                                    )
                                 } catch (e: Exception) {
                                     Bridge.log(
                                             "ERROR extracting entry ${entry?.name}: ${e.javaClass.simpleName}: ${e.message}"

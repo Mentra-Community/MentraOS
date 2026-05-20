@@ -17,18 +17,24 @@ function toGroovyString(value: string): string {
 }
 
 /**
- * Modify settings.gradle to include lc3Lib module
+ * Modify settings.gradle to include lc3Lib and silero modules
  */
 function withSettingsGradleModifications(config: any) {
   return withSettingsGradle(config, (config) => {
     let settingsGradle = config.modResults.contents
+    const bluetoothSdkRoot = getBluetoothSdkRoot()
 
-    // Add lc3Lib module if not present
     if (!settingsGradle.includes("include ':lc3Lib'")) {
-      const bluetoothSdkRoot = getBluetoothSdkRoot()
       settingsGradle += `
   include ':lc3Lib'
   project(':lc3Lib').projectDir = new File(${toGroovyString(bluetoothSdkRoot)}, 'android/lc3Lib')
+  `
+    }
+
+    if (!settingsGradle.includes("include ':silero'")) {
+      settingsGradle += `
+  include ':silero'
+  project(':silero').projectDir = new File(${toGroovyString(bluetoothSdkRoot)}, 'android/silero')
   `
     }
 
