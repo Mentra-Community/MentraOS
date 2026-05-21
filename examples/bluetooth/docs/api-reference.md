@@ -230,7 +230,7 @@ These are the supported React Native app developer entrypoints:
 | Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `cancelConnectionAttempt`, `disconnect`, `forget` |
 | Display | `displayText`, `clearDisplay`, `showDashboard`, `setDashboardPosition`, `setHeadUpAngle`, `setScreenDisabled` |
 | Wi-Fi and hotspot | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
-| Camera and gallery | `requestPhoto`, `queryGalleryStatus`, `setGalleryMode`, `setButtonPhotoSettings`, `setButtonVideoRecordingSettings`, `setButtonCameraLed`, `setButtonMaxRecordingTime`, `setCameraFov`, `startVideoRecording`, `stopVideoRecording` |
+| Camera and gallery | `requestPhoto`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setButtonPhotoSettings`, `setButtonVideoRecordingSettings`, `setButtonCameraLed`, `setButtonMaxRecordingTime`, `setCameraFov`, `startVideoRecording`, `stopVideoRecording` |
 | Streaming | `startStream`, `keepStreamAlive`, `stopStream` |
 | Audio | `setMicState`, `setPreferredMic`, `setOwnAppAudioPlaying`, `getGlassesMediaVolume`, `setGlassesMediaVolume` |
 | LED and version | `rgbLedControl`, `requestVersionInfo` |
@@ -296,7 +296,7 @@ sdk.setAutoBrightness(enabled = true)
 sdk.setDashboardPosition(height = 4, depth = 6)
 sdk.setHeadUpAngle(angleDegrees = 20)
 sdk.setScreenDisabled(false)
-sdk.setGalleryMode(GalleryMode.AUTO)
+sdk.setGalleryModeEnabled(true)
 sdk.setButtonPhotoSettings(size = ButtonPhotoSize.MEDIUM)
 sdk.setButtonVideoRecordingSettings(width = 1280, height = 720, fps = 30)
 sdk.setButtonCameraLed(enabled = true)
@@ -313,7 +313,7 @@ try await sdk.setAutoBrightness(enabled: true)
 try await sdk.setDashboardPosition(height: 4, depth: 6)
 try await sdk.setHeadUpAngle(20)
 try await sdk.setScreenDisabled(false)
-try await sdk.setGalleryMode(.auto)
+try await sdk.setGalleryModeEnabled(true)
 try await sdk.setButtonPhotoSettings(size: .medium)
 try await sdk.setButtonVideoRecordingSettings(width: 1280, height: 720, fps: 30)
 try await sdk.setButtonCameraLed(enabled: true)
@@ -329,8 +329,8 @@ await BluetoothSdk.setAutoBrightness(true);
 await BluetoothSdk.setDashboardPosition(4, 6);
 await BluetoothSdk.setHeadUpAngle(20);
 await BluetoothSdk.setScreenDisabled(false);
-await BluetoothSdk.setGalleryMode('auto');
-await BluetoothSdk.setGalleryMode('manual');
+await BluetoothSdk.setGalleryModeEnabled(true);
+await BluetoothSdk.setGalleryModeEnabled(false);
 await BluetoothSdk.setButtonPhotoSettings('medium');
 await BluetoothSdk.setButtonVideoRecordingSettings(1280, 720, 30);
 await BluetoothSdk.setButtonCameraLed(true);
@@ -338,7 +338,7 @@ await BluetoothSdk.setButtonMaxRecordingTime(3);
 await BluetoothSdk.setCameraFov('wide');
 ```
 
-`setGalleryMode('auto')` lets the glasses button save photos/videos locally. `setGalleryMode('manual')` reports button and touch events to the host app without triggering local gallery capture. Button presses are always reported as SDK events.
+Mentra Live gallery mode controls right-action-button capture. When gallery mode is enabled, a short press takes a photo, a long press starts video recording, and a short press stops the active video recording. `setGalleryModeEnabled(true)` enables local button capture; `setGalleryModeEnabled(false)` reports button and touch events to the host app without triggering local gallery capture while the glasses are connected. Button presses are always reported as SDK events.
 
 ## RGB LED
 
@@ -476,15 +476,15 @@ sdk.requestPhoto(
 React Native:
 
 ```ts
-await BluetoothSdk.requestPhoto(
-  `assistant-${Date.now()}`,
-  'com.example.assistant',
-  'medium',
-  'https://api.example.com/mentra/photo',
-  'optional-token',
-  'medium',
-  true,
-);
+await BluetoothSdk.requestPhoto({
+  requestId: `assistant-${Date.now()}`,
+  appId: 'com.example.assistant',
+  size: 'medium',
+  webhookUrl: 'https://api.example.com/mentra/photo',
+  authToken: 'optional-token',
+  compress: 'medium',
+  sound: true,
+});
 ```
 
 The camera light is always enabled for photo capture and streaming as a privacy indicator.

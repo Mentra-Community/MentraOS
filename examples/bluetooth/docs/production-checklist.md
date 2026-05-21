@@ -21,7 +21,7 @@ Use this checklist before shipping an app with the Mentra Bluetooth SDK.
 - App cleans up SDK listeners/delegates and calls `close()` / `invalidate()` when sessions end.
 - React Native apps remove every SDK event subscription when screens/session owners unmount.
 - App avoids sending rapid display updates without debouncing.
-- App uses typed settings APIs for brightness, dashboard, gallery-button behavior, camera, LED, Wi-Fi, streaming, and microphone settings.
+- App uses typed settings APIs for brightness, dashboard, gallery mode, camera, LED, Wi-Fi, streaming, and microphone settings.
 - Advanced controls are gated behind SDK capability/status checks.
 
 ## Privacy And Compliance
@@ -48,7 +48,7 @@ Use this checklist before shipping an app with the Mentra Bluetooth SDK.
 - Display command test, if shipping display-equipped models such as G2.
 - Camera/gallery/streaming test, if shipping camera-equipped models such as Mentra Live.
 - Speaker playback test, if shipping speaker-equipped models such as Mentra Live.
-- Hardware settings test for brightness/dashboard where supported, save-in-gallery mode, camera options, LED color/pattern, Wi-Fi, and hotspot behavior.
+- Hardware settings test for brightness/dashboard where supported, gallery mode, camera options, LED color/pattern, Wi-Fi, and hotspot behavior.
 - Button/touch event test.
 - Microphone audio/transcription test if enabled.
 - Version/status handling test if enabled.

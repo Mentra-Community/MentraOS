@@ -419,7 +419,7 @@ fun SystemScreen(controller: MentraExampleController) {
             Spacer(Modifier.height(12.dp))
             Text("Save in gallery mode", color = AppColor.ink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             Text(
-                if (state.galleryModeAuto) {
+                if (state.galleryModeEnabled) {
                     "On: the glasses button saves photos/videos locally."
                 } else {
                     "Off: button and touch events are reported to the phone."
@@ -430,8 +430,8 @@ fun SystemScreen(controller: MentraExampleController) {
             )
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                GalleryModeChip("Save media", state.galleryModeAuto, connected) { controller.setGalleryModeAuto(true) }
-                GalleryModeChip("Report events", !state.galleryModeAuto, connected) { controller.setGalleryModeAuto(false) }
+                GalleryModeChip("Save media", state.galleryModeEnabled, connected) { controller.setGalleryModeEnabled(true) }
+                GalleryModeChip("Report events", !state.galleryModeEnabled, connected) { controller.setGalleryModeEnabled(false) }
             }
         }
 

@@ -270,13 +270,13 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         <View style={styles.galleryModeBlock}>
           <Text style={styles.galleryModeTitle}>Save in gallery mode</Text>
           <Text style={styles.galleryModeBody}>
-            {sdk.galleryModeAuto
+            {sdk.galleryModeEnabled
               ? 'On: the glasses button saves photos/videos locally.'
               : 'Off: button and touch events are reported to the phone.'}
           </Text>
           <View style={styles.galleryModeChips}>
-            <GalleryModeChip active={sdk.galleryModeAuto} disabled={!connected} label="Save media" onPress={() => sdk.setGalleryModeAuto(true)} />
-            <GalleryModeChip active={!sdk.galleryModeAuto} disabled={!connected} label="Report events" onPress={() => sdk.setGalleryModeAuto(false)} />
+            <GalleryModeChip active={sdk.galleryModeEnabled} disabled={!connected} label="Save media" onPress={() => sdk.setGalleryModeEnabled(true)} />
+            <GalleryModeChip active={!sdk.galleryModeEnabled} disabled={!connected} label="Report events" onPress={() => sdk.setGalleryModeEnabled(false)} />
           </View>
         </View>
       </LinearGradient>

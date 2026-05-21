@@ -33,7 +33,6 @@ import com.mentra.bluetoothsdk.ButtonPressEvent
 import com.mentra.bluetoothsdk.GlassesBatteryState
 import com.mentra.bluetoothsdk.Device
 import com.mentra.bluetoothsdk.DeviceModel
-import com.mentra.bluetoothsdk.GalleryMode
 import com.mentra.bluetoothsdk.GlassesConnectionState
 import com.mentra.bluetoothsdk.GlassesRuntimeState
 import com.mentra.bluetoothsdk.HotspotErrorEvent
@@ -135,7 +134,7 @@ data class MentraExampleState(
     val selectedDiscoveredDevice: Device? = null,
     val selectedScanModel: DeviceModel = DeviceModel.MENTRA_LIVE,
     val events: List<ExampleEvent> = listOf(exampleEvent("LIVE", "SDK ready. Scan to discover glasses.")),
-    val galleryModeAuto: Boolean = false,
+    val galleryModeEnabled: Boolean = false,
     val galleryServerReachable: Boolean? = null,
     val galleryServerStatus: String = "Gallery server: enable hotspot to check",
     val glassesStatus: GlassesRuntimeState? = null,
@@ -282,7 +281,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             glassesStatus = initialState.glasses,
             bluetoothStatus = initialState.sdk,
             discoveredDevices = initialState.scan.devices,
-            galleryModeAuto = galleryModeAuto(initialState.sdk),
+            galleryModeEnabled = galleryModeEnabled(initialState.sdk),
             hotspotEnabled = enabledHotspotStatus(initialState.glasses) != null,
             phoneAudioRoute = currentAudioOutputRouteLabel(),
         )
@@ -368,10 +367,10 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         mentraBluetoothSdk.clearDisplay()
     }
 
-    fun setGalleryModeAuto(enabled: Boolean) = runAction(if (enabled) "Save in gallery mode" else "Report button events") {
+    fun setGalleryModeEnabled(enabled: Boolean) = runAction(if (enabled) "Save in gallery mode" else "Report button events") {
         requireConnected("change gallery mode")
-        mentraBluetoothSdk.setGalleryMode(if (enabled) GalleryMode.AUTO else GalleryMode.MANUAL)
-        state = state.copy(galleryModeAuto = enabled)
+        mentraBluetoothSdk.setGalleryModeEnabled(enabled)
+        state = state.copy(galleryModeEnabled = enabled)
     }
 
     fun setWebhookUrl(url: String) {
@@ -1096,7 +1095,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     override fun onSdkStateChanged(sdk: PhoneSdkRuntimeState) {
         state = state.copy(
             bluetoothStatus = sdk,
-            galleryModeAuto = galleryModeAuto(sdk),
+            galleryModeEnabled = galleryModeEnabled(sdk),
         )
         addEvent("BLE", summarize(sdk))
     }
@@ -2269,7 +2268,7 @@ fun summarize(status: PhoneSdkRuntimeState): String =
     listOfNotNull(
         "searching: ${status.searching}",
         "wifiScanResults: ${status.wifiScanResults.size}",
-        "galleryMode: ${status.galleryMode.desired}",
+        "galleryModeEnabled: ${status.galleryMode.enabled}",
         status.defaultDevice?.let { "defaultDevice: ${it.name}" },
     ).take(3).joinToString(", ")
 
@@ -2285,7 +2284,7 @@ fun intValue(values: Map<String, Any>, key: String): Int? =
 
 fun boolValue(values: Map<String, Any>, key: String): Boolean? = values[key] as? Boolean
 
-fun galleryModeAuto(status: PhoneSdkRuntimeState?): Boolean = status?.galleryMode?.desired == GalleryMode.AUTO
+fun galleryModeEnabled(status: PhoneSdkRuntimeState?): Boolean = status?.galleryMode?.enabled ?: false
 
 fun connectionLabel(status: GlassesRuntimeState?): String =
     status?.connection?.value

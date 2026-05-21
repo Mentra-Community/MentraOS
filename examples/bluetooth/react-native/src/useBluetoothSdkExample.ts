@@ -99,7 +99,7 @@ export type BluetoothSdkExampleState = {
   defaultDevice: Device | null;
   discoveredDevices: Device[];
   events: SdkConsoleEvent[];
-  galleryModeAuto: boolean;
+  galleryModeEnabled: boolean;
   galleryServerReachable: boolean | null;
   galleryServerStatus: string;
   glasses: GlassesRuntimeState;
@@ -162,7 +162,7 @@ export type BluetoothSdkExampleActions = {
   selectLedMode: (mode: LedMode) => Promise<void>;
   selectProtocol: (protocol: StreamProtocol) => void;
   sendWifiCredentials: (ssid: string, password: string, requiresPassword: boolean) => Promise<void>;
-  setGalleryModeAuto: (enabled: boolean) => Promise<void>;
+  setGalleryModeEnabled: (enabled: boolean) => Promise<void>;
   setPhotoCompression: (compression: PhotoCompression) => void;
   setPhotoCloudServerEnabled: (enabled: boolean) => Promise<void>;
   setPhotoSize: (size: PhotoSize) => void;
@@ -293,7 +293,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   const glassesConnected = glasses.connected;
   const phone = bluetooth.sdk;
   const scanActive = bluetooth.scan.active;
-  const galleryModeAuto = phone.galleryMode.desired === 'auto';
+  const galleryModeEnabled = phone.galleryMode.enabled;
   const hotspotEnabled = enabledHotspotStatus(glasses) !== null;
   const selectedDiscoveredDevice = bluetooth.scan.selectedDevice;
   const selectedScanModel = scanModelFromDeviceModel(bluetooth.scan.model);
@@ -568,10 +568,10 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     });
   }
 
-  async function setGalleryModeAutoAction(enabled: boolean) {
+  async function setGalleryModeEnabledAction(enabled: boolean) {
     await runAction(enabled ? 'Save in gallery mode' : 'Report button events', async () => {
       requireConnected('change gallery mode');
-      await bluetooth.setGalleryMode(enabled ? 'auto' : 'manual');
+      await bluetooth.setGalleryModeEnabled(enabled);
     });
   }
 
@@ -613,15 +613,15 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
 
       setPhotoPreviewUrl(null);
       setCameraStatus(`Camera: webhook upload requested (${requestId})`);
-      await BluetoothSdk.requestPhoto(
+      await BluetoothSdk.requestPhoto({
         requestId,
-        PHOTO_APP_ID,
-        photoSize,
-        uploadUrlText,
-        null,
-        photoCompression,
-        true,
-      );
+        appId: PHOTO_APP_ID,
+        size: photoSize,
+        webhookUrl: uploadUrlText,
+        authToken: null,
+        compress: photoCompression,
+        sound: true,
+      });
       void pollPhotoPreview(requestId, statusUrl, pollGeneration);
   }
 
@@ -645,15 +645,15 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       }
     }, DIRECT_PHOTO_UPLOAD_TIMEOUT_MS);
 
-    await BluetoothSdk.requestPhoto(
+    await BluetoothSdk.requestPhoto({
       requestId,
-      PHOTO_APP_ID,
-      photoSize,
-      receiver.uploadUrl,
-      null,
-      photoCompression,
-      true,
-    );
+      appId: PHOTO_APP_ID,
+      size: photoSize,
+      webhookUrl: receiver.uploadUrl,
+      authToken: null,
+      compress: photoCompression,
+      sound: true,
+    });
   }
 
   async function testWebhook() {
@@ -1504,7 +1504,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     displayHello,
     events,
     forgetCurrentWifiNetwork,
-    galleryModeAuto,
+    galleryModeEnabled,
     galleryServerReachable,
     galleryServerStatus,
     glasses,
@@ -1542,7 +1542,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     selectScanModel,
     selectProtocol,
     sendWifiCredentials,
-    setGalleryModeAuto: setGalleryModeAutoAction,
+    setGalleryModeEnabled: setGalleryModeEnabledAction,
     setPhotoCompression,
     setPhotoCloudServerEnabled: setPhotoCloudServerEnabledAction,
     setPhotoSize,

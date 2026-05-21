@@ -110,7 +110,7 @@ The example has five tabs:
 - **Device**: scan for Mentra Live glasses, connect, disconnect, reconnect to the saved/default device, and inspect battery, firmware, Wi-Fi, RSSI, and discovered-device state.
 - **Camera**: request photo upload to the local demo cloud or directly to this phone, then preview the received JPEG. Direct phone photo is implemented in the companion local native module.
 - **Stream**: start RTMP, SRT, or WebRTC streams, send 15-second keep-alives, and preview HLS/WebRTC output. Android and iOS can receive WebRTC directly on the phone through the app-hosted GStreamer WHIP receiver.
-- **System**: scan/connect/forget Wi-Fi, toggle hotspot, change save-in-gallery mode, receive microphone PCM, and send RGB LED controls.
+- **System**: scan/connect/forget Wi-Fi, toggle hotspot, change gallery mode, receive microphone PCM, and send RGB LED controls.
 - **Console**: watch button, touch, swipe, BLE, TX, STORE, hotspot, stream, photo, microphone, and SDK diagnostic events.
 
 ## Local Photo And Streaming Helper

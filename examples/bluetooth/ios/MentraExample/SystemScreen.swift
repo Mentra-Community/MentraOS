@@ -497,16 +497,16 @@ struct SystemScreen: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Save in gallery mode").font(.system(size: 14, weight: .bold)).foregroundColor(AppColor.ink)
-                Text(model.galleryModeAuto ? "On: the glasses button saves photos/videos locally." : "Off: button and touch events are reported to the phone.")
+                Text(model.galleryModeEnabled ? "On: the glasses button saves photos/videos locally." : "Off: button and touch events are reported to the phone.")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(AppColor.muted)
                     .lineSpacing(2)
                 HStack(spacing: 8) {
-                    GalleryModeChip(title: "Save media", active: model.galleryModeAuto, enabled: model.glassesConnected) {
-                        model.setGalleryModeAuto(true)
+                    GalleryModeChip(title: "Save media", active: model.galleryModeEnabled, enabled: model.glassesConnected) {
+                        model.setGalleryModeEnabled(true)
                     }
-                    GalleryModeChip(title: "Report events", active: !model.galleryModeAuto, enabled: model.glassesConnected) {
-                        model.setGalleryModeAuto(false)
+                    GalleryModeChip(title: "Report events", active: !model.galleryModeEnabled, enabled: model.glassesConnected) {
+                        model.setGalleryModeEnabled(false)
                     }
                 }
                 .padding(.top, 2)

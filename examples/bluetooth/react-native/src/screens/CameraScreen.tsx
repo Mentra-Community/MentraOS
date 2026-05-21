@@ -12,25 +12,25 @@ import { PHOTO_COMPRESSIONS, PHOTO_SIZES, type BluetoothSdkExampleModel, type Ph
 function cameraSdkCall(size: PhotoSize, compression: PhotoCompression, useCloudServer: boolean) {
   if (!useCloudServer) {
     return `const { uploadUrl } = await MentraPhotoReceiver.startPhotoReceiver();
-await BluetoothSdk.requestPhoto(
+await BluetoothSdk.requestPhoto({
   requestId,
-  PHOTO_APP_ID,
-  "${size}",
-  uploadUrl,
-  null,
-  "${compression}",
-  true,
-)`;
+  appId: PHOTO_APP_ID,
+  size: "${size}",
+  webhookUrl: uploadUrl,
+  authToken: null,
+  compress: "${compression}",
+  sound: true,
+})`;
   }
-  return `await BluetoothSdk.requestPhoto(
+  return `await BluetoothSdk.requestPhoto({
   requestId,
-  PHOTO_APP_ID,
-  "${size}",
+  appId: PHOTO_APP_ID,
+  size: "${size}",
   webhookUrl,
-  null,
-  "${compression}",
-  true,
-)`;
+  authToken: null,
+  compress: "${compression}",
+  sound: true,
+})`;
 }
 
 export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {

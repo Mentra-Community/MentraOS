@@ -108,7 +108,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var streamPreviewReady = false
     @Published private(set) var streamStartedAt: Date?
     @Published private(set) var streamStatus = "Ready to start stream"
-    @Published private(set) var galleryModeAuto = false
+    @Published private(set) var galleryModeEnabled = false
     @Published private(set) var hotspotEnabled = false
     @Published private(set) var galleryServerReachable: Bool?
     @Published private(set) var galleryServerStatus = "Gallery server: enable hotspot to check"
@@ -313,11 +313,11 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
     }
 
-    func setGalleryModeAuto(_ enabled: Bool) {
+    func setGalleryModeEnabled(_ enabled: Bool) {
         runAction(enabled ? "Save in gallery mode" : "Report button events") {
             try requireConnected("change gallery mode")
-            galleryModeAuto = enabled
-            Task { try? await mentraBluetoothSdk.setGalleryMode(enabled ? .auto : .manual) }
+            galleryModeEnabled = enabled
+            Task { try? await mentraBluetoothSdk.setGalleryModeEnabled(enabled) }
         }
     }
 
@@ -1224,7 +1224,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func applySdkState(_ status: PhoneSdkRuntimeState) {
         bluetoothValues = status
-        galleryModeAuto = status.galleryMode.desired == .auto
+        galleryModeEnabled = status.galleryMode.enabled
     }
 
     private func loadPersistedDefaultDevice() -> Device? {
@@ -1937,7 +1937,7 @@ func summarize(_ status: PhoneSdkRuntimeState) -> String {
     let parts = [
         "searching: \(status.searching)",
         "wifiScanResults: \(status.wifiScanResults.count)",
-        "galleryMode: \(status.galleryMode.desired)",
+        "galleryModeEnabled: \(status.galleryMode.enabled)",
         status.defaultDevice.map { "defaultDevice: \($0.name)" },
     ].compactMap { $0 }.prefix(3)
     return parts.joined(separator: ", ")
