@@ -196,6 +196,7 @@ class CoreManager {
     // Guard against duplicate ready callbacks firing back-to-back.
     private var lastReadyHandledAtMs: Long = 0L
     private var lastReadyHandledKey: String = ""
+    private var lastSystemTimeSyncConnectionKey: String = ""
 
     private var systemMicUnavailable: Boolean
         get() = GlassesStore.store.get("core", "systemMicUnavailable") as? Boolean ?: false
@@ -1004,6 +1005,7 @@ class CoreManager {
             Bridge.log("MAN: Cleaning up previous sgc type: ${sgc?.type}")
             sgc?.cleanup()
             sgc = null
+            lastSystemTimeSyncConnectionKey = ""
         }
 
         if (sgc != null) {
@@ -1078,6 +1080,8 @@ class CoreManager {
         defaultWearable = sgc?.type ?: ""
         searching = false
 
+        syncSystemTimeOnceForConnection(readyKey)
+
         // Apply dashboard position before any boot text so content doesn't jump.
         sgc?.setDashboardPosition(dashboardHeight, dashboardDepth)
 
@@ -1114,6 +1118,21 @@ class CoreManager {
         Bridge.saveSetting("device_address", deviceAddress)
     }
 
+    private fun syncSystemTimeOnceForConnection(connectionKey: String) {
+        val activeSgc = sgc ?: return
+        if (activeSgc.type.contains(DeviceTypes.SIMULATED)) {
+            return
+        }
+        if (connectionKey == lastSystemTimeSyncConnectionKey) {
+            return
+        }
+
+        lastSystemTimeSyncConnectionKey = connectionKey
+        val timestampMs = System.currentTimeMillis()
+        Bridge.log("MAN: Syncing glasses system time once for connection: $timestampMs")
+        activeSgc.sendSetSystemTime(timestampMs)
+    }
+
     private fun handleG1Ready() {
         // G1-specific setup (if any needed in the future)
         // Note: G1-specific settings like silent mode, battery status,
@@ -1126,6 +1145,7 @@ class CoreManager {
 
     fun handleDeviceDisconnected() {
         Bridge.log("MAN: Device disconnected")
+        lastSystemTimeSyncConnectionKey = ""
         GlassesStore.apply("glasses", "headUp", false)
     }
 
@@ -1532,6 +1552,7 @@ class CoreManager {
         sgc?.clearDisplay()
         sgc?.disconnect()
         sgc = null // Clear the SGC reference after disconnect
+        lastSystemTimeSyncConnectionKey = ""
         searching = false
         micEnabled = false
         updateMicState()
