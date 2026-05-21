@@ -1,13 +1,22 @@
-### CameraNeo Service (Camera2) – Architecture and Usage Guide
+### CameraNeoService (Camera2) – Architecture and Usage Guide
 
-This document explains how `CameraNeo` works end-to-end and how to use it to capture photos and record videos. It is designed for developers integrating or extending the camera service.
+This document explains how `CameraNeoService` works end-to-end and how to use it to capture photos and record videos. It is designed for developers integrating or extending the camera service.
 
-- **Location**: `asg_client/app/src/main/java/com/mentra/asg_client/camera/CameraNeo.java`
+- **Location**: `asg_client/app/src/main/java/com/mentra/asg_client/camera/CameraNeoService.java`
 - **Type**: Android `LifecycleService` using Camera2 API
 - **Primary responsibilities**:
   - Foreground service that owns camera lifecycle
   - Photo capture with brief auto-exposure convergence
   - Single video recording with `MediaRecorder`
+
+#### Package layout (`com.mentra.asg_client.camera`)
+
+- **Root**: `CameraNeoService`, `CameraConstants`, `CameraSettings`, this README.
+- **`lifecycle/`**: `CameraCoordinator`, `PhotoSession`, `VideoRecordingSession`, `HdrBurstCapture`, `ImageReaderTwin`, `CameraOpener`, `CameraRecoveryHelper`, `CameraServiceNotification`.
+- **`request/`**: `PreviewRequestConfigurator`, `StillCaptureBuilder`, `StillCaptureCallback`, `HdrBurstBuilder`, `AeCaptureCallback`, `AePreviewController`.
+- **`policy/`**: `AeStateMachine`, `ManualExposurePolicy`, `FpsRangePolicy`, `VideoRecorderPolicy`, `PhotoResolutionPolicy`, `CameraSizeSelector`, `JpegOrientationResolver`, `MeteringRegions`, `EisController`, `CameraCapabilities`.
+- **`model/`**: `QueuedPhotoRequest` (FIFO waiting), `ActivePhotoCapture` (in-flight snapshot), `QueuedPhotoRequestQueue`.
+- **`diagnostics/`**: `CameraDiagnosticsLog` (structured `MentraDbg` JSON for logcat parsers).
 
 ---
 
@@ -17,34 +26,34 @@ All APIs are fire-and-forget static helpers that start the foreground service wi
 
 ```java
 // 1) Take a photo
-CameraNeo.takePictureWithCallback(
+CameraNeoService.takePictureWithCallback(
     context,
     filePath, // if null/empty, a default path is generated
-    new CameraNeo.PhotoCaptureCallback() {
+    new CameraNeoService.PhotoCaptureCallback() {
       @Override public void onPhotoCaptured(String filePath) {}
       @Override public void onPhotoError(String error) {}
     }
 );
 
 // 2) Start/stop a single video recording
-CameraNeo.startVideoRecording(
+CameraNeoService.startVideoRecording(
     context,
     videoId,               // any unique string you track on the caller side
     videoOutputFilePath,   // if null/empty, a default path is generated
-    new CameraNeo.VideoRecordingCallback() {
+    new CameraNeoService.VideoRecordingCallback() {
       @Override public void onRecordingStarted(String videoId) {}
       @Override public void onRecordingProgress(String videoId, long durationMs) {}
       @Override public void onRecordingStopped(String videoId, String filePath) {}
       @Override public void onRecordingError(String videoId, String error) {}
     }
 );
-CameraNeo.stopVideoRecording(context, videoId);
+CameraNeoService.stopVideoRecording(context, videoId);
 ```
 
 Utility status check:
 
 ```java
-boolean isBusy = CameraNeo.isCameraInUse();
+boolean isBusy = CameraNeoService.isCameraInUse();
 ```
 
 ---
@@ -78,7 +87,7 @@ boolean isBusy = CameraNeo.isCameraInUse();
 - Default video size: closest to `1280x720`
 - AE wait timeout before capture: `0.5 s`
 
-You can tweak these via the constants in `CameraNeo.java`.
+You can tweak these via the constants in `CameraConstants.java` and `CameraNeoService.java`.
 
 ---
 

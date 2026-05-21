@@ -503,7 +503,7 @@ class R1: NSObject, ControllerManager {
     func sendJson(_: [String: Any], wakeUp _: Bool, requireAck _: Bool) {}
     func requestPhoto(
         _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
-        compress _: String?, flash _: Bool, sound _: Bool
+        compress _: String?, flash _: Bool, sound _: Bool, exposureTimeNs _: Double?
     ) {}
     func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {}
     func stopVideoRecording(requestId _: String) {}

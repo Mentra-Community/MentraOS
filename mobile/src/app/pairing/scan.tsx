@@ -1,4 +1,4 @@
-import CoreModule, {MentraDevice} from "@mentra/bluetooth-sdk"
+import CoreModule, {type Device} from "@mentra/bluetooth-sdk"
 import {useLocalSearchParams} from "expo-router"
 import {useEffect, useState} from "react"
 import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
@@ -30,7 +30,7 @@ export default function SelectGlassesBluetoothScreen() {
   const btcConnected = useGlassesStore((state) => state.btcConnected)
   const [_deviceName, setDeviceName] = useSetting(SETTINGS.device_name.key)
   const searchResults = useCoreStore((state) => state.searchResults)
-  const [rememberedSearchResults, setRememberedSearchResults] = useState<MentraDevice[]>(searchResults)
+  const [rememberedSearchResults, setRememberedSearchResults] = useState<Device[]>(searchResults)
 
   // useFocusEffect(
   //   useCallback(() => {
@@ -69,7 +69,7 @@ export default function SelectGlassesBluetoothScreen() {
     void initializeAndSearchForDevices()
   }, [])
 
-  const triggerGlassesPairingGuide = async (device: MentraDevice) => {
+  const triggerGlassesPairingGuide = async (device: Device) => {
     if (Platform.OS === "android") {
       const hasLocationPermission = await requestFeaturePermissions(PermissionFeatures.LOCATION)
 
@@ -97,7 +97,7 @@ export default function SelectGlassesBluetoothScreen() {
     await startPairing(device)
   }
 
-  const startPairing = async (device: MentraDevice) => {
+  const startPairing = async (device: Device) => {
     const deviceTypesWithBtClassic = [DeviceTypes.LIVE]
     if (Platform.OS === "android" || btcConnected || !deviceTypesWithBtClassic.includes(device.model as DeviceTypes)) {
       setTimeout(() => {
@@ -169,7 +169,7 @@ export default function SelectGlassesBluetoothScreen() {
           ) : (
             <ScrollView className="max-h-[300px] -mr-4 pr-4" contentContainerClassName="my-4">
               <Group>
-                {visibleResults.map((res: MentraDevice) => {
+                {visibleResults.map((res: Device) => {
                   let deviceName = filterDeviceName(res.name)
 
                   return (

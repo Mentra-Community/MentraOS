@@ -169,7 +169,7 @@ class CoreManager {
         set(value) = GlassesStore.apply("core", "dashboard_depth", value)
 
     private var galleryMode: Boolean
-        get() = GlassesStore.store.get("core", "gallery_mode") as? Boolean ?: false
+        get() = GlassesStore.store.get("core", "gallery_mode") as? Boolean ?: true
         set(value) = GlassesStore.apply("core", "gallery_mode", value)
 
     // state:
@@ -1390,12 +1390,27 @@ class CoreManager {
             authToken: String?,
             compress: String,
             flash: Boolean,
-            sound: Boolean
+            sound: Boolean,
+            exposureTimeNs: Double? = null,
     ) {
+        val exposureNs: Long? =
+                exposureTimeNs?.takeIf { it.isFinite() && it > 0 }?.let { v ->
+                    when {
+                        v > Long.MAX_VALUE.toDouble() -> Long.MAX_VALUE
+                        else -> v.toLong()
+                    }
+                }
         Bridge.log(
-                "MAN: onPhotoRequest: $requestId, $appId, $size, compress=$compress, flash=$flash, sound=$sound"
+                "MAN: PHOTO PIPELINE [4/6] DeviceManager.photoRequest requestId=$requestId appId=$appId size=$size compress=$compress flash=$flash sound=$sound exposureTimeNs=$exposureNs sgc=${sgc?.javaClass?.simpleName ?: "null"}"
         )
-        sgc?.requestPhoto(requestId, appId, size, webhookUrl, authToken, compress, flash, sound)
+        val activeSgc = sgc
+        if (activeSgc == null) {
+            Bridge.log(
+                    "MAN: PHOTO PIPELINE — sgc is null (glasses not connected); dropping requestId=$requestId"
+            )
+            return
+        }
+        activeSgc.requestPhoto(requestId, appId, size, webhookUrl, authToken, compress, flash, sound, exposureNs)
     }
 
     fun rgbLedControl(

@@ -18,7 +18,7 @@ import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 
 import com.mentra.asg_client.audio.AudioAssets;
-import com.mentra.asg_client.camera.CameraNeo;
+import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
@@ -250,7 +250,7 @@ public class WhipStreamingService extends Service {
   /** Start streaming to the currently configured WHIP URL. */
   private void startStreaming() {
     // Check if camera is busy with photo/video capture
-    if (CameraNeo.isCameraInUse()) {
+    if (CameraNeoService.isCameraInUse()) {
       Log.e(TAG, "Cannot start WHIP stream - camera is busy with photo/video capture");
       notifyError("camera_busy");
       // If we were reconnecting, reset state so we don't get stuck in RECONNECTING

@@ -15,7 +15,7 @@ import {spacing, ThemedStyle} from "@/theme"
 import CoreModule from "@mentra/bluetooth-sdk"
 
 type PhotoSize = "small" | "medium" | "large"
-type VideoResolution = "720p" | "1080p" // | "1440p" | "4K"
+type VideoResolution = "720p" | "1080p" | "1440p" | "4K"
 type MaxRecordingTime = "3m" | "5m" | "10m" | "15m" | "20m"
 type CameraRoiPosition = 0 | 1 | 2 // 0=Center, 1=Bottom, 2=Top
 

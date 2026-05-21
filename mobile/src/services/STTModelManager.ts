@@ -279,7 +279,7 @@ class STTModelManager {
       const downloadOptions = {
         fromUrl: modelUrl,
         toFile: tempPath,
-        progress: (res: RNFS.DownloadProgressCallbackResult) => {
+        progress: (res: RNFS.DownloadProgressCallbackResultT) => {
           const percentage = Math.round((res.bytesWritten / res.contentLength) * 100)
           onProgress?.({
             jobId: res.jobId,
@@ -289,7 +289,7 @@ class STTModelManager {
           })
         },
         progressDivider: 10, // Update every 10%
-        begin: (res: RNFS.DownloadBeginCallbackResult) => {
+        begin: (res: RNFS.DownloadBeginCallbackResultT) => {
           console.log("Download started:", res)
         },
         connectionTimeout: 30000,

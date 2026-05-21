@@ -1,4 +1,4 @@
-import CoreModule, {MentraDevice} from "@mentra/bluetooth-sdk"
+import CoreModule, {type Device} from "@mentra/bluetooth-sdk"
 import {useLocalSearchParams} from "expo-router"
 import {useEffect, useState} from "react"
 import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
@@ -24,7 +24,7 @@ export default function SelectGlassesBluetoothScreen() {
   const {goBack, replace} = useNavigationStore.getState()
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
   const searchResults = useCoreStore((state) => state.searchResults)
-  const [rememberedSearchResults, setRememberedSearchResults] = useState<MentraDevice[]>(searchResults)
+  const [rememberedSearchResults, setRememberedSearchResults] = useState<Device[]>(searchResults)
 
   // useFocusEffect(
   //   useCallback(() => {
@@ -62,7 +62,7 @@ export default function SelectGlassesBluetoothScreen() {
     void initializeAndSearchForDevices()
   }, [])
 
-  const triggerGlassesPairingGuide = async (device: MentraDevice) => {
+  const triggerGlassesPairingGuide = async (device: Device) => {
     if (Platform.OS === "android") {
       const hasLocationPermission = await requestFeaturePermissions(PermissionFeatures.LOCATION)
 
@@ -90,7 +90,7 @@ export default function SelectGlassesBluetoothScreen() {
     await startPairing(device)
   }
 
-  const startPairing = async (device: MentraDevice) => {
+  const startPairing = async (device: Device) => {
     setTimeout(() => {
       CoreModule.connect(device).catch((error) => {
         console.error("Failed to connect to controller:", error)
@@ -141,7 +141,7 @@ export default function SelectGlassesBluetoothScreen() {
           ) : (
             <ScrollView className="max-h-[300px] -mr-4 pr-4" contentContainerClassName="my-4">
               <Group>
-                {visibleResults.map((res: MentraDevice) => {
+                {visibleResults.map((res: Device) => {
                   let deviceName = filterDeviceName(res.name)
                   return (
                     <View key={res.id} className="flex-row items-center justify-between px-4 py-3 bg-primary-foreground">

@@ -481,7 +481,7 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: false,
     persist: false,
   },
-  gallery_mode: {key: "gallery_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
+  gallery_mode: {key: "gallery_mode", defaultValue: () => true, writable: true, saveOnServer: true, persist: true},
   gallery_sync_explained: {
     key: "gallery_sync_explained",
     defaultValue: () => false,

@@ -104,6 +104,11 @@ export interface PhotoRequestToGlasses extends BaseMessage {
   flash?: boolean;
   /** Controls shutter/video sounds. */
   sound?: boolean;
+  /**
+   * Optional sensor exposure time for this capture only (nanoseconds). Not persisted.
+   * When omitted or invalid, device uses auto exposure.
+   */
+  exposureTimeNs?: number;
 }
 
 /**

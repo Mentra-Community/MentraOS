@@ -1530,7 +1530,7 @@ public class G1 extends SGCManager {
     }
 
     @Override
-    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean sound) {
+    public void requestPhoto(String requestId, String appId, String size, String webhookUrl, String authToken, String compress, boolean flash, boolean sound, Long exposureTimeNs) {
 
     }
 

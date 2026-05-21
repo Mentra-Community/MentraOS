@@ -6,7 +6,6 @@ import * as TaskManager from "expo-task-manager"
 import {shallow} from "zustand/shallow"
 
 import audioPlaybackService from "@/services/AudioPlaybackService"
-import miniSockets from "@/services/MiniSockets"
 import {requestMiniappSdkPhoto} from "@/services/miniapp/MiniappSdkPhotoHandler"
 import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {migrate} from "@/services/Migrations"
@@ -40,6 +39,8 @@ import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUt
 import {logE2EMetric} from "@/utils/e2eMetrics"
 import {useAppStatusStore} from "@mentra/island"
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
+import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
+import mentraAuth from "@/utils/auth/authClient"
 
 const LOCATION_TASK_NAME = "handleLocationUpdates"
 
@@ -184,6 +185,11 @@ class MantleManager {
       console.error("MANTLE: No settings received from server")
     }
 
+    const userRes = await mentraAuth.getUser()
+    if (userRes.is_ok()) {
+      await ensureDevModeForUser(userRes.value.email)
+    }
+
     // Send device timezone to cloud (used for calendar/time display)
     this.syncTimezone()
 
@@ -227,7 +233,6 @@ class MantleManager {
 
     localMiniappRuntime.cleanup()
     micStateCoordinator.cleanup()
-    miniSockets.stop()
 
     await socketComms.cleanup()
     restComms.goodbye()
@@ -239,23 +244,11 @@ class MantleManager {
 
     // Warm the local miniapp registry by reading lmas/ off disk. Cheap call —
     // it populates AppRegistry's cache so the first refreshApplets() doesn't
-    // pay the disk-walk cost in the UI thread. The result is also used below
-    // to gate MiniSockets startup.
-    const localApps = await appRegistry.getInstalledMiniapps()
+    // pay the disk-walk cost in the UI thread.
+    await appRegistry.getInstalledMiniapps()
 
     // Initialize local miniapp runtime
     localMiniappRuntime.initialize()
-
-    // Start MiniSockets conditionally (only if user has local miniapps)
-    if (localApps.length > 0) {
-      miniSockets.start()
-      miniSockets.onTextMessage((clientId, text) => {
-        // For MiniSocket clients, we need to identify the packageName from the CONNECT message.
-        // For now, route through LocalMiniappRuntime with a placeholder.
-        // The actual packageName binding happens in the CONNECT handler.
-        localMiniappRuntime.handleRawMessage(`__minisocket_${clientId}`, text)
-      })
-    }
   }
 
   private async syncNotificationSettingsToCrust() {

@@ -17,7 +17,6 @@ import AppIcon from "@/components/home/AppIcon"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {useNavigationStore} from "@/stores/navigation"
 import {SYSTEM_APPS} from "@/constants/miniapps"
-import {push} from "expo-router/build/global-state/routing"
 
 interface CapsuleButtonProps {
   onMinusPress?: () => void
@@ -270,7 +269,7 @@ export const MiniAppMoreActionsSheet = forwardRef<BottomSheetModal, MiniAppMoreA
 
     const handleFeedback = useCallback(() => {
       internalRef.current?.dismiss()
-      push("/miniapps/settings/feedback", {
+      useNavigationStore.getState().push("/miniapps/settings/feedback", {
         submissionMode: "USER_INITIATED",
         triggerArea: "applet_capsule_menu",
         triggerReason: "manual_bug_report",
@@ -281,7 +280,7 @@ export const MiniAppMoreActionsSheet = forwardRef<BottomSheetModal, MiniAppMoreA
 
     const handleSettings = useCallback(() => {
       internalRef.current?.dismiss()
-      push("/applet/settings", {
+      useNavigationStore.getState().push("/applet/settings", {
         packageName: packageName,
         appName: app?.name,
       })

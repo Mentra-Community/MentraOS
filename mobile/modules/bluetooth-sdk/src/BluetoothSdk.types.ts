@@ -170,6 +170,18 @@ export type PhotoSize = "small" | "medium" | "large" | "full"
 export type ButtonPhotoSize = "small" | "medium" | "large"
 export type PhotoCompression = "none" | "medium" | "heavy"
 
+export type PhotoRequestParams = {
+  requestId: string
+  appId: string
+  size: PhotoSize
+  webhookUrl: string | null
+  authToken: string | null
+  compress: PhotoCompression
+  flash: boolean
+  sound: boolean
+  exposureTimeNs?: number | null
+}
+
 export type StreamVideoConfig = {
   width?: number
   height?: number
