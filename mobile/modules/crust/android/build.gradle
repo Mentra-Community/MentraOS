@@ -9,35 +9,18 @@ applyKotlinExpoModulesCorePlugin()
 useCoreDependencies()
 useExpoPublishing()
 
-// Zipline + kotlinx.serialization plugins. The Zipline plugin processes
-// any interface annotated `@ZiplineService` and generates a Kotlin Serializer
-// adapter so JS can call into it through QuickJS. The serialization plugin
-// is its prerequisite — it provides the @Serializable code generator that
-// Zipline's adapter relies on.
+// MentraJS Android runtime: QuickJS via dokar3/quickjs-kt.
 //
-// Version pin: the active Kotlin compiler in this Expo SDK 55 build is
-// 2.1.20, which reads metadata up to 2.2.0. Newer Zipline releases (1.22+)
-// ship JARs with metadata 2.3.0 and their compiler plugins call IR APIs
-// that don't exist in 2.1.20. Zipline 1.20.0 is the last release whose
-// runtime metadata (1.9.x) and IR-plugin API are both compatible. Bump
-// only when the host Kotlin compiler clears 2.3.0 metadata.
-buildscript {
-  repositories {
-    google()
-    mavenCentral()
-    gradlePluginPortal()
-  }
-  dependencies {
-    classpath 'app.cash.zipline:zipline-gradle-plugin:1.20.0'
-    // kotlinx.serialization compiler plugin — ships as a separate classpath
-    // artifact from the core Kotlin gradle plugin. Pinned to match the
-    // active Kotlin compiler so its IR-plugin API calls resolve.
-    classpath 'org.jetbrains.kotlin:kotlin-serialization:2.1.20'
-  }
-}
-
-apply plugin: 'org.jetbrains.kotlin.plugin.serialization'
-apply plugin: 'app.cash.zipline'
+// Zipline's `bind(name, service)` registers services in an internal Kotlin
+// map keyed by name for the Kotlin/JS-compiled `Zipline.take()` API; it does
+// not install JS globals on globalThis. Our polyfill is hand-written JS that
+// reads `globalThis.__mentraNativeBridge`, so the Zipline path silently
+// dropped every JS→host dispatch on Android.
+//
+// dokar3/quickjs-kt exposes `QuickJs.function(name) { args -> ... }` which
+// installs the lambda directly as a property of globalThis via QuickJS's
+// `JS_SetPropertyStr(JS_NewCFunction(...))`. This matches iOS Apple JSC's
+// `ctx.setObject(closure, forKeyedSubscript: ...)` pattern point-for-point.
 
 // If you want to use the managed Android SDK versions from expo-modules-core, set this to true.
 // The Android SDK versions will be bumped from time to time in SDK releases and may introduce breaking changes in your module code.
@@ -113,14 +96,18 @@ dependencies {
 }
 
 dependencies {
-  // MentraJS — QuickJS (via Cash App's Zipline) for per-miniapp JS contexts.
-  // The Zipline runtime exposes Kotlin objects to QuickJS through generated
-  // @ZiplineService adapters; the matching Gradle plugin above produces those
-  // adapters at compile time.
-  implementation 'app.cash.zipline:zipline-android:1.20.0'
-  // kotlinx.serialization runtime (Zipline's adapter generator marshals
-  // bridge method args + return values as JSON across the QuickJS boundary).
-  implementation 'org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3'
+  // MentraJS — QuickJS for per-miniapp JS contexts. dokar3/quickjs-kt is a
+  // KMP wrapper around Bellard QuickJS that exposes `function(name) { ... }`
+  // for installing Kotlin lambdas as JS globals via `JS_SetPropertyStr`.
+  // Mirrors iOS Apple JSC's `setObject(_, forKeyedSubscript:)` pattern.
+  //
+  // Version pin: this Expo SDK 55 build uses Kotlin 2.1.20, which can read
+  // metadata up to 2.2.0. dokar3 1.0.1+ ships classes with metadata 2.3.0
+  // (compiled with Kotlin 2.3.x) and is unreadable here. 1.0.0-alpha13 is
+  // the last release compiled with Kotlin 2.0 (metadata 2.0.0) — its API
+  // (`QuickJs.create`, `evaluate`, `function` extension) matches 1.0.5 1:1.
+  // Bump only when the host Kotlin compiler clears 2.3.0 metadata.
+  implementation 'io.github.dokar3:quickjs-kt-android:1.0.0-alpha13'
 
   // OkHttp for fetch / WebSocket — already used elsewhere in MentraOS;
   // pinned here so the gradle plugin doesn't downgrade us.
@@ -131,7 +118,8 @@ dependencies {
   // which ships on the platform.
   implementation 'com.google.crypto.tink:tink-android:1.14.1'
 
-  // Kotlin coroutines for the Zipline bridge + suspending polyfill shims.
+  // Kotlin coroutines: dokar3's `evaluate()` is suspend; we bridge it via
+  // `runBlocking(dispatcher)` from the per-miniapp single-thread executor.
   implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1'
   implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
 }
