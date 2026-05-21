@@ -302,6 +302,11 @@ class JSCRuntime private constructor(private val appContext: Context) {
     private fun installGlobals(qjs: QuickJs, packageName: String) {
         // __dispatch: sync. Returns JSON or null. Throws on dispatcher Error.
         qjs.function("__dispatch") { args ->
+            // Bail if the context was killed mid-dispatch. The JS frame won't
+            // see this return because dokar3 will have already torn down the
+            // engine — but it's defensive against the brief window where the
+            // QuickJs is alive but the host has dropped the record.
+            if (contexts[packageName] == null) return@function null
             val iface = args[0] as? String
                 ?: throw MentraJSDispatchError("INVALID_ARGS", "iface")
             val method = args[1] as? String
