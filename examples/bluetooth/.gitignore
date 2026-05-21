@@ -33,6 +33,8 @@ examples/react-native/.gstreamer/
 examples/react-native/modules/**/android/.gradle/
 examples/react-native/modules/**/android/build/
 examples/react-native/modules/**/android/gst-android-build/
+examples/react-native-elevenlabs-audio/.env*
+!examples/react-native-elevenlabs-audio/.env.example
 
 # Local webhook demo uploads.
 examples/photo-webhook-server/uploads/

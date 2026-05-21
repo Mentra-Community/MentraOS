@@ -19,6 +19,7 @@ Use the latest SDK version published by Mentra for your app. This repo can be cl
    - [Android Kotlin / Jetpack Compose](examples/android/README.md)
    - [iOS SwiftUI](examples/ios/README.md)
    - [React Native / Expo](examples/react-native/README.md)
+   - [React Native ElevenLabs audio repro](examples/react-native-elevenlabs-audio/README.md)
 3. Keep [API Reference](docs/api-reference.md), [Display Guide](docs/display-guide.md), [Audio Guide](docs/audio-guide.md), and [Hardware Integration Notes](docs/hardware-integration.md) nearby while building.
 4. Use [Troubleshooting](docs/troubleshooting.md) and the [Production Checklist](docs/production-checklist.md) before shipping.
 
@@ -41,6 +42,7 @@ Use the latest SDK version published by Mentra for your app. This repo can be cl
 - `docs/production-checklist.md`: release-readiness checklist.
 - `docs/troubleshooting.md`: build, permission, scan, stream, and React Native issues.
 - `examples/local-demo-cloud`: recommended local helper for photo upload and stream preview.
+- `examples/react-native-elevenlabs-audio`: focused Mentra Live PCM to ElevenLabs WebSocket repro app.
 - `examples/photo-webhook-server`: focused photo webhook server.
 - `examples/local-webrtc-server`: lower-level MediaMTX helper.
 

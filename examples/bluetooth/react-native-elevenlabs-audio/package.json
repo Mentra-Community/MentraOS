@@ -1,0 +1,26 @@
+{
+  "name": "mentra-elevenlabs-audio-repro",
+  "version": "0.1.0",
+  "private": true,
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start --dev-client --port 8082",
+    "android": "expo run:android --port 8082",
+    "android:dev": "node ./scripts/android-dev.mjs",
+    "signing-server": "node ./scripts/signed-url-server.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mentra/bluetooth-sdk": "0.1.6",
+    "expo": "~55.0.24",
+    "expo-build-properties": "~55.0.14",
+    "expo-dev-client": "~55.0.34",
+    "react": "19.2.0",
+    "react-native": "0.83.6",
+    "react-native-safe-area-context": "~5.6.2"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "typescript": "~5.9.2"
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "expo": {
+    "name": "Mentra ElevenLabs Audio",
+    "slug": "mentra-elevenlabs-audio",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "mentra-elevenlabs-audio",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.mentra.elevenlabsaudio",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "This app uses Bluetooth to connect to Mentra Live glasses.",
+        "NSBluetoothPeripheralUsageDescription": "This app uses Bluetooth to connect to Mentra Live glasses.",
+        "NSMicrophoneUsageDescription": "This app streams microphone audio from connected Mentra Live glasses."
+      }
+    },
+    "android": {
+      "package": "com.mentra.elevenlabsaudio",
+      "softwareKeyboardLayoutMode": "pan",
+      "usesCleartextTraffic": true,
+      "permissions": [
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.INTERNET",
+        "android.permission.POST_NOTIFICATIONS"
+      ]
+    },
+    "plugins": [
+      [
+        "@mentra/bluetooth-sdk",
+        {
+          "node": true
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 28,
+            "packagingOptions": {
+              "pickFirst": [
+                "**/libc++_shared.so",
+                "**/libonnxruntime.so",
+                "**/libonnxruntime4j_jni.so"
+              ]
+            }
+          }
+        }
+      ]
+    ]
+  }
+}
