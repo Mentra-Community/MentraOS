@@ -1,9 +1,0 @@
-{
-  "platforms": ["apple", "android", "web"],
-  "apple": {
-    "modules": ["MentraDirectReceiverModule"]
-  },
-  "android": {
-    "modules": ["com.mentra.directreceiver.MentraDirectReceiverModule"]
-  }
-}

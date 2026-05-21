@@ -7,13 +7,15 @@
   "scripts": {
     "start": "expo start --dev-client",
     "ios": "bun run ios:setup && expo run:ios",
-    "ios:setup": "bash ./modules/mentra-direct-receiver/scripts/setup-gstreamer-ios.sh",
+    "ios:setup": "bash ./modules/mentra-video-stream-receiver/scripts/setup-gstreamer-ios.sh",
     "android": "expo run:android",
     "android:dev": "node ./scripts/android-dev.mjs",
     "web": "expo start --web"
   },
   "dependencies": {
     "@mentra/bluetooth-sdk": "0.1.6",
+    "@mentra/react-native-photo-receiver": "file:modules/mentra-photo-receiver",
+    "@mentra/react-native-video-stream-receiver": "file:modules/mentra-video-stream-receiver",
     "expo": "~55.0.24",
     "expo-audio": "~55.0.14",
     "expo-build-properties": "~55.0.14",
@@ -21,7 +23,6 @@
     "expo-file-system": "~55.0.20",
     "expo-linear-gradient": "~55.0.14",
     "expo-video": "~55.0.17",
-    "mentra-direct-receiver": "file:modules/mentra-direct-receiver",
     "react": "19.2.0",
     "react-native": "0.83.6",
     "react-native-safe-area-context": "~5.6.2",

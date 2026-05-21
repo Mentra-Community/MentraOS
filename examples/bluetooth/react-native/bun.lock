@@ -6,6 +6,8 @@
       "name": "mentra-bluetooth-sdk-example",
       "dependencies": {
         "@mentra/bluetooth-sdk": "0.1.6",
+        "@mentra/react-native-photo-receiver": "file:modules/mentra-photo-receiver",
+        "@mentra/react-native-video-stream-receiver": "file:modules/mentra-video-stream-receiver",
         "expo": "~55.0.24",
         "expo-audio": "~55.0.14",
         "expo-build-properties": "~55.0.14",
@@ -13,7 +15,6 @@
         "expo-file-system": "~55.0.20",
         "expo-linear-gradient": "~55.0.14",
         "expo-video": "~55.0.17",
-        "mentra-direct-receiver": "file:modules/mentra-direct-receiver",
         "react": "19.2.0",
         "react-native": "0.83.6",
         "react-native-safe-area-context": "~5.6.2",
@@ -299,6 +300,10 @@
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
     "@mentra/bluetooth-sdk": ["@mentra/bluetooth-sdk@0.1.6", "", { "peerDependencies": { "@expo/config-plugins": ">=8.0.0", "@types/react": ">=18.0.0", "expo": ">=49.0.0", "react": ">=18.0.0", "react-native": ">=0.72.0" } }, "sha512-fCko7p+sW5K85YZxeAaZM5+lYGpJETKXa8O1Sn68q81Pxckm6vYmyo/6PQIBMz9Bop2lIOHjO1fbAIc2xdAWWg=="],
+
+    "@mentra/react-native-photo-receiver": ["@mentra/react-native-photo-receiver@file:modules/mentra-photo-receiver", { "peerDependencies": { "expo": "*", "react": "*", "react-native": "*" } }],
+
+    "@mentra/react-native-video-stream-receiver": ["@mentra/react-native-video-stream-receiver@file:modules/mentra-video-stream-receiver", { "peerDependencies": { "expo": "*", "react": "*", "react-native": "*" } }],
 
     "@react-native/assets-registry": ["@react-native/assets-registry@0.83.6", "", {}, "sha512-iljb4ue1yWJ3EhySz7EjV6CzSVrI2uNtR8BI2jzP5+QS5E4Cl3fdIJRmVwDEx1pu8uE97PGEusGRHnoaZ9Q3jg=="],
 
@@ -741,8 +746,6 @@
     "mdn-data": ["mdn-data@2.0.14", "", {}, "sha512-dn6wd0uw5GsdswPFfsgMp5NSB0/aDe6fK94YJV/AJDYXL6HVLWBsxeq7js7Ad+mU2K9LAlwpk6kN2D5mwCPVow=="],
 
     "memoize-one": ["memoize-one@5.2.1", "", {}, "sha512-zYiwtZUcYyXKo/np96AGZAckk+FWWsUdJ3cHGGmld7+AhvcWmQyGCYUh1hc4Q/pkOhb65dQR/pqCyK0cOaHz4Q=="],
-
-    "mentra-direct-receiver": ["mentra-direct-receiver@file:modules/mentra-direct-receiver", { "peerDependencies": { "expo": "*", "react": "*", "react-native": "*" } }],
 
     "merge-stream": ["merge-stream@2.0.0", "", {}, "sha512-abv/qOcuPfk3URPfDzmZU1LKmuw8kT+0nIHvKrKgFrwifol/doWcdA4ZqsWQ8ENrFKkd67Mfpo/LovbIUsbt3w=="],
 

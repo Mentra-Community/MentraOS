@@ -4,7 +4,7 @@ import { VideoView, useVideoPlayer } from 'expo-video';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path, Polyline, Rect } from 'react-native-svg';
 import WebView from 'react-native-webview';
-import { MentraDirectReceiverView } from 'mentra-direct-receiver';
+import { MentraVideoStreamReceiverView } from '@mentra/react-native-video-stream-receiver';
 import { Header } from '../components/Header';
 import { useScrollBottomPadding } from '../components/keyboardLayout';
 import { OfflineNotice } from '../components/OfflineNotice';
@@ -21,7 +21,7 @@ import {
 const bars = [18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40];
 function streamSdkCall(useCloudServer: boolean) {
   if (!useCloudServer) {
-    return `const receiver = await MentraDirectReceiver.startWebRtcReceiver();
+    return `const receiver = await MentraVideoStreamReceiver.startWebRtcReceiver();
 const streamId = \`rn-\${Date.now()}\`;
 await BluetoothSdk.startStream({
   type: 'start_stream',
@@ -94,7 +94,7 @@ export function StreamScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             {previewTarget ? (
               <LiveStreamPreview target={previewTarget} />
             ) : !sdk.streamCloudServerEnabled && previewReady ? (
-              <MentraDirectReceiverView style={styles.previewFill} />
+              <MentraVideoStreamReceiverView style={styles.previewFill} />
             ) : (
               <PlaceholderStreamPreview message={streamActive ? 'Starting stream...\nWaiting for preview' : undefined} />
             )}

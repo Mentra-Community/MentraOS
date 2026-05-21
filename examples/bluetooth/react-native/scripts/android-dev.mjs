@@ -4,10 +4,13 @@ import {spawn, spawnSync} from "node:child_process"
 import {setTimeout as delay} from "node:timers/promises"
 
 const port = Number(process.env.EXPO_DEV_SERVER_PORT || process.env.RCT_METRO_PORT || 8081)
+const metroHost = process.env.EXPO_DEV_SERVER_HOST || "localhost"
 const scheme = process.env.EXPO_DEV_CLIENT_SCHEME || "exp+mentra-example"
 const appId = process.env.EXPO_ANDROID_APP_ID || "com.mentra.bluetoothsdk.example"
-const metroUrl = `http://127.0.0.1:${port}`
+const metroUrl = `http://${metroHost}:${port}`
 const devClientUrl = `${scheme}://expo-development-client/?url=${encodeURIComponent(metroUrl)}`
+
+process.env.REACT_NATIVE_PACKAGER_HOSTNAME ||= metroHost
 
 const args = new Set(process.argv.slice(2))
 if (args.has("-h") || args.has("--help")) {
@@ -20,6 +23,7 @@ spawning a second bundler, then explicitly opens the Expo dev-client URL.
 
 Environment overrides:
   EXPO_DEV_SERVER_PORT       Metro port. Defaults to 8081.
+  EXPO_DEV_SERVER_HOST       Metro host in the dev-client URL. Defaults to localhost.
   EXPO_DEV_CLIENT_SCHEME     Dev-client scheme. Defaults to exp+mentra-example.
   EXPO_ANDROID_APP_ID        Android app id. Defaults to com.mentra.bluetoothsdk.example.
   ANDROID_SERIAL             Required when multiple Android devices are connected.
@@ -131,7 +135,7 @@ async function main() {
     console.log(`Starting Metro at ${metroUrl}`)
     metroProcess = spawn(
       "bunx",
-      ["expo", "start", "--dev-client", "--localhost", "--port", String(port)],
+      ["expo", "start", "--dev-client", "--host", "localhost", "--port", String(port)],
       {
         stdio: "inherit",
         env: process.env,
@@ -155,6 +159,7 @@ async function main() {
   run("bunx", ["expo", "run:android", "--no-bundler"])
 
   console.log(`Opening Expo dev-client URL: ${devClientUrl}`)
+  run("adb", ["-s", serial, "shell", "am", "force-stop", appId])
   run("adb", [
     "-s",
     serial,

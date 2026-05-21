@@ -40,7 +40,12 @@ bunx expo run:ios
 
 Run on a physical iPhone for Bluetooth testing. Simulators are useful only for UI and compile checks.
 
-The React Native example uses the companion `mentra-direct-receiver` native module for direct phone WebRTC preview. On iOS that receiver needs the GStreamer iOS SDK. `bun run ios:setup` downloads the GStreamer package from `gstreamer.freedesktop.org`, verifies the published SHA-256 checksum, and installs it to `~/Library/Developer/GStreamer/iPhone.sdk`. The CocoaPods podspec also runs the same setup automatically during `pod install` when the SDK is missing from the default location, so `bunx expo run:ios` can recover from a fresh clone.
+The React Native example keeps direct phone receiving split into two local native modules:
+
+- `@mentra/react-native-photo-receiver` starts a small phone-local photo upload server for direct JPEG uploads.
+- `@mentra/react-native-video-stream-receiver` starts the phone-local WebRTC preview receiver.
+
+Only the video stream receiver needs GStreamer. On iOS, `bun run ios:setup` downloads the GStreamer package from `gstreamer.freedesktop.org`, verifies the published SHA-256 checksum, and installs it to `~/Library/Developer/GStreamer/iPhone.sdk`. The video receiver CocoaPods podspec also runs the same setup automatically during `pod install` when the SDK is missing from the default location, so `bunx expo run:ios` can recover from a fresh clone.
 
 If your GStreamer SDK is installed somewhere else, set `GSTREAMER_ROOT_IOS` before prebuild or run:
 
@@ -133,4 +138,5 @@ Do not use `localhost` in the app. The glasses, phone, and computer must be on a
 - `src/sdkFormat.ts`: shared status/event formatting.
 - `app.json`: permissions, SDK plugin, and Android native-library packaging rules.
 - `metro.config.js`: package resolution for published installs and local SDK overrides.
-- `modules/mentra-direct-receiver`: local native module used by this example for Android/iOS direct phone photo demos and Android/iOS direct phone WebRTC demos.
+- `modules/mentra-photo-receiver`: local native module used by this example for Android/iOS direct phone photo upload demos.
+- `modules/mentra-video-stream-receiver`: local native module used by this example for Android/iOS direct phone WebRTC preview demos.

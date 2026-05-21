@@ -1,0 +1,32 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.mentra.photoreceiver'
+version = '0.1.0'
+
+android {
+  namespace "com.mentra.photoreceiver"
+  compileSdk 35
+
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+    minSdkVersion 28
+    targetSdkVersion 35
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  lintOptions {
+    abortOnError false
+  }
+}
+
+dependencies {
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
+}

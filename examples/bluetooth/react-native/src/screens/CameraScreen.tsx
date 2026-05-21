@@ -11,7 +11,7 @@ import { PHOTO_COMPRESSIONS, PHOTO_SIZES, type BluetoothSdkExampleModel, type Ph
 
 function cameraSdkCall(size: PhotoSize, compression: PhotoCompression, useCloudServer: boolean) {
   if (!useCloudServer) {
-    return `const { uploadUrl } = await MentraDirectReceiver.startPhotoReceiver();
+    return `const { uploadUrl } = await MentraPhotoReceiver.startPhotoReceiver();
 await BluetoothSdk.requestPhoto(
   requestId,
   PHOTO_APP_ID,

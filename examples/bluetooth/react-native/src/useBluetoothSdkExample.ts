@@ -23,11 +23,14 @@ import {
   type GlassesRuntimeState,
   type PhoneSdkRuntimeState,
 } from '@mentra/bluetooth-sdk/react';
-import MentraDirectReceiver, {
-  type DirectPhotoUploadEvent,
-  type DirectReceiverStatusEvent,
-  type DirectStreamFirstFrameEvent,
-} from 'mentra-direct-receiver';
+import MentraPhotoReceiver, {
+  type PhotoReceiverStatusEvent,
+  type PhotoReceiverUploadEvent,
+} from '@mentra/react-native-photo-receiver';
+import MentraVideoStreamReceiver, {
+  type VideoStreamFirstFrameEvent,
+  type VideoStreamReceiverStatusEvent,
+} from '@mentra/react-native-video-stream-receiver';
 import {
   galleryHotspotPasswordLabel,
   galleryHotspotSsidLabel,
@@ -343,9 +346,10 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
         setGalleryServerStatus('Gallery server: hotspot error');
         addEvent('TX', `hotspot error ${summarizeMap(payload)}`);
       }),
-      MentraDirectReceiver.addListener('photoUpload', handleDirectPhotoUpload),
-      MentraDirectReceiver.addListener('receiverStatus', handleDirectReceiverStatus),
-      MentraDirectReceiver.addListener('streamFirstFrame', handleDirectStreamFirstFrame),
+      MentraPhotoReceiver.addListener('photoUpload', handleDirectPhotoUpload),
+      MentraPhotoReceiver.addListener('receiverStatus', handlePhotoReceiverStatus),
+      MentraVideoStreamReceiver.addListener('receiverStatus', handleVideoStreamReceiverStatus),
+      MentraVideoStreamReceiver.addListener('streamFirstFrame', handleDirectStreamFirstFrame),
       BluetoothSdk.addListener('photo_response', handlePhotoResponse),
       BluetoothSdk.addListener('stream_status', (payload: StreamStatusEvent) => {
         applyStreamStatus(payload);
@@ -418,8 +422,8 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       clearPhotoUploadTimeout();
       stopKeepAlive();
       stopPreviewHealthPoll();
-      void MentraDirectReceiver.stopPhotoReceiver().catch(() => undefined);
-      void MentraDirectReceiver.stopWebRtcReceiver().catch(() => undefined);
+      void MentraPhotoReceiver.stopPhotoReceiver().catch(() => undefined);
+      void MentraVideoStreamReceiver.stopWebRtcReceiver().catch(() => undefined);
       activeStreamIdRef.current = null;
       activePhotoRequestIdRef.current = null;
       pollGenerationRef.current += 1;
@@ -622,7 +626,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   }
 
   async function captureAndUploadToPhone() {
-    const receiver = await MentraDirectReceiver.startPhotoReceiver();
+    const receiver = await MentraPhotoReceiver.startPhotoReceiver();
     setPhonePhotoReceiverRunning(true);
     setPhonePhotoUploadUrl(receiver.uploadUrl);
 
@@ -689,7 +693,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     });
   }
 
-  function handleDirectPhotoUpload(payload: DirectPhotoUploadEvent) {
+  function handleDirectPhotoUpload(payload: PhotoReceiverUploadEvent) {
     const activeRequestId = activePhotoRequestIdRef.current;
     if (activeRequestId && payload.requestId && payload.requestId !== activeRequestId) {
       addEvent('LIVE', `ignoring stale phone photo ${payload.requestId}`);
@@ -703,17 +707,17 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     addEvent('LIVE', `phone photo ready ${payload.fileUri}`);
   }
 
-  function handleDirectReceiverStatus(payload: DirectReceiverStatusEvent) {
-    if (payload.kind === 'photo') {
-      if (payload.message.toLowerCase().includes('ready at')) {
-        setPhonePhotoReceiverRunning(true);
-      }
-      if (payload.message.toLowerCase().includes('stopped')) {
-        setPhonePhotoReceiverRunning(false);
-      }
-      addEvent('LIVE', `photo receiver ${payload.message}`);
-      return;
+  function handlePhotoReceiverStatus(payload: PhotoReceiverStatusEvent) {
+    if (payload.message.toLowerCase().includes('ready at')) {
+      setPhonePhotoReceiverRunning(true);
     }
+    if (payload.message.toLowerCase().includes('stopped')) {
+      setPhonePhotoReceiverRunning(false);
+    }
+    addEvent('LIVE', `photo receiver ${payload.message}`);
+  }
+
+  function handleVideoStreamReceiverStatus(payload: VideoStreamReceiverStatusEvent) {
     if (payload.kind === 'stream') {
       if (payload.message.toLowerCase().includes('ready at')) {
         setDirectStreamReceiverRunning(true);
@@ -725,7 +729,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     addEvent('LIVE', `${payload.kind} receiver ${payload.message}`);
   }
 
-  function handleDirectStreamFirstFrame(_payload: DirectStreamFirstFrameEvent) {
+  function handleDirectStreamFirstFrame(_payload: VideoStreamFirstFrameEvent) {
     if (!activeStreamIdRef.current || streamCloudServerEnabledRef.current) {
       return;
     }
@@ -820,7 +824,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       clearPhotoUploadTimeout();
       pollGenerationRef.current += 1;
       if (enabled) {
-        await MentraDirectReceiver.stopPhotoReceiver().catch(() => undefined);
+        await MentraPhotoReceiver.stopPhotoReceiver().catch(() => undefined);
         setPhonePhotoReceiverRunning(false);
         setPhonePhotoUploadUrl(null);
         setCameraStatus('Camera: enter the cloud Photo upload URL');
@@ -908,7 +912,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   }
 
   async function startPhoneWebRtcStream() {
-    const receiver = await MentraDirectReceiver.startWebRtcReceiver();
+    const receiver = await MentraVideoStreamReceiver.startWebRtcReceiver();
     setDirectStreamReceiverRunning(true);
     setDirectStreamWhipUrl(receiver.streamUrl);
     setStreamPreviewReady(false);
@@ -930,7 +934,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       setStreamPreviewReady(false);
       setStreamStatus('Starting WebRTC stream to phone; waiting for preview');
     } catch (error) {
-      await MentraDirectReceiver.stopWebRtcReceiver().catch(() => undefined);
+      await MentraVideoStreamReceiver.stopWebRtcReceiver().catch(() => undefined);
       setDirectStreamReceiverRunning(false);
       setDirectStreamWhipUrl(null);
       throw error;
@@ -944,7 +948,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     if (isGlassesConnected(glasses)) {
       await BluetoothSdk.stopStream();
     }
-    await MentraDirectReceiver.stopWebRtcReceiver().catch(() => undefined);
+    await MentraVideoStreamReceiver.stopWebRtcReceiver().catch(() => undefined);
     setDirectStreamReceiverRunning(false);
     setDirectStreamWhipUrl(null);
     setStreamRequested(false);
@@ -1419,7 +1423,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     stopKeepAlive();
     stopPreviewHealthPoll();
     clearPhotoUploadTimeout();
-    void MentraDirectReceiver.stopWebRtcReceiver().catch(() => undefined);
+    void MentraVideoStreamReceiver.stopWebRtcReceiver().catch(() => undefined);
     activeStreamIdRef.current = null;
     const hadPhotoRequest = activePhotoRequestIdRef.current !== null;
     activePhotoRequestIdRef.current = null;
@@ -1472,7 +1476,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       stopKeepAlive();
       stopPreviewHealthPoll();
       activeStreamIdRef.current = null;
-      void MentraDirectReceiver.stopWebRtcReceiver().catch(() => undefined);
+      void MentraVideoStreamReceiver.stopWebRtcReceiver().catch(() => undefined);
       setDirectStreamReceiverRunning(false);
       setDirectStreamWhipUrl(null);
       setStreamRequested(false);
