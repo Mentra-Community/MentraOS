@@ -555,15 +555,38 @@ class SocketComms {
     const compress = normalizePhotoCompression(msg.compress)
     const flash = msg.flash ?? true
     const sound = msg.sound ?? true
+    const rawExp = msg.exposureTimeNs
+    const exposureTimeNs = typeof rawExp === "number" && Number.isFinite(rawExp) && rawExp > 0 ? rawExp : null
     console.log(
-      `Received photo_request, requestId: ${requestId}, appId: ${appId}, webhookUrl: ${webhookUrl}, size: ${size} authToken: ${authToken} compress: ${compress} flash: ${flash} sound: ${sound}`,
+      `SOCKET: PHOTO PIPELINE [1/6] Received photo_request requestId=${requestId} appId=${appId} webhookUrl=${webhookUrl} size=${size} compress=${compress} flash=${flash} sound=${sound} exposureTimeNs=${exposureTimeNs ?? "none"} authToken=${authToken ? "set" : "none"}`,
     )
     if (!requestId || !appId) {
-      console.log("Invalid photo request: missing requestId or appId")
+      console.log(
+        `SOCKET: PHOTO PIPELINE — invalid photo_request (missing requestId=${requestId || "empty"} or appId=${appId || "empty"})`,
+      )
       return
     }
-    // Parameter order: requestId, appId, size, webhookUrl, authToken, compress, flash, sound
-    CoreModule.photoRequest(requestId, appId, size, webhookUrl, authToken, compress, flash, sound)
+    console.log(`SOCKET: PHOTO PIPELINE [2/6] Forwarding to CoreModule.photoRequest requestId=${requestId}`)
+    void CoreModule.photoRequest({
+      requestId,
+      appId,
+      size,
+      webhookUrl,
+      authToken,
+      compress,
+      flash,
+      sound,
+      exposureTimeNs,
+    })
+      .then(() => {
+        console.log(`SOCKET: PHOTO PIPELINE [3/6] CoreModule.photoRequest resolved requestId=${requestId}`)
+      })
+      .catch((err: unknown) => {
+        console.log(
+          `SOCKET: PHOTO PIPELINE — CoreModule.photoRequest failed requestId=${requestId}:`,
+          err instanceof Error ? err.message : err,
+        )
+      })
   }
 
   private handle_start_stream(msg: any) {

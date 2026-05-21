@@ -11,7 +11,6 @@ import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
 import com.mentra.asg_client.io.streaming.services.SrtStreamingService;
 import com.mentra.asg_client.io.streaming.services.WhipStreamingService;
 import com.mentra.asg_client.SysControl;
-import io.github.thibaultbee.streampack.internal.sources.camera.CameraController;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.media.interfaces.IMediaManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
@@ -220,8 +219,7 @@ public class StreamCommandHandler implements ICommandHandler {
 
     /**
      * Apply EIS configuration for an active livestream. Updates the Pixsmart
-     * system property and arms the StreamPackLite per-CaptureRequest hook so
-     * the next session start uses SPORTS scene mode plus the vendor key.
+     * system property used by the camera pipeline.
      *
      * EIS is only enabled when the requested resolution is at or below
      * {@link #EIS_MAX_PIXELS}; above that, EIS is forced off because the camera
@@ -234,7 +232,6 @@ public class StreamCommandHandler implements ICommandHandler {
             Log.i(TAG, "EIS disabled for " + width + "x" + height + " (>= " + EIS_MAX_PIXELS + " px)");
         }
         SysControl.setEisEnable(context, enable);
-        CameraController.enablePixsmartEisOnRequest = enable;
     }
 
     /**
@@ -243,7 +240,6 @@ public class StreamCommandHandler implements ICommandHandler {
      */
     private void restoreEisAfterStreaming() {
         SysControl.setEisEnable(context, false);
-        CameraController.enablePixsmartEisOnRequest = false;
     }
 
     /**

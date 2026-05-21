@@ -10,8 +10,7 @@ import {
   GlassesMediaVolumeSetResult,
   GlassesStatus,
   Device,
-  PhotoCompression,
-  PhotoSize,
+  PhotoRequestParams,
   RgbLedAction,
   RgbLedColor,
   StreamKeepAliveRequest,
@@ -69,16 +68,7 @@ declare class CoreModule extends NativeModule<CoreModuleEvents> {
   // Gallery Commands
   setGalleryMode(mode: GalleryMode): Promise<void>
   queryGalleryStatus(): Promise<void>
-  photoRequest(
-    requestId: string,
-    appId: string,
-    size: PhotoSize,
-    webhookUrl: string | null,
-    authToken: string | null,
-    compress: PhotoCompression,
-    flash: boolean,
-    sound: boolean,
-  ): Promise<void>
+  photoRequest(params: PhotoRequestParams): Promise<void>
 
   // OTA Commands
   sendOtaStart(): Promise<void>
@@ -233,6 +223,31 @@ NativeCoreModule.connectDefault = function (options?: ConnectOptions) {
 
 NativeCoreModule.connect = function (device: Device, options?: ConnectOptions) {
   return this.connectWithOptions(device, {...DEFAULT_CONNECT_OPTIONS, ...options})
+}
+
+/** Expo Android bridge rejects null values in Map<String, Any> — omit optional nullish fields. */
+function photoRequestParamsForNative(params: PhotoRequestParams): Record<string, string | number | boolean> {
+  const payload: Record<string, string | number | boolean> = {
+    requestId: params.requestId,
+    appId: params.appId,
+    size: params.size,
+    webhookUrl: params.webhookUrl ?? "",
+    compress: params.compress,
+    flash: params.flash,
+    sound: params.sound,
+  }
+  if (params.authToken != null && params.authToken.length > 0) {
+    payload.authToken = params.authToken
+  }
+  if (params.exposureTimeNs != null && Number.isFinite(params.exposureTimeNs) && params.exposureTimeNs > 0) {
+    payload.exposureTimeNs = params.exposureTimeNs
+  }
+  return payload
+}
+
+const nativePhotoRequest = NativeCoreModule.photoRequest.bind(NativeCoreModule)
+NativeCoreModule.photoRequest = function (params: PhotoRequestParams) {
+  return nativePhotoRequest(photoRequestParamsForNative(params) as PhotoRequestParams)
 }
 
 export default NativeCoreModule

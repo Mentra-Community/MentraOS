@@ -75,7 +75,7 @@ class Simulated: SGCManager {
 
     // MARK: - Camera & Media
 
-    func requestPhoto(_: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?, compress _: String?, flash _: Bool, sound _: Bool) {
+    func requestPhoto(_: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?, compress _: String?, flash _: Bool, sound _: Bool, exposureTimeNs _: Double?) {
         Bridge.log("requestPhoto")
     }
 

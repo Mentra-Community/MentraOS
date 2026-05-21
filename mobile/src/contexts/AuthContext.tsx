@@ -4,6 +4,7 @@ import {FC, createContext, useEffect, useState, useContext} from "react"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {LogoutUtils} from "@/utils/LogoutUtils"
 import mentraAuth from "@/utils/auth/authClient"
+import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import {MentraAuthSession, MentraAuthUser} from "@/utils/auth/authProvider.types"
 
 interface AuthContextProps {
@@ -41,6 +42,10 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
       const session = res.value
       setSession(session)
       setUser(session?.user ?? null)
+      if (session?.user?.email) {
+        setAuthEmail(session.user.email)
+        void ensureDevModeForUser(session.user.email)
+      }
       setLoading(false)
     }
 
@@ -61,6 +66,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
         // Send user email to glasses for crash reporting
         if (session?.user?.email) {
           setAuthEmail(session.user.email)
+          void ensureDevModeForUser(session.user.email)
         }
       })
       console.log("AuthContext: setupAuthListener()", res)

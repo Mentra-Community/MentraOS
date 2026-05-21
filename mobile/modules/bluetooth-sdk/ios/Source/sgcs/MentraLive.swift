@@ -1311,9 +1311,11 @@ class MentraLive: NSObject, SGCManager {
 
     func requestPhoto(
         _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, flash: Bool, sound: Bool
+        compress: String?, flash: Bool, sound: Bool, exposureTimeNs: Double?
     ) {
-        Bridge.log("Requesting photo: \(requestId) for app: \(appId), flash: \(flash), sound: \(sound)")
+        Bridge.log(
+            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(requestId) appId=\(appId) flash=\(flash) sound=\(sound)"
+        )
 
         var json: [String: Any] = [
             "type": "take_photo",
@@ -1360,7 +1362,13 @@ class MentraLive: NSObject, SGCManager {
         json["flash"] = flash
         json["sound"] = sound
 
-        Bridge.log("Using auto transfer mode with BLE fallback ID: \(bleImgId)")
+        if let e = exposureTimeNs, e.isFinite, e > 0, e <= Double(Int64.max) {
+            Bridge.log("LIVE: Using manual exposure time for photo request \(requestId): \(Int64(e)) ns")
+            json["exposureTimeNs"] = Int64(e)
+        }
+
+        Bridge.log("LIVE: PHOTO PIPELINE [5b/6] take_photo JSON ready bleImgId=\(bleImgId) transferMethod=auto")
+        Bridge.log("LIVE: PHOTO PIPELINE [6/6] Dispatching take_photo to sendJson()")
 
         sendJson(json, wakeUp: true)
     }
@@ -2086,6 +2094,9 @@ class MentraLive: NSObject, SGCManager {
                     // MTK firmware version (e.g., "20241130")
                     // Note: Stored separately from BES version for OTA patch matching
                     GlassesStore.shared.apply("glasses", "mtkFwVersion", mtkFwVersion)
+                }
+                if let systemTimeMs = fields["system_time_ms"] as? NSNumber {
+                    GlassesStore.shared.apply("glasses", "systemTimeMs", systemTimeMs.int64Value)
                 }
                 if let btMacAddress = fields["bt_mac_address"] as? String {
                     GlassesStore.shared.apply("glasses", "btMacAddress", btMacAddress)
@@ -3237,6 +3248,9 @@ class MentraLive: NSObject, SGCManager {
                     Bridge.log("LIVE: All chunks queued for transmission")
                 } else {
                     // Normal single message transmission
+                    if (json["type"] as? String) == "take_photo" {
+                        Bridge.log("LIVE: PHOTO PIPELINE BLE handoff — sendJson -> queueSend take_photo")
+                    }
                     Bridge.log("LIVE: Sending data to glasses: \(jsonString)")
                     let packedData = packJson(jsonString, wakeUp: wakeUp) ?? Data()
                     queueSend(packedData, id: trackingId)

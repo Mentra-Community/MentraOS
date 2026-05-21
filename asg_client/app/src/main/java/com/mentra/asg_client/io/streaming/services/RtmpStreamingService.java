@@ -29,7 +29,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.RequiresPermission;
 import androidx.core.app.NotificationCompat;
 
-import com.mentra.asg_client.camera.CameraNeo;
+import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.utils.WakeLockManager;
 import com.mentra.asg_client.reporting.domains.StreamingReporting;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
@@ -756,7 +756,7 @@ public class RtmpStreamingService extends Service {
             }
 
             // Check if camera is busy with photo/video capture BEFORE attempting to stream
-            if (CameraNeo.isCameraInUse()) {
+            if (CameraNeoService.isCameraInUse()) {
                 String error = "camera_busy";
                 Log.e(TAG, "Cannot start RTMP stream - camera is busy with photo/video capture");
                 EventBus.getDefault().post(new StreamingEvent.Error(error));
@@ -770,7 +770,7 @@ public class RtmpStreamingService extends Service {
             }
 
             // Close kept-alive camera if it exists to free resources for streaming
-            CameraNeo.closeKeptAliveCamera();
+            CameraNeoService.closeKeptAliveCamera();
 
             if (mRtmpUrl == null || mRtmpUrl.isEmpty()) {
                 String error = "RTMP URL not set";

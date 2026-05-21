@@ -170,7 +170,7 @@
         </service>
 
         <service
-            android:name="com.mentra.asg_client.camera.CameraNeo"
+            android:name="com.mentra.asg_client.camera.CameraNeoService"
             android:enabled="true"
             android:exported="true"
             android:foregroundServiceType="camera|microphone" />

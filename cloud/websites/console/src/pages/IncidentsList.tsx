@@ -1,8 +1,8 @@
 // pages/IncidentsList.tsx
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import DashboardLayout from "../components/DashboardLayout";
 import { Badge, Button, Card, CardContent, CardHeader, CardTitle } from "@mentra/shared";
-import { useNavigate } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   Loader2,
   Bug,
@@ -17,58 +17,82 @@ import {
 import api, { Incident } from "../services/api.service";
 
 const IncidentsList: React.FC = () => {
-  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const limitParam = Number(searchParams.get("limit"));
+  const offsetParam = Number(searchParams.get("offset"));
+  const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.floor(limitParam) : 25;
+  const offset = Number.isFinite(offsetParam) && offsetParam >= 0 ? Math.floor(offsetParam) : 0;
+  const q = searchParams.get("q") || "";
+  const submissionMode = (searchParams.get("submissionMode") || "") as "" | Incident["submissionMode"];
+  const triggerArea = searchParams.get("triggerArea") || "";
+  const triggerReason = searchParams.get("triggerReason") || "";
+
+  const [searchInput, setSearchInput] = useState(q);
+  const [triggerAreaInput, setTriggerAreaInput] = useState(triggerArea);
+  const [triggerReasonInput, setTriggerReasonInput] = useState(triggerReason);
+
   const [isLoading, setIsLoading] = useState(true);
   const [incidents, setIncidents] = useState<Incident[]>([]);
-  const [pagination, setPagination] = useState({
-    total: 0,
-    limit: 25,
-    offset: 0,
-    hasMore: false,
-  });
+  const [serverMeta, setServerMeta] = useState({ total: 0, hasMore: false });
   const [error, setError] = useState<string | null>(null);
-  const [searchInput, setSearchInput] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [submissionMode, setSubmissionMode] = useState<"" | Incident["submissionMode"]>("");
-  const [triggerAreaInput, setTriggerAreaInput] = useState("");
-  const [triggerArea, setTriggerArea] = useState("");
-  const [triggerReasonInput, setTriggerReasonInput] = useState("");
-  const [triggerReason, setTriggerReason] = useState("");
+  const [refreshTick, setRefreshTick] = useState(0);
   const requestIdRef = useRef(0);
 
+  // Keep text inputs in sync when URL changes (browser back/forward, shared links).
+  useEffect(() => {
+    setSearchInput(q);
+    setTriggerAreaInput(triggerArea);
+    setTriggerReasonInput(triggerReason);
+  }, [q, triggerArea, triggerReason]);
+
+  // Debounce text filters into the URL and reset to page 1.
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
-      setSearchQuery(searchInput);
-      setTriggerArea(triggerAreaInput);
-      setTriggerReason(triggerReasonInput);
+      setSearchParams(
+        (prev) => {
+          const currentQ = prev.get("q") || "";
+          const currentArea = prev.get("triggerArea") || "";
+          const currentReason = prev.get("triggerReason") || "";
+          if (
+            searchInput === currentQ &&
+            triggerAreaInput === currentArea &&
+            triggerReasonInput === currentReason
+          ) {
+            return prev;
+          }
+          const next = new URLSearchParams(prev);
+          if (searchInput) {
+            next.set("q", searchInput);
+          } else {
+            next.delete("q");
+          }
+          if (triggerAreaInput) {
+            next.set("triggerArea", triggerAreaInput);
+          } else {
+            next.delete("triggerArea");
+          }
+          if (triggerReasonInput) {
+            next.set("triggerReason", triggerReasonInput);
+          } else {
+            next.delete("triggerReason");
+          }
+          next.delete("offset");
+          return next;
+        },
+        { replace: false },
+      );
     }, 300);
 
     return () => window.clearTimeout(timeoutId);
-  }, [searchInput, triggerAreaInput, triggerReasonInput]);
+  }, [searchInput, triggerAreaInput, triggerReasonInput, setSearchParams]);
 
-  useEffect(() => {
-    if (pagination.offset !== 0) {
-      setPagination((prev) => ({
-        ...prev,
-        offset: 0,
-      }));
-      return;
-    }
-
-    void fetchIncidents();
-  }, [searchQuery, submissionMode, triggerArea, triggerReason]);
-
-  useEffect(() => {
-    void fetchIncidents();
-  }, [pagination.offset, pagination.limit]);
-
-  const fetchIncidents = async () => {
+  const fetchIncidents = useCallback(async () => {
     const requestId = ++requestIdRef.current;
     setIsLoading(true);
     setError(null);
     try {
-      const response = await api.admin.incidents.list(pagination.limit, pagination.offset, {
-        q: searchQuery.trim() || undefined,
+      const response = await api.admin.incidents.list(limit, offset, {
+        q: q.trim() || undefined,
         submissionMode: submissionMode || undefined,
         triggerArea: triggerArea.trim() || undefined,
         triggerReason: triggerReason.trim() || undefined,
@@ -77,21 +101,75 @@ const IncidentsList: React.FC = () => {
         return;
       }
       setIncidents(response.data);
-      setPagination((prev) => ({
-        ...prev,
-        ...response.pagination,
-      }));
-    } catch (err: any) {
+      setServerMeta({
+        total: response.pagination.total,
+        hasMore: response.pagination.hasMore,
+      });
+    } catch (err: unknown) {
       if (requestId !== requestIdRef.current) {
         return;
       }
       console.error("Failed to fetch incidents:", err);
-      setError(err.response?.data?.message || "Failed to load incidents");
+      const axiosLike = err as { response?: { data?: { message?: string } } };
+      setError(axiosLike.response?.data?.message || "Failed to load incidents");
     } finally {
       if (requestId === requestIdRef.current) {
         setIsLoading(false);
       }
     }
+  }, [limit, offset, q, submissionMode, triggerArea, triggerReason]);
+
+  useEffect(() => {
+    void fetchIncidents();
+  }, [fetchIncidents, refreshTick]);
+
+  const setSubmissionModeInUrl = (value: "" | Incident["submissionMode"]) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (value) {
+          next.set("submissionMode", value);
+        } else {
+          next.delete("submissionMode");
+        }
+        next.delete("offset");
+        return next;
+      },
+      { replace: false },
+    );
+  };
+
+  const goToNextPage = () => {
+    if (!serverMeta.hasMore) {
+      return;
+    }
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set("offset", String(offset + limit));
+        return next;
+      },
+      { replace: false },
+    );
+  };
+
+  const goToPrevPage = () => {
+    if (offset <= 0) {
+      return;
+    }
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        const nextOffset = Math.max(0, offset - limit);
+        if (nextOffset === 0) {
+          next.delete("offset");
+        } else {
+          next.set("offset", String(nextOffset));
+        }
+        return next;
+      },
+      { replace: false },
+    );
   };
 
   const getStatusBadge = (status: Incident["status"]) => {
@@ -156,24 +234,6 @@ const IncidentsList: React.FC = () => {
     });
   };
 
-  const goToNextPage = () => {
-    if (pagination.hasMore) {
-      setPagination((prev) => ({
-        ...prev,
-        offset: prev.offset + prev.limit,
-      }));
-    }
-  };
-
-  const goToPrevPage = () => {
-    if (pagination.offset > 0) {
-      setPagination((prev) => ({
-        ...prev,
-        offset: Math.max(0, prev.offset - prev.limit),
-      }));
-    }
-  };
-
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -183,7 +243,10 @@ const IncidentsList: React.FC = () => {
             <Bug className="h-6 w-6 text-red-500" />
             <h1 className="text-2xl font-bold">Bug Report Incidents</h1>
           </div>
-          <Button variant="outline" onClick={fetchIncidents} disabled={isLoading}>
+          <Button
+            variant="outline"
+            onClick={() => setRefreshTick((t) => t + 1)}
+            disabled={isLoading}>
             {isLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
             Refresh
           </Button>
@@ -201,7 +264,9 @@ const IncidentsList: React.FC = () => {
               <select
                 className="h-10 rounded-md border border-gray-300 px-3 text-sm"
                 value={submissionMode}
-                onChange={(e) => setSubmissionMode(e.target.value as "" | Incident["submissionMode"])}>
+                onChange={(e) =>
+                  setSubmissionModeInUrl(e.target.value as "" | Incident["submissionMode"])
+                }>
                 <option value="">All submission modes</option>
                 <option value="USER_INITIATED">User initiated</option>
                 <option value="AUTOMATIC">Automatic</option>
@@ -245,7 +310,7 @@ const IncidentsList: React.FC = () => {
         {!isLoading && !error && (
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg">Recent Incidents ({pagination.total} total)</CardTitle>
+              <CardTitle className="text-lg">Recent Incidents ({serverMeta.total} total)</CardTitle>
             </CardHeader>
             <CardContent>
               {incidents.length === 0 ? (
@@ -258,51 +323,57 @@ const IncidentsList: React.FC = () => {
                   {incidents.map((incident) => (
                     <div
                       key={incident.incidentId}
-                      className="flex items-center justify-between p-4 border rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
-                      onClick={() => navigate(`/admin/incidents/${incident.incidentId}`)}>
-                      <div className="flex items-center gap-4 flex-1 min-w-0">
-                        <div className="flex flex-col min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono text-sm text-gray-500">
-                              {incident.incidentId.slice(0, 8)}...
-                            </span>
-                            <span className="text-sm text-gray-400">·</span>
-                            <span className="text-sm text-gray-600 truncate">{incident.userId}</span>
-                          </div>
-                          {incident.summary && (
-                            <span className="text-sm font-medium text-gray-800 truncate mt-1">{incident.summary}</span>
-                          )}
-                          <div className="flex flex-wrap items-center gap-2 mt-2">
-                            {getSubmissionBadge(incident.submissionMode)}
-                            {incident.triggerArea && (
-                              <Badge className="bg-gray-100 text-gray-700 hover:bg-gray-200">
-                                {formatAreaLabel(incident.triggerArea)}
-                              </Badge>
+                      className="flex items-center border rounded-lg hover:bg-gray-50 transition-colors">
+                      <Link
+                        to={`/admin/incidents/${incident.incidentId}`}
+                        className="flex items-center justify-between flex-1 p-4 min-w-0 text-inherit no-underline">
+                        <div className="flex items-center gap-4 flex-1 min-w-0">
+                          <div className="flex flex-col min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-sm text-gray-500">
+                                {incident.incidentId.slice(0, 8)}...
+                              </span>
+                              <span className="text-sm text-gray-400">·</span>
+                              <span className="text-sm text-gray-600 truncate">{incident.userId}</span>
+                            </div>
+                            {incident.summary && (
+                              <span className="text-sm font-medium text-gray-800 truncate mt-1">
+                                {incident.summary}
+                              </span>
                             )}
-                            {incident.sourceAppletName && (
-                              <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-200">
-                                {incident.sourceAppletName}
-                              </Badge>
-                            )}
+                            <div className="flex flex-wrap items-center gap-2 mt-2">
+                              {getSubmissionBadge(incident.submissionMode)}
+                              {incident.triggerArea && (
+                                <Badge className="bg-gray-100 text-gray-700 hover:bg-gray-200">
+                                  {formatAreaLabel(incident.triggerArea)}
+                                </Badge>
+                              )}
+                              {incident.sourceAppletName && (
+                                <Badge className="bg-emerald-100 text-emerald-800 hover:bg-emerald-200">
+                                  {incident.sourceAppletName}
+                                </Badge>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
 
-                      <div className="flex items-center gap-4 flex-shrink-0">
-                        <span className="text-sm text-gray-500">{formatDate(incident.createdAt)}</span>
-                        {getStatusBadge(incident.status)}
-                        {incident.linearIssueUrl && (
-                          <a
-                            href={incident.linearIssueUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className="text-blue-500 hover:text-blue-700">
-                            <ExternalLink className="h-4 w-4" />
-                          </a>
-                        )}
-                        <ChevronRight className="h-4 w-4 text-gray-400" />
-                      </div>
+                        <div className="flex items-center gap-4 flex-shrink-0">
+                          <span className="text-sm text-gray-500">{formatDate(incident.createdAt)}</span>
+                          {getStatusBadge(incident.status)}
+                        </div>
+                      </Link>
+
+                      {incident.linearIssueUrl && (
+                        <a
+                          href={incident.linearIssueUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 text-blue-500 hover:text-blue-700 shrink-0"
+                          aria-label="Open Linear issue">
+                          <ExternalLink className="h-4 w-4" />
+                        </a>
+                      )}
+                      <ChevronRight className="h-4 w-4 text-gray-400 shrink-0 pr-4" aria-hidden />
                     </div>
                   ))}
                 </div>
@@ -311,15 +382,15 @@ const IncidentsList: React.FC = () => {
               {/* Pagination */}
               {incidents.length > 0 && (
                 <div className="flex items-center justify-between mt-4 pt-4 border-t">
-                  <Button variant="outline" size="sm" onClick={goToPrevPage} disabled={pagination.offset === 0}>
+                  <Button variant="outline" size="sm" onClick={goToPrevPage} disabled={offset === 0}>
                     <ChevronLeft className="h-4 w-4 mr-1" />
                     Previous
                   </Button>
                   <span className="text-sm text-gray-500">
-                    Showing {pagination.offset + 1} - {Math.min(pagination.offset + incidents.length, pagination.total)}{" "}
-                    of {pagination.total}
+                    Showing {offset + 1} - {Math.min(offset + incidents.length, serverMeta.total)} of{" "}
+                    {serverMeta.total}
                   </span>
-                  <Button variant="outline" size="sm" onClick={goToNextPage} disabled={!pagination.hasMore}>
+                  <Button variant="outline" size="sm" onClick={goToNextPage} disabled={!serverMeta.hasMore}>
                     Next
                     <ChevronRight className="h-4 w-4 ml-1" />
                   </Button>

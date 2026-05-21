@@ -370,3 +370,6 @@ nicelogs.txt
 
 # mentra-miniapp install cache (built+packed zips ready to serve)
 **/.mentra/
+
+# Cursor IDE local config (MCP, etc.)
+.cursor/

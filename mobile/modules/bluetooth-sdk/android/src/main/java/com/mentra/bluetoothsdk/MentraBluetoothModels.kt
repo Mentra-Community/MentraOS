@@ -781,7 +781,32 @@ data class PhotoRequest @JvmOverloads constructor(
     val compress: PhotoCompression = PhotoCompression.MEDIUM,
     val flash: Boolean = false,
     val sound: Boolean = true,
-)
+    /** Sensor exposure time for this capture only (ns), or null for auto exposure */
+    val exposureTimeNs: Double? = null,
+) {
+    companion object {
+        /** Mirrors iOS `BluetoothSdkModule` defaults for keys omitted from the JS bridge. */
+        fun fromMap(values: Map<String, Any>): PhotoRequest {
+            val rawExp = values["exposureTimeNs"] ?: values["exposure_time_ns"]
+            val exposureTimeNs: Double? =
+                when (rawExp) {
+                    is Number -> rawExp.toDouble().takeIf { it.isFinite() && it > 0 }
+                    else -> null
+                }
+            return PhotoRequest(
+                requestId = stringValue(values, "requestId", "request_id").orEmpty(),
+                appId = stringValue(values, "appId", "app_id").orEmpty(),
+                size = PhotoSize.fromValue(stringValue(values, "size") ?: "medium"),
+                webhookUrl = stringValue(values, "webhookUrl", "webhook_url").orEmpty(),
+                authToken = stringValue(values, "authToken", "auth_token")?.takeIf { it.isNotBlank() },
+                compress = PhotoCompression.fromValue(stringValue(values, "compress") ?: "none"),
+                flash = boolValue(values, "flash") ?: true,
+                sound = boolValue(values, "sound") ?: true,
+                exposureTimeNs = exposureTimeNs,
+            )
+        }
+    }
+}
 
 data class StreamVideoConfig @JvmOverloads constructor(
     val width: Int? = null,

@@ -77,6 +77,7 @@ export class PhotoManager {
         size,
         hasCustomWebhook: !!customWebhookUrl,
         hasAuthToken: !!authToken,
+        rawExposureTimeNs: appRequest.exposureTimeNs,
       },
       "Processing App photo request.",
     );
@@ -124,6 +125,9 @@ export class PhotoManager {
     const flash = true;
     const sound = appRequest.sound ?? true;
 
+    const expNs = appRequest.exposureTimeNs;
+    const includeExposure = typeof expNs === "number" && Number.isFinite(expNs) && expNs > 0;
+
     // Message to glasses based on CloudToGlassesMessageType.PHOTO_REQUEST
     // Include webhook URL so ASG can upload directly to the app
     const messageToGlasses = {
@@ -138,6 +142,7 @@ export class PhotoManager {
       flash, // Controls privacy flash LED (cloud-controlled)
       sound, // Controls shutter sound (app-controllable via SDK)
       timestamp: new Date(),
+      ...(includeExposure ? { exposureTimeNs: expNs } : {}),
     };
 
     try {
@@ -151,8 +156,9 @@ export class PhotoManager {
           hasAuthToken: !!authToken,
           flash,
           sound,
+          exposureTimeNs: includeExposure ? expNs : undefined,
         },
-        `PHOTO_REQUEST command sent to glasses (flash=${flash}, sound=${sound}).`,
+        `PHOTO PIPELINE [cloud] PHOTO_REQUEST sent to phone websocket (flash=${flash}, sound=${sound}).`,
       );
 
       // If using custom webhook URL, resolve immediately since glasses won't send response back to cloud
