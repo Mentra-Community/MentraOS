@@ -2,10 +2,10 @@
 
 ASG Client streams the camera feed to a remote server in real time. Three protocols are supported and selected automatically by URL prefix:
 
-| Prefix | Protocol | Service class |
-|--------|----------|---------------|
-| `rtmp://` / `rtmps://` | RTMP | `RtmpStreamingService` |
-| `srt://` | SRT | `SrtStreamingService` |
+| Prefix                 | Protocol      | Service class          |
+| ---------------------- | ------------- | ---------------------- |
+| `rtmp://` / `rtmps://` | RTMP          | `RtmpStreamingService` |
+| `srt://`               | SRT           | `SrtStreamingService`  |
 | `https://` / `http://` | WHIP (WebRTC) | `WhipStreamingService` |
 
 Source: `app/src/main/java/com/mentra/asg_client/io/streaming/services/`. Phone-side dispatch goes through `StreamCommandHandler`.
@@ -37,7 +37,7 @@ See the [API doc](../ASG_CLIENT_API.md#streaming-rtmp--srt--whip) for fields and
 
 ### Active stream
 
-Status callbacks emit `stream_status` messages back to the phone. Status values include `streaming_started`, `reconnecting`, `error`, `stopping`, `error_not_streaming`.
+Status callbacks emit `stream_status` messages back to the phone. Canonical status values include `initializing`, `streaming`, `reconnecting`, `reconnected`, `reconnect_failed`, `stopping`, `stopped`, and `error`.
 
 ### Keep-alive timeout
 
@@ -66,7 +66,7 @@ The reconnection backoff is internal to each streaming service. The phone can ca
 
 `stop_stream` finds whichever service is currently active (`isStreaming()` or `isReconnecting()`), calls `stopStreaming(context)`, and re-enables EIS.
 
-If no stream is active, the response is `error_not_streaming`.
+If no stream is active, the response is `status: "error"` with `errorDetails: "not_streaming"`.
 
 ## Resource constraints
 
@@ -77,22 +77,22 @@ If no stream is active, the response is `error_not_streaming`.
 
 ## Network expectations
 
-| | Minimum | Recommended |
-|---|---------|-------------|
-| Upload bandwidth | 1 Mbps | 2-3 Mbps |
-| Latency | < 200 ms RTT | < 100 ms RTT |
-| Stability | reconnects within ~30 s tolerated | sustained connection |
+|                  | Minimum                           | Recommended          |
+| ---------------- | --------------------------------- | -------------------- |
+| Upload bandwidth | 1 Mbps                            | 2-3 Mbps             |
+| Latency          | < 200 ms RTT                      | < 100 ms RTT         |
+| Stability        | reconnects within ~30 s tolerated | sustained connection |
 
 ## Logcat tags
 
-| Tag | What |
-|-----|------|
-| `StreamCommandHandler` | Command dispatch, protocol detection |
-| `RtmpStreamingService` | RTMP lifecycle, reconnect |
-| `SrtStreamingService` | SRT lifecycle |
-| `WhipStreamingService` | WHIP lifecycle |
-| `WhipCameraFormatSelector` | WHIP resolution validation |
-| `MediaManager` | Status callback dispatch over BLE |
+| Tag                        | What                                 |
+| -------------------------- | ------------------------------------ |
+| `StreamCommandHandler`     | Command dispatch, protocol detection |
+| `RtmpStreamingService`     | RTMP lifecycle, reconnect            |
+| `SrtStreamingService`      | SRT lifecycle                        |
+| `WhipStreamingService`     | WHIP lifecycle                       |
+| `WhipCameraFormatSelector` | WHIP resolution validation           |
+| `MediaManager`             | Status callback dispatch over BLE    |
 
 Useful filters:
 
@@ -107,6 +107,6 @@ adb logcat | grep -E "keep_stream_alive|keep_alive_ack"
 ## Common issues
 
 - **Stream stops after ~60 s** — keep-alives aren't reaching the glasses, or `streamId` doesn't match the active stream.
-- **`error_not_streaming` on stop** — stream already stopped on its own (timeout, reconnect-failure). Treat as idempotent.
+- **`error` with `errorDetails: "not_streaming"` on stop** — stream already stopped on its own (timeout, reconnect-failure). Treat as idempotent.
 - **WHIP `Resolution too high`** — requested `width`/`height` exceeds what the camera can output. Reduce resolution or let the config use defaults.
 - **Stream won't start** — check the `BATTERY_LOW` / `no_wifi_connection` error details and the `Unknown stream URL protocol` log.

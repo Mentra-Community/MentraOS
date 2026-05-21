@@ -2,13 +2,13 @@ import {Stack} from "expo-router"
 
 import NexDeveloperSettings from "@/components/glasses/NexDeveloperSettings"
 import {Screen, Header} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {$styles} from "@/theme"
 
 export default function NexDeveloperSettingsPage() {
   const {themed} = useAppTheme()
-  const {goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
 
   return (
     <Screen preset="fixed">

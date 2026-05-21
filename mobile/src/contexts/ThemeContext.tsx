@@ -6,7 +6,7 @@ import * as NavigationBar from "expo-navigation-bar"
 import {useSetting, SETTINGS} from "@/stores/settings"
 import {type Theme, type ThemeContexts, type ThemedStyle, type ThemedStyleArray, lightTheme, darkTheme} from "@/theme"
 import {setStatusBarStyle} from "expo-status-bar"
-import {BgTimer} from "@/utils/timers"
+import {BgTimer} from "@mentra/island"
 import {Uniwind} from "uniwind"
 
 type ThemeContextType = {

@@ -1,19 +1,30 @@
-import CoreModule from "core"
+import CoreModule from "@mentra/bluetooth-sdk"
+import {
+  displayProcessor,
+  localMiniappRuntime,
+  localSttFallbackCoordinator,
+  micStateCoordinator,
+  throttle,
+} from "@mentra/island"
 
-import {push} from "@/contexts/NavigationHistoryContext"
 import audioPlaybackService from "@/services/AudioPlaybackService"
-import displayProcessor from "@/services/DisplayProcessor"
 import mantle from "@/services/MantleManager"
+import restComms from "@/services/RestComms"
+import {
+  normalizePhotoCompression,
+  normalizePhotoSize,
+  normalizeRgbLedAction,
+  normalizeRgbLedColor,
+} from "@/services/SocketComms.normalizers"
 import udp from "@/services/UdpManager"
 import ws from "@/services/WebSocketManager"
-import {useAppletStatusStore} from "@/stores/applets"
+import miniappCatalog from "@/services/miniapps/MiniappCatalog"
 import {useDisplayStore} from "@/stores/display"
 import {useGlassesStore} from "@/stores/glasses"
-import {useSettingsStore, SETTINGS} from "@/stores/settings"
+import {useNavigationStore} from "@/stores/navigation"
+import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {showAlert} from "@/utils/AlertUtils"
-import restComms from "@/services/RestComms"
 import {checkFeaturePermissions, PermissionFeatures} from "@/utils/PermissionsUtils"
-import {throttle} from "@/utils/timers"
 
 class SocketComms {
   private static instance: SocketComms | null = null
@@ -106,9 +117,10 @@ class SocketComms {
     const glassesInfo = useGlassesStore.getState()
 
     // Always include WiFi info - null means "unknown", false means "explicitly disconnected"
+    const wifi = glassesInfo.wifi
     const wifiInfo = {
-      connected: glassesInfo.wifiConnected ?? null,
-      ssid: glassesInfo.wifiSsid ?? null,
+      connected: glassesInfo.wifiStatusKnown ? wifi.state === "connected" : null,
+      ssid: wifi.state === "connected" ? wifi.ssid : null,
     }
 
     const connected = glassesInfo.connected
@@ -125,14 +137,14 @@ class SocketComms {
     )
   }
 
-  public sendBatteryStatus(): void {
-    const batteryLevel = useGlassesStore.getState().batteryLevel
-    const charging = useGlassesStore.getState().charging
+  public sendBatteryStatus(level?: number, charging?: boolean, timestamp: number = Date.now()): void {
+    const batteryLevel = level ?? useGlassesStore.getState().batteryLevel
+    const isCharging = charging ?? useGlassesStore.getState().charging
     const msg = {
       type: "glasses_battery_update",
       level: batteryLevel,
-      charging: charging,
-      timestamp: Date.now(),
+      charging: isCharging,
+      timestamp,
     }
     ws.sendText(JSON.stringify(msg))
   }
@@ -233,6 +245,20 @@ class SocketComms {
       timestamp,
     }
     ws.sendText(JSON.stringify(payload))
+  }
+
+  /** Send an arbitrary message over the phone↔cloud WebSocket. */
+  public sendMessage(msg: object) {
+    ws.sendText(JSON.stringify(msg))
+  }
+
+  public updatePhoneSubscriptions(subscriptions: string[]) {
+    const msg = {
+      type: "phone_subscription_update",
+      subscriptions,
+      timestamp: new Date().toISOString(),
+    }
+    ws.sendText(JSON.stringify(msg))
   }
 
   public sendSwitchStatus(switchType: number, switchValue: number, timestamp: number) {
@@ -404,7 +430,7 @@ class SocketComms {
   }
 
   private refreshAppletsThrottled = throttle(() => {
-    useAppletStatusStore.getState().refreshApplets()
+    void miniappCatalog.refresh()
   }, 500)
 
   private handle_app_state_change(msg: any) {
@@ -451,11 +477,17 @@ class SocketComms {
       }
     }
 
-    CoreModule.update("core", {
-      // should_send_pcm: shouldSendPcmData,
-      should_send_lc3: shouldSendPcmData, // online apps always want lc3
-      should_send_transcript: shouldSendTranscript,
-      bypass_vad: bypassVad,
+    // CoreModule.updateCore({
+    //   // should_send_pcm: shouldSendPcmData,
+    //   should_send_lc3: shouldSendPcmData, // online apps always want lc3
+    //   should_send_transcript: shouldSendTranscript,
+    //   bypass_vad: bypassVad,
+    // })
+    micStateCoordinator.setCloudRequirements({
+      pcm: !!shouldSendPcmData,
+      lc3: !!shouldSendPcmData, // online apps always want lc3
+      transcript: !!shouldSendTranscript,
+      bypass_vad: !!bypassVad,
     })
   }
 
@@ -507,31 +539,54 @@ class SocketComms {
       return
     }
     console.log(`SOCKET: Received app_started message for package: ${msg.packageName}`)
-    useAppletStatusStore.getState().refreshApplets()
+    void miniappCatalog.refresh()
   }
   private handle_app_stopped(msg: any) {
     console.log(`SOCKET: Received app_stopped message for package: ${msg.packageName}`)
-    useAppletStatusStore.getState().refreshApplets()
+    void miniappCatalog.refresh()
   }
 
   private handle_photo_request(msg: any) {
     const requestId = msg.requestId ?? ""
     const appId = msg.appId ?? ""
     const webhookUrl = msg.webhookUrl ?? ""
-    const size = msg.size ?? "medium"
-    const authToken = msg.authToken ?? ""
-    const compress = msg.compress ?? "none"
+    const size = normalizePhotoSize(msg.size)
+    const authToken = typeof msg.authToken === "string" && msg.authToken.length > 0 ? msg.authToken : null
+    const compress = normalizePhotoCompression(msg.compress)
     const flash = msg.flash ?? true
     const sound = msg.sound ?? true
+    const rawExp = msg.exposureTimeNs
+    const exposureTimeNs = typeof rawExp === "number" && Number.isFinite(rawExp) && rawExp > 0 ? rawExp : null
     console.log(
-      `Received photo_request, requestId: ${requestId}, appId: ${appId}, webhookUrl: ${webhookUrl}, size: ${size} authToken: ${authToken} compress: ${compress} flash: ${flash} sound: ${sound}`,
+      `SOCKET: PHOTO PIPELINE [1/6] Received photo_request requestId=${requestId} appId=${appId} webhookUrl=${webhookUrl} size=${size} compress=${compress} flash=${flash} sound=${sound} exposureTimeNs=${exposureTimeNs ?? "none"} authToken=${authToken ? "set" : "none"}`,
     )
     if (!requestId || !appId) {
-      console.log("Invalid photo request: missing requestId or appId")
+      console.log(
+        `SOCKET: PHOTO PIPELINE — invalid photo_request (missing requestId=${requestId || "empty"} or appId=${appId || "empty"})`,
+      )
       return
     }
-    // Parameter order: requestId, appId, size, webhookUrl, authToken, compress, flash, sound
-    CoreModule.photoRequest(requestId, appId, size, webhookUrl, authToken, compress, flash, sound)
+    console.log(`SOCKET: PHOTO PIPELINE [2/6] Forwarding to CoreModule.photoRequest requestId=${requestId}`)
+    void CoreModule.photoRequest({
+      requestId,
+      appId,
+      size,
+      webhookUrl,
+      authToken,
+      compress,
+      flash,
+      sound,
+      exposureTimeNs,
+    })
+      .then(() => {
+        console.log(`SOCKET: PHOTO PIPELINE [3/6] CoreModule.photoRequest resolved requestId=${requestId}`)
+      })
+      .catch((err: unknown) => {
+        console.log(
+          `SOCKET: PHOTO PIPELINE — CoreModule.photoRequest failed requestId=${requestId}:`,
+          err instanceof Error ? err.message : err,
+        )
+      })
   }
 
   private handle_start_stream(msg: any) {
@@ -581,8 +636,8 @@ class SocketComms {
     CoreModule.rgbLedControl(
       msg.requestId,
       msg.packageName ?? null,
-      msg.action ?? "off",
-      msg.color ?? null,
+      normalizeRgbLedAction(msg.action),
+      normalizeRgbLedColor(msg.color),
       coerceNumber(msg.ontime, 1000),
       coerceNumber(msg.offtime, 0),
       coerceNumber(msg.count, 1),
@@ -609,7 +664,8 @@ class SocketComms {
         {
           text: "Setup WiFi",
           onPress: () => {
-            push("/wifi/scan")
+            const nav = useNavigationStore.getState()
+            nav.push("/wifi/scan")
           },
         },
       ],
@@ -768,6 +824,22 @@ class SocketComms {
 
       case "udp_ping_ack":
         this.handle_udp_ping_ack(msg)
+        break
+
+      case "data_stream": {
+        const streamType = msg.streamType
+        if (typeof streamType === "string" && streamType.startsWith("transcription:")) {
+          localSttFallbackCoordinator.onCloudTranscript()
+        }
+        localMiniappRuntime.forwardEvent(streamType, msg.data)
+        break
+      }
+
+      case "phone_photo_ready":
+      case "phone_stream_status":
+      case "phone_managed_stream_status":
+        // Forward Phase 5 messages to LocalMiniappRuntime
+        localMiniappRuntime.handleCloudMessage(msg)
         break
 
       default:

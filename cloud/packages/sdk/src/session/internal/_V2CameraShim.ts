@@ -16,6 +16,8 @@ export interface _V2PhotoRequestOptions {
   size?: "small" | "medium" | "large" | "full";
   compress?: "none" | "medium" | "heavy";
   sound?: boolean;
+  /** Sensor exposure time for this request only (nanoseconds). Not persisted. */
+  exposureTimeNs?: number;
 }
 
 export interface _V2PhotoRequestBridge {
@@ -68,8 +70,6 @@ export class _V2CameraShim {
     return this.session.camera.takePhoto(options);
   }
 
-
-
   async requestPhoto(options?: _V2PhotoRequestOptions): Promise<LegacyPhotoData> {
     const bridge = this.config.photoRequestBridge;
     const userId = this.session.userId;
@@ -90,6 +90,9 @@ export class _V2CameraShim {
         timestamp: Date.now(),
       });
 
+      const expNs = options?.exposureTimeNs;
+      const includeExp = typeof expNs === "number" && Number.isFinite(expNs) && expNs > 0;
+
       this.session.sendMessage({
         type: AppToCloudMessageType.PHOTO_REQUEST,
         packageName: this.session.packageName,
@@ -102,6 +105,7 @@ export class _V2CameraShim {
         size: options?.size ?? "medium",
         compress: options?.compress ?? "none",
         sound: options?.sound,
+        ...(includeExp ? { exposureTimeNs: expNs } : {}),
       });
 
       if (options?.customWebhookUrl) {

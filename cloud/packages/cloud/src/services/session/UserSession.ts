@@ -39,6 +39,7 @@ import { clearSubscriptionChangeTimer } from "./handlers/app-message-handler";
 import LocationManager from "./LocationManager";
 import MicrophoneManager from "./MicrophoneManager";
 import PhotoManager from "./PhotoManager";
+import { MiniappSdkPhotoManager } from "./MiniappSdkPhotoManager";
 import SubscriptionManager from "./SubscriptionManager";
 import { TranscriptionManager } from "./transcription/TranscriptionManager";
 import { TranslationManager } from "./translation/TranslationManager";
@@ -139,6 +140,7 @@ export class UserSession {
   public streamRegistry: StreamRegistry;
   public unmanagedStreamingExtension: UnmanagedStreamingExtension;
   public photoManager: PhotoManager;
+  public miniappSdkPhotoManager: MiniappSdkPhotoManager;
   public managedStreamingExtension: ManagedStreamingExtension;
 
   // Resource tracking for automatic cleanup (prevents memory leaks)
@@ -195,6 +197,7 @@ export class UserSession {
     this.calendarManager = new CalendarManager(this);
     this.locationManager = new LocationManager(this);
     this.photoManager = new PhotoManager(this);
+    this.miniappSdkPhotoManager = new MiniappSdkPhotoManager(this);
     this.streamRegistry = new StreamRegistry(this.logger);
     this.unmanagedStreamingExtension = new UnmanagedStreamingExtension(this);
     this.managedStreamingExtension = new ManagedStreamingExtension(this.logger, this.streamRegistry);
@@ -808,6 +811,7 @@ export class UserSession {
     // if (this.heartbeatManager) this.heartbeatManager.dispose();
     if (this.unmanagedStreamingExtension) this.unmanagedStreamingExtension.dispose();
     if (this.photoManager) this.photoManager.dispose();
+    if (this.miniappSdkPhotoManager) this.miniappSdkPhotoManager.cleanup();
     if (this.managedStreamingExtension) this.managedStreamingExtension.dispose();
     if (this.appAudioStreamManager) this.appAudioStreamManager.dispose();
 

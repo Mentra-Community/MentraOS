@@ -24,10 +24,11 @@ import java.util.Map;
 
 /**
  * File-based report provider that writes crash logs to external storage.
- * Logs are accessible via ADB: adb pull /sdcard/mentra_crash_logs/
+ * Preferred path is app external files dir (no extra storage permission on modern Android).
+ * When legacy public storage is writable, also uses /sdcard/mentra_crash_logs/ for ADB.
  *
  * Features:
- * - Writes to /sdcard/mentra_crash_logs/ for easy ADB access
+ * - Tries public external dir when writable; falls back to {@code Context#getExternalFilesDir}
  * - Automatic log rotation when total size exceeds limit
  * - Full stack traces and device context
  * - Works offline (no network required)
@@ -61,19 +62,19 @@ public class FileReportProvider implements IReportProvider {
         Log.i(TAG, "Initializing file report provider...");
 
         try {
-            // Use external storage for ADB accessibility
-            File externalDir = Environment.getExternalStorageDirectory();
-            mLogDirectory = new File(externalDir, LOG_DIRECTORY);
+            mLogDirectory = resolveLogDirectory(context);
+            if (mLogDirectory == null) {
+                Log.e(TAG, "Failed to resolve crash log directory");
+                return false;
+            }
 
             if (!mLogDirectory.exists()) {
-                boolean created = mLogDirectory.mkdirs();
-                if (!created) {
+                if (!mLogDirectory.mkdirs()) {
                     Log.e(TAG, "Failed to create log directory: " + mLogDirectory.getAbsolutePath());
                     return false;
                 }
             }
 
-            // Verify we can write to the directory
             if (!mLogDirectory.canWrite()) {
                 Log.e(TAG, "Cannot write to log directory: " + mLogDirectory.getAbsolutePath());
                 return false;
@@ -90,6 +91,31 @@ public class FileReportProvider implements IReportProvider {
             Log.e(TAG, "Failed to initialize file report provider", e);
             return false;
         }
+    }
+
+    /**
+     * Prefer legacy public storage when we can create/write it (easy {@code adb pull});
+     * otherwise use app-specific external storage (works under scoped storage).
+     */
+    private File resolveLogDirectory(Context context) {
+        try {
+            File externalRoot = Environment.getExternalStorageDirectory();
+            if (externalRoot != null) {
+                File pub = new File(externalRoot, LOG_DIRECTORY);
+                if ((!pub.exists() && pub.mkdirs()) || pub.exists()) {
+                    if (pub.canWrite()) {
+                        return pub;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Public crash log path unavailable: " + e.getMessage());
+        }
+        File appExt = context.getExternalFilesDir(null);
+        if (appExt != null) {
+            return new File(appExt, LOG_DIRECTORY);
+        }
+        return new File(context.getFilesDir(), LOG_DIRECTORY);
     }
 
     @Override

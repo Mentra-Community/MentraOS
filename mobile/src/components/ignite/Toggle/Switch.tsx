@@ -1,10 +1,9 @@
 import {useEffect, useMemo, useRef, useCallback, useState} from "react"
-import {Animated, Image, ImageStyle, Platform, StyleProp, TextStyle, View, ViewStyle} from "react-native"
+import {Animated, Image, ImageSourcePropType, ImageStyle, Platform, StyleProp, TextStyle, View, ViewStyle} from "react-native"
 
 import {iconRegistry} from "@/components/ignite/Icon"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {isRTL} from "@/i18n"
-import {$styles} from "@/theme"
 import type {ThemedStyle} from "@/theme"
 
 import {$inputOuterBase, BaseToggleInputProps, Toggle, ToggleProps} from "./Toggle"
@@ -116,7 +115,7 @@ function _SwitchInput(props: SwitchInputProps) {
   })()
 
   const rtlAdjustment = isRTL ? -1 : 1
-  const $themedSwitchInner = useMemo(() => themed([$styles.toggleInner, $switchInner]), [themed])
+  const $themedSwitchInner = useMemo(() => themed($switchInner), [themed])
 
   const offsetLeft = ($innerStyleOverride?.paddingStart ||
     $innerStyleOverride?.paddingLeft ||
@@ -315,14 +314,20 @@ function _SwitchAccessibilityLabel(props: SwitchInputProps & {role: "on" | "off"
         />
       )}
 
-      {accessibilityMode === "icon" && shouldLabelBeVisible && (
-        <Image
-          style={[$switchAccessibilityIcon, {tintColor: color}]}
-          source={role === "off" ? iconRegistry.hidden : iconRegistry.view}
-        />
-      )}
+      {accessibilityMode === "icon" &&
+        shouldLabelBeVisible &&
+        getSwitchAccessibilityIcon(role) != null && (
+          <Image style={[$switchAccessibilityIcon, {tintColor: color}]} source={getSwitchAccessibilityIcon(role)!} />
+        )}
     </View>
   )
+}
+
+function getSwitchAccessibilityIcon(role: "on" | "off"): ImageSourcePropType | undefined {
+  const source = (iconRegistry as Record<string, unknown>)[role === "off" ? "hidden" : "view"]
+  return typeof source === "number" || (source != null && typeof source === "object")
+    ? (source as ImageSourcePropType)
+    : undefined
 }
 
 const $inputOuter: StyleProp<ViewStyle> = [$inputOuterBase, {height: 16, width: 32, borderRadius: 16}]

@@ -7,10 +7,12 @@ import {Header, Icon, Screen, Text} from "@/components/ignite"
 import AppIcon from "@/components/home/AppIcon"
 import {Group} from "@/components/ui"
 import {RouteButton} from "@/components/ui/RouteButton"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
-import {sortAppsByLastOpenTime, SYSTEM_APPS, useApplets, type ClientAppletInterface} from "@/stores/applets"
+import {sortAppsByLastOpenTime, useApps, type ClientApp} from "@mentra/island"
+
+import {SYSTEM_APPS} from "@/constants/miniapps"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {buildMenuItems, filterCompatibleMenuItems, getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
 
@@ -18,12 +20,12 @@ const MAX_MENU_ITEMS = 10
 
 export default function GlassesMenuScreen() {
   const {theme} = useAppTheme()
-  const {goBack} = useNavigationHistory()
-  const applets = useApplets()
+  const {goBack} = useNavigationStore.getState()
+  const applets = useApps()
   const [savedMenuApps, setSavedMenuApps] = useSetting<GlassesMenuItem[] | null>(SETTINGS.menu_apps.key)
   const [menuItems, setMenuItems] = useState<GlassesMenuItem[]>([])
   const [showPicker, setShowPicker] = useState(false)
-  const [sortedAvailable, setSortedAvailable] = useState<ClientAppletInterface[]>([])
+  const [sortedAvailable, setSortedAvailable] = useState<ClientApp[]>([])
   const [pickerReady, setPickerReady] = useState(false)
 
   // Load menu items on mount
@@ -68,7 +70,7 @@ export default function GlassesMenuScreen() {
   }
 
   // Look up the full applet for a menu item (for icon rendering)
-  const getApplet = (packageName: string): ClientAppletInterface | undefined => {
+  const getApplet = (packageName: string): ClientApp | undefined => {
     return applets.find((a) => a.packageName === packageName)
   }
 
@@ -124,7 +126,7 @@ export default function GlassesMenuScreen() {
             ) : (
               <View style={{width: 32, height: 32, borderRadius: 8, backgroundColor: theme.colors.border}} />
             )}
-            <Text style={{color: theme.colors.foreground}} size="sm">
+            <Text style={{color: theme.colors.foreground}}>
               {item.name}
             </Text>
           </View>
@@ -159,7 +161,7 @@ export default function GlassesMenuScreen() {
             paddingHorizontal: theme.spacing.s4,
           }}>
           <Icon name="plus" size={20} color={theme.colors.primary} />
-          <Text style={{color: theme.colors.primary}} size="sm">
+          <Text style={{color: theme.colors.primary}}>
             {translate("settings:glassesMenuAddApp")}
           </Text>
         </Pressable>
@@ -190,7 +192,7 @@ export default function GlassesMenuScreen() {
                 borderBottomColor: theme.colors.border,
               }}>
               <AppIcon app={app} style={{width: 28, height: 28, borderRadius: 6}} disableLoader />
-              <Text style={{color: theme.colors.foreground}} size="sm">
+              <Text style={{color: theme.colors.foreground}}>
                 {app.name}
               </Text>
             </Pressable>

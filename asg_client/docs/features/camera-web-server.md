@@ -40,22 +40,22 @@ The `FileManager` provides package-namespaced file storage and deletion — see 
 
 All routes are dispatched in `AsgCameraServer.handleRequest(IHTTPSession)`.
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `/` | HTML index page (mostly for manual testing) |
-| POST | `/api/take-picture` | Trigger photo capture via the registered `OnPictureRequestListener` |
-| GET | `/api/latest-photo` | Returns the most recently captured photo (binary) |
-| GET | `/api/gallery` | List all photos with metadata |
-| GET | `/api/photo?file=<filename>` | Serve a specific photo |
-| GET | `/api/download?file=<filename>` | Download a specific file with content-disposition |
-| GET | `/api/status` | Server status & metrics |
-| GET | `/api/health` | Health check |
-| POST | `/api/cleanup` | Bulk cleanup operation |
-| POST | `/api/delete-files` | Delete a list of named files (see below) |
-| GET | `/api/sync` | Single-file sync handshake |
-| GET | `/api/sync-batch` | Batch sync handshake |
-| GET | `/api/sync-status` | Current sync state |
-| GET | `/static/<filename>` | Static asset (CSS/JS/images served from app assets) |
+| Method | Path                            | Purpose                                                             |
+| ------ | ------------------------------- | ------------------------------------------------------------------- |
+| GET    | `/`                             | HTML index page (mostly for manual testing)                         |
+| POST   | `/api/take-picture`             | Trigger photo capture via the registered `OnPictureRequestListener` |
+| GET    | `/api/latest-photo`             | Returns the most recently captured photo (binary)                   |
+| GET    | `/api/gallery`                  | List all photos with metadata                                       |
+| GET    | `/api/photo?file=<filename>`    | Serve a specific photo                                              |
+| GET    | `/api/download?file=<filename>` | Download a specific file with content-disposition                   |
+| GET    | `/api/status`                   | Server status & metrics                                             |
+| GET    | `/api/health`                   | Health check                                                        |
+| POST   | `/api/cleanup`                  | Bulk cleanup operation                                              |
+| POST   | `/api/delete-files`             | Delete a list of named files (see below)                            |
+| GET    | `/api/sync`                     | Single-file sync handshake                                          |
+| GET    | `/api/sync-batch`               | Batch sync handshake                                                |
+| GET    | `/api/sync-status`              | Current sync state                                                  |
+| GET    | `/static/<filename>`            | Static asset (CSS/JS/images served from app assets)                 |
 
 ### `POST /api/delete-files`
 
@@ -146,9 +146,9 @@ curl -X POST http://<GLASSES_IP>:8089/api/delete-files \
 
 ## Logcat tags
 
-| Tag | Component |
-|-----|-----------|
-| `AsgCameraServer` | Route handling, photo serving, deletion |
+| Tag                          | Component                               |
+| ---------------------------- | --------------------------------------- |
+| `AsgCameraServer`            | Route handling, photo serving, deletion |
 | `AsgServer` (base class TAG) | Generic request handling, rate limiting |
-| `CacheManager` | Cache hits/misses |
-| `RateLimiter` | Throttling decisions |
+| `CacheManager`               | Cache hits/misses                       |
+| `RateLimiter`                | Throttling decisions                    |

@@ -5,17 +5,17 @@ import {Text, Screen, Header} from "@/components/ignite"
 import {OptionList} from "@/components/ui/Options"
 import {ThemedSlider} from "@/components/settings/ThemedSlider"
 import ToggleSetting from "@/components/settings/ToggleSetting"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import Toast from "react-native-toast-message"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {spacing, ThemedStyle} from "@/theme"
-import CoreModule from "core"
+import CoreModule from "@mentra/bluetooth-sdk"
 
 type PhotoSize = "small" | "medium" | "large"
-type VideoResolution = "720p" | "1080p" // | "1440p" | "4K"
+type VideoResolution = "720p" | "1080p" | "1440p" | "4K"
 type MaxRecordingTime = "3m" | "5m" | "10m" | "15m" | "20m"
 type CameraRoiPosition = 0 | 1 | 2 // 0=Center, 1=Bottom, 2=Top
 
@@ -49,7 +49,7 @@ const ROI_POSITION_OPTIONS = [
 
 export default function CameraSettingsScreen() {
   const {theme, themed} = useAppTheme()
-  const {goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
   const [_devMode, _setDevMode] = useSetting(SETTINGS.dev_mode.key)
   const [photoSize, setPhotoSize] = useSetting(SETTINGS.button_photo_size.key)
   const [_ledEnabled, setLedEnabled] = useSetting(SETTINGS.button_camera_led.key)

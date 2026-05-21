@@ -2,13 +2,13 @@ import {ScrollView, View} from "react-native"
 
 import {MicrophoneSelector} from "@/components/glasses/settings/MicrophoneSelector"
 import {Header, Screen, Text} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 
 export default function MicrophoneScreen() {
   const {theme, themed} = useAppTheme()
-  const {goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
 
   return (
     <Screen preset="fixed">

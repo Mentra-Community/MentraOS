@@ -1,0 +1,8 @@
+{
+  "packageName": "{{packageName}}",
+  "version": "1.0.0",
+  "name": "My Miniapp",
+  "description": "A MentraOS miniapp",
+  "permissions": [],
+  "hardwareRequirements": []
+}

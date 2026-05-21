@@ -94,6 +94,9 @@ const fonts = {
   },
 }
 
+const primaryFonts = Platform.select({ios: fonts.sfProRounded, android: fonts.redHatDisplay}) ?? fonts.redHatDisplay
+const codeFonts = Platform.select({ios: fonts.courier, android: fonts.monospace}) ?? fonts.monospace
+
 export const typography = {
   /**
    * The fonts are available to use, but prefer using the semantic name.
@@ -102,7 +105,7 @@ export const typography = {
   /**
    * The primary font. Used in most places.
    */
-  primary: Platform.select({ios: fonts.sfProRounded, android: fonts.redHatDisplay}),
+  primary: primaryFonts,
   /**
    * An alternate font used for perhaps titles and stuff.
    */
@@ -110,5 +113,5 @@ export const typography = {
   /**
    * Lets get fancy with a monospace font!
    */
-  code: Platform.select({ios: fonts.courier, android: fonts.monospace}),
+  code: codeFonts,
 }

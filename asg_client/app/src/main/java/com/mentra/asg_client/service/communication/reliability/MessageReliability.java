@@ -24,7 +24,8 @@ public class MessageReliability {
         "wifi_disconnected",
         "settings_updated",
         "ota_download_progress",
-        "ota_installation_progress"
+        "ota_installation_progress",
+        "ota_status"
     );
 
     // Messages that NEVER get retry (prevent loops)

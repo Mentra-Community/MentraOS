@@ -13,6 +13,7 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
   const {theme} = useAppTheme()
 
   const [searchQuery, setSearchQuery] = useState("")
+  const [isOpen, setIsOpen] = useState(false)
 
   const snapPoints = useMemo(() => ["90%"], [])
 
@@ -40,6 +41,7 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
         ref={bottomSheetRef}
         snapPoints={snapPoints}
         animateOnMount={false}
+        onChange={(idx) => setIsOpen(idx >= 0)}
         backdropComponent={renderBackdrop}
         backgroundComponent={(props: any) => {
           if (Platform.OS === "android") {
@@ -89,16 +91,18 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
               {/* <View className="h-px bg-border my-4" /> */}
             </View>
             <View className="h-2" />
-            <AppsGrid
-              showAllApps={true}
-              searchQuery={searchQuery}
-              onOpenApp={() => {
-                bottomSheetRef.current?.close()
-              }}
-              onAddToHome={() => {
-                bottomSheetRef.current?.close()
-              }}
-            />
+            {isOpen && (
+              <AppsGrid
+                showAllApps={true}
+                searchQuery={searchQuery}
+                onOpenApp={() => {
+                  bottomSheetRef.current?.close()
+                }}
+                onAddToHome={() => {
+                  bottomSheetRef.current?.close()
+                }}
+              />
+            )}
           </View>
         </BottomSheetScrollView>
       </BottomSheet>

@@ -1,4 +1,4 @@
-import {BgTimer} from "@/utils/timers"
+import {BgTimer} from "@mentra/island"
 
 export class TranscriptProcessor {
   private maxCharsPerLine: number = 44
@@ -13,7 +13,7 @@ export class TranscriptProcessor {
   private lastPartialUpdateTime: number = 0
   private readonly throttleInterval: number = 300 // 300ms throttle interval
   private pendingUpdate: string | null = null
-  private pendingTimer: ReturnType<typeof setTimeout> | null = null
+  private pendingTimer: number | null = null
   private sendPendingCallback: (() => void) | null = null
 
   constructor(sendPendingCallback?: () => void) {

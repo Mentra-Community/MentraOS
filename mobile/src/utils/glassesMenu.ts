@@ -6,11 +6,9 @@
  * G2.swift is responsible for: name truncation, running indicators, padding, numeric IDs, wire format.
  */
 
-import {sortAppsByLastOpenTime, SYSTEM_APPS, useAppletStatusStore, type ClientAppletInterface} from "@/stores/applets"
-import {useGlassesStore} from "@/stores/glasses"
-import {SETTINGS, useSettingsStore} from "@/stores/settings"
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
-// import CoreModule from "core"
+import {sortAppsByLastOpenTime, useAppStatusStore, type ClientApp} from "@mentra/island"
+
+import {SYSTEM_APPS} from "@/constants/miniapps"
 
 export interface GlassesMenuItem {
   packageName: string
@@ -34,7 +32,7 @@ export function buildMenuItems(apps: {packageName: string; name: string}[]): Gla
  * Auto-populate the dashboard menu with the most recently used compatible miniapps.
  * Used when the user hasn't explicitly configured their menu.
  */
-export async function getDefaultMenuApps(allApps: ClientAppletInterface[]): Promise<GlassesMenuItem[]> {
+export async function getDefaultMenuApps(allApps: ClientApp[]): Promise<GlassesMenuItem[]> {
   const candidates = allApps.filter(
     (app) => !app.hidden && app.compatibility?.isCompatible !== false && !SYSTEM_APPS.includes(app.packageName),
   )
@@ -52,46 +50,10 @@ export async function getDefaultMenuApps(allApps: ClientAppletInterface[]): Prom
  */
 export function filterCompatibleMenuItems(
   savedItems: GlassesMenuItem[],
-  allApps: ClientAppletInterface[],
+  allApps: ClientApp[],
 ): GlassesMenuItem[] {
   return savedItems.filter((item) => {
     const app = allApps.find((a) => a.packageName === item.packageName)
     return app && app.compatibility?.isCompatible !== false
   })
 }
-
-/**
- * Sync the G2 dashboard menu to glasses.
- * Reads the saved menu setting, resolves running state, sends to native.
- * G2.swift handles all display formatting (truncation, indicators, padding, IDs).
- *
- * This is the SINGLE codepath for sending menu data to glasses.
- * Triggered by: glasses connect, applet store changes, settings screen save.
- */
-// export async function syncDashboardMenu() {
-//   const defaultWearable = useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key)
-//   if (defaultWearable !== DeviceTypes.G2) return
-//   if (!useGlassesStore.getState().fullyBooted) return
-//   const savedMenuApps = useSettingsStore.getState().getSetting(SETTINGS.menu_apps.key) as
-//     | GlassesMenuItem[]
-//     | null
-//   const allApps = useAppletStatusStore.getState().apps
-//   let menuItems: GlassesMenuItem[]
-//   if (savedMenuApps && savedMenuApps.length > 0) {
-//     menuItems = filterCompatibleMenuItems(savedMenuApps, allApps)
-//   } else {
-//     menuItems = await getDefaultMenuApps(allApps)
-//   }
-//   // Send to native: [{name, packageName, running}]
-//   // G2.swift handles truncation, running prefix, padding, numeric IDs
-//   const itemsForNative = menuItems.map((item) => {
-//     const app = allApps.find((a) => a.packageName === item.packageName)
-//     return {
-//       name: item.name,
-//       packageName: item.packageName,
-//       running: app?.running ?? false,
-//     }
-//   })
-//   useSettingsStore.getState().setSetting(SETTINGS.menu_apps.key, itemsForNative)
-//   console.log(`GLASSES_MENU: Synced ${itemsForNative.length} miniapps to G2 dashboard menu`)
-// }

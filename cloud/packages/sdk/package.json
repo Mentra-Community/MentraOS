@@ -2,6 +2,10 @@
   "name": "@mentra/sdk",
   "version": "3.0.0-alpha.1",
   "description": "Build apps for MentraOS smartglasses. This SDK provides everything you need to create real-time smartglasses applications.",
+  "publishConfig": {
+    "tag": "alpha",
+    "access": "public"
+  },
   "source": "src/index.ts",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

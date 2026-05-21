@@ -36,7 +36,9 @@ export const extractDisplayText = (displayEvent: any): string[] => {
     case "double_text_wall":
       return [layout.topText, layout.bottomText].filter((value): value is string => typeof value === "string")
     case "text_rows":
-      return Array.isArray(layout.text) ? layout.text.filter((value): value is string => typeof value === "string") : []
+      return Array.isArray(layout.text)
+        ? layout.text.filter((value: unknown): value is string => typeof value === "string")
+        : []
     default:
       return []
   }

@@ -9,7 +9,9 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.util.Log;
 
 import androidx.core.app.NotificationCompat;
@@ -20,6 +22,7 @@ import com.mentra.asg_client.io.ota.events.InstallationProgressEvent;
 import com.mentra.asg_client.io.ota.events.MtkOtaProgressEvent;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
+import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.events.BatteryStatusEvent;
 import com.mentra.asg_client.SysControl;
 
@@ -220,16 +223,20 @@ public class OtaService extends Service {
                 updateNotification("MTK firmware updated successfully");
                 Log.i(TAG, "📱 MTK system SUCCESS received - staged for next reboot");
 
-                // Send FINISHED to phone now that MTK install is complete.
-                // The phone UI will show "completed" and let the user tap Continue,
-                // which re-checks for remaining updates (e.g. BES) and starts a new round.
                 if (otaHelper != null) {
                     otaHelper.sendMtkInstallProgressToPhone("FINISHED", 100, null);
-                    Log.i(TAG, "📱 MTK complete - phone will re-check for remaining updates");
+                    // Session-based path: auto-advance to the next step (e.g. BES) immediately
+                    // so BES starts without waiting for a phone-side re-check or user tap.
+                    boolean advanced = otaHelper.continueSessionAfterStepComplete(this);
+                    if (!advanced) {
+                        // Legacy path (no active session): tell the phone MTK is done so it
+                        // can decide whether to start another round.
+                        Log.i(TAG, "📱 MTK complete (no session) - notifying phone via legacy broadcast");
+                        sendMtkUpdateCompleteMessage();
+                    }
+                } else {
+                    sendMtkUpdateCompleteMessage();
                 }
-
-                // Send broadcast to notify app that MTK update is complete
-                sendMtkUpdateCompleteMessage();
                 break;
             case ERROR:
                 updateNotification("MTK firmware update failed: " + event.getMessage());
@@ -298,13 +305,56 @@ public class OtaService extends Service {
         }
     }
 
-    /**
-     * Check if ASG client was just updated and auto-resume OTA for MTK/BES.
-     * This enables single-prompt OTA: user taps install once, APK updates,
-     * then MTK/BES updates happen automatically without another prompt.
-     */
     private void checkAndResumeAfterApkUpdate() {
         try {
+            OtaSessionManager sessionManager = new OtaSessionManager(this);
+
+            if (sessionManager.hasActiveSession() && sessionManager.isInRestartGuard()) {
+                Log.i(TAG, "📱 Active OTA session found in restart guard - auto-continuing");
+                long waitMs = sessionManager.getRestartGuardRemainingMs();
+                if (waitMs > 0) {
+                    Log.i(TAG, "OTA restart guard: waiting " + waitMs + "ms before auto-continuing");
+                    new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                        resumeFromSession(sessionManager);
+                    }, waitMs);
+                    return;
+                }
+                resumeFromSession(sessionManager);
+                return;
+            }
+
+            // Edge case: an active session exists but the restart guard was never armed (or
+            // was already cleared, e.g. by an installApk failure rollback). Without this
+            // branch we fall through to the version-bump heuristic and may either skip the
+            // resume entirely, or kick a duplicate version check while a real session is
+            // still in flight. Resume directly so the next step is picked up.
+            //
+            // CRITICAL: resumeFromSession() unconditionally advances currentStepIndex + 1.
+            // We must only invoke it when the active session is the APK install restart
+            // recovery case (step 0, type=apk, phase=install). For any other in-flight
+            // session (e.g. MTK/BES download or install) the service may have been
+            // recreated by the OS while a real OTA step is still running on the glasses,
+            // so advancing here would skip the current step or mark the session complete
+            // before the update actually finished. Leave that session alone and let
+            // normal OTA progress events drive it.
+            if (sessionManager.hasActiveSession()) {
+                int currentStepIndex = sessionManager.getCurrentStepIndex();
+                String currentStepType = sessionManager.getStepType(currentStepIndex);
+                String currentPhase = sessionManager.getCurrentPhase();
+                boolean isApkInstallRestart = currentStepIndex == 0
+                        && "apk".equals(currentStepType)
+                        && "install".equals(currentPhase);
+                if (isApkInstallRestart) {
+                    Log.i(TAG, "📱 Active APK install session found without restart guard — resuming next step");
+                    resumeFromSession(sessionManager);
+                    return;
+                }
+                Log.i(TAG, "📱 Active OTA session found without restart guard but not APK install restart "
+                        + "(step=" + currentStepIndex + " type=" + currentStepType + " phase=" + currentPhase
+                        + ") — leaving session in place, no auto-resume");
+                return;
+            }
+
             SharedPreferences prefs = getSharedPreferences("ota_state", Context.MODE_PRIVATE);
             long previousVersion = prefs.getLong("last_seen_asg_version", -1);
 
@@ -312,11 +362,6 @@ public class OtaService extends Service {
             long currentVersion = packageInfo.getLongVersionCode();
 
             if (previousVersion == -1) {
-                // First time this feature runs - could be:
-                // 1. Literally first boot ever (factory fresh)
-                // 2. Update from old ASG client that didn't have this code
-                // In both cases, trigger OTA check - harmless if nothing to update,
-                // necessary if we just updated from an old version
                 Log.i(TAG, "📱 First boot with version tracking - recording ASG version: " + currentVersion);
                 prefs.edit().putLong("last_seen_asg_version", currentVersion).apply();
 
@@ -325,7 +370,6 @@ public class OtaService extends Service {
                     otaHelper.startVersionCheck(this);
                 }
             } else if (currentVersion > previousVersion) {
-                // ASG client was updated - auto-trigger OTA check for MTK/BES
                 Log.i(TAG, "📱 ASG client was updated from " + previousVersion + " to " + currentVersion);
                 prefs.edit().putLong("last_seen_asg_version", currentVersion).apply();
 
@@ -338,6 +382,54 @@ public class OtaService extends Service {
             }
         } catch (Exception e) {
             Log.e(TAG, "Error checking for APK update auto-resume", e);
+        }
+    }
+
+    private void resumeFromSession(OtaSessionManager sessionManager) {
+        try {
+            sessionManager.clearRestartGuard();
+            int nextStep = sessionManager.getCurrentStepIndex() + 1;
+
+            if (nextStep >= sessionManager.getTotalSteps()) {
+                Log.i(TAG, "📱 All OTA session steps complete after APK restart");
+                // Queue the APK-done signal BEFORE setComplete() so buildApkDoneJson()
+                // can still read the correct session fields (total_steps, step_sequence, etc.).
+                sessionManager.setPendingApkStatus("complete");
+                sessionManager.setComplete();
+                // onPhoneConnected() is the primary delivery path for the APK done signal.
+                // sendCompletionToPhone() here is a fallback for the case where the phone
+                // is already connected when this code runs (unlikely but possible).
+                if (otaHelper != null) {
+                    otaHelper.sendCompletionToPhone(sessionManager);
+                }
+                return;
+            }
+
+            // Multi-step (APK + MTK/BES): queue the APK step_complete signal BEFORE advancing
+            // so buildApkDoneJson() captures the correct pre-advance session fields.
+            sessionManager.setPendingApkStatus("step_complete");
+            sessionManager.advanceStep(nextStep, "download");
+            String stepType = sessionManager.getStepType(nextStep);
+            Log.i(TAG, "📱 Resuming OTA session: step " + (nextStep + 1) + "/" + sessionManager.getTotalSteps() + " type=" + stepType);
+
+            if (otaHelper == null) {
+                Log.e(TAG, "OtaHelper not available - cannot resume OTA session");
+                sessionManager.setFailed("OtaHelper not available after APK restart");
+                return;
+            }
+
+            String versionJsonUrl = sessionManager.getVersionJsonUrl();
+            if (versionJsonUrl == null || versionJsonUrl.isEmpty()) {
+                Log.e(TAG, "No version JSON URL in session - cannot resume");
+                sessionManager.setFailed("Missing version JSON URL");
+                return;
+            }
+
+            otaHelper.setPhoneInitiatedOta(true);
+            otaHelper.startVersionCheckWithUrl(this, versionJsonUrl);
+        } catch (Exception e) {
+            Log.e(TAG, "Error resuming OTA from session", e);
+            sessionManager.setFailed("Resume error: " + e.getMessage());
         }
     }
 }

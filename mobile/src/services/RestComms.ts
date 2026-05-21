@@ -2,12 +2,12 @@ import {AppletInterface} from "@/../../cloud/packages/types/src"
 import axios, {AxiosInstance, AxiosRequestConfig} from "axios"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
-import CoreModule, {GlassesStatus, PhotoResponseEvent} from "core"
+import CoreModule, {PhotoResponseEvent} from "@mentra/bluetooth-sdk"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {useConnectionStore} from "@/stores/connection"
 import {WebSocketStatus} from "@/services/ws-types"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
-import {BgTimer} from "@/utils/timers"
+import {BgTimer} from "@mentra/island"
 
 interface RequestConfig {
   method: "GET" | "POST" | "DELETE"
@@ -50,7 +50,7 @@ class RestComms {
 
     // Sync to native GlassesStore (and persist to SharedPreferences in CoreModule when bridge runs)
     const value = token ?? ""
-    const updateResult = CoreModule.update("core", {core_token: value})
+    const updateResult = CoreModule.updateCore({core_token: value})
     if (updateResult != null && typeof (updateResult as Promise<void>).then === "function") {
       ;(updateResult as Promise<void>).catch(() => {})
     }
@@ -313,7 +313,7 @@ class RestComms {
     return res.map((response) => response.data)
   }
 
-  public updateGlassesState(state: Partial<GlassesStatus>): AsyncResult<void, Error> {
+  public updateGlassesState(state: Record<string, any>): AsyncResult<void, Error> {
     const config: RequestConfig = {
       method: "POST",
       endpoint: "/api/client/device/state",
@@ -666,10 +666,27 @@ class RestComms {
   }
 
   public sendPhotoResponse(data: PhotoResponseEvent): AsyncResult<any, Error> {
+    const response =
+      data.state === "success"
+        ? {
+            type: data.type,
+            requestId: data.requestId,
+            photoUrl: data.photoUrl,
+            timestamp: data.timestamp,
+            success: true,
+          }
+        : {
+            type: data.type,
+            requestId: data.requestId,
+            timestamp: data.timestamp,
+            success: false,
+            errorCode: data.errorCode,
+            errorMessage: data.errorMessage,
+          }
     const config: RequestConfig = {
       method: "POST",
       endpoint: "/api/client/photo/response",
-      data: data,
+      data: response,
     }
     interface Response {
       success: boolean

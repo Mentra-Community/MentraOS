@@ -29,7 +29,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.RequiresPermission;
 import androidx.core.app.NotificationCompat;
 
-import com.mentra.asg_client.camera.CameraNeo;
+import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.utils.WakeLockManager;
 import com.mentra.asg_client.reporting.domains.StreamingReporting;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
@@ -342,9 +342,10 @@ public class RtmpStreamingService extends Service {
         }
 
         try {
-            int surfaceWidth = mStreamConfig.getVideoWidth();
-            int surfaceHeight = mStreamConfig.getVideoHeight();
-            Log.d(TAG, "Creating surface texture with size: " + surfaceWidth + "x" + surfaceHeight);
+            int surfaceWidth = mStreamConfig.getCaptureSurfaceWidth();
+            int surfaceHeight = mStreamConfig.getCaptureSurfaceHeight();
+            Log.d(TAG, "Creating surface texture with size: " + surfaceWidth + "x" + surfaceHeight
+                    + " (encode " + mStreamConfig.getVideoWidth() + "x" + mStreamConfig.getVideoHeight() + ")");
             mSurfaceTexture = new SurfaceTexture(0);
             mSurfaceTexture.setDefaultBufferSize(surfaceWidth, surfaceHeight);
             mSurface = new Surface(mSurfaceTexture);
@@ -609,6 +610,8 @@ public class RtmpStreamingService extends Service {
             // Use config values (either from SDK or defaults)
             int videoWidth = mStreamConfig.getVideoWidth();
             int videoHeight = mStreamConfig.getVideoHeight();
+            int captureW = mStreamConfig.getCaptureSurfaceWidth();
+            int captureH = mStreamConfig.getCaptureSurfaceHeight();
             int videoBitrate = mStreamConfig.getVideoBitrate();
             int videoFps = mStreamConfig.getVideoFps();
             int audioBitrate = mStreamConfig.getAudioBitrate();
@@ -635,7 +638,11 @@ public class RtmpStreamingService extends Service {
             int profile = VideoConfig.Companion.getBestProfile(mimeType);
             int level = VideoConfig.Companion.getBestLevel(mimeType, profile);
 
-            // Configure video settings using proper constructor
+            // Encode at output size; camera buffer at native capture size when it differs
+            Size captureSize =
+                (captureW != videoWidth || captureH != videoHeight)
+                    ? new Size(captureW, captureH)
+                    : null;
             VideoConfig videoConfig = new VideoConfig(
                     MediaFormat.MIMETYPE_VIDEO_AVC,
                     videoBitrate,
@@ -643,7 +650,8 @@ public class RtmpStreamingService extends Service {
                     videoFps,
                     profile,
                     level,
-                    2.0f // Force keyframe every 2 seconds
+                    2.0f, // Force keyframe every 2 seconds
+                    captureSize
             );
 
             // Apply configurations and start preview
@@ -748,7 +756,7 @@ public class RtmpStreamingService extends Service {
             }
 
             // Check if camera is busy with photo/video capture BEFORE attempting to stream
-            if (CameraNeo.isCameraInUse()) {
+            if (CameraNeoService.isCameraInUse()) {
                 String error = "camera_busy";
                 Log.e(TAG, "Cannot start RTMP stream - camera is busy with photo/video capture");
                 EventBus.getDefault().post(new StreamingEvent.Error(error));
@@ -762,7 +770,7 @@ public class RtmpStreamingService extends Service {
             }
 
             // Close kept-alive camera if it exists to free resources for streaming
-            CameraNeo.closeKeptAliveCamera();
+            CameraNeoService.closeKeptAliveCamera();
 
             if (mRtmpUrl == null || mRtmpUrl.isEmpty()) {
                 String error = "RTMP URL not set";

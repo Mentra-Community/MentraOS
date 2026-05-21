@@ -6,15 +6,15 @@ import {Header, Screen} from "@/components/ignite"
 import HeadUpAngleComponent from "@/components/settings/HeadUpAngleComponent"
 import ToggleSetting from "@/components/settings/ToggleSetting"
 import {RouteButton} from "@/components/ui/RouteButton"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
 import {useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 
 export default function DashboardSettingsScreen() {
   const {theme} = useAppTheme()
-  const {goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
   const [headUpAngleComponentVisible, setHeadUpAngleComponentVisible] = useState(false)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [headUpAngle, setHeadUpAngle] = useSetting(SETTINGS.head_up_angle.key)

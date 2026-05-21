@@ -5,8 +5,8 @@ import {ActivityIndicator, Keyboard, Modal, Platform, ScrollView, TextInput, Tou
 
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {spacing} from "@/theme"
@@ -24,7 +24,7 @@ export default function EmailLoginScreen() {
   const [isLoading, setIsLoading] = useState(false)
   const [isAuthLoading, setIsAuthLoading] = useState(false)
 
-  const {goBack, replace, push} = useNavigationHistory()
+  const {goBack, replace, push} = useNavigationStore.getState()
   const {theme} = useAppTheme()
   const [isChina] = useSetting(SETTINGS.china_deployment.key)
 

@@ -3,7 +3,7 @@ import {View, Modal, ActivityIndicator} from "react-native"
 import {usePathname} from "expo-router"
 import {Text, Button} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {useGlassesStore} from "@/stores/glasses"
 import {translate} from "@/i18n"
 import {create} from "zustand"
@@ -26,11 +26,13 @@ interface OverlayConfigState {
   customMessage: string | null
   hideStopButton: boolean
   smallTitle: boolean
+  suppressOverlay: boolean
   setConfig: (config: {
     customTitle?: string | null
     customMessage?: string | null
     hideStopButton?: boolean
     smallTitle?: boolean
+    suppressOverlay?: boolean
   }) => void
   clearConfig: () => void
 }
@@ -40,22 +42,25 @@ export const useConnectionOverlayConfig = create<OverlayConfigState>((set) => ({
   customMessage: null,
   hideStopButton: false,
   smallTitle: false,
+  suppressOverlay: false,
   setConfig: (config) =>
     set((state) => ({
       customTitle: config.customTitle !== undefined ? config.customTitle : state.customTitle,
       customMessage: config.customMessage !== undefined ? config.customMessage : state.customMessage,
       hideStopButton: config.hideStopButton !== undefined ? config.hideStopButton : state.hideStopButton,
       smallTitle: config.smallTitle !== undefined ? config.smallTitle : state.smallTitle,
+      suppressOverlay: config.suppressOverlay !== undefined ? config.suppressOverlay : state.suppressOverlay,
     })),
-  clearConfig: () => set({customTitle: null, customMessage: null, hideStopButton: false, smallTitle: false}),
+  clearConfig: () =>
+    set({customTitle: null, customMessage: null, hideStopButton: false, smallTitle: false, suppressOverlay: false}),
 }))
 
 function GlobalConnectionOverlay() {
   const {theme} = useAppTheme()
-  const {clearHistoryAndGoHome} = useNavigationHistory()
+  const {clearHistoryAndGoHome} = useNavigationStore.getState()
   const pathname = usePathname()
   const glassesConnected = useGlassesStore((state) => state.connected)
-  const {customTitle, customMessage, hideStopButton, smallTitle} = useConnectionOverlayConfig()
+  const {customTitle, customMessage, hideStopButton, smallTitle, suppressOverlay} = useConnectionOverlayConfig()
 
   const [showOverlay, setShowOverlay] = useState(false)
   const [cancelButtonEnabled, setCancelButtonEnabled] = useState(false)
@@ -65,7 +70,7 @@ function GlobalConnectionOverlay() {
   const shouldShowOnRoute = OVERLAY_ROUTES.some((route) => pathname.startsWith(route))
 
   useEffect(() => {
-    if (!glassesConnected && shouldShowOnRoute) {
+    if (!glassesConnected && shouldShowOnRoute && !suppressOverlay) {
       setShowOverlay(true)
       setCancelButtonEnabled(false)
       // Start timer to enable cancel button after delay
@@ -88,7 +93,7 @@ function GlobalConnectionOverlay() {
         cancelButtonTimerRef.current = null
       }
     }
-  }, [glassesConnected, shouldShowOnRoute])
+  }, [glassesConnected, shouldShowOnRoute, suppressOverlay])
 
   const handleStopTrying = () => {
     if (!cancelButtonEnabled) return

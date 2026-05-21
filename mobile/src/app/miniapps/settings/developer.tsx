@@ -9,8 +9,8 @@ import ToggleSetting from "@/components/settings/ToggleSetting"
 import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {Spacer} from "@/components/ui/Spacer"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import ws from "@/services/WebSocketManager"
@@ -26,7 +26,7 @@ const LC3_FRAME_SIZE_OPTIONS = [
 
 export default function DeveloperSettingsScreen() {
   const {theme} = useAppTheme()
-  const {goBack, push, replaceAll, clearHistoryAndGoHome} = useNavigationHistory()
+  const {goBack, push, replaceAll, clearHistoryAndGoHome} = useNavigationStore.getState()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [devMode, setDevMode] = useSetting(SETTINGS.dev_mode.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
@@ -37,6 +37,7 @@ export default function DeveloperSettingsScreen() {
   const [_onboardingOsCompleted, setOnboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
   const [_onboardingLiveCompleted, setOnboardingLiveCompleted] = useSetting(SETTINGS.onboarding_live_completed.key)
   const [lc3FrameSize, setLc3FrameSize] = useSetting(SETTINGS.lc3_frame_size.key)
+  const [localSttFallbackEnabled, setLocalSttFallbackEnabled] = useSetting(SETTINGS.local_stt_fallback_enabled.key)
 
   return (
     <Screen preset="fixed">
@@ -135,6 +136,25 @@ export default function DeveloperSettingsScreen() {
                 clearHistoryAndGoHome()
                 push("/test/switcher")
               }}
+            />
+          </Group>
+
+          <Group title={translate("devSettings:miniappDevGroupTitle")}>
+            <RouteButton
+              label={translate("devSettings:miniappDevLoadUrlLabel")}
+              subtitle={translate("devSettings:miniappDevLoadUrlSubtitle")}
+              onPress={() => push("/miniapps/settings/miniapp-developer-url")}
+            />
+            <RouteButton
+              label={translate("devSettings:miniappDevScanLabel")}
+              subtitle={translate("devSettings:miniappDevScanSubtitle")}
+              onPress={() => push("/miniapps/settings/miniapp-developer-scanner")}
+            />
+            <ToggleSetting
+              label="Local STT Fallback"
+              subtitle="Use on-device Sherpa when cloud transcription fails (requires downloaded language pack)"
+              value={localSttFallbackEnabled}
+              onValueChange={(value) => setLocalSttFallbackEnabled(value)}
             />
           </Group>
 

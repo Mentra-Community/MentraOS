@@ -4,19 +4,19 @@ import {Icon, Text} from "@/components/ignite"
 import AppIcon from "@/components/home/AppIcon"
 import {Badge} from "@/components/ui"
 import {Group} from "@/components/ui/Group"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {ClientAppletInterface, useBackgroundApps, useStopApplet} from "@/stores/applets"
+import {useNavigationStore} from "@/stores/navigation"
+import {useBackgroundApps, useStop, type ClientApp} from "@mentra/island"
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
 
 export const ActiveBackgroundApps: React.FC = () => {
   const {themed, theme} = useAppTheme()
-  const {push} = useNavigationHistory()
+  const {push} = useNavigationStore.getState()
   const {active} = useBackgroundApps()
-  const stopApplet = useStopApplet()
+  const stopApplet = useStop()
 
-  const handlePress = (applet: ClientAppletInterface) => {
+  const handlePress = (applet: ClientApp) => {
     if (applet) {
       // Handle apps with custom routes
       if (applet.offlineRoute) {
@@ -40,7 +40,7 @@ export const ActiveBackgroundApps: React.FC = () => {
     }
   }
 
-  const handleLongPress = (applet: ClientAppletInterface) => {
+  const handleLongPress = (applet: ClientApp) => {
     if (applet) {
       showAlert("Stop App", `Do you want to stop ${applet.name}?`, [
         {text: "Cancel", style: "cancel"},
@@ -55,7 +55,7 @@ export const ActiveBackgroundApps: React.FC = () => {
     }
   }
 
-  const handleStopApp = async (applet: ClientAppletInterface, event: any) => {
+  const handleStopApp = async (applet: ClientApp, event: any) => {
     if (applet?.loading) {
       // don't do anything if still loading
       return
@@ -82,7 +82,7 @@ export const ActiveBackgroundApps: React.FC = () => {
 
   return (
     <Group>
-      {active.map((applet: ClientAppletInterface) => (
+      {active.map((applet: ClientApp) => (
         <TouchableOpacity
           key={applet.packageName}
           style={themed($container)}

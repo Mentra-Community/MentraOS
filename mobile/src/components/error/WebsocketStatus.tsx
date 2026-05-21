@@ -1,19 +1,19 @@
 import {useEffect, useRef, useState} from "react"
 import {TouchableOpacity, View} from "react-native"
 
-import {Icon, Text} from "@/components/ignite"
+import {Icon, Text, type IconTypes} from "@/components/ignite"
 import {translate} from "@/i18n"
 import {WebSocketStatus} from "@/services/WebSocketManager"
-import {useRefreshApplets} from "@/stores/applets"
+import {useRefresh} from "@mentra/island"
 import {useConnectionStore} from "@/stores/connection"
-import {BgTimer} from "@/utils/timers"
+import {BgTimer} from "@mentra/island"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useNavigationStore} from "@/stores/navigation"
 
 type DisplayStatus = "connected" | "warning" | "disconnected"
 
-const STATUS_CONFIG: Record<DisplayStatus, {icon: string; label: () => string; bgClass: string; iconColor: string}> = {
+const STATUS_CONFIG: Record<DisplayStatus, {icon: IconTypes; label: () => string; bgClass: string; iconColor: string}> = {
   connected: {
     icon: "wifi",
     label: () => translate("connection:connected"),
@@ -39,12 +39,12 @@ export default function WebsocketStatus() {
   const [displayStatus, setDisplayStatus] = useState<DisplayStatus>("connected")
   const [offlineMode] = useSetting(SETTINGS.offline_mode.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
-  const refreshApplets = useRefreshApplets()
+  const refreshApplets = useRefresh()
   const {theme} = useAppTheme()
   const disconnectionTimerRef = useRef<number | null>(null)
   const DISCONNECTION_DELAY = 3000
   const prevConnectionStatusRef = useRef(connectionStatus)
-  const {push} = useNavigationHistory()
+  const {push} = useNavigationStore.getState()
 
   // Track whether the WS was observed as disconnected long enough that we
   // might genuinely have missed applet state changes. Flipped true by the

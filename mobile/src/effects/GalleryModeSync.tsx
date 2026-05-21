@@ -1,6 +1,8 @@
 import {useEffect} from "react"
 
-import {useApplets, cameraPackageName} from "@/stores/applets"
+import {useApps} from "@mentra/island"
+
+import {cameraPackageName} from "@/constants/miniapps"
 import {SETTINGS, useSetting} from "@/stores/settings"
 
 /**
@@ -14,7 +16,7 @@ import {SETTINGS, useSetting} from "@/stores/settings"
  * while preventing capture when other apps are handling button events.
  */
 export function GalleryModeSync() {
-  const applets = useApplets()
+  const applets = useApps()
   const [galleryMode, setGalleryMode] = useSetting(SETTINGS.gallery_mode.key)
 
   useEffect(() => {

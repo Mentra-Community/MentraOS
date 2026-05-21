@@ -27,6 +27,13 @@ const withAndroidWorkingConfig: ConfigPlugin = (config) => {
   return config
 }
 
+// Derive the active Android applicationId. Honors MENTRAOS_BUILD_NAME so that
+// build-variant suffixes flow through manifest entries that would otherwise
+// hardcode the base package (e.g. the DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION).
+function getAndroidPackageName(config: any): string {
+  return config?.android?.package || "com.mentra.mentra"
+}
+
 /**
  * Modify root build.gradle to exclude protobuf-javalite globally
  * (conflicts with protobuf-java required by core module's MentraosBle)
@@ -119,8 +126,8 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
       )
     }
 
-    // 2. Update versionName to 2.10.1
-    buildGradle = buildGradle.replace(/versionName\s+["'][^"']*["']/, 'versionName "2.10.1"')
+    // 2. Update versionName to 2.11.0
+    buildGradle = buildGradle.replace(/versionName\s+["'][^"']*["']/, 'versionName "2.11.0"')
 
     // 3. Add externalNativeBuild configuration in defaultConfig
     if (!buildGradle.includes("externalNativeBuild")) {
@@ -199,6 +206,7 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
 function withAndroidManifestModifications(config: any) {
   return withAndroidManifest(config, (config) => {
     const manifest: any = config.modResults.manifest
+    const pkg = getAndroidPackageName(config)
 
     // Remove permissions that Google Play doesn't allow for our use case
     // We only SAVE photos from glasses - we don't need to READ the user's photo library
@@ -259,7 +267,6 @@ function withAndroidManifestModifications(config: any) {
 
     // Add permissions that need to be added
     const permissionsToAdd = [
-      {name: "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"},
       {name: "android.permission.BLUETOOTH", maxSdkVersion: 30},
       {name: "android.permission.BLUETOOTH_ADMIN", maxSdkVersion: 30},
       {name: "android.permission.BLUETOOTH_ADVERTISE"},
@@ -275,7 +282,7 @@ function withAndroidManifestModifications(config: any) {
       {name: "android.permission.QUERY_ALL_PACKAGES"},
       {name: "android.permission.READ_PHONE_STATE"},
       {name: "android.permission.RECEIVE_BOOT_COMPLETED"},
-      {name: "com.mentra.mentra.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"},
+      {name: `${pkg}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`},
     ]
 
     // Ensure uses-permission array exists
@@ -317,13 +324,14 @@ function withAndroidManifestModifications(config: any) {
     if (!manifest.permission) {
       manifest.permission = []
     }
+    const customPermName = `${pkg}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`
     const customPermExists = manifest.permission.find(
-      (p: any) => p.$["android:name"] === "com.mentra.mentra.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+      (p: any) => p.$["android:name"] === customPermName,
     )
     if (!customPermExists) {
       manifest.permission.push({
         $: {
-          "android:name": "com.mentra.mentra.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
+          "android:name": customPermName,
         },
       })
     }
@@ -508,7 +516,7 @@ function withGradlePropertiesModifications(config: any) {
 //     if (!settingsGradle.includes("include ':lc3Lib'")) {
 //       settingsGradle += `
 // include ':lc3Lib'
-// project(':lc3Lib').projectDir = new File(rootDir, '../modules/core/android/lc3Lib')
+// project(':lc3Lib').projectDir = new File(rootDir, '../modules/bluetooth-sdk/android/lc3Lib')
 // `
 //     }
 

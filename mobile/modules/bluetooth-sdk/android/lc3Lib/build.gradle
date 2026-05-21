@@ -1,0 +1,109 @@
+import groovy.json.JsonSlurper
+
+plugins {
+    id 'com.android.library'
+    id 'maven-publish'
+    id 'signing'
+}
+
+def packageJson = new JsonSlurper().parse(file("../../package.json"))
+
+group = 'com.mentra'
+version = packageJson.version
+
+def isPublishTask = {
+    gradle.taskGraph.allTasks.any { it.name.toLowerCase().contains("publish") }
+}
+
+android {
+    namespace "com.mentra.lc3Lib"
+    compileSdk 33
+
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+            withJavadocJar()
+        }
+    }
+
+    packagingOptions {
+        exclude 'META-INF/proguard/androidx-annotations.pro'
+        resources {
+            excludes += '/META-INF/{AL2.0,LGPL2.1,DEPENDENCIES}'
+            excludes += '/META-INF/INDEX.LIST'
+        }
+    }
+
+    defaultConfig {
+        minSdk 28
+        targetSdk 32
+        versionCode 3
+        versionName "0.1"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+        externalNativeBuild {
+            cmake {
+                arguments '-DCMAKE_OBJECT_PATH_MAX=600', '-DANDROID_STL=c++_static'
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file('src/main/cpp/liblc3/CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
+
+}
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.1.3'
+}
+
+afterEvaluate {
+    publishing {
+        publications {
+            release(MavenPublication) {
+                groupId = 'com.mentra'
+                artifactId = 'lc3Lib'
+                version = project.version
+
+                from components.release
+
+                pom {
+                    name = 'Mentra LC3 Android Library'
+                    description = 'LC3 audio codec support for Mentra Bluetooth SDK'
+                    url = 'https://github.com/Mentra-Community/MentraOS'
+                    licenses {
+                        license {
+                            name = 'MIT License'
+                            url = 'https://opensource.org/licenses/MIT'
+                        }
+                    }
+                    developers {
+                        developer {
+                            id = 'mentra'
+                            name = 'Mentra'
+                            email = 'dev@mentra.glass'
+                        }
+                    }
+                    scm {
+                        connection = 'scm:git:https://github.com/Mentra-Community/MentraOS.git'
+                        developerConnection = 'scm:git:ssh://git@github.com:Mentra-Community/MentraOS.git'
+                        url = 'https://github.com/Mentra-Community/MentraOS'
+                    }
+                }
+            }
+        }
+    }
+
+    signing {
+        required {
+            isPublishTask() && (findProperty("signing.keyId") || findProperty("signingKey"))
+        }
+        sign publishing.publications.release
+    }
+}

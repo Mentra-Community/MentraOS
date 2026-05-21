@@ -67,7 +67,7 @@ const TimeSetting: React.FC<TimeSettingProps> = ({
   const CENTER_SLOT = Math.floor(REPEATS / 2)
 
   // Function to scroll to center the selected value
-  const scrollToCenter = (scrollRef: React.RefObject<ScrollView>, value: number, max: number) => {
+  const scrollToCenter = (scrollRef: React.RefObject<ScrollView | null>, value: number, max: number) => {
     if (scrollRef.current) {
       // Center slot index for the selected value
       const centerIndex = CENTER_SLOT * max + value
@@ -144,7 +144,7 @@ const TimeSetting: React.FC<TimeSettingProps> = ({
   const currentSeconds = currentTotalSeconds % 60
 
   // Add a helper to trigger scrollToCenter on layout
-  const handleScrollViewLayout = (scrollRef: React.RefObject<ScrollView>, value: number, max: number) => () => {
+  const handleScrollViewLayout = (scrollRef: React.RefObject<ScrollView | null>, value: number, max: number) => () => {
     scrollToCenter(scrollRef, value, max)
   }
 

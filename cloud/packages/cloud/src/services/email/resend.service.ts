@@ -1,4 +1,8 @@
 import { Resend } from "resend";
+import type {
+  FeedbackReceiptDetails,
+  FeedbackReceiptType,
+} from "../../types/feedback.types";
 
 /**
  * Email service using Resend API for sending transactional emails
@@ -588,6 +592,167 @@ export class ResendEmailService {
       console.error("[resend.service] Error sending incident notification:", error);
       return { error };
     }
+  }
+
+  /**
+   * Sends a user-facing receipt for submitted feedback or bug reports.
+   */
+  async sendFeedbackReceipt(
+    recipientEmail: string,
+    feedbackType: FeedbackReceiptType,
+    incidentId?: string,
+    details?: FeedbackReceiptDetails,
+  ): Promise<{ id?: string; error?: any }> {
+    const feedbackLabel = this.getFeedbackReceiptLabel(feedbackType);
+    const { html, text } = this.generateFeedbackReceiptEmail(feedbackLabel, incidentId, details);
+
+    try {
+      const { data, error } = await this.resend.emails.send({
+        from: this.defaultSender,
+        to: [recipientEmail],
+        subject: `Thanks for your Mentra ${feedbackLabel}`,
+        html,
+        text,
+      });
+
+      if (error) {
+        console.error("[resend.service] Failed to send feedback receipt:", error);
+        return { error };
+      }
+
+      return { id: data?.id };
+    } catch (error) {
+      console.error("[resend.service] Error sending feedback receipt:", error);
+      return { error };
+    }
+  }
+
+  private getFeedbackReceiptLabel(feedbackType: FeedbackReceiptType): string {
+    if (feedbackType === "bug") {
+      return "bug report";
+    }
+
+    if (feedbackType === "feature") {
+      return "feature request";
+    }
+
+    return "feedback";
+  }
+
+  private generateFeedbackReceiptEmail(
+    feedbackLabel: string,
+    incidentId?: string,
+    details?: FeedbackReceiptDetails,
+  ): { html: string; text: string } {
+    const escapedFeedbackLabel = this.escapeHtml(feedbackLabel);
+    const escapedIncidentId = incidentId ? this.escapeHtml(incidentId) : undefined;
+    const referenceHtml = escapedIncidentId
+      ? `<p class="reference">Reference ID: <code>${escapedIncidentId}</code></p>`
+      : "";
+    const referenceText = incidentId ? [`Reference ID: ${incidentId}`] : [];
+
+    const echoRows = this.buildFeedbackReceiptEchoRows(details);
+    const echoHtml = echoRows.length
+      ? `
+        <div class="echo">
+          <div class="echo-title">What you sent us</div>
+          <dl class="echo-list">
+            ${echoRows
+              .map(
+                (row) =>
+                  `<dt>${this.escapeHtml(row.label)}</dt><dd>${row.isMultiline ? `<pre>${this.escapeHtml(row.value)}</pre>` : this.escapeHtml(row.value)}</dd>`,
+              )
+              .join("")}
+          </dl>
+        </div>`
+      : "";
+    const echoText = echoRows.length
+      ? ["What you sent us:", ...echoRows.map((row) => `${row.label}: ${row.value}`)]
+      : [];
+
+    return {
+      html: `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Thanks for your Mentra ${escapedFeedbackLabel}</title>
+            <style>
+              body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; background-color: #f6f7f9; margin: 0; padding: 0; }
+              .container { max-width: 600px; margin: 20px auto; background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+              .header { background-color: #00b869; color: #fff; padding: 24px; text-align: center; }
+              .header img { display: block; margin: 0 auto 12px; height: 32px; max-width: 200px; }
+              .header h2 { margin: 0; font-weight: 500; font-size: 20px; }
+              .content { padding: 24px; }
+              .reference { background: #f1f5f9; border: 1px solid #e2e8f0; padding: 12px; border-radius: 6px; }
+              .echo { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px; margin: 16px 0; }
+              .echo-title { font-weight: 600; color: #475569; font-size: 13px; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 8px; }
+              .echo-list { margin: 0; }
+              .echo-list dt { font-weight: 600; color: #334155; margin-top: 8px; font-size: 14px; }
+              .echo-list dd { margin: 4px 0 0 0; color: #1f2937; }
+              .echo-list pre { font-family: inherit; white-space: pre-wrap; margin: 0; }
+              .footer { background: #f8fafc; padding: 16px; text-align: center; color: #64748b; font-size: 13px; border-top: 1px solid #e2e8f0; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <img src="https://mentra-store-cdn.mentraglass.com/mentra_store_assets/Mentra_Logo/PNG/Full/Full%20-%20W.png" alt="Mentra" />
+                <h2>Thanks for your ${escapedFeedbackLabel}</h2>
+              </div>
+              <div class="content">
+                <p>Thanks a ton for sending this in. Reports and requests like this are very helpful for us, and we read every one.</p>
+                <p>If we need to follow up, our team will reach out by email.</p>
+                ${echoHtml}
+                ${referenceHtml}
+                <p>Thanks again,<br>The Mentra Team</p>
+              </div>
+              <div class="footer">&copy; ${new Date().getFullYear()} Mentra Labs</div>
+            </div>
+          </body>
+        </html>
+      `,
+      text: [
+        `Thanks for your Mentra ${feedbackLabel}.`,
+        "Thanks a ton for sending this in. Reports and requests like this are very helpful for us, and we read every one.",
+        "If we need to follow up, our team will reach out by email.",
+        ...echoText,
+        ...referenceText,
+        "Thanks again,\nThe Mentra Team",
+      ].join("\n\n"),
+    };
+  }
+
+  private buildFeedbackReceiptEchoRows(
+    details?: FeedbackReceiptDetails,
+  ): Array<{ label: string; value: string; isMultiline: boolean }> {
+    if (!details) {
+      return [];
+    }
+
+    const rows: Array<{ label: string; value: string; isMultiline: boolean }> = [];
+
+    if (details.expectedBehavior) {
+      rows.push({ label: "Expected behavior", value: details.expectedBehavior, isMultiline: true });
+    }
+    if (details.actualBehavior) {
+      rows.push({ label: "What happened", value: details.actualBehavior, isMultiline: true });
+    }
+    if (details.severityRating !== undefined) {
+      rows.push({ label: "Severity", value: `${details.severityRating}/5`, isMultiline: false });
+    }
+    if (details.feedbackText) {
+      rows.push({ label: "Your message", value: details.feedbackText, isMultiline: true });
+    }
+    if (details.experienceRating !== undefined) {
+      rows.push({ label: "Rating", value: `${details.experienceRating}/5`, isMultiline: false });
+    }
+    if (details.legacyText) {
+      rows.push({ label: "Your message", value: details.legacyText, isMultiline: true });
+    }
+
+    return rows;
   }
 
   /**

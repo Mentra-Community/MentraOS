@@ -6,26 +6,30 @@ import {Icon, Screen} from "@/components/ignite"
 import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {Spacer} from "@/components/ui/Spacer"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {useRef} from "react"
-import {MiniAppCapsuleMenu} from "@/components/miniapps/CapsuleMenu"
+import {useRegisterCapsule} from "@/stores/capsule"
 
 export default function MainSettingsPage() {
   const {theme, themed} = useAppTheme()
-  const {push} = useNavigationHistory()
+  const {push} = useNavigationStore.getState()
   const [devMode] = useSetting(SETTINGS.dev_mode.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const viewShotRef = useRef<View>(null)
 
+  useRegisterCapsule({
+    packageName: "com.mentra.settings",
+    viewShotRef,
+    visibleOnRoutes: ["/miniapps/settings/main"],
+    offsetRight: theme.spacing.s2,
+  })
+
   return (
     <>
-      <View className="mr-4">
-        <MiniAppCapsuleMenu packageName="com.mentra.settings" viewShotRef={viewShotRef} />
-      </View>
       <Screen preset="fixed" safeAreaEdges={["top"]} ref={viewShotRef} className="px-0">
         <ScrollView className="pt-8 px-6" contentInsetAdjustmentBehavior="automatic">
           <View style={{flex: 1, gap: theme.spacing.s6}}>
@@ -90,6 +94,7 @@ export default function MainSettingsPage() {
                   icon={<Icon name="user-code" size={24} color={theme.colors.secondary_foreground} />}
                   label={translate("settings:developerSettings")}
                   onPress={() => push("/miniapps/settings/developer")}
+                  onLongPress={() => superMode && push("/miniapps/settings/super")}
                 />
               )}
             </Group>

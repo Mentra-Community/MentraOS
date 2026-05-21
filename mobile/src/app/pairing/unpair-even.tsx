@@ -1,17 +1,18 @@
 import {useRoute} from "@react-navigation/native"
 import {View} from "react-native"
-import CoreModule from "core"
+import CoreModule from "@mentra/bluetooth-sdk"
 
 import {Button, Screen} from "@/components/ignite"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
-import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
+import {useNavigationStore} from "@/stores/navigation"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 
 export default function UnpairEvenScreen() {
   const route = useRoute()
   const {deviceModel} = route.params as {deviceModel: string}
-  const {clearHistory, replace} = useNavigationHistory()
+  const {clearHistory, replace} = useNavigationStore.getState()
 
   focusEffectPreventBack()
 

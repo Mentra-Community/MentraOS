@@ -43,6 +43,7 @@ import { deferredAppConnectionRegistry, type DeferredAppConnection } from "../we
 
 import { AppSession, AppConnectionState as AppSessionState } from "./AppSession";
 import { HardwareCompatibilityService } from "./HardwareCompatibilityService";
+import { PhoneSession, PHONE_PACKAGE_NAME } from "./PhoneSession";
 import UserSession from "./UserSession";
 
 // session.service APIs are being consolidated into UserSession
@@ -147,6 +148,14 @@ export class AppManager {
   // Track pending app start operations
   private pendingConnections = new Map<string, PendingConnection>();
 
+  // ===== Synthetic phone session (local miniapp support) =====
+  // The phone subscribes to cloud streams (transcription, translation) on behalf
+  // of local miniapps. It uses a reserved packageName "__phone__" that is NOT a
+  // real app and is never surfaced in user-facing lists. This field is separate
+  // from the apps Map to avoid retyping the map or adding instanceof narrowing
+  // to every call site that needs AppSession-specific members.
+  private phoneSession: PhoneSession | null = null;
+
   private appStateBroadcastTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingAppStateRefresh = false;
   private appSettingsByPackage = new Map<string, AppSetting[]>();
@@ -238,6 +247,24 @@ export class AppManager {
       this.logger.debug({ packageName }, `[AppManager] Created new AppSession for ${packageName}`);
     }
     return session;
+  }
+
+  /**
+   * Get or create the synthetic phone session for local miniapp stream delivery.
+   * Returns a PhoneSession that implements AppLikeSession.
+   */
+  getOrCreatePhoneSession(): PhoneSession {
+    if (!this.phoneSession) {
+      this.phoneSession = new PhoneSession(this.logger);
+    }
+    return this.phoneSession;
+  }
+
+  /**
+   * Get the current phone session (null if never created).
+   */
+  getPhoneSession(): PhoneSession | null {
+    return this.phoneSession;
   }
 
   /**
@@ -2005,6 +2032,14 @@ export class AppManager {
    * @returns Promise with send result and resurrection info
    */
   async sendMessageToApp(packageName: string, message: any): Promise<AppMessageResult> {
+    // ===== Synthetic phone session bypass =====
+    // The __phone__ session receives stream data (transcription, translation) over
+    // the existing phone client WebSocket (userSession.websocket). It has no AppSession
+    // or app WS of its own.
+    if (packageName === PHONE_PACKAGE_NAME) {
+      return this.sendToPhoneClient(message);
+    }
+
     try {
       // Check connection state first (via AppSession)
       const appState = this.getAppConnectionState(packageName);
@@ -2092,6 +2127,44 @@ export class AppManager {
         resurrectionTriggered: false,
         error: errorMessage,
       };
+    }
+  }
+
+  // ===== Phone client routing =====
+
+  /**
+   * Send a message to the phone client (the mobile app) over the existing
+   * userSession.websocket (glasses/phone WS). Used for __phone__ subscriber
+   * traffic (transcription, translation stream data, Phase 5 photo/stream status).
+   */
+  private sendToPhoneClient(message: any): AppMessageResult {
+    const ws = this.userSession.websocket;
+    if (!ws || ws.readyState !== WebSocketReadyState.OPEN) {
+      return { sent: false, resurrectionTriggered: false, error: "Phone client WebSocket not open" };
+    }
+    try {
+      // Rewrite message types for phone-bound streaming messages so the phone
+      // can distinguish cloud→phone status from cloud→app status.
+      let outbound = message;
+      if (message.type === CloudToAppMessageType.STREAM_STATUS) {
+        outbound = { ...message, type: "phone_stream_status" };
+      } else if (message.type === CloudToAppMessageType.MANAGED_STREAM_STATUS) {
+        outbound = { ...message, type: "phone_managed_stream_status" };
+      }
+      // Drop legacy rtmp_stream_status duplicates on the __phone__ path
+      if (message.type === "rtmp_stream_status") {
+        return SEND_SUCCESS; // silently drop
+      }
+
+      ws.send(JSON.stringify(outbound));
+      return SEND_SUCCESS;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        { error: errorMessage },
+        "[AppManager:sendToPhoneClient] Failed to send to phone client",
+      );
+      return { sent: false, resurrectionTriggered: false, error: errorMessage };
     }
   }
 
@@ -2274,6 +2347,12 @@ export class AppManager {
         }
       }
       this.apps.clear();
+
+      // Clean up phone session if it exists
+      if (this.phoneSession) {
+        this.phoneSession.cleanup();
+        this.phoneSession = null;
+      }
     } catch (error) {
       this.logger.error(error, `Error disposing AppManager for ${this.userSession.userId}`);
     }

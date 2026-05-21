@@ -1,226 +1,183 @@
-import {memo, useEffect, useMemo, useRef, useState} from "react"
-import {View} from "react-native"
-import {useLocalMiniApps} from "@/stores/applets"
-import LocalMiniApp from "@/components/home/LocalMiniApp"
-import composer from "@/services/Composer"
-import {usePathname} from "expo-router"
-import {Screen, Text} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
-import {MiniAppCapsuleMenu} from "@/components/miniapps/CapsuleMenu"
-import CoreModule, {MicPcmEvent} from "core"
-import {SETTINGS, useSetting} from "@/stores/settings"
-// import {useCactusSTT} from "cactus-react-native"
+/**
+ * Compositor — renders the foregrounded local miniapp over /home.
+ *
+ * Subscribes to the island apps store's `foreground` flag (set by the press
+ * path's MiniappCatalog.navigateForApp). When an app becomes foreground the
+ * Compositor:
+ *   1. Calls launchLocalMiniapp() to mount + setForeground on MiniappHost
+ *   2. Renders MiniappHost inside an Animated.View overlay above /home
+ *   3. Renders <CapsuleMenu forceShow /> for the active miniapp
+ *   4. Owns the iOS-style left-edge swipe-to-back gesture; on commit, clears
+ *      foreground (host overlay slides off, miniapp keeps running in
+ *      background — same as the old setBackground behavior)
+ *
+ * MiniappHost continues to handle WebView lifecycle (mount/mountDev/unmount,
+ * runtime registration, splash). The route at /applet/local is now legacy —
+ * the press path doesn't push it; only the QR scanner still uses it.
+ */
 
-const LmaContainer = memo(
-  function LmaContainer({
-    html,
-    packageName,
-    isActive,
-    enabled,
-    index,
-  }: {
-    html: string
-    packageName: string
-    isActive: boolean
-    enabled: boolean
-    index: number
-  }) {
-    // don't waste rendering a webview if the app is not enabled:
-    if (!enabled) {
-      return null
-    }
-    return (
-      <View
-        className={
-          isActive ? "absolute inset-0 z-10" : "absolute left-0 top-0 w-[100px] h-[100px] overflow-hidden z-[1]"
-          // isActive ? "absolute inset-0 z-10" : "absolute left-0 w-[100px] h-[100px] overflow-hidden z-[1]"
-        }
-        style={!isActive ? {bottom: index * 12} : undefined}
-        pointerEvents={isActive ? "auto" : "none"}>
-        <LocalMiniApp html={html} packageName={packageName} />
-      </View>
-    )
-  },
-  (prev, next) => {
-    // Only re-render if active state changes or the html/packageName changed
-    return (
-      prev.isActive === next.isActive &&
-      prev.html === next.html &&
-      prev.packageName === next.packageName &&
-      prev.index === next.index &&
-      prev.enabled === next.enabled
-    )
-  },
-)
+import {useEffect, useRef} from "react"
+import {Dimensions, Platform, View} from "react-native"
+import {Gesture, GestureDetector} from "react-native-gesture-handler"
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withSpring,
+  withTiming,
+} from "react-native-reanimated"
 
-function Compositor() {
-  const lmas = useLocalMiniApps()
-  const pathname = usePathname()
-  const viewShotRef = useRef<View>(null)
-  const [packageName, setPackageName] = useState<string | null>(null)
-  const {getCurrentParams} = useNavigationHistory()
-  const [offlineCaptionsRunning, setOfflineCaptionsRunning] = useSetting(SETTINGS.offline_captions_running.key)
-  const [offlineTranslationRunning, setOfflineTranslationRunning] = useSetting(SETTINGS.offline_translation_running.key)
+import MiniappHost, {miniappHost} from "@/components/miniapp/MiniappHost"
+import CapsuleMenu from "@/effects/CapsuleMenu"
+import {launchLocalMiniapp} from "@/services/miniapps/launchLocalMiniapp"
+import {useCapsuleStore} from "@/stores/capsule"
+import {useAppStatusStore, useForegroundMiniApp} from "@mentra/island"
+
+const EDGE_HIT_WIDTH = 24
+const COMMIT_FRACTION = 0.4
+const COMMIT_DURATION_MS = 220
+const FADE_IN_DELAY_MS = 20
+const FADE_IN_DURATION_MS = 500
+const FADE_OUT_DURATION_MS = 300
+const FADE_OUT_SCALE_TO = 0.4
+
+export default function Compositor() {
+  const foregroundApp = useForegroundMiniApp()
+  const lastForegroundPkgRef = useRef<string | null>(null)
 
   useEffect(() => {
-    if (pathname.includes("/applet/local")) {
-      const params = getCurrentParams()
-      if (params && params.packageName) {
-        setPackageName(params.packageName as string)
-      } else {
-        setPackageName(null)
-      }
-    } else {
-      setPackageName(null)
+    const prev = lastForegroundPkgRef.current
+    const next = foregroundApp?.packageName ?? null
+    if (prev === next) return
+
+    // When foreground clears, defer the setBackground until after the
+    // Compositor's fade-out animation finishes so the WebView remains visible
+    // during the fade. When switching directly to a new app, background the
+    // previous one immediately (the new app is foregrounding right now).
+    if (prev && prev !== next && next != null) {
+      miniappHost.setBackground(prev)
+    } else if (prev && next == null) {
+      const prevPkg = prev
+      setTimeout(() => {
+        // Only background if no new foreground app reclaimed this slot.
+        if (lastForegroundPkgRef.current === null) {
+          miniappHost.setBackground(prevPkg)
+        }
+      }, FADE_OUT_DURATION_MS)
     }
-  }, [pathname])
-
-  // console.log("COMPOSITOR: Package Name", packageName)
-
-  const isActive = pathname.includes("/applet/local")
-  // const activePackageName = pathname.includes("/applet/local") ? packageName : null
-
-  const resolvedLmas = useMemo(() => {
-    return lmas
-      .filter((lma) => !!lma.version)
-      .map((lma) => {
-        if (!lma.version) {
-          console.error("COMPOSITOR: Local mini app has no version", lma.packageName)
-          return null
-        }
-        const htmlRes = composer.getLocalMiniAppHtml(lma.packageName, lma.version)
-        if (htmlRes.is_ok()) {
-          return {packageName: lma.packageName, html: htmlRes.value, running: lma.running}
-        }
-        console.error("COMPOSITOR: Error getting local mini app html", htmlRes.error)
-        return null
+    if (foregroundApp) {
+      void launchLocalMiniapp(foregroundApp, {
+        onClose: () => useAppStatusStore.getState().clearForeground(),
+        onBack: () => handleBack(foregroundApp.packageName),
       })
-      .filter(Boolean) as {packageName: string; html: string; running: boolean}[]
-  }, [lmas])
-
-  // return null
-
-  // console.log("COMPOSITOR: Resolved Lmas", resolvedLmas.map((lma) => lma.packageName + " " + lma.running))
-
-  // const model = useSpeechToText({
-  //   model: WHISPER_TINY_EN,
-  // })
-
-  // const cactusSTT = useCactusSTT({
-  //   model: "whisper-medium",
-  //   options: {
-  //     pro: true,
-  //     // quantization: "int8",
-  //   },
-  // })
-
-  const transcription = useRef<string>("")
-  let useExecutorch = false
-  let useCactus = false
-  let useExpoSpeech = true
-
-  const handlePcm = async (pcm: ArrayBuffer) => {
-    // if (useExpoSpeech) {
-    //   const audioChunk = decodePcm16ToFloat32(pcm)
-    //   SpeechTranscriber.realtimeBufferTranscribe(
-    //     audioChunk, // Float32Array or number[]
-    //     16000, // sample rate
-    //   )
-    //   return
-    // }
-    // if (useExecutorch) {
-    //   // const audioChunk = new Float32Array(pcm)
-    //   const audioChunk = decodePcm16ToFloat32(pcm)
-    //   sttModule.streamInsert(audioChunk)
-    //   return
-    // }
-    // const audioChunk = Array.from(new Int16Array(pcm))
-    // // const audioChunk = decodePcm16ToFloat32(pcm)
-    // // const audioChunk = Array.from(new Float32Array(pcm))
-    // const result = await cactusSTT.streamTranscribeProcess({audio: audioChunk})
-    // if (result.confirmed) {
-    //   // console.log("COMPOSITOR: c:", result.confirmed)
-    //   transcription.current += " " + result.confirmed
-    //   // if (result.confirmed.length > 100) {
-    //   //   transcription.current = transcription.current.slice(-100)
-    //   // }
-    // }
-    // if (result.pending) {
-    //   console.log("COMP: P:", result.pending)
-    // }
-    // console.log("COMP: F:", transcription.current)
-  }
-
-  useEffect(() => {
-    const initSTT = async () => {
-      // await CoreModule.update("core", {
-      //   should_send_pcm: true,
-      // })
-
-      // await cactusSTT.download({
-      //   onProgress: (progress: number) => {
-      //     console.log("COMPOSITOR: Downloading cactus model...", progress)
-      //   },
-      // })
-
-      // await cactusSTT.streamTranscribeStart({
-      //   confirmationThreshold: 0.99,
-      //   minChunkSize: 32000,
-      // })
-
-      const pcmSub = CoreModule.addListener("mic_pcm", (event: MicPcmEvent) => {
-        // console.log("COMPOSITOR: Received mic pcm:", event.base64)
-        // const samples = decodePcm16Base64ToFloat32(event.base64)
-        // sttModule.streamInsert(samples)
-        handlePcm(event.pcm)
-      })
-
-      return () => {
-        pcmSub?.remove()
-      }
     }
-    initSTT()
-  }, [])
 
+    lastForegroundPkgRef.current = next
+  }, [foregroundApp])
+
+  // Register a capsule handler whenever a local miniapp is foregrounded so the
+  // global house-button reflects the Compositor-managed app without each
+  // miniapp screen having to call useRegisterCapsule.
   useEffect(() => {
-    // cactusSTT.start()
+    if (!foregroundApp) return
+    const {setActive} = useCapsuleStore.getState()
+    setActive({
+      packageName: foregroundApp.packageName,
+      viewShotRef: {current: null},
+      appNameOverride: foregroundApp.name,
+      iconUrlOverride: foregroundApp.logoUrl,
+      handleExit: () => {
+        useAppStatusStore.getState().clearForeground()
+      },
+    })
     return () => {
-      // cactusSTT.stop()
+      const current = useCapsuleStore.getState().active
+      if (current?.packageName === foregroundApp.packageName) {
+        setActive(null)
+      }
     }
-  }, [offlineCaptionsRunning, offlineTranslationRunning])
+  }, [foregroundApp])
+
+  const swipeTranslateX = useSharedValue(0)
+  const fadeOpacity = useSharedValue(0)
+  const fadeScale = useSharedValue(1)
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: fadeOpacity.value,
+    transform: [{translateX: swipeTranslateX.value}, {scale: fadeScale.value}],
+  }))
+
+  const isForeground = foregroundApp != null
+  const screenWidth = Dimensions.get("window").width
+  const commitThreshold = screenWidth * COMMIT_FRACTION
+
+  const swipeGesture = Gesture.Pan()
+    .activeOffsetX(10)
+    .failOffsetY([-15, 15])
+    .onUpdate((e) => {
+      if (Platform.OS !== "ios") return
+      swipeTranslateX.value = Math.max(0, e.translationX)
+    })
+    .onEnd((e) => {
+      if (Platform.OS !== "ios") {
+        if (e.translationX > commitThreshold) {
+          runOnJS(commitClose)()
+        }
+        return
+      }
+      if (e.translationX > commitThreshold) {
+        swipeTranslateX.value = withTiming(screenWidth, {duration: COMMIT_DURATION_MS}, (finished) => {
+          if (finished) runOnJS(commitClose)()
+        })
+      } else {
+        swipeTranslateX.value = withSpring(0, {damping: 20, stiffness: 200, overshootClamping: true})
+      }
+    })
+
+  // Drive fade-in (foreground) and fade-out + shrink (clear).
+  useEffect(() => {
+    if (isForeground) {
+      swipeTranslateX.value = 0
+      fadeOpacity.value = 0
+      fadeScale.value = 1
+      fadeOpacity.value = withDelay(FADE_IN_DELAY_MS, withTiming(1, {duration: FADE_IN_DURATION_MS}))
+    } else {
+      fadeOpacity.value = withTiming(0, {duration: FADE_OUT_DURATION_MS})
+      fadeScale.value = withTiming(FADE_OUT_SCALE_TO, {duration: FADE_OUT_DURATION_MS})
+    }
+  }, [isForeground, swipeTranslateX, fadeOpacity, fadeScale])
 
   return (
-    <View className={`absolute inset-0 ${isActive ? "z-11" : "z-0"}`} pointerEvents="box-none">
-      <View className="z-12">
-        {isActive && (
-          <MiniAppCapsuleMenu
-            viewShotRef={viewShotRef}
-            onEllipsisPress={() => {
-              // push("/applet/settings", {
-              //   packageName: packageName as string,
-              //   fromWebView: "true",
-              // })
+    <Animated.View
+      pointerEvents={isForeground ? "auto" : "box-none"}
+      style={[{position: "absolute", top: 0, bottom: 0, left: 0, right: 0, zIndex: 10}, animatedStyle]}>
+      <MiniappHost />
+      {isForeground && (
+        <GestureDetector gesture={swipeGesture}>
+          <View
+            style={{
+              position: "absolute",
+              top: 0,
+              bottom: 0,
+              left: 0,
+              width: EDGE_HIT_WIDTH,
+              zIndex: 10,
             }}
-            packageName={packageName as string}
           />
-        )}
-      </View>
-      <Screen preset="fixed" safeAreaEdges={["top"]} KeyboardAvoidingViewProps={{enabled: true}} ref={viewShotRef}>
-        <View className="flex-1 -mx-6">
-          {resolvedLmas.map((lma, index) => (
-            <LmaContainer
-              key={lma.packageName}
-              html={lma.html}
-              packageName={lma.packageName}
-              enabled={lma.running}
-              isActive={packageName === lma.packageName}
-              index={index}
-            />
-          ))}
-        </View>
-      </Screen>
-    </View>
+        </GestureDetector>
+      )}
+      {isForeground && <CapsuleMenu forceShow={true} />}
+    </Animated.View>
   )
 }
 
-export default Compositor
+function commitClose() {
+  useAppStatusStore.getState().clearForeground()
+}
+
+function handleBack(packageName: string) {
+  const wentBack = miniappHost.goBackInWebView(packageName)
+  if (!wentBack) {
+    useAppStatusStore.getState().clearForeground()
+  }
+}

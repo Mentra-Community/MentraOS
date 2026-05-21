@@ -82,6 +82,10 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
             boolean sent = communicationManager.sendBluetoothResponse(response);
             Log.d(TAG, "📱 " + (sent ? "✅ Glasses ready response sent successfully" : "❌ Failed to send glasses ready response"));
 
+            if (sent && serviceManager != null) {
+                serviceManager.onPhoneReadyHandshakeComplete();
+            }
+
             // Auto-send WiFi status after glasses_ready
             Log.d(TAG, "📱 🔄 Scheduling WiFi status check in 500ms...");
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
@@ -189,4 +193,4 @@ public class PhoneReadyCommandHandler implements ICommandHandler {
             Log.e(TAG, "💥 Error sending RGB LED authority command", e);
         }
     }
-} 
+}

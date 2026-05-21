@@ -3,7 +3,7 @@ import {AppState} from "react-native"
 
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
-import CoreModule from "core"
+import CoreModule from "@mentra/bluetooth-sdk"
 import {useGlassesStore} from "@/stores/glasses"
 import {useCoreStore} from "@/stores/core"
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
@@ -34,7 +34,12 @@ export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
   if (!requirementsCheck) {
     return true
   }
-  await CoreModule.connectDefault()
+  try {
+    await CoreModule.connectDefault()
+  } catch (error) {
+    console.warn("RECONNECT: failed to connect default wearable:", error)
+    return false
+  }
   return true
 }
 

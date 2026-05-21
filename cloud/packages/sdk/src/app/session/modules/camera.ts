@@ -18,7 +18,13 @@ import {
   CameraFovSetRequest,
   CameraRoiPosition,
 } from "../../../types";
-import { VideoConfig, AudioConfig, StreamConfig, StreamStatusHandler } from "../../../types/rtmp-stream";
+import {
+  VideoConfig,
+  AudioConfig,
+  StreamConfig,
+  StreamStatusHandler,
+  validateVideoConfig,
+} from "../../../types/rtmp-stream";
 import { StreamType } from "../../../types/streams";
 import { Logger } from "pino";
 import { CameraManagedExtension, ManagedStreamOptions, ManagedStreamResult } from "./camera-managed-extension";
@@ -46,6 +52,11 @@ export interface PhotoRequestOptions {
   compress?: "none" | "medium" | "heavy";
   /** Controls shutter sound. Defaults to true if omitted. */
   sound?: boolean;
+  /**
+   * Sensor exposure time for this photo request only (nanoseconds). Not persisted.
+   * Invalid values are ignored on the wire; device falls back to auto exposure.
+   */
+  exposureTimeNs?: number;
 }
 
 /**
@@ -187,6 +198,9 @@ export class CameraModule {
         });
 
         // Create photo request message
+        const expNs = options?.exposureTimeNs;
+        const includeExp = typeof expNs === "number" && Number.isFinite(expNs) && expNs > 0;
+
         const message: PhotoRequest = {
           type: AppToCloudMessageType.PHOTO_REQUEST,
           packageName: this.packageName,
@@ -199,6 +213,7 @@ export class CameraModule {
           size: options?.size || "medium",
           compress: options?.compress || "none",
           sound: options?.sound,
+          ...(includeExp ? { exposureTimeNs: expNs } : {}),
         };
 
         // Send request to cloud
@@ -210,6 +225,7 @@ export class CameraModule {
             saveToGallery: options?.saveToGallery,
             hasCustomWebhook: !!options?.customWebhookUrl,
             hasAuthToken: !!options?.authToken,
+            exposureTimeNs: includeExp ? expNs : undefined,
           },
           `📸 Photo request sent`,
         );
@@ -369,12 +385,20 @@ export class CameraModule {
 
     cameraWarnLog(this.session.getHttpsServerUrl?.(), this.packageName, "startLocalLivestream");
 
+    validateVideoConfig(options.video);
+
     if (!options.streamUrl) {
       throw new Error("streamUrl is required");
     }
 
     const url = options.streamUrl;
-    if (!url.startsWith("rtmp://") && !url.startsWith("rtmps://") && !url.startsWith("srt://") && !url.startsWith("https://") && !url.startsWith("http://")) {
+    if (
+      !url.startsWith("rtmp://") &&
+      !url.startsWith("rtmps://") &&
+      !url.startsWith("srt://") &&
+      !url.startsWith("https://") &&
+      !url.startsWith("http://")
+    ) {
       throw new Error("Invalid stream URL: must start with rtmp://, rtmps://, srt://, https://, or http://");
     }
 

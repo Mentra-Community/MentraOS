@@ -7,14 +7,14 @@ import {usePathname} from "expo-router"
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 import showAlert from "@/utils/AlertUtils"
 import {translate} from "@/i18n"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {useNavigationStore} from "@/stores/navigation"
 
 export function BtClassicPairing() {
   const btcConnected = useGlassesStore((state) => state.btcConnected)
   const glassesConnected = useGlassesStore((state) => state.connected)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [deviceName] = useSetting(SETTINGS.device_name.key)
-  const {push} = useNavigationHistory()
+  const {push} = useNavigationStore.getState()
 
   const pathname = usePathname()
   const ignoreRef = useRef(false)

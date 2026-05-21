@@ -1,0 +1,23 @@
+{
+  "name": "@mentra/miniapp-cli",
+  "version": "0.1.0",
+  "description": "Dev tools for MentraOS miniapps",
+  "type": "module",
+  "bin": {
+    "mentra-miniapp": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "bun src/index.ts schema regenerate",
+    "prepare": "bun src/index.ts schema regenerate"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.2.0",
+    "jszip": "^3.10.1",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/qrcode-terminal": "^0.12.0",
+    "typescript": "^5.0.0"
+  },
+  "files": ["src", "schema"]
+}

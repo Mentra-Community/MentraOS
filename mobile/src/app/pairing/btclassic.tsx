@@ -2,19 +2,20 @@ import {useEffect} from "react"
 import {Button, Screen} from "@/components/ignite"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {translate} from "@/i18n"
-import {focusEffectPreventBack, useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {focusEffectPreventBack, usePushPrevious} from "@/contexts/NavigationHistoryContext"
 import {useGlassesStore} from "@/stores/glasses"
-import CoreModule from "core"
+import CoreModule from "@mentra/bluetooth-sdk"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {SettingsNavigationUtils} from "@/utils/SettingsNavigationUtils"
 import {useCoreStore} from "@/stores/core"
 import {View} from "react-native"
-import {ExpoAvRoutePickerView} from "@douglowder/expo-av-route-picker-view"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import CrustModule from "crust"
 
 export default function BtClassicPairingScreen() {
-  const {pushPrevious, goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
+  const pushPrevious = usePushPrevious()
   const btcConnected = useGlassesStore((state) => state.btcConnected)
   const otherBtConnected = useCoreStore((state) => state.otherBtConnected)
   const [deviceName] = useSetting(SETTINGS.device_name.key)
@@ -23,8 +24,9 @@ export default function BtClassicPairingScreen() {
   focusEffectPreventBack()
 
   const handleSuccess = () => {
-    // we should have a device name saved in the core:
-    CoreModule.connectByName(deviceName)
+    CoreModule.connectDefault().catch((error) => {
+      console.error("Failed to connect default glasses after Bluetooth Classic pairing:", error)
+    })
     pushPrevious()
   }
 

@@ -63,6 +63,7 @@ Off:
 `B` is a JSON-string-inside-JSON — that's the K900 protocol convention.
 
 Bounds:
+
 - `led` — 0 (red) … 4 (white)
 - `ontime` / `offtime` — milliseconds, ≥ 0
 - `count` — cycles, ≥ 0
@@ -72,11 +73,11 @@ Bounds:
 
 These commands are documented in detail in [ASG_CLIENT_API.md#rgb-led-control](../ASG_CLIENT_API.md#rgb-led-control). Quick reference:
 
-| Command | Purpose |
-|---------|---------|
-| `rgb_led_control_on` | Generic on/blink. Pick `led`, `ontime`, `offtime`, `count`, optional `brightness`. |
-| `rgb_led_control_off` | Turn the ring off. |
-| `rgb_led_photo_flash` | White flash for photo capture (default 5 s). |
+| Command               | Purpose                                                                                                 |
+| --------------------- | ------------------------------------------------------------------------------------------------------- |
+| `rgb_led_control_on`  | Generic on/blink. Pick `led`, `ontime`, `offtime`, `count`, optional `brightness`.                      |
+| `rgb_led_control_off` | Turn the ring off.                                                                                      |
+| `rgb_led_photo_flash` | White flash for photo capture (default 5 s).                                                            |
 | `rgb_led_video_solid` | Solid white for video recording (30 min internal duration; turned off explicitly when recording stops). |
 
 Each command responds with `<command>_response` on success or `rgb_led_control_error` on failure / unsupported hardware.
@@ -85,17 +86,17 @@ Each command responds with `<command>_response` on success or `rgb_led_control_e
 
 `MediaCaptureService` and the streaming services drive both LEDs together so the user gets a consistent privacy indicator:
 
-| Event | Local MTK LED | RGB ring |
-|-------|---------------|----------|
-| Photo capture (flash on) | brief flash | white flash via `rgb_led_photo_flash` |
-| Photo capture (flash off) | nothing | nothing |
-| Video recording start | solid on | white solid via `rgb_led_video_solid` |
-| Video recording stop | off | off via `rgb_led_control_off` |
-| Stream start | solid on | (handled by stream service) |
-| Stream stop | off | off |
-| Buffer recording active | blinking (1 s on / 2 s off) | (BES default) |
-| Buffer recording stopped | off | (BES default) |
-| Recording error | off | off |
+| Event                     | Local MTK LED               | RGB ring                              |
+| ------------------------- | --------------------------- | ------------------------------------- |
+| Photo capture (flash on)  | brief flash                 | white flash via `rgb_led_photo_flash` |
+| Photo capture (flash off) | nothing                     | nothing                               |
+| Video recording start     | solid on                    | white solid via `rgb_led_video_solid` |
+| Video recording stop      | off                         | off via `rgb_led_control_off`         |
+| Stream start              | solid on                    | (handled by stream service)           |
+| Stream stop               | off                         | off                                   |
+| Buffer recording active   | blinking (1 s on / 2 s off) | (BES default)                         |
+| Buffer recording stopped  | off                         | (BES default)                         |
+| Recording error           | off                         | off                                   |
 
 Whether the local MTK LED actually fires for a given button-triggered capture is gated by the [`button_camera_led` setting](../ASG_CLIENT_API.md#button_camera_led).
 
@@ -132,10 +133,10 @@ In application code, prefer routing through the BLE command surface (so the phon
 
 ## Logcat tags
 
-| Tag | Component |
-|-----|-----------|
-| `K900LedController` | Local MTK LED |
-| `K900RgbLedController` | RGB ring driver |
+| Tag                    | Component                            |
+| ---------------------- | ------------------------------------ |
+| `K900LedController`    | Local MTK LED                        |
+| `K900RgbLedController` | RGB ring driver                      |
 | `RgbLedCommandHandler` | Phone-facing RGB LED command handler |
-| `K900CommandHandler` | RGB authority claim/release |
-| `MediaCaptureService` | Recording-LED orchestration |
+| `K900CommandHandler`   | RGB authority claim/release          |
+| `MediaCaptureService`  | Recording-LED orchestration          |

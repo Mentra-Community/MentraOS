@@ -37,7 +37,18 @@ android {
     versionCode 1
     versionName "0.1.0"
   }
+  buildTypes {
+    internal {
+      initWith release
+      matchingFallbacks = ['release']
+    }
+  }
   lintOptions {
     abortOnError false
   }
+}
+
+dependencies {
+  implementation 'com.google.android.gms:play-services-location:21.0.1'
+  implementation 'com.google.android.gms:play-services-base:18.2.0'
 }

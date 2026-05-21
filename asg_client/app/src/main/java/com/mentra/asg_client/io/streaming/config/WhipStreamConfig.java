@@ -7,8 +7,8 @@ import org.json.JSONObject;
  */
 public class WhipStreamConfig {
 
-  public static final int DEFAULT_VIDEO_WIDTH = 960;
-  public static final int DEFAULT_VIDEO_HEIGHT = 540;
+  public static final int DEFAULT_VIDEO_WIDTH = 854;
+  public static final int DEFAULT_VIDEO_HEIGHT = 480;
   public static final int DEFAULT_VIDEO_FPS = 15;
   public static final int DEFAULT_VIDEO_BITRATE = 1000000; // 1 Mbps
 

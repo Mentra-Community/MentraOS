@@ -1,7 +1,7 @@
 // src/messages/glasses-to-cloud.ts
 
 import { GlassesToCloudMessageType, ControlActionTypes, EventTypes } from "../message-types";
-import { StreamType } from "../streams";
+import { StreamType, ExtendedStreamType } from "../streams";
 
 import { BaseMessage } from "./base";
 
@@ -419,6 +419,16 @@ export interface UdpUnregister extends BaseMessage {
 }
 
 /**
+ * Phone subscription update — local miniapp support.
+ * The phone sends this to subscribe to cloud streams (transcription, translation)
+ * on behalf of locally-running miniapps.
+ */
+export interface PhoneSubscriptionUpdate extends BaseMessage {
+  type: GlassesToCloudMessageType.PHONE_SUBSCRIPTION_UPDATE;
+  subscriptions: ExtendedStreamType[];
+}
+
+/**
  * Union type for all messages from glasses to cloud
  */
 export type GlassesToCloudMessage =
@@ -451,7 +461,8 @@ export type GlassesToCloudMessage =
   | AudioPlayResponse
   | LocalTranscription
   | UdpRegister
-  | UdpUnregister;
+  | UdpUnregister
+  | PhoneSubscriptionUpdate;
 
 //===========================================================
 // Type guards

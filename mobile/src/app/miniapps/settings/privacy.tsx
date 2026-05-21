@@ -1,4 +1,4 @@
-import CoreModule from "core"
+import CrustModule from "crust"
 import {useEffect, useState} from "react"
 import {AppState, Platform, ScrollView} from "react-native"
 
@@ -6,8 +6,8 @@ import {Header, Screen} from "@/components/ignite"
 import PermissionButton from "@/components/settings/PermButton"
 import ToggleSetting from "@/components/settings/ToggleSetting"
 import {Spacer} from "@/components/ui/Spacer"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {checkAndRequestNotificationAccessSpecialPermission} from "@/utils/NotificationServiceUtils"
@@ -21,7 +21,7 @@ export default function PrivacySettingsScreen() {
   const [locationPermissionPending, setLocationPermissionPending] = useState(false)
   const [appState, setAppState] = useState(AppState.currentState)
   const {theme} = useAppTheme()
-  const {goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
   const [sensingEnabled, setSensingEnabled] = useSetting(SETTINGS.sensing_enabled.key)
 
   // Check permissions when screen loads
@@ -30,7 +30,7 @@ export default function PrivacySettingsScreen() {
       console.log("Checking permissions in PrivacySettingsScreen")
       // Check notification permissions
       if (Platform.OS === "android") {
-        const hasNotificationAccess = await CoreModule.hasNotificationListenerPermission()
+        const hasNotificationAccess = await CrustModule.hasNotificationListenerPermission()
         setNotificationsEnabled(hasNotificationAccess)
       }
 
@@ -48,7 +48,7 @@ export default function PrivacySettingsScreen() {
 
   const checkPermissions = async () => {
     if (Platform.OS === "android") {
-      const hasNotificationAccess = await CoreModule.hasNotificationListenerPermission()
+      const hasNotificationAccess = await CrustModule.hasNotificationListenerPermission()
 
       // If permission was granted while away, enable notifications and start service
       if (hasNotificationAccess && !notificationsEnabled) {
@@ -137,7 +137,7 @@ export default function PrivacySettingsScreen() {
       await checkAndRequestNotificationAccessSpecialPermission()
 
       // Re-check permissions after the request
-      const hasAccess = await CoreModule.hasNotificationListenerPermission()
+      const hasAccess = await CrustModule.hasNotificationListenerPermission()
       if (hasAccess) {
         setNotificationsEnabled(true)
       }

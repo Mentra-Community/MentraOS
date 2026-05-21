@@ -1,23 +1,23 @@
 import {useEffect, useRef, useState} from "react"
-import {View, ViewStyle, TextStyle} from "react-native"
+import {ImageStyle, TextStyle, View, ViewStyle} from "react-native"
 import LinearGradient from "react-native-linear-gradient"
 import Animated, {useSharedValue, withTiming} from "react-native-reanimated"
 
-import {Icon, Text} from "@/components/ignite"
+import {Icon, Text, type IconTypes} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {WebSocketStatus} from "@/services/WebSocketManager"
-import {useRefreshApplets} from "@/stores/applets"
+import {useRefresh} from "@mentra/island"
 import {useConnectionStore} from "@/stores/connection"
 import {ThemedStyle} from "@/theme"
-import {BgTimer} from "@/utils/timers"
+import {BgTimer} from "@mentra/island"
 
 export default function CloudConnection() {
   const connectionStatus = useConnectionStore((state) => state.status)
   const {themed} = useAppTheme()
   const cloudConnectionStatusAnim = useSharedValue(1)
   const [hideCloudConnection, setHideCloudConnection] = useState(true)
-  const refreshApplets = useRefreshApplets()
+  const refreshApplets = useRefresh()
 
   // Add delay logic for disconnection alerts
   const [delayedStatus, setDelayedStatus] = useState<WebSocketStatus>(connectionStatus)
@@ -45,7 +45,7 @@ export default function CloudConnection() {
   /**
    * Return icon name and color based on connection status
    */
-  const getIcon = (connectionStatus: WebSocketStatus): {name: string; color: string; label: string} => {
+  const getIcon = (connectionStatus: WebSocketStatus): {name: IconTypes; color: string; label: string} => {
     switch (connectionStatus) {
       case WebSocketStatus.CONNECTED:
         return {
@@ -180,7 +180,7 @@ const $row: ThemedStyle<ViewStyle> = () => ({
   justifyContent: "center",
 })
 
-const $icon: ThemedStyle<ViewStyle> = ({spacing}) => ({
+const $icon: ThemedStyle<ImageStyle> = ({spacing}) => ({
   marginRight: spacing.s2,
 })
 

@@ -25,6 +25,7 @@ import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.media.interfaces.ServiceCallbackInterface;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
 import com.mentra.asg_client.io.network.interfaces.NetworkStateListener;
+import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.io.streaming.events.StreamingEvent;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
@@ -203,7 +204,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             Log.d(TAG, "✅ EventBus registration successful");
 
             // EIS is toggled on/off at point of use:
-            // - Enabled before video recording (CameraNeo)
+            // - Enabled before video recording (CameraNeoService)
             // - Disabled before streaming (StreamCommandHandler)
             SysControl.setEisEnable(this, false);
 
@@ -801,6 +802,13 @@ public class AsgClientService extends Service implements NetworkStateListener, B
         Log.i(TAG, "📶 Bluetooth connection state changed: " + (connected ? "CONNECTED" : "DISCONNECTED"));
 
         if (connected) {
+            // Send the pending APK-done signal immediately on reconnect (before WiFi/version info).
+            // This is the primary path for the phone to learn the APK updated successfully.
+            OtaHelper otaHelper = OtaHelper.getInstance();
+            if (otaHelper != null) {
+                otaHelper.onPhoneConnected();
+            }
+
             Log.d(TAG, "⏱️ Scheduling WiFi status send in 3 seconds");
             // Send WiFi status after delay
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
@@ -842,8 +850,9 @@ public class AsgClientService extends Service implements NetworkStateListener, B
         }
 
         Log.i(TAG, "📥 Received " + data.length + " bytes from Bluetooth");
-        Log.d(TAG, "📋 Data preview: " + new String(data, 0, Math.min(data.length, 100)) + 
-                  (data.length > 100 ? "..." : ""));
+        String incomingPayload = new String(data, StandardCharsets.UTF_8);
+        Log.d(TAG, "📋 Data preview: " + incomingPayload.substring(0, Math.min(incomingPayload.length(), 100)) +
+                  (incomingPayload.length() > 100 ? "..." : ""));
 
         // BLE/serial can deliver data before getInterfaceReferences() runs (e.g. right after
         // MY_PACKAGE_REPLACED when the service is still in onCreate). Guard to avoid NPE.
@@ -952,6 +961,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
                 chunk1.put("build_number", buildNumber);
                 chunk1.put("device_model", deviceModel);
                 chunk1.put("android_version", androidVersion);
+                chunk1.put("system_time_ms", System.currentTimeMillis());
 
                 Log.d(TAG, "📤 Sending version_info_1: " + chunk1.toString());
                 serviceContainer.getServiceManager().getBluetoothManager().sendData(chunk1.toString().getBytes(StandardCharsets.UTF_8));
@@ -1250,6 +1260,14 @@ public class AsgClientService extends Service implements NetworkStateListener, B
      */
     public boolean isConnected() {
         return isConnected;
+    }
+
+    /**
+     * Handle the phone_ready/glasses_ready handshake completing over Bluetooth.
+     */
+    public void onPhoneReadyHandshakeComplete() {
+        Log.d(TAG, "📱 Phone ready handshake complete - marking phone connection active");
+        resetHeartbeatTimeout();
     }
 
     /**
@@ -1591,4 +1609,4 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             Log.e(TAG, "🗑️ Error cleaning up orphaned BLE transfers", e);
         }
     }
-} 
+}

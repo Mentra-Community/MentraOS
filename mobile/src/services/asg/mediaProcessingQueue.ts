@@ -11,7 +11,7 @@ import CrustModule from "crust"
 import {asgCameraApi} from "@/services/asg/asgCameraApi"
 import {localStorageService} from "@/services/asg/localStorageService"
 import {useGallerySyncStore} from "@/stores/gallerySync"
-import {BgTimer} from "@/utils/timers"
+import {BgTimer} from "@mentra/island"
 import {MediaLibraryPermissions} from "@/utils/permissions/MediaLibraryPermissions"
 
 const TAG = "[MediaProcessingQueue]"

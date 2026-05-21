@@ -2,8 +2,8 @@ import {useState} from "react"
 import {View, TextInput, ActivityIndicator, ScrollView, TouchableOpacity} from "react-native"
 
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
@@ -13,7 +13,7 @@ export default function ForgotPasswordScreen() {
   const [email, setEmail] = useState("")
   const [isLoading, setIsLoading] = useState(false)
 
-  const {goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
   const {theme} = useAppTheme()
 
   const isEmailValid = email.includes("@") && email.includes(".")

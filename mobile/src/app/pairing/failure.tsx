@@ -1,18 +1,18 @@
-import CoreModule from "core"
+import CoreModule from "@mentra/bluetooth-sdk"
 import {useLocalSearchParams} from "expo-router"
 import {useEffect} from "react"
 import {View} from "react-native"
 import Animated, {useAnimatedStyle, useSharedValue, withTiming} from "react-native-reanimated"
 
 import {Screen, Header, Text, Button, Icon} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {TxKeyPath} from "@/i18n"
 import {translate} from "@/i18n/translate"
 
 export default function PairingFailureScreen() {
   const {theme} = useAppTheme()
-  const {clearHistoryAndGoHome, push} = useNavigationHistory()
+  const {clearHistoryAndGoHome, push} = useNavigationStore.getState()
 
   const {error, deviceModel}: {error: string; deviceModel?: string} = useLocalSearchParams()
 

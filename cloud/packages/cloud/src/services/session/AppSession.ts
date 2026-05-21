@@ -24,6 +24,7 @@ import { ResourceTracker } from "../../utils/resource-tracker";
 import { metricsService } from "../metrics/MetricsService";
 import { markWebSocketPingSent, recordWebSocketSend } from "../metrics/cascade-diagnostics";
 import { IWebSocket, WebSocketReadyState, hasEventEmitter } from "../websocket/types";
+import type { AppLikeSession } from "./AppLikeSession";
 
 /**
  * Location rate/accuracy tier for location subscriptions
@@ -108,7 +109,7 @@ const LOG_PING_PONG = false;
  * - Grace period and resurrection
  * - Ownership release for clean handoffs
  */
-export class AppSession {
+export class AppSession implements AppLikeSession {
   // ===== Identity =====
   public readonly sessionId: string;
   public readonly packageName: string;

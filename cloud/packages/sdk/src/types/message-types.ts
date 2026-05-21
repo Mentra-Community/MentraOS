@@ -60,6 +60,9 @@ export enum GlassesToCloudMessageType {
   // UDP audio
   UDP_REGISTER = "udp_register",
   UDP_UNREGISTER = "udp_unregister",
+
+  // Local miniapp support — phone subscribes on behalf of local miniapps
+  PHONE_SUBSCRIPTION_UPDATE = "phone_subscription_update",
 }
 
 /**

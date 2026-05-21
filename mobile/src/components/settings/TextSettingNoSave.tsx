@@ -3,8 +3,8 @@ import {useCallback} from "react"
 import {View, Platform, Pressable, ViewStyle, TextStyle} from "react-native"
 
 import {Text} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 import {ThemedStyle} from "@/theme"
 import {textEditorStore} from "@/utils/TextEditorStore"
 
@@ -37,7 +37,7 @@ const TextSettingNoSave: React.FC<TextSettingNoSaveProps> = ({
           marginBottom: isLast ? 0 : theme.spacing.s2,
         }
       : undefined
-  const {push} = useNavigationHistory()
+  const {push} = useNavigationStore.getState()
 
   // Check for pending value when component gets focus
   useFocusEffect(

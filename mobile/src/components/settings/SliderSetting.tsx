@@ -1,18 +1,19 @@
-import {View, ViewStyle, TextStyle} from "react-native"
+import {Platform, View, ViewStyle} from "react-native"
+import {Host as IosHost, Slider as IosSlider} from "@expo/ui/swift-ui"
+import {Host as AndroidHost, Slider as AndroidSlider} from "@expo/ui/jetpack-compose"
 
 import {Text} from "@/components/ignite"
-import {ThemedSlider} from "@/components/settings/ThemedSlider"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {ThemedStyle} from "@/theme"
+import {useEffect, useState} from "react"
 
 type SliderSettingProps = {
   label: string
   subtitle?: string
-  value: number | undefined // Allow undefined if value might not always be set
+  value: number | undefined
   min: number
   max: number
-  onValueChange: (value: number) => void // For immediate feedback, e.g., UI updates
-  onValueSet: (value: number) => void // For BLE requests or final actions
+  onValueChange: (value: number) => void
+  onValueSet: (value: number) => void
   style?: ViewStyle
   disableBorder?: boolean
   isFirst?: boolean
@@ -22,7 +23,7 @@ type SliderSettingProps = {
 const SliderSetting: React.FC<SliderSettingProps> = ({
   label,
   subtitle,
-  value = 0, // Default value if not provided
+  value = 0,
   min,
   max,
   onValueChange,
@@ -32,17 +33,30 @@ const SliderSetting: React.FC<SliderSettingProps> = ({
   isFirst,
   isLast,
 }) => {
+  const {theme} = useAppTheme()
+  const safeValue = value || 0
+  const [localValue, setLocalValue] = useState<number>(safeValue)
+
+  // Keep the displayed readout + slider position in sync with external prop
+  // updates (e.g. settings synced from cloud after mount).
+  useEffect(() => {
+    setLocalValue(safeValue)
+  }, [safeValue])
+
   const handleValueChange = (val: number) => {
-    const roundedValue = Math.round(val)
-    onValueChange(roundedValue) // Emit only integer values
+    setLocalValue(Math.round(val))
+    onValueChange(Math.round(val))
   }
 
-  const handleValueSet = (val: number) => {
-    const roundedValue = Math.round(val)
-    onValueSet(roundedValue) // Emit only integer values
+  const handleEditingChanged = (isEditing: boolean) => {
+    if (!isEditing) {
+      onValueSet(Math.round(localValue))
+    }
   }
 
-  const {theme, themed} = useAppTheme()
+  const handleValueSet = () => {
+    onValueSet(Math.round(localValue))
+  }
 
   const groupedStyle: ViewStyle | undefined =
     isFirst !== undefined || isLast !== undefined
@@ -55,68 +69,44 @@ const SliderSetting: React.FC<SliderSettingProps> = ({
         }
       : undefined
 
+  const sliderHeight = 40
+
   return (
-    <View style={[themed($container), groupedStyle, disableBorder && {borderWidth: 0}, style]}>
-      <View style={themed($textContainer)}>
-        <View style={themed($labelRow)}>
-          <Text text={label} style={themed($label)} />
-          <Text text={String(value || 0)} style={themed($valueText)} />
+    <View
+      className="w-full bg-primary-foreground rounded-2xl px-4 py-4"
+      style={[groupedStyle, disableBorder && {borderWidth: 0}, style]}>
+      <View className="w-full mb-2 gap-1">
+        <View className="w-full flex-row items-center justify-between">
+          <Text text={label} className="text-sm font-semibold text-foreground" />
+          <Text text={String(localValue)} className="text-sm font-medium text-muted-foreground" />
         </View>
-        {subtitle && <Text text={subtitle} style={themed($subtitle)} />}
+        {subtitle && <Text text={subtitle} className="text-xs text-muted-foreground" />}
       </View>
-      <ThemedSlider
-        value={value || 0}
-        min={min}
-        max={max}
-        onValueChange={handleValueChange}
-        onSlidingComplete={handleValueSet}
-      />
+      {Platform.OS === "ios" ? (
+        <IosHost style={{width: "100%", height: sliderHeight}}>
+          <IosSlider
+            value={localValue}
+            min={min}
+            max={max}
+            step={1}
+            onValueChange={handleValueChange}
+            onEditingChanged={handleEditingChanged}
+          />
+        </IosHost>
+      ) : (
+        <AndroidHost style={{width: "100%", height: sliderHeight}}>
+          <AndroidSlider
+            value={localValue}
+            min={min}
+            max={max}
+            steps={Math.max(0, max - min - 1)}
+            onValueChange={handleValueChange}
+            onValueChangeFinished={handleValueSet}
+          />
+        </AndroidHost>
+      )}
     </View>
   )
 }
-
-const $container: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
-  flexDirection: "column",
-  justifyContent: "flex-start",
-  alignItems: "flex-start",
-  width: "100%",
-  backgroundColor: colors.primary_foreground,
-  paddingVertical: spacing.s4,
-  paddingHorizontal: spacing.s4,
-  borderRadius: spacing.s4,
-})
-
-const $textContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  flexDirection: "column",
-  alignItems: "flex-start",
-  justifyContent: "flex-start",
-  gap: 4,
-  width: "100%",
-  marginBottom: spacing.s2,
-})
-
-const $label: ThemedStyle<TextStyle> = ({colors}) => ({
-  fontSize: 14,
-  fontWeight: "600",
-  color: colors.text,
-})
-
-const $subtitle: ThemedStyle<TextStyle> = ({colors}) => ({
-  fontSize: 12,
-  color: colors.textDim,
-})
-
-const $labelRow: ThemedStyle<ViewStyle> = () => ({
-  flexDirection: "row",
-  justifyContent: "space-between",
-  alignItems: "center",
-  width: "100%",
-})
-
-const $valueText: ThemedStyle<TextStyle> = ({colors}) => ({
-  fontSize: 14,
-  color: colors.textDim,
-  fontWeight: "500",
-})
 
 export default SliderSetting

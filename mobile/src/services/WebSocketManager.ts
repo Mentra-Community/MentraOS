@@ -6,7 +6,7 @@ import {useConnectionStore} from "@/stores/connection"
 import {getGlasesInfoPartial, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
-import {BgTimer} from "@/utils/timers"
+import {BgTimer} from "@mentra/island"
 
 export {WebSocketStatus}
 

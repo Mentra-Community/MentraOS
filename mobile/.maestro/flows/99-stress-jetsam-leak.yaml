@@ -1,0 +1,43 @@
+appId: ${MAESTRO_APP_ID}
+env:
+  MB_PER_APP: "25"
+  MAX_MOUNTS: "10"
+---
+# Jetsam stress test — foreground scenario.
+# Drives the app from launch into the stress-test screen and mounts dummies.
+#
+# Assumptions:
+#  - Super Mode is already enabled (test won't toggle it).
+#  - The stress-test screen exists at /miniapps/settings/stress-test
+#    and is reachable via Settings → Super Settings → Stress Test (Jetsam).
+#
+# Repeat counts use Maestro's `repeat` block. We mount 1 at a time so the
+# mount taps don't get coalesced and so the per-mount STRESS log line lands.
+
+- launchApp:
+    clearState: false
+
+# Open settings tab and dive into Super → Stress Test.
+- tapOn: "Settings"
+- tapOn: "Super Settings"
+- tapOn: "Stress Test (Jetsam)"
+
+# Pick the heap size for each dummy. The button label matches "${MB_PER_APP} MB".
+- tapOn: "${MB_PER_APP} MB"
+
+# Begin logging — flips active=true in the store, which switches on the
+# 1Hz STRESS: sample emitter.
+- tapOn: "Start logging"
+
+# Mount MAX_MOUNTS dummies, one tap at a time.
+- repeat:
+    times: ${MAX_MOUNTS}
+    commands:
+      - tapOn: "Mount 1"
+      # Small wait so each WebView gets a chance to allocate before the next
+      # one starts; lets us see staircase-style memory growth in the log.
+      - waitForAnimationToEnd:
+          timeout: 1500
+
+# Leave the screen alive so the harness's dwell timer can collect samples.
+# The harness will tear down via app launch state on the next run.

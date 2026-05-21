@@ -2,13 +2,13 @@ import {useLocalSearchParams} from "expo-router"
 import {View} from "react-native"
 
 import {Text, Screen, Header} from "@/components/ignite"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useNavigationStore} from "@/stores/navigation"
 
 export default function VideoPlayer() {
   const {fileName} = useLocalSearchParams()
   const {theme} = useAppTheme()
-  const {goBack} = useNavigationHistory()
+  const {goBack} = useNavigationStore.getState()
 
   return (
     <Screen preset="fixed" safeAreaEdges={["top"]}>

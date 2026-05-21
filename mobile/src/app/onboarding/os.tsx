@@ -1,6 +1,6 @@
 import {Screen} from "@/components/ignite"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
-import {useNavigationHistory} from "@/contexts/NavigationHistoryContext"
+import {usePushPrevious} from "@/contexts/NavigationHistoryContext"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
@@ -9,7 +9,7 @@ import {getGlassesImage} from "@/utils/getGlassesImage"
 const CDN_BASE = "https://mentra-videos-cdn.mentraglass.com/onboarding/mentraos/light"
 
 export default function MentraOSOnboarding() {
-  const {pushPrevious} = useNavigationHistory()
+  const pushPrevious = usePushPrevious()
   const [_onboardingOsCompleted, setOnboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
 

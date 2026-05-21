@@ -13,7 +13,7 @@ Source: `service/core/handlers/K900CommandHandler.java` (`handleConfigurableButt
    - `cs_vdo` — long press
    - `hs_ntfy` with `msg: "button click"` / `"button long click"` — newer firmware format
 4. **`K900CommandHandler` dispatches** to `handleCameraButtonShortPress()` or `handleCameraButtonLongPress()`, which both call `handleConfigurableButtonPress(isLongPress)`.
-5. **Universal forwarding** — *every* press is forwarded to the phone as a `button_press` event, regardless of any local-capture decision.
+5. **Universal forwarding** — _every_ press is forwarded to the phone as a `button_press` event, regardless of any local-capture decision.
 6. **Local capture decision** — runs through the gallery-mode gate (below), then takes the appropriate action.
 
 ## Universal forwarding to the phone
@@ -33,7 +33,7 @@ Every button press emits the following over BLE, before any local-capture logic:
 
 ## Local capture and gallery mode
 
-Whether the button *also* captures a photo/video locally is governed by a single boolean: `AsgSettings.isSaveInGalleryMode()`. The phone toggles this via the [`save_in_gallery_mode`](../ASG_CLIENT_API.md#save_in_gallery_mode) command — typically when the user enters or leaves the gallery view in the phone app.
+Whether the button _also_ captures a photo/video locally is governed by a single boolean: `AsgSettings.isSaveInGalleryMode()`. The phone toggles this via the [`save_in_gallery_mode`](../ASG_CLIENT_API.md#save_in_gallery_mode) command — typically when the user enters or leaves the gallery view in the phone app.
 
 ### Decision rules
 
@@ -45,6 +45,7 @@ isSaveInGalleryMode  isConnected       Local capture?
 ```
 
 In words:
+
 - **Gallery mode active** → always capture locally.
 - **Gallery mode inactive but glasses connected to phone** → skip local capture (the phone routes the press to apps).
 - **Gallery mode inactive and glasses disconnected** → still capture locally so a press isn't lost.
@@ -67,6 +68,7 @@ if (captureService.isRecordingVideo()) {
 ```
 
 Settings consulted:
+
 - `getButtonPhotoSize()` — `small` / `medium` / `large`. Set via [`button_photo_setting`](../ASG_CLIENT_API.md#button_photo_setting).
 - `getButtonCameraLedEnabled()` — privacy LED on/off during capture. Set via [`button_camera_led`](../ASG_CLIENT_API.md#button_camera_led).
 
@@ -89,6 +91,7 @@ if (captureService.isRecordingVideo()) {
 ```
 
 Settings consulted:
+
 - `getButtonVideoSettings()` — width × height × fps. Set via [`button_video_recording_setting`](../ASG_CLIENT_API.md#button_video_recording_setting).
 - `getButtonMaxRecordingTimeMinutes()` — auto-stop after N minutes. Set via [`button_max_recording_time`](../ASG_CLIENT_API.md#button_max_recording_time).
 
@@ -114,11 +117,11 @@ The phone app sets button-related settings via the [API commands](../ASG_CLIENT_
 
 ## Logcat tags
 
-| Tag | What |
-|-----|------|
-| `K900CommandHandler` | Press detection and capture decision |
-| `MediaCaptureService` (`PhotoTest`, `MediaCapture`) | Capture pipeline |
-| `AsgSettings` | Settings persistence |
+| Tag                                                 | What                                 |
+| --------------------------------------------------- | ------------------------------------ |
+| `K900CommandHandler`                                | Press detection and capture decision |
+| `MediaCaptureService` (`PhotoTest`, `MediaCapture`) | Capture pipeline                     |
+| `AsgSettings`                                       | Settings persistence                 |
 
 ## Troubleshooting
 
