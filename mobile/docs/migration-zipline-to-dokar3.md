@@ -1,10 +1,13 @@
 # Migration: Cash App Zipline → dokar3/quickjs-kt
 
-**Status:** Plan. Not yet executed.
+**Status:** Shipped on `mentra-miniapp-sdk-2` (commit `01d2b98a6`, follow-ups `60f4e1a78`/`d8f939fb5`).
 **Scope:** Android only. iOS (Apple JSC) unchanged.
 **Module:** `mobile/modules/crust/android/`
-**Target dep:** `io.github.dokar3:quickjs-kt-android:1.0.5`
-**Estimated effort:** 2–3 days end-to-end.
+**Shipped dep:** `io.github.dokar3:quickjs-kt-android:1.0.0-alpha13`
+  — NOT 1.0.5: that release ships Kotlin 2.3.0 metadata which this build's
+  Kotlin 2.1.20 compiler cannot read. Alpha13 is the last release built with
+  Kotlin 2.0 metadata; its API matches 1.0.5 for the surface we use.
+**Estimated effort:** 2–3 days end-to-end. Actual: ~half a day end-to-end.
 
 ## Why
 
