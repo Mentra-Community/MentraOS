@@ -287,7 +287,7 @@ truth.
 | State | Source of truth | Cached/replicated where | Lifetime |
 | --- | --- | --- | --- |
 | User account, OEM linkage, MentraUserId | Persistent DB (Mongo) | Brief in-memory at request time | Permanent |
-| Installed miniapps (list) | Persistent DB | Mobile client (cache) | Permanent |
+| Installed miniapps (list) | Mobile client | Persistent DB (cache for cross-device sync) | Permanent |
 | Installed miniapps (code/JS bundles) | Mobile client | Downloaded from store/CDN | Until uninstall |
 | Miniapp catalog | Persistent DB / object storage | CDN | Permanent |
 | User preferences | Persistent DB | Mobile client | Permanent |

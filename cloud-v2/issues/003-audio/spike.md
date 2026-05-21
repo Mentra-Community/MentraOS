@@ -235,7 +235,7 @@ Detailed version in [`spec.md`](./spec.md). Summary:
 | User intent (which subscriptions, mic state) | Mobile client |
 | Running miniapps and their state | Mobile client |
 | Installed miniapp code | Mobile client (downloaded from store) |
-| Installed miniapp list | Persistent DB (cached on phone) |
+| Installed miniapp list | Mobile client (cached in DB for cross-device sync) |
 | User account, OEM linkage | Persistent DB |
 | Active WebSocket connections | Owner pod |
 | Per-user decoder, provider connections | Worker on owner pod |
