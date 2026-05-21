@@ -93,7 +93,10 @@ class JSCDispatcher(private val appContext: Context) {
     }
 
     /**
-     * Main entry. Called from QuickJs glue script's __dispatch trampoline.
+     * Main entry. Called from the `__dispatch` JS global installed on each
+     * QuickJs context by [JSCRuntime.installGlobals]. The JS side invokes
+     * `__dispatch(iface, method, argsJson)` and gets back a JSON string, null,
+     * or a thrown Error.
      *
      * Permission gate: bridge-internal calls (`__runtime`, `__log`, crypto,
      * localStorage) are exempt — they don't touch OS sensors. For everything
