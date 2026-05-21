@@ -77,6 +77,7 @@ export default function OtaProgressScreen() {
   const connected = useGlassesStore((s) => s.connected)
   const otaStatus = useGlassesStore((s) => s.otaStatus)
   const otaProgress = useGlassesStore((s) => s.otaProgress)
+  const deviceModel = useGlassesStore((s) => s.deviceModel)
 
   // Genuinely local UI state
   const [errorMsg, setErrorMsg] = useState("")
@@ -749,7 +750,7 @@ export default function OtaProgressScreen() {
     }
 
     if (displayState === "failed") {
-      const displayedError = errorMsg || getOtaErrorMessage(otaStatus?.error)
+      const displayedError = errorMsg || getOtaErrorMessage(otaStatus?.error, deviceModel)
       const showChangeWifi = shouldShowChangeWifiForOtaDownloadFailure(otaStatus, otaProgress, errorMsg)
       return (
         <>

@@ -96,6 +96,23 @@ describe("MantleManager ota_status handler", () => {
     expect(stored?.status).toBe("failed")
   })
 
+  it("maps abbreviated err field to error (glasses BLE short keys)", () => {
+    handleOtaStatusEvent({
+      session_id: "sess-err",
+      total_steps: 1,
+      current_step: 1,
+      step_type: "apk",
+      phase: "download",
+      step_percent: 0,
+      overall_percent: 0,
+      status: "failed",
+      err: "ssl_trust_failure",
+    })
+
+    const stored = useGlassesStore.getState().otaStatus
+    expect(stored?.error).toBe("ssl_trust_failure")
+  })
+
   it("emits via GlobalEventEmitter", () => {
     const emitted: any[] = []
     GlobalEventEmitter.on("ota_status", (s: any) => emitted.push(s))

@@ -20,7 +20,7 @@ export type NormalizedOtaStatusEvent = {
 export function normalizeOtaStatusEvent(event: Record<string, unknown>): NormalizedOtaStatusEvent {
   const e = event as Record<string, any>
   const phase: "download" | "install" = e?.phase === "install" ? "install" : "download"
-  const err = e?.error_message ?? e?.errorMessage
+  const err = e?.error_message ?? e?.errorMessage ?? e?.err
   return {
     session_id: String(e?.session_id ?? e?.sessionId ?? ""),
     total_steps: Number(e?.total_steps ?? e?.totalSteps ?? 0),

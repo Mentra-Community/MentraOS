@@ -39,6 +39,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Collectors;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -606,6 +607,33 @@ public class OtaHelper {
     }
 
     /**
+     * Detect TLS trust-chain failures (wrong device time, captive portal TLS MITM, etc.).
+     * Walks the full cause chain because {@link javax.net.ssl.SSLHandshakeException} often wraps
+     * {@link java.security.cert.CertPathValidatorException}.
+     */
+    private static boolean isTlsTrustFailure(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof java.security.cert.CertificateException) {
+                return true;
+            }
+            String cn = t.getClass().getName();
+            if (cn.contains("CertPathValidatorException")) {
+                return true;
+            }
+            String m = t.getMessage();
+            if (m != null) {
+                String lm = m.toLowerCase(Locale.US);
+                if (lm.contains("trust anchor")
+                        || lm.contains("certpathvalidator")
+                        || lm.contains("certification path not found")) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * Classify download exceptions into semantic error codes for actionable user feedback.
      */
     private String classifyDownloadError(Exception e) {
@@ -613,6 +641,9 @@ public class OtaHelper {
             // Non-network failure (size cap, sha256 mismatch). Carry the stable code through
             // so the phone-side error mapping doesn't confuse this with a transient WiFi issue.
             return ((FirmwareDownloadException) e).getErrorCode();
+        } else if (isTlsTrustFailure(e)) {
+            // Distinct from generic ssl_error so the phone can show clock/captive-portal guidance.
+            return "ssl_trust_failure";
         } else if (e instanceof java.net.SocketTimeoutException) {
             return "no_internet";
         } else if (e instanceof java.net.UnknownHostException) {

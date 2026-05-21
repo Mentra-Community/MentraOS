@@ -1,5 +1,28 @@
 import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk"
 
+const DEFAULT_GLASSES_DISPLAY_NAME = "Mentra Live"
+
+function looksLikeRawJvmTlsTrustError(msg: string): boolean {
+  const m = msg.toLowerCase()
+  return (
+    m.includes("certpathvalidator") ||
+    m.includes("trust anchor") ||
+    m.includes("certification path not found")
+  )
+}
+
+/**
+ * Copy for TLS trust / clock / captive-portal style failures. We cannot reliably tell
+ * wrong time vs captive portal on the phone, so both common fixes are included.
+ */
+export function otaTlsTrustUserMessage(glassesDisplayName?: string): string {
+  const name = (glassesDisplayName ?? "").trim() || DEFAULT_GLASSES_DISPLAY_NAME
+  return (
+    `Your ${name} can't reach the internet. Please restart your Mentra Live.\n\n` +
+    `Mentra Live does not work on captive portal WiFi networks. Please try a different WiFi network.`
+  )
+}
+
 function isDownloadPhaseSnapshot(
   otaStatus: OtaStatus | null | undefined,
   otaProgress: OtaProgress | null | undefined,
@@ -37,12 +60,17 @@ export function shouldShowChangeWifiForOtaDownloadFailure(
   return false
 }
 
-export function getOtaErrorMessage(error?: string): string {
+export function getOtaErrorMessage(error?: string, glassesDisplayName?: string): string {
+  if (!error) {
+    return "Update failed"
+  }
+
   switch (error) {
     case "no_internet":
       return "Glasses WiFi has no internet connection"
     case "ssl_error":
-      return "Secure connection failed — try a different WiFi network"
+    case "ssl_trust_failure":
+      return otaTlsTrustUserMessage(glassesDisplayName)
     case "download_failed":
       return "Download failed — check glasses WiFi connection"
     case "firmware_too_large":
@@ -52,6 +80,9 @@ export function getOtaErrorMessage(error?: string): string {
     case "install_failed":
       return "Install failed — please try again"
     default:
+      if (looksLikeRawJvmTlsTrustError(error)) {
+        return otaTlsTrustUserMessage(glassesDisplayName)
+      }
       return error || "Update failed"
   }
 }
