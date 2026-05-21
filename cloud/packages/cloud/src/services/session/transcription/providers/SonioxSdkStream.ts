@@ -450,10 +450,12 @@ export class SonioxSdkStream implements StreamInstance {
     // Stop gap detection interval (Fix 044-3)
     this.stopGapDetection();
 
-    // Discard any in-flight pending FINAL so its debounce timer can't
-    // fire after close. (handleFinished will fire during finish() and
-    // emit a final if needed.)
-    this.cancelPendingFinal("stream closing");
+    // Commit any in-flight pending FINAL before shutdown. If we cancelled
+    // it instead, we'd silently drop the last utterance when close() lands
+    // inside the endpoint-debounce window (handleEndpoint clears
+    // lastEmittedInterimText, so pendingFinalText is the only copy of the
+    // text). After committing, the timer is cleared so it can't refire.
+    this.commitPendingFinal("stream closing");
 
     try {
       // Graceful shutdown: finish() waits for remaining results, then closes.

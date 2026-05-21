@@ -132,7 +132,9 @@ function readWavPcm16(filePath: string): { pcm: Buffer; sampleRate: number; chan
       dataLength = chunkSize;
       break;
     }
-    offset += 8 + chunkSize;
+    // RIFF requires odd-sized chunks to be followed by a pad byte to
+    // keep subsequent chunks word-aligned.
+    offset += 8 + chunkSize + (chunkSize % 2);
   }
   if (sampleRate !== 16000 || channels !== 1 || bitsPerSample !== 16) {
     throw new Error(
@@ -226,14 +228,11 @@ async function main() {
     }
   }
 
-  // Also flag: any FINAL ending in incomplete-looking token (single letter + apostrophe, etc.)
-  for (const f of finals) {
-    const text = f.text ?? "";
-    if (/\b[A-Za-z]'$/.test(text) || /\b[A-Za-z]$/.test(text)) {
-      console.log(`\x1b[31mBUG: FINAL ends mid-word: "${text}"\x1b[0m`);
-      bugDetected = true;
-    }
-  }
+  // The "consecutive FINALs within 800ms" check above is the load-bearing
+  // diagnostic. We deliberately don't try heuristics like "ends in single
+  // letter" or "ends in letter+apostrophe": those produce false positives
+  // on legitimate words ("I", "a") or transcribed hesitations ("uh, I'")
+  // and don't add coverage beyond the timing-based check.
 
   console.log();
   console.log("Final transcript chain:");
