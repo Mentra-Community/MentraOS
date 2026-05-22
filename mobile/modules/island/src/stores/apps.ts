@@ -104,6 +104,12 @@ export const getAppsOrder = (): Result<OrderMap, Error> => {
   return storage.load<OrderMap>(APP_ORDER_KEY)
 }
 
+// In-memory cache for hidden flags. `projectApps` reads getHiddenStatus once
+// per app per refresh — without a cache that was a synchronous JNI hop per
+// app per refresh on a hot UI path. Kept consistent with disk by writing
+// through in setHiddenStatus. Map of packageName → hidden boolean.
+const hiddenStatusCache = new Map<string, boolean>()
+
 const getRawPackageNamePriority = (pkg: string): number => {
   if (pkg.includes("@empty")) {
     return 1000
@@ -164,34 +170,33 @@ function projectApps(
   extraApps: ClientApp[],
 ): ClientApp[] {
   // Dedupe by packageName, keep first occurrence (extra/cloud wins).
-  let apps: ClientApp[] = [...extraApps, ...localApps]
   const byPackage = new Map<string, ClientApp>()
-  for (const app of apps) {
+  for (const app of [...extraApps, ...localApps]) {
     if (!byPackage.has(app.packageName)) byPackage.set(app.packageName, app)
   }
-  apps = Array.from(byPackage.values())
 
-  // Carry over screenshots from the previous snapshot so a refresh in
-  // the middle of a launch doesn't drop the cached preview.
+  // Index previous snapshot for cheap lookups (was O(N²) via .find()).
+  const previousByPackage = new Map<string, ClientApp>()
   for (const oldApp of previousState.apps) {
-    const next = apps.find((a) => a.packageName === oldApp.packageName)
-    if (!next) continue
-    if (oldApp.screenshot) next.screenshot = oldApp.screenshot
+    previousByPackage.set(oldApp.packageName, oldApp)
   }
 
-  // Compatibility info using host-provided capabilities.
   const capabilities = hostHooks.getCapabilities?.() ?? getModelCapabilities(DeviceTypes.NONE)
-  for (const app of apps) {
-    app.compatibility = HardwareCompatibility.checkCompatibility(app.hardwareRequirements, capabilities)
-  }
 
-  // Hidden flag from MMKV (read via the store's getter — projectApps is
-  // called from refresh which already has the state, so we read via it).
-  for (const app of apps) {
-    app.hidden = previousState.getHiddenStatus(app.packageName)
-  }
-
-  return apps
+  // Single pass: dedupe → screenshot carry-over → compat → hidden, all into
+  // fresh objects. The previous in-place mutation re-used object references
+  // across refreshes, which broke React.memo / referential-equality
+  // memoization downstream (every refresh propagated re-renders even when
+  // nothing meaningful changed) AND tripped Reanimated's "tried to modify
+  // key of an object already passed to a worklet" warning whenever the home
+  // screen's animated app cards held a reference to a previous snapshot's
+  // app object that we then mutated.
+  return Array.from(byPackage.values()).map((app) => ({
+    ...app,
+    screenshot: previousByPackage.get(app.packageName)?.screenshot ?? app.screenshot,
+    compatibility: HardwareCompatibility.checkCompatibility(app.hardwareRequirements, capabilities),
+    hidden: previousState.getHiddenStatus(app.packageName),
+  }))
 }
 
 export const useAppStatusStore = create<AppStatusState>((set, get) => ({
@@ -343,6 +348,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   },
 
   setHiddenStatus: (packageName: string, status: boolean) => {
+    hiddenStatusCache.set(packageName, status)
     set((s) => ({
       apps: s.apps.map((a) => (a.packageName === packageName ? {...a, hidden: status} : a)),
     }))
@@ -357,9 +363,12 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   },
 
   getHiddenStatus: (packageName: string): boolean => {
+    const cached = hiddenStatusCache.get(packageName)
+    if (cached !== undefined) return cached
     const res = storage.load<boolean>(`${packageName}_hidden`)
-    if (res.is_ok()) return res.value
-    return false
+    const value = res.is_ok() ? res.value : false
+    hiddenStatusCache.set(packageName, value)
+    return value
   },
 
   setApps: (apps) => set({apps}),
