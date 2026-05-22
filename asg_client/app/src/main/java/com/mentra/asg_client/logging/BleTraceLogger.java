@@ -1,5 +1,9 @@
 package com.mentra.asg_client.logging;
 
+import android.content.Context;
+import android.content.pm.PackageInfo;
+import android.os.Build;
+import android.os.Process;
 import android.util.Log;
 
 import org.json.JSONArray;
@@ -46,6 +50,41 @@ public final class BleTraceLogger {
 
         JSONObject sanitized = sanitize(payload);
         Log.i(TAG, format(direction, layer, caller(), extractType(payload), bytes, sanitized.toString()));
+    }
+
+    public static void logLifecycle(Context context, String component, String event) {
+        logLifecycle(context, component, event, null);
+    }
+
+    public static void logLifecycle(Context context, String component, String event, JSONObject extra) {
+        JSONObject payload = new JSONObject();
+        try {
+            payload.put("event", event);
+            payload.put("component", component);
+            payload.put("pid", Process.myPid());
+            payload.put("model", Build.MODEL);
+            payload.put("sdkInt", Build.VERSION.SDK_INT);
+
+            if (context != null) {
+                payload.put("package", context.getPackageName());
+                String version = packageVersion(context);
+                if (version != null) {
+                    payload.put("version", version);
+                }
+            }
+
+            if (extra != null) {
+                Iterator<String> keys = extra.keys();
+                while (keys.hasNext()) {
+                    String key = keys.next();
+                    payload.put(key, extra.opt(key));
+                }
+            }
+        } catch (Exception ignored) {
+            // Keep trace logging non-fatal.
+        }
+
+        Log.i(TAG, format("glasses_app", "app_lifecycle", caller(), event, null, sanitize(payload).toString()));
     }
 
     private static String format(
@@ -167,6 +206,22 @@ public final class BleTraceLogger {
     private static String simpleClassName(String className) {
         int lastDot = className.lastIndexOf('.');
         return lastDot >= 0 ? className.substring(lastDot + 1) : className;
+    }
+
+    private static String packageVersion(Context context) {
+        try {
+            PackageInfo packageInfo = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
+            long versionCode;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                versionCode = packageInfo.getLongVersionCode();
+            } else {
+                versionCode = packageInfo.versionCode;
+            }
+            String versionName = packageInfo.versionName != null ? packageInfo.versionName : "unknown";
+            return versionName + "+" + versionCode;
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private static String truncate(String value) {

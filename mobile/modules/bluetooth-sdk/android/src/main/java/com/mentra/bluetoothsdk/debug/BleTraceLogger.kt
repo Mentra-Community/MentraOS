@@ -1,5 +1,8 @@
 package com.mentra.bluetoothsdk.debug
 
+import android.content.Context
+import android.os.Build
+import android.os.Process
 import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
@@ -25,6 +28,29 @@ object BleTraceLogger {
     fun logMap(direction: String, layer: String, type: String?, payload: Map<String, Any>) {
         val sanitized = sanitize(JSONObject(payload))
         Log.i(TAG, format(direction, layer, caller(), type ?: extractType(sanitized), null, sanitized.toString()))
+    }
+
+    @JvmStatic
+    fun logLifecycle(
+        context: Context?,
+        component: String,
+        event: String,
+        extra: Map<String, Any?> = emptyMap(),
+    ) {
+        val payload = JSONObject()
+        payload.put("event", event)
+        payload.put("component", component)
+        payload.put("pid", Process.myPid())
+        payload.put("model", Build.MODEL)
+        payload.put("sdkInt", Build.VERSION.SDK_INT)
+
+        context?.let {
+            payload.put("package", it.packageName)
+            packageVersion(it)?.let { version -> payload.put("version", version) }
+        }
+
+        extra.forEach { (key, value) -> payload.put(key, value ?: JSONObject.NULL) }
+        Log.i(TAG, format("phone_app", "app_lifecycle", caller(), event, null, sanitize(payload).toString()))
     }
 
     private fun format(
@@ -98,6 +124,21 @@ object BleTraceLogger {
             "${it.className.substringAfterLast('.')}.${it.methodName}(${it.fileName}:${it.lineNumber})"
         } ?: "unknown"
     }
+
+    private fun packageVersion(context: Context): String? =
+        try {
+            val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            val versionCode =
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    packageInfo.longVersionCode
+                } else {
+                    @Suppress("DEPRECATION")
+                    packageInfo.versionCode.toLong()
+                }
+            "${packageInfo.versionName ?: "unknown"}+$versionCode"
+        } catch (_: Exception) {
+            null
+        }
 
     private fun truncate(value: String): String {
         if (value.length <= MAX_PAYLOAD_CHARS) {

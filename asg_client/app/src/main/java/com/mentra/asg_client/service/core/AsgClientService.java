@@ -28,6 +28,7 @@ import com.mentra.asg_client.io.network.interfaces.NetworkStateListener;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.io.streaming.events.StreamingEvent;
+import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
 import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
@@ -194,6 +195,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
         super.onCreate();
         Log.i(TAG, "🚀 AsgClientServiceV2 onCreate() started");
         Log.d(TAG, "📊 Android API Level: " + Build.VERSION.SDK_INT);
+        BleTraceLogger.logLifecycle(this, "AsgClientService", "service_create");
 
         instance = this;
 
@@ -258,6 +260,12 @@ public class AsgClientService extends Service implements NetworkStateListener, B
         super.onStartCommand(intent, flags, startId);
 
         try {
+            JSONObject lifecycleDetails = new JSONObject();
+            lifecycleDetails.put("action", intent != null ? intent.getAction() : JSONObject.NULL);
+            lifecycleDetails.put("flags", flags);
+            lifecycleDetails.put("startId", startId);
+            BleTraceLogger.logLifecycle(this, "AsgClientService", "service_start_command", lifecycleDetails);
+
             // Ensure foreground service on API 26+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 Log.d(TAG, "📱 API 26+ detected - setting up foreground service");
@@ -297,6 +305,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     @Override
     public void onDestroy() {
         Log.i(TAG, "🛑 AsgClientServiceV2 onDestroy() started");
+        BleTraceLogger.logLifecycle(this, "AsgClientService", "service_destroy_start");
         
         try {
             // Unregister from EventBus
@@ -358,6 +367,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             handleSwipeVolumeControl(true);
 
             Log.i(TAG, "✅ AsgClientServiceV2 onDestroy() completed successfully");
+            BleTraceLogger.logLifecycle(this, "AsgClientService", "service_destroy_complete");
         } catch (Exception e) {
             Log.e(TAG, "💥 Error in onDestroy()", e);
         }
