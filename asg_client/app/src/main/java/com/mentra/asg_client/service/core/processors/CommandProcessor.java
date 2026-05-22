@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.Log;
 
 import com.mentra.asg_client.io.file.core.FileManager;
+import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.core.handlers.OtaCommandHandler;
@@ -265,6 +266,7 @@ public class CommandProcessor {
 
         String type = commandData.type();
         Log.i(TAG, "🎯 Routing command type: " + type);
+        BleTraceLogger.logJson("phone_to_glasses", "asg_command_router", commandData.data());
         if ("take_photo".equals(type)) {
             Log.i(TAG, "PHOTO PIPELINE [ASG 1/3] Received take_photo on glasses: "
                     + commandData.data());

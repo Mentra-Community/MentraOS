@@ -9,6 +9,7 @@ package com.mentra.bluetoothsdk
 
 import android.util.Base64
 import android.util.Log
+import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import java.util.HashMap
 import java.util.UUID
 import kotlin.jvm.JvmStatic
@@ -643,6 +644,15 @@ public class Bridge private constructor() {
                             "Cannot send typed message '$type': no event sinks registered (app may be killed/backgrounded)"
                     )
                     return
+                }
+
+                if (type != "log") {
+                    BleTraceLogger.logMap(
+                        "phone_to_app",
+                        "sdk_event_dispatch",
+                        type,
+                        mutableBody as Map<String, Any>,
+                    )
                 }
 
                 // Send directly using type as event name - no JSON serialization

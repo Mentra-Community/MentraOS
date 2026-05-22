@@ -35,6 +35,7 @@ import androidx.core.app.ActivityCompat;
 import com.mentra.bluetoothsdk.sgcs.SGCManager;
 import com.mentra.bluetoothsdk.DeviceManager;
 import com.mentra.bluetoothsdk.Bridge;
+import com.mentra.bluetoothsdk.debug.BleTraceLogger;
 import com.mentra.bluetoothsdk.utils.DeviceTypes;
 import com.mentra.bluetoothsdk.utils.ConnTypes;
 import com.mentra.bluetoothsdk.utils.BitmapJavaUtils;
@@ -1781,6 +1782,7 @@ public class MentraLive extends SGCManager {
                     if ("take_photo".equals(json.optString("type", ""))) {
                         Bridge.log("LIVE: PHOTO PIPELINE [4/4] sendJson(build<5) -> sendDataToGlasses — " + summarizeOutgoingMessage(jsonStr));
                     }
+                    BleTraceLogger.logJson("phone_to_glasses", "sdk_ble_command", json, jsonStr.length());
                     sendDataToGlasses(jsonStr, wakeup);
                 } else {
                     // Add esoteric message ID to the JSON
@@ -1819,6 +1821,7 @@ public class MentraLive extends SGCManager {
                     if ("take_photo".equals(json.optString("type", ""))) {
                         Bridge.log("LIVE: PHOTO PIPELINE [4/4] sendJson -> sendDataToGlasses (mId=" + messageId + ", ackTimeoutMs=" + ackTimeout + ") — " + summarizeOutgoingMessage(jsonStr));
                     }
+                    BleTraceLogger.logJson("phone_to_glasses", "sdk_ble_command", json, jsonStr.length());
                     sendDataToGlasses(jsonStr, wakeup);
                 }
             } catch (JSONException e) {
@@ -2257,6 +2260,7 @@ public class MentraLive extends SGCManager {
         if (Log.isLoggable(TAG, Log.DEBUG)) {
             Log.d(TAG, "LIVE: Got some JSON from glasses: " + json.toString());
         }
+        BleTraceLogger.logJson("glasses_to_phone", "sdk_ble_event", json, json.toString().length());
 
         // Check if this is an ACK response
         String type = json.optString("type", "");
