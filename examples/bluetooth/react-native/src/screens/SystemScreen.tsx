@@ -239,7 +239,7 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         <View>
           <Text style={styles.tileTitle}>Microphone</Text>
           <Text style={[styles.tileSub, { color: sdk.micRecording || sdk.micPlaying ? colors.greenAccent : colors.muted }]}>{micStatus}</Text>
-          <SpeakingStatusRow speaking={sdk.speaking === true} />
+          <SpeakingStatusRow enabled={sdk.voiceActivityDetectionEnabled} speaking={sdk.speaking} />
           <Text style={styles.micRouteText}>{sdk.micAudioRouteStatus}</Text>
           <Pressable style={styles.micSettingsButton} onPress={sdk.openBluetoothSettings}>
             <Text style={styles.micSettingsText}>Audio setup</Text>
@@ -568,13 +568,14 @@ function VoiceActivityToggle({ active, disabled, onPress }: { active: boolean; d
   );
 }
 
-function SpeakingStatusRow({ speaking }: { speaking: boolean }) {
+function SpeakingStatusRow({ enabled, speaking }: { enabled: boolean; speaking: boolean | null }) {
+  const active = enabled && speaking === true;
   return (
     <View style={styles.speakingStatusRow}>
-      <View style={[styles.speakingDot, { backgroundColor: speaking ? colors.greenAccent : colors.red }]} />
+      <View style={[styles.speakingDot, { backgroundColor: active ? colors.greenAccent : enabled ? colors.red : colors.muted }]} />
       <Text style={styles.speakingLabel}>Speech</Text>
-      <Text style={[styles.speakingValue, { color: speaking ? colors.greenAccent : colors.red }]}>
-        {speaking ? 'Speaking' : 'Not speaking'}
+      <Text style={[styles.speakingValue, { color: active ? colors.greenAccent : enabled ? colors.red : colors.muted }]}>
+        {enabled ? (active ? 'Speaking' : 'Not speaking') : 'VAD off'}
       </Text>
     </View>
   );

@@ -335,6 +335,9 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       }),
       BluetoothSdk.addListener('voice_activity_detection_status', (payload: VoiceActivityDetectionStatusEvent) => {
         setVoiceActivityDetectionEnabledState(payload.voiceActivityDetectionEnabled);
+        if (!payload.voiceActivityDetectionEnabled) {
+          setSpeaking(null);
+        }
         addEvent('LIVE', `voice activity detection ${payload.voiceActivityDetectionEnabled ? 'enabled' : 'disabled'}`);
       }),
       BluetoothSdk.addListener('speaking_status', (payload: SpeakingStatusEvent) => {

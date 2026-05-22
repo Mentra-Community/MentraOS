@@ -97,6 +97,15 @@ function resolveAndroidSerial() {
   return devices[0].serial
 }
 
+function resolveExpoDeviceName(serial) {
+  const line = output("adb", ["devices", "-l"])
+    .split(/\r?\n/)
+    .find((deviceLine) => deviceLine.trim().startsWith(`${serial} `))
+
+  const model = line?.match(/\bmodel:(\S+)/)?.[1]
+  return model || serial
+}
+
 async function isMetroRunning() {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 1000)
@@ -127,6 +136,7 @@ async function waitForMetro() {
 
 async function main() {
   const serial = resolveAndroidSerial()
+  const expoDeviceName = resolveExpoDeviceName(serial)
   let metroProcess = null
 
   if (await isMetroRunning()) {
@@ -156,7 +166,7 @@ async function main() {
   run("adb", ["-s", serial, "reverse", `tcp:${port}`, `tcp:${port}`])
 
   console.log("Installing and launching the Android development build")
-  run("bunx", ["expo", "run:android", "--no-bundler"])
+  run("bunx", ["expo", "run:android", "--no-bundler", "--device", expoDeviceName])
 
   console.log(`Opening Expo dev-client URL: ${devClientUrl}`)
   run("adb", ["-s", serial, "shell", "am", "force-stop", appId])
