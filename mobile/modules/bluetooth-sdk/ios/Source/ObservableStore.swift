@@ -1,6 +1,6 @@
 //
 //  ObservableStore.swift
-//  Core
+//  BluetoothSdk
 //
 //  Observable state management with immediate event emission
 //
@@ -13,11 +13,11 @@ class ObservableStore {
     private var onEmit: ((String, [String: Any]) -> Void)?
     private var listeners: [String: (String, [String: Any]) -> Void] = [:]
 
-    nonisolated static let coreCategory = "core"
-    private nonisolated static let legacyBluetoothCategory = "bluetooth"
+    nonisolated static let bluetoothCategory = "bluetooth"
+    private nonisolated static let legacyCoreCategory = "core"
 
     nonisolated static func normalizeCategory(_ category: String) -> String {
-        category == legacyBluetoothCategory ? coreCategory : category
+        category == legacyCoreCategory ? bluetoothCategory : category
     }
 
     func configure(onEmit: @escaping (String, [String: Any]) -> Void) {

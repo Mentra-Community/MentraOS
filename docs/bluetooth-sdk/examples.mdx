@@ -1,0 +1,81 @@
+---
+title: "Example Apps"
+description: "Run the Android, iOS, and React Native starter apps from a fresh clone."
+icon: "mobile"
+---
+
+The [Mentra Bluetooth SDK Starter Kit](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit) contains complete example apps for Android, iOS, and React Native / Expo.
+
+```bash
+git clone https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit.git
+cd Mentra-Bluetooth-SDK-Starter-Kit
+```
+
+## What The Examples Demonstrate
+
+- Scanning for supported Mentra glasses, connecting, disconnecting, and reconnecting to a saved/default device.
+- Reading typed glasses and Bluetooth status snapshots.
+- Displaying text, clearing the display, and opening the dashboard where supported.
+- Handling button, touch, swipe, head-up, battery, Wi-Fi, hotspot, stream, photo, audio, and SDK log events.
+- Controlling model-supported features such as dashboard position, head-up angle, gallery mode, button photo/video settings, speaker playback, RGB LED patterns, Wi-Fi, hotspot, microphone, camera, and streaming.
+- Running the default glasses-to-phone photo and streaming demos, plus optional cloud-server demos for external upload and streaming endpoints.
+
+## Android
+
+```bash
+cd examples/android
+./gradlew installDebug
+```
+
+The Android example is a Kotlin / Jetpack Compose app. It installs the SDK as `com.mentra:bluetooth-sdk`.
+
+## iOS
+
+```bash
+cd examples/ios
+pod install
+open MentraExample.xcworkspace
+```
+
+The iOS example is a SwiftUI app. It installs the SDK as the `MentraBluetoothSDK` CocoaPod.
+
+## React Native / Expo
+
+```bash
+cd examples/react-native
+bun install
+bunx expo prebuild
+bunx expo run:ios
+# or
+bun run android:dev
+```
+
+The React Native example installs the SDK as `@mentra/bluetooth-sdk` and demonstrates the same Device, Camera, Stream, System, and Console flows as the native examples.
+
+## Optional Local Photo And Streaming Helper
+
+The Camera and Stream screens default to a glasses-to-phone flow where the example app starts a receiver on the phone and sends the glasses output there. You do not need this helper for that default path.
+
+Use this helper only when you turn on **Use cloud server** in the example app and want to test an external endpoint without deploying your own photo webhook or streaming server. Production apps can use any reachable HTTPS upload endpoint and any reachable RTMP, SRT, or WHIP ingest URL.
+
+From the repo root:
+
+```bash
+python3 examples/local-demo-cloud/server.py
+```
+
+After enabling **Use cloud server**, paste the printed LAN `/upload` URL into the Camera screen, or paste the printed RTMP, SRT, or WHIP publish URL into the Stream screen. If Docker is not installed or not running, the helper starts the photo webhook and skips streaming with a warning.
+
+<Warning>
+Do not use `localhost` in the app. The glasses, phone, and computer must be on a network where the glasses can reach the printed LAN address.
+</Warning>
+
+## Local SDK Development
+
+Package-manager installs are the normal SDK path. Use local overrides only when testing SDK source changes:
+
+- Android: publish `com.mentra:bluetooth-sdk` and its companion artifacts to Maven local, then build the example with `mavenLocal()` enabled.
+- iOS: set `MENTRA_BLUETOOTH_SDK_LOCAL_PATH` to a local SDK checkout before `pod install`.
+- React Native: install a local `@mentra/bluetooth-sdk` package path and set `MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` so Metro and native builds resolve the same package.
+
+Do not bake machine-specific paths into committed app config.

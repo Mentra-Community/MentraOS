@@ -1,4 +1,11 @@
-import CoreModule, {ButtonPressEvent, CoreStatus, GlassesStatus, OtaStatus} from "@mentra/bluetooth-sdk"
+import BluetoothSdk, {
+  ButtonPressEvent,
+  BluetoothStatus,
+  GlassesStatus,
+  OtaStatus,
+  OtaProgress,
+  OtaUpdateInfo,
+} from "@mentra/bluetooth-sdk-internal"
 import CrustModule from "crust"
 import * as Calendar from "expo-calendar"
 import * as Location from "expo-location"
@@ -29,7 +36,7 @@ import {
 } from "@mentra/island"
 import {useConnectionStore} from "@/stores/connection"
 import {useDisplayStore} from "@/stores/display"
-import {useGlassesStore, getGlasesInfoPartial} from "@/stores/glasses"
+import {getGlasesInfoPartial, isGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {useSettingsStore, SETTINGS} from "@/stores/settings"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import TranscriptProcessor from "@/utils/TranscriptProcessor"
@@ -154,7 +161,7 @@ class MantleManager {
           // — so the canonical names always win over anything in the host store.
           return {
             ...s,
-            connected: s.connected,
+            connected: isGlassesConnected(s.connection),
             deviceModel: s.deviceModel,
             batteryLevel: s.batteryLevel,
             charging: s.charging,
@@ -189,6 +196,20 @@ class MantleManager {
         },
       },
       setDisplayEvent: (event) => useDisplayStore.getState().setDisplayEvent(event),
+      sendDisplayEvent: (event) => BluetoothSdk.displayEvent(event),
+      subscribeGlassesStatus: (onChange) => BluetoothSdk.onGlassesStatus(onChange),
+      restartTranscriber: () => BluetoothSdk.restartTranscriber(),
+      setMicRequirements: (requirements) => {
+        const values: Record<string, unknown> = {
+          should_send_pcm: requirements.shouldSendPcm,
+          should_send_lc3: requirements.shouldSendLc3,
+          should_send_transcript: requirements.shouldSendTranscript,
+        }
+        if (requirements.voiceActivityDetectionEnabled !== undefined) {
+          values.voice_activity_detection_enabled = requirements.voiceActivityDetectionEnabled
+        }
+        return BluetoothSdk.update("core", values)
+      },
       requestMiniappSdkPhoto: (params) => requestMiniappSdkPhoto(params),
       // Google Nav SDK adapter — the island runtime fan-outs nav events to
       // miniapps subscribed to navigation_*. Delegates straight to the host's
@@ -249,7 +270,7 @@ class MantleManager {
     // give the core some time to boot before sending all the initial settings:
     BgTimer.setTimeout(() => {
       const initialCoreSettings = useSettingsStore.getState().getCoreSettings()
-      CoreModule.updateCore(initialCoreSettings) // send settings to core
+      BluetoothSdk.updateBluetoothSettings(initialCoreSettings) // send settings to core
       console.log("MANTLE: Settings sent to core")
       // settings are now in native; safe to attempt auto-connect
       attemptReconnectToDefaultWearable()
@@ -357,7 +378,7 @@ class MantleManager {
     //     }
     //     // give some time for the glasses to be fully ready:
     //     BgTimer.setTimeout(async () => {
-    //       await CoreModule.connectDefault()
+    //       await BluetoothSdk.connectDefault()
     //     }, 3000)
     //   } catch (error) {
     //     console.error("connect to glasses error:", error)
@@ -396,7 +417,7 @@ class MantleManager {
           }
         }
         // console.log("MANTLE: core settings changed", coreSettingsObj)
-        CoreModule.updateCore(coreSettingsObj)
+        BluetoothSdk.updateBluetoothSettings(coreSettingsObj)
       },
       {equalityFn: shallow},
     )
@@ -418,18 +439,18 @@ class MantleManager {
 
     // Forward core status changes to the zustand core store.
     this.subs.push(
-      CoreModule.onCoreStatus((changed: Partial<CoreStatus>) => {
+      BluetoothSdk.onBluetoothStatus((changed: Partial<BluetoothStatus>) => {
         // console.log("MANTLE: Core status changed", changed)
         useCoreStore.getState().setCoreInfo(changed)
       }),
     )
     this.subs.push(
-      CoreModule.onGlassesStatus((changed) => {
+      BluetoothSdk.onGlassesStatus((changed) => {
         // console.log("MANTLE: Glasses status changed", changed)
         useGlassesStore.getState().setGlassesInfo(changed)
         localMiniappRuntime.forwardEvent("glasses_connection_state", changed)
         // TODO: this should be moved to the bluetooth sdk:
-        if (changed.connected === false) {
+        if (changed.connection?.state === "disconnected") {
           useGlassesStore.getState().setOtaUpdateAvailable(null)
         }
       }),
@@ -438,14 +459,14 @@ class MantleManager {
     // Subscribe to individual core events
     {
       this.subs.push(
-        CoreModule.addListener("log", (event) => {
+        BluetoothSdk.addListener("log", (event) => {
           console.log("CORE:", event.message)
         }),
       )
 
       // Keep the store in sync for standalone WiFi status events.
       this.subs.push(
-        CoreModule.addListener("wifi_status_change", (event) => {
+        BluetoothSdk.addListener("wifi_status_change", (event) => {
           const {type: _type, ...wifi} = event
           useGlassesStore.getState().setGlassesInfo({wifi})
         }),
@@ -453,7 +474,7 @@ class MantleManager {
 
       // TODO: remove since we can sub to the zustand store for hotspot info:
       this.subs.push(
-        CoreModule.addListener("hotspot_status_change", (event) => {
+        BluetoothSdk.addListener("hotspot_status_change", (event) => {
           const enabled = event.state === "enabled"
           const ssid = enabled ? event.ssid : ""
           const password = enabled ? event.password : ""
@@ -469,34 +490,34 @@ class MantleManager {
       )
 
       this.subs.push(
-        CoreModule.addListener("hotspot_error", (event) => {
+        BluetoothSdk.addListener("hotspot_error", (event) => {
           GlobalEventEmitter.emit("hotspot_error", {
-            error_message: event.error_message,
+            error_message: event.errorMessage,
             timestamp: event.timestamp,
           })
         }),
       )
 
       this.subs.push(
-        CoreModule.addListener("gallery_status", (event) => {
+        BluetoothSdk.addListener("gallery_status", (event) => {
           GlobalEventEmitter.emit("gallery_status", {
             photos: event.photos,
             videos: event.videos,
             total: event.total,
-            has_content: event.has_content,
-            camera_busy: event.camera_busy,
+            has_content: event.hasContent,
+            camera_busy: event.cameraBusy,
           })
         }),
       )
 
       this.subs.push(
-        CoreModule.addListener("photo_response", (event) => {
+        BluetoothSdk.addListener("photo_response", (event) => {
           restComms.sendPhotoResponse(event)
         }),
       )
 
       this.subs.push(
-        CoreModule.addListener("heartbeat_sent", (event) => {
+        BluetoothSdk.addListener("heartbeat_sent", (event) => {
           console.log("MANTLE: received heartbeat_sent event from Bluetooth SDK", event.heartbeat_sent)
           // TODO: remove the global event emitter and sub directly in the component where needed
           GlobalEventEmitter.emit("heartbeat_sent", {
@@ -506,7 +527,7 @@ class MantleManager {
       )
 
       this.subs.push(
-        CoreModule.addListener("heartbeat_received", (event) => {
+        BluetoothSdk.addListener("heartbeat_received", (event) => {
           console.log("MANTLE: received heartbeat_received event from Bluetooth SDK", event.heartbeat_received)
           // TODO: remove the global event emitter and sub directly in the component where needed
           GlobalEventEmitter.emit("heartbeat_received", {
@@ -516,7 +537,7 @@ class MantleManager {
       )
 
       this.subs.push(
-        CoreModule.addListener("button_press", (event) => {
+        BluetoothSdk.addListener("button_press", (event) => {
           console.log("MANTLE: BUTTON_PRESS event received:", event)
           this.handle_button_press(event)
           localMiniappRuntime.forwardEvent("button_press", event)
@@ -524,21 +545,14 @@ class MantleManager {
       )
 
       this.subs.push(
-        CoreModule.addListener("touch_event", (event) => {
-          const deviceModel = event.device_model ?? "Mentra Live"
-          const gestureName = event.gesture_name ?? "unknown"
-          const timestamp = typeof event.timestamp === "number" ? event.timestamp : Date.now()
-          socketComms.sendTouchEvent({
-            device_model: deviceModel,
-            gesture_name: gestureName,
-            timestamp,
-          })
+        BluetoothSdk.addListener("touch_event", (event) => {
+          socketComms.sendTouchEvent(event)
           localMiniappRuntime.forwardEvent("touch_event", event)
         }),
       )
 
       this.subs.push(
-        CoreModule.addListener("swipe_volume_status", (event) => {
+        BluetoothSdk.addListener("swipe_volume_status", (event) => {
           const enabled = !!event.enabled
           const timestamp = typeof event.timestamp === "number" ? event.timestamp : Date.now()
           socketComms.sendSwipeVolumeStatus(enabled, timestamp)
@@ -548,83 +562,76 @@ class MantleManager {
       )
 
       this.subs.push(
-        CoreModule.addListener("switch_status", (event) => {
-          const switchType = typeof event.switch_type === "number" ? event.switch_type : (event.switchType ?? -1)
-          const switchValue = typeof event.switch_value === "number" ? event.switch_value : (event.switchValue ?? -1)
+        BluetoothSdk.addListener("switch_status", (event) => {
+          const switchType = event.switchType ?? -1
+          const switchValue = event.switchValue ?? -1
           const timestamp = typeof event.timestamp === "number" ? event.timestamp : Date.now()
           socketComms.sendSwitchStatus(switchType, switchValue, timestamp)
-          // TODO: remove
-          GlobalEventEmitter.emit("SWITCH_STATUS", {switchType, switchValue, timestamp})
         }),
       )
 
       this.subs.push(
-        CoreModule.addListener("rgb_led_control_response", (event) => {
-          const requestId = event.requestId ?? ""
-          const success = event.state === "success"
-          const errorMessage = event.state === "error" ? event.errorCode : null
-          socketComms.sendRgbLedControlResponse(requestId, success, errorMessage)
-          // TODO: remove
-          GlobalEventEmitter.emit("rgb_led_control_response", {requestId, success, error: errorMessage})
+        BluetoothSdk.addListener("rgb_led_control_response", (event) => {
+          socketComms.sendRgbLedControlResponse(event)
         }),
       )
 
       this.subs.push(
-        CoreModule.addListener("pair_failure", (event) => {
+        BluetoothSdk.addListener("pair_failure", (event) => {
           GlobalEventEmitter.emit("pair_failure", event.error)
         }),
       )
 
       this.subs.push(
-        CoreModule.addListener("audio_pairing_needed", (event) => {
+        BluetoothSdk.addListener("audio_pairing_needed", (event) => {
           GlobalEventEmitter.emit("audio_pairing_needed", {
-            deviceName: event.device_name,
+            deviceName: event.deviceName,
           })
         }),
       )
 
       this.subs.push(
-        CoreModule.addListener("audio_connected", (event) => {
+        BluetoothSdk.addListener("audio_connected", (event) => {
           GlobalEventEmitter.emit("audio_connected", {
-            deviceName: event.device_name,
+            deviceName: event.deviceName,
           })
         }),
       )
 
       this.subs.push(
-        CoreModule.addListener("audio_disconnected", () => {
+        BluetoothSdk.addListener("audio_disconnected", () => {
           GlobalEventEmitter.emit("audio_disconnected", {})
         }),
       )
 
       // Allow core to persist hardware-originated setting changes.
       this.subs.push(
-        CoreModule.addListener("save_setting", async (event) => {
+        BluetoothSdk.addListener("save_setting", async (event) => {
           console.log("MANTLE: Received save_setting event from core:", event)
           await useSettingsStore.getState().setSetting(event.key, event.value)
         }),
       )
 
       this.subs.push(
-        CoreModule.addListener("head_up", (event) => {
+        BluetoothSdk.addListener("head_up", (event) => {
           mantle.handle_head_up(event.up)
         }),
       )
 
       this.subs.push(
-        CoreModule.addListener("vad_status", (event) => {
-          socketComms.sendVadStatus(event.status)
+        BluetoothSdk.addListener("speaking_status", (event) => {
+          socketComms.sendVadStatus(event.speaking)
         }),
       )
 
       this.subs.push(
-        CoreModule.addListener("battery_status", (event) => {
+        BluetoothSdk.addListener("battery_status", (event) => {
           socketComms.sendBatteryStatus(event.level, event.charging, event.timestamp)
         }),
       )
 
       this.subs.push(
-        CoreModule.addListener("local_transcription", (event) => {
+        BluetoothSdk.addListener("local_transcription", (event) => {
           mantle.handle_local_transcription(event)
         }),
       )
@@ -735,37 +742,37 @@ class MantleManager {
       )
 
       this.subs.push(
-        CoreModule.addListener("audio_pairing_needed", (event) => {
+        BluetoothSdk.addListener("audio_pairing_needed", (event) => {
           GlobalEventEmitter.emit("audio_pairing_needed", {
-            deviceName: event.device_name,
+            deviceName: event.deviceName,
           })
         }),
       )
 
       this.subs.push(
-        CoreModule.addListener("audio_connected", (event) => {
+        BluetoothSdk.addListener("audio_connected", (event) => {
           GlobalEventEmitter.emit("audio_connected", {
-            deviceName: event.device_name,
+            deviceName: event.deviceName,
           })
         }),
       )
 
       this.subs.push(
-        CoreModule.addListener("audio_disconnected", () => {
+        BluetoothSdk.addListener("audio_disconnected", () => {
           GlobalEventEmitter.emit("audio_disconnected", {})
         }),
       )
 
       // allow the core to change settings so it can persist state:
       this.subs.push(
-        CoreModule.addListener("save_setting", async (event) => {
+        BluetoothSdk.addListener("save_setting", async (event) => {
           console.log("MANTLE: Received save_setting event from Core:", event)
           await useSettingsStore.getState().setSetting(event.key, event.value)
         }),
       )
 
       this.subs.push(
-        CoreModule.addListener("head_up", (event) => {
+        BluetoothSdk.addListener("head_up", (event) => {
           mantle.handle_head_up(event.up)
           // Translate native {up: boolean} → cloud-SDK shape {position: "up" | "down"}
           localMiniappRuntime.forwardEvent("head_up", {
@@ -806,7 +813,14 @@ class MantleManager {
       // this.subs.push({remove: () => batteryStateSub.remove()})
 
       // this.subs.push(
-      //   CoreModule.addListener("audio_chunk", (event) => {
+      //   BluetoothSdk.addListener("vad", (event) => {
+      //     localMiniappRuntime.forwardEvent("VAD", event)
+      //     localSttFallbackCoordinator.onVad(!!event?.status)
+      //   }),
+      // )
+
+      // this.subs.push(
+      //   BluetoothSdk.addListener("audio_chunk", (event) => {
       //     localMiniappRuntime.forwardEvent("audio_chunk", event)
       //   }),
       // )
@@ -814,7 +828,7 @@ class MantleManager {
       // G2 dashboard menu: user selected a miniapp from the glasses swipe menu
       // G2.swift resolves the numeric appId → packageName before sending this event
       this.subs.push(
-        CoreModule.addListener("miniapp_selected", (event) => {
+        BluetoothSdk.addListener("miniapp_selected", (event) => {
           const packageName = event.packageName as string
           if (!packageName) return
           const app = useAppStatusStore.getState().apps.find((a) => a.packageName === packageName)
@@ -831,19 +845,19 @@ class MantleManager {
       )
 
       this.subs.push(
-        CoreModule.addListener("local_transcription", (event) => {
+        BluetoothSdk.addListener("local_transcription", (event) => {
           mantle.handle_local_transcription(event)
         }),
       )
 
       this.subs.push(
-        CoreModule.addListener("ws_text", (event) => {
+        BluetoothSdk.addListener("ws_text", (event) => {
           socketComms.sendText(event.text)
         }),
       )
 
       this.subs.push(
-        CoreModule.addListener("ws_bin", (event) => {
+        BluetoothSdk.addListener("ws_bin", (event) => {
           const binaryString = atob(event.base64)
           const bytes = new Uint8Array(binaryString.length)
           for (let i = 0; i < binaryString.length; i++) {
@@ -854,7 +868,7 @@ class MantleManager {
       )
 
       this.subs.push(
-        CoreModule.addListener("mic_lc3", (event) => {
+        BluetoothSdk.addListener("mic_lc3", (event) => {
           if (this.micDataTimeout) {
             BgTimer.clearTimeout(this.micDataTimeout)
           }
@@ -876,7 +890,7 @@ class MantleManager {
       )
 
       this.subs.push(
-        CoreModule.addListener("mic_pcm", () => {
+        BluetoothSdk.addListener("mic_pcm", () => {
           // mic_pcm events are strictly on-device. Local miniapps consume
           // raw PCM via the `audio_chunk` listener; Sherpa-ONNX consumes
           // it via the local-STT path. The cloud only ever receives LC3
@@ -894,22 +908,22 @@ class MantleManager {
       )
 
       this.subs.push(
-        CoreModule.addListener("stream_status", (event) => {
+        BluetoothSdk.addListener("stream_status", (event) => {
           console.log("MANTLE: Forwarding stream status to server:", event)
           socketComms.sendStreamStatus(event)
         }),
       )
 
       this.subs.push(
-        CoreModule.addListener("keep_alive_ack", (event) => {
+        BluetoothSdk.addListener("keep_alive_ack", (event) => {
           console.log("MANTLE: Forwarding keep-alive ACK to server:", event)
           socketComms.sendKeepAliveAck(event)
         }),
       )
 
       this.subs.push(
-        CoreModule.addListener("ota_update_available", (event) => {
-          if (!useGlassesStore.getState().connected) {
+        BluetoothSdk.addListener("ota_update_available", (event) => {
+          if (!isGlassesConnected(useGlassesStore.getState().connection)) {
             console.log("📱 MANTLE: Ignoring ota_update_available - glasses not connected")
             return
           }
@@ -932,7 +946,7 @@ class MantleManager {
       )
 
       this.subs.push(
-        CoreModule.addListener("mtk_update_complete", (event) => {
+        BluetoothSdk.addListener("mtk_update_complete", (event) => {
           console.log("MANTLE: MTK firmware update complete:", event.message)
           GlobalEventEmitter.emit("mtk_update_complete", {
             message: event.message,
@@ -942,14 +956,14 @@ class MantleManager {
       )
 
       this.subs.push(
-        CoreModule.addListener("ota_start_ack", (event) => {
+        BluetoothSdk.addListener("ota_start_ack", (event) => {
           console.log("MANTLE: ota_start_ack received from glasses")
           GlobalEventEmitter.emit("ota_start_ack", {timestamp: event.timestamp})
         }),
       )
 
       this.subs.push(
-        CoreModule.addListener("ota_status", (event) => {
+        BluetoothSdk.addListener("ota_status", (event) => {
           const normalized = normalizeOtaStatusEvent(event as Record<string, unknown>)
           const status: OtaStatus = otaStatusFromNormalized(normalized)
           useGlassesStore.getState().setOtaStatus(status)
@@ -970,11 +984,11 @@ class MantleManager {
     }
 
     // one time get all:
-    const coreStatus = await CoreModule.getCoreStatus()
+    const coreStatus = await BluetoothSdk.getBluetoothStatus()
     // console.log("MANTLE: core status:", coreStatus)
     useCoreStore.getState().setCoreInfo(coreStatus)
 
-    const glassesStatus = await CoreModule.getGlassesStatus()
+    const glassesStatus = await BluetoothSdk.getGlassesStatus()
     // console.log("MANTLE: glasses status:", glassesStatus)
     useGlassesStore.getState().setGlassesInfo(glassesStatus)
   }

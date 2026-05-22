@@ -3,8 +3,8 @@ import {AppState} from "react-native"
 
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import {checkConnectivityRequirementsUI} from "@/utils/PermissionsUtils"
-import CoreModule from "@mentra/bluetooth-sdk"
-import {useGlassesStore} from "@/stores/glasses"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
+import {isGlassesConnected, selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {useCoreStore} from "@/stores/core"
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
 
@@ -17,7 +17,7 @@ export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
   }
 
   const defaultWearable = await useSettingsStore.getState().getSetting(SETTINGS.default_wearable.key)
-  const glassesConnected = await useGlassesStore.getState().connected
+  const glassesConnected = isGlassesConnected(useGlassesStore.getState().connection)
   const isSearching = await useCoreStore.getState().searching
 
   // Don't try to reconnect if no glasses have been paired yet (skip simulated glasses)
@@ -35,7 +35,7 @@ export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
     return true
   }
   try {
-    await CoreModule.connectDefault()
+    await BluetoothSdk.connectDefault()
   } catch (error) {
     console.warn("RECONNECT: failed to connect default wearable:", error)
     return false
@@ -44,7 +44,7 @@ export async function attemptReconnectToDefaultWearable(): Promise<boolean> {
 }
 
 export function Reconnect() {
-  const glassesConnected = useGlassesStore((state) => state.connected)
+  const glassesConnected = useGlassesStore(selectGlassesConnected)
   const isSearching = useCoreStore((state) => state.searching)
   const defaultWearable = useSetting(SETTINGS.default_wearable.key)
 

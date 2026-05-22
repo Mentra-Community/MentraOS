@@ -1,19 +1,20 @@
-package com.mentra.core.sgcs
+package com.mentra.bluetoothsdk.sgcs
 
-import com.mentra.core.Bridge
-import com.mentra.core.CoreManager
-import com.mentra.core.utils.ConnTypes
-import com.mentra.core.utils.DeviceTypes
-import com.mentra.core.GlassesStore
+import com.mentra.bluetoothsdk.Bridge
+import com.mentra.bluetoothsdk.DeviceManager
+import com.mentra.bluetoothsdk.utils.ConnTypes
+import com.mentra.bluetoothsdk.utils.DeviceTypes
+import com.mentra.bluetoothsdk.DeviceStore
 
 class Simulated : SGCManager() {
 
     init {
         type = DeviceTypes.SIMULATED
-        GlassesStore.apply("glasses", "fullyBooted", true)
-        GlassesStore.apply("glasses", "connected", true)
-        GlassesStore.apply("glasses", "connectionState", ConnTypes.CONNECTED)
-        GlassesStore.apply("glasses", "micEnabled", false)
+        DeviceStore.apply("glasses", "fullyBooted", true)
+        DeviceStore.apply("glasses", "connected", true)
+        DeviceStore.apply("glasses", "connectionState", ConnTypes.CONNECTED)
+        DeviceStore.apply("glasses", "micEnabled", false)
+        DeviceStore.apply("glasses", "voiceActivityDetectionEnabled", true)
     }
 
     // Audio Control
@@ -141,8 +142,8 @@ class Simulated : SGCManager() {
             packageName: String?,
             action: String,
             color: String?,
-            ontime: Int,
-            offtime: Int,
+            onDurationMs: Int,
+            offDurationMs: Int,
             count: Int
     ) {
         Bridge.log("sendRgbLedControl - not supported on Simulated")

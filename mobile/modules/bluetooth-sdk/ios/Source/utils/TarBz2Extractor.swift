@@ -4,12 +4,12 @@ import Foundation
 import SWCompression
 
 @objc(TarBz2Extractor)
-public class TarBz2Extractor: NSObject {
+class TarBz2Extractor: NSObject {
     private static let chunkSize = 1 << 16 // 64 KB
     private static let progressEmitIntervalMs: Int64 = 200
 
     @objc
-    public static func extractTarBz2From(
+    static func extractTarBz2From(
         _ sourcePath: String,
         to destinationPath: String,
         error errorPointer: NSErrorPointer

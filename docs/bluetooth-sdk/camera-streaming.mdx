@@ -1,0 +1,253 @@
+---
+title: "Camera And Streaming"
+description: "Request photos and start RTMP, SRT, or WebRTC streams from supported smart glasses."
+icon: "camera"
+---
+
+Camera and streaming features depend on the connected glasses model. Mentra Live has a camera; G2 does not. Gate UI by SDK status and model capability before exposing photo, video, or stream controls.
+
+## Photo Upload
+
+Photo upload sends a JPEG from supported glasses to a webhook URL. In the starter apps, the default Camera flow starts a receiver on the phone and sends the photo from the glasses to that phone URL. Turn on **Use cloud server** only when you want to send the upload to an external endpoint, such as your production API, a staging API, or the optional starter-kit helper.
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+await BluetoothSdk.requestPhoto({
+  requestId: `photo-${Date.now()}`,
+  appId: 'com.example.app',
+  size: 'medium',
+  webhookUrl: 'https://api.example.com/mentra/photo',
+  authToken: 'optional-token',
+  compress: 'medium',
+  sound: true,
+});
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+sdk.requestPhoto(
+    PhotoRequest(
+        requestId = "photo-${System.currentTimeMillis()}",
+        appId = "com.example.app",
+        size = PhotoSize.MEDIUM,
+        webhookUrl = "https://api.example.com/mentra/photo",
+        authToken = "optional-token",
+        compress = PhotoCompression.MEDIUM,
+        sound = true,
+    )
+)
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+sdk.requestPhoto(
+    PhotoRequest(
+        requestId: "photo-\(Date().timeIntervalSince1970)",
+        appId: "com.example.app",
+        size: .medium,
+        webhookUrl: "https://api.example.com/mentra/photo",
+        authToken: "optional-token",
+        compress: .medium,
+        sound: true
+    )
+)
+```
+
+  </Tab>
+</Tabs>
+
+The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
+
+## Gallery Mode
+
+Mentra Live has gallery mode for the right action button. When gallery mode is enabled, a short press takes a photo, a long press starts video recording, and a short press stops the active video recording. Button and touch events are still reported to your app.
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+await BluetoothSdk.setGalleryModeEnabled(true);
+await BluetoothSdk.setButtonPhotoSettings('medium');
+await BluetoothSdk.setButtonVideoRecordingSettings(1280, 720, 30);
+await BluetoothSdk.setButtonMaxRecordingTime(3);
+await BluetoothSdk.setCameraFov('wide');
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+sdk.setGalleryModeEnabled(true)
+sdk.setButtonPhotoSettings(size = ButtonPhotoSize.MEDIUM)
+sdk.setButtonVideoRecordingSettings(width = 1280, height = 720, fps = 30)
+sdk.setButtonMaxRecordingTime(minutes = 3)
+sdk.setCameraFov(CameraFov.WIDE)
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+try await sdk.setGalleryModeEnabled(true)
+try await sdk.setButtonPhotoSettings(size: .medium)
+try await sdk.setButtonVideoRecordingSettings(width: 1280, height: 720, fps: 30)
+try await sdk.setButtonMaxRecordingTime(minutes: 3)
+try await sdk.setCameraFov(.wide)
+```
+
+  </Tab>
+</Tabs>
+
+Use `setGalleryModeEnabled(false)` when you want the action button to report events without triggering local gallery capture while the glasses are connected.
+
+## Streaming
+
+Streaming sends camera video from supported glasses to an ingest URL. In the starter apps, the default Stream flow uses the phone as the receiver where the platform example supports it. Turn on **Use cloud server** when you want the glasses to stream to an external RTMP, SRT, or WHIP/WebRTC ingest endpoint. Use your own server in production; the local helper below is only a demo convenience for testing external endpoints from the starter apps.
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+const streamId = `stream-${Date.now()}`;
+
+await BluetoothSdk.startStream({
+  type: 'start_stream',
+  streamUrl: 'http://192.168.1.42:8889/mentra-live/whip',
+  streamId,
+});
+
+await BluetoothSdk.keepStreamAlive({
+  type: 'keep_stream_alive',
+  streamId,
+  ackId: `ack-${Date.now()}`,
+});
+
+await BluetoothSdk.stopStream();
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+val streamId = "stream-${System.currentTimeMillis()}"
+
+sdk.startStream(
+    StreamRequest(
+        streamUrl = "http://192.168.1.42:8889/mentra-live/whip",
+        streamId = streamId,
+    )
+)
+
+sdk.keepStreamAlive(
+    StreamKeepAliveRequest(
+        streamId = streamId,
+        ackId = "ack-${System.currentTimeMillis()}",
+    )
+)
+
+sdk.stopStream()
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+let streamId = "stream-\(Date().timeIntervalSince1970)"
+
+sdk.startStream(
+    StreamRequest(
+        streamUrl: "http://192.168.1.42:8889/mentra-live/whip",
+        streamId: streamId
+    )
+)
+
+sdk.keepStreamAlive(
+    StreamKeepAliveRequest(
+        streamId: streamId,
+        ackId: "ack-\(Date().timeIntervalSince1970)"
+    )
+)
+
+sdk.stopStream()
+```
+
+  </Tab>
+</Tabs>
+
+Use `rtmp://` or `rtmps://` for RTMP, `srt://` for SRT, and `http://` or `https://` for WHIP/WebRTC ingest. Send keep-alives about every 15 seconds while streaming. The camera light is always enabled while streaming.
+
+## Optional Local Demo Helper
+
+The starter kit includes a local helper server so developers can try the **Use cloud server** path without first deploying their own webhook or streaming service:
+
+```bash
+git clone https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit.git
+cd Mentra-Bluetooth-SDK-Starter-Kit
+python3 examples/local-demo-cloud/server.py
+```
+
+In the starter apps, leave **Use cloud server** off for the default glasses-to-phone flow. Turn it on when you want to test an external endpoint, then paste the printed LAN `/upload` URL into the Camera screen or the printed RTMP, SRT, or WHIP publish URL into the Stream screen. You can skip this helper entirely when you already have reachable upload and streaming endpoints.
+
+<Warning>
+Do not use `localhost` from the mobile app. The glasses, phone, and computer must be on a network where the glasses can reach the printed LAN address.
+</Warning>
+
+## Direct Phone Capture And Streaming
+
+The starter kit examples also include direct phone photo and WebRTC receive flows:
+
+- Android can receive photos directly on the phone and host a GStreamer WHIP receiver.
+- iOS can receive photos directly on the phone and host a GStreamer WHIP receiver.
+- React Native includes local native companion modules for Android and iOS direct phone photo and WebRTC demos.
+
+Use real hardware for these flows. Keep the glasses Wi-Fi active and make sure the phone and glasses are on a reachable local network.
+
+## Stream Status
+
+Subscribe to stream status before starting a stream. Treat stream start as accepted, then drive UI from status events:
+
+<Tabs>
+  <Tab title="React Native">
+
+```tsx
+import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
+
+export function StreamStatusLogger() {
+  useBluetoothEvent('stream_status', (event) => {
+    console.log(event);
+  });
+
+  return null;
+}
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+override fun onStreamStatus(event: StreamStatusEvent) {
+    Log.d("Mentra", "Stream status: ${event.status}")
+}
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: BluetoothEvent) {
+    if case let .streamStatus(status) = event {
+        print("Stream status: \(status)")
+    }
+}
+```
+
+  </Tab>
+</Tabs>
+
+Status values include initializing, streaming, stopped, reconnecting, and error states.

@@ -10,7 +10,7 @@ mode: "custom"
   </h1>
 
 <p className="max-w-2xl mx-auto text-base text-gray-600 dark:text-zinc-400 leading-relaxed">
-  Build and deploy smart glasses apps on MentraOS.
+  Build cloud apps and mobile apps for smart glasses on MentraOS.
 </p>
 
   <a
@@ -33,13 +33,21 @@ mode: "custom"
 </div>
 
 <section className="px-4 max-w-6xl mx-auto space-y-4">
-  <CardGroup cols={3}>
+  <CardGroup cols={2}>
     <Card
-      title="Build a smart glasses app"
+      title="Build a cloud Mini App"
       icon="Glasses"
       href="/app-devs/getting-started/overview"
     >
-      Developers who want to build smart glasses apps.
+      Use `@mentra/sdk` to build apps that run through MentraOS sessions.
+    </Card>
+
+    <Card
+      title="Build a mobile Bluetooth app"
+      icon="bluetooth"
+      href="/bluetooth-sdk/overview"
+    >
+      Use the Mentra Bluetooth SDK to connect mobile apps directly to glasses.
     </Card>
 
     <Card

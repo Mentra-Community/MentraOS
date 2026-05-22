@@ -16,7 +16,7 @@ import restComms from "@/services/RestComms"
 import {useAppStatusStore} from "@mentra/island"
 
 import {feedbackPackageName, settingsPackageName} from "@/constants/miniapps"
-import {useGlassesStore} from "@/stores/glasses"
+import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
@@ -67,11 +67,11 @@ export default function FeedbackPage() {
   }, [apps])
 
   // Glasses info for bug reports
-  const glassesConnected = useGlassesStore((state) => state.connected)
+  const glassesConnected = useGlassesStore(selectGlassesConnected)
   const deviceModel = useGlassesStore((state) => state.deviceModel)
   const glassesBluetoothName = useGlassesStore((state) => state.bluetoothName)
   const buildNumber = useGlassesStore((state) => state.buildNumber)
-  const glassesFwVersion = useGlassesStore((state) => state.fwVersion)
+  const glassesFirmwareVersion = useGlassesStore((state) => state.firmwareVersion)
   const appVersion = useGlassesStore((state) => state.appVersion)
   const serialNumber = useGlassesStore((state) => state.serialNumber)
   const androidVersion = useGlassesStore((state) => state.androidVersion)
@@ -263,7 +263,7 @@ export default function FeedbackPage() {
             bluetoothId: glassesBluetoothId || undefined,
             serialNumber: serialNumber || undefined,
             buildNumber: buildNumber || undefined,
-            fwVersion: glassesFwVersion || undefined,
+            firmwareVersion: glassesFirmwareVersion || undefined,
             appVersion: appVersion || undefined,
             androidVersion: androidVersion || undefined,
             ...glassesWifiInfo,

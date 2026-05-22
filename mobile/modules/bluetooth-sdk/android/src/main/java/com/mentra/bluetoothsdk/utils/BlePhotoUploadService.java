@@ -1,4 +1,4 @@
-package com.mentra.core.utils;
+package com.mentra.bluetoothsdk.utils;
 
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;

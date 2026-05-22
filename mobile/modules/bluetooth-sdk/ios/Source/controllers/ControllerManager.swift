@@ -54,8 +54,8 @@ protocol ControllerManager {
     func sendShutdown()
     func sendReboot()
     func sendRgbLedControl(
-        requestId: String, packageName: String?, action: String, color: String?, ontime: Int,
-        offtime: Int, count: Int
+        requestId: String, packageName: String?, action: String, color: String?, onDurationMs: Int,
+        offDurationMs: Int, count: Int
     )
 
     // MARK: - Connection Management
@@ -99,89 +99,89 @@ protocol ControllerManager {
 /// doesn't seem to work for concurrency reasons :(
 /// we can make read-only getters for convienence though:
 extension ControllerManager {
-    // MARK: - Default GlassesStore-backed property implementations
+    // MARK: - Default DeviceStore-backed property implementations
 
     var fullyBooted: Bool {
-        GlassesStore.shared.get("glasses", "fullyBooted") as? Bool ?? false
+        DeviceStore.shared.get("glasses", "fullyBooted") as? Bool ?? false
     }
 
     var connected: Bool {
-        GlassesStore.shared.get("glasses", "connected") as? Bool ?? false
+        DeviceStore.shared.get("glasses", "connected") as? Bool ?? false
     }
 
     var appVersion: String {
-        GlassesStore.shared.get("glasses", "appVersion") as? String ?? ""
+        DeviceStore.shared.get("glasses", "appVersion") as? String ?? ""
     }
 
     var buildNumber: String {
-        GlassesStore.shared.get("glasses", "buildNumber") as? String ?? ""
+        DeviceStore.shared.get("glasses", "buildNumber") as? String ?? ""
     }
 
     var deviceModel: String {
-        GlassesStore.shared.get("glasses", "deviceModel") as? String ?? ""
+        DeviceStore.shared.get("glasses", "deviceModel") as? String ?? ""
     }
 
     var androidVersion: String {
-        GlassesStore.shared.get("glasses", "androidVersion") as? String ?? ""
+        DeviceStore.shared.get("glasses", "androidVersion") as? String ?? ""
     }
 
     var otaVersionUrl: String {
-        GlassesStore.shared.get("glasses", "otaVersionUrl") as? String ?? ""
+        DeviceStore.shared.get("glasses", "otaVersionUrl") as? String ?? ""
     }
 
     var firmwareVersion: String {
-        GlassesStore.shared.get("glasses", "fwVersion") as? String ?? ""
+        DeviceStore.shared.get("glasses", "firmwareVersion") as? String ?? ""
     }
 
-    var btMacAddress: String {
-        GlassesStore.shared.get("glasses", "btMacAddress") as? String ?? ""
+    var bluetoothMacAddress: String {
+        DeviceStore.shared.get("glasses", "bluetoothMacAddress") as? String ?? ""
     }
 
     var serialNumber: String {
-        GlassesStore.shared.get("glasses", "serialNumber") as? String ?? ""
+        DeviceStore.shared.get("glasses", "serialNumber") as? String ?? ""
     }
 
     var style: String {
-        GlassesStore.shared.get("glasses", "style") as? String ?? ""
+        DeviceStore.shared.get("glasses", "style") as? String ?? ""
     }
 
     var color: String {
-        GlassesStore.shared.get("glasses", "color") as? String ?? ""
+        DeviceStore.shared.get("glasses", "color") as? String ?? ""
     }
 
     var micEnabled: Bool {
-        GlassesStore.shared.get("glasses", "micEnabled") as? Bool ?? false
+        DeviceStore.shared.get("glasses", "micEnabled") as? Bool ?? false
     }
 
-    var vadEnabled: Bool {
-        GlassesStore.shared.get("glasses", "vadEnabled") as? Bool ?? false
+    var voiceActivityDetectionEnabled: Bool {
+        DeviceStore.shared.get("glasses", "voiceActivityDetectionEnabled") as? Bool ?? true
     }
 
     var batteryLevel: Int {
-        GlassesStore.shared.get("glasses", "batteryLevel") as? Int ?? -1
+        DeviceStore.shared.get("glasses", "batteryLevel") as? Int ?? -1
     }
 
     var headUp: Bool {
-        GlassesStore.shared.get("glasses", "headUp") as? Bool ?? false
+        DeviceStore.shared.get("glasses", "headUp") as? Bool ?? false
     }
 
     var charging: Bool {
-        GlassesStore.shared.get("glasses", "charging") as? Bool ?? false
+        DeviceStore.shared.get("glasses", "charging") as? Bool ?? false
     }
 
     var caseOpen: Bool {
-        GlassesStore.shared.get("glasses", "caseOpen") as? Bool ?? true
+        DeviceStore.shared.get("glasses", "caseOpen") as? Bool ?? true
     }
 
     var caseRemoved: Bool {
-        GlassesStore.shared.get("glasses", "caseRemoved") as? Bool ?? true
+        DeviceStore.shared.get("glasses", "caseRemoved") as? Bool ?? true
     }
 
     var caseCharging: Bool {
-        GlassesStore.shared.get("glasses", "caseCharging") as? Bool ?? false
+        DeviceStore.shared.get("glasses", "caseCharging") as? Bool ?? false
     }
 
     var caseBatteryLevel: Int {
-        GlassesStore.shared.get("glasses", "caseBatteryLevel") as? Int ?? -1
+        DeviceStore.shared.get("glasses", "caseBatteryLevel") as? Int ?? -1
     }
 }

@@ -1,4 +1,4 @@
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import {useEffect, useState, useRef, useCallback} from "react"
 import {View, ActivityIndicator} from "react-native"
 
@@ -9,7 +9,7 @@ import {LoadingCoverVideo} from "@/components/ota/LoadingCoverVideo"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {checkBesUpdate, findMatchingMtkPatch, fetchVersionInfo, OTA_VERSION_URL_PROD} from "@/effects/OtaUpdateChecker"
-import {useGlassesStore} from "@/stores/glasses"
+import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {logEvent} from "@/utils/analytics"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
@@ -24,7 +24,7 @@ import {
   PROGRESS_TIMEOUT_MS,
   RETRY_INTERVAL_MS,
 } from "@/app/ota/otaProgressTimeouts"
-import { useNavigationStore } from "@/stores/navigation"
+import {useNavigationStore} from "@/stores/navigation"
 
 /** Legacy OTA: +20s on every watchdog / timer duration (shared defaults stay unchanged for progress.tsx). */
 const LEGACY_EXTRA_TIMEOUT_MS = 20_000
@@ -66,12 +66,12 @@ export default function OtaProgressScreen() {
   const [superMode] = useSetting(SETTINGS.super_mode.key)
   const otaProgress = useGlassesStore((state) => state.otaProgress)
   const otaUpdateAvailable = useGlassesStore((state) => state.otaUpdateAvailable)
-  const glassesConnected = useGlassesStore((state) => state.connected)
+  const glassesConnected = useGlassesStore(selectGlassesConnected)
   const wifiConnected = useGlassesStore((state) => state.wifi.state === "connected")
   const wifiStatusKnown = useGlassesStore((state) => state.wifiStatusKnown)
   const buildNumber = useGlassesStore((state) => state.buildNumber)
-  const besFwVersion = useGlassesStore((state) => state.besFwVersion)
-  const mtkFwVersion = useGlassesStore((state) => state.mtkFwVersion)
+  const besFirmwareVersion = useGlassesStore((state) => state.besFirmwareVersion)
+  const mtkFirmwareVersion = useGlassesStore((state) => state.mtkFirmwareVersion)
 
   const [progressState, setProgressState] = useState<ProgressState>("starting")
   const [retryCount, setRetryCount] = useState(0)
@@ -286,11 +286,11 @@ export default function OtaProgressScreen() {
 
     if (isOtaActive && glassesConnected) {
       // Send initial ping immediately
-      CoreModule.ping().catch((err) => console.log("OTA: ping failed:", err))
+      BluetoothSdk.ping().catch((err) => console.log("OTA: ping failed:", err))
 
       // Set up interval to ping (legacy: PING_INTERVAL_MS + LEGACY_EXTRA_TIMEOUT_MS)
       pingIntervalRef.current = window.setInterval(() => {
-        CoreModule.ping().catch((err) => console.log("OTA: ping failed:", err))
+        BluetoothSdk.ping().catch((err) => console.log("OTA: ping failed:", err))
       }, legacyPingIntervalMs)
 
       return () => {
@@ -337,10 +337,7 @@ export default function OtaProgressScreen() {
     // already in the store. If a background prefetch (or a re-mount during an active
     // OTA — e.g. user navigated away and back) has already populated otaProgress,
     // wiping it here resets the visible progress bar to 0% and confuses the watchdog.
-    const inFlight =
-      otaProgress &&
-      otaProgress.status !== "FINISHED" &&
-      otaProgress.status !== "FAILED"
+    const inFlight = otaProgress && otaProgress.status !== "FINISHED" && otaProgress.status !== "FAILED"
     console.log(
       "OTA_TRACK: screen_mounted",
       JSON.stringify({
@@ -391,11 +388,11 @@ export default function OtaProgressScreen() {
       const originalSequence = [...updateSequenceRef.current]
 
       // Check if BES update is still needed
-      if (updateSequenceRef.current.includes("bes") && besFwVersion) {
-        const besStillNeeded = checkBesUpdate(versionJson.bes_firmware, besFwVersion)
+      if (updateSequenceRef.current.includes("bes") && besFirmwareVersion) {
+        const besStillNeeded = checkBesUpdate(versionJson.bes_firmware, besFirmwareVersion)
         if (!besStillNeeded) {
           console.log(
-            `OTA REVALIDATE: BES no longer needs update (current: ${besFwVersion}, server: ${versionJson.bes_firmware?.version})`,
+            `OTA REVALIDATE: BES no longer needs update (current: ${besFirmwareVersion}, server: ${versionJson.bes_firmware?.version})`,
           )
           updateSequenceRef.current = updateSequenceRef.current.filter((u) => u !== "bes")
           sequenceChanged = true
@@ -403,10 +400,10 @@ export default function OtaProgressScreen() {
       }
 
       // Check if MTK update is still needed
-      if (updateSequenceRef.current.includes("mtk") && mtkFwVersion) {
-        const mtkPatch = findMatchingMtkPatch(versionJson.mtk_patches, mtkFwVersion)
+      if (updateSequenceRef.current.includes("mtk") && mtkFirmwareVersion) {
+        const mtkPatch = findMatchingMtkPatch(versionJson.mtk_patches, mtkFirmwareVersion)
         if (!mtkPatch) {
-          console.log(`OTA REVALIDATE: MTK no longer needs update (current: ${mtkFwVersion}, no matching patch)`)
+          console.log(`OTA REVALIDATE: MTK no longer needs update (current: ${mtkFirmwareVersion}, no matching patch)`)
           updateSequenceRef.current = updateSequenceRef.current.filter((u) => u !== "mtk")
           sequenceChanged = true
         }
@@ -450,7 +447,7 @@ export default function OtaProgressScreen() {
     }
 
     revalidateUpdateSequence()
-  }, [besFwVersion, mtkFwVersion])
+  }, [besFirmwareVersion, mtkFirmwareVersion])
 
   // Fallback: detect APK install success via build number increase for older glasses firmware
   // that does not send the explicit ota_status apk/step_complete signal on reconnect.
@@ -587,7 +584,7 @@ export default function OtaProgressScreen() {
         "OTA_TRACK: send_ota_start",
         JSON.stringify({attempt: retryCount + 1, maxRetries: MAX_RETRIES, sequence: [...updateSequenceRef.current]}),
       )
-      await CoreModule.sendOtaStart()
+      await BluetoothSdk.sendOtaStart()
       setOtaStartTime(Date.now())
 
       // Start global session timeout once (covers whole multi-step OTA)
@@ -1529,7 +1526,7 @@ export default function OtaProgressScreen() {
     const completedUpdate = updateSequenceRef.current[currentUpdateIndex]
     if (completedUpdate === "apk") {
       // Clear native store so future version_info events aren't deduped by ObservableStore
-      CoreModule.updateGlasses({buildNumber: ""})
+      BluetoothSdk.updateGlasses({buildNumber: ""})
       // Clear RN store synchronously so check-for-updates sees empty buildNumber on mount
       // (the native bridge call is async and may not complete before navigation)
       useGlassesStore.getState().setGlassesInfo({buildNumber: ""})

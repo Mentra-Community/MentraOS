@@ -1,4 +1,4 @@
-import CoreModule, {type Device} from "@mentra/bluetooth-sdk"
+import BluetoothSdk, {type Device, type DeviceModel} from "@mentra/bluetooth-sdk-internal"
 import {useLocalSearchParams} from "expo-router"
 import {useEffect, useState} from "react"
 import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
@@ -19,7 +19,7 @@ import GlassView from "@/components/ui/GlassView"
 import {useNavigationStore} from "@/stores/navigation"
 
 export default function SelectGlassesBluetoothScreen() {
-  const {deviceModel}: {deviceModel: string} = useLocalSearchParams()
+  const {deviceModel} = useLocalSearchParams() as {deviceModel: DeviceModel}
   const {theme} = useAppTheme()
   const {goBack, replace} = useNavigationStore.getState()
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
@@ -37,8 +37,8 @@ export default function SelectGlassesBluetoothScreen() {
     if (event && event.actionType !== "GO_BACK" && event.actionType !== "POP") {
       return
     }
-    CoreModule.disconnectController()
-    CoreModule.forgetController()
+    BluetoothSdk.disconnectController()
+    BluetoothSdk.forgetController()
     goBack()
   }, true)
 
@@ -53,7 +53,7 @@ export default function SelectGlassesBluetoothScreen() {
   useEffect(() => {
     const initializeAndSearchForDevices = async () => {
       try {
-        await CoreModule.startScan({model: deviceModel})
+        await BluetoothSdk.startScan(deviceModel)
       } catch (error) {
         console.error("Failed to start controller scan:", error)
       }
@@ -92,7 +92,7 @@ export default function SelectGlassesBluetoothScreen() {
 
   const startPairing = async (device: Device) => {
     setTimeout(() => {
-      CoreModule.connect(device).catch((error) => {
+      BluetoothSdk.connect(device).catch((error) => {
         console.error("Failed to connect to controller:", error)
       })
     }, 2000)

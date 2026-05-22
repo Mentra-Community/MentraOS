@@ -1,4 +1,4 @@
-package com.mentra.core.services
+package com.mentra.bluetoothsdk.services
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -10,7 +10,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import com.mentra.core.Bridge
+import com.mentra.bluetoothsdk.Bridge
 
 class ForegroundService : Service() {
     companion object {

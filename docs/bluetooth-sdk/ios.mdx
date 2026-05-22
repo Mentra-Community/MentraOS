@@ -1,0 +1,143 @@
+---
+title: "iOS"
+description: "Use the Mentra Bluetooth SDK from a native iOS app."
+icon: "apple"
+---
+
+Native iOS apps use the CocoaPod `MentraBluetoothSDK`.
+
+## Requirements
+
+- iOS deployment target `15.1` or newer.
+- Xcode 15 or newer.
+- CocoaPods.
+- A physical iPhone for Bluetooth, camera, microphone, direct phone photo, and direct phone WebRTC testing.
+
+## Podfile
+
+```ruby
+platform :ios, '15.1'
+
+target 'YourApp' do
+  use_frameworks!
+
+  pod 'MentraBluetoothSDK', '0.1.6'
+end
+```
+
+Install pods:
+
+```bash
+pod install
+```
+
+## Permissions
+
+Add usage descriptions to `Info.plist`:
+
+```xml
+<key>NSBluetoothAlwaysUsageDescription</key>
+<string>This app connects to your smart glasses over Bluetooth.</string>
+<key>NSMicrophoneUsageDescription</key>
+<string>This app uses the microphone when you enable audio features.</string>
+<key>NSLocalNetworkUsageDescription</key>
+<string>This app can connect to optional local demo servers on your network.</string>
+```
+
+## Background Operation
+
+If your iOS app needs to keep the glasses BLE link alive while the phone is locked or the app is backgrounded, enable Core Bluetooth background mode:
+
+```xml
+<key>UIBackgroundModes</key>
+<array>
+  <string>bluetooth-central</string>
+</array>
+```
+
+If your app also keeps microphone capture or an audio session active in the background, add `audio` as well:
+
+```xml
+<key>UIBackgroundModes</key>
+<array>
+  <string>bluetooth-central</string>
+  <string>audio</string>
+</array>
+```
+
+Configure your `AVAudioSession` before starting continuous microphone or playback work. Start continuous microphone capture while the app is foregrounded; iOS background mode lets an active session continue, but the SDK does not start the phone microphone from the background. For example:
+
+```swift
+let session = AVAudioSession.sharedInstance()
+try session.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth, .defaultToSpeaker])
+try session.setActive(true)
+```
+
+`bluetooth-central` allows iOS to continue BLE central activity in the background, subject to iOS scheduling and power-management limits. `audio` is required only for apps that intentionally keep recording or audio playback active after backgrounding.
+
+<Warning>
+This SDK version does not enable terminated-app Core Bluetooth state restoration with `CBCentralManagerOptionRestoreIdentifierKey`. If iOS terminates the app, relaunch the app and reconnect from your normal startup flow.
+</Warning>
+
+## Basic Flow
+
+```swift
+import MentraBluetoothSDK
+
+@MainActor
+final class GlassesController: NSObject, MentraBluetoothSDKDelegate {
+    private let sdk = MentraBluetoothSDK()
+    private var selectedDevice: Device?
+
+    override init() {
+        super.init()
+        sdk.delegate = self
+    }
+
+    func scan() throws {
+        try sdk.scan(model: .mentraLive, timeout: 10) { [weak self] devices in
+            self?.renderDevicePicker(devices) { device in
+                self?.selectedDevice = device
+            }
+        }
+    }
+
+    func connect() throws {
+        guard let selectedDevice else { return }
+        try sdk.connect(to: selectedDevice)
+    }
+
+    func refreshStatus() {
+        sdk.requestVersionInfo()
+        let glasses = sdk.glasses
+        if let device = glasses.device {
+            let battery = glasses.battery?.level.map(String.init) ?? "unknown"
+            print("Connected to \(device.deviceModel?.deviceType ?? "glasses"), battery=\(battery)%")
+        }
+    }
+
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateGlasses glasses: GlassesRuntimeState) {
+        // Keep app UI derived from SDK status.
+        print("Glasses changed: \(glasses)")
+    }
+
+    private func renderDevicePicker(_ devices: [Device], onSelect: @escaping (Device) -> Void) {
+        // Render devices in SDK-provided order and call onSelect with the user's choice.
+    }
+
+    deinit {
+        sdk.invalidate()
+    }
+}
+```
+
+## Local SDK Override
+
+Use this when testing SDK source changes locally:
+
+```bash
+export MENTRA_BLUETOOTH_SDK_LOCAL_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk/ios
+pod install
+```
+
+Keep `MENTRA_BLUETOOTH_SDK_LOCAL_PATH` in your shell or CI environment, not in committed project settings.
