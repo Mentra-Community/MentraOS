@@ -351,9 +351,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         // MARK: - OTA Commands
 
-        AsyncFunction("sendOtaStart") {
+        AsyncFunction("sendOtaStart") { (versionJsonUrl: String?) in
             await MainActor.run {
-                self.bluetoothSdk().sendOtaStart()
+                self.bluetoothSdk().sendOtaStart(versionJsonUrl: versionJsonUrl)
             }
         }
 

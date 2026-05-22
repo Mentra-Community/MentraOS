@@ -6,8 +6,7 @@ package com.mentra.asg_client.io.ota.utils;
 public class OtaConstants {
     public static final String TAG = "ASGClientOTA";
 
-    // URLs
-    // Production OTA version JSON URL
+    // Default production manifest URL. Phone-initiated OTA can override this via ota_start.version_json_url.
     public static final String VERSION_JSON_URL = "https://ota.mentraglass.com/prod_live_version.json";
 
     // Test URLs (uncomment to use for testing)

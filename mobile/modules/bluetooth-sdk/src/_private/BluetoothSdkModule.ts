@@ -105,7 +105,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   requestPhoto(params: PhotoRequestParams): Promise<void>
 
   // OTA Commands
-  sendOtaStart(): Promise<void>
+  sendOtaStart(versionJsonUrl?: string): Promise<void>
   sendOtaQueryStatus(): Promise<void>
 
   // Version Info Commands

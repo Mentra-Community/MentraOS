@@ -9,7 +9,7 @@ import {Screen, Header, Button, Text, Icon} from "@/components/ignite"
 import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {checkForOtaUpdate, OTA_VERSION_URL_PROD} from "@/effects/OtaUpdateChecker"
+import {checkForOtaUpdate} from "@/effects/OtaUpdateChecker"
 import {translate} from "@/i18n/translate"
 import {isGlassesConnected, selectGlassesConnected, useGlassesStore, waitForGlassesState} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
@@ -25,6 +25,7 @@ export default function OtaCheckForUpdatesScreen() {
   const besFirmwareVersion = useGlassesStore((state) => state.besFirmwareVersion)
   const glassesWifiConnected = useGlassesStore((state) => state.wifi.state === "connected")
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
+  const [otaVersionUrl] = useSetting<string>(SETTINGS.ota_version_url.key)
   const deviceName = defaultWearable || "Glasses"
   const glassesConnected = useGlassesStore(selectGlassesConnected)
   const [onboardingLiveCompleted] = useSetting(SETTINGS.onboarding_live_completed.key)
@@ -173,7 +174,7 @@ export default function OtaCheckForUpdatesScreen() {
         void BluetoothSdk.requestVersionInfo()
 
         const result = await checkForOtaUpdate(
-          OTA_VERSION_URL_PROD,
+          otaVersionUrl,
           currentBuildNumber,
           latestMtkFirmwareVersion,
           latestBesFirmwareVersion,
@@ -250,7 +251,7 @@ export default function OtaCheckForUpdatesScreen() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [checkKey, currentBuildNumber, mtkFirmwareVersion, besFirmwareVersion, glassesConnected])
+  }, [checkKey, currentBuildNumber, mtkFirmwareVersion, besFirmwareVersion, glassesConnected, otaVersionUrl])
 
   // Navigate to next step based on onboarding status
   const handleContinue = () => {

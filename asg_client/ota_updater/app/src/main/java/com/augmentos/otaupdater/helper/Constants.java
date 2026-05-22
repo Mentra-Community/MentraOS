@@ -3,8 +3,8 @@ package com.mentra.otaupdater.helper;
 public class Constants {
     public static final String TAG = "OTAUpdater";
 
-    // URLs
-    public static final String VERSION_JSON_URL = "https://ota.mentraglass.com/prod_live_version.json"; // TODO: change with real server ip address
+    // Default production manifest URL used by the standalone OTA updater.
+    public static final String VERSION_JSON_URL = "https://ota.mentraglass.com/prod_live_version.json";
 
     // Heartbeat actions
     public static final String ACTION_HEARTBEAT = "com.augmentos.otaupdater.ACTION_HEARTBEAT";

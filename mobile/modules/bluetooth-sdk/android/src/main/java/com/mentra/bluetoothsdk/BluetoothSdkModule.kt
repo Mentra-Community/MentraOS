@@ -390,7 +390,7 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - OTA Commands
 
-        AsyncFunction("sendOtaStart") { sdk?.sendOtaStart() }
+        AsyncFunction("sendOtaStart") { versionJsonUrl: String? -> sdk?.sendOtaStart(versionJsonUrl) }
 
         AsyncFunction("sendOtaQueryStatus") { sdk?.sendOtaQueryStatus() }
 

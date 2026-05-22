@@ -180,6 +180,7 @@ public class OtaHelper {
     private static volatile boolean isBackgroundPrefetchInProgress = false;
 
     private volatile boolean pendingPhoneInstall = false;
+    private volatile String pendingPhoneInstallVersionJsonUrl = null;
 
     /** Snapshot for {@link #buildMinimalOtaStatusJson()} when no OTA session exists (aligns with {@link #sendMtkInstallProgress} shape). */
     private String lastOtaPhoneStage;
@@ -551,30 +552,6 @@ public class OtaHelper {
 
     // Wakelock timeout for OTA process (10 minutes)
     private static final long OTA_WAKELOCK_TIMEOUT_MS = 600000;
-    private static final int REACHABILITY_TIMEOUT_MS = 5000;
-
-    /**
-     * Quick HEAD request to CDN to verify internet reachability before starting OTA.
-     * Returns true if the CDN is reachable, false otherwise.
-     */
-    private boolean checkInternetReachable() {
-        try {
-            // This is just a HEAD reachability probe so the actual URL doesn't matter for the
-            // probe to work, but it should be kept in sync with the manifest URL when that swaps.
-            HttpURLConnection conn = (HttpURLConnection)
-                new URL("https://ota.mentraglass.com/prod_live_version.json").openConnection();
-            conn.setConnectTimeout(REACHABILITY_TIMEOUT_MS);
-            conn.setReadTimeout(REACHABILITY_TIMEOUT_MS);
-            conn.setRequestMethod("HEAD");
-            conn.connect();
-            int code = conn.getResponseCode();
-            conn.disconnect();
-            return code >= 200 && code < 400;
-        } catch (Exception e) {
-            Log.w(TAG, "Internet reachability check failed: " + e.getMessage());
-            return false;
-        }
-    }
 
     private List<String> buildStepSequence(JSONObject rootJson, JSONObject apps, Context context) {
         List<String> steps = new ArrayList<>();
@@ -635,7 +612,15 @@ public class OtaHelper {
      * Called by OtaCommandHandler when phone sends ota_start command.
      */
     public void startOtaFromPhone() {
-        Log.i(TAG, "📱 Starting OTA from phone request");
+        startOtaFromPhone(OtaConstants.VERSION_JSON_URL);
+    }
+
+    /**
+     * Start OTA update from phone command using the phone-selected version manifest URL.
+     */
+    public void startOtaFromPhone(String versionJsonUrl) {
+        String requestedVersionJsonUrl = resolveVersionJsonUrl(versionJsonUrl);
+        Log.i(TAG, "📱 Starting OTA from phone request with versionJsonUrl=" + requestedVersionJsonUrl);
 
         // Immediately acknowledge receipt so the phone cancels its retry timer.
         sendOtaStartAck();
@@ -646,6 +631,7 @@ public class OtaHelper {
         if (versionCheckLock.isLocked()) {
             Log.i(TAG, "📱 OTA prefetch in progress - queuing install to fire after prefetch completes");
             pendingPhoneInstall = true;
+            pendingPhoneInstallVersionJsonUrl = requestedVersionJsonUrl;
             isPhoneInitiatedOta = true;
             // Acquire wakelock early so CPU stays awake for the queued install pass
             WakeLockManager.acquireCpuWakeLock(context, OTA_WAKELOCK_TIMEOUT_MS);
@@ -668,15 +654,18 @@ public class OtaHelper {
 
         // Fast-path: if background prefetch already fetched and cached the version JSON,
         // skip the network round-trip entirely and jump straight to install.
-        if (cachedVersionJson != null) {
+        if (cachedVersionJson != null && requestedVersionJsonUrl.equals(lastVersionJsonUrl)) {
             Log.i(TAG, "📱 Cache fast-path: reusing prefetched version JSON (skipping network re-fetch)");
             startInstallFromCachedJson(context, cachedVersionJson);
             return;
+        } else if (cachedVersionJson != null) {
+            Log.i(TAG, "📱 Ignoring prefetched version JSON because phone requested a different manifest: "
+                    + requestedVersionJsonUrl + " (cached=" + lastVersionJsonUrl + ")");
         }
 
         Log.i(TAG, "📱 Phone-initiated OTA: starting version check (download STARTED deferred)");
 
-        startVersionCheck(context);
+        startVersionCheckWithUrl(context, requestedVersionJsonUrl);
     }
 
     /**
@@ -689,7 +678,7 @@ public class OtaHelper {
             try {
                 if (!versionCheckLock.tryLock()) {
                     Log.w(TAG, "📱 Cache fast-path: version check lock held — falling back to full check");
-                    startVersionCheck(context);
+                    startVersionCheckWithUrl(context, lastVersionJsonUrl);
                     return;
                 }
                 try {
@@ -844,12 +833,25 @@ public class OtaHelper {
     }
 
     /**
+     * Resolve the optional phone-provided manifest URL.
+     * Older phone builds do not send one, and blank developer-setting values should fall back to production.
+     */
+    private String resolveVersionJsonUrl(String versionJsonUrl) {
+        if (versionJsonUrl == null) {
+            return OtaConstants.VERSION_JSON_URL;
+        }
+        String trimmed = versionJsonUrl.trim();
+        return trimmed.isEmpty() ? OtaConstants.VERSION_JSON_URL : trimmed;
+    }
+
+    /**
      * Start a version check using a custom version JSON URL.
      * Used by DebugApkOtaReceiver to test OTA with a local/custom URL.
      * @param context Application context
      * @param versionJsonUrl URL to fetch the version JSON from (http, https)
      */
     public void startVersionCheckWithUrl(Context context, String versionJsonUrl) {
+        String resolvedVersionJsonUrl = resolveVersionJsonUrl(versionJsonUrl);
         Log.d(TAG, "Check OTA update method init");
         Log.i(TAG, "OTA check trigger -> phoneInitiated=" + isPhoneInitiatedOta
                 + ", autonomousEnabled=" + AUTONOMOUS_OTA_ENABLED
@@ -857,7 +859,7 @@ public class OtaHelper {
                 + ", isUpdating=" + isUpdating
                 + ", mtkInProgress=" + isMtkOtaInProgress
                 + ", besInProgress=" + BesOtaManager.isBesOtaInProgress
-                + ", versionJsonUrl=" + versionJsonUrl);
+                + ", versionJsonUrl=" + resolvedVersionJsonUrl);
 
         // if (!isNetworkAvailable(context)) {
         //     Log.e(TAG, "No WiFi connection available. Skipping OTA check.");
@@ -884,7 +886,7 @@ public class OtaHelper {
 
             // Store the URL under the lock so a concurrent caller can't overwrite it
             // before this check finishes (used by the pendingPhoneInstall retry).
-            lastVersionJsonUrl = versionJsonUrl;
+            lastVersionJsonUrl = resolvedVersionJsonUrl;
 
             // Check if update is in progress (separate from version check)
             if (isUpdating) {
@@ -909,7 +911,7 @@ public class OtaHelper {
 
                 stage[0] = "fetch_version_info";
                 // Fetch version info from URL
-                String versionInfo = fetchVersionInfo(versionJsonUrl);
+                String versionInfo = fetchVersionInfo(resolvedVersionJsonUrl);
                 stage[0] = "parse_version_json";
                 JSONObject json = new JSONObject(versionInfo);
 
@@ -956,7 +958,7 @@ public class OtaHelper {
                 otaCheckReachedSuccessLog[0] = true;
                 Log.i(TAG, "OTA check completed successfully");
             } catch (Exception e) {
-                String urlForLog = versionJsonUrl != null ? versionJsonUrl : lastVersionJsonUrl;
+                String urlForLog = resolvedVersionJsonUrl != null ? resolvedVersionJsonUrl : lastVersionJsonUrl;
                 String rootMsg = e.getMessage() != null ? e.getMessage() : "";
                 String causeInfo = "";
                 if (e.getCause() != null) {
@@ -974,6 +976,7 @@ public class OtaHelper {
                 // Cancel any queued install — triggering an install pass after a failed prefetch
                 // would attempt to install a potentially corrupt or incomplete cache.
                 pendingPhoneInstall = false;
+                pendingPhoneInstallVersionJsonUrl = null;
                 // Send failure to phone with semantic error classification
                 String errorCode = classifyDownloadError(e);
                 if (isPhoneInitiatedOta) {
@@ -994,9 +997,13 @@ public class OtaHelper {
                 // Capture before resetting — if the user tapped Install while prefetch was running,
                 // we need to fire a fresh install pass now that the cache is fully populated.
                 boolean shouldInstallNow = pendingPhoneInstall;
+                String queuedVersionJsonUrl = pendingPhoneInstallVersionJsonUrl != null
+                        ? pendingPhoneInstallVersionJsonUrl
+                        : lastVersionJsonUrl;
                 isBackgroundPrefetchInProgress = false;
                 isPhoneInitiatedOta = false;
                 pendingPhoneInstall = false;
+                pendingPhoneInstallVersionJsonUrl = null;
                 versionCheckLock.unlock();
                 Log.d(TAG, "Version check thread finished (reachedSuccessLog=" + otaCheckReachedSuccessLog[0]
                         + ", lastStage=" + stage[0] + "), lock released, ready for next check");
@@ -1004,7 +1011,7 @@ public class OtaHelper {
                 if (shouldInstallNow) {
                     Log.i(TAG, "📱 Phone-initiated install was queued during prefetch - firing install pass now");
                     isPhoneInitiatedOta = true;
-                    startVersionCheckWithUrl(context, lastVersionJsonUrl); // fresh pass: same URL, installNow=true, files served from cache
+                    startVersionCheckWithUrl(context, queuedVersionJsonUrl); // fresh pass: same URL, installNow=true, files served from cache
                 }
             }
         }).start();

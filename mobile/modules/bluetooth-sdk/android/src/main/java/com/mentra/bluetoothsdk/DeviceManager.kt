@@ -1241,9 +1241,9 @@ class DeviceManager {
      * Send OTA start command to glasses. Called when user approves an update (onboarding or
      * background mode). Triggers glasses to begin download and installation.
      */
-    fun sendOtaStart() {
+    fun sendOtaStart(versionJsonUrl: String? = null) {
         Bridge.log("MAN: 📱 Sending OTA start command to glasses")
-        (sgc as? MentraLive)?.sendOtaStart()
+        (sgc as? MentraLive)?.sendOtaStart(versionJsonUrl)
     }
 
     fun sendOtaQueryStatus() {

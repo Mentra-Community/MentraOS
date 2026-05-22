@@ -47,9 +47,6 @@ interface VersionJson {
   releaseNotes?: string
 }
 
-// OTA version URL constant
-export const OTA_VERSION_URL_PROD = "https://ota.mentraglass.com/prod_live_version.json"
-
 function areGlassesConnectedNow(): boolean {
   return isGlassesConnected(useGlassesStore.getState().connection)
 }
@@ -391,6 +388,7 @@ export function OtaUpdateChecker() {
   // OTA check state from glasses store
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
+  const [otaVersionUrl] = useSetting<string>(SETTINGS.ota_version_url.key)
   const glassesConnected = useGlassesStore(selectGlassesConnected)
   const buildNumber = useGlassesStore((state) => state.buildNumber)
   const glassesWifiConnected = useGlassesStore((state) => state.wifi.state === "connected")
@@ -634,7 +632,7 @@ export function OtaUpdateChecker() {
       )
       hasCheckedOta.current = true // Mark as checked to prevent duplicate checks
 
-      checkForOtaUpdate(OTA_VERSION_URL_PROD, buildNumber, latestMtkFirmwareVersion, latestBesFirmwareVersion)
+      checkForOtaUpdate(otaVersionUrl, buildNumber, latestMtkFirmwareVersion, latestBesFirmwareVersion)
         .then(({updateAvailable, latestVersionInfo, updates}) => {
           console.log(
             `OTA: check completed - updateAvailable: ${updateAvailable}, updates: ${updates?.join(", ") || "none"}`,
@@ -747,6 +745,7 @@ export function OtaUpdateChecker() {
     defaultWearable,
     pathname,
     push,
+    otaVersionUrl,
     superMode,
   ])
 

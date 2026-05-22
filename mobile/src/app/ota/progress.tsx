@@ -22,6 +22,7 @@ import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
 import {isGlassesConnected, selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
+import {SETTINGS, useSetting} from "@/stores/settings"
 import {getOtaErrorMessage, shouldShowChangeWifiForOtaDownloadFailure} from "@/utils/otaErrorMapping"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 import {useNavigationStore} from "@/stores/navigation"
@@ -77,6 +78,7 @@ export default function OtaProgressScreen() {
   const connected = useGlassesStore(selectGlassesConnected)
   const otaStatus = useGlassesStore((s) => s.otaStatus)
   const otaProgress = useGlassesStore((s) => s.otaProgress)
+  const [otaVersionUrl] = useSetting<string>(SETTINGS.ota_version_url.key)
 
   // Genuinely local UI state
   const [errorMsg, setErrorMsg] = useState("")
@@ -308,7 +310,7 @@ export default function OtaProgressScreen() {
         console.log(
           `[OTA_PROGRESS] watchdog: no ack in ${RETRY_INTERVAL_MS}ms, retrying ota_start (attempt ${retryCountRef.current})`,
         )
-        void BluetoothSdk.sendOtaStart()
+        void BluetoothSdk.sendOtaStart(otaVersionUrl)
           .then(() => {
             armAckAndStuckWatchdogsOnly()
           })
@@ -332,14 +334,14 @@ export default function OtaProgressScreen() {
       clearRetryTimeout()
       setErrorMsg(OtaProgressMessages.stalledOrStuck)
     }, DOWNLOAD_STUCK_TIMEOUT_MS)
-  }, [clearRetryTimeout, clearStuckTimeout, computeDisplayStateNow])
+  }, [clearRetryTimeout, clearStuckTimeout, computeDisplayStateNow, otaVersionUrl])
 
   const sendOtaStartWithWatchdogs = useCallback(async () => {
     maybeStartGlobalTimeout()
     hasReceivedAckRef.current = false
     armAckAndStuckWatchdogsOnly()
     try {
-      await BluetoothSdk.sendOtaStart()
+      await BluetoothSdk.sendOtaStart(otaVersionUrl)
     } catch (err) {
       console.warn("[OTA_PROGRESS] sendOtaStart threw", err)
       clearRetryTimeout()
@@ -355,7 +357,7 @@ export default function OtaProgressScreen() {
         setErrorMsg(OtaProgressMessages.sendOtaStartFailed)
       }
     }
-  }, [armAckAndStuckWatchdogsOnly, clearRetryTimeout, clearStuckTimeout, maybeStartGlobalTimeout])
+  }, [armAckAndStuckWatchdogsOnly, clearRetryTimeout, clearStuckTimeout, maybeStartGlobalTimeout, otaVersionUrl])
 
   sendOtaStartRef.current = sendOtaStartWithWatchdogs
 

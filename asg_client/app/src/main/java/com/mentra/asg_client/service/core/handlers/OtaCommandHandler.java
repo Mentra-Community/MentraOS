@@ -117,10 +117,13 @@ public class OtaCommandHandler implements ICommandHandler {
 
         // Reset retry counter on success
         otaStartRetryCount = 0;
-        
+
+        String versionJsonUrl = data.optString("version_json_url", data.optString("ota_version_url", null));
+
         // Start OTA from phone request
-        otaHelperInstance.startOtaFromPhone();
-        Log.i(TAG, "📱 OTA started from phone command");
+        otaHelperInstance.startOtaFromPhone(versionJsonUrl);
+        Log.i(TAG, "📱 OTA started from phone command"
+                + (versionJsonUrl != null && !versionJsonUrl.isEmpty() ? " using " + versionJsonUrl : ""));
         return true;
     }
 
@@ -184,11 +187,11 @@ public class OtaCommandHandler implements ICommandHandler {
             st.put("overall_percent", 0);
             st.put("status", "failed");
             st.put("error_message", errorMessage);
-            
+
             communicationManager.sendOtaStatus(st);
             Log.i(TAG, "📱 Sent OTA error to phone: " + errorMessage);
         } catch (JSONException e) {
             Log.e(TAG, "Error creating OTA error message", e);
         }
     }
-} 
+}

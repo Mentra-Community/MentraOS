@@ -2514,12 +2514,19 @@ class MentraLive: NSObject, SGCManager {
     /// Called when user approves an update (onboarding or background mode).
     /// Triggers glasses to begin download and installation.
     func sendOtaStart() {
+        sendOtaStart(versionJsonUrl: nil)
+    }
+
+    func sendOtaStart(versionJsonUrl: String?) {
         Bridge.log("LIVE: 📱 Sending ota_start command to glasses")
 
-        let json: [String: Any] = [
+        var json: [String: Any] = [
             "type": "ota_start",
             "timestamp": Int(Date().timeIntervalSince1970 * 1000),
         ]
+        if let trimmedUrl = versionJsonUrl?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmedUrl.isEmpty {
+            json["version_json_url"] = trimmedUrl
+        }
 
         sendJson(json, wakeUp: true)
     }

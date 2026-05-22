@@ -470,8 +470,8 @@ class MentraBluetoothSdk private constructor(
         deviceManager.requestVersionInfo()
     }
 
-    internal fun sendOtaStart() {
-        deviceManager.sendOtaStart()
+    internal fun sendOtaStart(versionJsonUrl: String? = null) {
+        deviceManager.sendOtaStart(versionJsonUrl)
     }
 
     internal fun sendOtaQueryStatus() {

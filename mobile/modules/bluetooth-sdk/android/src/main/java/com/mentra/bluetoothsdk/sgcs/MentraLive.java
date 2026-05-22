@@ -3652,10 +3652,17 @@ public class MentraLive extends SGCManager {
      * Triggers glasses to begin download and installation.
      */
     public void sendOtaStart() {
+        sendOtaStart(null);
+    }
+
+    public void sendOtaStart(String versionJsonUrl) {
         try {
             JSONObject json = new JSONObject();
             json.put("type", "ota_start");
             json.put("timestamp", System.currentTimeMillis());
+            if (versionJsonUrl != null && !versionJsonUrl.trim().isEmpty()) {
+                json.put("version_json_url", versionJsonUrl.trim());
+            }
             sendJson(json, true);
             Bridge.log("LIVE: 📱 Sending ota_start command to glasses");
         } catch (JSONException e) {

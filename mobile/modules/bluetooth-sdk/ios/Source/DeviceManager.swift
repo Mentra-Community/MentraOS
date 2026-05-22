@@ -1082,9 +1082,13 @@ struct ViewState {
     /// Send OTA start command to glasses.
     /// Called when user approves an update (onboarding or background mode).
     /// Triggers glasses to begin download and installation.
-    func sendOtaStart() {
+    func sendOtaStart(versionJsonUrl: String? = nil) {
         Bridge.log("MAN: 📱 Sending OTA start command to glasses")
-        sgc?.sendOtaStart()
+        if let live = sgc as? MentraLive {
+            live.sendOtaStart(versionJsonUrl: versionJsonUrl)
+        } else {
+            sgc?.sendOtaStart()
+        }
     }
 
     func sendOtaQueryStatus() {

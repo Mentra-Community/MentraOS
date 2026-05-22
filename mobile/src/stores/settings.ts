@@ -5,6 +5,7 @@ import {create} from "zustand"
 import {subscribeWithSelector} from "zustand/middleware"
 import * as Device from "expo-device"
 
+import {OTA_VERSION_URL_PROD} from "@/config/ota"
 import restComms from "@/services/RestComms"
 import {storage} from "@/utils/storage"
 
@@ -121,6 +122,17 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: false,
     persist: true,
   },
+  ota_version_url: {
+    key: "ota_version_url",
+    defaultValue: () => {
+      return process.env.EXPO_PUBLIC_OTA_VERSION_URL_OVERRIDE || OTA_VERSION_URL_PROD
+    },
+    // If env var is set, always use it (on every boot)
+    override: () => process.env.EXPO_PUBLIC_OTA_VERSION_URL_OVERRIDE,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   saved_backend_urls: {
     key: "saved_backend_urls",
     defaultValue: () => [],
@@ -133,6 +145,13 @@ export const SETTINGS: Record<string, Setting> = {
     defaultValue: () => [],
     writable: true,
     saveOnServer: true,
+    persist: true,
+  },
+  saved_ota_version_urls: {
+    key: "saved_ota_version_urls",
+    defaultValue: () => [],
+    writable: true,
+    saveOnServer: false,
     persist: true,
   },
   reconnect_on_app_foreground: {

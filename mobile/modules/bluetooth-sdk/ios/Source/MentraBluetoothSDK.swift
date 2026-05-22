@@ -436,8 +436,8 @@ public final class MentraBluetoothSDK {
         DeviceManager.shared.requestVersionInfo()
     }
 
-    func sendOtaStart() {
-        DeviceManager.shared.sendOtaStart()
+    func sendOtaStart(versionJsonUrl: String? = nil) {
+        DeviceManager.shared.sendOtaStart(versionJsonUrl: versionJsonUrl)
     }
 
     func sendOtaQueryStatus() {
