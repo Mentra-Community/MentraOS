@@ -48,6 +48,7 @@
     }
   },
   "scripts": {
+    "test": "bun test",
     "build": "bun run build:js && bun run build:types",
     "build:js-only": "bun run build:js",
     "build:full": "bun run build:js && bun run build:types",
