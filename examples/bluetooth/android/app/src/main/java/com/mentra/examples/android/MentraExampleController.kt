@@ -47,11 +47,13 @@ import com.mentra.bluetoothsdk.RgbLedAction
 import com.mentra.bluetoothsdk.RgbLedColor
 import com.mentra.bluetoothsdk.RgbLedRequest
 import com.mentra.bluetoothsdk.ScanSession
+import com.mentra.bluetoothsdk.SpeakingStatusEvent
 import com.mentra.bluetoothsdk.StreamState
 import com.mentra.bluetoothsdk.StreamKeepAliveRequest
 import com.mentra.bluetoothsdk.StreamRequest
 import com.mentra.bluetoothsdk.StreamStatus
 import com.mentra.bluetoothsdk.TouchEvent
+import com.mentra.bluetoothsdk.VoiceActivityDetectionStatusEvent
 import com.mentra.bluetoothsdk.WifiScanResult
 import com.mentra.bluetoothsdk.WifiStatus
 import com.mentra.bluetoothsdk.WifiStatusEvent
@@ -152,6 +154,8 @@ data class MentraExampleState(
     val micRecording: Boolean = false,
     val pcmBytes: Int = 0,
     val pcmFrames: Int = 0,
+    val speaking: Boolean? = null,
+    val voiceActivityDetectionEnabled: Boolean = true,
     val photoDestination: PhotoDestination = PhotoDestination.THIS_PHONE,
     val photoPreviewUrl: String? = null,
     val photoCompression: String = "medium",
@@ -1015,6 +1019,14 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         startMicPlayback()
     }
 
+    fun setVoiceActivityDetectionEnabled(enabled: Boolean) = runAction(
+        if (enabled) "Enable voice activity detection" else "Disable voice activity detection"
+    ) {
+        requireConnected("change voice activity detection")
+        state = state.copy(voiceActivityDetectionEnabled = enabled)
+        mentraBluetoothSdk.setVoiceActivityDetectionEnabled(enabled)
+    }
+
     fun selectLedMode(mode: String) = runAction("RGB LED $mode") {
         requireConnected("control the RGB LED")
         state = state.copy(ledMode = mode)
@@ -1236,6 +1248,18 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             "LIVE",
             "received LC3 mic frame while PCM recording is enabled (${event.lc3.size} bytes, ${event.frameDurationMs}ms)",
         )
+    }
+
+    override fun onVoiceActivityDetectionStatus(event: VoiceActivityDetectionStatusEvent) {
+        state = state.copy(voiceActivityDetectionEnabled = event.voiceActivityDetectionEnabled)
+        addEvent(
+            "LIVE",
+            "voice activity detection ${if (event.voiceActivityDetectionEnabled) "enabled" else "disabled"}",
+        )
+    }
+
+    override fun onSpeakingStatus(event: SpeakingStatusEvent) {
+        state = state.copy(speaking = event.speaking)
     }
 
     override fun onRawEvent(eventName: String, values: Map<String, Any>) {
@@ -1656,13 +1680,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             lastMicDurationSeconds = null,
             micPlaybackHint = null,
         )
-        mentraBluetoothSdk.setMicState(enabled = true, useGlassesMic = true, bypassVad = true)
+        mentraBluetoothSdk.setMicState(enabled = true, useGlassesMic = true)
         startMicElapsedTimer()
     }
 
     private fun stopMicRecording() {
         if (isGlassesConnected()) {
-            mentraBluetoothSdk.setMicState(enabled = false, bypassVad = true)
+            mentraBluetoothSdk.setMicState(enabled = false)
         }
         stopMicElapsedTimer()
         val pcm = micPcmBuffer.toByteArray()

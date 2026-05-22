@@ -367,6 +367,12 @@ struct SystemScreen: View {
                         active: model.micPlaying,
                         action: model.playMicRecording
                     )
+                    voiceActivityToggle(
+                        active: model.voiceActivityDetectionEnabled,
+                        enabled: model.glassesConnected
+                    ) {
+                        model.setVoiceActivityDetectionEnabled(!model.voiceActivityDetectionEnabled)
+                    }
                 }
             }
             .padding(.bottom, 10)
@@ -377,6 +383,8 @@ struct SystemScreen: View {
                     .foregroundColor(model.micRecording || model.micPlaying ? AppColor.greenAccent : AppColor.muted)
                     .lineLimit(2)
                     .minimumScaleFactor(0.8)
+                speakingStatusRow
+                    .padding(.top, 6)
                 Button(action: model.openBluetoothSettings) {
                     Text("Bluetooth settings")
                         .font(.system(size: 10, weight: .bold))
@@ -429,6 +437,26 @@ struct SystemScreen: View {
         return "recording · \(formatPcmBytes(model.pcmBytes)) captured"
     }
 
+    private var speakingStatusRow: some View {
+        let speaking = model.speaking == true
+        return HStack(spacing: 7) {
+            Circle()
+                .fill(speaking ? AppColor.greenAccent : AppColor.red)
+                .frame(width: 8, height: 8)
+            Text("Speech")
+                .font(.system(size: 10, weight: .bold))
+                .tracking(0.6)
+                .foregroundColor(AppColor.muted)
+            Text(speaking ? "Speaking" : "Not speaking")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(speaking ? AppColor.greenAccent : AppColor.red)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(AppColor.ink.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
     private func formatPcmBytes(_ bytes: Int) -> String {
         if bytes < 1024 {
             return "\(bytes) B PCM"
@@ -453,6 +481,21 @@ struct SystemScreen: View {
                     .foregroundColor(active ? .white : AppColor.greenInk)
             }
         }
+        .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.42)
+    }
+
+    private func voiceActivityToggle(active: Bool, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(active ? "VAD on" : "VAD off")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(active ? AppColor.greenInk : AppColor.muted)
+                .frame(minWidth: 66, minHeight: 44)
+                .background(active ? AppColor.greenAccent.opacity(0.16) : AppColor.ink.opacity(0.04))
+                .overlay(Capsule().stroke(active ? AppColor.greenAccent.opacity(0.34) : AppColor.ink.opacity(0.08), lineWidth: 1))
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
         .disabled(!enabled)
         .opacity(enabled ? 1 : 0.42)
     }

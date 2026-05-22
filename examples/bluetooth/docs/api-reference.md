@@ -232,7 +232,7 @@ These are the supported React Native app developer entrypoints:
 | Wi-Fi and hotspot | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
 | Camera and gallery | `requestPhoto`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setButtonPhotoSettings`, `setButtonVideoRecordingSettings`, `setButtonCameraLed`, `setButtonMaxRecordingTime`, `setCameraFov`, `startVideoRecording`, `stopVideoRecording` |
 | Streaming | `startStream`, `keepStreamAlive`, `stopStream` |
-| Audio | `setMicState`, `setPreferredMic`, `setOwnAppAudioPlaying`, `getGlassesMediaVolume`, `setGlassesMediaVolume` |
+| Audio | `setMicState`, `setPreferredMic`, `setVoiceActivityDetectionEnabled`, `setOwnAppAudioPlaying`, `getGlassesMediaVolume`, `setGlassesMediaVolume` |
 | LED and version | `rgbLedControl`, `requestVersionInfo` |
 
 React Native helper exports include `DeviceModels`, `isConnectedGlassesConnectionStatus`, `isReadyGlassesConnectionStatus`, `isBusyGlassesConnectionStatus`, `isConnectedWifiStatus`, and `isEnabledHotspotStatus`. The React subpath exports `useMentraBluetooth`, `useBluetoothScan`, and `useBluetoothEvent`.
@@ -417,7 +417,7 @@ await BluetoothSdk.setMicState(true);
 
 Microphone audio events and local transcription are advanced capabilities. Gate them behind explicit user permission and in-app controls.
 
-`setMicState(enabled)` defaults to glasses microphone audio with `bypassVad=true`. VAD means Voice Activity Detection: the SDK speech detector that can gate microphone audio to detected speech. Keep the default for continuous PCM into external STT, WAV writing, recording, or playback. Pass `bypassVad=false` only when your app intentionally wants VAD-gated microphone events.
+`setMicState(enabled)` defaults to glasses microphone audio, transcript events off, and LC3 events off. Microphone audio events are continuous while capture is enabled; glasses-side Voice Activity Detection status is reported separately through `voice_activity_detection_status` and `speaking_status` events when supported.
 
 Phone-originated playback is routed by the OS, not by the BLE command channel. On Android, Mentra Live initiates Bluetooth Classic bonding after BLE connects; accept the system pairing dialog so media audio can route to the glasses. On iOS, users must pair/connect the glasses from Settings > Bluetooth and select them as the audio output because apps cannot initiate Bluetooth Classic audio pairing.
 
@@ -664,7 +664,8 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `button_press` | `ButtonPressEvent` | Glasses button press. |
 | `touch_event` | `TouchEvent` | Glasses touch or swipe gesture. |
 | `head_up` | `HeadUpEvent` | Head-up state changes. |
-| `vad_status` | `VadStatusEvent` | Voice Activity Detection state changes. |
+| `voice_activity_detection_status` | `VoiceActivityDetectionStatusEvent` | Voice Activity Detection on/off state changes. |
+| `speaking_status` | `SpeakingStatusEvent` | Glasses-side speech activity changes. |
 | `battery_status` | `BatteryStatusEvent` | Battery update from glasses. |
 | `local_transcription` | `LocalTranscriptionEvent` | SDK local transcription text update. |
 | `wifi_status_change` | `WifiStatusChangeEvent` | Glasses Wi-Fi connection state changes. |
@@ -685,9 +686,9 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `stream_status` | `StreamStatusEvent` | Camera stream lifecycle, reconnect, or error state changes. |
 | `keep_alive_ack` | `KeepAliveAckEvent` | Glasses acknowledge a stream keep-alive request. |
 
-React Native event payload fields use camelCase. For example, `touch_event` includes `deviceModel` and `gestureName`, successful `photo_response` events include `uploadUrl`, hotspot errors include `errorMessage`, and `gallery_status` includes `hasContent` and `cameraBusy`. `mic_pcm` includes `sampleRate`, `bitsPerSample`, `channels`, `encoding`, and `vadGated`; `mic_lc3` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, `packetizedFromGlasses`, and `vadGated`.
+React Native event payload fields use camelCase. For example, `touch_event` includes `deviceModel` and `gestureName`, successful `photo_response` events include `uploadUrl`, hotspot errors include `errorMessage`, and `gallery_status` includes `hasContent` and `cameraBusy`. `mic_pcm` includes `sampleRate`, `bitsPerSample`, `channels`, and `encoding`; `mic_lc3` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, and `packetizedFromGlasses`.
 
-Android and iOS expose typed callbacks/delegate methods instead of the React Native string event API. Android uses `MentraBluetoothSdkListener` methods such as `onStateChanged`, `onGlassesChanged`, `onSdkStateChanged`, `onScanChanged`, `onDeviceDiscovered`, `onButtonPress`, `onPhotoResponse`, `onMicPcm`, and `onStreamStatus`. iOS uses `MentraBluetoothSDKDelegate` methods such as `mentraBluetoothSDK(_:didUpdate:)`, `mentraBluetoothSDK(_:didUpdateGlasses:)`, `mentraBluetoothSDK(_:didUpdateSdkState:)`, `mentraBluetoothSDK(_:didUpdateScan:)`, `mentraBluetoothSDK(_:didDiscover:)`, `mentraBluetoothSDK(_:didReceive:)`, `mentraBluetoothSDK(_:didReceiveMicPcm:)`, and `mentraBluetoothSDK(_:didReceiveMicLc3:)`. Microphone audio callbacks use `MicPcmEvent` and `MicLc3Event` objects with the same metadata as React Native.
+Android and iOS expose typed callbacks/delegate methods instead of the React Native string event API. Android uses `MentraBluetoothSdkListener` methods such as `onStateChanged`, `onGlassesChanged`, `onSdkStateChanged`, `onScanChanged`, `onDeviceDiscovered`, `onButtonPress`, `onVoiceActivityDetectionStatus`, `onSpeakingStatus`, `onPhotoResponse`, `onMicPcm`, and `onStreamStatus`. iOS uses `MentraBluetoothSDKDelegate` methods such as `mentraBluetoothSDK(_:didUpdate:)`, `mentraBluetoothSDK(_:didUpdateGlasses:)`, `mentraBluetoothSDK(_:didUpdateSdkState:)`, `mentraBluetoothSDK(_:didUpdateScan:)`, `mentraBluetoothSDK(_:didDiscover:)`, `mentraBluetoothSDK(_:didReceive:)`, `mentraBluetoothSDK(_:didReceiveMicPcm:)`, and `mentraBluetoothSDK(_:didReceiveMicLc3:)`. Microphone audio callbacks use `MicPcmEvent` and `MicLc3Event` objects with the same metadata as React Native.
 
 ## SDK Models
 
@@ -710,7 +711,7 @@ Android and iOS expose typed callbacks/delegate methods instead of the React Nat
 | iOS `MentraBluetoothSDK()` | Uses `.default` configuration. |
 | `connect` / `connectDefault` | `connect` saves connected glasses as default and cancels existing connection attempts unless options override that behavior. `connectDefault` uses the app-restored default device. |
 | `displayText` | Defaults to `x = 0`, `y = 0`, `size = 24` when supported by the platform call. |
-| `setMicState` | `useGlassesMic = true`, `bypassVad = true`, `sendTranscript = false`, and `sendLc3Data = false` unless explicitly set. |
+| `setMicState` | `useGlassesMic = true`, `sendTranscript = false`, and `sendLc3Data = false` unless explicitly set. |
 | `PhotoRequest` / `requestPhoto` | Pass explicit size, compression, and sound. The camera light is always enabled by the SDK. |
 | `StreamRequest` / `startStream` | `keepAlive = true`, `keepAliveIntervalSeconds = 15`, and `sound = true` by default in native SDK calls. The camera light is always enabled by the SDK. |
 

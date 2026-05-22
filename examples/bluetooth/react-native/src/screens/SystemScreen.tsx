@@ -229,11 +229,17 @@ export function SystemScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             <MicControlButton disabled={sdk.lastMicBytes <= 0 || sdk.micRecording} active={sdk.micPlaying} onPress={sdk.playMicRecording}>
               {sdk.micPlaying ? <StopIcon active /> : <PlayIcon />}
             </MicControlButton>
+            <VoiceActivityToggle
+              active={sdk.voiceActivityDetectionEnabled}
+              disabled={!connected}
+              onPress={() => sdk.setVoiceActivityDetectionEnabled(!sdk.voiceActivityDetectionEnabled)}
+            />
           </View>
         </View>
         <View>
           <Text style={styles.tileTitle}>Microphone</Text>
           <Text style={[styles.tileSub, { color: sdk.micRecording || sdk.micPlaying ? colors.greenAccent : colors.muted }]}>{micStatus}</Text>
+          <SpeakingStatusRow speaking={sdk.speaking === true} />
           <Text style={styles.micRouteText}>{sdk.micAudioRouteStatus}</Text>
           <Pressable style={styles.micSettingsButton} onPress={sdk.openBluetoothSettings}>
             <Text style={styles.micSettingsText}>Audio setup</Text>
@@ -549,6 +555,31 @@ function MicControlButton({ active, children, disabled, onPress }: { active: boo
   );
 }
 
+function VoiceActivityToggle({ active, disabled, onPress }: { active: boolean; disabled: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      disabled={disabled}
+      onPress={onPress}
+      style={[styles.voiceActivityToggle, active && styles.voiceActivityToggleActive, disabled && styles.disabled]}>
+      <Text style={[styles.voiceActivityToggleText, active && styles.voiceActivityToggleTextActive]}>
+        {active ? 'VAD on' : 'VAD off'}
+      </Text>
+    </Pressable>
+  );
+}
+
+function SpeakingStatusRow({ speaking }: { speaking: boolean }) {
+  return (
+    <View style={styles.speakingStatusRow}>
+      <View style={[styles.speakingDot, { backgroundColor: speaking ? colors.greenAccent : colors.red }]} />
+      <Text style={styles.speakingLabel}>Speech</Text>
+      <Text style={[styles.speakingValue, { color: speaking ? colors.greenAccent : colors.red }]}>
+        {speaking ? 'Speaking' : 'Not speaking'}
+      </Text>
+    </View>
+  );
+}
+
 function RecordIcon() {
   return (
     <Svg width={16} height={16} viewBox="0 0 24 24">
@@ -635,6 +666,14 @@ const styles = StyleSheet.create({
   micControls: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   micControlButton: { width: 44, height: 44, borderRadius: 999, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', shadowColor: '#0F2A1D', shadowOpacity: 0.05, shadowOffset: { width: 0, height: 4 }, shadowRadius: 8, elevation: 1 },
   micControlButtonActive: { backgroundColor: colors.greenInk },
+  voiceActivityToggle: { minWidth: 66, minHeight: 44, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10, borderRadius: 999, backgroundColor: 'rgba(15,42,29,0.04)', borderWidth: 1, borderColor: 'rgba(15,42,29,0.08)' },
+  voiceActivityToggleActive: { backgroundColor: 'rgba(52,199,89,0.16)', borderColor: 'rgba(52,199,89,0.34)' },
+  voiceActivityToggleText: { color: colors.muted, fontSize: 11, fontWeight: '700' },
+  voiceActivityToggleTextActive: { color: colors.greenInk },
+  speakingStatusRow: { alignSelf: 'flex-start', minHeight: 32, flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 6, paddingVertical: 7, paddingHorizontal: 10, borderRadius: 12, backgroundColor: 'rgba(15,42,29,0.04)' },
+  speakingDot: { width: 8, height: 8, borderRadius: 999 },
+  speakingLabel: { color: colors.muted, fontSize: 10, fontWeight: '700', letterSpacing: 0.6, textTransform: 'uppercase' },
+  speakingValue: { fontSize: 12, fontWeight: '600' },
   micSettingsButton: { alignSelf: 'flex-start', minHeight: 40, marginTop: 6, backgroundColor: 'rgba(52,199,89,0.14)', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8, justifyContent: 'center' },
   micSettingsText: { color: colors.greenDeep, fontSize: 12, fontWeight: '700' },
   micRouteText: { color: colors.muted, fontSize: 12, fontWeight: '600', lineHeight: 16, marginTop: 4 },

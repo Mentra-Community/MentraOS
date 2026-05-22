@@ -83,6 +83,7 @@ fun SystemScreen(controller: MentraExampleController) {
         connected -> "record PCM from glasses"
         else -> "connect glasses to record"
     }
+    val speakingLabel = if (state.speaking == true) "Speaking" else "Not speaking"
     val canRecordMic = connected && !state.micPlaying
     val canPlayMic = state.lastMicBytes > 0 && !state.micRecording
     val phoneVolumeLabel = state.phoneMediaVolume?.let { volume ->
@@ -290,11 +291,22 @@ fun SystemScreen(controller: MentraExampleController) {
             padding = PaddingValues(horizontal = 16.dp, vertical = 16.dp)
         ) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                     IconTile(Icons.Outlined.Mic)
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text("Microphone", color = AppColor.ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        Text(micStatus, color = if (state.micRecording || state.micPlaying) AppColor.greenAccent else AppColor.muted, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        Text(
+                            micStatus,
+                            color = if (state.micRecording || state.micPlaying) AppColor.greenAccent else AppColor.muted,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -308,9 +320,17 @@ fun SystemScreen(controller: MentraExampleController) {
                         enabled = canPlayMic || state.micPlaying,
                         active = state.micPlaying,
                     ) { controller.playMicRecording() }
+                    VoiceActivityToggle(
+                        active = state.voiceActivityDetectionEnabled,
+                        enabled = connected,
+                    ) {
+                        controller.setVoiceActivityDetectionEnabled(!state.voiceActivityDetectionEnabled)
+                    }
                 }
             }
             Spacer(Modifier.height(12.dp))
+            SpeakingStatusLine(speakingLabel, state.speaking == true)
+            Spacer(Modifier.height(10.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 Column(modifier = Modifier.weight(1f)) {
                     AudioStatusLine("Bond", state.audioBondStatus.removePrefix("Bond: "))
@@ -569,6 +589,51 @@ private fun MicControlButton(icon: ImageVector, enabled: Boolean, active: Boolea
             tint = if (active) Color.White else AppColor.greenInk.copy(alpha = if (enabled) 1f else 0.38f),
             modifier = Modifier.size(16.dp)
         )
+    }
+}
+
+@Composable
+private fun VoiceActivityToggle(active: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    Text(
+        if (active) "VAD on" else "VAD off",
+        color = if (active) AppColor.greenInk else AppColor.muted,
+        fontSize = 11.sp,
+        fontWeight = FontWeight.Bold,
+        textAlign = TextAlign.Center,
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(if (active) AppColor.greenAccent.copy(alpha = 0.16f) else AppColor.ink.copy(alpha = 0.04f))
+            .border(
+                1.dp,
+                if (active) AppColor.greenAccent.copy(alpha = 0.34f) else AppColor.ink.copy(alpha = 0.08f),
+                RoundedCornerShape(999.dp)
+            )
+            .clickable(enabled = enabled) { onClick() }
+            .widthIn(min = 66.dp)
+            .heightIn(min = 44.dp)
+            .padding(horizontal = 10.dp, vertical = 12.dp),
+    )
+}
+
+@Composable
+private fun SpeakingStatusLine(label: String, speaking: Boolean) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(AppColor.ink.copy(alpha = 0.04f))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(9.dp)
+                .clip(CircleShape)
+                .background(if (speaking) AppColor.greenAccent else AppColor.red)
+        )
+        Text("Speech", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.6.sp)
+        Text(label, color = if (speaking) AppColor.greenAccent else AppColor.red, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 

@@ -117,6 +117,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var micElapsedSeconds = 0
     @Published private(set) var pcmFrames = 0
     @Published private(set) var pcmBytes = 0
+    @Published private(set) var speaking: Bool?
+    @Published private(set) var voiceActivityDetectionEnabled = true
     @Published private(set) var lastMicDurationSeconds: Int?
     @Published private(set) var lastMicBytes = 0
     @Published private(set) var micPlaybackHint: String?
@@ -318,6 +320,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             try requireConnected("change gallery mode")
             galleryModeEnabled = enabled
             Task { try? await mentraBluetoothSdk.setGalleryModeEnabled(enabled) }
+        }
+    }
+
+    func setVoiceActivityDetectionEnabled(_ enabled: Bool) {
+        runAction(enabled ? "Enable voice activity detection" : "Disable voice activity detection") {
+            try requireConnected("change voice activity detection")
+            voiceActivityDetectionEnabled = enabled
+            Task { try? await mentraBluetoothSdk.setVoiceActivityDetectionEnabled(enabled) }
         }
     }
 
@@ -1047,6 +1057,11 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             append(tag: "LIVE", text: "button \(button.buttonId): \(button.pressType)")
         case let .touch(touch):
             append(tag: "LIVE", text: "\(touch.isSwipe ? "swipe" : "touch") \(touch.gestureName ?? summarize(touch.values))")
+        case let .voiceActivityDetectionStatus(status):
+            voiceActivityDetectionEnabled = status.voiceActivityDetectionEnabled
+            append(tag: "LIVE", text: "voice activity detection \(status.voiceActivityDetectionEnabled ? "enabled" : "disabled")")
+        case let .speakingStatus(status):
+            speaking = status.speaking
         case let .wifiStatus(status):
             applyWifiStatus(status)
         case let .hotspotStatus(status):
@@ -1295,14 +1310,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         pcmBytes = 0
         micElapsedSeconds = 0
         micStartedAt = Date()
-        mentraBluetoothSdk.setMicState(enabled: true, useGlassesMic: true, bypassVad: true)
+        mentraBluetoothSdk.setMicState(enabled: true, useGlassesMic: true)
         micRecording = true
         startMicElapsedTimer()
     }
 
     private func stopMicRecording() {
         if glassesConnected {
-            mentraBluetoothSdk.setMicState(enabled: false, bypassVad: true)
+            mentraBluetoothSdk.setMicState(enabled: false)
         }
         micRecording = false
         stopMicElapsedTimer()
@@ -1850,7 +1865,7 @@ func wifiScanResults(_ status: PhoneSdkRuntimeState?) -> [WifiScanResult] {
 
 extension GlassesRuntimeState {
     func withBattery(level: Int, charging: Bool) -> GlassesRuntimeState {
-        guard case let .connected(_, connection, device, firmware, hotspot, ready, signal, wifi) = self else {
+        guard case let .connected(_, connection, device, firmware, hotspot, ready, signal, voiceActivityDetectionEnabled, wifi) = self else {
             return self
         }
         return .connected(
@@ -1861,12 +1876,13 @@ extension GlassesRuntimeState {
             hotspot: hotspot,
             ready: ready,
             signal: signal,
+            voiceActivityDetectionEnabled: voiceActivityDetectionEnabled,
             wifi: wifi
         )
     }
 
     func withWifi(_ wifi: WifiStatus) -> GlassesRuntimeState {
-        guard case let .connected(battery, connection, device, firmware, hotspot, ready, signal, _) = self else {
+        guard case let .connected(battery, connection, device, firmware, hotspot, ready, signal, voiceActivityDetectionEnabled, _) = self else {
             return self
         }
         return .connected(
@@ -1877,12 +1893,13 @@ extension GlassesRuntimeState {
             hotspot: hotspot,
             ready: ready,
             signal: signal,
+            voiceActivityDetectionEnabled: voiceActivityDetectionEnabled,
             wifi: wifi
         )
     }
 
     func withHotspot(_ hotspot: HotspotStatus) -> GlassesRuntimeState {
-        guard case let .connected(battery, connection, device, firmware, _, ready, signal, wifi) = self else {
+        guard case let .connected(battery, connection, device, firmware, _, ready, signal, voiceActivityDetectionEnabled, wifi) = self else {
             return self
         }
         return .connected(
@@ -1893,6 +1910,7 @@ extension GlassesRuntimeState {
             hotspot: hotspot,
             ready: ready,
             signal: signal,
+            voiceActivityDetectionEnabled: voiceActivityDetectionEnabled,
             wifi: wifi
         )
     }

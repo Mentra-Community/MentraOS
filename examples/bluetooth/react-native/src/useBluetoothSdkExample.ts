@@ -14,8 +14,10 @@ import BluetoothSdk, {
   type MicPcmEvent,
   type PhotoResponseEvent,
   type RgbLedControlResponseEvent,
+  type SpeakingStatusEvent,
   type StreamStatusEvent,
   type TouchEvent,
+  type VoiceActivityDetectionStatusEvent,
 } from '@mentra/bluetooth-sdk';
 import {
   useMentraBluetooth,
@@ -116,6 +118,8 @@ export type BluetoothSdkExampleState = {
   micRecording: boolean;
   pcmBytes: number;
   pcmFrames: number;
+  speaking: boolean | null;
+  voiceActivityDetectionEnabled: boolean;
   permissionStatus: string;
   phonePhotoReceiverRunning: boolean;
   phonePhotoUploadUrl: string | null;
@@ -170,6 +174,7 @@ export type BluetoothSdkExampleActions = {
   setStreamCloudServerEnabled: (enabled: boolean) => Promise<void>;
   setStreamUrl: (url: string) => void;
   setWebhookUrl: (url: string) => void;
+  setVoiceActivityDetectionEnabled: (enabled: boolean) => Promise<void>;
   startScan: () => Promise<void>;
   testWebhook: () => Promise<void>;
   toggleHotspot: () => Promise<void>;
@@ -241,6 +246,8 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   const [micElapsedSeconds, setMicElapsedSeconds] = useState(0);
   const [pcmFrames, setPcmFrames] = useState(0);
   const [pcmBytes, setPcmBytes] = useState(0);
+  const [speaking, setSpeaking] = useState<boolean | null>(null);
+  const [voiceActivityDetectionEnabled, setVoiceActivityDetectionEnabledState] = useState(true);
   const [lastMicBytes, setLastMicBytes] = useState(0);
   const [lastMicDurationSeconds, setLastMicDurationSeconds] = useState<number | null>(null);
   const [micPlaybackHint, setMicPlaybackHint] = useState<string | null>(null);
@@ -325,6 +332,13 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
           'LIVE',
           `${gesture.toLowerCase().includes('swipe') ? 'swipe' : 'touch'} ${gesture}`,
         );
+      }),
+      BluetoothSdk.addListener('voice_activity_detection_status', (payload: VoiceActivityDetectionStatusEvent) => {
+        setVoiceActivityDetectionEnabledState(payload.voiceActivityDetectionEnabled);
+        addEvent('LIVE', `voice activity detection ${payload.voiceActivityDetectionEnabled ? 'enabled' : 'disabled'}`);
+      }),
+      BluetoothSdk.addListener('speaking_status', (payload: SpeakingStatusEvent) => {
+        setSpeaking(payload.speaking);
       }),
       BluetoothSdk.addListener('battery_status', (payload) => {
         addEvent('STORE', `battery ${payload.level}%${payload.charging ? ' charging' : ''}`);
@@ -1151,6 +1165,14 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     });
   }
 
+  async function setVoiceActivityDetectionEnabledAction(enabled: boolean) {
+    await runAction(enabled ? 'Enable voice activity detection' : 'Disable voice activity detection', async () => {
+      requireConnected('change voice activity detection');
+      setVoiceActivityDetectionEnabledState(enabled);
+      await BluetoothSdk.setVoiceActivityDetectionEnabled(enabled);
+    });
+  }
+
   async function openBluetoothSettings() {
     await runAction('Open Bluetooth settings', async () => {
       if (Platform.OS === 'android') {
@@ -1192,7 +1214,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     setMicRecording(true);
     startMicElapsedTimer();
     try {
-      await BluetoothSdk.setMicState(true, true, true);
+      await BluetoothSdk.setMicState(true, true);
     } catch (error) {
       micRecordingRef.current = false;
       setMicRecording(false);
@@ -1524,6 +1546,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     openWifiSettings,
     pcmBytes,
     pcmFrames,
+    speaking,
     permissionStatus,
     phonePhotoReceiverRunning,
     phonePhotoUploadUrl,
@@ -1550,6 +1573,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     setStreamCloudServerEnabled: setStreamCloudServerEnabledAction,
     setStreamUrl: setStreamUrlAction,
     setWebhookUrl,
+    setVoiceActivityDetectionEnabled: setVoiceActivityDetectionEnabledAction,
     selectedDiscoveredDevice,
     startScan,
     streamCloudServerEnabled,
@@ -1563,6 +1587,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     toggleHotspot,
     toggleMic,
     toggleStream,
+    voiceActivityDetectionEnabled,
     webhookUrl,
   };
 }
@@ -1680,13 +1705,11 @@ function copyPcmFrame(pcm: MicPcmEvent['pcm'] | ArrayBufferView | ArrayLike<numb
 }
 
 function formatMicPcmMetadata(event: MicPcmEvent) {
-  const vad = event.vadGated ? 'VAD-gated' : 'continuous';
-  return `${event.sampleRate}Hz ${event.bitsPerSample}-bit ${event.channels}ch ${event.encoding} ${vad}`;
+  return `${event.sampleRate}Hz ${event.bitsPerSample}-bit ${event.channels}ch ${event.encoding}`;
 }
 
 function formatMicLc3Metadata(event: MicLc3Event) {
-  const vad = event.vadGated ? 'VAD-gated' : 'continuous';
-  return `${event.lc3.byteLength} bytes, ${event.frameDurationMs}ms, ${event.sampleRate}Hz ${event.channels}ch, ${event.bitrate}bps, ${vad}`;
+  return `${event.lc3.byteLength} bytes, ${event.frameDurationMs}ms, ${event.sampleRate}Hz ${event.channels}ch, ${event.bitrate}bps`;
 }
 
 function concatChunks(chunks: MicPcmChunk[]) {

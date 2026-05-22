@@ -59,7 +59,19 @@ await BluetoothSdk.setOwnAppAudioPlaying(false);
 await BluetoothSdk.setMicState(true);
 ```
 
-`setMicState(enabled)` defaults to glasses microphone audio with `bypassVad=true`. VAD means Voice Activity Detection: the SDK speech detector that can gate microphone audio to detected speech. Keep the default for continuous PCM into external STT, WAV writing, recording, or playback. Pass `bypassVad=false` only when your app intentionally wants VAD-gated microphone events.
+`setMicState(enabled)` defaults to glasses microphone audio, transcript events off, and LC3 events off. Microphone audio events are continuous while capture is enabled; glasses-side Voice Activity Detection status is reported separately through `voice_activity_detection_status` and `speaking_status` events when supported.
+
+## Voice Activity Detection
+
+Voice Activity Detection is a glasses-side setting on Mentra Live. When enabled, the glasses report whether speech is currently active; when disabled, PCM capture still works continuously.
+
+```ts
+await BluetoothSdk.setVoiceActivityDetectionEnabled(true);
+
+BluetoothSdk.addListener('speaking_status', (event) => {
+  console.log(event.speaking ? 'speaking' : 'not speaking');
+});
+```
 
 ## PCM Audio
 
@@ -89,7 +101,7 @@ import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
 export function MicPcmLogger() {
   useBluetoothEvent('mic_pcm', (event) => {
     // Forward event.pcm to your audio pipeline.
-    console.log(event.sampleRate, event.bitsPerSample, event.channels, event.encoding, event.vadGated);
+    console.log(event.sampleRate, event.bitsPerSample, event.channels, event.encoding);
   });
 
   return null;
@@ -124,7 +136,7 @@ import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
 export function MicLc3Logger() {
   useBluetoothEvent('mic_lc3', (event) => {
     // Decode or forward event.lc3 depending on your pipeline.
-    console.log(event.frameDurationMs, event.frameSizeBytes, event.bitrate, event.vadGated);
+    console.log(event.frameDurationMs, event.frameSizeBytes, event.bitrate);
   });
 
   return null;

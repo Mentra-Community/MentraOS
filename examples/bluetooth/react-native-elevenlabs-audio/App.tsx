@@ -56,7 +56,6 @@ type Diagnostics = {
   lastElevenLabsEvent: string;
   lastPcmAtMs: number | null;
   lastPcmSize: number | null;
-  lastPcmVadGated: boolean | null;
   lastSendError: string | null;
   micRequestedAtMs: number | null;
   micStage: string;
@@ -87,7 +86,6 @@ const emptyDiagnostics: Diagnostics = {
   lastElevenLabsEvent: 'None',
   lastPcmAtMs: null,
   lastPcmSize: null,
-  lastPcmVadGated: null,
   lastSendError: null,
   micRequestedAtMs: null,
   micStage: 'Idle',
@@ -358,17 +356,13 @@ export default function App() {
   async function startGlassesPcm() {
     stopPcmSubscription();
     pcmSubscriptionRef.current = BluetoothSdk.addListener('mic_pcm', handlePcmFrame);
-    appendLog('requesting continuous glasses PCM with SDK VAD bypassed');
+    appendLog('requesting continuous glasses PCM');
     updateDiagnostics({micStage: 'Setting preferred mic'});
     await BluetoothSdk.setPreferredMic('glasses');
     updateDiagnostics({micStage: 'Enabling mic stream'});
     const micRequestedAtMs = Date.now();
     updateDiagnostics({micRequestedAtMs});
-    await BluetoothSdk.setMicState(
-      true,
-      true,
-      true, // Bypass SDK VAD so ElevenLabs receives continuous PCM.
-    );
+    await BluetoothSdk.setMicState(true, true);
     updateDiagnostics({micStage: 'Mic requested; waiting for PCM'});
     startFirstPcmWatchdog();
   }
@@ -413,15 +407,13 @@ export default function App() {
 
     if (nextBase.frames === 1) {
       clearFirstPcmTimeout();
-      appendLog(
-        `first PCM frame: ${pcm.byteLength} bytes, vadGated=${String(event.vadGated)}`,
-      );
+      appendLog(`first PCM frame: ${pcm.byteLength} bytes`);
     }
 
     if (!audioMetadataCapturedRef.current) {
       audioMetadataCapturedRef.current = true;
       setMetadata(
-        `${event.sampleRate} Hz, ${event.bitsPerSample}-bit, ${event.channels} ch, ${event.encoding}, vadGated=${event.vadGated}`,
+        `${event.sampleRate} Hz, ${event.bitsPerSample}-bit, ${event.channels} ch, ${event.encoding}`,
       );
     }
 
@@ -436,7 +428,6 @@ export default function App() {
         firstPcmAtMs: currentDiagnostics.firstPcmAtMs ?? receivedAtMs,
         lastPcmAtMs: receivedAtMs,
         lastPcmSize: pcm.byteLength,
-        lastPcmVadGated: event.vadGated,
         micStage: 'Receiving PCM',
       }));
     }
@@ -723,9 +714,7 @@ function formatLastPcm(diagnostics: Diagnostics, nowMs: number) {
   if (diagnostics.lastPcmAtMs === null) {
     return 'None';
   }
-  return `${formatTimestamp(diagnostics.lastPcmAtMs, nowMs)}, ${diagnostics.lastPcmSize ?? '?'} bytes, vadGated=${String(
-    diagnostics.lastPcmVadGated,
-  )}`;
+  return `${formatTimestamp(diagnostics.lastPcmAtMs, nowMs)}, ${diagnostics.lastPcmSize ?? '?'} bytes`;
 }
 
 function formatPcmWait(diagnostics: Diagnostics, nowMs: number) {
