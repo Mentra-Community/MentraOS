@@ -300,7 +300,7 @@ export function HardwareEventLogger() {
   useBluetoothEvent('button_press', (event) => console.log(event));
   useBluetoothEvent('touch_event', (event) => console.log(event));
   useBluetoothEvent('photo_response', (event) => console.log(event));
-  useBluetoothEvent('stream_status', (event) => console.log(event));
+  useBluetoothEvent('stream_status', (event) => console.log(event.resolvedConfig?.video?.fps));
   useBluetoothEvent('speaking_status', (event) => console.log(event.speaking));
   useBluetoothEvent('mic_pcm', (event) => {
     console.log(event.sampleRate, event.bitsPerSample, event.channels, event.encoding);
@@ -387,7 +387,7 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `audio_disconnected` | `AudioDisconnectedEvent` | Bluetooth audio disconnects. |
 | `mic_pcm` | `MicPcmEvent` | PCM microphone frame arrives. |
 | `mic_lc3` | `MicLc3Event` | LC3 microphone frame arrives. |
-| `stream_status` | `StreamStatusEvent` | Camera stream lifecycle, reconnect, or error state changes. |
+| `stream_status` | `StreamStatusEvent` | Camera stream lifecycle, reconnect, or error state changes. May include `resolvedConfig` with effective stream settings. |
 | `keep_alive_ack` | `KeepAliveAckEvent` | Glasses acknowledge a stream keep-alive request. |
 
 For example, `useBluetoothEvent('photo_response', ...)` receives a `PhotoResponseEvent`, while `useBluetoothEvent('mic_pcm', ...)` receives a `MicPcmEvent`. `MicPcmEvent` includes `sampleRate`, `bitsPerSample`, `channels`, `encoding`, and `voiceActivityDetectionEnabled`; `MicLc3Event` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, `packetizedFromGlasses`, and `voiceActivityDetectionEnabled`. `speaking_status` is separate from microphone audio frames so apps can use continuous audio while still reacting to speech activity.

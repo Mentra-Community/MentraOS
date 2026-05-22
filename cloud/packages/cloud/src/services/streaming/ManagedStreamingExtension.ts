@@ -447,6 +447,7 @@ export class ManagedStreamingExtension {
         undefined,
         undefined,
         undefined,
+        status.resolvedConfig,
       );
     }
 
@@ -1094,6 +1095,7 @@ export class ManagedStreamingExtension {
     webrtcUrl?: string,
     previewUrl?: string,
     thumbnailUrl?: string,
+    resolvedConfig?: ManagedStreamStatus["resolvedConfig"],
   ): Promise<void> {
     const stream = this.stateManager.getStreamByStreamId(streamId);
     if (!stream || stream.type !== "managed") return;
@@ -1124,6 +1126,7 @@ export class ManagedStreamingExtension {
       thumbnailUrl: thumbnailUrl,
       streamId,
       message,
+      resolvedConfig,
       outputs,
     };
 

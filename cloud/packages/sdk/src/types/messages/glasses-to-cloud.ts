@@ -344,6 +344,24 @@ export interface RgbLedControlResponse extends BaseMessage {
 /**
  * Stream status update from glasses
  */
+export interface StreamResolvedConfig {
+  transport?: "rtmp" | "srt" | "whip";
+  video?: {
+    width: number;
+    height: number;
+    captureWidth?: number;
+    captureHeight?: number;
+    bitrate: number;
+    fps: number;
+  };
+  audio?: {
+    bitrate?: number;
+    sampleRate?: number;
+    echoCancellation?: boolean;
+    noiseSuppression?: boolean;
+  };
+}
+
 export interface StreamStatus extends BaseMessage {
   type: GlassesToCloudMessageType.STREAM_STATUS;
   streamId?: string; // Unique identifier for the stream
@@ -368,6 +386,7 @@ export interface StreamStatus extends BaseMessage {
     droppedFrames: number;
     duration: number;
   };
+  resolvedConfig?: StreamResolvedConfig;
 }
 
 /**
