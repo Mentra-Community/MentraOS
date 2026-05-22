@@ -14,7 +14,6 @@ module.exports = function (api: any) {
             "@plugins": "./plugins",
             "@assets": "./assets",
             "@cloud": "../cloud/packages/types",
-            "@mentra/display-utils": "../cloud/packages/display-utils/src",
           },
           extensions: [".ios.js", ".android.js", ".js", ".ts", ".tsx", ".json"],
         },

@@ -56,6 +56,11 @@ export interface PhotoRequest extends BaseMessage {
   compress?: "none" | "medium" | "heavy";
   /** Controls shutter sound. Defaults to true if omitted. */
   sound?: boolean;
+  /**
+   * Optional sensor exposure time for this photo only (nanoseconds). Not persisted.
+   * When omitted or invalid, glasses use auto exposure as today.
+   */
+  exposureTimeNs?: number;
 }
 
 /**

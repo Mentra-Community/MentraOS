@@ -265,6 +265,10 @@ public class CommandProcessor {
 
         String type = commandData.type();
         Log.i(TAG, "🎯 Routing command type: " + type);
+        if ("take_photo".equals(type)) {
+            Log.i(TAG, "PHOTO PIPELINE [ASG 1/3] Received take_photo on glasses: "
+                    + commandData.data());
+        }
 
         // Try modern command handler first
         Log.d(TAG, "🔍 Looking up handler for command type: " + type);

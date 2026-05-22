@@ -159,7 +159,7 @@ export const AppPicker: FC<AppPickerProps> = ({
                 filteredApps.map((app) => {
                   const isSelected = app.packageName === selectedPackageName
                   const isCompatible = app.compatibility?.isCompatible !== false
-                  const compatibilityMessage = app.compatibility?.message || ""
+                  const compatibilityMessage = getCompatibilityMessage(app.compatibility)
                   const isOffline = app.offline
 
                   return (
@@ -200,6 +200,10 @@ export const AppPicker: FC<AppPickerProps> = ({
       </View>
     </Modal>
   )
+}
+
+function getCompatibilityMessage(compatibility: ClientApp["compatibility"]): string {
+  return (compatibility as {message?: string} | undefined)?.message || ""
 }
 
 // Styles

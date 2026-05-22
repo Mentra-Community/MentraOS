@@ -115,6 +115,7 @@ export default function TranscriptionSettingsScreen() {
         const backHandler = BackHandler.addEventListener("hardwareBackPress", handleBackPress)
         return () => backHandler.remove()
       }
+      return
     }, [handleBackPress]),
   )
 

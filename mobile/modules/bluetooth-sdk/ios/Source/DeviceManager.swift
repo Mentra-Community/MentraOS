@@ -1280,14 +1280,21 @@ struct ViewState {
         _ authToken: String?,
         _ compress: String?,
         _ flash: Bool,
-        _ sound: Bool
+        _ sound: Bool,
+        exposureTimeNs: Double? = nil
     ) {
         Bridge.log(
-            "MAN: onPhotoRequest: \(requestId), \(appId), \(webhookUrl), size=\(size), compress=\(compress ?? "none"), flash=\(flash), sound=\(sound)"
+            "MAN: PHOTO PIPELINE [4/6] DeviceManager.photoRequest requestId=\(requestId) appId=\(appId) webhookUrl=\(webhookUrl ?? "nil") size=\(size ?? "nil") compress=\(compress ?? "none") flash=\(flash) sound=\(sound) exposureTimeNs=\(exposureTimeNs.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
         )
-        sgc?.requestPhoto(
+        guard let sgc else {
+            Bridge.log(
+                "MAN: PHOTO PIPELINE — sgc is null (glasses not connected); dropping requestId=\(requestId)"
+            )
+            return
+        }
+        sgc.requestPhoto(
             requestId, appId: appId, size: size, webhookUrl: webhookUrl, authToken: authToken,
-            compress: compress, flash: flash, sound: sound
+            compress: compress, flash: flash, sound: sound, exposureTimeNs: exposureTimeNs
         )
     }
 

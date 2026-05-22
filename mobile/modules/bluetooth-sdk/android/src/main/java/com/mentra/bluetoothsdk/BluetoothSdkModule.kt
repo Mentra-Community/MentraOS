@@ -349,27 +349,24 @@ class CoreModule : Module() {
 
         AsyncFunction("queryGalleryStatus") { sdk?.queryGalleryStatus() }
 
-        AsyncFunction("photoRequest") {
-                requestId: String,
-                appId: String,
-                size: String,
-                webhookUrl: String,
-                authToken: String?,
-                compress: String,
-                flash: Boolean,
-                sound: Boolean ->
-            sdk?.requestPhoto(
-                    PhotoRequest(
-                            requestId = requestId,
-                            appId = appId,
-                            size = PhotoSize.fromValue(size),
-                            webhookUrl = webhookUrl,
-                            authToken = authToken,
-                            compress = PhotoCompression.fromValue(compress),
-                            flash = flash,
-                            sound = sound,
-                    )
+        AsyncFunction("photoRequest") { params: Map<String, Any?> ->
+            // JS may pass null for optional fields; Map<String, Any> rejects null values at the bridge.
+            val sanitized =
+                    params.mapNotNull { (key, value) ->
+                        if (value == null) null else key to value
+                    }.toMap()
+            val req = PhotoRequest.fromMap(sanitized)
+            Bridge.log(
+                    "NATIVE: PHOTO PIPELINE [3/6] CoreModule.photoRequest requestId=${req.requestId} appId=${req.appId} size=${req.size} compress=${req.compress} flash=${req.flash} sound=${req.sound} exposureTimeNs=${req.exposureTimeNs}"
             )
+            val activeSdk = sdk
+            if (activeSdk == null) {
+                Bridge.log(
+                        "NATIVE: PHOTO PIPELINE — sdk is null; photoRequest dropped requestId=${req.requestId}"
+                )
+            } else {
+                activeSdk.requestPhoto(req)
+            }
         }
 
         // MARK: - OTA Commands

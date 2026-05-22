@@ -69,7 +69,7 @@ export class AsgCameraApiClient {
     if (timeSinceLastRequest < minDelay) {
       const delay = minDelay - timeSinceLastRequest
       console.log(`[ASG Camera API] Rate limiting: waiting ${delay}ms`)
-      await new Promise((resolve) => BgTimer.setTimeout(resolve, delay))
+      await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), delay))
     }
 
     this.lastRequestTime = Date.now()
@@ -140,7 +140,7 @@ export class AsgCameraApiClient {
           // N3: Cap individual retry delay at 10s
           const retryDelay = Math.min(Math.pow(2, 6 - retries) * 1000, 10000)
           console.log(`[ASG Camera API] Rate limited, retrying in ${retryDelay}ms (${retries} retries left)`)
-          await new Promise((resolve) => BgTimer.setTimeout(resolve, retryDelay))
+          await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), retryDelay))
           return this.makeRequest<T>(endpoint, options, retries - 1)
         }
 
@@ -711,7 +711,7 @@ export class AsgCameraApiClient {
       // Small delay between batches to prevent overwhelming the server
       if (i + CONCURRENCY_LIMIT < files.length) {
         console.log(`[ASG Camera API] Waiting 300ms between batches`)
-        await new Promise((resolve) => BgTimer.setTimeout(resolve, 300))
+        await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), 300))
       }
     }
 

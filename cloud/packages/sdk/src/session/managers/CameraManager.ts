@@ -28,6 +28,11 @@ export interface PhotoOptions {
   compression?: "none" | "medium" | "heavy";
   saveToGallery?: boolean;
   sound?: boolean;
+  /**
+   * Sensor exposure time for this photo request only, in nanoseconds (Camera2 `SENSOR_EXPOSURE_TIME`).
+   * Not saved as a camera preference. Omit for auto exposure. Invalid or unsupported values fall back to auto exposure on device.
+   */
+  exposureTimeNs?: number;
   timeout?: number;
 }
 
@@ -210,9 +215,7 @@ export class CameraManager {
       this.deps.messageHandlers.register(CloudToAppMessageType.STREAM_STATUS, (msg: any) =>
         this.handleStreamStatus(msg),
       ),
-      this.deps.messageHandlers.register("rtmp_stream_status" as any, (msg: any) =>
-        this.handleStreamStatus(msg),
-      ),
+      this.deps.messageHandlers.register("rtmp_stream_status" as any, (msg: any) => this.handleStreamStatus(msg)),
       this.deps.messageHandlers.register(CloudToAppMessageType.MANAGED_STREAM_STATUS, (msg: any) =>
         this.handleManagedStreamStatus(msg),
       ),
@@ -234,6 +237,9 @@ export class CameraManager {
 
       this.pendingRequests.set(requestId, { requestId, resolve, reject, timer });
 
+      const exposureNs = opts?.exposureTimeNs;
+      const includeExposure = typeof exposureNs === "number" && Number.isFinite(exposureNs) && exposureNs > 0;
+
       const message = {
         type: AppToCloudMessageType.PHOTO_REQUEST,
         packageName: this.deps.getPackageName(),
@@ -244,12 +250,19 @@ export class CameraManager {
         size: opts?.size ?? "medium",
         compress: opts?.compression ?? "none",
         sound: opts?.sound,
+        ...(includeExposure ? { exposureTimeNs: exposureNs } : {}),
       };
 
       try {
         this.deps.sendMessage(message);
         this.deps.logger.info(
-          { requestId, size: message.size, compress: message.compress, saveToGallery: message.saveToGallery },
+          {
+            requestId,
+            size: message.size,
+            compress: message.compress,
+            saveToGallery: message.saveToGallery,
+            exposureTimeNs: includeExposure ? exposureNs : undefined,
+          },
           "📸 Photo request sent",
         );
       } catch (err) {
@@ -372,7 +385,13 @@ export class CameraManager {
     validateVideoConfig(opts.video);
     const url = opts.direct!;
 
-    if (!url.startsWith("rtmp://") && !url.startsWith("rtmps://") && !url.startsWith("srt://") && !url.startsWith("https://") && !url.startsWith("http://")) {
+    if (
+      !url.startsWith("rtmp://") &&
+      !url.startsWith("rtmps://") &&
+      !url.startsWith("srt://") &&
+      !url.startsWith("https://") &&
+      !url.startsWith("http://")
+    ) {
       throw new Error("Invalid stream URL: must start with rtmp://, rtmps://, srt://, https://, or http://");
     }
 
@@ -442,7 +461,13 @@ export class CameraManager {
 
   /** @deprecated Use startStream({ direct: url }) instead */
   async startDirectStream(options: RtmpStreamOptions): Promise<void> {
-    return this._startDirectStream({ direct: options.rtmpUrl, video: options.video, audio: options.audio, stream: options.stream, sound: options.sound });
+    return this._startDirectStream({
+      direct: options.rtmpUrl,
+      video: options.video,
+      audio: options.audio,
+      stream: options.stream,
+      sound: options.sound,
+    });
   }
 
   /** @deprecated Use startStream() or startStream({ destinations: [...] }) instead */

@@ -18,6 +18,18 @@ Android application that runs on Android-based smart glasses like Mentra Live. C
 - **Clean Build**: `./gradlew clean`
 - **Run Tests**: `./gradlew test`
 
+### Camera module tests
+
+From `asg_client/`:
+
+```bash
+./gradlew :app:test                       # JVM unit tests (no device)
+./gradlew :app:connectedAndroidTest       # instrumentation (device / glasses)
+./gradlew :app:test --tests "*Camera*"    # camera-related unit tests only
+```
+
+Camera sources live in `com.mentra.asg_client.camera` subpackages (`lifecycle/`, `request/`, `policy/`, `model/`, `diagnostics/`); JVM tests mirror those folders under `app/src/test/java/com/mentra/asg_client/camera/`.
+
 ### APK Location
 
 - Debug: `app/build/outputs/apk/debug/app-debug.apk`
