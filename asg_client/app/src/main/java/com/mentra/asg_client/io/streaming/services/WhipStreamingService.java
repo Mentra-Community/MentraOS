@@ -759,7 +759,7 @@ public class WhipStreamingService extends Service {
   }
 
   private void notifyError(String error) {
-    if (sStatusCallback != null) mMainHandler.post(() -> sStatusCallback.onStreamError(error, mCurrentStreamId));
+    if (sStatusCallback != null) sStatusCallback.onStreamError(error, mCurrentStreamId);
   }
 
   // -----------------------------------------------------------------------
@@ -956,7 +956,8 @@ public class WhipStreamingService extends Service {
   public static boolean isStreaming() {
     if (sInstance == null) return false;
     synchronized (sInstance.mStateLock) {
-      return sInstance.mStreamState == StreamState.STREAMING;
+      return sInstance.mStreamState == StreamState.STREAMING
+          || sInstance.mStreamState == StreamState.STARTING;
     }
   }
 
