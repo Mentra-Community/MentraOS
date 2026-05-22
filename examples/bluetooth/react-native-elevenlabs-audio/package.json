@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mentra/bluetooth-sdk": "0.1.6",
+    "@mentra/bluetooth-sdk": "0.1.7",
     "expo": "~55.0.24",
     "expo-build-properties": "~55.0.14",
     "expo-dev-client": "~55.0.34",

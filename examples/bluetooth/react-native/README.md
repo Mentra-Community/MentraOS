@@ -24,7 +24,7 @@ bun install
 The example depends on the SDK version pinned in `package.json`, for example:
 
 ```json
-"@mentra/bluetooth-sdk": "0.1.6"
+"@mentra/bluetooth-sdk": "0.1.7"
 ```
 
 Use the latest SDK version published by Mentra.

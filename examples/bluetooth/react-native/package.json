@@ -13,7 +13,7 @@
     "web": "expo start --web"
   },
   "dependencies": {
-    "@mentra/bluetooth-sdk": "0.1.6",
+    "@mentra/bluetooth-sdk": "0.1.7",
     "@mentra/react-native-photo-receiver": "file:modules/mentra-photo-receiver",
     "@mentra/react-native-video-stream-receiver": "file:modules/mentra-video-stream-receiver",
     "expo": "~55.0.24",
