@@ -191,18 +191,9 @@ type TranslationSubscription = {
   target: string;                                        // ISO code
 };
 
-type AudioForwardingSubscription = {
-  kind: "audio-forwarding";
-  targetId: string;
-  endpoint: string;
-  payload: "raw-audio" | "transcription" | "translation";
-  authToken?: string;
-};
-
 type AudioSubscription =
   | TranscriptionSubscription
-  | TranslationSubscription
-  | AudioForwardingSubscription;
+  | TranslationSubscription;
 ```
 
 Identity is structural: two subscriptions are the same if their
@@ -375,8 +366,9 @@ math in the spike. See [`design.md`](./design.md) for sizing notes.
   [`design.md`](./design.md).
 - Migration plan from v1 to v2. Big separate topic.
 - Multi-region active-active. Single region in v2.
-- Audio forwarding (the future subscription kind) implementation.
-  Spec'd as a subscription shape, deferred.
+- Audio forwarding to external developer endpoints (raw audio,
+  transcripts, or translations sent to a webhook-style target).
+  Mentioned in the v2 plan as a later/non-goal; not in scope here.
 - Specific cluster sizing and capacity planning. Rough math in
   [`design.md`](./design.md); real numbers come from measurement.
 
