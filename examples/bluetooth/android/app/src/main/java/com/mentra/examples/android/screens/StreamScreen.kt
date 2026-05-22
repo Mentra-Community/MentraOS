@@ -50,6 +50,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mentra.examples.android.MentraExampleController
+import com.mentra.bluetoothsdk.StreamResolvedConfig
 import com.mentra.examples.android.elapsedText
 import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.isGlassesWifiConnected
@@ -69,6 +70,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
@@ -109,6 +111,7 @@ fun StreamScreen(controller: MentraExampleController) {
     val streamUrlFocusRequester = remember { FocusRequester() }
     val scrollState = rememberScrollState()
     var streamUrlFocused by remember { mutableStateOf(false) }
+    var resolvedConfigExpanded by remember { mutableStateOf(false) }
     val sdkCall = streamSdkCall(state.streamFps)
 
     LaunchedEffect(streamUrlFocused) {
@@ -271,6 +274,13 @@ fun StreamScreen(controller: MentraExampleController) {
             }
         }
 
+        ResolvedStreamConfigCard(
+            config = state.streamResolvedConfig,
+            expanded = resolvedConfigExpanded,
+            onToggle = { resolvedConfigExpanded = !resolvedConfigExpanded },
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        )
+
         // Protocol card
         GlassCard(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
@@ -353,6 +363,47 @@ fun StreamScreen(controller: MentraExampleController) {
         }
 
         Spacer(Modifier.height(if (streamUrlFocused) maxOf(scrollBottomPadding(), 340.dp) else scrollBottomPadding()))
+    }
+}
+
+@Composable
+private fun ResolvedStreamConfigCard(
+    config: StreamResolvedConfig?,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    GlassCard(
+        modifier = modifier,
+        corner = 18,
+        padding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable { onToggle() },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("RESOLVED STREAM CONFIG", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
+                Text(streamResolvedConfigSummary(config), color = AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 4.dp))
+            }
+            Text(if (expanded) "Hide" else "Show", color = AppColor.greenAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+
+        if (expanded) {
+            Spacer(Modifier.height(10.dp))
+            Column(
+                modifier = Modifier.fillMaxWidth().border(1.dp, AppColor.ink.copy(alpha = 0.08f), RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                streamResolvedConfigRows(config).forEach { row ->
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text(row.first, color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        Text(row.second, color = AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.End, modifier = Modifier.weight(1f))
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -527,6 +578,54 @@ private fun localStreamSetupHint(protocol: String, streamUrl: String, status: St
     }
     return "Local WebRTC setup: run python3 examples/local-demo-cloud/server.py, paste the printed WHIP publish URL here, then start streaming. The app previews the MediaMTX WebRTC page."
 }
+
+private fun streamResolvedConfigSummary(config: StreamResolvedConfig?): String {
+    config ?: return "Waiting for stream status from the glasses"
+    val video = config.video
+    return listOfNotNull(
+        config.transport?.value?.uppercase(),
+        video?.let { "${it.width}x${it.height}" },
+        video?.let { "${it.fps} fps" },
+        video?.let { bitrateLabel(it.bitrate) },
+    ).joinToString(" · ")
+}
+
+private fun streamResolvedConfigRows(config: StreamResolvedConfig?): List<Pair<String, String>> {
+    config ?: return listOf("Status" to "No resolved config received yet")
+    val rows = mutableListOf("Transport" to (config.transport?.value?.uppercase() ?: "Unknown"))
+    config.video?.let { video ->
+        rows += "Video" to "${video.width} x ${video.height}"
+        rows += "Capture" to if (video.captureWidth != null && video.captureHeight != null) {
+            "${video.captureWidth} x ${video.captureHeight}"
+        } else {
+            "Same as video"
+        }
+        rows += "FPS" to "${video.fps}"
+        rows += "Video bitrate" to bitrateLabel(video.bitrate)
+    }
+    config.audio?.let { audio ->
+        rows += "Audio bitrate" to audio.bitrate?.let(::bitrateLabel).orEmpty().ifBlank { "Not reported" }
+        rows += "Sample rate" to audio.sampleRate?.let { "$it Hz" }.orEmpty().ifBlank { "Not reported" }
+        rows += "Echo cancellation" to when (audio.echoCancellation) {
+            true -> "On"
+            false -> "Off"
+            null -> "Not reported"
+        }
+        rows += "Noise suppression" to when (audio.noiseSuppression) {
+            true -> "On"
+            false -> "Off"
+            null -> "Not reported"
+        }
+    }
+    return rows
+}
+
+private fun bitrateLabel(bitsPerSecond: Int): String =
+    when {
+        bitsPerSecond >= 1_000_000 -> String.format(Locale.US, "%.1f Mbps", bitsPerSecond / 1_000_000.0)
+        bitsPerSecond >= 1_000 -> "${bitsPerSecond / 1_000} kbps"
+        else -> "$bitsPerSecond bps"
+    }
 
 @Composable
 private fun StreamFpsSlider(enabled: Boolean, value: Int, onValueChange: (Int) -> Unit) {

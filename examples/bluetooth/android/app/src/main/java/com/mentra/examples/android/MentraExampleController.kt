@@ -11,6 +11,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.AudioAttributes
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
@@ -51,6 +52,7 @@ import com.mentra.bluetoothsdk.SpeakingStatusEvent
 import com.mentra.bluetoothsdk.StreamState
 import com.mentra.bluetoothsdk.StreamKeepAliveRequest
 import com.mentra.bluetoothsdk.StreamRequest
+import com.mentra.bluetoothsdk.StreamResolvedConfig
 import com.mentra.bluetoothsdk.StreamStatus
 import com.mentra.bluetoothsdk.StreamVideoConfig
 import com.mentra.bluetoothsdk.TouchEvent
@@ -103,6 +105,21 @@ data class ExampleEvent(
     val time: String,
     val tag: String,
     val text: String,
+)
+
+data class PhotoPreviewDetails(
+    val byteCount: Int? = null,
+    val contentType: String? = null,
+    val error: String? = null,
+    val height: Int? = null,
+    val previewUrl: String? = null,
+    val requestId: String? = null,
+    val source: String,
+    val state: String,
+    val timestamp: Long? = null,
+    val uploadUrl: String? = null,
+    val uploadedAt: String? = null,
+    val width: Int? = null,
 )
 
 private data class RgbLedPattern(
@@ -158,6 +175,7 @@ data class MentraExampleState(
     val speaking: Boolean? = null,
     val voiceActivityDetectionEnabled: Boolean = true,
     val photoDestination: PhotoDestination = PhotoDestination.THIS_PHONE,
+    val photoPreviewDetails: PhotoPreviewDetails? = null,
     val photoPreviewUrl: String? = null,
     val photoCompression: String = "medium",
     val photoSize: String = "medium",
@@ -178,6 +196,7 @@ data class MentraExampleState(
     val streamFps: Int = 15,
     val streamRequested: Boolean = false,
     val streamPreviewReady: Boolean = false,
+    val streamResolvedConfig: StreamResolvedConfig? = null,
     val streamStartedAt: Long? = null,
     val streamStatus: String = "Ready to stream WebRTC to this phone",
     val streamUrl: String = defaultStreamUrl("webrtc"),
@@ -428,6 +447,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         val generation = pollGeneration
         state = state.copy(
             cameraStatus = "Camera: webhook upload requested ($requestId)",
+            photoPreviewDetails = null,
             photoPreviewUrl = null,
         )
         mentraBluetoothSdk.requestPhoto(
@@ -459,6 +479,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
         state = state.copy(
             cameraStatus = "Camera: requested phone upload ($requestId)",
+            photoPreviewDetails = null,
             photoPreviewUrl = null,
         )
         mentraBluetoothSdk.requestPhoto(
@@ -587,6 +608,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             streamProtocol = protocol,
             streamUrl = if (shouldUseDefault) defaultStreamUrl(protocol) else state.streamUrl,
             streamStatus = if (stoppedStream) "Ready to start stream" else state.streamStatus,
+            streamResolvedConfig = null,
         )
     }
 
@@ -603,6 +625,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 streamUrl = if (shouldUseDefault) defaultStreamUrl(state.streamProtocol) else state.streamUrl,
                 streamStatus = "Ready to start stream",
                 streamPreviewReady = false,
+                streamResolvedConfig = null,
                 directStreamFrame = null,
             )
             return
@@ -612,6 +635,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             streamCloudServerEnabled = false,
             streamStatus = "Ready to stream WebRTC to this phone",
             streamPreviewReady = false,
+            streamResolvedConfig = null,
             directStreamFrame = null,
         )
     }
@@ -624,6 +648,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         state = state.copy(
             streamUrl = url,
             streamStatus = if (stoppedStream) "Ready to start stream" else state.streamStatus,
+            streamResolvedConfig = null,
         )
     }
 
@@ -650,20 +675,36 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                         if (isDirectPhoneWebRtcSelected() && state.directStreamReceiverRunning) {
                             activeStreamId = null
                             stopDirectPhoneStreamReceiver("WebRTC direct phone stopped")
-                            state = state.copy(streamRequested = false, streamStartedAt = null)
+                            state = state.copy(
+                                streamRequested = false,
+                                streamResolvedConfig = null,
+                                streamStartedAt = null,
+                            )
                         }
                     }
                     return@runAction
                 }
                 stopDirectPhoneStreamReceiver("Stopped")
                 activeStreamId = null
-                state = state.copy(streamRequested = false, streamPreviewReady = false, streamStartedAt = null, streamStatus = "Stopped")
+                state = state.copy(
+                    streamRequested = false,
+                    streamPreviewReady = false,
+                    streamResolvedConfig = null,
+                    streamStartedAt = null,
+                    streamStatus = "Stopped",
+                )
                 return@runAction
             }
             if (isGlassesConnected()) {
                 mentraBluetoothSdk.stopStream()
             }
-            state = state.copy(streamRequested = false, streamPreviewReady = false, streamStartedAt = null, streamStatus = "Stopped")
+            state = state.copy(
+                streamRequested = false,
+                streamPreviewReady = false,
+                streamResolvedConfig = null,
+                streamStartedAt = null,
+                streamStatus = "Stopped",
+            )
             return@runAction
         }
         requireConnected("start streaming")
@@ -1093,9 +1134,20 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             activePhotoRequestId = null
             directPhotoTimeoutJob?.cancel()
             directPhotoTimeoutJob = null
+            val dimensions = imageDimensions(upload.photoFile)
+            val previewUrl = Uri.fromFile(upload.photoFile).toString()
             state = state.copy(
                 cameraStatus = "Camera: received phone upload ${requestId ?: ""}".trim(),
-                photoPreviewUrl = Uri.fromFile(upload.photoFile).toString(),
+                photoPreviewDetails = state.photoPreviewDetails.copyForUpload(
+                    byteCount = upload.byteCount,
+                    contentType = "image/jpeg",
+                    height = dimensions?.second,
+                    previewUrl = previewUrl,
+                    requestId = requestId,
+                    source = "Phone receiver",
+                    width = dimensions?.first,
+                ),
+                photoPreviewUrl = previewUrl,
             )
             addEvent("LIVE", "phone photo ready ${upload.byteCount} bytes requestId=${requestId ?: ""}")
         }
@@ -1211,6 +1263,21 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             return
         }
         val uploadTarget = if (state.photoDestination == PhotoDestination.THIS_PHONE) "phone upload" else "local upload"
+        val nextDetails = when (response) {
+            is PhotoResponse.Error -> PhotoPreviewDetails(
+                error = response.errorCode ?: response.errorMessage,
+                requestId = requestId,
+                source = if (state.photoDestination == PhotoDestination.THIS_PHONE) "Phone receiver" else "Cloud server",
+                state = "error",
+                timestamp = response.timestamp,
+            )
+            is PhotoResponse.Success -> state.photoPreviewDetails.copyForAck(
+                requestId = requestId,
+                source = if (state.photoDestination == PhotoDestination.THIS_PHONE) "Phone receiver" else "Cloud server",
+                timestamp = response.timestamp,
+                uploadUrl = response.uploadUrl,
+            )
+        }
         state = state.copy(
             cameraStatus = when (response) {
                 is PhotoResponse.Error ->
@@ -1218,12 +1285,16 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 is PhotoResponse.Success ->
                     "Camera: photo acknowledged; waiting for $uploadTarget"
             },
+            photoPreviewDetails = nextDetails,
         )
         addEvent("LIVE", "photo response $requestId")
     }
 
     override fun onStreamStatus(event: com.mentra.bluetoothsdk.StreamStatusEvent) {
         applyStreamStatus(event.status)
+        event.resolvedConfig?.let { resolvedConfig ->
+            state = state.copy(streamResolvedConfig = resolvedConfig)
+        }
         val summary = summarize(event.values)
         val streamState = event.state
         if (isDirectPhoneWebRtcSelected()) {
@@ -1647,7 +1718,12 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 stopKeepAlive()
                 stopPreviewHealthPoll()
                 activeStreamId = null
-                state = state.copy(streamRequested = false, streamPreviewReady = false, streamStartedAt = null)
+                state = state.copy(
+                    streamRequested = false,
+                    streamPreviewReady = false,
+                    streamResolvedConfig = null,
+                    streamStartedAt = null,
+                )
                 if (state.directStreamReceiverRunning) {
                     stopDirectPhoneStreamReceiver("WebRTC direct phone stopped")
                 }
@@ -1979,8 +2055,22 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                         val body = connection.inputStream.bufferedReader().use { it.readText() }
                         val photoUrl = Regex("\"photoUrl\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
                         if (photoUrl != null) {
+                            val bytes = Regex("\"bytes\"\\s*:\\s*(\\d+)").find(body)?.groupValues?.get(1)?.toIntOrNull()
+                            val contentType = Regex("\"contentType\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
+                            val uploadedAt = Regex("\"uploadedAt\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
                             scope.launch {
-                                state = state.copy(photoPreviewUrl = photoUrl, cameraStatus = "Camera: loaded photo preview")
+                                state = state.copy(
+                                    photoPreviewDetails = state.photoPreviewDetails.copyForUpload(
+                                        byteCount = bytes,
+                                        contentType = contentType,
+                                        previewUrl = photoUrl,
+                                        requestId = requestId,
+                                        source = "Cloud server",
+                                        uploadedAt = uploadedAt,
+                                    ),
+                                    photoPreviewUrl = photoUrl,
+                                    cameraStatus = "Camera: loaded photo preview",
+                                )
                                 addEvent("LIVE", "local photo ready $photoUrl")
                             }
                             activePhotoRequestId = null
@@ -2461,6 +2551,52 @@ fun rssiLabel(status: GlassesRuntimeState?): String =
 
 fun rssiUpdatedLabel(status: GlassesRuntimeState?): String =
     status?.signal?.updatedAt?.let { "updated ${formatTime(it)}" } ?: "signal"
+
+private fun PhotoPreviewDetails?.copyForAck(
+    requestId: String,
+    source: String,
+    timestamp: Long,
+    uploadUrl: String,
+): PhotoPreviewDetails =
+    (this ?: PhotoPreviewDetails(source = source, state = "acknowledged")).copy(
+        requestId = requestId,
+        source = source,
+        state = if (this?.state == "preview") "preview" else "acknowledged",
+        timestamp = timestamp,
+        uploadUrl = uploadUrl,
+    )
+
+private fun PhotoPreviewDetails?.copyForUpload(
+    byteCount: Int? = null,
+    contentType: String? = null,
+    height: Int? = null,
+    previewUrl: String,
+    requestId: String?,
+    source: String,
+    uploadedAt: String? = null,
+    width: Int? = null,
+): PhotoPreviewDetails =
+    (this ?: PhotoPreviewDetails(source = source, state = "preview")).copy(
+        byteCount = byteCount ?: this?.byteCount,
+        contentType = contentType ?: this?.contentType,
+        height = height ?: this?.height,
+        previewUrl = previewUrl,
+        requestId = requestId ?: this?.requestId,
+        source = source,
+        state = "preview",
+        uploadedAt = uploadedAt ?: this?.uploadedAt,
+        width = width ?: this?.width,
+    )
+
+private fun imageDimensions(file: File): Pair<Int, Int>? {
+    val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(file.absolutePath, options)
+    return if (options.outWidth > 0 && options.outHeight > 0) {
+        options.outWidth to options.outHeight
+    } else {
+        null
+    }
+}
 
 private fun formatTime(timestampMs: Long): String =
     SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(timestampMs))

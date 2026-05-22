@@ -1,7 +1,7 @@
 import {createAudioPlayer, setAudioModeAsync, type AudioPlayer} from 'expo-audio';
 import {File, Paths} from 'expo-file-system';
 import {useEffect, useRef, useState} from 'react';
-import {Clipboard, Linking, PermissionsAndroid, Platform} from 'react-native';
+import {Clipboard, Image as RNImage, Linking, PermissionsAndroid, Platform} from 'react-native';
 import BluetoothSdk, {
   DeviceModels,
   type AudioConnectedEvent,
@@ -49,6 +49,37 @@ export type StreamProtocol = 'rtmp' | 'srt' | 'webrtc';
 export type StreamPreviewTarget = {
   kind: 'hls' | 'web';
   url: string;
+};
+export type StreamResolvedConfig = {
+  transport?: 'rtmp' | 'srt' | 'whip';
+  video?: {
+    width: number;
+    height: number;
+    captureWidth?: number;
+    captureHeight?: number;
+    bitrate: number;
+    fps: number;
+  };
+  audio?: {
+    bitrate?: number;
+    sampleRate?: number;
+    echoCancellation?: boolean;
+    noiseSuppression?: boolean;
+  };
+};
+export type PhotoPreviewDetails = {
+  byteCount?: number;
+  contentType?: string;
+  error?: string;
+  height?: number;
+  previewUrl?: string;
+  requestId?: string | null;
+  source: 'Cloud server' | 'Phone receiver';
+  state: 'acknowledged' | 'error' | 'preview';
+  timestamp?: number;
+  uploadUrl?: string;
+  uploadedAt?: string;
+  width?: number;
 };
 export type LedMode = 'Off' | 'Solid' | 'Pulse' | 'Blink';
 type RgbLedAction = 'on' | 'off';
@@ -131,6 +162,7 @@ export type BluetoothSdkExampleState = {
   phonePhotoUploadUrl: string | null;
   photoCompression: PhotoCompression;
   photoCloudServerEnabled: boolean;
+  photoPreviewDetails: PhotoPreviewDetails | null;
   photoPreviewUrl: string | null;
   photoSize: PhotoSize;
   rawJsonExpanded: boolean;
@@ -144,6 +176,7 @@ export type BluetoothSdkExampleState = {
   streamProtocol: StreamProtocol;
   streamPreviewReady: boolean;
   streamRequested: boolean;
+  streamResolvedConfig: StreamResolvedConfig | null;
   streamStartedAt: number | null;
   streamStatus: string;
   streamUrl: string;
@@ -234,6 +267,8 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   const [phonePhotoReceiverRunning, setPhonePhotoReceiverRunning] = useState(false);
   const [phonePhotoUploadUrl, setPhonePhotoUploadUrl] = useState<string | null>(null);
   const [cameraStatus, setCameraStatus] = useState('Camera: ready to capture to phone');
+  const [photoPreviewDetails, setPhotoPreviewDetails] =
+    useState<PhotoPreviewDetails | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [photoSize, setPhotoSize] = useState<PhotoSize>('medium');
   const [photoCompression, setPhotoCompression] = useState<PhotoCompression>('medium');
@@ -249,6 +284,8 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   const [streamStartedAt, setStreamStartedAt] = useState<number | null>(null);
   const [streamRequested, setStreamRequested] = useState(false);
   const [streamPreviewReady, setStreamPreviewReady] = useState(false);
+  const [streamResolvedConfig, setStreamResolvedConfig] =
+    useState<StreamResolvedConfig | null>(null);
   const [streamStatus, setStreamStatus] = useState('Ready to stream WebRTC to phone');
   const [micRecording, setMicRecording] = useState(false);
   const [micPlaying, setMicPlaying] = useState(false);
@@ -638,6 +675,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       const pollGeneration = pollGenerationRef.current;
 
       setPhotoPreviewUrl(null);
+      setPhotoPreviewDetails(null);
       setCameraStatus(`Camera: webhook upload requested (${requestId})`);
       await BluetoothSdk.requestPhoto({
         requestId,
@@ -661,6 +699,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     pollGenerationRef.current += 1;
 
     setPhotoPreviewUrl(null);
+    setPhotoPreviewDetails(null);
     setCameraStatus(`Camera: phone upload requested (${requestId})`);
     clearPhotoUploadTimeout();
     photoUploadTimeoutRef.current = setTimeout(() => {
@@ -729,6 +768,15 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     activePhotoRequestIdRef.current = null;
     setPhonePhotoReceiverRunning(true);
     setPhotoPreviewUrl(payload.fileUri);
+    setPhotoPreviewDetails((current) => ({
+      ...current,
+      byteCount: payload.byteCount,
+      previewUrl: payload.fileUri,
+      requestId: payload.requestId ?? activeRequestId ?? current?.requestId ?? null,
+      source: 'Phone receiver',
+      state: 'preview',
+    }));
+    updatePhotoPreviewDimensions(payload.fileUri);
     setCameraStatus(`Camera: phone photo ready (${Math.round(payload.byteCount / 1024)} KB)`);
     addEvent('LIVE', `phone photo ready ${payload.fileUri}`);
   }
@@ -772,6 +820,13 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       return;
     }
     if (payload.state === 'error') {
+      setPhotoPreviewDetails({
+        error: payload.errorCode ?? payload.errorMessage,
+        requestId: payload.requestId,
+        source: photoCloudServerEnabledRef.current ? 'Cloud server' : 'Phone receiver',
+        state: 'error',
+        timestamp: payload.timestamp,
+      });
       setCameraStatus(
         `Camera: glasses reported ${payload.errorCode ?? payload.errorMessage}; waiting for upload`,
       );
@@ -783,6 +838,14 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
         ? 'Camera: photo acknowledged; waiting for cloud upload'
         : 'Camera: photo acknowledged; waiting for phone upload',
     );
+    setPhotoPreviewDetails((current) => ({
+      ...current,
+      requestId: payload.requestId,
+      source: photoCloudServerEnabledRef.current ? 'Cloud server' : 'Phone receiver',
+      state: current?.state === 'preview' ? 'preview' : 'acknowledged',
+      timestamp: payload.timestamp,
+      uploadUrl: payload.uploadUrl,
+    }));
     addEvent('LIVE', `photo response ${payload.requestId}`);
   }
 
@@ -804,9 +867,26 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
           headers: {'Cache-Control': 'no-cache', Pragma: 'no-cache'},
         });
         if (response.ok) {
-          const json = (await response.json()) as {photoUrl?: string};
+          const json = (await response.json()) as {
+            bytes?: number;
+            contentType?: string;
+            photoUrl?: string;
+            requestId?: string;
+            uploadedAt?: string;
+          };
           if (json.photoUrl) {
             setPhotoPreviewUrl(json.photoUrl);
+            setPhotoPreviewDetails((current) => ({
+              ...current,
+              byteCount: typeof json.bytes === 'number' ? json.bytes : current?.byteCount,
+              contentType: json.contentType ?? current?.contentType,
+              previewUrl: json.photoUrl,
+              requestId: json.requestId ?? requestId,
+              source: 'Cloud server',
+              state: 'preview',
+              uploadedAt: json.uploadedAt ?? current?.uploadedAt,
+            }));
+            updatePhotoPreviewDimensions(json.photoUrl);
             setCameraStatus('Camera: loaded photo preview');
             addEvent('LIVE', `local photo ready ${json.photoUrl}`);
             activePhotoRequestIdRef.current = null;
@@ -828,10 +908,23 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     }
   }
 
+  function updatePhotoPreviewDimensions(uri: string) {
+    RNImage.getSize(
+      uri,
+      (width, height) => {
+        setPhotoPreviewDetails((current) =>
+          current?.previewUrl === uri ? {...current, width, height} : current,
+        );
+      },
+      () => undefined,
+    );
+  }
+
   function selectProtocol(protocol: StreamProtocol) {
     if (streamRequested || streamStartedAt !== null) {
       void stopActiveStream('Stream stopped because protocol changed');
     }
+    setStreamResolvedConfig(null);
     setStreamProtocol(protocol);
     setStreamUrlState((current) => {
       const trimmed = current.trim();
@@ -868,6 +961,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       streamCloudServerEnabledRef.current = enabled;
       setStreamCloudServerEnabledState(enabled);
       setStreamPreviewReady(false);
+      setStreamResolvedConfig(null);
       if (enabled) {
         setStreamStatus('Ready to stream to a cloud server');
         return;
@@ -881,6 +975,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     if (streamRequested || streamStartedAt !== null) {
       void stopActiveStream('Stream stopped because URL changed');
     }
+    setStreamResolvedConfig(null);
     setStreamUrlState(url);
   }
 
@@ -940,6 +1035,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     } satisfies StreamStartRequest;
     await BluetoothSdk.startStream(params);
     activeStreamIdRef.current = streamId;
+    startKeepAlive(streamId);
     setStreamRequested(true);
     setStreamPreviewReady(false);
     setStreamStatus(`Starting ${streamProtocol.toUpperCase()} stream; waiting for preview`);
@@ -966,6 +1062,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     try {
       await BluetoothSdk.startStream(params);
       activeStreamIdRef.current = streamId;
+      startKeepAlive(streamId);
       setStreamRequested(true);
       setStreamPreviewReady(false);
       setStreamStatus('Starting WebRTC stream to phone; waiting for preview');
@@ -1066,14 +1163,22 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
 
   function startKeepAlive(streamId: string) {
     stopKeepAlive();
+    sendStreamKeepAlive(streamId);
     keepAliveTimerRef.current = setInterval(() => {
+      sendStreamKeepAlive(streamId);
+    }, 15000);
+  }
+
+  function sendStreamKeepAlive(streamId: string) {
+    if (activeStreamIdRef.current !== streamId) {
+      return;
+    }
       void BluetoothSdk.keepStreamAlive({
         ackId: `ack-${Date.now()}`,
         streamId,
         type: 'keep_stream_alive',
       });
       addEvent('TX', 'stream keep alive');
-    }, 15000);
   }
 
   function stopKeepAlive() {
@@ -1490,6 +1595,9 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   }
 
   function applyStreamStatus(payload: StreamStatusEvent) {
+    const resolvedConfig = (payload as {resolvedConfig?: StreamResolvedConfig})
+      .resolvedConfig;
+
     const status = payload.status;
     if (
       status === 'streaming' ||
@@ -1509,6 +1617,9 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       ) {
         startKeepAlive(activeStreamIdRef.current);
       }
+      if (resolvedConfig) {
+        setStreamResolvedConfig(resolvedConfig);
+      }
       return;
     }
     if (
@@ -1525,7 +1636,13 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       setDirectStreamWhipUrl(null);
       setStreamRequested(false);
       setStreamPreviewReady(false);
+      if (!resolvedConfig) {
+        setStreamResolvedConfig(null);
+      }
       setStreamStartedAt(null);
+    }
+    if (resolvedConfig) {
+      setStreamResolvedConfig(resolvedConfig);
     }
   }
 
@@ -1574,6 +1691,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     phonePhotoUploadUrl,
     photoCompression,
     photoCloudServerEnabled,
+    photoPreviewDetails,
     photoPreviewUrl,
     photoSize,
     playMicRecording,
@@ -1604,6 +1722,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     streamProtocol,
     streamPreviewReady,
     streamRequested,
+    streamResolvedConfig,
     streamStartedAt,
     streamStatus,
     streamUrl,

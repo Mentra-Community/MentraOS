@@ -7,7 +7,7 @@ import { useScrollBottomPadding } from '../components/keyboardLayout';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { colors } from '../components/theme';
 import { isGlassesConnected, isGlassesWifiConnected } from '../sdkFormat';
-import { PHOTO_COMPRESSIONS, PHOTO_SIZES, type BluetoothSdkExampleModel, type PhotoCompression, type PhotoSize } from '../useBluetoothSdkExample';
+import { PHOTO_COMPRESSIONS, PHOTO_SIZES, type BluetoothSdkExampleModel, type PhotoCompression, type PhotoPreviewDetails, type PhotoSize } from '../useBluetoothSdkExample';
 
 function cameraSdkCall(size: PhotoSize, compression: PhotoCompression, useCloudServer: boolean) {
   if (!useCloudServer) {
@@ -35,6 +35,7 @@ await BluetoothSdk.requestPhoto({
 
 export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   const scrollBottomPadding = useScrollBottomPadding();
+  const [photoDetailsExpanded, setPhotoDetailsExpanded] = React.useState(false);
   const connected = isGlassesConnected(sdk.glasses);
   const glassesWifiConnected = isGlassesWifiConnected(sdk.glasses);
   const wifiRequired = connected && !glassesWifiConnected;
@@ -134,6 +135,12 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         </View>
       </LinearGradient>
 
+      <PhotoDetailsCard
+        details={sdk.photoPreviewDetails}
+        expanded={photoDetailsExpanded}
+        onToggle={() => setPhotoDetailsExpanded((value) => !value)}
+      />
+
       {/* Upload to */}
       <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={styles.uploadCard}>
         <View style={styles.cardHead}>
@@ -201,6 +208,81 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
       </LinearGradient>
     </ScrollView>
   );
+}
+
+function PhotoDetailsCard({
+  details,
+  expanded,
+  onToggle,
+}: {
+  details: PhotoPreviewDetails | null;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const rows = photoDetailsRows(details);
+  return (
+    <LinearGradient colors={['rgba(255,255,255,0.74)', 'rgba(255,255,255,0.52)']} style={styles.detailsCard}>
+      <Pressable onPress={onToggle} style={styles.detailsHeader}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.eyebrow}>PHOTO DETAILS</Text>
+          <Text style={styles.detailsSummary}>{photoDetailsSummary(details)}</Text>
+        </View>
+        <Text style={styles.detailsChevron}>{expanded ? 'Hide' : 'Show'}</Text>
+      </Pressable>
+      {expanded ? (
+        <View style={styles.detailsBody}>
+          {rows.map((row) => (
+            <View key={row.label} style={styles.detailsRow}>
+              <Text style={styles.detailsLabel}>{row.label}</Text>
+              <Text style={styles.detailsValue}>{row.value}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </LinearGradient>
+  );
+}
+
+function photoDetailsSummary(details: PhotoPreviewDetails | null) {
+  if (!details) {
+    return 'Waiting for first photo preview';
+  }
+  if (details.state === 'error') {
+    return `Error · ${details.error ?? 'Photo failed'}`;
+  }
+  return [
+    details.source,
+    details.byteCount ? formatBytes(details.byteCount) : null,
+    details.width && details.height ? `${details.width} x ${details.height}` : null,
+    details.state === 'acknowledged' ? 'acknowledged' : 'preview ready',
+  ].filter(Boolean).join(' · ');
+}
+
+function photoDetailsRows(details: PhotoPreviewDetails | null) {
+  if (!details) {
+    return [{label: 'Status', value: 'No photo metadata received yet'}];
+  }
+  const rows: Array<{label: string; value: string}> = [
+    {label: 'Source', value: details.source},
+    {label: 'State', value: details.state},
+  ];
+  if (details.requestId) rows.push({label: 'Request ID', value: details.requestId});
+  if (details.byteCount) rows.push({label: 'Size', value: formatBytes(details.byteCount)});
+  if (details.width && details.height) rows.push({label: 'Dimensions', value: `${details.width} x ${details.height}`});
+  if (details.contentType) rows.push({label: 'Content type', value: details.contentType});
+  if (details.uploadUrl) rows.push({label: 'Upload URL', value: details.uploadUrl});
+  if (details.previewUrl) rows.push({label: 'Preview URL', value: details.previewUrl});
+  if (details.timestamp) rows.push({label: 'SDK timestamp', value: new Date(details.timestamp).toLocaleTimeString()});
+  if (details.uploadedAt) rows.push({label: 'Uploaded at', value: details.uploadedAt});
+  if (details.error) rows.push({label: 'Error', value: details.error});
+  return rows;
+}
+
+function formatBytes(bytes: number) {
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
 function isCameraStatusFailure(status: string) {
@@ -281,6 +363,15 @@ const styles = StyleSheet.create({
   statusTitle: { color: colors.ink, fontSize: 12, fontWeight: '600' },
   statusSub: { color: colors.muted, fontSize: 11, fontWeight: '500' },
   linkRight: { color: colors.muted, fontSize: 12, fontWeight: '600' },
+
+  detailsCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 18, paddingVertical: 12, paddingHorizontal: 14, borderWidth: 1, borderColor: colors.borderSoft },
+  detailsHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  detailsSummary: { color: colors.ink, fontSize: 12, fontWeight: '600', marginTop: 4 },
+  detailsChevron: { color: colors.greenAccent, fontSize: 12, fontWeight: '700' },
+  detailsBody: { marginTop: 12, borderTopWidth: 1, borderTopColor: 'rgba(15,42,29,0.08)', paddingTop: 8 },
+  detailsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 5, gap: 12 },
+  detailsLabel: { color: colors.muted, fontSize: 11, fontWeight: '600' },
+  detailsValue: { color: colors.ink, fontSize: 12, fontWeight: '600', textAlign: 'right', flexShrink: 1 },
 
   uploadCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 22, paddingVertical: 16, paddingHorizontal: 18, gap: 12, borderWidth: 1, borderColor: colors.borderSoft },
   eyebrow: { color: colors.muted, fontSize: 10, fontWeight: '600', letterSpacing: 1.2 },

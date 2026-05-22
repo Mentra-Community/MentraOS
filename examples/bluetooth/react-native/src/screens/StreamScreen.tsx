@@ -48,6 +48,7 @@ await BluetoothSdk.startStream({
 export function StreamScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
   const scrollRef = React.useRef<React.ElementRef<typeof ScrollView>>(null);
   const streamUrlInputRef = React.useRef<React.ElementRef<typeof TextInput>>(null);
+  const [resolvedConfigExpanded, setResolvedConfigExpanded] = React.useState(false);
   const scrollBottomPadding = useScrollBottomPadding();
   const connected = isGlassesConnected(sdk.glasses);
   const glassesWifiConnected = isGlassesWifiConnected(sdk.glasses);
@@ -163,6 +164,12 @@ export function StreamScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         </View>
       </LinearGradient>
 
+      <ResolvedStreamConfigCard
+        config={sdk.streamResolvedConfig}
+        expanded={resolvedConfigExpanded}
+        onToggle={() => setResolvedConfigExpanded((expanded) => !expanded)}
+      />
+
       {/* Protocol */}
       <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={styles.protocolCard}>
         <View style={styles.cardHead}>
@@ -225,6 +232,38 @@ export function StreamScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         />
       </LinearGradient>
     </ScrollView>
+  );
+}
+
+function ResolvedStreamConfigCard({
+  config,
+  expanded,
+  onToggle,
+}: {
+  config: BluetoothSdkExampleModel['streamResolvedConfig'];
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <LinearGradient colors={['rgba(255,255,255,0.7)', 'rgba(255,255,255,0.5)']} style={styles.resolvedCard}>
+      <Pressable style={styles.resolvedHeader} onPress={onToggle}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.eyebrow}>RESOLVED STREAM CONFIG</Text>
+          <Text style={styles.resolvedSummary}>{streamResolvedConfigSummary(config)}</Text>
+        </View>
+        <Text style={styles.resolvedChevron}>{expanded ? 'Hide' : 'Show'}</Text>
+      </Pressable>
+      {expanded ? (
+        <View style={styles.resolvedBody}>
+          {streamResolvedConfigRows(config).map((row) => (
+            <View key={row.label} style={styles.resolvedRow}>
+              <Text style={styles.resolvedLabel}>{row.label}</Text>
+              <Text style={styles.resolvedValue}>{row.value}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </LinearGradient>
   );
 }
 
@@ -362,6 +401,77 @@ function streamProtocolLabel(protocol: StreamProtocol) {
   return protocol === 'webrtc' ? 'WHIP' : protocol.toUpperCase();
 }
 
+function streamResolvedConfigSummary(
+  config: BluetoothSdkExampleModel['streamResolvedConfig'],
+) {
+  if (!config) {
+    return 'Waiting for stream status from the glasses';
+  }
+  const video = config.video;
+  return [
+    config.transport?.toUpperCase(),
+    video ? `${video.width}x${video.height}` : null,
+    video ? `${video.fps} fps` : null,
+    video ? bitrateLabel(video.bitrate) : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function streamResolvedConfigRows(
+  config: BluetoothSdkExampleModel['streamResolvedConfig'],
+) {
+  if (!config) {
+    return [{label: 'Status', value: 'No resolved config received yet'}];
+  }
+  const rows = [{label: 'Transport', value: config.transport?.toUpperCase() ?? 'Unknown'}];
+  if (config.video) {
+    rows.push(
+      {label: 'Video', value: `${config.video.width} x ${config.video.height}`},
+      {
+        label: 'Capture',
+        value:
+          config.video.captureWidth && config.video.captureHeight
+            ? `${config.video.captureWidth} x ${config.video.captureHeight}`
+            : 'Same as video',
+      },
+      {label: 'FPS', value: `${config.video.fps}`},
+      {label: 'Video bitrate', value: bitrateLabel(config.video.bitrate)},
+    );
+  }
+  if (config.audio) {
+    rows.push(
+      {
+        label: 'Audio bitrate',
+        value: config.audio.bitrate ? bitrateLabel(config.audio.bitrate) : 'Not reported',
+      },
+      {
+        label: 'Sample rate',
+        value: config.audio.sampleRate ? `${config.audio.sampleRate} Hz` : 'Not reported',
+      },
+      {
+        label: 'Echo cancellation',
+        value: config.audio.echoCancellation === undefined ? 'Not reported' : config.audio.echoCancellation ? 'On' : 'Off',
+      },
+      {
+        label: 'Noise suppression',
+        value: config.audio.noiseSuppression === undefined ? 'Not reported' : config.audio.noiseSuppression ? 'On' : 'Off',
+      },
+    );
+  }
+  return rows;
+}
+
+function bitrateLabel(bitsPerSecond: number) {
+  if (bitsPerSecond >= 1_000_000) {
+    return `${(bitsPerSecond / 1_000_000).toFixed(1)} Mbps`;
+  }
+  if (bitsPerSecond >= 1_000) {
+    return `${Math.round(bitsPerSecond / 1_000)} kbps`;
+  }
+  return `${bitsPerSecond} bps`;
+}
+
 function isStreamStatusFailure(status: string) {
   const normalized = status.toLowerCase();
   return (
@@ -446,6 +556,15 @@ const styles = StyleSheet.create({
   statusDotError: { backgroundColor: colors.red },
   statusTitle: { color: colors.ink, fontSize: 12, fontWeight: '600' },
   statusSub: { color: colors.muted, fontSize: 11, fontWeight: '500' },
+
+  resolvedCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 18, paddingVertical: 12, paddingHorizontal: 14, borderWidth: 1, borderColor: colors.borderSoft },
+  resolvedHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  resolvedSummary: { color: colors.ink, fontSize: 12, fontWeight: '600', marginTop: 4 },
+  resolvedChevron: { color: colors.greenAccent, fontSize: 12, fontWeight: '700' },
+  resolvedBody: { marginTop: 12, borderTopWidth: 1, borderTopColor: 'rgba(15,42,29,0.08)', paddingTop: 8 },
+  resolvedRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 5, gap: 12 },
+  resolvedLabel: { color: colors.muted, fontSize: 11, fontWeight: '600' },
+  resolvedValue: { color: colors.ink, fontSize: 12, fontWeight: '600', textAlign: 'right', flexShrink: 1 },
 
   protocolCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 22, paddingVertical: 14, paddingHorizontal: 14, gap: 12, borderWidth: 1, borderColor: colors.borderSoft },
   eyebrow: { color: colors.muted, fontSize: 10, fontWeight: '600', letterSpacing: 1.2 },

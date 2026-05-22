@@ -20,6 +20,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -34,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.mentra.examples.android.MentraExampleController
+import com.mentra.examples.android.PhotoPreviewDetails
 import com.mentra.examples.android.PhotoDestination
 import com.mentra.examples.android.cameraSdkCall
 import com.mentra.examples.android.isGlassesConnected
@@ -46,6 +51,9 @@ import com.mentra.examples.android.ui.GlassCard
 import com.mentra.examples.android.ui.OfflineNotice
 import com.mentra.examples.android.ui.PageHeader
 import com.mentra.examples.android.ui.scrollBottomPadding
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun CameraScreen(controller: MentraExampleController) {
@@ -59,6 +67,7 @@ fun CameraScreen(controller: MentraExampleController) {
     val setupHint = if (cloudServerEnabled) localCameraSetupHint(state.webhookUrl, state.cameraStatus) else null
     val sdkCall = cameraSdkCall(state.photoSize, state.photoCompression)
     val clipboardManager = LocalClipboardManager.current
+    var photoDetailsExpanded by remember { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
         PageHeader("Camera")
         if (!connected) {
@@ -202,6 +211,12 @@ fun CameraScreen(controller: MentraExampleController) {
             }
         }
 
+        PhotoDetailsCard(
+            details = state.photoPreviewDetails,
+            expanded = photoDetailsExpanded,
+            onToggle = { photoDetailsExpanded = !photoDetailsExpanded },
+        )
+
         // Upload card
         GlassCard(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
@@ -301,6 +316,86 @@ fun CameraScreen(controller: MentraExampleController) {
         Spacer(Modifier.height(scrollBottomPadding()))
     }
 }
+
+@Composable
+private fun PhotoDetailsCard(details: PhotoPreviewDetails?, expanded: Boolean, onToggle: () -> Unit) {
+    GlassCard(
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+        corner = 18,
+        padding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable { onToggle() },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Eyebrow("PHOTO DETAILS")
+                Text(photoDetailsSummary(details), color = AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            }
+            Text(if (expanded) "Hide" else "Show", color = AppColor.greenAccent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        }
+        if (expanded) {
+            Spacer(Modifier.height(12.dp))
+            Box(Modifier.fillMaxWidth().height(1.dp).background(AppColor.ink.copy(alpha = 0.08f)))
+            Spacer(Modifier.height(8.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                photoDetailsRows(details).forEach { row ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Text(row.first, color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            row.second,
+                            color = AppColor.ink,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.End
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun photoDetailsSummary(details: PhotoPreviewDetails?): String {
+    if (details == null) return "Waiting for first photo preview"
+    if (details.state == "error") return "Error · ${details.error ?: "Photo failed"}"
+    return listOfNotNull(
+        details.source,
+        details.byteCount?.let(::formatBytes),
+        if (details.width != null && details.height != null) "${details.width} x ${details.height}" else null,
+        if (details.state == "acknowledged") "acknowledged" else "preview ready",
+    ).joinToString(" · ")
+}
+
+private fun photoDetailsRows(details: PhotoPreviewDetails?): List<Pair<String, String>> {
+    if (details == null) return listOf("Status" to "No photo metadata received yet")
+    return buildList {
+        add("Source" to details.source)
+        add("State" to details.state)
+        details.requestId?.let { add("Request ID" to it) }
+        details.byteCount?.let { add("Size" to formatBytes(it)) }
+        if (details.width != null && details.height != null) add("Dimensions" to "${details.width} x ${details.height}")
+        details.contentType?.let { add("Content type" to it) }
+        details.uploadUrl?.let { add("Upload URL" to it) }
+        details.previewUrl?.let { add("Preview URL" to it) }
+        details.timestamp?.let { add("SDK timestamp" to SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(it))) }
+        details.uploadedAt?.let { add("Uploaded at" to it) }
+        details.error?.let { add("Error" to it) }
+    }
+}
+
+private fun formatBytes(bytes: Int): String =
+    if (bytes >= 1024 * 1024) {
+        String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
+    } else {
+        "${maxOf(1, (bytes + 1023) / 1024)} KB"
+    }
 
 private fun isCameraStatusFailure(status: String): Boolean {
     val normalized = status.lowercase()

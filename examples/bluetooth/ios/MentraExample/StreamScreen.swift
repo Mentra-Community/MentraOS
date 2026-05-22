@@ -1,4 +1,5 @@
 import SwiftUI
+import MentraBluetoothSDK
 import UIKit
 import WebKit
 
@@ -21,6 +22,7 @@ struct StreamScreen: View {
     @ObservedObject var model: BluetoothViewModel
     @Environment(\.keyboardVisible) private var keyboardVisible
     @FocusState private var streamUrlFocused: Bool
+    @State private var resolvedConfigExpanded = false
     private let bars: [CGFloat] = [18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40]
     private let streamUrlFieldId = "stream-url-field"
     private var cloudServerEnabled: Bool {
@@ -78,6 +80,7 @@ struct StreamScreen: View {
 
                     previewCard(scrollProxy: scrollProxy).padding(.horizontal, 16).padding(.top, 8)
                     sdkCard.padding(.horizontal, 16).padding(.top, 12)
+                    resolvedConfigCard.padding(.horizontal, 16).padding(.top, 12)
                     protocolCard.padding(.horizontal, 16).padding(.top, 12)
                 }
                 .padding(.bottom, LayoutMetric.scrollBottomPadding(keyboardVisible: keyboardVisible))
@@ -260,6 +263,55 @@ struct StreamScreen: View {
         .clipShape(RoundedRectangle(cornerRadius: 22))
     }
 
+    private var resolvedConfigCard: some View {
+        GlassCard(corner: 18, padding: EdgeInsets(top: 12, leading: 14, bottom: 12, trailing: 14)) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    resolvedConfigExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("RESOLVED STREAM CONFIG")
+                            .font(.system(size: 10, weight: .bold))
+                            .tracking(1.1)
+                            .foregroundColor(AppColor.muted)
+                        Text(streamResolvedConfigSummary(model.streamResolvedConfig))
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(AppColor.ink)
+                            .multilineTextAlignment(.leading)
+                    }
+                    Spacer()
+                    Text(resolvedConfigExpanded ? "Hide" : "Show")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(AppColor.greenAccent)
+                }
+            }
+            .buttonStyle(.plain)
+
+            if resolvedConfigExpanded {
+                VStack(spacing: 8) {
+                    ForEach(streamResolvedConfigRows(model.streamResolvedConfig), id: \.label) { row in
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(row.label)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(AppColor.muted)
+                            Spacer()
+                            Text(row.value)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(AppColor.ink)
+                                .multilineTextAlignment(.trailing)
+                        }
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(AppColor.ink.opacity(0.08), lineWidth: 1))
+                .padding(.top, 10)
+            }
+        }
+    }
+
     private var protocolCard: some View {
         GlassCard(corner: 22, padding: EdgeInsets(top: 14, leading: 14, bottom: 14, trailing: 14)) {
             Toggle(isOn: Binding(
@@ -402,6 +454,67 @@ struct StreamScreen: View {
 
 private func shouldFocusStreamUrlTemplate(_ streamUrl: String, streamActive: Bool) -> Bool {
     !streamActive && streamUrl.contains("<computer-ip>")
+}
+
+private struct ResolvedStreamConfigRow {
+    let label: String
+    let value: String
+}
+
+private func streamResolvedConfigSummary(_ config: StreamResolvedConfig?) -> String {
+    guard let config else {
+        return "Waiting for stream status from the glasses"
+    }
+    let video = config.video
+    return [
+        config.transport?.rawValue.uppercased(),
+        video.map { "\($0.width)x\($0.height)" },
+        video.map { "\($0.fps) fps" },
+        video.map { bitrateLabel($0.bitrate) },
+    ]
+    .compactMap { $0 }
+    .joined(separator: " · ")
+}
+
+private func streamResolvedConfigRows(_ config: StreamResolvedConfig?) -> [ResolvedStreamConfigRow] {
+    guard let config else {
+        return [ResolvedStreamConfigRow(label: "Status", value: "No resolved config received yet")]
+    }
+    var rows = [
+        ResolvedStreamConfigRow(label: "Transport", value: config.transport?.rawValue.uppercased() ?? "Unknown"),
+    ]
+    if let video = config.video {
+        rows.append(ResolvedStreamConfigRow(label: "Video", value: "\(video.width) x \(video.height)"))
+        if let captureWidth = video.captureWidth, let captureHeight = video.captureHeight {
+            rows.append(ResolvedStreamConfigRow(label: "Capture", value: "\(captureWidth) x \(captureHeight)"))
+        } else {
+            rows.append(ResolvedStreamConfigRow(label: "Capture", value: "Same as video"))
+        }
+        rows.append(ResolvedStreamConfigRow(label: "FPS", value: "\(video.fps)"))
+        rows.append(ResolvedStreamConfigRow(label: "Video bitrate", value: bitrateLabel(video.bitrate)))
+    }
+    if let audio = config.audio {
+        rows.append(ResolvedStreamConfigRow(label: "Audio bitrate", value: audio.bitrate.map(bitrateLabel) ?? "Not reported"))
+        rows.append(ResolvedStreamConfigRow(label: "Sample rate", value: audio.sampleRate.map { "\($0) Hz" } ?? "Not reported"))
+        rows.append(ResolvedStreamConfigRow(label: "Echo cancellation", value: boolSettingLabel(audio.echoCancellation)))
+        rows.append(ResolvedStreamConfigRow(label: "Noise suppression", value: boolSettingLabel(audio.noiseSuppression)))
+    }
+    return rows
+}
+
+private func bitrateLabel(_ bitsPerSecond: Int) -> String {
+    if bitsPerSecond >= 1_000_000 {
+        return String(format: "%.1f Mbps", Double(bitsPerSecond) / 1_000_000)
+    }
+    if bitsPerSecond >= 1_000 {
+        return "\(bitsPerSecond / 1_000) kbps"
+    }
+    return "\(bitsPerSecond) bps"
+}
+
+private func boolSettingLabel(_ value: Bool?) -> String {
+    guard let value else { return "Not reported" }
+    return value ? "On" : "Off"
 }
 
 struct ProtocolTab: View {

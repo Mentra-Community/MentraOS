@@ -32,6 +32,72 @@ enum PhotoDestination {
     case thisPhone
 }
 
+struct PhotoPreviewDetails {
+    let byteCount: Int?
+    let contentType: String?
+    let error: String?
+    let height: Int?
+    let previewUrl: String?
+    let requestId: String?
+    let source: String
+    let state: String
+    let timestamp: Int?
+    let uploadUrl: String?
+    let uploadedAt: String?
+    let width: Int?
+
+    func acknowledged(requestId: String, source: String, timestamp: Int, uploadUrl: String) -> PhotoPreviewDetails {
+        PhotoPreviewDetails(
+            byteCount: byteCount,
+            contentType: contentType,
+            error: error,
+            height: height,
+            previewUrl: previewUrl,
+            requestId: requestId,
+            source: source,
+            state: state == "preview" ? "preview" : "acknowledged",
+            timestamp: timestamp,
+            uploadUrl: uploadUrl,
+            uploadedAt: uploadedAt,
+            width: width
+        )
+    }
+
+    func uploaded(
+        byteCount: Int?,
+        contentType: String? = nil,
+        height: Int? = nil,
+        previewUrl: String,
+        requestId: String?,
+        source: String,
+        uploadedAt: String? = nil,
+        width: Int? = nil
+    ) -> PhotoPreviewDetails {
+        PhotoPreviewDetails(
+            byteCount: byteCount ?? self.byteCount,
+            contentType: contentType ?? self.contentType,
+            error: error,
+            height: height ?? self.height,
+            previewUrl: previewUrl,
+            requestId: requestId ?? self.requestId,
+            source: source,
+            state: "preview",
+            timestamp: timestamp,
+            uploadUrl: uploadUrl,
+            uploadedAt: uploadedAt ?? self.uploadedAt,
+            width: width ?? self.width
+        )
+    }
+
+    static func waiting(source: String) -> PhotoPreviewDetails {
+        PhotoPreviewDetails(byteCount: nil, contentType: nil, error: nil, height: nil, previewUrl: nil, requestId: nil, source: source, state: "acknowledged", timestamp: nil, uploadUrl: nil, uploadedAt: nil, width: nil)
+    }
+
+    static func failed(requestId: String, source: String, error: String, timestamp: Int) -> PhotoPreviewDetails {
+        PhotoPreviewDetails(byteCount: nil, contentType: nil, error: error, height: nil, previewUrl: nil, requestId: requestId, source: source, state: "error", timestamp: timestamp, uploadUrl: nil, uploadedAt: nil, width: nil)
+    }
+}
+
 func deviceModelLabel(_ model: DeviceModel) -> String {
     switch model {
     case .mentraLive:
@@ -92,6 +158,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var lastAction = "No actions yet."
     @Published private(set) var cameraStatus = "Camera: phone receiver will start before capture"
     @Published var webhookUrl = defaultPhotoUploadUrl
+    @Published private(set) var photoPreviewDetails: PhotoPreviewDetails?
     @Published private(set) var photoPreviewUrl: URL?
     @Published private(set) var photoPreviewImage: UIImage?
     @Published private(set) var photoDestination: PhotoDestination = .thisPhone
@@ -107,6 +174,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var directStreamWhipUrl = "Phone receiver not started"
     @Published private(set) var streamRequested = false
     @Published private(set) var streamPreviewReady = false
+    @Published private(set) var streamResolvedConfig: StreamResolvedConfig?
     @Published private(set) var streamStartedAt: Date?
     @Published private(set) var streamStatus = "Ready to start stream"
     @Published private(set) var galleryModeEnabled = false
@@ -373,6 +441,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             activePhotoRequestId = requestId
             pollGeneration += 1
             let generation = pollGeneration
+            photoPreviewDetails = nil
             photoPreviewUrl = nil
             photoPreviewImage = nil
             cameraStatus = "Camera: webhook upload requested (\(requestId))"
@@ -405,6 +474,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 self.append(tag: "TX", text: "phone photo upload timed out \(requestId)")
             }
         }
+        photoPreviewDetails = nil
         photoPreviewUrl = nil
         photoPreviewImage = nil
         cameraStatus = "Camera: requested phone upload (\(requestId))"
@@ -477,6 +547,15 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         activePhotoRequestId = nil
         photoPreviewUrl = upload.fileURL
         photoPreviewImage = UIImage(contentsOfFile: upload.fileURL.path)
+        photoPreviewDetails = (photoPreviewDetails ?? .waiting(source: "Phone receiver")).uploaded(
+            byteCount: upload.byteCount,
+            contentType: "image/jpeg",
+            height: photoPreviewImage.map { Int($0.size.height * $0.scale) },
+            previewUrl: upload.fileURL.absoluteString,
+            requestId: upload.requestId,
+            source: "Phone receiver",
+            width: photoPreviewImage.map { Int($0.size.width * $0.scale) }
+        )
         cameraStatus = "Camera: received phone upload \(upload.requestId ?? "")"
         append(tag: "LIVE", text: "phone photo ready \(upload.byteCount) bytes")
     }
@@ -551,6 +630,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                                 self.activeStreamId = nil
                                 self.stopDirectPhoneStreamReceiver(status: "WebRTC direct phone stopped")
                                 self.streamRequested = false
+                                self.streamResolvedConfig = nil
                                 self.streamStartedAt = nil
                             }
                         }
@@ -560,6 +640,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                     activeStreamId = nil
                     streamRequested = false
                     streamPreviewReady = false
+                    streamResolvedConfig = nil
                     streamStartedAt = nil
                     streamStatus = "Stopped"
                     return
@@ -570,6 +651,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 activeStreamId = nil
                 streamRequested = false
                 streamPreviewReady = false
+                streamResolvedConfig = nil
                 streamStartedAt = nil
                 streamStatus = "Stopped"
             }
@@ -671,8 +753,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         let message = lastError?.localizedDescription ?? "No local WHIP port pair was available."
         directStreamReceiverRunning = false
         directStreamWhipUrl = "Phone receiver failed"
-        streamPreviewReady = false
-        streamRequested = false
+                streamPreviewReady = false
+                streamResolvedConfig = nil
+                streamRequested = false
         streamStatus = "WebRTC phone receiver failed: \(message)"
         throw ExampleActionError(message: "WebRTC phone receiver failed: \(message)")
     }
@@ -814,6 +897,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         }
         streamRequested = false
         streamPreviewReady = false
+        streamResolvedConfig = nil
         streamStartedAt = nil
         return true
     }
@@ -824,6 +908,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         let shouldUseDefault = currentUrl.isEmpty || ExampleStreamProtocol.defaultUrls.contains(currentUrl)
         let stoppedStream = stopStreamForConfigurationChange(status: "Stopped before changing stream protocol")
         streamProtocol = nextProtocol
+        streamResolvedConfig = nil
         if shouldUseDefault {
             streamUrl = nextProtocol.defaultUrl
         }
@@ -835,6 +920,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     func setStreamCloudServerEnabled(_ enabled: Bool) {
         guard streamCloudServerEnabled != enabled else { return }
         stopStreamForConfigurationChange(status: "Stopped before changing stream destination")
+        streamResolvedConfig = nil
         if enabled {
             let currentUrl = streamUrl.trimmingCharacters(in: .whitespacesAndNewlines)
             let shouldUseDefault = currentUrl.isEmpty || ExampleStreamProtocol.defaultUrls.contains(currentUrl)
@@ -844,18 +930,21 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             }
             streamStatus = "Ready to start stream"
             streamPreviewReady = false
+            streamResolvedConfig = nil
             return
         }
 
         streamCloudServerEnabled = false
         streamStatus = "Ready to stream WebRTC to this phone"
         streamPreviewReady = false
+        streamResolvedConfig = nil
     }
 
     func setStreamUrl(_ nextUrl: String) {
         guard streamUrl != nextUrl else { return }
         let stoppedStream = stopStreamForConfigurationChange(status: "Stopped before changing stream URL")
         streamUrl = nextUrl
+        streamResolvedConfig = nil
         if stoppedStream {
             streamStatus = "Ready to start stream"
         }
@@ -1291,6 +1380,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         activeStreamId = nil
         streamRequested = false
         streamPreviewReady = false
+        streamResolvedConfig = nil
         streamStartedAt = nil
         streamStatus = status
         micRecording = false
@@ -1541,6 +1631,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         case .stopped, .stopping, .error, .reconnectFailed:
             streamRequested = false
             streamPreviewReady = false
+            streamResolvedConfig = nil
             streamStartedAt = nil
             activeStreamId = nil
             stopKeepAlive()
@@ -1553,6 +1644,9 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
 
     private func handleStreamStatus(_ status: StreamStatus) {
         applyStreamStatus(status)
+        if let resolvedConfig = status.resolvedConfig {
+            streamResolvedConfig = resolvedConfig
+        }
         let summary = summarize(status.values)
         if isDirectPhoneWebRtcSelected {
             if status.state == .stopped || status.state == .stopping || status.state == .reconnectFailed {
@@ -1577,10 +1671,23 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             return
         }
         let uploadTarget = photoDestination == .thisPhone ? "phone upload" : "local upload"
+        let source = photoDestination == .thisPhone ? "Phone receiver" : "Cloud server"
         switch response {
-        case .success:
+        case let .success(requestId, uploadUrl, timestamp):
+            photoPreviewDetails = (photoPreviewDetails ?? .waiting(source: source)).acknowledged(
+                requestId: requestId,
+                source: source,
+                timestamp: timestamp,
+                uploadUrl: uploadUrl
+            )
             cameraStatus = "Camera: photo acknowledged; waiting for \(uploadTarget)"
-        case let .error(_, errorCode, errorMessage, _):
+        case let .error(requestId, errorCode, errorMessage, timestamp):
+            photoPreviewDetails = .failed(
+                requestId: requestId,
+                source: source,
+                error: errorCode ?? errorMessage,
+                timestamp: timestamp
+            )
             cameraStatus = "Camera: glasses reported \(errorCode ?? errorMessage); waiting for \(uploadTarget)"
         }
         append(tag: "LIVE", text: "photo response \(requestId)")
@@ -1600,6 +1707,14 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                     {
                         photoPreviewUrl = url
                         photoPreviewImage = nil
+                        photoPreviewDetails = (photoPreviewDetails ?? .waiting(source: "Cloud server")).uploaded(
+                            byteCount: intValue(json, "bytes"),
+                            contentType: stringValue(json, "contentType"),
+                            previewUrl: photoUrl,
+                            requestId: stringValue(json, "requestId") ?? requestId,
+                            source: "Cloud server",
+                            uploadedAt: stringValue(json, "uploadedAt")
+                        )
                         cameraStatus = "Camera: loaded photo preview"
                         activePhotoRequestId = nil
                         append(tag: "LIVE", text: "local photo ready \(photoUrl)")

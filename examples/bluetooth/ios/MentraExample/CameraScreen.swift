@@ -1,3 +1,4 @@
+import Foundation
 import MentraBluetoothSDK
 import SwiftUI
 import UIKit
@@ -24,6 +25,7 @@ struct CameraScreen: View {
     @ObservedObject var model: BluetoothViewModel
     @Environment(\.keyboardVisible) private var keyboardVisible
     @FocusState private var webhookUrlFocused: Bool
+    @State private var photoDetailsExpanded = false
     private var cloudServerEnabled: Bool {
         model.photoDestination == .macBookServer
     }
@@ -61,6 +63,7 @@ struct CameraScreen: View {
 
                 previewCard.padding(.horizontal, 16).padding(.top, 8)
                 sdkCard.padding(.horizontal, 16).padding(.top, 12)
+                photoDetailsCard.padding(.horizontal, 16).padding(.top, 12)
                 uploadCard.padding(.horizontal, 16).padding(.top, 12)
             }
             .padding(.bottom, LayoutMetric.scrollBottomPadding(keyboardVisible: keyboardVisible))
@@ -271,6 +274,112 @@ struct CameraScreen: View {
             }
         }
     }
+
+    private var photoDetailsCard: some View {
+        let rows = photoDetailsRows(model.photoPreviewDetails)
+        return GlassCard(corner: 18, padding: EdgeInsets(top: 12, leading: 14, bottom: 12, trailing: 14)) {
+            Button {
+                photoDetailsExpanded.toggle()
+            } label: {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("PHOTO DETAILS")
+                            .font(.system(size: 10, weight: .semibold))
+                            .tracking(1.2)
+                            .foregroundColor(AppColor.muted)
+                        Text(photoDetailsSummary(model.photoPreviewDetails))
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(AppColor.ink)
+                    }
+                    Spacer()
+                    Text(photoDetailsExpanded ? "Hide" : "Show")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(AppColor.greenAccent)
+                }
+            }
+            .buttonStyle(.plain)
+
+            if photoDetailsExpanded {
+                Rectangle()
+                    .fill(AppColor.ink.opacity(0.08))
+                    .frame(height: 1)
+                    .padding(.top, 12)
+                    .padding(.bottom, 8)
+                VStack(spacing: 8) {
+                    ForEach(rows, id: \.label) { row in
+                        HStack(alignment: .top) {
+                            Text(row.label)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(AppColor.muted)
+                            Spacer()
+                            Text(row.value)
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(AppColor.ink)
+                                .multilineTextAlignment(.trailing)
+                                .lineLimit(3)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct PhotoDetailsRow {
+    let label: String
+    let value: String
+}
+
+private func photoDetailsSummary(_ details: PhotoPreviewDetails?) -> String {
+    guard let details else { return "Waiting for first photo preview" }
+    if details.state == "error" {
+        return "Error · \(details.error ?? "Photo failed")"
+    }
+    return [
+        details.source,
+        details.byteCount.map(formatBytes),
+        dimensionsLabel(width: details.width, height: details.height),
+        details.state == "acknowledged" ? "acknowledged" : "preview ready",
+    ].compactMap { $0 }.joined(separator: " · ")
+}
+
+private func photoDetailsRows(_ details: PhotoPreviewDetails?) -> [PhotoDetailsRow] {
+    guard let details else {
+        return [PhotoDetailsRow(label: "Status", value: "No photo metadata received yet")]
+    }
+    var rows = [
+        PhotoDetailsRow(label: "Source", value: details.source),
+        PhotoDetailsRow(label: "State", value: details.state),
+    ]
+    if let requestId = details.requestId { rows.append(PhotoDetailsRow(label: "Request ID", value: requestId)) }
+    if let byteCount = details.byteCount { rows.append(PhotoDetailsRow(label: "Size", value: formatBytes(byteCount))) }
+    if let dimensions = dimensionsLabel(width: details.width, height: details.height) { rows.append(PhotoDetailsRow(label: "Dimensions", value: dimensions)) }
+    if let contentType = details.contentType { rows.append(PhotoDetailsRow(label: "Content type", value: contentType)) }
+    if let uploadUrl = details.uploadUrl { rows.append(PhotoDetailsRow(label: "Upload URL", value: uploadUrl)) }
+    if let previewUrl = details.previewUrl { rows.append(PhotoDetailsRow(label: "Preview URL", value: previewUrl)) }
+    if let timestamp = details.timestamp { rows.append(PhotoDetailsRow(label: "SDK timestamp", value: timeLabel(timestamp))) }
+    if let uploadedAt = details.uploadedAt { rows.append(PhotoDetailsRow(label: "Uploaded at", value: uploadedAt)) }
+    if let error = details.error { rows.append(PhotoDetailsRow(label: "Error", value: error)) }
+    return rows
+}
+
+private func dimensionsLabel(width: Int?, height: Int?) -> String? {
+    guard let width, let height else { return nil }
+    return "\(width) x \(height)"
+}
+
+private func formatBytes(_ bytes: Int) -> String {
+    if bytes >= 1024 * 1024 {
+        return String(format: "%.1f MB", Double(bytes) / (1024 * 1024))
+    }
+    return "\(max(1, (bytes + 1023) / 1024)) KB"
+}
+
+private func timeLabel(_ timestamp: Int) -> String {
+    let date = Date(timeIntervalSince1970: Double(timestamp) / 1000)
+    let formatter = DateFormatter()
+    formatter.dateFormat = "HH:mm:ss"
+    return formatter.string(from: date)
 }
 
 private func isCameraStatusFailure(_ status: String) -> Bool {
