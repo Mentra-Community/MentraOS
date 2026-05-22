@@ -707,27 +707,19 @@ class CoreManager {
     }
 
     fun handlePcm(pcmData: ByteArray) {
-        val policy = vadPolicy
-        if (bypassVad || policy == null) {
-            // VAD disabled (kill-switch) or failed to init — send everything.
-            handleSendingPcm(pcmData)
-            if (shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive) {
-                transcriber?.acceptAudio(pcmData)
-            }
-            return
-        }
-
-        // Run VAD. Frame size assumption: 16 kHz PCM-16LE, must be a multiple
-        // of 1024 bytes (512 samples). Glasses LC3 decodes to this shape and
-        // PhoneMic's read buffer is a multiple of it as well. The policy
-        // logs and bails on a bad size, so we don't crash on a mismatch.
-        policy.processAudioBytes(pcmData, 0, pcmData.size)
-
-        if (policy.shouldPassAudioToRecognizer()) {
-            handleSendingPcm(pcmData)
-            if (shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive) {
-                transcriber?.acceptAudio(pcmData)
-            }
+        // Audio always flows. The previous phone-side Silero VAD gate was a
+        // bandwidth-saver that ate transcripts when the mic delivered frames
+        // not aligned to 512 samples (the case for Android AudioRecord on the
+        // phone internal mic) and was never wired up correctly anyway —
+        // `bypass_vad_for_debugging` was dead, cloud-side `bypass_vad` was
+        // the only knob, and the policy double-VAD'd what the cloud already
+        // VADs server-side. VadGateSpeechPolicy is kept around because
+        // hardware-side VAD events from the glasses route through the same
+        // class to fire `vad_status` (a separate signal the cloud SDK
+        // surfaces as `session.audio.isSpeaking`).
+        handleSendingPcm(pcmData)
+        if (shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive) {
+            transcriber?.acceptAudio(pcmData)
         }
     }
 

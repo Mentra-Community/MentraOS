@@ -285,13 +285,6 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  bypass_vad_for_debugging: {
-    key: "bypass_vad_for_debugging",
-    defaultValue: () => true,
-    writable: true,
-    saveOnServer: true,
-    persist: true,
-  },
   bypass_audio_encoding_for_debugging: {
     key: "bypass_audio_encoding_for_debugging",
     defaultValue: () => false,

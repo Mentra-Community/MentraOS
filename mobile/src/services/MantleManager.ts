@@ -806,13 +806,6 @@ class MantleManager {
       // this.subs.push({remove: () => batteryStateSub.remove()})
 
       // this.subs.push(
-      //   CoreModule.addListener("vad", (event) => {
-      //     localMiniappRuntime.forwardEvent("VAD", event)
-      //     localSttFallbackCoordinator.onVad(!!event?.status)
-      //   }),
-      // )
-
-      // this.subs.push(
       //   CoreModule.addListener("audio_chunk", (event) => {
       //     localMiniappRuntime.forwardEvent("audio_chunk", event)
       //   }),

@@ -462,8 +462,6 @@ const en = {
     phoneHeadset: "Phone / Headset",
     glasses: "Glasses",
     appearance: "Appearance",
-    bypassVAD: "Bypass VAD for Debugging",
-    bypassVADSubtitle: "Bypass the VAD (Voice Activity Detection).",
     enforceLocalTranscription: "Enforce Local Transcription",
     enforceLocalTranscriptionSubtitle: "Transcribe audio locally instead of in the cloud.",
     sensingLabel: "Enable Sensors",
