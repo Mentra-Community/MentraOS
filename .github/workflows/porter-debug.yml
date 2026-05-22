@@ -8,6 +8,8 @@ on:
       - cloud/pod-loop-stall-cascade
       - cloud/104-soniox-eventqueue-leak-fix
       - codex/issue-107-reconnect-storm
+      - cloud/legacy-sessionid-hyphen-fix
+      - cloud/fix-soniox-isfinal-split
     paths:
       - "cloud/**"
       - ".github/workflows/porter-debug.yml"

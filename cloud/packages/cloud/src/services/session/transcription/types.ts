@@ -75,6 +75,20 @@ export interface SonioxProviderConfig {
   endpoint: string;
   model?: string; // Default: SONIOX_MODEL env var or 'stt-rt-v4'
   maxConnections?: number;
+  /**
+   * Soniox `max_endpoint_delay_ms`. Allowed 500–3000, default 2000.
+   * Higher = Soniox waits longer before committing endpoint events,
+   * giving the semantic model more time to retract premature decisions.
+   * Useful for reducing mid-utterance endpoint splits.
+   */
+  maxEndpointDelayMs?: number;
+  /**
+   * How long to wait after a Soniox `endpoint` event before emitting
+   * the FINAL. If new tokens or new audio arrive within this window,
+   * the endpoint is treated as premature and discarded. Defaults to
+   * 500ms; tune higher for noisier signals.
+   */
+  endpointDebounceMs?: number;
 }
 
 export interface AlibabaProviderConfig {
@@ -347,6 +361,12 @@ export const DEFAULT_TRANSCRIPTION_CONFIG: TranscriptionConfig = {
     apiKey: SONIOX_API_KEY,
     endpoint: SONIOX_ENDPOINT,
     model: SONIOX_MODEL,
+    // 3000ms = Soniox's max. Higher = Soniox waits longer before
+    // committing endpoint events, giving the semantic model more time
+    // to retract premature decisions. Combined with our endpoint-
+    // debounce-and-merge logic in SonioxSdkStream, this reduces the
+    // rate of mid-utterance FINAL splits.
+    maxEndpointDelayMs: 3000,
   },
 
   alibaba: {
