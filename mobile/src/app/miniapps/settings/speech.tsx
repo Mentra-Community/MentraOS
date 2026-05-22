@@ -5,7 +5,6 @@ import {ActivityIndicator, BackHandler, Platform, ScrollView, View} from "react-
 
 import {Header, Screen, Text} from "@/components/ignite"
 import LanguageSelector, {LanguageRow} from "@/components/settings/LanguageSelector"
-import ToggleSetting from "@/components/settings/ToggleSetting"
 import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
@@ -41,7 +40,6 @@ export default function SpeechSettingsScreen() {
   const [autoStatus, setAutoStatus] = useState<DownloadStatus | null>(offlineSpeechModelService.getStatus())
 
   const [isLoading, setIsLoading] = useState(true)
-  const [bypassVadForDebugging, setBypassVadForDebugging] = useSetting(SETTINGS.bypass_vad_for_debugging.key)
   const [_offlineCaptionsAppRunning, setOfflineCaptionsAppRunning] = useSetting(SETTINGS.offline_captions_running.key)
   const [_enforceLocalTranscription, setEnforceLocalTranscription] = useSetting(
     SETTINGS.enforce_local_transcription.key,
@@ -345,15 +343,6 @@ export default function SpeechSettingsScreen() {
       />
 
       <ScrollView className="pt-6 px-6 -mx-6">
-        <ToggleSetting
-          label={translate("settings:bypassVAD")}
-          subtitle={translate("settings:bypassVADSubtitle")}
-          value={bypassVadForDebugging}
-          onValueChange={setBypassVadForDebugging}
-        />
-
-        <Spacer height={theme.spacing.s6} />
-
         {isLoading ? (
           <View style={{alignItems: "center", padding: theme.spacing.s6}}>
             <ActivityIndicator size="large" color={theme.colors.foreground} />

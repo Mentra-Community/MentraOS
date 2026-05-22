@@ -131,7 +131,7 @@ const GlassesDisplayMirror: React.FC<GlassesDisplayMirrorProps> = ({
   const renderLayout = (
     layout: any,
     textStyle?: TextStyle,
-    canvasRef?: React.RefObject<Canvas>,
+    canvasRef?: React.RefObject<Canvas | null>,
     containerRef?: React.RefObject<View | null>,
     setContainerWidth?: (width: number) => void,
   ) => {

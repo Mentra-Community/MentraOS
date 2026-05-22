@@ -17,7 +17,9 @@ async function getAnalytics() {
       return null
     }
   }
-  return analyticsModule.default()
+  const module = analyticsModule
+  if (!module) return null
+  return module.default()
 }
 
 export async function initAnalytics() {

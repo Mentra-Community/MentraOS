@@ -150,6 +150,7 @@ public class K900CommandHandler {
                 case "cs_swit":
                 case "cs_fbvol":
                 case "cs_batv":
+                case "sr_ledon":
                     Log.d(TAG, "📦 Ignoring mirrored K900 command: " + command);
                     break;
 

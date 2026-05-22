@@ -68,6 +68,31 @@ class CrustModule : Module() {
     }
   }
 
+  // Whether the JSCRuntime's onOutbound sink + polyfill bridge have been wired
+  // up. We try in OnCreate, but `appContext.reactContext` is often null that
+  // early — in that case we re-attempt the install on the first AsyncFunction
+  // call that can hand us a real context. Without this every host-bound
+  // __dispatch from a per-miniapp QuickJS context (SUBSCRIBE, mic, location,
+  // display, send, etc.) would be silently dropped on Android.
+  @Volatile private var runtimeInstalled: Boolean = false
+
+  private fun installRuntimeIfPossible(reason: String): Boolean {
+    if (runtimeInstalled) return true
+    val ctx = appContext.reactContext ?: appContext.currentActivity
+    if (ctx == null) {
+      Log.w(TAG, "MentraJS: install deferred ($reason) — no context yet")
+      return false
+    }
+    val runtime = JSCRuntime.shared(ctx)
+    runtime.onOutbound = { msg ->
+      sendEvent("mentrajs_message", msg.payload)
+    }
+    JSCPolyfillBridge.install(runtime)
+    runtimeInstalled = true
+    Log.i(TAG, "MentraJS: runtime installed ($reason)")
+    return true
+  }
+
   override fun definition() = ModuleDefinition {
     Name("Crust")
 
@@ -93,18 +118,7 @@ class CrustModule : Module() {
 
     OnCreate {
       eventEmitter = { eventName, data -> sendEvent(eventName, data) }
-      val ctx =
-              appContext.reactContext
-                      ?: appContext.currentActivity
-      if (ctx != null) {
-        val runtime = JSCRuntime.shared(ctx)
-        runtime.onOutbound = { msg ->
-          sendEvent("mentrajs_message", msg.payload)
-        }
-        JSCPolyfillBridge.install(runtime)
-      } else {
-        Log.w(TAG, "MentraJS: no context yet — runtime install deferred")
-      }
+      installRuntimeIfPossible("OnCreate")
     }
 
     Function("hello") {
@@ -117,6 +131,12 @@ class CrustModule : Module() {
 
     Function("showAVRoutePicker") { _: String? ->
       // iOS-only; Android uses system Bluetooth settings / Crust where appropriate.
+    }
+
+    AsyncFunction("setDeferredSystemGestures") { _: List<String> ->
+      // iOS-only: maps to preferredScreenEdgesDeferringSystemGestures.
+      // Android has no equivalent — system gestures are user-configurable
+      // at the OS level, not per-app.
     }
 
     // MARK: - MentraOS Notification Commands
@@ -169,6 +189,11 @@ class CrustModule : Module() {
               appContext.reactContext
                       ?: appContext.currentActivity
                               ?: throw IllegalStateException("MentraJS: no context")
+      // Safety net for the OnCreate-too-early race: if the runtime wasn't
+      // wired during module creation (no reactContext yet), do it now —
+      // otherwise every host-bound __dispatch from this miniapp's JSContext
+      // would have a null onOutbound sink and silently drop frames.
+      installRuntimeIfPossible("mentraJsSpawn")
       JSCRuntime.shared(ctx).spawn(
           packageName = packageName,
           polyfillBundleOverride = polyfillBundle.takeIf { it.isNotEmpty() },

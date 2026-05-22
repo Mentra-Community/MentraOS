@@ -35,7 +35,7 @@ import {storage} from "@/utils/storage"
 import {captureRef} from "react-native-view-shot"
 
 export default function AppSettings() {
-  const {packageName, appName: appNameParam} = useLocalSearchParams()
+  const {packageName, appName: appNameParam} = useLocalSearchParams<{packageName: string; appName?: string}>()
   const [isUninstalling, setIsUninstalling] = useState(false)
   const {theme, themed} = useAppTheme()
   const {goBack, replaceAll} = useNavigationStore.getState()
@@ -300,15 +300,13 @@ export default function AppSettings() {
       [key]: value,
     }))
 
-    // Build an array of settings to send.
-    restComms
-      .updateAppSetting(packageName, {key, value})
-      .then((data) => {
-        console.log("Server update response:", data)
-      })
-      .catch((error) => {
-        console.error("Error updating setting on server:", error)
-      })
+    void restComms.updateAppSetting(packageName, {key, value}).then((result) => {
+      if (result.is_error()) {
+        console.error("Error updating setting on server:", result.error)
+        return
+      }
+      console.log("Server update response:", result.value)
+    })
   }
 
   // Pre-process settings into groups for proper isFirst/isLast styling

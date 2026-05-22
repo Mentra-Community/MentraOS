@@ -189,12 +189,15 @@ dependencies {
   // library modules.
   implementation "${sherpaOnnxGroup}:${sherpaOnnxArtifact}:${sherpaOnnxVersion}@aar"
 
-  // Silero VAD (with onnxruntime exclusions to avoid conflicts with sherpa-onnx)
-  implementation ('com.github.gkonovalov:android-vad:2.0.9') {
-    exclude group: 'com.microsoft.onnxruntime', module: 'onnxruntime'
-    exclude group: 'com.microsoft.onnxruntime', module: 'onnxruntime4j'
-    exclude group: 'com.microsoft.onnxruntime', module: 'onnxruntime4j-jni'
-  }
+  // Silero VAD — vendored source under silero/, wired as :silero
+  // sub-project (see settings.gradle). This replaces the previous Jitpack AAR
+  // (com.github.gkonovalov:android-vad:2.0.9) whose prebuilt JNI was bound to
+  // an ORT version incompatible with the one bundled by sherpa-onnx, causing a
+  // dlopen UnsatisfiedLinkError for OrtGetApiBase at VAD startup. By owning the
+  // source we control both the Java API surface and the ORT version it links
+  // against; today both consumers (Silero VAD and sherpa-onnx) load their own
+  // libonnxruntime.so — see packagingOptions pickFirst above.
+  implementation project(':silero')
 
   // Vuzix Z100
   implementation 'com.vuzix:ultralite-sdk-android:1.8'
@@ -204,17 +207,21 @@ dependencies {
   implementation 'com.google.protobuf:protobuf-java-util:4.32.0'
 }
 
-// Force override onnxruntime version to 1.17.1
+// Pin onnxruntime-android to 1.24.3 — the version sherpa-onnx 1.13.2 was built
+// against (its libonnxruntime.so exports OrtGetApiBase@@VERS_1.24.3). Matching
+// this lets the :silero VAD module share a single libonnxruntime.so with
+// sherpa-onnx, resolving the ELF symbol-versioning conflict that crashed VAD
+// startup on previous mismatched versions.
 configurations.all {
   resolutionStrategy {
     eachDependency { DependencyResolveDetails details ->
       if (details.requested.group == 'com.microsoft.onnxruntime') {
-        details.useVersion '1.17.1'
-        details.because('Force override vad\'s transitive version')
+        details.useVersion '1.24.3'
+        details.because('Match sherpa-onnx 1.13.2 ORT 1.24.3')
       }
       if (details.requested.name == 'onnxruntime-android') {
-        details.useVersion '1.17.1'
-        details.because('Force override vad\'s transitive version')
+        details.useVersion '1.24.3'
+        details.because('Match sherpa-onnx 1.13.2 ORT 1.24.3')
       }
     }
   }

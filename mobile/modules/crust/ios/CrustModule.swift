@@ -268,6 +268,25 @@ public class CrustModule: Module {
             #endif
         }
 
+        // Configure which screen edges defer iOS system gestures
+        // (Control Center, Notification Center, Home indicator). Edge
+        // strings: "top", "bottom", "left", "right", "all". An empty
+        // array restores default behavior. iOS-only; Android is a no-op.
+        AsyncFunction("setDeferredSystemGestures") { (edges: [String]) -> Void in
+            var rect: UIRectEdge = []
+            for edge in edges {
+                switch edge.lowercased() {
+                case "top": rect.insert(.top)
+                case "bottom": rect.insert(.bottom)
+                case "left": rect.insert(.left)
+                case "right": rect.insert(.right)
+                case "all": rect = .all
+                default: break
+                }
+            }
+            SystemGestures.setDeferredEdges(rect)
+        }
+
         Function("showAVRoutePicker") { (tintColor: String?) in
             DispatchQueue.main.async {
                 let picker = AVRoutePickerView()

@@ -132,7 +132,7 @@ public class Mach1 extends SGCManager {
     }
 
     @Override
-    public void requestPhoto(@NonNull String requestId, @NonNull String appId, @NonNull String size, @Nullable String webhookUrl, @Nullable String authToken, @Nullable String compress, boolean flash, boolean sound) {
+    public void requestPhoto(@NonNull String requestId, @NonNull String appId, @NonNull String size, @Nullable String webhookUrl, @Nullable String authToken, @Nullable String compress, boolean flash, boolean sound, @Nullable Long exposureTimeNs) {
 
     }
 

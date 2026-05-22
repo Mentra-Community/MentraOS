@@ -2,8 +2,8 @@ package com.mentra.crust.jsc
 
 import android.content.Context
 import android.util.Log
-import app.cash.zipline.Zipline
-import app.cash.zipline.ZiplineService
+import com.dokar.quickjs.QuickJs
+import com.dokar.quickjs.binding.function
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
@@ -11,37 +11,58 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
-import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 
 /**
- * Thrown from the bridge's dispatch() method to propagate a structured
- * MentraJS dispatch failure (PERMISSION_NOT_DECLARED / INVALID_ARGS /
- * etc.) back to the calling JS frame. Zipline surfaces Kotlin exceptions
- * from bound methods as JS-side throws, so the SDK's send-request
- * Promise correctly rejects with a real Error.
+ * Thrown from the `__dispatch` binding to propagate a structured MentraJS
+ * dispatch failure (PERMISSION_NOT_DECLARED / INVALID_ARGS / etc.) back to
+ * the calling JS frame. Dokar3 surfaces Kotlin throwables from bindings as
+ * JS-side `throw new Error(message)`, so the SDK's send-request Promise
+ * correctly rejects with a real Error.
  */
 class MentraJSDispatchError(val code: String, message: String) : RuntimeException("$code: $message")
 
 /**
- * MentraJS — per-miniapp QuickJS (via Cash App's Zipline) runtime host on Android.
+ * MentraJS — per-miniapp QuickJS runtime host on Android.
  *
- * Owns N QuickJs instances keyed by packageName. Each context gets:
- *   - its own QuickJs (heap isolation; Zipline's runtime is single-threaded so
- *     we hop every operation onto the context's dedicated SingleThreadExecutor).
- *   - the polyfill bundle pre-evaluated before any miniapp code runs
- *   - a single `__dispatch(iface, method, argsJson)` global routed through
- *     [JSCDispatcher].
+ * Owns N QuickJs instances (via dokar3/quickjs-kt) keyed by packageName.
+ * Each context gets:
+ *   - its own QuickJs (heap isolation; QuickJS is single-threaded so we hop
+ *     every operation onto the context's dedicated SingleThreadExecutor).
+ *   - six host-callable globals installed at spawn time
+ *     (`__dispatch`, `__hostLog`, `__hostError`, `__hostUnhandledRejection`,
+ *     `__nativeSetTimeout`, `__nativeClearTimer`) via dokar3's
+ *     `QuickJs.function(name) { args -> ... }` extension. This maps directly
+ *     to `JS_SetPropertyStr(JS_NewCFunction(...))` on the QuickJS C API and
+ *     mirrors iOS Apple JSC's `ctx.setObject(closure, forKeyedSubscript:)`
+ *     pattern point-for-point.
+ *   - the polyfill bundle pre-evaluated before any miniapp code runs.
  *
  * Symmetric with iOS [JSCRuntime.swift]. The class name keeps the "JSC"
- * prefix on Android even though the engine is QuickJS — cross-platform parity
- * for log filters, Sentry tags, and developer mental model.
+ * prefix on Android even though the engine is QuickJS — cross-platform
+ * parity for log filters, Sentry tags, and developer mental model.
  *
- * QuickJS does not drain Promise reactions on its own; Zipline drains them
- * during bridge re-entry. Every native callback that needs to resolve a JS
- * Promise routes back through `evaluate(...)` (the polyfill's __deliver),
- * which is a fresh bridge entry — so the drain happens naturally without
- * exposing `JS_ExecutePendingJob`. See the spec's "Mandatory microtask
- * discipline (Android only)" section.
+ * Dokar3 drains pending Promise jobs after every `evaluate(...)` and after
+ * every async-binding completion via QuickJS's `JS_ExecutePendingJob` loop,
+ * so we don't need to manually pump microtasks.
+ *
+ * Threading rule: every QuickJs operation must run on its context's
+ * dedicated executor thread. We `executor.submit { runBlocking { qjs.evaluate(...) } }`
+ * to satisfy both dokar3's coroutine entry point and the thread-affinity
+ * invariant. We pass `Dispatchers.Unconfined` to `QuickJs.create()` so
+ * async-job callbacks resume on whatever thread completes them (the
+ * executor thread, since we hop there via `executor.submit`); passing
+ * `executor.asCoroutineDispatcher()` instead would deadlock because
+ * `runBlocking(dispatcher)` parks the executor thread inside its own event
+ * loop and the dispatcher would try to schedule continuations back through
+ * the same executor's task queue, which is no longer being drained.
+ *
+ * Re-entrancy rule: bindings must NOT call `qjs.evaluate(...)` on the same
+ * instance — dokar3 holds an internal mutex across evaluate, and a binding
+ * that re-enters would deadlock. Our `__dispatch` returns a string and may
+ * throw, but never re-evaluates JS, so this rule is satisfied by
+ * construction. Future bindings must observe it.
  */
 class JSCRuntime private constructor(private val appContext: Context) {
     companion object {
@@ -67,11 +88,42 @@ class JSCRuntime private constructor(private val appContext: Context) {
 
     /**
      * Subscribe to outbound `mentrajs_message` events. Set by [CrustModule]
-     * during `OnCreate`; the runtime fires this for every __dispatch call
-     * that has no matching local route in [JSCDispatcher].
+     * during `OnCreate` (or lazily on `mentraJsSpawn` if reactContext was
+     * null at OnCreate time). The runtime fires this for every __dispatch
+     * call that has no matching local route in [JSCDispatcher]. If this is
+     * still null when a __dispatch arrives, the frame is silently dropped
+     * — we log a one-time warning at the first drop and count subsequent
+     * ones, since otherwise a miniapp will just look dead with no error
+     * trail.
      */
     @Volatile
-    var onOutbound: ((OutboundMessage) -> Unit)? = null
+    private var _onOutbound: ((OutboundMessage) -> Unit)? = null
+    var onOutbound: ((OutboundMessage) -> Unit)?
+        get() = _onOutbound
+        set(value) {
+            val prev = _onOutbound
+            _onOutbound = value
+            if (value != null && prev == null) {
+                Log.i(TAG, "onOutbound sink installed (dropped frames before this: $droppedOutboundCount)")
+            } else if (value == null) {
+                Log.w(TAG, "onOutbound sink cleared")
+            }
+        }
+
+    @Volatile private var droppedOutboundCount: Int = 0
+    private fun deliverOrDrop(message: OutboundMessage) {
+        val sink = _onOutbound
+        if (sink != null) {
+            sink.invoke(message)
+            return
+        }
+        val n = ++droppedOutboundCount
+        if (n == 1 || n % 50 == 0) {
+            val iface = message.payload["iface"]
+            val method = message.payload["method"]
+            Log.w(TAG, "outbound dropped (no sink): ${message.packageName} $iface.$method [drop #$n]")
+        }
+    }
 
     data class OutboundMessage(
         val packageName: String,
@@ -92,17 +144,13 @@ class JSCRuntime private constructor(private val appContext: Context) {
 
     private inner class ContextRecord(
         val packageName: String,
-        val zipline: Zipline,
+        val qjs: QuickJs,
         val executor: ExecutorService,
         val pendingTimers: MutableMap<Int, ScheduledFuture<*>> = ConcurrentHashMap(),
         @Volatile var readyAcked: Boolean = false,
         @Volatile var readyNackTimer: ScheduledFuture<*>? = null,
         @Volatile var watchdogTimer: ScheduledFuture<*>? = null,
-    ) {
-        // Access underlying QuickJS for evaluate calls. Always touched from
-        // [executor]'s single thread — Zipline asserts this.
-        val quickJs get() = zipline.quickJs
-    }
+    )
 
     /**
      * Called from the dispatcher's __runtime.ready route when the polyfill
@@ -123,7 +171,7 @@ class JSCRuntime private constructor(private val appContext: Context) {
                 TAG,
                 "NACK: ${record.packageName} $phase ready signal not received in ${timeoutMs}ms",
             )
-            onOutbound?.invoke(
+            deliverOrDrop(
                 OutboundMessage(
                     record.packageName,
                     mapOf(
@@ -146,16 +194,16 @@ class JSCRuntime private constructor(private val appContext: Context) {
      */
     fun debugForceGC(packageName: String): Boolean {
         val record = contexts[packageName] ?: return false
-        try {
+        return try {
             record.executor.submit {
                 try {
-                    record.quickJs.gc()
+                    record.qjs.gc()
                 } catch (_: Throwable) { /* ignore */ }
             }
+            true
         } catch (_: Throwable) {
-            return false
+            false
         }
-        return true
     }
 
     fun isAlive(packageName: String): Boolean = contexts.containsKey(packageName)
@@ -194,17 +242,38 @@ class JSCRuntime private constructor(private val appContext: Context) {
         val executor = Executors.newSingleThreadExecutor { r ->
             Thread(r, "MentraJS-$packageName").apply { isDaemon = true }
         }
-        // Zipline binds Kotlin services to JS via a coroutine dispatcher.
-        // We wrap the single-thread executor so Zipline + every subsequent
-        // QuickJs call ride the same thread (Zipline asserts this).
-        val zipline = try {
-            executor.submit<Zipline> { Zipline.create(executor.asCoroutineDispatcher()) }.get()
+
+        // Create the QuickJs context ON the executor thread. We pass
+        // `Dispatchers.Unconfined` as the jobDispatcher: dokar3 only uses it
+        // to schedule async-job callbacks via `coroutineScope.launch`. If we
+        // passed `executor.asCoroutineDispatcher()` instead, then
+        // `runBlocking(dispatcher) { evaluate(...) }` would deadlock —
+        // runBlocking parks the executor thread inside its own event loop,
+        // but the dispatcher tries to schedule the suspend body back through
+        // the same executor's task queue, which is no longer being drained.
+        // With Unconfined the suspend continuations resume on whatever thread
+        // completes them — which, since every operation is hopped onto the
+        // executor via `executor.submit { ... }`, is always the same thread T.
+        // The dokar3 internal jsMutex serializes any cross-thread access
+        // anyway, so this is safe.
+        val qjs = try {
+            executor.submit<QuickJs> {
+                QuickJs.create(Dispatchers.Unconfined).apply {
+                    memoryLimit = 32L * 1024 * 1024     // 32 MB heap per miniapp
+                    maxStackSize = 512L * 1024          // 512 KB stack
+                }
+            }.get()
         } catch (e: Throwable) {
-            Log.e(TAG, "Zipline.create() failed for $packageName", e)
+            Log.e(TAG, "QuickJs.create() failed for $packageName", e)
             executor.shutdownNow()
             return false
         }
-        val record = ContextRecord(packageName, zipline, executor)
+
+        val record = ContextRecord(
+            packageName = packageName,
+            qjs = qjs,
+            executor = executor,
+        )
         contexts[packageName] = record
 
         // Arm cold-start NACK before the first eval — catches a wedged
@@ -214,24 +283,16 @@ class JSCRuntime private constructor(private val appContext: Context) {
 
         val bundle = polyfillBundleOverride ?: polyfillBundle
 
-        // Bind the native bridge BEFORE evaluating any JS. Zipline exposes
-        // any @ZiplineService implementation as a JS global; the matching
-        // adapter is generated at build time by the Zipline Gradle plugin.
         return try {
             executor.submit<Boolean> {
-                val bridge = JSCBridgeImpl(packageName)
-                zipline.bind<NativeBridge>("__mentraNativeBridge", bridge)
-                val quickJs = zipline.quickJs
-                // Glue layer: forward globalThis.__dispatch / __hostLog / etc
-                // onto the bound object. Done in JS rather than via individual
-                // bindings to keep the surface symmetric with iOS-JSC and avoid
-                // multiple Kotlin proxy types.
-                quickJs.evaluate(GLUE_SCRIPT, "mentrajs:glue.js")
-                if (bundle.isNotEmpty()) {
-                    quickJs.evaluate(bundle, "mentrajs:startup.js")
-                }
-                if (miniappJs.isNotEmpty()) {
-                    quickJs.evaluate(miniappJs, "mentrajs:miniapp.js")
+                runBlocking {
+                    installGlobals(qjs, packageName)
+                    if (bundle.isNotEmpty()) {
+                        qjs.evaluate<Any?>(bundle, filename = "mentrajs:startup.js")
+                    }
+                    if (miniappJs.isNotEmpty()) {
+                        qjs.evaluate<Any?>(miniappJs, filename = "mentrajs:miniapp.js")
+                    }
                 }
                 Log.i(TAG, "spawned $packageName")
                 true
@@ -244,6 +305,133 @@ class JSCRuntime private constructor(private val appContext: Context) {
     }
 
     /**
+     * Install the six host-callable JS globals on `qjs`'s `globalThis`,
+     * mirroring iOS `JSCRuntime.swift:497–574`. Must run on the context's
+     * executor thread; dokar3's `function` extension is sync.
+     */
+    private fun installGlobals(qjs: QuickJs, packageName: String) {
+        // __dispatch: sync. Returns JSON or null. Throws on dispatcher Error.
+        qjs.function("__dispatch") { args ->
+            // Bail if the context was killed mid-dispatch. The JS frame won't
+            // see this return because dokar3 will have already torn down the
+            // engine — but it's defensive against the brief window where the
+            // QuickJs is alive but the host has dropped the record.
+            if (contexts[packageName] == null) return@function null
+            val iface = args[0] as? String
+                ?: throw MentraJSDispatchError("INVALID_ARGS", "iface")
+            val method = args[1] as? String
+                ?: throw MentraJSDispatchError("INVALID_ARGS", "method")
+            val argsJson = args[2] as? String
+                ?: throw MentraJSDispatchError("INVALID_ARGS", "argsJson")
+            val parsed = parseArgsEnvelope(argsJson)
+            val outcome = dispatcher.handle(
+                packageName = packageName,
+                iface = iface,
+                method = method,
+                args = parsed.first,
+                reqId = parsed.second,
+            )
+            when (outcome) {
+                is JSCDispatchOutcome.Sync -> outcome.json
+                is JSCDispatchOutcome.Async -> null
+                is JSCDispatchOutcome.Error ->
+                    throw MentraJSDispatchError(outcome.code, outcome.message ?: outcome.code)
+                is JSCDispatchOutcome.ForwardToRn -> {
+                    val payload = HashMap<String, Any?>(outcome.payload)
+                    payload["packageName"] = packageName
+                    payload["iface"] = iface
+                    payload["method"] = method
+                    parsed.second?.let { payload["reqId"] = it }
+                    deliverOrDrop(OutboundMessage(packageName, payload))
+                    null
+                }
+            }
+        }
+
+        // __hostLog: fire-and-forget. Routes to __log outbound.
+        qjs.function<Unit>("__hostLog") { args ->
+            deliverOrDrop(
+                OutboundMessage(
+                    packageName,
+                    mapOf(
+                        "packageName" to packageName,
+                        "iface" to "__log",
+                        "method" to (args[0] as? String ?: "log"),
+                        "argsJson" to (args[1] as? String ?: "[]"),
+                    ),
+                )
+            )
+        }
+
+        // __hostError: window.onerror trampoline.
+        qjs.function<Unit>("__hostError") { args ->
+            deliverOrDrop(
+                OutboundMessage(
+                    packageName,
+                    mapOf(
+                        "packageName" to packageName,
+                        "iface" to "__error",
+                        "method" to "uncaught",
+                        "argsJson" to (args[0] as? String ?: "{}"),
+                    ),
+                )
+            )
+        }
+
+        // __hostUnhandledRejection: Promise unhandledrejection trampoline.
+        qjs.function<Unit>("__hostUnhandledRejection") { args ->
+            deliverOrDrop(
+                OutboundMessage(
+                    packageName,
+                    mapOf(
+                        "packageName" to packageName,
+                        "iface" to "__error",
+                        "method" to "unhandledRejection",
+                        "argsJson" to (args[0] as? String ?: "{}"),
+                    ),
+                )
+            )
+        }
+
+        // __nativeSetTimeout: schedule wallclock callback. Fires __deliverTimer.
+        qjs.function<Unit>("__nativeSetTimeout") { args ->
+            val token = (args[0] as? Number)?.toInt() ?: return@function
+            val delayMs = (args[1] as? Number)?.toLong()?.coerceAtLeast(0L) ?: 0L
+            scheduleTimer(packageName, token, delayMs)
+        }
+
+        // __nativeClearTimer: cancel scheduled.
+        qjs.function<Unit>("__nativeClearTimer") { args ->
+            val token = (args[0] as? Number)?.toInt() ?: return@function
+            contexts[packageName]?.pendingTimers?.remove(token)?.cancel(false)
+        }
+    }
+
+    private fun scheduleTimer(packageName: String, token: Int, delayMs: Long) {
+        val record = contexts[packageName] ?: return
+        val future = timerScheduler.schedule({
+            record.pendingTimers.remove(token)
+            try {
+                record.executor.submit {
+                    runBlocking {
+                        try {
+                            record.qjs.evaluate<Any?>(
+                                "globalThis.__deliverTimer && globalThis.__deliverTimer($token);",
+                                filename = "mentrajs:timer-$token.js",
+                            )
+                        } catch (e: Throwable) {
+                            Log.w(TAG, "timer fire threw in $packageName: ${e.message}")
+                        }
+                    }
+                }
+            } catch (_: java.util.concurrent.RejectedExecutionException) {
+                // Context already killed — drop silently.
+            }
+        }, delayMs, TimeUnit.MILLISECONDS)
+        record.pendingTimers[token] = future
+    }
+
+    /**
      * Run arbitrary JS in the named context. Returns the JS return value
      * coerced to a JSON-friendly type (string for objects, primitives
      * passthrough). Returns null if the context is dead or eval threw.
@@ -252,7 +440,12 @@ class JSCRuntime private constructor(private val appContext: Context) {
         val record = contexts[packageName] ?: return null
         return try {
             record.executor.submit<Any?> {
-                record.quickJs.evaluate(source, "mentrajs:eval-${System.nanoTime()}.js")
+                runBlocking {
+                    record.qjs.evaluate<Any?>(
+                        source,
+                        filename = "mentrajs:eval-${System.nanoTime()}.js",
+                    )
+                }
             }.get()
         } catch (e: Throwable) {
             Log.w(TAG, "evaluate threw in $packageName: ${e.message}")
@@ -268,47 +461,53 @@ class JSCRuntime private constructor(private val appContext: Context) {
         val record = contexts[packageName] ?: return
         // Steady-state NACK — re-arm so a wedged QuickJS context surfaces
         // an __error/ready_nack frame after 3s instead of silently
-        // swallowing the delivery. Skipped during cold-start (timer
-        // still ticking from spawn).
+        // swallowing the delivery. Skipped during cold-start (timer still
+        // ticking from spawn).
         if (record.readyAcked) {
             armReadyNackTimer(record, STEADY_STATE_NACK_TIMEOUT_MS, cold = false)
         }
-        record.executor.submit {
-            // Soft watchdog around evaluate: warn at 5s, kill at 30s.
-            val warn = timerScheduler.schedule({
-                Log.i(TAG, "watchdog: $packageName __deliver blocked >${WATCHDOG_WARN_MS}ms")
-            }, WATCHDOG_WARN_MS, TimeUnit.MILLISECONDS)
-            val killTimer = timerScheduler.schedule({
-                Log.e(TAG, "watchdog: $packageName blocked >${WATCHDOG_KILL_MS}ms, killing")
-                onOutbound?.invoke(
-                    OutboundMessage(
-                        packageName,
-                        mapOf(
-                            "packageName" to packageName,
-                            "iface" to "__error",
-                            "method" to "watchdog_kill",
-                            "argsJson" to org.json.JSONObject(
-                                mapOf("thresholdMs" to WATCHDOG_KILL_MS) as Map<*, *>,
-                            ).toString(),
-                        ),
+        try {
+            record.executor.submit {
+                // Soft watchdog around evaluate: warn at 5s, kill at 30s.
+                val warn = timerScheduler.schedule({
+                    Log.i(TAG, "watchdog: $packageName __deliver blocked >${WATCHDOG_WARN_MS}ms")
+                }, WATCHDOG_WARN_MS, TimeUnit.MILLISECONDS)
+                val killTimer = timerScheduler.schedule({
+                    Log.e(TAG, "watchdog: $packageName blocked >${WATCHDOG_KILL_MS}ms, killing")
+                    deliverOrDrop(
+                        OutboundMessage(
+                            packageName,
+                            mapOf(
+                                "packageName" to packageName,
+                                "iface" to "__error",
+                                "method" to "watchdog_kill",
+                                "argsJson" to org.json.JSONObject(
+                                    mapOf("thresholdMs" to WATCHDOG_KILL_MS) as Map<*, *>,
+                                ).toString(),
+                            ),
+                        )
                     )
-                )
-                kill(packageName)
-            }, WATCHDOG_KILL_MS, TimeUnit.MILLISECONDS)
-            record.watchdogTimer = killTimer
-            try {
-                val source = "globalThis.__deliver(${jsStringLiteral(envelopeJson)});"
-                record.quickJs.evaluate(source, "mentrajs:deliver.js")
-                // Successful delivery — context is responsive.
-                record.readyNackTimer?.cancel(false)
-                record.readyNackTimer = null
-            } catch (e: Throwable) {
-                Log.w(TAG, "dispatchToJs threw in $packageName: ${e.message}")
-            } finally {
-                warn.cancel(false)
-                killTimer.cancel(false)
-                if (record.watchdogTimer === killTimer) record.watchdogTimer = null
+                    kill(packageName)
+                }, WATCHDOG_KILL_MS, TimeUnit.MILLISECONDS)
+                record.watchdogTimer = killTimer
+                try {
+                    val source = "globalThis.__deliver(${jsStringLiteral(envelopeJson)});"
+                    runBlocking {
+                        record.qjs.evaluate<Any?>(source, filename = "mentrajs:deliver.js")
+                    }
+                    // Successful delivery — context is responsive.
+                    record.readyNackTimer?.cancel(false)
+                    record.readyNackTimer = null
+                } catch (e: Throwable) {
+                    Log.w(TAG, "dispatchToJs threw in $packageName: ${e.message}", e)
+                } finally {
+                    warn.cancel(false)
+                    killTimer.cancel(false)
+                    if (record.watchdogTimer === killTimer) record.watchdogTimer = null
+                }
             }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            // Context killed mid-flight — drop. dispatchToJs is best-effort.
         }
     }
 
@@ -317,7 +516,7 @@ class JSCRuntime private constructor(private val appContext: Context) {
         // Cancel timers first so no scheduled fire-callback grabs the
         // QuickJs after it's closed. Order matches the iOS teardown:
         // setTimeout/setInterval → NACK watchdog → soft watchdog →
-        // close(zipline → quickJs) → executor.shutdown.
+        // close(qjs) → executor.shutdown.
         for ((_, future) in record.pendingTimers) {
             future.cancel(false)
         }
@@ -329,11 +528,9 @@ class JSCRuntime private constructor(private val appContext: Context) {
         try {
             record.executor.submit {
                 try {
-                    // Zipline.close() tears down QuickJS and its bound
-                    // services together — no need to close QuickJS first.
-                    record.zipline.close()
+                    record.qjs.close()
                 } catch (e: Throwable) {
-                    Log.w(TAG, "Zipline.close() threw for $packageName: ${e.message}")
+                    Log.w(TAG, "QuickJs.close() threw for $packageName: ${e.message}")
                 }
             }.get(2, TimeUnit.SECONDS)
         } catch (e: Throwable) {
@@ -342,133 +539,6 @@ class JSCRuntime private constructor(private val appContext: Context) {
             record.executor.shutdownNow()
         }
         Log.i(TAG, "killed $packageName")
-    }
-
-    // ------------------------------------------------------------------
-    // Bridge implementation — bound to JS via `__mentraNativeBridge`.
-    // ------------------------------------------------------------------
-
-    /**
-     * The JS-facing surface. Marked with [ZiplineService] so the Zipline
-     * Gradle plugin generates a serializer adapter at compile time;
-     * `zipline.bind<NativeBridge>(name, impl)` then exposes the
-     * implementation as a JS global with the same method shape.
-     */
-    interface NativeBridge : ZiplineService {
-        /** Synchronous dispatch — return value is a JSON string (or null). */
-        fun dispatch(iface: String, method: String, argsJson: String): String?
-        /** Console.* sink — `level` ∈ "log"|"info"|"warn"|"error"|... */
-        fun hostLog(level: String, messageJson: String)
-        /** window.onerror trampoline. */
-        fun hostError(payloadJson: String)
-        /** Promise unhandledrejection trampoline. */
-        fun hostUnhandledRejection(payloadJson: String)
-        /** Schedule a wall-clock callback. JS fires __deliverTimer(token). */
-        fun setTimerNative(token: Int, delayMs: Int)
-        /** Cancel a previously-scheduled timer. */
-        fun clearTimerNative(token: Int)
-    }
-
-    private inner class JSCBridgeImpl(private val packageName: String) : NativeBridge {
-        override fun dispatch(iface: String, method: String, argsJson: String): String? {
-            val record = contexts[packageName] ?: return null
-            val argsAndReqId = parseArgsEnvelope(argsJson)
-            val outcome = dispatcher.handle(
-                packageName = packageName,
-                iface = iface,
-                method = method,
-                args = argsAndReqId.first,
-                reqId = argsAndReqId.second,
-            )
-            return when (outcome) {
-                is JSCDispatchOutcome.Sync -> outcome.json
-                is JSCDispatchOutcome.Async -> null
-                is JSCDispatchOutcome.Error -> {
-                    // Throw a real Kotlin RuntimeException so Zipline
-                    // propagates it as a JS-side throw — the polyfill's
-                    // send-request promise then rejects with a real
-                    // Error object whose .code field the SDK can read.
-                    // Previously we submitted an async evaluate which
-                    // never reached the calling __dispatch's JS frame.
-                    val errorMessage = outcome.message ?: outcome.code
-                    throw MentraJSDispatchError(outcome.code, errorMessage)
-                }
-                is JSCDispatchOutcome.ForwardToRn -> {
-                    val payload = HashMap<String, Any?>(outcome.payload)
-                    payload["packageName"] = packageName
-                    payload["iface"] = iface
-                    payload["method"] = method
-                    argsAndReqId.second?.let { payload["reqId"] = it }
-                    onOutbound?.invoke(OutboundMessage(packageName, payload))
-                    null
-                }
-            }
-        }
-
-        override fun hostLog(level: String, messageJson: String) {
-            onOutbound?.invoke(
-                OutboundMessage(
-                    packageName,
-                    mapOf(
-                        "packageName" to packageName,
-                        "iface" to "__log",
-                        "method" to level,
-                        "argsJson" to messageJson,
-                    ),
-                )
-            )
-        }
-
-        override fun hostError(payloadJson: String) {
-            onOutbound?.invoke(
-                OutboundMessage(
-                    packageName,
-                    mapOf(
-                        "packageName" to packageName,
-                        "iface" to "__error",
-                        "method" to "uncaught",
-                        "argsJson" to payloadJson,
-                    ),
-                )
-            )
-        }
-
-        override fun hostUnhandledRejection(payloadJson: String) {
-            onOutbound?.invoke(
-                OutboundMessage(
-                    packageName,
-                    mapOf(
-                        "packageName" to packageName,
-                        "iface" to "__error",
-                        "method" to "unhandledRejection",
-                        "argsJson" to payloadJson,
-                    ),
-                )
-            )
-        }
-
-        override fun setTimerNative(token: Int, delayMs: Int) {
-            val record = contexts[packageName] ?: return
-            val future = timerScheduler.schedule({
-                record.pendingTimers.remove(token)
-                record.executor.submit {
-                    try {
-                        record.quickJs.evaluate(
-                            "globalThis.__deliverTimer && globalThis.__deliverTimer($token);",
-                            "mentrajs:timer-$token.js",
-                        )
-                    } catch (e: Throwable) {
-                        Log.w(TAG, "timer fire threw in $packageName: ${e.message}")
-                    }
-                }
-            }, delayMs.toLong().coerceAtLeast(0), TimeUnit.MILLISECONDS)
-            record.pendingTimers[token] = future
-        }
-
-        override fun clearTimerNative(token: Int) {
-            val record = contexts[packageName] ?: return
-            record.pendingTimers.remove(token)?.cancel(false)
-        }
     }
 
     // ------------------------------------------------------------------
@@ -514,35 +584,10 @@ class JSCRuntime private constructor(private val appContext: Context) {
     }
 
     private fun jsStringLiteral(s: String): String {
-        // Re-encode via JSONObject so quotes / backslashes / control chars
+        // Re-encode via JSONArray so quotes / backslashes / control chars
         // are escaped correctly for embedding in a JS source string.
         return org.json.JSONArray().put(s).toString().let { arr ->
             arr.substring(1, arr.length - 1)
         }
     }
-
-    private val GLUE_SCRIPT: String = """
-        (function () {
-          var bridge = globalThis.__mentraNativeBridge;
-          if (!bridge) return;
-          globalThis.__dispatch = function (iface, method, argsJson) {
-            return bridge.dispatch(iface, method, argsJson);
-          };
-          globalThis.__hostLog = function (level, messageJson) {
-            bridge.hostLog(level, messageJson);
-          };
-          globalThis.__hostError = function (payloadJson) {
-            bridge.hostError(payloadJson);
-          };
-          globalThis.__hostUnhandledRejection = function (payloadJson) {
-            bridge.hostUnhandledRejection(payloadJson);
-          };
-          globalThis.__nativeSetTimeout = function (token, delayMs) {
-            bridge.setTimerNative(token | 0, delayMs | 0);
-          };
-          globalThis.__nativeClearTimer = function (token) {
-            bridge.clearTimerNative(token | 0);
-          };
-        })();
-    """.trimIndent()
 }

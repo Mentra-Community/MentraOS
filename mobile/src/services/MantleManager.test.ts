@@ -316,7 +316,6 @@ describe("MantleManager", () => {
   it("keeps non-SDK settings out of Bluetooth SDK sync", async () => {
     const nonSdkSettings = {
       always_on_status_bar: true,
-      bypass_vad_for_debugging: false,
       bypass_audio_encoding_for_debugging: true,
       metric_system: true,
       enforce_local_transcription: true,

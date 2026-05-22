@@ -187,7 +187,7 @@ export default function BackendUrl() {
     setAsiaButtonLastTapTime(currentTime)
 
     if (asiaButtonTapCount + 1 >= 3) {
-      setCustomUrlInput("https://devold.augmentos.org:443")
+      setCustomUrlInput("https://clouddev.ngrok.app:443")
     } else {
       setCustomUrlInput("https://asiaeastapi.mentra.glass:443")
     }

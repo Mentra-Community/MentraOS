@@ -379,3 +379,5 @@ issues
 
 # Local session notes
 MEMORY.md
+# Cursor IDE local config (MCP, etc.)
+.cursor/

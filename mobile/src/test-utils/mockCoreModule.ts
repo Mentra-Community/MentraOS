@@ -28,6 +28,7 @@ export const coreModuleMock = {
       wifiScanResults: [],
       lastLog: [],
       otherBtConnected: false,
+      gallery_mode: true,
     }),
   ),
   getGlassesStatus: jest.fn(() =>

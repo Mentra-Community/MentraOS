@@ -440,54 +440,16 @@ struct ViewState {
     }
 
     func handlePcm(_ pcmData: Data) {
-        // handle incoming PCM data from the microphone manager and feed to the VAD:
-        if bypassVad {
-            handleSendingPcm(pcmData)
-
-            // Send PCM to local transcriber (always needs raw PCM)
-            if shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive {
-                transcriber?.acceptAudio(pcm16le: pcmData)
-            }
-            return
-        }
-
-        // feed PCM to the VAD:
-        guard let vad = vad else {
-            Bridge.log("VAD not initialized")
-            return
-        }
-
-        // convert audioData to Int16 array for VAD:
-        let pcmDataArray = pcmData.withUnsafeBytes { pointer -> [Int16] in
-            Array(
-                UnsafeBufferPointer(
-                    start: pointer.bindMemory(to: Int16.self).baseAddress,
-                    count: pointer.count / MemoryLayout<Int16>.stride
-                )
-            )
-        }
-
-        vad.checkVAD(pcm: pcmDataArray) { [weak self] state in
-            guard let self = self else { return }
-            Bridge.log("VAD State: \(state)")
-        }
-
-        let vadState = vad.currentState()
-        if vadState == .speeching {
-            checkSetVadStatus(speaking: true)
-            // first send out whatever's in the vadBuffer (if there is anything):
-            emptyVadBuffer()
-
-            handleSendingPcm(pcmData)
-
-            // Send PCM to local transcriber (always needs raw PCM)
-            if shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive {
-                transcriber?.acceptAudio(pcm16le: pcmData)
-            }
-        } else {
-            checkSetVadStatus(speaking: false)
-            // add to the vadBuffer (stores PCM for potential later sending):
-            addToVadBuffer(pcmData)
+        // Audio always flows. The previous phone-side SileroVAD gate was a
+        // bandwidth-saver that double-VAD'd what the cloud already handles
+        // server-side, and on Android its frame-size assumptions ate every
+        // transcript. SileroVADStrategy is kept around because hardware-side
+        // VAD events from the glasses still surface via `Bridge.sendVadEvent`
+        // (a separate signal the cloud SDK exposes as
+        // `session.audio.isSpeaking`).
+        handleSendingPcm(pcmData)
+        if shouldSendTranscript || offlineCaptionsRunning || localSttFallbackActive {
+            transcriber?.acceptAudio(pcm16le: pcmData)
         }
     }
 
@@ -1283,14 +1245,21 @@ struct ViewState {
         _ authToken: String?,
         _ compress: String?,
         _ flash: Bool,
-        _ sound: Bool
+        _ sound: Bool,
+        exposureTimeNs: Double? = nil
     ) {
         Bridge.log(
-            "MAN: onPhotoRequest: \(requestId), \(appId), \(webhookUrl), size=\(size), compress=\(compress ?? "none"), flash=\(flash), sound=\(sound)"
+            "MAN: PHOTO PIPELINE [4/6] DeviceManager.photoRequest requestId=\(requestId) appId=\(appId) webhookUrl=\(webhookUrl ?? "nil") size=\(size ?? "nil") compress=\(compress ?? "none") flash=\(flash) sound=\(sound) exposureTimeNs=\(exposureTimeNs.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
         )
-        sgc?.requestPhoto(
+        guard let sgc else {
+            Bridge.log(
+                "MAN: PHOTO PIPELINE — sgc is null (glasses not connected); dropping requestId=\(requestId)"
+            )
+            return
+        }
+        sgc.requestPhoto(
             requestId, appId: appId, size: size, webhookUrl: webhookUrl, authToken: authToken,
-            compress: compress, flash: flash, sound: sound
+            compress: compress, flash: flash, sound: sound, exposureTimeNs: exposureTimeNs
         )
     }
 

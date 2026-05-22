@@ -2,8 +2,6 @@
 
 console.log('Running postinstall...');
 
-// Patch packages (--error-on-fail to allow version mismatches - patches are iOS-only anyway)
-// await $({ stdio: 'inherit', nothrow: true })`patch-package`;
 // Workspace setup hoists deps to root node_modules — per-module `bun install`
 // is no longer needed and re-introduced duplicate react/react-native copies.
 

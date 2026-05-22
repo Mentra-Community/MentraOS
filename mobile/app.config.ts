@@ -12,16 +12,18 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   // a parallel-installable build with package com.mentra.mentra.stable and app
   // label "stable". Leave unset for the normal Mentra build.
   const variantName = process.env.MENTRAOS_BUILD_NAME?.trim() || null
-  const isValidVariant = variantName && /^[a-zA-Z][a-zA-Z0-9_]*$/.test(variantName)
+  const isValidVariant = variantName && /^[a-zA-Z][a-zA-Z0-9_ ]*$/.test(variantName)
   if (variantName && !isValidVariant) {
     throw new Error(
-      `MENTRAOS_BUILD_NAME="${variantName}" is invalid. Must start with a letter and contain only letters, digits, or underscores.`,
+      `MENTRAOS_BUILD_NAME="${variantName}" is invalid. Must start with a letter and contain only letters, digits, spaces, or underscores.`,
     )
   }
   const appName = isValidVariant ? variantName : "Mentra"
   const baseId = "com.mentra.mentra"
-  const androidPackage = isValidVariant ? `${baseId}.${variantName}` : baseId
-  const iosBundleId = isValidVariant ? `${baseId}.${variantName}` : baseId
+  // replace non-alphanumeric characters with underscores:
+  const normalizedVariantId = variantName?.toLowerCase().replace(/[^a-zA-Z0-9_]/g, "")
+  const androidPackage = isValidVariant ? `${baseId}.${normalizedVariantId}` : baseId
+  const iosBundleId = isValidVariant ? `${baseId}.${normalizedVariantId}` : baseId
 
   // Google Navigation SDK API key — required for the iOS Nav SDK to
   // boot. Fail loudly in CI/EAS so a release build never ships without
@@ -61,7 +63,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       // icon: "./assets/app-icons/ic_launcher.png",
       package: androidPackage,
       googleServicesFile: "./google-services.json",
-      versionCode: 244,
+      versionCode: 256,
       adaptiveIcon: {
         foregroundImage: "./assets/app-icons/ic_launcher_foreground.png",
         // backgroundImage: "./assets/app-icons/ic_launcher.png",
@@ -99,7 +101,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       icon: "./assets/app-icons/ic_launcher.png",
       supportsTablet: false,
       requireFullScreen: true,
-      buildNumber: "244",
+      buildNumber: "256",
       bundleIdentifier: iosBundleId,
       appleTeamId: "T5XXXL6N36",
       googleServicesFile: "./GoogleService-Info.plist",
@@ -312,6 +314,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         },
       ],
       "expo-web-browser",
+      "expo-image",
     ],
     experiments: {
       tsconfigPaths: true,

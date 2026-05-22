@@ -16,7 +16,7 @@ export const CORS_ORIGINS = [
   "http://localhost:8052",
   "https://cloud.augmentos.org",
   "https://dev.augmentos.org",
-  "https://devold.augmentos.org",
+  "https://clouddev.ngrok.app",
   "https://www.augmentos.org",
   "https://augmentos.org",
   "https://augmentos.dev",

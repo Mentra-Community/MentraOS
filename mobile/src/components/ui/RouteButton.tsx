@@ -58,6 +58,7 @@ interface RouteButtonProps {
   label: string
   subtitle?: string
   onPress?: () => void
+  onLongPress?: () => void
   position?: "top" | "bottom" | "middle"
   text?: string
   style?: ViewStyle
@@ -70,6 +71,7 @@ export function RouteButton({
   label,
   subtitle,
   onPress,
+  onLongPress,
   style,
   text,
   icon,
@@ -87,7 +89,7 @@ export function RouteButton({
 
   return (
     <GlassView androidShadowSize="sm" className="bg-primary-foreground px-4 rounded-2xl" style={[disabled && {opacity: 0.5}, style]}>
-      <TouchableOpacity onPress={onPress} disabled={disabled || !onPress} hitSlop={4}>
+      <TouchableOpacity onPress={onPress} onLongPress={onLongPress} disabled={disabled || !onPress} hitSlop={4}>
         <View className="items-center py-2 flex-row">
           <View
             style={{

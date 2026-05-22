@@ -16,10 +16,6 @@ import sttModelManager from "./STTModelManager"
  * `localMiniappRuntime.forwardEvent`, with this coordinator providing the
  * subscription-active gate so we never publish transcripts to miniapps
  * that aren't asking for them.
- *
- * VAD is restored on the phone side independently of this coordinator;
- * for now we treat connection state as the only switching signal. Future
- * versions can use VAD-driven utterance boundaries for cleaner hand-off.
  */
 class LocalSttFallbackCoordinator {
   private static instance: LocalSttFallbackCoordinator
@@ -89,10 +85,10 @@ class LocalSttFallbackCoordinator {
   }
 
   /**
-   * Called by the host when a cloud transcript arrives. Right now it's
-   * informational — the cloud-connected listener is authoritative — but
-   * the hook is kept so future VAD-driven hysteresis can use cloud-result
-   * arrival as a "cloud is healthy enough" signal.
+   * Called by SocketComms when a cloud transcript arrives. Informational
+   * hook — the cloud-connected listener is the authoritative switching
+   * signal. Kept for future hysteresis if connection-state alone proves too
+   * coarse.
    */
   onCloudTranscript(): void {}
 

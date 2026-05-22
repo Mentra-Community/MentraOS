@@ -302,7 +302,8 @@ class AppRegistry {
    * On-disk path for a given miniapp bundle version.
    */
   public getBundleDir(packageName: string, version: string): string {
-    return `${Paths.document.uri}/lmas/${packageName}/${version}`
+    const bundleDir = new Directory(Paths.document, "lmas", packageName, version)
+    return bundleDir.uri
   }
 
   /**
@@ -326,12 +327,15 @@ class AppRegistry {
     const bundleDir = this.getBundleDir(packageName, version)
     const resolve = (rel: string): string | null => {
       const trimmed = rel.replace(/^\.?\/+/, "")
-      const file = new File(new Directory(bundleDir.replace(/^file:\/\//, "")), trimmed)
+      const file = new File(bundleDir, trimmed)
       return file.exists ? file.uri : null
     }
     if (manifest?.entry) {
+      console.log("manifest.entry", manifest.entry)
       const bg = manifest.entry.background ? resolve(manifest.entry.background) : null
+      console.log("bg", bg)
       const ui = manifest.entry.ui ? resolve(manifest.entry.ui) : null
+      console.log("ui", ui)
       if (bg || ui) {
         return {background: bg, ui: ui}
       }

@@ -1,6 +1,6 @@
-import en, {Translations} from "./en"
+import en, {type TranslationResource} from "./en"
 
-const hi: Translations = {
+const hi = {
   ...en,
   common: {
     ok: "ठीक है!",
@@ -124,6 +124,6 @@ const hi: Translations = {
         "अभी तक कोई पसंदीदा नहीं जोड़ा गया है। इसे अपने पसंदीदा में जोड़ने के लिए किसी एपिसोड पर दिल पर टैप करें!",
     },
   },
-}
+} satisfies TranslationResource
 
 export default hi

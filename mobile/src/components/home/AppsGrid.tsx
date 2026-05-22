@@ -187,7 +187,19 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
     }
   }, [])
 
-  const gridData: MasonryAppItem[] = useMemo(() => {
+  // gridData was previously a `useMemo` that MUTATED `orderMap` (React state)
+  // during its computation — adding dummy `@emptyN` keys, deleting keys when
+  // unpositioned real apps stole their slots, etc. Mutating state inside a
+  // memo violates the pure-derivation contract: React assumes useMemo
+  // produces the same output for the same deps, but a mutating memo
+  // observes/changes its own input. In practice it caused unstable renders
+  // and made the home screen jitter on Android because every refresh that
+  // re-ran the memo perturbed `orderMap` and triggered downstream re-renders.
+  //
+  // Fix: work on a *local* copy inside the memo. After the memo returns,
+  // a useEffect commits the new orderMap via setOrderMap only when it
+  // actually changes. Same semantics, no mutation of React state during render.
+  const {gridData, nextOrderMap} = useMemo(() => {
     let filteredApps = apps.filter((app) => {
       if (showAllApps) {
         return true
@@ -206,6 +218,9 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
       )
     }
 
+    // Local working copy — never mutate state during memo.
+    const workingOrderMap: OrderMap = {...orderMap}
+
     // add dummy apps so we can place apps anywhere in the grid:
     const totalItems = filteredApps.length
     const remainder = totalItems % GRID_COLUMNS
@@ -214,9 +229,6 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
     if (remainder == 0) {
       emptySlots = 0
     }
-    // console.log("MIN_APPS", MIN_APPS, "totalItems", totalItems)
-    // console.log("emptySlots", emptySlots)
-    // emptySlots = Math.max(emptySlots, MIN_APPS - totalItems)
     while (emptySlots + totalItems < MIN_APPS) {
       emptySlots += GRID_COLUMNS
     }
@@ -224,27 +236,21 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
       emptySlots += GRID_COLUMNS
     }
 
-    // if (showAllApps) {
-    //   emptySlots = 0
-    // }
-
-    // Fill gaps in orderMap with dummy apps
+    // Fill gaps in workingOrderMap with dummy apps
     if (!showAllApps) {
       const orderedPackages = new Set(
-        filteredApps.filter((app) => orderMap[app.packageName] !== undefined).map((app) => app.packageName),
+        filteredApps.filter((app) => workingOrderMap[app.packageName] !== undefined).map((app) => app.packageName),
       )
       const usedIndices = new Set<number>()
-      orderedPackages.forEach((pkg) => usedIndices.add(orderMap[pkg]))
+      orderedPackages.forEach((pkg) => usedIndices.add(workingOrderMap[pkg]))
 
       if (usedIndices.size > 0) {
         const highestRealIndex = Math.max(...usedIndices)
         let maxIndex = filteredApps.length + emptySlots
-        // console.log("maxIndex", maxIndex)
         for (let i = 0; i <= highestRealIndex; i++) {
           if (!usedIndices.has(i)) {
-            // console.log(`adding dummy app @empty${i}`)
             filteredApps.push({...DUMMY_APPLET, packageName: `@empty${i}`})
-            orderMap[`@empty${i}`] = i
+            workingOrderMap[`@empty${i}`] = i
             emptySlots -= 1
             maxIndex = filteredApps.length + emptySlots
           }
@@ -252,39 +258,36 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
 
         // add the remaining dummy apps:
         for (let i = highestRealIndex + 1; i <= maxIndex - 1; i++) {
-          // console.log(`adding dummy app @empty${i}`)
           filteredApps.push({...DUMMY_APPLET, packageName: `@empty${i}`})
-          // Add the gap dummy to the orderMap so it sorts correctly
-          orderMap[`@empty${i}`] = i
+          workingOrderMap[`@empty${i}`] = i
           emptySlots -= 1
         }
       }
     }
 
     if (showAllApps) {
-      // console.log("adding empty slots", emptySlots)
       emptySlots = Math.min(emptySlots, GRID_COLUMNS * 2)
       for (let i = 0; i < emptySlots; i++) {
         let index = filteredApps.length + i + 100
         filteredApps.push({...DUMMY_APPLET, packageName: `@empty${index}`})
-        orderMap[`@empty${index}`] = index
+        workingOrderMap[`@empty${index}`] = index
       }
     }
 
     // Assign unpositioned real apps to the first available empty slots
     const unpositioned = filteredApps.filter(
-      (app) => !app.packageName.startsWith("@empty") && orderMap[app.packageName] === undefined,
+      (app) => !app.packageName.startsWith("@empty") && workingOrderMap[app.packageName] === undefined,
     )
     if (unpositioned.length > 0) {
       const dummySlots = filteredApps
-        .filter((app) => app.packageName.startsWith("@empty") && orderMap[app.packageName] !== undefined)
-        .sort((a, b) => orderMap[a.packageName] - orderMap[b.packageName])
+        .filter((app) => app.packageName.startsWith("@empty") && workingOrderMap[app.packageName] !== undefined)
+        .sort((a, b) => workingOrderMap[a.packageName] - workingOrderMap[b.packageName])
 
       for (const app of unpositioned) {
         const dummy = dummySlots.shift()
         if (dummy) {
-          orderMap[app.packageName] = orderMap[dummy.packageName]
-          delete orderMap[dummy.packageName]
+          workingOrderMap[app.packageName] = workingOrderMap[dummy.packageName]
+          delete workingOrderMap[dummy.packageName]
           const idx = filteredApps.indexOf(dummy)
           if (idx !== -1) filteredApps.splice(idx, 1)
         }
@@ -292,8 +295,8 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
     }
 
     filteredApps.sort((a, b) => {
-      const aIndex = orderMap[a.packageName]
-      const bIndex = orderMap[b.packageName]
+      const aIndex = workingOrderMap[a.packageName]
+      const bIndex = workingOrderMap[b.packageName]
       if (aIndex === undefined && bIndex === undefined) {
         return sortAppsByPackageNamePriority(a, b)
       }
@@ -306,13 +309,34 @@ export function AppsGrid({showAllApps = false, onOpenApp, onAddToHome, searchQue
       filteredApps.sort(sortAppsByPackageNamePriority)
     }
 
-    return filteredApps.map((app) => ({
+    const data: MasonryAppItem[] = filteredApps.map((app) => ({
       ...app,
-      // id: `${app.packageName}-${app.compatibility?.isCompatible}`,
       id: app.packageName,
       height: 110,
     }))
+
+    return {gridData: data, nextOrderMap: workingOrderMap}
   }, [apps, orderMap, showAllApps, searchQuery])
+
+  // Commit the updated orderMap to state only when it actually differs from
+  // the current one. Equality is shallow (key set + numeric values), which
+  // matches how the memo above uses it. Without this guard we'd cause an
+  // infinite render loop: setOrderMap → orderMap dep changes → memo re-runs
+  // → potentially produces same nextOrderMap → setOrderMap called again.
+  useEffect(() => {
+    const prevKeys = Object.keys(orderMap)
+    const nextKeys = Object.keys(nextOrderMap)
+    if (prevKeys.length !== nextKeys.length) {
+      setOrderMap(nextOrderMap)
+      return
+    }
+    for (const k of nextKeys) {
+      if (orderMap[k] !== nextOrderMap[k]) {
+        setOrderMap(nextOrderMap)
+        return
+      }
+    }
+  }, [nextOrderMap, orderMap])
 
   const dismissPopover = useCallback(() => {
     setPopoverVisible(false)
