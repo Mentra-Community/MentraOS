@@ -2,17 +2,20 @@ import SwiftUI
 import UIKit
 import WebKit
 
-private let streamSdkCall = """
+private func streamSdkCall(fps: Int) -> String {
+    """
 let streamId = "ios-..."
 mentraBluetoothSdk.startStream(
   StreamRequest(
     streamUrl: streamUrl,
     streamId: streamId,
     keepAlive: true,
-    keepAliveIntervalSeconds: 15
+    keepAliveIntervalSeconds: 15,
+    video: StreamVideoConfig(fps: \(fps))
   )
 )
 """
+}
 
 struct StreamScreen: View {
     @ObservedObject var model: BluetoothViewModel
@@ -31,6 +34,10 @@ struct StreamScreen: View {
 
     private var streamActive: Bool {
         model.streamRequested || model.streamStartedAt != nil
+    }
+
+    private var sdkCall: String {
+        streamSdkCall(fps: model.streamFps)
     }
 
     private var wifiRequired: Bool {
@@ -217,7 +224,7 @@ struct StreamScreen: View {
                     Text("SDK CALL").font(.system(size: 9, weight: .bold)).tracking(1.1).foregroundColor(AppColor.greenAccent)
                     Spacer()
                     Button {
-                        UIPasteboard.general.string = streamSdkCall
+                        UIPasteboard.general.string = sdkCall
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "doc.on.doc").font(.system(size: 9)).foregroundColor(AppColor.consoleText)
@@ -228,7 +235,7 @@ struct StreamScreen: View {
                     }
                     .buttonStyle(.plain)
                 }
-                Text(streamSdkCall)
+                Text(sdkCall)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(AppColor.consoleText)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -324,6 +331,9 @@ struct StreamScreen: View {
                 .padding(.top, 12)
             }
 
+            streamFpsControl
+                .padding(.top, 12)
+
             if cloudServerEnabled, let setupHint {
                 Text(setupHint)
                     .font(.system(size: 12, weight: .medium))
@@ -336,6 +346,45 @@ struct StreamScreen: View {
                     .padding(.top, 12)
             }
         }
+    }
+
+    private var streamFpsControl: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("STREAM FPS")
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(1.1)
+                    .foregroundColor(AppColor.muted)
+                Spacer()
+                Text("\(model.streamFps) fps")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundColor(AppColor.ink)
+            }
+            Slider(
+                value: Binding(
+                    get: { Double(model.streamFps) },
+                    set: { model.setStreamFps(Int($0.rounded())) }
+                ),
+                in: 1 ... 24,
+                step: 1
+            )
+            .tint(AppColor.greenAccent)
+            .disabled(streamActive)
+            HStack {
+                Text("1")
+                Spacer()
+                Text(streamActive ? "Read-only while streaming" : "Set before starting")
+                Spacer()
+                Text("24")
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(AppColor.muted)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(AppColor.ink.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .opacity(streamActive ? 0.62 : 1)
     }
 
     private func focusStreamUrlField(_ scrollProxy: ScrollViewProxy) {

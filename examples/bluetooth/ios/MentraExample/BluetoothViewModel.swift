@@ -101,6 +101,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var phonePhotoUploadUrl = "Phone receiver not started"
     @Published var streamProtocol: ExampleStreamProtocol = .webrtc
     @Published var streamUrl = ExampleStreamProtocol.webrtc.defaultUrl
+    @Published private(set) var streamFps = 15
     @Published private(set) var streamCloudServerEnabled = false
     @Published private(set) var directStreamReceiverRunning = false
     @Published private(set) var directStreamWhipUrl = "Phone receiver not started"
@@ -682,7 +683,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 streamUrl: streamUrl,
                 streamId: streamId,
                 keepAlive: true,
-                keepAliveIntervalSeconds: 15
+                keepAliveIntervalSeconds: 15,
+                video: StreamVideoConfig(fps: streamFps)
             )
         )
         startKeepAlive(streamId: streamId)
@@ -729,7 +731,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 streamUrl: streamUrl,
                 streamId: streamId,
                 keepAlive: true,
-                keepAliveIntervalSeconds: 15
+                keepAliveIntervalSeconds: 15,
+                video: StreamVideoConfig(fps: streamFps)
             )
         )
         activeStreamId = streamId
@@ -856,6 +859,11 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         if stoppedStream {
             streamStatus = "Ready to start stream"
         }
+    }
+
+    func setStreamFps(_ fps: Int) {
+        guard !streamRequested, streamStartedAt == nil else { return }
+        streamFps = min(24, max(1, fps))
     }
 
     func requestWifiScan() {

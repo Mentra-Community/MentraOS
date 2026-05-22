@@ -63,6 +63,9 @@ type StreamStartRequest = {
   streamId: string;
   streamUrl: string;
   type: 'start_stream';
+  video: {
+    fps: number;
+  };
 };
 
 type PersistedDefaultDevice = Device & {
@@ -73,6 +76,9 @@ type PersistedDefaultDevice = Device & {
 export const RGB_LED_COLORS: LedColor[] = ['red', 'green', 'blue', 'orange', 'white'];
 export const PHOTO_SIZES: PhotoSize[] = ['small', 'medium', 'large', 'full'];
 export const PHOTO_COMPRESSIONS: PhotoCompression[] = ['none', 'medium', 'heavy'];
+export const STREAM_MIN_FPS = 1;
+export const STREAM_MAX_FPS = 24;
+export const STREAM_DEFAULT_FPS = 15;
 
 export const STREAM_DEFAULT_URLS: Record<StreamProtocol, string> = {
   rtmp: 'rtmp://<computer-ip>:1935/live/mentra-live',
@@ -134,6 +140,7 @@ export type BluetoothSdkExampleState = {
   directStreamReceiverRunning: boolean;
   directStreamWhipUrl: string | null;
   streamCloudServerEnabled: boolean;
+  streamFps: number;
   streamProtocol: StreamProtocol;
   streamPreviewReady: boolean;
   streamRequested: boolean;
@@ -172,6 +179,7 @@ export type BluetoothSdkExampleActions = {
   setPhotoSize: (size: PhotoSize) => void;
   setRawJsonExpanded: (expanded: boolean) => void;
   setStreamCloudServerEnabled: (enabled: boolean) => Promise<void>;
+  setStreamFps: (fps: number) => void;
   setStreamUrl: (url: string) => void;
   setWebhookUrl: (url: string) => void;
   setVoiceActivityDetectionEnabled: (enabled: boolean) => Promise<void>;
@@ -237,6 +245,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   const [streamUrl, setStreamUrlState] = useState(
     process.env?.EXPO_PUBLIC_MENTRA_STREAM_URL ?? STREAM_DEFAULT_URLS.webrtc,
   );
+  const [streamFps, setStreamFps] = useState(STREAM_DEFAULT_FPS);
   const [streamStartedAt, setStreamStartedAt] = useState<number | null>(null);
   const [streamRequested, setStreamRequested] = useState(false);
   const [streamPreviewReady, setStreamPreviewReady] = useState(false);
@@ -875,6 +884,14 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     setStreamUrlState(url);
   }
 
+  function setStreamFpsAction(fps: number) {
+    if (streamRequested || streamStartedAt !== null) {
+      return;
+    }
+    const nextFps = Math.max(STREAM_MIN_FPS, Math.min(STREAM_MAX_FPS, Math.round(fps)));
+    setStreamFps(nextFps);
+  }
+
   async function toggleStream() {
     if (streamRequested || streamStartedAt) {
       await runAction('Stop stream', () => stopActiveStream('Stopped'));
@@ -919,6 +936,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       streamId,
       streamUrl: url,
       type: 'start_stream',
+      video: {fps: streamFps},
     } satisfies StreamStartRequest;
     await BluetoothSdk.startStream(params);
     activeStreamIdRef.current = streamId;
@@ -943,6 +961,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       streamId,
       streamUrl: receiver.streamUrl,
       type: 'start_stream',
+      video: {fps: streamFps},
     } satisfies StreamStartRequest;
     try {
       await BluetoothSdk.startStream(params);
@@ -1574,12 +1593,14 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     setPhotoSize,
     setRawJsonExpanded,
     setStreamCloudServerEnabled: setStreamCloudServerEnabledAction,
+    setStreamFps: setStreamFpsAction,
     setStreamUrl: setStreamUrlAction,
     setWebhookUrl,
     setVoiceActivityDetectionEnabled: setVoiceActivityDetectionEnabledAction,
     selectedDiscoveredDevice,
     startScan,
     streamCloudServerEnabled,
+    streamFps,
     streamProtocol,
     streamPreviewReady,
     streamRequested,

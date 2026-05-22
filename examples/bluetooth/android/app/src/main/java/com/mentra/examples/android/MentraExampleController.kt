@@ -52,6 +52,7 @@ import com.mentra.bluetoothsdk.StreamState
 import com.mentra.bluetoothsdk.StreamKeepAliveRequest
 import com.mentra.bluetoothsdk.StreamRequest
 import com.mentra.bluetoothsdk.StreamStatus
+import com.mentra.bluetoothsdk.StreamVideoConfig
 import com.mentra.bluetoothsdk.TouchEvent
 import com.mentra.bluetoothsdk.VoiceActivityDetectionStatusEvent
 import com.mentra.bluetoothsdk.WifiScanResult
@@ -174,6 +175,7 @@ data class MentraExampleState(
     val directStreamWhipUrl: String = "Phone receiver not started",
     val streamCloudServerEnabled: Boolean = false,
     val streamProtocol: String = "webrtc",
+    val streamFps: Int = 15,
     val streamRequested: Boolean = false,
     val streamPreviewReady: Boolean = false,
     val streamStartedAt: Long? = null,
@@ -625,6 +627,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         )
     }
 
+    fun setStreamFps(fps: Int) {
+        if (state.streamRequested || state.streamStartedAt != null) {
+            return
+        }
+        state = state.copy(streamFps = fps.coerceIn(1, 24))
+    }
+
     fun toggleStream() = runAction(if (!state.streamRequested && state.streamStartedAt == null) "Start stream" else "Stop stream") {
         if (state.streamRequested || state.streamStartedAt != null) {
             stopKeepAlive()
@@ -699,6 +708,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 streamId = streamId,
                 keepAlive = true,
                 keepAliveIntervalSeconds = 15,
+                video = StreamVideoConfig(fps = state.streamFps),
             )
         )
         activeStreamId = streamId
@@ -776,6 +786,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 streamId = streamId,
                 keepAlive = true,
                 keepAliveIntervalSeconds = 15,
+                video = StreamVideoConfig(fps = state.streamFps),
             )
         )
         startKeepAlive(streamId)

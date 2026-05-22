@@ -19,6 +19,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -69,19 +70,21 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 
 private val barHeights = listOf(18, 32, 48, 24, 40, 56, 30, 44, 22, 36, 50, 28, 40)
-private val streamSdkCall = """
-val streamId = "android-${'$'}{System.currentTimeMillis()}"
-mentraBluetoothSdk.startStream(
-  StreamRequest(
-    streamUrl = streamUrl,
-    streamId = streamId,
-    keepAlive = true,
-    keepAliveIntervalSeconds = 15,
-  )
-)
-""".trimIndent()
+private fun streamSdkCall(fps: Int) = """
+	val streamId = "android-${'$'}{System.currentTimeMillis()}"
+	mentraBluetoothSdk.startStream(
+	  StreamRequest(
+	    streamUrl = streamUrl,
+	    streamId = streamId,
+	    keepAlive = true,
+	    keepAliveIntervalSeconds = 15,
+	    video = StreamVideoConfig(fps = $fps),
+	  )
+	)
+	""".trimIndent()
 
 @Composable
 fun StreamScreen(controller: MentraExampleController) {
@@ -106,6 +109,7 @@ fun StreamScreen(controller: MentraExampleController) {
     val streamUrlFocusRequester = remember { FocusRequester() }
     val scrollState = rememberScrollState()
     var streamUrlFocused by remember { mutableStateOf(false) }
+    val sdkCall = streamSdkCall(state.streamFps)
 
     LaunchedEffect(streamUrlFocused) {
         if (streamUrlFocused) {
@@ -236,7 +240,7 @@ fun StreamScreen(controller: MentraExampleController) {
                         modifier = Modifier
                             .clip(RoundedCornerShape(9.dp))
                             .background(Color.White.copy(alpha = 0.06f))
-                            .clickable { clipboardManager.setText(AnnotatedString(streamSdkCall)) }
+                            .clickable { clipboardManager.setText(AnnotatedString(sdkCall)) }
                             .heightIn(min = 36.dp)
                             .padding(horizontal = 10.dp, vertical = 7.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -248,7 +252,7 @@ fun StreamScreen(controller: MentraExampleController) {
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    streamSdkCall,
+                    sdkCall,
                     color = AppColor.consoleText, fontSize = 11.sp, fontFamily = FontFamily.Monospace
                 )
             }
@@ -326,6 +330,12 @@ fun StreamScreen(controller: MentraExampleController) {
                     )
                 }
             }
+            Spacer(Modifier.height(12.dp))
+            StreamFpsSlider(
+                enabled = !streamActive,
+                value = state.streamFps,
+                onValueChange = controller::setStreamFps,
+            )
             if (cloudServerEnabled && setupHint != null) {
                 Spacer(Modifier.height(12.dp))
                 Text(
@@ -516,6 +526,35 @@ private fun localStreamSetupHint(protocol: String, streamUrl: String, status: St
         return "Local SRT setup: run python3 examples/local-demo-cloud/server.py, paste the printed SRT publish URL here, then start streaming. The app previews the derived HLS URL; the printed SRT ffplay command is optional for debugging."
     }
     return "Local WebRTC setup: run python3 examples/local-demo-cloud/server.py, paste the printed WHIP publish URL here, then start streaming. The app previews the MediaMTX WebRTC page."
+}
+
+@Composable
+private fun StreamFpsSlider(enabled: Boolean, value: Int, onValueChange: (Int) -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(AppColor.ink.copy(alpha = 0.04f))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("STREAM FPS", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
+            Text("$value fps", color = AppColor.ink, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        }
+        Slider(
+            enabled = enabled,
+            value = value.toFloat(),
+            onValueChange = { onValueChange(it.roundToInt()) },
+            valueRange = 1f..24f,
+            steps = 22,
+        )
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("1", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            Text(if (enabled) "Set before starting" else "Read-only while streaming", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+            Text("24", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        }
+    }
 }
 
 @Composable
