@@ -45,6 +45,7 @@ import com.mentra.asg_client.audio.AudioAssets;
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
+import org.json.JSONObject;
 
 import io.github.thibaultbee.streampack.data.AudioConfig;
 import io.github.thibaultbee.streampack.data.VideoConfig;
@@ -823,6 +824,17 @@ public class SrtStreamingService extends Service {
       sPendingStreamConfig = config;
       Log.d(TAG, "✅ SRT stream config stored as pending: " + config.toString());
     }
+  }
+
+  /** Returns the effective configuration for the active or pending SRT stream. */
+  public static JSONObject getCurrentResolvedConfig() {
+    RtmpStreamConfig config = null;
+    if (sInstance != null) {
+      config = sInstance.mStreamConfig;
+    } else if (sPendingStreamConfig != null) {
+      config = sPendingStreamConfig;
+    }
+    return config != null ? config.toStatusJson("srt") : null;
   }
 
   public static void startStreaming(Context context, String srtUrl, String streamId,

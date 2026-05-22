@@ -56,6 +56,110 @@ data class StreamAudioConfig @JvmOverloads constructor(
     }
 }
 
+data class StreamResolvedVideoConfig @JvmOverloads constructor(
+    val width: Int,
+    val height: Int,
+    val captureWidth: Int? = null,
+    val captureHeight: Int? = null,
+    val bitrate: Int,
+    val fps: Int,
+) {
+    fun toMap(): Map<String, Any> =
+        buildMap {
+            put("width", width)
+            put("height", height)
+            captureWidth?.let { put("captureWidth", it) }
+            captureHeight?.let { put("captureHeight", it) }
+            put("bitrate", bitrate)
+            put("fps", fps)
+        }
+
+    companion object {
+        @JvmStatic
+        fun fromMap(values: Map<String, Any>?): StreamResolvedVideoConfig? {
+            values ?: return null
+            return StreamResolvedVideoConfig(
+                width = numberValue(values, "width") ?: return null,
+                height = numberValue(values, "height") ?: return null,
+                captureWidth = numberValue(values, "captureWidth"),
+                captureHeight = numberValue(values, "captureHeight"),
+                bitrate = numberValue(values, "bitrate") ?: return null,
+                fps = numberValue(values, "fps") ?: return null,
+            )
+        }
+    }
+}
+
+data class StreamResolvedAudioConfig @JvmOverloads constructor(
+    val bitrate: Int? = null,
+    val sampleRate: Int? = null,
+    val echoCancellation: Boolean? = null,
+    val noiseSuppression: Boolean? = null,
+) {
+    fun toMap(): Map<String, Any> =
+        buildMap {
+            bitrate?.let { put("bitrate", it) }
+            sampleRate?.let { put("sampleRate", it) }
+            echoCancellation?.let { put("echoCancellation", it) }
+            noiseSuppression?.let { put("noiseSuppression", it) }
+        }
+
+    companion object {
+        @JvmStatic
+        fun fromMap(values: Map<String, Any>?): StreamResolvedAudioConfig? {
+            values ?: return null
+            return StreamResolvedAudioConfig(
+                bitrate = numberValue(values, "bitrate"),
+                sampleRate = numberValue(values, "sampleRate"),
+                echoCancellation = boolValue(values, "echoCancellation"),
+                noiseSuppression = boolValue(values, "noiseSuppression"),
+            )
+        }
+    }
+}
+
+enum class StreamTransport(val value: String) {
+    RTMP("rtmp"),
+    SRT("srt"),
+    WHIP("whip");
+
+    companion object {
+        @JvmStatic
+        fun fromValue(value: String?): StreamTransport? =
+            when (value?.lowercase()) {
+                "rtmp" -> RTMP
+                "srt" -> SRT
+                "whip" -> WHIP
+                else -> null
+            }
+    }
+}
+
+data class StreamResolvedConfig @JvmOverloads constructor(
+    val transport: StreamTransport? = null,
+    val video: StreamResolvedVideoConfig? = null,
+    val audio: StreamResolvedAudioConfig? = null,
+) {
+    fun toMap(): Map<String, Any> =
+        buildMap {
+            transport?.let { put("transport", it.value) }
+            video?.let { put("video", it.toMap()) }
+            audio?.let { put("audio", it.toMap()) }
+        }
+
+    companion object {
+        @JvmStatic
+        fun fromMap(values: Map<String, Any>?): StreamResolvedConfig? {
+            values ?: return null
+            return StreamResolvedConfig(
+                transport = StreamTransport.fromValue(stringValue(values, "transport")),
+                video = StreamResolvedVideoConfig.fromMap(stringMapValue(values["video"])),
+                audio = StreamResolvedAudioConfig.fromMap(stringMapValue(values["audio"])),
+            )
+        }
+    }
+}
+
 data class StreamRequest @JvmOverloads constructor(
     val streamUrl: String,
     val streamId: String = "",
@@ -162,6 +266,7 @@ sealed interface StreamStatus {
     val state: StreamState
     val streamId: String?
     val timestamp: Long?
+    val resolvedConfig: StreamResolvedConfig?
 
     fun toMap(): Map<String, Any> {
         val values = mutableMapOf<String, Any>(
@@ -170,6 +275,7 @@ sealed interface StreamStatus {
         )
         streamId?.takeIf { it.isNotBlank() }?.let { values["streamId"] = it }
         timestamp?.let { values["timestamp"] = it }
+        resolvedConfig?.let { values["resolvedConfig"] = it.toMap() }
 
         when (this) {
             is Lifecycle -> Unit
@@ -197,6 +303,7 @@ sealed interface StreamStatus {
         override val state: StreamState,
         override val streamId: String?,
         override val timestamp: Long?,
+        override val resolvedConfig: StreamResolvedConfig?,
     ) : StreamStatus {
         override val kind: StreamStatusKind = StreamStatusKind.LIFECYCLE
     }
@@ -207,6 +314,7 @@ sealed interface StreamStatus {
         val maxAttempts: Int,
         val reason: String,
         override val timestamp: Long?,
+        override val resolvedConfig: StreamResolvedConfig?,
     ) : StreamStatus {
         override val kind: StreamStatusKind = StreamStatusKind.RECONNECT
         override val state: StreamState = StreamState.RECONNECTING
@@ -216,6 +324,7 @@ sealed interface StreamStatus {
         override val streamId: String?,
         val attempt: Int,
         override val timestamp: Long?,
+        override val resolvedConfig: StreamResolvedConfig?,
     ) : StreamStatus {
         override val kind: StreamStatusKind = StreamStatusKind.RECONNECT
         override val state: StreamState = StreamState.RECONNECTED
@@ -225,6 +334,7 @@ sealed interface StreamStatus {
         override val streamId: String?,
         val maxAttempts: Int,
         override val timestamp: Long?,
+        override val resolvedConfig: StreamResolvedConfig?,
     ) : StreamStatus {
         override val kind: StreamStatusKind = StreamStatusKind.RECONNECT
         override val state: StreamState = StreamState.RECONNECT_FAILED
@@ -234,6 +344,7 @@ sealed interface StreamStatus {
         override val streamId: String?,
         val errorDetails: String,
         override val timestamp: Long?,
+        override val resolvedConfig: StreamResolvedConfig?,
     ) : StreamStatus {
         override val kind: StreamStatusKind = StreamStatusKind.ERROR
         override val state: StreamState = StreamState.ERROR
@@ -246,6 +357,7 @@ sealed interface StreamStatus {
         override val streamId: String?,
         val attempt: Int?,
         override val timestamp: Long?,
+        override val resolvedConfig: StreamResolvedConfig?,
     ) : StreamStatus {
         override val kind: StreamStatusKind = StreamStatusKind.SNAPSHOT
     }
@@ -258,6 +370,7 @@ sealed interface StreamStatus {
             val reconnecting = boolValue(values, "reconnecting") ?: false
             val streamId = stringValue(values, "streamId")
             val timestamp = longValue(values, "timestamp")
+            val resolvedConfig = StreamResolvedConfig.fromMap(stringMapValue(values["resolvedConfig"]))
             val attempt = numberValue(values, "attempt")
             val maxAttempts = numberValue(values, "maxAttempts") ?: 0
 
@@ -273,6 +386,7 @@ sealed interface StreamStatus {
                     streamId = streamId,
                     attempt = attempt,
                     timestamp = timestamp,
+                    resolvedConfig = resolvedConfig,
                 )
             }
 
@@ -281,6 +395,7 @@ sealed interface StreamStatus {
                     streamId = streamId,
                     errorDetails = rawState?.let { "Unknown stream status: $it" } ?: "Missing stream status",
                     timestamp = timestamp,
+                    resolvedConfig = resolvedConfig,
                 )
 
             return when (state) {
@@ -290,27 +405,32 @@ sealed interface StreamStatus {
                     maxAttempts = maxAttempts,
                     reason = stringValue(values, "reason") ?: "",
                     timestamp = timestamp,
+                    resolvedConfig = resolvedConfig,
                 )
                 StreamState.RECONNECTED -> Reconnected(
                     streamId = streamId,
                     attempt = attempt ?: 0,
                     timestamp = timestamp,
+                    resolvedConfig = resolvedConfig,
                 )
                 StreamState.RECONNECT_FAILED -> ReconnectFailed(
                     streamId = streamId,
                     maxAttempts = maxAttempts,
                     timestamp = timestamp,
+                    resolvedConfig = resolvedConfig,
                 )
                 StreamState.ERROR -> Error(
                     streamId = streamId,
                     errorDetails = stringValue(values, "errorDetails")
                         ?: if (rawState == "error_not_streaming") "not_streaming" else "Unknown stream error",
                     timestamp = timestamp,
+                    resolvedConfig = resolvedConfig,
                 )
                 else -> Lifecycle(
                     state = state,
                     streamId = streamId,
                     timestamp = timestamp,
+                    resolvedConfig = resolvedConfig,
                 )
             }
         }
@@ -324,6 +444,7 @@ data class StreamStatusEvent(
 
     val state: StreamState get() = status.state
     val streamId: String? get() = status.streamId
+    val resolvedConfig: StreamResolvedConfig? get() = status.resolvedConfig
     val values: Map<String, Any> get() = status.toEventMap()
 }
 

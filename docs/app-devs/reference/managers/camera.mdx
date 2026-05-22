@@ -293,6 +293,7 @@ interface ManagedStreamStatus {
   webrtcUrl?: string;
   message?: string;
   streamId?: string;
+  resolvedConfig?: StreamResolvedConfig;
   timestamp: Date;
 }
 ```
@@ -445,7 +446,28 @@ interface StreamStatus {
     droppedFrames: number;
     duration: number;
   };
+  resolvedConfig?: StreamResolvedConfig;
   timestamp: Date;
+}
+```
+
+```typescript
+interface StreamResolvedConfig {
+  transport?: 'rtmp' | 'srt' | 'whip';
+  video?: {
+    width: number;
+    height: number;
+    captureWidth?: number;
+    captureHeight?: number;
+    bitrate: number;
+    fps: number;
+  };
+  audio?: {
+    bitrate?: number;
+    sampleRate?: number;
+    echoCancellation?: boolean;
+    noiseSuppression?: boolean;
+  };
 }
 ```
 

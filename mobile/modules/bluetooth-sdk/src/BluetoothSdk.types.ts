@@ -340,58 +340,65 @@ export type StreamStatusLifecycleState = "initializing" | "streaming" | "stoppin
 export type StreamStatusReconnectState = "reconnecting" | "reconnected" | "reconnect_failed"
 export type StreamStatusState = StreamStatusLifecycleState | StreamStatusReconnectState | "error"
 
+export type StreamResolvedConfig = {
+  transport?: "rtmp" | "srt" | "whip"
+  video?: {
+    width: number
+    height: number
+    captureWidth?: number
+    captureHeight?: number
+    bitrate: number
+    fps: number
+  }
+  audio?: {
+    bitrate?: number
+    sampleRate?: number
+    echoCancellation?: boolean
+    noiseSuppression?: boolean
+  }
+}
+
+type StreamStatusCommon = {
+  type: "stream_status"
+  streamId?: string
+  timestamp?: number
+  resolvedConfig?: StreamResolvedConfig
+}
+
 export type StreamStatusEvent =
-  | {
-      type: "stream_status"
+  | (StreamStatusCommon & {
       kind: "lifecycle"
       status: StreamStatusLifecycleState
-      streamId?: string
-      timestamp?: number
-    }
-  | {
-      type: "stream_status"
+    })
+  | (StreamStatusCommon & {
       kind: "reconnect"
       status: "reconnecting"
-      streamId?: string
       attempt: number
       maxAttempts: number
       reason: string
-      timestamp?: number
-    }
-  | {
-      type: "stream_status"
+    })
+  | (StreamStatusCommon & {
       kind: "reconnect"
       status: "reconnected"
-      streamId?: string
       attempt: number
-      timestamp?: number
-    }
-  | {
-      type: "stream_status"
+    })
+  | (StreamStatusCommon & {
       kind: "reconnect"
       status: "reconnect_failed"
-      streamId?: string
       maxAttempts: number
-      timestamp?: number
-    }
-  | {
-      type: "stream_status"
+    })
+  | (StreamStatusCommon & {
       kind: "error"
       status: "error"
-      streamId?: string
       errorDetails: string
-      timestamp?: number
-    }
-  | {
-      type: "stream_status"
+    })
+  | (StreamStatusCommon & {
       kind: "snapshot"
       status: "streaming" | "reconnecting" | "stopped"
       streaming: boolean
       reconnecting: boolean
-      streamId?: string
       attempt?: number
-      timestamp?: number
-    }
+    })
 
 export type KeepAliveAckEvent = {
   type: "keep_alive_ack"

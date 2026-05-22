@@ -155,6 +155,7 @@ export type {
   SpeakingStatusEvent,
   StreamAudioConfig,
   StreamKeepAliveRequest,
+  StreamResolvedConfig,
   StreamStartRequest,
   StreamStatusEvent,
   StreamStatusLifecycleState,

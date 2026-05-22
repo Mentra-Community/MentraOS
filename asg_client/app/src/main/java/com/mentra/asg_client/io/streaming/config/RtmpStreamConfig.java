@@ -64,7 +64,7 @@ public class RtmpStreamConfig {
             config.videoWidth = clamp(config.videoWidth, 320, 1920);
             config.videoHeight = clamp(config.videoHeight, 240, 1080);
             config.videoBitrate = clamp(config.videoBitrate, 100000, 10000000); // 100 kbps to 10 Mbps
-            config.videoFps = clamp(config.videoFps, 10, 60);
+            config.videoFps = clamp(config.videoFps, 1, 30);
         }
 
         // Parse audio config (supports both full and compact keys)
@@ -140,8 +140,34 @@ public class RtmpStreamConfig {
     }
 
     public RtmpStreamConfig setVideoFps(int fps) {
-        this.videoFps = clamp(fps, 10, 60);
+        this.videoFps = clamp(fps, 1, 30);
         return this;
+    }
+
+    /** Returns the effective stream settings reported back through stream status events. */
+    public JSONObject toStatusJson(String transport) {
+        JSONObject resolvedConfig = new JSONObject();
+        JSONObject video = new JSONObject();
+        JSONObject audio = new JSONObject();
+        try {
+            resolvedConfig.put("transport", transport);
+            video.put("width", getVideoWidth());
+            video.put("height", getVideoHeight());
+            video.put("captureWidth", getCaptureSurfaceWidth());
+            video.put("captureHeight", getCaptureSurfaceHeight());
+            video.put("bitrate", getVideoBitrate());
+            video.put("fps", getVideoFps());
+            resolvedConfig.put("video", video);
+
+            audio.put("bitrate", getAudioBitrate());
+            audio.put("sampleRate", getAudioSampleRate());
+            audio.put("echoCancellation", isEchoCancellation());
+            audio.put("noiseSuppression", isNoiseSuppression());
+            resolvedConfig.put("audio", audio);
+        } catch (Exception ignored) {
+            // JSONObject writes above are deterministic for primitive values.
+        }
+        return resolvedConfig;
     }
 
     /**

@@ -65,6 +65,7 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+import org.json.JSONObject;
 
 /**
  * WHIP (WebRTC-HTTP Ingest Protocol) streaming service.
@@ -1002,5 +1003,16 @@ public class WhipStreamingService extends Service {
     } else {
       sPendingStreamConfig = config;
     }
+  }
+
+  /** Returns the effective configuration for the active or pending WHIP stream. */
+  public static JSONObject getCurrentResolvedConfig() {
+    WhipStreamConfig config = null;
+    if (sInstance != null) {
+      config = sInstance.mStreamConfig;
+    } else if (sPendingStreamConfig != null) {
+      config = sPendingStreamConfig;
+    }
+    return config != null ? config.toStatusJson("whip") : null;
   }
 }

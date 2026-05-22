@@ -221,6 +221,7 @@ import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
 export function StreamStatusLogger() {
   useBluetoothEvent('stream_status', (event) => {
     console.log(event);
+    console.log(event.resolvedConfig?.video?.fps);
   });
 
   return null;
@@ -233,6 +234,7 @@ export function StreamStatusLogger() {
 ```kotlin
 override fun onStreamStatus(event: StreamStatusEvent) {
     Log.d("Mentra", "Stream status: ${event.status}")
+    Log.d("Mentra", "Resolved FPS: ${event.resolvedConfig?.video?.fps}")
 }
 ```
 
@@ -243,6 +245,7 @@ override fun onStreamStatus(event: StreamStatusEvent) {
 func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: BluetoothEvent) {
     if case let .streamStatus(status) = event {
         print("Stream status: \(status)")
+        print("Resolved FPS: \(status.resolvedConfig?.video?.fps ?? -1)")
     }
 }
 ```

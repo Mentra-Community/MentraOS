@@ -315,6 +315,8 @@ export interface ManagedStreamStatus extends BaseMessage {
   thumbnailUrl?: string;
   message?: string;
   streamId?: string;
+  /** Effective stream settings reported by the glasses after defaults and clamps. */
+  resolvedConfig?: StreamStatus["resolvedConfig"];
   /** Status of re-stream outputs if configured */
   outputs?: OutputStatus[];
 }

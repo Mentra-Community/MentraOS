@@ -292,7 +292,11 @@ export class UnmanagedStreamingExtension {
   /**
    * Update stream status (simplified from original)
    */
-  async updateStatus(streamId: string, status: UnmanagedStreamStatus): Promise<void> {
+  async updateStatus(
+    streamId: string,
+    status: UnmanagedStreamStatus,
+    resolvedConfig?: StreamStatus["resolvedConfig"],
+  ): Promise<void> {
     const runtime = this.unmanagedStreams.get(streamId);
     if (!runtime) {
       this.logger.warn({ streamId }, "Attempted to update status for unknown stream");
@@ -305,7 +309,7 @@ export class UnmanagedStreamingExtension {
     runtime.lastActivity = new Date();
     this.userSession.streamRegistry.updateLastActivity(this.userSession.userId);
 
-    await this.sendStreamStatusToApp(streamId, status);
+    await this.sendStreamStatusToApp(streamId, status, undefined, undefined, resolvedConfig);
 
     if (status === "active") {
       runtime.lifecycle.setActive(true);
@@ -523,7 +527,7 @@ export class UnmanagedStreamingExtension {
         break;
     }
 
-    void this.updateStatus(streamId, mappedStatus);
+    void this.updateStatus(streamId, mappedStatus, statusMessage.resolvedConfig);
   }
 
   /**
@@ -575,6 +579,7 @@ export class UnmanagedStreamingExtension {
     status: StreamStatus["status"], // This is the status string from SDK
     errorDetails?: string,
     stats?: StreamStatus["stats"],
+    resolvedConfig?: StreamStatus["resolvedConfig"],
   ): Promise<void> {
     const streamInfo = this.unmanagedStreams.get(streamId);
     // It's possible streamInfo is gone if cleanup happened due to rapid events.
@@ -589,6 +594,7 @@ export class UnmanagedStreamingExtension {
       status,
       errorDetails,
       stats,
+      resolvedConfig,
       appId: packageName,
       timestamp: new Date(),
     };
@@ -644,6 +650,7 @@ export class UnmanagedStreamingExtension {
       errorDetails,
       appId: packageName,
       stats,
+      resolvedConfig,
       timestamp: new Date(),
     };
 

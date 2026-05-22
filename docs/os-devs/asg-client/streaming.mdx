@@ -61,7 +61,24 @@ Initiates a stream to the specified URL. The protocol is auto-detected from the 
 {
   "type": "stream_status",
   "status": "initializing",
-  "streamId": "unique-stream-id"
+  "streamId": "unique-stream-id",
+  "resolvedConfig": {
+    "transport": "rtmp",
+    "video": {
+      "width": 854,
+      "height": 480,
+      "captureWidth": 1920,
+      "captureHeight": 1080,
+      "bitrate": 1000000,
+      "fps": 15
+    },
+    "audio": {
+      "bitrate": 64000,
+      "sampleRate": 44100,
+      "echoCancellation": false,
+      "noiseSuppression": false
+    }
+  }
 }
 ```
 
@@ -130,7 +147,18 @@ Queries the current streaming status.
 {
   "type": "stream_status",
   "streaming": true,
-  "reconnecting": false
+  "reconnecting": false,
+  "resolvedConfig": {
+    "transport": "rtmp",
+    "video": {
+      "width": 854,
+      "height": 480,
+      "captureWidth": 1920,
+      "captureHeight": 1080,
+      "bitrate": 1000000,
+      "fps": 15
+    }
+  }
 }
 ```
 

@@ -45,7 +45,7 @@ describe("CameraManager.startStream", () => {
     await expect(
       mgr.startStream({
         direct: "srt://127.0.0.1:4201?mode=caller",
-        video: { frameRate: 9 },
+        video: { frameRate: 0 },
       }),
     ).rejects.toThrow(RangeError);
     expect(sent.length).toBe(0);

@@ -84,6 +84,7 @@ public class MediaManager implements IMediaManager {
             if (details != null) {
                 response.put("errorDetails", details);
             }
+            attachResolvedStreamConfig(response);
             response.put("timestamp", System.currentTimeMillis());
             String jsonString = response.toString();
             Log.d(TAG, "📤 Sending stream status response: " + jsonString);
@@ -103,6 +104,7 @@ public class MediaManager implements IMediaManager {
             if (!statusObject.has("type")) {
                 statusObject.put("type", "stream_status");
             }
+            attachResolvedStreamConfig(statusObject);
             if (!statusObject.has("timestamp")) {
                 statusObject.put("timestamp", System.currentTimeMillis());
             }
@@ -113,6 +115,30 @@ public class MediaManager implements IMediaManager {
         String jsonString = statusObject.toString();
         Log.d(TAG, "📤 Sending stream status response: " + jsonString);
         serviceManager.getBluetoothManager().sendData(jsonString.getBytes());
+    }
+
+    private void attachResolvedStreamConfig(JSONObject statusObject) throws JSONException {
+        if (statusObject.has("resolvedConfig")) {
+            return;
+        }
+
+        JSONObject resolvedConfig = getCurrentResolvedStreamConfig();
+        if (resolvedConfig != null) {
+            statusObject.put("resolvedConfig", resolvedConfig);
+        }
+    }
+
+    private JSONObject getCurrentResolvedStreamConfig() {
+        if (RtmpStreamingService.isStreaming() || RtmpStreamingService.isReconnecting()) {
+            return RtmpStreamingService.getCurrentResolvedConfig();
+        }
+        if (SrtStreamingService.isStreaming() || SrtStreamingService.isReconnecting()) {
+            return SrtStreamingService.getCurrentResolvedConfig();
+        }
+        if (WhipStreamingService.isStreaming() || WhipStreamingService.isReconnecting()) {
+            return WhipStreamingService.getCurrentResolvedConfig();
+        }
+        return null;
     }
 
     @Override
