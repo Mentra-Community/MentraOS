@@ -11,8 +11,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
-import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -49,9 +48,15 @@ class MentraJSDispatchError(val code: String, message: String) : RuntimeExceptio
  * so we don't need to manually pump microtasks.
  *
  * Threading rule: every QuickJs operation must run on its context's
- * dedicated executor thread. We `executor.submit { runBlocking(jsDispatcher)
- * { qjs.evaluate(...) } }` to satisfy both dokar3's coroutine entry point
- * and the thread-affinity invariant.
+ * dedicated executor thread. We `executor.submit { runBlocking { qjs.evaluate(...) } }`
+ * to satisfy both dokar3's coroutine entry point and the thread-affinity
+ * invariant. We pass `Dispatchers.Unconfined` to `QuickJs.create()` so
+ * async-job callbacks resume on whatever thread completes them (the
+ * executor thread, since we hop there via `executor.submit`); passing
+ * `executor.asCoroutineDispatcher()` instead would deadlock because
+ * `runBlocking(dispatcher)` parks the executor thread inside its own event
+ * loop and the dispatcher would try to schedule continuations back through
+ * the same executor's task queue, which is no longer being drained.
  *
  * Re-entrancy rule: bindings must NOT call `qjs.evaluate(...)` on the same
  * instance — dokar3 holds an internal mutex across evaluate, and a binding
@@ -141,7 +146,6 @@ class JSCRuntime private constructor(private val appContext: Context) {
         val packageName: String,
         val qjs: QuickJs,
         val executor: ExecutorService,
-        val jsDispatcher: CoroutineDispatcher,
         val pendingTimers: MutableMap<Int, ScheduledFuture<*>> = ConcurrentHashMap(),
         @Volatile var readyAcked: Boolean = false,
         @Volatile var readyNackTimer: ScheduledFuture<*>? = null,
@@ -238,16 +242,23 @@ class JSCRuntime private constructor(private val appContext: Context) {
         val executor = Executors.newSingleThreadExecutor { r ->
             Thread(r, "MentraJS-$packageName").apply { isDaemon = true }
         }
-        // Local var renamed to avoid shadowing the class field
-        // `dispatcher: JSCDispatcher`.
-        val jsDispatcher = executor.asCoroutineDispatcher()
 
-        // Create the QuickJs context ON the executor thread. dokar3 stores
-        // the dispatcher for async-job continuations; the constructor itself
-        // is non-suspend so no runBlocking is needed here.
+        // Create the QuickJs context ON the executor thread. We pass
+        // `Dispatchers.Unconfined` as the jobDispatcher: dokar3 only uses it
+        // to schedule async-job callbacks via `coroutineScope.launch`. If we
+        // passed `executor.asCoroutineDispatcher()` instead, then
+        // `runBlocking(dispatcher) { evaluate(...) }` would deadlock —
+        // runBlocking parks the executor thread inside its own event loop,
+        // but the dispatcher tries to schedule the suspend body back through
+        // the same executor's task queue, which is no longer being drained.
+        // With Unconfined the suspend continuations resume on whatever thread
+        // completes them — which, since every operation is hopped onto the
+        // executor via `executor.submit { ... }`, is always the same thread T.
+        // The dokar3 internal jsMutex serializes any cross-thread access
+        // anyway, so this is safe.
         val qjs = try {
             executor.submit<QuickJs> {
-                QuickJs.create(jsDispatcher).apply {
+                QuickJs.create(Dispatchers.Unconfined).apply {
                     memoryLimit = 32L * 1024 * 1024     // 32 MB heap per miniapp
                     maxStackSize = 512L * 1024          // 512 KB stack
                 }
@@ -262,7 +273,6 @@ class JSCRuntime private constructor(private val appContext: Context) {
             packageName = packageName,
             qjs = qjs,
             executor = executor,
-            jsDispatcher = jsDispatcher,
         )
         contexts[packageName] = record
 
@@ -275,7 +285,7 @@ class JSCRuntime private constructor(private val appContext: Context) {
 
         return try {
             executor.submit<Boolean> {
-                runBlocking(jsDispatcher) {
+                runBlocking {
                     installGlobals(qjs, packageName)
                     if (bundle.isNotEmpty()) {
                         qjs.evaluate<Any?>(bundle, filename = "mentrajs:startup.js")
@@ -403,7 +413,7 @@ class JSCRuntime private constructor(private val appContext: Context) {
             record.pendingTimers.remove(token)
             try {
                 record.executor.submit {
-                    runBlocking(record.jsDispatcher) {
+                    runBlocking {
                         try {
                             record.qjs.evaluate<Any?>(
                                 "globalThis.__deliverTimer && globalThis.__deliverTimer($token);",
@@ -430,7 +440,7 @@ class JSCRuntime private constructor(private val appContext: Context) {
         val record = contexts[packageName] ?: return null
         return try {
             record.executor.submit<Any?> {
-                runBlocking(record.jsDispatcher) {
+                runBlocking {
                     record.qjs.evaluate<Any?>(
                         source,
                         filename = "mentrajs:eval-${System.nanoTime()}.js",
@@ -482,7 +492,7 @@ class JSCRuntime private constructor(private val appContext: Context) {
                 record.watchdogTimer = killTimer
                 try {
                     val source = "globalThis.__deliver(${jsStringLiteral(envelopeJson)});"
-                    runBlocking(record.jsDispatcher) {
+                    runBlocking {
                         record.qjs.evaluate<Any?>(source, filename = "mentrajs:deliver.js")
                     }
                     // Successful delivery — context is responsive.
