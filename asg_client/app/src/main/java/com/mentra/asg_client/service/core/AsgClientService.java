@@ -544,9 +544,6 @@ public class AsgClientService extends Service implements NetworkStateListener, B
             serviceContainer.initialize();
             Log.d(TAG, "✅ Service container initialization completed");
 
-            //Wait for 1 second
-            Thread.sleep(1000);
-
             // Get interface references
             Log.d(TAG, "📋 Getting interface references from service container");
             lifecycleManager = serviceContainer.getLifecycleManager();
