@@ -85,7 +85,9 @@ public class MediaManager implements IMediaManager {
                 response.put("errorDetails", details);
             }
             attachResolvedStreamConfig(response);
-            response.put("timestamp", System.currentTimeMillis());
+            if (!response.has("resolvedConfig")) {
+                response.put("timestamp", System.currentTimeMillis());
+            }
             String jsonString = response.toString();
             Log.d(TAG, "📤 Sending stream status response: " + jsonString);
             serviceManager.getBluetoothManager().sendData(jsonString.getBytes());
@@ -105,7 +107,7 @@ public class MediaManager implements IMediaManager {
                 statusObject.put("type", "stream_status");
             }
             attachResolvedStreamConfig(statusObject);
-            if (!statusObject.has("timestamp")) {
+            if (!statusObject.has("timestamp") && !statusObject.has("resolvedConfig")) {
                 statusObject.put("timestamp", System.currentTimeMillis());
             }
         } catch (JSONException e) {

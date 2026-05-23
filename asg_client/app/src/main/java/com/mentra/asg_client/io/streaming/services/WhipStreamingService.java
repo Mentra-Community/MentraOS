@@ -759,7 +759,11 @@ public class WhipStreamingService extends Service {
   }
 
   private void notifyError(String error) {
-    if (sStatusCallback != null) sStatusCallback.onStreamError(error, mCurrentStreamId);
+    StreamingStatusCallback callback = sStatusCallback;
+    if (callback != null) {
+      String streamId = mCurrentStreamId;
+      mMainHandler.post(() -> callback.onStreamError(error, streamId));
+    }
   }
 
   // -----------------------------------------------------------------------

@@ -97,7 +97,6 @@ public class WhipStreamConfig {
   public JSONObject toStatusJson(String transport) {
     JSONObject resolvedConfig = new JSONObject();
     JSONObject video = new JSONObject();
-    JSONObject audio = new JSONObject();
     try {
       resolvedConfig.put("transport", transport);
       video.put("width", getVideoWidth());
@@ -105,10 +104,6 @@ public class WhipStreamConfig {
       video.put("bitrate", getVideoBitrate());
       video.put("fps", getVideoFps());
       resolvedConfig.put("video", video);
-
-      audio.put("echoCancellation", isEchoCancellation());
-      audio.put("noiseSuppression", isNoiseSuppression());
-      resolvedConfig.put("audio", audio);
     } catch (Exception ignored) {
       // JSONObject writes above are deterministic for primitive values.
     }
