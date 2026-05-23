@@ -192,6 +192,46 @@ public class OtaHelper {
     private static volatile OtaHelper instance;
 
     /**
+     * Notified when {@link #initialize(Context)} creates the singleton (e.g. from OtaService).
+     */
+    public interface OnInitializedListener {
+        void onOtaHelperInitialized(OtaHelper helper);
+    }
+
+    private static final CopyOnWriteArrayList<OnInitializedListener> initializedListeners =
+            new CopyOnWriteArrayList<>();
+
+    /**
+     * Register for singleton creation. If already initialized, the listener is invoked immediately.
+     */
+    public static void addOnInitializedListener(OnInitializedListener listener) {
+        if (listener == null) {
+            return;
+        }
+        OtaHelper current = instance;
+        if (current != null) {
+            listener.onOtaHelperInitialized(current);
+            return;
+        }
+        initializedListeners.add(listener);
+    }
+
+    public static void removeOnInitializedListener(OnInitializedListener listener) {
+        initializedListeners.remove(listener);
+    }
+
+    private static void notifyInitialized(OtaHelper helper) {
+        for (OnInitializedListener listener : initializedListeners) {
+            try {
+                listener.onOtaHelperInitialized(helper);
+            } catch (Exception e) {
+                Log.e(TAG, "OnInitializedListener callback failed", e);
+            }
+        }
+        initializedListeners.clear();
+    }
+
+    /**
      * Get the singleton instance of OtaHelper.
      * Must call initialize(Context) first.
      * @return The OtaHelper instance, or null if not initialized
@@ -210,6 +250,7 @@ public class OtaHelper {
         if (instance == null) {
             instance = new OtaHelper(context);
             Log.i(TAG, "OtaHelper singleton initialized");
+            notifyInitialized(instance);
         }
         return instance;
     }
