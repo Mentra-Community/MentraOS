@@ -1,6 +1,8 @@
 package com.mentra.asg_client.service.core;
 
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -33,6 +35,10 @@ import com.mentra.asg_client.service.system.managers.StateManager;
  */
 public class ServiceContainer {
 
+    private static final String TAG = "ServiceContainer";
+    private static final long OTA_WIRE_RETRY_INTERVAL_MS = 2000;
+    private static final int OTA_WIRE_MAX_ATTEMPTS = 15;
+
     private final Context context;
     private final AsgClientServiceManager serviceManager;
     private final CommandProcessor commandProcessor;
@@ -47,6 +53,14 @@ public class ServiceContainer {
     private final IMediaManager streamingManager;
 
     private final FileManager fileManager;
+
+    private boolean phoneControlledOtaWired;
+    private Handler otaWireHandler;
+    private Runnable otaWireRetryRunnable;
+    private int otaWireAttemptCount;
+
+    private final OtaHelper.OnInitializedListener otaInitializedListener =
+            helper -> wireUpPhoneControlledOta();
 
     public ServiceContainer(Context context, @NonNull AsgClientService service) {
         this.context = context;
@@ -157,42 +171,75 @@ public class ServiceContainer {
      * Initialize all components
      */
     public void initialize() {
-        Log.d("ServiceContainer", "Initializing service container");
+        Log.d(TAG, "Initializing service container");
 
         // Initialize lifecycle manager first
         lifecycleManager.initialize();
 
-        // Wire up phone-controlled OTA after OtaService has started (delayed)
-        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
-            wireUpPhoneControlledOta();
-        }, 6000); // After OtaService starts (5s delay + 1s buffer)
+        phoneControlledOtaWired = false;
+        otaWireHandler = new Handler(Looper.getMainLooper());
+        OtaHelper.addOnInitializedListener(otaInitializedListener);
+        wireUpPhoneControlledOta();
+        scheduleOtaWireRetryIfNeeded();
 
-        Log.d("ServiceContainer", "Service container initialized successfully");
+        Log.d(TAG, "Service container initialized successfully");
     }
 
     /**
      * Wire up phone-controlled OTA connections.
-     * Called after OtaService has started and OtaHelper singleton is available.
+     * Called when OtaHelper becomes available (OtaService) or on bounded retry until wired.
      */
     private void wireUpPhoneControlledOta() {
-        Log.d("ServiceContainer", "Wiring up phone-controlled OTA...");
+        Log.d(TAG, "Wiring up phone-controlled OTA...");
 
         // Always set CommunicationManager on OtaCommandHandler for error reporting
-        // This is needed even if OtaHelper isn't ready yet
         OtaCommandHandler.setCommunicationManager(communicationManager);
-        Log.i("ServiceContainer", "✅ CommunicationManager set on OtaCommandHandler");
+        Log.i(TAG, "✅ CommunicationManager set on OtaCommandHandler");
 
         OtaHelper otaHelper = OtaHelper.getInstance();
         if (otaHelper != null) {
-            // Set CommunicationManager as the PhoneConnectionProvider
             otaHelper.setPhoneConnectionProvider((CommunicationManager) communicationManager);
-            Log.i("ServiceContainer", "✅ PhoneConnectionProvider set on OtaHelper");
+            Log.i(TAG, "✅ PhoneConnectionProvider set on OtaHelper");
 
-            // Set OtaHelper on OtaCommandHandler for handling ota_start commands
             OtaCommandHandler.setOtaHelper(otaHelper);
-            Log.i("ServiceContainer", "✅ OtaHelper set on OtaCommandHandler");
+            Log.i(TAG, "✅ OtaHelper set on OtaCommandHandler");
+
+            phoneControlledOtaWired = true;
+            cancelOtaWireRetry();
+            OtaHelper.removeOnInitializedListener(otaInitializedListener);
         } else {
-            Log.w("ServiceContainer", "⚠️ OtaHelper not yet initialized - phone-controlled OTA not available");
+            Log.w(TAG, "⚠️ OtaHelper not yet initialized - will retry when OtaService starts");
+        }
+    }
+
+    private void scheduleOtaWireRetryIfNeeded() {
+        if (phoneControlledOtaWired || otaWireHandler == null) {
+            return;
+        }
+        cancelOtaWireRetry();
+        otaWireAttemptCount = 0;
+        otaWireRetryRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (phoneControlledOtaWired) {
+                    return;
+                }
+                wireUpPhoneControlledOta();
+                if (!phoneControlledOtaWired && otaWireAttemptCount++ < OTA_WIRE_MAX_ATTEMPTS) {
+                    otaWireHandler.postDelayed(this, OTA_WIRE_RETRY_INTERVAL_MS);
+                } else if (!phoneControlledOtaWired) {
+                    Log.e(TAG, "Phone-controlled OTA wiring failed after " + OTA_WIRE_MAX_ATTEMPTS
+                            + " attempts — OtaHelper never became available");
+                }
+            }
+        };
+        otaWireHandler.postDelayed(otaWireRetryRunnable, OTA_WIRE_RETRY_INTERVAL_MS);
+    }
+
+    private void cancelOtaWireRetry() {
+        if (otaWireHandler != null && otaWireRetryRunnable != null) {
+            otaWireHandler.removeCallbacks(otaWireRetryRunnable);
+            otaWireRetryRunnable = null;
         }
     }
 
@@ -200,7 +247,11 @@ public class ServiceContainer {
      * Clean up all components
      */
     public void cleanup() {
-        Log.d("ServiceContainer", "Cleaning up service container");
+        Log.d(TAG, "Cleaning up service container");
+
+        OtaHelper.removeOnInitializedListener(otaInitializedListener);
+        cancelOtaWireRetry();
+        otaWireHandler = null;
 
         // Clean up streaming manager first (unregisters callbacks)
         streamingManager.cleanup();
@@ -208,6 +259,6 @@ public class ServiceContainer {
         // Clean up lifecycle manager
         lifecycleManager.cleanup();
 
-        Log.d("ServiceContainer", "Service container cleanup completed");
+        Log.d(TAG, "Service container cleanup completed");
     }
 }
