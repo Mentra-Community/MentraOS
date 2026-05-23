@@ -1,4 +1,4 @@
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import NetInfo from "@react-native-community/netinfo"
 import Constants from "expo-constants"
 import * as ImagePicker from "expo-image-picker"
@@ -10,7 +10,7 @@ import {useAppStatusStore} from "@mentra/island"
 import {useConnectionStore} from "@/stores/connection"
 import {useCoreStore} from "@/stores/core"
 import {useDebugStore} from "@/stores/debug"
-import {useGlassesStore} from "@/stores/glasses"
+import {isGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {logBuffer} from "@/utils/dev/logging"
 
@@ -154,19 +154,17 @@ export async function buildBugReportFeedbackDataForBug(
   const apps = useAppStatusStore.getState().apps
   const runningApps = apps.filter((app) => app.running).map((app) => app.packageName)
 
-  const glassesConnected = useGlassesStore.getState().connected
+  const glassesConnected = isGlassesConnected(useGlassesStore.getState().connection)
   const deviceModel = useGlassesStore.getState().deviceModel
   const glassesBluetoothName = useGlassesStore.getState().bluetoothName
   const buildNumber = useGlassesStore.getState().buildNumber
-  const glassesFwVersion = useGlassesStore.getState().fwVersion
+  const glassesFirmwareVersion = useGlassesStore.getState().firmwareVersion
   const appVersion = useGlassesStore.getState().appVersion
   const serialNumber = useGlassesStore.getState().serialNumber
   const androidVersion = useGlassesStore.getState().androidVersion
   const glassesWifi = useGlassesStore.getState().wifi
   const glassesWifiInfo =
-    glassesWifi.state === "connected"
-      ? {wifiConnected: true, wifiSsid: glassesWifi.ssid}
-      : {wifiConnected: false}
+    glassesWifi.state === "connected" ? {wifiConnected: true, wifiSsid: glassesWifi.ssid} : {wifiConnected: false}
   const glassesBatteryLevel = useGlassesStore.getState().batteryLevel
 
   const glassesBluetoothId = glassesBluetoothName?.split("_").pop() || glassesBluetoothName
@@ -204,7 +202,7 @@ export async function buildBugReportFeedbackDataForBug(
         bluetoothId: glassesBluetoothId || undefined,
         serialNumber: serialNumber || undefined,
         buildNumber: buildNumber || undefined,
-        fwVersion: glassesFwVersion || undefined,
+        firmwareVersion: glassesFirmwareVersion || undefined,
         appVersion: appVersion || undefined,
         androidVersion: androidVersion || undefined,
         ...glassesWifiInfo,
@@ -246,9 +244,9 @@ export async function submitBugIncident(
     }
   }
 
-  const glassesConnected = useGlassesStore.getState().connected
+  const glassesConnected = isGlassesConnected(useGlassesStore.getState().connection)
   if (glassesConnected) {
-    CoreModule.sendIncidentId(incidentId, phoneBackendUrl)
+    BluetoothSdk.sendIncidentId(incidentId, phoneBackendUrl)
   }
 
   if (options?.screenshots && options.screenshots.length > 0) {

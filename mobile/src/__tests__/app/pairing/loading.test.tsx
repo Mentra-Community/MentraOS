@@ -1,3 +1,14 @@
+import {act, render, waitFor} from "@testing-library/react-native"
+import type {ReactNode} from "react"
+
+import BluetoothSdk from "@mentra/bluetooth-sdk"
+import {useRoute} from "@react-navigation/native"
+import {useNavigationStore} from "@/stores/navigation"
+import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
+import GlassesPairingLoadingScreen from "@/app/pairing/loading"
+import {useGlassesStore} from "@/stores/glasses"
+import {emitCoreModuleEvent, resetCoreModuleMock} from "@/test-utils/mockCoreModule"
+
 jest.mock("@mentra/bluetooth-sdk", () => {
   const {coreModuleMock} = require("@/test-utils/mockCoreModule")
   return {
@@ -78,17 +89,6 @@ jest.mock("@/components/glasses/GlassesPairingLoader", () => {
   return MockGlassesPairingLoader
 })
 
-import {act, render, waitFor} from "@testing-library/react-native"
-import type {ReactNode} from "react"
-
-import CoreModule from "@mentra/bluetooth-sdk"
-import {useRoute} from "@react-navigation/native"
-import {useNavigationStore} from "@/stores/navigation"
-import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
-import GlassesPairingLoadingScreen from "@/app/pairing/loading"
-import {useGlassesStore} from "@/stores/glasses"
-import {emitCoreModuleEvent, resetCoreModuleMock} from "@/test-utils/mockCoreModule"
-
 describe("pairing loading screen", () => {
   const replace = jest.fn()
   const goBack = jest.fn()
@@ -123,7 +123,7 @@ describe("pairing loading screen", () => {
     })
 
     await waitFor(() => {
-      expect(CoreModule.forget).toHaveBeenCalled()
+      expect(BluetoothSdk.forget).toHaveBeenCalled()
       expect(replace).toHaveBeenCalledWith("/pairing/failure", {
         error: "pairing:failed",
         deviceModel: "Mentra Live",
@@ -135,7 +135,7 @@ describe("pairing loading screen", () => {
     const first = render(<GlassesPairingLoadingScreen />)
 
     act(() => {
-      useGlassesStore.getState().setGlassesInfo({fullyBooted: true})
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
     })
     act(() => {
       jest.advanceTimersByTime(1_000)

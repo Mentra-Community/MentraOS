@@ -13,7 +13,7 @@ const ensureBluetoothSdkExpoAdapterPodEnv = (podfile: string): string => {
   }
 
   const insertion = [
-    "  # Expo apps need the SDK's Expo module adapter so autolinking can register CoreModule.",
+    "  # Expo apps need the SDK's Expo module adapter so autolinking can register BluetoothSdk.",
     `  ${BLUETOOTH_SDK_EXPO_ADAPTER_LINE}`,
     "",
   ].join("\n")

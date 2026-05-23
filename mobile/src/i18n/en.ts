@@ -35,7 +35,7 @@ const en = {
     model: "Model",
     deviceId: "Device ID",
     serialNumber: "Serial number",
-    btMacAddress: "MAC address",
+    bluetoothMacAddress: "MAC address",
     buildNumber: "Build number",
     firmwareVersion: "Firmware version",
     appVersion: "App version",

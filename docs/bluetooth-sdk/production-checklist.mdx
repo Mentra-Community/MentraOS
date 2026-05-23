@@ -1,0 +1,57 @@
+---
+title: "Production Checklist"
+description: "Validate a mobile app before shipping with the Mentra Bluetooth SDK."
+icon: "clipboard-check"
+---
+
+Use this checklist before shipping an app with the Mentra Bluetooth SDK.
+
+## App Setup
+
+- Android, iOS, and/or React Native native builds are configured for the app stack you ship.
+- iOS deployment target is `15.1` or newer.
+- Android min SDK is `28` or newer.
+- Android builds use Java 17.
+- Android native packaging includes the SDK ONNX Runtime `pickFirst` rule.
+- Bluetooth permission copy is user-friendly and specific.
+- Microphone, camera, local network, notification, and location permissions are requested only when needed.
+- The app integrates through the documented Android, iOS, or React Native SDK APIs.
+
+## SDK Integration
+
+- App subscribes to typed glasses and Bluetooth status callbacks.
+- App handles disconnect, reconnect, scan stopped, and pair failure states.
+- App does not assume every model supports every feature.
+- App cleans up SDK listeners/delegates and calls `close()` / `invalidate()` when sessions end.
+- React Native apps remove every SDK event subscription when screens/session owners unmount.
+- App avoids sending rapid display updates without debouncing.
+- App uses typed settings APIs for dashboard, gallery mode, camera, LED, Wi-Fi, streaming, and microphone settings.
+- Advanced controls are gated behind SDK capability/status checks.
+
+## Privacy And Compliance
+
+- Audio capture behavior is clearly disclosed.
+- Camera capture behavior is clearly disclosed.
+- Bluetooth and location permission copy explains device discovery.
+- Cloud upload behavior is documented in the app privacy policy.
+- Logs avoid sensitive user data.
+
+## Release Validation
+
+- Fresh bare Android app install using the published Maven artifact.
+- Fresh bare iOS app install using the published CocoaPod.
+- Fresh React Native development or production build using the published JavaScript package, if shipping React Native.
+- Android sample app in the Starter Kit builds.
+- iOS sample app in the Starter Kit runs `pod install` and builds.
+- React Native sample app in the Starter Kit runs `bun install`, `bunx expo prebuild`, and at least one native platform build.
+- Fresh install test on iOS.
+- Fresh install test on Android.
+- Pairing test with each supported glasses model.
+- Reconnect test after app restart.
+- Reconnect test after Bluetooth toggle.
+- Display command test, if shipping display-equipped models such as G2.
+- Camera/gallery/streaming test, if shipping camera-equipped models such as Mentra Live.
+- Speaker playback test, if shipping speaker-equipped models such as Mentra Live.
+- Hardware settings test for dashboard where supported, save-in-gallery mode, camera options, LED color/pattern, Wi-Fi, and hotspot behavior.
+- Button/touch event test.
+- Microphone audio/transcription test if enabled.

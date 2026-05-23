@@ -1,4 +1,4 @@
-import CoreModule, {WifiSearchResult} from "@mentra/bluetooth-sdk"
+import BluetoothSdk, {WifiSearchResult} from "@mentra/bluetooth-sdk"
 import {useFocusEffect} from "expo-router"
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {ActivityIndicator, ScrollView, TouchableOpacity, View} from "react-native"
@@ -131,7 +131,7 @@ export default function WifiScanScreen() {
     }, 15000)
 
     try {
-      await CoreModule.requestWifiScan()
+      await BluetoothSdk.requestWifiScan()
       console.log("WIFI_SCAN: WiFi scan request sent successfully")
     } catch (error) {
       console.error("WIFI_SCAN: Error scanning for WiFi networks:", error)
@@ -163,7 +163,7 @@ export default function WifiScanScreen() {
             onPress: async () => {
               try {
                 console.log(`WIFI_SCAN: Forgetting network: ${selectedNetwork.ssid}`)
-                await CoreModule.forgetWifiNetwork(selectedNetwork.ssid)
+                await BluetoothSdk.forgetWifiNetwork(selectedNetwork.ssid)
                 // Also remove from local saved credentials
                 WifiCredentialsService.removeCredentials(selectedNetwork.ssid)
                 setSavedNetworks((prev) => prev.filter((ssid) => ssid !== selectedNetwork.ssid))

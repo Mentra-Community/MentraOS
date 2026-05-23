@@ -368,10 +368,10 @@ class G1: NSObject, SGCManager {
 
     private var _fullyBooted: Bool = false
     var fullyBooted: Bool {
-        get { GlassesStore.shared.get("glasses", "fullyBooted") as? Bool ?? false }
+        get { DeviceStore.shared.get("glasses", "fullyBooted") as? Bool ?? false }
         set {
-            let oldValue = GlassesStore.shared.get("glasses", "fullyBooted") as? Bool ?? false
-            GlassesStore.shared.apply("glasses", "fullyBooted", newValue)
+            let oldValue = DeviceStore.shared.get("glasses", "fullyBooted") as? Bool ?? false
+            DeviceStore.shared.apply("glasses", "fullyBooted", newValue)
             if !newValue {
                 // Reset battery levels when disconnected
                 batteryLevel = -1
@@ -382,8 +382,8 @@ class G1: NSObject, SGCManager {
     }
 
     private var connected: Bool {
-        get { GlassesStore.shared.get("glasses", "connected") as? Bool ?? false }
-        set { GlassesStore.shared.apply("glasses", "connected", newValue) }
+        get { DeviceStore.shared.get("glasses", "connected") as? Bool ?? false }
+        set { DeviceStore.shared.apply("glasses", "connected", newValue) }
     }
 
     var leftReady: Bool = false
@@ -396,23 +396,23 @@ class G1: NSObject, SGCManager {
     @Published var rightBatteryLevel: Int = -1
 
     private var batteryLevel: Int {
-        get { GlassesStore.shared.get("glasses", "batteryLevel") as? Int ?? -1 }
-        set { GlassesStore.shared.apply("glasses", "batteryLevel", newValue) }
+        get { DeviceStore.shared.get("glasses", "batteryLevel") as? Int ?? -1 }
+        set { DeviceStore.shared.apply("glasses", "batteryLevel", newValue) }
     }
 
     private var caseCharging: Bool {
-        get { GlassesStore.shared.get("glasses", "caseCharging") as? Bool ?? false }
-        set { GlassesStore.shared.apply("glasses", "caseCharging", newValue) }
+        get { DeviceStore.shared.get("glasses", "caseCharging") as? Bool ?? false }
+        set { DeviceStore.shared.apply("glasses", "caseCharging", newValue) }
     }
 
     private var caseOpen: Bool {
-        get { GlassesStore.shared.get("glasses", "caseOpen") as? Bool ?? true }
-        set { GlassesStore.shared.apply("glasses", "caseOpen", newValue) }
+        get { DeviceStore.shared.get("glasses", "caseOpen") as? Bool ?? true }
+        set { DeviceStore.shared.apply("glasses", "caseOpen", newValue) }
     }
 
     private var caseRemoved: Bool {
-        get { GlassesStore.shared.get("glasses", "caseRemoved") as? Bool ?? true }
-        set { GlassesStore.shared.apply("glasses", "caseRemoved", newValue) }
+        get { DeviceStore.shared.get("glasses", "caseRemoved") as? Bool ?? true }
+        set { DeviceStore.shared.apply("glasses", "caseRemoved", newValue) }
     }
 
     var isDisconnecting = false
@@ -1181,7 +1181,7 @@ class G1: NSObject, SGCManager {
             // compressedVoiceData = data
             // skip the first 2 bytes:
             let lc3Data = data.subdata(in: 2 ..< data.count)
-            CoreManager.shared.handleGlassesMicData(lc3Data)
+            DeviceManager.shared.handleGlassesMicData(lc3Data)
         //                CoreCommsService.log("G1: Got voice data: " + String(data.count))
         case .UNK_1:
             handleAck(from: peripheral, success: true)
@@ -1238,16 +1238,16 @@ class G1: NSObject, SGCManager {
             switch DeviceOrders(rawValue: order) {
             case .HEAD_UP:
                 Bridge.log("G1: HEAD_UP")
-                GlassesStore.shared.apply("glasses", "headUp", true)
+                DeviceStore.shared.apply("glasses", "headUp", true)
             case .HEAD_UP2:
                 Bridge.log("G1: HEAD_UP2")
-                GlassesStore.shared.apply("glasses", "headUp", true)
+                DeviceStore.shared.apply("glasses", "headUp", true)
             // case .HEAD_DOWN:
             //   CoreCommsService.log("HEAD_DOWN")
             //   break
             case .HEAD_DOWN2:
                 Bridge.log("G1: HEAD_DOWN2")
-                GlassesStore.shared.apply("glasses", "headUp", false)
+                DeviceStore.shared.apply("glasses", "headUp", false)
             case .ACTIVATED:
                 Bridge.log("G1: ACTIVATED")
             case .SILENCED:
@@ -1290,7 +1290,7 @@ class G1: NSObject, SGCManager {
                 guard data.count >= 3 else { break }
                 if Int(data[2]) != -1 {
                     let newCaseBatteryLevel = Int(data[2])
-                    GlassesStore.shared.apply("glasses", "caseBatteryLevel", newCaseBatteryLevel)
+                    DeviceStore.shared.apply("glasses", "caseBatteryLevel", newCaseBatteryLevel)
                     Bridge.log("G1: Case battery level: \(newCaseBatteryLevel)%")
                 } else {
                     Bridge.log("G1: Case battery level was -1")
@@ -1446,7 +1446,7 @@ extension G1 {
 
     func sendRgbLedControl(
         requestId: String, packageName _: String?, action _: String, color _: String?,
-        ontime _: Int, offtime _: Int, count _: Int
+        onDurationMs _: Int, offDurationMs _: Int, count _: Int
     ) {
         Bridge.log("sendRgbLedControl - not supported on G1")
         Bridge.sendRgbLedControlResponse(
@@ -1749,7 +1749,7 @@ extension G1 {
 
     func setMicEnabled(_ enabled: Bool) {
         Bridge.log("G1: setMicEnabled() \(enabled)")
-        GlassesStore.shared.apply("glasses", "micEnabled", enabled)
+        DeviceStore.shared.apply("glasses", "micEnabled", enabled)
         var micOnData = Data()
         micOnData.append(Commands.BLE_REQ_MIC_ON.rawValue)
         if enabled {
@@ -2238,9 +2238,9 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
                     Bridge.log("G1: 📱 Style: \(style), Color: \(color)")
 
                     // Store the information
-                    GlassesStore.shared.apply("glasses", "serialNumber", decodedSerial)
-                    GlassesStore.shared.apply("glasses", "style", decodedStyle)
-                    GlassesStore.shared.apply("glasses", "color", decodedColor)
+                    DeviceStore.shared.apply("glasses", "serialNumber", decodedSerial)
+                    DeviceStore.shared.apply("glasses", "style", decodedStyle)
+                    DeviceStore.shared.apply("glasses", "color", decodedColor)
                 } else {
                     Bridge.log("G1: 📱 Could not decode serial number from manufacturer data")
                 }

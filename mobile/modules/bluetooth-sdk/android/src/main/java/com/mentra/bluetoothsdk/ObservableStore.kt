@@ -1,4 +1,4 @@
-package com.mentra.core
+package com.mentra.bluetoothsdk
 
 import java.util.UUID
 import org.json.JSONObject
@@ -6,11 +6,11 @@ import org.json.JSONObject
 /** Observable state management with immediate event emission */
 class ObservableStore {
     companion object {
-        const val CORE_CATEGORY = "core"
-        private const val LEGACY_BLUETOOTH_CATEGORY = "bluetooth"
+        const val BLUETOOTH_CATEGORY = "bluetooth"
+        private const val LEGACY_CORE_CATEGORY = "core"
 
         fun normalizeCategory(category: String): String =
-                if (category == LEGACY_BLUETOOTH_CATEGORY) CORE_CATEGORY else category
+                if (category == LEGACY_CORE_CATEGORY) BLUETOOTH_CATEGORY else category
     }
 
     private val values = mutableMapOf<String, Any>()
