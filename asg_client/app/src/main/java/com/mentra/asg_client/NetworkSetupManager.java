@@ -617,35 +617,23 @@ public class NetworkSetupManager {
             String pass = credentials != null ? credentials.password : null;
             String token = credentials != null ? credentials.token : null;
 
-            // Prepare response
-            StringBuilder response = new StringBuilder();
-            response.append("HTTP/1.1 200 OK\r\n");
-            response.append("Content-Type: text/html\r\n");
-            response.append("Connection: close\r\n");
-            response.append("\r\n");
-
             // If we got parameters, start connection attempt and show confirmation page
             if (credentials != null && credentials.hasWifiCredentials()) {
-                response.append("<html><head><title>WiFi Setup Complete</title>");
-                response.append(
-                        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");
-                response.append(
-                        "<style>body{font-family:sans-serif;margin:0;padding:20px;line-height:1.5;} ");
-                response.append(
-                        "h1{color:#4285f4;} .success{color:green;font-weight:bold;}</style></head>");
-                response.append("<body><h1>WiFi Setup Complete</h1>");
-                response.append("<p class=\"success\">Attempting to connect to network: ")
-                        .append(ssid)
-                        .append("</p>");
-                response.append(
-                        "<p>The glasses are now attempting to connect to your WiFi network. ");
-                response.append(
-                        "If successful, they will automatically connect to the AugmentOS backend.</p>");
-                response.append("<p>Please close this window and return to the AugmentOS app.</p>");
-                response.append("</body></html>");
+                String htmlBody =
+                        "<html><head><title>WiFi Setup Complete</title>"
+                                + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
+                                + "<style>body{font-family:sans-serif;margin:0;padding:20px;line-height:1.5;} "
+                                + "h1{color:#4285f4;} .success{color:green;font-weight:bold;}</style></head>"
+                                + "<body><h1>WiFi Setup Complete</h1>"
+                                + "<p class=\"success\">Attempting to connect to network: "
+                                + HotspotSetupRequestParser.escapeHtml(ssid)
+                                + "</p>"
+                                + "<p>The glasses are now attempting to connect to your WiFi network. "
+                                + "If successful, they will automatically connect to the MentraOS backend.</p>"
+                                + "<p>Please close this window and return to the MentraOS app.</p>"
+                                + "</body></html>";
 
-                // Send the response immediately
-                out.write(response.toString().getBytes());
+                HotspotSetupRequestParser.writeHtmlResponse(out, htmlBody);
                 out.flush();
 
                 // Now attempt to connect to the network
@@ -659,9 +647,7 @@ public class NetworkSetupManager {
                     callback.onCredentialsReceived(ssid, pass, null);
                 }
             } else {
-                // No parameters, show the setup form
-                response.append(loadHotspotLandingPage());
-                out.write(response.toString().getBytes());
+                HotspotSetupRequestParser.writeHtmlResponse(out, loadHotspotLandingPage());
                 out.flush();
             }
 

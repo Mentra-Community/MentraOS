@@ -691,16 +691,7 @@ public class SystemNetworkManager extends BaseNetworkManager {
                 responseBody = loadHotspotLandingPage();
             }
 
-            String response =
-                    "HTTP/1.1 200 OK\r\n"
-                            + "Content-Type: text/html\r\n"
-                            + "Content-Length: "
-                            + responseBody.length()
-                            + "\r\n"
-                            + "\r\n"
-                            + responseBody;
-
-            output.write(response.getBytes());
+            HotspotSetupRequestParser.writeHtmlResponse(output, responseBody);
             output.flush();
         } catch (IOException e) {
             Log.e(TAG, "Error handling client", e);
@@ -720,11 +711,11 @@ public class SystemNetworkManager extends BaseNetworkManager {
                 + "h1{color:#4285f4;} .success{color:green;font-weight:bold;}</style></head>"
                 + "<body><h1>WiFi Setup Complete</h1>"
                 + "<p class=\"success\">Attempting to connect to network: "
-                + ssid
+                + HotspotSetupRequestParser.escapeHtml(ssid)
                 + "</p>"
                 + "<p>The glasses are now attempting to connect to your WiFi network. "
-                + "If successful, they will automatically connect to the AugmentOS backend.</p>"
-                + "<p>Please close this window and return to the AugmentOS app.</p>"
+                + "If successful, they will automatically connect to the MentraOS backend.</p>"
+                + "<p>Please close this window and return to the MentraOS app.</p>"
                 + "</body></html>";
     }
 

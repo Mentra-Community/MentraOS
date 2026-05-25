@@ -1,14 +1,19 @@
 package com.mentra.asg_client.io.network.utils;
 
+import android.text.TextUtils;
 import androidx.annotation.Nullable;
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 
 /** Parses WiFi credentials from hotspot captive-portal HTTP requests. */
 public final class HotspotSetupRequestParser {
+
+    /** Max POST body size for captive-portal form data (ssid, pass, token). */
+    public static final int MAX_HTTP_BODY_BYTES = 8192;
 
     private HotspotSetupRequestParser() {}
 
@@ -90,10 +95,32 @@ public final class HotspotSetupRequestParser {
         }
     }
 
+    public static String escapeHtml(@Nullable String text) {
+        return text == null ? "" : TextUtils.htmlEncode(text);
+    }
+
+    /** Writes a minimal HTTP/1.1 HTML response using UTF-8 for headers and body. */
+    public static void writeHtmlResponse(OutputStream output, String htmlBody) throws IOException {
+        byte[] bodyBytes = htmlBody.getBytes(StandardCharsets.UTF_8);
+        String headers =
+                "HTTP/1.1 200 OK\r\n"
+                        + "Content-Type: text/html; charset=UTF-8\r\n"
+                        + "Content-Length: "
+                        + bodyBytes.length
+                        + "\r\n"
+                        + "Connection: close\r\n"
+                        + "\r\n";
+        output.write(headers.getBytes(StandardCharsets.UTF_8));
+        output.write(bodyBytes);
+    }
+
     @Nullable
     public static String readHttpBody(BufferedReader reader, int contentLength) throws IOException {
         if (contentLength <= 0) {
             return "";
+        }
+        if (contentLength > MAX_HTTP_BODY_BYTES) {
+            throw new IOException("Request body too large: " + contentLength);
         }
         char[] buf = new char[contentLength];
         int read = 0;
