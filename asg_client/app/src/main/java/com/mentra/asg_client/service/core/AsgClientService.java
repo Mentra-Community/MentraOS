@@ -590,11 +590,7 @@ public class AsgClientService extends Service
 
         } catch (Exception e) {
             Log.e(TAG, "💥 Error initializing service container", e);
-            try {
-                throw e;
-            } catch (InterruptedException ex) {
-                throw new RuntimeException(ex);
-            }
+            throw new RuntimeException(e);
         }
     }
 

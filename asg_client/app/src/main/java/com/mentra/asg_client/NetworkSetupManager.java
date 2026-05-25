@@ -14,6 +14,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import com.mentra.asg_client.io.network.utils.HotspotLandingPage;
+import com.mentra.asg_client.io.network.utils.HotspotSetupRequestParser;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -592,46 +593,29 @@ public class NetworkSetupManager {
             String requestLine = reader.readLine();
             Log.d(TAG, "Client requestLine: " + requestLine);
 
-            // Parse parameters if present
-            String ssid = null;
-            String pass = null;
-            String token = null;
+            boolean isPost = requestLine != null && requestLine.startsWith("POST");
+            boolean isGet = requestLine != null && requestLine.startsWith("GET");
 
-            if (requestLine != null) {
-                // Check if the request has parameters
-                int paramIndex = requestLine.indexOf("/?");
-                if (paramIndex != -1) {
-                    // Extract the query string
-                    String query = requestLine.substring(paramIndex + 2);
-                    int endIndex = query.indexOf(" HTTP/");
-                    if (endIndex != -1) {
-                        query = query.substring(0, endIndex);
-                    }
-
-                    // Parse parameters
-                    String[] pairs = query.split("&");
-                    for (String pair : pairs) {
-                        String[] kv = pair.split("=");
-                        if (kv.length == 2) {
-                            String key = kv[0].trim();
-                            String value = kv[1].trim();
-                            if ("ssid".equalsIgnoreCase(key)) {
-                                ssid = value;
-                            } else if ("pass".equalsIgnoreCase(key)) {
-                                pass = value;
-                            } else if ("token".equalsIgnoreCase(key)) {
-                                token = value;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Consume all headers (important to read the entire request)
+            int contentLength = 0;
             String line;
             while ((line = reader.readLine()) != null && !line.isEmpty()) {
-                // Just read until empty line (end of headers)
+                contentLength =
+                        Math.max(
+                                contentLength,
+                                HotspotSetupRequestParser.parseContentLengthHeader(line));
             }
+
+            HotspotSetupRequestParser.Credentials credentials = null;
+            if (isPost) {
+                String body = HotspotSetupRequestParser.readHttpBody(reader, contentLength);
+                credentials = HotspotSetupRequestParser.parseFormUrlEncoded(body);
+            } else if (isGet) {
+                credentials = HotspotSetupRequestParser.parseGetRequestLine(requestLine);
+            }
+
+            String ssid = credentials != null ? credentials.ssid : null;
+            String pass = credentials != null ? credentials.password : null;
+            String token = credentials != null ? credentials.token : null;
 
             // Prepare response
             StringBuilder response = new StringBuilder();
@@ -641,7 +625,7 @@ public class NetworkSetupManager {
             response.append("\r\n");
 
             // If we got parameters, start connection attempt and show confirmation page
-            if (ssid != null && pass != null) {
+            if (credentials != null && credentials.hasWifiCredentials()) {
                 response.append("<html><head><title>WiFi Setup Complete</title>");
                 response.append(
                         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">");

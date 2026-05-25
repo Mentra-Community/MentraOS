@@ -16,6 +16,8 @@ import android.util.Log;
 import com.mentra.asg_client.io.network.core.BaseNetworkManager;
 import com.mentra.asg_client.io.network.interfaces.IWifiScanCallback;
 import com.mentra.asg_client.io.network.utils.DebugNotificationManager;
+import com.mentra.asg_client.io.network.utils.HotspotLandingPage;
+import com.mentra.asg_client.io.network.utils.HotspotSetupRequestParser;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -42,30 +44,6 @@ public class SystemNetworkManager extends BaseNetworkManager {
     private static final String DEFAULT_HOTSPOT_PASSWORD = "augmentos1234";
     private static final int DEFAULT_WEBSERVER_PORT = 8080;
 
-    // HTML content for the hotspot landing page
-    private static final String HOTSPOT_LANDING_PAGE =
-            "<html><head><title>AugmentOS WiFi Setup</title>"
-                    + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
-                    + "<style>body{font-family:sans-serif;margin:0;padding:20px;line-height:1.5;} "
-                    + "h1{color:#4285f4;} form{margin-top:20px;} "
-                    + "label{display:block;margin-bottom:5px;font-weight:bold;} "
-                    + "input[type=text],input[type=password]{width:100%;padding:8px;margin-bottom:15px;border:1px solid #ddd;border-radius:4px;} "
-                    + "button{background:#4285f4;color:white;border:none;padding:10px 15px;border-radius:4px;cursor:pointer;} "
-                    + "button:hover{background:#2a75f3;}</style></head>"
-                    + "<body><h1>AugmentOS WiFi Setup</h1>"
-                    + "<p>Please enter your WiFi network details to connect these glasses to the internet:</p>"
-                    + "<form id=\"wifiForm\" method=\"GET\" action=\"/\">"
-                    + "<label for=\"ssid\">WiFi Network Name:</label>"
-                    + "<input type=\"text\" id=\"ssid\" name=\"ssid\" required>"
-                    + "<label for=\"pass\">WiFi Password:</label>"
-                    + "<input type=\"password\" id=\"pass\" name=\"pass\" required>"
-                    + "<label for=\"token\">Auth Token (optional):</label>"
-                    + "<input type=\"text\" id=\"token\" name=\"token\">"
-                    + "<button type=\"submit\">Connect</button></form>"
-                    + "<script>document.getElementById('wifiForm').onsubmit = function() {"
-                    + "alert('Connecting to network... The glasses will reboot if successful.');"
-                    + "};</script></body></html>";
-
     private final WifiManager wifiManager;
     private final DebugNotificationManager notificationManager;
     private BroadcastReceiver wifiStateReceiver;
@@ -75,6 +53,7 @@ public class SystemNetworkManager extends BaseNetworkManager {
     private boolean isServerRunning = false;
     private Thread serverThread;
     private int listenPort = DEFAULT_WEBSERVER_PORT;
+    private String hotspotLandingPage;
 
     /**
      * Create a new SystemNetworkManager
@@ -650,75 +629,79 @@ public class SystemNetworkManager extends BaseNetworkManager {
         }
     }
 
+    private String loadHotspotLandingPage() {
+        if (hotspotLandingPage == null) {
+            try {
+                hotspotLandingPage = HotspotLandingPage.load(context);
+            } catch (IOException e) {
+                Log.e(TAG, "Failed to load hotspot landing page", e);
+                hotspotLandingPage = "";
+            }
+        }
+        return hotspotLandingPage;
+    }
+
     private void handleClient(Socket client) {
         try (BufferedReader reader =
                         new BufferedReader(new InputStreamReader(client.getInputStream()));
                 OutputStream output = client.getOutputStream()) {
 
             String requestLine = reader.readLine();
-            if (requestLine != null && requestLine.startsWith("GET")) {
-                // Parse query parameters
-                String[] parts = requestLine.split(" ");
-                if (parts.length > 1) {
-                    String path = parts[1];
-                    if (path.contains("?")) {
-                        String query = path.substring(path.indexOf("?") + 1);
-                        String[] params = query.split("&");
-
-                        String ssid = null;
-                        String password = null;
-                        String token = null;
-
-                        for (String param : params) {
-                            String[] keyValue = param.split("=");
-                            if (keyValue.length == 2) {
-                                switch (keyValue[0]) {
-                                    case "ssid":
-                                        ssid = keyValue[1];
-                                        break;
-                                    case "pass":
-                                        password = keyValue[1];
-                                        break;
-                                    case "token":
-                                        token = keyValue[1];
-                                        break;
-                                }
-                            }
-                        }
-
-                        if (ssid != null && password != null) {
-                            // Connect to the specified network
-                            final String finalSsid = ssid;
-                            final String finalPassword = password;
-                            final String finalToken = token;
-                            new Handler(Looper.getMainLooper())
-                                    .post(
-                                            new Runnable() {
-                                                @Override
-                                                public void run() {
-                                                    connectToWifi(finalSsid, finalPassword);
-                                                    notifyWifiCredentialsReceived(
-                                                            finalSsid, finalPassword, finalToken);
-                                                }
-                                            });
-                        }
-                    }
-                }
-
-                // Send response
-                String landingPage = loadHotspotLandingPage();
-                String response =
-                        "HTTP/1.1 200 OK\r\n"
-                                + "Content-Type: text/html\r\n"
-                                + "Content-Length: "
-                                + landingPage.length()
-                                + "\r\n"
-                                + "\r\n"
-                                + landingPage;
-
-                output.write(response.getBytes());
-                output.flush();
+            if (requestLine == null) {
+                return;
             }
+
+            boolean isPost = requestLine.startsWith("POST");
+            boolean isGet = requestLine.startsWith("GET");
+            if (!isPost && !isGet) {
+                return;
+            }
+
+            int contentLength = 0;
+            String headerLine;
+            while ((headerLine = reader.readLine()) != null && !headerLine.isEmpty()) {
+                contentLength =
+                        Math.max(
+                                contentLength,
+                                HotspotSetupRequestParser.parseContentLengthHeader(headerLine));
+            }
+
+            HotspotSetupRequestParser.Credentials credentials = null;
+            if (isPost) {
+                String body = HotspotSetupRequestParser.readHttpBody(reader, contentLength);
+                credentials = HotspotSetupRequestParser.parseFormUrlEncoded(body);
+            } else {
+                credentials = HotspotSetupRequestParser.parseGetRequestLine(requestLine);
+            }
+
+            String responseBody;
+            if (credentials != null && credentials.hasWifiCredentials()) {
+                final String finalSsid = credentials.ssid;
+                final String finalPassword = credentials.password;
+                final String finalToken = credentials.token;
+                new Handler(Looper.getMainLooper())
+                        .post(
+                                () -> {
+                                    connectToWifi(finalSsid, finalPassword);
+                                    notifyWifiCredentialsReceived(
+                                            finalSsid, finalPassword, finalToken);
+                                });
+                responseBody = buildHotspotSuccessPage(finalSsid);
+            } else {
+                responseBody = loadHotspotLandingPage();
+            }
+
+            String response =
+                    "HTTP/1.1 200 OK\r\n"
+                            + "Content-Type: text/html\r\n"
+                            + "Content-Length: "
+                            + responseBody.length()
+                            + "\r\n"
+                            + "\r\n"
+                            + responseBody;
+
+            output.write(response.getBytes());
+            output.flush();
         } catch (IOException e) {
             Log.e(TAG, "Error handling client", e);
         } finally {
@@ -728,6 +711,21 @@ public class SystemNetworkManager extends BaseNetworkManager {
                 Log.e(TAG, "Error closing client", e);
             }
         }
+    }
+
+    private static String buildHotspotSuccessPage(String ssid) {
+        return "<html><head><title>WiFi Setup Complete</title>"
+                + "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
+                + "<style>body{font-family:sans-serif;margin:0;padding:20px;line-height:1.5;} "
+                + "h1{color:#4285f4;} .success{color:green;font-weight:bold;}</style></head>"
+                + "<body><h1>WiFi Setup Complete</h1>"
+                + "<p class=\"success\">Attempting to connect to network: "
+                + ssid
+                + "</p>"
+                + "<p>The glasses are now attempting to connect to your WiFi network. "
+                + "If successful, they will automatically connect to the AugmentOS backend.</p>"
+                + "<p>Please close this window and return to the AugmentOS app.</p>"
+                + "</body></html>";
     }
 
     @SuppressLint("MissingPermission")

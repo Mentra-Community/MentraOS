@@ -38,6 +38,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.Collectors;
 import org.greenrobot.eventbus.EventBus;
@@ -222,16 +223,20 @@ public class OtaHelper {
         if (listener == null) {
             return;
         }
-        OtaHelper current = instance;
-        if (current != null) {
-            listener.onOtaHelperInitialized(current);
-            return;
+        synchronized (OtaHelper.class) {
+            OtaHelper current = instance;
+            if (current != null) {
+                listener.onOtaHelperInitialized(current);
+            } else {
+                initializedListeners.add(listener);
+            }
         }
-        initializedListeners.add(listener);
     }
 
     public static void removeOnInitializedListener(OnInitializedListener listener) {
-        initializedListeners.remove(listener);
+        synchronized (OtaHelper.class) {
+            initializedListeners.remove(listener);
+        }
     }
 
     private static void notifyInitialized(OtaHelper helper) {
