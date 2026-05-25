@@ -30,34 +30,13 @@ public class OtaCommandHandler implements ICommandHandler {
     private static int otaStartRetryCount = 0;
     private static final Handler retryHandler = new Handler(Looper.getMainLooper());
 
-    // Reference to OtaHelper for triggering OTA updates
-    private static OtaHelper otaHelperInstance;
-    
-    // Reference to CommunicationManager for sending error messages
-    private static ICommunicationManager communicationManager;
+    private final OtaHelper otaHelper;
+    private final ICommunicationManager communicationManager;
 
-    public OtaCommandHandler() {
-        // No dependencies needed in constructor - dependencies set via static methods
-    }
-
-    /**
-     * Set the OtaHelper instance for phone-controlled OTA.
-     * Called during service initialization.
-     * @param helper The OtaHelper instance
-     */
-    public static void setOtaHelper(OtaHelper helper) {
-        otaHelperInstance = helper;
-        Log.i(TAG, "OtaHelper instance set for phone-controlled OTA");
-    }
-    
-    /**
-     * Set the CommunicationManager for sending error messages to phone.
-     * Called during service initialization.
-     * @param manager The CommunicationManager instance
-     */
-    public static void setCommunicationManager(ICommunicationManager manager) {
-        communicationManager = manager;
-        Log.i(TAG, "CommunicationManager set for OTA error reporting");
+    public OtaCommandHandler(OtaHelper otaHelper, ICommunicationManager communicationManager) {
+        this.otaHelper = otaHelper;
+        this.communicationManager = communicationManager;
+        Log.i(TAG, "OtaCommandHandler constructed with injected dependencies");
     }
 
     @Override
@@ -96,7 +75,7 @@ public class OtaCommandHandler implements ICommandHandler {
     private boolean handleOtaStart(JSONObject data) {
         Log.i(TAG, "📱 Received ota_start command from phone");
 
-        if (otaHelperInstance == null) {
+        if (otaHelper == null) {
             // OtaHelper not ready yet - this can happen right after APK install
             // Schedule a retry instead of failing immediately
             if (otaStartRetryCount < OTA_START_MAX_RETRIES) {
@@ -119,7 +98,7 @@ public class OtaCommandHandler implements ICommandHandler {
         otaStartRetryCount = 0;
         
         // Start OTA from phone request
-        otaHelperInstance.startOtaFromPhone();
+        otaHelper.startOtaFromPhone();
         Log.i(TAG, "📱 OTA started from phone command");
         return true;
     }
@@ -148,12 +127,12 @@ public class OtaCommandHandler implements ICommandHandler {
     private boolean handleOtaQueryStatus() {
         Log.i(TAG, "📱 Received ota_query_status from phone");
 
-        if (otaHelperInstance == null) {
+        if (otaHelper == null) {
             Log.w(TAG, "OtaHelper not initialized — cannot respond to ota_query_status");
             return false;
         }
 
-        JSONObject state = otaHelperInstance.getOtaSessionState();
+        JSONObject state = otaHelper.getOtaSessionState();
         if (state != null && communicationManager != null) {
             communicationManager.sendOtaStatus(state);
             JSONObject data = state.optJSONObject("data");
