@@ -4,13 +4,14 @@ import android.content.Context;
 import android.hardware.camera2.CameraAccessException;
 import android.util.Log;
 
+import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.streaming.config.RtmpStreamConfig;
 import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
 import com.mentra.asg_client.io.streaming.services.WhipCameraFormatSelector;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
 import com.mentra.asg_client.io.streaming.services.SrtStreamingService;
 import com.mentra.asg_client.io.streaming.services.WhipStreamingService;
-import com.mentra.asg_client.SysControl;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.media.interfaces.IMediaManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
@@ -131,7 +132,7 @@ public class StreamCommandHandler implements ICommandHandler {
                 int batteryLevel = stateManager.getBatteryLevel();
                 if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
                     Log.w(TAG, "🚫 Stream rejected - battery too low (" + batteryLevel + "%)");
-                    com.mentra.asg_client.io.media.core.MediaCaptureService.playBatteryLowSound(context);
+                    MediaCaptureService.playBatteryLowSound(context);
                     streamingManager.sendStreamStatusResponse(false, ServiceConstants.STATUS_ERROR,
                             "Battery level too low (" + batteryLevel + "%) - minimum " +
                             BatteryConstants.MIN_BATTERY_LEVEL + "% required");
@@ -231,7 +232,7 @@ public class StreamCommandHandler implements ICommandHandler {
         if (EIS_IN_LIVESTREAMS && !withinEisBudget) {
             Log.i(TAG, "EIS disabled for " + width + "x" + height + " (>= " + EIS_MAX_PIXELS + " px)");
         }
-        SysControl.setEisEnable(context, enable);
+        SystemControllerFactory.get(context).setEisEnabled(enable);
     }
 
     /**
@@ -239,7 +240,7 @@ public class StreamCommandHandler implements ICommandHandler {
      * fails to start. Mirrors AsgClientService boot-time configuration.
      */
     private void restoreEisAfterStreaming() {
-        SysControl.setEisEnable(context, false);
+        SystemControllerFactory.get(context).setEisEnabled(false);
     }
 
     /**
