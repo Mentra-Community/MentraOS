@@ -4,7 +4,11 @@ import android.content.Context;
 import android.util.Log;
 
 import com.mentra.asg_client.io.file.core.FileManager;
+import com.mentra.asg_client.service.core.handlers.GalleryModeCommandHandler;
 import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
+import com.mentra.asg_client.service.core.handlers.PowerCommandHandler;
+import com.mentra.asg_client.service.core.handlers.ServiceHeartbeatCommandHandler;
+import com.mentra.asg_client.service.core.handlers.TransferCompleteCommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.core.handlers.OtaCommandHandler;
 import com.mentra.asg_client.service.core.handlers.SettingsCommandHandler;
@@ -73,7 +77,19 @@ public class CommandProcessor {
     private final ChunkReassembler chunkReassembler;
     private final RgbLedCommandHandler rgbLedCommandHandler;
 
-    public CommandProcessor(Context context, ICommunicationManager communicationManager, IStateManager stateManager, IMediaManager streamingManager, IResponseBuilder responseBuilder, IConfigurationManager configurationManager, AsgClientServiceManager serviceManager, FileManager fileManager, RgbLedCommandHandler rgbLedCommandHandler) {
+    private final OtaCommandHandler otaCommandHandler;
+
+    public CommandProcessor(
+            Context context,
+            ICommunicationManager communicationManager,
+            IStateManager stateManager,
+            IMediaManager streamingManager,
+            IResponseBuilder responseBuilder,
+            IConfigurationManager configurationManager,
+            AsgClientServiceManager serviceManager,
+            FileManager fileManager,
+            RgbLedCommandHandler rgbLedCommandHandler,
+            OtaCommandHandler otaCommandHandler) {
         Log.d(TAG, "🔧 Initializing CommandProcessor with dependencies");
         this.context = context;
         this.communicationManager = communicationManager;
@@ -84,6 +100,7 @@ public class CommandProcessor {
         this.serviceManager = serviceManager;
         this.fileManager = fileManager;
         this.rgbLedCommandHandler = rgbLedCommandHandler;
+        this.otaCommandHandler = otaCommandHandler;
 
         // Initialize components (Single Responsibility Principle)
         Log.d(TAG, "📦 Creating command processing components");
@@ -98,13 +115,13 @@ public class CommandProcessor {
         this.protocolDetector.addChunkedMessageSupport(chunkReassembler);
         Log.d(TAG, "✅ Chunked message support initialized");
         
-        // Wire K900CommandHandler to BesOtaManager for authorization requests
-        com.mentra.asg_client.io.bes.BesOtaManager.setK900CommandHandler(this.k900CommandHandler);
-        Log.d(TAG, "✅ K900CommandHandler wired to BesOtaManager");
-
         // Register command handlers
         initializeCommandHandlers();
         Log.i(TAG, "✅ CommandProcessor initialization completed successfully");
+    }
+
+    public K900CommandHandler getK900CommandHandler() {
+        return k900CommandHandler;
     }
 
     /**
@@ -337,7 +354,7 @@ public class CommandProcessor {
             commandHandlerRegistry.registerHandler(new SettingsCommandHandler(serviceManager, communicationManager, responseBuilder));
             Log.d(TAG, "✅ Registered SettingsCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new OtaCommandHandler());
+            commandHandlerRegistry.registerHandler(otaCommandHandler);
             Log.d(TAG, "✅ Registered OtaCommandHandler");
 
             commandHandlerRegistry.registerHandler(new ImuCommandHandler(context, responseSender));
@@ -346,22 +363,22 @@ public class CommandProcessor {
             commandHandlerRegistry.registerHandler(new GalleryCommandHandler(serviceManager, communicationManager));
             Log.d(TAG, "✅ Registered GalleryCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new com.mentra.asg_client.service.core.handlers.TransferCompleteCommandHandler(serviceManager));
+            commandHandlerRegistry.registerHandler(new TransferCompleteCommandHandler(serviceManager));
             Log.d(TAG, "✅ Registered TransferCompleteCommandHandler");
 
             commandHandlerRegistry.registerHandler(rgbLedCommandHandler);
             Log.d(TAG, "✅ Registered RgbLedCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new com.mentra.asg_client.service.core.handlers.GalleryModeCommandHandler(serviceManager));
+            commandHandlerRegistry.registerHandler(new GalleryModeCommandHandler(serviceManager));
             Log.d(TAG, "✅ Registered GalleryModeCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new com.mentra.asg_client.service.core.handlers.ServiceHeartbeatCommandHandler(serviceManager));
+            commandHandlerRegistry.registerHandler(new ServiceHeartbeatCommandHandler(serviceManager));
             Log.d(TAG, "✅ Registered ServiceHeartbeatCommandHandler");
 
             commandHandlerRegistry.registerHandler(new BleConfigCommandHandler());
             Log.d(TAG, "✅ Registered BleConfigCommandHandler");
 
-            commandHandlerRegistry.registerHandler(new com.mentra.asg_client.service.core.handlers.PowerCommandHandler(context, serviceManager));
+            commandHandlerRegistry.registerHandler(new PowerCommandHandler(context, serviceManager));
             Log.d(TAG, "✅ Registered PowerCommandHandler");
 
             commandHandlerRegistry.registerHandler(new UploadIncidentLogsCommandHandler(context,
@@ -458,7 +475,7 @@ public class CommandProcessor {
      * Pass a non-null incidentId to also upload to the incident backend as "glasses_firmware".
      */
     public void requestBesLogs(String incidentId, android.content.Context context,
-                               com.mentra.asg_client.service.system.interfaces.IConfigurationManager configManager) {
+                               IConfigurationManager configManager) {
         if (k900CommandHandler != null) {
             k900CommandHandler.requestBesLogs(incidentId, context, configManager);
         } else {
