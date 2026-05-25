@@ -7,8 +7,9 @@ import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
 import com.mentra.asg_client.utils.WakeLockManager;
 import com.mentra.asg_client.io.bes.protocol.*;
 import com.mentra.asg_client.io.bes.util.BesOtaUtil;
-import com.mentra.asg_client.io.bluetooth.core.ComManager;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.SerialPortBridge;
 import com.mentra.asg_client.io.bluetooth.utils.ByteUtil;
+import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
 
 import org.greenrobot.eventbus.EventBus;
 
@@ -27,7 +28,6 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
     // Static flag to track if BES OTA is in progress
     public static volatile boolean isBesOtaInProgress = false;
     
-    private static BesOtaManager mInstance;
     private static byte[] sCurrentFirmwareVersion = null; // Store current firmware version bytes
 
     // Wakelock timeout for BES OTA to prevent CPU sleep during firmware transfer
@@ -51,44 +51,22 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
     private boolean bWait4Confirm = false;
     private boolean isWaitingForAuthorization = false;
     
-    private ComManager comManager;
+    private final SerialPortBridge comManager;
     private BesOtaCommandListener mListener;
-    private static com.mentra.asg_client.service.core.handlers.K900CommandHandler sK900CommandHandler;
+    private final K900CommandHandler k900CommandHandler;
 
     /**
-     * Constructor - receives ComManager instance from AsgClientService
-     * @param comManager The ComManager instance for UART communication
+     * @param comManager UART bridge for BES2700
      * @param context Application context for wakelock
+     * @param k900CommandHandler Handler for BES authorization and phone messaging
      */
-    public BesOtaManager(ComManager comManager, Context context) {
+    public BesOtaManager(
+            SerialPortBridge comManager, Context context, K900CommandHandler k900CommandHandler) {
         this.comManager = comManager;
         this.mContext = context.getApplicationContext();
+        this.k900CommandHandler = k900CommandHandler;
     }
-    
-    /**
-     * Set K900CommandHandler for sending authorization requests
-     * @param handler The K900CommandHandler instance
-     */
-    public static void setK900CommandHandler(com.mentra.asg_client.service.core.handlers.K900CommandHandler handler) {
-        sK900CommandHandler = handler;
-    }
-    
-    /**
-     * Get singleton instance (for checking isBesOtaInProgress flag)
-     * @return BesOtaManager instance
-     */
-    public static BesOtaManager getInstance() {
-        return mInstance;
-    }
-    
-    /**
-     * Set singleton instance (called by AsgClientService)
-     * @param instance The BesOtaManager instance
-     */
-    public static void setInstance(BesOtaManager instance) {
-        mInstance = instance;
-    }
-    
+
     /**
      * Get current firmware version from BES device
      * @return byte array with [major, minor, patch, build] or null if not available
@@ -146,7 +124,7 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
      */
     public boolean queryFirmwareVersion() {
         if (comManager == null) {
-            Log.e(TAG, "Cannot query firmware version - ComManager is null");
+            Log.e(TAG, "Cannot query firmware version - SerialPortBridge is null");
             return false;
         }
         
@@ -155,7 +133,7 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
             return false;
         }
         
-        // Send GetFirmwareVersion command directly via ComManager
+        // Send GetFirmwareVersion command directly via SerialPortBridge
         BesCmd_GetFirmwareVersion cmd = new BesCmd_GetFirmwareVersion();
         byte[] data = cmd.getSendData();
         
@@ -168,7 +146,7 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
     
     /**
      * Callback for firmware version response (outside OTA context)
-     * This is called directly from ComManager's normal data handling
+     * This is called directly from SerialPortBridge's normal data handling
      */
     public void onFirmwareVersionReceived(byte[] data, int size) {
         // Parse the firmware version from raw data
@@ -263,8 +241,8 @@ public class BesOtaManager implements BesOtaUartListener, BesOtaCommandListener 
         // STEP 1: Request authorization from BES chip via K900CommandHandler
         Log.i(TAG, "Requesting BES OTA authorization from BES chip");
         
-        if (sK900CommandHandler != null) {
-            sK900CommandHandler.sendBesOtaAuthorizationRequest();
+        if (k900CommandHandler != null) {
+            k900CommandHandler.sendBesOtaAuthorizationRequest();
             // Start authorization timeout — if BES chip never responds, fail gracefully
             authTimeoutHandler = new android.os.Handler(android.os.Looper.getMainLooper());
             authTimeoutRunnable = () -> {
