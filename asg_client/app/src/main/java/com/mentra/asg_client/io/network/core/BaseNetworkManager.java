@@ -15,7 +15,7 @@ import android.os.Looper;
 import android.util.Log;
 
 import com.mentra.asg_client.NetworkUtils;
-import com.mentra.asg_client.io.network.interfaces.INetworkManager;
+import com.mentra.asg_client.io.network.interfaces.INetworkController;
 import com.mentra.asg_client.io.network.interfaces.IWifiScanCallback;
 import com.mentra.asg_client.io.network.interfaces.NetworkStateListener;
 import com.mentra.asg_client.io.network.models.NetworkInfo;
@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Base implementation of the INetworkManager interface.
  * Provides common functionality for all network manager implementations.
  */
-public abstract class BaseNetworkManager implements INetworkManager {
+public abstract class BaseNetworkManager implements INetworkController {
     private static final String TAG = "BaseNetworkManager";
     
     // Constants for device-persistent hotspot credentials
