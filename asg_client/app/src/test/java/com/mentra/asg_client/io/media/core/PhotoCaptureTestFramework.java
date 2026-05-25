@@ -1,6 +1,7 @@
 package com.mentra.asg_client.io.media.core;
 
 import android.util.Log;
+import java.util.Random;
 
 /**
  * PHOTO CAPTURE TESTING FRAMEWORK
