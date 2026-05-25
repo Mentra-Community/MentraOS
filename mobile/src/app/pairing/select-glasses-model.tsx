@@ -1,5 +1,5 @@
 import {DeviceTypes} from "@/../../cloud/packages/types/src"
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {useFocusEffect} from "expo-router"
 import {useCallback} from "react"
 import {View, TouchableOpacity, Platform, ScrollView, Image} from "react-native"
@@ -27,7 +27,7 @@ export default function SelectGlassesModelScreen() {
   // when this screen is focused, forget any glasses that may be paired:
   useFocusEffect(
     useCallback(() => {
-      CoreModule.forget()
+      BluetoothSdk.forget()
       return () => {}
     }, []),
   )

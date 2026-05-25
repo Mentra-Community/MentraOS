@@ -15,7 +15,7 @@ import * as Battery from "expo-battery"
 import * as Clipboard from "expo-clipboard"
 import {File, Paths} from "expo-file-system"
 import * as Location from "expo-location"
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk, {type RgbLedAction, type RgbLedColor} from "@mentra/bluetooth-sdk"
 
 import {
   MiniappErrorCode,
@@ -60,6 +60,8 @@ interface ConnectedMiniapp {
 const LOG_TAG = "LOCAL_MINIAPP"
 const PING_INTERVAL_MS = 5_000
 const PING_TIMEOUT_THRESHOLD = 3 // unregister after 3 missed pongs (~15s)
+const RGB_LED_ACTIONS = new Set<RgbLedAction>(["on", "off"])
+const RGB_LED_COLORS = new Set<RgbLedColor>(["red", "green", "blue", "orange", "white"])
 
 // =============================================================================
 // Declared-permission record helper (for CONNECT_ACK / PERMISSIONS_UPDATE)
@@ -82,6 +84,14 @@ const PERMISSION_TYPE_TO_CANONICAL: Record<string, string> = {
   READ_NOTIFICATIONS: "notifications",
   POST_NOTIFICATIONS: "notifications",
   CALENDAR: "calendar",
+}
+
+function normalizeRgbLedAction(value: unknown): RgbLedAction {
+  return typeof value === "string" && RGB_LED_ACTIONS.has(value as RgbLedAction) ? (value as RgbLedAction) : "off"
+}
+
+function normalizeRgbLedColor(value: unknown): RgbLedColor | null {
+  return typeof value === "string" && RGB_LED_COLORS.has(value as RgbLedColor) ? (value as RgbLedColor) : null
 }
 
 const ALL_CANONICAL_PERMISSIONS = ["location", "microphone", "camera", "notifications", "calendar"] as const
@@ -820,7 +830,7 @@ class LocalMiniappRuntime {
       }
 
       // Hand off to LocalDisplayManager — it owns boot/throttle/arbitration/
-      // expiry + the native CoreModule.displayEvent call + useDisplayStore.
+      // expiry + the native BluetoothSdk.displayEvent call + useDisplayStore.
       localDisplayManager.request(packageName, {
         view: (payload.view as DisplayPayload["view"]) ?? "main",
         layout: payload.layout as DisplayPayload["layout"],
@@ -957,10 +967,10 @@ class LocalMiniappRuntime {
     }
 
     const ledRequestId = requestId || `led_${Date.now()}`
-    const action = (payload.action as string) ?? "off"
-    const color = typeof payload.color === "string" ? payload.color : null
+    const action = normalizeRgbLedAction(payload.action)
+    const color = normalizeRgbLedColor(payload.color)
 
-    CoreModule.rgbLedControl(
+    BluetoothSdk.rgbLedControl(
       ledRequestId,
       packageName,
       action,
@@ -1442,7 +1452,7 @@ class LocalMiniappRuntime {
    *
    * Cloud-dependent streams (transcription:*, translation:*) only flow if the
    * cloud knows the phone wants them. Local-only streams (button_press, etc.)
-   * are NOT sent — they come from CoreModule, not from cloud.
+   * are NOT sent — they come from the Bluetooth SDK, not from cloud.
    */
   private updateCloudSubscriptions(): void {
     const cloudStreams = new Set<string>()
@@ -1543,8 +1553,8 @@ class LocalMiniappRuntime {
    * Translate cloud event names to miniapp stream type values.
    */
   private normalizeStreamType(cloudEventName: string): string {
-    // Cloud / CoreModule → miniapp protocol translations.
-    // CoreModule event names don't always match the miniapp wire values.
+    // Cloud / Bluetooth SDK → miniapp protocol translations.
+    // Bluetooth SDK event names don't always match the miniapp wire values.
     switch (cloudEventName) {
       case "head_up":
         return MiniappStreamType.HEAD_POSITION // head_up → head_position

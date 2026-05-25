@@ -38,6 +38,8 @@ public class AsgCameraServer extends AsgServer {
 
     private static final String TAG = AsgCameraServer.class.getName();
     private static final int DEFAULT_PORT = 8089;
+    /** If phone last_sync_time is this far ahead of glasses clock, treat as full sync. */
+    private static final long CLOCK_SKEW_TOLERANCE_MS = 60_000L;
 
     /**
      * Provider that returns the capture ID (directory name, e.g. "VID_xxx") of an
@@ -1246,6 +1248,14 @@ public class AsgCameraServer extends AsgServer {
                 logger.warn(TAG, "🔄 ❌ Invalid last_sync parameter: " + lastSyncTimeParam);
                 return createErrorResponse(Response.Status.BAD_REQUEST, "Invalid last_sync parameter");
             }
+        }
+
+        long glassesNow = System.currentTimeMillis();
+        if (lastSyncTime > glassesNow + CLOCK_SKEW_TOLERANCE_MS) {
+            logger.warn(TAG, "🔄 ⏰ last_sync_time is in the future vs glasses clock (last_sync="
+                    + lastSyncTime + " (" + new Date(lastSyncTime) + "), glasses_now="
+                    + glassesNow + " (" + new Date(glassesNow) + ")); resetting to 0 for full sync");
+            lastSyncTime = 0;
         }
 
         boolean includeThumbnailsFlag = "true".equalsIgnoreCase(includeThumbnails);

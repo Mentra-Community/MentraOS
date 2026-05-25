@@ -1,4 +1,4 @@
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 
 import {gallerySyncNotifications} from "@/services/asg/gallerySyncNotifications"
 import {gallerySyncService} from "./gallerySyncService"
@@ -125,10 +125,10 @@ describe("GallerySyncService", () => {
 
   it("cancels an active sync if glasses disconnect", () => {
     gallerySyncService.initialize()
-    useGlassesStore.getState().setGlassesInfo({connected: true})
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
     useGallerySyncStore.getState().setRequestingHotspot()
 
-    useGlassesStore.getState().setGlassesInfo({connected: false})
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
 
     expect(useGallerySyncStore.getState().syncState).toBe("error")
     expect(useGallerySyncStore.getState().lastError).toBe("Glasses disconnected")
@@ -136,12 +136,12 @@ describe("GallerySyncService", () => {
   })
 
   it("requests hotspot and records ownership when starting sync", async () => {
-    useGlassesStore.getState().setGlassesInfo({connected: true})
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
 
     await gallerySyncService.startSync()
 
     expect(useGallerySyncStore.getState().syncState).toBe("requesting_hotspot")
     expect(useGallerySyncStore.getState().syncServiceOpenedHotspot).toBe(true)
-    expect(CoreModule.setHotspotState).toHaveBeenCalledWith(true)
+    expect(BluetoothSdk.setHotspotState).toHaveBeenCalledWith(true)
   })
 })

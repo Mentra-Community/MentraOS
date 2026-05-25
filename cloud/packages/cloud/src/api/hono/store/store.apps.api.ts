@@ -338,6 +338,9 @@ async function installApp(c: AppContext) {
       return c.json({ success: true, message: "App already installed" });
     }
 
+    const userSession = UserSession.getById(email);
+    userSession?.appManager.scheduleBroadcastAppState({ refreshInstalledApps: true });
+
     return c.json({ success: true, message: "App installed successfully" });
   } catch (e: unknown) {
     const error = e as Error;
@@ -392,6 +395,7 @@ async function uninstallApp(c: AppContext) {
 
     // Uninstall app using service
     await storeService.uninstallAppForUser(user, packageName);
+    userSession?.appManager.scheduleBroadcastAppState({ refreshInstalledApps: true });
 
     return c.json({ success: true, message: "App uninstalled successfully" });
   } catch (e: unknown) {

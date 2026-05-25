@@ -2,7 +2,6 @@ import {useEffect, useRef} from "react"
 import {StyleProp, View, ViewStyle, Animated} from "react-native"
 
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {$styles} from "@/theme"
 
 import {$inputOuterBase, BaseToggleInputProps, ToggleProps, Toggle} from "./Toggle"
 
@@ -62,7 +61,6 @@ function RadioInput(props: RadioInputProps) {
   ].filter(Boolean)[0]
 
   const onBackgroundColor = [
-    disabled && colors.transparent,
     status === "error" && colors.errorBackground,
     colors.palette.neutral100,
   ].filter(Boolean)[0]
@@ -78,7 +76,6 @@ function RadioInput(props: RadioInputProps) {
       style={[$inputOuter, {backgroundColor: offBackgroundColor, borderColor: outerBorderColor}, $outerStyleOverride]}>
       <Animated.View
         style={[
-          $styles.toggleInner,
           {backgroundColor: onBackgroundColor},
           $innerStyleOverride,
           {opacity: opacity.current},

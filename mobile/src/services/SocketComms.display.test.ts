@@ -1,9 +1,9 @@
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
+import {displayProcessor as MockDisplayProcessor} from "@mentra/island"
 
-import MockDisplayProcessor from "@/services/DisplayProcessor"
 import {useDisplayStore} from "@/stores/display"
 
-jest.mock("@mentra/bluetooth-sdk", () => {
+jest.mock("@mentra/bluetooth-sdk-internal", () => {
   const {coreModuleMock} = require("@/test-utils/mockCoreModule")
   return {
     __esModule: true,
@@ -36,27 +36,9 @@ jest.mock("@/services/RestComms", () => ({
   },
 }))
 
-jest.mock("@/services/DisplayProcessor", () => ({
-  __esModule: true,
-  default: {
-    processDisplayEvent: jest.fn((msg) => ({
-      ...msg,
-      _processed: true,
-      _profile: "test",
-    })),
-  },
-}))
-
 jest.mock("@/services/AudioPlaybackService", () => ({__esModule: true, default: {}}))
 jest.mock("@/services/MantleManager", () => ({__esModule: true, default: {}}))
 jest.mock("@/services/UdpManager", () => ({__esModule: true, default: {cleanup: jest.fn()}}))
-jest.mock("@/stores/applets", () => ({
-  useAppletStatusStore: {
-    getState: () => ({
-      refreshApplets: jest.fn(),
-    }),
-  },
-}))
 jest.mock("@/utils/PermissionsUtils", () => ({
   PermissionFeatures: {MICROPHONE: "microphone"},
   checkFeaturePermissions: jest.fn(() => Promise.resolve(true)),
@@ -92,7 +74,7 @@ describe("SocketComms display events", () => {
         view: "main",
       }),
     )
-    expect(CoreModule.displayEvent).toHaveBeenCalledWith(
+    expect(BluetoothSdk.displayEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         _processed: true,
         view: "main",
@@ -123,7 +105,7 @@ describe("SocketComms display events", () => {
 
     socketComms.handle_display_event(rawEvent)
 
-    expect(CoreModule.displayEvent).toHaveBeenCalledWith(rawEvent)
+    expect(BluetoothSdk.displayEvent).toHaveBeenCalledWith(rawEvent)
     expect(useDisplayStore.getState().dashboardEvent).toEqual(rawEvent)
     expect(consoleErrorSpy).toHaveBeenCalledWith("SOCKET: DisplayProcessor error, using raw event:", expect.any(Error))
     consoleErrorSpy.mockRestore()

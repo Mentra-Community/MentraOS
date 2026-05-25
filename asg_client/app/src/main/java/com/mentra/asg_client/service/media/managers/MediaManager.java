@@ -99,6 +99,17 @@ public class MediaManager implements IMediaManager {
             Log.w(TAG, "Cannot send stream status response - not connected to BLE device");
             return;
         }
+        try {
+            if (!statusObject.has("type")) {
+                statusObject.put("type", "stream_status");
+            }
+            if (!statusObject.has("timestamp")) {
+                statusObject.put("timestamp", System.currentTimeMillis());
+            }
+        } catch (JSONException e) {
+            Log.e(TAG, "Error normalizing stream status response", e);
+            return;
+        }
         String jsonString = statusObject.toString();
         Log.d(TAG, "📤 Sending stream status response: " + jsonString);
         serviceManager.getBluetoothManager().sendData(jsonString.getBytes());

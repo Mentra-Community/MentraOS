@@ -1,7 +1,7 @@
 import {useFocusEffect} from "expo-router"
 import {useEffect, useState, useCallback, useRef} from "react"
 import {View, ActivityIndicator} from "react-native"
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 
 import {MINIMUM_OTA_STATUS_BUILD} from "@/app/ota/otaProgressTimeouts"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
@@ -11,7 +11,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {checkForOtaUpdate, OTA_VERSION_URL_PROD} from "@/effects/OtaUpdateChecker"
 import {translate} from "@/i18n/translate"
-import {useGlassesStore} from "@/stores/glasses"
+import {isGlassesConnected, selectGlassesConnected, useGlassesStore, waitForGlassesState} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {BgTimer} from "@mentra/island"
 
@@ -19,13 +19,14 @@ type CheckState = "checking" | "update_available" | "no_update" | "error"
 
 export default function OtaCheckForUpdatesScreen() {
   const {theme} = useAppTheme()
-  const {replace, clearHistoryAndGoHome} = useNavigationStore.getState()
+  const {replace, clearHistoryAndGoHome, push} = useNavigationStore.getState()
   const currentBuildNumber = useGlassesStore((state) => state.buildNumber)
-  const mtkFwVersion = useGlassesStore((state) => state.mtkFwVersion)
-  const besFwVersion = useGlassesStore((state) => state.besFwVersion)
+  const mtkFirmwareVersion = useGlassesStore((state) => state.mtkFirmwareVersion)
+  const besFirmwareVersion = useGlassesStore((state) => state.besFirmwareVersion)
+  const glassesWifiConnected = useGlassesStore((state) => state.wifi.state === "connected")
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const deviceName = defaultWearable || "Glasses"
-  const glassesConnected = useGlassesStore((state) => state.connected)
+  const glassesConnected = useGlassesStore(selectGlassesConnected)
   const [onboardingLiveCompleted] = useSetting(SETTINGS.onboarding_live_completed.key)
 
   const [checkState, setCheckState] = useState<CheckState>("checking")
@@ -35,6 +36,8 @@ export default function OtaCheckForUpdatesScreen() {
   const waitStartTimeRef = useRef<number | null>(null)
   const hasInitiatedCheckRef = useRef(false) // Track if we've initiated check for this checkKey
   const checkCompletedRef = useRef(false) // Guards against stale timeout callbacks firing after check progresses
+  /** Incremented each effect run so stale async performCheck exits before mutating state. */
+  const performCheckGenerationRef = useRef(0)
 
   focusEffectPreventBack()
 
@@ -60,6 +63,8 @@ export default function OtaCheckForUpdatesScreen() {
   useEffect(() => {
     const MIN_DISPLAY_TIME_MS = 1100
     const MAX_WAIT_FOR_VERSION_INFO_MS = 10000 // Wait up to 10 seconds for version_info
+    const myGen = ++performCheckGenerationRef.current
+    let cancelled = false
 
     const performCheck = async () => {
       // Bail out if the check already completed for this checkKey — prevents re-entry
@@ -95,7 +100,7 @@ export default function OtaCheckForUpdatesScreen() {
 
           // Request version info since we don't have it yet
           console.log("OTA: Requesting version_info from glasses")
-          CoreModule.requestVersionInfo()
+          BluetoothSdk.requestVersionInfo()
 
           versionInfoTimeoutRef.current = BgTimer.setTimeout(() => {
             if (checkCompletedRef.current) {
@@ -110,6 +115,42 @@ export default function OtaCheckForUpdatesScreen() {
         }
 
         // Don't proceed yet - the effect will re-run when these values change
+        return
+      }
+
+      // Match OtaUpdateChecker home path: BES often arrives late in version_info_3 (chip init after reflash).
+      void BluetoothSdk.requestVersionInfo()
+
+      let latestBesFirmwareVersion = useGlassesStore.getState().besFirmwareVersion
+      if (!latestBesFirmwareVersion) {
+        console.log("OTA: BES version still unknown - waiting up to 5s for it to arrive...")
+        await waitForGlassesState("besFirmwareVersion", (v) => !!v, 5000)
+        latestBesFirmwareVersion = useGlassesStore.getState().besFirmwareVersion
+        if (latestBesFirmwareVersion) {
+          console.log(`OTA: BES version arrived: ${latestBesFirmwareVersion}`)
+        } else {
+          console.log("OTA: BES version still unknown after extended wait - will assume BES update if published")
+        }
+      }
+
+      if (cancelled || myGen !== performCheckGenerationRef.current) {
+        return
+      }
+      if (!isGlassesConnected(useGlassesStore.getState().connection)) {
+        console.log("OTA: Glasses disconnected while waiting for firmware info")
+        return
+      }
+
+      let latestMtkFirmwareVersion = useGlassesStore.getState().mtkFirmwareVersion
+      if (!latestMtkFirmwareVersion) {
+        await waitForGlassesState("mtkFirmwareVersion", (v) => !!v, 2000)
+        latestMtkFirmwareVersion = useGlassesStore.getState().mtkFirmwareVersion
+      }
+
+      if (cancelled || myGen !== performCheckGenerationRef.current) {
+        return
+      }
+      if (!isGlassesConnected(useGlassesStore.getState().connection)) {
         return
       }
 
@@ -129,9 +170,14 @@ export default function OtaCheckForUpdatesScreen() {
         // Refresh version_info (build / fw) in case the store still held values from a prior session
         // before the native clear-on-connect + glasses_ready re-query completed.
         console.log("OTA: Requesting fresh version_info from glasses before HTTP compare")
-        void CoreModule.requestVersionInfo()
+        void BluetoothSdk.requestVersionInfo()
 
-        const result = await checkForOtaUpdate(OTA_VERSION_URL_PROD, currentBuildNumber, mtkFwVersion, besFwVersion)
+        const result = await checkForOtaUpdate(
+          OTA_VERSION_URL_PROD,
+          currentBuildNumber,
+          latestMtkFirmwareVersion,
+          latestBesFirmwareVersion,
+        )
         console.log("📱 OTA check completed - result:", JSON.stringify(result))
 
         // Calculate remaining time to meet minimum display duration
@@ -161,6 +207,9 @@ export default function OtaCheckForUpdatesScreen() {
             // If isRequired is not specified in version.json, default to true (forced update)
             setIsUpdateRequired(result.latestVersionInfo?.isRequired !== false)
             // Store the update info in global state so progress screen can access the sequence.
+            // cacheReady: false ensures the home-screen "cache-ready" popup in OtaUpdateChecker
+            // does not fire on this in-flow write — only true cache-ready signals from the glasses
+            // (see MantleManager ota_update_available listener) should trip that popup.
             useGlassesStore.getState().setOtaUpdateAvailable({
               available: true,
               versionCode: result.latestVersionInfo?.versionCode || 0,
@@ -172,10 +221,12 @@ export default function OtaCheckForUpdatesScreen() {
             setCheckState("update_available")
           } else {
             console.log("📱 No updates available after filtering - setting no_update state")
+            useGlassesStore.getState().setOtaUpdateAvailable(null)
             setCheckState("no_update")
           }
         } else {
           console.log("📱 No updates available - setting no_update state")
+          useGlassesStore.getState().setOtaUpdateAvailable(null)
           setCheckState("no_update")
         }
       } catch (error) {
@@ -192,13 +243,14 @@ export default function OtaCheckForUpdatesScreen() {
 
     // Cleanup timeouts on unmount or when dependencies change
     return () => {
+      cancelled = true
       if (versionInfoTimeoutRef.current) {
         BgTimer.clearTimeout(versionInfoTimeoutRef.current)
         versionInfoTimeoutRef.current = null
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [checkKey, currentBuildNumber, mtkFwVersion, besFwVersion, glassesConnected])
+  }, [checkKey, currentBuildNumber, mtkFirmwareVersion, besFirmwareVersion, glassesConnected])
 
   // Navigate to next step based on onboarding status
   const handleContinue = () => {
@@ -229,6 +281,11 @@ export default function OtaCheckForUpdatesScreen() {
   }
 
   const handleUpdateNow = () => {
+    if (useGlassesStore.getState().wifi.state !== "connected") {
+      console.log("OTA: Update Now pressed but glasses not on WiFi - pushing /wifi/scan")
+      push("/wifi/scan")
+      return
+    }
     const store = useGlassesStore.getState()
     const otaProgressBefore = store.otaProgress
     console.log(
@@ -282,11 +339,23 @@ export default function OtaCheckForUpdatesScreen() {
             <View className="h-6" />
             <Text text={translate("ota:updateAvailable", {deviceName})} className="font-semibold text-xl text-center" />
             <View className="h-4" />
-            <Text tx="ota:updateDescription" className="text-sm text-center" style={{color: theme.colors.textDim}} />
+            <Text
+              text={
+                glassesWifiConnected
+                  ? translate("ota:updateDescription")
+                  : translate("ota:updateConnectWifi", {deviceName})
+              }
+              className="text-sm text-center"
+              style={{color: theme.colors.textDim}}
+            />
           </View>
 
           <View className="gap-3">
-            <Button preset="primary" tx="ota:updateNow" onPress={handleUpdateNow} />
+            <Button
+              preset="primary"
+              tx={glassesWifiConnected ? "ota:updateNow" : "ota:setupWifi"}
+              onPress={handleUpdateNow}
+            />
             {!isUpdateRequired && <Button preset="secondary" tx="ota:updateLater" onPress={handleContinue} />}
             {__DEV__ && isUpdateRequired && (
               <Button preset="secondary" text="Skip (dev only)" onPress={handleContinue} />

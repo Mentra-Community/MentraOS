@@ -1,0 +1,422 @@
+---
+title: "API Reference"
+description: "Lifecycle, status, commands, events, and shared types for the Mentra Bluetooth SDK."
+icon: "book"
+---
+
+The Mentra Bluetooth SDK exposes the same core glasses lifecycle across Android, iOS, and React Native:
+
+- Scan for a supported glasses model.
+- Connect to a discovered `Device` or an app-restored default device.
+- Read typed lifecycle state through the public surface for your platform.
+- Subscribe to typed hardware events.
+- Send display, camera, stream, audio, Wi-Fi, hotspot, LED, and settings commands where supported by the connected model.
+
+## Packages And Imports
+
+| Platform | Install package | Import |
+| --- | --- | --- |
+| Android | `com.mentra:bluetooth-sdk` | `import com.mentra.bluetoothsdk.*` |
+| iOS | `MentraBluetoothSDK` CocoaPod | `import MentraBluetoothSDK` |
+| React Native / Expo | `@mentra/bluetooth-sdk` | `import BluetoothSdk, {DeviceModels} from '@mentra/bluetooth-sdk'` |
+| React Native hooks | `@mentra/bluetooth-sdk` | `import {useMentraBluetooth} from '@mentra/bluetooth-sdk/react'` |
+
+Only documented imports are part of the supported app developer API. Undocumented package subpaths or symbols with a leading underscore can change without notice.
+
+## Lifecycle
+
+<Tabs>
+  <Tab title="React Native">
+
+```tsx
+import {useBluetoothEvent, useMentraBluetooth} from '@mentra/bluetooth-sdk/react';
+
+function DeviceScreen() {
+  const mentra = useMentraBluetooth();
+  useBluetoothEvent('button_press', (event) => {
+    console.log(event.buttonId, event.pressType);
+  });
+
+  console.log(mentra.glasses.connection.state);
+}
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+val sdk = MentraBluetoothSdk.create(
+    context = applicationContext,
+    config = MentraBluetoothSdkConfig(),
+    listener = listener,
+)
+
+sdk.close()
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+let sdk = MentraBluetoothSDK(configuration: .default)
+sdk.delegate = delegate
+
+sdk.invalidate()
+```
+
+  </Tab>
+</Tabs>
+
+Keep one SDK instance per active app session. The SDK owns Bluetooth connection state, native event delivery, and cleanup. Your app owns user identity, UI state, and whether a default device record is persisted across app restarts.
+
+## Connection
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+const devices = await BluetoothSdk.scan(DeviceModels.MentraLive, {
+  timeoutMs: 10_000,
+  onResults: (nextDevices) => renderDevicePicker(nextDevices),
+});
+
+const device = await chooseDevice(devices);
+await BluetoothSdk.connect(device, {saveAsDefault: false});
+
+await BluetoothSdk.setDefaultDevice(device);
+
+const defaultDevice = await BluetoothSdk.getDefaultDevice();
+await BluetoothSdk.connectDefault();
+await BluetoothSdk.clearDefaultDevice();
+
+await BluetoothSdk.cancelConnectionAttempt();
+await BluetoothSdk.disconnect();
+await BluetoothSdk.forget();
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+val devices = mutableListOf<Device>()
+val scanSession = sdk.scan(DeviceModel.MENTRA_LIVE, timeoutMs = 10_000) { nextDevices ->
+    devices.clear()
+    devices.addAll(nextDevices)
+    renderDevicePicker(nextDevices)
+}
+
+val device = chooseDevice(devices)
+sdk.connect(device)
+sdk.setDefaultDevice(device)
+val defaultDevice = sdk.getDefaultDevice()
+sdk.connectDefault()
+sdk.clearDefaultDevice()
+
+sdk.cancelConnectionAttempt()
+sdk.disconnect()
+sdk.forget()
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+var devices: [Device] = []
+let scanSession = try sdk.scan(model: .mentraLive, timeout: 10) { nextDevices in
+    devices = nextDevices
+    renderDevicePicker(nextDevices)
+}
+
+let device = chooseDevice(devices)
+try sdk.connect(to: device)
+sdk.setDefaultDevice(device)
+let defaultDevice = sdk.getDefaultDevice()
+try sdk.connectDefault()
+sdk.clearDefaultDevice()
+
+sdk.cancelConnectionAttempt()
+sdk.disconnect()
+sdk.forget()
+```
+
+  </Tab>
+</Tabs>
+
+Prefer connecting to a `Device` returned by SDK scan callbacks. If your app wants `connectDefault()` to work after restart, persist a small default-device record in app storage and restore it with `setDefaultDevice()` before calling `connectDefault()`.
+
+Use `scan()` for user-facing device pickers. The progressive result callback is for UI: render the nearby-device list every time it changes during scanning. The returned final result is for control flow: after the timeout/completion, choose a device from the last list and connect. In multi-device environments, do not auto-connect to the first nearby glasses; present an explicit picker.
+
+## Device Identity
+
+`Device.id` is the stable app-facing key for a scan result, within the limits of the platform identifier available to the SDK. Use it as a list key, selected-device key, and persisted default-device key.
+
+Do not parse `id` for model, name, or address information. Use the typed fields instead:
+
+| Field | Meaning |
+| --- | --- |
+| `model` | Supported glasses family, such as Mentra Live or G2. |
+| `name` | Bluetooth/display name reported during scan. |
+| `address` / `identifier` | Platform device handle when available. Android commonly provides a Bluetooth address. iOS commonly provides a CoreBluetooth identifier. React Native exposes this value as `address`. |
+| `rssi` | Optional signal strength from scan results. It may be undefined at first discovery and appear in a later scan update when the platform reports RSSI metadata. |
+
+When the platform does not provide an address or identifier, the SDK falls back to a `model:name` key.
+
+Do not require `rssi` for picker rows. Use SDK-provided stable discovery order by default, and treat RSSI as supplemental signal-strength metadata when it is present.
+
+## Status
+
+<Tabs>
+  <Tab title="React Native">
+
+```tsx
+import {useMentraBluetooth} from '@mentra/bluetooth-sdk/react';
+
+const mentra = useMentraBluetooth();
+```
+
+React Native exposes `mentra.glasses.connection` as a discriminated union:
+
+```ts
+type GlassesConnectionStatus =
+  | {state: 'disconnected'}
+  | {state: 'scanning'}
+  | {state: 'connecting'}
+  | {state: 'bonding'}
+  | {state: 'connected'; fullyBooted: boolean};
+```
+
+Use `mentra.glasses.connection.state` for link-layer progress. `fullyBooted` only exists when `state === 'connected'`. The hook exposes the React app state as `glasses`, `sdk`, and `scan`.
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+val state = sdk.getState()
+val glasses = sdk.getGlasses()
+val sdkState = sdk.getSdkState()
+val scan = sdk.getScanState()
+```
+
+Android exposes `GlassesRuntimeState` as `Connected` or `Disconnected`. The full state is grouped as `MentraBluetoothState(glasses, sdk, scan)`.
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+let state = sdk.state
+let glasses = sdk.glasses
+let sdkState = sdk.sdkState
+let scan = sdk.scanState
+```
+
+iOS exposes `GlassesRuntimeState` as `.connected(...)` or `.disconnected(...)`. The full state is grouped as `MentraBluetoothState(glasses, sdk, scan)`.
+
+  </Tab>
+</Tabs>
+
+Status snapshots are safe to read at any time. Treat command success as "command accepted"; keep UI state derived from status callbacks or hook state.
+
+Public status is grouped the same way across platforms:
+
+| Field | Meaning |
+| --- | --- |
+| `glasses` | Connected-glasses runtime state. Includes connection/readiness, connected device identity, battery, firmware, Wi-Fi, hotspot, and signal metadata when connected. |
+| `sdk` | Phone-side SDK runtime state. Includes default device, gallery mode, microphone route, mic ranking, Wi-Fi scan results, scan activity, system mic availability, other Bluetooth audio status, and recent SDK log lines. |
+| `scan` | User-facing scan state. Includes whether a scan is active, whether controller scanning is active, and the stable-order discovered `Device[]` list. |
+
+Use `glasses.connected` / `mentra.glasses.connected` before reading connected-only fields. Native Android uses `GlassesRuntimeState.Connected`; native iOS uses `GlassesRuntimeState.connected(...)`; React Native exposes `mentra.glasses` with the same grouped concepts in React-friendly objects.
+
+## React Native Public Surface
+
+These are the supported React Native app developer entrypoints:
+
+| Area | Methods |
+| --- | --- |
+| Status and subscriptions | `useMentraBluetooth`, `useBluetoothScan`, and `useBluetoothEvent` for React components; `addListener` is available as the lower-level non-React subscription API |
+| Default device | `getDefaultDevice`, `setDefaultDevice`, `clearDefaultDevice` |
+| Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `cancelConnectionAttempt`, `disconnect`, `forget` |
+| Display | `displayText`, `clearDisplay`, `showDashboard`, `setDashboardPosition`, `setHeadUpAngle`, `setScreenDisabled` |
+| Wi-Fi and hotspot | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
+| Camera and gallery | `requestPhoto`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setButtonPhotoSettings`, `setButtonVideoRecordingSettings`, `setButtonCameraLed`, `setButtonMaxRecordingTime`, `setCameraFov`, `startVideoRecording`, `stopVideoRecording` |
+| Streaming | `startStream`, `keepStreamAlive`, `stopStream` |
+| Audio | `setMicState`, `setVoiceActivityDetectionEnabled`, `setPreferredMic`, `setOwnAppAudioPlaying`, `getGlassesMediaVolume`, `setGlassesMediaVolume` |
+| LED and version | `rgbLedControl`, `requestVersionInfo` |
+
+React Native helper exports include `DeviceModels`, `isConnectedGlassesConnectionStatus`, `isReadyGlassesConnectionStatus`, `isBusyGlassesConnectionStatus`, `isConnectedWifiStatus`, and `isEnabledHotspotStatus`. The React subpath exports `useMentraBluetooth`, `useBluetoothScan`, and `useBluetoothEvent`.
+
+For React Native status UI, use `useMentraBluetooth()` from `@mentra/bluetooth-sdk/react`. It returns `mentra.glasses`, `mentra.sdk`, and `mentra.scan` for connection, battery, Wi-Fi, hotspot, scan, and SDK runtime state.
+
+Important defaults:
+
+- `scan(model, options)` reports progressive results through `options.onResults`, resolves with the final matching `Device[]`, and times out after 15 seconds unless `options.timeoutMs` is set.
+- `connect` and `connectDefault` default `saveAsDefault` and `cancelExistingConnectionAttempt` to `true`.
+- `displayText(text, x, y, size)` defaults to `x = 0`, `y = 0`, and `size = 24`.
+- `setMicState(enabled)` defaults to glasses microphone on, transcript events off, and LC3 events off. Microphone audio events are continuous while capture is enabled. Use `setVoiceActivityDetectionEnabled(...)` for glasses-side Voice Activity Detection; `voice_activity_detection_status` reports whether it is enabled, and `speaking_status` reports speaking/not-speaking when supported. Microphone audio events include the latest `voiceActivityDetectionEnabled` value.
+- `requestPhoto({authToken, ...})` omits the `Authorization` header when `authToken` is `null` or empty.
+- `startStream` optional `video` and `audio` configs are omitted unless supplied, so the connected glasses use their model defaults.
+- Photo capture, video recording, and streaming always enable the camera light as a privacy indicator.
+
+## Gallery Mode
+
+Mentra Live has a gallery mode for the right action button. When gallery mode is enabled, a short press takes a photo, a long press starts video recording, and a short press stops the active video recording. Button and touch events are still reported to the SDK.
+
+Use `setGalleryModeEnabled(true)` to enable local button capture, and `setGalleryModeEnabled(false)` to report button events without triggering local gallery capture while the glasses are connected. The SDK can also configure the capture settings used by gallery mode:
+
+| Setting | API |
+| --- | --- |
+| Photo size | `setButtonPhotoSettings(...)` |
+| Video resolution and frame rate | `setButtonVideoRecordingSettings(width, height, fps)` |
+| Maximum video length | `setButtonMaxRecordingTime(minutes)` |
+| Camera field of view | `setCameraFov(...)` |
+| Camera LED preference | `setButtonCameraLed(...)` |
+
+## Common Commands
+
+| Area | Commands |
+| --- | --- |
+| Display | `displayText`, `clearDisplay`, `showDashboard` |
+| Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `disconnect`, `forget` |
+| Wi-Fi and hotspot | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
+| Camera | `requestPhoto`, gallery mode, button photo settings, button video settings, camera field of view |
+| Streaming | `startStream`, `keepStreamAlive`, `stopStream` |
+| Audio | `setMicState`, Voice Activity Detection setting and events, audio callbacks, local transcription, media volume |
+| Settings | Brightness, dashboard position, head-up angle, screen disabled, gallery mode |
+| LEDs | `rgbLedControl` on supported glasses |
+| System | `requestVersionInfo` |
+
+Mentra Live has camera, microphone, and speaker hardware, but no display. G2 has display and microphone hardware, but no camera or speaker. Gate UI for display, camera, and speaker features by the connected model.
+
+## Events
+
+React Native components should use `useBluetoothEvent()` for hardware events. The hook keeps the callback typed and removes the native subscription when the component unmounts. Native apps receive the same event categories through listener/delegate methods:
+
+<Tabs>
+  <Tab title="React Native">
+
+```tsx
+import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
+
+export function HardwareEventLogger() {
+  useBluetoothEvent('button_press', (event) => console.log(event));
+  useBluetoothEvent('touch_event', (event) => console.log(event));
+  useBluetoothEvent('photo_response', (event) => console.log(event));
+  useBluetoothEvent('stream_status', (event) => console.log(event));
+  useBluetoothEvent('speaking_status', (event) => console.log(event.speaking));
+  useBluetoothEvent('mic_pcm', (event) => {
+    console.log(event.sampleRate, event.bitsPerSample, event.channels, event.encoding);
+    console.log(event.pcm);
+  });
+
+  return null;
+}
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+class GlassesEvents : MentraBluetoothSdkCallback() {
+    override fun onButtonPress(event: ButtonPressEvent) {
+        Log.d("Mentra", "${event.buttonId} ${event.pressType}")
+    }
+
+    override fun onPhotoResponse(event: PhotoResponseEvent) {
+        Log.d("Mentra", "Photo request ${event.requestId}: ${event.response.state}")
+    }
+
+    override fun onMicPcm(event: MicPcmEvent) {
+        Log.d("Mentra", "${event.sampleRate} Hz ${event.bitsPerSample}-bit PCM")
+    }
+}
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+final class GlassesEvents: MentraBluetoothSDKDelegate {
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: BluetoothEvent) {
+        switch event {
+        case let .buttonPress(button):
+            print("\(button.buttonId) \(button.pressType)")
+        case let .photoResponse(photo):
+            print("Photo request \(photo.requestId): \(photo.response.state.rawValue)")
+        default:
+            break
+        }
+    }
+
+    func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceiveMicPcm event: MicPcmEvent) {
+        print("\(event.sampleRate) Hz \(event.bitsPerSample)-bit PCM")
+    }
+}
+```
+
+  </Tab>
+</Tabs>
+
+For non-React modules, `BluetoothSdk.addListener(...)` is the low-level subscription API. Keep the returned subscription and call `remove()` when the listener is no longer needed.
+
+The React Native event surface is typed through `BluetoothSdkEventMap`. These are the public event names accepted by `useBluetoothEvent()` and `BluetoothSdk.addListener()`:
+
+| Event name | Payload type | When it fires |
+| --- | --- | --- |
+| `log` | `LogEvent` | SDK diagnostic log line. |
+| `device_discovered` | `Device` | A supported glasses device is discovered during scan. |
+| `default_device_changed` | `{device?: Device}` | The SDK default device changes. |
+| `glasses_not_ready` | `GlassesNotReadyEvent` | A command needs ready glasses but the connected device is not ready. |
+| `button_press` | `ButtonPressEvent` | Glasses button press. |
+| `touch_event` | `TouchEvent` | Glasses touch or swipe gesture. |
+| `head_up` | `HeadUpEvent` | Head-up state changes. |
+| `voice_activity_detection_status` | `VoiceActivityDetectionStatusEvent` | Glasses-side Voice Activity Detection is enabled or disabled. |
+| `speaking_status` | `SpeakingStatusEvent` | Glasses-side Voice Activity Detection reports speaking or not speaking. |
+| `battery_status` | `BatteryStatusEvent` | Battery update from glasses. |
+| `local_transcription` | `LocalTranscriptionEvent` | SDK local transcription text update. |
+| `wifi_status_change` | `WifiStatusChangeEvent` | Glasses Wi-Fi connection state changes. |
+| `hotspot_status_change` | `HotspotStatusChangeEvent` | Glasses hotspot state changes. |
+| `hotspot_error` | `HotspotErrorEvent` | Hotspot operation fails. |
+| `photo_response` | `PhotoResponseEvent` | Photo request succeeds or fails. |
+| `gallery_status` | `GalleryStatusEvent` | Gallery content/camera-busy status changes. |
+| `compatible_glasses_search_stop` | `CompatibleGlassesSearchStopEvent` | Compatible-glasses search stops for a model. |
+| `swipe_volume_status` | `SwipeVolumeStatusEvent` | Swipe-volume setting changes. |
+| `switch_status` | `SwitchStatusEvent` | Glasses switch status changes. |
+| `rgb_led_control_response` | `RgbLedControlResponseEvent` | RGB LED command succeeds or fails. |
+| `pair_failure` | `PairFailureEvent` | Bluetooth pairing fails. |
+| `audio_pairing_needed` | `AudioPairingNeededEvent` | The phone needs Bluetooth audio pairing for the device. |
+| `audio_connected` | `AudioConnectedEvent` | Bluetooth audio connects. |
+| `audio_disconnected` | `AudioDisconnectedEvent` | Bluetooth audio disconnects. |
+| `mic_pcm` | `MicPcmEvent` | PCM microphone frame arrives. |
+| `mic_lc3` | `MicLc3Event` | LC3 microphone frame arrives. |
+| `stream_status` | `StreamStatusEvent` | Camera stream lifecycle, reconnect, or error state changes. |
+| `keep_alive_ack` | `KeepAliveAckEvent` | Glasses acknowledge a stream keep-alive request. |
+
+For example, `useBluetoothEvent('photo_response', ...)` receives a `PhotoResponseEvent`, while `useBluetoothEvent('mic_pcm', ...)` receives a `MicPcmEvent`. `MicPcmEvent` includes `sampleRate`, `bitsPerSample`, `channels`, `encoding`, and `voiceActivityDetectionEnabled`; `MicLc3Event` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, `packetizedFromGlasses`, and `voiceActivityDetectionEnabled`. `speaking_status` is separate from microphone audio frames so apps can use continuous audio while still reacting to speech activity.
+
+Public React Native event payload fields use camelCase. For example, touch events expose `deviceModel` and `gestureName`, successful photo responses expose `uploadUrl`, hotspot errors expose `errorMessage`, and gallery status exposes `hasContent` and `cameraBusy`.
+
+Android and iOS expose typed callbacks/delegate methods instead of the React Native string event API. Android uses `MentraBluetoothSdkListener` methods such as `onStateChanged`, `onGlassesChanged`, `onSdkStateChanged`, `onScanChanged`, `onDeviceDiscovered`, `onButtonPress`, `onSpeakingStatus`, `onPhotoResponse`, `onMicPcm`, and `onStreamStatus`. iOS uses `MentraBluetoothSDKDelegate` methods such as `mentraBluetoothSDK(_:didUpdate:)`, `mentraBluetoothSDK(_:didUpdateGlasses:)`, `mentraBluetoothSDK(_:didUpdateSdkState:)`, `mentraBluetoothSDK(_:didUpdateScan:)`, `mentraBluetoothSDK(_:didDiscover:)`, `mentraBluetoothSDK(_:didReceive:)`, `mentraBluetoothSDK(_:didReceiveMicPcm:)`, and `mentraBluetoothSDK(_:didReceiveMicLc3:)`. Microphone audio callbacks use `MicPcmEvent` and `MicLc3Event` objects with the same metadata as React Native.
+
+| Event area | Examples |
+| --- | --- |
+| Input | Button press, touch, swipe, head-up |
+| Device state | Battery, case, Wi-Fi, hotspot, connection, RSSI |
+| Camera | Photo request result, gallery state, camera settings |
+| Streaming | Stream initializing, active, stopped, error |
+| Audio | Microphone PCM, LC3, local transcription, audio route state |
+| Diagnostics | SDK log events |
+
+## Version Fields
+
+Call `requestVersionInfo()` after connection when your app wants the glasses to refresh version metadata. Updated values arrive through the normal glasses-status callback and are also available in the next status snapshot.
+
+| Field | Meaning |
+| --- | --- |
+| `firmwareVersion` | Generic glasses firmware version when the connected model reports one. |
+| `deviceFirmwareVersion` | Device firmware version for models that report device info as a structured payload. |
+| `leftFirmwareVersion` / `rightFirmwareVersion` | Per-side firmware versions for glasses that report left/right firmware separately. |
+| `besFirmwareVersion` | Mentra Live BES firmware version. |
+| `mtkFirmwareVersion` | Mentra Live MTK/system OTA firmware version. |
+| `appVersion` | Glasses-side companion app version. On Mentra Live this is the ASG client APK version, not firmware. |
+| `androidVersion` | Android OS version on Android-based glasses. This is not firmware. |
+
+Different glasses models expose different version fields, so apps should prefer the generic firmware field when present, then fall back to model-specific firmware fields. Keep app and OS versions visibly labeled as app/OS versions.

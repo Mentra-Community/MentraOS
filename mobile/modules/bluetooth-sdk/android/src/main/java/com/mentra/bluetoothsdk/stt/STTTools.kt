@@ -1,8 +1,8 @@
-package com.mentra.core.stt
+package com.mentra.bluetoothsdk.stt
 
 import android.content.Context
 import android.content.SharedPreferences
-import com.mentra.core.Bridge
+import com.mentra.bluetoothsdk.Bridge
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File

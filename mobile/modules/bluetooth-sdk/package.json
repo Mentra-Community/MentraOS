@@ -1,17 +1,47 @@
 {
   "name": "@mentra/bluetooth-sdk",
-  "version": "0.1.0",
+  "version": "0.1.7",
   "description": "SDK for communicating with smart glasses",
   "main": "build/index.js",
   "react-native": "src/index.ts",
-  "app.plugin": "plugin/src/index",
+  "app.plugin": "app.plugin.js",
   "types": "build/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./build/index.d.ts",
+      "react-native": "./src/index.ts",
+      "default": "./build/index.js"
+    },
+    "./react": {
+      "types": "./build/react/index.d.ts",
+      "react-native": "./src/react/index.ts",
+      "default": "./build/react/index.js"
+    },
+    "./_private/*": null,
+    "./build/*": null,
+    "./src/*": null,
+    "./app.plugin": "./app.plugin.js",
+    "./app.plugin.js": "./app.plugin.js",
+    "./package.json": "./package.json"
+  },
   "files": [
     "android",
+    "!android/.gradle",
+    "!android/.gradle/**",
+    "!android/build",
+    "!android/build/**",
+    "!android/lc3Lib/.cxx",
+    "!android/lc3Lib/.cxx/**",
+    "!android/lc3Lib/build",
+    "!android/lc3Lib/build/**",
     "app.plugin.js",
     "build",
     "expo-module.config.json",
     "ios",
+    "!ios/build",
+    "!ios/build/**",
+    "!ios/Pods",
+    "!ios/Pods/**",
     "plugin/build",
     "README.md",
     "src",
@@ -39,7 +69,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/Mentra-Community/MentraOS.git",
+    "url": "git+https://github.com/Mentra-Community/MentraOS.git",
     "directory": "mobile/modules/bluetooth-sdk"
   },
   "bugs": {

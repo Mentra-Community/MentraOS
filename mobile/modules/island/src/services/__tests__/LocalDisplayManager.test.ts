@@ -5,34 +5,21 @@
  * arbitration. Uses jest fake timers + an injected clock.
  */
 
-// Override the global mock of "core" so we can capture displayEvent calls.
 const displayEventMock = jest.fn()
-jest.doMock("core", () => ({
-  __esModule: true,
-  default: {
-    displayEvent: displayEventMock,
-  },
-}))
 
 // DisplayProcessor: pass through unchanged so we can assert on the raw event.
-jest.doMock("@/services/DisplayProcessor", () => ({
+jest.doMock("../DisplayProcessor", () => ({
   __esModule: true,
   default: {
     processDisplayEvent: (e: Record<string, unknown>) => ({...e, _processed: true}),
   },
 }))
 
-// useDisplayStore: stub setDisplayEvent so we don't pull in zustand.
 const setDisplayEventMock = jest.fn()
-jest.doMock("@/stores/display", () => ({
-  __esModule: true,
-  useDisplayStore: {
-    getState: () => ({setDisplayEvent: setDisplayEventMock}),
-  },
-}))
 
 // Import AFTER mocks
 
+const {configureRuntime} = require("../../runtime/config")
 const {LocalDisplayManager} = require("../LocalDisplayManager")
 
 type Mgr = InstanceType<typeof LocalDisplayManager>
@@ -70,6 +57,10 @@ describe("LocalDisplayManager", () => {
     jest.useFakeTimers()
     displayEventMock.mockClear()
     setDisplayEventMock.mockClear()
+    configureRuntime({
+      sendDisplayEvent: displayEventMock,
+      setDisplayEvent: setDisplayEventMock,
+    })
     now = 1_000_000
     // Fresh singleton per test.
     mgr = LocalDisplayManager.getInstance()

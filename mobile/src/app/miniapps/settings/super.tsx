@@ -1,5 +1,5 @@
 import {ScrollView, View} from "react-native"
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 
 import {Header, Screen} from "@/components/ignite"
 import ToggleSetting from "@/components/settings/ToggleSetting"
@@ -11,6 +11,7 @@ import {RouteButton} from "@/components/ui/RouteButton"
 export default function SuperSettingsScreen() {
   const {goBack} = useNavigationStore.getState()
   const [superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
+  const [useNativeDashboard, setUseNativeDashboard] = useSetting(SETTINGS.use_native_dashboard.key)
   const [debugNavigationHistoryEnabled, setDebugNavigationHistoryEnabled] = useSetting(
     SETTINGS.debug_navigation_history.key,
   )
@@ -42,11 +43,17 @@ export default function SuperSettingsScreen() {
               value={debugCoreStatusBarEnabled}
               onValueChange={(value) => setDebugCoreStatusBarEnabled(value)}
             />
+
+            <ToggleSetting
+              label="Use Native G2 Dashboard"
+              value={useNativeDashboard}
+              onValueChange={(value) => setUseNativeDashboard(value)}
+            />
           </Group>
 
           <Group title="Debug">
-            <RouteButton label="dbg1()" onPress={() => CoreModule.dbg1()} />
-            <RouteButton label="dbg2()" onPress={() => CoreModule.dbg2()} />
+            <RouteButton label="dbg1()" onPress={() => BluetoothSdk.dbg1()} />
+            <RouteButton label="dbg2()" onPress={() => BluetoothSdk.dbg2()} />
             <RouteButton label="Stress Test (Jetsam)" onPress={() => push("/miniapps/settings/stress-test")} />
           </Group>
 

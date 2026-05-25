@@ -1,6 +1,6 @@
-import en, {Translations} from "./en"
+import en, {type TranslationResource} from "./en"
 
-const ar: Translations = {
+const ar = {
   ...en,
   common: {
     ok: "نعم",
@@ -116,6 +116,6 @@ const ar: Translations = {
       content: "لم تتم اضافة اي مفضلات حتى الان. اضغط على القلب في إحدى الحلقات لإضافته الى المفضلة.",
     },
   },
-}
+} satisfies TranslationResource
 
 export default ar

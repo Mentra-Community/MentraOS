@@ -146,6 +146,39 @@ export class SonioxSdkStream implements StreamInstance {
   private stablePrefixText = "";
   private prevWindowFinalLen = 0;
 
+  // ── Endpoint debounce + merge ───────────────────────────────────────
+  // Soniox's semantic endpoint detector occasionally misfires mid-
+  // utterance, producing a chain of short FINALs that should have been
+  // one (~5% of utterances in staging traces). To prevent emitting
+  // multiple split FINALs per logical utterance, we:
+  //
+  //   1. On `endpoint`, capture the current candidate text as a
+  //      "pending FINAL" and reset utterance state (so Soniox's
+  //      internal rolling-window reset stays in sync).
+  //   2. Defer the actual FINAL emission by `endpointDebounceMs`.
+  //   3. If a second `endpoint` fires before the timer expires, attempt
+  //      to merge the new candidate text into the pending one using
+  //      suffix-prefix overlap detection. If they overlap, the second
+  //      endpoint was a continuation of the same utterance; if not,
+  //      they're genuinely separate (commit the first, hold the second).
+  //   4. When the timer expires, emit the pending FINAL.
+  //
+  // Trusted signals that bypass the debounce and emit immediately:
+  //   - `finalized` event (handleFinalized): only fires in response to
+  //     OUR `session.finalize()` or `session.pause()` calls, which are
+  //     driven by phone-VAD-stop or our 2s audio-gap detection. We
+  //     initiated them, so the utterance has truly ended.
+  //   - `finished` event (handleFinished): the session is ending; flush
+  //     immediately.
+  private pendingFinalText: string = "";
+  private pendingFinalUtteranceId: string | null = null;
+  private pendingFinalSpeakerId: string | undefined;
+  private pendingFinalLanguage: string | undefined;
+  private pendingFinalTimer: NodeJS.Timeout | null = null;
+  private endpointDebounceMs: number;
+  private static readonly DEFAULT_ENDPOINT_DEBOUNCE_MS = 500;
+  private static readonly MIN_OVERLAP_CHARS = 3;
+
   constructor(
     public readonly id: string,
     public readonly subscription: string,
@@ -157,6 +190,9 @@ export class SonioxSdkStream implements StreamInstance {
     private readonly config: SonioxProviderConfig,
     client: SonioxNodeClient,
   ) {
+    this.endpointDebounceMs =
+      config.endpointDebounceMs ?? SonioxSdkStream.DEFAULT_ENDPOINT_DEBOUNCE_MS;
+
     // ── Build session config ────────────────────────────────────────
     const sessionConfig = this.buildSessionConfig();
 
@@ -414,6 +450,13 @@ export class SonioxSdkStream implements StreamInstance {
     // Stop gap detection interval (Fix 044-3)
     this.stopGapDetection();
 
+    // Commit any in-flight pending FINAL before shutdown. If we cancelled
+    // it instead, we'd silently drop the last utterance when close() lands
+    // inside the endpoint-debounce window (handleEndpoint clears
+    // lastEmittedInterimText, so pendingFinalText is the only copy of the
+    // text). After committing, the timer is cleared so it can't refire.
+    this.commitPendingFinal("stream closing");
+
     try {
       // Graceful shutdown: finish() waits for remaining results, then closes.
       // Keep listeners active through finish() so finalized/finished handlers
@@ -605,66 +648,176 @@ export class SonioxSdkStream implements StreamInstance {
   }
 
   /**
-   * Endpoint event: the server detected that the speaker stopped talking.
+   * Endpoint event: the server's semantic detector thinks the speaker
+   * stopped. Soft signal — misfires ~5% of the time, firing mid-
+   * utterance. We capture the current utterance's text as a pending
+   * FINAL and defer emission. A second endpoint that arrives before
+   * the timer expires is merged with this one if its text continues
+   * from where the pending text left off (suffix-prefix overlap).
    *
-   * Emit a final with the last emitted interim text (which is the most
-   * complete version of this utterance). Then rotate utteranceId so the
-   * next speech segment gets its own card.
+   * Critically, we DO reset utterance state immediately, because
+   * Soniox's internal rolling window also resets on endpoint. Keeping
+   * our `stablePrefixText` in sync prevents duplicated content in the
+   * next utterance's interims.
    */
   private handleEndpoint(): void {
     this.lastActivity = Date.now();
 
-    // The most complete text for this utterance is whatever we last emitted
-    // as an interim. Use that as the final, ensuring the frontend transitions
-    // the card from interim → final seamlessly (same utteranceId, same text).
-    if (this.lastEmittedInterimText.trim()) {
-      this.emitFinal(
-        this.lastEmittedInterimText,
-        this.currentSpeakerId,
-        this.currentLanguage,
-        undefined, // no token array needed for final
-      );
-    } else {
-      // Try the utterance buffer as a fallback
-      const utterance = this.utteranceBuffer.markEndpoint();
-      if (utterance && utterance.text.trim()) {
-        this.emitFinal(utterance.text, utterance.speaker, utterance.language, utterance.tokens);
+    const candidate = this.lastEmittedInterimText.trim();
+    if (candidate) {
+      if (this.pendingFinalText && this.pendingFinalTimer) {
+        const merged = this.tryMergeOverlap(this.pendingFinalText, candidate);
+        if (merged !== null) {
+          // Continuation of the prior utterance — merge texts, keep the
+          // original utteranceId so downstream can update the same card.
+          this.pendingFinalText = merged;
+          this.logger.debug(
+            { streamId: this.id, mergedLen: merged.length },
+            "🎙️ SONIOX SDK: endpoint merged with pending (continuation)",
+          );
+        } else {
+          // No overlap — these are genuinely separate utterances. Commit
+          // the prior, set this as the new pending candidate.
+          this.commitPendingFinal("non-overlapping next endpoint");
+          this.pendingFinalText = candidate;
+          this.pendingFinalUtteranceId = this.currentUtteranceId;
+          this.pendingFinalSpeakerId = this.currentSpeakerId;
+          this.pendingFinalLanguage = this.currentLanguage;
+        }
+      } else {
+        // First endpoint candidate — capture current state.
+        this.pendingFinalText = candidate;
+        this.pendingFinalUtteranceId = this.currentUtteranceId;
+        this.pendingFinalSpeakerId = this.currentSpeakerId;
+        this.pendingFinalLanguage = this.currentLanguage;
       }
+
+      // (Re)schedule commit.
+      if (this.pendingFinalTimer) clearTimeout(this.pendingFinalTimer);
+      this.pendingFinalTimer = setTimeout(() => {
+        this.commitPendingFinal("debounce expired");
+      }, this.endpointDebounceMs);
     }
 
-    // Rotate utterance ID and reset prefix for the next speech segment
+    // Reset utterance state so the next utterance starts fresh in sync
+    // with Soniox's internal rolling-window reset.
     this.currentUtteranceId = null;
     this.currentSpeakerId = undefined;
     this.currentLanguage = undefined;
     this.lastEmittedInterimText = "";
     this.stablePrefixText = "";
     this.prevWindowFinalLen = 0;
-
-    // Reset utterance buffer for the next utterance
     this.utteranceBuffer.reset();
 
-    this.logger.debug({ streamId: this.id }, "🎙️ SONIOX SDK: endpoint — rotated utterance");
+    this.logger.debug({ streamId: this.id }, "🎙️ SONIOX SDK: endpoint received (pending FINAL deferred)");
   }
 
   /**
-   * Finalized event: the server confirmed a manual `session.finalize()` call
-   * (triggered by VAD stop). Behaves like endpoint — emit final from the
-   * last known interim text, then reset for the next utterance.
+   * Suffix-prefix overlap merge. Returns the merged string if `b` starts
+   * with a suffix of `a` (at least `MIN_OVERLAP_CHARS`), otherwise null.
+   *
+   * Example: ("You know? Come on, I'", "Come on, I'm right.")
+   *   Suffix "Come on, I'" (11 chars) of `a` matches prefix of `b`.
+   *   → "You know? Come on, I'" + "m right." = "You know? Come on, I'm right."
+   */
+  private tryMergeOverlap(a: string, b: string): string | null {
+    const maxOverlap = Math.min(a.length, b.length);
+    for (let len = maxOverlap; len >= SonioxSdkStream.MIN_OVERLAP_CHARS; len--) {
+      if (a.endsWith(b.substring(0, len))) {
+        return a + b.substring(len);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Emit the pending FINAL and clear pending state. Called by:
+   *   - Debounce timer expiry (the happy path)
+   *   - Non-overlapping next endpoint (commit prior before storing new)
+   *   - Trusted signals (handleFinalized, handleFinished)
+   */
+  private commitPendingFinal(reason: string): void {
+    if (this.pendingFinalTimer) {
+      clearTimeout(this.pendingFinalTimer);
+      this.pendingFinalTimer = null;
+    }
+
+    if (!this.pendingFinalText) {
+      return;
+    }
+
+    // Restore the pending utterance's identity temporarily so emitFinal
+    // attaches the right utteranceId / speaker / language. The
+    // currentUtteranceId may have already advanced to a new utterance
+    // by the time the debounce fires.
+    const savedUtteranceId = this.currentUtteranceId;
+    const savedSpeakerId = this.currentSpeakerId;
+    const savedLanguage = this.currentLanguage;
+
+    this.currentUtteranceId = this.pendingFinalUtteranceId;
+    this.currentSpeakerId = this.pendingFinalSpeakerId;
+    this.currentLanguage = this.pendingFinalLanguage;
+
+    this.emitFinal(this.pendingFinalText, this.pendingFinalSpeakerId, this.pendingFinalLanguage, undefined);
+
+    this.currentUtteranceId = savedUtteranceId;
+    this.currentSpeakerId = savedSpeakerId;
+    this.currentLanguage = savedLanguage;
+
+    this.pendingFinalText = "";
+    this.pendingFinalUtteranceId = null;
+    this.pendingFinalSpeakerId = undefined;
+    this.pendingFinalLanguage = undefined;
+
+    this.logger.debug({ streamId: this.id, reason }, "🎙️ SONIOX SDK: pending FINAL committed");
+  }
+
+  /**
+   * Discard any pending FINAL without emitting (used on close/dispose
+   * where committing would be racy).
+   */
+  private cancelPendingFinal(reason: string): void {
+    if (this.pendingFinalTimer) {
+      clearTimeout(this.pendingFinalTimer);
+      this.pendingFinalTimer = null;
+    }
+    if (this.pendingFinalText) {
+      this.pendingFinalText = "";
+      this.pendingFinalUtteranceId = null;
+      this.pendingFinalSpeakerId = undefined;
+      this.pendingFinalLanguage = undefined;
+      this.logger.debug({ streamId: this.id, reason }, "🎙️ SONIOX SDK: pending FINAL discarded");
+    }
+  }
+
+  /**
+   * Finalized event: the server confirmed a manual `session.finalize()`
+   * call (triggered by VAD-stop or the 2s audio-gap auto-pause). Trusted
+   * signal — we initiated it, so the utterance has truly ended.
+   *
+   * Two pieces of work:
+   *   1. Commit any in-flight pending FINAL (from a prior endpoint that
+   *      hadn't yet expired its debounce).
+   *   2. Emit FINAL for the current utterance's text.
    */
   private handleFinalized(): void {
     this.lastActivity = Date.now();
 
+    // Step 1: flush any debounced pending FINAL.
+    this.commitPendingFinal("superseded by finalize");
+
+    // Step 2: emit FINAL for the current utterance directly, bypassing
+    // the debounce (this is a trusted signal).
     if (this.lastEmittedInterimText.trim()) {
       this.emitFinal(this.lastEmittedInterimText, this.currentSpeakerId, this.currentLanguage, undefined);
     } else {
-      // Fallback: flush utterance buffer
       const utterance = this.utteranceBuffer.markEndpoint();
       if (utterance && utterance.text.trim()) {
         this.emitFinal(utterance.text, utterance.speaker, utterance.language, utterance.tokens);
       }
     }
 
-    // Reset for next utterance
+    // Reset for next utterance.
     this.currentUtteranceId = null;
     this.currentSpeakerId = undefined;
     this.currentLanguage = undefined;
@@ -678,10 +831,12 @@ export class SonioxSdkStream implements StreamInstance {
 
   /**
    * Finished event: the session is ending (server signaled end of stream).
+   * Flush any pending debounced FINAL, then flush any current interim
+   * text as a final.
    */
   private handleFinished(): void {
     this.logger.debug({ streamId: this.id }, "Soniox SDK session finished");
-    // Flush any pending data as a final
+    this.commitPendingFinal("session finished");
     if (this.lastEmittedInterimText.trim()) {
       this.emitFinal(this.lastEmittedInterimText, this.currentSpeakerId, this.currentLanguage, undefined);
       this.lastEmittedInterimText = "";
@@ -813,6 +968,10 @@ export class SonioxSdkStream implements StreamInstance {
       enable_endpoint_detection: true,
       enable_speaker_diarization: true,
       language_hints: languageHints.length > 0 ? languageHints : undefined,
+      // Allowed 500–3000, Soniox default 2000. Higher gives the semantic
+      // model more time to retract premature endpoint decisions, reducing
+      // mid-utterance splits.
+      max_endpoint_delay_ms: this.config.maxEndpointDelayMs,
       context: {
         terms: ["Mentra", "MentraOS", "Hey Mentra"],
         text: "Mentra MentraOS, Hey Mentra (an AI assistant)",

@@ -35,7 +35,7 @@ const en = {
     model: "Model",
     deviceId: "Device ID",
     serialNumber: "Serial number",
-    btMacAddress: "MAC address",
+    bluetoothMacAddress: "MAC address",
     buildNumber: "Build number",
     firmwareVersion: "Firmware version",
     appVersion: "App version",
@@ -462,8 +462,6 @@ const en = {
     phoneHeadset: "Phone / Headset",
     glasses: "Glasses",
     appearance: "Appearance",
-    bypassVAD: "Bypass VAD for Debugging",
-    bypassVADSubtitle: "Bypass the VAD (Voice Activity Detection).",
     enforceLocalTranscription: "Enforce Local Transcription",
     enforceLocalTranscriptionSubtitle: "Transcribe audio locally instead of in the cloud.",
     sensingLabel: "Enable Sensors",
@@ -516,6 +514,7 @@ const en = {
     postProcessing: "Post Processing",
     postProcessingSubtitle: "Improves photo and video quality. Sync may take longer.",
     positionSettings: "Display position",
+    screenSettings: "Screen settings",
     screenDescription: "Adjust depth and height of the display content.",
     glassesWifiSettings: "Wi-Fi Networks",
     glassesWifiDescription: "Configure WiFi settings for your smart glasses.",
@@ -1049,3 +1048,8 @@ const en = {
 
 export default en
 export type Translations = typeof en
+export type TranslationResource = DeepPartial<Translations> & Record<string, unknown>
+
+type DeepPartial<T> = {
+  [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K]
+}

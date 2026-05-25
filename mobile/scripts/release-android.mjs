@@ -79,7 +79,7 @@ await $({ stdio: 'inherit' })`rm -rf android/build/generated/autolinking`;
 // ── Step 4: Copy fastlane config into android/ ────────────────────────────────
 
 console.log('\n━━━ Step 4: Copying fastlane config into android/ ━━━');
-const fastlaneSrc = path.resolve('fastlane-android');
+const fastlaneSrc = path.resolve('ci/fastlane-android');
 const fastlaneDst = path.resolve('android', 'fastlane');
 await mkdir(fastlaneDst, { recursive: true });
 for (const file of ['Fastfile', 'Appfile', 'Gemfile']) {

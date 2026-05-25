@@ -4,7 +4,7 @@
     "allowSyntheticDefaultImports": true,
     "experimentalDecorators": true,
     "jsx": "react-native",
-    "module": "es2015",
+    "module": "esnext",
     "moduleResolution": "bundler",
     "strict": true,
     "noImplicitAny": true,
@@ -21,7 +21,8 @@
       "@cloud/*": ["../cloud/packages/types/*"],
       "@assets/*": ["./assets/*"],
       "@plugins/*": ["./plugins/*"],
-      "@mentra/display-utils": ["../cloud/packages/display-utils/src"]
+      "@mentra/display-utils": ["../cloud/packages/display-utils/src"],
+      "@mentra/bluetooth-sdk-internal": ["./modules/bluetooth-sdk/src/_internal"]
     },
     "types": ["node", "react", "jest"]
   },
@@ -32,5 +33,11 @@
     }
   },
   "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"],
-  "exclude": ["node_modules", "test/**/*"]
+  "exclude": [
+    "node_modules",
+    "test/**/*",
+    "e2e-tests/ui/**/*",
+    "modules/*/src/**/*.test.ts",
+    "modules/*/src/**/__tests__/**/*"
+  ]
 }

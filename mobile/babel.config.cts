@@ -15,6 +15,7 @@ module.exports = function (api: any) {
             "@assets": "./assets",
             "@cloud": "../cloud/packages/types",
             "@mentra/display-utils": "../cloud/packages/display-utils/src",
+            "@mentra/bluetooth-sdk-internal": "./modules/bluetooth-sdk/src/_internal",
           },
           extensions: [".ios.js", ".android.js", ".js", ".ts", ".tsx", ".json"],
         },

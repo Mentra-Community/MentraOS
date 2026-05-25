@@ -10,6 +10,11 @@ import Foundation
 /// Bridge for Bluetooth SDK communication between Expo modules and native iOS code
 /// Has commands for the Bluetooth SDK to use to send messages to JavaScript
 class Bridge {
+    private static let micSampleRate = 16_000
+    private static let pcmBitsPerSample = 16
+    private static let micChannels = 1
+    private static let lc3FrameDurationMs = 10
+    private static let defaultLc3FrameSizeBytes = 60
     private static let eventSinkLock = NSLock()
     private static let defaultEventSinkId = "default"
     private static var eventSinks: [String: (String, [String: Any]) -> Void] = [:]
@@ -72,18 +77,46 @@ class Bridge {
         Bridge.sendTypedMessage("pair_failure", body: data)
     }
 
+    @MainActor
     static func sendMicPcm(_ data: Data) {
-        // let base64String = data.base64EncodedString()
-        // let body = ["base64": base64String]
-        let body = ["pcm": data]
-        Bridge.sendTypedMessage("mic_pcm", body: body)
+        Bridge.sendTypedMessage("mic_pcm", body: micPcmEventBody(data))
     }
 
+    @MainActor
     static func sendMicLc3(_ data: Data) {
-        // let base64String = data.base64EncodedString()
-        // let body = ["base64": base64String]
-        let body = ["lc3": data]
-        Bridge.sendTypedMessage("mic_lc3", body: body)
+        Bridge.sendTypedMessage("mic_lc3", body: micLc3EventBody(data))
+    }
+
+    @MainActor
+    private static func micPcmEventBody(_ data: Data) -> [String: Any] {
+        let voiceActivityDetectionEnabled =
+            DeviceStore.shared.get("glasses", "voiceActivityDetectionEnabled") as? Bool ?? true
+        return [
+            "pcm": data,
+            "sampleRate": micSampleRate,
+            "bitsPerSample": pcmBitsPerSample,
+            "channels": micChannels,
+            "encoding": "pcm_s16le",
+            "voiceActivityDetectionEnabled": voiceActivityDetectionEnabled,
+        ]
+    }
+
+    @MainActor
+    private static func micLc3EventBody(_ data: Data) -> [String: Any] {
+        let voiceActivityDetectionEnabled =
+            DeviceStore.shared.get("glasses", "voiceActivityDetectionEnabled") as? Bool ?? true
+        let frameSizeBytes = DeviceStore.shared.get("bluetooth", "lc3_frame_size") as? Int ?? defaultLc3FrameSizeBytes
+        return [
+            "lc3": data,
+            "sampleRate": micSampleRate,
+            "channels": micChannels,
+            "encoding": "lc3",
+            "frameDurationMs": lc3FrameDurationMs,
+            "frameSizeBytes": frameSizeBytes,
+            "bitrate": frameSizeBytes * 8 * (1000 / lc3FrameDurationMs),
+            "packetizedFromGlasses": false,
+            "voiceActivityDetectionEnabled": voiceActivityDetectionEnabled,
+        ]
     }
 
     static func saveSetting(_ key: String, _ value: Any) {
@@ -91,9 +124,21 @@ class Bridge {
         Bridge.sendTypedMessage("save_setting", body: body)
     }
 
-    static func sendVadEvent(_ isSpeaking: Bool) {
-        let body: [String: Any] = ["status": isSpeaking]
-        Bridge.sendTypedMessage("vad_status", body: body)
+    @MainActor
+    static func sendVoiceActivityDetectionStatus(_ enabled: Bool) {
+        DeviceStore.shared.set("glasses", "voiceActivityDetectionEnabled", enabled)
+        let body: [String: Any] = [
+            "voiceActivityDetectionEnabled": enabled,
+        ]
+        Bridge.sendTypedMessage("voice_activity_detection_status", body: body)
+    }
+
+    static func sendSpeakingStatus(_ speaking: Bool) {
+        let body: [String: Any] = [
+            "speaking": speaking,
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+        ]
+        Bridge.sendTypedMessage("speaking_status", body: body)
     }
 
     static func sendBatteryStatus(level: Int, charging: Bool) {
@@ -105,23 +150,67 @@ class Bridge {
         Bridge.sendTypedMessage("battery_status", body: body)
     }
 
-    static func sendDiscoveredDevice(_ deviceModel: String, _ deviceName: String) {
+    static func sendDiscoveredDevice(
+        _ deviceModel: String,
+        _ deviceName: String,
+        deviceAddress: String = "",
+        rssi: Int? = nil
+    ) {
         Task {
             await MainActor.run {
-                let searchResults = GlassesStore.shared.get("core", "searchResults") as? [[String: Any]] ?? []
-                let newResult: [String: Any] = [
-                    "deviceModel": deviceModel,
-                    "deviceName": deviceName,
+                let searchResults = DeviceStore.shared.get("bluetooth", "searchResults") as? [[String: Any]] ?? []
+                let id = "\(deviceModel):\(deviceName)"
+                var newResult: [String: Any] = [
+                    "id": id,
+                    "model": deviceModel,
+                    "name": deviceName,
                 ]
-                let allResults = searchResults + [newResult]
-                var seen = Set<String>()
-                let uniqueResults = allResults.reversed().filter {
-                    guard let name = $0["deviceName"] as? String else { return false }
-                    return seen.insert(name).inserted
-                }.reversed()
-                GlassesStore.shared.set("core", "searchResults", Array(uniqueResults))
+                if !deviceAddress.isEmpty {
+                    newResult["address"] = deviceAddress
+                }
+                if let rssi {
+                    newResult["rssi"] = rssi
+                }
+                // Keep the public searchResults array stable as glasses are added or removed.
+                // Duplicate discoveries refresh their existing row; only new glasses append.
+                let uniqueResults = mergeStableSearchResults(
+                    searchResults,
+                    newResult: newResult,
+                    fallbackModel: deviceModel
+                )
+                DeviceStore.shared.set("bluetooth", "searchResults", uniqueResults)
             }
         }
+    }
+
+    private static func mergeStableSearchResults(
+        _ currentResults: [[String: Any]],
+        newResult: [String: Any],
+        fallbackModel: String
+    ) -> [[String: Any]] {
+        guard let newKey = searchResultKey(newResult, fallbackModel: fallbackModel) else {
+            return currentResults
+        }
+        var nextResults = currentResults
+        if let existingIndex = nextResults.firstIndex(where: {
+            searchResultKey($0, fallbackModel: fallbackModel) == newKey
+        }) {
+            nextResults[existingIndex] = newResult
+        } else {
+            nextResults.append(newResult)
+        }
+        return nextResults
+    }
+
+    private static func searchResultKey(_ result: [String: Any], fallbackModel: String) -> String? {
+        if let id = result["id"] as? String, !id.isEmpty {
+            return id
+        }
+        let model = result["model"] as? String ?? fallbackModel
+        guard let name = result["name"] as? String else {
+            return nil
+        }
+        return "\(model):\(name)"
     }
 
     // MARK: - Hardware Events
@@ -139,8 +228,9 @@ class Bridge {
 
     static func sendTouchEvent(deviceModel: String, gestureName: String, timestamp: Int64, source: Int32? = nil) {
         var body: [String: Any] = [
-            "device_model": deviceModel,
-            "gesture_name": gestureName,
+            "type": "touch_event",
+            "deviceModel": deviceModel,
+            "gestureName": gestureName,
             "timestamp": timestamp,
         ]
         if let source {
@@ -159,8 +249,8 @@ class Bridge {
 
     static func sendSwitchStatus(switchType: Int, value: Int, timestamp: Int64) {
         let body: [String: Any] = [
-            "switch_type": switchType,
-            "switch_value": value,
+            "switchType": switchType,
+            "switchValue": value,
             "timestamp": timestamp,
         ]
         Bridge.sendTypedMessage("switch_status", body: body)
@@ -169,11 +259,12 @@ class Bridge {
     static func sendRgbLedControlResponse(requestId: String, success: Bool, error: String?) {
         guard !requestId.isEmpty else { return }
         var body: [String: Any] = [
+            "type": "rgb_led_control_response",
             "requestId": requestId,
-            "success": success,
+            "state": success ? "success" : "error",
         ]
-        if let error {
-            body["error"] = error
+        if !success {
+            body["errorCode"] = error ?? "unknown_error"
         }
         Bridge.sendTypedMessage("rgb_led_control_response", body: body)
     }
@@ -181,9 +272,8 @@ class Bridge {
     static func sendPhotoError(requestId: String, errorCode: String, errorMessage: String) {
         var event: [String: Any] = [
             "type": "photo_response",
+            "state": "error",
             "requestId": requestId,
-            "success": false,
-            "photoUrl": "",
             "timestamp": Int(Date().timeIntervalSince1970 * 1000),
         ]
         if !errorCode.isEmpty {
@@ -230,19 +320,21 @@ class Bridge {
     }
 
     static func sendWifiStatusChange(connected: Bool, ssid: String?, localIp: String?) {
-        let event: [String: Any] = [
-            "connected": connected,
-            "ssid": ssid,
-            "local_ip": localIp,
-        ]
-        Bridge.sendTypedMessage("wifi_status_change", body: event)
+        guard let status = WifiStatus.fromStoreFields(
+            connected: connected,
+            ssid: ssid,
+            localIp: localIp
+        ) else {
+            return
+        }
+        Bridge.sendTypedMessage("wifi_status_change", body: status.values)
     }
 
     static func updateWifiScanResults(_ networks: [[String: Any]]) {
         Task {
             await MainActor.run {
                 var storedNetworks: [[String: Any]] =
-                    GlassesStore.shared.get("core", "wifiScanResults") as? [[String: Any]] ?? []
+                    DeviceStore.shared.get("bluetooth", "wifiScanResults") as? [[String: Any]] ?? []
                 // add the networks to the storedNetworks array, removing duplicates by ssid
                 for network in networks {
                     if !storedNetworks.contains(where: {
@@ -251,7 +343,7 @@ class Bridge {
                         storedNetworks.append(network)
                     }
                 }
-                GlassesStore.shared.apply("core", "wifiScanResults", storedNetworks)
+                DeviceStore.shared.apply("bluetooth", "wifiScanResults", storedNetworks)
             }
         }
     }

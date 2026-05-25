@@ -64,7 +64,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       // icon: "./assets/app-icons/ic_launcher.png",
       package: androidPackage,
       ...(variant.googleServicesFile ? {googleServicesFile: variant.googleServicesFile} : {}),
-      versionCode: 240,
+      versionCode: 265,
       adaptiveIcon: {
         foregroundImage: variant.adaptiveIcon,
         // backgroundImage: "./assets/app-icons/ic_launcher.png",
@@ -102,7 +102,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       icon: variant.icon,
       supportsTablet: false,
       requireFullScreen: true,
-      buildNumber: "240",
+      buildNumber: "265",
       bundleIdentifier: iosBundleId,
       appleTeamId: "T5XXXL6N36",
       ...(variant.googleServicesPlist ? {googleServicesFile: variant.googleServicesPlist} : {}),
@@ -307,6 +307,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         },
       ],
       "expo-web-browser",
+      "expo-image",
     ],
     experiments: {
       tsconfigPaths: true,

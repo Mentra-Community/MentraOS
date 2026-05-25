@@ -1,4 +1,4 @@
-// Core Event Types
+// Bluetooth SDK Event Types
 export type GlassesNotReadyEvent = {
   type: "glasses_not_ready"
   message: string
@@ -13,8 +13,8 @@ export type ButtonPressEvent = {
 
 export type TouchEvent = {
   type: "touch_event"
-  device_model?: string
-  gesture_name?: string
+  deviceModel: DeviceModel
+  gestureName: string
   timestamp: number
 }
 
@@ -22,9 +22,15 @@ export type HeadUpEvent = {
   up: boolean
 }
 
-export type VadStatusEvent = {
-  type: "vad_status"
-  status: boolean
+export type VoiceActivityDetectionStatusEvent = {
+  type: "voice_activity_detection_status"
+  voiceActivityDetectionEnabled: boolean
+}
+
+export type SpeakingStatusEvent = {
+  type: "speaking_status"
+  speaking: boolean
+  timestamp: number
 }
 
 export type BatteryStatusEvent = {
@@ -34,9 +40,41 @@ export type BatteryStatusEvent = {
   timestamp: number
 }
 
+export type GlassesConnectionStatus =
+  | {state: 'disconnected'}
+  | {state: 'scanning'}
+  | {state: 'connecting'}
+  | {state: 'bonding'}
+  | {state: 'connected'; fullyBooted: boolean}
+
+export type ConnectedGlassesConnectionStatus = Extract<GlassesConnectionStatus, {state: 'connected'}>
+
+export function isConnectedGlassesConnectionStatus(
+  status: GlassesConnectionStatus,
+): status is ConnectedGlassesConnectionStatus {
+  return status.state === 'connected'
+}
+
+export function isReadyGlassesConnectionStatus(status: GlassesConnectionStatus): boolean {
+  return status.state === 'connected' && status.fullyBooted
+}
+
+export function isBusyGlassesConnectionStatus(status: GlassesConnectionStatus): boolean {
+  return status.state === 'scanning' || status.state === 'connecting' || status.state === 'bonding'
+}
+
+export function createDisconnectedGlassesStatus(): Partial<GlassesStatus> {
+  return {
+    connection: {state: 'disconnected'},
+    hotspot: {state: 'disabled'},
+    voiceActivityDetectionEnabled: true,
+    wifi: {state: 'disconnected'},
+  }
+}
+
 /** K900 `sr_getvol` response (Mentra Live glasses media step volume 0–15). */
 export type GlassesMediaVolumeGetResult = {
-  vol: number
+  level: number
   statusCode: number
 }
 
@@ -55,48 +93,66 @@ export type LogEvent = {
   message: string
 }
 
-export type WifiStatusChangeEvent = {
-  type: "wifi_status_change"
-  connected: boolean
-  ssid: string
+export type WifiStatus = {state: 'disconnected'} | {state: 'connected'; ssid: string; localIp?: string}
+
+export type ConnectedWifiStatus = Extract<WifiStatus, {state: 'connected'}>
+
+export function isConnectedWifiStatus(status: WifiStatus): status is ConnectedWifiStatus {
+  return status.state === 'connected'
 }
 
-export type HotspotStatusChangeEvent = {
+export type WifiStatusChangeEvent = WifiStatus & {
+  type: "wifi_status_change"
+}
+
+export type HotspotStatus = {state: 'disabled'} | {state: 'enabled'; ssid: string; password: string; localIp: string}
+
+export type EnabledHotspotStatus = Extract<HotspotStatus, {state: 'enabled'}>
+
+export function isEnabledHotspotStatus(status: HotspotStatus): status is EnabledHotspotStatus {
+  return status.state === 'enabled'
+}
+
+export type HotspotStatusChangeEvent = HotspotStatus & {
   type: "hotspot_status_change"
-  enabled: boolean
-  ssid: string
-  password: string
-  local_ip: string
 }
 
 export type HotspotErrorEvent = {
   type: "hotspot_error"
-  error_message: string
+  errorMessage: string
   timestamp: number
 }
 
-export type PhotoResponseEvent = {
-  type: "photo_response"
-  requestId: string
-  photoUrl: string
-  timestamp: number
-  success: boolean
-  errorCode?: string
-  errorMessage?: string
-}
+export type PhotoResponseEvent =
+  | {
+      type: "photo_response"
+      state: "success"
+      requestId: string
+      uploadUrl: string
+      timestamp: number
+    }
+  | {
+      type: "photo_response"
+      state: "error"
+      requestId: string
+      timestamp: number
+      errorCode?: string
+      errorMessage: string
+    }
 
 export type GalleryStatusEvent = {
   type: "gallery_status"
   photos: number
   videos: number
   total: number
-  has_content: boolean
-  camera_busy: boolean
+  totalSize?: number
+  hasContent: boolean
+  cameraBusy: boolean
 }
 
 export type CompatibleGlassesSearchStopEvent = {
   type: "compatible_glasses_search_stop"
-  device_model: string
+  deviceModel: DeviceModel
 }
 
 export type HeartbeatSentEvent = {
@@ -121,18 +177,105 @@ export type SwipeVolumeStatusEvent = {
 
 export type SwitchStatusEvent = {
   type: "switch_status"
-  switch_type?: number
   switchType?: number
-  switch_value?: number
   switchValue?: number
   timestamp: number
 }
 
-export type RgbLedControlResponseEvent = {
-  type: "rgb_led_control_response"
+export type RgbLedControlResponseEvent =
+  | {
+      type: "rgb_led_control_response"
+      state: "success"
+      requestId: string
+    }
+  | {
+      type: "rgb_led_control_response"
+      state: "error"
+      requestId: string
+      errorCode: string
+    }
+
+export type RgbLedAction = "on" | "off"
+export type RgbLedColor = "red" | "green" | "blue" | "orange" | "white"
+export type PhotoSize = "small" | "medium" | "large" | "full"
+export type ButtonPhotoSize = "small" | "medium" | "large"
+export type PhotoCompression = "none" | "medium" | "heavy"
+export const DeviceModels = {
+  Simulated: "Simulated Glasses",
+  G1: "Even Realities G1",
+  G2: "Even Realities G2",
+  MentraLive: "Mentra Live",
+  MentraNex: "Mentra Display",
+  Mach1: "Mentra Mach1",
+  Z100: "Vuzix Z100",
+  Frame: "Brilliant Frame",
+  R1: "Even Realities R1",
+} as const
+
+export type DeviceModel = (typeof DeviceModels)[keyof typeof DeviceModels]
+export type ObservableStoreCategory = "glasses" | "bluetooth" | "core"
+
+export type DashboardMenuItem = {
+  title: string
+  packageName: string
+  values?: Record<string, unknown>
+}
+
+export type CameraFov = "standard" | "wide"
+
+export type CameraFovSetting = {
+  fov: number
+  roiPosition: number
+}
+
+type NativeCameraFovSetting = {
+  fov: number
+  roi_position: number
+}
+
+export type MicPreference = "auto" | "phone" | "glasses" | "bluetooth"
+export type MicMode = "phone" | "glasses" | "bluetoothClassic" | "bluetooth"
+
+export type PhotoRequestParams = {
   requestId: string
-  success: boolean
-  error?: string
+  appId: string
+  size: PhotoSize
+  webhookUrl: string | null
+  authToken: string | null
+  compress: PhotoCompression
+  sound: boolean
+  exposureTimeNs?: number | null
+}
+
+export type StreamVideoConfig = {
+  width?: number
+  height?: number
+  bitrate?: number
+  fps?: number
+}
+
+export type StreamAudioConfig = {
+  bitrate?: number
+  sampleRate?: number
+  echoCancellation?: boolean
+  noiseSuppression?: boolean
+}
+
+export type StreamStartRequest = {
+  type?: "start_stream"
+  streamUrl: string
+  streamId?: string
+  keepAlive?: boolean
+  keepAliveIntervalSeconds?: number
+  sound?: boolean
+  video?: StreamVideoConfig
+  audio?: StreamAudioConfig
+}
+
+export type StreamKeepAliveRequest = {
+  type?: "keep_stream_alive"
+  streamId: string
+  ackId: string
 }
 
 export type PairFailureEvent = {
@@ -142,12 +285,12 @@ export type PairFailureEvent = {
 
 export type AudioPairingNeededEvent = {
   type: "audio_pairing_needed"
-  device_name: string
+  deviceName: string
 }
 
 export type AudioConnectedEvent = {
   type: "audio_connected"
-  device_name: string
+  deviceName: string
 }
 
 export type AudioDisconnectedEvent = {
@@ -173,21 +316,88 @@ export type WsBinEvent = {
 export type MicPcmEvent = {
   type: "mic_pcm"
   pcm: ArrayBuffer
+  sampleRate: 16000
+  bitsPerSample: 16
+  channels: 1
+  encoding: "pcm_s16le"
+  voiceActivityDetectionEnabled: boolean
 }
 
 export type MicLc3Event = {
   type: "mic_lc3"
   lc3: ArrayBuffer
+  sampleRate: 16000
+  channels: 1
+  encoding: "lc3"
+  frameDurationMs: 10
+  frameSizeBytes: number
+  bitrate: number
+  packetizedFromGlasses: boolean
+  voiceActivityDetectionEnabled: boolean
 }
 
-export type StreamStatusEvent = {
-  type: "stream_status"
-  [key: string]: any
-}
+export type StreamStatusLifecycleState = "initializing" | "streaming" | "stopping" | "stopped"
+export type StreamStatusReconnectState = "reconnecting" | "reconnected" | "reconnect_failed"
+export type StreamStatusState = StreamStatusLifecycleState | StreamStatusReconnectState | "error"
+
+export type StreamStatusEvent =
+  | {
+      type: "stream_status"
+      kind: "lifecycle"
+      status: StreamStatusLifecycleState
+      streamId?: string
+      timestamp?: number
+    }
+  | {
+      type: "stream_status"
+      kind: "reconnect"
+      status: "reconnecting"
+      streamId?: string
+      attempt: number
+      maxAttempts: number
+      reason: string
+      timestamp?: number
+    }
+  | {
+      type: "stream_status"
+      kind: "reconnect"
+      status: "reconnected"
+      streamId?: string
+      attempt: number
+      timestamp?: number
+    }
+  | {
+      type: "stream_status"
+      kind: "reconnect"
+      status: "reconnect_failed"
+      streamId?: string
+      maxAttempts: number
+      timestamp?: number
+    }
+  | {
+      type: "stream_status"
+      kind: "error"
+      status: "error"
+      streamId?: string
+      errorDetails: string
+      timestamp?: number
+    }
+  | {
+      type: "stream_status"
+      kind: "snapshot"
+      status: "streaming" | "reconnecting" | "stopped"
+      streaming: boolean
+      reconnecting: boolean
+      streamId?: string
+      attempt?: number
+      timestamp?: number
+    }
 
 export type KeepAliveAckEvent = {
   type: "keep_alive_ack"
-  [key: string]: any
+  streamId: string
+  ackId: string
+  timestamp?: number
 }
 
 export type MtkUpdateCompleteEvent = {
@@ -205,7 +415,7 @@ export type OtaUpdateAvailableEvent = {
   cache_ready?: boolean
 }
 
-/** @deprecated Glasses no longer emit ota_progress; use {@link OtaStatusEvent} and legacy store mapping. */
+/** @deprecated Glasses no longer emit ota_progress; use {@link OtaStatusEvent} and status-store mapping. */
 export type OtaProgressEvent = {
   type: "ota_progress"
   stage?: OtaStage
@@ -247,19 +457,22 @@ export type MiniappSelectedEvent = {
   packageName: string
 }
 
-// Union type of all core events
-export type CoreEvent = Parameters<CoreModuleEvents[keyof CoreModuleEvents]>[0]
+// Union type of all native/internal Bluetooth SDK events.
+export type BluetoothSdkInternalEvent = Parameters<BluetoothSdkModuleEvents[keyof BluetoothSdkModuleEvents]>[0]
 
-export type CoreModuleEvents = {
+export type BluetoothSdkModuleEvents = {
   glasses_status: (changed: Partial<GlassesStatus>) => void
-  core_status: (changed: Partial<CoreStatus>) => void
+  bluetooth_status: (changed: Partial<BluetoothStatus>) => void
   log: (event: LogEvent) => void
+  device_discovered: (device: Device) => void
+  default_device_changed: (event: {device?: Device}) => void
   // Individual event handlers
   glasses_not_ready: (event: GlassesNotReadyEvent) => void
   button_press: (event: ButtonPressEvent) => void
   touch_event: (event: TouchEvent) => void
   head_up: (event: HeadUpEvent) => void
-  vad_status: (event: VadStatusEvent) => void
+  voice_activity_detection_status: (event: VoiceActivityDetectionStatusEvent) => void
+  speaking_status: (event: SpeakingStatusEvent) => void
   battery_status: (event: BatteryStatusEvent) => void
   local_transcription: (event: LocalTranscriptionEvent) => void
   wifi_status_change: (event: WifiStatusChangeEvent) => void
@@ -293,7 +506,139 @@ export type CoreModuleEvents = {
   miniapp_selected: (event: MiniappSelectedEvent) => void
 }
 
-export type GlassesConnectionState = "disconnected" | "connected" | "connecting"
+export type PublicGlassesStatus = Omit<
+  GlassesStatus,
+  "otaUpdateAvailable" | "otaProgress" | "otaInProgress" | "otaVersionUrl"
+>
+
+export type PublicBluetoothStatus = Pick<
+  BluetoothStatus,
+  | "searching"
+  | "searchingController"
+  | "systemMicUnavailable"
+  | "micRanking"
+  | "currentMic"
+  | "searchResults"
+  | "wifiScanResults"
+  | "lastLog"
+  | "otherBtConnected"
+  | "galleryModeEnabled"
+>
+
+export type BluetoothSdkEventMap = {
+  log: LogEvent
+  device_discovered: Device
+  default_device_changed: {device?: Device}
+  glasses_not_ready: GlassesNotReadyEvent
+  button_press: ButtonPressEvent
+  touch_event: TouchEvent
+  head_up: HeadUpEvent
+  voice_activity_detection_status: VoiceActivityDetectionStatusEvent
+  speaking_status: SpeakingStatusEvent
+  battery_status: BatteryStatusEvent
+  local_transcription: LocalTranscriptionEvent
+  wifi_status_change: WifiStatusChangeEvent
+  hotspot_status_change: HotspotStatusChangeEvent
+  hotspot_error: HotspotErrorEvent
+  photo_response: PhotoResponseEvent
+  gallery_status: GalleryStatusEvent
+  compatible_glasses_search_stop: CompatibleGlassesSearchStopEvent
+  swipe_volume_status: SwipeVolumeStatusEvent
+  switch_status: SwitchStatusEvent
+  rgb_led_control_response: RgbLedControlResponseEvent
+  pair_failure: PairFailureEvent
+  audio_pairing_needed: AudioPairingNeededEvent
+  audio_connected: AudioConnectedEvent
+  audio_disconnected: AudioDisconnectedEvent
+  mic_pcm: MicPcmEvent
+  mic_lc3: MicLc3Event
+  stream_status: StreamStatusEvent
+  keep_alive_ack: KeepAliveAckEvent
+}
+
+export type BluetoothSdkEventName = keyof BluetoothSdkEventMap
+
+export type BluetoothSdkEventListener<EventName extends BluetoothSdkEventName> = (
+  event: BluetoothSdkEventMap[EventName],
+) => void
+
+export type BluetoothSdkSubscription = {
+  remove(): void
+}
+
+export type BluetoothSdkEvent = BluetoothSdkEventMap[BluetoothSdkEventName]
+
+export interface BluetoothSdkPublicModule {
+  addListener<EventName extends BluetoothSdkEventName>(
+    eventName: EventName,
+    listener: BluetoothSdkEventListener<EventName>,
+  ): BluetoothSdkSubscription
+
+  getDefaultDevice(): Promise<Device | null>
+  setDefaultDevice(device: Device | null): Promise<void>
+  clearDefaultDevice(): Promise<void>
+
+  startScan(model: DeviceModel): Promise<void>
+  stopScan(): Promise<void>
+  scan(options: ScanOptions): Promise<Device[]>
+  scan(model: DeviceModel, options?: ScanModelOptions): Promise<Device[]>
+  connect(device: Device, options?: ConnectOptions): Promise<void>
+  connectDefault(options?: ConnectOptions): Promise<void>
+  cancelConnectionAttempt(): Promise<void>
+  disconnect(): Promise<void>
+  forget(): Promise<void>
+
+  displayText(text: string, x?: number, y?: number, size?: number): Promise<void>
+  clearDisplay(): Promise<void>
+  showDashboard(): Promise<void>
+  setDashboardPosition(height: number, depth: number): Promise<void>
+  setHeadUpAngle(angleDegrees: number): Promise<void>
+  setScreenDisabled(disabled: boolean): Promise<void>
+
+  requestWifiScan(): Promise<void>
+  sendWifiCredentials(ssid: string, password: string): Promise<void>
+  forgetWifiNetwork(ssid: string): Promise<void>
+  setHotspotState(enabled: boolean): Promise<void>
+
+  setGalleryModeEnabled(enabled: boolean): Promise<void>
+  setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
+  setButtonPhotoSettings(size: ButtonPhotoSize): Promise<void>
+  setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<void>
+  setButtonCameraLed(enabled: boolean): Promise<void>
+  setButtonMaxRecordingTime(minutes: number): Promise<void>
+  setCameraFov(fov: CameraFov): Promise<void>
+  queryGalleryStatus(): Promise<void>
+  requestPhoto(params: PhotoRequestParams): Promise<void>
+  startVideoRecording(requestId: string, save: boolean, sound: boolean): Promise<void>
+  stopVideoRecording(requestId: string): Promise<void>
+
+  startStream(params: StreamStartRequest): Promise<void>
+  stopStream(): Promise<void>
+  keepStreamAlive(params: StreamKeepAliveRequest): Promise<void>
+
+  setMicState(
+    enabled: boolean,
+    useGlassesMic?: boolean,
+    sendTranscript?: boolean,
+    sendLc3Data?: boolean,
+  ): Promise<void>
+  setPreferredMic(preferredMic: MicPreference): Promise<void>
+  setOwnAppAudioPlaying(playing: boolean): Promise<void>
+  getGlassesMediaVolume(): Promise<GlassesMediaVolumeGetResult>
+  setGlassesMediaVolume(level: number): Promise<GlassesMediaVolumeSetResult>
+
+  rgbLedControl(
+    requestId: string,
+    packageName: string | null,
+    action: RgbLedAction,
+    color: RgbLedColor | null,
+    onDurationMs: number,
+    offDurationMs: number,
+    count: number,
+  ): Promise<void>
+
+  requestVersionInfo(): Promise<void>
+}
 
 // OTA update status types
 export type OtaStage = "download" | "install"
@@ -332,19 +677,20 @@ export interface OtaProgress {
 
 export interface GlassesStatus {
   // state:
-  fullyBooted: boolean
-  connected: boolean
+  connection: GlassesConnectionStatus
   micEnabled: boolean
-  connectionState: string
-  btcConnected: boolean
+  voiceActivityDetectionEnabled: boolean
+  bluetoothClassicConnected: boolean
   signalStrength: number
+  /** Milliseconds since epoch when signalStrength was last refreshed by the phone BLE stack. */
+  signalStrengthUpdatedAt: number
   // device info
   deviceModel: string
   androidVersion: string
-  fwVersion: string
-  besFwVersion: string
-  mtkFwVersion: string
-  btMacAddress: string
+  firmwareVersion: string
+  besFirmwareVersion: string
+  mtkFirmwareVersion: string
+  bluetoothMacAddress: string
   leftMacAddress: string
   rightMacAddress: string
   buildNumber: string
@@ -355,9 +701,7 @@ export interface GlassesStatus {
   style: string
   color: string
   // wifi info
-  wifiConnected: boolean
-  wifiSsid: string
-  wifiLocalIp: string
+  wifi: WifiStatus
   // battery info
   batteryLevel: number
   charging: boolean
@@ -366,10 +710,7 @@ export interface GlassesStatus {
   caseOpen: boolean
   caseRemoved: boolean
   // hotspot info
-  hotspotEnabled: boolean
-  hotspotSsid: string
-  hotspotPassword: string
-  hotspotGatewayIp: string
+  hotspot: HotspotStatus
   // OTA update info
   otaUpdateAvailable: OtaUpdateInfo | null
   otaProgress: OtaProgress | null
@@ -382,23 +723,52 @@ export interface GlassesStatus {
   controllerSignalStrength: number
 }
 
-interface DashboardMenuItem {
+export interface CoreDashboardMenuItem {
   name: string
   packageName: string
   running: boolean
 }
 
 export interface CoreSettings {
-  menu_apps: DashboardMenuItem[]
+  menu_apps: CoreDashboardMenuItem[]
 }
 
-export type MicRanking = "auto" | "phone" | "glasses" | "bluetooth"
-
-export interface DeviceSearchResult {
-  deviceModel: string
-  deviceName: string
-  deviceAddress?: string
+export interface Device {
+  /**
+   * Stable app-facing key for this scan result, within the limits of the
+   * platform identifier available to the SDK. Do not parse this value; use the
+   * typed model, name, address, and rssi fields instead.
+   */
+  id: string
+  model: DeviceModel
+  name: string
+  /** Platform address/identifier when available: Android Bluetooth address, iOS CoreBluetooth identifier. */
+  address?: string
+  /**
+   * Optional scan signal strength. It may be undefined at first discovery and
+   * appear in a later scan update when the platform reports RSSI metadata.
+   */
+  rssi?: number
 }
+
+export interface ConnectOptions {
+  saveAsDefault?: boolean
+  cancelExistingConnectionAttempt?: boolean
+}
+
+export type ScanResultsCallback = (devices: Device[]) => void
+
+export interface ScanOptions {
+  model: DeviceModel
+  /** Defaults to 15000. */
+  timeoutMs?: number
+  /** Alias for `timeoutMs`, useful when mirroring native examples. */
+  timeout?: number
+  /** Called every time the discovered device list changes during the scan. */
+  onResults?: ScanResultsCallback
+}
+
+export type ScanModelOptions = Omit<ScanOptions, "model">
 
 export interface WifiSearchResult {
   ssid: string
@@ -408,15 +778,71 @@ export interface WifiSearchResult {
   frequency?: number
 }
 
-export interface CoreStatus {
+export interface BluetoothStatus {
   // state:
   searching: boolean
   searchingController: boolean
+  default_wearable?: DeviceModel | ""
+  pending_wearable?: DeviceModel | ""
+  device_name?: string
+  device_address?: string
+  default_controller?: DeviceModel | ""
+  pending_controller?: DeviceModel | ""
+  controller_device_name?: string
+  controller_address?: string
   systemMicUnavailable: boolean
-  micRanking: MicRanking[]
-  currentMic: MicRanking | null
-  searchResults: DeviceSearchResult[]
+  micRanking: MicMode[]
+  currentMic: MicMode | "" | null
+  /**
+   * Nearby glasses in stable discovery order.
+   * Existing entries keep their array position as details refresh; new glasses append at the end,
+   * and removals should not reorder remaining entries.
+   */
+  searchResults: Device[]
   wifiScanResults: WifiSearchResult[]
   lastLog: string[]
   otherBtConnected: boolean
+  // desired settings the SDK sends to compatible connected glasses:
+  galleryModeEnabled: boolean
 }
+
+export type BluetoothSettingsUpdate = Partial<{
+  auth_email: string
+  core_token: string
+  sensing_enabled: boolean
+  power_saving_mode: boolean
+  lc3_frame_size: number
+  preferred_mic: MicPreference
+  screen_disabled: boolean
+  contextual_dashboard: boolean
+  head_up_angle: number
+  brightness: number
+  auto_brightness: boolean
+  dashboard_height: number
+  dashboard_depth: number
+  menu_apps: DashboardMenuItem[] | CoreDashboardMenuItem[] | Array<Record<string, unknown>> | null
+  gallery_mode: boolean
+  voice_activity_detection_enabled: boolean
+  button_photo_size: ButtonPhotoSize
+  button_video_settings: {width: number; height: number; fps: number}
+  button_video_width: number
+  button_video_height: number
+  button_video_fps: number
+  button_camera_led: boolean
+  button_max_recording_time: number
+  camera_fov: NativeCameraFovSetting
+  should_send_pcm: boolean
+  should_send_lc3: boolean
+  should_send_transcript: boolean
+  offline_mode: boolean
+  offline_captions_running: boolean
+  local_stt_fallback_active: boolean
+  pending_wearable: DeviceModel | ""
+  default_wearable: DeviceModel | ""
+  device_name: string
+  device_address: string
+  default_controller: DeviceModel | ""
+  pending_controller: DeviceModel | ""
+  controller_device_name: string
+  controller_address: string
+}>

@@ -16,7 +16,7 @@ import restComms from "@/services/RestComms"
 import {useAppStatusStore} from "@mentra/island"
 
 import {feedbackPackageName, settingsPackageName} from "@/constants/miniapps"
-import {useGlassesStore} from "@/stores/glasses"
+import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import {APP_STORE_REVIEW_URL, PLAY_STORE_URL} from "@/constants/appConfig"
 import showAlert from "@/utils/AlertUtils"
@@ -68,16 +68,19 @@ export default function FeedbackPage() {
   }, [apps])
 
   // Glasses info for bug reports
-  const glassesConnected = useGlassesStore((state) => state.connected)
+  const glassesConnected = useGlassesStore(selectGlassesConnected)
   const deviceModel = useGlassesStore((state) => state.deviceModel)
   const glassesBluetoothName = useGlassesStore((state) => state.bluetoothName)
   const buildNumber = useGlassesStore((state) => state.buildNumber)
-  const glassesFwVersion = useGlassesStore((state) => state.fwVersion)
+  const glassesFirmwareVersion = useGlassesStore((state) => state.firmwareVersion)
   const appVersion = useGlassesStore((state) => state.appVersion)
   const serialNumber = useGlassesStore((state) => state.serialNumber)
   const androidVersion = useGlassesStore((state) => state.androidVersion)
-  const glassesWifiConnected = useGlassesStore((state) => state.wifiConnected)
-  const glassesWifiSsid = useGlassesStore((state) => state.wifiSsid)
+  const glassesWifi = useGlassesStore((state) => state.wifi)
+  const glassesWifiInfo =
+    glassesWifi.state === "connected"
+      ? {wifiConnected: true, wifiSsid: glassesWifi.ssid}
+      : {wifiConnected: false}
   const glassesBatteryLevel = useGlassesStore((state) => state.batteryLevel)
 
   const [userEmail, setUserEmail] = useState("")
@@ -261,11 +264,10 @@ export default function FeedbackPage() {
             bluetoothId: glassesBluetoothId || undefined,
             serialNumber: serialNumber || undefined,
             buildNumber: buildNumber || undefined,
-            fwVersion: glassesFwVersion || undefined,
+            firmwareVersion: glassesFirmwareVersion || undefined,
             appVersion: appVersion || undefined,
             androidVersion: androidVersion || undefined,
-            wifiConnected: glassesWifiConnected,
-            ...(glassesWifiConnected && glassesWifiSsid && {wifiSsid: glassesWifiSsid}),
+            ...glassesWifiInfo,
             ...(glassesBatteryLevel >= 0 && {batteryLevel: glassesBatteryLevel}),
           },
         }),

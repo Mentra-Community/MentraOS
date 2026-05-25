@@ -94,6 +94,7 @@ export default function MainSettingsPage() {
                   icon={<Icon name="user-code" size={24} color={theme.colors.secondary_foreground} />}
                   label={translate("settings:developerSettings")}
                   onPress={() => push("/miniapps/settings/developer")}
+                  onLongPress={() => superMode && push("/miniapps/settings/super")}
                 />
               )}
             </Group>

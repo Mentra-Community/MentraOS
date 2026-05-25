@@ -37,7 +37,7 @@ See the [API doc](../ASG_CLIENT_API.md#streaming-rtmp--srt--whip) for fields and
 
 ### Active stream
 
-Status callbacks emit `stream_status` messages back to the phone. Status values include `streaming_started`, `reconnecting`, `error`, `stopping`, `error_not_streaming`.
+Status callbacks emit `stream_status` messages back to the phone. Canonical status values include `initializing`, `streaming`, `reconnecting`, `reconnected`, `reconnect_failed`, `stopping`, `stopped`, and `error`.
 
 ### Keep-alive timeout
 
@@ -66,7 +66,7 @@ The reconnection backoff is internal to each streaming service. The phone can ca
 
 `stop_stream` finds whichever service is currently active (`isStreaming()` or `isReconnecting()`), calls `stopStreaming(context)`, and re-enables EIS.
 
-If no stream is active, the response is `error_not_streaming`.
+If no stream is active, the response is `status: "error"` with `errorDetails: "not_streaming"`.
 
 ## Resource constraints
 
@@ -107,6 +107,6 @@ adb logcat | grep -E "keep_stream_alive|keep_alive_ack"
 ## Common issues
 
 - **Stream stops after ~60 s** — keep-alives aren't reaching the glasses, or `streamId` doesn't match the active stream.
-- **`error_not_streaming` on stop** — stream already stopped on its own (timeout, reconnect-failure). Treat as idempotent.
+- **`error` with `errorDetails: "not_streaming"` on stop** — stream already stopped on its own (timeout, reconnect-failure). Treat as idempotent.
 - **WHIP `Resolution too high`** — requested `width`/`height` exceeds what the camera can output. Reduce resolution or let the config use defaults.
 - **Stream won't start** — check the `BATTERY_LOW` / `no_wifi_connection` error details and the `Unknown stream URL protocol` log.

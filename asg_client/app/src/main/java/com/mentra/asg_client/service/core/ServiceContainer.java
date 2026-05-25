@@ -3,6 +3,7 @@ package com.mentra.asg_client.service.core;
 import android.content.Context;
 import android.util.Log;
 
+import androidx.annotation.NonNull;
 
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.file.core.FileManagerFactory;
@@ -47,7 +48,7 @@ public class ServiceContainer {
 
     private final FileManager fileManager;
 
-    public ServiceContainer(Context context, AsgClientService service) {
+    public ServiceContainer(Context context, @NonNull AsgClientService service) {
         this.context = context;
 
         this.fileManager = FileManagerFactory.getInstance();

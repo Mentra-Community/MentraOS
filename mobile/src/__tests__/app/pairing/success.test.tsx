@@ -102,31 +102,32 @@ describe("pairing success screen", () => {
   })
 
   it("stacks missing Mentra Live setup steps in the expected order", async () => {
-    ;(waitForGlassesState as jest.Mock).mockResolvedValueOnce(false).mockResolvedValueOnce(false)
+    ;(waitForGlassesState as jest.Mock).mockResolvedValueOnce(false)
 
     const {getAllByText} = render(<PairingSuccessScreen />)
 
     await waitFor(() => expect(getAllByText("onboarding:continueSetup").length).toBeGreaterThan(0))
     fireEvent.press(getAllByText("onboarding:continueSetup")[1])
 
-    expect(clearHistoryAndGoHome).toHaveBeenCalled()
+    await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalled())
     expect(push).toHaveBeenCalledWith("/pairing/btclassic")
-    expect(pushUnder).toHaveBeenNthCalledWith(1, "/onboarding/live")
-    expect(pushUnder).toHaveBeenNthCalledWith(2, "/ota/check-for-updates")
-    expect(pushUnder).toHaveBeenNthCalledWith(3, "/wifi/scan")
+    expect(pushUnder).toHaveBeenCalledTimes(1)
+    expect(pushUnder).toHaveBeenCalledWith("/ota/check-for-updates")
+    expect(waitForGlassesState).toHaveBeenCalledTimes(1)
   })
 
-  it("uses connected Mentra Live state to skip btclassic and wifi setup", async () => {
-    ;(waitForGlassesState as jest.Mock).mockResolvedValueOnce(true).mockResolvedValueOnce(true)
+  it("uses connected Mentra Live state to skip btclassic setup", async () => {
+    ;(waitForGlassesState as jest.Mock).mockResolvedValueOnce(true)
 
     const {getAllByText} = render(<PairingSuccessScreen />)
 
     await waitFor(() => expect(getAllByText("onboarding:continueSetup").length).toBeGreaterThan(0))
     fireEvent.press(getAllByText("onboarding:continueSetup")[1])
 
-    expect(push).toHaveBeenCalledWith("/ota/check-for-updates")
-    expect(pushUnder).toHaveBeenCalledWith("/onboarding/live")
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/ota/check-for-updates"))
+    expect(pushUnder).not.toHaveBeenCalled()
     expect(push).not.toHaveBeenCalledWith("/pairing/btclassic")
+    expect(waitForGlassesState).toHaveBeenCalledTimes(1)
   })
 
   it("finishes non-Live pairing without adding setup routes", async () => {
@@ -138,7 +139,7 @@ describe("pairing success screen", () => {
     await waitFor(() => expect(getAllByText("common:continue").length).toBeGreaterThan(0))
     fireEvent.press(getAllByText("common:continue")[1])
 
-    expect(clearHistoryAndGoHome).toHaveBeenCalled()
+    await waitFor(() => expect(clearHistoryAndGoHome).toHaveBeenCalled())
     expect(push).not.toHaveBeenCalled()
     expect(pushUnder).not.toHaveBeenCalled()
   })

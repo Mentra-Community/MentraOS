@@ -285,9 +285,10 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  // Legacy cloud/mobile setting name. Locally it maps to glasses-side Voice Activity Detection.
   bypass_vad_for_debugging: {
     key: "bypass_vad_for_debugging",
-    defaultValue: () => true,
+    defaultValue: () => false,
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -351,6 +352,13 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  use_native_dashboard: {
+    key: "use_native_dashboard",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: true,
+    persist: true,
+  },
   head_up_angle: {key: "head_up_angle", defaultValue: () => 45, writable: true, saveOnServer: true, persist: true},
   brightness: {key: "brightness", defaultValue: () => 50, writable: true, saveOnServer: true, persist: true},
   auto_brightness: {
@@ -382,6 +390,7 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
   },
   // button settings
+  // Legacy persisted/cloud key; hardware behavior is now controlled by gallery_mode plus capture settings.
   button_mode: {key: "button_mode", defaultValue: () => "photo", writable: true, saveOnServer: true, persist: true},
   button_photo_size: {
     key: "button_photo_size",
@@ -473,7 +482,7 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: false,
     persist: false,
   },
-  gallery_mode: {key: "gallery_mode", defaultValue: () => false, writable: true, saveOnServer: true, persist: true},
+  gallery_mode: {key: "gallery_mode", defaultValue: () => true, writable: true, saveOnServer: true, persist: true},
   gallery_sync_explained: {
     key: "gallery_sync_explained",
     defaultValue: () => false,
@@ -587,8 +596,8 @@ const CORE_SETTINGS_KEYS: string[] = [
   SETTINGS.dashboard_height.key,
   SETTINGS.dashboard_depth.key,
   SETTINGS.menu_apps.key,
+  SETTINGS.use_native_dashboard.key,
   // button:
-  SETTINGS.button_mode.key,
   SETTINGS.button_photo_size.key,
   // Legacy MentraLive native code reads the object form when syncing video settings.
   SETTINGS.button_video_settings.key,
@@ -631,13 +640,10 @@ interface SettingsState {
 }
 
 const getDefaultSettings = () =>
-  Object.keys(SETTINGS).reduce(
-    (acc, key) => {
-      acc[key] = SETTINGS[key].defaultValue()
-      return acc
-    },
-    {} as Record<string, any>,
-  )
+  Object.keys(SETTINGS).reduce((acc, key) => {
+    acc[key] = SETTINGS[key].defaultValue()
+    return acc
+  }, {} as Record<string, any>)
 
 export const useSettingsStore = create<SettingsState>()(
   subscribeWithSelector((set, get) => ({
@@ -817,6 +823,7 @@ export const useSettingsStore = create<SettingsState>()(
           coreSettings[setting.key] = state.getSetting(setting.key)
         }
       })
+      coreSettings.voice_activity_detection_enabled = !state.getSetting(SETTINGS.bypass_vad_for_debugging.key)
       return coreSettings
     },
     resetAllSettingsLocally: () => {

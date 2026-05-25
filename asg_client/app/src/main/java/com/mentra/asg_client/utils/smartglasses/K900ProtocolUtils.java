@@ -243,7 +243,7 @@ public class K900ProtocolUtils {
      */
     public static byte[] formatMessageForTransmission(String jsonData) {
         try {
-            android.util.Log.e("K900ProtocolUtils", "🔄 Formatting message: " + jsonData);
+            android.util.Log.d("K900ProtocolUtils", "🔄 Formatting message: " + jsonData);
             
             // Validate that input is proper JSON
             new JSONObject(jsonData);
@@ -254,7 +254,7 @@ public class K900ProtocolUtils {
             wrapper.put(FIELD_V, 1); // Optional version field
             wrapper.put(FIELD_B, new JSONObject()); // Optional body field
             String wrappedJson = wrapper.toString();
-            android.util.Log.e("K900ProtocolUtils", "🔄 After C-wrapping: " + wrappedJson);
+            android.util.Log.d("K900ProtocolUtils", "🔄 After C-wrapping: " + wrappedJson);
             
             // Now format with BES2700 protocol
             byte[] result = packDataCommand(wrappedJson.getBytes(StandardCharsets.UTF_8), CMD_TYPE_STRING);

@@ -76,10 +76,10 @@ The media system handles camera button presses and media capture:
 
 - Physical button press detected by microcontroller
 - MCU sends command to ASG Client (`cs_pho` for short press, `cs_vdo` for long press)
-- ASG Client checks button press mode configuration:
-  - **PHOTO mode**: Takes photo/video locally
-  - **APPS mode**: Sends button event to phone/apps
-  - **BOTH mode**: Does both actions
+- ASG Client always forwards a `button_press` event to the phone/apps
+- Gallery/save mode controls whether the same press also captures media locally:
+  - **Enabled**: Short press captures a photo; long press starts/stops video
+  - **Disabled**: The press is event-only while connected, with local capture as the disconnected fallback
 - Photos are captured and queued for upload when connected
 
 ### RTMP Streaming

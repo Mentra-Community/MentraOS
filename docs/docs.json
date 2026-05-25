@@ -194,6 +194,48 @@
         ]
       },
       {
+        "tab": "Bluetooth SDK",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "icon": "bluetooth",
+            "pages": [
+              "bluetooth-sdk/overview",
+              "bluetooth-sdk/quickstart",
+              "bluetooth-sdk/examples"
+            ]
+          },
+          {
+            "group": "Platform Setup",
+            "icon": "mobile",
+            "pages": [
+              "bluetooth-sdk/react-native-expo",
+              "bluetooth-sdk/android",
+              "bluetooth-sdk/ios"
+            ]
+          },
+          {
+            "group": "Core APIs",
+            "icon": "glasses",
+            "pages": [
+              "bluetooth-sdk/api-reference",
+              "bluetooth-sdk/display",
+              "bluetooth-sdk/audio",
+              "bluetooth-sdk/camera-streaming",
+              "bluetooth-sdk/hardware"
+            ]
+          },
+          {
+            "group": "Release",
+            "icon": "clipboard-check",
+            "pages": [
+              "bluetooth-sdk/troubleshooting",
+              "bluetooth-sdk/production-checklist"
+            ]
+          }
+        ]
+      },
+      {
         "tab": "OS Devs",
         "groups": [
           {
@@ -252,8 +294,13 @@
       "icon": "discord"
     },
     {
-      "anchor": "SDK Package",
+      "anchor": "App SDK Package",
       "href": "https://www.npmjs.com/package/@mentraos/sdk",
+      "icon": "npm"
+    },
+    {
+      "anchor": "Bluetooth SDK Package",
+      "href": "https://www.npmjs.com/package/@mentra/bluetooth-sdk",
       "icon": "npm"
     }
   ],
