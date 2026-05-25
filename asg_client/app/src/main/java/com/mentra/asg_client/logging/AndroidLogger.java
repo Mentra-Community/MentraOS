@@ -8,29 +8,38 @@ import android.util.Log;
  */
 public class AndroidLogger implements Logger {
     private static final String DEFAULT_TAG = "ASG_Server";
-    
+    private final String defaultTag;
+
+    public AndroidLogger() {
+        this(DEFAULT_TAG);
+    }
+
+    public AndroidLogger(String defaultTag) {
+        this.defaultTag = defaultTag != null ? defaultTag : DEFAULT_TAG;
+    }
+
     @Override
     public void debug(String tag, String message) {
-        Log.d(tag != null ? tag : DEFAULT_TAG, message);
+        Log.d(tag != null ? tag : defaultTag, message);
     }
     
     @Override
     public void info(String tag, String message) {
-        Log.i(tag != null ? tag : DEFAULT_TAG, message);
+        Log.i(tag != null ? tag : defaultTag, message);
     }
     
     @Override
     public void warn(String tag, String message) {
-        Log.w(tag != null ? tag : DEFAULT_TAG, message);
+        Log.w(tag != null ? tag : defaultTag, message);
     }
     
     @Override
     public void error(String tag, String message) {
-        Log.e(tag != null ? tag : DEFAULT_TAG, message);
+        Log.e(tag != null ? tag : defaultTag, message);
     }
     
     @Override
     public void error(String tag, String message, Throwable throwable) {
-        Log.e(tag != null ? tag : DEFAULT_TAG, message, throwable);
+        Log.e(tag != null ? tag : defaultTag, message, throwable);
     }
 } 
