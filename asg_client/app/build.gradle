@@ -5,6 +5,19 @@ plugins {
     id 'io.sentry.android.gradle' version '5.8.0'
 }
 
+apply plugin: 'com.diffplug.spotless'
+
+spotless {
+    java {
+        target 'src/**/*.java'
+        googleJavaFormat('1.17.0').aosp()
+        ratchetFrom 'origin/dev'
+        toggleOffOn()
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
+}
+
 // 1. Import classes for file/stream and properties
 import java.util.Properties
 

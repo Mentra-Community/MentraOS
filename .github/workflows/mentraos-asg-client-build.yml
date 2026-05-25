@@ -108,6 +108,10 @@ jobs:
             asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
             asg-gradle-${{ runner.os }}-
 
+      - name: Spotless check
+        working-directory: ./asg_client
+        run: ./gradlew spotlessCheck
+
       - name: Build Release APK
         id: gradle-build
         working-directory: ./asg_client
