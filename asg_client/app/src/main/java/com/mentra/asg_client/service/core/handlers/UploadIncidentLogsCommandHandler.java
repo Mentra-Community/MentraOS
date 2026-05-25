@@ -3,6 +3,7 @@ package com.mentra.asg_client.service.core.handlers;
 import android.content.Context;
 import android.util.Log;
 
+import com.mentra.asg_client.io.bes.log.BesLogManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
 import com.mentra.asg_client.reporting.GlassesLogBuffer;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
@@ -58,7 +59,7 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
     private final IStateManager mStateManager;
     /**
      * Resolved at command time via {@link AsgClientServiceManager#getBluetoothManager()} — not at
-     * handler construction, because {@link com.mentra.asg_client.service.core.ServiceContainer}
+     * handler construction, because {@link com.mentra.asg_client.service.core.ServiceInitializer}
      * builds {@code CommandProcessor} before {@code AsgClientServiceManager#initialize()} creates
      * the Bluetooth manager.
      */
@@ -234,14 +235,14 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
             }
             String fwJson = firmwareJson.get();
             if (fwJson == null) {
-                fwJson = com.mentra.asg_client.io.bes.log.BesLogManager.buildFirmwareUploadJson("");
+                fwJson = BesLogManager.buildFirmwareUploadJson("");
             }
 
             String bName = IncidentLogBleRelayNaming.bleFileBaseName(incidentId, 'B');
             File bFile = new File(mContext.getCacheDir(), bName);
             writeUtf8File(bFile, fwJson);
 
-            if (!bt.sendImageFile(bFile.getAbsolutePath())) {
+            if (!bt.sendFile(bFile.getAbsolutePath())) {
                 Log.e(TAG, "Failed to start BLE transfer for firmware log file " + bName);
                 deleteQuietly(bFile);
                 return;
@@ -258,7 +259,7 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
             File lFile = new File(mContext.getCacheDir(), lName);
             writeUtf8File(lFile, logcatJson);
 
-            if (!bt.sendImageFile(lFile.getAbsolutePath())) {
+            if (!bt.sendFile(lFile.getAbsolutePath())) {
                 Log.e(TAG, "Failed to start BLE transfer for logcat file " + lName);
                 deleteQuietly(lFile);
                 return;
