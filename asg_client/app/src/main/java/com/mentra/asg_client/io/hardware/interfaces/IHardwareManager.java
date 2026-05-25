@@ -1,5 +1,9 @@
 package com.mentra.asg_client.io.hardware.interfaces;
 
+import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
+
+import java.util.Set;
+
 /**
  * Interface for hardware management operations across different device types.
  * This interface abstracts hardware control operations to support different
@@ -15,12 +19,14 @@ public interface IHardwareManager {
      */
     void initialize();
 
+    /** Capabilities supported on this device. */
+    Set<Capability> getCapabilities();
+
     /**
-     * Set the Bluetooth manager for RGB LED control
-     * This should be called after initialize() to enable RGB LED functionality
-     * @param bluetoothManager The Bluetooth manager instance
+     * Wire companion transport for RGB LED commands (UART on Mentra Live).
+     * Call after {@link #initialize()}.
      */
-    void setBluetoothManager(Object bluetoothManager);
+    void setTransport(ICompanionTransport transport);
     
     /**
      * Check if the device supports recording LED control
@@ -78,12 +84,6 @@ public interface IHardwareManager {
      * @return String identifying the device model (e.g., "K900", "GENERIC")
      */
     String getDeviceModel();
-    
-    /**
-     * Check if this is a K900 device
-     * @return true if running on K900 hardware, false otherwise
-     */
-    boolean isK900Device();
 
     /**
      * Check whether this hardware supports audio playback through the MCU.
@@ -126,6 +126,12 @@ public interface IHardwareManager {
      * @return true if charging, false if not charging or unknown
      */
     boolean getChargingStatus();
+
+    /**
+     * Update cached battery readings from an MCU notification (e.g. hm_batv).
+     * No-op when {@link Capability#MCU_BATTERY} is not supported.
+     */
+    void notifyBatteryReading(int percent, int voltageMv);
 
     // ============================================
     // MTK LED Brightness Control
