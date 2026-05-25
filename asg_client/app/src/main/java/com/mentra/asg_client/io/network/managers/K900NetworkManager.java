@@ -13,7 +13,7 @@ import android.util.Log;
 import com.mentra.asg_client.io.network.core.BaseNetworkManager;
 import com.mentra.asg_client.io.network.interfaces.IWifiScanCallback;
 import com.mentra.asg_client.io.network.utils.DebugNotificationManager;
-import com.mentra.asg_client.SysControl;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -446,7 +446,7 @@ public class K900NetworkManager extends BaseNetworkManager {
                 connectToWifiNative(ssid, password);
             } else {
                 Log.d(TAG, "📶 📡 Connecting to WiFi via SysControl (with credential refresh)...");
-                SysControl.connectToWifiWithRefresh(context, ssid, password);
+                SystemControllerFactory.get(context).connectToWifiWithCredentialRefresh( ssid, password);
                 Log.i(TAG, "📶 ✅ WiFi connect command sent for SSID: " + ssid);
             }
             notificationManager.showDebugNotification("WiFi Connection", "Connecting to: " + ssid);
@@ -513,7 +513,7 @@ public class K900NetworkManager extends BaseNetworkManager {
                 Log.i(TAG, "📶 ✅ WiFi disconnected via WifiManager");
             } else {
                 Log.d(TAG, "📶 📡 Disconnecting from WiFi via SysControl...");
-                SysControl.disconnectFromWifi(context);
+                SystemControllerFactory.get(context).disconnectFromWifi();
                 Log.i(TAG, "📶 ✅ WiFi disconnect command sent via SysControl");
             }
             notificationManager.showDebugNotification("WiFi Disconnection", "Disconnecting from current network");
@@ -532,7 +532,7 @@ public class K900NetworkManager extends BaseNetworkManager {
         try {
             // Use SysControl to forget - the SmartXY broadcast reliably removes saved networks
             Log.d(TAG, "📶 📡 Forgetting WiFi network via SysControl...");
-            SysControl.disconnectFromWifi(context, ssid);
+            SystemControllerFactory.get(context).disconnectFromWifi(ssid);
 
             Log.i(TAG, "📶 ✅ WiFi forget command sent for: " + ssid);
             notificationManager.showDebugNotification("WiFi Network Forgotten", "Removed: " + ssid);
