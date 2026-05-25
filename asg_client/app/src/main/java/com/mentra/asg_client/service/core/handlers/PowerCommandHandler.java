@@ -3,7 +3,7 @@ package com.mentra.asg_client.service.core.handlers;
 import android.content.Context;
 import android.util.Log;
 
-import com.mentra.asg_client.SysControl;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
@@ -64,7 +64,8 @@ public class PowerCommandHandler implements ICommandHandler {
 
         try {
             stopActiveRecording();
-            SysControl.shut(context);
+            SystemControllerFactory.get(context)
+                    .shutdown();
             return true;
         } catch (Exception e) {
             Log.e(TAG, "❌ Error initiating shutdown", e);
@@ -81,7 +82,7 @@ public class PowerCommandHandler implements ICommandHandler {
 
         try {
             stopActiveRecording();
-            SysControl.reboot(context);
+            SystemControllerFactory.get(context).reboot();
             return true;
         } catch (Exception e) {
             Log.e(TAG, "❌ Error initiating reboot", e);
