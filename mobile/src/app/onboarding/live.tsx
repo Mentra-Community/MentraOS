@@ -4,7 +4,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import showAlert from "@/utils/AlertUtils"
-import CoreModule, {TouchEvent} from "@mentra/bluetooth-sdk"
+import BluetoothSdk, {TouchEvent} from "@mentra/bluetooth-sdk"
 import {Platform} from "react-native"
 
 const CDN_BASE = "https://mentra-videos-cdn.mentraglass.com/onboarding/mentra-live/light"
@@ -42,7 +42,7 @@ export default function MentraLiveOnboarding() {
       // wait for the action button to be pressed:
       waitFn: (): Promise<void> => {
         return new Promise<void>((resolve) => {
-          const unsub = CoreModule.addListener("button_press", (data: any) => {
+          const unsub = BluetoothSdk.addListener("button_press", (data: any) => {
             if (data?.type === "button_press" && data?.pressType === "short") {
               unsub.remove()
               resolve()
@@ -64,7 +64,7 @@ export default function MentraLiveOnboarding() {
       info: translate("onboarding:liveLedFlashWarning"),
       waitFn: (): Promise<void> => {
         return new Promise<void>((resolve) => {
-          const unsub = CoreModule.addListener("button_press", (data: any) => {
+          const unsub = BluetoothSdk.addListener("button_press", (data: any) => {
             if (data?.type === "button_press" && (data?.pressType === "long" || data?.pressType === "short")) {
               unsub.remove()
               resolve()
@@ -86,7 +86,7 @@ export default function MentraLiveOnboarding() {
       info: translate("onboarding:liveLedFlashWarning"),
       waitFn: (): Promise<void> => {
         return new Promise<void>((resolve) => {
-          const unsub = CoreModule.addListener("button_press", (data: any) => {
+          const unsub = BluetoothSdk.addListener("button_press", (data: any) => {
             if (data?.type === "button_press" && (data?.pressType === "long" || data?.pressType === "short")) {
               unsub.remove()
               resolve()
@@ -119,8 +119,8 @@ export default function MentraLiveOnboarding() {
       subtitle: translate("onboarding:liveDoubleTapTouchpad"),
       waitFn: (): Promise<void> => {
         return new Promise<void>((resolve) => {
-          const unsub = CoreModule.addListener("touch_event", (data: TouchEvent) => {
-            if (data?.gesture_name === "double_tap") {
+          const unsub = BluetoothSdk.addListener("touch_event", (data: TouchEvent) => {
+            if (data?.gestureName === "double_tap") {
               unsub.remove()
               resolve()
             }
@@ -141,8 +141,8 @@ export default function MentraLiveOnboarding() {
       // subtitle2: translate("onboarding:liveSwipeTouchpadDown"),
       waitFn: (): Promise<void> => {
         return new Promise<void>((resolve) => {
-          const unsub = CoreModule.addListener("touch_event", (data: TouchEvent) => {
-            if (data?.gesture_name === "forward_swipe" || data?.gesture_name === "backward_swipe") {
+          const unsub = BluetoothSdk.addListener("touch_event", (data: TouchEvent) => {
+            if (data?.gestureName === "forward_swipe" || data?.gestureName === "backward_swipe") {
               unsub.remove()
               resolve()
             }
@@ -162,8 +162,8 @@ export default function MentraLiveOnboarding() {
       subtitle: translate("onboarding:liveDoubleTapTouchpad"),
       waitFn: (): Promise<void> => {
         return new Promise<void>((resolve) => {
-          const unsub = CoreModule.addListener("touch_event", (data: TouchEvent) => {
-            if (data?.gesture_name === "double_tap") {
+          const unsub = BluetoothSdk.addListener("touch_event", (data: TouchEvent) => {
+            if (data?.gestureName === "double_tap") {
               unsub.remove()
               resolve()
             }

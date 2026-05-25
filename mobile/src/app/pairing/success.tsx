@@ -40,13 +40,13 @@ export default function PairingSuccessScreen() {
     let newStack: string[] = []
 
     if (deviceModel === DeviceTypes.LIVE) {
-      let btcConnected = await waitForGlassesState("btcConnected", (value) => value === true, 1000)
-      console.log("PAIR_SUCCESS: btcConnected", btcConnected)
+      let bluetoothClassicConnected = await waitForGlassesState("bluetoothClassicConnected", (value) => value === true, 1000)
+      console.log("PAIR_SUCCESS: bluetoothClassicConnected", bluetoothClassicConnected)
       if (Platform.OS === "android") {
-        btcConnected = true
+        bluetoothClassicConnected = true
       }
 
-      if (!btcConnected) {
+      if (!bluetoothClassicConnected) {
         newStack.push("/pairing/btclassic")
       }
       // OTA check runs on the phone; WiFi is only required after an update is confirmed (see check-for-updates).

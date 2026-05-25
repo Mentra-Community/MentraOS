@@ -6,12 +6,12 @@ import socketComms from "@/services/SocketComms"
 import {submitAutomaticBugIncident} from "@/services/bugReport/automaticBugReport"
 import {useCoreStore} from "@/stores/core"
 import {useDisplayStore} from "@/stores/display"
-import {useGlassesStore} from "@/stores/glasses"
+import {isGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {crustModuleMock, emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
 import {coreModuleMock, emitCoreModuleEvent, resetCoreModuleMock} from "@/test-utils/mockCoreModule"
 
-jest.mock("@mentra/bluetooth-sdk", () => {
+jest.mock("@mentra/bluetooth-sdk-internal", () => {
   const {coreModuleMock} = require("@/test-utils/mockCoreModule")
   return {
     __esModule: true,
@@ -198,21 +198,22 @@ describe("MantleManager", () => {
   it("syncs native status, routes events, and forwards Bluetooth SDK setting changes", async () => {
     jest.advanceTimersByTime(1000)
 
-    expect(coreModuleMock.updateCore).toHaveBeenCalledWith(
+    expect(coreModuleMock.updateBluetoothSettings).toHaveBeenCalledWith(
       expect.objectContaining({
         contextual_dashboard: true,
         core_token: "server-token",
         auth_email: "from-server@example.com",
         power_saving_mode: false,
+        voice_activity_detection_enabled: true,
       }),
     )
-    expect(coreModuleMock.updateCore).not.toHaveBeenCalledWith(
+    expect(coreModuleMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
       expect.objectContaining({
         notifications_enabled: expect.anything(),
       }),
     )
     for (const nonSdkKey of ["always_on_status_bar", "metric_system"]) {
-      expect(coreModuleMock.updateCore).not.toHaveBeenCalledWith(
+      expect(coreModuleMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
         expect.objectContaining({
           [nonSdkKey]: expect.anything(),
         }),
@@ -220,12 +221,16 @@ describe("MantleManager", () => {
     }
     expect(crustModuleMock.setNotificationConfig).toHaveBeenCalledWith(true, [])
 
-    emitCoreModuleEvent("core_status", {searching: true, otherBtConnected: true})
-    emitCoreModuleEvent("glasses_status", {connected: true, deviceModel: "Mentra Live", batteryLevel: 77})
+    emitCoreModuleEvent("bluetooth_status", {searching: true, otherBtConnected: true})
+    emitCoreModuleEvent("glasses_status", {
+      connection: {state: "connected", fullyBooted: true},
+      deviceModel: "Mentra Live",
+      batteryLevel: 77,
+    })
 
     expect(useCoreStore.getState().searching).toBe(true)
     expect(useCoreStore.getState().otherBtConnected).toBe(true)
-    expect(useGlassesStore.getState().connected).toBe(true)
+    expect(isGlassesConnected(useGlassesStore.getState().connection)).toBe(true)
     expect(useGlassesStore.getState().deviceModel).toBe("Mentra Live")
     expect(useGlassesStore.getState().batteryLevel).toBe(77)
 
@@ -233,23 +238,26 @@ describe("MantleManager", () => {
       type: "photo_response",
       state: "success",
       requestId: "req-1",
-      photoUrl: "https://example.com/photo.jpg",
+      uploadUrl: "https://example.com/photo.jpg",
       timestamp: 123,
     })
     expect(restComms.sendPhotoResponse).toHaveBeenCalledWith(
       expect.objectContaining({
         requestId: "req-1",
-        photoUrl: "https://example.com/photo.jpg",
+        uploadUrl: "https://example.com/photo.jpg",
       }),
     )
 
     emitCoreModuleEvent("touch_event", {
-      gesture_name: "tap",
+      type: "touch_event",
+      deviceModel: "Mentra Live",
+      gestureName: "tap",
       timestamp: 999,
     })
     expect(socketComms.sendTouchEvent).toHaveBeenCalledWith({
-      device_model: "Mentra Live",
-      gesture_name: "tap",
+      type: "touch_event",
+      deviceModel: "Mentra Live",
+      gestureName: "tap",
       timestamp: 999,
     })
 
@@ -273,7 +281,7 @@ describe("MantleManager", () => {
       expect(useDisplayStore.getState().view).toBe("dashboard")
     })
 
-    emitCoreModuleEvent("vad_status", {type: "vad_status", status: true})
+    emitCoreModuleEvent("speaking_status", {type: "speaking_status", speaking: true})
     expect(socketComms.sendVadStatus).toHaveBeenCalledWith(true)
 
     emitCoreModuleEvent("battery_status", {
@@ -283,9 +291,9 @@ describe("MantleManager", () => {
       timestamp: 123456,
     })
     expect(socketComms.sendBatteryStatus).toHaveBeenCalledWith(88, true, 123456)
-    ;(coreModuleMock.updateCore as jest.Mock).mockClear()
+    ;(coreModuleMock.updateBluetoothSettings as jest.Mock).mockClear()
     await useSettingsStore.getState().setSetting(SETTINGS.core_token.key, "new-token", false)
-    expect(coreModuleMock.updateCore).toHaveBeenCalledWith(
+    expect(coreModuleMock.updateBluetoothSettings).toHaveBeenCalledWith(
       expect.objectContaining({
         core_token: "new-token",
       }),
@@ -293,7 +301,7 @@ describe("MantleManager", () => {
   })
 
   it("syncs notification enablement and blocklist settings to Crust only", async () => {
-    ;(coreModuleMock.updateCore as jest.Mock).mockClear()
+    ;(coreModuleMock.updateBluetoothSettings as jest.Mock).mockClear()
     ;(crustModuleMock.setNotificationConfig as jest.Mock).mockClear()
 
     await useSettingsStore.getState().setSetting(SETTINGS.notifications_enabled.key, false, false)
@@ -302,12 +310,12 @@ describe("MantleManager", () => {
     await waitFor(() => {
       expect(crustModuleMock.setNotificationConfig).toHaveBeenLastCalledWith(false, ["com.blocked"])
     })
-    expect(coreModuleMock.updateCore).not.toHaveBeenCalledWith(
+    expect(coreModuleMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
       expect.objectContaining({
         notifications_enabled: expect.anything(),
       }),
     )
-    expect(coreModuleMock.updateCore).not.toHaveBeenCalledWith(
+    expect(coreModuleMock.updateBluetoothSettings).not.toHaveBeenCalledWith(
       expect.objectContaining({
         notifications_blocklist: expect.anything(),
       }),
@@ -317,7 +325,6 @@ describe("MantleManager", () => {
   it("keeps non-SDK settings out of Bluetooth SDK sync", async () => {
     const nonSdkSettings = {
       always_on_status_bar: true,
-      bypass_vad_for_debugging: false,
       bypass_audio_encoding_for_debugging: true,
       metric_system: true,
       enforce_local_transcription: true,
@@ -329,7 +336,7 @@ describe("MantleManager", () => {
     for (const key of Object.keys(nonSdkSettings)) {
       expect(useSettingsStore.getState().getCoreSettings()).not.toHaveProperty(key)
     }
-    ;(coreModuleMock.updateCore as jest.Mock).mockClear()
+    ;(coreModuleMock.updateBluetoothSettings as jest.Mock).mockClear()
     for (const [key, value] of Object.entries(nonSdkSettings)) {
       await useSettingsStore.getState().setSetting(key, value, false)
     }
@@ -337,11 +344,11 @@ describe("MantleManager", () => {
     for (const key of Object.keys(nonSdkSettings)) {
       expect(useSettingsStore.getState().getCoreSettings()).not.toHaveProperty(key)
     }
-    expect(coreModuleMock.updateCore).not.toHaveBeenCalled()
+    expect(coreModuleMock.updateBluetoothSettings).not.toHaveBeenCalled()
 
     expect(useSettingsStore.getState().getCoreSettings()).toHaveProperty("power_saving_mode")
     await useSettingsStore.getState().setSetting(SETTINGS.power_saving_mode.key, true, false)
-    expect(coreModuleMock.updateCore).toHaveBeenCalledWith(
+    expect(coreModuleMock.updateBluetoothSettings).toHaveBeenCalledWith(
       expect.objectContaining({
         power_saving_mode: true,
       }),
@@ -464,7 +471,7 @@ describe("MantleManager", () => {
   })
 
   it("tracks OTA events without accepting disconnected update availability", async () => {
-    useGlassesStore.getState().setGlassesInfo({connected: false})
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
     useGlassesStore.getState().setOtaUpdateAvailable(null)
 
     emitCoreModuleEvent("ota_update_available", {
@@ -475,7 +482,7 @@ describe("MantleManager", () => {
     })
     expect(useGlassesStore.getState().otaUpdateAvailable).toBeNull()
 
-    useGlassesStore.getState().setGlassesInfo({connected: true})
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
     emitCoreModuleEvent("ota_update_available", {
       version_code: 101,
       version_name: "1.0.1",

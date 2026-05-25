@@ -285,9 +285,10 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  // Legacy cloud/mobile setting name. Locally it maps to glasses-side Voice Activity Detection.
   bypass_vad_for_debugging: {
     key: "bypass_vad_for_debugging",
-    defaultValue: () => true,
+    defaultValue: () => false,
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -822,6 +823,7 @@ export const useSettingsStore = create<SettingsState>()(
           coreSettings[setting.key] = state.getSetting(setting.key)
         }
       })
+      coreSettings.voice_activity_detection_enabled = !state.getSetting(SETTINGS.bypass_vad_for_debugging.key)
       return coreSettings
     },
     resetAllSettingsLocally: () => {

@@ -1,7 +1,7 @@
 import {useFocusEffect} from "expo-router"
 import {useEffect, useState, useCallback, useRef} from "react"
 import {View, ActivityIndicator} from "react-native"
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 
 import {MINIMUM_OTA_STATUS_BUILD} from "@/app/ota/otaProgressTimeouts"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
@@ -11,7 +11,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {checkForOtaUpdate, OTA_VERSION_URL_PROD} from "@/effects/OtaUpdateChecker"
 import {translate} from "@/i18n/translate"
-import {useGlassesStore, waitForGlassesState} from "@/stores/glasses"
+import {isGlassesConnected, selectGlassesConnected, useGlassesStore, waitForGlassesState} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {BgTimer} from "@mentra/island"
 
@@ -21,12 +21,12 @@ export default function OtaCheckForUpdatesScreen() {
   const {theme} = useAppTheme()
   const {replace, clearHistoryAndGoHome, push} = useNavigationStore.getState()
   const currentBuildNumber = useGlassesStore((state) => state.buildNumber)
-  const mtkFwVersion = useGlassesStore((state) => state.mtkFwVersion)
-  const besFwVersion = useGlassesStore((state) => state.besFwVersion)
+  const mtkFirmwareVersion = useGlassesStore((state) => state.mtkFirmwareVersion)
+  const besFirmwareVersion = useGlassesStore((state) => state.besFirmwareVersion)
   const glassesWifiConnected = useGlassesStore((state) => state.wifi.state === "connected")
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const deviceName = defaultWearable || "Glasses"
-  const glassesConnected = useGlassesStore((state) => state.connected)
+  const glassesConnected = useGlassesStore(selectGlassesConnected)
   const [onboardingLiveCompleted] = useSetting(SETTINGS.onboarding_live_completed.key)
 
   const [checkState, setCheckState] = useState<CheckState>("checking")
@@ -100,7 +100,7 @@ export default function OtaCheckForUpdatesScreen() {
 
           // Request version info since we don't have it yet
           console.log("OTA: Requesting version_info from glasses")
-          CoreModule.requestVersionInfo()
+          BluetoothSdk.requestVersionInfo()
 
           versionInfoTimeoutRef.current = BgTimer.setTimeout(() => {
             if (checkCompletedRef.current) {
@@ -119,15 +119,15 @@ export default function OtaCheckForUpdatesScreen() {
       }
 
       // Match OtaUpdateChecker home path: BES often arrives late in version_info_3 (chip init after reflash).
-      void CoreModule.requestVersionInfo()
+      void BluetoothSdk.requestVersionInfo()
 
-      let latestBesFwVersion = useGlassesStore.getState().besFwVersion
-      if (!latestBesFwVersion) {
+      let latestBesFirmwareVersion = useGlassesStore.getState().besFirmwareVersion
+      if (!latestBesFirmwareVersion) {
         console.log("OTA: BES version still unknown - waiting up to 5s for it to arrive...")
-        await waitForGlassesState("besFwVersion", (v) => !!v, 5000)
-        latestBesFwVersion = useGlassesStore.getState().besFwVersion
-        if (latestBesFwVersion) {
-          console.log(`OTA: BES version arrived: ${latestBesFwVersion}`)
+        await waitForGlassesState("besFirmwareVersion", (v) => !!v, 5000)
+        latestBesFirmwareVersion = useGlassesStore.getState().besFirmwareVersion
+        if (latestBesFirmwareVersion) {
+          console.log(`OTA: BES version arrived: ${latestBesFirmwareVersion}`)
         } else {
           console.log("OTA: BES version still unknown after extended wait - will assume BES update if published")
         }
@@ -136,21 +136,21 @@ export default function OtaCheckForUpdatesScreen() {
       if (cancelled || myGen !== performCheckGenerationRef.current) {
         return
       }
-      if (!useGlassesStore.getState().connected) {
+      if (!isGlassesConnected(useGlassesStore.getState().connection)) {
         console.log("OTA: Glasses disconnected while waiting for firmware info")
         return
       }
 
-      let latestMtkFwVersion = useGlassesStore.getState().mtkFwVersion
-      if (!latestMtkFwVersion) {
-        await waitForGlassesState("mtkFwVersion", (v) => !!v, 2000)
-        latestMtkFwVersion = useGlassesStore.getState().mtkFwVersion
+      let latestMtkFirmwareVersion = useGlassesStore.getState().mtkFirmwareVersion
+      if (!latestMtkFirmwareVersion) {
+        await waitForGlassesState("mtkFirmwareVersion", (v) => !!v, 2000)
+        latestMtkFirmwareVersion = useGlassesStore.getState().mtkFirmwareVersion
       }
 
       if (cancelled || myGen !== performCheckGenerationRef.current) {
         return
       }
-      if (!useGlassesStore.getState().connected) {
+      if (!isGlassesConnected(useGlassesStore.getState().connection)) {
         return
       }
 
@@ -170,13 +170,13 @@ export default function OtaCheckForUpdatesScreen() {
         // Refresh version_info (build / fw) in case the store still held values from a prior session
         // before the native clear-on-connect + glasses_ready re-query completed.
         console.log("OTA: Requesting fresh version_info from glasses before HTTP compare")
-        void CoreModule.requestVersionInfo()
+        void BluetoothSdk.requestVersionInfo()
 
         const result = await checkForOtaUpdate(
           OTA_VERSION_URL_PROD,
           currentBuildNumber,
-          latestMtkFwVersion,
-          latestBesFwVersion,
+          latestMtkFirmwareVersion,
+          latestBesFirmwareVersion,
         )
         console.log("📱 OTA check completed - result:", JSON.stringify(result))
 
@@ -250,7 +250,7 @@ export default function OtaCheckForUpdatesScreen() {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [checkKey, currentBuildNumber, mtkFwVersion, besFwVersion, glassesConnected])
+  }, [checkKey, currentBuildNumber, mtkFirmwareVersion, besFirmwareVersion, glassesConnected])
 
   // Navigate to next step based on onboarding status
   const handleContinue = () => {

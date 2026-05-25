@@ -1,4 +1,4 @@
-import type {OtaProgress, OtaProgressStatus, OtaStatus} from "@mentra/bluetooth-sdk"
+import type {OtaProgress, OtaProgressStatus, OtaStatus} from "@mentra/bluetooth-sdk-internal"
 
 /** Normalized ota_status fields (snake_case) after bridging Core/expo (snake or camel). */
 export type NormalizedOtaStatusEvent = {

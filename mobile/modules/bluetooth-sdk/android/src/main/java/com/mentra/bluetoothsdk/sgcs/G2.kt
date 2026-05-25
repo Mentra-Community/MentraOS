@@ -1,4 +1,4 @@
-package com.mentra.core.sgcs
+package com.mentra.bluetoothsdk.sgcs
 
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothGatt
@@ -19,10 +19,10 @@ import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.util.Base64
-import com.mentra.core.Bridge
-import com.mentra.core.CoreManager
-import com.mentra.core.GlassesStore
-import com.mentra.core.utils.DeviceTypes
+import com.mentra.bluetoothsdk.Bridge
+import com.mentra.bluetoothsdk.DeviceManager
+import com.mentra.bluetoothsdk.DeviceStore
+import com.mentra.bluetoothsdk.utils.DeviceTypes
 import java.io.ByteArrayOutputStream
 import java.util.TimeZone
 import java.util.UUID
@@ -1066,7 +1066,7 @@ class G2 : SGCManager() {
             val old = _batteryLevel
             _batteryLevel = value
             if (value != old && value >= 0) {
-                GlassesStore.apply("glasses", "batteryLevel", value)
+                DeviceStore.apply("glasses", "batteryLevel", value)
                 Bridge.sendBatteryStatus(value, isCharging)
             }
         }
@@ -1569,7 +1569,7 @@ class G2 : SGCManager() {
                                                                 "G2: Auth sequence complete, glasses ready"
                                                         )
 
-                                                        // Set device_name so CoreManager can save
+                                                        // Set device_name so DeviceManager can save
                                                         // it for reconnection
                                                         val peripheralName =
                                                                 rightGatt?.device?.name
@@ -1579,8 +1579,8 @@ class G2 : SGCManager() {
                                                                     deviceNameToSerialNumber[it]
                                                                 }
                                                         if (serialNumber != null) {
-                                                            GlassesStore.apply(
-                                                                    "core",
+                                                            DeviceStore.apply(
+                                                                    "bluetooth",
                                                                     "device_name",
                                                                     serialNumber
                                                             )
@@ -1595,27 +1595,18 @@ class G2 : SGCManager() {
                                                                 rightGatt?.device?.name
                                                                         ?: leftGatt?.device?.name
                                                                                 ?: ""
-                                                        GlassesStore.apply(
+                                                        DeviceStore.apply(
                                                                 "glasses",
                                                                 "bluetoothName",
                                                                 btName
                                                         )
-                                                        GlassesStore.apply(
+                                                        DeviceStore.apply(
                                                                 "glasses",
                                                                 "deviceModel",
                                                                 DeviceTypes.G2
                                                         )
 
-                                                        GlassesStore.apply(
-                                                                "glasses",
-                                                                "connected",
-                                                                true
-                                                        )
-                                                        GlassesStore.apply(
-                                                                "glasses",
-                                                                "fullyBooted",
-                                                                true
-                                                        )
+                                                        setFullyConnected()
 
                                                         // Connect a controller if we have one
                                                         connectController()
@@ -1732,7 +1723,7 @@ class G2 : SGCManager() {
     }
 
     private fun sendEvenHubHeartbeat() {
-        val isFullyBooted = GlassesStore.get("glasses", "fullyBooted") as? Boolean ?: false
+        val isFullyBooted = DeviceStore.get("glasses", "fullyBooted") as? Boolean ?: false
         if (!isFullyBooted) {
             return
         }
@@ -1747,7 +1738,7 @@ class G2 : SGCManager() {
     }
 
     private fun sendDevSettingsHeartbeat() {
-        val isFullyBooted = GlassesStore.get("glasses", "fullyBooted") as? Boolean ?: false
+        val isFullyBooted = DeviceStore.get("glasses", "fullyBooted") as? Boolean ?: false
         if (!isFullyBooted) {
             return
         }
@@ -1763,7 +1754,7 @@ class G2 : SGCManager() {
 
     private fun sendMenuApps() {
         val menuItems =
-                GlassesStore.get("core", "menu_apps") as? List<Map<String, Any>> ?: emptyList()
+                DeviceStore.get("bluetooth", "menu_apps") as? List<Map<String, Any>> ?: emptyList()
         if (menuItems.isNotEmpty()) {
             setDashboardMenu(menuItems)
         }
@@ -2338,11 +2329,11 @@ class G2 : SGCManager() {
 
     override fun setMicEnabled(enabled: Boolean) {
         Bridge.log("G2: setMicEnabled($enabled)")
-        val currentEnabled = GlassesStore.get("glasses", "micEnabled") as? Boolean ?: false
+        val currentEnabled = DeviceStore.get("glasses", "micEnabled") as? Boolean ?: false
 
         // if already enabled, set to disabled, then send enabled after 500ms:
         if (currentEnabled && enabled) {
-            GlassesStore.apply("glasses", "micEnabled", true)
+            DeviceStore.apply("glasses", "micEnabled", true)
             val msg = EvenHubProto.audioControlMessage(false)
             sendEvenHubCommand(msg)
             mainHandler.postDelayed({
@@ -2351,7 +2342,7 @@ class G2 : SGCManager() {
             }, 500)
             return
         }
-        GlassesStore.apply("glasses", "micEnabled", enabled)
+        DeviceStore.apply("glasses", "micEnabled", enabled)
         val msg = EvenHubProto.audioControlMessage(enabled)
         sendEvenHubCommand(msg)
     }
@@ -2478,8 +2469,8 @@ class G2 : SGCManager() {
         activeMenuAppId = null
         lastClickTimestamp = null
         lastMenuSelectTimestamp = null
-        GlassesStore.apply("glasses", "connected", false)
-        GlassesStore.apply("glasses", "fullyBooted", false)
+        DeviceStore.apply("glasses", "connected", false)
+        DeviceStore.apply("glasses", "fullyBooted", false)
     }
 
     override fun forget() {
@@ -2521,7 +2512,7 @@ class G2 : SGCManager() {
     }
 
     fun reconnectController() {
-        val mac = GlassesStore.get("glasses", "controllerMacAddress") as? String
+        val mac = DeviceStore.get("glasses", "controllerMacAddress") as? String
         if (mac.isNullOrEmpty()) {
             Bridge.log("G2: reconnectController - no MAC address found")
             return
@@ -2530,12 +2521,12 @@ class G2 : SGCManager() {
     }
 
     override fun connectController() {
-        val isFullyBooted = GlassesStore.get("glasses", "fullyBooted") as? Boolean ?: false
+        val isFullyBooted = DeviceStore.get("glasses", "fullyBooted") as? Boolean ?: false
         if (!isFullyBooted) {
             Bridge.log("G2: connectController - g2 not fully booted, ignoring")
             return
         }
-        val mac = GlassesStore.get("glasses", "controllerMacAddress") as? String
+        val mac = DeviceStore.get("glasses", "controllerMacAddress") as? String
         if (mac.isNullOrEmpty()) {
             Bridge.log("G2: connectController - no MAC address found")
             return
@@ -2553,12 +2544,12 @@ class G2 : SGCManager() {
     }
 
     override fun disconnectController() {
-        val isFullyBooted = GlassesStore.get("glasses", "fullyBooted") as? Boolean ?: false
+        val isFullyBooted = DeviceStore.get("glasses", "fullyBooted") as? Boolean ?: false
         if (!isFullyBooted) {
             Bridge.log("G2: disconnectController - g2 not fully booted, ignoring")
             return
         }
-        val mac = GlassesStore.get("glasses", "controllerMacAddress") as? String
+        val mac = DeviceStore.get("glasses", "controllerMacAddress") as? String
         if (mac.isNullOrEmpty()) {
             Bridge.log("G2: disconnectController - no MAC address found")
             return
@@ -2571,9 +2562,9 @@ class G2 : SGCManager() {
         val macData = hexParts.toByteArray()
         val msg = DevSettingsProto.ringConnectInfo(sendManager.nextMagicRandom(), false, macData)
         sendDevSettingsCommand(msg)
-        // GlassesStore.apply("glasses", "controllerMacAddress", "")
-        GlassesStore.apply("glasses", "controllerConnected", false)
-        GlassesStore.apply("glasses", "controllerFullyBooted", false)
+        // DeviceStore.apply("glasses", "controllerMacAddress", "")
+        DeviceStore.apply("glasses", "controllerConnected", false)
+        DeviceStore.apply("glasses", "controllerFullyBooted", false)
         Bridge.log("G2: Sent RING_DISCONNECT_INFO for MAC $mac")
     }
 
@@ -2619,8 +2610,8 @@ class G2 : SGCManager() {
             packageName: String?,
             action: String,
             color: String?,
-            ontime: Int,
-            offtime: Int,
+            onDurationMs: Int,
+            offDurationMs: Int,
             count: Int
     ) {
         // G2 doesn't have RGB LEDs
@@ -2720,10 +2711,10 @@ class G2 : SGCManager() {
                             val mac = extractMacFromScanRecord(result)
                             if (mac != null) {
                                 if (name.contains("_L_")) {
-                                    GlassesStore.apply("glasses", "leftMacAddress", mac)
-                                    GlassesStore.apply("glasses", "btMacAddress", mac)
+                                    DeviceStore.apply("glasses", "leftMacAddress", mac)
+                                    DeviceStore.apply("glasses", "bluetoothMacAddress", mac)
                                 } else if (name.contains("_R_")) {
-                                    GlassesStore.apply("glasses", "rightMacAddress", mac)
+                                    DeviceStore.apply("glasses", "rightMacAddress", mac)
                                 }
                             }
                             // Stop scanning once we have both
@@ -2948,8 +2939,8 @@ class G2 : SGCManager() {
                         startupPageCreated = false
                         pageCreated = false
                         pageHasTextContainer = false
-                        GlassesStore.apply("glasses", "connected", false)
-                        GlassesStore.apply("glasses", "fullyBooted", false)
+                        DeviceStore.apply("glasses", "connected", false)
+                        DeviceStore.apply("glasses", "fullyBooted", false)
 
                         startReconnectionTimer()
                     }
@@ -3212,26 +3203,26 @@ class G2 : SGCManager() {
     }
 
     private fun setFullyConnected() {
-        val isFullyConnected = GlassesStore.get("glasses", "connected") as? Boolean ?: false
-        val isFullyBooted = GlassesStore.get("glasses", "fullyBooted") as? Boolean ?: false
+        val isFullyConnected = DeviceStore.get("glasses", "connected") as? Boolean ?: false
+        val isFullyBooted = DeviceStore.get("glasses", "fullyBooted") as? Boolean ?: false
         if (!isFullyConnected) {
-            GlassesStore.apply("glasses", "connected", true)
+            DeviceStore.apply("glasses", "connected", true)
         }
         if (!isFullyBooted) {
-            GlassesStore.apply("glasses", "fullyBooted", true)
+            DeviceStore.apply("glasses", "fullyBooted", true)
         }
     }
 
     private fun setControllerFullyConnected() {
         val isControllerConnected =
-                GlassesStore.get("glasses", "controllerConnected") as? Boolean ?: false
+                DeviceStore.get("glasses", "controllerConnected") as? Boolean ?: false
         val isControllerFullyBooted =
-                GlassesStore.get("glasses", "controllerFullyBooted") as? Boolean ?: false
+                DeviceStore.get("glasses", "controllerFullyBooted") as? Boolean ?: false
         if (!isControllerConnected) {
-            GlassesStore.apply("glasses", "controllerConnected", true)
+            DeviceStore.apply("glasses", "controllerConnected", true)
         }
         if (!isControllerFullyBooted) {
-            GlassesStore.apply("glasses", "controllerFullyBooted", true)
+            DeviceStore.apply("glasses", "controllerFullyBooted", true)
         }
     }
 
@@ -3276,9 +3267,9 @@ class G2 : SGCManager() {
 
             if (eventType == OsEventType.DOUBLE_CLICK) {
                 // trigger dashboard:
-                val isHeadUp = GlassesStore.get("glasses", "headUp") as? Boolean ?: false
+                val isHeadUp = DeviceStore.get("glasses", "headUp") as? Boolean ?: false
                 // toggle head up:
-                GlassesStore.apply("glasses", "headUp", !isHeadUp)
+                DeviceStore.apply("glasses", "headUp", !isHeadUp)
                 // if (isHeadUp) {
                 //     // clear the display after a delay:
                 //     mainHandler.postDelayed({ clearDisplay() }, 500)
@@ -3294,8 +3285,8 @@ class G2 : SGCManager() {
                 currentTextContent = ""
                 currentBitmapBase64 = ""
                 // Firmware kills the mic on system exit; re-arm it if it should be on
-                GlassesStore.apply("glasses", "micEnabled", false)
-                CoreManager.getInstance().updateMicState()
+                DeviceStore.apply("glasses", "micEnabled", false)
+                DeviceManager.getInstance().updateMicState()
             }
             return
         }
@@ -3380,12 +3371,12 @@ class G2 : SGCManager() {
 
                 if ((ringFields[1] as? Int ?: 0) == 1) {
                     Bridge.log("G2: Ring maybe connected?")
-                    GlassesStore.apply("glasses", "controllerFullyBooted", true)
+                    DeviceStore.apply("glasses", "controllerFullyBooted", true)
                 }
 
                 if ((ringFields[4] as? Int ?: 0) == 62) {
                     Bridge.log("G2: Ring maybe reconnected?")
-                    GlassesStore.apply("glasses", "controllerFullyBooted", true)
+                    DeviceStore.apply("glasses", "controllerFullyBooted", true)
                 }
 
                 val connStatus = ringFields[4] as? Int ?: -1
@@ -3393,15 +3384,15 @@ class G2 : SGCManager() {
 
                 if (connStatus == 22) {
                     Bridge.log("G2: Ring disconnected")
-                    GlassesStore.apply("glasses", "controllerFullyBooted", false)
-                    GlassesStore.apply("glasses", "controllerSearching", true)
+                    DeviceStore.apply("glasses", "controllerFullyBooted", false)
+                    DeviceStore.apply("glasses", "controllerSearching", true)
                     reconnectController()
                 }
 
                 if (connStatus == 8) {
                     Bridge.log("G2: Ring maybe disconnected?")
-                    // GlassesStore.apply("glasses", "controllerFullyBooted", false)
-                    // GlassesStore.apply("glasses", "controllerSearching", true)
+                    // DeviceStore.apply("glasses", "controllerFullyBooted", false)
+                    // DeviceStore.apply("glasses", "controllerSearching", true)
                     // reconnectController()
                 }
             }
@@ -3457,8 +3448,8 @@ class G2 : SGCManager() {
         if (payload.contentEquals(byteArrayOf(0x08, 0x01, 0x1A, 0x00))) {
             Bridge.log("G2: gesture_ctrl response: dashboard closed")
             // Re-send mic on / update mic state
-            GlassesStore.apply("glasses", "micEnabled", false)
-            CoreManager.getInstance().updateMicState()
+            DeviceStore.apply("glasses", "micEnabled", false)
+            DeviceManager.getInstance().updateMicState()
             // Reset the text container
             sendTextWall(" ")
         }
@@ -3505,14 +3496,14 @@ class G2 : SGCManager() {
         (fields[5] as? ByteArray)?.let { leftVer ->
             val leftVersion = String(leftVer, Charsets.UTF_8)
             Bridge.log("G2: Left firmware: $leftVersion")
-            GlassesStore.apply("glasses", "leftFirmwareVersion", leftVersion)
+            DeviceStore.apply("glasses", "leftFirmwareVersion", leftVersion)
         }
 
         (fields[6] as? ByteArray)?.let { rightVer ->
             val rightVersion = String(rightVer, Charsets.UTF_8)
             Bridge.log("G2: Right firmware: $rightVersion")
-            GlassesStore.apply("glasses", "rightFirmwareVersion", rightVersion)
-            GlassesStore.apply("glasses", "firmwareVersion", rightVersion)
+            DeviceStore.apply("glasses", "rightFirmwareVersion", rightVersion)
+            DeviceStore.apply("glasses", "firmwareVersion", rightVersion)
         }
     }
 
@@ -3540,14 +3531,14 @@ class G2 : SGCManager() {
         }
         lastAudioFrame = audioData
         Bridge.log("G2: audio data from $sourceKey: ${data.take(10).joinToString("") { String.format("%02X", it) }}")
-        CoreManager.getInstance().handleGlassesMicData(audioData, 40)
+        DeviceManager.getInstance().handleGlassesMicData(audioData, 40)
     }
 
     // ---------- Reconnection ----------
 
     private fun startReconnectionTimer() {
         reconnectionManager.start {
-            val isFullyBooted = GlassesStore.get("glasses", "fullyBooted") as? Boolean ?: false
+            val isFullyBooted = DeviceStore.get("glasses", "fullyBooted") as? Boolean ?: false
             if (isFullyBooted) {
                 Bridge.log("G2: Already connected, stopping reconnection")
                 return@start true

@@ -7,14 +7,14 @@ import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
-import {useGlassesStore} from "@/stores/glasses"
+import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSetting} from "@/stores/settings"
 import {getGlassesImage} from "@/utils/getGlassesImage"
 import {Group} from "@/components/ui"
 import {RouteButton} from "@/components/ui/RouteButton"
 
 import {Capabilities, DeviceTypes, getModelCapabilities} from "@/../../cloud/packages/types/src"
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 
 import OtaProgressSection from "@/components/glasses/OtaProgressSection"
 import {BatteryStatus} from "@/components/glasses/info/BatteryStatus"
@@ -35,7 +35,7 @@ function DeviceSettings() {
   )
   const [superMode] = useSetting(SETTINGS.super_mode.key)
   const [defaultButtonActionApp, setDefaultButtonActionApp] = useSetting(SETTINGS.default_button_action_app.key)
-  const glassesConnected = useGlassesStore((state) => state.connected)
+  const glassesConnected = useGlassesStore(selectGlassesConnected)
 
   const {push} = useNavigationStore.getState()
   const applets = useApps()
@@ -56,7 +56,7 @@ function DeviceSettings() {
       options: {allowDismiss: false},
     })
     if (result === 1) {
-      CoreModule.forget()
+      BluetoothSdk.forget()
       // useAppletStatusStore.getState().stopAllApplets()
       // useAppletStatusStore.getState().refreshApplets()
       // // give us a second to forget the glasses before going back
@@ -75,7 +75,7 @@ function DeviceSettings() {
     })
 
     if (result === 1) {
-      CoreModule.disconnect()
+      BluetoothSdk.disconnect()
     }
   }
 
@@ -240,7 +240,7 @@ export default function Glasses() {
   const {theme} = useAppTheme()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
   const {goBack} = useNavigationStore.getState()
-  const glassesConnected = useGlassesStore((state) => state.connected)
+  const glassesConnected = useGlassesStore(selectGlassesConnected)
 
   const formatGlassesTitle = (title: string) => title.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())
   let pageSubtitle

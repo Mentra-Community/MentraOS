@@ -1,0 +1,83 @@
+---
+title: "Troubleshooting"
+description: "Fix dependency, permission, scan, stream, and React Native build issues."
+icon: "circle-question"
+---
+
+## Android Dependency Resolution Fails
+
+- Confirm your app has `google()`, `mavenCentral()`, and any required SDK repository configured.
+- Confirm `com.mentra:bluetooth-sdk:<version>` matches the SDK version you are integrating.
+- Confirm Gradle can resolve the companion SDK artifacts.
+- If you are testing an unreleased SDK, publish the SDK and companion artifacts to `mavenLocal()` and include `mavenLocal()` in the app repositories.
+
+## Android Build Fails On Native Libraries
+
+- Confirm Android min SDK is at least `28`.
+- Confirm Java 17 is used by Gradle.
+- Confirm your app includes `pickFirsts += "**/libonnxruntime.so"` under `android.packaging.jniLibs`.
+- Confirm no app-level packaging rule excludes `libc++_shared.so`, ONNX Runtime, or SDK native libraries.
+- Clean only the app build output first. Do not delete SDK source artifacts unless you are intentionally resetting your workspace.
+
+## iOS Pod Install Fails
+
+Run:
+
+```bash
+pod repo update
+pod install --repo-update
+```
+
+Check that your iOS deployment target is at least `15.1` and that the `MentraBluetoothSDK` pod version exists.
+
+If your app also uses Firebase with static frameworks, Firebase modular header configuration belongs in your app, not in the Bluetooth SDK.
+
+## React Native Native Module Is Missing
+
+- Confirm you are running a development build or production native build. Expo Go cannot load `@mentra/bluetooth-sdk`.
+- Run `bunx expo prebuild` after adding the SDK plugin to `app.json`.
+- Confirm `@mentra/bluetooth-sdk` is installed in the app that is being prebuilt.
+- On iOS, run `pod install` inside the generated `ios/` directory or rerun `bunx expo run:ios`.
+- If you are testing a local SDK package, set `MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` to the same package path you installed with Bun.
+
+## Bluetooth Permission Problems
+
+- Android 12+ requires runtime Bluetooth scan/connect permissions.
+- Android scanning may require location permission or Location services depending on OS version and device policy.
+- On some Android 12+ devices, scans can start successfully but return zero callbacks until `ACCESS_FINE_LOCATION` is granted.
+- iOS requires `NSBluetoothAlwaysUsageDescription`.
+- Microphone/audio features require `RECORD_AUDIO` on Android and `NSMicrophoneUsageDescription` on iOS.
+
+## No Devices Found
+
+- Confirm the glasses are charged and in pairing mode.
+- Confirm OS Bluetooth permissions are granted.
+- On Android, confirm location permission is granted and device Location services are enabled.
+- Confirm the selected `DeviceModel` matches the target glasses family.
+- Stop and restart scanning from the UI instead of scanning indefinitely.
+- Try pairing from a clean Bluetooth state after forgetting the device.
+
+## Connected But No Events
+
+- Subscribe before connecting.
+- In React Native, render `useMentraBluetooth()` state for connection, battery, Wi-Fi, hotspot, scan, and SDK state. In native Android/iOS apps, log the SDK status objects.
+- Confirm the hardware feature is available on the connected model.
+- Watch SDK log callbacks for native diagnostics.
+
+## Optional Local Stream Preview Does Not Show Video
+
+- The local demo cloud is only needed when the starter app's Stream screen has **Use cloud server** enabled. If you are using that optional local stream preview, confirm the local demo cloud or MediaMTX helper is running.
+- Use the printed LAN URL, not `localhost`, in the example app's RTMP or WebRTC field.
+- Confirm the glasses, phone, and computer are on a network where local device-to-device traffic is allowed.
+- Confirm Mentra Live is connected to Wi-Fi before starting the stream.
+- For RTMP, the native iOS example embeds the derived HLS preview URL while live. You can also open or refresh the printed HLS preview URL on your computer after tapping **Start stream**.
+- If Docker is running in bridge mode, confirm UDP ports `8890` and `8189` are published.
+- If the helper picked the wrong network interface, restart it with `python3 examples/local-demo-cloud/server.py --host-ip <computer-lan-ip>`.
+
+## React Native Or Expo Apps
+
+React Native and Expo apps use the `@mentra/bluetooth-sdk` package and must run as development builds or production native builds. Expo Go cannot load the native SDK. Start from `examples/react-native` for Expo, `examples/android` for bare Android, or `examples/ios` for bare iOS.
+
+If Android prebuild succeeds but native linking fails, confirm the generated project includes `:lc3Lib` in `android/settings.gradle`. The SDK plugin adds this module automatically during prebuild.
+
+If iOS builds fail with missing Expo adapter symbols, rerun `bunx expo prebuild` so the SDK plugin can configure the Podfile for Expo module registration.

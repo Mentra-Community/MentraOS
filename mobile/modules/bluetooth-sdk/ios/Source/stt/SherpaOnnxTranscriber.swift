@@ -214,16 +214,13 @@ class SherpaOnnxTranscriber {
      * Feed PCM audio data (16-bit little endian) into the transcriber.
      * This method should be called continuously with short chunks (e.g., 100-300ms).
      *
-     * Note: Audio passed to this method is assumed to have already passed VAD elsewhere,
-     * so it's directly queued for processing without additional VAD checks.
+     * Audio is queued directly; microphone VAD gating is not applied in the SDK.
      */
     func acceptAudio(pcm16le: Data) {
         guard isRunning else {
             return
         }
 
-        // Directly queue the audio data for processing
-        // No VAD check here as it's assumed to be done upstream
         queueAudioData(pcm16le)
     }
 

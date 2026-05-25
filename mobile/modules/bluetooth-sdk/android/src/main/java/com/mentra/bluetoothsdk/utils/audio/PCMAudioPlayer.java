@@ -1,4 +1,4 @@
-package com.mentra.core.utils.audio;
+package com.mentra.bluetoothsdk.utils.audio;
 
 import android.content.Context;
 import android.media.AudioDeviceInfo;

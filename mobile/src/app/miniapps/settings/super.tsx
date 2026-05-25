@@ -1,5 +1,5 @@
 import {ScrollView, View} from "react-native"
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 
 import {Header, Screen} from "@/components/ignite"
 import ToggleSetting from "@/components/settings/ToggleSetting"
@@ -52,8 +52,8 @@ export default function SuperSettingsScreen() {
           </Group>
 
           <Group title="Debug">
-            <RouteButton label="dbg1()" onPress={() => CoreModule.dbg1()} />
-            <RouteButton label="dbg2()" onPress={() => CoreModule.dbg2()} />
+            <RouteButton label="dbg1()" onPress={() => BluetoothSdk.dbg1()} />
+            <RouteButton label="dbg2()" onPress={() => BluetoothSdk.dbg2()} />
             <RouteButton label="Stress Test (Jetsam)" onPress={() => push("/miniapps/settings/stress-test")} />
           </Group>
 

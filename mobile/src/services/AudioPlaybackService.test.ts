@@ -1,4 +1,4 @@
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {createAudioPlayer, setAudioModeAsync} from "expo-audio"
 
 import audioPlaybackService from "@/services/AudioPlaybackService"
@@ -44,7 +44,7 @@ describe("AudioPlaybackService", () => {
     jest.clearAllMocks()
     resetCoreModuleMock()
     mockPlayer.volume = 1
-    ;(CoreModule.getGlassesMediaVolume as jest.Mock).mockResolvedValue({vol: 1, statusCode: 0})
+    ;(BluetoothSdk.getGlassesMediaVolume as jest.Mock).mockResolvedValue({level: 1, statusCode: 0})
   })
 
   afterEach(() => {
@@ -70,21 +70,21 @@ describe("AudioPlaybackService", () => {
         shouldPlayInBackground: true,
       }),
     )
-    expect(CoreModule.setGlassesMediaVolume).toHaveBeenCalledWith(9)
+    expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenCalledWith(9)
     expect(mockPlayer.volume).toBe(0.25)
     expect(mockPlayer.replace).toHaveBeenCalledWith({uri: "https://example.com/audio.mp3"})
     expect(mockPlayer.play).toHaveBeenCalled()
-    expect(CoreModule.setOwnAppAudioPlaying).toHaveBeenCalledWith(true)
+    expect(BluetoothSdk.setOwnAppAudioPlaying).toHaveBeenCalledWith(true)
 
     const statusListener = getLatestStatusListener()
     statusListener({didJustFinish: true, duration: 2})
 
     expect(onComplete).toHaveBeenCalledWith("audio-1", true, null, 2000)
-    expect(CoreModule.setGlassesMediaVolume).toHaveBeenLastCalledWith(1)
+    expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenLastCalledWith(1)
 
     jest.advanceTimersByTime(500)
     await Promise.resolve()
-    expect(CoreModule.setOwnAppAudioPlaying).toHaveBeenLastCalledWith(false)
+    expect(BluetoothSdk.setOwnAppAudioPlaying).toHaveBeenLastCalledWith(false)
   })
 
   it("interrupts existing playback without restoring bumped volume until the replacement finishes", async () => {
@@ -95,13 +95,13 @@ describe("AudioPlaybackService", () => {
     await audioPlaybackService.play({requestId: "second", audioUrl: "https://example.com/two.mp3"}, secondComplete)
 
     expect(firstComplete).toHaveBeenCalledWith("first", true, null, expect.any(Number))
-    expect(CoreModule.setGlassesMediaVolume).toHaveBeenCalledTimes(1)
+    expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenCalledTimes(1)
     expect(createAudioPlayer).toHaveBeenCalledTimes(1)
 
     const statusListener = getLatestStatusListener()
     statusListener({didJustFinish: true, duration: 1})
 
     expect(secondComplete).toHaveBeenCalledWith("second", true, null, 1000)
-    expect(CoreModule.setGlassesMediaVolume).toHaveBeenLastCalledWith(1)
+    expect(BluetoothSdk.setGlassesMediaVolume).toHaveBeenLastCalledWith(1)
   })
 })

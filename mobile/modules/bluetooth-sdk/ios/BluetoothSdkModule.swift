@@ -1,16 +1,16 @@
 import ExpoModulesCore
 import Foundation
 
-public class CoreModule: Module, MentraBluetoothSDKDelegate {
+public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
     private var sdk: MentraBluetoothSDK?
 
     public func definition() -> ModuleDefinition {
-        Name("Core")
+        Name("BluetoothSdk")
 
         // Define events that can be sent to JavaScript
         Events(
             "glasses_status",
-            "core_status",
+            "bluetooth_status",
             "log",
             "device_discovered",
             "default_device_changed",
@@ -19,7 +19,8 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
             "button_press",
             "touch_event",
             "head_up",
-            "vad_status",
+            "voice_activity_detection_status",
+            "speaking_status",
             "battery_status",
             "wifi_status_change",
             "hotspot_status_change",
@@ -79,7 +80,7 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
-        Function("getCoreStatus") { () -> [String: Any] in
+        Function("getBluetoothStatus") { () -> [String: Any] in
             self.readOnMainActor {
                 self.bluetoothSdk().bluetoothStatus.values
             }
@@ -96,7 +97,7 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
                 let normalizedCategory = ObservableStore.normalizeCategory(category)
                 for (key, value) in values {
                     if value is NSNull { continue }
-                    GlassesStore.shared.apply(normalizedCategory, key, value)
+                    DeviceStore.shared.apply(normalizedCategory, key, value)
                 }
             }
         }
@@ -108,15 +109,9 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
             try? await sdk.displayEvent(DisplayEventRequest(values: params))
         }
 
-        AsyncFunction("displayText") { (params: [String: Any]) in
-            let request = DisplayTextRequest(
-                text: params["text"] as? String ?? "",
-                x: intValue(params["x"], defaultValue: 0),
-                y: intValue(params["y"], defaultValue: 0),
-                size: intValue(params["size"], defaultValue: 24)
-            )
+        AsyncFunction("displayText") { (text: String, x: Int?, y: Int?, size: Int?) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            try? await sdk.displayText(request)
+            try? await sdk.displayText(text, x: x ?? 0, y: y ?? 0, size: size ?? 24)
         }
 
         // MARK: - Connection Commands
@@ -159,7 +154,7 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
 
         AsyncFunction("connectDefaultController") {
             await MainActor.run {
-                CoreManager.shared.connectDefaultController()
+                DeviceManager.shared.connectDefaultController()
             }
         }
 
@@ -177,7 +172,7 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
 
         AsyncFunction("disconnectController") {
             await MainActor.run {
-                CoreManager.shared.disconnectController()
+                DeviceManager.shared.disconnectController()
             }
         }
 
@@ -189,14 +184,19 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
 
         AsyncFunction("forgetController") {
             await MainActor.run {
-                CoreManager.shared.forgetController()
+                DeviceManager.shared.forgetController()
             }
         }
 
-        AsyncFunction("startScan") { (params: [String: Any]) in
+        AsyncFunction("startScan") { (model: String) in
             try await MainActor.run {
-                let model = params["model"] as? String ?? DeviceTypes.LIVE
                 try self.bluetoothSdk().startScan(model: DeviceModel.fromDeviceType(model))
+            }
+        }
+
+        AsyncFunction("stopScan") {
+            await MainActor.run {
+                self.bluetoothSdk().stopScan()
             }
         }
 
@@ -214,21 +214,21 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
 
         AsyncFunction("ping") {
             await MainActor.run {
-                CoreManager.shared.ping()
+                DeviceManager.shared.ping()
             }
         }
 
         AsyncFunction("dbg1") {
             await MainActor.run {
-                CoreManager.shared.dbg1()
-                CoreManager.shared.sgc?.dbg1()
+                DeviceManager.shared.dbg1()
+                DeviceManager.shared.sgc?.dbg1()
             }
         }
 
         AsyncFunction("dbg2") {
             await MainActor.run {
-                CoreManager.shared.dbg2()
-                CoreManager.shared.sgc?.dbg2()
+                DeviceManager.shared.dbg2()
+                DeviceManager.shared.sgc?.dbg2()
             }
         }
 
@@ -292,21 +292,14 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
 
         // MARK: - Gallery Commands
 
-        AsyncFunction("setGalleryMode") { (mode: String) in
-            let galleryMode: GalleryMode
-            switch mode.lowercased() {
-            case "auto":
-                galleryMode = .auto
-            case "manual":
-                galleryMode = .manual
-            default:
-                throw BluetoothError(
-                    code: "invalid_gallery_mode",
-                    message: "setGalleryMode mode must be \"auto\" or \"manual\"."
-                )
-            }
+        AsyncFunction("setGalleryModeEnabled") { (enabled: Bool) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            try await sdk.setGalleryMode(galleryMode)
+            try await sdk.setGalleryModeEnabled(enabled)
+        }
+
+        AsyncFunction("setVoiceActivityDetectionEnabled") { (enabled: Bool) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            try await sdk.setVoiceActivityDetectionEnabled(enabled)
         }
 
         AsyncFunction("queryGalleryStatus") {
@@ -315,11 +308,11 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
-        AsyncFunction("photoRequest") { (params: [String: Any]) in
+        AsyncFunction("requestPhoto") { (params: [String: Any]) in
             let requestId = params["requestId"] as? String ?? ""
             let appId = params["appId"] as? String ?? ""
             Bridge.log(
-                "NATIVE: PHOTO PIPELINE [3/6] CoreModule.photoRequest requestId=\(requestId) appId=\(appId)"
+                "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=\(requestId) appId=\(appId)"
             )
             let size = params["size"] as? String ?? "medium"
             let webhookUrl = params["webhookUrl"] as? String ?? ""
@@ -394,10 +387,10 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
 
         // MARK: - Video Recording Commands
 
-        AsyncFunction("startVideoRecording") { (requestId: String, save: Bool, flash: Bool, sound: Bool) in
+        AsyncFunction("startVideoRecording") { (requestId: String, save: Bool, sound: Bool) in
             await MainActor.run {
                 self.bluetoothSdk().startVideoRecording(
-                    VideoRecordingRequest(requestId: requestId, save: save, flash: flash, sound: sound)
+                    VideoRecordingRequest(requestId: requestId, save: save, sound: sound)
                 )
             }
         }
@@ -437,11 +430,11 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
         }
 
         AsyncFunction("getGlassesMediaVolume") { () async throws -> [String: Any] in
-            try await CoreManager.shared.getGlassesMediaVolume()
+            try await DeviceManager.shared.getGlassesMediaVolume()
         }
 
         AsyncFunction("setGlassesMediaVolume") { (level: Int) async throws -> [String: Any] in
-            try await CoreManager.shared.setGlassesMediaVolume(level: level)
+            try await DeviceManager.shared.setGlassesMediaVolume(level: level)
         }
 
         // MARK: - RGB LED Control
@@ -449,7 +442,7 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("rgbLedControl") {
             (
                 requestId: String, packageName: String?, action: String, color: String?,
-                ontime: Int, offtime: Int, count: Int
+                onDurationMs: Int, offDurationMs: Int, count: Int
             ) in
             await MainActor.run {
                 self.bluetoothSdk().rgbLedControl(
@@ -458,8 +451,8 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
                         packageName: packageName,
                         action: RgbLedAction(rawValue: action) ?? .off,
                         color: color.flatMap(RgbLedColor.init(rawValue:)),
-                        ontime: ontime,
-                        offtime: offtime,
+                        onDurationMs: onDurationMs,
+                        offDurationMs: offDurationMs,
                         count: count
                     )
                 )
@@ -468,21 +461,25 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
 
         // MARK: - Microphone Commands
 
-        AsyncFunction("setMicState") { (sendPcmData: Bool, sendTranscript: Bool, bypassVad: Bool) in
+        AsyncFunction("setMicState") { (
+            enabled: Bool,
+            useGlassesMic: Bool?,
+            sendTranscript: Bool?,
+            sendLc3Data: Bool?
+        ) in
             await MainActor.run {
                 self.bluetoothSdk().setMicState(
-                    MicConfiguration(
-                        sendPcmData: sendPcmData,
-                        sendTranscript: sendTranscript,
-                        bypassVad: bypassVad
-                    )
+                    enabled: enabled,
+                    useGlassesMic: useGlassesMic ?? true,
+                    sendTranscript: sendTranscript ?? false,
+                    sendLc3Data: sendLc3Data ?? false
                 )
             }
         }
 
         AsyncFunction("restartTranscriber") {
             await MainActor.run {
-                CoreManager.shared.restartTranscriber()
+                DeviceManager.shared.restartTranscriber()
             }
         }
 
@@ -542,27 +539,14 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
         }
     }
 
-    private func intValue(_ value: Any?, defaultValue: Int) -> Int {
-        switch value {
-        case let value as Int:
-            return value
-        case let value as Double:
-            return Int(value)
-        case let value as NSNumber:
-            return value.intValue
-        default:
-            return defaultValue
-        }
+    @MainActor
+    public func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateGlasses _: GlassesRuntimeState) {
+        sendEvent("glasses_status", sdk.glassesStatus.dictionary)
     }
 
     @MainActor
-    public func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateGlassesStatus status: GlassesStatusUpdate) {
-        sendEvent("glasses_status", status.dictionary)
-    }
-
-    @MainActor
-    public func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateBluetoothStatus status: BluetoothStatusUpdate) {
-        sendEvent("core_status", status.values)
+    public func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didUpdateSdkState _: PhoneSdkRuntimeState) {
+        sendEvent("bluetooth_status", sdk.bluetoothStatus.values)
     }
 
     @MainActor
@@ -579,7 +563,7 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
             "compatible_glasses_search_stop",
             [
                 "type": "compatible_glasses_search_stop",
-                "device_model": deviceModel,
+                "deviceModel": deviceModel,
             ]
         )
     }
@@ -598,6 +582,10 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
             )
         case let .touch(touch):
             sendEvent("touch_event", touch.values)
+        case let .voiceActivityDetectionStatus(status):
+            sendEvent("voice_activity_detection_status", status.values)
+        case let .speakingStatus(status):
+            sendEvent("speaking_status", status.values)
         case let .wifiStatus(status):
             sendEvent("wifi_status_change", status.values)
         case let .hotspotStatus(status):
@@ -618,13 +606,13 @@ public class CoreModule: Module, MentraBluetoothSDKDelegate {
     }
 
     @MainActor
-    public func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceiveMicPcm frame: Data) {
-        sendEvent("mic_pcm", ["pcm": frame])
+    public func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceiveMicPcm event: MicPcmEvent) {
+        sendEvent("mic_pcm", event.values)
     }
 
     @MainActor
-    public func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceiveMicLc3 frame: Data) {
-        sendEvent("mic_lc3", ["lc3": frame])
+    public func mentraBluetoothSDK(_: MentraBluetoothSDK, didReceiveMicLc3 event: MicLc3Event) {
+        sendEvent("mic_lc3", event.values)
     }
 
     @MainActor
