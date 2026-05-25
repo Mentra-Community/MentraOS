@@ -22,7 +22,7 @@ import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.utils.SysProp;
-import com.mentra.asg_client.SysControl;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -361,7 +361,7 @@ public class K900CommandHandler {
             Log.i(TAG, "🔌 Initiating MTK shutdown...");
             Context context = serviceManager != null ? serviceManager.getContext() : null;
             if (context != null) {
-                SysControl.shut(context);
+                SystemControllerFactory.get(context).shutdown();
             } else {
                 Log.e(TAG, "🔌 Cannot shutdown - context not available");
             }
@@ -417,7 +417,7 @@ public class K900CommandHandler {
                 return;
             }
 
-            boolean sent = serviceManager.getBluetoothManager().sendData(
+            boolean sent = serviceManager.getBluetoothManager().sendMessage(
                 commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
             if (sent) {
@@ -535,7 +535,7 @@ public class K900CommandHandler {
             String commandStr = k900Command.toString();
             Log.d(TAG, "📤 Sending mh_logs: " + commandStr);
 
-            boolean sent = serviceManager.getBluetoothManager().sendData(
+            boolean sent = serviceManager.getBluetoothManager().sendMessage(
                 commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
             if (sent) {
@@ -591,7 +591,7 @@ public class K900CommandHandler {
             Log.d(TAG, "📤 Sending sh_syvr request: " + commandStr);
 
             // Send via BluetoothManager - response handled by handleSystemVersionReport()
-            boolean sent = serviceManager.getBluetoothManager().sendData(
+            boolean sent = serviceManager.getBluetoothManager().sendMessage(
                 commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
             if (sent) {
@@ -630,7 +630,7 @@ public class K900CommandHandler {
                 return;
             }
 
-            boolean sent = serviceManager.getBluetoothManager().sendData(
+            boolean sent = serviceManager.getBluetoothManager().sendMessage(
                 commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
 
             if (sent) {
@@ -669,9 +669,8 @@ public class K900CommandHandler {
                 Log.d(TAG, "🔋 Battery voltage: " + newBatteryVoltage + "mV");
             }
 
-            // Notify K900HardwareManager of battery response (for cache update)
-            if (hardwareManager instanceof K900HardwareManager) {
-                ((K900HardwareManager) hardwareManager).onBatteryResponse(newBatteryPercentage, newBatteryVoltage);
+            if (hardwareManager != null) {
+                hardwareManager.notifyBatteryReading(newBatteryPercentage, newBatteryVoltage);
             }
 
             // Send battery status over BLE if we have valid data
@@ -725,7 +724,7 @@ public class K900CommandHandler {
             if (serviceManager == null || serviceManager.getBluetoothManager() == null) {
                 Log.e(TAG, "❌ ServiceManager or Bluetooth manager unavailable");
                 // Notify BesOtaManager of failure
-                BesOtaManager manager = BesOtaManager.getInstance();
+                BesOtaManager manager = serviceManager.getBesOtaManager();
                 if (manager != null) {
                     manager.onAuthorizationDenied();
                 }
@@ -735,14 +734,14 @@ public class K900CommandHandler {
             if (!serviceManager.getBluetoothManager().isConnected()) {
                 Log.e(TAG, "❌ Bluetooth not connected; cannot send BES OTA authorization request");
                 // Notify BesOtaManager of failure
-                BesOtaManager manager = BesOtaManager.getInstance();
+                BesOtaManager manager = serviceManager.getBesOtaManager();
                 if (manager != null) {
                     manager.onAuthorizationDenied();
                 }
                 return;
             }
 
-            boolean sent = serviceManager.getBluetoothManager().sendData(
+            boolean sent = serviceManager.getBluetoothManager().sendMessage(
                 commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             
             if (sent) {
@@ -750,7 +749,7 @@ public class K900CommandHandler {
             } else {
                 Log.e(TAG, "❌ Failed to send BES OTA authorization request");
                 // Notify BesOtaManager of failure
-                BesOtaManager manager = BesOtaManager.getInstance();
+                BesOtaManager manager = serviceManager.getBesOtaManager();
                 if (manager != null) {
                     manager.onAuthorizationDenied();
                 }
@@ -758,14 +757,14 @@ public class K900CommandHandler {
         } catch (JSONException e) {
             Log.e(TAG, "💥 Error creating BES OTA authorization request", e);
             // Notify BesOtaManager of failure
-            BesOtaManager manager = BesOtaManager.getInstance();
+            BesOtaManager manager = serviceManager.getBesOtaManager();
             if (manager != null) {
                 manager.onAuthorizationDenied();
             }
         } catch (Exception e) {
             Log.e(TAG, "💥 Error sending BES OTA authorization request", e);
             // Notify BesOtaManager of failure
-            BesOtaManager manager = BesOtaManager.getInstance();
+            BesOtaManager manager = serviceManager.getBesOtaManager();
             if (manager != null) {
                 manager.onAuthorizationDenied();
             }
@@ -789,7 +788,7 @@ public class K900CommandHandler {
         }
         
         // Notify BesOtaManager of authorization result
-        BesOtaManager manager = BesOtaManager.getInstance();
+        BesOtaManager manager = serviceManager.getBesOtaManager();
         if (manager != null) {
             if (authorized) {
                 manager.onAuthorizationGranted();
@@ -923,7 +922,7 @@ public class K900CommandHandler {
                 String jsonString = buttonObject.toString();
                 Log.d(TAG, "Formatted button press response: " + jsonString);
 
-                serviceManager.getBluetoothManager().sendData(jsonString.getBytes());
+                serviceManager.getBluetoothManager().sendMessage(jsonString.getBytes());
             } catch (JSONException e) {
                 Log.e(TAG, "Error creating button press response", e);
             }
@@ -952,7 +951,7 @@ public class K900CommandHandler {
                 obj.put("percent", batteryPercentage);
                 String jsonString = obj.toString();
                 Log.d(TAG, "Formatted battery status message: " + jsonString);
-                serviceManager.getBluetoothManager().sendData(jsonString.getBytes());
+                serviceManager.getBluetoothManager().sendMessage(jsonString.getBytes());
                 Log.d(TAG, "Sent battery status via BLE");
             } catch (JSONException e) {
                 Log.e(TAG, "Error creating battery status JSON", e);
@@ -962,7 +961,7 @@ public class K900CommandHandler {
 
     /**
      * Activate blue RGB LED
-     * Uses full K900 format (C, V, B) to avoid double-wrapping by K900ProtocolUtils
+     * Uses full K900 format (C, V, B) to avoid double-wrapping by BesWireFormat
      */
     private void activateBlueRgbLedViaService() {
         Log.d(TAG, "🚨 💙 activateBlueRgbLedViaService() called");
@@ -994,7 +993,7 @@ public class K900CommandHandler {
                 return;
             }
 
-            boolean sent = serviceManager.getBluetoothManager().sendData(
+            boolean sent = serviceManager.getBluetoothManager().sendMessage(
                 commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             
             if (sent) {
@@ -1065,7 +1064,7 @@ public class K900CommandHandler {
                 return;
             }
 
-            boolean sent = serviceManager.getBluetoothManager().sendData(commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            boolean sent = serviceManager.getBluetoothManager().sendMessage(commandStr.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             if (sent) {
                 Log.i(TAG, "✅ RGB LED control authority " + (claimControl ? "CLAIMED" : "RELEASED") + " successfully");
             } else {
@@ -1135,7 +1134,7 @@ public class K900CommandHandler {
                 
                 String jsonString = obj.toString();
                 Log.d(TAG, "📤 Sending switch status: " + jsonString);
-                serviceManager.getBluetoothManager().sendData(jsonString.getBytes());
+                serviceManager.getBluetoothManager().sendMessage(jsonString.getBytes());
             } catch (JSONException e) {
                 Log.e(TAG, "Error creating switch status JSON", e);
             }
@@ -1157,7 +1156,7 @@ public class K900CommandHandler {
                 
                 String jsonString = obj.toString();
                 Log.d(TAG, "📤 Sending touch event: " + jsonString);
-                serviceManager.getBluetoothManager().sendData(jsonString.getBytes());
+                serviceManager.getBluetoothManager().sendMessage(jsonString.getBytes());
             } catch (JSONException e) {
                 Log.e(TAG, "Error creating touch event JSON", e);
             }
@@ -1178,7 +1177,7 @@ public class K900CommandHandler {
                 
                 String jsonString = obj.toString();
                 Log.d(TAG, "📤 Sending swipe volume status: " + jsonString);
-                serviceManager.getBluetoothManager().sendData(jsonString.getBytes());
+                serviceManager.getBluetoothManager().sendMessage(jsonString.getBytes());
             } catch (JSONException e) {
                 Log.e(TAG, "Error creating swipe volume status JSON", e);
             }
