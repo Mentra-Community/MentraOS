@@ -733,7 +733,7 @@ struct ViewState {
         if !glassesMicEnabled || !glassesConnected {
             return
         }
-        
+
         let timeSinceLastLc3Event = Date().timeIntervalSince(lastLc3Event ?? Date())
         if timeSinceLastLc3Event > 5 {
             Bridge.log("MAN: No audio activity in the last 5 seconds from glasses, reinitializing glasses mic")
@@ -1196,10 +1196,12 @@ struct ViewState {
         _ compress: String?,
         _ flash: Bool,
         _ sound: Bool,
-        exposureTimeNs: Double? = nil
+        exposureTimeNs: Double? = nil,
+        iso: Int? = nil
     ) {
+        let manualIso = exposureTimeNs != nil ? iso.flatMap { $0 > 0 ? $0 : nil } : nil
         Bridge.log(
-            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(requestId) appId=\(appId) webhookUrl=\(webhookUrl ?? "nil") size=\(size) compress=\(compress ?? "none") flash=\(flash) sound=\(sound) exposureTimeNs=\(exposureTimeNs.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
+            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(requestId) appId=\(appId) webhookUrl=\(webhookUrl ?? "nil") size=\(size) compress=\(compress ?? "none") flash=\(flash) sound=\(sound) exposureTimeNs=\(exposureTimeNs.map { String($0) } ?? "nil") iso=\(manualIso.map { String($0) } ?? "auto") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
         )
         guard let sgc else {
             Bridge.log(
@@ -1209,7 +1211,7 @@ struct ViewState {
         }
         sgc.requestPhoto(
             requestId, appId: appId, size: size, webhookUrl: webhookUrl, authToken: authToken,
-            compress: compress, flash: flash, sound: sound, exposureTimeNs: exposureTimeNs
+            compress: compress, flash: flash, sound: sound, exposureTimeNs: exposureTimeNs, iso: manualIso
         )
     }
 

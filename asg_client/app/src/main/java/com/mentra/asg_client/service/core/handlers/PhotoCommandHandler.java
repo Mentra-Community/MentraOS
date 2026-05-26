@@ -80,9 +80,19 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             boolean flash = data.optBoolean("flash", true);
             boolean sound = data.optBoolean("sound", true);
             Long exposureTimeNs = PhotoExposureTimeNs.parse(data);
+            Integer requestedIso = PhotoIso.parse(data);
+            Integer iso = exposureTimeNs != null ? requestedIso : null;
             if (exposureTimeNs != null) {
                 Log.i(TAG, "Mentra Live using manual exposure time for take_photo request "
                         + requestId + ": " + exposureTimeNs + " ns");
+            }
+            if (requestedIso != null && exposureTimeNs == null) {
+                Log.i(TAG, "Mentra Live ignoring ISO for take_photo request "
+                        + requestId + " because exposureTimeNs was not set");
+            }
+            if (iso != null) {
+                Log.i(TAG, "Mentra Live using manual ISO for take_photo request "
+                        + requestId + ": ISO " + iso);
             }
 
             // Route SDK no-save captures into the sync-hidden _sdk_pending area so an in-flight
@@ -153,7 +163,7 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
             Log.i(TAG, "PHOTO PIPELINE [ASG 3/3] Starting capture requestId=" + requestId
                     + " transferMethod=" + transferMethod + " size=" + size);
             boolean success = processPhotoCapture(captureService, photoFilePath, requestId, webhookUrl, authToken,
-                                                 bleImgId, save, size, transferMethod, flash, sound, compress, exposureTimeNs);
+                                                 bleImgId, save, size, transferMethod, flash, sound, compress, exposureTimeNs, iso);
             logCommandResult("take_photo", success, success ? null : "Photo capture failed");
             if (success) {
                 Log.i(TAG, "PHOTO PIPELINE [ASG 3/3] Capture accepted requestId=" + requestId);
@@ -187,21 +197,21 @@ public class PhotoCommandHandler extends BaseMediaCommandHandler {
     private boolean processPhotoCapture(MediaCaptureService captureService, String photoFilePath,
                                       String requestId, String webhookUrl, String authToken, String bleImgId,
                                       boolean save, String size, String transferMethod, boolean flash, boolean sound, String compress,
-                                      Long exposureTimeNs) {
+                                      Long exposureTimeNs, Integer iso) {
         Log.d(TAG, "Processing photo capture with transfer method: " + transferMethod);
         switch (transferMethod) {
             case "ble":
-                captureService.takePhotoForBleTransfer(photoFilePath, requestId, bleImgId, save, size, flash, sound, exposureTimeNs);
+                captureService.takePhotoForBleTransfer(photoFilePath, requestId, bleImgId, save, size, flash, sound, exposureTimeNs, iso);
                 return true;
             case "auto":
                 if (bleImgId.isEmpty()) {
                     Log.e(TAG, "Auto mode requires bleImgId for fallback");
                     return false;
                 }
-                captureService.takePhotoAutoTransfer(photoFilePath, requestId, webhookUrl, authToken, bleImgId, save, size, flash, sound, compress, exposureTimeNs);
+                captureService.takePhotoAutoTransfer(photoFilePath, requestId, webhookUrl, authToken, bleImgId, save, size, flash, sound, compress, exposureTimeNs, iso);
                 return true;
             default:
-                captureService.takePhotoAndUpload(photoFilePath, requestId, webhookUrl, authToken, save, size, flash, sound, compress, exposureTimeNs);
+                captureService.takePhotoAndUpload(photoFilePath, requestId, webhookUrl, authToken, save, size, flash, sound, compress, exposureTimeNs, iso);
                 return true;
         }
     }

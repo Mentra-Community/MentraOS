@@ -254,6 +254,8 @@ export type PhotoRequestParams = {
   compress: PhotoCompression
   sound: boolean
   exposureTimeNs?: number | null
+  /** Sensor ISO for this capture only. Only used when exposureTimeNs enables manual exposure. */
+  iso?: number | null
 }
 
 export type StreamVideoConfig = {

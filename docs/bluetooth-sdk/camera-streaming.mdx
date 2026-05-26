@@ -22,6 +22,8 @@ await BluetoothSdk.requestPhoto({
   authToken: 'optional-token',
   compress: 'medium',
   sound: true,
+  exposureTimeNs: null,
+  iso: null,
 });
 ```
 
@@ -38,6 +40,8 @@ sdk.requestPhoto(
         authToken = "optional-token",
         compress = PhotoCompression.MEDIUM,
         sound = true,
+        exposureTimeNs = null,
+        iso = null,
     )
 )
 ```
@@ -54,7 +58,9 @@ sdk.requestPhoto(
         webhookUrl: "https://api.example.com/mentra/photo",
         authToken: "optional-token",
         compress: .medium,
-        sound: true
+        sound: true,
+        exposureTimeNs: nil,
+        iso: nil
     )
 )
 ```
@@ -63,6 +69,8 @@ sdk.requestPhoto(
 </Tabs>
 
 The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
+
+For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `exposureTimeNs` is sensor exposure time in nanoseconds; `iso` is sensor ISO. If `exposureTimeNs` is omitted, `null` / `nil`, invalid, or unsupported by the connected glasses, the camera uses auto exposure and ignores `iso`.
 
 ## Gallery Mode
 

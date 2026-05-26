@@ -46,7 +46,7 @@ class MentraNexSGC: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate, SG
 
     func requestPhoto(
         _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
-        compress _: String?, flash _: Bool, sound _: Bool, exposureTimeNs _: Double?
+        compress _: String?, flash _: Bool, sound _: Bool, exposureTimeNs _: Double?, iso _: Int?
     ) {}
 
     func startStream(_: [String: Any]) {}

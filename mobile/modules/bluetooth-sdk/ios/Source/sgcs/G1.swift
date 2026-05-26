@@ -278,7 +278,7 @@ class G1: NSObject, SGCManager {
 
     func requestPhoto(
         _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
-        compress _: String?, flash _: Bool, sound _: Bool, exposureTimeNs _: Double?
+        compress _: String?, flash _: Bool, sound _: Bool, exposureTimeNs _: Double?, iso _: Int?
     ) {}
 
     func startStream(_: [String: Any]) {}
@@ -1813,7 +1813,8 @@ extension G1 {
         ctx.draw(cgImage, in: CGRect(x: offsetX, y: offsetY, width: scaledW, height: scaledH))
 
         guard let renderedImage = ctx.makeImage(),
-              let pixels = renderedImage.dataProvider?.data as Data? else {
+              let pixels = renderedImage.dataProvider?.data as Data?
+        else {
             Bridge.log("G1: convertToG1Bmp - failed to get pixel data")
             return nil
         }
@@ -1850,9 +1851,9 @@ extension G1 {
         bmp.append(contentsOf: [0xFF, 0xFF, 0xFF, 0x00]) // white
 
         // Pixel data (bottom-up row order for BMP)
-        for row in (0..<height).reversed() {
+        for row in (0 ..< height).reversed() {
             var rowData = [UInt8](repeating: 0, count: rowBytes)
-            for col in 0..<width {
+            for col in 0 ..< width {
                 let pixelIndex = row * width + col
                 let gray = pixels[pixelIndex]
                 if gray >= 128 {

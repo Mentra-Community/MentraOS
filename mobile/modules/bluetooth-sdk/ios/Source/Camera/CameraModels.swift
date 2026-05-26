@@ -71,6 +71,8 @@ public struct PhotoRequest {
     public let sound: Bool
     /// Sensor exposure time for this capture only (ns), or nil for auto exposure
     public let exposureTimeNs: Double?
+    /// Sensor ISO for this capture only. Only used when exposureTimeNs enables manual exposure.
+    public let iso: Int?
 
     public init(
         requestId: String,
@@ -81,7 +83,8 @@ public struct PhotoRequest {
         compress: PhotoCompression? = nil,
         flash: Bool = true,
         sound: Bool,
-        exposureTimeNs: Double? = nil
+        exposureTimeNs: Double? = nil,
+        iso: Int? = nil
     ) {
         self.requestId = requestId
         self.appId = appId
@@ -92,6 +95,7 @@ public struct PhotoRequest {
         self.flash = flash
         self.sound = sound
         self.exposureTimeNs = exposureTimeNs
+        self.iso = iso
     }
 }
 
@@ -236,7 +240,7 @@ public struct PhotoResponseEvent: CustomStringConvertible {
     }
 
     public init(values: [String: Any]) {
-        self.response = PhotoResponse(values: values)
+        response = PhotoResponse(values: values)
     }
 
     public var requestId: String {

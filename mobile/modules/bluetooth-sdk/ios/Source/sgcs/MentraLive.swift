@@ -1313,10 +1313,10 @@ class MentraLive: NSObject, SGCManager {
 
     func requestPhoto(
         _ requestId: String, appId: String, size: String?, webhookUrl: String?, authToken: String?,
-        compress: String?, flash: Bool, sound: Bool, exposureTimeNs: Double?
+        compress: String?, flash: Bool, sound: Bool, exposureTimeNs: Double?, iso: Int?
     ) {
         Bridge.log(
-            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(requestId) appId=\(appId) flash=\(flash) sound=\(sound)"
+            "LIVE: PHOTO PIPELINE [5/6] requestPhoto() entry requestId=\(requestId) appId=\(appId) flash=\(flash) sound=\(sound) iso=\(iso.map { String($0) } ?? "auto")"
         )
 
         var json: [String: Any] = [
@@ -1367,6 +1367,10 @@ class MentraLive: NSObject, SGCManager {
         if let e = exposureTimeNs, e.isFinite, e > 0, e <= Double(Int64.max) {
             Bridge.log("LIVE: Using manual exposure time for photo request \(requestId): \(Int64(e)) ns")
             json["exposureTimeNs"] = Int64(e)
+        }
+        if let iso, iso > 0 {
+            Bridge.log("LIVE: Using manual ISO for photo request \(requestId): ISO \(iso)")
+            json["iso"] = iso
         }
 
         Bridge.log("LIVE: PHOTO PIPELINE [5b/6] take_photo JSON ready bleImgId=\(bleImgId) transferMethod=auto")

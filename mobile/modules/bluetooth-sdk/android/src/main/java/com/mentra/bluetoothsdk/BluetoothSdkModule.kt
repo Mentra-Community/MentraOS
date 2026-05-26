@@ -383,7 +383,7 @@ class BluetoothSdkModule : Module() {
                     }.toMap()
             val req = PhotoRequest.fromMap(sanitized)
             Bridge.log(
-                    "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=${req.requestId} appId=${req.appId} size=${req.size} compress=${req.compress} flash=${req.flash} sound=${req.sound} exposureTimeNs=${req.exposureTimeNs}"
+                    "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=${req.requestId} appId=${req.appId} size=${req.size} compress=${req.compress} flash=${req.flash} sound=${req.sound} exposureTimeNs=${req.exposureTimeNs} iso=${req.iso}"
             )
             val activeSdk = sdk
             if (activeSdk == null) {

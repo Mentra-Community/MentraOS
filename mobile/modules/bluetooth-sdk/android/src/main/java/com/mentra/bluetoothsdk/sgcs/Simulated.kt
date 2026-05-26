@@ -37,6 +37,7 @@ class Simulated : SGCManager() {
             flash: Boolean,
             sound: Boolean,
             exposureTimeNs: Long?,
+            iso: Int?,
     ) {
         Bridge.log("requestPhoto flash=$flash, sound=$sound")
     }

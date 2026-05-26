@@ -518,8 +518,13 @@ function photoRequestParamsForNative(params: PhotoRequestParams): Record<string,
   if (params.authToken != null && params.authToken.length > 0) {
     payload.authToken = params.authToken
   }
-  if (params.exposureTimeNs != null && Number.isFinite(params.exposureTimeNs) && params.exposureTimeNs > 0) {
-    payload.exposureTimeNs = params.exposureTimeNs
+  const exposureTimeNs = params.exposureTimeNs
+  const hasManualExposure = exposureTimeNs != null && Number.isFinite(exposureTimeNs) && exposureTimeNs > 0
+  if (hasManualExposure) {
+    payload.exposureTimeNs = exposureTimeNs
+  }
+  if (hasManualExposure && params.iso != null && Number.isFinite(params.iso) && params.iso > 0) {
+    payload.iso = Math.round(params.iso)
   }
   return payload
 }

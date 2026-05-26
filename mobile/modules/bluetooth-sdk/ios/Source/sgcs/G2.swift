@@ -2331,8 +2331,8 @@ class G2: NSObject, SGCManager {
             if useNativeDashboard && dashboardShowing > 0 {
                 return
             }
-            if (!pageCreated || !pageHasTextContainer) {
-                DeviceManager.shared.sendCurrentState()// should re-create the page if needed
+            if !pageCreated || !pageHasTextContainer {
+                DeviceManager.shared.sendCurrentState() // should re-create the page if needed
             }
             let msg = EvenHubProto.audioControlMessage(enable: true)
             self.sendEvenHubCommand(msg)
@@ -2647,7 +2647,7 @@ class G2: NSObject, SGCManager {
 
     func requestPhoto(
         _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
-        compress _: String?, flash _: Bool, sound _: Bool, exposureTimeNs _: Double?
+        compress _: String?, flash _: Bool, sound _: Bool, exposureTimeNs _: Double?, iso _: Int?
     ) {}
     func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {}
     func startStream(_: [String: Any]) {}
@@ -3441,7 +3441,7 @@ class G2: NSObject, SGCManager {
                 }
                 // do nothing this time since we just closed the dashboard
                 dashboardShowing -= 1
-                if (dashboardShowing < 0) {
+                if dashboardShowing < 0 {
                     dashboardShowing = 0
                 }
             }

@@ -29,10 +29,15 @@ export interface PhotoOptions {
   saveToGallery?: boolean;
   sound?: boolean;
   /**
-   * Sensor exposure time for this photo request only, in nanoseconds (Camera2 `SENSOR_EXPOSURE_TIME`).
+   * Sensor exposure time for this photo request only, in nanoseconds.
    * Not saved as a camera preference. Omit for auto exposure. Invalid or unsupported values fall back to auto exposure on device.
    */
   exposureTimeNs?: number;
+  /**
+   * Sensor ISO for this photo request only.
+   * Only used when `exposureTimeNs` enables manual exposure.
+   */
+  iso?: number;
   timeout?: number;
 }
 
@@ -239,6 +244,8 @@ export class CameraManager {
 
       const exposureNs = opts?.exposureTimeNs;
       const includeExposure = typeof exposureNs === "number" && Number.isFinite(exposureNs) && exposureNs > 0;
+      const iso = opts?.iso;
+      const includeIso = includeExposure && typeof iso === "number" && Number.isFinite(iso) && iso > 0;
 
       const message = {
         type: AppToCloudMessageType.PHOTO_REQUEST,
@@ -251,6 +258,7 @@ export class CameraManager {
         compress: opts?.compression ?? "none",
         sound: opts?.sound,
         ...(includeExposure ? { exposureTimeNs: exposureNs } : {}),
+        ...(includeIso ? { iso: Math.round(iso) } : {}),
       };
 
       try {
@@ -262,6 +270,7 @@ export class CameraManager {
             compress: message.compress,
             saveToGallery: message.saveToGallery,
             exposureTimeNs: includeExposure ? exposureNs : undefined,
+            iso: includeIso ? Math.round(iso) : undefined,
           },
           "📸 Photo request sent",
         );

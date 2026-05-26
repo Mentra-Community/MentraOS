@@ -331,6 +331,18 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             default:
                 exposureTimeNs = nil
             }
+            let iso: Int?
+            switch params["iso"] {
+            case let value as Int:
+                iso = value > 0 ? value : nil
+            case let value as Double:
+                iso = value.isFinite && value > 0 ? Int(value) : nil
+            case let value as NSNumber:
+                let intValue = value.intValue
+                iso = intValue > 0 ? intValue : nil
+            default:
+                iso = nil
+            }
 
             await MainActor.run {
                 self.bluetoothSdk().requestPhoto(
@@ -343,7 +355,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
                         compress: PhotoCompression(rawValue: compress),
                         flash: flash,
                         sound: sound,
-                        exposureTimeNs: exposureTimeNs
+                        exposureTimeNs: exposureTimeNs,
+                        iso: iso
                     )
                 )
             }

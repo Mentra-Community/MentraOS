@@ -409,10 +409,20 @@ public class CameraNeoService extends LifecycleService {
      * @param callback Callback to be notified when photo is captured
      */
     public static void enqueuePhotoRequest(Context context, String filePath, String size, boolean enableLed, boolean isFromSdk, Long exposureTimeNs, PhotoCaptureCallback callback) {
+        enqueuePhotoRequest(context, filePath, size, enableLed, isFromSdk, exposureTimeNs, null, callback);
+    }
+
+    /**
+     * Primary entry point for photo requests - uses global queue to prevent race conditions.
+     *
+     * @param iso optional sensor sensitivity for manual exposure captures only; {@code null} =
+     *     derive ISO from preview metering
+     */
+    public static void enqueuePhotoRequest(Context context, String filePath, String size, boolean enableLed, boolean isFromSdk, Long exposureTimeNs, Integer iso, PhotoCaptureCallback callback) {
         synchronized (SERVICE_LOCK) {
             // Create and queue the request immediately
             QueuedPhotoRequest request =
-                    new QueuedPhotoRequest(filePath, size, enableLed, isFromSdk, exposureTimeNs, callback);
+                    new QueuedPhotoRequest(filePath, size, enableLed, isFromSdk, exposureTimeNs, iso, callback);
             QueuedPhotoRequestQueue.getInstance().offer(request);
             
             Log.d(TAG, "📸 Enqueued photo request: " + request.requestId + 

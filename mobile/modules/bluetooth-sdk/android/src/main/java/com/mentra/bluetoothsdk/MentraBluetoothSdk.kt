@@ -427,6 +427,7 @@ class MentraBluetoothSdk private constructor(
             request.flash,
             request.sound,
             request.exposureTimeNs,
+            request.iso,
         )
     }
 

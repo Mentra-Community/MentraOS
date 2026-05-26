@@ -1313,6 +1313,8 @@ public class MediaCaptureService {
      * @param compress Compression level (none, medium, heavy)
      * @param exposureTimeNs optional sensor exposure time in nanoseconds for this capture only;
      *     {@code null} = auto
+     * @param iso optional sensor sensitivity for manual exposure captures only; {@code null} =
+     *     derive ISO from preview metering
      */
     public void takePhotoAndUpload(
             String photoFilePath,
@@ -1324,7 +1326,8 @@ public class MediaCaptureService {
             boolean enableFlash,
             boolean enableSound,
             String compress,
-            Long exposureTimeNs) {
+            Long exposureTimeNs,
+            Integer iso) {
         // Start timing for end-to-end photo capture performance measurement
         final long requestStartTimeMs = System.currentTimeMillis();
         recordTiming(requestId, "request_start");
@@ -1444,7 +1447,9 @@ public class MediaCaptureService {
                                 + requestId
                                 + ", exposureTimeNs="
                                 + exposureTimeNs
-                                + " ns");
+                                + " ns, iso="
+                                + (iso != null ? iso : "auto")
+                );
             }
             CameraNeoService.enqueuePhotoRequest(
                     mContext,
@@ -1453,6 +1458,7 @@ public class MediaCaptureService {
                     enableFlash,
                     true, // isFromSdk - use optimized resolution for fast transfer
                     exposureTimeNs,
+                    iso,
                     new CameraNeoService.PhotoCaptureCallback() {
                         @Override
                         public void onPhotoCaptured(String filePath) {
@@ -2542,6 +2548,8 @@ public class MediaCaptureService {
      * @param compress Compression level (none, medium, heavy)
      * @param exposureTimeNs optional sensor exposure time in nanoseconds for this capture only;
      *     {@code null} = auto
+     * @param iso optional sensor sensitivity for manual exposure captures only; {@code null} =
+     *     derive ISO from preview metering
      */
     public void takePhotoAutoTransfer(
             String photoFilePath,
@@ -2554,7 +2562,8 @@ public class MediaCaptureService {
             boolean enableFlash,
             boolean enableSound,
             String compress,
-            Long exposureTimeNs) {
+            Long exposureTimeNs,
+            Integer iso) {
         // Check if camera HAL is restarting after FOV change
         if (CameraRestartCooldown.isActive()) {
             Log.w(TAG, "Cannot take photo - camera HAL restarting after FOV change");
@@ -2599,7 +2608,8 @@ public class MediaCaptureService {
                     enableFlash,
                     enableSound,
                     compress,
-                    exposureTimeNs);
+                    exposureTimeNs,
+                    iso);
         } else {
             // No WiFi - skip webhook entirely, go straight to BLE (saves 2-5s timeout wait)
             Log.d(TAG, "📵 No WiFi - skipping webhook, using BLE transfer for " + requestId);
@@ -2611,7 +2621,8 @@ public class MediaCaptureService {
                     size,
                     enableFlash,
                     enableSound,
-                    exposureTimeNs);
+                    exposureTimeNs,
+                    iso);
         }
     }
 
@@ -2622,6 +2633,10 @@ public class MediaCaptureService {
      * @param requestId Request ID for tracking
      * @param bleImgId BLE image ID to use as filename
      * @param save Whether to keep the original photo on device
+     * @param exposureTimeNs optional sensor exposure time in nanoseconds for this capture only;
+     *     {@code null} = auto
+     * @param iso optional sensor sensitivity for manual exposure captures only; {@code null} =
+     *     derive ISO from preview metering
      */
     public void takePhotoForBleTransfer(
             String photoFilePath,
@@ -2631,7 +2646,8 @@ public class MediaCaptureService {
             String size,
             boolean enableFlash,
             boolean enableSound,
-            Long exposureTimeNs) {
+            Long exposureTimeNs,
+            Integer iso) {
         // Start timing for end-to-end photo capture performance measurement
         final long requestStartTimeMs = System.currentTimeMillis();
         recordTiming(requestId, "ble_request_start");
@@ -2745,6 +2761,7 @@ public class MediaCaptureService {
                     enableFlash,
                     true, // isFromSdk — same sizing as webhook SDK path
                     exposureTimeNs,
+                    iso,
                     new CameraNeoService.PhotoCaptureCallback() {
                         @Override
                         public void onPhotoCaptured(String filePath) {
