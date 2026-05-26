@@ -27,7 +27,6 @@ import mentraos.ble.MentraosBle.GlassesToPhone
 import mentraos.ble.MentraosBle.PhoneToGlasses
 import mentraos.ble.MentraosBle.ChargingState
 import mentraos.ble.MentraosBle.BatteryStatus
-import mentraos.ble.MentraosBle.VersionResponse
 import mentraos.ble.MentraosBle.HeadGesture
 import mentraos.ble.MentraosBle.ButtonEvent
 import mentraos.ble.MentraosBle.ImuData
@@ -902,8 +901,12 @@ class MentraNex : SGCManager() {
                 // Query glasses protobuf version from firmware
                 Bridge.log("=== SENDING GLASSES PROTOBUF VERSION REQUEST ===")
                 val versionQueryPacket = NexProtobufUtils.generateVersionRequestCommandBytes()
-                sendDataSequentially(versionQueryPacket, 100)
-                Bridge.log("Sent glasses protobuf version request")
+                if (versionQueryPacket.isNotEmpty()) {
+                    sendDataSequentially(versionQueryPacket, 100)
+                    Bridge.log("Sent glasses protobuf version request")
+                } else {
+                    Bridge.log("Skipping version request: schema removed VersionRequest")
+                }
 
                 // Push current glasses-side Voice Activity Detection setting
                 sendVoiceActivityDetectionSetting()
@@ -1399,7 +1402,8 @@ class MentraNex : SGCManager() {
                     val headUpAngleResponse: HeadUpAngleResponse = glassesToPhone.headUpAngleSet
                     Bridge.log("headUpAngleResponse: $headUpAngleResponse")
                 }
-                GlassesToPhone.PayloadCase.PING -> {
+                GlassesToPhone.PayloadCase.PONG -> {
+                    // New schema: glasses-initiated heartbeat is named `pong`; phone replies with `ping`.
                     lastHeartbeatReceivedTime = System.currentTimeMillis()
                     Bridge.log("=== RECEIVED PING FROM GLASSES === (Time: $lastHeartbeatReceivedTime)")
                     sendPongResponse()
@@ -1445,28 +1449,6 @@ class MentraNex : SGCManager() {
                     // EventBus.getDefault().post(GlassesHeadUpEvent())
                     // EventBus.getDefault().post(GlassesHeadDownEvent())
                     // EventBus.getDefault().post(GlassesTapOutputEvent(2, isRight, System.currentTimeMillis()))
-                }
-                GlassesToPhone.PayloadCase.VERSION_RESPONSE -> {
-                    val versionResponse: VersionResponse = glassesToPhone.versionResponse
-                    Bridge.log("=== RECEIVED GLASSES PROTOBUF VERSION RESPONSE ===")
-                    Bridge.log("Glasses Protobuf Version: ${versionResponse.version}")
-                    Bridge.log("Message ID: ${versionResponse.msgId}")
-                    DeviceStore.apply("glasses", "protobufVersion", versionResponse.version.toString())
-                    
-                    if (versionResponse.commit.isNotEmpty()) {
-                        Bridge.log("Commit: ${versionResponse.commit}")
-                    }
-                    if (versionResponse.buildDate.isNotEmpty()) {
-                        Bridge.log("Build Date: ${versionResponse.buildDate}")
-                    }
-                    
-                    // Post glasses protobuf version event to update UI
-                    // EventBus.getDefault().post(ProtocolVersionResponseEvent(
-                    //     versionResponse.version,
-                    //     versionResponse.commit,
-                    //     versionResponse.buildDate,
-                    //     versionResponse.msgId
-                    // ))
                 }
                 GlassesToPhone.PayloadCase.PAYLOAD_NOT_SET,
                 null -> {
