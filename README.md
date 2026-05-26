@@ -104,45 +104,6 @@ This keeps the glasses lightweight while letting multiple apps run together, lik
 
 Manufacturers can integrate the Mentra Runtime into their own iOS and Android apps to unlock the Mentra ecosystem while preserving their brand, app, and customer relationship.
 
-## Development Setup
-
-### Quick Start
-
-For detailed setup instructions, see [CLAUDE.md](./CLAUDE.md) in the repository root.
-
-### Recommended Development Environment
-
-- **Platform:** macOS or Linux
-- **Node.js:** Version 20.x
-- **Package Manager:** bun preferred, npm supported
-- **Android:** Android Studio with Java SDK 17
-- **iOS:** Xcode
-- **Cloud:** Docker and Docker Compose
-
-### Key Commands
-
-**Mobile App** (`mobile/`):
-
-```bash
-cd mobile
-bun install
-bun start
-bun android
-bun ios
-bun test
-```
-
-**Cloud Backend** (`cloud/`):
-
-```bash
-cd cloud
-bun install
-bun run dev
-bun run test
-```
-
-For complete build instructions, testing guidelines, and code style requirements, see [CLAUDE.md](./CLAUDE.md).
-
 ## Nightly Builds
 
 <div align="center">
