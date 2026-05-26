@@ -1443,6 +1443,9 @@ public class MentraLive extends SGCManager {
 
             if (isRxCharacteristic) {
                 Bridge.log("LIVE: Received data on RX characteristic");
+                // #region agent log [810da2] Hypothesis A+C: capture data.length vs negotiated MTU
+                Bridge.log("LIVE: [DEBUG-810da2-HypAC] RX dataLen=" + data.length + " mtu=" + currentMtu + " firstByte=0x" + String.format("%02X", data[0]) + " second=0x" + (data.length > 1 ? String.format("%02X", data[1]) : "??"));
+                // #endregion
             } else if (isTxCharacteristic) {
                 Bridge.log("LIVE: Received data on TX characteristic");
             } else if (isLc3ReadCharacteristic) {
@@ -2199,6 +2202,10 @@ public class MentraLive extends SGCManager {
                 processJsonMessage(json);
             } else {
                 Log.w(TAG, "Thread-" + threadId + ": Failed to parse K900 protocol data");
+                // #region agent log [810da2] Hypothesis A+B: log header-declared length vs actual data length
+                int declaredPayloadLen = (data.length >= 5) ? (((data[3] & 0xFF) << 8) | (data[4] & 0xFF)) : -1;
+                Bridge.log("LIVE: [DEBUG-810da2-HypAB] K900 PARSE FAILED thread=" + threadId + " dataLen=" + data.length + " mtu=" + currentMtu + " declaredPayloadLen=" + declaredPayloadLen + " expectedTotal=" + (declaredPayloadLen + 7));
+                // #endregion
             }
 
             return; // Exit after processing K900 protocol format
@@ -3225,31 +3232,16 @@ public class MentraLive extends SGCManager {
                 }
                 break;
 
-            case "sr_swst":
             case "sr_swit":
                 try {
                     JSONObject bodyObj = optK900Body(json);
                     if (bodyObj != null) {
                         int type = bodyObj.optInt("type", -1);
                         int value = bodyObj.optInt("switch", -1);
-                        if (type == -1 && bodyObj.has("status")) {
-                            Log.w(
-                                    TAG,
-                                    "RX "
-                                            + command
-                                            + " firmware status body (not type/switch): "
-                                            + bodyObj
-                                            + " full="
-                                            + json);
-                        }
-                        if (type != -1) {
-                            handleSwitchStatus(type, value, System.currentTimeMillis());
-                        }
-                    } else {
-                        Log.w(TAG, "RX " + command + " with no parseable B field: " + json);
+                        handleSwitchStatus(type, value, System.currentTimeMillis());
                     }
                 } catch (Exception e) {
-                    Log.e(TAG, "Error parsing " + command + " response", e);
+                    Log.e(TAG, "Error parsing sr_swit response", e);
                 }
                 break;
 
@@ -3350,11 +3342,6 @@ public class MentraLive extends SGCManager {
                 }
                 break;
 
-            case "cs_swst":
-            case "cs_swit":
-                // Echo of our own TX (e.g. MTK forward loopback); not a glasses response.
-                break;
-
             default:
                 Log.d(TAG, "Unknown K900 command: " + command);
 
@@ -3364,15 +3351,6 @@ public class MentraLive extends SGCManager {
                 try {
                     // Try to parse the "C" field as JSON
                     JSONObject innerJson = new JSONObject(command);
-
-                    // Nested K900 JSON (double C-wrap from glasses MTK forward path)
-                    if (innerJson.has("C") && innerJson.optString("C", "").length() > 0) {
-                        String innerCommand = innerJson.optString("C", "");
-                        if (!innerCommand.startsWith("{")) {
-                            processK900JsonMessage(innerJson);
-                            return;
-                        }
-                    }
 
                     // If it has a "type" field, it's a standard message that got C-wrapped
                     if (innerJson.has("type")) {
@@ -5000,7 +4978,7 @@ public class MentraLive extends SGCManager {
             String jsonStr = cmd.toString();
             Bridge.log("LIVE: Sending hrt command: " + jsonStr);
             byte[] packedData = K900ProtocolUtils.packDataToK900(jsonStr.getBytes(StandardCharsets.UTF_8), K900ProtocolUtils.CMD_TYPE_STRING);
-
+            
             queueData(packedData);
         } catch (JSONException e) {
             Log.e(TAG, "Error creating enable_custom_audio_tx command", e);
@@ -6582,43 +6560,12 @@ public class MentraLive extends SGCManager {
         sendVoiceActivityDetectionSetting();
     }
 
-    /** Logcat (tag Live): {@code adb logcat -s Live:I} */
-    /**
-     * Send a native K900 client command (cs_*) to glasses. Uses packDataToK900 on the full
-     * {"C","V","B"} envelope — never packJsonToK900, which is only for Mentra app JSON.
-     */
-    private boolean sendK900ClientCommand(String command, String bodyJson) {
-        if (!isConnected) {
-            Log.w(TAG, "TX K900 " + command + " skipped - not connected");
-            return false;
-        }
-        try {
-            JSONObject cmdObject = new JSONObject();
-            cmdObject.put("C", command);
-            cmdObject.put("V", 1);
-            cmdObject.put("B", bodyJson != null ? bodyJson : "");
-
-            String jsonStr = cmdObject.toString();
-            byte[] packedData =
-                    K900ProtocolUtils.packDataToK900(
-                            jsonStr.getBytes(StandardCharsets.UTF_8),
-                            K900ProtocolUtils.CMD_TYPE_STRING);
-            if (packedData == null) {
-                Log.e(TAG, "TX K900 " + command + " failed - pack returned null");
-                return false;
-            }
-            queueData(packedData);
-            return true;
-        } catch (JSONException e) {
-            Log.e(TAG, "Error creating K900 client command " + command, e);
-            return false;
-        }
-    }
-
     @Override
     public void sendVoiceActivityDetectionSetting() {
         Object value = DeviceStore.INSTANCE.get("bluetooth", "voice_activity_detection_enabled");
         boolean enabled = value instanceof Boolean ? (Boolean) value : true;
+
+        Bridge.log("LIVE: 🎤 Sending Voice Activity Detection setting to glasses: " + enabled);
 
         if (!isConnected) {
             Bridge.log("LIVE: Cannot send Voice Activity Detection setting - not connected");
@@ -6630,10 +6577,20 @@ public class MentraLive extends SGCManager {
             body.put("type", VOICE_ACTIVITY_DETECTION_SWITCH_TYPE);
             body.put("switch", enabled ? 1 : 0);
 
-            if (!sendK900ClientCommand("cs_swit", body.toString())) {
-                Bridge.log("LIVE: Failed to send Voice Activity Detection setting command");
+            JSONObject cmdObject = new JSONObject();
+            cmdObject.put("C", "cs_swit");
+            cmdObject.put("V", 1);
+            cmdObject.put("B", body.toString());
+
+            byte[] packedData =
+                    K900ProtocolUtils.packDataToK900(
+                            cmdObject.toString().getBytes(StandardCharsets.UTF_8),
+                            K900ProtocolUtils.CMD_TYPE_STRING);
+            if (packedData == null) {
+                Bridge.log("LIVE: Failed to pack Voice Activity Detection setting command");
                 return;
             }
+            queueData(packedData);
             Bridge.sendVoiceActivityDetectionStatus(enabled);
         } catch (JSONException e) {
             Log.e(TAG, "Error creating Voice Activity Detection setting command", e);
@@ -6647,13 +6604,8 @@ public class MentraLive extends SGCManager {
             return;
         }
 
-        try {
-            if (!sendK900ClientCommand("cs_swst", "")) {
-                Bridge.log("LIVE: Failed to send Voice Activity Detection query command");
-                return;
-            }
-        } catch (JSONException e) {
-            Log.e(TAG, "Error creating cs_swst command", e);
+        if (!sendK900ClientCommand("cs_swst", "")) {
+            Bridge.log("LIVE: Failed to send Voice Activity Detection query command");
         }
     }
 
