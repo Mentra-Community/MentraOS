@@ -42,40 +42,40 @@ MentraOS works across a growing ecosystem of smart glasses.
   <table border="0" cellspacing="0" cellpadding="0" style="border: 0 !important; border-collapse: separate; border-spacing: 14px;">
     <tbody>
       <tr style="border: 0 !important; background: transparent;">
-        <td align="left" width="20%" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; background: #ffffff;">
-          <sub><b>Supported</b></sub>
+        <td align="center" width="20%" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; background: #ffffff;">
+          <img src="https://img.shields.io/badge/Supported-06BF73?style=flat-square" alt="Supported" />
           <br /><br />
           <img src="./images/glasses/mentra-live.png" alt="Mentra Live" width="180" />
           <br /><br />
-          <b>Mentra Live</b>
+          <p align="center"><b>Mentra Live</b></p>
         </td>
-        <td align="left" width="20%" style="border: 1px solid #bbf7d0; border-radius: 14px; padding: 18px; background: #ffffff;">
-          <sub><b>Supported</b></sub>
+        <td align="center" width="20%" style="border: 1px solid #bbf7d0; border-radius: 14px; padding: 18px; background: #ffffff;">
+          <img src="https://img.shields.io/badge/Supported-06BF73?style=flat-square" alt="Supported" />
           <br /><br />
           <img src="./images/glasses/even-realities-g2.png" alt="Even Realities G2" width="180" />
           <br /><br />
-          <b>Even Realities G2</b>
+          <p align="center"><b>Even Realities G2</b></p>
         </td>
-        <td align="left" width="20%" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; background: #ffffff;">
-          <sub><b>Supported</b></sub>
+        <td align="center" width="20%" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; background: #ffffff;">
+          <img src="https://img.shields.io/badge/Supported-06BF73?style=flat-square" alt="Supported" />
           <br /><br />
           <img src="./images/glasses/vuzix-z100.png" alt="Vuzix Z100" width="180" />
           <br /><br />
-          <b>Vuzix Z100</b>
+          <p align="center"><b>Vuzix Z100</b></p>
         </td>
-        <td align="left" width="20%" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; background: #ffffff;">
-          <sub><b>Supported</b></sub>
+        <td align="center" width="20%" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; background: #ffffff;">
+          <img src="https://img.shields.io/badge/Supported-06BF73?style=flat-square" alt="Supported" />
           <br /><br />
           <img src="./images/glasses/even-realities-g1.png" alt="Even Realities G1" width="180" />
           <br /><br />
-          <b>Even Realities G1</b>
+          <p align="center"><b>Even Realities G1</b></p>
         </td>
-        <td align="left" width="20%" style="border: 1px solid #fed7aa; border-radius: 14px; padding: 18px; background: #ffffff;">
-          <sub><b>Coming soon</b></sub>
+        <td align="center" width="20%" style="border: 1px solid #fed7aa; border-radius: 14px; padding: 18px; background: #ffffff;">
+          <img src="https://img.shields.io/badge/Coming%20soon-F97316?style=flat-square" alt="Coming soon" />
           <br /><br />
           <img src="./images/glasses/nimo.png" alt="NIMO" width="180" />
           <br /><br />
-          <b>NIMO</b>
+          <p align="center"><b>NIMO</b></p>
         </td>
       </tr>
     </tbody>
