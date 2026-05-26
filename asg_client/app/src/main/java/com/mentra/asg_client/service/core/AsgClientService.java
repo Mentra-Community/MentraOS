@@ -115,8 +115,11 @@ public class AsgClientService extends Service
     private boolean lastI2sPlaying = false;
     private boolean isConnected = false; // Track connection state based on heartbeat
 
-    /** Used before {@link ServiceContainer} exists so FGS promotion is not delayed by heavy init. */
+    /**
+     * Used before {@link ServiceContainer} exists so FGS promotion is not delayed by heavy init.
+     */
     private AsgNotificationManager mEarlyNotificationManager;
+
     private boolean mForegroundStarted;
 
     // ---------------------------------------------
@@ -552,8 +555,8 @@ public class AsgClientService extends Service
     // ---------------------------------------------
 
     /**
-     * Promote to a foreground service. Idempotent; safe from {@link #onCreate()} and
-     * {@link #onStartCommand()}. Not wrapped in onCreate's catch-all so AMS failures are visible.
+     * Promote to a foreground service. Idempotent; safe from {@link #onCreate()} and {@link
+     * #onStartCommand()}. Not wrapped in onCreate's catch-all so AMS failures are visible.
      */
     private void ensureForegroundStarted() {
         if (mForegroundStarted || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
