@@ -59,7 +59,7 @@ MentraOS works across a growing ecosystem of smart glasses.
         <td align="center" valign="top" width="20%" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 12px; background: #ffffff;">
           <img src="https://img.shields.io/badge/Supported-06BF73?style=flat-square" alt="Supported" />
           <br /><br />
-          <img src="./images/glasses/vuzix-z100.png" alt="Vuzix Z100" width="110" />
+          <img src="./images/glasses/vuzix-z100.png" alt="Vuzix Z100" width="140" />
           <br /><br />
           <p align="center"><b>Vuzix Z100</b></p>
         </td>
@@ -73,7 +73,7 @@ MentraOS works across a growing ecosystem of smart glasses.
         <td align="center" valign="top" width="20%" style="border: 1px solid #fed7aa; border-radius: 14px; padding: 12px; background: #ffffff;">
           <img src="https://img.shields.io/badge/Coming%20soon-F97316?style=flat-square" alt="Coming soon" />
           <br /><br />
-          <img src="./images/glasses/nimo.png" alt="NIMO" width="140" />
+          <img src="./images/glasses/nimo.png" alt="NIMO" width="95" />
           <br /><br />
           <p align="center"><b>NIMO</b></p>
         </td>
