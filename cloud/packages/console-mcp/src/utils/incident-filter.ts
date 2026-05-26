@@ -77,7 +77,7 @@ export function filterLogEntries(
 
   const limit = options.limit ?? 200;
   const truncated = filtered.length > limit;
-  return { entries: filtered.slice(0, limit), truncated };
+  return { entries: filtered.slice(-limit), truncated };
 }
 
 export function formatLogLines(entries: LogEntryWithSource[]): string {
