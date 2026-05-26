@@ -8,6 +8,7 @@
     <a href="https://apps.mentra.glass">Mentra MiniApp Store</a>
   </p>
 
+  <!--
   <p>
     <img src="https://img.shields.io/github/contributors/TeamOpenSmartGlasses/DiscussPlusPlus" alt="Contributors" />
     <img src="https://img.shields.io/github/license/TeamOpenSmartGlasses/DiscussPlusPlus" alt="License" />
@@ -15,6 +16,7 @@
     <img src="https://img.shields.io/github/v/release/TeamOpenSmartGlasses/DiscussPlusPlus" alt="GitHub Release Version" />
     <img src="https://img.shields.io/github/last-commit/TeamOpenSmartGlasses/DiscussPlusPlus" alt="Last Updated" />
   </p>
+  -->
 </div>
 
 <div align="center">
