@@ -362,16 +362,8 @@ class MiniappCatalog {
       return
     }
     if (app.local) {
-      // Local miniapps mirror cloud webviews: push a route with an
-      // inline WebView. The always-on half (JSContext) survives nav-away;
-      // only the WebView is torn down when the route pops.
-      nav.push("/applet/local", {
-        packageName: app.packageName,
-        appName: app.name,
-        iconUrl: app.logoUrl,
-        version: app.version,
-        transition: appOpenTransition,
-      })
+      // bring the local miniapp to the foreground:
+      useAppStatusStore.getState().setForeground(app.packageName)
       return
     }
     if (app.webviewUrl && app.healthy) {
