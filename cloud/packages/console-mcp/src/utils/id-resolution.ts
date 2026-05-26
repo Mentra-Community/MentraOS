@@ -26,7 +26,7 @@ export async function resolveIncidentId(
         `Ambiguous prefix "${shortId}" — matches ${matches.length} incidents: ${ids}`,
       );
     }
-    if (matches.length === 1) {
+    if (matches.length === 1 && !res.pagination.hasMore) {
       return matches[0].incidentId;
     }
     if (!res.pagination.hasMore) {
