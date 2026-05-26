@@ -181,6 +181,6 @@ MIT License Copyright 2025 MentraOS Community
 
 <div align="center">
   <br />
-  <img width="100" alt="MentraOS" src="./images/MentraLogoSquareRound.png" style="border-radius: 20%;" />
+  <img width="100" alt="MentraOS" src="./images/MentraLogoWhiteSquare.svg" style="border-radius: 20%;" />
   <h3>© 2025 Mentra Labs</h3>
 </div>
