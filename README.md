@@ -38,11 +38,49 @@ Every component is open source under the MIT license, giving you privacy, freedo
 
 MentraOS works across a growing ecosystem of smart glasses.
 
-Mentra Live  
-Even Realities G2  
-Vuzix Z100  
-Even Realities G1  
-NIMO (Coming Summer 2026\)
+<div align="center">
+  <table border="0" cellspacing="0" cellpadding="0" style="border: 0 !important; border-collapse: separate; border-spacing: 14px;">
+    <tbody>
+      <tr style="border: 0 !important; background: transparent;">
+        <td align="left" width="20%" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; background: #ffffff;">
+          <sub><b>Supported</b></sub>
+          <br /><br />
+          <img src="./images/glasses/mentra-live.webp" alt="Mentra Live" width="180" />
+          <br /><br />
+          <b>Mentra Live</b>
+        </td>
+        <td align="left" width="20%" style="border: 1px solid #bbf7d0; border-radius: 14px; padding: 18px; background: #ffffff;">
+          <sub><b>Supported</b></sub>
+          <br /><br />
+          <img src="./images/glasses/even-realities-g2.png" alt="Even Realities G2" width="180" />
+          <br /><br />
+          <b>Even Realities G2</b>
+        </td>
+        <td align="left" width="20%" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; background: #ffffff;">
+          <sub><b>Supported</b></sub>
+          <br /><br />
+          <img src="./images/glasses/vuzix-z100.png" alt="Vuzix Z100" width="180" />
+          <br /><br />
+          <b>Vuzix Z100</b>
+        </td>
+        <td align="left" width="20%" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; background: #ffffff;">
+          <sub><b>Supported</b></sub>
+          <br /><br />
+          <img src="./images/glasses/even-realities-g1.png" alt="Even Realities G1" width="180" />
+          <br /><br />
+          <b>Even Realities G1</b>
+        </td>
+        <td align="left" width="20%" style="border: 1px solid #fed7aa; border-radius: 14px; padding: 18px; background: #ffffff;">
+          <sub><b>Coming soon</b></sub>
+          <br /><br />
+          <img src="./images/glasses/nimo.png" alt="NIMO" width="180" />
+          <br /><br />
+          <b>NIMO</b>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</div>
 
 ## Why Build with MentraOS?
 
