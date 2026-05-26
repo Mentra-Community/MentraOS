@@ -158,6 +158,20 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   validateSttModel(path: string): Promise<boolean>
   extractTarBz2(sourcePath: string, destinationPath: string): Promise<boolean>
 
+  // TTS Commands
+  setTtsModelDetails(path: string, languageCode: string): Promise<void>
+  getTtsModelPath(): Promise<string>
+  getTtsModelLanguage(): Promise<string>
+  checkTtsModelAvailable(): Promise<boolean>
+  validateTtsModel(path: string): Promise<boolean>
+  generateTtsAudio(
+    text: string,
+    modelPath: string,
+    outputPath: string,
+    speakerId: number,
+    speed: number,
+  ): Promise<boolean>
+
   // Helper methods for type-safe observable store access
   updateGlasses(values: Partial<GlassesStatus>): Promise<void>
   updateBluetoothSettings(values: BluetoothSettingsUpdate): Promise<void>

@@ -561,6 +561,7 @@ export type BluetoothSdkEventMap = {
   mic_lc3: MicLc3Event
   stream_status: StreamStatusEvent
   keep_alive_ack: KeepAliveAckEvent
+  extraction_progress: ExtractionProgressEvent
 }
 
 export type BluetoothSdkEventName = keyof BluetoothSdkEventMap
@@ -645,6 +646,43 @@ export interface BluetoothSdkPublicModule {
   ): Promise<void>
 
   requestVersionInfo(): Promise<void>
+
+  // // stt commands (MOVE TO CRUST)
+  // setSttModelDetails(path: string, languageCode: string): Promise<void>
+  // getSttModelPath(): Promise<string>
+  // checkSttModelAvailable(): Promise<boolean>
+  // validateSttModel(path: string): Promise<boolean>
+  // extractTarBz2(sourcePath: string, destinationPath: string): Promise<boolean>
+
+  // // tts commands (MOVE TO CRUST)
+  // setTtsModelDetails(path: string, languageCode: string): Promise<void>
+  // getTtsModelPath(): Promise<string>
+  // getTtsModelLanguage(): Promise<string>
+  // checkTtsModelAvailable(): Promise<boolean>
+  // validateTtsModel(path: string): Promise<boolean>
+  // generateTtsAudio(text: string, path: string, outputPath: string, speakerId: number, speed: number): Promise<boolean>
+  
+  // STT Commands (TODO: MOVE TO CRUST)
+  setSttModelDetails(path: string, languageCode: string): Promise<void>
+  getSttModelPath(): Promise<string>
+  checkSttModelAvailable(): Promise<boolean>
+  validateSttModel(path: string): Promise<boolean>
+  extractTarBz2(sourcePath: string, destinationPath: string): Promise<boolean>
+  restartTranscriber(): Promise<void>
+
+  // TTS Commands (TODO: MOVE TO CRUST)
+  setTtsModelDetails(path: string, languageCode: string): Promise<void>
+  getTtsModelPath(): Promise<string>
+  getTtsModelLanguage(): Promise<string>
+  checkTtsModelAvailable(): Promise<boolean>
+  validateTtsModel(path: string): Promise<boolean>
+  generateTtsAudio(
+    text: string,
+    modelPath: string,
+    outputPath: string,
+    speakerId: number,
+    speed: number,
+  ): Promise<boolean>
 }
 
 // OTA update status types

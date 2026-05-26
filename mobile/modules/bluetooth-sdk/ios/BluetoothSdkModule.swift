@@ -55,7 +55,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "send_command_to_ble",
             "receive_command_from_ble",
             "miniapp_selected",
-            "captions_tester_incident"
+            "captions_tester_incident",
+            "extraction_progress"
         )
 
         OnCreate {

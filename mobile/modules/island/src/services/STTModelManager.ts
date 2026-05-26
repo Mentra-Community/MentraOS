@@ -260,7 +260,7 @@ class STTModelManager {
 
       onExtractionProgress?.({percentage: 0})
 
-      const unsubscribe = CoreModule.onExtractionProgress((event) => {
+      const subscription = CoreModule.addListener("extraction_progress", (event) => {
         onExtractionProgress?.({percentage: event.percentage})
       })
 
@@ -273,7 +273,7 @@ class STTModelManager {
         console.error("Native extraction failed:", extractError)
         throw extractError
       } finally {
-        unsubscribe()
+        subscription.remove()
       }
 
       onExtractionProgress?.({percentage: 100})
