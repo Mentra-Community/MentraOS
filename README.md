@@ -82,7 +82,7 @@ MentraOS works across a growing ecosystem of smart glasses.
             <tbody>
               <tr style="border: 0 !important; background: transparent;">
                 <td align="center" valign="middle" height="190" style="border: 0 !important; background: transparent;">
-                  <img src="./images/glasses/vuzix-z100.png" alt="Vuzix Z100" width="180" />
+                  <img src="./images/glasses/vuzix-z100.png" alt="Vuzix Z100" width="135" />
                 </td>
               </tr>
               <tr style="border: 0 !important; background: transparent;">
