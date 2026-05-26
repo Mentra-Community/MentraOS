@@ -87,7 +87,10 @@ export function createCliClient(config: ConsoleMcpConfig) {
     listOrgs: () => request<{ success?: boolean; data?: unknown }>("GET", "/api/cli/orgs"),
 
     getOrg: (orgId: string) =>
-      request<{ success?: boolean; data?: unknown }>("GET", `/api/cli/orgs/${orgId}`),
+      request<{ success?: boolean; data?: unknown }>(
+        "GET",
+        `/api/cli/orgs/${encodeURIComponent(orgId)}`,
+      ),
 
     createOrg: (name: string) =>
       request<{ success?: boolean; data?: unknown }>("POST", "/api/cli/orgs", {
@@ -95,44 +98,49 @@ export function createCliClient(config: ConsoleMcpConfig) {
       }),
 
     updateOrg: (orgId: string, body: Record<string, unknown>) =>
-      request<{ success?: boolean; data?: unknown }>("PUT", `/api/cli/orgs/${orgId}`, {
-        body,
-      }),
+      request<{ success?: boolean; data?: unknown }>(
+        "PUT",
+        `/api/cli/orgs/${encodeURIComponent(orgId)}`,
+        { body },
+      ),
 
     deleteOrg: (orgId: string) =>
-      request<{ success?: boolean; data?: unknown }>("DELETE", `/api/cli/orgs/${orgId}`),
+      request<{ success?: boolean; data?: unknown }>(
+        "DELETE",
+        `/api/cli/orgs/${encodeURIComponent(orgId)}`,
+      ),
 
     inviteMember: (orgId: string, email: string, role: string) =>
       request<{ success?: boolean; data?: unknown }>(
         "POST",
-        `/api/cli/orgs/${orgId}/members`,
+        `/api/cli/orgs/${encodeURIComponent(orgId)}/members`,
         { body: { email, role } },
       ),
 
     changeMemberRole: (orgId: string, memberId: string, role: string) =>
       request<{ success?: boolean; data?: unknown }>(
         "PATCH",
-        `/api/cli/orgs/${orgId}/members/${memberId}`,
+        `/api/cli/orgs/${encodeURIComponent(orgId)}/members/${encodeURIComponent(memberId)}`,
         { body: { role } },
       ),
 
     removeMember: (orgId: string, memberId: string) =>
       request<{ success?: boolean; data?: unknown }>(
         "DELETE",
-        `/api/cli/orgs/${orgId}/members/${memberId}`,
+        `/api/cli/orgs/${encodeURIComponent(orgId)}/members/${encodeURIComponent(memberId)}`,
       ),
 
     resendInvite: (orgId: string, email: string) =>
       request<{ success?: boolean; data?: unknown }>(
         "POST",
-        `/api/cli/orgs/${orgId}/invites/resend`,
+        `/api/cli/orgs/${encodeURIComponent(orgId)}/invites/resend`,
         { body: { email } },
       ),
 
     rescindInvite: (orgId: string, email: string) =>
       request<{ success?: boolean; data?: unknown }>(
         "POST",
-        `/api/cli/orgs/${orgId}/invites/rescind`,
+        `/api/cli/orgs/${encodeURIComponent(orgId)}/invites/rescind`,
         { body: { email } },
       ),
 
@@ -151,15 +159,23 @@ export function createCliClient(config: ConsoleMcpConfig) {
       }),
 
     getCliKey: (keyId: string) =>
-      request<{ success?: boolean; data?: unknown }>("GET", `/api/cli/cli-keys/${keyId}`),
+      request<{ success?: boolean; data?: unknown }>(
+        "GET",
+        `/api/cli/cli-keys/${encodeURIComponent(keyId)}`,
+      ),
 
     updateCliKey: (keyId: string, body: Record<string, unknown>) =>
-      request<{ success?: boolean; data?: unknown }>("PATCH", `/api/cli/cli-keys/${keyId}`, {
-        body,
-      }),
+      request<{ success?: boolean; data?: unknown }>(
+        "PATCH",
+        `/api/cli/cli-keys/${encodeURIComponent(keyId)}`,
+        { body },
+      ),
 
     revokeCliKey: (keyId: string) =>
-      request<{ success?: boolean; data?: unknown }>("DELETE", `/api/cli/cli-keys/${keyId}`),
+      request<{ success?: boolean; data?: unknown }>(
+        "DELETE",
+        `/api/cli/cli-keys/${encodeURIComponent(keyId)}`,
+      ),
   };
 }
 
