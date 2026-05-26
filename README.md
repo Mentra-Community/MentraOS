@@ -101,11 +101,11 @@ Browse, install, and run glasses apps from your phone. Try captions, AI notes, p
 
 ## How MentraOS Works
 
-MentraOS runs MiniApps from the phone and connects them to smart glasses through one shared runtime.
+MentraOS runs glasses apps on the phone inside the Mentra Runtime. Multiple glasses apps can run simultaneously, controlling your smart glasses through one shared connection.
 
-This keeps the glasses lightweight while letting multiple apps run together, like captions, notes, notifications, translation, and AI tools.
+This keeps the glasses lightweight while letting multiple apps run together, like captions, notes, notifications, dashboard, and AI tools. It also allows one app to work with any pair of supported smart glasses.
 
-Manufacturers can integrate the Mentra Core Engine into their own iOS and Android apps to unlock the Mentra ecosystem while keeping their brand, app, and customer relationship.
+Manufacturers can integrate the Mentra Runtime into their own iOS and Android apps to unlock the Mentra ecosystem while preserving their brand, app, and customer relationship.
 
 ## Development Setup
 
