@@ -40,10 +40,10 @@ bunx expo run:ios
 
 Run on a physical iPhone for Bluetooth testing. Simulators are useful only for UI and compile checks.
 
-The React Native example keeps direct phone receiving split into two local native modules:
+The React Native example uses the SDK photo receiver plus local native modules for direct phone receiving:
 
 - `@mentra/react-native-barcode-scanner` scans the latest photo preview for barcodes and can generate a known local Code 128 image for scanner checks.
-- `@mentra/react-native-photo-receiver` starts a small phone-local photo upload server for direct JPEG uploads.
+- `@mentra/bluetooth-sdk/photo-receiver` starts a small phone-local photo upload server for direct JPEG uploads.
 - `@mentra/react-native-video-stream-receiver` starts the phone-local WebRTC preview receiver.
 
 Only the video stream receiver needs GStreamer. On iOS, `bun run ios:setup` downloads the GStreamer package from `gstreamer.freedesktop.org`, verifies the published SHA-256 checksum, and installs it to `~/Library/Developer/GStreamer/iPhone.sdk`. The video receiver CocoaPods podspec also runs the same setup automatically during `pod install` when the SDK is missing from the default location, so `bunx expo run:ios` can recover from a fresh clone.
@@ -109,7 +109,7 @@ MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk
 The example has five tabs:
 
 - **Device**: scan for Mentra Live glasses, connect, disconnect, reconnect to the saved/default device, and inspect battery, firmware, Wi-Fi, RSSI, and discovered-device state.
-- **Camera**: request photo upload to the local demo cloud or directly to this phone, preview the received JPEG, and scan the preview for barcodes. Direct phone photo and barcode scanning are implemented in companion local native modules.
+- **Camera**: request photo upload to the local demo cloud or directly to this phone, preview the received JPEG, and scan the preview for barcodes. Direct phone photo is provided by the SDK, while barcode scanning is implemented in a companion local native module.
 - **Stream**: start RTMP, SRT, or WebRTC streams, send 15-second keep-alives, and preview HLS/WebRTC output. Android and iOS can receive WebRTC directly on the phone through the app-hosted GStreamer WHIP receiver.
 - **System**: scan/connect/forget Wi-Fi, toggle hotspot, change gallery mode, receive microphone PCM, and send RGB LED controls.
 - **Console**: watch button, touch, swipe, BLE, TX, STORE, hotspot, stream, photo, microphone, and SDK diagnostic events.
@@ -140,5 +140,4 @@ Do not use `localhost` in the app. The glasses, phone, and computer must be on a
 - `app.json`: permissions, SDK plugin, and Android native-library packaging rules.
 - `metro.config.js`: package resolution for published installs and local SDK overrides.
 - `modules/mentra-barcode-scanner`: local native module used by this example to scan received photo previews for barcodes.
-- `modules/mentra-photo-receiver`: local native module used by this example for Android/iOS direct phone photo upload demos.
 - `modules/mentra-video-stream-receiver`: local native module used by this example for Android/iOS direct phone WebRTC preview demos.

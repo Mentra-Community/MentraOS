@@ -31,7 +31,7 @@ import MentraBarcodeScanner, {
 import MentraPhotoReceiver, {
   type PhotoReceiverStatusEvent,
   type PhotoReceiverUploadEvent,
-} from '@mentra/react-native-photo-receiver';
+} from '@mentra/bluetooth-sdk/photo-receiver';
 import MentraVideoStreamReceiver, {
   type VideoStreamFirstFrameEvent,
   type VideoStreamReceiverStatusEvent,
