@@ -1,6 +1,6 @@
 # ASG Client (Android Smart Glasses Client)
 
-Android application that runs on Android-based smart glasses like Mentra Live. Connects to MentraOS Cloud via WebSocket and manages hardware interfaces (camera, microphone, LED control, sensors).
+Android application that runs on Android-based smart glasses like Mentra Live. Primary transport is BLE to the paired phone (the phone forwards to MentraOS Cloud). Manages hardware interfaces (camera, microphone, LED control, sensors).
 
 ## Compatible Devices
 
@@ -114,7 +114,7 @@ This removes your custom build and restores the factory app.
 ```
 asg_client/
 ├── app/src/main/java/com/mentra/asg_client/
-│   ├── service/        # Main services (WebSocket, foreground service)
+│   ├── service/        # Main services (BLE bridge, foreground service)
 │   ├── camera/         # Camera capture and streaming
 │   ├── audio/          # Audio capture and processing
 │   ├── hardware/       # Hardware interfaces (LED, sensors)
@@ -142,7 +142,7 @@ asg_client/
 - **Methods**: camelCase (e.g., `connectToCloud()`)
 - **Constants**: UPPER_SNAKE_CASE (e.g., `MAX_RETRY_ATTEMPTS`)
 - **Member Variables**: mCamelCase with 'm' prefix (e.g., `mWebSocketClient`)
-- **Indentation**: 2 spaces
+- **Indentation**: 4 spaces
 - **Braces**: Opening brace on same line
 
 ### Documentation
@@ -153,7 +153,7 @@ asg_client/
 
 ### Architecture
 
-- **Dependency Injection**: Use Dagger/Hilt patterns in `/di` package
+- **Dependency Injection**: Manual factories under `io/*/core/*Factory.java` and `service/utils/DeviceProfile`. No Dagger/Hilt today (`/di` only has `AppModule.java`).
 - **Error Reporting**: Use Sentry via reporting package
 - **Logging**: Use Android Logcat with appropriate tags
 - **Services**: Follow Android foreground service best practices
@@ -169,7 +169,7 @@ asg_client/
 
 ### Cloud Communication
 
-- **WebSocket**: Persistent connection to MentraOS Cloud
+- **Phone bridge**: Primary transport is BLE to the paired phone; the phone forwards to MentraOS Cloud. Some ancillary HTTP/WebSocket paths exist (see `BuildConfig.MENTRAOS_HOST`).
 - **Media Streaming**: RTMP streaming via StreamPackLite
 - **Event Handling**: Camera button events, sensor data
 

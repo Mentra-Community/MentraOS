@@ -306,7 +306,7 @@ function withAndroidManifestModifications(config: any) {
       {name: "android.permission.QUERY_ALL_PACKAGES"},
       {name: "android.permission.READ_PHONE_STATE"},
       {name: "android.permission.RECEIVE_BOOT_COMPLETED"},
-      {name: `${pkg}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`},
+      {name: `${config.android?.package}.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION`},
     ]
 
     // Ensure uses-permission array exists
@@ -415,11 +415,11 @@ function withAndroidManifestModifications(config: any) {
       })
 
       if (schemeFilter && schemeFilter.data) {
-        const hasExtraScheme = schemeFilter.data.some((d: any) => d.$["android:scheme"] === "com.mentra.mentra")
+        const hasExtraScheme = schemeFilter.data.some((d: any) => d.$["android:scheme"] === config.android?.package)
 
         if (!hasExtraScheme) {
           schemeFilter.data.push({
-            $: {"android:scheme": "com.mentra.mentra"},
+            $: {"android:scheme": config.android?.package},
           })
         }
       }
