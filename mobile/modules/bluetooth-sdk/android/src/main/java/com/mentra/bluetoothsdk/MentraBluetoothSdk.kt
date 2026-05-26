@@ -316,6 +316,10 @@ class MentraBluetoothSdk private constructor(
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "voice_activity_detection_enabled", enabled)
     }
 
+    fun queryVoiceActivityDetectionEnabled() {
+        deviceManager.queryVoiceActivityDetectionEnabled()
+    }
+
     fun setButtonPhotoSettings(size: ButtonPhotoSize) {
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_size", size.value)
     }
