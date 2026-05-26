@@ -93,7 +93,7 @@ MentraOS works across a growing ecosystem of smart glasses.
 
 ## Apps on the Mentra MiniApp Store
 
-Browse, install, and run MiniApps from your phone. Try captions, AI notes, proactive AI, translation, streaming, and more.
+Browse, install, and run glasses apps from your phone. Try captions, AI notes, proactive AI, translation, streaming, and more.
 
 <div align="center">
   <table border="0" cellspacing="0" cellpadding="0" style="border: 0 !important; border-collapse: collapse;">
