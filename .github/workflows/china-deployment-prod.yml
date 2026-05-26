@@ -1,13 +1,12 @@
-name: China Cloud Api Deployment (Dev)
+name: China Cloud Api Deployment
 
 on:
   push:
     branches:
-      - "dev"
-      - "ya/fix-china-cloud-acr"
+      - "main"
     paths:
       - "cloud/**"
-      - ".github/workflows/china-deployment-dev.yml"
+      - ".github/workflows/china-deployment-prod.yml"
 
 jobs:
   china-cloud-deploy:
@@ -38,17 +37,17 @@ jobs:
           - name: CLOUD_VERSION
             value: "2.1.2"
           - name: ADMIN_EMAILS
-            value: "israelov@mentra.glass, isaiah@mentra.glass, matt@mentra.glass, cayden@mentra.glass, nicolo@mentra.glass, team@mentra.glass, yash@mentraglass.com"
+            value: "israelov@mentra.glass, isaiah@mentra.glass, matt@mentra.glass, cayden@mentra.glass, nicolo@mentra.glass, team@mentra.glass, yash@mentra.glass"
           - name: CLOUD_PUBLIC_HOST_NAME
-            value: "dev-api.mentraglass.cn"
+            value: "api.mentraglass.cn"
           - name: CLOUD_HOST_NAME
-            value: "dev-api.mentraglass.cn"
+            value: "api.mentraglass.cn"
           - name: CLOUD_LOCAL_HOST_NAME
             value: "cloud-prod-cloud.default.svc.cluster.local:80"
           - name: PORTER_APP_NAME
             value: "cloud-prod"
           - name: MONGO_URL
-            value: "mongodb+srv://root:${{ secrets.MONGO_PASSWORD }}@dds-n9e5761d6d2d0f84-srv.mongodb.nosql.aliyuncs.com/prod?ssl=false"
+            value: "mongodb+srv://root:${{ secrets.MONGO_PASSWORD }}@dds-n9e4ca1d1dc902d4-srv.mongodb.nosql.aliyuncs.com/prod?ssl=false"
           - name: AUGMENTOS_AUTH_JWT_SECRET
             value: "${{ secrets.AUGMENTOS_AUTH_JWT_SECRET }}"
           - name: INVITE_JWT_SECRET
@@ -87,10 +86,14 @@ jobs:
             value: "${{ secrets.AZURE_SPEECH_KEY }}"
           - name: AZURE_SPEECH_REGION
             value: "centralus"
-          - name: SONIOX_API_KEY
-            value: "${{ secrets.SONIOX_API_KEY }}"
           - name: ANTHROPIC_API_KEY
             value: "${{ secrets.ANTHROPIC_API_KEY }}"
+          - name: ALIBABA_OSS_REGION
+            value: "oss-cn-shenzhen"
+          - name: ALIBABA_PUBLIC_ASSET_OSS_BUCKET
+            value: "mentraos-prod-api-oss-public"
+          - name: ALIBABA_PUBLIC_ASSET_OSS_DOMAIN
+            value: "asset.mentraglass.cn"
           - name: ELEVENLABS_API_KEY
             value: "${{ secrets.ELEVENLABS_API_KEY }}"
           - name: ELEVENLABS_DEFAULT_VOICE_ID
@@ -130,7 +133,17 @@ jobs:
           - name: RESEND_API_KEY
             value: "${{ secrets.RESEND_API_KEY }}"
           - name: UDP_HOST
-            value: "dev-udp-api.mentraglass.cn"
+            value: "udp-api.mentraglass.cn"
+          - name: SONIOX_ENDPOINT
+            value: "wss://stt-rt.soniox.com/transcribe-websocket" 
+          - name: SONIOX_API_KEY
+            value: "random"
+          - name: aliyun_logs_app
+            value: "stdout"
+          - name: aliyun_logs_app_project
+            value: "mentraos-prod-sls"
+          - name: aliyun_logs_app_logstore
+            value: "api"
           EOL
 
       # Create start.sh file
@@ -143,7 +156,7 @@ jobs:
       # Deploy using the environment file
       - uses: Mentra-Community/cloud-actions/deploy-app-alibaba@main
         with:
-          environment: "dev"
+          environment: "prod"
           alibaba-access-key-id: ${{ secrets.ALIBABA_ACCESS_KEY_ID }}
           alibaba-access-key-secret: ${{ secrets.ALIBABA_ACCESS_KEY_SECRET }}
           deployment-region: "cn-shenzhen"
@@ -157,7 +170,7 @@ jobs:
           min-instances: 1
           max-instances: 2
           use-specs: "2.0-4.0Gi"
-          vswitch: "vsw-wz94gyb5cinmsod89a4tj,vsw-wz9p9qoldncmf9k5se950"
-          security-group: "sg-wz95j71022jl4tezfozp"
+          vswitch: "vsw-wz9ie55i32y0m8sguoum4,vsw-wz9448ykk5arq76y1m85q"
+          security-group: "sg-wz92n2ui7musjt04j79p"
           env-yaml-file: "env.yaml"
           container-start-args-file: "container-start-args.yaml"
