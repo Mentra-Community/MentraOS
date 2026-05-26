@@ -42,40 +42,90 @@ MentraOS works across a growing ecosystem of smart glasses.
   <table border="0" cellspacing="0" cellpadding="0" style="border: 0 !important; border-collapse: separate; border-spacing: 14px;">
     <tbody>
       <tr style="border: 0 !important; background: transparent;">
-        <td align="center" width="20%" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; background: #ffffff;">
+        <td align="left" width="20%" valign="top" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; background: #ffffff;">
           <img src="https://img.shields.io/badge/Supported-06BF73?style=flat-square" alt="Supported" />
-          <br /><br />
-          <img src="./images/glasses/mentra-live.png" alt="Mentra Live" width="180" />
-          <br /><br />
-          <p align="center"><b>Mentra Live</b></p>
+          <table border="0" cellspacing="0" cellpadding="0" width="100%" style="border: 0 !important; border-collapse: collapse; background: transparent;">
+            <tbody>
+              <tr style="border: 0 !important; background: transparent;">
+                <td align="center" valign="middle" height="190" style="border: 0 !important; background: transparent;">
+                  <img src="./images/glasses/mentra-live.png" alt="Mentra Live" width="180" />
+                </td>
+              </tr>
+              <tr style="border: 0 !important; background: transparent;">
+                <td align="center" valign="bottom" height="48" style="border: 0 !important; background: transparent;">
+                  <b>Mentra Live</b>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </td>
-        <td align="center" width="20%" style="border: 1px solid #bbf7d0; border-radius: 14px; padding: 18px; background: #ffffff;">
+        <td align="left" width="20%" valign="top" style="border: 1px solid #bbf7d0; border-radius: 14px; padding: 18px; background: #ffffff;">
           <img src="https://img.shields.io/badge/Supported-06BF73?style=flat-square" alt="Supported" />
-          <br /><br />
-          <img src="./images/glasses/even-realities-g2.png" alt="Even Realities G2" width="180" />
-          <br /><br />
-          <p align="center"><b>Even Realities G2</b></p>
+          <table border="0" cellspacing="0" cellpadding="0" width="100%" style="border: 0 !important; border-collapse: collapse; background: transparent;">
+            <tbody>
+              <tr style="border: 0 !important; background: transparent;">
+                <td align="center" valign="middle" height="190" style="border: 0 !important; background: transparent;">
+                  <img src="./images/glasses/even-realities-g2.png" alt="Even Realities G2" width="180" />
+                </td>
+              </tr>
+              <tr style="border: 0 !important; background: transparent;">
+                <td align="center" valign="bottom" height="48" style="border: 0 !important; background: transparent;">
+                  <b>Even Realities G2</b>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </td>
-        <td align="center" width="20%" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; background: #ffffff;">
+        <td align="left" width="20%" valign="top" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; background: #ffffff;">
           <img src="https://img.shields.io/badge/Supported-06BF73?style=flat-square" alt="Supported" />
-          <br /><br />
-          <img src="./images/glasses/vuzix-z100.png" alt="Vuzix Z100" width="180" />
-          <br /><br />
-          <p align="center"><b>Vuzix Z100</b></p>
+          <table border="0" cellspacing="0" cellpadding="0" width="100%" style="border: 0 !important; border-collapse: collapse; background: transparent;">
+            <tbody>
+              <tr style="border: 0 !important; background: transparent;">
+                <td align="center" valign="middle" height="190" style="border: 0 !important; background: transparent;">
+                  <img src="./images/glasses/vuzix-z100.png" alt="Vuzix Z100" width="180" />
+                </td>
+              </tr>
+              <tr style="border: 0 !important; background: transparent;">
+                <td align="center" valign="bottom" height="48" style="border: 0 !important; background: transparent;">
+                  <b>Vuzix Z100</b>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </td>
-        <td align="center" width="20%" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; background: #ffffff;">
+        <td align="left" width="20%" valign="top" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; background: #ffffff;">
           <img src="https://img.shields.io/badge/Supported-06BF73?style=flat-square" alt="Supported" />
-          <br /><br />
-          <img src="./images/glasses/even-realities-g1.png" alt="Even Realities G1" width="180" />
-          <br /><br />
-          <p align="center"><b>Even Realities G1</b></p>
+          <table border="0" cellspacing="0" cellpadding="0" width="100%" style="border: 0 !important; border-collapse: collapse; background: transparent;">
+            <tbody>
+              <tr style="border: 0 !important; background: transparent;">
+                <td align="center" valign="middle" height="190" style="border: 0 !important; background: transparent;">
+                  <img src="./images/glasses/even-realities-g1.png" alt="Even Realities G1" width="180" />
+                </td>
+              </tr>
+              <tr style="border: 0 !important; background: transparent;">
+                <td align="center" valign="bottom" height="48" style="border: 0 !important; background: transparent;">
+                  <b>Even Realities G1</b>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </td>
-        <td align="center" width="20%" style="border: 1px solid #fed7aa; border-radius: 14px; padding: 18px; background: #ffffff;">
+        <td align="left" width="20%" valign="top" style="border: 1px solid #fed7aa; border-radius: 14px; padding: 18px; background: #ffffff;">
           <img src="https://img.shields.io/badge/Coming%20soon-F97316?style=flat-square" alt="Coming soon" />
-          <br /><br />
-          <img src="./images/glasses/nimo.png" alt="NIMO" width="180" />
-          <br /><br />
-          <p align="center"><b>NIMO</b></p>
+          <table border="0" cellspacing="0" cellpadding="0" width="100%" style="border: 0 !important; border-collapse: collapse; background: transparent;">
+            <tbody>
+              <tr style="border: 0 !important; background: transparent;">
+                <td align="center" valign="middle" height="190" style="border: 0 !important; background: transparent;">
+                  <img src="./images/glasses/nimo.png" alt="NIMO" width="180" />
+                </td>
+              </tr>
+              <tr style="border: 0 !important; background: transparent;">
+                <td align="center" valign="bottom" height="48" style="border: 0 !important; background: transparent;">
+                  <b>NIMO</b>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </td>
       </tr>
     </tbody>
