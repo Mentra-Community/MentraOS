@@ -1,29 +1,47 @@
 <div align="center">
   <img src="./images/Github-Readme.png" alt="Mentra: The open source smart glasses operating system" width="100%" />
 
+  <br />
+
   <p>
-    <a href="https://mentra.glass">Website</a> •
-    <a href="https://docs.mentra.glass">Documentation</a> •
-    <a href="https://console.mentra.glass">Developer Console</a> •
-    <a href="https://apps.mentra.glass">Mentra MiniApp Store</a>
+    <a href="https://mentra.glass">
+      <img src="https://img.shields.io/badge/Website-mentra.glass-06BF73?style=for-the-badge" alt="Website" />
+    </a>
+    <a href="https://docs.mentra.glass">
+      <img src="https://img.shields.io/badge/Docs-docs.mentra.glass-111827?style=for-the-badge" alt="Documentation" />
+    </a>
+    <a href="https://console.mentra.glass">
+      <img src="https://img.shields.io/badge/Console-console.mentra.glass-111827?style=for-the-badge" alt="Developer Console" />
+    </a>
+    <a href="https://apps.mentra.glass">
+      <img src="https://img.shields.io/badge/Store-apps.mentra.glass-06BF73?style=for-the-badge" alt="Mentra MiniApp Store" />
+    </a>
   </p>
 
   <p>
-    <img src="https://img.shields.io/github/contributors/TeamOpenSmartGlasses/DiscussPlusPlus" alt="Contributors" />
-    <img src="https://img.shields.io/github/license/TeamOpenSmartGlasses/DiscussPlusPlus" alt="License" />
-    <img src="https://img.shields.io/github/stars/TeamOpenSmartGlasses/DiscussPlusPlus?style=social" alt="GitHub Stars" />
-    <img src="https://img.shields.io/github/v/release/TeamOpenSmartGlasses/DiscussPlusPlus" alt="GitHub Release Version" />
-    <img src="https://img.shields.io/github/last-commit/TeamOpenSmartGlasses/DiscussPlusPlus" alt="Last Updated" />
+    <img src="https://img.shields.io/github/contributors/Mentra-Community/MentraOS?style=flat-square&color=06BF73" alt="Contributors" />
+    <img src="https://img.shields.io/github/license/Mentra-Community/MentraOS?style=flat-square&color=111827" alt="License" />
+    <img src="https://img.shields.io/github/stars/Mentra-Community/MentraOS?style=flat-square&color=06BF73" alt="GitHub Stars" />
+    <img src="https://img.shields.io/github/v/release/Mentra-Community/MentraOS?style=flat-square&color=111827" alt="GitHub Release Version" />
+    <img src="https://img.shields.io/github/last-commit/Mentra-Community/MentraOS?style=flat-square&color=06BF73" alt="Last Updated" />
   </p>
-</div>
 
-<div align="center">
-  <a href="https://apps.apple.com/us/app/mentra-the-smart-glasses-app/id6747363193">
-    <img src="./images/AppStoreBadge.png" alt="Download on the App Store" width="180">
-  </a>
-  <a href="https://play.google.com/store/apps/details?id=com.mentra.mentra">
-    <img src="./images/GooglePlayBadge.png" alt="Get it on Google Play" width="180">
-  </a>
+  <table border="0" cellspacing="0" cellpadding="0" style="border: 0 !important; border-collapse: collapse;">
+    <tbody>
+      <tr style="border: 0 !important; background: transparent;">
+        <td align="center" style="border: 0 !important; padding: 8px; background: transparent;">
+          <a href="https://apps.apple.com/us/app/mentra-the-smart-glasses-app/id6747363193">
+            <img src="./images/AppStoreBadge.png" alt="Download on the App Store" width="190">
+          </a>
+        </td>
+        <td align="center" style="border: 0 !important; padding: 8px; background: transparent;">
+          <a href="https://play.google.com/store/apps/details?id=com.mentra.mentra">
+            <img src="./images/GooglePlayBadge.png" alt="Get it on Google Play" width="190">
+          </a>
+        </td>
+      </tr>
+    </tbody>
+  </table>
 </div>
 
 ## Write Once, Run on Any Smart Glasses
