@@ -293,6 +293,14 @@ public class K900ProtocolUtils {
                 return true;
             }
 
+            // Native K900 command name in C (not Mentra JSON embedded in C)
+            if (json.has(FIELD_C) && json.has(FIELD_V)) {
+                String command = json.optString(FIELD_C, "");
+                if (!command.isEmpty() && !command.startsWith("{")) {
+                    return true;
+                }
+            }
+
             return false;
         } catch (JSONException e) {
             return false;
@@ -431,15 +439,24 @@ public class K900ProtocolUtils {
             // Check if this is C-wrapped format {"C": "..."}
             if (json.has(FIELD_C)) {
                 String innerContent = json.optString(FIELD_C, "");
-                android.util.Log.d("K900ProtocolUtils", "Detected C-wrapped format, inner content: " + innerContent);
 
-                // Try to parse the inner content as JSON
+                // Mentra app JSON-in-C: C holds a JSON object string. Native K900: C is cs_*/sr_* name.
+                if (!innerContent.startsWith("{")) {
+                    android.util.Log.d(
+                            "K900ProtocolUtils",
+                            "Native K900 envelope (C=" + innerContent + "), not unwrapping");
+                    return json;
+                }
+
+                android.util.Log.d("K900ProtocolUtils", "Detected JSON-in-C wrap, inner: " + innerContent);
+
                 try {
                     JSONObject innerJson = new JSONObject(innerContent);
                     return innerJson;
                 } catch (JSONException e) {
-                    android.util.Log.d("K900ProtocolUtils", "Inner content is not JSON, returning outer JSON object");
-                    // If inner content is not JSON, return the outer JSON
+                    android.util.Log.d(
+                            "K900ProtocolUtils",
+                            "Inner content is not JSON, returning outer: " + payloadStr);
                     return json;
                 }
             } else {
