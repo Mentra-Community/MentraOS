@@ -52,6 +52,38 @@ public final class BleTraceLogger {
         Log.i(TAG, format(direction, layer, caller(), extractType(payload), bytes, sanitized.toString()));
     }
 
+    public static void logEvent(String direction, String layer, String type, JSONObject payload) {
+        JSONObject sanitized = payload != null ? sanitize(payload) : new JSONObject();
+        Log.i(TAG, format(direction, layer, caller(), type, null, sanitized.toString()));
+    }
+
+    public static void logBesTraceLine(String line) {
+        if (line == null || line.trim().isEmpty()) {
+            return;
+        }
+
+        JSONObject payload = new JSONObject();
+        try {
+            payload.put("line", line);
+        } catch (Exception ignored) {
+            // Keep trace logging non-fatal.
+        }
+        logEvent("bes_to_asg", "bes_trace_log", "trace", payload);
+    }
+
+    public static void logK900Frame(String direction, String layer, byte[] frame) {
+        logK900Frame(direction, layer, frame, frame != null ? frame.length : null);
+    }
+
+    public static void logK900Frame(String direction, String layer, byte[] frame, Integer bytes) {
+        JSONObject payload = parseK900Frame(frame);
+        if (payload != null) {
+            logJson(direction, layer, payload, bytes);
+            return;
+        }
+        logBytes(direction, layer, frame);
+    }
+
     public static void logLifecycle(Context context, String component, String event) {
         logLifecycle(context, component, event, null);
     }
@@ -137,6 +169,44 @@ public final class BleTraceLogger {
         }
     }
 
+    private static JSONObject parseK900Frame(byte[] frame) {
+        if (frame == null || frame.length < 7) {
+            return null;
+        }
+        if (frame[0] != 0x23 || frame[1] != 0x23) {
+            return null;
+        }
+        if (frame[frame.length - 2] != 0x24 || frame[frame.length - 1] != 0x24) {
+            return null;
+        }
+
+        int bigEndianLength = ((frame[3] & 0xFF) << 8) | (frame[4] & 0xFF);
+        int littleEndianLength = (frame[3] & 0xFF) | ((frame[4] & 0xFF) << 8);
+        int payloadLength = bigEndianLength;
+        if (payloadLength + 7 != frame.length && littleEndianLength + 7 == frame.length) {
+            payloadLength = littleEndianLength;
+        }
+        if (payloadLength <= 0 || payloadLength + 7 > frame.length) {
+            return null;
+        }
+
+        String payload = new String(frame, 5, payloadLength, StandardCharsets.UTF_8);
+        JSONObject json = parseJson(payload);
+        if (json != null) {
+            return json;
+        }
+
+        JSONObject rawPayload = new JSONObject();
+        try {
+            rawPayload.put("frameType", String.format(Locale.US, "0x%02X", frame[2] & 0xFF));
+            rawPayload.put("length", payloadLength);
+            rawPayload.put("payload", truncate(payload));
+        } catch (Exception ignored) {
+            // Keep trace logging non-fatal.
+        }
+        return rawPayload;
+    }
+
     private static JSONObject sanitize(JSONObject input) {
         JSONObject output = new JSONObject();
         Iterator<String> keys = input.keys();
@@ -194,7 +264,8 @@ public final class BleTraceLogger {
         for (StackTraceElement frame : stackTrace) {
             String className = frame.getClassName();
             if (className.equals(BleTraceLogger.class.getName())
-                || className.equals(Thread.class.getName())) {
+                || className.equals(Thread.class.getName())
+                || className.equals("dalvik.system.VMStack")) {
                 continue;
             }
             return simpleClassName(className) + "." + frame.getMethodName()

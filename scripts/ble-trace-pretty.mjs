@@ -5,6 +5,7 @@ import readline from 'node:readline';
 const rawArgs = process.argv.slice(2);
 const args = new Set(rawArgs);
 const verbose = args.has('--verbose');
+const showBesChunks = verbose || args.has('--show-bes-chunks');
 const noColor = args.has('--no-color') || !process.stdout.isTTY;
 const timeZone = resolveTimeZone();
 
@@ -13,6 +14,7 @@ const colors = {
   red: '\u001b[31m',
   cyan: '\u001b[36m',
   yellow: '\u001b[33m',
+  magenta: '\u001b[35m',
   dim: '\u001b[2m',
   reset: '\u001b[0m',
 };
@@ -62,6 +64,15 @@ function compactLabel(direction, layer) {
   }
   if (direction === 'phone_to_app') {
     return color('SDK -> APP', 'cyan');
+  }
+  if (direction === 'asg_to_bes') {
+    return color('ASG -> BES', 'green');
+  }
+  if (direction === 'bes_to_asg' && layer === 'bes_trace_log') {
+    return color('BES TRACE', 'magenta');
+  }
+  if (direction === 'bes_to_asg') {
+    return color('BES -> ASG', 'red');
   }
   if (layer === 'asg_command_router') {
     return color('ASG ROUTER', 'yellow');
@@ -170,6 +181,29 @@ function summarize(trace) {
     return parts.slice(0, 8).join(' ');
   }
 
+  if (trace.layer === 'bes_trace_log') {
+    return trace.payload.line ?? '';
+  }
+
+  if (trace.layer === 'bes_trace_control') {
+    const parts = [];
+    for (const key of ['event', 'reason', 'intervalMs']) {
+      if (trace.payload[key] != null) {
+        parts.push(`${key}=${trace.payload[key]}`);
+      }
+    }
+    return parts.join(' ');
+  }
+
+  if (trace.type === 'k900:sr_log' && trace.payload.B) {
+    const body = trace.payload.B.body ?? '';
+    return [
+      `cur=${trace.payload.B.cur ?? ''}`,
+      `chars=${String(body).length}`,
+      `terminator=${trace.payload.B.cur === 255}`,
+    ].join(' ');
+  }
+
   const omitted = new Set(['type', 'timestamp', 'mId']);
   if (trace.payload.C && trace.type === `k900:${trace.payload.C}`) {
     omitted.add('C');
@@ -179,9 +213,13 @@ function summarize(trace) {
     .filter(([key]) => !omitted.has(key))
     .filter(([key]) => !key.startsWith('timestamp.'))
     .slice(0, 8)
-    .map(([key, value]) => `${key}=${value}`);
+    .map(([key, value]) => `${key}=${singleLine(value)}`);
 
   return parts.join(' ');
+}
+
+function singleLine(value) {
+  return String(value).replace(/\s*\r?\n\s*/g, '\\n');
 }
 
 function formatTrace(trace) {
@@ -209,6 +247,9 @@ const rl = readline.createInterface({
 rl.on('line', (line) => {
   const trace = parseLine(line);
   if (!trace) {
+    return;
+  }
+  if (!showBesChunks && (trace.type === 'k900:sr_log' || trace.layer === 'bes_log_stream')) {
     return;
   }
   console.log(formatTrace(trace));
