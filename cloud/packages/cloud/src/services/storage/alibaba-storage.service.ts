@@ -9,10 +9,10 @@ export class AlibabaStorageService {
 
   constructor(logger: Logger) {
     this.logger = logger;
-    const region = "oss-cn-shenzhen";
+    const region = process.env.ALIBABA_OSS_REGION;
     const accessKeyId = process.env.ALIBABA_ACCESS_KEY_ID;
     const accessKeySecret = process.env.ALIBABA_ACCESS_KEY_SECRET;
-    this.bucketName = "mentraos-prod-api-oss-public";
+    this.bucketName = process.env.ALIBABA_PUBLIC_ASSET_OSS_BUCKET || "";
 
     if (!region || !accessKeyId || !accessKeySecret || !this.bucketName) {
       throw new Error("Alibaba OSS credentials or configuration missing");
@@ -21,7 +21,7 @@ export class AlibabaStorageService {
     this.ossClient = new OSS({
       accessKeyId,
       accessKeySecret,
-      endpoint: "asset.mentraglass.cn",
+      endpoint: process.env.ALIBABA_PUBLIC_ASSET_OSS_DOMAIN || "",
       cname: true,
       bucket: this.bucketName,
     });

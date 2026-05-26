@@ -87,10 +87,14 @@ jobs:
             value: "${{ secrets.AZURE_SPEECH_KEY }}"
           - name: AZURE_SPEECH_REGION
             value: "centralus"
-          - name: SONIOX_API_KEY
-            value: "${{ secrets.SONIOX_API_KEY }}"
           - name: ANTHROPIC_API_KEY
             value: "${{ secrets.ANTHROPIC_API_KEY }}"
+          - name: ALIBABA_OSS_REGION
+            value: "oss-cn-shenzhen"
+          - name: ALIBABA_PUBLIC_ASSET_OSS_BUCKET
+            value: "mentraos-prod-api-oss-public"
+          - name: ALIBABA_PUBLIC_ASSET_OSS_DOMAIN
+            value: "asset.mentraglass.cn"
           - name: ELEVENLABS_API_KEY
             value: "${{ secrets.ELEVENLABS_API_KEY }}"
           - name: ELEVENLABS_DEFAULT_VOICE_ID

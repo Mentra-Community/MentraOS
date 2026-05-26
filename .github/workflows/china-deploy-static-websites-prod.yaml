@@ -3,7 +3,7 @@ name: China Cloud Deploy Static Websites
 on:
   push:
     branches:
-      - dev
+      - "main"
       - "ya/china-cloud-launch-prep"
     paths:
       - "cloud/websites/**"
@@ -17,7 +17,7 @@ jobs:
       contents: read
 
     env:
-      NODE_ENV: development
+      NODE_ENV: production
       STORE_OSS_BUCKET: mentraos-prod-apps-oss
       STORE_OSS_CNAME: apps.mentraglass.cn
       STORE_OSS_PATH: cloud/websites/store/dist
