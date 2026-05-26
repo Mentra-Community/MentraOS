@@ -107,6 +107,8 @@ protocol SGCManager {
 
     func sendVoiceActivityDetectionSetting()
 
+    func queryVoiceActivityDetectionEnabled()
+
     // MARK: - Version Info
 
     func requestVersionInfo()
@@ -134,6 +136,8 @@ extension SGCManager {
     // MARK: - Voice Activity Detection (default no-op — Mentra Live supports this)
 
     func sendVoiceActivityDetectionSetting() {}
+
+    func queryVoiceActivityDetectionEnabled() {}
 
     // MARK: - Default DeviceStore-backed property implementations
 

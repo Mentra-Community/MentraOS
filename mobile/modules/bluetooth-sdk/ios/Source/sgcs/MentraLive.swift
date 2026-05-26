@@ -2267,7 +2267,7 @@ class MentraLive: NSObject, SGCManager {
                 handleSpeakingStatus(speaking: on == 1)
             }
 
-        case "sr_swit":
+        case "sr_swst", "sr_swit":
             if let body = k900ParseBody(json["B"]) {
                 let switchType = k900JsonInt(body, "type") ?? -1
                 let switchValue = k900JsonInt(body, "switch") ?? -1
@@ -4561,7 +4561,6 @@ extension MentraLive {
 
     func sendVoiceActivityDetectionSetting() {
         let enabled = DeviceStore.shared.get("bluetooth", "voice_activity_detection_enabled") as? Bool ?? true
-        Bridge.log("LIVE: 🎤 Sending Voice Activity Detection setting to glasses: \(enabled)")
 
         guard connectedPeripheral != nil, txCharacteristic != nil else {
             Bridge.log("Cannot send Voice Activity Detection setting - BLE write path not ready")
@@ -4589,6 +4588,22 @@ extension MentraLive {
             }
         } catch {
             Bridge.log("LIVE: Error encoding Voice Activity Detection payload: \(error)")
+        }
+    }
+
+    func queryVoiceActivityDetectionEnabled() {
+        guard connectedPeripheral != nil, txCharacteristic != nil else {
+            Bridge.log("Cannot query Voice Activity Detection - BLE write path not ready")
+            return
+        }
+
+        let command: [String: Any] = [
+            "C": "cs_swst",
+            "V": 1,
+            "B": "",
+        ]
+        if !sendRawK900Command(command, wakeUp: true) {
+            Bridge.log("LIVE: Failed to send Voice Activity Detection query command")
         }
     }
 
