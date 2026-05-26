@@ -1,0 +1,22 @@
+{
+  "name": "cloud-v2",
+  "version": "0.0.0",
+  "private": true,
+  "description": "MentraOS cloud rewrite. Local JS miniapp SDK backend, horizontally scalable, three packages (core / audio / proxy).",
+  "workspaces": ["packages/*"],
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "scripts": {
+    "setup": "bun scripts/setup.ts",
+    "dev:core": "bun --watch packages/core/src/index.ts",
+    "dev:audio": "bun --watch packages/audio/src/index.ts",
+    "dev:proxy": "bun --watch packages/proxy/src/index.ts",
+    "typecheck": "tsc -b",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  }
+}
