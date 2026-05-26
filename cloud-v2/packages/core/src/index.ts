@@ -2,11 +2,11 @@
  * `@cloud-v2/core` — Mentra Services. OEM auth runtime, OEM portal backend,
  * miniapp store, REST endpoints.
  *
- * Specs: cloud-v2/docs/issues/001-oem-auth/, 002-oem-portal/, miniapp-store work.
- *
- * Currently a placeholder. Real entry point lands as part of subsequent tickets.
+ * Specs: cloud-v2/docs/issues/001-oem-auth/, 002-oem-portal/, miniapp store work.
  */
 
-import { PACKAGE_NAME as SHARED } from "@cloud-v2/shared";
+import { createLogger } from "@cloud-v2/shared";
 
-console.log(`[@cloud-v2/core] starting (shared: ${SHARED}). Real implementation pending.`);
+const logger = createLogger("core");
+
+logger.info("starting cloud-v2 core (placeholder; real entry point in upcoming tickets)");
