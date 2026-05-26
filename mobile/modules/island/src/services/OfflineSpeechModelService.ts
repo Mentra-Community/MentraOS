@@ -1,4 +1,4 @@
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 // import NetInfo from "@react-native-community/netinfo"
 
 import STTModelManager from "./STTModelManager"
@@ -115,7 +115,7 @@ class OfflineSpeechModelService {
 
     if (await STTModelManager.isModelAvailable(code)) {
       await STTModelManager.activateLanguage(code)
-      await CoreModule.restartTranscriber()
+      await BluetoothSdk.restartTranscriber()
       console.log(`OFFLINE_MODELS: STT model ready: ${code}`)
       return
     }
@@ -129,7 +129,7 @@ class OfflineSpeechModelService {
         (p) => this.setStatus({kind: "stt", languageCode: code, stage: "extracting", percent: p.percentage}),
       )
       await STTModelManager.activateLanguage(code)
-      await CoreModule.restartTranscriber()
+      await BluetoothSdk.restartTranscriber()
       this.setStatus({kind: "stt", languageCode: code, stage: "complete", percent: 100})
       console.log(`OFFLINE_MODELS: STT model downloaded: ${code}`)
     } catch (error) {

@@ -1,4 +1,5 @@
 import CoreModule from "@mentra/bluetooth-sdk"
+import CrustModule from "crust"
 import * as RNFS from "@dr.pogodin/react-native-fs"
 
 /**
@@ -343,7 +344,7 @@ class TTSModelManager {
 
       let extractionResult = false
       try {
-        extractionResult = await CoreModule.extractTarBz2(tempPath, finalPath)
+        extractionResult = await CrustModule.extractTarBz2(tempPath, finalPath)
       } finally {
         unsubscribe()
       }
