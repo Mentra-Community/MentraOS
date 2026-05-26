@@ -6,6 +6,64 @@ A MentraOS glasses client that runs on Android-based smart glasses such as Mentr
 
 - Mentra Live
 
+### Hardware Architecture (Mentra Live)
+
+Mentra Live has two SOCs: an **MTK** chip running Android (where `asg_client` runs) and a **BES** chip running an RTOS. The BES owns the phone link and most peripherals; the MTK is asleep by default and is woken on demand for camera, Wi-Fi, and heavier compute. The two chips talk over **UART** (control) and **I2S** (audio).
+
+```mermaid
+flowchart LR
+    Phone[Phone]
+
+    subgraph Glasses[Mentra Live]
+        direction LR
+
+        subgraph BES["BES (RTOS) — always on"]
+            BES_CORE[BES SOC<br/>BLE + BT Classic]
+        end
+
+        subgraph MTK["MTK (Android) — asleep by default"]
+            MTK_CORE[MTK SOC<br/>runs asg_client]
+        end
+
+        Speakers[Speakers]
+        Mic1[Microphone 1]
+        Mic2[Microphone 2]
+        Mic3[Microphone 3]
+        Btn1[Button 1]
+        Btn2[Button 2]
+        Touchpad[Touchpad]
+        StatusLED[Status LED]
+        Camera[Camera]
+        FlashLED[Flash LED]
+        WiFi[Wi-Fi chip]
+    end
+
+    Phone <-- "BLE (control)" --> BES_CORE
+    Phone <-- "BT Classic (audio)" --> BES_CORE
+
+    BES_CORE <-- UART --> MTK_CORE
+    BES_CORE <-- I2S --> MTK_CORE
+
+    BES_CORE --- Speakers
+    BES_CORE --- Mic1
+    BES_CORE --- Mic2
+    BES_CORE --- Btn1
+    BES_CORE --- Btn2
+    BES_CORE --- Touchpad
+    BES_CORE --- StatusLED
+
+    MTK_CORE --- Camera
+    MTK_CORE --- FlashLED
+    MTK_CORE --- Mic3
+    MTK_CORE --- WiFi
+```
+
+Implications for development:
+
+- The phone never talks to the MTK directly. All phone ↔ glasses traffic goes through BES, then over UART/I2S to the MTK when needed.
+- Anything battery-cheap (button presses, touch input, status LED, the always-on audio path) lives on BES.
+- Anything heavy (camera capture, RTMP streaming, Wi-Fi, on-device processing) requires waking the MTK.
+
 ### Environment Setup
 
 1. Create a `.env` file by copying the provided example:
