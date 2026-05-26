@@ -2,13 +2,25 @@ import { describe, expect, test } from "bun:test";
 import { resolveIncidentId } from "../src/utils/id-resolution.ts";
 import type { AgentClient } from "../src/http/agent-client.ts";
 
-function mockClient(incidents: { incidentId: string }[]): AgentClient {
+function mockClient(
+  incidents: { incidentId: string }[],
+  options?: { pageSize?: number },
+): AgentClient {
+  const pageSize = options?.pageSize ?? 500;
   return {
-    listIncidents: async () => ({
-      success: true,
-      data: incidents as AgentClient extends { listIncidents: infer R } ? never : never,
-      pagination: { total: incidents.length, limit: 500, offset: 0, hasMore: false },
-    }),
+    listIncidents: async (_limit: number, offset: number) => {
+      const page = incidents.slice(offset, offset + pageSize);
+      return {
+        success: true,
+        data: page as never,
+        pagination: {
+          total: incidents.length,
+          limit: pageSize,
+          offset,
+          hasMore: offset + page.length < incidents.length,
+        },
+      };
+    },
     getIncident: async () => ({ success: true, data: incidents[0] as never }),
     getIncidentLogs: async () => ({ success: true, data: {} as never }),
   } as unknown as AgentClient;
@@ -33,5 +45,14 @@ describe("resolveIncidentId", () => {
       { incidentId: "c3f3e699-1111-2222-3333-444444444444" },
     ]);
     await expect(resolveIncidentId(client, "c3f3e699")).rejects.toThrow(/Ambiguous/);
+  });
+
+  test("paginates past first page to resolve prefix", async () => {
+    const target = "deadbeef-0000-0000-0000-000000000001";
+    const filler = Array.from({ length: 500 }, (_, i) => ({
+      incidentId: `aaaaaaaa-bbbb-cccc-dddd-${String(i).padStart(12, "0")}`,
+    }));
+    const client = mockClient([...filler, { incidentId: target }], { pageSize: 500 });
+    expect(await resolveIncidentId(client, "deadbeef")).toBe(target);
   });
 });
