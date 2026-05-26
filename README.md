@@ -63,7 +63,7 @@ MentraOS works across a growing ecosystem of smart glasses.
         <td align="left" width="20%" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; background: #ffffff;">
           <sub><b>Supported</b></sub>
           <br /><br />
-          <img src="./images/glasses/mentra-live.webp" alt="Mentra Live" width="180" />
+          <img src="./images/glasses/mentra-live.png" alt="Mentra Live" width="180" />
           <br /><br />
           <b>Mentra Live</b>
         </td>
