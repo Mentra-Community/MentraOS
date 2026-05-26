@@ -5,8 +5,19 @@
  * Spec + design pending: cloud-v2/docs/issues/004-api-proxy/.
  */
 
-import { createLogger } from "@cloud-v2/shared";
+import { createHealthApp, createLogger } from "@cloud-v2/shared";
 
 const logger = createLogger("proxy");
+const PORT = Number.parseInt(process.env.PORT ?? "3002", 10);
 
-logger.info("starting cloud-v2 proxy (placeholder; real entry point in upcoming tickets)");
+const app = createHealthApp({
+  packageName: "proxy",
+  readinessChecks: [],
+});
+
+const server = Bun.serve({
+  port: PORT,
+  fetch: app.fetch,
+});
+
+logger.info({ port: server.port }, "cloud-v2 proxy listening (REST relay pending)");

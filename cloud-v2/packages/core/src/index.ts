@@ -5,8 +5,21 @@
  * Specs: cloud-v2/docs/issues/001-oem-auth/, 002-oem-portal/, miniapp store work.
  */
 
-import { createLogger } from "@cloud-v2/shared";
+import { createHealthApp, createLogger } from "@cloud-v2/shared";
 
 const logger = createLogger("core");
+const PORT = Number.parseInt(process.env.PORT ?? "3000", 10);
 
-logger.info("starting cloud-v2 core (placeholder; real entry point in upcoming tickets)");
+const app = createHealthApp({
+  packageName: "core",
+  // Readiness checks are added as dependencies come online:
+  // - Mongo connection (lands with the OEM auth data model, OS-1496)
+  readinessChecks: [],
+});
+
+const server = Bun.serve({
+  port: PORT,
+  fetch: app.fetch,
+});
+
+logger.info({ port: server.port }, "cloud-v2 core listening");

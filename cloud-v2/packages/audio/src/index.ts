@@ -5,8 +5,22 @@
  * Spec + design: cloud-v2/docs/issues/003-audio/.
  */
 
-import { createLogger } from "@cloud-v2/shared";
+import { createHealthApp, createLogger } from "@cloud-v2/shared";
 
 const logger = createLogger("audio");
+const PORT = Number.parseInt(process.env.PORT ?? "3001", 10);
 
-logger.info("starting cloud-v2 audio (placeholder; real entry point in upcoming tickets)");
+const app = createHealthApp({
+  packageName: "audio",
+  // Readiness checks are added as dependencies come online:
+  // - Redis connection (lands with OS-1503 — Redis Streams audio bus)
+  // - At least one worker alive (lands with OS-1505 — worker pool)
+  readinessChecks: [],
+});
+
+const server = Bun.serve({
+  port: PORT,
+  fetch: app.fetch,
+});
+
+logger.info({ port: server.port }, "cloud-v2 audio listening (HTTP only; UDP + WS pending)");
