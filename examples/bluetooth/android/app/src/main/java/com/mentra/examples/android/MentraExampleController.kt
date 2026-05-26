@@ -31,6 +31,7 @@ import com.mentra.bluetoothsdk.MentraBluetoothSdkCallback
 import com.mentra.bluetoothsdk.MicLc3Event
 import com.mentra.bluetoothsdk.MicPcmEvent
 import com.mentra.bluetoothsdk.ButtonPressEvent
+import com.mentra.bluetoothsdk.CameraFov
 import com.mentra.bluetoothsdk.GlassesBatteryState
 import com.mentra.bluetoothsdk.Device
 import com.mentra.bluetoothsdk.DeviceModel
@@ -145,6 +146,13 @@ private data class GalleryServerCheck(
 val rgbLedColorOptions = RgbLedColor.values().map { it.value }
 val scanModelOptions = listOf(DeviceModel.MENTRA_LIVE, DeviceModel.G2)
 const val MENTRA_LIVE_DEFAULT_HOTSPOT_PASSWORD = "00001111"
+const val PHOTO_EXPOSURE_MIN_NS = 1_000_000
+const val PHOTO_EXPOSURE_MAX_NS = 33_333_333
+const val PHOTO_EXPOSURE_DEFAULT_NS = 8_333_333
+const val CAMERA_FOV_MIN = 82
+const val CAMERA_FOV_MAX = 118
+const val CAMERA_FOV_DEFAULT = 102
+val cameraRoiPositions = listOf("Center" to 0, "Bottom" to 1, "Top" to 2)
 
 data class MentraExampleState(
     val activeAction: String? = null,
@@ -177,8 +185,13 @@ data class MentraExampleState(
     val photoDestination: PhotoDestination = PhotoDestination.THIS_PHONE,
     val photoPreviewDetails: PhotoPreviewDetails? = null,
     val photoPreviewUrl: String? = null,
-    val photoCompression: String = "medium",
-    val photoSize: String = "medium",
+    val photoCompression: String = "none",
+    val photoSize: String = "full",
+    val photoExposureManual: Boolean = false,
+    val photoExposureTimeNs: Int = PHOTO_EXPOSURE_DEFAULT_NS,
+    val cameraFov: Int = CAMERA_FOV_DEFAULT,
+    val cameraRoiPosition: Int = 0,
+    val cameraSettingsStatus: String = "Camera settings: default",
     val phonePhotoServerRunning: Boolean = false,
     val phonePhotoUploadUrl: String = "Phone receiver not started",
     val audioBondStatus: String = "Bond: checking",
@@ -423,6 +436,39 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         state = state.copy(photoCompression = compression)
     }
 
+    fun setPhotoExposureManual(enabled: Boolean) {
+        state = state.copy(photoExposureManual = enabled)
+    }
+
+    fun setPhotoExposureTimeNs(exposureTimeNs: Int) {
+        state = state.copy(photoExposureTimeNs = exposureTimeNs.coerceIn(PHOTO_EXPOSURE_MIN_NS, PHOTO_EXPOSURE_MAX_NS))
+    }
+
+    fun setCameraFov(fov: Int) {
+        val nextFov = fov.coerceIn(CAMERA_FOV_MIN, CAMERA_FOV_MAX)
+        state = state.copy(
+            cameraFov = nextFov,
+            cameraRoiPosition = if (nextFov == CAMERA_FOV_MAX) 0 else state.cameraRoiPosition,
+        )
+    }
+
+    fun setCameraRoiPosition(roiPosition: Int) {
+        state = state.copy(cameraRoiPosition = if (state.cameraFov == CAMERA_FOV_MAX) 0 else roiPosition.coerceIn(0, 2))
+    }
+
+    fun applyCameraSettings() = runAction("Apply camera settings") {
+        requireConnected("apply camera settings")
+        val fov = state.cameraFov.coerceIn(CAMERA_FOV_MIN, CAMERA_FOV_MAX)
+        val roiPosition = if (fov == CAMERA_FOV_MAX) 0 else state.cameraRoiPosition.coerceIn(0, 2)
+        state = state.copy(cameraSettingsStatus = "Camera settings: applying; camera restarts for about 5s")
+        mentraBluetoothSdk.setCameraFov(CameraFov(fov, roiPosition))
+        addEvent("TX", "setCameraFov fov=$fov roiPosition=$roiPosition")
+        scope.launch {
+            delay(5_000)
+            state = state.copy(cameraSettingsStatus = "Camera settings: field of view ${fov}°, ${roiPositionLabel(roiPosition)} crop")
+        }
+    }
+
     fun captureAndUpload() = runAction("Capture & upload") {
         requireConnected("capture photos")
         requireGlassesWifi("capture photos")
@@ -458,6 +504,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 webhookUrl = uploadUrl,
                 compress = PhotoCompression.fromValue(state.photoCompression),
                 sound = true,
+                exposureTimeNs = if (state.photoExposureManual) state.photoExposureTimeNs.toDouble() else null,
             )
         )
         pollPhotoPreview(requestId, statusUrl, generation)
@@ -490,6 +537,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 webhookUrl = uploadUrl,
                 compress = PhotoCompression.fromValue(state.photoCompression),
                 sound = true,
+                exposureTimeNs = if (state.photoExposureManual) state.photoExposureTimeNs.toDouble() else null,
             )
         )
         addEvent("TX", "requestPhoto requestId=$requestId webhookUrl=$uploadUrl")
@@ -2110,10 +2158,19 @@ fun disconnectedGlassesStatus(status: GlassesRuntimeState?): GlassesRuntimeState
 val photoSizeOptions = listOf("small", "medium", "large", "full")
 val photoCompressionOptions = listOf("none", "medium", "heavy")
 
+fun roiPositionLabel(roiPosition: Int): String =
+    cameraRoiPositions.firstOrNull { it.second == roiPosition }?.first ?: "Center"
+
 fun cameraSdkCall(
     size: String,
     compression: String,
+    exposureManual: Boolean,
+    exposureTimeNs: Int,
+    cameraFov: Int,
+    cameraRoiPosition: Int,
 ): String = """
+mentraBluetoothSdk.setCameraFov(CameraFov(fov = $cameraFov, roiPosition = $cameraRoiPosition))
+// Mentra Live restarts the camera for about 5s after FOV/ROI changes.
 mentraBluetoothSdk.requestPhoto(
     PhotoRequest(
       requestId = requestId,
@@ -2122,6 +2179,7 @@ mentraBluetoothSdk.requestPhoto(
       webhookUrl = uploadUrl,
       compress = PhotoCompression.${compression.uppercase(Locale.US)},
       sound = true,
+      exposureTimeNs = ${if (exposureManual) exposureTimeNs else "null"},
     )
 )
 """.trimIndent()

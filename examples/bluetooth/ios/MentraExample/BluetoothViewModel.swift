@@ -26,6 +26,13 @@ private struct GalleryServerCheck {
 
 private let defaultPhotoUploadUrl = "http://<computer-ip>:8787/upload"
 let scanModelOptions: [DeviceModel] = [.mentraLive, .g2]
+let photoExposureMinNs = 1_000_000
+let photoExposureMaxNs = 33_333_333
+let photoExposureDefaultNs = 8_333_333
+let cameraFovMin = 82
+let cameraFovMax = 118
+let cameraFovDefault = 102
+let cameraRoiPositions: [(label: String, value: Int)] = [("Center", 0), ("Bottom", 1), ("Top", 2)]
 
 enum PhotoDestination {
     case macBookServer
@@ -123,6 +130,10 @@ func deviceModelLabel(_ model: DeviceModel) -> String {
     }
 }
 
+func roiPositionLabel(_ roiPosition: Int) -> String {
+    cameraRoiPositions.first { $0.value == roiPosition }?.label ?? "Center"
+}
+
 enum ExampleStreamProtocol: String, CaseIterable {
     case rtmp
     case srt
@@ -162,8 +173,13 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var photoPreviewUrl: URL?
     @Published private(set) var photoPreviewImage: UIImage?
     @Published private(set) var photoDestination: PhotoDestination = .thisPhone
-    @Published private(set) var photoSize: PhotoSize = .medium
-    @Published private(set) var photoCompression: PhotoCompression = .medium
+    @Published private(set) var photoSize: PhotoSize = .full
+    @Published private(set) var photoCompression: PhotoCompression = .none
+    @Published private(set) var photoExposureManual = false
+    @Published private(set) var photoExposureTimeNs = photoExposureDefaultNs
+    @Published private(set) var cameraFov = cameraFovDefault
+    @Published private(set) var cameraRoiPosition = 0
+    @Published private(set) var cameraSettingsStatus = "Camera settings: default"
     @Published private(set) var phonePhotoServerRunning = false
     @Published private(set) var phonePhotoUploadUrl = "Phone receiver not started"
     @Published var streamProtocol: ExampleStreamProtocol = .webrtc
@@ -419,6 +435,50 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         photoCompression = compression
     }
 
+    func setPhotoExposureManual(_ enabled: Bool) {
+        photoExposureManual = enabled
+    }
+
+    func setPhotoExposureTimeNs(_ exposureTimeNs: Int) {
+        photoExposureTimeNs = min(max(exposureTimeNs, photoExposureMinNs), photoExposureMaxNs)
+    }
+
+    func setCameraFov(_ fov: Int) {
+        cameraFov = min(max(fov, cameraFovMin), cameraFovMax)
+        if cameraFov == cameraFovMax {
+            cameraRoiPosition = 0
+        }
+    }
+
+    func setCameraRoiPosition(_ roiPosition: Int) {
+        cameraRoiPosition = cameraFov == cameraFovMax ? 0 : min(max(roiPosition, 0), 2)
+    }
+
+    func applyCameraSettings() {
+        runAction("Apply camera settings") {
+            try requireConnected("apply camera settings")
+            let fov = cameraFov
+            let roiPosition = fov == cameraFovMax ? 0 : cameraRoiPosition
+            cameraSettingsStatus = "Camera settings: applying; camera restarts for about 5s"
+            Task { [weak self] in
+                do {
+                    try await self?.mentraBluetoothSdk.setCameraFov(CameraFov(fov: fov, roiPosition: roiPosition))
+                    await MainActor.run {
+                        self?.append(tag: "TX", text: "setCameraFov fov=\(fov) roiPosition=\(roiPosition)")
+                    }
+                    try await Task.sleep(nanoseconds: 5_000_000_000)
+                    await MainActor.run {
+                        self?.cameraSettingsStatus = "Camera settings: field of view \(fov)°, \(roiPositionLabel(roiPosition)) crop"
+                    }
+                } catch {
+                    await MainActor.run {
+                        self?.cameraSettingsStatus = "Camera settings failed: \(error.localizedDescription)"
+                    }
+                }
+            }
+        }
+    }
+
     func captureAndUpload() {
         runAction("Capture & upload") {
             try requireConnected("capture photos")
@@ -452,7 +512,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                     size: photoSize,
                     webhookUrl: uploadUrl,
                     compress: photoCompression,
-                    sound: true
+                    sound: true,
+                    exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil
                 )
             )
             pollPhotoPreview(requestId: requestId, statusUrl: statusUrl.deletingLastPathComponent().appendingPathComponent("\(requestId).json"), generation: generation)
@@ -485,7 +546,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 size: photoSize,
                 webhookUrl: uploadUrl,
                 compress: photoCompression,
-                sound: true
+                sound: true,
+                exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil
             )
         )
         append(tag: "TX", text: "requestPhoto requestId=\(requestId) webhookUrl=\(uploadUrl)")

@@ -17,6 +17,7 @@ import androidx.compose.material.icons.outlined.Camera
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -38,13 +39,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.mentra.examples.android.MentraExampleController
+import com.mentra.examples.android.CAMERA_FOV_DEFAULT
+import com.mentra.examples.android.CAMERA_FOV_MAX
+import com.mentra.examples.android.CAMERA_FOV_MIN
+import com.mentra.examples.android.PHOTO_EXPOSURE_DEFAULT_NS
+import com.mentra.examples.android.PHOTO_EXPOSURE_MAX_NS
+import com.mentra.examples.android.PHOTO_EXPOSURE_MIN_NS
 import com.mentra.examples.android.PhotoPreviewDetails
 import com.mentra.examples.android.PhotoDestination
+import com.mentra.examples.android.cameraRoiPositions
 import com.mentra.examples.android.cameraSdkCall
 import com.mentra.examples.android.isGlassesConnected
 import com.mentra.examples.android.isGlassesWifiConnected
 import com.mentra.examples.android.photoCompressionOptions
 import com.mentra.examples.android.photoSizeOptions
+import com.mentra.examples.android.roiPositionLabel
 import com.mentra.examples.android.ui.AppColor
 import com.mentra.examples.android.ui.Eyebrow
 import com.mentra.examples.android.ui.GlassCard
@@ -65,7 +74,14 @@ fun CameraScreen(controller: MentraExampleController) {
     val directPhone = !cloudServerEnabled
     val cameraStatusFailed = isCameraStatusFailure(state.cameraStatus)
     val setupHint = if (cloudServerEnabled) localCameraSetupHint(state.webhookUrl, state.cameraStatus) else null
-    val sdkCall = cameraSdkCall(state.photoSize, state.photoCompression)
+    val sdkCall = cameraSdkCall(
+        state.photoSize,
+        state.photoCompression,
+        state.photoExposureManual,
+        state.photoExposureTimeNs,
+        state.cameraFov,
+        state.cameraRoiPosition,
+    )
     val clipboardManager = LocalClipboardManager.current
     var photoDetailsExpanded by remember { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxSize().background(AppColor.bg).verticalScroll(rememberScrollState())) {
@@ -310,10 +326,124 @@ fun CameraScreen(controller: MentraExampleController) {
                         }
                     }
                 }
+                ExposureSettingsCard(controller)
+                CameraFovSettingsCard(controller)
             }
         }
 
         Spacer(Modifier.height(scrollBottomPadding()))
+    }
+}
+
+@Composable
+private fun ExposureSettingsCard(controller: MentraExampleController) {
+    val state = controller.state
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(AppColor.ink.copy(alpha = 0.04f))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("EXPOSURE", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
+                Text(
+                    if (state.photoExposureManual) exposureLabel(state.photoExposureTimeNs) else "Auto exposure",
+                    color = AppColor.greenAccent,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Switch(checked = state.photoExposureManual, onCheckedChange = controller::setPhotoExposureManual)
+        }
+        Slider(
+            enabled = state.photoExposureManual,
+            value = state.photoExposureTimeNs.toFloat(),
+            onValueChange = { controller.setPhotoExposureTimeNs(it.toInt()) },
+            valueRange = PHOTO_EXPOSURE_MIN_NS.toFloat()..PHOTO_EXPOSURE_MAX_NS.toFloat(),
+        )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("1/1000s", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Preset 1/120s",
+                color = AppColor.greenAccent,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clickable { controller.setPhotoExposureTimeNs(PHOTO_EXPOSURE_DEFAULT_NS) }
+            )
+            Text("1/30s", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+@Composable
+private fun CameraFovSettingsCard(controller: MentraExampleController) {
+    val state = controller.state
+    val roiDisabled = state.cameraFov == CAMERA_FOV_MAX
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(AppColor.ink.copy(alpha = 0.04f))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("FIELD OF VIEW", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
+                Text(
+                    "${state.cameraFov}° · ${if (roiDisabled) "full sensor" else "${roiPositionLabel(state.cameraRoiPosition)} crop"}",
+                    color = AppColor.greenAccent,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Text(
+                "Apply",
+                color = AppColor.greenAccent,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(AppColor.greenAccent.copy(alpha = 0.16f))
+                    .border(1.dp, AppColor.greenAccent.copy(alpha = 0.28f), RoundedCornerShape(999.dp))
+                    .clickable { controller.applyCameraSettings() }
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+            )
+        }
+        Slider(
+            value = state.cameraFov.toFloat(),
+            onValueChange = { controller.setCameraFov(it.toInt()) },
+            valueRange = CAMERA_FOV_MIN.toFloat()..CAMERA_FOV_MAX.toFloat(),
+            steps = CAMERA_FOV_MAX - CAMERA_FOV_MIN - 1,
+        )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("${CAMERA_FOV_MIN}°", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Default ${CAMERA_FOV_DEFAULT}°",
+                color = AppColor.greenAccent,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clickable { controller.setCameraFov(CAMERA_FOV_DEFAULT) }
+            )
+            Text("${CAMERA_FOV_MAX}°", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        }
+        CameraOptionGroup("crop position") {
+            cameraRoiPositions.forEach { option ->
+                OptionChip(option.first, state.cameraRoiPosition == option.second, enabled = !roiDisabled) {
+                    controller.setCameraRoiPosition(option.second)
+                }
+            }
+        }
+        Text(
+            "${state.cameraSettingsStatus}. Applying FOV/ROI restarts the Mentra Live camera for about 5 seconds.",
+            color = AppColor.muted,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            lineHeight = 16.sp,
+        )
     }
 }
 
@@ -427,6 +557,11 @@ private fun localCameraSetupHint(webhookUrl: String, status: String): String? {
     return "Cloud server setup: run python3 examples/local-demo-cloud/server.py from the Starter Kit repo root, then paste the printed Photo upload URL here. It looks like http://<computer-ip>:8787/upload."
 }
 
+private fun exposureLabel(ns: Int): String {
+    val denominator = (1_000_000_000.0 / ns).toInt()
+    return "${"%,d".format(ns)} ns · 1/${denominator}s"
+}
+
 @Composable
 private fun CloudServerToggle(enabled: Boolean, onEnabledChange: (Boolean) -> Unit) {
     Row(
@@ -469,7 +604,7 @@ private fun CameraOptionGroup(label: String, content: @Composable RowScope.() ->
 }
 
 @Composable
-private fun OptionChip(value: String, active: Boolean, onClick: () -> Unit) {
+private fun OptionChip(value: String, active: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .clip(RoundedCornerShape(999.dp))
@@ -479,7 +614,7 @@ private fun OptionChip(value: String, active: Boolean, onClick: () -> Unit) {
                 if (active) AppColor.greenAccent.copy(alpha = 0.32f) else AppColor.ink.copy(alpha = 0.06f),
                 RoundedCornerShape(999.dp)
             )
-            .clickable { onClick() }
+            .clickable(enabled = enabled) { onClick() }
             .heightIn(min = 44.dp)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,

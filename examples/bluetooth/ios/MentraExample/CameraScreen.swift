@@ -6,8 +6,22 @@ import UIKit
 private let photoSizeOptions: [PhotoSize] = [.small, .medium, .large, .full]
 private let photoCompressionOptions: [PhotoCompression] = [.none, .medium, .heavy]
 
-private func cameraSdkCall(size: String, compression: String) -> String {
-    """
+private func cameraSdkCall(
+    size: String,
+    compression: String,
+    exposureManual: Bool,
+    exposureTimeNs: Int,
+    cameraFov: Int,
+    cameraRoiPosition: Int
+) -> String {
+    let exposureLine = exposureManual
+        ? "      exposureTimeNs: \(exposureTimeNs)"
+        : "      exposureTimeNs: nil // auto exposure"
+    return """
+try await mentraBluetoothSdk.setCameraFov(
+    CameraFov(fov: \(cameraFov), roiPosition: \(cameraRoiPosition))
+)
+// Mentra Live restarts the camera for about 5s after FOV/ROI changes.
 mentraBluetoothSdk.requestPhoto(
     PhotoRequest(
       requestId: requestId,
@@ -15,7 +29,8 @@ mentraBluetoothSdk.requestPhoto(
       size: .\(size),
       webhookUrl: uploadUrl,
       compress: .\(compression),
-      sound: true
+      sound: true,
+\(exposureLine)
     )
 )
 """
@@ -132,7 +147,14 @@ struct CameraScreen: View {
     }
 
     private var sdkCard: some View {
-        let sdkCall = cameraSdkCall(size: model.photoSize.rawValue, compression: model.photoCompression.rawValue)
+        let sdkCall = cameraSdkCall(
+            size: model.photoSize.rawValue,
+            compression: model.photoCompression.rawValue,
+            exposureManual: model.photoExposureManual,
+            exposureTimeNs: model.photoExposureTimeNs,
+            cameraFov: model.cameraFov,
+            cameraRoiPosition: model.cameraRoiPosition
+        )
         return VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
@@ -271,6 +293,8 @@ struct CameraScreen: View {
                     }
                 }
 
+                ExposureSettingsCard(model: model)
+                CameraFovSettingsCard(model: model)
             }
         }
     }
@@ -323,6 +347,130 @@ struct CameraScreen: View {
             }
         }
     }
+}
+
+private struct ExposureSettingsCard: View {
+    @ObservedObject var model: BluetoothViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("EXPOSURE")
+                        .font(.system(size: 10, weight: .bold))
+                        .tracking(1.1)
+                        .foregroundColor(AppColor.muted)
+                    Text(model.photoExposureManual ? exposureLabel(model.photoExposureTimeNs) : "Auto exposure")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(AppColor.greenAccent)
+                }
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { model.photoExposureManual },
+                    set: model.setPhotoExposureManual
+                ))
+                .labelsHidden()
+                .toggleStyle(SwitchToggleStyle(tint: AppColor.greenAccent))
+            }
+            Slider(
+                value: Binding(
+                    get: { Double(model.photoExposureTimeNs) },
+                    set: { model.setPhotoExposureTimeNs(Int($0.rounded())) }
+                ),
+                in: Double(photoExposureMinNs)...Double(photoExposureMaxNs),
+                step: 1
+            )
+            .disabled(!model.photoExposureManual)
+            .opacity(model.photoExposureManual ? 1 : 0.45)
+            HStack {
+                Text("1/1000s")
+                Spacer()
+                Button("Preset 1/120s") { model.setPhotoExposureTimeNs(photoExposureDefaultNs) }
+                    .buttonStyle(.plain)
+                    .foregroundColor(AppColor.greenAccent)
+                Spacer()
+                Text("1/30s")
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(AppColor.muted)
+        }
+        .padding(14)
+        .background(AppColor.ink.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+}
+
+private struct CameraFovSettingsCard: View {
+    @ObservedObject var model: BluetoothViewModel
+
+    var body: some View {
+        let roiDisabled = model.cameraFov == cameraFovMax
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("FIELD OF VIEW")
+                        .font(.system(size: 10, weight: .bold))
+                        .tracking(1.1)
+                        .foregroundColor(AppColor.muted)
+                    Text("\(model.cameraFov)° · \(roiDisabled ? "full sensor" : "\(roiPositionLabel(model.cameraRoiPosition)) crop")")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(AppColor.greenAccent)
+                }
+                Spacer()
+                Button("Apply") { model.applyCameraSettings() }
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(AppColor.greenAccent)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(AppColor.greenAccent.opacity(0.16))
+                    .overlay(Capsule().stroke(AppColor.greenAccent.opacity(0.28), lineWidth: 1))
+                    .clipShape(Capsule())
+                    .buttonStyle(.plain)
+            }
+            Slider(
+                value: Binding(
+                    get: { Double(model.cameraFov) },
+                    set: { model.setCameraFov(Int($0.rounded())) }
+                ),
+                in: Double(cameraFovMin)...Double(cameraFovMax),
+                step: 1
+            )
+            HStack {
+                Text("\(cameraFovMin)°")
+                Spacer()
+                Button("Default \(cameraFovDefault)°") { model.setCameraFov(cameraFovDefault) }
+                    .buttonStyle(.plain)
+                    .foregroundColor(AppColor.greenAccent)
+                Spacer()
+                Text("\(cameraFovMax)°")
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(AppColor.muted)
+
+            CameraOptionGroup(label: "crop position") {
+                ForEach(cameraRoiPositions, id: \.value) { option in
+                    CameraOptionChip(value: option.label, highlight: model.cameraRoiPosition == option.value)
+                        .opacity(roiDisabled ? 0.45 : 1)
+                        .onTapGesture {
+                            if !roiDisabled {
+                                model.setCameraRoiPosition(option.value)
+                            }
+                        }
+                }
+            }
+            Text("\(model.cameraSettingsStatus). Applying FOV/ROI restarts the Mentra Live camera for about 5 seconds.")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(AppColor.muted)
+        }
+        .padding(14)
+        .background(AppColor.ink.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+}
+
+private func exposureLabel(_ ns: Int) -> String {
+    let denominator = Int(round(1_000_000_000.0 / Double(ns)))
+    return "\(ns.formatted()) ns · 1/\(denominator)s"
 }
 
 private struct PhotoDetailsRow {

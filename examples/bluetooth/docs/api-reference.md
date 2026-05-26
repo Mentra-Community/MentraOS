@@ -301,7 +301,7 @@ sdk.setButtonPhotoSettings(size = ButtonPhotoSize.MEDIUM)
 sdk.setButtonVideoRecordingSettings(width = 1280, height = 720, fps = 30)
 sdk.setButtonCameraLed(enabled = true)
 sdk.setButtonMaxRecordingTime(minutes = 3)
-sdk.setCameraFov(CameraFov.WIDE)
+sdk.setCameraFov(CameraFov(fov = 102, roiPosition = 0))
 ```
 
 iOS:
@@ -318,7 +318,7 @@ try await sdk.setButtonPhotoSettings(size: .medium)
 try await sdk.setButtonVideoRecordingSettings(width: 1280, height: 720, fps: 30)
 try await sdk.setButtonCameraLed(enabled: true)
 try await sdk.setButtonMaxRecordingTime(minutes: 3)
-try await sdk.setCameraFov(.wide)
+try await sdk.setCameraFov(CameraFov(fov: 102, roiPosition: 0))
 ```
 
 React Native:
@@ -335,10 +335,12 @@ await BluetoothSdk.setButtonPhotoSettings('medium');
 await BluetoothSdk.setButtonVideoRecordingSettings(1280, 720, 30);
 await BluetoothSdk.setButtonCameraLed(true);
 await BluetoothSdk.setButtonMaxRecordingTime(3);
-await BluetoothSdk.setCameraFov('wide');
+await BluetoothSdk.setCameraFov({fov: 102, roiPosition: 0});
 ```
 
 Mentra Live gallery mode controls right-action-button capture. When gallery mode is enabled, a short press takes a photo, a long press starts video recording, and a short press stops the active video recording. `setGalleryModeEnabled(true)` enables local button capture; `setGalleryModeEnabled(false)` reports button and touch events to the host app without triggering local gallery capture while the glasses are connected. Button presses are always reported as SDK events.
+
+`setCameraFov` accepts FOV degrees from 82 to 118 and ROI position `0` center, `1` bottom, or `2` top. On Mentra Live, applying FOV/ROI restarts the camera for about 5 seconds; wait for that restart before requesting a photo.
 
 ## RGB LED
 
@@ -453,6 +455,7 @@ sdk.requestPhoto(
         authToken = "optional-token",
         compress = PhotoCompression.MEDIUM,
         sound = true,
+        exposureTimeNs = null,
     )
 )
 ```
@@ -468,7 +471,8 @@ sdk.requestPhoto(
         webhookUrl: "https://api.example.com/mentra/photo",
         authToken: "optional-token",
         compress: .medium,
-        sound: true
+        sound: true,
+        exposureTimeNs: nil
     )
 )
 ```
@@ -484,10 +488,11 @@ await BluetoothSdk.requestPhoto({
   authToken: 'optional-token',
   compress: 'medium',
   sound: true,
+  exposureTimeNs: null,
 });
 ```
 
-The camera light is always enabled for photo capture and streaming as a privacy indicator.
+Omit `exposureTimeNs` or pass `null` for auto exposure. Pass a positive nanosecond value for one-shot manual exposure, for example `8_333_333` for about 1/120s. The camera light is always enabled for photo capture and streaming as a privacy indicator.
 
 Your webhook should accept multipart form data with a `photo` file and `requestId`. If you include `authToken`, the uploader adds `Authorization: Bearer <token>` on the webhook request.
 
@@ -712,7 +717,7 @@ Android and iOS expose typed callbacks/delegate methods instead of the React Nat
 | `connect` / `connectDefault` | `connect` saves connected glasses as default and cancels existing connection attempts unless options override that behavior. `connectDefault` uses the app-restored default device. |
 | `displayText` | Defaults to `x = 0`, `y = 0`, `size = 24` when supported by the platform call. |
 | `setMicState` | `useGlassesMic = true`, `sendTranscript = false`, and `sendLc3Data = false` unless explicitly set. |
-| `PhotoRequest` / `requestPhoto` | Pass explicit size, compression, and sound. The camera light is always enabled by the SDK. |
+| `PhotoRequest` / `requestPhoto` | Pass explicit size, compression, and sound. `exposureTimeNs` is optional; omitted or `null` means auto exposure. The camera light is always enabled by the SDK. |
 | `StreamRequest` / `startStream` | `keepAlive = true`, `keepAliveIntervalSeconds = 15`, and `sound = true` by default in native SDK calls. The camera light is always enabled by the SDK. |
 
 ## Error Handling
