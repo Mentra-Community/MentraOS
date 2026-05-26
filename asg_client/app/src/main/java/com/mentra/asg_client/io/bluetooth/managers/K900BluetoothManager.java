@@ -17,6 +17,7 @@ import java.util.concurrent.Executors;
 
 import com.mentra.asg_client.service.core.AsgClientService;
 import com.mentra.asg_client.utils.smartglasses.K900ProtocolUtils;
+import com.mentra.asg_client.utils.smartglasses.MessageChunker;
 import com.mentra.asg_client.reporting.domains.BluetoothReporting;
 
 import org.json.JSONObject;
@@ -165,6 +166,13 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 if (originalData.startsWith("{") && !K900ProtocolUtils.isCWrappedJson(originalData)) {
                     Log.d(TAG, "📡 🔧 JSON data detected, applying C-wrapping and protocol formatting...");
                     Log.d(TAG, "📡 📦 JSON DATA BEFORE C-WRAPPING: " + originalData);
+                    JSONObject testWrapper = new JSONObject();
+                    testWrapper.put("C", originalData);
+                    String testWrappedJson = testWrapper.toString();
+                    if (MessageChunker.needsChunking(testWrappedJson)) {
+                        return sendChunkedJson(originalData);
+                    }
+
                     data = K900ProtocolUtils.formatMessageForTransmission(originalData);
 
                     // Log the first 50 bytes of the hex representation
@@ -203,6 +211,46 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         }
 
         return sent;
+    }
+
+    private boolean sendChunkedJson(String originalJson) {
+        try {
+            long messageId = -1;
+            try {
+                JSONObject original = new JSONObject(originalJson);
+                messageId = original.optLong("mId", -1);
+            } catch (Exception ignored) {
+                // Chunking also supports non-ACK messages.
+            }
+
+            List<JSONObject> chunks = MessageChunker.createChunks(originalJson, messageId);
+            Log.d(TAG, "📡 🧩 Sending chunked JSON as " + chunks.size() + " chunks");
+
+            boolean allSent = true;
+            for (int i = 0; i < chunks.size(); i++) {
+                byte[] chunkData = K900ProtocolUtils.formatMessageForTransmission(chunks.get(i).toString());
+                Log.d(TAG, "📡 🧩 Sending chunk " + (i + 1) + "/" + chunks.size()
+                        + " (" + chunkData.length + " bytes packed)");
+                BleTraceLogger.logK900Frame("asg_to_bes", "asg_uart_output", chunkData);
+                boolean sent = comManager.send(chunkData);
+                allSent = allSent && sent;
+
+                if (i < chunks.size() - 1) {
+                    try {
+                        Thread.sleep(50);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        Log.w(TAG, "Interrupted while pacing chunked JSON send");
+                        return false;
+                    }
+                }
+            }
+
+            return allSent;
+        } catch (Exception e) {
+            Log.e(TAG, "Error chunking JSON for K900 transmission", e);
+            return false;
+        }
     }
 
     @Override
