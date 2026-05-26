@@ -96,7 +96,7 @@ MentraOS works across a growing ecosystem of smart glasses.
 Browse, install, and run glasses apps from your phone. Try captions, AI notes, proactive AI, translation, streaming, and more.
 
 <div align="center">
-  <img src="./images/Mockup_appshomepage.png" alt="MentraOS glasses apps homepage" width="520" />
+  <img src="./images/Mockup_appshomepage.png" alt="MentraOS glasses apps homepage" width="364" />
 </div>
 
 ## How MentraOS Works
