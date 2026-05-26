@@ -162,7 +162,6 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
                 // If looks like JSON but not C-wrapped, use the full formatting function
                 if (originalData.startsWith("{") && !K900ProtocolUtils.isCWrappedJson(originalData)) {
-                    Log.d(TAG, "📡 🔧 JSON data detected, applying C-wrapping and protocol formatting...");
                     Log.d(TAG, "📡 📦 JSON DATA BEFORE C-WRAPPING: " + originalData);
                     data = K900ProtocolUtils.formatMessageForTransmission(originalData);
 

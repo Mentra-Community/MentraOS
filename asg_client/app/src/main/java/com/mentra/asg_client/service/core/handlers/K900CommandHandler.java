@@ -27,6 +27,8 @@ import com.mentra.asg_client.SysControl;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.nio.charset.StandardCharsets;
+
 /**
  * Handles K900 protocol commands.
  * Follows Single Responsibility Principle by handling only K900 protocol commands.
@@ -34,6 +36,7 @@ import org.json.JSONObject;
  */
 public class K900CommandHandler {
     private static final String TAG = "K900CommandHandler";
+    private static final int VOICE_ACTIVITY_DETECTION_SWITCH_TYPE = 8;
 
     private final AsgClientServiceManager serviceManager;
     private final IStateManager stateManager;
@@ -61,7 +64,7 @@ public class K900CommandHandler {
     public void processK900Command(JSONObject json) {
         try {
             String command = json.optString("C", "");
-            JSONObject bData = json.optJSONObject("B");
+            JSONObject bData = optK900Body(json);
             Log.d(TAG, "📦 Received K900 command: " + command);
 
             switch (command) {
@@ -92,7 +95,8 @@ public class K900CommandHandler {
                 // ---------------------------------------------
                 
                 case "sr_swst":
-                    // Switch status report (touch events)
+                case "sr_swit":
+                    // Switch status report (touch, VAD type 8, etc.)
                     handleSwitchStatusReport(bData);
                     break;
 
@@ -146,10 +150,15 @@ public class K900CommandHandler {
                     handleShutdownCommand();
                     break;
 
-                case "android_control_led":
+                // Phone → BES (tunneled via MTK UART). Forward to BES; do not treat as BES→MTK events.
+                case "cs_swst":
                 case "cs_swit":
                 case "cs_fbvol":
                 case "cs_batv":
+                    forwardK900CommandToBes(json);
+                    break;
+
+                case "android_control_led":
                 case "sr_ledon":
                     Log.d(TAG, "📦 Ignoring mirrored K900 command: " + command);
                     break;
@@ -554,6 +563,56 @@ public class K900CommandHandler {
             if (relayFirmwareJson != null) {
                 relayFirmwareJson.accept(BesLogManager.buildFirmwareUploadJson(""));
             }
+        }
+    }
+
+    private JSONObject optK900Body(JSONObject json) {
+        if (json == null) {
+            return null;
+        }
+        JSONObject bData = json.optJSONObject("B");
+        if (bData != null) {
+            return bData;
+        }
+        String bField = json.optString("B", "");
+        if (bField.isEmpty()) {
+            return null;
+        }
+        try {
+            return new JSONObject(bField);
+        } catch (JSONException e) {
+            Log.w(TAG, "Failed to parse K900 B field as JSON: " + bField);
+            return null;
+        }
+    }
+
+    /**
+     * Forward a phone-originated K900 client command to the BES chip over UART.
+     * On K900 glasses the phone sends commands to BES; BES tunnels a copy to MTK and expects
+     * MTK to relay the same JSON to BES for execution (e.g. cs_swst query, cs_swit type 8 VAD).
+     */
+    private void forwardK900CommandToBes(JSONObject json) {
+        if (serviceManager == null || serviceManager.getBluetoothManager() == null) {
+            Log.w(TAG, "Cannot forward K900 command to BES - Bluetooth manager unavailable");
+            return;
+        }
+
+        if (!serviceManager.getBluetoothManager().isConnected()) {
+            Log.w(TAG, "Cannot forward K900 command to BES - serial not connected");
+            return;
+        }
+
+        String commandStr = json.toString();
+
+        boolean sent =
+                serviceManager
+                        .getBluetoothManager()
+                        .sendData(commandStr.getBytes(StandardCharsets.UTF_8));
+
+        if (sent) {
+            Log.i(TAG, "✅ Forwarded K900 command to BES");
+        } else {
+            Log.e(TAG, "❌ Failed to forward K900 command to BES");
         }
     }
 
@@ -1018,13 +1077,17 @@ public class K900CommandHandler {
      */
     private void handleSwitchStatusReport(JSONObject bData) {
         Log.d(TAG, "📦 Processing switch status report");
-        
+
         if (bData != null) {
             int type = bData.optInt("type", -1);
             int switchValue = bData.optInt("switch", -1);
-            
-            Log.i(TAG, "📦 Switch status - Type: " + type + ", Switch: " + switchValue);
-            
+
+            if (type == VOICE_ACTIVITY_DETECTION_SWITCH_TYPE) {
+                Log.i(TAG, "📦 VAD switch status - enabled: " + (switchValue == 1));
+            } else {
+                Log.i(TAG, "📦 Switch status - Type: " + type + ", Switch: " + switchValue);
+            }
+
             // Send switch status over BLE
             sendSwitchStatusOverBle(type, switchValue);
         } else {

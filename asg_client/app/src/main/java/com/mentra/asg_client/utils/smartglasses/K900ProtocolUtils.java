@@ -328,7 +328,16 @@ public class K900ProtocolUtils {
             if (json.has(FIELD_C) && json.has(FIELD_V) && json.has(FIELD_B)) {
                 return true;
             }
-            
+
+            // Native K900 command envelope (cs_*, sr_*): C is a command name, not embedded JSON.
+            // B may be omitted when tunneled phone→MTK; must not run formatMessageForTransmission.
+            if (json.has(FIELD_C) && json.has(FIELD_V)) {
+                String command = json.optString(FIELD_C, "");
+                if (!command.isEmpty() && !command.startsWith("{")) {
+                    return true;
+                }
+            }
+
             return false;
         } catch (JSONException e) {
             return false;
