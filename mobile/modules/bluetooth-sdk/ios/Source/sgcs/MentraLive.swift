@@ -4739,7 +4739,7 @@ extension MentraLive {
 
         var json: [String: Any] = [
             "type": "start_video_recording",
-            "request_id": requestId,
+            "requestId": requestId,
             "save": save,
             "flash": flash,
             "sound": sound,
@@ -4766,7 +4766,7 @@ extension MentraLive {
 
         let json: [String: Any] = [
             "type": "stop_video_recording",
-            "request_id": requestId,
+            "requestId": requestId,
         ]
         sendJson(json)
     }

@@ -1,6 +1,29 @@
 import "tsx/cjs"
 import {ExpoConfig, ConfigContext} from "@expo/config"
 
+const VARIANTS = {
+  default: {
+    appName: "Mentra",
+    packageName: "com.mentra.mentra",
+    includeFirebase: true,
+    googleServicesFile: "./google-services.json",
+    googleServicesPlist: "./GoogleService-Info.plist",
+    icon: "./assets/app-icons/ic_launcher.png",
+    adaptiveIcon: "./assets/app-icons/ic_launcher_foreground.png",
+  },
+  cn: {
+    appName: "Mentra",
+    packageName: "com.mentra.mentra.cn",
+    includeFirebase: false,
+    googleServicesFile: null,
+    googleServicesPlist: null,
+    icon: "./assets/app-icons/ic_launcher_china.png",
+    adaptiveIcon: "./assets/app-icons/ic_launcher_foreground_china.png",
+  },
+} as const
+
+const variant = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china" ? VARIANTS.cn : VARIANTS.default
+
 /**
  * @param config ExpoConfig coming from the static config app.json if it exists
  *
@@ -18,8 +41,8 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       `MENTRAOS_BUILD_NAME="${variantName}" is invalid. Must start with a letter and contain only letters, digits, or underscores.`,
     )
   }
-  const appName = isValidVariant ? variantName : "Mentra"
-  const baseId = "com.mentra.mentra"
+  const appName = isValidVariant ? variantName : variant.appName
+  const baseId = variant.packageName
   const androidPackage = isValidVariant ? `${baseId}.${variantName}` : baseId
   const iosBundleId = isValidVariant ? `${baseId}.${variantName}` : baseId
 
@@ -31,7 +54,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     scheme: "com.mentra",
     orientation: "portrait",
     userInterfaceStyle: "automatic",
-    icon: "./assets/app-icons/ic_launcher.png",
+    icon: variant.icon,
     updates: {
       fallbackToCacheTimeout: 0,
     },
@@ -40,10 +63,10 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     android: {
       // icon: "./assets/app-icons/ic_launcher.png",
       package: androidPackage,
-      googleServicesFile: "./google-services.json",
+      ...(variant.googleServicesFile ? {googleServicesFile: variant.googleServicesFile} : {}),
       versionCode: 265,
       adaptiveIcon: {
-        foregroundImage: "./assets/app-icons/ic_launcher_foreground.png",
+        foregroundImage: variant.adaptiveIcon,
         // backgroundImage: "./assets/app-icons/ic_launcher.png",
         backgroundColor: "#fff",
       },
@@ -76,13 +99,13 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
       ],
     },
     ios: {
-      icon: "./assets/app-icons/ic_launcher.png",
+      icon: variant.icon,
       supportsTablet: false,
       requireFullScreen: true,
       buildNumber: "265",
       bundleIdentifier: iosBundleId,
       appleTeamId: "T5XXXL6N36",
-      googleServicesFile: "./GoogleService-Info.plist",
+      ...(variant.googleServicesPlist ? {googleServicesFile: variant.googleServicesPlist} : {}),
       associatedDomains: ["applinks:apps.mentra.glass", "applinks:apps.mentraglass.com"],
       infoPlist: {
         NSCameraUsageDescription: "This app needs access to your camera to capture images.",
@@ -274,7 +297,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
           locationAlwaysAndWhenInUsePermission: "Allow Mentra to use your location.",
         },
       ],
-      "@react-native-firebase/app",
+      ...(variant.includeFirebase ? ["@react-native-firebase/app"] : []),
       "expo-audio",
       [
         "expo-video",

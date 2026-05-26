@@ -1,11 +1,5 @@
 <div align="center">
-  <p>
-    <img src="./images/mach1.png" alt="Mentra Mach 1" height="80" style="margin: 0 15px;" />
-    <img src="./mobile/assets/glasses/g1.png" alt="Even Realities G1" height="80" style="margin: 0 15px;" />
-    <img src="./images/MentraLiveFinal.png" alt="Mentra Live" height="80" style="margin: 0 15px;" />
-  </p>
-  <h1>MentraOS</h1>
-  <h3>The open source operating system for smart glasses</h3>
+  <img src="./images/Github-Readme.png" alt="Mentra: The open source smart glasses operating system" width="100%" />
   
   <p>
     <a href="https://mentra.glass">Website</a> •
