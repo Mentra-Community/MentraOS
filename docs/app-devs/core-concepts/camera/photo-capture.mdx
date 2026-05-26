@@ -50,9 +50,11 @@ Pass an options object to control the capture:
 ```typescript
 const photo = await session.camera.takePhoto({
   size: "large",
-  compression: "high",
+  compression: "medium",
   saveToGallery: true,
   sound: true,
+  exposureTimeNs: 8_333_333,
+  iso: 200,
   timeout: 10000,
 });
 ```
@@ -63,7 +65,11 @@ const photo = await session.camera.takePhoto({
 | `compression` | `string` | `undefined` | Compression level |
 | `saveToGallery` | `boolean` | `false` | Save the photo to the user's gallery |
 | `sound` | `boolean` | `true` | Play a shutter sound on capture |
+| `exposureTimeNs` | `number` | `undefined` | Sensor exposure time in nanoseconds for this photo only. Omit for auto exposure. |
+| `iso` | `number` | `undefined` | Sensor ISO for this photo only. Only used when `exposureTimeNs` enables manual exposure. |
 | `timeout` | `number` | `5000` | Timeout in milliseconds |
+
+Pass `exposureTimeNs` and `iso` together for manual shutter tuning. If `exposureTimeNs` is omitted, invalid, or unsupported by the connected glasses, the camera uses auto exposure and ignores `iso`.
 
 ## Return Value
 

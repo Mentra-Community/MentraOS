@@ -18,6 +18,8 @@ export interface _V2PhotoRequestOptions {
   sound?: boolean;
   /** Sensor exposure time for this request only (nanoseconds). Not persisted. */
   exposureTimeNs?: number;
+  /** Sensor ISO. Only used when exposureTimeNs enables manual exposure. */
+  iso?: number;
 }
 
 export interface _V2PhotoRequestBridge {
@@ -92,6 +94,8 @@ export class _V2CameraShim {
 
       const expNs = options?.exposureTimeNs;
       const includeExp = typeof expNs === "number" && Number.isFinite(expNs) && expNs > 0;
+      const iso = options?.iso;
+      const includeIso = includeExp && typeof iso === "number" && Number.isFinite(iso) && iso > 0;
 
       this.session.sendMessage({
         type: AppToCloudMessageType.PHOTO_REQUEST,
@@ -106,6 +110,7 @@ export class _V2CameraShim {
         compress: options?.compress ?? "none",
         sound: options?.sound,
         ...(includeExp ? { exposureTimeNs: expNs } : {}),
+        ...(includeIso ? { iso: Math.round(iso) } : {}),
       });
 
       if (options?.customWebhookUrl) {

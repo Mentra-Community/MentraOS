@@ -65,6 +65,8 @@ public struct PhotoRequest {
     public let sound: Bool
     /// Sensor exposure time for this capture only (ns), or nil for auto exposure
     public let exposureTimeNs: Double?
+    /// Sensor ISO for this capture only. Only used when exposureTimeNs enables manual exposure.
+    public let iso: Int?
 
     public init(
         requestId: String,
@@ -76,7 +78,8 @@ public struct PhotoRequest {
         flash: Bool = true,
         save: Bool = false,
         sound: Bool,
-        exposureTimeNs: Double? = nil
+        exposureTimeNs: Double? = nil,
+        iso: Int? = nil
     ) {
         self.requestId = requestId
         self.appId = appId
@@ -88,6 +91,7 @@ public struct PhotoRequest {
         self.save = save
         self.sound = sound
         self.exposureTimeNs = exposureTimeNs
+        self.iso = iso
     }
 }
 

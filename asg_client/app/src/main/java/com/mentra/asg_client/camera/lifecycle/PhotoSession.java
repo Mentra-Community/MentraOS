@@ -231,6 +231,10 @@ public final class PhotoSession {
         return activeCapture != null ? activeCapture.exposureTimeNs : null;
     }
 
+    private Integer currentIso() {
+        return activeCapture != null ? activeCapture.iso : null;
+    }
+
     private long currentStartTimeMs() {
         return activeCapture != null ? activeCapture.startTimeMs : 0L;
     }
@@ -701,10 +705,21 @@ public final class PhotoSession {
     }
 
     private int pickSensitivityForManualCapture(long targetExposureNs) {
+        Integer requestedIso = currentIso();
         Integer last = mLastMeteredIso;
         Long meteredExposureNs = mLastMeteredExposureNs;
         CameraCapabilities caps = hooks.capabilities();
         Range<Integer> isoRange = (caps != null) ? caps.sensorSensitivityRange : null;
+
+        if (requestedIso != null && requestedIso > 0) {
+            int clampedIso = requestedIso;
+            if (isoRange != null) {
+                clampedIso = Math.max(isoRange.getLower(), Math.min(isoRange.getUpper(), clampedIso));
+            }
+            Log.i(TAG, "Using requested manual ISO " + clampedIso
+                    + " for still capture (requested=" + requestedIso + ")");
+            return clampedIso;
+        }
 
         int isoBeforeScale = (last != null && last > 0) ? last.intValue() : ManualExposurePolicy.DEFAULT_ISO;
         double evScaleApplied = 1.0;
@@ -786,7 +801,9 @@ public final class PhotoSession {
                 Log.i(TAG, "Using manual exposure time for still capture: SENSOR_EXPOSURE_TIME="
                         + manualClampedNs + " ns, SENSOR_SENSITIVITY=" + manualIso
                         + ", SENSOR_FRAME_DURATION=" + manualFrameDurationNs
-                        + " (requestedNs=" + requestedExposureNs + "; AE disabled; ZSL/MFNR vendor path skipped)");
+                        + " (requestedNs=" + requestedExposureNs
+                        + ", requestedIso=" + (currentIso() != null ? currentIso() : "auto")
+                        + "; AE disabled; ZSL/MFNR vendor path skipped)");
             } else {
                 Log.d(TAG, "Using auto exposure / AE lock path");
             }

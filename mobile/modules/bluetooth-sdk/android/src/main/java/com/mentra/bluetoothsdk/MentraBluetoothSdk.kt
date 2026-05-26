@@ -440,6 +440,7 @@ class MentraBluetoothSdk private constructor(
             request.save,
             request.sound,
             request.exposureTimeNs,
+            request.iso,
         )
     }
 

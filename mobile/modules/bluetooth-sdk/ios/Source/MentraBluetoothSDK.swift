@@ -405,7 +405,8 @@ public final class MentraBluetoothSDK {
             request.flash,
             request.save,
             request.sound,
-            exposureTimeNs: request.exposureTimeNs
+            exposureTimeNs: request.exposureTimeNs,
+            iso: request.iso
         )
     }
 

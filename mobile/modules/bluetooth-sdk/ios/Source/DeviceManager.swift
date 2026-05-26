@@ -1259,10 +1259,12 @@ struct ViewState {
         _ flash: Bool,
         _ save: Bool,
         _ sound: Bool,
-        exposureTimeNs: Double? = nil
+        exposureTimeNs: Double? = nil,
+        iso: Int? = nil
     ) {
+        let manualIso = exposureTimeNs != nil ? iso.flatMap { $0 > 0 ? $0 : nil } : nil
         Bridge.log(
-            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(requestId) appId=\(appId) webhookUrl=\(webhookUrl ?? "nil") size=\(size) compress=\(compress ?? "none") flash=\(flash) save=\(save) sound=\(sound) exposureTimeNs=\(exposureTimeNs.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
+            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(requestId) appId=\(appId) webhookUrl=\(webhookUrl ?? "nil") size=\(size) compress=\(compress ?? "none") flash=\(flash) save=\(save) sound=\(sound) exposureTimeNs=\(exposureTimeNs.map { String($0) } ?? "nil") iso=\(manualIso.map { String($0) } ?? "auto") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
         )
         guard let sgc else {
             Bridge.log(
@@ -1272,7 +1274,7 @@ struct ViewState {
         }
         sgc.requestPhoto(
             requestId, appId: appId, size: size, webhookUrl: webhookUrl, authToken: authToken,
-            compress: compress, flash: flash, save: save, sound: sound, exposureTimeNs: exposureTimeNs
+            compress: compress, flash: flash, save: save, sound: sound, exposureTimeNs: exposureTimeNs, iso: manualIso
         )
     }
 
