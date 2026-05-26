@@ -1096,6 +1096,7 @@ class MentraLive: NSObject, SGCManager {
     // Queue Management
     private let commandQueue = CommandQueue()
     private let bluetoothQueue = DispatchQueue(label: "MentraLiveBluetooth", qos: .userInitiated)
+    private let incomingChunkReassembler = MessageChunkReassembler()
     private var lastSendTimeMs: TimeInterval = 0
 
     // Timers
@@ -1778,6 +1779,11 @@ class MentraLive: NSObject, SGCManager {
         // Log ALL incoming JSON objects for debugging
         // Bridge.log("LIVE: DEBUG: processJsonObject: \(json)")
 
+        if MessageChunker.isChunkedMessage(json) {
+            processChunkedJsonObject(json)
+            return
+        }
+
         // Check for K900 command format
         if let command = json["C"] as? String {
             processK900JsonMessage(json)
@@ -2124,6 +2130,26 @@ class MentraLive: NSObject, SGCManager {
                 Bridge.log("Unhandled message type: \(type)")
             }
         }
+    }
+
+    private func processChunkedJsonObject(_ json: [String: Any]) {
+        guard let info = MessageChunker.getChunkInfo(json) else {
+            Bridge.log("LIVE: Received malformed chunked message from glasses")
+            return
+        }
+
+        guard let reassembled = incomingChunkReassembler.addChunk(info) else {
+            return
+        }
+
+        guard let data = reassembled.data(using: .utf8),
+              let reassembledJson = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            Bridge.log("LIVE: Failed to parse reassembled chunked message")
+            return
+        }
+
+        processJsonObject(reassembledJson)
     }
 
     /// Maps K900 gesture type codes to gesture names
