@@ -306,7 +306,7 @@ gets structured-cloned, which adds CPU and GC pressure.
   `{ kind: "shutdown" }`; worker stops accepting new audio, finishes
   in-flight transcripts, exits.
 
-## UDP packet header format
+## Audio packet header format
 
 **Carry forward unchanged from v1.** The v1 packet format already
 includes a session identifier in its header, supports encryption (per
@@ -315,7 +315,7 @@ not redesigning the wire format for v2.
 
 Concretely, this means:
 
-- The header includes a session ID (extracted by the ingress pod to
+- The header includes a session ID (extracted by the ingress code to
   determine the user)
 - Encryption is per v1's existing scheme (see v1's
   `027-udp-audio-encryption/`)
@@ -323,16 +323,56 @@ Concretely, this means:
   or PCM (legacy fallback)
 - Packet sequence numbers and any other v1 fields are preserved
 
-The ingress pod's responsibility:
+## Dual ingress transport (UDP + WS)
 
-1. Receive a UDP datagram on the cloud's UDP service.
+The same packet payload arrives via two channels:
+
+### UDP path
+
+Standalone UDP socket on the audio package's UDP port. Pure datagram
+ingress. Used as the primary transport in production.
+
+1. Receive a UDP datagram on the audio service's UDP port.
 2. Parse the header to extract the session/user ID.
-3. Validate the packet (whatever validation v1 already does).
+3. Validate the packet.
 4. `XADD` the packet to the user's audio stream.
 5. Done. No interpretation of the payload at the ingress layer.
 
-If/when we want to change the packet format (e.g., to add per-packet
-metadata or change the encryption scheme), it's a separate spec.
+### WebSocket binary path
+
+The per-user transcript-delivery WebSocket (per OS-1513) is
+bidirectional. Inbound binary frames on that same WS connection are
+treated as audio packets:
+
+1. Receive a binary message on the per-user WS.
+2. Same userId is already known from the WS auth handshake (no header
+   parse needed for session ID; the WS connection identifies the user).
+3. Optionally validate the packet shape (still v1 format inside).
+4. `XADD` the packet to the user's audio stream.
+5. Done.
+
+Both paths converge at step 4. The Redis stream entry is identical; the
+worker that consumes it has no idea which transport delivered the audio.
+
+This matches v1's existing pattern (`bun-websocket.ts handleGlassesMessage`
+routes binary messages into `AudioManager.processAudioData`, same as the
+UDP server does).
+
+### When each transport gets used
+
+- **Production**: phone sends audio via UDP. Lower overhead, lower latency.
+- **Local dev**: phone sends audio via WS over the existing control
+  connection. No NAT / firewall / "what's the laptop's IP" issues.
+- **Fallback**: in production, if UDP can't get through (corp network
+  blocking UDP, mobile carrier path issues, etc.), phone falls back to WS.
+
+Phone-side transport selection logic lives in the mobile SDK, not cloud.
+
+### Changing the packet format
+
+If/when we want to change the packet format (e.g., add per-packet
+metadata or change the encryption scheme), it's a separate spec and
+both transports update together.
 
 ## Session bootstrap walkthrough
 

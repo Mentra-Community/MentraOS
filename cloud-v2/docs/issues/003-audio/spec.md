@@ -40,12 +40,28 @@ specifics (Redis commands, message shapes, walkthrough) live in
 
 These are the proposal. Reasoning, alternatives, and details follow.
 
-### Commitment 1: Stateless UDP ingress, Redis-routed ownership
+### Commitment 1: Stateless ingress (UDP primary, WS fallback), Redis-routed ownership
 
-Any pod can receive any UDP audio packet. Packets carry a session
-identifier in their header. The receiving pod writes the packet to a
-Redis Stream keyed by the user. The user's owner pod (the one
-holding the user's WebSocket) reads from the stream and processes.
+Audio ingress is dual-transport. Both deliver the same v1 packet format
+into the same Redis stream; downstream logic is transport-agnostic.
+
+- **UDP** is the primary path. Lower overhead, lower latency. Any pod can
+  receive any UDP packet on the audio service's UDP port.
+- **WebSocket binary frames** are the fallback. When UDP can't get through
+  (mobile NAT, client on cellular vs laptop on LAN during local dev, etc.)
+  the phone sends the same packet payload as a binary message on the
+  per-user transcript-delivery WebSocket. v1 already supports this: see
+  `bun-websocket.ts handleGlassesMessage` (binary messages route into
+  `AudioManager.processAudioData`).
+
+Phones decide which transport to use; cloud accepts whichever arrives.
+Local dev typically uses WS (no NAT/firewall headaches); prod typically
+uses UDP. Same code path on the cloud side either way.
+
+Packets carry a session identifier in their header. The receiving pod
+writes the packet to a Redis Stream keyed by the user. The user's owner
+pod (the one holding the user's WebSocket) reads from the stream and
+processes.
 
 ```
                     LB (round-robin UDP)
