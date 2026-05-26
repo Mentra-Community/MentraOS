@@ -149,6 +149,9 @@ const val MENTRA_LIVE_DEFAULT_HOTSPOT_PASSWORD = "00001111"
 const val PHOTO_EXPOSURE_MIN_NS = 1_000_000
 const val PHOTO_EXPOSURE_MAX_NS = 33_333_333
 const val PHOTO_EXPOSURE_DEFAULT_NS = 8_333_333
+const val PHOTO_ISO_MIN = 100
+const val PHOTO_ISO_MAX = 6400
+const val PHOTO_ISO_DEFAULT = 200
 const val CAMERA_FOV_MIN = 82
 const val CAMERA_FOV_MAX = 118
 const val CAMERA_FOV_DEFAULT = 102
@@ -189,6 +192,7 @@ data class MentraExampleState(
     val photoSize: String = "full",
     val photoExposureManual: Boolean = false,
     val photoExposureTimeNs: Int = PHOTO_EXPOSURE_DEFAULT_NS,
+    val photoIso: Int = PHOTO_ISO_DEFAULT,
     val cameraFov: Int = CAMERA_FOV_DEFAULT,
     val cameraRoiPosition: Int = 0,
     val cameraSettingsStatus: String = "Camera settings: default",
@@ -444,6 +448,10 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         state = state.copy(photoExposureTimeNs = exposureTimeNs.coerceIn(PHOTO_EXPOSURE_MIN_NS, PHOTO_EXPOSURE_MAX_NS))
     }
 
+    fun setPhotoIso(iso: Int) {
+        state = state.copy(photoIso = iso.coerceIn(PHOTO_ISO_MIN, PHOTO_ISO_MAX))
+    }
+
     fun setCameraFov(fov: Int) {
         val nextFov = fov.coerceIn(CAMERA_FOV_MIN, CAMERA_FOV_MAX)
         state = state.copy(
@@ -505,6 +513,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 compress = PhotoCompression.fromValue(state.photoCompression),
                 sound = true,
                 exposureTimeNs = if (state.photoExposureManual) state.photoExposureTimeNs.toDouble() else null,
+                iso = if (state.photoExposureManual) state.photoIso else null,
             )
         )
         pollPhotoPreview(requestId, statusUrl, generation)
@@ -538,6 +547,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 compress = PhotoCompression.fromValue(state.photoCompression),
                 sound = true,
                 exposureTimeNs = if (state.photoExposureManual) state.photoExposureTimeNs.toDouble() else null,
+                iso = if (state.photoExposureManual) state.photoIso else null,
             )
         )
         addEvent("TX", "requestPhoto requestId=$requestId webhookUrl=$uploadUrl")
@@ -2166,6 +2176,7 @@ fun cameraSdkCall(
     compression: String,
     exposureManual: Boolean,
     exposureTimeNs: Int,
+    iso: Int,
     cameraFov: Int,
     cameraRoiPosition: Int,
 ): String = """
@@ -2180,6 +2191,7 @@ mentraBluetoothSdk.requestPhoto(
       compress = PhotoCompression.${compression.uppercase(Locale.US)},
       sound = true,
       exposureTimeNs = ${if (exposureManual) exposureTimeNs else "null"},
+      iso = ${if (exposureManual) iso else "null"},
     )
 )
 """.trimIndent()

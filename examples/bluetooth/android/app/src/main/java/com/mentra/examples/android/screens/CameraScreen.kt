@@ -45,6 +45,9 @@ import com.mentra.examples.android.CAMERA_FOV_MIN
 import com.mentra.examples.android.PHOTO_EXPOSURE_DEFAULT_NS
 import com.mentra.examples.android.PHOTO_EXPOSURE_MAX_NS
 import com.mentra.examples.android.PHOTO_EXPOSURE_MIN_NS
+import com.mentra.examples.android.PHOTO_ISO_DEFAULT
+import com.mentra.examples.android.PHOTO_ISO_MAX
+import com.mentra.examples.android.PHOTO_ISO_MIN
 import com.mentra.examples.android.PhotoPreviewDetails
 import com.mentra.examples.android.PhotoDestination
 import com.mentra.examples.android.cameraRoiPositions
@@ -79,6 +82,7 @@ fun CameraScreen(controller: MentraExampleController) {
         state.photoCompression,
         state.photoExposureManual,
         state.photoExposureTimeNs,
+        state.photoIso,
         state.cameraFov,
         state.cameraRoiPosition,
     )
@@ -367,13 +371,40 @@ private fun ExposureSettingsCard(controller: MentraExampleController) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
             Text("1/1000s", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
             Text(
-                "Preset 1/120s",
+                "Default 1/120s",
                 color = AppColor.greenAccent,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.clickable { controller.setPhotoExposureTimeNs(PHOTO_EXPOSURE_DEFAULT_NS) }
             )
             Text("1/30s", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Spacer(Modifier.height(4.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("ISO", color = AppColor.muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
+            Text(
+                if (state.photoExposureManual) "ISO ${state.photoIso}" else "Auto ISO",
+                color = AppColor.greenAccent,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        Slider(
+            enabled = state.photoExposureManual,
+            value = state.photoIso.toFloat(),
+            onValueChange = { controller.setPhotoIso(it.toInt()) },
+            valueRange = PHOTO_ISO_MIN.toFloat()..PHOTO_ISO_MAX.toFloat(),
+        )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("ISO $PHOTO_ISO_MIN", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Default ISO $PHOTO_ISO_DEFAULT",
+                color = AppColor.greenAccent,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clickable { controller.setPhotoIso(PHOTO_ISO_DEFAULT) }
+            )
+            Text("ISO $PHOTO_ISO_MAX", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }

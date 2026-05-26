@@ -16,6 +16,9 @@ import {
   PHOTO_EXPOSURE_DEFAULT_NS,
   PHOTO_EXPOSURE_MAX_NS,
   PHOTO_EXPOSURE_MIN_NS,
+  PHOTO_ISO_DEFAULT,
+  PHOTO_ISO_MAX,
+  PHOTO_ISO_MIN,
   PHOTO_SIZES,
   type BluetoothSdkExampleModel,
   type PhotoCompression,
@@ -29,10 +32,12 @@ function cameraSdkCall(
   useCloudServer: boolean,
   exposureManual: boolean,
   exposureTimeNs: number,
+  iso: number,
   cameraFov: number,
   cameraRoiPosition: number,
 ) {
   const exposureLine = exposureManual ? `  exposureTimeNs: ${exposureTimeNs},` : '  exposureTimeNs: null, // auto exposure';
+  const isoLine = exposureManual ? `  iso: ${iso},` : '  iso: null, // auto ISO';
   const prefix = `await BluetoothSdk.setCameraFov({ fov: ${cameraFov}, roiPosition: ${cameraRoiPosition} });
 // Mentra Live restarts the camera for about 5s after FOV/ROI changes.
 `;
@@ -47,6 +52,7 @@ await BluetoothSdk.requestPhoto({
   compress: "${compression}",
   sound: true,
 ${exposureLine}
+${isoLine}
 })`;
   }
   return `${prefix}await BluetoothSdk.requestPhoto({
@@ -58,6 +64,7 @@ ${exposureLine}
   compress: "${compression}",
   sound: true,
 ${exposureLine}
+${isoLine}
 })`;
 }
 
@@ -75,6 +82,7 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
     sdk.photoCloudServerEnabled,
     sdk.photoExposureManual,
     sdk.photoExposureTimeNs,
+    sdk.photoIso,
     sdk.cameraFov,
     sdk.cameraRoiPosition,
   );
@@ -272,7 +280,9 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         <ExposureControl
           enabled={sdk.photoExposureManual}
           onEnabledChange={sdk.setPhotoExposureManual}
+          onIsoChange={sdk.setPhotoIso}
           onValueChange={sdk.setPhotoExposureTimeNs}
+          iso={sdk.photoIso}
           value={sdk.photoExposureTimeNs}
         />
         <CameraSettingsControl
@@ -324,12 +334,16 @@ function PhotoDetailsCard({
 function ExposureControl({
   enabled,
   onEnabledChange,
+  onIsoChange,
   onValueChange,
+  iso,
   value,
 }: {
   enabled: boolean;
   onEnabledChange: (enabled: boolean) => void;
+  onIsoChange: (iso: number) => void;
   onValueChange: (value: number) => void;
+  iso: number;
   value: number;
 }) {
   return (
@@ -357,9 +371,29 @@ function ExposureControl({
       <View style={styles.settingRangeRow}>
         <Text style={styles.settingRangeText}>1/1000s</Text>
         <Pressable onPress={() => onValueChange(PHOTO_EXPOSURE_DEFAULT_NS)}>
-          <Text style={styles.settingHint}>Preset 1/120s</Text>
+          <Text style={styles.settingHint}>Default 1/120s</Text>
         </Pressable>
         <Text style={styles.settingRangeText}>1/30s</Text>
+      </View>
+      <View style={styles.isoHeader}>
+        <View>
+          <Text style={styles.settingLabel}>ISO</Text>
+          <Text style={styles.settingHint}>{enabled ? `ISO ${iso}` : 'Auto ISO'}</Text>
+        </View>
+      </View>
+      <RangeSlider
+        disabled={!enabled}
+        max={PHOTO_ISO_MAX}
+        min={PHOTO_ISO_MIN}
+        onChange={onIsoChange}
+        value={iso}
+      />
+      <View style={styles.settingRangeRow}>
+        <Text style={styles.settingRangeText}>ISO {PHOTO_ISO_MIN}</Text>
+        <Pressable onPress={() => onIsoChange(PHOTO_ISO_DEFAULT)}>
+          <Text style={styles.settingHint}>Default ISO {PHOTO_ISO_DEFAULT}</Text>
+        </Pressable>
+        <Text style={styles.settingRangeText}>ISO {PHOTO_ISO_MAX}</Text>
       </View>
     </View>
   );
@@ -723,6 +757,7 @@ const styles = StyleSheet.create({
   chipValueActive: { color: colors.greenAccent },
   settingCard: { backgroundColor: 'rgba(15,42,29,0.04)', borderRadius: 14, padding: 14, gap: 8 },
   settingHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  isoHeader: { paddingTop: 6 },
   settingLabel: { color: colors.muted, fontSize: 10, fontWeight: '800', letterSpacing: 1.1, textTransform: 'uppercase' },
   settingHint: { color: colors.greenAccent, fontSize: 12, fontWeight: '700', marginTop: 2 },
   settingDescription: { color: colors.muted, fontSize: 11, fontWeight: '600', lineHeight: 16 },

@@ -456,6 +456,7 @@ sdk.requestPhoto(
         compress = PhotoCompression.MEDIUM,
         sound = true,
         exposureTimeNs = null,
+        iso = null,
     )
 )
 ```
@@ -472,7 +473,8 @@ sdk.requestPhoto(
         authToken: "optional-token",
         compress: .medium,
         sound: true,
-        exposureTimeNs: nil
+        exposureTimeNs: nil,
+        iso: nil
     )
 )
 ```
@@ -489,10 +491,11 @@ await BluetoothSdk.requestPhoto({
   compress: 'medium',
   sound: true,
   exposureTimeNs: null,
+  iso: null,
 });
 ```
 
-Omit `exposureTimeNs` or pass `null` for auto exposure. Pass a positive nanosecond value for one-shot manual exposure, for example `8_333_333` for about 1/120s. The camera light is always enabled for photo capture and streaming as a privacy indicator.
+Omit `exposureTimeNs` or pass `null` for auto exposure. Pass a positive nanosecond value for one-shot manual exposure, for example `8_333_333` for about 1/120s. Pass `iso` with manual exposure when you want a specific sensor gain; `iso` is ignored when auto exposure is active. The camera light is always enabled for photo capture and streaming as a privacy indicator.
 
 Your webhook should accept multipart form data with a `photo` file and `requestId`. If you include `authToken`, the uploader adds `Authorization: Bearer <token>` on the webhook request.
 
@@ -717,7 +720,7 @@ Android and iOS expose typed callbacks/delegate methods instead of the React Nat
 | `connect` / `connectDefault` | `connect` saves connected glasses as default and cancels existing connection attempts unless options override that behavior. `connectDefault` uses the app-restored default device. |
 | `displayText` | Defaults to `x = 0`, `y = 0`, `size = 24` when supported by the platform call. |
 | `setMicState` | `useGlassesMic = true`, `sendTranscript = false`, and `sendLc3Data = false` unless explicitly set. |
-| `PhotoRequest` / `requestPhoto` | Pass explicit size, compression, and sound. `exposureTimeNs` is optional; omitted or `null` means auto exposure. The camera light is always enabled by the SDK. |
+| `PhotoRequest` / `requestPhoto` | Pass explicit size, compression, and sound. `exposureTimeNs` is optional; omitted or `null` means auto exposure. `iso` is only used with manual `exposureTimeNs`. The camera light is always enabled by the SDK. |
 | `StreamRequest` / `startStream` | `keepAlive = true`, `keepAliveIntervalSeconds = 15`, and `sound = true` by default in native SDK calls. The camera light is always enabled by the SDK. |
 
 ## Error Handling

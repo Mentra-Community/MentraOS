@@ -29,6 +29,9 @@ let scanModelOptions: [DeviceModel] = [.mentraLive, .g2]
 let photoExposureMinNs = 1_000_000
 let photoExposureMaxNs = 33_333_333
 let photoExposureDefaultNs = 8_333_333
+let photoIsoMin = 100
+let photoIsoMax = 6400
+let photoIsoDefault = 200
 let cameraFovMin = 82
 let cameraFovMax = 118
 let cameraFovDefault = 102
@@ -177,6 +180,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     @Published private(set) var photoCompression: PhotoCompression = .none
     @Published private(set) var photoExposureManual = false
     @Published private(set) var photoExposureTimeNs = photoExposureDefaultNs
+    @Published private(set) var photoIso = photoIsoDefault
     @Published private(set) var cameraFov = cameraFovDefault
     @Published private(set) var cameraRoiPosition = 0
     @Published private(set) var cameraSettingsStatus = "Camera settings: default"
@@ -443,6 +447,10 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         photoExposureTimeNs = min(max(exposureTimeNs, photoExposureMinNs), photoExposureMaxNs)
     }
 
+    func setPhotoIso(_ iso: Int) {
+        photoIso = min(max(iso, photoIsoMin), photoIsoMax)
+    }
+
     func setCameraFov(_ fov: Int) {
         cameraFov = min(max(fov, cameraFovMin), cameraFovMax)
         if cameraFov == cameraFovMax {
@@ -513,7 +521,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                     webhookUrl: uploadUrl,
                     compress: photoCompression,
                     sound: true,
-                    exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil
+                    exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
+                    iso: photoExposureManual ? photoIso : nil
                 )
             )
             pollPhotoPreview(requestId: requestId, statusUrl: statusUrl.deletingLastPathComponent().appendingPathComponent("\(requestId).json"), generation: generation)
@@ -547,7 +556,8 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 webhookUrl: uploadUrl,
                 compress: photoCompression,
                 sound: true,
-                exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil
+                exposureTimeNs: photoExposureManual ? Double(photoExposureTimeNs) : nil,
+                iso: photoExposureManual ? photoIso : nil
             )
         )
         append(tag: "TX", text: "requestPhoto requestId=\(requestId) webhookUrl=\(uploadUrl)")

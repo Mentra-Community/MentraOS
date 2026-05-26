@@ -128,6 +128,9 @@ export const STREAM_DEFAULT_FPS = 15;
 export const PHOTO_EXPOSURE_MIN_NS = 1_000_000;
 export const PHOTO_EXPOSURE_MAX_NS = 33_333_333;
 export const PHOTO_EXPOSURE_DEFAULT_NS = 8_333_333;
+export const PHOTO_ISO_MIN = 100;
+export const PHOTO_ISO_MAX = 6400;
+export const PHOTO_ISO_DEFAULT = 200;
 export const CAMERA_FOV_MIN = 82;
 export const CAMERA_FOV_MAX = 118;
 export const CAMERA_FOV_DEFAULT = 102;
@@ -190,6 +193,7 @@ export type BluetoothSdkExampleState = {
   photoCompression: PhotoCompression;
   photoCloudServerEnabled: boolean;
   photoExposureManual: boolean;
+  photoIso: number;
   photoExposureTimeNs: number;
   photoPreviewDetails: PhotoPreviewDetails | null;
   photoPreviewUrl: string | null;
@@ -244,6 +248,7 @@ export type BluetoothSdkExampleActions = {
   setPhotoCompression: (compression: PhotoCompression) => void;
   setPhotoCloudServerEnabled: (enabled: boolean) => Promise<void>;
   setPhotoExposureManual: (enabled: boolean) => void;
+  setPhotoIso: (iso: number) => void;
   setPhotoExposureTimeNs: (exposureTimeNs: number) => void;
   setPhotoSize: (size: PhotoSize) => void;
   setCameraFov: (fov: number) => void;
@@ -318,6 +323,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   const [photoCompression, setPhotoCompression] = useState<PhotoCompression>('none');
   const [photoExposureManual, setPhotoExposureManual] = useState(false);
   const [photoExposureTimeNs, setPhotoExposureTimeNsState] = useState(PHOTO_EXPOSURE_DEFAULT_NS);
+  const [photoIso, setPhotoIsoState] = useState(PHOTO_ISO_DEFAULT);
   const [cameraFov, setCameraFovState] = useState(CAMERA_FOV_DEFAULT);
   const [cameraRoiPosition, setCameraRoiPositionState] = useState<CameraRoiPosition>(0);
   const [cameraSettingsStatus, setCameraSettingsStatus] = useState('Camera settings: default');
@@ -737,6 +743,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
         compress: photoCompression,
         sound: true,
         exposureTimeNs: photoExposureManual ? photoExposureTimeNs : null,
+        iso: photoExposureManual ? photoIso : null,
       });
       void pollPhotoPreview(requestId, statusUrl, pollGeneration);
   }
@@ -772,6 +779,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       compress: photoCompression,
       sound: true,
       exposureTimeNs: photoExposureManual ? photoExposureTimeNs : null,
+      iso: photoExposureManual ? photoIso : null,
     });
   }
 
@@ -1069,6 +1077,10 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
 
   function setPhotoExposureTimeNsAction(exposureTimeNs: number) {
     setPhotoExposureTimeNsState(clampRounded(exposureTimeNs, PHOTO_EXPOSURE_MIN_NS, PHOTO_EXPOSURE_MAX_NS));
+  }
+
+  function setPhotoIsoAction(iso: number) {
+    setPhotoIsoState(clampRounded(iso, PHOTO_ISO_MIN, PHOTO_ISO_MAX));
   }
 
   function setCameraFovAction(fov: number) {
@@ -1879,6 +1891,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     photoCompression,
     photoCloudServerEnabled,
     photoExposureManual,
+    photoIso,
     photoExposureTimeNs,
     photoPreviewDetails,
     photoPreviewUrl,
@@ -1898,6 +1911,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     setPhotoCompression,
     setPhotoCloudServerEnabled: setPhotoCloudServerEnabledAction,
     setPhotoExposureManual,
+    setPhotoIso: setPhotoIsoAction,
     setPhotoExposureTimeNs: setPhotoExposureTimeNsAction,
     setPhotoSize,
     setCameraFov: setCameraFovAction,

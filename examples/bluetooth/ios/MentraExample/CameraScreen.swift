@@ -11,29 +11,34 @@ private func cameraSdkCall(
     compression: String,
     exposureManual: Bool,
     exposureTimeNs: Int,
+    iso: Int,
     cameraFov: Int,
     cameraRoiPosition: Int
 ) -> String {
     let exposureLine = exposureManual
-        ? "      exposureTimeNs: \(exposureTimeNs)"
-        : "      exposureTimeNs: nil // auto exposure"
+        ? "      exposureTimeNs: \(exposureTimeNs),"
+        : "      exposureTimeNs: nil, // auto exposure"
+    let isoLine = exposureManual
+        ? "      iso: \(iso)"
+        : "      iso: nil // auto ISO"
     return """
-try await mentraBluetoothSdk.setCameraFov(
-    CameraFov(fov: \(cameraFov), roiPosition: \(cameraRoiPosition))
-)
-// Mentra Live restarts the camera for about 5s after FOV/ROI changes.
-mentraBluetoothSdk.requestPhoto(
-    PhotoRequest(
-      requestId: requestId,
-      appId: "com.mentra.examples.ios",
-      size: .\(size),
-      webhookUrl: uploadUrl,
-      compress: .\(compression),
-      sound: true,
-\(exposureLine)
+    try await mentraBluetoothSdk.setCameraFov(
+        CameraFov(fov: \(cameraFov), roiPosition: \(cameraRoiPosition))
     )
-)
-"""
+    // Mentra Live restarts the camera for about 5s after FOV/ROI changes.
+    mentraBluetoothSdk.requestPhoto(
+        PhotoRequest(
+          requestId: requestId,
+          appId: "com.mentra.examples.ios",
+          size: .\(size),
+          webhookUrl: uploadUrl,
+          compress: .\(compression),
+          sound: true,
+    \(exposureLine)
+    \(isoLine)
+        )
+    )
+    """
 }
 
 struct CameraScreen: View {
@@ -152,6 +157,7 @@ struct CameraScreen: View {
             compression: model.photoCompression.rawValue,
             exposureManual: model.photoExposureManual,
             exposureTimeNs: model.photoExposureTimeNs,
+            iso: model.photoIso,
             cameraFov: model.cameraFov,
             cameraRoiPosition: model.cameraRoiPosition
         )
@@ -377,7 +383,7 @@ private struct ExposureSettingsCard: View {
                     get: { Double(model.photoExposureTimeNs) },
                     set: { model.setPhotoExposureTimeNs(Int($0.rounded())) }
                 ),
-                in: Double(photoExposureMinNs)...Double(photoExposureMaxNs),
+                in: Double(photoExposureMinNs) ... Double(photoExposureMaxNs),
                 step: 1
             )
             .disabled(!model.photoExposureManual)
@@ -385,11 +391,43 @@ private struct ExposureSettingsCard: View {
             HStack {
                 Text("1/1000s")
                 Spacer()
-                Button("Preset 1/120s") { model.setPhotoExposureTimeNs(photoExposureDefaultNs) }
+                Button("Default 1/120s") { model.setPhotoExposureTimeNs(photoExposureDefaultNs) }
                     .buttonStyle(.plain)
                     .foregroundColor(AppColor.greenAccent)
                 Spacer()
                 Text("1/30s")
+            }
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundColor(AppColor.muted)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("ISO")
+                    .font(.system(size: 10, weight: .bold))
+                    .tracking(1.1)
+                    .foregroundColor(AppColor.muted)
+                Text(model.photoExposureManual ? "ISO \(model.photoIso)" : "Auto ISO")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(AppColor.greenAccent)
+            }
+            .padding(.top, 4)
+            Slider(
+                value: Binding(
+                    get: { Double(model.photoIso) },
+                    set: { model.setPhotoIso(Int($0.rounded())) }
+                ),
+                in: Double(photoIsoMin) ... Double(photoIsoMax),
+                step: 1
+            )
+            .disabled(!model.photoExposureManual)
+            .opacity(model.photoExposureManual ? 1 : 0.45)
+            HStack {
+                Text("ISO \(photoIsoMin)")
+                Spacer()
+                Button("Default ISO \(photoIsoDefault)") { model.setPhotoIso(photoIsoDefault) }
+                    .buttonStyle(.plain)
+                    .foregroundColor(AppColor.greenAccent)
+                Spacer()
+                Text("ISO \(photoIsoMax)")
             }
             .font(.system(size: 11, weight: .semibold))
             .foregroundColor(AppColor.muted)
@@ -432,7 +470,7 @@ private struct CameraFovSettingsCard: View {
                     get: { Double(model.cameraFov) },
                     set: { model.setCameraFov(Int($0.rounded())) }
                 ),
-                in: Double(cameraFovMin)...Double(cameraFovMax),
+                in: Double(cameraFovMin) ... Double(cameraFovMax),
                 step: 1
             )
             HStack {
