@@ -41,11 +41,13 @@ describe("incident-filter", () => {
     expect(entries[0].message).toContain("disconnect");
   });
 
-  test("filterLogEntries truncates", () => {
+  test("filterLogEntries truncates to most recent entries", () => {
     const collected = collectLogEntries(sampleLogs, "all");
     const { entries, truncated } = filterLogEntries(collected, { limit: 2 });
     expect(entries).toHaveLength(2);
     expect(truncated).toBe(true);
+    expect(entries[0].message).toContain("high latency");
+    expect(entries[1].message).toContain("tick");
   });
 
   test("formatLogLines", () => {
