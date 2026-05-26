@@ -9,10 +9,7 @@ import android.net.Uri
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import androidx.exifinterface.media.ExifInterface
-import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.barcode.BarcodeScanning
-import com.google.mlkit.vision.barcode.common.Barcode
-import com.google.mlkit.vision.common.InputImage
 import com.google.zxing.BarcodeFormat as ZxingBarcodeFormat
 import com.google.zxing.oned.Code128Writer
 import expo.modules.kotlin.exception.Exceptions
@@ -53,10 +50,10 @@ class MentraBarcodeScannerModule : Module() {
 
   private fun scanImage(imageUri: String): List<Map<String, Any?>> {
     val context = reactContext()
-    val image = inputImageFromUri(context, imageUri)
+    val imageBytes = readImageBytes(context, imageUri)
     val scanner = BarcodeScanning.getClient()
     return try {
-      Tasks.await(scanner.process(image)).map(::barcodeToMap)
+      StillImageBarcodeScanner(imageBytes).scan(scanner)
     } finally {
       scanner.close()
     }
@@ -106,15 +103,6 @@ class MentraBarcodeScannerModule : Module() {
       put("focalLength35mm", focalLength35mm)
       put("estimatedFov", estimatedFov(width, height, focalLength35mm))
     }
-  }
-
-  private fun inputImageFromUri(context: Context, imageUri: String): InputImage {
-    val uri = Uri.parse(imageUri)
-    val scheme = uri.scheme.orEmpty().lowercase()
-    if (scheme == "http" || scheme == "https") {
-      return InputImage.fromBitmap(downloadBitmap(imageUri), 0)
-    }
-    return InputImage.fromFilePath(context, uri)
   }
 
   private fun openImage(imageUri: String) {
@@ -192,26 +180,6 @@ class MentraBarcodeScannerModule : Module() {
     }
   }
 
-  private fun downloadBitmap(imageUri: String): Bitmap {
-    val connection = URL(imageUri).openConnection() as HttpURLConnection
-    connection.connectTimeout = HTTP_TIMEOUT_MS
-    connection.readTimeout = HTTP_TIMEOUT_MS
-    connection.requestMethod = "GET"
-    connection.doInput = true
-    connection.connect()
-    try {
-      if (connection.responseCode !in 200..299) {
-        throw IllegalStateException("Image request returned HTTP ${connection.responseCode}")
-      }
-      return connection.inputStream.use { input ->
-        BitmapFactory.decodeStream(input)
-          ?: throw IllegalStateException("Could not decode image")
-      }
-    } finally {
-      connection.disconnect()
-    }
-  }
-
   private fun positiveInt(value: Int?): Int? = value?.takeIf { it > 0 }
 
   private fun estimatedFov(width: Int?, height: Int?, focalLength35mm: Int?): Map<String, Any>? {
@@ -234,74 +202,6 @@ class MentraBarcodeScannerModule : Module() {
 
   private fun fovDegrees(sensorMm: Double, focalLengthMm: Double): Double {
     return 2.0 * atan(sensorMm / (2.0 * focalLengthMm)) * 180.0 / Math.PI
-  }
-
-  private fun barcodeToMap(barcode: Barcode): Map<String, Any?> {
-    return buildMap {
-      put("rawValue", barcode.rawValue)
-      put("displayValue", barcode.displayValue)
-      put("format", formatName(barcode.format))
-      put("valueType", valueTypeName(barcode.valueType))
-      barcode.boundingBox?.let { rect ->
-        put(
-          "bounds",
-          mapOf(
-            "x" to rect.left,
-            "y" to rect.top,
-            "width" to rect.width(),
-            "height" to rect.height(),
-          ),
-        )
-      }
-      barcode.cornerPoints?.let { points ->
-        put(
-          "cornerPoints",
-          points.map { point ->
-            mapOf(
-              "x" to point.x,
-              "y" to point.y,
-            )
-          },
-        )
-      }
-    }
-  }
-
-  private fun formatName(format: Int): String {
-    return when (format) {
-      Barcode.FORMAT_CODE_128 -> "CODE_128"
-      Barcode.FORMAT_CODE_39 -> "CODE_39"
-      Barcode.FORMAT_CODE_93 -> "CODE_93"
-      Barcode.FORMAT_CODABAR -> "CODABAR"
-      Barcode.FORMAT_DATA_MATRIX -> "DATA_MATRIX"
-      Barcode.FORMAT_EAN_13 -> "EAN_13"
-      Barcode.FORMAT_EAN_8 -> "EAN_8"
-      Barcode.FORMAT_ITF -> "ITF"
-      Barcode.FORMAT_QR_CODE -> "QR_CODE"
-      Barcode.FORMAT_UPC_A -> "UPC_A"
-      Barcode.FORMAT_UPC_E -> "UPC_E"
-      Barcode.FORMAT_PDF417 -> "PDF417"
-      Barcode.FORMAT_AZTEC -> "AZTEC"
-      else -> "UNKNOWN"
-    }
-  }
-
-  private fun valueTypeName(valueType: Int): String {
-    return when (valueType) {
-      Barcode.TYPE_CALENDAR_EVENT -> "CALENDAR_EVENT"
-      Barcode.TYPE_CONTACT_INFO -> "CONTACT_INFO"
-      Barcode.TYPE_DRIVER_LICENSE -> "DRIVER_LICENSE"
-      Barcode.TYPE_EMAIL -> "EMAIL"
-      Barcode.TYPE_GEO -> "GEO"
-      Barcode.TYPE_ISBN -> "ISBN"
-      Barcode.TYPE_PHONE -> "PHONE"
-      Barcode.TYPE_PRODUCT -> "PRODUCT"
-      Barcode.TYPE_SMS -> "SMS"
-      Barcode.TYPE_TEXT -> "TEXT"
-      Barcode.TYPE_URL -> "URL"
-      Barcode.TYPE_WIFI -> "WIFI"
-      else -> "UNKNOWN"
-    }
   }
 
   private fun reactContext(): Context {

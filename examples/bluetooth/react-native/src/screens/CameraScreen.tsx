@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet, Image, TextInput, Clipboard, Switch, PanResponder } from 'react-native';
+import { View, Text, ScrollView, Pressable, StyleSheet, Image, TextInput, Clipboard, Switch, PanResponder, ActivityIndicator } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Path, Polyline, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
@@ -489,48 +489,63 @@ function BarcodeResult({scan}: {scan: BluetoothSdkExampleModel['barcodeScan']}) 
   const foundValues = scan.barcodes
     .map((barcode) => barcode.rawValue ?? barcode.displayValue)
     .filter((value): value is string => Boolean(value));
+  const copyValue = foundValues.join('\n');
+  const foundFormats = Array.from(new Set(scan.barcodes.map((barcode) => barcode.format).filter(Boolean)));
+  const foundTypeLabel = foundFormats.length === 1 ? ` (type: ${foundFormats[0]})` : foundFormats.length > 1 ? ` (types: ${foundFormats.join(', ')})` : '';
   const expectedMatched = scan.expectedValue
     ? foundValues.includes(scan.expectedValue)
     : false;
   const isFound = scan.state === 'found';
   const isError = scan.state === 'error';
-  const title = scan.state === 'scanning'
+  const isScanning = scan.state === 'scanning';
+  const title = isScanning
     ? 'Barcode scanning'
     : isFound
       ? expectedMatched
-        ? 'Barcode matched'
-        : 'Barcode found'
+        ? `Barcode matched${foundTypeLabel}`
+        : `Barcode found${foundTypeLabel}`
       : isError
         ? 'Barcode error'
         : 'No barcode found';
   const body = isFound
-    ? scan.barcodes.map(formatBarcodeResult).join(' · ')
+    ? foundValues.join(' · ')
     : isError
       ? scan.error ?? 'Scanner failed'
-      : scan.state === 'scanning'
-        ? 'Analyzing photo preview'
+      : isScanning
+        ? 'Analyzing photo preview...'
         : 'Photo preview scanned';
 
   return (
-    <View style={[styles.barcodeRow, isFound && styles.barcodeRowFound, isError && styles.barcodeRowError]}>
-      <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={isError ? colors.red : isFound ? colors.greenAccent : colors.muted} strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round">
-        <Path d="M3 5v14" />
-        <Path d="M7 5v14" />
-        <Path d="M11 5v14" />
-        <Path d="M17 5v14" />
-        <Path d="M21 5v14" />
-      </Svg>
+    <View style={[styles.barcodeRow, isScanning && styles.barcodeRowScanning, isFound && styles.barcodeRowFound, isError && styles.barcodeRowError]}>
+      {isScanning ? (
+        <ActivityIndicator size="small" color={colors.greenAccent} />
+      ) : (
+        <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={isError ? colors.red : isFound ? colors.greenAccent : colors.muted} strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round">
+          <Path d="M3 5v14" />
+          <Path d="M7 5v14" />
+          <Path d="M11 5v14" />
+          <Path d="M17 5v14" />
+          <Path d="M21 5v14" />
+        </Svg>
+      )}
       <View style={{flex: 1}}>
         <Text style={styles.barcodeTitle}>{title}</Text>
         <Text style={styles.barcodeValue}>{body}</Text>
       </View>
+      {isFound && copyValue ? (
+        <Pressable
+          hitSlop={8}
+          onPress={() => Clipboard.setString(copyValue)}
+          style={({pressed}) => [styles.barcodeCopyBtn, pressed && styles.copyChipPressed]}>
+          <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.greenAccent} strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round">
+            <Path d="M8 8h11v13H8z" />
+            <Path d="M5 16H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h11a1 1 0 0 1 1 1v1" />
+          </Svg>
+          <Text style={styles.barcodeCopyText}>Copy</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
-}
-
-function formatBarcodeResult(barcode: BluetoothSdkExampleModel['barcodeScan']['barcodes'][number]) {
-  const value = barcode.rawValue ?? barcode.displayValue ?? 'unreadable';
-  return `${barcode.format}: ${value}`;
 }
 
 function photoDetailsSummary(details: PhotoPreviewDetails | null) {
@@ -649,8 +664,11 @@ const styles = StyleSheet.create({
   previewOpenBadge: { position: 'absolute', right: 12, bottom: 12, zIndex: 3, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.42)', borderRadius: 999, borderWidth: 1, borderColor: 'rgba(255,255,255,0.22)', paddingVertical: 7, paddingHorizontal: 11 },
   previewOpenText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   barcodeRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10, marginHorizontal: 6, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(15,42,29,0.08)', backgroundColor: 'rgba(15,42,29,0.04)', paddingVertical: 10, paddingHorizontal: 12 },
+  barcodeRowScanning: { borderColor: 'rgba(52,199,89,0.24)', backgroundColor: 'rgba(52,199,89,0.08)' },
   barcodeRowFound: { borderColor: 'rgba(52,199,89,0.32)', backgroundColor: 'rgba(52,199,89,0.12)' },
   barcodeRowError: { borderColor: 'rgba(255,59,48,0.24)', backgroundColor: 'rgba(255,59,48,0.09)' },
+  barcodeCopyBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(52,199,89,0.26)', backgroundColor: 'rgba(255,255,255,0.5)', paddingVertical: 7, paddingHorizontal: 9 },
+  barcodeCopyText: { color: colors.greenAccent, fontSize: 11, fontWeight: '700' },
   barcodeTitle: { color: colors.ink, fontSize: 12, fontWeight: '700' },
   barcodeValue: { color: colors.muted, fontSize: 11, fontWeight: '600', lineHeight: 15, marginTop: 2 },
   captureBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 18, paddingVertical: 16, marginTop: 14, marginHorizontal: 6, gap: 10 },

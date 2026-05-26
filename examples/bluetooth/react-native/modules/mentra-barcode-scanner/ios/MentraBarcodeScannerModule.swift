@@ -2,7 +2,6 @@ import CoreImage
 import ExpoModulesCore
 import ImageIO
 import UIKit
-import Vision
 
 public class MentraBarcodeScannerModule: Module, UIDocumentInteractionControllerDelegate {
   private var documentInteractionController: UIDocumentInteractionController?
@@ -36,14 +35,7 @@ public class MentraBarcodeScannerModule: Module, UIDocumentInteractionController
       throw BarcodeScannerError("Invalid image URI.")
     }
     let data = try Data(contentsOf: url)
-    guard let image = UIImage(data: data), let cgImage = image.cgImage else {
-      throw BarcodeScannerError("Could not decode image.")
-    }
-
-    let request = VNDetectBarcodesRequest()
-    let handler = VNImageRequestHandler(cgImage: cgImage, orientation: .up, options: [:])
-    try handler.perform([request])
-    return (request.results ?? []).map(barcodeToDictionary)
+    return try StillImageBarcodeScanner(imageData: data).scan()
   }
 
   private func createTestBarcodeImage(value: String) throws -> [String: Any] {
@@ -121,30 +113,6 @@ public class MentraBarcodeScannerModule: Module, UIDocumentInteractionController
     }
   }
 
-  private func barcodeToDictionary(_ observation: VNBarcodeObservation) -> [String: Any] {
-    var result: [String: Any] = [
-      "rawValue": observation.payloadStringValue as Any,
-      "displayValue": observation.payloadStringValue as Any,
-      "format": formatName(observation.symbology),
-      "valueType": "TEXT",
-      "bounds": [
-        "x": observation.boundingBox.origin.x,
-        "y": observation.boundingBox.origin.y,
-        "width": observation.boundingBox.size.width,
-        "height": observation.boundingBox.size.height,
-      ],
-    ]
-    if !observation.cornerPoints.isEmpty {
-      result["cornerPoints"] = observation.cornerPoints.map { point in
-        [
-          "x": point.x,
-          "y": point.y,
-        ]
-      }
-    }
-    return result
-  }
-
   private func intValue(_ value: Any?) -> Int? {
     if let number = value as? NSNumber {
       let intValue = number.intValue
@@ -179,37 +147,6 @@ public class MentraBarcodeScannerModule: Module, UIDocumentInteractionController
 
   private func fovDegrees(sensorMm: Double, focalLengthMm: Double) -> Double {
     2.0 * atan(sensorMm / (2.0 * focalLengthMm)) * 180.0 / Double.pi
-  }
-
-  private func formatName(_ symbology: VNBarcodeSymbology) -> String {
-    switch symbology {
-    case .code128:
-      return "CODE_128"
-    case .code39:
-      return "CODE_39"
-    case .code93:
-      return "CODE_93"
-    case .codabar:
-      return "CODABAR"
-    case .dataMatrix:
-      return "DATA_MATRIX"
-    case .ean13:
-      return "EAN_13"
-    case .ean8:
-      return "EAN_8"
-    case .i2of5, .itf14:
-      return "ITF"
-    case .qr:
-      return "QR_CODE"
-    case .upce:
-      return "UPC_E"
-    case .pdf417:
-      return "PDF417"
-    case .aztec:
-      return "AZTEC"
-    default:
-      return symbology.rawValue
-    }
   }
 
   public func documentInteractionControllerViewControllerForPreview(

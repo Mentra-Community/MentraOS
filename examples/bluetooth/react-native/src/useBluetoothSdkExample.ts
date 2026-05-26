@@ -1028,6 +1028,10 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       sourceUri,
       state: 'scanning',
     });
+    await waitForNextFrame();
+    if (barcodeScanTokenRef.current !== token) {
+      return;
+    }
     try {
       const barcodes = await MentraBarcodeScanner.scanImage(sourceUri);
       if (barcodeScanTokenRef.current !== token) {
@@ -1953,6 +1957,12 @@ function barcodeScanSummary(barcodes: BarcodeScanResult[]) {
       return `${barcode.format}: ${value}`;
     })
     .join(' · ');
+}
+
+function waitForNextFrame() {
+  return new Promise<void>((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
 }
 
 async function loadPersistedDefaultDevice() {
