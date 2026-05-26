@@ -1,7 +1,7 @@
 import {createAudioPlayer, setAudioModeAsync, type AudioPlayer} from 'expo-audio';
 import {File, Paths} from 'expo-file-system';
 import {useEffect, useRef, useState} from 'react';
-import {Clipboard, Image as RNImage, Linking, PermissionsAndroid, Platform} from 'react-native';
+import {Clipboard, Linking, PermissionsAndroid, Platform} from 'react-native';
 import BluetoothSdk, {
   DeviceModels,
   type AudioConnectedEvent,
@@ -27,6 +27,7 @@ import {
 } from '@mentra/bluetooth-sdk/react';
 import MentraBarcodeScanner, {
   type BarcodeScanResult,
+  type ImageFovEstimate,
 } from '@mentra/react-native-barcode-scanner';
 import MentraPhotoReceiver, {
   type PhotoReceiverStatusEvent,
@@ -74,6 +75,8 @@ export type PhotoPreviewDetails = {
   byteCount?: number;
   contentType?: string;
   error?: string;
+  estimatedFov?: ImageFovEstimate | null;
+  focalLength35mm?: number | null;
   height?: number;
   previewUrl?: string;
   requestId?: string | null;
@@ -827,7 +830,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       source: 'Phone receiver',
       state: 'preview',
     }));
-    updatePhotoPreviewDimensions(payload.fileUri);
+    void updatePhotoPreviewMetadata(payload.fileUri);
     void scanPreviewBarcode(payload.fileUri);
     setCameraStatus(`Camera: phone photo ready (${Math.round(payload.byteCount / 1024)} KB)`);
     addEvent('LIVE', `phone photo ready ${payload.fileUri}`);
@@ -939,7 +942,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
               state: 'preview',
               uploadedAt: json.uploadedAt ?? current?.uploadedAt,
             }));
-            updatePhotoPreviewDimensions(json.photoUrl);
+            void updatePhotoPreviewMetadata(json.photoUrl);
             void scanPreviewBarcode(json.photoUrl);
             setCameraStatus('Camera: loaded photo preview');
             addEvent('LIVE', `local photo ready ${json.photoUrl}`);
@@ -962,16 +965,23 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     }
   }
 
-  function updatePhotoPreviewDimensions(uri: string) {
-    RNImage.getSize(
-      uri,
-      (width, height) => {
-        setPhotoPreviewDetails((current) =>
-          current?.previewUrl === uri ? {...current, width, height} : current,
-        );
-      },
-      () => undefined,
-    );
+  async function updatePhotoPreviewMetadata(uri: string) {
+    try {
+      const metadata = await MentraBarcodeScanner.getImageMetadata(uri);
+      setPhotoPreviewDetails((current) =>
+        current?.previewUrl === uri
+          ? {
+              ...current,
+              estimatedFov: metadata.estimatedFov,
+              focalLength35mm: metadata.focalLength35mm,
+              height: metadata.height ?? current.height,
+              width: metadata.width ?? current.width,
+            }
+          : current,
+      );
+    } catch (error) {
+      addEvent('TX', `photo metadata failed: ${formatError(error)}`);
+    }
   }
 
   async function loadTestBarcodePreview() {
@@ -989,7 +999,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
         source: 'Barcode test',
         state: 'preview',
       });
-      updatePhotoPreviewDimensions(testImage.fileUri);
+      void updatePhotoPreviewMetadata(testImage.fileUri);
       setCameraStatus(`Camera: barcode test preview loaded (${testImage.value})`);
       await scanPreviewBarcode(testImage.fileUri, testImage.value);
     });

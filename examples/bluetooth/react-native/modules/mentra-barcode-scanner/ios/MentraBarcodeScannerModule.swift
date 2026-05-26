@@ -1,5 +1,6 @@
 import CoreImage
 import ExpoModulesCore
+import ImageIO
 import UIKit
 import Vision
 
@@ -19,6 +20,10 @@ public class MentraBarcodeScannerModule: Module, UIDocumentInteractionController
 
     AsyncFunction("createTestBarcodeImage") { (value: String) -> [String: Any] in
       try createTestBarcodeImage(value: value)
+    }
+
+    AsyncFunction("getImageMetadata") { (imageUri: String) -> [String: Any?] in
+      try getImageMetadata(imageUri: imageUri)
     }
 
     AsyncFunction("openImage") { (imageUri: String) in
@@ -71,6 +76,30 @@ public class MentraBarcodeScannerModule: Module, UIDocumentInteractionController
     ]
   }
 
+  private func getImageMetadata(imageUri: String) throws -> [String: Any?] {
+    guard let url = URL(string: imageUri) else {
+      throw BarcodeScannerError("Invalid image URI.")
+    }
+    let data = try Data(contentsOf: url)
+    guard
+      let source = CGImageSourceCreateWithData(data as CFData, nil),
+      let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any]
+    else {
+      throw BarcodeScannerError("Could not read image metadata.")
+    }
+
+    let width = intValue(properties[kCGImagePropertyPixelWidth as String])
+    let height = intValue(properties[kCGImagePropertyPixelHeight as String])
+    let exif = properties[kCGImagePropertyExifDictionary as String] as? [String: Any]
+    let focalLength35mm = intValue(exif?[kCGImagePropertyExifFocalLenIn35mmFilm as String])
+    return [
+      "width": width,
+      "height": height,
+      "focalLength35mm": focalLength35mm,
+      "estimatedFov": estimatedFov(width: width, height: height, focalLength35mm: focalLength35mm),
+    ]
+  }
+
   private func openImage(imageUri: String) throws {
     guard let url = URL(string: imageUri) else {
       throw BarcodeScannerError("Invalid image URI.")
@@ -116,6 +145,42 @@ public class MentraBarcodeScannerModule: Module, UIDocumentInteractionController
     return result
   }
 
+  private func intValue(_ value: Any?) -> Int? {
+    if let number = value as? NSNumber {
+      let intValue = number.intValue
+      return intValue > 0 ? intValue : nil
+    }
+    if let string = value as? String, let intValue = Int(string), intValue > 0 {
+      return intValue
+    }
+    return nil
+  }
+
+  private func estimatedFov(width: Int?, height: Int?, focalLength35mm: Int?) -> [String: Any]? {
+    guard let focalLength35mm, focalLength35mm > 0 else {
+      return nil
+    }
+    let aspect: Double
+    if let width, let height, height > 0 {
+      aspect = Double(width) / Double(height)
+    } else {
+      aspect = 4.0 / 3.0
+    }
+    let sensorHeight = fullFrameDiagonalMm / sqrt((aspect * aspect) + 1.0)
+    let sensorWidth = sensorHeight * aspect
+    return [
+      "basis": "35mm_equivalent",
+      "focalLength35mm": focalLength35mm,
+      "diagonalDegrees": fovDegrees(sensorMm: fullFrameDiagonalMm, focalLengthMm: Double(focalLength35mm)),
+      "horizontalDegrees": fovDegrees(sensorMm: sensorWidth, focalLengthMm: Double(focalLength35mm)),
+      "verticalDegrees": fovDegrees(sensorMm: sensorHeight, focalLengthMm: Double(focalLength35mm)),
+    ]
+  }
+
+  private func fovDegrees(sensorMm: Double, focalLengthMm: Double) -> Double {
+    2.0 * atan(sensorMm / (2.0 * focalLengthMm)) * 180.0 / Double.pi
+  }
+
   private func formatName(_ symbology: VNBarcodeSymbology) -> String {
     switch symbology {
     case .code128:
@@ -153,6 +218,8 @@ public class MentraBarcodeScannerModule: Module, UIDocumentInteractionController
     appContext?.utilities?.currentViewController() ?? UIViewController()
   }
 }
+
+private let fullFrameDiagonalMm = 43.266615305567875
 
 final class BarcodeScannerError: Exception, @unchecked Sendable {
   private let message: String

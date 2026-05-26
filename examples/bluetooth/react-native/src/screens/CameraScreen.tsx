@@ -559,6 +559,8 @@ function photoDetailsRows(details: PhotoPreviewDetails | null) {
   if (details.requestId) rows.push({label: 'Request ID', value: details.requestId});
   if (details.byteCount) rows.push({label: 'Size', value: formatBytes(details.byteCount)});
   if (details.width && details.height) rows.push({label: 'Dimensions', value: `${details.width} x ${details.height}`});
+  if (details.estimatedFov) rows.push({label: 'Estimated FOV', value: formatFovEstimate(details.estimatedFov)});
+  else if (details.focalLength35mm) rows.push({label: 'Focal length', value: `${details.focalLength35mm}mm equiv.`});
   if (details.contentType) rows.push({label: 'Content type', value: details.contentType});
   if (details.uploadUrl) rows.push({label: 'Upload URL', value: details.uploadUrl});
   if (details.previewUrl) rows.push({label: 'Preview URL', value: details.previewUrl});
@@ -573,6 +575,15 @@ function formatBytes(bytes: number) {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function formatFovEstimate(fov: NonNullable<PhotoPreviewDetails['estimatedFov']>) {
+  return [
+    `${Math.round(fov.diagonalDegrees)}° diag`,
+    `${Math.round(fov.horizontalDegrees)}° H`,
+    `${Math.round(fov.verticalDegrees)}° V`,
+    `${fov.focalLength35mm}mm equiv.`,
+  ].join(' · ');
 }
 
 function isCameraStatusFailure(status: string) {

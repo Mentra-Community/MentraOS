@@ -19,6 +19,21 @@ export type BarcodeScanResult = {
   valueType?: string;
 };
 
+export type ImageFovEstimate = {
+  basis: '35mm_equivalent';
+  diagonalDegrees: number;
+  focalLength35mm: number;
+  horizontalDegrees: number;
+  verticalDegrees: number;
+};
+
+export type ImageMetadata = {
+  estimatedFov?: ImageFovEstimate | null;
+  focalLength35mm?: number | null;
+  height?: number | null;
+  width?: number | null;
+};
+
 export type TestBarcodeImage = {
   byteCount: number;
   fileUri: string;

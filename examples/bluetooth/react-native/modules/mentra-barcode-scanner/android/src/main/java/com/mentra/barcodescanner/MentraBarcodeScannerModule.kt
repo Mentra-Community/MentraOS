@@ -8,6 +8,7 @@ import android.graphics.Color
 import android.net.Uri
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
+import androidx.exifinterface.media.ExifInterface
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
@@ -17,10 +18,13 @@ import com.google.zxing.oned.Code128Writer
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlin.math.atan
+import kotlin.math.sqrt
 
 class MentraBarcodeScannerModule : Module() {
   override fun definition() = ModuleDefinition {
@@ -36,6 +40,10 @@ class MentraBarcodeScannerModule : Module() {
 
     AsyncFunction("createTestBarcodeImage") { value: String ->
       createTestBarcodeImage(value)
+    }
+
+    AsyncFunction("getImageMetadata") { imageUri: String ->
+      getImageMetadata(imageUri)
     }
 
     AsyncFunction("openImage") { imageUri: String ->
@@ -74,6 +82,30 @@ class MentraBarcodeScannerModule : Module() {
       "value" to safeValue,
       "byteCount" to file.length(),
     )
+  }
+
+  private fun getImageMetadata(imageUri: String): Map<String, Any?> {
+    val context = reactContext()
+    val bytes = readImageBytes(context, imageUri)
+    val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+
+    val exif = runCatching {
+      ExifInterface(ByteArrayInputStream(bytes))
+    }.getOrNull()
+    val width = positiveInt(options.outWidth)
+      ?: positiveInt(exif?.getAttributeInt(ExifInterface.TAG_PIXEL_X_DIMENSION, 0))
+      ?: positiveInt(exif?.getAttributeInt(ExifInterface.TAG_IMAGE_WIDTH, 0))
+    val height = positiveInt(options.outHeight)
+      ?: positiveInt(exif?.getAttributeInt(ExifInterface.TAG_PIXEL_Y_DIMENSION, 0))
+      ?: positiveInt(exif?.getAttributeInt(ExifInterface.TAG_IMAGE_LENGTH, 0))
+    val focalLength35mm = positiveInt(exif?.getAttributeInt(ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM, 0))
+    return buildMap {
+      put("width", width)
+      put("height", height)
+      put("focalLength35mm", focalLength35mm)
+      put("estimatedFov", estimatedFov(width, height, focalLength35mm))
+    }
   }
 
   private fun inputImageFromUri(context: Context, imageUri: String): InputImage {
@@ -130,6 +162,36 @@ class MentraBarcodeScannerModule : Module() {
     return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: "image/*"
   }
 
+  private fun readImageBytes(context: Context, imageUri: String): ByteArray {
+    val uri = Uri.parse(imageUri)
+    val scheme = uri.scheme.orEmpty().lowercase()
+    if (scheme == "http" || scheme == "https") {
+      return downloadBytes(imageUri)
+    }
+    if (scheme == "content") {
+      return context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        ?: throw IllegalStateException("Could not read image URI")
+    }
+    return File(uri.path ?: throw IllegalStateException("Invalid file URI")).readBytes()
+  }
+
+  private fun downloadBytes(imageUri: String): ByteArray {
+    val connection = URL(imageUri).openConnection() as HttpURLConnection
+    connection.connectTimeout = HTTP_TIMEOUT_MS
+    connection.readTimeout = HTTP_TIMEOUT_MS
+    connection.requestMethod = "GET"
+    connection.doInput = true
+    connection.connect()
+    try {
+      if (connection.responseCode !in 200..299) {
+        throw IllegalStateException("Image request returned HTTP ${connection.responseCode}")
+      }
+      return connection.inputStream.use { it.readBytes() }
+    } finally {
+      connection.disconnect()
+    }
+  }
+
   private fun downloadBitmap(imageUri: String): Bitmap {
     val connection = URL(imageUri).openConnection() as HttpURLConnection
     connection.connectTimeout = HTTP_TIMEOUT_MS
@@ -148,6 +210,30 @@ class MentraBarcodeScannerModule : Module() {
     } finally {
       connection.disconnect()
     }
+  }
+
+  private fun positiveInt(value: Int?): Int? = value?.takeIf { it > 0 }
+
+  private fun estimatedFov(width: Int?, height: Int?, focalLength35mm: Int?): Map<String, Any>? {
+    val focalLength = focalLength35mm?.takeIf { it > 0 } ?: return null
+    val aspect = if (width != null && height != null && height > 0) {
+      width.toDouble() / height.toDouble()
+    } else {
+      4.0 / 3.0
+    }
+    val sensorHeight = FULL_FRAME_DIAGONAL_MM / sqrt((aspect * aspect) + 1.0)
+    val sensorWidth = sensorHeight * aspect
+    return mapOf(
+      "basis" to "35mm_equivalent",
+      "focalLength35mm" to focalLength,
+      "diagonalDegrees" to fovDegrees(FULL_FRAME_DIAGONAL_MM, focalLength.toDouble()),
+      "horizontalDegrees" to fovDegrees(sensorWidth, focalLength.toDouble()),
+      "verticalDegrees" to fovDegrees(sensorHeight, focalLength.toDouble()),
+    )
+  }
+
+  private fun fovDegrees(sensorMm: Double, focalLengthMm: Double): Double {
+    return 2.0 * atan(sensorMm / (2.0 * focalLengthMm)) * 180.0 / Math.PI
   }
 
   private fun barcodeToMap(barcode: Barcode): Map<String, Any?> {
@@ -229,6 +315,7 @@ class MentraBarcodeScannerModule : Module() {
     const val TEST_BARCODE_VALUE = "MENTRA-BARCODE-12345"
     const val TEST_BARCODE_WIDTH = 1024
     const val TEST_BARCODE_HEIGHT = 320
+    const val FULL_FRAME_DIAGONAL_MM = 43.266615305567875
     val PREFERRED_IMAGE_VIEWER_PACKAGES = listOf(
       "com.sec.android.gallery3d",
       "com.google.android.apps.photos",
