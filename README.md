@@ -69,13 +69,13 @@ Browse, install, and run MiniApps from your phone. Try captions, AI notes, proac
       </td>
       <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
         <a href="https://apps.mentra.glass/package/com.mentra.link" style="text-decoration: none; color: inherit;">
-          <img src="https://appstore.augmentos.org/app-icons/mentra-link.png" alt="Link" width="80" style="border-radius: 18px;" />
+          <img src="./images/app-icons/LinkLingo.png" alt="Link" width="80" style="border-radius: 18px;" />
           <br /><b>Link</b>
         </a>
       </td>
       <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
         <a href="https://apps.mentra.glass/package/com.mentra.merge" style="text-decoration: none; color: inherit;">
-          <img src="https://appstore.augmentos.org/app-icons/mentra-merge.png" alt="Merge" width="80" style="border-radius: 18px;" />
+          <img src="./images/app-icons/Merge.png" alt="Merge" width="80" style="border-radius: 18px;" />
           <br /><b>Merge</b>
         </a>
       </td>
