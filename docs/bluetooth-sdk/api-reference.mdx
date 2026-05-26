@@ -253,6 +253,7 @@ Important defaults:
 - `displayText(text, x, y, size)` defaults to `x = 0`, `y = 0`, and `size = 24`.
 - `setMicState(enabled)` defaults to glasses microphone on, transcript events off, and LC3 events off. Microphone audio events are continuous while capture is enabled. Use `setVoiceActivityDetectionEnabled(...)` for glasses-side Voice Activity Detection; `voice_activity_detection_status` reports whether it is enabled, and `speaking_status` reports speaking/not-speaking when supported. Microphone audio events include the latest `voiceActivityDetectionEnabled` value.
 - `requestPhoto({authToken, ...})` omits the `Authorization` header when `authToken` is `null` or empty.
+- `setCameraFov({fov, roiPosition})` clamps `fov` to 82-118 degrees and `roiPosition` to `0` center, `1` bottom, or `2` top. On Mentra Live this persists the setting and restarts the camera for about 5 seconds before the next capture should run.
 - `startStream` optional `video` and `audio` configs are omitted unless supplied, so the connected glasses use their model defaults.
 - Photo capture, video recording, and streaming always enable the camera light as a privacy indicator.
 

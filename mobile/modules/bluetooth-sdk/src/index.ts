@@ -110,6 +110,9 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
 export default BluetoothSdk
 
 export {
+  CAMERA_FOV_DEFAULT,
+  CAMERA_FOV_MAX,
+  CAMERA_FOV_MIN,
   DeviceModels,
   isBusyGlassesConnectionStatus,
   isConnectedGlassesConnectionStatus,
@@ -132,6 +135,7 @@ export type {
   ButtonPhotoSize,
   ButtonPressEvent,
   CameraFov,
+  CameraRoiPosition,
   CompatibleGlassesSearchStopEvent,
   ConnectOptions,
   ConnectedGlassesConnectionStatus,

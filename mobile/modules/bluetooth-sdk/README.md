@@ -271,6 +271,8 @@ await BluetoothSdk.requestPhoto({
 
 The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
 
+Use `setCameraFov({fov, roiPosition})` to configure Mentra Live camera field of view and crop position. FOV is clamped to 82-118 degrees; ROI position is `0` center, `1` bottom, or `2` top. Applying FOV/ROI restarts the camera for about 5 seconds, so wait before requesting the next photo.
+
 ## Streaming
 
 ```ts

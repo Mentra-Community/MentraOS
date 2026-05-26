@@ -7,8 +7,10 @@ import {
   BluetoothStatus,
   ButtonPhotoSize,
   CalendarEvent,
+  CAMERA_FOV_DEFAULT,
+  CAMERA_FOV_MAX,
+  CAMERA_FOV_MIN,
   CameraFov,
-  CameraFovSetting,
   ConnectOptions,
   DashboardMenuItem,
   Device,
@@ -196,9 +198,26 @@ const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
 
 const DEFAULT_SCAN_TIMEOUT_MS = 15_000
 
-const CAMERA_FOV_SETTINGS: Record<CameraFov, CameraFovSetting> = {
-  standard: {fov: 118, roiPosition: 0},
-  wide: {fov: 118, roiPosition: 0},
+const CAMERA_ROI_MIN = 0
+const CAMERA_ROI_MAX = 2
+
+function clampInteger(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, Math.round(value)))
+}
+
+function normalizeCameraFov(setting: CameraFov): Required<CameraFov> {
+  return {
+    fov: clampInteger(
+      Number.isFinite(setting.fov) ? setting.fov : CAMERA_FOV_DEFAULT,
+      CAMERA_FOV_MIN,
+      CAMERA_FOV_MAX,
+    ),
+    roiPosition: clampInteger(
+      Number.isFinite(setting.roiPosition ?? 0) ? (setting.roiPosition ?? 0) : 0,
+      CAMERA_ROI_MIN,
+      CAMERA_ROI_MAX,
+    ) as Required<CameraFov>["roiPosition"],
+  }
 }
 
 function searchResultsForModel(status: Partial<PublicBluetoothStatus>, model: DeviceModel): Device[] {
@@ -394,7 +413,7 @@ NativeBluetoothSdkModule.setButtonMaxRecordingTime = function (minutes: number) 
 }
 
 NativeBluetoothSdkModule.setCameraFov = function (fov: CameraFov) {
-  const setting = CAMERA_FOV_SETTINGS[fov]
+  const setting = normalizeCameraFov(fov)
   return this.updateBluetoothSettings({
     camera_fov: {fov: setting.fov, roi_position: setting.roiPosition},
   })

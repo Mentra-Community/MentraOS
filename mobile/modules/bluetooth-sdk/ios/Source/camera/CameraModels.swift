@@ -39,17 +39,24 @@ public struct ButtonVideoRecordingSettings {
     }
 }
 
-public enum CameraFov {
-    case standard
-    case wide
+public struct CameraFov {
+    public static let minFov = 82
+    public static let maxFov = 118
+    public static let defaultFov = 102
+    public static let minRoiPosition = 0
+    public static let maxRoiPosition = 2
+    public static let defaultRoiPosition = 0
+
+    public let fov: Int
+    public let roiPosition: Int
+
+    public init(fov: Int = CameraFov.defaultFov, roiPosition: Int = CameraFov.defaultRoiPosition) {
+        self.fov = min(max(fov, CameraFov.minFov), CameraFov.maxFov)
+        self.roiPosition = min(max(roiPosition, CameraFov.minRoiPosition), CameraFov.maxRoiPosition)
+    }
 
     var value: [String: Int] {
-        switch self {
-        case .standard:
-            ["fov": 118, "roi_position": 0]
-        case .wide:
-            ["fov": 118, "roi_position": 0]
-        }
+        ["fov": fov, "roi_position": roiPosition]
     }
 }
 

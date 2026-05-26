@@ -47,9 +47,21 @@ data class ButtonVideoRecordingSettings(
     val fps: Int,
 )
 
-enum class CameraFov(val fov: Int, val roiPosition: Int) {
-    STANDARD(118, 0),
-    WIDE(118, 0),
+class CameraFov @JvmOverloads constructor(
+    fov: Int = DEFAULT_FOV,
+    roiPosition: Int = DEFAULT_ROI_POSITION,
+) {
+    val fov: Int = fov.coerceIn(MIN_FOV, MAX_FOV)
+    val roiPosition: Int = roiPosition.coerceIn(MIN_ROI_POSITION, MAX_ROI_POSITION)
+
+    companion object {
+        const val MIN_FOV = 82
+        const val MAX_FOV = 118
+        const val DEFAULT_FOV = 102
+        const val MIN_ROI_POSITION = 0
+        const val MAX_ROI_POSITION = 2
+        const val DEFAULT_ROI_POSITION = 0
+    }
 }
 
 data class PhotoRequest @JvmOverloads constructor(

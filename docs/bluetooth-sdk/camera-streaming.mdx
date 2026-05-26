@@ -76,7 +76,7 @@ await BluetoothSdk.setGalleryModeEnabled(true);
 await BluetoothSdk.setButtonPhotoSettings('medium');
 await BluetoothSdk.setButtonVideoRecordingSettings(1280, 720, 30);
 await BluetoothSdk.setButtonMaxRecordingTime(3);
-await BluetoothSdk.setCameraFov('wide');
+await BluetoothSdk.setCameraFov({fov: 102, roiPosition: 0});
 ```
 
   </Tab>
@@ -87,7 +87,7 @@ sdk.setGalleryModeEnabled(true)
 sdk.setButtonPhotoSettings(size = ButtonPhotoSize.MEDIUM)
 sdk.setButtonVideoRecordingSettings(width = 1280, height = 720, fps = 30)
 sdk.setButtonMaxRecordingTime(minutes = 3)
-sdk.setCameraFov(CameraFov.WIDE)
+sdk.setCameraFov(CameraFov(fov = 102, roiPosition = 0))
 ```
 
   </Tab>
@@ -98,13 +98,15 @@ try await sdk.setGalleryModeEnabled(true)
 try await sdk.setButtonPhotoSettings(size: .medium)
 try await sdk.setButtonVideoRecordingSettings(width: 1280, height: 720, fps: 30)
 try await sdk.setButtonMaxRecordingTime(minutes: 3)
-try await sdk.setCameraFov(.wide)
+try await sdk.setCameraFov(CameraFov(fov: 102, roiPosition: 0))
 ```
 
   </Tab>
 </Tabs>
 
 Use `setGalleryModeEnabled(false)` when you want the action button to report events without triggering local gallery capture while the glasses are connected.
+
+`setCameraFov` accepts FOV degrees from 82 to 118 and ROI position `0` center, `1` bottom, or `2` top. On Mentra Live, applying FOV/ROI restarts the camera for about 5 seconds; wait for that restart before requesting a photo.
 
 ## Streaming
 
