@@ -52,7 +52,7 @@ The Mentra Store already has a ton of useful apps that real users are running ev
     <tr style="border: 0 !important; background: transparent;">
       <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
         <a href="https://apps.mentra.glass/package/com.augmentos.livecaptions" style="text-decoration: none; color: inherit;">
-          <img src="https://appstore.augmentos.org/app-icons/captions.png" alt="Live Captions" width="80" style="border-radius: 18px;" />
+          <img src="./images/app-icons/Captions.svg" alt="Live Captions" width="80" style="border-radius: 18px;" />
           <br /><b>Captions</b>
         </a>
       </td>
@@ -70,7 +70,7 @@ The Mentra Store already has a ton of useful apps that real users are running ev
       </td>
       <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
         <a href="https://apps.mentra.glass/package/com.mentra.notes" style="text-decoration: none; color: inherit;">
-          <img src="./images/MentraNotes.png" alt="Notes" width="80" style="border-radius: 18px;" />
+          <img src="./images/app-icons/Mentra_Notes.png" alt="Notes" width="80" style="border-radius: 18px;" />
           <br /><b>Notes</b>
         </a>
       </td>
@@ -90,13 +90,13 @@ The Mentra Store already has a ton of useful apps that real users are running ev
       </td>
       <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
         <a href="https://apps.mentra.glass/package/com.mentra.translation" style="text-decoration: none; color: inherit;">
-          <img src="https://imagedelivery.net/nrc8B2Lk8UIoyW7fY8uHVg/b5891997-3e90-4bdc-398a-834e3318b900/square" alt="Live Translation" width="80" style="border-radius: 18px;" />
+          <img src="./images/app-icons/Translation.svg" alt="Live Translation" width="80" style="border-radius: 18px;" />
           <br /><b>Translation</b>
         </a>
       </td>
       <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
         <a href="https://apps.mentra.glass" style="text-decoration: none; color: inherit;">
-          <img src="./images/MentraLogoSquareRound.png" alt="Mentra Store" width="80" style="border-radius: 18px;" />
+          <img src="./images/app-icons/Miniappstore.png" alt="Mentra Store" width="80" style="border-radius: 18px;" />
           <br /><b>See All</b>
         </a>
       </td>
