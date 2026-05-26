@@ -27,7 +27,7 @@ export function registerCliKeyTools(server: McpServer, config: ConsoleMcpConfig)
       const res = await cli().createCliKey({ name, expiresInDays });
       const data = unwrapData(res);
       return textContent({
-        ...redactSecrets(data),
+        ...data,
         _warning: "Save the CLI token now — it will not be shown again.",
       });
     },
