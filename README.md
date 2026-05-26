@@ -211,6 +211,6 @@ Copyright 2026 Mentra Labs, Inc.
 
 <div align="center">
   <br />
-  <img width="100" alt="MentraOS" src="./images/MentraLogoSquareRound.png" style="border-radius: 20%;" />
+  <img width="100" alt="MentraOS" src="./images/MentraLogoWhiteSquare.svg" style="border-radius: 20%;" />
   <h3>© 2026 Mentra Labs, Inc.</h3>
 </div>
