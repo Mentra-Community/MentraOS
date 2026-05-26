@@ -34,12 +34,11 @@ import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.io.streaming.events.StreamingEvent;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
+import com.mentra.asg_client.service.media.interfaces.IMediaManager;
 import com.mentra.asg_client.service.system.interfaces.IConfigurationManager;
 import com.mentra.asg_client.service.system.interfaces.IServiceLifecycle;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
-import com.mentra.asg_client.service.media.interfaces.IMediaManager;
-// Note: AugmentosService removed - legacy dependency no longer needed
-// import com.augmentos.augmentos_core.AugmentosService;
+import com.mentra.asg_client.service.system.managers.AsgNotificationManager;
 import com.mentra.asg_client.service.utils.ServiceUtils;
 import com.mentra.asg_client.service.utils.SysProp;
 
@@ -120,6 +119,13 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     private boolean lastI2sPlaying = false;
     private boolean lastUvcStreaming = false;
     private boolean isConnected = false; // Track connection state based on heartbeat
+
+    /**
+     * Used before {@link ServiceContainer} exists so FGS promotion is not delayed by heavy init.
+     */
+    private AsgNotificationManager mEarlyNotificationManager;
+
+    private boolean mForegroundStarted;
 
     // ---------------------------------------------
     // WiFi State Management
@@ -207,6 +213,10 @@ public class AsgClientService extends Service implements NetworkStateListener, B
 
         instance = this;
 
+        // Must run before heavy onCreate() work: startForegroundService() deadline (~5s) is
+        // measured until startForeground(), and onStartCommand() only runs after onCreate().
+        ensureForegroundStarted();
+
         try {
             // Register for EventBus events
             Log.d(TAG, "📡 Registering for EventBus events");
@@ -268,16 +278,7 @@ public class AsgClientService extends Service implements NetworkStateListener, B
         super.onStartCommand(intent, flags, startId);
 
         try {
-            // Ensure foreground service on API 26+
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                Log.d(TAG, "📱 API 26+ detected - setting up foreground service");
-                serviceContainer.getNotificationManager().createNotificationChannel();
-                startForeground(serviceContainer.getNotificationManager().getDefaultNotificationId(),
-                        serviceContainer.getNotificationManager().createForegroundNotification());
-                Log.d(TAG, "✅ Foreground service started");
-            } else {
-                Log.d(TAG, "📱 API < 26 - skipping foreground service setup");
-            }
+            ensureForegroundStarted();
 
             if (intent == null || intent.getAction() == null) {
                 Log.w(TAG, "⚠️ Received null intent or null action");
@@ -612,6 +613,35 @@ public class AsgClientService extends Service implements NetworkStateListener, B
     // ---------------------------------------------
     // Initialization Methods
     // ---------------------------------------------
+
+    /**
+     * Promote to a foreground service. Idempotent; safe from {@link #onCreate()} and {@link
+     * #onStartCommand()}. Not wrapped in onCreate's catch-all so AMS failures are visible.
+     */
+    private void ensureForegroundStarted() {
+        if (mForegroundStarted || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return;
+        }
+
+        AsgNotificationManager notificationManager = resolveNotificationManager();
+        notificationManager.createNotificationChannel();
+        startForeground(
+                notificationManager.getDefaultNotificationId(),
+                notificationManager.createForegroundNotification());
+        mForegroundStarted = true;
+        Log.d(TAG, "✅ Foreground service started");
+    }
+
+    private AsgNotificationManager resolveNotificationManager() {
+        if (serviceContainer != null) {
+            return serviceContainer.getNotificationManager();
+        }
+        if (mEarlyNotificationManager == null) {
+            mEarlyNotificationManager = new AsgNotificationManager(this);
+        }
+        return mEarlyNotificationManager;
+    }
+
     private void initializeServiceContainer() {
         Log.d(TAG, "🔧 initializeServiceContainer() started");
         
