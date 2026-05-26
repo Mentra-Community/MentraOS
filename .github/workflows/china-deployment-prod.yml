@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - "main"
-      - "ya/china-cloud-launch-prep"
     paths:
       - "cloud/**"
       - ".github/workflows/china-deployment-prod.yml"

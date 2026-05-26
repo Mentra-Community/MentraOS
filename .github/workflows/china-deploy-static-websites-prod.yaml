@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - "main"
-      - "ya/china-cloud-launch-prep"
     paths:
       - "cloud/websites/**"
       - ".github/workflows/china-deploy-static-websites-prod.yaml"
