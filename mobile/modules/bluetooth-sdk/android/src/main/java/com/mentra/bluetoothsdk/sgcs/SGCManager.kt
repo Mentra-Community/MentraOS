@@ -112,7 +112,6 @@ abstract class SGCManager {
 
     // Voice Activity Detection
     open fun sendVoiceActivityDetectionSetting() {}
-
     open fun queryVoiceActivityDetectionEnabled() {}
 
     // Version info

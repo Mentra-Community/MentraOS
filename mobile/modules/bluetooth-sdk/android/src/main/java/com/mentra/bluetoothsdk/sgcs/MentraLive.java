@@ -6647,13 +6647,8 @@ public class MentraLive extends SGCManager {
             return;
         }
 
-        try {
-            if (!sendK900ClientCommand("cs_swst", "")) {
-                Bridge.log("LIVE: Failed to send Voice Activity Detection query command");
-                return;
-            }
-        } catch (JSONException e) {
-            Log.e(TAG, "Error creating cs_swst command", e);
+        if (!sendK900ClientCommand("cs_swst", "")) {
+            Bridge.log("LIVE: Failed to send Voice Activity Detection query command");
         }
     }
 
