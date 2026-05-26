@@ -1,5 +1,5 @@
 /**
- * `@cloud-v2/shared` — types, config, observability primitives shared
+ * `@mentra/cloud-shared` — types, config, observability primitives shared
  * across the core, audio, and proxy packages.
  */
 
@@ -10,4 +10,4 @@ export {
   type ReadinessCheck,
 } from "./health";
 
-export const PACKAGE_NAME = "@cloud-v2/shared";
+export const PACKAGE_NAME = "@mentra/cloud-shared";

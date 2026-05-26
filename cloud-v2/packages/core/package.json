@@ -1,5 +1,5 @@
 {
-  "name": "@cloud-v2/core",
+  "name": "@mentra/cloud-core",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,6 +9,6 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@cloud-v2/shared": "workspace:*"
+    "@mentra/cloud-shared": "workspace:*"
   }
 }

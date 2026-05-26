@@ -10,28 +10,28 @@
       },
     },
     "packages/audio": {
-      "name": "@cloud-v2/audio",
+      "name": "@mentra/cloud-audio",
       "version": "0.0.0",
       "dependencies": {
-        "@cloud-v2/shared": "workspace:*",
+        "@mentra/cloud-shared": "workspace:*",
       },
     },
     "packages/core": {
-      "name": "@cloud-v2/core",
+      "name": "@mentra/cloud-core",
       "version": "0.0.0",
       "dependencies": {
-        "@cloud-v2/shared": "workspace:*",
+        "@mentra/cloud-shared": "workspace:*",
       },
     },
     "packages/proxy": {
-      "name": "@cloud-v2/proxy",
+      "name": "@mentra/cloud-proxy",
       "version": "0.0.0",
       "dependencies": {
-        "@cloud-v2/shared": "workspace:*",
+        "@mentra/cloud-shared": "workspace:*",
       },
     },
     "packages/shared": {
-      "name": "@cloud-v2/shared",
+      "name": "@mentra/cloud-shared",
       "version": "0.0.0",
       "dependencies": {
         "hono": "^4.11.1",
@@ -41,13 +41,13 @@
     },
   },
   "packages": {
-    "@cloud-v2/audio": ["@cloud-v2/audio@workspace:packages/audio"],
+    "@mentra/cloud-audio": ["@mentra/cloud-audio@workspace:packages/audio"],
 
-    "@cloud-v2/core": ["@cloud-v2/core@workspace:packages/core"],
+    "@mentra/cloud-core": ["@mentra/cloud-core@workspace:packages/core"],
 
-    "@cloud-v2/proxy": ["@cloud-v2/proxy@workspace:packages/proxy"],
+    "@mentra/cloud-proxy": ["@mentra/cloud-proxy@workspace:packages/proxy"],
 
-    "@cloud-v2/shared": ["@cloud-v2/shared@workspace:packages/shared"],
+    "@mentra/cloud-shared": ["@mentra/cloud-shared@workspace:packages/shared"],
 
     "@pinojs/redact": ["@pinojs/redact@0.4.0", "", {}, "sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg=="],
 

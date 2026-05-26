@@ -1,11 +1,11 @@
 /**
- * `@cloud-v2/audio` — Audio Stack. UDP ingress, workers, Redis-routed
+ * `@mentra/cloud-audio` — Audio Stack. UDP ingress, workers, Redis-routed
  * ownership, transcription + translation providers.
  *
  * Spec + design: cloud-v2/docs/issues/003-audio/.
  */
 
-import { createHealthApp, createLogger } from "@cloud-v2/shared";
+import { createHealthApp, createLogger } from "@mentra/cloud-shared";
 
 const logger = createLogger("audio");
 const PORT = Number.parseInt(process.env.PORT ?? "3001", 10);
