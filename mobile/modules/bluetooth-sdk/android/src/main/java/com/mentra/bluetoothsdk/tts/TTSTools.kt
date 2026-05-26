@@ -7,7 +7,7 @@ import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsSupertonicModelConfig
-import com.mentra.core.Bridge
+import com.mentra.bluetoothsdk.Bridge
 import java.io.File
 
 /**

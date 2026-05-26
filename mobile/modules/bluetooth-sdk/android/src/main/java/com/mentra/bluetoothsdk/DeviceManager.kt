@@ -129,15 +129,15 @@ class DeviceManager {
         set(value) = DeviceStore.apply("bluetooth", "sensing_enabled", value)
 
     public var powerSavingMode: Boolean
-        get() = GlassesStore.store.get("bluetooth", "power_saving_mode") as? Boolean ?: false
-        set(value) = GlassesStore.apply("bluetooth", "power_saving_mode", value)
+        get() = DeviceStore.store.get("bluetooth", "power_saving_mode") as? Boolean ?: false
+        set(value) = DeviceStore.apply("bluetooth", "power_saving_mode", value)
 
     // Phone-side VAD gating switch. Default is OFF (VAD runs) so the
     // coordinator can drive per-utterance offline/online STT switching from
     // `vad_status` events. Set to `true` only as an emergency kill-switch.
     private var bypassVad: Boolean
-        get() = GlassesStore.store.get("bluetooth", "bypass_vad") as? Boolean ?: false
-        set(value) = GlassesStore.apply("bluetooth", "bypass_vad", value)
+        get() = DeviceStore.store.get("bluetooth", "bypass_vad") as? Boolean ?: false
+        set(value) = DeviceStore.apply("bluetooth", "bypass_vad", value)
 
     private var offlineCaptionsRunning: Boolean
         get() = DeviceStore.store.get("bluetooth", "offline_captions_running") as? Boolean ?: false
@@ -247,7 +247,7 @@ class DeviceManager {
     // VAD
     private val vadBuffer = mutableListOf<ByteArray>()
     private var isSpeaking = false
-    private var vadPolicy: com.mentra.core.stt.VadGateSpeechPolicy? = null
+    private var vadPolicy: com.mentra.bluetoothsdk.stt.VadGateSpeechPolicy? = null
 
     // STT
     private var transcriber: SherpaOnnxTranscriber? = null
@@ -306,11 +306,11 @@ class DeviceManager {
         try {
             vadPolicy?.stop()
             val ctx = Bridge.getContext()
-            val policy = com.mentra.core.stt.VadGateSpeechPolicy(ctx)
+            val policy = com.mentra.bluetoothsdk.stt.VadGateSpeechPolicy(ctx)
             policy.init(blockSizeSamples = 512)
             policy.onSpeechStateChanged = { speaking ->
                 isSpeaking = speaking
-                Bridge.sendVadEvent(speaking)
+                Bridge.sendVoiceActivityDetectionStatus(speaking)
             }
             vadPolicy = policy
             Bridge.log("VadGateSpeechPolicy initialized")
