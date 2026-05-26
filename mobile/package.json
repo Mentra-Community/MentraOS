@@ -67,6 +67,7 @@
     "@mentra/bluetooth-sdk": "workspace:*",
     "@mentra/island": "workspace:*",
     "@mentra/miniapp": "workspace:*",
+    "@mentra/mentrajs-runtime": "workspace:*",
     "@react-native-community/netinfo": "11.5.2",
     "@react-native-community/slider": "5.1.2",
     "@react-native-firebase/analytics": "^23.8.6",

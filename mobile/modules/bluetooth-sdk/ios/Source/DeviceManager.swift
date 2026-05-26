@@ -163,16 +163,16 @@ struct ViewState {
     }
 
     private var sensingEnabled: Bool {
-        get { GlassesStore.shared.get("bluetooth", "sensing_enabled") as? Bool ?? true }
-        set { GlassesStore.shared.apply("bluetooth", "sensing_enabled", newValue) }
+        get { DeviceStore.shared.get("bluetooth", "sensing_enabled") as? Bool ?? true }
+        set { DeviceStore.shared.apply("bluetooth", "sensing_enabled", newValue) }
     }
 
     /// Phone-side VAD gating switch. Default is OFF (VAD runs) so that the
     /// coordinator can drive per-utterance offline/online STT switching from
     /// `vad_status` events. Set to `true` only as an emergency kill-switch.
     private var bypassVad: Bool {
-        get { GlassesStore.shared.get("bluetooth", "bypass_vad") as? Bool ?? false }
-        set { GlassesStore.shared.apply("bluetooth", "bypass_vad", newValue) }
+        get { DeviceStore.shared.get("bluetooth", "bypass_vad") as? Bool ?? false }
+        set { DeviceStore.shared.apply("bluetooth", "bypass_vad", newValue) }
     }
 
     private var offlineCaptionsRunning: Bool {
