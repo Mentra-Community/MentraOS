@@ -82,7 +82,8 @@ export function registerAppTools(server: McpServer, config: ConsoleMcpConfig): v
       const res = await cli().createApp(body);
       const data = unwrapData(res) as { app?: unknown; apiKey?: string };
       return textContent({
-        ...redactSecrets(data),
+        ...data,
+        app: data.app ? redactSecrets(data.app) : data.app,
         _warning: data.apiKey
           ? "Save apiKey now — it will not be shown again."
           : undefined,
@@ -141,7 +142,7 @@ export function registerAppTools(server: McpServer, config: ConsoleMcpConfig): v
       const res = await cli().regenerateApiKey(packageName);
       const data = unwrapData(res);
       return textContent({
-        ...redactSecrets(data),
+        ...data,
         _warning: "Save the new API key now — it will not be shown again.",
       });
     },
