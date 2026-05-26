@@ -71,6 +71,7 @@ public class BesLogManager {
    * background thread instead of posting to the backend — used for BLE relay to the phone.
    */
   private final Consumer<String> mRelayJsonCallback;
+  private final Consumer<String> mRawLogCallback;
 
   /**
    * Backend base URL for direct HTTP upload. When non-empty, takes precedence over
@@ -83,7 +84,7 @@ public class BesLogManager {
    */
   public BesLogManager(String incidentId, Context context,
                        IConfigurationManager configurationManager) {
-    this(incidentId, context, configurationManager, "", null);
+    this(incidentId, context, configurationManager, "", null, null);
   }
 
   /**
@@ -94,7 +95,7 @@ public class BesLogManager {
   public BesLogManager(String incidentId, Context context,
                        IConfigurationManager configurationManager,
                        String apiBaseUrl) {
-    this(incidentId, context, configurationManager, apiBaseUrl, null);
+    this(incidentId, context, configurationManager, apiBaseUrl, null, null);
   }
 
   /**
@@ -104,18 +105,26 @@ public class BesLogManager {
   public BesLogManager(String incidentId, Context context,
                        IConfigurationManager configurationManager,
                        Consumer<String> relayJsonCallback) {
-    this(incidentId, context, configurationManager, "", relayJsonCallback);
+    this(incidentId, context, configurationManager, "", relayJsonCallback, null);
+  }
+
+  public static BesLogManager forRawLogCallback(Context context,
+                                                IConfigurationManager configurationManager,
+                                                Consumer<String> rawLogCallback) {
+    return new BesLogManager("", context, configurationManager, "", null, rawLogCallback);
   }
 
   private BesLogManager(String incidentId, Context context,
                         IConfigurationManager configurationManager,
                         String apiBaseUrl,
-                        Consumer<String> relayJsonCallback) {
+                        Consumer<String> relayJsonCallback,
+                        Consumer<String> rawLogCallback) {
     mIncidentId = incidentId;
     mContext = context;
     mConfigurationManager = configurationManager;
     mApiBaseUrl = apiBaseUrl != null ? apiBaseUrl.trim() : "";
     mRelayJsonCallback = relayJsonCallback;
+    mRawLogCallback = rawLogCallback;
     mHandler = new Handler(Looper.getMainLooper());
 
     mFirstPacketTimeout = () -> {
@@ -140,6 +149,10 @@ public class BesLogManager {
   public void startTimeouts() {
     mHandler.postDelayed(mFirstPacketTimeout, FIRST_PACKET_TIMEOUT_MS);
     mHandler.postDelayed(mOverallTimeout, OVERALL_TIMEOUT_MS);
+  }
+
+  public boolean isFinished() {
+    return mFinished;
   }
 
   /**
@@ -197,6 +210,17 @@ public class BesLogManager {
           mRelayJsonCallback.accept(json);
         } catch (Exception e) {
           Log.e(TAG, "relayJsonCallback failed", e);
+        }
+      }).start();
+      return;
+    }
+
+    if (mRawLogCallback != null) {
+      new Thread(() -> {
+        try {
+          mRawLogCallback.accept(fullLog);
+        } catch (Exception e) {
+          Log.e(TAG, "rawLogCallback failed", e);
         }
       }).start();
       return;
