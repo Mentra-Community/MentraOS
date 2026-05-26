@@ -567,6 +567,15 @@ public final class PhotoSession {
                 return;
             }
 
+            Handler backgroundHandler = hooks.backgroundHandler();
+            if (backgroundHandler == null || hooks.coordinator().device() == null) {
+                Log.e(TAG, "Camera handler or device not ready in startPreviewWithAeMonitoring");
+                notifyPhotoError("Camera handler not ready");
+                hooks.closeCamera();
+                hooks.stopService();
+                return;
+            }
+
             CaptureRequest previewRequest = hooks.previewBuilder().build();
             Boolean zslInPreview = previewRequest.get(CaptureRequest.CONTROL_ENABLE_ZSL);
             if (zslInPreview != null && zslInPreview) {
@@ -575,8 +584,7 @@ public final class PhotoSession {
                 Log.w(TAG, "⚠ ZSL NOT enabled in preview request - ZSL buffer will not fill!");
             }
 
-            activeSession.setRepeatingRequest(previewRequest,
-                    aeCallback, hooks.backgroundHandler());
+            activeSession.setRepeatingRequest(previewRequest, aeCallback, backgroundHandler);
 
             startPrecaptureSequence();
 
@@ -631,16 +639,21 @@ public final class PhotoSession {
     }
 
     public void restoreAePreview(CameraCaptureSession session) {
+        Handler backgroundHandler = hooks.backgroundHandler();
+        if (backgroundHandler == null || hooks.coordinator().device() == null) {
+            Log.w(TAG, "Cannot restore AE preview: camera handler or device not ready");
+            return;
+        }
         // A late still/HDR completion can run after a new photo has entered precapture; do not
         // clear AE wait flags in that case or the repeating callback will ignore convergence forever.
         boolean clearAeWait = shotState != AeStateMachine.ShotState.WAITING_AE
                 && shotState != AeStateMachine.ShotState.WAITING_AE_LOCK;
         AePreviewController.restorePreview(
                 session,
-                hooks.coordinator().device() != null,
+                true,
                 hooks.previewBuilder(),
                 aeCallback,
-                hooks.backgroundHandler(),
+                backgroundHandler,
                 hooks.cameraSettings(),
                 aeStateMachine,
                 clearAeWait);

@@ -44,6 +44,7 @@ import com.mentra.asg_client.camera.lifecycle.CameraCoordinator;
 import com.mentra.asg_client.camera.lifecycle.CameraOpener;
 import com.mentra.asg_client.camera.lifecycle.CameraRecoveryHelper;
 import com.mentra.asg_client.camera.lifecycle.CameraServiceNotification;
+import com.mentra.asg_client.camera.lifecycle.HandlerExecutor;
 import com.mentra.asg_client.camera.lifecycle.ImageReaderTwin;
 import com.mentra.asg_client.camera.lifecycle.PhotoSession;
 import com.mentra.asg_client.camera.lifecycle.VideoRecordingSession;
@@ -863,11 +864,19 @@ public class CameraNeoService extends LifecycleService {
             CameraCaptureSession.StateCallback sessionStateCallback = new CameraCaptureSession.StateCallback() {
                 @Override
                 public void onConfigured(@NonNull CameraCaptureSession session) {
-                    // Store the session atomically
+                    Handler handler;
+                    CameraDevice device;
                     synchronized (SERVICE_LOCK) {
+                        handler = backgroundHandler;
+                        device = cameraCoordinator.device();
+                        if (handler == null || device == null) {
+                            Log.w(TAG, "onConfigured after camera teardown; closing session");
+                            session.close();
+                            return;
+                        }
                         cameraCoordinator.setSession(session);
                     }
-                    
+
                     if (forVideo) {
                         try {
                             videoSession.startRecording(cameraCoordinator.session(), previewBuilder);
@@ -888,6 +897,15 @@ public class CameraNeoService extends LifecycleService {
 
                 @Override
                 public void onConfigureFailed(@NonNull CameraCaptureSession session) {
+                    Handler handler;
+                    synchronized (SERVICE_LOCK) {
+                        handler = backgroundHandler;
+                    }
+                    if (handler == null) {
+                        Log.w(TAG, "onConfigureFailed after camera teardown; ignoring");
+                        session.close();
+                        return;
+                    }
                     Log.e(TAG, "Failed to configure camera session for " + (forVideo ? "video" : "photo"));
                     if (forVideo)
                         notifyVideoError(videoSession.currentVideoId(), "Failed to configure camera for video");
@@ -901,7 +919,10 @@ public class CameraNeoService extends LifecycleService {
                 for (Surface surface : surfaces) {
                     outputConfigurations.add(new OutputConfiguration(surface));
                 }
-                SessionConfiguration config = new SessionConfiguration(SessionConfiguration.SESSION_REGULAR, outputConfigurations, executor, sessionStateCallback);
+                Executor sessionExecutor = backgroundHandler != null
+                        ? new HandlerExecutor(backgroundHandler)
+                        : executor;
+                SessionConfiguration config = new SessionConfiguration(SessionConfiguration.SESSION_REGULAR, outputConfigurations, sessionExecutor, sessionStateCallback);
                 activeCameraDevice.createCaptureSession(config);
             } else {
                 activeCameraDevice.createCaptureSession(surfaces, sessionStateCallback, backgroundHandler);

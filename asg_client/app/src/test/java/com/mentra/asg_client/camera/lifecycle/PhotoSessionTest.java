@@ -10,9 +10,10 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import android.os.Handler;
-
+import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraDevice;
+import android.hardware.camera2.CaptureRequest;
+import android.os.Handler;
 
 import com.mentra.asg_client.camera.model.QueuedPhotoRequest;
 import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
@@ -172,6 +173,47 @@ public class PhotoSessionTest {
         Field activeCaptureField = PhotoSession.class.getDeclaredField("activeCapture");
         activeCaptureField.setAccessible(true);
         activeCaptureField.set(session, null);
+    }
+
+    @Test
+    public void startPreviewWithAeMonitoring_nullBackgroundHandler_doesNotCrash() throws Exception {
+        PhotoSession.Hooks hooks = mock(PhotoSession.Hooks.class);
+        doReturn(new Object()).when(hooks).serviceLock();
+        CameraCoordinator coordinator = mock(CameraCoordinator.class);
+        CameraCaptureSession session = mock(CameraCaptureSession.class);
+        when(coordinator.session()).thenReturn(session);
+        when(coordinator.device()).thenReturn(mock(CameraDevice.class));
+        when(hooks.coordinator()).thenReturn(coordinator);
+        when(hooks.backgroundHandler()).thenReturn(null);
+        when(hooks.executor()).thenReturn(Runnable::run);
+
+        PhotoSession photoSession = new PhotoSession(hooks);
+        photoSession.startPreviewWithAeMonitoring();
+
+        verify(hooks).closeCamera();
+        verify(hooks).stopService();
+        verify(session, never()).setRepeatingRequest(
+                any(CaptureRequest.class),
+                any(CameraCaptureSession.CaptureCallback.class),
+                any(Handler.class));
+    }
+
+    @Test
+    public void restoreAePreview_nullBackgroundHandler_skipsSetRepeatingRequest() {
+        PhotoSession.Hooks hooks = mock(PhotoSession.Hooks.class);
+        CameraCoordinator coordinator = mock(CameraCoordinator.class);
+        when(coordinator.device()).thenReturn(mock(CameraDevice.class));
+        when(hooks.coordinator()).thenReturn(coordinator);
+        when(hooks.backgroundHandler()).thenReturn(null);
+
+        PhotoSession photoSession = new PhotoSession(hooks);
+        CameraCaptureSession session = mock(CameraCaptureSession.class);
+        photoSession.restoreAePreview(session);
+
+        verify(session, never()).setRepeatingRequest(
+                any(CaptureRequest.class),
+                any(CameraCaptureSession.CaptureCallback.class),
+                any(Handler.class));
     }
 
     @Test
