@@ -73,20 +73,27 @@ function withAppBuildGradleModifications(config: any) {
 
     // 1. Add release credentials and conditional Sentry script (after jscFlavor)
     if (!buildGradle.includes("releaseStorePassword =")) {
+      // China builds (EXPO_PUBLIC_DEPLOYMENT_REGION=china) use a separate keystore
+      // so the global upload key cannot accidentally sign a China APK.
+      const isChinaBuild = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china"
+      const keystoreFilename = isChinaBuild ? "china-upload-keystore.jks" : "upload-keystore.jks"
+      const regionLabel = isChinaBuild ? "china" : "default"
       const credentialsAndSentry = `
 /**
  * Release-Store credentials.
  * Looks for keystore in shared location (~/.mentra/credentials/) first,
  * then falls back to repo-local credentials/ folder.
+ * Keystore filename is selected at prebuild time based on EXPO_PUBLIC_DEPLOYMENT_REGION.
  * If no keystore is found, falls back to debug keystore for local development.
  */
 def releaseStorePassword = project.hasProperty("MENTRAOS_UPLOAD_STORE_PASSWORD") ? project.property("MENTRAOS_UPLOAD_STORE_PASSWORD") : ""
 def releaseKeyPassword = project.hasProperty("MENTRAOS_UPLOAD_KEY_PASSWORD") ? project.property("MENTRAOS_UPLOAD_KEY_PASSWORD") : ""
 def releaseKeyAlias = project.hasProperty("MENTRAOS_UPLOAD_KEY_ALIAS") ? project.property("MENTRAOS_UPLOAD_KEY_ALIAS") : "upload"
+def releaseRegion = "${regionLabel}"
 
 // Find keystore: check shared location first, then local
-def sharedKeystore = new File(System.getProperty("user.home"), ".mentra/credentials/upload-keystore.jks")
-def localKeystore = file('../../credentials/upload-keystore.jks')
+def sharedKeystore = new File(System.getProperty("user.home"), ".mentra/credentials/${keystoreFilename}")
+def localKeystore = file('../../credentials/${keystoreFilename}')
 def releaseKeystoreFile = sharedKeystore.exists() ? sharedKeystore : (localKeystore.exists() ? localKeystore : null)
 
 // Check if we have valid release signing credentials
@@ -97,6 +104,7 @@ println ""
 println "=============================================="
 println "[MentraOS] Signing Configuration"
 println "=============================================="
+println "  Region: \${releaseRegion}"
 if (hasReleaseSigningConfig) {
     println "  Using RELEASE keystore: \${releaseKeystoreFile.absolutePath}"
     println "  Key alias: \${releaseKeyAlias}"
