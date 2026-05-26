@@ -108,10 +108,6 @@ jobs:
             asg-gradle-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
             asg-gradle-${{ runner.os }}-
 
-      - name: Spotless check
-        working-directory: ./asg_client
-        run: ./gradlew spotlessCheck
-
       - name: Build Release APK
         id: gradle-build
         working-directory: ./asg_client
@@ -136,6 +132,10 @@ jobs:
             echo "Both build attempts failed"
             exit 1
           fi
+
+      - name: Mark build succeeded
+        id: build-ok
+        run: echo "ok=true" >> $GITHUB_OUTPUT
 
       - name: Upload Release APK (artifact)
         uses: actions/upload-artifact@v4
@@ -223,7 +223,7 @@ jobs:
             }
 
       - name: Update PR comment - Build succeeded
-        if: success() && github.event_name == 'pull_request'
+        if: steps.build-ok.outputs.ok == 'true' && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
@@ -256,8 +256,12 @@ jobs:
               body: newBody
             });
 
+      - name: Spotless check
+        working-directory: ./asg_client
+        run: ./gradlew spotlessCheck
+
       - name: Update PR comment - Build failed
-        if: failure() && github.event_name == 'pull_request'
+        if: failure() && steps.build-ok.outcome != 'success' && github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
