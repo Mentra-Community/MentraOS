@@ -366,6 +366,10 @@ class BluetoothSdkModule : Module() {
             sdk?.setVoiceActivityDetectionEnabled(enabled)
         }
 
+        AsyncFunction("queryVoiceActivityDetectionEnabled") {
+            sdk?.queryVoiceActivityDetectionEnabled()
+        }
+
         AsyncFunction("queryGalleryStatus") { sdk?.queryGalleryStatus() }
 
         AsyncFunction("requestPhoto") { params: Map<String, Any?> ->

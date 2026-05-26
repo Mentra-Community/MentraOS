@@ -1237,6 +1237,11 @@ class DeviceManager {
         sgc?.queryGalleryStatus()
     }
 
+    fun queryVoiceActivityDetectionEnabled() {
+        Bridge.log("MAN: Querying Voice Activity Detection switch state from glasses")
+        sgc?.queryVoiceActivityDetectionEnabled()
+    }
+
     /**
      * Send OTA start command to glasses. Called when user approves an update (onboarding or
      * background mode). Triggers glasses to begin download and installation.
