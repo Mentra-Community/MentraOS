@@ -25,6 +25,9 @@ import {
   type GlassesRuntimeState,
   type PhoneSdkRuntimeState,
 } from '@mentra/bluetooth-sdk/react';
+import MentraBarcodeScanner, {
+  type BarcodeScanResult,
+} from '@mentra/react-native-barcode-scanner';
 import MentraPhotoReceiver, {
   type PhotoReceiverStatusEvent,
   type PhotoReceiverUploadEvent,
@@ -74,18 +77,27 @@ export type PhotoPreviewDetails = {
   height?: number;
   previewUrl?: string;
   requestId?: string | null;
-  source: 'Cloud server' | 'Phone receiver';
+  source: 'Cloud server' | 'Phone receiver' | 'Barcode test';
   state: 'acknowledged' | 'error' | 'preview';
   timestamp?: number;
   uploadUrl?: string;
   uploadedAt?: string;
   width?: number;
 };
+export type BarcodeScanDetails = {
+  barcodes: BarcodeScanResult[];
+  error?: string;
+  expectedValue?: string;
+  scannedAt?: string;
+  sourceUri?: string;
+  state: 'idle' | 'scanning' | 'found' | 'none' | 'error';
+};
 export type LedMode = 'Off' | 'Solid' | 'Pulse' | 'Blink';
 type RgbLedAction = 'on' | 'off';
 export type LedColor = 'red' | 'green' | 'blue' | 'orange' | 'white';
 export type PhotoSize = 'small' | 'medium' | 'large' | 'full';
 export type PhotoCompression = 'none' | 'medium' | 'heavy';
+export type CameraRoiPosition = 0 | 1 | 2;
 export const SCAN_MODELS = [DeviceModels.MentraLive, DeviceModels.G2] as const;
 export type ScanModel = (typeof SCAN_MODELS)[number];
 type StreamStartRequest = {
@@ -110,6 +122,17 @@ export const PHOTO_COMPRESSIONS: PhotoCompression[] = ['none', 'medium', 'heavy'
 export const STREAM_MIN_FPS = 1;
 export const STREAM_MAX_FPS = 24;
 export const STREAM_DEFAULT_FPS = 15;
+export const PHOTO_EXPOSURE_MIN_NS = 1_000_000;
+export const PHOTO_EXPOSURE_MAX_NS = 33_333_333;
+export const PHOTO_EXPOSURE_DEFAULT_NS = 8_333_333;
+export const CAMERA_FOV_MIN = 82;
+export const CAMERA_FOV_MAX = 118;
+export const CAMERA_FOV_DEFAULT = 102;
+export const CAMERA_ROI_POSITIONS = [
+  {label: 'Center', value: 0},
+  {label: 'Bottom', value: 1},
+  {label: 'Top', value: 2},
+] as const satisfies ReadonlyArray<{label: string; value: CameraRoiPosition}>;
 
 export const STREAM_DEFAULT_URLS: Record<StreamProtocol, string> = {
   rtmp: 'rtmp://<computer-ip>:1935/live/mentra-live',
@@ -134,6 +157,7 @@ export type SdkConsoleEvent = {
 
 export type BluetoothSdkExampleState = {
   activeAction: string | null;
+  barcodeScan: BarcodeScanDetails;
   cameraStatus: string;
   defaultDevice: Device | null;
   discoveredDevices: Device[];
@@ -162,9 +186,14 @@ export type BluetoothSdkExampleState = {
   phonePhotoUploadUrl: string | null;
   photoCompression: PhotoCompression;
   photoCloudServerEnabled: boolean;
+  photoExposureManual: boolean;
+  photoExposureTimeNs: number;
   photoPreviewDetails: PhotoPreviewDetails | null;
   photoPreviewUrl: string | null;
   photoSize: PhotoSize;
+  cameraFov: number;
+  cameraRoiPosition: CameraRoiPosition;
+  cameraSettingsStatus: string;
   rawJsonExpanded: boolean;
   scanActive: boolean;
   selectedDiscoveredDevice: Device | null;
@@ -197,7 +226,9 @@ export type BluetoothSdkExampleActions = {
   copyGalleryServerUrl: () => Promise<void>;
   openBluetoothSettings: () => Promise<void>;
   openGalleryServer: () => Promise<void>;
+  openPhotoPreview: () => Promise<void>;
   openWifiSettings: () => Promise<void>;
+  loadTestBarcodePreview: () => Promise<void>;
   requestWifiScan: () => Promise<void>;
   playMicRecording: () => Promise<void>;
   selectDiscoveredDevice: (device: Device) => void;
@@ -209,7 +240,12 @@ export type BluetoothSdkExampleActions = {
   setGalleryModeEnabled: (enabled: boolean) => Promise<void>;
   setPhotoCompression: (compression: PhotoCompression) => void;
   setPhotoCloudServerEnabled: (enabled: boolean) => Promise<void>;
+  setPhotoExposureManual: (enabled: boolean) => void;
+  setPhotoExposureTimeNs: (exposureTimeNs: number) => void;
   setPhotoSize: (size: PhotoSize) => void;
+  setCameraFov: (fov: number) => void;
+  setCameraRoiPosition: (roiPosition: CameraRoiPosition) => void;
+  applyCameraSettings: () => Promise<void>;
   setRawJsonExpanded: (expanded: boolean) => void;
   setStreamCloudServerEnabled: (enabled: boolean) => Promise<void>;
   setStreamFps: (fps: number) => void;
@@ -227,6 +263,7 @@ export type BluetoothSdkExampleModel = BluetoothSdkExampleState & BluetoothSdkEx
 
 const PHOTO_APP_ID = 'com.mentra.examples.reactnative';
 const PHOTO_POLL_ATTEMPTS = 45;
+const TEST_BARCODE_VALUE = 'MENTRA-BARCODE-12345';
 const DIRECT_PHOTO_UPLOAD_TIMEOUT_MS = 75_000;
 const DIRECT_WEBRTC_RECEIVER_WARMUP_MS = 1000;
 const ANDROID_12_API_LEVEL = 31;
@@ -267,11 +304,20 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   const [phonePhotoReceiverRunning, setPhonePhotoReceiverRunning] = useState(false);
   const [phonePhotoUploadUrl, setPhonePhotoUploadUrl] = useState<string | null>(null);
   const [cameraStatus, setCameraStatus] = useState('Camera: ready to capture to phone');
+  const [barcodeScan, setBarcodeScan] = useState<BarcodeScanDetails>({
+    barcodes: [],
+    state: 'idle',
+  });
   const [photoPreviewDetails, setPhotoPreviewDetails] =
     useState<PhotoPreviewDetails | null>(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
-  const [photoSize, setPhotoSize] = useState<PhotoSize>('medium');
-  const [photoCompression, setPhotoCompression] = useState<PhotoCompression>('medium');
+  const [photoSize, setPhotoSize] = useState<PhotoSize>('full');
+  const [photoCompression, setPhotoCompression] = useState<PhotoCompression>('none');
+  const [photoExposureManual, setPhotoExposureManual] = useState(false);
+  const [photoExposureTimeNs, setPhotoExposureTimeNsState] = useState(PHOTO_EXPOSURE_DEFAULT_NS);
+  const [cameraFov, setCameraFovState] = useState(CAMERA_FOV_DEFAULT);
+  const [cameraRoiPosition, setCameraRoiPositionState] = useState<CameraRoiPosition>(0);
+  const [cameraSettingsStatus, setCameraSettingsStatus] = useState('Camera settings: default');
   const [streamCloudServerEnabled, setStreamCloudServerEnabledState] = useState(false);
   const [directStreamReceiverRunning, setDirectStreamReceiverRunning] = useState(false);
   const [directStreamWhipUrl, setDirectStreamWhipUrl] = useState<string | null>(null);
@@ -317,6 +363,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   const photoUploadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const keepAliveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const previewHealthTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const barcodeScanTokenRef = useRef(0);
   const lastMicFileUriRef = useRef<string | null>(null);
   const micElapsedSecondsRef = useRef(0);
   const micElapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -676,6 +723,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
 
       setPhotoPreviewUrl(null);
       setPhotoPreviewDetails(null);
+      resetBarcodeScan();
       setCameraStatus(`Camera: webhook upload requested (${requestId})`);
       await BluetoothSdk.requestPhoto({
         requestId,
@@ -685,6 +733,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
         authToken: null,
         compress: photoCompression,
         sound: true,
+        exposureTimeNs: photoExposureManual ? photoExposureTimeNs : null,
       });
       void pollPhotoPreview(requestId, statusUrl, pollGeneration);
   }
@@ -700,6 +749,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
 
     setPhotoPreviewUrl(null);
     setPhotoPreviewDetails(null);
+    resetBarcodeScan();
     setCameraStatus(`Camera: phone upload requested (${requestId})`);
     clearPhotoUploadTimeout();
     photoUploadTimeoutRef.current = setTimeout(() => {
@@ -718,6 +768,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       authToken: null,
       compress: photoCompression,
       sound: true,
+      exposureTimeNs: photoExposureManual ? photoExposureTimeNs : null,
     });
   }
 
@@ -777,6 +828,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       state: 'preview',
     }));
     updatePhotoPreviewDimensions(payload.fileUri);
+    void scanPreviewBarcode(payload.fileUri);
     setCameraStatus(`Camera: phone photo ready (${Math.round(payload.byteCount / 1024)} KB)`);
     addEvent('LIVE', `phone photo ready ${payload.fileUri}`);
   }
@@ -827,6 +879,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
         state: 'error',
         timestamp: payload.timestamp,
       });
+      resetBarcodeScan();
       setCameraStatus(
         `Camera: glasses reported ${payload.errorCode ?? payload.errorMessage}; waiting for upload`,
       );
@@ -887,6 +940,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
               uploadedAt: json.uploadedAt ?? current?.uploadedAt,
             }));
             updatePhotoPreviewDimensions(json.photoUrl);
+            void scanPreviewBarcode(json.photoUrl);
             setCameraStatus('Camera: loaded photo preview');
             addEvent('LIVE', `local photo ready ${json.photoUrl}`);
             activePhotoRequestIdRef.current = null;
@@ -918,6 +972,118 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       },
       () => undefined,
     );
+  }
+
+  async function loadTestBarcodePreview() {
+    await runAction('Test barcode scanner', async () => {
+      clearPhotoUploadTimeout();
+      activePhotoRequestIdRef.current = null;
+      pollGenerationRef.current += 1;
+
+      const testImage = await MentraBarcodeScanner.createTestBarcodeImage(TEST_BARCODE_VALUE);
+      setPhotoPreviewUrl(testImage.fileUri);
+      setPhotoPreviewDetails({
+        byteCount: testImage.byteCount,
+        previewUrl: testImage.fileUri,
+        requestId: null,
+        source: 'Barcode test',
+        state: 'preview',
+      });
+      updatePhotoPreviewDimensions(testImage.fileUri);
+      setCameraStatus(`Camera: barcode test preview loaded (${testImage.value})`);
+      await scanPreviewBarcode(testImage.fileUri, testImage.value);
+    });
+  }
+
+  async function openPhotoPreview() {
+    await runAction('Open photo preview', async () => {
+      if (!photoPreviewUrl) {
+        throw new Error('Capture or load a photo preview first.');
+      }
+      await MentraBarcodeScanner.openImage(photoPreviewUrl);
+    });
+  }
+
+  function resetBarcodeScan() {
+    barcodeScanTokenRef.current += 1;
+    setBarcodeScan({barcodes: [], state: 'idle'});
+  }
+
+  async function scanPreviewBarcode(sourceUri: string, expectedValue?: string) {
+    const token = barcodeScanTokenRef.current + 1;
+    barcodeScanTokenRef.current = token;
+    setBarcodeScan({
+      barcodes: [],
+      expectedValue,
+      sourceUri,
+      state: 'scanning',
+    });
+    try {
+      const barcodes = await MentraBarcodeScanner.scanImage(sourceUri);
+      if (barcodeScanTokenRef.current !== token) {
+        return;
+      }
+      const scannedAt = new Date().toISOString();
+      setBarcodeScan({
+        barcodes,
+        expectedValue,
+        scannedAt,
+        sourceUri,
+        state: barcodes.length > 0 ? 'found' : 'none',
+      });
+      if (barcodes.length > 0) {
+        addEvent('LIVE', `barcode ${barcodeScanSummary(barcodes)}`);
+      } else {
+        addEvent('LIVE', 'no barcode found in photo preview');
+      }
+    } catch (error) {
+      if (barcodeScanTokenRef.current !== token) {
+        return;
+      }
+      const message = formatError(error);
+      setBarcodeScan({
+        barcodes: [],
+        error: message,
+        expectedValue,
+        scannedAt: new Date().toISOString(),
+        sourceUri,
+        state: 'error',
+      });
+      addEvent('TX', `barcode scan failed: ${message}`);
+    }
+  }
+
+  function setPhotoExposureTimeNsAction(exposureTimeNs: number) {
+    setPhotoExposureTimeNsState(clampRounded(exposureTimeNs, PHOTO_EXPOSURE_MIN_NS, PHOTO_EXPOSURE_MAX_NS));
+  }
+
+  function setCameraFovAction(fov: number) {
+    const nextFov = clampRounded(fov, CAMERA_FOV_MIN, CAMERA_FOV_MAX);
+    setCameraFovState(nextFov);
+    if (nextFov === CAMERA_FOV_MAX) {
+      setCameraRoiPositionState(0);
+    }
+  }
+
+  function setCameraRoiPositionAction(roiPosition: CameraRoiPosition) {
+    setCameraRoiPositionState(cameraFov === CAMERA_FOV_MAX ? 0 : roiPosition);
+  }
+
+  async function applyCameraSettings() {
+    await runAction('Apply camera settings', async () => {
+      requireConnected('apply camera settings');
+      const fov = clampRounded(cameraFov, CAMERA_FOV_MIN, CAMERA_FOV_MAX);
+      const roiPosition = fov === CAMERA_FOV_MAX ? 0 : cameraRoiPosition;
+      setCameraSettingsStatus('Camera settings: applying; camera restarts for about 5s');
+      const setCameraFov = BluetoothSdk.setCameraFov as unknown as (params: {
+        fov: number;
+        roiPosition?: CameraRoiPosition;
+      }) => Promise<void>;
+      await setCameraFov({fov, roiPosition});
+      addEvent('TX', `setCameraFov fov=${fov} roiPosition=${roiPosition}`);
+      await delay(5000);
+      setCameraSettingsStatus(`Camera settings: field of view ${fov}°, ${roiPositionLabel(roiPosition)} crop`);
+    });
   }
 
   function selectProtocol(protocol: StreamProtocol) {
@@ -1648,8 +1814,12 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
 
   return {
     activeAction,
+    barcodeScan,
     phone,
     cameraStatus,
+    cameraFov,
+    cameraRoiPosition,
+    cameraSettingsStatus,
     captureAndUpload,
     clearDefaultDevice,
     clearDisplay,
@@ -1675,6 +1845,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     lastMicDurationSeconds,
     ledColor,
     ledMode,
+    loadTestBarcodePreview,
     micAudioRouteStatus,
     micElapsedSeconds,
     micPlaybackHint,
@@ -1682,7 +1853,9 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     micRecording,
     openBluetoothSettings,
     openGalleryServer,
+    openPhotoPreview,
     openWifiSettings,
+    applyCameraSettings,
     pcmBytes,
     pcmFrames,
     speaking,
@@ -1691,6 +1864,8 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     phonePhotoUploadUrl,
     photoCompression,
     photoCloudServerEnabled,
+    photoExposureManual,
+    photoExposureTimeNs,
     photoPreviewDetails,
     photoPreviewUrl,
     photoSize,
@@ -1708,7 +1883,11 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     setGalleryModeEnabled: setGalleryModeEnabledAction,
     setPhotoCompression,
     setPhotoCloudServerEnabled: setPhotoCloudServerEnabledAction,
+    setPhotoExposureManual,
+    setPhotoExposureTimeNs: setPhotoExposureTimeNsAction,
     setPhotoSize,
+    setCameraFov: setCameraFovAction,
+    setCameraRoiPosition: setCameraRoiPositionAction,
     setRawJsonExpanded,
     setStreamCloudServerEnabled: setStreamCloudServerEnabledAction,
     setStreamFps: setStreamFpsAction,
@@ -1755,6 +1934,15 @@ function event(tag: SdkConsoleEvent['tag'], text: string): SdkConsoleEvent {
       second: '2-digit',
     }),
   };
+}
+
+function barcodeScanSummary(barcodes: BarcodeScanResult[]) {
+  return barcodes
+    .map((barcode) => {
+      const value = barcode.rawValue ?? barcode.displayValue ?? 'unreadable';
+      return `${barcode.format}: ${value}`;
+    })
+    .join(' · ');
 }
 
 async function loadPersistedDefaultDevice() {
@@ -2267,6 +2455,14 @@ function delay(ms: number) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function clampRounded(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function roiPositionLabel(roiPosition: CameraRoiPosition) {
+  return CAMERA_ROI_POSITIONS.find((option) => option.value === roiPosition)?.label ?? 'Center';
 }
 
 function formatError(error: unknown) {

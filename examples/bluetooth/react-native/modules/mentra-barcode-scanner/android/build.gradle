@@ -1,0 +1,34 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.mentra.barcodescanner'
+version = '0.1.0'
+
+android {
+  namespace "com.mentra.barcodescanner"
+  compileSdk 35
+
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+    minSdkVersion 28
+    targetSdkVersion 35
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  lintOptions {
+    abortOnError false
+  }
+}
+
+dependencies {
+  implementation "androidx.core:core-ktx:1.13.1"
+  implementation "com.google.mlkit:barcode-scanning:17.3.0"
+  implementation "com.google.zxing:core:3.5.3"
+}

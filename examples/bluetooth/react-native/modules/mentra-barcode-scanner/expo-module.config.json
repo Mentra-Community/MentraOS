@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["MentraBarcodeScannerModule"]
+  },
+  "android": {
+    "modules": ["com.mentra.barcodescanner.MentraBarcodeScannerModule"]
+  }
+}

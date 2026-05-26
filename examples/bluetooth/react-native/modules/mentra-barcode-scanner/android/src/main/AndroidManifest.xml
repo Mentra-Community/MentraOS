@@ -1,0 +1,18 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <queries>
+    <package android:name="com.sec.android.gallery3d" />
+    <package android:name="com.google.android.apps.photos" />
+  </queries>
+
+  <application>
+    <provider
+      android:name="androidx.core.content.FileProvider"
+      android:authorities="${applicationId}.mentra.barcodescanner.fileprovider"
+      android:exported="false"
+      android:grantUriPermissions="true">
+      <meta-data
+        android:name="android.support.FILE_PROVIDER_PATHS"
+        android:resource="@xml/mentra_barcode_scanner_paths" />
+    </provider>
+  </application>
+</manifest>

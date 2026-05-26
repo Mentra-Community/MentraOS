@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, Pressable, StyleSheet, Image, TextInput, Clipboard, Switch } from 'react-native';
+import { View, Text, ScrollView, Pressable, StyleSheet, Image, TextInput, Clipboard, Switch, PanResponder } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle, Path, Polyline, Rect } from 'react-native-svg';
 import { Header } from '../components/Header';
@@ -7,11 +7,37 @@ import { useScrollBottomPadding } from '../components/keyboardLayout';
 import { OfflineNotice } from '../components/OfflineNotice';
 import { colors } from '../components/theme';
 import { isGlassesConnected, isGlassesWifiConnected } from '../sdkFormat';
-import { PHOTO_COMPRESSIONS, PHOTO_SIZES, type BluetoothSdkExampleModel, type PhotoCompression, type PhotoPreviewDetails, type PhotoSize } from '../useBluetoothSdkExample';
+import {
+  CAMERA_FOV_DEFAULT,
+  CAMERA_FOV_MAX,
+  CAMERA_FOV_MIN,
+  CAMERA_ROI_POSITIONS,
+  PHOTO_COMPRESSIONS,
+  PHOTO_EXPOSURE_DEFAULT_NS,
+  PHOTO_EXPOSURE_MAX_NS,
+  PHOTO_EXPOSURE_MIN_NS,
+  PHOTO_SIZES,
+  type BluetoothSdkExampleModel,
+  type PhotoCompression,
+  type PhotoPreviewDetails,
+  type PhotoSize,
+} from '../useBluetoothSdkExample';
 
-function cameraSdkCall(size: PhotoSize, compression: PhotoCompression, useCloudServer: boolean) {
+function cameraSdkCall(
+  size: PhotoSize,
+  compression: PhotoCompression,
+  useCloudServer: boolean,
+  exposureManual: boolean,
+  exposureTimeNs: number,
+  cameraFov: number,
+  cameraRoiPosition: number,
+) {
+  const exposureLine = exposureManual ? `  exposureTimeNs: ${exposureTimeNs},` : '  exposureTimeNs: null, // auto exposure';
+  const prefix = `await BluetoothSdk.setCameraFov({ fov: ${cameraFov}, roiPosition: ${cameraRoiPosition} });
+// Mentra Live restarts the camera for about 5s after FOV/ROI changes.
+`;
   if (!useCloudServer) {
-    return `const { uploadUrl } = await MentraPhotoReceiver.startPhotoReceiver();
+    return `${prefix}const { uploadUrl } = await MentraPhotoReceiver.startPhotoReceiver();
 await BluetoothSdk.requestPhoto({
   requestId,
   appId: PHOTO_APP_ID,
@@ -20,9 +46,10 @@ await BluetoothSdk.requestPhoto({
   authToken: null,
   compress: "${compression}",
   sound: true,
+${exposureLine}
 })`;
   }
-  return `await BluetoothSdk.requestPhoto({
+  return `${prefix}await BluetoothSdk.requestPhoto({
   requestId,
   appId: PHOTO_APP_ID,
   size: "${size}",
@@ -30,6 +57,7 @@ await BluetoothSdk.requestPhoto({
   authToken: null,
   compress: "${compression}",
   sound: true,
+${exposureLine}
 })`;
 }
 
@@ -45,6 +73,10 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
     sdk.photoSize,
     sdk.photoCompression,
     sdk.photoCloudServerEnabled,
+    sdk.photoExposureManual,
+    sdk.photoExposureTimeNs,
+    sdk.cameraFov,
+    sdk.cameraRoiPosition,
   );
 
   return (
@@ -65,7 +97,27 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
         <View style={styles.previewWrap}>
           <LinearGradient colors={['#1F4A33', '#3A8A56', '#7DD89E', '#26B870', '#163A26']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.preview}>
             {sdk.photoPreviewUrl ? (
-              <Image source={{ uri: sdk.photoPreviewUrl }} style={styles.previewImage} resizeMode="cover" />
+              <>
+                <Image source={{ uri: sdk.photoPreviewUrl }} style={styles.previewImage} resizeMode="cover" />
+                <Pressable
+                  accessibilityLabel="Open photo preview"
+                  hitSlop={8}
+                  onPress={sdk.openPhotoPreview}
+                  style={styles.previewTapLayer}
+                />
+                <Pressable
+                  accessibilityLabel="Open photo preview"
+                  hitSlop={8}
+                  onPress={sdk.openPhotoPreview}
+                  style={styles.previewOpenBadge}>
+                  <Svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.3} strokeLinecap="round" strokeLinejoin="round">
+                    <Path d="M15 3h6v6" />
+                    <Path d="M10 14 21 3" />
+                    <Path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5" />
+                  </Svg>
+                  <Text style={styles.previewOpenText}>Open</Text>
+                </Pressable>
+              </>
             ) : (
               <>
                 <View style={styles.previewGlow} />
@@ -79,6 +131,8 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             )}
           </LinearGradient>
         </View>
+
+        <BarcodeResult scan={sdk.barcodeScan} />
 
         <Pressable disabled={!connected || !glassesWifiConnected} onPress={sdk.captureAndUpload}>
           <LinearGradient colors={['#26473A', '#1F3A2A']} style={[styles.captureBtn, (!connected || !glassesWifiConnected) && styles.disabled]}>
@@ -96,6 +150,16 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
                   : 'Capture photo'}
             </Text>
           </LinearGradient>
+        </Pressable>
+        <Pressable onPress={sdk.loadTestBarcodePreview} style={({pressed}) => [styles.testBarcodeBtn, pressed && styles.testBarcodeBtnPressed]}>
+          <Svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={colors.greenAccent} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+            <Path d="M3 5v14" />
+            <Path d="M7 5v14" />
+            <Path d="M11 5v14" />
+            <Path d="M17 5v14" />
+            <Path d="M21 5v14" />
+          </Svg>
+          <Text style={styles.testBarcodeText}>Test barcode</Text>
         </Pressable>
       </LinearGradient>
 
@@ -205,6 +269,20 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             />
           ))}
         </OptionGroup>
+        <ExposureControl
+          enabled={sdk.photoExposureManual}
+          onEnabledChange={sdk.setPhotoExposureManual}
+          onValueChange={sdk.setPhotoExposureTimeNs}
+          value={sdk.photoExposureTimeNs}
+        />
+        <CameraSettingsControl
+          fov={sdk.cameraFov}
+          onApply={sdk.applyCameraSettings}
+          onFovChange={sdk.setCameraFov}
+          onRoiChange={sdk.setCameraRoiPosition}
+          roiPosition={sdk.cameraRoiPosition}
+          status={sdk.cameraSettingsStatus}
+        />
       </LinearGradient>
     </ScrollView>
   );
@@ -241,6 +319,218 @@ function PhotoDetailsCard({
       ) : null}
     </LinearGradient>
   );
+}
+
+function ExposureControl({
+  enabled,
+  onEnabledChange,
+  onValueChange,
+  value,
+}: {
+  enabled: boolean;
+  onEnabledChange: (enabled: boolean) => void;
+  onValueChange: (value: number) => void;
+  value: number;
+}) {
+  return (
+    <View style={styles.settingCard}>
+      <View style={styles.settingHeader}>
+        <View>
+          <Text style={styles.settingLabel}>EXPOSURE</Text>
+          <Text style={styles.settingHint}>{enabled ? exposureLabel(value) : 'Auto exposure'}</Text>
+        </View>
+        <Switch
+          ios_backgroundColor="rgba(15,42,29,0.18)"
+          onValueChange={onEnabledChange}
+          thumbColor="#fff"
+          trackColor={{false: 'rgba(15,42,29,0.18)', true: colors.greenAccent}}
+          value={enabled}
+        />
+      </View>
+      <RangeSlider
+        disabled={!enabled}
+        max={PHOTO_EXPOSURE_MAX_NS}
+        min={PHOTO_EXPOSURE_MIN_NS}
+        onChange={onValueChange}
+        value={value}
+      />
+      <View style={styles.settingRangeRow}>
+        <Text style={styles.settingRangeText}>1/1000s</Text>
+        <Pressable onPress={() => onValueChange(PHOTO_EXPOSURE_DEFAULT_NS)}>
+          <Text style={styles.settingHint}>Preset 1/120s</Text>
+        </Pressable>
+        <Text style={styles.settingRangeText}>1/30s</Text>
+      </View>
+    </View>
+  );
+}
+
+function CameraSettingsControl({
+  fov,
+  onApply,
+  onFovChange,
+  onRoiChange,
+  roiPosition,
+  status,
+}: {
+  fov: number;
+  onApply: () => Promise<void>;
+  onFovChange: (fov: number) => void;
+  onRoiChange: (roiPosition: (typeof CAMERA_ROI_POSITIONS)[number]['value']) => void;
+  roiPosition: (typeof CAMERA_ROI_POSITIONS)[number]['value'];
+  status: string;
+}) {
+  const roiDisabled = fov === CAMERA_FOV_MAX;
+  return (
+    <View style={styles.settingCard}>
+      <View style={styles.settingHeader}>
+        <View>
+          <Text style={styles.settingLabel}>FIELD OF VIEW</Text>
+          <Text style={styles.settingHint}>{fov}° · {roiDisabled ? 'full sensor' : `${roiLabel(roiPosition)} crop`}</Text>
+        </View>
+        <Pressable onPress={() => void onApply()} style={({pressed}) => [styles.applyChip, pressed && styles.copyChipPressed]}>
+          <Text style={styles.applyChipText}>Apply</Text>
+        </Pressable>
+      </View>
+      <RangeSlider
+        disabled={false}
+        max={CAMERA_FOV_MAX}
+        min={CAMERA_FOV_MIN}
+        onChange={onFovChange}
+        value={fov}
+      />
+      <View style={styles.settingRangeRow}>
+        <Text style={styles.settingRangeText}>{CAMERA_FOV_MIN}°</Text>
+        <Pressable onPress={() => onFovChange(CAMERA_FOV_DEFAULT)}>
+          <Text style={styles.settingHint}>Default {CAMERA_FOV_DEFAULT}°</Text>
+        </Pressable>
+        <Text style={styles.settingRangeText}>{CAMERA_FOV_MAX}°</Text>
+      </View>
+      <OptionGroup label="crop position">
+        {CAMERA_ROI_POSITIONS.map((option) => (
+          <Chip
+            key={option.value}
+            active={roiPosition === option.value}
+            disabled={roiDisabled}
+            value={option.label}
+            onPress={() => onRoiChange(option.value)}
+          />
+        ))}
+      </OptionGroup>
+      <Text style={styles.settingDescription}>{status}. Applying FOV/ROI restarts the Mentra Live camera for about 5 seconds.</Text>
+    </View>
+  );
+}
+
+function RangeSlider({
+  disabled,
+  max,
+  min,
+  onChange,
+  value,
+}: {
+  disabled: boolean;
+  max: number;
+  min: number;
+  onChange: (value: number) => void;
+  value: number;
+}) {
+  const [trackWidth, setTrackWidth] = React.useState(0);
+  const progress = (value - min) / (max - min);
+  const clampedProgress = Math.max(0, Math.min(1, progress));
+  const updateFromX = React.useCallback(
+    (x: number) => {
+      if (disabled || trackWidth <= 0) {
+        return;
+      }
+      const ratio = Math.max(0, Math.min(1, x / trackWidth));
+      onChange(min + ratio * (max - min));
+    },
+    [disabled, max, min, onChange, trackWidth],
+  );
+  const panResponder = React.useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => !disabled,
+        onMoveShouldSetPanResponder: () => !disabled,
+        onPanResponderGrant: (event) => updateFromX(event.nativeEvent.locationX),
+        onPanResponderMove: (event) => updateFromX(event.nativeEvent.locationX),
+      }),
+    [disabled, updateFromX],
+  );
+
+  return (
+    <View
+      {...panResponder.panHandlers}
+      onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)}
+      style={[styles.sliderTrack, disabled && styles.sliderDisabled]}>
+      <View style={styles.sliderTrackBase} />
+      <View style={[styles.sliderTrackFill, {width: `${clampedProgress * 100}%`}]} />
+      <View style={[styles.sliderThumb, {left: `${clampedProgress * 100}%`}]} />
+    </View>
+  );
+}
+
+function exposureLabel(ns: number) {
+  const seconds = ns / 1_000_000_000;
+  const denominator = Math.round(1 / seconds);
+  return `${Math.round(ns).toLocaleString()} ns · 1/${denominator}s`;
+}
+
+function roiLabel(roiPosition: (typeof CAMERA_ROI_POSITIONS)[number]['value']) {
+  return CAMERA_ROI_POSITIONS.find((option) => option.value === roiPosition)?.label ?? 'Center';
+}
+
+function BarcodeResult({scan}: {scan: BluetoothSdkExampleModel['barcodeScan']}) {
+  if (scan.state === 'idle') {
+    return null;
+  }
+
+  const foundValues = scan.barcodes
+    .map((barcode) => barcode.rawValue ?? barcode.displayValue)
+    .filter((value): value is string => Boolean(value));
+  const expectedMatched = scan.expectedValue
+    ? foundValues.includes(scan.expectedValue)
+    : false;
+  const isFound = scan.state === 'found';
+  const isError = scan.state === 'error';
+  const title = scan.state === 'scanning'
+    ? 'Barcode scanning'
+    : isFound
+      ? expectedMatched
+        ? 'Barcode matched'
+        : 'Barcode found'
+      : isError
+        ? 'Barcode error'
+        : 'No barcode found';
+  const body = isFound
+    ? scan.barcodes.map(formatBarcodeResult).join(' · ')
+    : isError
+      ? scan.error ?? 'Scanner failed'
+      : scan.state === 'scanning'
+        ? 'Analyzing photo preview'
+        : 'Photo preview scanned';
+
+  return (
+    <View style={[styles.barcodeRow, isFound && styles.barcodeRowFound, isError && styles.barcodeRowError]}>
+      <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={isError ? colors.red : isFound ? colors.greenAccent : colors.muted} strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round">
+        <Path d="M3 5v14" />
+        <Path d="M7 5v14" />
+        <Path d="M11 5v14" />
+        <Path d="M17 5v14" />
+        <Path d="M21 5v14" />
+      </Svg>
+      <View style={{flex: 1}}>
+        <Text style={styles.barcodeTitle}>{title}</Text>
+        <Text style={styles.barcodeValue}>{body}</Text>
+      </View>
+    </View>
+  );
+}
+
+function formatBarcodeResult(barcode: BluetoothSdkExampleModel['barcodeScan']['barcodes'][number]) {
+  const value = barcode.rawValue ?? barcode.displayValue ?? 'unreadable';
+  return `${barcode.format}: ${value}`;
 }
 
 function photoDetailsSummary(details: PhotoPreviewDetails | null) {
@@ -326,9 +616,9 @@ function OptionGroup({ children, label }: { children: React.ReactNode; label: st
   );
 }
 
-function Chip({ active, onPress, value }: { active: boolean; onPress: () => void; value: string }) {
+function Chip({ active, disabled = false, onPress, value }: { active: boolean; disabled?: boolean; onPress: () => void; value: string }) {
   return (
-    <Pressable onPress={onPress} style={[styles.chip, active && styles.chipActive]}>
+    <Pressable disabled={disabled} onPress={onPress} style={[styles.chip, active && styles.chipActive, disabled && styles.chipDisabled]}>
       <Text style={[styles.chipValue, active && styles.chipValueActive]}>{value}</Text>
     </Pressable>
   );
@@ -339,13 +629,24 @@ const styles = StyleSheet.create({
   previewWrap: { borderRadius: 22, overflow: 'hidden', height: 160 },
   preview: { flex: 1 },
   previewImage: { ...StyleSheet.absoluteFillObject },
+  previewTapLayer: { ...StyleSheet.absoluteFillObject, zIndex: 2 },
   previewGlow: { position: 'absolute', top: 30, right: 50, width: 80, height: 80, borderRadius: 999, backgroundColor: 'rgba(255,255,255,0.55)' },
   previewBottomShade: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 90, backgroundColor: 'rgba(0,0,0,0.25)' },
   previewBadge: { position: 'absolute', bottom: 14, left: 14, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.35)', paddingVertical: 6, paddingHorizontal: 11, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' },
   previewBadgeText: { color: '#fff', fontSize: 11, fontWeight: '600', letterSpacing: 0.5 },
   previewMeta: { position: 'absolute', bottom: 14, right: 14, color: 'rgba(255,255,255,0.85)', fontSize: 11, fontWeight: '500' },
+  previewOpenBadge: { position: 'absolute', right: 12, bottom: 12, zIndex: 3, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(0,0,0,0.42)', borderRadius: 999, borderWidth: 1, borderColor: 'rgba(255,255,255,0.22)', paddingVertical: 7, paddingHorizontal: 11 },
+  previewOpenText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  barcodeRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10, marginHorizontal: 6, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(15,42,29,0.08)', backgroundColor: 'rgba(15,42,29,0.04)', paddingVertical: 10, paddingHorizontal: 12 },
+  barcodeRowFound: { borderColor: 'rgba(52,199,89,0.32)', backgroundColor: 'rgba(52,199,89,0.12)' },
+  barcodeRowError: { borderColor: 'rgba(255,59,48,0.24)', backgroundColor: 'rgba(255,59,48,0.09)' },
+  barcodeTitle: { color: colors.ink, fontSize: 12, fontWeight: '700' },
+  barcodeValue: { color: colors.muted, fontSize: 11, fontWeight: '600', lineHeight: 15, marginTop: 2 },
   captureBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 18, paddingVertical: 16, marginTop: 14, marginHorizontal: 6, gap: 10 },
   captureText: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  testBarcodeBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 14, borderWidth: 1, borderColor: 'rgba(52,199,89,0.26)', backgroundColor: 'rgba(255,255,255,0.5)', paddingVertical: 12, marginTop: 8, marginHorizontal: 6, gap: 8 },
+  testBarcodeBtnPressed: { opacity: 0.65 },
+  testBarcodeText: { color: colors.greenAccent, fontSize: 13, fontWeight: '700' },
   disabled: { opacity: 0.45 },
 
   sdkCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 22, overflow: 'hidden', borderWidth: 1, borderColor: colors.borderSoft },
@@ -388,6 +689,21 @@ const styles = StyleSheet.create({
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { flexDirection: 'row', alignItems: 'center', minHeight: 44, gap: 6, backgroundColor: 'rgba(255,255,255,0.6)', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1, borderColor: 'rgba(15,42,29,0.06)' },
   chipActive: { backgroundColor: 'rgba(52,199,89,0.16)', borderColor: 'rgba(52,199,89,0.32)' },
+  chipDisabled: { opacity: 0.45 },
   chipValue: { color: colors.ink, fontSize: 13, fontWeight: '700' },
   chipValueActive: { color: colors.greenAccent },
+  settingCard: { backgroundColor: 'rgba(15,42,29,0.04)', borderRadius: 14, padding: 14, gap: 8 },
+  settingHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  settingLabel: { color: colors.muted, fontSize: 10, fontWeight: '800', letterSpacing: 1.1, textTransform: 'uppercase' },
+  settingHint: { color: colors.greenAccent, fontSize: 12, fontWeight: '700', marginTop: 2 },
+  settingDescription: { color: colors.muted, fontSize: 11, fontWeight: '600', lineHeight: 16 },
+  settingRangeRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  settingRangeText: { color: colors.muted, fontSize: 11, fontWeight: '600' },
+  applyChip: { borderRadius: 999, backgroundColor: 'rgba(52,199,89,0.16)', borderWidth: 1, borderColor: 'rgba(52,199,89,0.28)', paddingHorizontal: 12, paddingVertical: 8 },
+  applyChipText: { color: colors.greenAccent, fontSize: 12, fontWeight: '800' },
+  sliderTrack: { height: 28, justifyContent: 'center' },
+  sliderDisabled: { opacity: 0.45 },
+  sliderTrackBase: { position: 'absolute', left: 0, right: 0, height: 6, borderRadius: 999, backgroundColor: 'rgba(15,42,29,0.12)' },
+  sliderTrackFill: { position: 'absolute', left: 0, height: 6, borderRadius: 999, backgroundColor: colors.greenAccent },
+  sliderThumb: { position: 'absolute', marginLeft: -10, width: 20, height: 20, borderRadius: 999, backgroundColor: '#fff', borderWidth: 2, borderColor: colors.greenAccent, shadowColor: '#000', shadowOpacity: 0.14, shadowRadius: 5, shadowOffset: {width: 0, height: 2} },
 });
