@@ -2,7 +2,9 @@ import { z } from "zod";
 
 export function textContent(data: unknown, isError = false) {
   const text =
-    typeof data === "string" ? data : JSON.stringify(data, null, 2);
+    typeof data === "string"
+      ? data
+      : (JSON.stringify(data, null, 2) ?? String(data));
   return {
     content: [{ type: "text" as const, text }],
     isError,
