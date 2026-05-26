@@ -1,4 +1,4 @@
-package com.mentra.core.utils
+package com.mentra.bluetoothsdk.utils
 
 import android.content.Context
 import android.media.AudioManager
@@ -6,7 +6,7 @@ import android.media.AudioPlaybackConfiguration
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import com.mentra.core.Bridge
+import com.mentra.bluetoothsdk.Bridge
 
 /**
  * PhoneAudioMonitor - Monitors system audio playback state

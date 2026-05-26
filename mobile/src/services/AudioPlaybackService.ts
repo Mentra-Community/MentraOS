@@ -1,5 +1,5 @@
 import {createAudioPlayer, AudioPlayer, AudioStatus, setAudioModeAsync} from "expo-audio"
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {BgTimer} from "@mentra/island"
 
 interface AudioPlayRequest {
@@ -95,21 +95,21 @@ class AudioPlaybackService {
     }
 
     try {
-      const raw = await CoreModule.getGlassesMediaVolume()
-      const vol = Number(raw.vol)
+      const raw = await BluetoothSdk.getGlassesMediaVolume()
+      const level = Number(raw.level)
       const statusCode = Number(raw.statusCode)
-      if (!Number.isFinite(vol)) {
-        console.log("AUDIO: Received glasses media volume response without numeric vol:", JSON.stringify(raw))
+      if (!Number.isFinite(level)) {
+        console.log("AUDIO: Received glasses media volume response without numeric level:", JSON.stringify(raw))
         return
       }
       const k900S = Number.isFinite(statusCode) && statusCode >= 0 ? ` K900_S=${statusCode}` : ""
-      console.log(`AUDIO: Glasses media step volume (wearable knob, 0-15 scale): ${vol}/15.${k900S}`)
-      if (vol > AudioPlaybackService.GLASSES_VOLUME_LOW_THRESHOLD) {
+      console.log(`AUDIO: Glasses media step volume (wearable knob, 0-15 scale): ${level}/15.${k900S}`)
+      if (level > AudioPlaybackService.GLASSES_VOLUME_LOW_THRESHOLD) {
         return
       }
-      console.log(`AUDIO: Raising glasses media volume (was ${vol})`)
-      await CoreModule.setGlassesMediaVolume(AudioPlaybackService.GLASSES_VOLUME_FLOOR)
-      this.glassesVolumeRestoreLevel = vol
+      console.log(`AUDIO: Raising glasses media volume (was ${level})`)
+      await BluetoothSdk.setGlassesMediaVolume(AudioPlaybackService.GLASSES_VOLUME_FLOOR)
+      this.glassesVolumeRestoreLevel = level
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       console.warn("AUDIO: Skipping glasses volume bump:", msg)
@@ -127,7 +127,7 @@ class AudioPlaybackService {
 
     try {
       console.log(`AUDIO: Restoring glasses media volume to ${restoreLevel}`)
-      await CoreModule.setGlassesMediaVolume(restoreLevel)
+      await BluetoothSdk.setGlassesMediaVolume(restoreLevel)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       console.warn(`AUDIO: Failed to restore glasses volume to ${restoreLevel}:`, msg)
@@ -187,7 +187,7 @@ class AudioPlaybackService {
         BgTimer.clearTimeout(this.audioStopDebounceTimer)
         this.audioStopDebounceTimer = null
       }
-      CoreModule.setOwnAppAudioPlaying(true).catch((e) => {
+      BluetoothSdk.setOwnAppAudioPlaying(true).catch((e) => {
         console.warn("AUDIO: Failed to notify native of audio start:", e)
       })
 
@@ -297,7 +297,7 @@ class AudioPlaybackService {
     // Uses BgTimer to work reliably when app is backgrounded on Android
     this.audioStopDebounceTimer = BgTimer.setTimeout(() => {
       this.audioStopDebounceTimer = null
-      CoreModule.setOwnAppAudioPlaying(false).catch((e) => {
+      BluetoothSdk.setOwnAppAudioPlaying(false).catch((e) => {
         console.warn("AUDIO: Failed to notify native of audio stop:", e)
       })
     }, AudioPlaybackService.AUDIO_STOP_DEBOUNCE_MS)

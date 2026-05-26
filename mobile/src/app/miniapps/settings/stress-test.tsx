@@ -15,7 +15,7 @@ import {miniappHost} from "@/components/miniapp/MiniappHost"
 import {useNavigationStore} from "@/stores/navigation"
 import {useStressTestStore} from "@/stores/stressTest"
 import {buildDummyMiniappHtml} from "@/utils/stressTest/dummyHtml"
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import {miniappRunningRegistry} from "@mentra/island"
 
 const DUMMY_PREFIX = "com.mentra.stress.dummy."
@@ -59,7 +59,7 @@ export default function StressTest() {
     let id: ReturnType<typeof setInterval> | null = null
     const tick = () => {
       try {
-        const mb = CoreModule.getMemoryMB()
+        const mb = BluetoothSdk.getMemoryMB()
         setResidentMB(mb)
         if (active) {
           // Single-line structured log so the CLI driver can grep
@@ -143,7 +143,7 @@ export default function StressTest() {
     // syslog, which IS reachable from idevicesyslog (unlike RN's
     // console.log in release builds).
     if (jscN > 0) {
-      ;(CoreModule as any).jscRunBenchmark()
+      ;(BluetoothSdk as any).jscRunBenchmark()
       return
     }
 
@@ -221,31 +221,31 @@ export default function StressTest() {
               label="Spawn 1 JSContext"
               subtitle="Measures per-context memory cost"
               onPress={async () => {
-                const baseline = CoreModule.getMemoryMB()
-                const result = (CoreModule as any).jscSpawnAndMeasure(1, baseline)
+                const baseline = BluetoothSdk.getMemoryMB()
+                const result = (BluetoothSdk as any).jscSpawnAndMeasure(1, baseline)
                 console.log("STRESS: jsc-spike", JSON.stringify(result))
               }}
             />
             <RouteButton
               label="Spawn 10 JSContexts"
               onPress={async () => {
-                const baseline = CoreModule.getMemoryMB()
-                const result = (CoreModule as any).jscSpawnAndMeasure(10, baseline)
+                const baseline = BluetoothSdk.getMemoryMB()
+                const result = (BluetoothSdk as any).jscSpawnAndMeasure(10, baseline)
                 console.log("STRESS: jsc-spike", JSON.stringify(result))
               }}
             />
             <RouteButton
               label="Spawn 50 JSContexts"
               onPress={async () => {
-                const baseline = CoreModule.getMemoryMB()
-                const result = (CoreModule as any).jscSpawnAndMeasure(50, baseline)
+                const baseline = BluetoothSdk.getMemoryMB()
+                const result = (BluetoothSdk as any).jscSpawnAndMeasure(50, baseline)
                 console.log("STRESS: jsc-spike", JSON.stringify(result))
               }}
             />
             <RouteButton
               label="Kill all JSContexts"
               onPress={() => {
-                (CoreModule as any).jscKillAll()
+                (BluetoothSdk as any).jscKillAll()
                 console.log("STRESS: jsc-killed-all")
               }}
             />

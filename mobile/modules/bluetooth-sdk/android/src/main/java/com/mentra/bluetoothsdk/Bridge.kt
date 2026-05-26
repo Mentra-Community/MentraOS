@@ -5,7 +5,7 @@
 //  Created by Matthew Fosse on 3/4/25.
 //
 
-package com.mentra.core
+package com.mentra.bluetoothsdk
 
 import android.util.Base64
 import android.util.Log
@@ -20,10 +20,15 @@ import kotlin.jvm.Volatile
  * Android equivalent of the iOS Bridge.swift
  */
 public class Bridge private constructor() {
-    private var deviceManager: CoreManager? = null
+    private var deviceManager: DeviceManager? = null
 
     companion object {
         private const val TAG = "Bridge"
+        private const val MIC_SAMPLE_RATE = 16_000
+        private const val PCM_BITS_PER_SAMPLE = 16
+        private const val MIC_CHANNELS = 1
+        private const val LC3_FRAME_DURATION_MS = 10
+        private const val DEFAULT_LC3_FRAME_SIZE_BYTES = 60
 
         @Volatile private var instance: Bridge? = null
 
@@ -46,7 +51,7 @@ public class Bridge private constructor() {
 
         /**
          * Initialize the Bridge with event callback and context This should be called from
-         * CoreModule
+         * BluetoothSdkModule
          */
         @JvmStatic
         fun initialize(
@@ -121,7 +126,7 @@ public class Bridge private constructor() {
         @JvmStatic
         fun sendAudioConnected(deviceName: String) {
             val data = HashMap<String, Any>()
-            data["device_name"] = deviceName
+            data["deviceName"] = deviceName
             sendTypedMessage("audio_connected", data as Map<String, Any>)
         }
 
@@ -134,24 +139,48 @@ public class Bridge private constructor() {
 
         @JvmStatic
         fun sendMicPcm(data: ByteArray) {
-            // val base64String = Base64.encodeToString(data, Base64.NO_WRAP)
-            // val body = HashMap<String, Any>()
-            // body["base64"] = base64String
-            // sendTypedMessage("mic_pcm", body as Map<String, Any>)
-            val body = HashMap<String, Any>()
-            body["pcm"] = data
+            val body = micPcmEventBody(data)
             sendTypedMessage("mic_pcm", body as Map<String, Any>)
         }
         
         @JvmStatic
         fun sendMicLc3(data: ByteArray) {
-            // val base64String = Base64.encodeToString(data, Base64.NO_WRAP)
-            // val body = HashMap<String, Any>()
-            // body["base64"] = base64String
-            // sendTypedMessage("mic_lc3", body as Map<String, Any>)
+            val body = micLc3EventBody(data)
+            sendTypedMessage("mic_lc3", body as Map<String, Any>)
+        }
+
+        private fun micPcmEventBody(data: ByteArray): HashMap<String, Any> {
+            val voiceActivityDetectionEnabled =
+                    DeviceStore.get("glasses", "voiceActivityDetectionEnabled") as? Boolean
+                            ?: true
+            val body = HashMap<String, Any>()
+            body["pcm"] = data
+            body["sampleRate"] = MIC_SAMPLE_RATE
+            body["bitsPerSample"] = PCM_BITS_PER_SAMPLE
+            body["channels"] = MIC_CHANNELS
+            body["encoding"] = "pcm_s16le"
+            body["voiceActivityDetectionEnabled"] = voiceActivityDetectionEnabled
+            return body
+        }
+
+        private fun micLc3EventBody(data: ByteArray): HashMap<String, Any> {
+            val voiceActivityDetectionEnabled =
+                    DeviceStore.get("glasses", "voiceActivityDetectionEnabled") as? Boolean
+                            ?: true
+            val frameSizeBytes =
+                    (DeviceStore.store.get("bluetooth", "lc3_frame_size") as? Number)?.toInt()
+                            ?: DEFAULT_LC3_FRAME_SIZE_BYTES
             val body = HashMap<String, Any>()
             body["lc3"] = data
-            sendTypedMessage("mic_lc3", body as Map<String, Any>)
+            body["sampleRate"] = MIC_SAMPLE_RATE
+            body["channels"] = MIC_CHANNELS
+            body["encoding"] = "lc3"
+            body["frameDurationMs"] = LC3_FRAME_DURATION_MS
+            body["frameSizeBytes"] = frameSizeBytes
+            body["bitrate"] = frameSizeBytes * 8 * (1000 / LC3_FRAME_DURATION_MS)
+            body["packetizedFromGlasses"] = false
+            body["voiceActivityDetectionEnabled"] = voiceActivityDetectionEnabled
+            return body
         }
 
         /** Save a setting */
@@ -163,12 +192,22 @@ public class Bridge private constructor() {
             sendTypedMessage("save_setting", body as Map<String, Any>)
         }
 
-        /** Send VAD (Voice Activity Detection) status */
+        /** Send Voice Activity Detection status */
         @JvmStatic
-        fun sendVadEvent(isSpeaking: Boolean) {
+        fun sendVoiceActivityDetectionStatus(enabled: Boolean) {
+            DeviceStore.set("glasses", "voiceActivityDetectionEnabled", enabled)
             val body = HashMap<String, Any>()
-            body["status"] = isSpeaking
-            sendTypedMessage("vad_status", body as Map<String, Any>)
+            body["voiceActivityDetectionEnabled"] = enabled
+            sendTypedMessage("voice_activity_detection_status", body as Map<String, Any>)
+        }
+
+        /** Send live speaking status reported by glasses-side Voice Activity Detection. */
+        @JvmStatic
+        fun sendSpeakingStatus(speaking: Boolean) {
+            val body = HashMap<String, Any>()
+            body["speaking"] = speaking
+            body["timestamp"] = System.currentTimeMillis()
+            sendTypedMessage("speaking_status", body as Map<String, Any>)
         }
 
         /** Send battery status */
@@ -191,7 +230,7 @@ public class Bridge private constructor() {
                 rssi: Int? = null
         ) {
             val searchResults =
-                    (GlassesStore.store.getCategory("core")["searchResults"] as? List<*>)
+                    (DeviceStore.store.getCategory("bluetooth")["searchResults"] as? List<*>)
                             ?.mapNotNull { result ->
                                 (result as? Map<*, *>)?.entries
                                         ?.mapNotNull { (key, value) ->
@@ -211,17 +250,39 @@ public class Bridge private constructor() {
                         }
                         rssi?.let { put("rssi", it) }
                     }
-            val allResults = searchResults + newResult
-            val uniqueResults =
-                    allResults
-                            .asReversed()
-                            .distinctBy {
-                                val model = it["model"] ?: it["deviceModel"] ?: deviceModel
-                                val name = it["name"] ?: it["deviceName"] ?: return@distinctBy null
-                                "$model:$name"
-                            }
-                            .asReversed()
-            GlassesStore.set("core", "searchResults", uniqueResults)
+            // Keep the public searchResults array stable as glasses are added or removed.
+            // Duplicate discoveries refresh their existing row; only new glasses append.
+            val uniqueResults = mergeStableSearchResults(searchResults, newResult, deviceModel)
+            DeviceStore.set("bluetooth", "searchResults", uniqueResults)
+        }
+
+        private fun mergeStableSearchResults(
+                currentResults: List<Map<String, Any>>,
+                newResult: Map<String, Any>,
+                fallbackModel: String
+        ): List<Map<String, Any>> {
+            val newKey = searchResultKey(newResult, fallbackModel) ?: return currentResults
+            val nextResults = currentResults.toMutableList()
+            val existingIndex =
+                    nextResults.indexOfFirst { result ->
+                        searchResultKey(result, fallbackModel) == newKey
+                    }
+            if (existingIndex >= 0) {
+                nextResults[existingIndex] = newResult
+            } else {
+                nextResults += newResult
+            }
+            return nextResults
+        }
+
+        private fun searchResultKey(result: Map<String, Any>, fallbackModel: String): String? {
+            val id = result["id"] as? String
+            if (!id.isNullOrBlank()) {
+                return id
+            }
+            val model = result["model"] as? String ?: fallbackModel
+            val name = result["name"] as? String ?: return null
+            return "$model:$name"
         }
 
         // MARK: - Hardware Events
@@ -255,8 +316,9 @@ public class Bridge private constructor() {
                 source: Int? = null
         ) {
             val body = HashMap<String, Any>()
-            body["device_model"] = deviceModel
-            body["gesture_name"] = gestureName
+            body["type"] = "touch_event"
+            body["deviceModel"] = deviceModel
+            body["gestureName"] = gestureName
             body["timestamp"] = timestamp
             if (source != null) {
                 body["source"] = source
@@ -277,8 +339,8 @@ public class Bridge private constructor() {
         @JvmStatic
         fun sendSwitchStatus(switchType: Int, value: Int, timestamp: Long) {
             val body = HashMap<String, Any>()
-            body["switch_type"] = switchType
-            body["switch_value"] = value
+            body["switchType"] = switchType
+            body["switchValue"] = value
             body["timestamp"] = timestamp
             sendTypedMessage("switch_status", body)
         }
@@ -301,6 +363,7 @@ public class Bridge private constructor() {
             if (requestId.isEmpty()) return
             try {
                 val body = HashMap<String, Any>()
+                body["type"] = "rgb_led_control_response"
                 body["requestId"] = requestId
                 body["state"] = if (success) "success" else "error"
                 if (!success) {
@@ -352,8 +415,8 @@ public class Bridge private constructor() {
         @JvmStatic
         fun sendStatus(statusObj: Map<String, Any>) {
             val body = HashMap<String, Any>()
-            body["core_status"] = statusObj
-            sendTypedMessage("core_status_update", body as Map<String, Any>)
+            body["bluetooth_status"] = statusObj
+            sendTypedMessage("bluetooth_status_update", body as Map<String, Any>)
         }
 
         /** Send glasses serial number */
@@ -380,7 +443,7 @@ public class Bridge private constructor() {
         @JvmStatic
         fun updateWifiScanResults(networks: List<Map<String, Any>>) {
             var storedNetworks: List<Map<String, Any>> =
-                    GlassesStore.get("core", "wifiScanResults") as? List<Map<String, Any>>
+                    DeviceStore.get("bluetooth", "wifiScanResults") as? List<Map<String, Any>>
                             ?: emptyList()
             // add the networks to the storedNetworks array, removing duplicates by ssid
             val updatedNetworks = storedNetworks.toMutableList()
@@ -389,7 +452,7 @@ public class Bridge private constructor() {
                     updatedNetworks.add(network)
                 }
             }
-            GlassesStore.apply("core", "wifiScanResults", updatedNetworks)
+            DeviceStore.apply("bluetooth", "wifiScanResults", updatedNetworks)
         }
 
         /** Send gallery status - matches iOS MentraLive.swift handleGalleryStatus pattern */
@@ -405,8 +468,8 @@ public class Bridge private constructor() {
             galleryData["photos"] = photoCount
             galleryData["videos"] = videoCount
             galleryData["total"] = totalCount
-            galleryData["total_size"] = totalSize
-            galleryData["has_content"] = hasContent
+            galleryData["totalSize"] = totalSize
+            galleryData["hasContent"] = hasContent
 
             sendTypedMessage("gallery_status", galleryData as Map<String, Any>)
         }
@@ -427,7 +490,7 @@ public class Bridge private constructor() {
         @JvmStatic
         fun sendHotspotError(errorMessage: String, timestamp: Long) {
             val eventBody = HashMap<String, Any>()
-            eventBody["error_message"] = errorMessage
+            eventBody["errorMessage"] = errorMessage
             eventBody["timestamp"] = timestamp
 
             sendTypedMessage("hotspot_error", eventBody as Map<String, Any>)
@@ -602,9 +665,9 @@ public class Bridge private constructor() {
     }
 
     init {
-        deviceManager = CoreManager.Companion.getInstance()
+        deviceManager = DeviceManager.Companion.getInstance()
         if (deviceManager == null) {
-            Log.e(TAG, "Failed to initialize CoreManager in Bridge constructor")
+            Log.e(TAG, "Failed to initialize DeviceManager in Bridge constructor")
         }
     }
 }

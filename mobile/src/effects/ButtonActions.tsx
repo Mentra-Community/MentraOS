@@ -5,7 +5,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useApps, useStart} from "@mentra/island"
 import {SETTINGS, useSetting, useSettingsStore} from "@/stores/settings"
 import {askPermissionsUI} from "@/utils/PermissionsUtils"
-import CoreModule, {ButtonPressEvent} from "@mentra/bluetooth-sdk"
+import BluetoothSdk, {ButtonPressEvent} from "@mentra/bluetooth-sdk"
 
 export function ButtonActions() {
   const applets = useApps()
@@ -127,7 +127,7 @@ export function ButtonActions() {
       startApplet(targetApp, {skipNavigation: true})
     }
 
-    let sub = CoreModule.addListener("button_press", onButtonPress)
+    let sub = BluetoothSdk.addListener("button_press", onButtonPress)
 
     return () => {
       sub.remove()

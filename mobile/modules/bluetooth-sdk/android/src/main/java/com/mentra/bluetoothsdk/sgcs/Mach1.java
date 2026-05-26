@@ -1,4 +1,4 @@
-package com.mentra.core.sgcs;
+package com.mentra.bluetoothsdk.sgcs;
 
 import android.content.Context;
 import android.content.res.Resources;
@@ -15,18 +15,18 @@ import androidx.lifecycle.LiveData;
 import androidx.lifecycle.Observer;
 
 // Mentra
-import com.mentra.core.sgcs.SGCManager;
-import com.mentra.core.CoreManager;
-import com.mentra.core.Bridge;
-import com.mentra.core.utils.DeviceTypes;
-import com.mentra.core.utils.ConnTypes;
-import com.mentra.core.utils.BitmapJavaUtils;
-import com.mentra.core.utils.SmartGlassesConnectionState;
-import com.mentra.core.utils.K900ProtocolUtils;
-import com.mentra.core.utils.MessageChunker;
-import com.mentra.core.utils.audio.Lc3Player;
-import com.mentra.core.utils.BlePhotoUploadService;
-import com.mentra.core.GlassesStore;
+import com.mentra.bluetoothsdk.sgcs.SGCManager;
+import com.mentra.bluetoothsdk.DeviceManager;
+import com.mentra.bluetoothsdk.Bridge;
+import com.mentra.bluetoothsdk.utils.DeviceTypes;
+import com.mentra.bluetoothsdk.utils.ConnTypes;
+import com.mentra.bluetoothsdk.utils.BitmapJavaUtils;
+import com.mentra.bluetoothsdk.utils.SmartGlassesConnectionState;
+import com.mentra.bluetoothsdk.utils.K900ProtocolUtils;
+import com.mentra.bluetoothsdk.utils.MessageChunker;
+import com.mentra.bluetoothsdk.utils.audio.Lc3Player;
+import com.mentra.bluetoothsdk.utils.BlePhotoUploadService;
+import com.mentra.bluetoothsdk.DeviceStore;
 
 // import com.augmentos.augmentos_core.R;
 // import com.augmentos.augmentos_core.smarterglassesmanager.smartglassescommunicators.SmartGlassesCommunicator;
@@ -97,7 +97,7 @@ public class Mach1 extends SGCManager {
     private int totalDashboardsIdk = 0;
 
     private boolean hasBattery() {
-        Object level = GlassesStore.INSTANCE.get("glasses", "batteryLevel");
+        Object level = DeviceStore.INSTANCE.get("glasses", "batteryLevel");
         return level instanceof Number && ((Number) level).intValue() != -1;
     }
 
@@ -108,17 +108,17 @@ public class Mach1 extends SGCManager {
         }
 
         // Update the connection state
-        GlassesStore.INSTANCE.apply("glasses", "connectionState", state);
+        DeviceStore.INSTANCE.apply("glasses", "connectionState", state);
 
         if (state.equals(ConnTypes.CONNECTED)) {
             // Match iOS: only declare fully booted once we have battery info too
             if (hasBattery()) {
-                GlassesStore.INSTANCE.apply("glasses", "connected", true);
-                GlassesStore.INSTANCE.apply("glasses", "fullyBooted", true);
+                DeviceStore.INSTANCE.apply("glasses", "connected", true);
+                DeviceStore.INSTANCE.apply("glasses", "fullyBooted", true);
             }
         } else if (state.equals(ConnTypes.DISCONNECTED)) {
-            GlassesStore.INSTANCE.apply("glasses", "fullyBooted", false);
-            GlassesStore.INSTANCE.apply("glasses", "connected", false);
+            DeviceStore.INSTANCE.apply("glasses", "fullyBooted", false);
+            DeviceStore.INSTANCE.apply("glasses", "connected", false);
         }
     }
 
@@ -290,7 +290,7 @@ public class Mach1 extends SGCManager {
     }
 
     @Override
-    public void sendRgbLedControl(String requestId, String packageName, String action, String color, int ontime, int offtime, int count) {
+    public void sendRgbLedControl(String requestId, String packageName, String action, String color, int onDurationMs, int offDurationMs, int count) {
         Bridge.log("sendRgbLedControl - not supported on Mach1");
         Bridge.sendRgbLedControlResponse(requestId, false, "device_not_supported");
     }
@@ -413,8 +413,8 @@ public class Mach1 extends SGCManager {
             // Toggle dashboard on 2+ taps (same as iOS implementation)
             if (tapCount >= 2) {
                 isHeadUp = !isHeadUp;
-                // Notify CoreManager of head up state change (same as G1 does with IMU)
-                GlassesStore.INSTANCE.apply("glasses", "headUp", isHeadUp);
+                // Notify DeviceManager of head up state change (same as G1 does with IMU)
+                DeviceStore.INSTANCE.apply("glasses", "headUp", isHeadUp);
                 Log.d(TAG, "Mach1: Dashboard toggled via tap, isHeadUp: " + isHeadUp);
 
                 // Auto turn off the dashboard after 15 seconds
@@ -422,7 +422,7 @@ public class Mach1 extends SGCManager {
                     goHomeHandler.postDelayed(() -> {
                         if (isHeadUp) {
                             isHeadUp = false;
-                            GlassesStore.INSTANCE.apply("glasses", "headUp", false);
+                            DeviceStore.INSTANCE.apply("glasses", "headUp", false);
                             Log.d(TAG, "Mach1: Auto-disabling dashboard after 15 seconds");
                         }
                     }, 15000);
@@ -581,13 +581,13 @@ public class Mach1 extends SGCManager {
             return;
         }
         Log.d(TAG, "Ultralite new battery status: " + batteryStatus.getLevel());
-        GlassesStore.INSTANCE.apply("glasses", "batteryLevel", batteryStatus.getLevel());
+        DeviceStore.INSTANCE.apply("glasses", "batteryLevel", batteryStatus.getLevel());
 
         // Match iOS: if we're already connected but weren't fully booted yet (waiting
         // for battery), now that we have battery info we can declare fully booted.
         if (getConnectionState().equals(ConnTypes.CONNECTED) && !getFullyBooted()) {
-            GlassesStore.INSTANCE.apply("glasses", "connected", true);
-            GlassesStore.INSTANCE.apply("glasses", "fullyBooted", true);
+            DeviceStore.INSTANCE.apply("glasses", "connected", true);
+            DeviceStore.INSTANCE.apply("glasses", "fullyBooted", true);
         }
     }
 

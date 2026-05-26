@@ -1,7 +1,7 @@
 import {Platform} from "react-native"
 import * as Sentry from "@sentry/react-native"
 
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import {
   appRegistry,
   BgTimer,
@@ -188,7 +188,7 @@ class MiniappCatalog {
         }
         return false
       }
-      await CoreModule.restartTranscriber()
+      await BluetoothSdk.restartTranscriber()
       useSettingsStore.getState().setSetting(SETTINGS.offline_captions_running.key, true)
     }
 

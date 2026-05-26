@@ -1,4 +1,4 @@
-package com.mentra.core.utils.audio;
+package com.mentra.bluetoothsdk.utils.audio;
 
 import android.content.Context;
 import android.media.AudioFormat;
@@ -18,7 +18,7 @@ import android.util.Log;
 import android.widget.Toast;
 
 import com.mentra.lc3Lib.Lc3Cpp;
-import com.mentra.core.utils.audio.ByteUtilAudioPlayer;
+import com.mentra.bluetoothsdk.utils.audio.ByteUtilAudioPlayer;
 
 import java.io.File;
 import java.io.FileNotFoundException;

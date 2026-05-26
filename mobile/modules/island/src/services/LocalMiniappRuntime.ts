@@ -15,7 +15,7 @@ import * as Battery from "expo-battery"
 import * as Clipboard from "expo-clipboard"
 import {File, Paths} from "expo-file-system"
 import * as Location from "expo-location"
-import CoreModule, {type RgbLedAction, type RgbLedColor} from "@mentra/bluetooth-sdk"
+import BluetoothSdk, {type RgbLedAction, type RgbLedColor} from "@mentra/bluetooth-sdk"
 
 import {
   MiniappErrorCode,
@@ -830,7 +830,7 @@ class LocalMiniappRuntime {
       }
 
       // Hand off to LocalDisplayManager — it owns boot/throttle/arbitration/
-      // expiry + the native CoreModule.displayEvent call + useDisplayStore.
+      // expiry + the native BluetoothSdk.displayEvent call + useDisplayStore.
       localDisplayManager.request(packageName, {
         view: (payload.view as DisplayPayload["view"]) ?? "main",
         layout: payload.layout as DisplayPayload["layout"],
@@ -970,7 +970,7 @@ class LocalMiniappRuntime {
     const action = normalizeRgbLedAction(payload.action)
     const color = normalizeRgbLedColor(payload.color)
 
-    CoreModule.rgbLedControl(
+    BluetoothSdk.rgbLedControl(
       ledRequestId,
       packageName,
       action,
@@ -1452,7 +1452,7 @@ class LocalMiniappRuntime {
    *
    * Cloud-dependent streams (transcription:*, translation:*) only flow if the
    * cloud knows the phone wants them. Local-only streams (button_press, etc.)
-   * are NOT sent — they come from CoreModule, not from cloud.
+   * are NOT sent — they come from the Bluetooth SDK, not from cloud.
    */
   private updateCloudSubscriptions(): void {
     const cloudStreams = new Set<string>()
@@ -1553,8 +1553,8 @@ class LocalMiniappRuntime {
    * Translate cloud event names to miniapp stream type values.
    */
   private normalizeStreamType(cloudEventName: string): string {
-    // Cloud / CoreModule → miniapp protocol translations.
-    // CoreModule event names don't always match the miniapp wire values.
+    // Cloud / Bluetooth SDK → miniapp protocol translations.
+    // Bluetooth SDK event names don't always match the miniapp wire values.
     switch (cloudEventName) {
       case "head_up":
         return MiniappStreamType.HEAD_POSITION // head_up → head_position

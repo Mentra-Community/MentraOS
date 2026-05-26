@@ -4,7 +4,7 @@ import {usePathname} from "expo-router"
 import {Text, Button} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {useGlassesStore} from "@/stores/glasses"
+import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {translate} from "@/i18n"
 import {create} from "zustand"
 
@@ -59,7 +59,7 @@ function GlobalConnectionOverlay() {
   const {theme} = useAppTheme()
   const {clearHistoryAndGoHome} = useNavigationStore.getState()
   const pathname = usePathname()
-  const glassesConnected = useGlassesStore((state) => state.connected)
+  const glassesConnected = useGlassesStore(selectGlassesConnected)
   const {customTitle, customMessage, hideStopButton, smallTitle, suppressOverlay} = useConnectionOverlayConfig()
 
   const [showOverlay, setShowOverlay] = useState(false)

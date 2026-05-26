@@ -1,0 +1,133 @@
+---
+title: "Display"
+description: "Send text, clear the display, open the dashboard, and manage display-related settings."
+icon: "display"
+---
+
+The display API sends glanceable, user-visible information to supported smart glasses.
+
+<Info>
+Mentra Live does not have a display. Use display APIs only on display-equipped models such as G2.
+</Info>
+
+## Basic Text
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+await BluetoothSdk.displayText('Turn left in 100 ft', 0, 0, 24);
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+sdk.displayText(text = "Turn left in 100 ft", x = 0, y = 0, size = 24)
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+try await sdk.displayText("Turn left in 100 ft", x: 0, y: 0, size: 24)
+```
+
+  </Tab>
+</Tabs>
+
+## Clear Display
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+await BluetoothSdk.clearDisplay();
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+sdk.clearDisplay()
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+try await sdk.clearDisplay()
+```
+
+  </Tab>
+</Tabs>
+
+## Dashboard
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+await BluetoothSdk.showDashboard();
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+sdk.showDashboard()
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+sdk.showDashboard()
+```
+
+  </Tab>
+</Tabs>
+
+Dashboard support depends on the connected glasses model and firmware.
+
+## Display Settings
+
+Display-related settings include dashboard position, head-up angle, and screen enable/disable state.
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+await BluetoothSdk.setDashboardPosition(4, 6);
+await BluetoothSdk.setHeadUpAngle(20);
+await BluetoothSdk.setScreenDisabled(false);
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+sdk.setDashboardPosition(height = 4, depth = 6)
+sdk.setHeadUpAngle(angleDegrees = 20)
+sdk.setScreenDisabled(false)
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+try await sdk.setDashboardPosition(height: 4, depth: 6)
+try await sdk.setHeadUpAngle(20)
+try await sdk.setScreenDisabled(false)
+```
+
+  </Tab>
+</Tabs>
+
+## Guidelines
+
+- Keep text short. Glasses displays are glanceable, not phone screens.
+- Prefer one primary message at a time.
+- Avoid rapid display churn. Debounce frequent updates.
+- Clear the display when information is stale.
+- Handle disconnected, not-ready, and unsupported-capability states gracefully.

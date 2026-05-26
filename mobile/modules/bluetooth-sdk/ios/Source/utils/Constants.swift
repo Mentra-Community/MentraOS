@@ -38,6 +38,8 @@ struct ConnTypes {
     static let CONNECTING = "CONNECTING"
     static let CONNECTED = "CONNECTED"
     static let DISCONNECTED = "DISCONNECTED"
+    static let SCANNING = "SCANNING"
+    static let BONDING = "BONDING"
 
     /// Private init to prevent instantiation
     private init() {}
@@ -46,14 +48,14 @@ struct ConnTypes {
 struct MicTypes {
     static let PHONE_INTERNAL = "phone"
     static let GLASSES_CUSTOM = "glasses"
-    static let BT_CLASSIC = "btclassic"
-    static let BT = "bt"
+    static let BLUETOOTH_CLASSIC = "bluetoothClassic"
+    static let BLUETOOTH = "bluetooth"
 
     static let ALL = [
         PHONE_INTERNAL,
         GLASSES_CUSTOM,
-        BT_CLASSIC,
-        BT,
+        BLUETOOTH_CLASSIC,
+        BLUETOOTH,
     ]
 
     /// Private init to prevent instantiation
@@ -63,10 +65,10 @@ struct MicTypes {
 enum MicMap {
     static var map: [String: [String]] = [
         "auto": [
-            MicTypes.GLASSES_CUSTOM, MicTypes.PHONE_INTERNAL, MicTypes.BT, MicTypes.BT_CLASSIC,
+            MicTypes.GLASSES_CUSTOM, MicTypes.PHONE_INTERNAL, MicTypes.BLUETOOTH, MicTypes.BLUETOOTH_CLASSIC,
         ],
         "glasses": [MicTypes.GLASSES_CUSTOM],
         "phone": [MicTypes.PHONE_INTERNAL, MicTypes.GLASSES_CUSTOM],
-        "bluetooth": [MicTypes.BT, MicTypes.PHONE_INTERNAL, MicTypes.GLASSES_CUSTOM],
+        "bluetooth": [MicTypes.BLUETOOTH, MicTypes.BLUETOOTH_CLASSIC, MicTypes.PHONE_INTERNAL, MicTypes.GLASSES_CUSTOM],
     ]
 }

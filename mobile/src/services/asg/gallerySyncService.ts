@@ -5,12 +5,12 @@
 
 import * as RNFS from "@dr.pogodin/react-native-fs"
 import NetInfo from "@react-native-community/netinfo"
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {AppState, AppStateStatus, Platform} from "react-native"
 import WifiManager from "react-native-wifi-reborn"
 
 import {useGallerySyncStore, HotspotInfo} from "@/stores/gallerySync"
-import {useGlassesStore} from "@/stores/glasses"
+import {isGlassesConnected, selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {SETTINGS, useSettingsStore} from "@/stores/settings"
 import {PhotoInfo, CaptureGroup} from "@/types/asg"
 import {showAlert} from "@/utils/AlertUtils"
@@ -80,15 +80,12 @@ class GallerySyncService {
     GlobalEventEmitter.addListener("gallery_status", this.handleGalleryStatus)
 
     // Subscribe to glasses store to detect disconnection during sync
-    this.glassesStoreUnsubscribe = useGlassesStore.subscribe(
-      (state) => state.connected,
-      (connected, prevConnected) => {
-        // Only trigger on disconnect (was connected, now not connected)
-        if (prevConnected && !connected) {
-          this.handleGlassesDisconnected()
-        }
-      },
-    )
+    this.glassesStoreUnsubscribe = useGlassesStore.subscribe(selectGlassesConnected, (connected, prevConnected) => {
+      // Only trigger on disconnect (was connected, now not connected)
+      if (prevConnected && !connected) {
+        this.handleGlassesDisconnected()
+      }
+    })
 
     // Listen for app state changes to auto-retry sync after user enables WiFi
     this.appStateSubscription = AppState.addEventListener("change", this.handleAppStateChange)
@@ -188,9 +185,10 @@ class GallerySyncService {
 
     const store = useGallerySyncStore.getState()
     const glassesStore = useGlassesStore.getState()
+    const glassesConnected = isGlassesConnected(glassesStore.connection)
 
     // Check if glasses are still connected
-    if (!glassesStore.connected) {
+    if (!glassesConnected) {
       console.log("[GallerySyncService] Glasses disconnected - not retrying sync")
       this.waitingForWifiRetry = false
       return
@@ -276,7 +274,7 @@ class GallerySyncService {
     }
 
     // Pre-flight: do not start the wait if already disconnected (e.g. BT dropped right after hotspot enabled)
-    if (!useGlassesStore.getState().connected) {
+    if (!isGlassesConnected(useGlassesStore.getState().connection)) {
       console.log("[GallerySyncService] ❌ Glasses disconnected on hotspot_status_change - aborting (no wait)")
       store.setSyncError("Glasses disconnected")
       gallerySyncNotifications.showSyncError("Glasses disconnected")
@@ -304,7 +302,7 @@ class GallerySyncService {
     this.hotspotConnectionTimeout = BgTimer.setTimeout(() => {
       this.hotspotConnectionTimeout = null
       // Pre-flight: abort if Bluetooth disconnected during the wait
-      const stillConnected = useGlassesStore.getState().connected
+      const stillConnected = isGlassesConnected(useGlassesStore.getState().connection)
       if (!stillConnected) {
         console.log("[GallerySyncService] ❌ Glasses disconnected during hotspot wait - skipping WiFi connection")
         const currentStore = useGallerySyncStore.getState()
@@ -344,6 +342,7 @@ class GallerySyncService {
 
     const store = useGallerySyncStore.getState()
     const glassesStore = useGlassesStore.getState()
+    const glassesConnected = isGlassesConnected(glassesStore.connection)
     const glassesHotspot =
       glassesStore.hotspot.state === "enabled"
         ? {
@@ -375,7 +374,7 @@ class GallerySyncService {
     }
 
     // Check if glasses are connected (store-based, secondary check)
-    if (!glassesStore.connected) {
+    if (!glassesConnected) {
       console.warn("[GallerySyncService] Sync aborted - Glasses not connected")
       store.setSyncError("Glasses not connected")
       showAlert("Glasses Disconnected", "Please connect your glasses before syncing the gallery.", [{text: "OK"}])
@@ -384,7 +383,7 @@ class GallerySyncService {
 
     console.log("[GallerySyncService] ✅ Pre-flight check passed - BT enabled, Glasses connected")
     console.log("[GallerySyncService] 📊 Glasses info:", {
-      connected: glassesStore.connected,
+      connected: glassesConnected,
       hotspotEnabled: glassesHotspot !== null,
     })
 
@@ -656,7 +655,7 @@ class GallerySyncService {
 
     try {
       console.log("[GallerySyncService]   📤 Sending hotspot enable command to glasses...")
-      await CoreModule.setHotspotState(true)
+      await BluetoothSdk.setHotspotState(true)
       console.log("[GallerySyncService]   ✅ Hotspot request sent successfully")
       console.log("[GallerySyncService]   ⏳ Waiting for hotspot_status_change event (timeout: 30s)...")
     } catch (error) {
@@ -722,7 +721,7 @@ class GallerySyncService {
     const store = useGallerySyncStore.getState()
 
     // Pre-flight: do not attempt WiFi connection if Bluetooth already disconnected
-    if (!useGlassesStore.getState().connected) {
+    if (!isGlassesConnected(useGlassesStore.getState().connection)) {
       console.log("[GallerySyncService] ❌ Glasses not connected - aborting WiFi connection")
       store.setSyncError("Glasses disconnected")
       gallerySyncNotifications.showSyncError("Glasses disconnected")
@@ -915,7 +914,7 @@ class GallerySyncService {
             console.log(`[GallerySyncService] 📶 Final SSID check before download: "${finalSSID}"`)
             if (Platform.OS === "android") {
               // Some local builds can have stale generated typings for the Bluetooth SDK module.
-              ;(CoreModule as any).logCurrentWifiFrequency?.()
+              ;(BluetoothSdk as any).logCurrentWifiFrequency?.()
             }
             if (finalSSID !== hotspotInfo.ssid) {
               console.error(
@@ -1943,7 +1942,7 @@ class GallerySyncService {
 
     try {
       console.log("[GallerySyncService] Closing hotspot...")
-      await CoreModule.setHotspotState(false)
+      await BluetoothSdk.setHotspotState(false)
       store.setSyncServiceOpenedHotspot(false)
       store.setHotspotInfo(null)
       console.log("[GallerySyncService] Hotspot closed")
@@ -2002,7 +2001,7 @@ class GallerySyncService {
    */
   async queryGlassesGalleryStatus(): Promise<void> {
     try {
-      await CoreModule.queryGalleryStatus()
+      await BluetoothSdk.queryGalleryStatus()
     } catch (error) {
       console.error("[GallerySyncService] Failed to query gallery status:", error)
     }

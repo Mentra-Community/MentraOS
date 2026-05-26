@@ -12,7 +12,7 @@ import {Screen} from "@/components/ignite"
 import {Group} from "@/components/ui"
 import {BgTimer, useRefresh} from "@mentra/island"
 import {SETTINGS, useSetting} from "@/stores/settings"
-import {useGlassesStore} from "@/stores/glasses"
+import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {useCoreStore} from "@/stores/core"
 import AppSwitcherButton from "@/components/home/AppSwitcherButtton"
 import AppSwitcher from "@/components/home/AppSwitcher"
@@ -26,7 +26,7 @@ import {BlurTargetView, BlurView} from "expo-blur"
 export default function Homepage() {
   const refreshApps = useRefresh()
   const [defaultWearable] = useSetting(SETTINGS.default_wearable.key)
-  const glassesConnected = useGlassesStore((state) => state.connected)
+  const glassesConnected = useGlassesStore(selectGlassesConnected)
   const isSearching = useCoreStore((state) => state.searching)
   const hasAttemptedInitialConnect = useRef(false)
   const swipeProgress = useSharedValue(0)

@@ -6,10 +6,10 @@
  * The cloud sends mic state changes via SocketComms (e.g., "pcm", "transcription").
  * Local miniapps subscribe to audio_chunk / transcription streams.
  * This coordinator merges both sets of requirements and pushes the union to
- * CoreModule so the mic runs whenever at least one consumer needs it.
+ * BluetoothSdk so the mic runs whenever at least one consumer needs it.
  */
 
-import CoreModule from "@mentra/bluetooth-sdk"
+import {getRuntimeHooks} from "../runtime/config"
 
 const LOG_TAG = "MIC_COORDINATOR"
 
@@ -20,7 +20,7 @@ class MicStateCoordinator {
   private cloudWantsPcm = false
   private cloudWantsLc3 = false
   private cloudWantsTranscript = false
-  private cloudBypassVad = false
+  private cloudVoiceActivityDetectionEnabled: boolean | undefined
 
   // Local miniapp requirements (set when miniapps subscribe to audio streams)
   private localWantsPcm = false
@@ -39,13 +39,18 @@ class MicStateCoordinator {
    * Update cloud-side requirements. Called by SocketComms when the cloud
    * sends a mic_state_change message.
    */
-  public setCloudRequirements(req: {pcm: boolean; lc3: boolean; transcript: boolean; bypass_vad: boolean}): void {
+  public setCloudRequirements(req: {
+    pcm: boolean
+    lc3: boolean
+    transcript: boolean
+    voiceActivityDetectionEnabled?: boolean
+  }): void {
     this.cloudWantsPcm = req.pcm
     this.cloudWantsLc3 = req.lc3
     this.cloudWantsTranscript = req.transcript
-    this.cloudBypassVad = req.bypass_vad
+    this.cloudVoiceActivityDetectionEnabled = req.voiceActivityDetectionEnabled
     // console.log(
-    //   `${LOG_TAG}: cloud requirements updated — pcm=${req.pcm} lc3=${req.lc3} transcript=${req.transcript} bypass_vad=${req.bypass_vad}`,
+    //   `${LOG_TAG}: cloud requirements updated — pcm=${req.pcm} lc3=${req.lc3} transcript=${req.transcript} voiceActivityDetection=${req.voiceActivityDetectionEnabled}`,
     // )
     this.applyUnion()
   }
@@ -62,7 +67,7 @@ class MicStateCoordinator {
   }
 
   /**
-   * Compute the union of cloud and local requirements and push to CoreModule.
+   * Compute the union of cloud and local requirements and push to BluetoothSdk.
    *
    * Wire-format note: the cloud only ever receives LC3 over the binary
    * WebSocket. Its `requiredData=["pcm"]` is a logical "I need audio"
@@ -75,18 +80,31 @@ class MicStateCoordinator {
     const shouldSendPcm = this.localWantsPcm
     const shouldSendLc3 = this.cloudWantsPcm || this.cloudWantsLc3 || this.localWantsLc3
     const shouldSendTranscript = this.cloudWantsTranscript
-    const bypassVad = this.cloudBypassVad
+    const voiceActivityDetectionEnabled = this.cloudVoiceActivityDetectionEnabled
 
     // console.log(
-    //   `${LOG_TAG}: applying union — pcm=${shouldSendPcm} lc3=${shouldSendLc3} transcript=${shouldSendTranscript} bypass_vad=${bypassVad}`,
+    //   `${LOG_TAG}: applying union — pcm=${shouldSendPcm} lc3=${shouldSendLc3} transcript=${shouldSendTranscript} voiceActivityDetection=${voiceActivityDetectionEnabled}`,
     // )
 
-    CoreModule.update("core", {
-      should_send_pcm: shouldSendPcm,
-      should_send_lc3: shouldSendLc3,
-      should_send_transcript: shouldSendTranscript,
-      bypass_vad: bypassVad,
-    })
+    const setMicRequirements = getRuntimeHooks().setMicRequirements
+    if (!setMicRequirements) {
+      return
+    }
+
+    try {
+      void Promise.resolve(
+        setMicRequirements({
+          shouldSendPcm,
+          shouldSendLc3,
+          shouldSendTranscript,
+          ...(voiceActivityDetectionEnabled === undefined ? {} : {voiceActivityDetectionEnabled}),
+        }),
+      ).catch((err) => {
+        console.error(`${LOG_TAG}: failed to apply mic requirements:`, err)
+      })
+    } catch (err) {
+      console.error(`${LOG_TAG}: failed to apply mic requirements:`, err)
+    }
   }
 
   /**
@@ -96,7 +114,7 @@ class MicStateCoordinator {
     this.cloudWantsPcm = false
     this.cloudWantsLc3 = false
     this.cloudWantsTranscript = false
-    this.cloudBypassVad = false
+    this.cloudVoiceActivityDetectionEnabled = undefined
     this.localWantsPcm = false
     this.localWantsLc3 = false
     this.applyUnion()

@@ -138,7 +138,7 @@ import {render, fireEvent, waitFor} from "@testing-library/react-native"
 import type {ReactNode} from "react"
 import {Platform} from "react-native"
 
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {useLocalSearchParams} from "expo-router"
 import {usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
@@ -189,7 +189,7 @@ describe("pairing scan screen", () => {
     const {getByText} = render(<SelectGlassesBluetoothScreen />)
 
     await waitFor(() => {
-      expect(CoreModule.startScan).toHaveBeenCalledWith({model: "Mentra Live"})
+      expect(BluetoothSdk.startScan).toHaveBeenCalledWith({model: "Mentra Live"})
     })
 
     fireEvent.press(getByText("001"))
@@ -202,7 +202,7 @@ describe("pairing scan screen", () => {
       })
     })
 
-    expect(CoreModule.setDefaultDevice).toHaveBeenCalledWith({
+    expect(BluetoothSdk.setDefaultDevice).toHaveBeenCalledWith({
       id: "a",
       model: "Mentra Live",
       name: "MENTRA_LIVE_BLE_001",
@@ -213,7 +213,7 @@ describe("pairing scan screen", () => {
 
   it("auto-skips directly into pairing when NOTREQUIREDSKIP is discovered", async () => {
     setPlatformOS("android")
-    useGlassesStore.getState().setGlassesInfo({btcConnected: false})
+    useGlassesStore.getState().setGlassesInfo({bluetoothClassicConnected: false})
     useCoreStore.setState({
       searchResults: [{id: "skip", model: "Mentra Live", name: "NOTREQUIREDSKIP", address: "skip"}],
     })

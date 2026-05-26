@@ -1,0 +1,248 @@
+---
+title: "Audio"
+description: "Use microphone input and route normal phone audio playback to supported glasses speakers."
+icon: "microphone"
+---
+
+The Bluetooth SDK exposes microphone input controls, microphone audio callbacks, local transcription events, and Mentra Live media-volume helpers. Speaker playback is separate: your app plays audio with normal Android, iOS, or React Native audio APIs, and the phone OS routes that audio to Mentra Live when the glasses are connected as the Bluetooth media output.
+
+<Info>
+Mentra Live and G2 both have microphones. Mentra Live has a speaker; G2 does not.
+</Info>
+
+## Microphone Input
+
+Use `setMicState` when your app wants microphone audio from the connected glasses or phone microphone path.
+
+`enabled` turns microphone capture on or off. `useGlassesMic` selects the glasses microphone when `true`, or the phone microphone when `false`.
+
+Microphone audio events are emitted continuously from the selected microphone path while capture is enabled. The SDK does not apply phone-side Voice Activity Detection gating to PCM or LC3 events. Glasses-side Voice Activity Detection can be enabled or disabled with `setVoiceActivityDetectionEnabled(...)`; the current setting is reported through `voice_activity_detection_status`. When supported by the connected glasses, `speaking_status` reports whether the glasses currently detect speech. Microphone events also include the latest `voiceActivityDetectionEnabled` value.
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+await BluetoothSdk.setMicState(true);
+await BluetoothSdk.setVoiceActivityDetectionEnabled(false);
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+sdk.setMicState(enabled = true)
+sdk.setVoiceActivityDetectionEnabled(false)
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+sdk.setMicState(enabled: true)
+try await sdk.setVoiceActivityDetectionEnabled(false)
+```
+
+  </Tab>
+</Tabs>
+
+Your app owns user-facing microphone permission copy, should ask for microphone access only when the feature needs it, and should provide a visible way to disable microphone streaming.
+
+## Local Transcription
+
+<Tabs>
+  <Tab title="React Native">
+
+```tsx
+import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
+
+export function TranscriptLogger() {
+  useBluetoothEvent('local_transcription', (event) => {
+    console.log(`${event.text} final=${event.isFinal}`);
+  });
+
+  return null;
+}
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+override fun onLocalTranscription(event: LocalTranscriptionEvent) {
+    Log.d("Mentra", "${event.text} final=${event.isFinal}")
+}
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+func mentraBluetoothSDK(_ sdk: MentraBluetoothSDK, didReceive event: BluetoothEvent) {
+    if case let .localTranscription(transcription) = event {
+        print("\(transcription.text) final=\(transcription.isFinal)")
+    }
+}
+```
+
+  </Tab>
+</Tabs>
+
+## Microphone Audio Events
+
+React Native can listen for microphone PCM events. PCM events are self-describing so apps can pass the buffer directly to STT, WAV writing, or playback code without reading native SDK sources:
+
+```tsx
+import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
+
+export function MicPcmLogger() {
+  useBluetoothEvent('mic_pcm', (event) => {
+    console.log(event.sampleRate, event.bitsPerSample, event.channels, event.encoding);
+    console.log(event.voiceActivityDetectionEnabled);
+    console.log(event.pcm);
+  });
+
+  return null;
+}
+```
+
+`mic_pcm` emits continuous 16 kHz, 16-bit, mono, signed little-endian PCM while microphone capture is enabled.
+
+`mic_lc3` emits SDK-encoded LC3 frames with `sampleRate`, `channels`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, `packetizedFromGlasses`, and `voiceActivityDetectionEnabled`. For SDK-encoded LC3 events, `packetizedFromGlasses` is `false`: the SDK decodes glasses microphone LC3 and re-encodes it to the SDK's canonical LC3 output format before emitting app-facing LC3 events.
+
+Native Android and iOS apps receive `MicPcmEvent` and `MicLc3Event` objects with the same metadata through the SDK listener/delegate surfaces. Disable microphone audio callbacks when the app finishes using them.
+
+## Voice Activity Detection
+
+Voice Activity Detection means the glasses firmware is detecting whether the microphone signal currently contains speech. Use it as a signal, not as a replacement for microphone capture:
+
+- `setVoiceActivityDetectionEnabled(false)` keeps app-facing PCM and LC3 audio continuous for external STT, recording, and playback.
+- `voice_activity_detection_status` reports whether glasses-side Voice Activity Detection is enabled.
+- `speaking_status` reports the current speaking/not-speaking state when the connected glasses provide it.
+
+```tsx
+import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
+
+export function SpeakingLogger() {
+  useBluetoothEvent('speaking_status', (event) => {
+    console.log(event.speaking ? 'speaking' : 'not speaking');
+  });
+
+  return null;
+}
+```
+
+## Mentra Live Speaker Playback
+
+Mentra Live uses two Bluetooth paths:
+
+- The SDK's BLE connection controls glasses features and receives device events.
+- The phone OS's Bluetooth media connection carries speaker audio from the phone to the glasses.
+
+There is no special Bluetooth SDK method for "play this sound through the speaker." Play audio the same way you would play audio from any mobile app. If Mentra Live is the active Bluetooth media output, the sound comes from the glasses.
+
+On Android, the system usually creates the Bluetooth audio bond after the BLE connection flow. If the phone shows a pairing dialog, the user should accept it. On iOS, apps cannot programmatically pair or select the Bluetooth media output; ask the user to open Settings > Bluetooth and connect/select Mentra Live before playback.
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+import {createAudioPlayer, setAudioModeAsync} from 'expo-audio';
+
+await setAudioModeAsync({
+  playsInSilentMode: true,
+  interruptionMode: 'duckOthers',
+});
+
+const player = createAudioPlayer({uri: 'https://example.com/reply.wav'});
+
+await BluetoothSdk.setOwnAppAudioPlaying(true);
+player.addListener('playbackStatusUpdate', (status) => {
+  if (status.didJustFinish) {
+    void BluetoothSdk.setOwnAppAudioPlaying(false);
+  }
+});
+player.play();
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+val player = MediaPlayer().apply {
+    setAudioAttributes(
+        AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
+    )
+    setDataSource(audioUrl)
+    prepare()
+}
+
+sdk.setOwnAppAudioPlaying(true)
+player.setOnCompletionListener {
+    sdk.setOwnAppAudioPlaying(false)
+    it.release()
+}
+player.start()
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+let session = AVAudioSession.sharedInstance()
+try session.setCategory(.playback, mode: .default, options: [.duckOthers])
+try session.setActive(true)
+
+let player = AVPlayer(url: audioUrl)
+sdk.setOwnAppAudioPlaying(true)
+player.play()
+```
+
+  </Tab>
+</Tabs>
+
+`setOwnAppAudioPlaying(true)` does not route audio by itself. It tells the SDK that your app is playing audio so the Mentra Live microphone path can avoid conflicting with speaker playback. Set it back to `false` when playback finishes or stops.
+
+## Mentra Live Media Volume
+
+Mentra Live exposes step-based media volume helpers where supported:
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+const current = await BluetoothSdk.getGlassesMediaVolume();
+console.log(current.level); // 0-15
+
+await BluetoothSdk.setGlassesMediaVolume(8);
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+val current = sdk.getGlassesMediaVolume()
+sdk.setGlassesMediaVolume(8)
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+let current = try await sdk.getGlassesMediaVolume()
+try await sdk.setGlassesMediaVolume(8)
+```
+
+  </Tab>
+</Tabs>
+
+## Production Notes
+
+- Always provide a user-visible microphone permission explanation.
+- Let users disable microphone streaming.
+- For Mentra Live speaker features, explain that users may need to pair/select the glasses as the phone's Bluetooth media output.
+- Expect model availability to differ by platform, locale, and app configuration.
+- Keep cloud upload and retention policies explicit in your privacy disclosures.
+- Disable microphone audio callbacks when the app finishes using them.

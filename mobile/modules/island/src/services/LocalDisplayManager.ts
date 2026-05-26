@@ -19,8 +19,6 @@
  * is off.
  */
 
-import CoreModule from "@mentra/bluetooth-sdk"
-
 import displayProcessor from "./DisplayProcessor"
 import {getRuntimeHooks} from "../runtime/config"
 import {BgTimer} from "../utils/timers"
@@ -373,7 +371,12 @@ class LocalDisplayManager {
     }
 
     try {
-      CoreModule.displayEvent(processedEvent)
+      const sendDisplayEvent = getRuntimeHooks().sendDisplayEvent
+      if (sendDisplayEvent) {
+        void Promise.resolve(sendDisplayEvent(processedEvent)).catch((err) => {
+          console.error(`${LOG_TAG}: native display failed:`, err)
+        })
+      }
       getRuntimeHooks().setDisplayEvent?.(JSON.stringify(processedEvent))
     } catch (err) {
       console.error(`${LOG_TAG}: native display failed:`, err)

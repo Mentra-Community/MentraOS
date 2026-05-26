@@ -1,0 +1,278 @@
+---
+title: "React Native / Expo"
+description: "Use @mentra/bluetooth-sdk from a React Native or Expo development build."
+icon: "mobile-screen-button"
+---
+
+React Native apps use the JavaScript package `@mentra/bluetooth-sdk`. The package contains native Android and iOS code, so it must run in a development build or production native build.
+
+<Warning>
+Expo Go cannot load `@mentra/bluetooth-sdk` because Expo Go does not include the SDK's native modules.
+</Warning>
+
+## Install
+
+```bash
+bun add @mentra/bluetooth-sdk
+bunx expo install expo-build-properties
+```
+
+## Configure The Expo Plugin
+
+Add the SDK plugin and Android native-library packaging rules to your Expo app config. In most Expo apps this is the root `app.json`; in TypeScript-configured apps it is usually the root `app.config.ts`. Merge these keys into the existing top-level `expo` object instead of creating a second config file or replacing unrelated settings:
+
+```json
+{
+  "expo": {
+    "plugins": [
+      [
+        "@mentra/bluetooth-sdk",
+        {
+          "node": true
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 28,
+            "packagingOptions": {
+              "pickFirst": [
+                "**/libc++_shared.so",
+                "**/libonnxruntime.so",
+                "**/libonnxruntime4j_jni.so"
+              ]
+            }
+          }
+        }
+      ]
+    ]
+  }
+}
+```
+
+The plugin configures native module registration and the companion Android `lc3Lib` module during prebuild.
+
+## Run
+
+```bash
+bunx expo prebuild
+bunx expo run:ios
+# or
+bunx expo run:android
+```
+
+Use a physical phone for Bluetooth, camera, microphone, direct phone photo, and direct phone WebRTC testing.
+
+## Permissions
+
+Configure permissions in the same root Expo app config. If your app already has `android.permissions` or `ios.infoPlist`, append or merge these values:
+
+```json
+{
+  "expo": {
+    "android": {
+      "permissions": [
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.POST_NOTIFICATIONS"
+      ]
+    },
+    "ios": {
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "This app connects to your smart glasses over Bluetooth.",
+        "NSMicrophoneUsageDescription": "This app uses the microphone when you enable audio features.",
+        "NSLocalNetworkUsageDescription": "This app can connect to optional local demo servers on your network."
+      }
+    }
+  }
+}
+```
+
+## Background Operation On iOS
+
+If your React Native app needs BLE to keep running while the phone is locked or the app is backgrounded, add `bluetooth-central` to `ios.infoPlist.UIBackgroundModes`. If the app also keeps microphone capture or an audio session active in the background, add `audio` too:
+
+```json
+{
+  "expo": {
+    "ios": {
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "bluetooth-central",
+          "audio"
+        ],
+        "NSBluetoothAlwaysUsageDescription": "This app connects to your smart glasses over Bluetooth.",
+        "NSMicrophoneUsageDescription": "This app uses the microphone when you enable audio features."
+      }
+    }
+  }
+}
+```
+
+Configure the iOS audio session before continuous mic capture. If your app does not already depend on `expo-audio`, install it with `bunx expo install expo-audio`. Then call `setAudioModeAsync` once during app startup or before enabling the microphone:
+
+```ts
+import {setAudioModeAsync} from 'expo-audio';
+
+await setAudioModeAsync({
+  allowsRecording: true,
+  allowsBackgroundRecording: true,
+  shouldPlayInBackground: true,
+  playsInSilentMode: true,
+  interruptionMode: 'duckOthers',
+});
+```
+
+Start continuous microphone capture while the app is foregrounded; iOS background mode lets an active session continue, but the SDK does not start the phone microphone from the background.
+
+Use `audio` background mode only when the app genuinely records or plays audio in the background. `bluetooth-central` is the BLE requirement; `audio` is the audio-session requirement for continuous mic/audio behavior.
+
+<Warning>
+This SDK version does not enable terminated-app Core Bluetooth state restoration with `CBCentralManagerOptionRestoreIdentifierKey`. If iOS terminates the app, relaunch the app and reconnect from your normal startup flow.
+</Warning>
+
+## Basic Usage
+
+```ts
+import BluetoothSdk, {DeviceModels} from '@mentra/bluetooth-sdk';
+
+const devices = await BluetoothSdk.scan(DeviceModels.MentraLive, {
+  timeoutMs: 10_000,
+  onResults: (nextDevices) => {
+    console.log('Nearby glasses:', nextDevices);
+  },
+});
+
+const device = await chooseDevice(devices);
+if (!device) {
+  throw new Error('No Mentra Live glasses selected');
+}
+
+await BluetoothSdk.connect(device);
+await BluetoothSdk.requestVersionInfo();
+```
+
+Use the React hooks below to render connection and status state in components. Mentra Live does not have a display; use display commands only after gating by model capability.
+
+## React Hooks
+
+React Native apps can use the optional hooks subpath for common lifecycle
+plumbing while keeping the root SDK available for direct commands:
+
+| Hook | Use when |
+| --- | --- |
+| `useMentraBluetooth` | You want one React session object for status, scan, connect/disconnect, default-device state, and gallery mode. |
+| `useBluetoothScan` | You want a focused scan picker without the full connection/session helper. |
+| `useBluetoothEvent` | You want React-managed subscription cleanup for hardware events such as button presses, touch, battery, Wi-Fi, hotspot, photo, stream, speaking, or microphone events. |
+
+```tsx
+import {Button, Text, View} from 'react-native';
+import {DeviceModels} from '@mentra/bluetooth-sdk';
+import {useBluetoothEvent, useMentraBluetooth} from '@mentra/bluetooth-sdk/react';
+
+export function DeviceScreen() {
+  const mentra = useMentraBluetooth({
+    defaultModel: DeviceModels.MentraLive,
+    scanTimeoutMs: 10_000,
+  });
+
+  useBluetoothEvent('button_press', (event) => {
+    console.log('Glasses button:', event.buttonId, event.pressType);
+  });
+
+  useBluetoothEvent('speaking_status', (event) => {
+    console.log('Speaking:', event.speaking);
+  });
+
+  return (
+    <View>
+      <Text>{mentra.glasses.connected ? 'Connected' : 'Disconnected'}</Text>
+      <Button disabled={mentra.busy} title="Scan" onPress={() => mentra.scan.start()} />
+      {mentra.scan.devices.map((device) => (
+        <Button key={device.id} title={device.name} onPress={() => mentra.connect(device)} />
+      ))}
+      <Button
+        disabled={!mentra.glasses.connected || mentra.sdk.galleryMode.applying}
+        title={mentra.sdk.galleryMode.enabled ? 'Disable gallery mode' : 'Enable gallery mode'}
+        onPress={() => mentra.setGalleryModeEnabled(!mentra.sdk.galleryMode.enabled)}
+      />
+      <Button disabled={!mentra.glasses.connected} title="Disconnect" onPress={mentra.disconnect} />
+    </View>
+  );
+}
+```
+
+For a standalone picker, use `useBluetoothScan()` directly:
+
+```tsx
+import {Button, Text, View} from 'react-native';
+import {DeviceModels, type Device} from '@mentra/bluetooth-sdk';
+import {useBluetoothScan} from '@mentra/bluetooth-sdk/react';
+
+export function ScanPicker({onConnect}: {onConnect: (device: Device) => void}) {
+  const scan = useBluetoothScan({
+    model: DeviceModels.MentraLive,
+    timeoutMs: 10_000,
+  });
+
+  return (
+    <View>
+      <Button disabled={scan.scanning} title="Scan" onPress={() => scan.startScan()} />
+      {scan.error ? <Text>Scan failed</Text> : null}
+      {scan.devices.map((device) => (
+        <Button key={device.id} title={device.name} onPress={() => onConnect(device)} />
+      ))}
+    </View>
+  );
+}
+```
+
+The hooks do not request Android permissions or choose a persistence package for
+you. Ask for permissions in your app before calling scan/connect actions, and
+pass a `defaultDeviceStorage` adapter to `useMentraBluetooth` if you want to
+restore a default device across app restarts.
+
+## Status Shape
+
+React Native exposes `mentra.glasses.connection` as a discriminated union:
+
+```ts
+type GlassesConnectionStatus =
+  | {state: 'disconnected'}
+  | {state: 'scanning'}
+  | {state: 'connecting'}
+  | {state: 'bonding'}
+  | {state: 'connected'; fullyBooted: boolean};
+```
+
+Use `mentra.glasses.connection.state` for link-layer progress. `fullyBooted` only exists when `state === 'connected'`.
+
+Use `useMentraBluetooth()` as the React status API for connection, battery, Wi-Fi, hotspot, scan, and SDK runtime state. `mentra.sdk.galleryMode.enabled` reflects the desired gallery-mode setting sent to the glasses, and `mentra.sdk.galleryMode.applying` is true while `setGalleryModeEnabled(...)` is in flight.
+
+## Default Device
+
+React Native apps should persist their own default-device record if they want `connectDefault()` to work after restart:
+
+```ts
+const savedDevice = await loadSavedDevice();
+if (savedDevice) {
+  await BluetoothSdk.setDefaultDevice(savedDevice);
+  await BluetoothSdk.connectDefault();
+}
+```
+
+## Local SDK Override
+
+Use this when testing SDK source changes locally:
+
+```bash
+bun add --no-save /path/to/MentraOS/mobile/modules/bluetooth-sdk
+MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk bunx expo run:ios
+# or
+MENTRA_BLUETOOTH_SDK_PACKAGE_PATH=/path/to/MentraOS/mobile/modules/bluetooth-sdk bunx expo run:android
+```
+
+Keep `MENTRA_BLUETOOTH_SDK_PACKAGE_PATH` in your shell or CI environment, not in committed app config.

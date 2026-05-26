@@ -1,6 +1,6 @@
 import {useRoute} from "@react-navigation/native"
 import {View} from "react-native"
-import CoreModule from "@mentra/bluetooth-sdk"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 
 import {Button, Screen} from "@/components/ignite"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
@@ -24,7 +24,7 @@ export default function UnpairEvenScreen() {
   }
 
   const handleTryAgain = () => {
-    CoreModule.forget()
+    BluetoothSdk.forget()
     clearHistory()
     replace("/pairing/prep", {deviceModel})
   }

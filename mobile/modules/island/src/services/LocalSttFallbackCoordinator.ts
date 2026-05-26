@@ -1,5 +1,3 @@
-import CoreModule from "@mentra/bluetooth-sdk"
-
 import {getRuntimeHooks, ISLAND_SETTINGS_KEYS} from "../runtime/config"
 
 /**
@@ -71,7 +69,7 @@ class LocalSttFallbackCoordinator {
   private async startLocalStt(): Promise<void> {
     this.log("starting local stt")
     try {
-      await CoreModule.restartTranscriber()
+      await getRuntimeHooks().restartTranscriber?.()
     } catch (err) {
       this.log(`restartTranscriber failed: ${err}`)
     }
