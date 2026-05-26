@@ -136,6 +136,7 @@ export type MentraBluetoothSession = {
   setDefaultDevice: (device: Device | null) => Promise<void>
   setGalleryModeEnabled: (enabled: boolean) => Promise<void>
   setVoiceActivityDetectionEnabled: (enabled: boolean) => Promise<void>
+  queryVoiceActivityDetectionEnabled: () => Promise<void>
 }
 
 function stringValue(value: unknown): string | undefined {
@@ -294,6 +295,15 @@ export function useMentraBluetooth(options: UseMentraBluetoothOptions = {}): Men
     }
   }
 
+  async function queryVoiceActivityDetectionEnabled() {
+    try {
+      await BluetoothSdk.queryVoiceActivityDetectionEnabled()
+    } catch (error) {
+      options.onError?.(error)
+      throw error
+    }
+  }
+
   const galleryMode: GalleryModeState = {
     applying: galleryModeApplying,
     enabled: connection.bluetoothStatus.galleryModeEnabled !== false,
@@ -315,5 +325,6 @@ export function useMentraBluetooth(options: UseMentraBluetoothOptions = {}): Men
     setDefaultDevice: connection.setDefaultDevice,
     setGalleryModeEnabled,
     setVoiceActivityDetectionEnabled,
+    queryVoiceActivityDetectionEnabled,
   }
 }

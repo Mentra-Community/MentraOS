@@ -602,6 +602,8 @@ export interface BluetoothSdkPublicModule {
 
   setGalleryModeEnabled(enabled: boolean): Promise<void>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
+  /** Mentra Live only: K900 `cs_swst`; listen for `voice_activity_detection_status` / `switch_status` (type 8). */
+  queryVoiceActivityDetectionEnabled(): Promise<void>
   setButtonPhotoSettings(size: ButtonPhotoSize): Promise<void>
   setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<void>
   setButtonCameraLed(enabled: boolean): Promise<void>

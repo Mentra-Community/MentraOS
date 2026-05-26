@@ -96,6 +96,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   // Gallery Commands
   setGalleryModeEnabled(enabled: boolean): Promise<void>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
+  queryVoiceActivityDetectionEnabled(): Promise<void>
   setButtonPhotoSettings(size: ButtonPhotoSize): Promise<void>
   setButtonVideoRecordingSettings(width: number, height: number, fps: number): Promise<void>
   setButtonCameraLed(enabled: boolean): Promise<void>
@@ -350,6 +351,28 @@ NativeBluetoothSdkModule.setGalleryModeEnabled = function (enabled: boolean) {
 
 NativeBluetoothSdkModule.setVoiceActivityDetectionEnabled = function (enabled: boolean) {
   return this.updateBluetoothSettings({voice_activity_detection_enabled: enabled})
+}
+
+type NativeQueryVadSwitchState = () => Promise<void>
+
+const nativeQueryVoiceActivityDetectionEnabled =
+  typeof NativeBluetoothSdkModule.queryVoiceActivityDetectionEnabled === "function"
+    ? NativeBluetoothSdkModule.queryVoiceActivityDetectionEnabled.bind(NativeBluetoothSdkModule)
+    : typeof (NativeBluetoothSdkModule as {queryVadSwitchState?: NativeQueryVadSwitchState}).queryVadSwitchState ===
+        "function"
+      ? (NativeBluetoothSdkModule as {queryVadSwitchState: NativeQueryVadSwitchState}).queryVadSwitchState.bind(
+          NativeBluetoothSdkModule,
+        )
+      : undefined
+
+NativeBluetoothSdkModule.queryVoiceActivityDetectionEnabled = function () {
+  if (nativeQueryVoiceActivityDetectionEnabled) {
+    return nativeQueryVoiceActivityDetectionEnabled()
+  }
+  console.warn(
+    "[@mentra/bluetooth-sdk] queryVoiceActivityDetectionEnabled is unavailable. Rebuild the native app (expo prebuild && expo run:android).",
+  )
+  return Promise.resolve()
 }
 
 NativeBluetoothSdkModule.setButtonPhotoSettings = function (size: ButtonPhotoSize) {
