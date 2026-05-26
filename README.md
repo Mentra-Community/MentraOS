@@ -96,62 +96,7 @@ MentraOS works across a growing ecosystem of smart glasses.
 Browse, install, and run glasses apps from your phone. Try captions, AI notes, proactive AI, translation, streaming, and more.
 
 <div align="center">
-  <table border="0" cellspacing="0" cellpadding="0" style="border: 0 !important; border-collapse: collapse;">
-    <tbody>
-    <tr style="border: 0 !important; background: transparent;">
-      <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
-        <a href="https://apps.mentra.glass/package/com.augmentos.livecaptions" style="text-decoration: none; color: inherit;">
-          <img src="./images/app-icons/Captions.svg" alt="Live Captions" width="80" style="border-radius: 18px;" />
-          <br /><b>Captions</b>
-        </a>
-      </td>
-      <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
-        <a href="https://apps.mentra.glass/package/com.mentra.link" style="text-decoration: none; color: inherit;">
-          <img src="./images/app-icons/LinkLingo.png" alt="Link" width="80" style="border-radius: 18px;" />
-          <br /><b>Link</b>
-        </a>
-      </td>
-      <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
-        <a href="https://apps.mentra.glass/package/com.mentra.merge" style="text-decoration: none; color: inherit;">
-          <img src="./images/app-icons/Merge.png" alt="Merge" width="80" style="border-radius: 18px;" />
-          <br /><b>Merge</b>
-        </a>
-      </td>
-      <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
-        <a href="https://apps.mentra.glass/package/com.mentra.notes" style="text-decoration: none; color: inherit;">
-          <img src="./images/app-icons/Mentra_Notes.png" alt="Notes" width="80" style="border-radius: 18px;" />
-          <br /><b>Notes</b>
-        </a>
-      </td>
-    </tr>
-    <tr style="border: 0 !important; background: transparent;">
-      <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
-        <a href="https://apps.mentra.glass/package/com.mentra.calendarreminder" style="text-decoration: none; color: inherit;">
-          <img src="https://imagedelivery.net/nrc8B2Lk8UIoyW7fY8uHVg/32095bee-2bbd-4564-4777-4f99fcf73700/square" alt="Calendar Reminder" width="80" style="border-radius: 18px;" />
-          <br /><b>Calendar</b>
-        </a>
-      </td>
-      <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
-        <a href="https://apps.mentra.glass/package/com.mentra.dash" style="text-decoration: none; color: inherit;">
-          <img src="./images/app-icons/Dash.png" alt="Dash" width="80" style="border-radius: 18px;" />
-          <br /><b>Dash</b>
-        </a>
-      </td>
-      <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
-        <a href="https://apps.mentra.glass/package/com.mentra.translation" style="text-decoration: none; color: inherit;">
-          <img src="./images/app-icons/Translation.svg" alt="Live Translation" width="80" style="border-radius: 18px;" />
-          <br /><b>Translation</b>
-        </a>
-      </td>
-      <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
-        <a href="https://apps.mentra.glass" style="text-decoration: none; color: inherit;">
-          <img src="./images/app-icons/Miniappstore.png" alt="Mentra Store" width="80" style="border-radius: 18px;" />
-          <br /><b>See All</b>
-        </a>
-      </td>
-    </tr>
-    </tbody>
-  </table>
+  <img src="./images/Mockup_appshomepage.png" alt="MentraOS glasses apps homepage" width="520" />
 </div>
 
 ## How MentraOS Works
