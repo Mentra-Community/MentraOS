@@ -9,6 +9,7 @@ import { Logger } from "pino";
 import UserSession from "../UserSession";
 dotenv.config();
 
+const isChinaDeployment = process.env.DEPLOYMENT_REGION === "china";
 // Environment variables for provider configuration
 export const SONIOX_API_KEY = process.env.SONIOX_API_KEY || "";
 export const SONIOX_ENDPOINT = process.env.SONIOX_ENDPOINT || "wss://stt-rt.soniox.com/transcribe-websocket";
@@ -17,7 +18,7 @@ export const ALIBABA_ENDPOINT = process.env.ALIBABA_ENDPOINT || "wss://dashscope
 export const ALIBABA_WORKSPACE = process.env.ALIBABA_WORKSPACE || "";
 export const ALIBABA_DASHSCOPE_API_KEY = process.env.ALIBABA_DASHSCOPE_API_KEY || "";
 
-if (!SONIOX_API_KEY || !SONIOX_ENDPOINT) {
+if ((!SONIOX_API_KEY || !SONIOX_ENDPOINT) && !isChinaDeployment) {
   const message = "Missing required Soniox environment variables: SONIOX_API_KEY and SONIOX_ENDPOINT";
   if (process.env.NODE_ENV === "production") {
     throw new Error(message);

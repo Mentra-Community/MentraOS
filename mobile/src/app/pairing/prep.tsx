@@ -14,6 +14,7 @@ import GlassesDisplayMirror from "@/components/mirror/GlassesDisplayMirror"
 import {useState} from "react"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
+import {CDN_BASE_URL} from "@/constants/appConfig"
 import {useAppStatusStore} from "@mentra/island"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 
@@ -220,7 +221,7 @@ export default function PairingPrepScreen() {
   }
 
   const MentraLivePairingGuide = () => {
-    const CDN_BASE = "https://mentra-videos-cdn.mentraglass.com/onboarding/mentra-live/light"
+    const CDN_BASE = `${CDN_BASE_URL}/onboarding/mentra-live/light`
     let steps: OnboardingStep[] = [
       {
         name: "power_on_tutorial",
