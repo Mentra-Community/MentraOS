@@ -45,26 +45,31 @@ MentraOS works across a growing ecosystem of smart glasses.
     <tbody>
       <tr style="border: 0 !important; background: transparent;">
         <td align="center" valign="top" width="20%" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 24px 12px 12px; background: #ffffff;">
+          <br />
           <img src="./images/glasses/mentra-live.png" alt="Mentra Live" width="140" />
           <br /><br />
           <p align="center"><b>Mentra Live</b></p>
         </td>
         <td align="center" valign="top" width="20%" style="border: 1px solid #bbf7d0; border-radius: 14px; padding: 24px 12px 12px; background: #ffffff;">
+          <br />
           <img src="./images/glasses/even-realities-g2.png" alt="Even Realities G2" width="140" />
           <br /><br />
           <p align="center"><b>Even Realities G2</b></p>
         </td>
         <td align="center" valign="top" width="20%" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 24px 12px 12px; background: #ffffff;">
+          <br />
           <img src="./images/glasses/vuzix-z100.png" alt="Vuzix Z100" width="140" />
           <br /><br />
           <p align="center"><b>Vuzix Z100</b></p>
         </td>
         <td align="center" valign="top" width="20%" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 24px 12px 12px; background: #ffffff;">
+          <br />
           <img src="./images/glasses/even-realities-g1.png" alt="Even Realities G1" width="140" />
           <br /><br />
           <p align="center"><b>Even Realities G1</b></p>
         </td>
         <td align="center" valign="top" width="20%" style="border: 1px solid #fed7aa; border-radius: 14px; padding: 24px 12px 12px; background: #ffffff;">
+          <br />
           <img src="./images/glasses/nimo.png" alt="NIMO" width="95" />
           <br /><br />
           <p align="center"><b>NIMO&nbsp;(Coming&nbsp;Soon)</b></p>
