@@ -190,8 +190,6 @@ MIT License
 
 Copyright 2026 Mentra Labs, Inc.
 
----
-
 <div align="center">
   <br />
   <img width="100" alt="MentraOS" src="./images/MentraLogoWhiteSquare.svg" style="border-radius: 20%;" />
