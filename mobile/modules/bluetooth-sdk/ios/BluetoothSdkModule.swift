@@ -302,6 +302,12 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             try await sdk.setVoiceActivityDetectionEnabled(enabled)
         }
 
+        AsyncFunction("queryVoiceActivityDetectionEnabled") {
+            await MainActor.run {
+                self.bluetoothSdk().queryVoiceActivityDetectionEnabled()
+            }
+        }
+
         AsyncFunction("queryGalleryStatus") {
             await MainActor.run {
                 self.bluetoothSdk().queryGalleryStatus()
