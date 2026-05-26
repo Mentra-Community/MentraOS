@@ -21,6 +21,7 @@ import mentraos.ble.MentraosBle.AutoBrightnessConfig
 import mentraos.ble.MentraosBle.HeadUpAngleConfig
 import mentraos.ble.MentraosBle.DisplayDistanceConfig
 import mentraos.ble.MentraosBle.DisplayHeightConfig
+import mentraos.ble.MentraosBle.VadEnabledRequest
 import mentraos.ble.MentraosBle.VersionRequest
 
 import org.json.JSONArray
@@ -356,6 +357,18 @@ object NexProtobufUtils {
             .build()
         val phoneToGlasses = PhoneToGlasses.newBuilder()
             .setMicState(micStateConfig)
+            .build()
+
+        return generateProtobufCommandBytes(phoneToGlasses)
+    }
+
+    fun generateVadEnabledRequestCommandBytes(enable: Boolean): ByteArray {
+        Bridge.log("Nex: VAD Enabled: $enable")
+        val vadEnabledRequest = VadEnabledRequest.newBuilder()
+            .setEnabled(enable)
+            .build()
+        val phoneToGlasses = PhoneToGlasses.newBuilder()
+            .setSetVadEnabled(vadEnabledRequest)
             .build()
 
         return generateProtobufCommandBytes(phoneToGlasses)

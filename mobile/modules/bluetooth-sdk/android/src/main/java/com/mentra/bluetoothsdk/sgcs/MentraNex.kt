@@ -286,6 +286,20 @@ class MentraNex : SGCManager() {
     override fun queryGalleryStatus() { Bridge.log("Nex: queryGalleryStatus operation not supported") }
     override fun sendGalleryMode() { Bridge.log("Nex: sendGalleryMode operation not supported") }
 
+    override fun sendVoiceActivityDetectionSetting() {
+        val enabled = DeviceStore.get("bluetooth", "voice_activity_detection_enabled") as? Boolean ?: true
+        Bridge.log("Nex: 🎤 Sending Voice Activity Detection setting to glasses: $enabled")
+
+        if (connectionState != ConnTypes.CONNECTED) {
+            Bridge.log("Nex: Cannot send VAD setting - not connected")
+            return
+        }
+
+        val bytes = NexProtobufUtils.generateVadEnabledRequestCommandBytes(enabled)
+        sendDataSequentially(bytes)
+        Bridge.sendVoiceActivityDetectionStatus(enabled)
+    }
+
     // Version info: Not supported on Nex (uses protobuf for version info)
     override fun requestVersionInfo() { Bridge.log("Nex: requestVersionInfo operation not supported") }
 
@@ -890,6 +904,9 @@ class MentraNex : SGCManager() {
                 val versionQueryPacket = NexProtobufUtils.generateVersionRequestCommandBytes()
                 sendDataSequentially(versionQueryPacket, 100)
                 Bridge.log("Sent glasses protobuf version request")
+
+                // Push current glasses-side Voice Activity Detection setting
+                sendVoiceActivityDetectionSetting()
             }
         } else {
             Log.e(TAG, " glass UART service not found")

@@ -474,6 +474,26 @@ class MantleManager {
       )
 
       this.subs.push(
+        BluetoothSdk.addListener("send_command_to_ble", (event) => {
+          GlobalEventEmitter.emit("send_command_to_ble", {
+            command: event.command,
+            commandText: event.commandText,
+            timestamp: event.timestamp,
+          })
+        }),
+      )
+
+      this.subs.push(
+        BluetoothSdk.addListener("receive_command_from_ble", (event) => {
+          GlobalEventEmitter.emit("receive_command_from_ble", {
+            command: event.command,
+            commandText: event.commandText,
+            timestamp: event.timestamp,
+          })
+        }),
+      )
+
+      this.subs.push(
         BluetoothSdk.addListener("button_press", (event) => {
           console.log("MANTLE: BUTTON_PRESS event received:", event)
           this.handle_button_press(event)
