@@ -223,7 +223,7 @@ public struct StreamRequest {
         streamUrl: String,
         streamId: String = "",
         keepAlive: Bool = true,
-        keepAliveIntervalSeconds: Int = 15,
+        keepAliveIntervalSeconds: Int = 5,
         sound: Bool = true,
         video: StreamVideoConfig? = nil,
         audio: StreamAudioConfig? = nil,
@@ -248,7 +248,7 @@ public struct StreamRequest {
                 ?? "",
             streamId: values["streamId"] as? String ?? "",
             keepAlive: values["keepAlive"] as? Bool ?? true,
-            keepAliveIntervalSeconds: intValue(values["keepAliveIntervalSeconds"]) ?? 15,
+            keepAliveIntervalSeconds: intValue(values["keepAliveIntervalSeconds"]) ?? 5,
             sound: values["sound"] as? Bool ?? true,
             video: StreamVideoConfig(values: values["video"] as? [String: Any]),
             audio: StreamAudioConfig(values: values["audio"] as? [String: Any]),
@@ -258,6 +258,7 @@ public struct StreamRequest {
 
     public var values: [String: Any] {
         var values = extraValues
+        values.removeValue(forKey: "keepAliveMode")
         values["type"] = "start_stream"
         values["streamUrl"] = streamUrl
         values["streamId"] = streamId
@@ -276,12 +277,18 @@ public struct StreamRequest {
     }
 }
 
-public struct StreamKeepAliveRequest {
-    public let streamId: String
-    public let ackId: String
-    public let extraValues: [String: Any]
+extension StreamRequest {
+    var isExternallyManagedKeepAlive: Bool {
+        stringValue(extraValues, "keepAliveMode") == "external"
+    }
+}
 
-    public init(streamId: String, ackId: String, extraValues: [String: Any] = [:]) {
+struct StreamKeepAliveRequest {
+    let streamId: String
+    let ackId: String
+    let extraValues: [String: Any]
+
+    init(streamId: String, ackId: String, extraValues: [String: Any] = [:]) {
         self.streamId = streamId
         self.ackId = ackId
         self.extraValues = extraValues
@@ -295,7 +302,7 @@ public struct StreamKeepAliveRequest {
         )
     }
 
-    public var values: [String: Any] {
+    var values: [String: Any] {
         var values = extraValues
         values["type"] = "keep_stream_alive"
         values["streamId"] = streamId

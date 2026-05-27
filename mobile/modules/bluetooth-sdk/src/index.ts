@@ -33,7 +33,6 @@ const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "mic_pcm",
   "mic_lc3",
   "stream_status",
-  "keep_alive_ack",
 ])
 
 const addListener: BluetoothSdkPublicModule["addListener"] = (eventName, listener) => {
@@ -84,7 +83,6 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   stopVideoRecording: PrivateBluetoothSdkModule.stopVideoRecording.bind(PrivateBluetoothSdkModule),
   startStream: PrivateBluetoothSdkModule.startStream.bind(PrivateBluetoothSdkModule),
   stopStream: PrivateBluetoothSdkModule.stopStream.bind(PrivateBluetoothSdkModule),
-  keepStreamAlive: PrivateBluetoothSdkModule.keepStreamAlive.bind(PrivateBluetoothSdkModule),
   setMicState: PrivateBluetoothSdkModule.setMicState.bind(PrivateBluetoothSdkModule),
   setPreferredMic: PrivateBluetoothSdkModule.setPreferredMic.bind(PrivateBluetoothSdkModule),
   setOwnAppAudioPlaying: PrivateBluetoothSdkModule.setOwnAppAudioPlaying.bind(PrivateBluetoothSdkModule),
@@ -139,7 +137,6 @@ export type {
   HotspotErrorEvent,
   HotspotStatus,
   HotspotStatusChangeEvent,
-  KeepAliveAckEvent,
   LocalTranscriptionEvent,
   LogEvent,
   MicLc3Event,
@@ -158,7 +155,6 @@ export type {
   ScanResultsCallback,
   SpeakingStatusEvent,
   StreamAudioConfig,
-  StreamKeepAliveRequest,
   StreamResolvedConfig,
   StreamStartRequest,
   StreamStatusEvent,

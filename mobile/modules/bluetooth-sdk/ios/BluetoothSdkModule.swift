@@ -428,9 +428,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
-        AsyncFunction("keepStreamAlive") { (params: [String: Any]) in
+        AsyncFunction("sendCloudStreamKeepAlive") { (params: [String: Any]) in
             await MainActor.run {
-                self.bluetoothSdk().keepStreamAlive(StreamKeepAliveRequest(values: params))
+                self.bluetoothSdk().sendCloudStreamKeepAlive(StreamKeepAliveRequest(values: params))
             }
         }
 

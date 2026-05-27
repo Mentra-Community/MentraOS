@@ -580,7 +580,7 @@ class SocketComms {
   private handle_start_stream(msg: any) {
     const streamUrl = msg.streamUrl
     if (streamUrl) {
-      BluetoothSdk.startStream(msg)
+      BluetoothSdk.startCloudManagedStream(msg)
     } else {
       console.log("Invalid stream request: missing stream URL")
     }
@@ -592,7 +592,7 @@ class SocketComms {
 
   private handle_keep_stream_alive(msg: any) {
     console.log(`SOCKET: Received KEEP_STREAM_ALIVE: ${JSON.stringify(msg)}`)
-    BluetoothSdk.keepStreamAlive(msg)
+    BluetoothSdk.sendCloudStreamKeepAlive(msg)
   }
 
   private handle_start_video_recording(msg: any) {
