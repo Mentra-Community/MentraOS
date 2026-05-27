@@ -670,10 +670,14 @@ function BarcodeResult({scan}: {scan: BluetoothSdkExampleModel['barcodeScan']}) 
     return null;
   }
 
-  const foundValues = scan.barcodes
-    .map((barcode) => barcode.rawValue ?? barcode.displayValue)
-    .filter((value): value is string => Boolean(value));
-  const copyValue = foundValues.join('\n');
+  const foundBarcodes = scan.barcodes
+    .map((barcode, index) => ({
+      barcode,
+      index,
+      value: barcode.rawValue ?? barcode.displayValue,
+    }))
+    .filter((result): result is {barcode: (typeof scan.barcodes)[number]; index: number; value: string} => Boolean(result.value));
+  const foundValues = foundBarcodes.map((result) => result.value);
   const foundFormats = Array.from(new Set(scan.barcodes.map((barcode) => barcode.format).filter(Boolean)));
   const foundTypeLabel = foundFormats.length === 1 ? ` (type: ${foundFormats[0]})` : foundFormats.length > 1 ? ` (types: ${foundFormats.join(', ')})` : '';
   const expectedMatched = scan.expectedValue
@@ -691,13 +695,14 @@ function BarcodeResult({scan}: {scan: BluetoothSdkExampleModel['barcodeScan']}) 
       : isError
         ? 'Barcode error'
         : 'No barcode found';
-  const body = isFound
-    ? foundValues.join(' · ')
-    : isError
+  const fallbackBody = isError
       ? scan.error ?? 'Scanner failed'
       : isScanning
         ? 'Analyzing photo preview...'
         : 'Photo preview scanned';
+  const body = isFound
+    ? `${foundBarcodes.length} barcode${foundBarcodes.length === 1 ? '' : 's'} found`
+    : fallbackBody;
 
   return (
     <View style={[styles.barcodeRow, isScanning && styles.barcodeRowScanning, isFound && styles.barcodeRowFound, isError && styles.barcodeRowError]}>
@@ -714,20 +719,33 @@ function BarcodeResult({scan}: {scan: BluetoothSdkExampleModel['barcodeScan']}) 
       )}
       <View style={{flex: 1}}>
         <Text style={styles.barcodeTitle}>{title}</Text>
-        <Text style={styles.barcodeValue}>{body}</Text>
+        {isFound ? (
+          <View style={styles.barcodeResultList}>
+            {foundBarcodes.map(({barcode, index, value}, resultIndex) => (
+              <View key={`${barcode.format}-${value}-${index}`} style={styles.barcodeResultItem}>
+                <View style={styles.barcodeResultTextWrap}>
+                  <Text style={styles.barcodeValue}>{value}</Text>
+                  <Text style={styles.barcodeMeta}>
+                    {[barcode.format, foundBarcodes.length > 1 ? `result ${resultIndex + 1}` : null].filter(Boolean).join(' · ')}
+                  </Text>
+                </View>
+                <Pressable
+                  hitSlop={8}
+                  onPress={() => Clipboard.setString(value)}
+                  style={({pressed}) => [styles.barcodeCopyBtn, pressed && styles.copyChipPressed]}>
+                  <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.greenAccent} strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round">
+                    <Path d="M8 8h11v13H8z" />
+                    <Path d="M5 16H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h11a1 1 0 0 1 1 1v1" />
+                  </Svg>
+                  <Text style={styles.barcodeCopyText}>Copy</Text>
+                </Pressable>
+              </View>
+            ))}
+          </View>
+        ) : (
+          <Text style={styles.barcodeValue}>{body}</Text>
+        )}
       </View>
-      {isFound && copyValue ? (
-        <Pressable
-          hitSlop={8}
-          onPress={() => Clipboard.setString(copyValue)}
-          style={({pressed}) => [styles.barcodeCopyBtn, pressed && styles.copyChipPressed]}>
-          <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke={colors.greenAccent} strokeWidth={2.1} strokeLinecap="round" strokeLinejoin="round">
-            <Path d="M8 8h11v13H8z" />
-            <Path d="M5 16H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h11a1 1 0 0 1 1 1v1" />
-          </Svg>
-          <Text style={styles.barcodeCopyText}>Copy</Text>
-        </Pressable>
-      ) : null}
     </View>
   );
 }
@@ -852,14 +870,18 @@ const styles = StyleSheet.create({
   previewStatusLine: { flexDirection: 'row', alignItems: 'center', gap: 9 },
   previewStatusText: { flex: 1, color: '#fff', fontSize: 13, fontWeight: '800' },
   previewStatusDetail: { color: 'rgba(255,255,255,0.82)', fontSize: 11, fontWeight: '600', lineHeight: 15, marginTop: 5 },
-  barcodeRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 10, marginHorizontal: 6, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(15,42,29,0.08)', backgroundColor: 'rgba(15,42,29,0.04)', paddingVertical: 10, paddingHorizontal: 12 },
+  barcodeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginTop: 10, marginHorizontal: 6, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(15,42,29,0.08)', backgroundColor: 'rgba(15,42,29,0.04)', paddingVertical: 10, paddingHorizontal: 12 },
   barcodeRowScanning: { borderColor: 'rgba(52,199,89,0.24)', backgroundColor: 'rgba(52,199,89,0.08)' },
   barcodeRowFound: { borderColor: 'rgba(52,199,89,0.32)', backgroundColor: 'rgba(52,199,89,0.12)' },
   barcodeRowError: { borderColor: 'rgba(255,59,48,0.24)', backgroundColor: 'rgba(255,59,48,0.09)' },
+  barcodeResultList: { gap: 7, marginTop: 8 },
+  barcodeResultItem: { flexDirection: 'row', alignItems: 'center', gap: 8, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.42)', paddingVertical: 8, paddingHorizontal: 9 },
+  barcodeResultTextWrap: { flex: 1, minWidth: 0 },
   barcodeCopyBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(52,199,89,0.26)', backgroundColor: 'rgba(255,255,255,0.5)', paddingVertical: 7, paddingHorizontal: 9 },
   barcodeCopyText: { color: colors.greenAccent, fontSize: 11, fontWeight: '700' },
   barcodeTitle: { color: colors.ink, fontSize: 12, fontWeight: '700' },
-  barcodeValue: { color: colors.muted, fontSize: 11, fontWeight: '600', lineHeight: 15, marginTop: 2 },
+  barcodeValue: { color: colors.ink, fontSize: 11, fontWeight: '700', lineHeight: 15, marginTop: 2 },
+  barcodeMeta: { color: colors.muted, fontSize: 10, fontWeight: '600', lineHeight: 14, marginTop: 2 },
   captureBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 18, paddingVertical: 16, marginTop: 14, marginHorizontal: 6, gap: 10 },
   captureText: { color: '#fff', fontSize: 15, fontWeight: '600' },
   disabled: { opacity: 0.45 },
