@@ -340,7 +340,7 @@ await BluetoothSdk.setCameraFov({fov: 102, roiPosition: 0});
 
 Mentra Live gallery mode controls right-action-button capture. When gallery mode is enabled, a short press takes a photo, a long press starts video recording, and a short press stops the active video recording. `setGalleryModeEnabled(true)` enables local button capture; `setGalleryModeEnabled(false)` reports button and touch events to the host app without triggering local gallery capture while the glasses are connected. Button presses are always reported as SDK events.
 
-`setCameraFov` accepts FOV degrees from 82 to 118 and ROI position `0` center, `1` bottom, or `2` top. On Mentra Live, applying FOV/ROI restarts the camera for about 5 seconds; wait for that restart before requesting a photo.
+`setCameraFov` accepts FOV degrees from 50 to 118 and ROI position `0` center, `1` bottom, or `2` top. On Mentra Live, applying FOV/ROI restarts the camera for about 5 seconds; wait for that restart before requesting a photo.
 
 ## RGB LED
 
