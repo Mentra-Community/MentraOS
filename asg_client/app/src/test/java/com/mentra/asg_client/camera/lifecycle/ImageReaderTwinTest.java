@@ -154,7 +154,7 @@ public class ImageReaderTwinTest {
     }
 
     @Test
-    public void previewDrainSurvivesAcquireLatestImageThrowing() {
+    public void previewDrainSurvivesReaderClosedDuringCallback() {
         new ImageReaderTwin(new Size(1920, 1080), backgroundHandler, stillListener);
 
         ArgumentCaptor<ImageReader.OnImageAvailableListener> drainCaptor =
@@ -162,10 +162,10 @@ public class ImageReaderTwinTest {
         verify(previewReaderMock).setOnImageAvailableListener(drainCaptor.capture(), eq(backgroundHandler));
         ImageReader.OnImageAvailableListener drain = drainCaptor.getValue();
 
-        ImageReader noisyReader = mock(ImageReader.class);
-        when(noisyReader.acquireLatestImage()).thenThrow(new RuntimeException("native fault"));
+        ImageReader closedReader = mock(ImageReader.class);
+        when(closedReader.acquireLatestImage()).thenThrow(new IllegalStateException("reader closed"));
 
-        drain.onImageAvailable(noisyReader); // Must not propagate.
+        drain.onImageAvailable(closedReader); // Must not propagate.
     }
 
     @Test

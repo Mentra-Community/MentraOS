@@ -199,7 +199,7 @@ public class PhotoSessionTest {
     }
 
     @Test
-    public void restoreAePreview_nullBackgroundHandler_skipsSetRepeatingRequest() {
+    public void restoreAePreview_nullBackgroundHandler_skipsSetRepeatingRequest() throws Exception {
         PhotoSession.Hooks hooks = mock(PhotoSession.Hooks.class);
         CameraCoordinator coordinator = mock(CameraCoordinator.class);
         when(coordinator.device()).thenReturn(mock(CameraDevice.class));
