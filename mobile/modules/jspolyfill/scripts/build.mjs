@@ -4,7 +4,7 @@
 // Reads src/startup.ts and emits a single IIFE at assets/startup.js.
 // That assets/ file is the *single committed source of truth* for the
 // polyfill. Native modules pick it up via:
-//   - Android: crust's build.gradle adds `../../mentrajs-runtime/assets`
+//   - Android: crust's build.gradle adds `../../jspolyfill/assets`
 //              to `sourceSets.main.assets.srcDirs`. Gradle accepts cross-
 //              module sourceSet paths, so the file ships from the canonical
 //              location.
@@ -54,12 +54,12 @@ await build({
   external: [],
   outfile: outFile,
   banner: {
-    js: "// @generated MentraJS polyfill bundle — see mobile/modules/mentrajs-runtime",
+    js: "// @generated MentraJS polyfill bundle — see mobile/modules/jspolyfill",
   },
 })
 
 // Mirror to assets/ — the committed source of truth that Android picks
-// up via `sourceSets.main.assets.srcDirs += '../../mentrajs-runtime/assets'`.
+// up via `sourceSets.main.assets.srcDirs += '../../jspolyfill/assets'`.
 const assetsFile = resolve(assetsDir, "startup.js")
 copyFileSync(outFile, assetsFile)
 

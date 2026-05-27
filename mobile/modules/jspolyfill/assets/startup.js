@@ -1,4 +1,4 @@
-// @generated MentraJS polyfill bundle — see mobile/modules/mentrajs-runtime
+// @generated MentraJS polyfill bundle — see mobile/modules/jspolyfill
 "use strict";
 (() => {
   // src/startup.ts

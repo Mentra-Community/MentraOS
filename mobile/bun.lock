@@ -20,6 +20,7 @@
         "@livekit/react-native-webrtc": "^137.0.2",
         "@mentra/bluetooth-sdk": "workspace:*",
         "@mentra/island": "workspace:*",
+        "@mentra/jspolyfill": "workspace:*",
         "@mentra/miniapp": "workspace:*",
         "@react-native-community/netinfo": "11.5.2",
         "@react-native-community/slider": "5.1.2",
@@ -159,6 +160,9 @@
     "modules/crust": {
       "name": "crust",
       "version": "0.1.0",
+      "dependencies": {
+        "@mentra/jspolyfill": "workspace:*",
+      },
       "devDependencies": {
         "expo-module-scripts": "^55.0.2",
       },
@@ -200,8 +204,8 @@
         "zustand": "*",
       },
     },
-    "modules/mentrajs-runtime": {
-      "name": "@mentra/mentrajs-runtime",
+    "modules/jspolyfill": {
+      "name": "@mentra/jspolyfill",
       "version": "0.1.0",
       "devDependencies": {
         "esbuild": "^0.23.0",
@@ -826,7 +830,7 @@
 
     "@mentra/island": ["@mentra/island@workspace:modules/island"],
 
-    "@mentra/mentrajs-runtime": ["@mentra/mentrajs-runtime@workspace:modules/mentrajs-runtime"],
+    "@mentra/jspolyfill": ["@mentra/jspolyfill@workspace:modules/jspolyfill"],
 
     "@mentra/miniapp": ["@mentra/miniapp@workspace:modules/miniapp"],
 

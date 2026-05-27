@@ -24,7 +24,7 @@ dokar3/quickjs-kt exposes `QuickJs.function(name) { args -> ... }` which install
 
 ## What the user-visible JS surface keeps
 
-The polyfill bundle (`modules/mentrajs-runtime/assets/startup.js`) and the SDK (`@mentra/miniapp`) are unchanged. From the JS side, all of these must still be installed on `globalThis` before the polyfill evaluates:
+The polyfill bundle (`modules/jspolyfill/assets/startup.js`) and the SDK (`@mentra/miniapp`) are unchanged. From the JS side, all of these must still be installed on `globalThis` before the polyfill evaluates:
 
 | Global | Signature | Sync/Async | Notes |
 |---|---|---|---|
@@ -47,7 +47,7 @@ Same set iOS installs at `JSCRuntime.swift:497–574`. Migration parity check: r
 - `mobile/modules/crust/android/src/main/java/com/mentra/crust/CrustModule.kt` — calls `JSCRuntime.shared(ctx).spawn/kill/evaluate/dispatchToJs/alivePackages/debugForceGC/loadPolyfillBundle` plus `JSCRuntime.shared(ctx).dispatcher.setManifest(...)`. Every signature stays exactly the same after the migration.
 - `mobile/modules/crust/android/src/main/java/com/mentra/crust/jsc/JSCDispatcher.kt` — engine-agnostic.
 - `mobile/modules/crust/android/src/main/java/com/mentra/crust/jsc/JSCPolyfillBridge.kt` — engine-agnostic.
-- `mobile/modules/mentrajs-runtime/assets/startup.js` — polyfill unchanged.
+- `mobile/modules/jspolyfill/assets/startup.js` — polyfill unchanged.
 - iOS `JSCRuntime.swift` — unchanged.
 - `MentraJSRouter.ts`, `LocalMiniappRuntime.ts`, the SDK `@mentra/miniapp` — unchanged.
 
