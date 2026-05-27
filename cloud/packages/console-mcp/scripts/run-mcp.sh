@@ -23,4 +23,14 @@ read_env_from_zshrc MENTRA_CLI_TOKEN
 read_env_from_zshrc MENTRA_ADMIN_JWT
 read_env_from_zshrc MENTRA_ADMIN_TOKEN
 
-exec bun run src/index.ts
+# Cursor spawns MCP with a minimal PATH; resolve bun explicitly.
+BUN="${BUN:-$(command -v bun 2>/dev/null)}"
+if [[ -z "$BUN" && -x "${HOME}/.bun/bin/bun" ]]; then
+  BUN="${HOME}/.bun/bin/bun"
+fi
+if [[ -z "$BUN" ]]; then
+  echo "mentra-console-mcp: bun not found (install https://bun.sh or set BUN=...)" >&2
+  exit 127
+fi
+
+exec "$BUN" run src/index.ts
