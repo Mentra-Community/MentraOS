@@ -78,7 +78,11 @@ function CapsuleButton({onMinusPress, onEllipsisPress}: CapsuleButtonProps) {
             borderBottomLeftRadius: 40,
           },
         ]}>
-        <Icon name="ellipsis" size={20} color={theme.colors.foreground} />
+        {/* <View className="relative -top-[1px] left-0 w-4 h-4">
+          <View className="w-5.5 h-5.5 bg-input rounded-full z-0 absolute -top-0.5 -left-0.5" />
+          <Icon name={"minus"} size={16} color={theme.colors.foreground} className="z-0 absolute top-[1px] left-[1px]" />
+        </View> */}
+        <Icon name="minus" size={20} color={theme.colors.foreground} />
       </Pressable>
       <View className="h-4 w-px bg-primary-foreground/80 absolute left-1/2 -translate-x-1/2" />
       <Pressable
@@ -98,10 +102,11 @@ function CapsuleButton({onMinusPress, onEllipsisPress}: CapsuleButtonProps) {
           },
         ]}>
         {/* position circle under the icon: */}
-        <View className="relative -top-[1px] left-0 w-4 h-4">
+        {/* <View className="relative -top-[1px] left-0 w-4 h-4">
           <View className="w-5.5 h-5.5 bg-input rounded-full z-0 absolute -top-0.5 -left-0.5" />
           <Icon name={"x"} size={16} color={theme.colors.foreground} className="z-0 absolute top-[1px] left-[1px]" />
-        </View>
+        </View> */}
+        <Icon name={"x"} size={16} color={theme.colors.foreground} className="z-0" />
       </Pressable>
     </GlassView>
   )

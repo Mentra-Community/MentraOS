@@ -7,6 +7,7 @@ import BluetoothSdk, {
   OtaUpdateInfo,
 } from "@mentra/bluetooth-sdk-internal"
 import CrustModule from "crust"
+import {Asset} from "expo-asset"
 import * as Calendar from "expo-calendar"
 import * as Location from "expo-location"
 import * as TaskManager from "expo-task-manager"
@@ -55,6 +56,38 @@ import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import mentraAuth from "@/utils/auth/authClient"
 
 const LOCATION_TASK_NAME = "handleLocationUpdates"
+
+/**
+ * Miniapp bundles shipped inside the app binary, installed on first launch by
+ * MantleManager.installBundledMiniapps(). Each must be a literal
+ * `require("@assets/miniapps/<packageName>-<version>.zip")` so Metro can
+ * statically resolve and bundle the asset.
+ *
+ * The filename encodes packageName + version (e.g.
+ * `com.mentra.navigation-1.0.2.zip`), so we read those straight off the asset
+ * name to decide whether the bundle is already installed and up to date — no
+ * need to unzip just to check. Ship an update by dropping a new zip with a
+ * bumped version and adding its require() here.
+ */
+const BUNDLED_MINIAPPS: number[] = [
+  require("@assets/miniapps/com.mentra.navigation-1.0.2.zip"),
+]
+
+/**
+ * Parse `<packageName>-<version>` out of a bundled miniapp asset name like
+ * `com.mentra.navigation-1.0.2.zip`. Splits on the last hyphen so dotted
+ * package names (which contain no hyphens) stay intact. Returns null if the
+ * name doesn't match the expected shape.
+ */
+function parseBundledMiniappName(name: string): {packageName: string; version: string} | null {
+  const base = name.replace(/\.zip$/i, "")
+  const lastHyphen = base.lastIndexOf("-")
+  if (lastHyphen <= 0 || lastHyphen === base.length - 1) return null
+  return {
+    packageName: base.slice(0, lastHyphen),
+    version: base.slice(lastHyphen + 1),
+  }
+}
 
 // @ts-ignore
 TaskManager.defineTask(LOCATION_TASK_NAME, ({data: {locations}, error}) => {
@@ -278,6 +311,7 @@ class MantleManager {
     await this.syncNotificationSettingsToCrust()
 
     this.initServices()
+    this.initMiniapps()
     this.setupPeriodicTasks()
     this.setupSubscriptions()
   }
@@ -316,6 +350,17 @@ class MantleManager {
     socketComms.connectWebsocket()
     gallerySyncService.initialize()
 
+    // Bootstrap MentraJS — wires MentraJSRouter + MentraUIRouter +
+    // MentraJSCrashController. The /applet/local route binds the UI
+    // router to its inline WebView via getMentraJS().uiRouter directly.
+    try {
+      bootstrapMentraJS()
+    } catch (e) {
+      console.warn("mentraJsBootstrap failed:", e)
+    }
+  }
+
+  private async initMiniapps() {
     // Warm the local miniapp registry by reading lmas/ off disk. Cheap call —
     // it populates AppRegistry's cache so the first refreshApplets() doesn't
     // pay the disk-walk cost in the UI thread.
@@ -324,13 +369,54 @@ class MantleManager {
     // Initialize local miniapp runtime
     localMiniappRuntime.initialize()
 
-    // Bootstrap MentraJS — wires MentraJSRouter + MentraUIRouter +
-    // MentraJSCrashController. The /applet/local route binds the UI
-    // router to its inline WebView via getMentraJS().uiRouter directly.
-    try {
-      bootstrapMentraJS()
-    } catch (e) {
-      console.warn("mentraJsBootstrap failed:", e)
+    // Install any bundled miniapps that ship with the app and aren't on disk
+    // yet (or are an older version). Runs after the registry is warm so the
+    // already-installed check below sees the real on-disk state.
+    await this.installBundledMiniapps()
+  }
+
+  /**
+   * Install the miniapp zips bundled into the app binary under
+   * @assets/miniapps. Metro's `require` needs static string literals, so each
+   * bundle is listed explicitly in BUNDLED_MINIAPPS rather than globbed.
+   *
+   * The asset name carries packageName + version, so we read those off the
+   * filename and skip the bundle entirely when that exact version is already
+   * installed — no unzip needed to check. Otherwise we materialize the asset
+   * to disk (expo-asset gives us a file:// URI, but `File.downloadFileAsync`
+   * is HTTP-only) and hand the local zip to AppRegistry, which unzips and
+   * installs it.
+   */
+  private async installBundledMiniapps() {
+    for (const module of BUNDLED_MINIAPPS) {
+      try {
+        const asset = Asset.fromModule(module)
+        const parsed = parseBundledMiniappName(asset.name)
+        if (!parsed) {
+          console.warn(`MANTLE: bundled miniapp asset name "${asset.name}" is not <packageName>-<version>`)
+          continue
+        }
+        const {packageName, version} = parsed
+
+        if (appRegistry.getInstalledVersions(packageName).includes(version)) {
+          continue
+        }
+
+        await asset.downloadAsync()
+        if (!asset.localUri) {
+          console.warn(`MANTLE: bundled miniapp ${packageName} has no localUri after download`)
+          continue
+        }
+
+        const res = await appRegistry.installFromLocalZip(asset.localUri)
+        if (res.is_error()) {
+          console.error(`MANTLE: failed to install bundled miniapp ${packageName}@${version}:`, res.error)
+          continue
+        }
+        console.log(`MANTLE: installed bundled miniapp ${res.value.packageName}@${res.value.version}`)
+      } catch (error) {
+        console.error(`MANTLE: error installing bundled miniapp:`, error)
+      }
     }
   }
 
@@ -347,12 +433,9 @@ class MantleManager {
   private async setupPeriodicTasks() {
     this.sendCalendarEvents()
     // Calendar sync every hour
-    this.calendarSyncTimer = BgTimer.setInterval(
-      () => {
-        this.sendCalendarEvents()
-      },
-      60 * 60 * 1000,
-    ) // 1 hour
+    this.calendarSyncTimer = BgTimer.setInterval(() => {
+      this.sendCalendarEvents()
+    }, 60 * 60 * 1000) // 1 hour
 
     try {
       // only start location updates if we have the location permission:
