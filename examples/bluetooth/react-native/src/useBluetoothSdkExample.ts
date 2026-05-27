@@ -82,7 +82,7 @@ export type PhotoPreviewDetails = {
   height?: number;
   previewUrl?: string;
   requestId?: string | null;
-  source: 'Cloud server' | 'Phone receiver' | 'Barcode test';
+  source: 'Cloud server' | 'Phone receiver';
   state: 'acknowledged' | 'error' | 'preview';
   timestamp?: number;
   uploadUrl?: string;
@@ -236,7 +236,6 @@ export type BluetoothSdkExampleActions = {
   openGalleryServer: () => Promise<void>;
   openPhotoPreview: () => Promise<void>;
   openWifiSettings: () => Promise<void>;
-  loadTestBarcodePreview: () => Promise<void>;
   requestWifiScan: () => Promise<void>;
   playMicRecording: () => Promise<void>;
   selectDiscoveredDevice: (device: Device) => void;
@@ -272,7 +271,6 @@ export type BluetoothSdkExampleModel = BluetoothSdkExampleState & BluetoothSdkEx
 
 const PHOTO_APP_ID = 'com.mentra.examples.reactnative';
 const PHOTO_POLL_ATTEMPTS = 45;
-const TEST_BARCODE_VALUE = 'MENTRA-BARCODE-12345';
 const DIRECT_PHOTO_UPLOAD_TIMEOUT_MS = 75_000;
 const DIRECT_WEBRTC_RECEIVER_WARMUP_MS = 1000;
 const ANDROID_12_API_LEVEL = 31;
@@ -1093,28 +1091,6 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     } catch (error) {
       addEvent('TX', `photo metadata failed: ${formatError(error)}`);
     }
-  }
-
-  async function loadTestBarcodePreview() {
-    await runAction('Test barcode scanner', async () => {
-      clearPhotoUploadTimeout();
-      activePhotoRequestIdRef.current = null;
-      pollGenerationRef.current += 1;
-
-      const testImage = await MentraBarcodeScanner.createTestBarcodeImage(TEST_BARCODE_VALUE);
-      setPhotoPreviewUrl(testImage.fileUri);
-      setPhotoStatus(null);
-      setPhotoPreviewDetails({
-        byteCount: testImage.byteCount,
-        previewUrl: testImage.fileUri,
-        requestId: null,
-        source: 'Barcode test',
-        state: 'preview',
-      });
-      void updatePhotoPreviewMetadata(testImage.fileUri);
-      setCameraStatus(`Camera: barcode test preview loaded (${testImage.value})`);
-      await scanPreviewBarcode(testImage.fileUri, testImage.value);
-    });
   }
 
   async function openPhotoPreview() {
@@ -1963,7 +1939,6 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     lastMicDurationSeconds,
     ledColor,
     ledMode,
-    loadTestBarcodePreview,
     micAudioRouteStatus,
     micElapsedSeconds,
     micPlaybackHint,

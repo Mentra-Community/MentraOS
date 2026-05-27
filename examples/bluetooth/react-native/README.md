@@ -42,7 +42,7 @@ Run on a physical iPhone for Bluetooth testing. Simulators are useful only for U
 
 The React Native example uses the SDK photo receiver plus local native modules for direct phone receiving:
 
-- `@mentra/react-native-barcode-scanner` scans the latest photo preview for barcodes and can generate a known local Code 128 image for scanner checks.
+- `@mentra/react-native-barcode-scanner` scans the latest photo preview for barcodes.
 - `@mentra/bluetooth-sdk/photo-receiver` starts a small phone-local photo upload server for direct JPEG uploads.
 - `@mentra/react-native-video-stream-receiver` starts the phone-local WebRTC preview receiver.
 

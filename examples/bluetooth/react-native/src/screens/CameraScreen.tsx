@@ -190,16 +190,6 @@ export function CameraScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             </Text>
           </LinearGradient>
         </Pressable>
-        <Pressable onPress={sdk.loadTestBarcodePreview} style={({pressed}) => [styles.testBarcodeBtn, pressed && styles.testBarcodeBtnPressed]}>
-          <Svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={colors.greenAccent} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
-            <Path d="M3 5v14" />
-            <Path d="M7 5v14" />
-            <Path d="M11 5v14" />
-            <Path d="M17 5v14" />
-            <Path d="M21 5v14" />
-          </Svg>
-          <Text style={styles.testBarcodeText}>Test barcode</Text>
-        </Pressable>
       </LinearGradient>
 
       {/* SDK call card */}
@@ -872,9 +862,6 @@ const styles = StyleSheet.create({
   barcodeValue: { color: colors.muted, fontSize: 11, fontWeight: '600', lineHeight: 15, marginTop: 2 },
   captureBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 18, paddingVertical: 16, marginTop: 14, marginHorizontal: 6, gap: 10 },
   captureText: { color: '#fff', fontSize: 15, fontWeight: '600' },
-  testBarcodeBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderRadius: 14, borderWidth: 1, borderColor: 'rgba(52,199,89,0.26)', backgroundColor: 'rgba(255,255,255,0.5)', paddingVertical: 12, marginTop: 8, marginHorizontal: 6, gap: 8 },
-  testBarcodeBtnPressed: { opacity: 0.65 },
-  testBarcodeText: { color: colors.greenAccent, fontSize: 13, fontWeight: '700' },
   disabled: { opacity: 0.45 },
 
   sdkCard: { marginHorizontal: 16, marginTop: 12, borderRadius: 22, overflow: 'hidden', borderWidth: 1, borderColor: colors.borderSoft },
