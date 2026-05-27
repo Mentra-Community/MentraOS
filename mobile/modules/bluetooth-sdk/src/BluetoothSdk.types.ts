@@ -304,7 +304,7 @@ export type DashboardMenuItem = {
   values?: Record<string, unknown>
 }
 
-export const CAMERA_FOV_MIN = 82
+export const CAMERA_FOV_MIN = 50
 export const CAMERA_FOV_MAX = 118
 export const CAMERA_FOV_DEFAULT = 102
 
