@@ -353,6 +353,25 @@ function PhotoDetailsCard({
 }
 
 type PhotoStatusEvent = NonNullable<BluetoothSdkExampleModel['photoStatus']>;
+type PhotoStatusExtras = {
+  requestedCaptureConfig?: {
+    manual?: boolean;
+    exposureTimeNs?: number;
+    iso?: number;
+    frameDurationNs?: number;
+    aeTargetFpsRange?: {min?: number; max?: number};
+  };
+  meteredPreview?: {
+    exposureTimeNs?: number;
+    iso?: number;
+  };
+  captureMetadata?: {
+    exposureTimeNs?: number;
+    iso?: number;
+    frameDurationNs?: number;
+    aeStateName?: string;
+  };
+};
 
 function photoStatusOverlayInfo(status: PhotoStatusEvent | null, previewUrl: string | null) {
   if (!status) {
@@ -367,7 +386,7 @@ function photoStatusOverlayInfo(status: PhotoStatusEvent | null, previewUrl: str
     busy: !failed,
     detail: failed
       ? status.errorMessage
-      : photoResolvedConfigDetail(status.resolvedConfig),
+      : photoStatusDetail(status),
     failed,
     title: photoStatusTitle(status),
   };
@@ -402,6 +421,16 @@ function photoStatusTitle(status: PhotoStatusEvent) {
   }
 }
 
+function photoStatusDetail(status: PhotoStatusEvent) {
+  const statusWithExtras = status as PhotoStatusEvent & PhotoStatusExtras;
+  return [
+    photoResolvedConfigDetail(status.resolvedConfig),
+    photoRequestedCaptureDetail(statusWithExtras.requestedCaptureConfig),
+    photoMeteredPreviewDetail(statusWithExtras.meteredPreview),
+    photoCaptureMetadataDetail(statusWithExtras.captureMetadata),
+  ].filter(Boolean).join(' · ') || null;
+}
+
 function photoResolvedConfigDetail(config: PhotoStatusEvent['resolvedConfig']) {
   if (!config) {
     return null;
@@ -413,6 +442,54 @@ function photoResolvedConfigDetail(config: PhotoStatusEvent['resolvedConfig']) {
     config.transferMethod ? String(config.transferMethod) : null,
     config.compression ? `compress ${config.compression}` : null,
     config.iso ? `ISO ${config.iso}` : null,
+  ].filter(Boolean);
+  return values.length > 0 ? values.join(' · ') : null;
+}
+
+function compactExposureLabel(ns: number) {
+  const seconds = ns / 1_000_000_000;
+  if (seconds <= 0) {
+    return `${Math.round(ns)} ns`;
+  }
+  return `1/${Math.round(1 / seconds)}s`;
+}
+
+function photoRequestedCaptureDetail(config: PhotoStatusExtras['requestedCaptureConfig']) {
+  if (!config) {
+    return null;
+  }
+  const fps = config.aeTargetFpsRange?.min != null && config.aeTargetFpsRange?.max != null
+    ? `${config.aeTargetFpsRange.min}-${config.aeTargetFpsRange.max}fps`
+    : null;
+  const values = [
+    config.manual != null ? (config.manual ? 'manual request' : 'auto request') : null,
+    config.exposureTimeNs ? `request ${compactExposureLabel(config.exposureTimeNs)}` : null,
+    config.iso ? `request ISO ${config.iso}` : null,
+    fps,
+  ].filter(Boolean);
+  return values.length > 0 ? values.join(' · ') : null;
+}
+
+function photoMeteredPreviewDetail(config: PhotoStatusExtras['meteredPreview']) {
+  if (!config) {
+    return null;
+  }
+  const values = [
+    config.exposureTimeNs ? `metered ${compactExposureLabel(config.exposureTimeNs)}` : null,
+    config.iso ? `metered ISO ${config.iso}` : null,
+  ].filter(Boolean);
+  return values.length > 0 ? values.join(' · ') : null;
+}
+
+function photoCaptureMetadataDetail(config: PhotoStatusExtras['captureMetadata']) {
+  if (!config) {
+    return null;
+  }
+  const values = [
+    config.exposureTimeNs ? `actual ${compactExposureLabel(config.exposureTimeNs)}` : null,
+    config.iso ? `actual ISO ${config.iso}` : null,
+    config.frameDurationNs ? `frame ${compactExposureLabel(config.frameDurationNs)}` : null,
+    config.aeStateName ? `AE ${config.aeStateName}` : null,
   ].filter(Boolean);
   return values.length > 0 ? values.join(' · ') : null;
 }
