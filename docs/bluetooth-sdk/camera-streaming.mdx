@@ -99,7 +99,7 @@ useBluetoothEvent('photo_status', (event) => {
 | `capturing` | `requestedCaptureConfig`, `meteredPreview` | Compare the Camera2 still request with the latest auto-exposure preview estimate before the capture is fired. |
 | `captured` | `captureMetadata` | Read the actual HAL-applied still capture values, including exposure time, ISO, frame duration, AE state/name, noise reduction mode, edge mode, sensor timestamp, and MFNR hint when available. |
 
-Upload and BLE transfer statuses such as `uploading`, `compressing`, `ready_for_transfer`, and `transferring` are transport progress only. They do not carry capture metadata, so use the `captured` event when you need the actual exposure/ISO/frame data for debugging or UI.
+Upload and BLE transfer statuses such as `uploading`, `compressing`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring` are transport progress only. They do not carry capture metadata, so use the `captured` event when you need the actual exposure/ISO/frame data for debugging or UI. `ble_fallback_compression` means the direct Wi-Fi/webhook upload failed and the glasses are compressing the already-captured photo for Bluetooth fallback delivery.
 
 ## Gallery Mode
 

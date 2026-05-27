@@ -147,7 +147,7 @@ Status metadata is stage-specific:
 | `configuring` | `resolvedConfig` | Effective JPEG dimensions, quality, requested size, source (`sdk` or `button`), transfer method, compression, and manual exposure fields when present |
 | `capturing` | `requestedCaptureConfig`, `meteredPreview` | Camera2 still request about to be submitted, plus the latest AE preview estimate before capture |
 | `captured` | `captureMetadata` | HAL-applied still capture result, including actual exposure time, ISO, frame duration, AE state/name, sensor timestamp, and related camera modes when available |
-| `uploading`, `compressing`, `ready_for_transfer`, `transferring` | none | Transport progress only; capture metadata is not repeated here |
+| `uploading`, `compressing`, `ble_fallback_compression`, `ready_for_transfer`, `transferring` | none | Transport progress only; capture metadata is not repeated here. `ble_fallback_compression` means Wi-Fi/webhook upload failed and the photo is being compressed for Bluetooth fallback |
 | `failed` | `errorCode`, `errorMessage` | Capture or transfer failure details |
 
 `captureMetadata` on `captured` is the right place to read the actual still capture values:
