@@ -197,17 +197,17 @@ final class LocalPhotoUploadServer {
     try photoBytes.write(to: photoFile, options: .atomic)
 
     onLog("upload fields=\(parsed.fields.keys.joined(separator: ",")) requestId=\(requestId ?? "") bytes=\(photoBytes.count) saved=\(photoFile.path)")
+    writeJson(
+      connection,
+      status: 200,
+      body: #"{"ok":true,"requestId":"\#(jsonEscape(requestId ?? ""))","bytes":\#(photoBytes.count)}"#
+    )
     onUpload(PhotoUpload(
       requestId: requestId,
       photoFile: photoFile,
       byteCount: photoBytes.count,
       fields: parsed.fields
     ))
-    writeJson(
-      connection,
-      status: 200,
-      body: #"{"ok":true,"requestId":"\#(jsonEscape(requestId ?? ""))","bytes":\#(photoBytes.count)}"#
-    )
     return true
   }
 

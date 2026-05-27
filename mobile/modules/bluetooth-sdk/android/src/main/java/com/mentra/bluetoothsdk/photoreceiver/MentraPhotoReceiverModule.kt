@@ -2,6 +2,8 @@ package com.mentra.bluetoothsdk.photoreceiver
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
+import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import expo.modules.kotlin.exception.Exceptions
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -73,6 +75,16 @@ class MentraPhotoReceiverModule : Module() {
 
   private fun handlePhotoUpload(upload: PhotoUpload) {
     val fileUri = Uri.fromFile(upload.photoFile).toString()
+    BleTraceLogger.logMap(
+      "phone_to_app",
+      "photo_receiver_event",
+      "photo_upload",
+      mapOf(
+        "requestId" to upload.requestId.orEmpty(),
+        "fileName" to upload.photoFile.name,
+        "byteCount" to upload.byteCount,
+      ),
+    )
     sendEvent(
       "photoUpload",
       mapOf(
@@ -85,6 +97,7 @@ class MentraPhotoReceiverModule : Module() {
   }
 
   private fun emitStatus(message: String) {
+    Log.d(TAG, message)
     sendEvent(
       "receiverStatus",
       mapOf("message" to message),
@@ -115,6 +128,7 @@ class MentraPhotoReceiverModule : Module() {
   }
 
   private companion object {
+    const val TAG = "MentraPhotoReceiver"
     val PHOTO_PORTS = listOf(8787, 8788, 8789, 8790)
   }
 }

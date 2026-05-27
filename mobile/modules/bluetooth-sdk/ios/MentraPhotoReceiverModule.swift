@@ -79,6 +79,7 @@ public class MentraPhotoReceiverModule: Module {
   }
 
   private func emitStatus(message: String) {
+    NSLog("[MentraPhotoReceiver] %@", message)
     sendEvent("receiverStatus", [
       "message": message,
     ])

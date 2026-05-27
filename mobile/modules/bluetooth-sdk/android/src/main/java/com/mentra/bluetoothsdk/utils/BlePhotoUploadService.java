@@ -7,8 +7,11 @@ import android.util.Log;
 
 import androidx.annotation.Nullable;
 
+import com.mentra.bluetoothsdk.debug.BleTraceLogger;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.net.URI;
 import java.util.concurrent.TimeUnit;
 
 import okhttp3.MediaType;
@@ -17,6 +20,7 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+import org.json.JSONObject;
 
 /**
  * Service to handle BLE photo uploads including AVIF decoding and webhook posting
@@ -61,7 +65,7 @@ public class BlePhotoUploadService {
                 Log.d(TAG, "Converted to JPEG for upload. Size: " + jpegData.length + " bytes");
 
                 // 3. Upload to webhook
-                uploadToWebhook(jpegData, requestId, webhookUrl, authToken);
+                uploadToWebhook(jpegData, imageData.length, requestId, webhookUrl, authToken);
 
                 Log.d(TAG, "Photo uploaded successfully for requestId: " + requestId);
                 callback.onSuccess(requestId);
@@ -120,6 +124,11 @@ public class BlePhotoUploadService {
      */
     private static void uploadToWebhook(byte[] jpegData, String requestId,
                                        String webhookUrl, @Nullable String authToken) throws IOException {
+        uploadToWebhook(jpegData, -1, requestId, webhookUrl, authToken);
+    }
+
+    private static void uploadToWebhook(byte[] jpegData, int sourceImageBytes, String requestId,
+                                       String webhookUrl, @Nullable String authToken) throws IOException {
         OkHttpClient client = new OkHttpClient.Builder()
             .connectTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
@@ -147,14 +156,148 @@ public class BlePhotoUploadService {
         Request request = requestBuilder.build();
 
         Log.d(TAG, "Uploading photo to webhook: " + webhookUrl);
+        long startMs = System.currentTimeMillis();
+        traceRelayUploadStart(requestId, webhookUrl, authToken, sourceImageBytes, jpegData.length, startMs);
 
+        boolean responseTraced = false;
         try (Response response = client.newCall(request).execute()) {
             if (!response.isSuccessful()) {
                 String errorBody = response.body() != null ? response.body().string() : "No response body";
+                traceRelayUploadEnd(
+                    requestId,
+                    webhookUrl,
+                    sourceImageBytes,
+                    jpegData.length,
+                    startMs,
+                    response.code(),
+                    false,
+                    "http_error");
+                responseTraced = true;
                 throw new IOException("Upload failed with code " + response.code() + ": " + errorBody);
             }
 
+            traceRelayUploadEnd(
+                requestId,
+                webhookUrl,
+                sourceImageBytes,
+                jpegData.length,
+                startMs,
+                response.code(),
+                true,
+                "uploaded");
+            responseTraced = true;
             Log.d(TAG, "Upload successful. Response code: " + response.code());
+        } catch (IOException e) {
+            if (!responseTraced) {
+                traceRelayUploadError(
+                    requestId,
+                    webhookUrl,
+                    sourceImageBytes,
+                    jpegData.length,
+                    startMs,
+                    e,
+                    "failed");
+            }
+            throw e;
+        }
+    }
+
+    private static void traceRelayUploadStart(String requestId, String webhookUrl,
+                                             @Nullable String authToken, int sourceImageBytes,
+                                             int jpegBytes, long startMs) {
+        JSONObject payload = createRelayUploadPayload(
+            "photo_relay_upload_start",
+            requestId,
+            webhookUrl,
+            sourceImageBytes,
+            jpegBytes,
+            startMs);
+        putJson(payload, "bearerHeaderPresent", authToken != null && !authToken.isEmpty());
+        BleTraceLogger.logJson("phone_to_wifi", "wifi_http_output", payload, null);
+    }
+
+    private static void traceRelayUploadEnd(String requestId, String webhookUrl,
+                                           int sourceImageBytes, int jpegBytes, long startMs,
+                                           int statusCode, boolean success, String outcome) {
+        JSONObject payload = createRelayUploadPayload(
+            "photo_relay_upload_end",
+            requestId,
+            webhookUrl,
+            sourceImageBytes,
+            jpegBytes,
+            startMs);
+        long endMs = System.currentTimeMillis();
+        putJson(payload, "endMs", endMs);
+        putJson(payload, "durationMs", endMs - startMs);
+        putJson(payload, "statusCode", statusCode);
+        putJson(payload, "success", success);
+        putJson(payload, "outcome", outcome);
+        BleTraceLogger.logJson("wifi_to_phone", "wifi_http_input", payload, null);
+    }
+
+    private static void traceRelayUploadError(String requestId, String webhookUrl,
+                                             int sourceImageBytes, int jpegBytes, long startMs,
+                                             Exception error, String outcome) {
+        JSONObject payload = createRelayUploadPayload(
+            "photo_relay_upload_error",
+            requestId,
+            webhookUrl,
+            sourceImageBytes,
+            jpegBytes,
+            startMs);
+        long endMs = System.currentTimeMillis();
+        putJson(payload, "endMs", endMs);
+        putJson(payload, "durationMs", endMs - startMs);
+        putJson(payload, "success", false);
+        putJson(payload, "outcome", outcome);
+        putJson(payload, "errorClass", error.getClass().getSimpleName());
+        putJson(payload, "errorMessage", error.getMessage());
+        BleTraceLogger.logJson("wifi_to_phone", "wifi_http_input", payload, null);
+    }
+
+    private static JSONObject createRelayUploadPayload(String type, String requestId,
+                                                      String webhookUrl, int sourceImageBytes,
+                                                      int jpegBytes, long startMs) {
+        JSONObject payload = new JSONObject();
+        putJson(payload, "type", type);
+        putJson(payload, "requestId", requestId);
+        putJson(payload, "source", "ble_fallback");
+        if (sourceImageBytes >= 0) {
+            putJson(payload, "imageBytes", sourceImageBytes);
+        }
+        putJson(payload, "jpegBytes", jpegBytes);
+        putJson(payload, "startMs", startMs);
+        putWebhookSummary(payload, webhookUrl);
+        return payload;
+    }
+
+    private static void putWebhookSummary(JSONObject payload, String webhookUrl) {
+        if (webhookUrl == null || webhookUrl.isEmpty()) {
+            return;
+        }
+
+        try {
+            URI uri = URI.create(webhookUrl);
+            putJson(payload, "urlScheme", uri.getScheme());
+            putJson(payload, "urlHost", uri.getHost());
+            if (uri.getPort() != -1) {
+                putJson(payload, "urlPort", uri.getPort());
+            }
+            String path = uri.getRawPath();
+            putJson(payload, "urlPath", path == null || path.isEmpty() ? "/" : path);
+            putJson(payload, "urlHasQuery", uri.getRawQuery() != null && !uri.getRawQuery().isEmpty());
+        } catch (Exception e) {
+            putJson(payload, "urlParseError", e.getClass().getSimpleName());
+        }
+    }
+
+    private static void putJson(JSONObject payload, String key, Object value) {
+        if (payload == null || key == null || value == null) {
+            return;
+        }
+        try {
+            payload.put(key, value);
+        } catch (Exception ignored) {
         }
     }
 
