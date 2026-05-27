@@ -1219,6 +1219,7 @@ public class MediaCaptureService {
 
         // Generate a temporary requestId first
         String requestId = "local_" + timeStamp;
+        sendPhotoStatus(requestId, "queued");
 
         // TESTING: Check for fake camera initialization failure
         if (PhotoCaptureTestHooks.shouldFail("CAMERA_INIT")) {
@@ -1269,7 +1270,37 @@ public class MediaCaptureService {
                 null, // exposureTimeNs — auto exposure for button photos
                 new CameraNeoService.PhotoCaptureCallback() {
                     @Override
+                    public void onPhotoConfigured(JSONObject resolvedConfig) {
+                        sendPhotoStatus(
+                                requestId,
+                                "configuring",
+                                addPhotoTransferDetails(resolvedConfig, true, "local", "none"),
+                                null,
+                                null);
+                    }
+
+                    @Override
+                    public void onPhotoCapturing(
+                            JSONObject requestedCaptureConfig,
+                            JSONObject meteredPreview) {
+                        sendPhotoStatus(
+                                requestId,
+                                "capturing",
+                                null,
+                                null,
+                                null,
+                                requestedCaptureConfig,
+                                meteredPreview,
+                                null);
+                    }
+
+                    @Override
                     public void onPhotoCaptured(String filePath) {
+                        onPhotoCaptured(filePath, null);
+                    }
+
+                    @Override
+                    public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
                         // Calculate end-to-end timing from request to capture
                         long totalElapsedMs = System.currentTimeMillis() - requestStartTimeMs;
                         if (ENABLE_PHOTO_TIMING_LOGS) {
@@ -1279,6 +1310,15 @@ public class MediaCaptureService {
                         }
 
                         Log.d(TAG, "Local photo captured successfully at: " + filePath);
+                        sendPhotoStatus(
+                                requestId,
+                                "captured",
+                                null,
+                                null,
+                                null,
+                                null,
+                                null,
+                                captureMetadata);
 
                         // LED is now managed by CameraNeoService and will turn off when camera
                         // closes
@@ -1296,6 +1336,12 @@ public class MediaCaptureService {
                     @Override
                     public void onPhotoError(String errorMessage) {
                         Log.e(TAG, "Failed to capture offline photo: " + errorMessage);
+                        sendPhotoStatus(
+                                requestId,
+                                "failed",
+                                null,
+                                "CAMERA_CAPTURE_FAILED",
+                                errorMessage);
 
                         // LED is now managed by CameraNeoService and will turn off when camera
                         // closes
@@ -1490,12 +1536,27 @@ public class MediaCaptureService {
                         }
 
                         @Override
-                        public void onPhotoCapturing() {
-                            sendPhotoStatus(requestId, "capturing");
+                        public void onPhotoCapturing(
+                                JSONObject requestedCaptureConfig,
+                                JSONObject meteredPreview) {
+                            sendPhotoStatus(
+                                    requestId,
+                                    "capturing",
+                                    null,
+                                    null,
+                                    null,
+                                    requestedCaptureConfig,
+                                    meteredPreview,
+                                    null);
                         }
 
                         @Override
                         public void onPhotoCaptured(String filePath) {
+                            onPhotoCaptured(filePath, null);
+                        }
+
+                        @Override
+                        public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
                             // NOTE: do NOT clear isPhotoJobInFlight here — the job continues
                             // through the webhook upload phase below. Flag is cleared only at
                             // terminal exits inside uploadPhotoToWebhook (or its BLE fallback).
@@ -1514,7 +1575,15 @@ public class MediaCaptureService {
                             }
 
                             Log.d(TAG, "Photo captured successfully at: " + filePath);
-                            sendPhotoStatus(requestId, "captured");
+                            sendPhotoStatus(
+                                    requestId,
+                                    "captured",
+                                    null,
+                                    null,
+                                    null,
+                                    null,
+                                    null,
+                                    captureMetadata);
 
                             // LED is now managed by CameraNeoService and will turn off when camera
                             // closes
@@ -1530,7 +1599,11 @@ public class MediaCaptureService {
                                 // Upload directly to app webhook
                                 recordTiming(requestId, "upload_start");
                                 uploadPhotoToWebhook(
-                                        filePath, requestId, webhookUrl, authToken, compress);
+                                        filePath,
+                                        requestId,
+                                        webhookUrl,
+                                        authToken,
+                                        compress);
                             } else {
                                 // No webhook → no upload phase to run. Job ends here.
                                 releasePhotoJob(requestId);
@@ -2838,12 +2911,27 @@ public class MediaCaptureService {
                         }
 
                         @Override
-                        public void onPhotoCapturing() {
-                            sendPhotoStatus(requestId, "capturing");
+                        public void onPhotoCapturing(
+                                JSONObject requestedCaptureConfig,
+                                JSONObject meteredPreview) {
+                            sendPhotoStatus(
+                                    requestId,
+                                    "capturing",
+                                    null,
+                                    null,
+                                    null,
+                                    requestedCaptureConfig,
+                                    meteredPreview,
+                                    null);
                         }
 
                         @Override
                         public void onPhotoCaptured(String filePath) {
+                            onPhotoCaptured(filePath, null);
+                        }
+
+                        @Override
+                        public void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
                             // NOTE: do NOT clear isPhotoJobInFlight here — the job continues
                             // through BLE compression + handoff. Flag is cleared in
                             // compressAndSendViaBle's finally block.
@@ -2861,7 +2949,15 @@ public class MediaCaptureService {
                             }
 
                             Log.d(TAG, "Photo captured successfully for BLE transfer: " + filePath);
-                            sendPhotoStatus(requestId, "captured");
+                            sendPhotoStatus(
+                                    requestId,
+                                    "captured",
+                                    null,
+                                    null,
+                                    null,
+                                    null,
+                                    null,
+                                    captureMetadata);
 
                             // LED is now managed by CameraNeoService and will turn off when camera
                             // closes
@@ -3312,6 +3408,26 @@ public class MediaCaptureService {
             JSONObject resolvedConfig,
             String errorCode,
             String errorMessage) {
+        sendPhotoStatus(
+                requestId,
+                status,
+                resolvedConfig,
+                errorCode,
+                errorMessage,
+                null,
+                null,
+                null);
+    }
+
+    private void sendPhotoStatus(
+            String requestId,
+            String status,
+            JSONObject resolvedConfig,
+            String errorCode,
+            String errorMessage,
+            JSONObject requestedCaptureConfig,
+            JSONObject meteredPreview,
+            JSONObject captureMetadata) {
         if (requestId == null || requestId.isEmpty()) {
             return;
         }
@@ -3324,6 +3440,15 @@ public class MediaCaptureService {
             json.put("timestamp", System.currentTimeMillis());
             if (resolvedConfig != null) {
                 json.put("resolvedConfig", resolvedConfig);
+            }
+            if (requestedCaptureConfig != null) {
+                json.put("requestedCaptureConfig", requestedCaptureConfig);
+            }
+            if (meteredPreview != null) {
+                json.put("meteredPreview", meteredPreview);
+            }
+            if (captureMetadata != null) {
+                json.put("captureMetadata", captureMetadata);
             }
             if (errorCode != null && !errorCode.isEmpty()) {
                 json.put("errorCode", errorCode);

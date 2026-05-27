@@ -167,12 +167,57 @@ export type PhotoResolvedConfig = {
   iso?: number
 }
 
+export type PhotoFpsRange = {
+  min?: number
+  max?: number
+}
+
+export type PhotoRequestedCaptureConfig = {
+  manual?: boolean
+  exposureTimeNs?: number
+  iso?: number
+  frameDurationNs?: number
+  aeMode?: number
+  aeLock?: boolean
+  aeExposureCompensation?: number
+  aeTargetFpsRange?: PhotoFpsRange
+  noiseReductionMode?: number
+  edgeMode?: number
+  afMode?: number
+  zsl?: boolean
+}
+
+export type PhotoMeteredPreview = {
+  exposureTimeNs?: number
+  iso?: number
+  totalLightProxy?: number
+}
+
+export type PhotoCaptureMetadata = {
+  manual?: boolean
+  exposureTimeNs?: number
+  iso?: number
+  frameDurationNs?: number
+  aeMode?: number
+  aeState?: number
+  aeStateName?: string
+  noiseReductionMode?: number
+  edgeMode?: number
+  zsl?: boolean
+  sensorTimestampNs?: number
+  totalLightProxy?: number
+  mfnrLikely?: boolean
+}
+
 export type PhotoStatusEvent = {
   type: "photo_status"
   requestId: string
   status: PhotoStatusState | string
   timestamp: number
   resolvedConfig?: PhotoResolvedConfig
+  requestedCaptureConfig?: PhotoRequestedCaptureConfig
+  meteredPreview?: PhotoMeteredPreview
+  captureMetadata?: PhotoCaptureMetadata
   errorCode?: string
   errorMessage?: string
 }

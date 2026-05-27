@@ -145,6 +145,12 @@ public class CameraNeoService extends LifecycleService {
     public interface PhotoCaptureCallback {
         default void onPhotoConfigured(JSONObject resolvedConfig) {}
         default void onPhotoCapturing() {}
+        default void onPhotoCapturing(JSONObject requestedCaptureConfig, JSONObject meteredPreview) {
+            onPhotoCapturing();
+        }
+        default void onPhotoCaptured(String filePath, JSONObject captureMetadata) {
+            onPhotoCaptured(filePath);
+        }
         void onPhotoCaptured(String filePath);
         void onPhotoError(String errorMessage);
     }

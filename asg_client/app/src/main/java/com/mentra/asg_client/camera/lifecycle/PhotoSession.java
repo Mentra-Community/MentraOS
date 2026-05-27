@@ -58,6 +58,7 @@ import org.json.JSONObject;
 public final class PhotoSession {
 
     private static final String TAG = "CameraNeo";
+    private static final long CAPTURE_METADATA_WAIT_TIMEOUT_MS = 750;
 
     /** Fallback output path for still {@link ImageReader} callback (openCamera path param). */
     private String listenerFallbackPhotoPath;
@@ -87,6 +88,17 @@ public final class PhotoSession {
     private volatile Long mLastStillSensorTimestampNs;
 
     private final HdrBurstCapture hdrBurstCapture = new HdrBurstCapture();
+    private final Object captureMetadataLock = new Object();
+    @Nullable
+    private JSONObject pendingStillCaptureMetadata;
+    @Nullable
+    private String pendingCapturedFilePath;
+    @Nullable
+    private CameraNeoService.PhotoCaptureCallback pendingCapturedCallback;
+    private long pendingCapturedStartTimeMs;
+    @Nullable
+    private Runnable pendingCaptureMetadataTimeout;
+    private boolean photoCapturedCallbackSent;
 
     private final Hooks hooks;
     private final AeCaptureCallback aeCallback;
@@ -247,6 +259,7 @@ public final class PhotoSession {
      * The queue entry may still be mutated for callback binding until this runs.
      */
     private void activateQueuedRequest(QueuedPhotoRequest queued) {
+        resetCaptureMetadataState();
         activeCapture = ActivePhotoCapture.fromQueued(queued);
         rememberConfiguredCamera(queued);
     }
@@ -462,9 +475,6 @@ public final class PhotoSession {
                                 }
                             }
                             notifyPhotoCaptured(basePath);
-                            clearActiveCapture();
-                            shotState = AeStateMachine.ShotState.IDLE;
-                            dispatchNextPhotoRequest();
                         }
 
                         @Override
@@ -493,17 +503,15 @@ public final class PhotoSession {
 
                 notifyPhotoCaptured(targetPath);
                 Log.d(TAG, "Photo saved successfully: " + targetPath);
-                clearActiveCapture();
             } else {
                 ImuRecorder imu = hooks.imuRecorderOrNull();
                 if (imu != null) {
                     imu.cancel();
                 }
                 notifyPhotoError("Failed to save image");
+                shotState = AeStateMachine.ShotState.IDLE;
+                dispatchNextPhotoRequest();
             }
-
-            shotState = AeStateMachine.ShotState.IDLE;
-            dispatchNextPhotoRequest();
         } catch (Exception e) {
             Log.e(TAG, "Error handling image data", e);
             notifyPhotoError("Error processing photo: " + e.getMessage());
@@ -545,28 +553,205 @@ public final class PhotoSession {
         }
     }
 
-    private void notifyPhotoCaptured(String filePath) {
-        long startMs = currentStartTimeMs();
-        long e2eTimeMs = (startMs > 0) ? (System.currentTimeMillis() - startMs) : -1L;
-        Log.i(TAG, "📸 PHOTO E2E: Photo captured and saved in " + e2eTimeMs + "ms (e2e) | Path: " + filePath);
-
-        CameraNeoService.PhotoCaptureCallback callback = activeCapture != null ? activeCapture.callback : null;
-        if (callback != null) {
-            hooks.executor().execute(() -> callback.onPhotoCaptured(filePath));
+    private void resetCaptureMetadataState() {
+        Runnable timeoutToCancel;
+        synchronized (captureMetadataLock) {
+            timeoutToCancel = pendingCaptureMetadataTimeout;
+            pendingStillCaptureMetadata = null;
+            pendingCapturedFilePath = null;
+            pendingCapturedCallback = null;
+            pendingCapturedStartTimeMs = 0L;
+            pendingCaptureMetadataTimeout = null;
+            photoCapturedCallbackSent = false;
+        }
+        if (timeoutToCancel != null) {
+            Handler h = hooks.backgroundHandler();
+            if (h != null) {
+                h.removeCallbacks(timeoutToCancel);
+            }
         }
     }
 
+    private void emitPhotoCaptured(
+            String filePath,
+            @Nullable JSONObject captureMetadata,
+            @Nullable CameraNeoService.PhotoCaptureCallback callback,
+            long startMs) {
+        long e2eTimeMs = (startMs > 0) ? (System.currentTimeMillis() - startMs) : -1L;
+        Log.i(TAG, "📸 PHOTO E2E: Photo captured and saved in " + e2eTimeMs + "ms (e2e) | Path: " + filePath);
+
+        if (callback != null) {
+            hooks.executor().execute(() -> callback.onPhotoCaptured(filePath, captureMetadata));
+        }
+        finishSuccessfulPhotoCapture();
+    }
+
+    private void finishSuccessfulPhotoCapture() {
+        clearActiveCapture();
+        shotState = AeStateMachine.ShotState.IDLE;
+        dispatchNextPhotoRequest();
+    }
+
+    private void notifyPhotoCaptured(String filePath) {
+        long startMs = currentStartTimeMs();
+        CameraNeoService.PhotoCaptureCallback callback = activeCapture != null ? activeCapture.callback : null;
+        JSONObject metadataToSend;
+        synchronized (captureMetadataLock) {
+            if (photoCapturedCallbackSent) {
+                return;
+            }
+            metadataToSend = pendingStillCaptureMetadata;
+            if (metadataToSend == null) {
+                pendingCapturedFilePath = filePath;
+                pendingCapturedCallback = callback;
+                pendingCapturedStartTimeMs = startMs;
+                scheduleCaptureMetadataTimeoutLocked(filePath);
+                return;
+            }
+            pendingStillCaptureMetadata = null;
+            photoCapturedCallbackSent = true;
+        }
+        emitPhotoCaptured(filePath, metadataToSend, callback, startMs);
+    }
+
+    private void scheduleCaptureMetadataTimeoutLocked(String filePath) {
+        if (pendingCaptureMetadataTimeout != null) {
+            return;
+        }
+        Runnable timeout = () -> {
+            CameraNeoService.PhotoCaptureCallback callback;
+            long startMs;
+            synchronized (captureMetadataLock) {
+                if (!Objects.equals(pendingCapturedFilePath, filePath)
+                        || photoCapturedCallbackSent) {
+                    return;
+                }
+                callback = pendingCapturedCallback;
+                startMs = pendingCapturedStartTimeMs;
+                pendingCapturedFilePath = null;
+                pendingCapturedCallback = null;
+                pendingCapturedStartTimeMs = 0L;
+                pendingCaptureMetadataTimeout = null;
+                photoCapturedCallbackSent = true;
+            }
+            Log.w(TAG, "Still capture metadata was not available within "
+                    + CAPTURE_METADATA_WAIT_TIMEOUT_MS
+                    + "ms; emitting captured status without captureMetadata");
+            emitPhotoCaptured(filePath, null, callback, startMs);
+        };
+        pendingCaptureMetadataTimeout = timeout;
+
+        Handler h = hooks.backgroundHandler();
+        if (h != null) {
+            h.postDelayed(timeout, CAPTURE_METADATA_WAIT_TIMEOUT_MS);
+        } else {
+            timeout.run();
+        }
+    }
+
+    private void recordStillCaptureMetadata(JSONObject captureMetadata) {
+        String filePathToNotify = null;
+        CameraNeoService.PhotoCaptureCallback callback = null;
+        long startMs = 0L;
+        Runnable timeoutToCancel = null;
+
+        synchronized (captureMetadataLock) {
+            if (photoCapturedCallbackSent) {
+                return;
+            }
+            if (pendingCapturedFilePath == null) {
+                pendingStillCaptureMetadata = captureMetadata;
+                return;
+            }
+            filePathToNotify = pendingCapturedFilePath;
+            callback = pendingCapturedCallback;
+            startMs = pendingCapturedStartTimeMs;
+            timeoutToCancel = pendingCaptureMetadataTimeout;
+            pendingCapturedFilePath = null;
+            pendingCapturedCallback = null;
+            pendingCapturedStartTimeMs = 0L;
+            pendingCaptureMetadataTimeout = null;
+            pendingStillCaptureMetadata = null;
+            photoCapturedCallbackSent = true;
+        }
+
+        if (timeoutToCancel != null) {
+            Handler h = hooks.backgroundHandler();
+            if (h != null) {
+                h.removeCallbacks(timeoutToCancel);
+            }
+        }
+        emitPhotoCaptured(filePathToNotify, captureMetadata, callback, startMs);
+    }
+
     private void notifyPhotoError(String errorMessage) {
+        resetCaptureMetadataState();
         CameraNeoService.PhotoCaptureCallback callback = activeCapture != null ? activeCapture.callback : null;
         if (callback != null) {
             hooks.executor().execute(() -> callback.onPhotoError(errorMessage));
         }
     }
 
-    private void notifyPhotoCapturing() {
+    private static void putIfNotNull(JSONObject json, String key, Object value) throws JSONException {
+        if (value != null) {
+            json.put(key, value);
+        }
+    }
+
+    @Nullable
+    private JSONObject rangeToJson(@Nullable Range<Integer> range) throws JSONException {
+        if (range == null) {
+            return null;
+        }
+        JSONObject json = new JSONObject();
+        json.put("min", range.getLower());
+        json.put("max", range.getUpper());
+        return json;
+    }
+
+    @Nullable
+    private JSONObject buildMeteredPreview() throws JSONException {
+        JSONObject metered = new JSONObject();
+        putIfNotNull(metered, "iso", mLastMeteredIso);
+        putIfNotNull(metered, "exposureTimeNs", mLastMeteredExposureNs);
+        if (mLastMeteredIso != null && mLastMeteredExposureNs != null) {
+            metered.put("totalLightProxy",
+                    (mLastMeteredExposureNs / 1_000_000.0) * mLastMeteredIso.doubleValue());
+        }
+        return metered.length() > 0 ? metered : null;
+    }
+
+    @Nullable
+    private JSONObject buildRequestedCaptureConfig(CaptureRequest captureRequest, boolean useManual) throws JSONException {
+        if (captureRequest == null) {
+            return null;
+        }
+        JSONObject requested = new JSONObject();
+        requested.put("manual", useManual);
+        putIfNotNull(requested, "exposureTimeNs", captureRequest.get(CaptureRequest.SENSOR_EXPOSURE_TIME));
+        putIfNotNull(requested, "iso", captureRequest.get(CaptureRequest.SENSOR_SENSITIVITY));
+        putIfNotNull(requested, "frameDurationNs", captureRequest.get(CaptureRequest.SENSOR_FRAME_DURATION));
+        putIfNotNull(requested, "aeMode", captureRequest.get(CaptureRequest.CONTROL_AE_MODE));
+        putIfNotNull(requested, "aeLock", captureRequest.get(CaptureRequest.CONTROL_AE_LOCK));
+        putIfNotNull(requested, "aeExposureCompensation",
+                captureRequest.get(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION));
+        putIfNotNull(requested, "noiseReductionMode", captureRequest.get(CaptureRequest.NOISE_REDUCTION_MODE));
+        putIfNotNull(requested, "edgeMode", captureRequest.get(CaptureRequest.EDGE_MODE));
+        putIfNotNull(requested, "afMode", captureRequest.get(CaptureRequest.CONTROL_AF_MODE));
+        putIfNotNull(requested, "zsl", captureRequest.get(CaptureRequest.CONTROL_ENABLE_ZSL));
+        JSONObject fpsRange = rangeToJson(captureRequest.get(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE));
+        if (fpsRange != null) {
+            requested.put("aeTargetFpsRange", fpsRange);
+        }
+        return requested;
+    }
+
+    private void notifyPhotoCapturing(
+            @Nullable JSONObject requestedCaptureConfig,
+            @Nullable JSONObject meteredPreview) {
         CameraNeoService.PhotoCaptureCallback callback = activeCapture != null ? activeCapture.callback : null;
         if (callback != null) {
-            hooks.executor().execute(callback::onPhotoCapturing);
+            hooks.executor().execute(() -> callback.onPhotoCapturing(requestedCaptureConfig, meteredPreview));
         }
     }
 
@@ -897,6 +1082,8 @@ public final class PhotoSession {
                 Log.i(TAG, "📸 SHOT firing: AUTO — " + describeAutoExposureStillPath());
             }
 
+            JSONObject requestedCaptureConfig = null;
+            JSONObject meteredPreview = null;
             try {
                 Long reqExp = captureRequest.get(CaptureRequest.SENSOR_EXPOSURE_TIME);
                 Integer reqIso = captureRequest.get(CaptureRequest.SENSOR_SENSITIVITY);
@@ -922,13 +1109,20 @@ public final class PhotoSession {
                         reqAeLock,
                         reqExpComp,
                         reqFps);
+                requestedCaptureConfig = buildRequestedCaptureConfig(captureRequest, useManual);
+                meteredPreview = buildMeteredPreview();
             } catch (Throwable t) { /* never let logging crash capture */ }
 
-            notifyPhotoCapturing();
+            notifyPhotoCapturing(requestedCaptureConfig, meteredPreview);
             activeSession.capture(captureRequest, new StillCaptureCallback(new StillCaptureCallback.Hooks() {
                 @Override
                 public void recordStillSensorTimestampNs(Long timestampNs) {
                     mLastStillSensorTimestampNs = timestampNs;
+                }
+
+                @Override
+                public void recordCaptureMetadata(JSONObject captureMetadata) {
+                    recordStillCaptureMetadata(captureMetadata);
                 }
 
                 @Override

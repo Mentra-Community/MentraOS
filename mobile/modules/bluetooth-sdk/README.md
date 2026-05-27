@@ -275,7 +275,7 @@ The webhook should accept multipart form data with a `photo` file and `requestId
 
 For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `exposureTimeNs` is sensor exposure time in nanoseconds; `iso` is sensor ISO. If `exposureTimeNs` is omitted, `null`, invalid, or unsupported by the connected glasses, the camera uses auto exposure and ignores `iso`.
 
-Use `setCameraFov({fov, roiPosition})` to configure Mentra Live camera field of view and crop position. FOV is clamped to 82-118 degrees; ROI position is `0` center, `1` bottom, or `2` top. Applying FOV/ROI restarts the camera for about 5 seconds, so wait before requesting the next photo.
+Use `setCameraFov({fov, roiPosition})` to configure Mentra Live camera field of view and crop position. FOV is clamped to 62-118 degrees; ROI position is `0` center, `1` bottom, or `2` top. Applying FOV/ROI restarts the camera for about 5 seconds, so wait before requesting the next photo.
 ## Streaming
 
 ```ts
@@ -309,7 +309,7 @@ import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react'
 export function HardwareEventLogger() {
   useBluetoothEvent('button_press', (event) => console.log(event))
   useBluetoothEvent('touch_event', (event) => console.log(event))
-  useBluetoothEvent('photo_status', (event) => console.log(event.status, event.resolvedConfig))
+  useBluetoothEvent('photo_status', (event) => console.log(event.status, event.resolvedConfig, event.captureMetadata))
   useBluetoothEvent('photo_response', (event) => console.log(event))
   useBluetoothEvent('stream_status', (event) => console.log(event))
   useBluetoothEvent('speaking_status', (event) => console.log(event.speaking))
@@ -326,7 +326,17 @@ For non-React modules, `BluetoothSdk.addListener(...)` is the low-level subscrip
 
 Common event names include `button_press`, `touch_event`, `head_up`, `battery_status`, `wifi_status_change`, `hotspot_status_change`, `photo_status`, `photo_response`, `gallery_status`, `stream_status`, `keep_alive_ack`, `mic_pcm`, `mic_lc3`, `local_transcription`, `rgb_led_control_response`, `audio_connected`, `audio_disconnected`, and `log`.
 
-React Native event payload fields use camelCase. For example, `touch_event` includes `gestureName`, `photo_response` success includes `uploadUrl`, and `gallery_status` includes `hasContent` and `cameraBusy`. `photo_status` reports intermediate photo states such as `accepted`, `queued`, `configuring`, `capturing`, `captured`, `compressing`, `uploading`, `ready_for_transfer`, `transferring`, and `failed`; the `configuring` event includes `resolvedConfig` with the effective JPEG dimensions, quality, requested size, transfer method, compression, and manual exposure fields when present. `mic_pcm` includes `sampleRate`, `bitsPerSample`, `channels`, and `encoding`; `mic_lc3` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, and `packetizedFromGlasses`.
+React Native event payload fields use camelCase. For example, `touch_event` includes `gestureName`, `photo_response` success includes `uploadUrl`, and `gallery_status` includes `hasContent` and `cameraBusy`. `photo_status` reports intermediate photo states such as `accepted`, `queued`, `configuring`, `capturing`, `captured`, `compressing`, `uploading`, `ready_for_transfer`, `transferring`, and `failed`; the `configuring` event includes `resolvedConfig` with the effective JPEG dimensions, quality, requested size, transfer method, compression, and manual exposure fields when present. The `capturing` event may include `requestedCaptureConfig` and `meteredPreview`; the `captured` event may include `captureMetadata` with the HAL-applied exposure, ISO, frame duration, and AE state. `mic_pcm` includes `sampleRate`, `bitsPerSample`, `channels`, and `encoding`; `mic_lc3` includes `sampleRate`, `channels`, `encoding`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, and `packetizedFromGlasses`.
+
+Photo status metadata is tied to the capture stage where the glasses know it:
+
+| Status | Optional metadata | Meaning |
+| --- | --- | --- |
+| `configuring` | `resolvedConfig` | Effective JPEG size, quality, requested size, source, transfer method, compression, and manual capture settings when present. |
+| `capturing` | `requestedCaptureConfig`, `meteredPreview` | Camera2 still request about to be submitted, plus the latest auto-exposure preview estimate before capture. |
+| `captured` | `captureMetadata` | HAL-applied still capture result, including actual exposure, ISO, frame duration, AE state, and related camera modes when available. |
+
+Upload and transfer statuses such as `uploading`, `compressing`, `ready_for_transfer`, and `transferring` describe transport progress only and do not carry capture metadata. Local action-button photos emitted by the glasses use the same `photo_status` event shape when the phone SDK is connected; those events use `resolvedConfig.source: "button"` and `resolvedConfig.transferMethod: "local"`.
 
 Only documented imports are supported for app developers. Undocumented package subpaths or symbols with a leading underscore can change without notice.
 
