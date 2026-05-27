@@ -65,6 +65,15 @@ function compactLabel(direction, layer) {
   if (direction === 'phone_to_app') {
     return color('SDK -> APP', 'cyan');
   }
+  if (direction === 'glasses_to_wifi') {
+    return color('GLASSES -> WIFI', 'green');
+  }
+  if (direction === 'wifi_to_glasses') {
+    return color('WIFI -> GLASSES', 'red');
+  }
+  if (direction === 'glasses_network') {
+    return color('GLASSES NET', 'yellow');
+  }
   if (direction === 'asg_to_bes') {
     return color('ASG -> BES', 'green');
   }
@@ -193,6 +202,37 @@ function summarize(trace) {
       }
     }
     return parts.join(' ');
+  }
+
+  if (
+    trace.layer === 'wifi_http_output' ||
+    trace.layer === 'wifi_http_input' ||
+    trace.layer === 'wifi_route'
+  ) {
+    const priorityKeys = [
+      'requestId',
+      'route',
+      'reason',
+      'outcome',
+      'statusCode',
+      'success',
+      'durationMs',
+      'fileBytes',
+      'urlHost',
+      'urlPath',
+      'wifiConnected',
+      'internetValidated',
+      'fallback',
+      'errorClass',
+      'errorMessage',
+    ];
+    const parts = [];
+    for (const key of priorityKeys) {
+      if (trace.payload[key] != null) {
+        parts.push(`${key}=${singleLine(trace.payload[key])}`);
+      }
+    }
+    return parts.slice(0, 10).join(' ');
   }
 
   if (trace.type === 'k900:sr_log' && trace.payload.B) {
