@@ -665,18 +665,80 @@ function roiLabel(roiPosition: (typeof CAMERA_ROI_POSITIONS)[number]['value']) {
   return CAMERA_ROI_POSITIONS.find((option) => option.value === roiPosition)?.label ?? 'Center';
 }
 
+function withBarcodePositionLabels<T extends {barcode: BluetoothSdkExampleModel['barcodeScan']['barcodes'][number]}>(
+  results: T[],
+): Array<T & {positionLabel: string | null}> {
+  const positions = results
+    .map((result, index) => {
+      const bounds = result.barcode.bounds;
+      if (!bounds) {
+        return null;
+      }
+      return {
+        index,
+        x: bounds.x + bounds.width / 2,
+        y: bounds.y + bounds.height / 2,
+      };
+    })
+    .filter((position): position is {index: number; x: number; y: number} => position !== null);
+
+  if (positions.length < 2) {
+    return results.map((result) => ({...result, positionLabel: null}));
+  }
+
+  const minX = Math.min(...positions.map((position) => position.x));
+  const maxX = Math.max(...positions.map((position) => position.x));
+  const minY = Math.min(...positions.map((position) => position.y));
+  const maxY = Math.max(...positions.map((position) => position.y));
+  const xSpan = maxX - minX;
+  const ySpan = maxY - minY;
+
+  return results.map((result, index) => {
+    const position = positions.find((candidate) => candidate.index === index);
+    const candidates: Array<{distance: number; label: string; priority: number}> = [];
+
+    if (position && xSpan > 0) {
+      const xPercent = (position.x - minX) / xSpan;
+      if (position.x === minX) {
+        candidates.push({distance: xPercent, label: 'left-most', priority: 0});
+      }
+      if (position.x === maxX) {
+        candidates.push({distance: 1 - xPercent, label: 'right-most', priority: 1});
+      }
+    }
+
+    if (position && ySpan > 0) {
+      const yPercent = (position.y - minY) / ySpan;
+      if (position.y === minY) {
+        candidates.push({distance: yPercent, label: 'top-most', priority: 2});
+      }
+      if (position.y === maxY) {
+        candidates.push({distance: 1 - yPercent, label: 'bottom-most', priority: 3});
+      }
+    }
+
+    candidates.sort((a, b) => a.distance - b.distance || a.priority - b.priority);
+    return {
+      ...result,
+      positionLabel: candidates[0]?.label ?? null,
+    };
+  });
+}
+
 function BarcodeResult({scan}: {scan: BluetoothSdkExampleModel['barcodeScan']}) {
   if (scan.state === 'idle') {
     return null;
   }
 
-  const foundBarcodes = scan.barcodes
-    .map((barcode, index) => ({
-      barcode,
-      index,
-      value: barcode.rawValue ?? barcode.displayValue,
-    }))
-    .filter((result): result is {barcode: (typeof scan.barcodes)[number]; index: number; value: string} => Boolean(result.value));
+  const foundBarcodes = withBarcodePositionLabels(
+    scan.barcodes
+      .map((barcode, index) => ({
+        barcode,
+        index,
+        value: barcode.rawValue ?? barcode.displayValue,
+      }))
+      .filter((result): result is {barcode: (typeof scan.barcodes)[number]; index: number; value: string} => Boolean(result.value)),
+  );
   const foundValues = foundBarcodes.map((result) => result.value);
   const foundFormats = Array.from(new Set(scan.barcodes.map((barcode) => barcode.format).filter(Boolean)));
   const foundTypeLabel = foundFormats.length === 1 ? ` (type: ${foundFormats[0]})` : foundFormats.length > 1 ? ` (types: ${foundFormats.join(', ')})` : '';
@@ -721,12 +783,12 @@ function BarcodeResult({scan}: {scan: BluetoothSdkExampleModel['barcodeScan']}) 
         <Text style={styles.barcodeTitle}>{title}</Text>
         {isFound ? (
           <View style={styles.barcodeResultList}>
-            {foundBarcodes.map(({barcode, index, value}, resultIndex) => (
+            {foundBarcodes.map(({barcode, index, positionLabel, value}) => (
               <View key={`${barcode.format}-${value}-${index}`} style={styles.barcodeResultItem}>
                 <View style={styles.barcodeResultTextWrap}>
                   <Text style={styles.barcodeValue}>{value}</Text>
                   <Text style={styles.barcodeMeta}>
-                    {[barcode.format, foundBarcodes.length > 1 ? `result ${resultIndex + 1}` : null].filter(Boolean).join(' · ')}
+                    {[barcode.format, positionLabel].filter(Boolean).join(' · ')}
                   </Text>
                 </View>
                 <Pressable
