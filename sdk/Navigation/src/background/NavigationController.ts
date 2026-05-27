@@ -8,13 +8,7 @@
  * UI's mentra.send / mentra.request bus declared in shared/channels.ts.
  */
 
-import type {
-  MiniappSession,
-  NavRoute,
-  NavUpdate,
-  Pivot,
-  UIModule,
-} from "@mentra/miniapp/background"
+import type {MiniappSession, NavRoute, NavUpdate, Pivot, UIModule} from "@mentra/miniapp/background"
 
 import type {Channels} from "../shared/channels"
 import type {Coords, DevSettings, LogEntry, NavSnapshot, TripState} from "../shared/types"
@@ -205,28 +199,18 @@ export class NavigationController {
   // ── RPC handlers ─────────────────────────────────────────────────────
 
   private wireRpcHandlers(): void {
-    this.unsubs.push(
-      this.ui.handle("nav:compute-route", (opts) => this.navigation.computeRoute(opts)),
-    )
-    this.unsubs.push(
-      this.ui.handle("nav:request-permission", () => this.navigation.requestPermission()),
-    )
+    this.unsubs.push(this.ui.handle("nav:compute-route", (opts) => this.navigation.computeRoute(opts)))
+    this.unsubs.push(this.ui.handle("nav:request-permission", () => this.navigation.requestPermission()))
     this.unsubs.push(this.ui.handle("nav:get-snapshot", () => this.buildSnapshot()))
 
     this.unsubs.push(
-      this.ui.handle("places:autocomplete", ({query, near}, ctx) =>
-        this.places.autocomplete(query, near, ctx?.signal),
-      ),
+      this.ui.handle("places:autocomplete", ({query, near}, ctx) => this.places.autocomplete(query, near, ctx?.signal)),
     )
-    this.unsubs.push(
-      this.ui.handle("places:details", ({placeId}, ctx) => this.places.details(placeId, ctx?.signal)),
-    )
+    this.unsubs.push(this.ui.handle("places:details", ({placeId}, ctx) => this.places.details(placeId, ctx?.signal)))
 
     this.unsubs.push(this.ui.handle("storage:list-saved", () => this.storage.getAllSavedPlaces()))
     this.unsubs.push(this.ui.handle("storage:add-saved", (p) => this.storage.addSavedPlace(p)))
-    this.unsubs.push(
-      this.ui.handle("storage:remove-saved", ({placeId}) => this.storage.removeSavedPlace(placeId)),
-    )
+    this.unsubs.push(this.ui.handle("storage:remove-saved", ({placeId}) => this.storage.removeSavedPlace(placeId)))
     this.unsubs.push(this.ui.handle("storage:list-recent", () => this.storage.getRecentSearches()))
     this.unsubs.push(this.ui.handle("storage:add-recent", (p) => this.storage.addRecentSearch(p)))
   }
@@ -316,6 +300,12 @@ export class NavigationController {
       }),
     )
 
+    this.unsubs.push(
+      this.ui.handle("test:show-text-test", ({text, durationMs}) => {
+        this.display.showText(text, durationMs)
+      }),
+    )
+
     // Mid-trip hydration: every fresh WebView open gets a snapshot.
     this.unsubs.push(this.ui.onOpen(() => this.ui.send("nav:snapshot", this.buildSnapshot())))
   }
@@ -367,19 +357,12 @@ export class NavigationController {
         {lat: this.upcomingPivot.lat, lng: this.upcomingPivot.lng},
       )
       const isCross = this.upcomingPivot.maneuver === "CROSS_STREET"
-      const verb = isCross
-        ? "Cross the road"
-        : this.upcomingPivot.direction === "right"
-          ? "Turn right"
-          : "Turn left"
+      const verb = isCross ? "Cross the road" : this.upcomingPivot.direction === "right" ? "Turn right" : "Turn left"
       const distStr = formatDistance(dist)
       const nextRoad = isCross ? null : isRealRoadName(this.upcomingPivot.fromRoad)
       const topLine = nextRoad ? `Onto ${nextRoad}` : null
       next = [topLine, `${verb} in ${distStr}`].filter(Boolean).join("\n")
-    } else if (
-      maneuver?.distanceToDestinationMeters != null &&
-      maneuver.distanceToDestinationMeters >= 0
-    ) {
+    } else if (maneuver?.distanceToDestinationMeters != null && maneuver.distanceToDestinationMeters >= 0) {
       next = `Arriving in ${formatDistance(maneuver.distanceToDestinationMeters)}`
     } else if (running) {
       next = "Arriving"

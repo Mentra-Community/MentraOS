@@ -61,6 +61,9 @@ export interface Channels {
   "storage:remove-saved": Rpc<{placeId: string}, void>
   "storage:list-recent": Rpc<void, PlaceDetails[]>
   "storage:add-recent": Rpc<PlaceDetails, void>
+
+  // test channels
+  "test:show-text-test": Rpc<{text: string; durationMs?: number}, void>
 }
 
 // Convenience: the typed shape of `window.mentra` for this miniapp.

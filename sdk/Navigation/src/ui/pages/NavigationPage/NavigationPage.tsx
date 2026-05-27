@@ -85,9 +85,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   const [simulatorMode, setSimulatorMode] = useState(false)
   const [searchFrozen, setSearchFrozen] = useState(false)
   const [isSearching, setIsSearching] = useState(false)
-  const [devDrawer, setDevDrawer] = useState<"auto" | "idle" | "preview" | "running" | "arrived">(
-    "auto",
-  )
+  const [devDrawer, setDevDrawer] = useState<"auto" | "idle" | "preview" | "running" | "arrived">("auto")
   const [simulate, setSimulate] = useState(false)
   const [speedMultiplier, setSpeedMultiplier] = useState(5)
   const [wrongSidewalk, setWrongSidewalk] = useState(false)
@@ -98,9 +96,10 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
   // Route-aware totals from computeRoute (mode-correct, follows the actual
   // walking path rather than crow-flies). Cleared when destination changes
   // or trip ends. Drawers prefer these over recomputing.
-  const [previewRouteSummary, setPreviewRouteSummary] = useState<
-    {distanceMeters: number; durationSeconds: number} | null
-  >(null)
+  const [previewRouteSummary, setPreviewRouteSummary] = useState<{
+    distanceMeters: number
+    durationSeconds: number
+  } | null>(null)
   // Devloop local log — distinct from the background broadcast log
   // accessible via the store. Lives here so the FloatingDevPanel can
   // mutate it directly without round-tripping a channel.
@@ -128,10 +127,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
         const route = result.routes?.[0]
         const pts = route?.points ?? null
         setPreviewRoutePoints(pts)
-        if (
-          typeof route?.totalDistanceMeters === "number" &&
-          typeof route?.totalDurationSeconds === "number"
-        ) {
+        if (typeof route?.totalDistanceMeters === "number" && typeof route?.totalDurationSeconds === "number") {
           setPreviewRouteSummary({
             distanceMeters: route.totalDistanceMeters,
             durationSeconds: route.totalDurationSeconds,
@@ -225,9 +221,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
     const finalize = (next: Partial<PlaceDetails>) => {
       // Only apply the upgrade if the same pin is still selected —
       // user may have dropped another one in the meantime.
-      setDestination((prev) =>
-        prev && prev.placeId === pinId ? {...prev, ...next, isGeocoding: false} : prev,
-      )
+      setDestination((prev) => (prev && prev.placeId === pinId ? {...prev, ...next, isGeocoding: false} : prev))
     }
     const g = (window as unknown as {google?: {maps?: {Geocoder?: new () => GeocoderLike}}}).google
     if (g?.maps?.Geocoder) {
@@ -360,6 +354,20 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
         {isDev ? (
           <FloatingDevPanel title="Navigation Dev" storageKey="NavigationPage:dev">
             <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-neutral-700">Show test text on glasses</span>
+              <button
+                type="button"
+                onClick={() =>
+                  mentra.request("test:show-text-test", {
+                    text: "Hello from the UI",
+                    durationMs: 3000,
+                  })
+                }
+                className="text-[11px] px-2.5 py-1 rounded-lg font-semibold bg-red-600 text-white">
+                Send
+              </button>
+            </div>
+            <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
               <span className="text-[13px] font-medium text-neutral-700">Simulator Mode</span>
               <button
                 type="button"
@@ -383,9 +391,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
             </div>
             {simulatorMode && (
               <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3">
-                <div className="text-[11px] font-bold tracking-wider text-neutral-500 uppercase mb-2">
-                  Drawer
-                </div>
+                <div className="text-[11px] font-bold tracking-wider text-neutral-500 uppercase mb-2">Drawer</div>
                 <div className="flex gap-1.5 flex-wrap">
                   {(["auto", "idle", "preview", "running", "arrived"] as const).map((mode) => (
                     <button
@@ -393,9 +399,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
                       type="button"
                       onClick={() => setDevDrawer(mode)}
                       className={`text-[11px] px-2.5 py-1 rounded-lg font-semibold capitalize ${
-                        devDrawer === mode
-                          ? "bg-blue-600 text-white"
-                          : "bg-neutral-200 text-neutral-700"
+                        devDrawer === mode ? "bg-blue-600 text-white" : "bg-neutral-200 text-neutral-700"
                       }`}>
                       {mode}
                     </button>
@@ -466,9 +470,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
               </>
             )}
             <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3">
-              <div className="text-[11px] font-bold tracking-wider text-neutral-500 uppercase mb-2">
-                🚶 Travel mode
-              </div>
+              <div className="text-[11px] font-bold tracking-wider text-neutral-500 uppercase mb-2">🚶 Travel mode</div>
               <div className="grid grid-cols-2 gap-2">
                 {(["walking", "driving", "cycling", "two_wheeler"] as const).map((m) => (
                   <button
@@ -486,9 +488,7 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
               </div>
             </div>
             <div className="bg-white border border-neutral-200 rounded-xl p-3 mb-3 flex items-center justify-between">
-              <span className="text-[13px] font-medium text-neutral-700">
-                Freeze location search panel
-              </span>
+              <span className="text-[13px] font-medium text-neutral-700">Freeze location search panel</span>
               <button
                 type="button"
                 onClick={() => setSearchFrozen((f) => !f)}
@@ -515,8 +515,5 @@ export function NavigationPage({savedPlacesVersion = 0}: Props) {
 type GeocoderResultLike = {formatted_address?: string}
 type GeocoderRequestLike = {location: {lat: number; lng: number}}
 type GeocoderLike = {
-  geocode(
-    request: GeocoderRequestLike,
-    callback: (results: GeocoderResultLike[] | null, status: string) => void,
-  ): void
+  geocode(request: GeocoderRequestLike, callback: (results: GeocoderResultLike[] | null, status: string) => void): void
 }

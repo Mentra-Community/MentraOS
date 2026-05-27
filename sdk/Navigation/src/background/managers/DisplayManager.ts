@@ -22,6 +22,14 @@ export class DisplayManager {
     )
   }
 
+  showTextTest(): void {
+    this.safeCall(() =>
+      this.session.display.showTextWall(
+        "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Donec venenatis vulputate lorem. Maecenas vestibulum mollis diam. Pellentesque ut neque. Sed lectus. Donec sodales sagittis magna.",
+      ),
+    )
+  }
+
   // showTwoLines(top: string, bottom: string): void {
   //   this.showText(`${top} / ${bottom}`)
   // }
