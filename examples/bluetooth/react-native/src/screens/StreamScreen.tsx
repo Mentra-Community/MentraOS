@@ -29,8 +29,6 @@ await BluetoothSdk.startStream({
   type: 'start_stream',
   streamId,
   streamUrl: receiver.streamUrl,
-  keepAlive: true,
-  keepAliveIntervalSeconds: 15,
   video: { fps: ${fps} },
 })`;
   }
@@ -39,8 +37,6 @@ await BluetoothSdk.startStream({
   type: 'start_stream',
   streamId,
   streamUrl,
-  keepAlive: true,
-  keepAliveIntervalSeconds: 15,
   video: { fps: ${fps} },
 })`;
 }
@@ -101,7 +97,9 @@ export function StreamScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             ) : !sdk.streamCloudServerEnabled && previewReady ? (
               <MentraVideoStreamReceiverView style={styles.previewFill} />
             ) : (
-              <PlaceholderStreamPreview message={streamActive ? 'Starting stream...\nWaiting for preview' : undefined} />
+              <PlaceholderStreamPreview
+                message={streamActive ? streamPreviewWaitingMessage(sdk.streamStatus) : undefined}
+              />
             )}
             <View style={styles.livePill}>
               <View style={[styles.liveDot, !streamActive && styles.readyDot]} />
@@ -111,8 +109,8 @@ export function StreamScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
             <Text style={styles.previewMeta}>
               {previewReady
                 ? sdk.streamCloudServerEnabled
-                  ? `${sdk.streamProtocol.toUpperCase()} · keep-alive 15s`
-                  : 'WEBRTC · phone receiver'
+                  ? `${sdk.streamProtocol.toUpperCase()} · SDK keep-alive`
+                  : 'WEBRTC · phone receiver · SDK keep-alive'
                 : streamActive
                   ? 'Waiting for preview'
                   : sdk.streamCloudServerEnabled
@@ -159,7 +157,7 @@ export function StreamScreen({ sdk }: { sdk: BluetoothSdkExampleModel }) {
           </View>
           <View style={{ flex: 1 }}>
             <Text style={styles.statusTitle}>{sdk.streamStatus}</Text>
-            <Text style={styles.statusSub}>uptime {uptime} · keep-alive 15s</Text>
+            <Text style={styles.statusSub}>uptime {uptime} · SDK keep-alive</Text>
           </View>
         </View>
       </LinearGradient>
@@ -483,6 +481,12 @@ function isStreamStatusFailure(status: string) {
     normalized.includes('connect the glasses to wi-fi') ||
     normalized.includes('connect glasses first')
   );
+}
+
+function streamPreviewWaitingMessage(status: string) {
+  return status.toLowerCase().includes('stalled')
+    ? status
+    : 'Starting stream...\nWaiting for preview';
 }
 
 function localStreamSetupHint(protocol: StreamProtocol, streamUrl: string, status: string) {

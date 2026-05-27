@@ -10,8 +10,6 @@ mentraBluetoothSdk.startStream(
   StreamRequest(
     streamUrl: streamUrl,
     streamId: streamId,
-    keepAlive: true,
-    keepAliveIntervalSeconds: 15,
     video: StreamVideoConfig(fps: \(fps))
   )
 )
@@ -129,9 +127,18 @@ struct StreamScreen: View {
                     .frame(height: 160)
                     .background(Color.black)
                     .clipShape(RoundedRectangle(cornerRadius: 22))
+                if !model.streamPreviewReady {
+                    Color.black.opacity(0.62)
+                        .clipShape(RoundedRectangle(cornerRadius: 22))
+                    Text(model.streamStatus)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                }
                 previewChrome(
                     label: model.streamPreviewReady ? "LIVE" : "STARTING",
-                    detail: model.streamPreviewReady ? "WebRTC · phone receiver · keep-alive 15s" : "Waiting for first frame"
+                    detail: model.streamPreviewReady ? "WebRTC · phone receiver · SDK keep-alive" : "Waiting for first frame"
                 )
             }
         } else if let livePreviewUrl {
@@ -185,12 +192,12 @@ struct StreamScreen: View {
 
     private var previewDetail: String {
         if directPhoneWebRtc {
-            return "WebRTC · phone receiver · keep-alive 15s"
+            return "WebRTC · phone receiver · SDK keep-alive"
         }
         if model.streamProtocol == .srt {
-            return "SRT · web preview · keep-alive 15s"
+            return "SRT · web preview · SDK keep-alive"
         }
-        return "\(model.streamProtocol.rawValue.uppercased()) · keep-alive 15s"
+        return "\(model.streamProtocol.rawValue.uppercased()) · SDK keep-alive"
     }
 
     private func previewChrome(label: String, detail: String) -> some View {
@@ -253,7 +260,7 @@ struct StreamScreen: View {
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(model.streamStatus).font(.system(size: 12, weight: .semibold)).foregroundColor(AppColor.ink)
-                    Text("uptime \(elapsedText(model.streamStartedAt)) · keep-alive 15s").font(.system(size: 11, weight: .medium)).foregroundColor(AppColor.muted)
+                    Text("uptime \(elapsedText(model.streamStartedAt)) · SDK keep-alive").font(.system(size: 11, weight: .medium)).foregroundColor(AppColor.muted)
                 }
             }
             .padding(.vertical, 12).padding(.horizontal, 16)

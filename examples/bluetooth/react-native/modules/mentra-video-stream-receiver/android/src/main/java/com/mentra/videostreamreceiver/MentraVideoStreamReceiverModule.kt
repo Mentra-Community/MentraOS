@@ -13,11 +13,12 @@ class MentraVideoStreamReceiverModule : Module() {
   private var whipReceiver: GStreamerWhipReceiver? = null
   private var whipProxy: WhipHeaderProxy? = null
   private var firstFrameSeen = false
+  private var lastFrameEventAtMs = 0L
 
   override fun definition() = ModuleDefinition {
     Name("MentraVideoStreamReceiver")
 
-    Events("receiverStatus", "streamFirstFrame")
+    Events("receiverStatus", "streamFirstFrame", "streamFrame")
 
     AsyncFunction("isSupported") {
       true
@@ -55,9 +56,14 @@ class MentraVideoStreamReceiverModule : Module() {
           onStatus = { message -> emitStatus("stream", message) },
           onFrame = { bitmap ->
             VideoStreamReceiverFrameRegistry.update(bitmap)
+            val now = System.currentTimeMillis()
+            if (now - lastFrameEventAtMs >= 1000) {
+              lastFrameEventAtMs = now
+              sendEvent("streamFrame", mapOf("timestamp" to now))
+            }
             if (!firstFrameSeen) {
               firstFrameSeen = true
-              sendEvent("streamFirstFrame", mapOf("timestamp" to System.currentTimeMillis()))
+              sendEvent("streamFirstFrame", mapOf("timestamp" to now))
             }
           },
         )
@@ -100,6 +106,7 @@ class MentraVideoStreamReceiverModule : Module() {
     }
     whipReceiver = null
     firstFrameSeen = false
+    lastFrameEventAtMs = 0L
     VideoStreamReceiverFrameRegistry.clear()
     emitStatus("stream", "WebRTC phone receiver stopped")
   }

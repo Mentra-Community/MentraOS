@@ -34,6 +34,7 @@ import MentraPhotoReceiver, {
   type PhotoReceiverUploadEvent,
 } from '@mentra/bluetooth-sdk/photo-receiver';
 import MentraVideoStreamReceiver, {
+  type VideoStreamFrameEvent,
   type VideoStreamFirstFrameEvent,
   type VideoStreamReceiverStatusEvent,
 } from '@mentra/react-native-video-stream-receiver';
@@ -104,8 +105,6 @@ export type CameraRoiPosition = 0 | 1 | 2;
 export const SCAN_MODELS = [DeviceModels.MentraLive, DeviceModels.G2] as const;
 export type ScanModel = (typeof SCAN_MODELS)[number];
 type StreamStartRequest = {
-  keepAlive: boolean;
-  keepAliveIntervalSeconds: number;
   streamId: string;
   streamUrl: string;
   type: 'start_stream';
@@ -370,8 +369,8 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   const photoCloudServerEnabledRef = useRef(false);
   const streamCloudServerEnabledRef = useRef(false);
   const photoUploadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const keepAliveTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const previewHealthTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const directStreamFrameStaleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const barcodeScanTokenRef = useRef(0);
   const lastMicFileUriRef = useRef<string | null>(null);
   const micElapsedSecondsRef = useRef(0);
@@ -468,6 +467,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       MentraPhotoReceiver.addListener('photoUpload', handleDirectPhotoUpload),
       MentraPhotoReceiver.addListener('receiverStatus', handlePhotoReceiverStatus),
       MentraVideoStreamReceiver.addListener('receiverStatus', handleVideoStreamReceiverStatus),
+      MentraVideoStreamReceiver.addListener('streamFrame', handleDirectStreamFrame),
       MentraVideoStreamReceiver.addListener('streamFirstFrame', handleDirectStreamFirstFrame),
       BluetoothSdk.addListener('photo_response', handlePhotoResponse),
       BluetoothSdk.addListener('stream_status', (payload: StreamStatusEvent) => {
@@ -539,8 +539,8 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     return () => {
       subscriptions.forEach((subscription) => subscription.remove());
       clearPhotoUploadTimeout();
-      stopKeepAlive();
       stopPreviewHealthPoll();
+      stopDirectStreamFrameWatchdog();
       void MentraPhotoReceiver.stopPhotoReceiver().catch(() => undefined);
       void MentraVideoStreamReceiver.stopWebRtcReceiver().catch(() => undefined);
       activeStreamIdRef.current = null;
@@ -648,7 +648,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
 
   async function disconnect() {
     await runAction('Disconnect', async () => {
-      stopKeepAlive();
+      stopDirectStreamFrameWatchdog();
       await bluetooth.disconnect();
       applyDisconnectedState('Disconnected');
     });
@@ -861,19 +861,39 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       }
       if (payload.message.toLowerCase().includes('stopped')) {
         setDirectStreamReceiverRunning(false);
+        stopDirectStreamFrameWatchdog();
+      }
+      if (payload.message.startsWith('Rendered ')) {
+        markDirectStreamFrameReceived();
       }
     }
     addEvent('LIVE', `${payload.kind} receiver ${payload.message}`);
   }
 
   function handleDirectStreamFirstFrame(_payload: VideoStreamFirstFrameEvent) {
+    markDirectStreamFrameReceived();
+  }
+
+  function handleDirectStreamFrame(_payload: VideoStreamFrameEvent) {
+    markDirectStreamFrameReceived();
+  }
+
+  function markDirectStreamFrameReceived() {
     if (!activeStreamIdRef.current || streamCloudServerEnabledRef.current) {
       return;
     }
     setStreamPreviewReady(true);
     setStreamStartedAt((current) => current ?? Date.now());
     setStreamStatus('WebRTC phone preview ready');
-    addEvent('LIVE', 'WebRTC phone preview ready');
+    stopDirectStreamFrameWatchdog();
+    directStreamFrameStaleTimerRef.current = setTimeout(() => {
+      if (!activeStreamIdRef.current || streamCloudServerEnabledRef.current) {
+        return;
+      }
+      setStreamPreviewReady(false);
+      setStreamStatus('WebRTC preview stalled: no video frames received from glasses');
+      addEvent('TX', 'WebRTC preview stalled');
+    }, 7000);
   }
 
   function handlePhotoResponse(payload: PhotoResponseEvent) {
@@ -1218,8 +1238,6 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     }
     const streamId = `rn-${Date.now()}`;
     const params = {
-      keepAlive: true,
-      keepAliveIntervalSeconds: 15,
       streamId,
       streamUrl: url,
       type: 'start_stream',
@@ -1227,7 +1245,6 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     } satisfies StreamStartRequest;
     await BluetoothSdk.startStream(params);
     activeStreamIdRef.current = streamId;
-    startKeepAlive(streamId);
     setStreamRequested(true);
     setStreamPreviewReady(false);
     setStreamStatus(`Starting ${streamProtocol.toUpperCase()} stream; waiting for preview`);
@@ -1244,8 +1261,6 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
 
     const streamId = `rn-${Date.now()}`;
     const params = {
-      keepAlive: true,
-      keepAliveIntervalSeconds: 15,
       streamId,
       streamUrl: receiver.streamUrl,
       type: 'start_stream',
@@ -1254,7 +1269,6 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     try {
       await BluetoothSdk.startStream(params);
       activeStreamIdRef.current = streamId;
-      startKeepAlive(streamId);
       setStreamRequested(true);
       setStreamPreviewReady(false);
       setStreamStatus('Starting WebRTC stream to phone; waiting for preview');
@@ -1267,8 +1281,8 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   }
 
   async function stopActiveStream(status: string) {
-    stopKeepAlive();
     stopPreviewHealthPoll();
+    stopDirectStreamFrameWatchdog();
     activeStreamIdRef.current = null;
     if (isGlassesConnected(glasses)) {
       await BluetoothSdk.stopStream();
@@ -1331,7 +1345,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
           addEvent('LIVE', `${protocol.toUpperCase()} preview ready`);
         } else if (!ready && lastReady) {
           setStreamPreviewReady(false);
-          setStreamStatus(`${protocol.toUpperCase()} media path lost; waiting for preview`);
+          setStreamStatus(`${protocol.toUpperCase()} media path lost; preview may be frozen`);
           addEvent('TX', `${protocol.toUpperCase()} media path lost`);
         }
         lastReady = ready;
@@ -1353,30 +1367,10 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
     }
   }
 
-  function startKeepAlive(streamId: string) {
-    stopKeepAlive();
-    sendStreamKeepAlive(streamId);
-    keepAliveTimerRef.current = setInterval(() => {
-      sendStreamKeepAlive(streamId);
-    }, 15000);
-  }
-
-  function sendStreamKeepAlive(streamId: string) {
-    if (activeStreamIdRef.current !== streamId) {
-      return;
-    }
-      void BluetoothSdk.keepStreamAlive({
-        ackId: `ack-${Date.now()}`,
-        streamId,
-        type: 'keep_stream_alive',
-      });
-      addEvent('TX', 'stream keep alive');
-  }
-
-  function stopKeepAlive() {
-    if (keepAliveTimerRef.current) {
-      clearInterval(keepAliveTimerRef.current);
-      keepAliveTimerRef.current = null;
+  function stopDirectStreamFrameWatchdog() {
+    if (directStreamFrameStaleTimerRef.current) {
+      clearTimeout(directStreamFrameStaleTimerRef.current);
+      directStreamFrameStaleTimerRef.current = null;
     }
   }
 
@@ -1761,8 +1755,8 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   }
 
   function applyDisconnectedState(status: string) {
-    stopKeepAlive();
     stopPreviewHealthPoll();
+    stopDirectStreamFrameWatchdog();
     clearPhotoUploadTimeout();
     void MentraVideoStreamReceiver.stopWebRtcReceiver().catch(() => undefined);
     activeStreamIdRef.current = null;
@@ -1789,6 +1783,7 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
   function applyStreamStatus(payload: StreamStatusEvent) {
     const resolvedConfig = (payload as {resolvedConfig?: StreamResolvedConfig})
       .resolvedConfig;
+    const summary = summarizeMap(payload);
 
     const status = payload.status;
     if (
@@ -1802,13 +1797,6 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       }
       setStreamRequested(true);
       setStreamStartedAt((current) => current ?? Date.now());
-      if (
-        (status === 'streaming' || status === 'reconnecting' || status === 'reconnected') &&
-        keepAliveTimerRef.current === null &&
-        activeStreamIdRef.current
-      ) {
-        startKeepAlive(activeStreamIdRef.current);
-      }
       if (resolvedConfig) {
         setStreamResolvedConfig(resolvedConfig);
       }
@@ -1820,18 +1808,28 @@ export function useBluetoothSdkExample(): BluetoothSdkExampleModel {
       status === 'error' ||
       status === 'reconnect_failed'
     ) {
-      stopKeepAlive();
       stopPreviewHealthPoll();
+      stopDirectStreamFrameWatchdog();
       activeStreamIdRef.current = null;
       void MentraVideoStreamReceiver.stopWebRtcReceiver().catch(() => undefined);
       setDirectStreamReceiverRunning(false);
       setDirectStreamWhipUrl(null);
       setStreamRequested(false);
       setStreamPreviewReady(false);
+      stopDirectStreamFrameWatchdog();
       if (!resolvedConfig) {
         setStreamResolvedConfig(null);
       }
       setStreamStartedAt(null);
+      setStreamStatus(
+        status === 'error'
+          ? `Stream error: ${payload.errorDetails ?? summary}`
+          : status === 'reconnect_failed'
+            ? `Stream reconnect failed: ${summary}`
+            : status === 'stopping'
+              ? 'Stopping stream'
+              : 'Stream stopped',
+      );
     }
     if (resolvedConfig) {
       setStreamResolvedConfig(resolvedConfig);

@@ -51,7 +51,6 @@ import com.mentra.bluetoothsdk.RgbLedRequest
 import com.mentra.bluetoothsdk.ScanSession
 import com.mentra.bluetoothsdk.SpeakingStatusEvent
 import com.mentra.bluetoothsdk.StreamState
-import com.mentra.bluetoothsdk.StreamKeepAliveRequest
 import com.mentra.bluetoothsdk.StreamRequest
 import com.mentra.bluetoothsdk.StreamResolvedConfig
 import com.mentra.bluetoothsdk.StreamStatus
@@ -244,11 +243,12 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     private var directPhotoTimeoutJob: Job? = null
     private var gStreamerWhipReceiver: GStreamerWhipReceiver? = null
     private var whipHeaderProxy: WhipHeaderProxy? = null
-    private var keepAliveJob: Job? = null
     private var previewHealthJob: Job? = null
+    private var directStreamFrameWatchdogJob: Job? = null
     private var directStreamStartJob: Job? = null
     private var directStreamStopJob: Job? = null
     private var directStreamFirstFrameSeen = false
+    private var lastDirectStreamFrameWatchdogRefreshMs = 0L
     private var scanSession: ScanSession? = null
     private var lastMicFile: File? = null
     private var micElapsedJob: Job? = null
@@ -384,8 +384,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     fun disconnect() = runAction("Disconnect") {
-        stopKeepAlive()
         stopPreviewHealthPoll()
+        stopDirectStreamFrameWatchdog()
         stopDirectPhoneStreamReceiver("Disconnected")
         mentraBluetoothSdk.disconnect()
         applyDisconnectedState("Disconnected")
@@ -719,8 +719,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
 
     fun toggleStream() = runAction(if (!state.streamRequested && state.streamStartedAt == null) "Start stream" else "Stop stream") {
         if (state.streamRequested || state.streamStartedAt != null) {
-            stopKeepAlive()
             stopPreviewHealthPoll()
+            stopDirectStreamFrameWatchdog()
             if (isDirectPhoneWebRtcSelected()) {
                 directStreamStartJob?.cancel()
                 directStreamStartJob = null
@@ -805,8 +805,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             StreamRequest(
                 streamUrl = streamUrl,
                 streamId = streamId,
-                keepAlive = true,
-                keepAliveIntervalSeconds = 15,
                 video = StreamVideoConfig(fps = state.streamFps),
             )
         )
@@ -841,6 +839,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 val streamId = "android-gst-${System.currentTimeMillis()}"
                 activeStreamId = streamId
                 directStreamFirstFrameSeen = false
+                lastDirectStreamFrameWatchdogRefreshMs = 0L
                 state = state.copy(
                     directStreamFrame = null,
                     directStreamReceiverRunning = true,
@@ -875,6 +874,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             streamRequested = false,
             streamStatus = "WebRTC phone receiver failed: $message",
         )
+        stopDirectStreamFrameWatchdog()
         throw IllegalStateException("WebRTC phone receiver failed: $message")
     }
 
@@ -883,12 +883,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             StreamRequest(
                 streamUrl = streamUrl,
                 streamId = streamId,
-                keepAlive = true,
-                keepAliveIntervalSeconds = 15,
                 video = StreamVideoConfig(fps = state.streamFps),
             )
         )
-        startKeepAlive(streamId)
         state = state.copy(
             streamRequested = true,
             streamStartedAt = state.streamStartedAt ?: System.currentTimeMillis(),
@@ -902,7 +899,9 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         directStreamStartJob = null
         directStreamStopJob?.cancel()
         directStreamStopJob = null
+        stopDirectStreamFrameWatchdog()
         directStreamFirstFrameSeen = false
+        lastDirectStreamFrameWatchdogRefreshMs = 0L
         whipHeaderProxy?.stop()
         gStreamerWhipReceiver?.stop()
         state = state.copy(
@@ -920,8 +919,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             return false
         }
 
-        stopKeepAlive()
         stopPreviewHealthPoll()
+        stopDirectStreamFrameWatchdog()
         directStreamStartJob?.cancel()
         directStreamStartJob = null
         directStreamStopJob?.cancel()
@@ -980,10 +979,35 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         if (firstFrame) {
             addEvent("LIVE", "first WebRTC frame received on phone")
         }
+        val now = System.currentTimeMillis()
+        if (firstFrame || now - lastDirectStreamFrameWatchdogRefreshMs >= 1_000) {
+            lastDirectStreamFrameWatchdogRefreshMs = now
+            scheduleDirectStreamFrameWatchdog()
+        }
     }
 
     private fun isDirectPhoneWebRtcSelected(): Boolean =
         !state.streamCloudServerEnabled
+
+    private fun scheduleDirectStreamFrameWatchdog() {
+        directStreamFrameWatchdogJob?.cancel()
+        directStreamFrameWatchdogJob = scope.launch {
+            delay(7_000)
+            if (!isDirectPhoneWebRtcSelected() || !state.directStreamReceiverRunning || activeStreamId == null) {
+                return@launch
+            }
+            state = state.copy(
+                streamPreviewReady = false,
+                streamStatus = "WebRTC preview stalled: no video frames received from glasses",
+            )
+            addEvent("TX", "WebRTC preview stalled")
+        }
+    }
+
+    private fun stopDirectStreamFrameWatchdog() {
+        directStreamFrameWatchdogJob?.cancel()
+        directStreamFrameWatchdogJob = null
+    }
 
     private fun startPreviewReadinessPoll(streamUrl: String, protocol: String, streamId: String) {
         scope.launch(Dispatchers.IO) {
@@ -1033,7 +1057,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                         !ready && lastReady -> {
                             state = state.copy(
                                 streamPreviewReady = false,
-                                streamStatus = "${protocol.uppercase()} media path lost; waiting for preview",
+                                streamStatus = "${protocol.uppercase()} media path lost; preview may be frozen",
                             )
                             addEvent("TX", "${protocol.uppercase()} media path lost")
                         }
@@ -1502,8 +1526,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     override fun close() {
-        stopKeepAlive()
         stopPreviewHealthPoll()
+        stopDirectStreamFrameWatchdog()
         directPhotoTimeoutJob?.cancel()
         directStreamStartJob?.cancel()
         scanSession?.stop()
@@ -1720,8 +1744,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
 
     private fun applyDisconnectedState(status: String) {
-        stopKeepAlive()
         stopPreviewHealthPoll()
+        stopDirectStreamFrameWatchdog()
         stopDirectPhoneStreamReceiver(status)
         activeStreamId = null
         val hadPhotoRequest = activePhotoRequestId != null
@@ -1765,16 +1789,13 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                     streamRequested = true,
                     streamStartedAt = state.streamStartedAt ?: System.currentTimeMillis(),
                 )
-                if (keepAliveJob == null) {
-                    startKeepAlive(activeStreamId ?: return)
-                }
             }
             StreamState.STOPPED,
             StreamState.STOPPING,
             StreamState.RECONNECT_FAILED,
             StreamState.ERROR -> {
-                stopKeepAlive()
                 stopPreviewHealthPoll()
+                stopDirectStreamFrameWatchdog()
                 activeStreamId = null
                 state = state.copy(
                     streamRequested = false,
@@ -1787,27 +1808,6 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
                 }
             }
         }
-    }
-
-    private fun startKeepAlive(streamId: String) {
-        stopKeepAlive()
-        keepAliveJob = scope.launch {
-            while (isActive) {
-                delay(15_000)
-                mentraBluetoothSdk.keepStreamAlive(
-                    StreamKeepAliveRequest(
-                        streamId = streamId,
-                        ackId = "ack-${System.currentTimeMillis()}",
-                    ),
-                )
-                addEvent("TX", "stream keep alive")
-            }
-        }
-    }
-
-    private fun stopKeepAlive() {
-        keepAliveJob?.cancel()
-        keepAliveJob = null
     }
 
     private fun startMicRecording() {

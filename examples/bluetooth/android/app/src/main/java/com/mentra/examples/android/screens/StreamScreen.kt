@@ -81,8 +81,6 @@ private fun streamSdkCall(fps: Int) = """
 	  StreamRequest(
 	    streamUrl = streamUrl,
 	    streamId = streamId,
-	    keepAlive = true,
-	    keepAliveIntervalSeconds = 15,
 	    video = StreamVideoConfig(fps = $fps),
 	  )
 	)
@@ -143,7 +141,7 @@ fun StreamScreen(controller: MentraExampleController) {
                 if (directPhoneWebRtc) {
                     DirectPhoneStreamPreview(
                         frame = state.directStreamFrame,
-                        message = if (streamActive) "Waiting for first frame" else null,
+                        message = if (streamActive && !previewReady) state.streamStatus else null,
                         modifier = Modifier.matchParentSize()
                     )
                 } else if (previewTarget != null) {
@@ -172,11 +170,11 @@ fun StreamScreen(controller: MentraExampleController) {
 
                 Text(
                     if (directPhoneWebRtc && previewReady) {
-                        "WebRTC · phone receiver · keep-alive 15s"
+                        "WebRTC · phone receiver · SDK keep-alive"
                     } else if (directPhoneWebRtc && streamActive) {
                         "Waiting for first frame"
                     } else if (previewReady) {
-                        "${state.streamProtocol.uppercase()} · keep-alive 15s"
+                        "${state.streamProtocol.uppercase()} · SDK keep-alive"
                     } else if (streamActive) {
                         "Waiting for preview"
                     } else if (directPhoneWebRtc) {
@@ -269,7 +267,7 @@ fun StreamScreen(controller: MentraExampleController) {
                 }
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                     Text(state.streamStatus, color = AppColor.ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    Text("uptime $uptime · keep-alive 15s", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                    Text("uptime $uptime · SDK keep-alive", color = AppColor.muted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                 }
             }
         }
@@ -478,7 +476,11 @@ private fun DirectPhoneStreamPreview(frame: android.graphics.Bitmap?, message: S
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Fit
             )
-        } else if (message != null) {
+        }
+        if (message != null) {
+            if (frame != null) {
+                Box(modifier = Modifier.matchParentSize().background(Color.Black.copy(alpha = 0.62f)))
+            }
             Text(
                 message,
                 color = Color.White,

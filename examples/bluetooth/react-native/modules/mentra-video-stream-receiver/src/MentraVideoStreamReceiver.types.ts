@@ -11,6 +11,10 @@ export type VideoStreamFirstFrameEvent = {
   timestamp: number;
 };
 
+export type VideoStreamFrameEvent = {
+  timestamp: number;
+};
+
 export type WebRtcReceiverResult = {
   backendPort: number;
   host: string;
@@ -21,6 +25,7 @@ export type WebRtcReceiverResult = {
 export type MentraVideoStreamReceiverModuleEvents = {
   receiverStatus: (event: VideoStreamReceiverStatusEvent) => void;
   streamFirstFrame: (event: VideoStreamFirstFrameEvent) => void;
+  streamFrame: (event: VideoStreamFrameEvent) => void;
 };
 
 export type MentraVideoStreamReceiverViewProps = {

@@ -322,6 +322,10 @@ static GstElement *on_request_encoded_filter(GstElement *source,
             if ([videoView isKindOfClass:[GStreamerVideoContainerView class]]) {
                 ((GStreamerVideoContainerView *)videoView).image = frameImage;
             }
+            void (^frameHandler)(void) = self.onFrameRendered;
+            if (frameHandler) {
+                frameHandler();
+            }
         });
         if (frameNumber == 1 || frameNumber % 30 == 0) {
             [self notify:[NSString stringWithFormat:@"Rendered %lu frames (%dx%d)", (unsigned long)frameNumber, width, height]];

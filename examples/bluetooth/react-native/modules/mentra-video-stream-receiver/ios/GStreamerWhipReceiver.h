@@ -7,6 +7,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, strong, readonly) UIView *videoView;
 @property (nonatomic, copy, readonly, nullable) NSString *whipURL;
 @property (nonatomic, copy, nullable) void (^onStateChanged)(NSString *message);
+@property (nonatomic, copy, nullable) void (^onFrameRendered)(void);
 
 - (BOOL)startWithAdvertisedHost:(NSString *)advertisedHost
                            port:(NSInteger)port

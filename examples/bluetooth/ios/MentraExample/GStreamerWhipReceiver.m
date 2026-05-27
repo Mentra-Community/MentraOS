@@ -315,6 +315,10 @@ static GstElement *on_request_encoded_filter(GstElement *source,
         self.renderedFrameCount = frameNumber;
         dispatch_async(dispatch_get_main_queue(), ^{
             ((GStreamerVideoContainerView *)self.videoView).image = image;
+            void (^frameHandler)(void) = self.onFrameRendered;
+            if (frameHandler) {
+                frameHandler();
+            }
         });
         if (frameNumber == 1 || frameNumber % 30 == 0) {
             [self notify:[NSString stringWithFormat:@"Rendered %lu frames (%dx%d)", (unsigned long)frameNumber, width, height]];

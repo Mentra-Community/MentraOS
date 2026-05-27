@@ -6,11 +6,12 @@ public class MentraVideoStreamReceiverModule: Module {
   private var whipReceiver: GStreamerWhipReceiver?
   private var whipProxy: WhipHeaderProxy?
   private var firstFrameSeen = false
+  private var lastFrameEventAtMs = 0
 
   public func definition() -> ModuleDefinition {
     Name("MentraVideoStreamReceiver")
 
-    Events("receiverStatus", "streamFirstFrame")
+    Events("receiverStatus", "streamFirstFrame", "streamFrame")
 
     AsyncFunction("isSupported") {
       true
@@ -45,6 +46,9 @@ public class MentraVideoStreamReceiverModule: Module {
         let receiver = GStreamerWhipReceiver()
         receiver.onStateChanged = { [weak self] message in
           self?.handleReceiverStatus(message)
+        }
+        receiver.onFrameRendered = { [weak self] in
+          self?.handleFrameRendered()
         }
 
         try receiver.start(withAdvertisedHost: "127.0.0.1", port: ports.backendPort)
@@ -86,8 +90,19 @@ public class MentraVideoStreamReceiverModule: Module {
     whipReceiver?.stop()
     whipReceiver = nil
     firstFrameSeen = false
+    lastFrameEventAtMs = 0
     VideoStreamReceiverViewRegistry.shared.clear()
     emitStatus(kind: "stream", message: "WebRTC phone receiver stopped")
+  }
+
+  private func handleFrameRendered() {
+    let now = Int(Date().timeIntervalSince1970 * 1000)
+    if now - lastFrameEventAtMs >= 1000 {
+      lastFrameEventAtMs = now
+      sendEvent("streamFrame", [
+        "timestamp": now,
+      ])
+    }
   }
 
   private func handleReceiverStatus(_ message: String) {
